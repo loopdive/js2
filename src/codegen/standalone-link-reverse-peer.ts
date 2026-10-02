@@ -78,6 +78,7 @@ import type { ReversePeerReadBinding } from "../runtime/wasmgc/values/object-get
 
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { exportStandaloneLinkErrorCtorCells } from "./standalone-link-error-ctor-cells.js";
 import { addFuncType } from "./registry/types.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { ensureExnTag } from "./registry/physical-imports.js";
@@ -900,6 +901,9 @@ export function reverseProxyGetArmInstrs(hops: ReversePeerHops, resultLocal: num
  * today's answer, rather than installing somewhere unordered.
  */
 export function finalizeStandaloneLinkReversePeer(ctx: CodegenContext): void {
+  // (#6723 D4) The Error-family constructor carriers, published by the provider
+  // and imported by the consumer: one `TypeError` per linked graph.
+  exportStandaloneLinkErrorCtorCells(ctx);
   if (isProvider(ctx)) {
     const index = ctx.funcMap.get(LINK_REVERSE_PEER.install);
     if (index === undefined) return;

@@ -1,0 +1,655 @@
+{
+  "schema": 1,
+  "kind": "authenticated-live-program-initial-graph-evolution",
+  "provenance": {
+    "originalReceipt": "f95d8a0bf318e857d981863b1018a9d776483a46",
+    "extractionRevision": "3a119a88b28bb347f4faaaa2146bd991acf61228",
+    "runtimeSupportCommit": "efe352fee8afc3feb6a28c34d00fc658dc1fb205",
+    "physicalCommit": "4b00bce674d20192e96fdd77fa58cc03f35a1fc7",
+    "previousKernel": "36ea5ce9f54190c1f2c7af0466cf768afb453394"
+  },
+  "preAReceipt": {
+    "path": "tests/helpers/ir-program-pre-a-evolution.json",
+    "bytes": 17770,
+    "sha256": "76b82aab953cd10800aa3fabce9a6b96b6a8e6a1e98204a2ace117bca3e14909",
+    "gitBlob": "0d3b86d7b362ce5470c0d96d48cd44fe50e0a7b2"
+  },
+  "inputs": [
+    {
+      "path": "src/ir/identity.ts",
+      "bytes": 61452,
+      "sha256": "ac9bcf913f1bbe4358f020307b3fd25b47c0fac26be88dfde449ba1d33694e44",
+      "gitBlob": "4a47d555bb511e921e2e9fd70902fa9275d3329a"
+    },
+    {
+      "path": "src/ir/prepared-component-dependencies.ts",
+      "bytes": 74563,
+      "sha256": "0ea7a1b7d7ce5bf0a035d8b3a4c9c5a65aabd841ddd3c7a7c10bf82b11c9b8a7",
+      "gitBlob": "c75052c6c51a824bc1ad0af99155271fb4d30480"
+    },
+    {
+      "path": "src/ir/program/input-contracts.ts",
+      "bytes": 2375,
+      "sha256": "755022df130534f4ddeb0dab4eaebd50a5a1f9790bbc9a98d2e3d74e29e65fe7",
+      "gitBlob": "ae84ebb03ddd7461cf887d1028d558140ecba156"
+    },
+    {
+      "path": "src/ir/program/prepared-contracts.ts",
+      "bytes": 4843,
+      "sha256": "889bedc1c23fb8e26db609634ce0a0137da73a9cc85f636b810a86a396173225",
+      "gitBlob": "e8443bbd780aff5284f322d89748b8de691babe3"
+    },
+    {
+      "path": "src/shared/contracts/ir-identity.ts",
+      "bytes": 2741,
+      "sha256": "ef9427c37f81455e06b81cf4f2599601d50e80f0d83abcacda447c9048fa4d0f",
+      "gitBlob": "07f882159a6e688c1ed30c2965a36699d21a0b85"
+    },
+    {
+      "path": "src/shared/contracts/identity-values.ts",
+      "bytes": 1208,
+      "sha256": "df20402d646264c0341a16a0c49bac2db4bdb38b5ac3e3b1e7ab7ef5a17f2412",
+      "gitBlob": "b5dcede80a8be81b35e1442f2229a849cb785931"
+    },
+    {
+      "path": "src/ir/identity-values.ts",
+      "bytes": 312,
+      "sha256": "3f38d0923826ffa5e3114612a21c7e4c8f4d9c0d3e51c0826e4bc174877acd93",
+      "gitBlob": "ce78e415149dfff0cb447c2b97034f3b819ead23"
+    },
+    {
+      "path": "src/shared/contracts/ir-unit-inventory.ts",
+      "bytes": 4708,
+      "sha256": "f6f253cefa3b4618bd5f2daf2555b6c0d734a715f2dd44a30a83921c0d9b6496",
+      "gitBlob": "e7f088edffda5ef76b726b6786341e5bcc744078"
+    },
+    {
+      "path": "src/ir/program/abi-lookup.ts",
+      "bytes": 1112,
+      "sha256": "f461b6ed08cfd89e6efec74bddd3f6857e92bc0ab3bea354836292587d04facf",
+      "gitBlob": "a677bd2379ee5ad2439668fec0589ce01d8b13b0"
+    },
+    {
+      "path": "src/ir/program/runtime-support.ts",
+      "bytes": 14807,
+      "sha256": "da7e458acb00449fc57e2e6cace2eea5bcd9f781bc63c93baa29e810d537b1f9",
+      "gitBlob": "f92a1ef2653a66dedb9430371ce83d506a32befb"
+    },
+    {
+      "path": "src/ir/program/formatter-support.ts",
+      "bytes": 2489,
+      "sha256": "e6528c00040027687b3fb3cb887500535f789e14b7914599c168f6a73fc600bf",
+      "gitBlob": "112d4fb48c4556d1e87b9afe6c1ec95709e114e7"
+    },
+    {
+      "path": "src/ir/program/errors.ts",
+      "bytes": 1117,
+      "sha256": "b64c58e9ed9e870aa1fa8b219e413b786b66c6cdf4586adac78a5894fbce5907",
+      "gitBlob": "079dbd626af8dcc207201552095501ba0fd622f1"
+    },
+    {
+      "path": "src/ir/core/types.ts",
+      "bytes": 32296,
+      "sha256": "58d3795e4f38002798fbdb93c7599f74cb422555ba0ed84f160a51aec52543a2",
+      "gitBlob": "db0b740a300009d035b7af28377bf0333e023105"
+    },
+    {
+      "path": "src/ir/program/input.ts",
+      "bytes": 6763,
+      "sha256": "3c9da679634f7fcb8fee9a8e5664cc752ee1e6a370148d4d375e56f6462afbda",
+      "gitBlob": "07e2f9c4ec8b24f94028f76ba0ac7daebd963fb7"
+    },
+    {
+      "path": "src/wasm/physical/function-handles.ts",
+      "bytes": 4317,
+      "sha256": "c6a82f897b8fa6c755b68129926e2deb9b6e885a25ecd2e253a444d0bcb5193f",
+      "gitBlob": "e4f75d1b6faba7d320b5919520fca765622fe17d"
+    },
+    {
+      "path": "src/wasm/model/instructions.ts",
+      "bytes": 14904,
+      "sha256": "b305b96583e473272f26032cd1e4ad4653a32d4f56db74df50dac7f1c2461b6d",
+      "gitBlob": "699c7b386f529b6017659a2f4b0f3c5671235969"
+    },
+    {
+      "path": "src/wasm/model/module-records.ts",
+      "bytes": 3867,
+      "sha256": "0de6972cbc506dc29a04119fed1efbf9a4b84e4219a52363c120e0130364ae75",
+      "gitBlob": "c700df20e0e24aa54b0dd5d4a438773c22deb6f7"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "src/ir/program/input-contracts.ts",
+      "bytes": 2267,
+      "sha256": "35513eb7bbb1c5228da514904d4ed1baf8b904ccd4ba321c0feff5bf80623767",
+      "gitBlob": "cebf4928df125a79f05942469d270200302ad816"
+    },
+    {
+      "path": "src/ir/program/prepared-contracts.ts",
+      "bytes": 4735,
+      "sha256": "6535893fc7c88d72fb3b0f963dab151f18cf10052f36693d52859a92837e0a20",
+      "gitBlob": "34f66f9f3047739e5020ab9880d3753188d3e484"
+    },
+    {
+      "path": "src/ir/program/input.ts",
+      "bytes": 6441,
+      "sha256": "fc6d92f559b3a46e203ca5f8b1cf92ddf41cdc56d7f6ae326207b6596fcc6994",
+      "gitBlob": "a84b348e02b789c42efdc1343c5695eccfb02b65"
+    },
+    {
+      "path": "src/wasm/physical/function-handles.ts",
+      "bytes": 2477,
+      "sha256": "daddc2fea3c4e2017c117b54863ec00a27341378f8acc796e54bfb751e5cdac0",
+      "gitBlob": "8b91e2391b574e75ee6db331ebaa5aaa9da5d436"
+    }
+  ],
+  "records": [
+    {
+      "path": "src/ir/program/input.ts",
+      "current": {
+        "bytes": 6763,
+        "sha256": "3c9da679634f7fcb8fee9a8e5664cc752ee1e6a370148d4d375e56f6462afbda",
+        "gitBlob": "07e2f9c4ec8b24f94028f76ba0ac7daebd963fb7"
+      },
+      "original": {
+        "bytes": 6441,
+        "sha256": "fc6d92f559b3a46e203ca5f8b1cf92ddf41cdc56d7f6ae326207b6596fcc6994",
+        "gitBlob": "a84b348e02b789c42efdc1343c5695eccfb02b65"
+      },
+      "currentDeclarations": [
+        {
+          "ordinal": 0,
+          "kind": "ImportDeclaration",
+          "name": "../analysis/alloc-registry.js",
+          "startByte": 85,
+          "endByte": 174,
+          "bytes": 89,
+          "sha256": "924672b6f0645ae71e1546b6d9844f9057222dfb4e32d2dff5ffa7578df6bb19",
+          "gitBlob": "e15c9e68ae75b56e93f72a6ebe9334b1a6ea97fa"
+        },
+        {
+          "ordinal": 1,
+          "kind": "ImportDeclaration",
+          "name": "./data.js",
+          "startByte": 175,
+          "endByte": 226,
+          "bytes": 51,
+          "sha256": "42096e542c5d7dd1748705f433418ff6d3443de3ebe7d7e1000289074977cec8",
+          "gitBlob": "861a1cfe408fc01a067ff56e719bdb9453820d43"
+        },
+        {
+          "ordinal": 2,
+          "kind": "ImportDeclaration",
+          "name": "./errors.js",
+          "startByte": 227,
+          "endByte": 289,
+          "bytes": 62,
+          "sha256": "d218bdd47bc29d7ae6d6af4d166841b5de465b48b49f125d65a6813f3be7e87c",
+          "gitBlob": "4d3c921f636e0087a953fcfc44baa30776a1f486"
+        },
+        {
+          "ordinal": 3,
+          "kind": "ImportDeclaration",
+          "name": "./input-contracts.js",
+          "startByte": 290,
+          "endByte": 377,
+          "bytes": 87,
+          "sha256": "bb21f763f48ed724b57e77aa5c6349ea1263602afeef6f47d37eb6186b832b72",
+          "gitBlob": "7bfd5bd98960d2d811f615d3449df1c7df08dcc6"
+        },
+        {
+          "ordinal": 4,
+          "kind": "ImportDeclaration",
+          "name": "./runtime-support.js",
+          "startByte": 378,
+          "endByte": 440,
+          "bytes": 62,
+          "sha256": "672061871ef91ed5bf9a014525599aa94c2b44027da30fa7ed551315d623bb19",
+          "gitBlob": "71fdae9e2f297af0481d7b26be497531d2c19ea7"
+        },
+        {
+          "ordinal": 5,
+          "kind": "FunctionDeclaration",
+          "name": "invalid",
+          "startByte": 442,
+          "endByte": 563,
+          "bytes": 121,
+          "sha256": "414661f4a3026e0bbc5c20b630ccad92ff6d85697aba5601293056aa25009782",
+          "gitBlob": "0582b0179eab00ead8cc5a68afb5bf46e4294724"
+        },
+        {
+          "ordinal": 6,
+          "kind": "FunctionDeclaration",
+          "name": "fields",
+          "startByte": 565,
+          "endByte": 1089,
+          "bytes": 524,
+          "sha256": "ee6fb6029106e5347ae5c4cc55cf318ce9590bc02c70a0e615259cfd358ac4c2",
+          "gitBlob": "a1e3d0ba1b8088108171e48691c9e1ed5d38c0c2"
+        },
+        {
+          "ordinal": 7,
+          "kind": "FunctionDeclaration",
+          "name": "dense",
+          "startByte": 1091,
+          "endByte": 1342,
+          "bytes": 251,
+          "sha256": "610c8cc93fdc1a01c8c1eefe69101b80e086622970cb02b98dfa872047c3d773",
+          "gitBlob": "5a8c63708f343b26316d7084e104053fff0d4a41"
+        },
+        {
+          "ordinal": 8,
+          "kind": "FunctionDeclaration",
+          "name": "assertGlobalStorage",
+          "startByte": 1428,
+          "endByte": 3563,
+          "bytes": 2135,
+          "sha256": "b28cd907646a8cb1d94a2ed92961625e058fa62d250929a06a2c05f7f1c27928",
+          "gitBlob": "558f42aba22fc48ec0747e40035a90affb906cac"
+        },
+        {
+          "ordinal": 9,
+          "kind": "FunctionDeclaration",
+          "name": "ownTypedIrProgramInput",
+          "startByte": 3652,
+          "endByte": 5651,
+          "bytes": 1999,
+          "sha256": "802c388f4f413d330aa489573f2927f80461969157248f1791052f3948a7a24b",
+          "gitBlob": "20fd54b879f890cc513593a3280d0d113045ca3a"
+        },
+        {
+          "ordinal": 10,
+          "kind": "FunctionDeclaration",
+          "name": "ownTypedIrProgramOptions",
+          "startByte": 5653,
+          "endByte": 6762,
+          "bytes": 1109,
+          "sha256": "a817e4aed383f8b779487cb665ed241e9e023ca32795016d08f3b8de326b8092",
+          "gitBlob": "f9bb7c746eb54708ece7b4775dd12fa4cf9646c9"
+        }
+      ],
+      "originalDeclarations": [
+        {
+          "ordinal": 0,
+          "kind": "ImportDeclaration",
+          "name": "../analysis/alloc-registry.js",
+          "startByte": 85,
+          "endByte": 174,
+          "bytes": 89,
+          "sha256": "924672b6f0645ae71e1546b6d9844f9057222dfb4e32d2dff5ffa7578df6bb19",
+          "gitBlob": "e15c9e68ae75b56e93f72a6ebe9334b1a6ea97fa"
+        },
+        {
+          "ordinal": 1,
+          "kind": "ImportDeclaration",
+          "name": "./data.js",
+          "startByte": 175,
+          "endByte": 226,
+          "bytes": 51,
+          "sha256": "42096e542c5d7dd1748705f433418ff6d3443de3ebe7d7e1000289074977cec8",
+          "gitBlob": "861a1cfe408fc01a067ff56e719bdb9453820d43"
+        },
+        {
+          "ordinal": 2,
+          "kind": "ImportDeclaration",
+          "name": "./errors.js",
+          "startByte": 227,
+          "endByte": 289,
+          "bytes": 62,
+          "sha256": "d218bdd47bc29d7ae6d6af4d166841b5de465b48b49f125d65a6813f3be7e87c",
+          "gitBlob": "4d3c921f636e0087a953fcfc44baa30776a1f486"
+        },
+        {
+          "ordinal": 3,
+          "kind": "ImportDeclaration",
+          "name": "./input-contracts.js",
+          "startByte": 290,
+          "endByte": 377,
+          "bytes": 87,
+          "sha256": "bb21f763f48ed724b57e77aa5c6349ea1263602afeef6f47d37eb6186b832b72",
+          "gitBlob": "7bfd5bd98960d2d811f615d3449df1c7df08dcc6"
+        },
+        {
+          "ordinal": 4,
+          "kind": "FunctionDeclaration",
+          "name": "invalid",
+          "startByte": 379,
+          "endByte": 500,
+          "bytes": 121,
+          "sha256": "414661f4a3026e0bbc5c20b630ccad92ff6d85697aba5601293056aa25009782",
+          "gitBlob": "0582b0179eab00ead8cc5a68afb5bf46e4294724"
+        },
+        {
+          "ordinal": 5,
+          "kind": "FunctionDeclaration",
+          "name": "fields",
+          "startByte": 502,
+          "endByte": 1026,
+          "bytes": 524,
+          "sha256": "ee6fb6029106e5347ae5c4cc55cf318ce9590bc02c70a0e615259cfd358ac4c2",
+          "gitBlob": "a1e3d0ba1b8088108171e48691c9e1ed5d38c0c2"
+        },
+        {
+          "ordinal": 6,
+          "kind": "FunctionDeclaration",
+          "name": "dense",
+          "startByte": 1028,
+          "endByte": 1279,
+          "bytes": 251,
+          "sha256": "610c8cc93fdc1a01c8c1eefe69101b80e086622970cb02b98dfa872047c3d773",
+          "gitBlob": "5a8c63708f343b26316d7084e104053fff0d4a41"
+        },
+        {
+          "ordinal": 7,
+          "kind": "FunctionDeclaration",
+          "name": "assertGlobalStorage",
+          "startByte": 1365,
+          "endByte": 3500,
+          "bytes": 2135,
+          "sha256": "b28cd907646a8cb1d94a2ed92961625e058fa62d250929a06a2c05f7f1c27928",
+          "gitBlob": "558f42aba22fc48ec0747e40035a90affb906cac"
+        },
+        {
+          "ordinal": 8,
+          "kind": "FunctionDeclaration",
+          "name": "ownTypedIrProgramInput",
+          "startByte": 3589,
+          "endByte": 5329,
+          "bytes": 1740,
+          "sha256": "ea987bf55a540404c422ac888d9f4e35198c249851eca30c67782be7e582d041",
+          "gitBlob": "e696331a3bf9325c28a631131295903ffa87f124"
+        },
+        {
+          "ordinal": 9,
+          "kind": "FunctionDeclaration",
+          "name": "ownTypedIrProgramOptions",
+          "startByte": 5331,
+          "endByte": 6440,
+          "bytes": 1109,
+          "sha256": "a817e4aed383f8b779487cb665ed241e9e023ca32795016d08f3b8de326b8092",
+          "gitBlob": "f9bb7c746eb54708ece7b4775dd12fa4cf9646c9"
+        }
+      ],
+      "operands": [
+        {
+          "slot": "callee",
+          "ownerOrdinal": 9,
+          "ownerName": "ownTypedIrProgramInput",
+          "statementOrdinal": 1,
+          "kind": "Identifier",
+          "startByte": 3942,
+          "endByte": 3948,
+          "bytes": 6,
+          "sha256": "bfe5d697162d90298c67c1933908741be8395838aa230408e04710909c576806",
+          "gitBlob": "7ba9aebd1d338c4813edf31960b778752324054c"
+        },
+        {
+          "slot": "receiver",
+          "ownerOrdinal": 9,
+          "ownerName": "ownTypedIrProgramInput",
+          "statementOrdinal": 1,
+          "kind": "Identifier",
+          "startByte": 3954,
+          "endByte": 3962,
+          "bytes": 8,
+          "sha256": "b737815f5ca9697f685dfe2b5fe1f7b12a180562f97da5a72e90eaedd9890876",
+          "gitBlob": "7c0582a8cf83e80b2f94396dafd6b97adbeccd23"
+        },
+        {
+          "slot": "requiredFields",
+          "ownerOrdinal": 9,
+          "ownerName": "ownTypedIrProgramInput",
+          "statementOrdinal": 1,
+          "kind": "ArrayLiteralExpression",
+          "startByte": 3968,
+          "endByte": 4053,
+          "bytes": 85,
+          "sha256": "9e28ea3755ec36a2f2eb5ff3094241bfeab15bc7cdd6419047613c7ebfa1f6e5",
+          "gitBlob": "ecc6bfe8d3fa7b869ec213388c5080d660aaaff3"
+        }
+      ],
+      "changes": [
+        {
+          "role": "runtime-support-import",
+          "current": {
+            "startByte": 378,
+            "endByte": 441,
+            "bytes": 63,
+            "sha256": "cc6a831aa4185ac24694cf385e2955902ee0897b061a486634d29ca4a14f72e3",
+            "gitBlob": "968fa0d5b214895daf130093a5aec1d7d0dd3925"
+          },
+          "original": {
+            "startByte": 378,
+            "endByte": 378,
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+          },
+          "replacement": "delete",
+          "originalAnchor": {
+            "startByte": 378,
+            "endByte": 506,
+            "bytes": 128,
+            "sha256": "822c27d34145ee51c2aa9f1135c04fbe52498fa294db0f0f3bc49f9a97b7dc01",
+            "gitBlob": "46480cb45cfbd9aeca8c3fe3cbd0abf04674fc0c"
+          }
+        },
+        {
+          "role": "initial-fields-call",
+          "current": {
+            "startByte": 3940,
+            "endByte": 4083,
+            "bytes": 143,
+            "sha256": "cc139555f85cfd7f235838ae7477624dfece0316dcfc8d64a2431a6c12416f9b",
+            "gitBlob": "32fecd47e72c7e89516a710655a35243e8189fed"
+          },
+          "original": {
+            "startByte": 3877,
+            "endByte": 3983,
+            "bytes": 106,
+            "sha256": "9b3b250a4cea8d6aaacb518f0901434940c788eef218cc31c6deb1565e248dcc",
+            "gitBlob": "063990a6424577108f08a964bb0134c766e24f97"
+          },
+          "replacement": "first-fields-call",
+          "originalAnchor": null
+        },
+        {
+          "role": "runtime-support-validation",
+          "current": {
+            "startByte": 5186,
+            "endByte": 5408,
+            "bytes": 222,
+            "sha256": "810e9c2f0cef5097780b7232827e8471ab1c308bc4ed05a744ae6463fa5a9cc1",
+            "gitBlob": "cbec11f78a90cf7d9849ca9227941e76e88102b2"
+          },
+          "original": {
+            "startByte": 5086,
+            "endByte": 5086,
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+          },
+          "replacement": "delete",
+          "originalAnchor": {
+            "startByte": 5086,
+            "endByte": 5214,
+            "bytes": 128,
+            "sha256": "3e183c79ea452fb00941667db919f0c952fb14579c65fe92c2b7831d04a489b1",
+            "gitBlob": "7099f9d20325370c9d2dac519f38a7da846d4254"
+          }
+        }
+      ]
+    },
+    {
+      "path": "src/wasm/physical/function-handles.ts",
+      "current": {
+        "bytes": 4317,
+        "sha256": "c6a82f897b8fa6c755b68129926e2deb9b6e885a25ecd2e253a444d0bcb5193f",
+        "gitBlob": "e4f75d1b6faba7d320b5919520fca765622fe17d"
+      },
+      "original": {
+        "bytes": 2477,
+        "sha256": "daddc2fea3c4e2017c117b54863ec00a27341378f8acc796e54bfb751e5cdac0",
+        "gitBlob": "8b91e2391b574e75ee6db331ebaa5aaa9da5d436"
+      },
+      "currentDeclarations": [
+        {
+          "ordinal": 0,
+          "kind": "ImportDeclaration",
+          "name": "../model/instructions.js",
+          "startByte": 85,
+          "endByte": 144,
+          "bytes": 59,
+          "sha256": "6aa92ae3f95ca849d4145bffaf6c13c48b08879edcfcb61556cf08764f05ddef",
+          "gitBlob": "76f3d0441c6d761fa6140c2a1ccedf151fe745f2"
+        },
+        {
+          "ordinal": 1,
+          "kind": "ImportDeclaration",
+          "name": "../model/module-records.js",
+          "startByte": 145,
+          "endByte": 208,
+          "bytes": 63,
+          "sha256": "a4d7dd6ebfedd26981f46dcdcaec72823fe6119649546e69e02d5458854f9560",
+          "gitBlob": "49eeb73ca71a437804bb908af7ddb384593ed00c"
+        },
+        {
+          "ordinal": 2,
+          "kind": "FirstStatement",
+          "name": "STABLE_FUNC_BASE",
+          "startByte": 1900,
+          "endByte": 1940,
+          "bytes": 40,
+          "sha256": "55ba75f305453d5500f76fefab8dd0b7b59a66f95beb67ae482e34332767b55a",
+          "gitBlob": "1b4de04e7072286a6d2916f6d3cee627373c47a7"
+        },
+        {
+          "ordinal": 3,
+          "kind": "FunctionDeclaration",
+          "name": "inLiveShiftRange",
+          "startByte": 2463,
+          "endByte": 2601,
+          "bytes": 138,
+          "sha256": "298ac4912768ae4447f19653836a7f06bc2a82d835b339d2de9829218b6d5f9e",
+          "gitBlob": "82817fa9232ba7224d12626db73d70812eb3a271"
+        },
+        {
+          "ordinal": 4,
+          "kind": "InterfaceDeclaration",
+          "name": "DefinedFunctionStorage",
+          "startByte": 2679,
+          "endByte": 2786,
+          "bytes": 107,
+          "sha256": "7acd3c14fedd5cb276e3904706d40385a0eec018ce050d25cee5d4c6a94d5e8f",
+          "gitBlob": "d8efc75297eb0016d7b61ae50494de5c2dca537a"
+        },
+        {
+          "ordinal": 5,
+          "kind": "FunctionDeclaration",
+          "name": "mintDefinedFunc",
+          "startByte": 2863,
+          "endByte": 3231,
+          "bytes": 368,
+          "sha256": "eb59a1c9e1e207ea2a316451ee786554f30711c4a59e17ec27cb414051bb19f6",
+          "gitBlob": "7b686f06ef490db5616f35072e380cf71cea9108"
+        },
+        {
+          "ordinal": 6,
+          "kind": "FunctionDeclaration",
+          "name": "commitDefinedFuncOrdinal",
+          "startByte": 3463,
+          "endByte": 4110,
+          "bytes": 647,
+          "sha256": "599ba7fc894d108c3fb67af4a64a4a34a1653b40b63ea71bb5241c382e3a3ae5",
+          "gitBlob": "7b0d3a78863f3159547d5f0dfa1014ee5cf7ab75"
+        },
+        {
+          "ordinal": 7,
+          "kind": "FunctionDeclaration",
+          "name": "appendDefinedFunc",
+          "startByte": 4192,
+          "endByte": 4316,
+          "bytes": 124,
+          "sha256": "6d0a6bb5ddc77b4ff01a2c5402f34cfe4b8fbb2ff1d30ede2169b12d611aeaa2",
+          "gitBlob": "dc5b217153e16bc330ce28f5423564ff313a50ab"
+        }
+      ],
+      "originalDeclarations": [
+        {
+          "ordinal": 0,
+          "kind": "FirstStatement",
+          "name": "STABLE_FUNC_BASE",
+          "startByte": 1775,
+          "endByte": 1815,
+          "bytes": 40,
+          "sha256": "55ba75f305453d5500f76fefab8dd0b7b59a66f95beb67ae482e34332767b55a",
+          "gitBlob": "1b4de04e7072286a6d2916f6d3cee627373c47a7"
+        },
+        {
+          "ordinal": 1,
+          "kind": "FunctionDeclaration",
+          "name": "inLiveShiftRange",
+          "startByte": 2338,
+          "endByte": 2476,
+          "bytes": 138,
+          "sha256": "298ac4912768ae4447f19653836a7f06bc2a82d835b339d2de9829218b6d5f9e",
+          "gitBlob": "82817fa9232ba7224d12626db73d70812eb3a271"
+        }
+      ],
+      "operands": [],
+      "changes": [
+        {
+          "role": "allocator-type-imports",
+          "current": {
+            "startByte": 85,
+            "endByte": 210,
+            "bytes": 125,
+            "sha256": "b306fa9802d033fd80bc0cc032787e933cd8636569f28eac4c44977e96e15232",
+            "gitBlob": "c53d8b015ae3935f20a56706e207980400084b7e"
+          },
+          "original": {
+            "startByte": 85,
+            "endByte": 85,
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+          },
+          "replacement": "delete",
+          "originalAnchor": {
+            "startByte": 85,
+            "endByte": 215,
+            "bytes": 130,
+            "sha256": "a0695b84ada4c4a460c531cd4f6b26792251685885fb5654eab2e0fe1498b732",
+            "gitBlob": "ccf6f4e18286326e41f48901f28ff6b496c88f60"
+          }
+        },
+        {
+          "role": "allocator-declarations",
+          "current": {
+            "startByte": 2602,
+            "endByte": 4317,
+            "bytes": 1715,
+            "sha256": "299b3e2a0664aae68d36f60516a81d18d9e371c64f4effc5c0fb292998b7c933",
+            "gitBlob": "2767e8cfc01b48cc37589a37fc00d556e3f30bfd"
+          },
+          "original": {
+            "startByte": 2477,
+            "endByte": 2477,
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+          },
+          "replacement": "delete",
+          "originalAnchor": {
+            "startByte": 2349,
+            "endByte": 2477,
+            "bytes": 128,
+            "sha256": "0788f93e79f6bcaa29a896896183c551655606bfc634772de368265379c69cca",
+            "gitBlob": "be5b945e21c62309cadc863a36b3d3740348cb11"
+          }
+        }
+      ]
+    }
+  ]
+}

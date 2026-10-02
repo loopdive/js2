@@ -1,0 +1,13 @@
+{
+  "directory": "/private/tmp/js2-ir-source-contracts-writer-20261001/.tmp/source-contracts-writer/phase-a-role-correction-qktlatcg",
+  "test": "tests/issue-3518-source-validation-contracts.test.ts",
+  "beforeSha256": "505386df804919af395189c9c89cb59fa37cdc9fe8fd5d4fb008347cf6df89b6",
+  "afterSha256": "702e04648e4bcad87856b9396aea3b5f3f5ed0a6febf35e94a95748abd279b74",
+  "manifestSha256": "58de81f1ec29953d2e50166132286bf163bf1626b90062509104aab46c85670f",
+  "originalSnapshotFileCount": 49,
+  "originalSnapshotChanged": [],
+  "frozenPaths": 26,
+  "productionChanges": 0,
+  "testsRun": false,
+  "compilerRun": false
+}

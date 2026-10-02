@@ -1,0 +1,1 @@
+[jstag-seam] OK — direct JsTag usage outside the domain leaves: valueImports=1, refs=38 across 1 file(s) (no growth).

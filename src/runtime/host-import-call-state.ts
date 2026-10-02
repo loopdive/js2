@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 /** Structural import facts used by the existing guard; no source resolver or policy table. */
+import { readEnv } from "../env.js";
+
 export interface HostImportCallDescriptor {
   readonly name: string;
   readonly paramCount?: number;
@@ -82,7 +84,7 @@ export function createHostImportCallState(): HostImportCallState {
     fn: Function,
     importIndex: number,
   ): { fn: Function; fastLeaf: boolean } => {
-    const fastLeaf = process.env.JS2WASM_FAST_LEAF_HOST_IMPORTS !== "0" && isFastLeafHostImport(imp);
+    const fastLeaf = readEnv("JS2WASM_FAST_LEAF_HOST_IMPORTS") !== "0" && isFastLeafHostImport(imp);
     if (fastLeaf && imp.paramCount === 0) {
       const original = fn;
       // biome-ignore lint/complexity/useArrowFunction: Preserve the original ordinary wrapper's shape and arity.

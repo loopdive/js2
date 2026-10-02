@@ -1,0 +1,61 @@
+# Remaining runtime historical inverse specification
+
+Read-only inspection at exact main `1265c47d6fc41300a380ef7e4abc45fdfcfd2c61`. Git reads used `GIT_NO_LAZY_FETCH=1`; no network, mutation, compiler or tests. TypeScript was used only to parse syntax and source-qualified declaration receipts. One first inventory attempt failed locally because an options object was accidentally passed as a git hash-object filename; diagnostic retained separately. The successful inventory computes Git blob hashes locally and modifies only this unique findings directory.
+
+## Verified drift, including correction to the earlier diagnosis
+
+The helper's golden post-clock/vector checkpoint is `6ed68535323e0756c3a0b15dde18fd480ad7fc9f`. Its actual source independently reproduces **all ten original link hashes and all five original owner hashes** at `tests/helpers/ir-historical-runtime-reconstruction.ts:1685-1703`.
+
+Current main has exactly **four link mismatches and one owner mismatch**, not two owner mismatches:
+
+| Scope path | Link receipt | Whole declaration-owner receipt | Bounded inverse groups |
+|---|---|---|---:|
+| `src/ir/runtime/callable-declarations.ts` | changed | not one of the five owner pins; declaration order grows 7 to 10 | 2 |
+| `src/ir/runtime/manifest.ts` | changed | not one of the five owner pins; eight retained declarations change | 15 |
+| `src/ir/intrinsic-support.ts` | changed | not one of the five owner pins; implementation overload changes | 2 |
+| `src/ir/program-runtime-abi.ts` | changed | changed; two functions moved, leaving 3 declarations instead of 5 | 2 |
+| `src/ir/runtime-program-manifest.ts` | unchanged | unchanged; entire source byte-for-byte equal | 0 |
+
+`program-runtime-validation.ts` also matches both original pins. No inverse or repin is needed for either unchanged module. Complete before/current SHA256, bytes, Git blobs, exact declaration order, per-declaration changed/removed census and all ten/five hash outcomes are in `receipt-drift.json`. All four changes are real published main evolutions, not Phase A effects.
+
+## Exact source evolution and provenance
+
+Five later reachable commits touch this assignment's paths. Their complete parent identities and explicit first-parent diffs are retained in `provenance.txt`, `bounded-inverse-spans.json`, and individual `provenance-*.diff` files. All five are verified ancestors of requested main; no missing parent contents were inferred.
+
+- `ed15de69a9a301793429adee7b0e610a934b101e` moves the two runtime ABI identity functions out of program-runtime-abi into new `program/runtime-abi-identity.ts`. Although its subject concerns string output, it is the actual move provenance; the later invocation merge did not introduce this move.
+- `7de4c2f421416b8b521dda0b0c777da140ed81df` adds ordinary Object/Number declarations, runtime demand and feature joins.
+- `cb64af7b0315d59d08809e404c1216c846270654` adds source closure invocation callable composition.
+- `85750eeee069fcaf7b49f203904086a37c941648` is a **two-parent merge**, joining semantic callable providers and their policy/signature checks with ordinary objects. Its first-parent and second-parent histories must not be flattened into assumed independent linear source deltas.
+- `c2fb27fed2ae2cbe3559b26acd42d53d61da80d0` adds native Boolean box/unbox providers and native Number box selection.
+
+The narrow receipt layer can record the **net independently pinned current-to-golden delta** rather than executing mutually overlapping branch deltas. `bounded-inverse-spans.json` specifies exactly **21 ordered reciprocal contextual spans** across the four modified files. Every before/after operand is nonempty and unique in its complete side, offsets are explicit, spans do not overlap, and pure source-string inverse/forward replay exactly recovers the complete golden/current bytes. That is source arithmetic evidence, not executed acceptance of a repaired helper.
+
+## Required bounded inverses
+
+1. **Callable declarations:** restore exact old import blocks; remove only the three later semantic-provider declarations after authenticating their complete live declarations/docs; reverse the expanded irRuntimeCallableDeclaration lookup tail into the old native-async/vector tail. This must not erase or substitute any retained body, and a mutation in a removed addition must fail raw-current authentication before removal.
+2. **Manifest:** reverse exact import substitutions and added signatures/features, native Number/Boolean rows and their changed documentation, Number/Boolean selector additions, semantic provider joins, ordinary-object/from-value feature and ID membership, Boolean policy freeze fields, and the exact three RuntimeManifestBuilder composition/diagnostic changes. Keep all other constructor/index/select method bodies and ordering. In particular, restored native policy/signature checks must remain at their exact old positions so the old reorder controls still reject.
+3. **Intrinsic support:** remove the one exact ordinary-object callable import and reverse only the expanded runtime-call feature condition in the implementation overload. All overload signatures, demand checks, clocks/vector checks, branch order and remaining function body text stay live and exact.
+4. **Runtime ABI identity move:** authenticate all current ABI facade links and declarations; authenticate the complete actual donor module, its six imports and exact two-function census/order. Require the exact named forward, then remove it and splice **the actual live donor functions with their actual leading docs** after RuntimeCallableInput and before assertPreparedIrRuntimeCallableDeclaration. Restore only the fixed original import dependencies. Both current live donor full-text functions are exactly equal to their golden original declarations/docs; this was independently measured from syntax. Never inject saved historical function bodies or search for a first same-named function. The donor SHA256 is `a3d26cbc0e6b8f084825d83786c7c7b2e45714e2335c6c87b8b427c64476dd7f`; full links/bodies are recorded in `live-identity-donor.json`. The source-span marked `live-donor-splice-required` is a composition specification, not permission to use its static old body as a fallback.
+5. **Runtime-program-manifest:** leave current live source unchanged; it already matches full golden source and the old owner/link receipts.
+
+## Composition and fixed authority
+
+Place this reviewed later-main normalization **before** `assertCurrentClockVectorExtensions` (`:1952`) and before its old declaration-order lookups. Then preserve that function's complete ten link checks, link placement, five whole-owner checks, documentation checks, vector additions and facade checks unchanged. Retain the old vector inverse stage, clock inverse stage, callable inverse stages, and final historical hashes in their existing order (`callableSourceView:2074`, historicalHashes:2114). Do not replace any old digest with the current-main digest.
+
+A normalization implementation must authenticate raw current input before editing, authenticate only fixed paths/donor associations, validate exact unique ordered spans and reciprocal replay, and compare full reconstructed source/receipts. It may not replace an entire source file with a historical blob, discover declarations dynamically, accept arbitrary receipt authority, use a first match, skip unknown paths, or treat a merely present function/import as proof. Header/comment/whitespace and retained-body mutation outside the reviewed spans must remain detectable.
+
+The ABI forward currently occurs after RuntimeCallableInput, so its current link block is also no longer all at the front. Removing the exact forward and composing the live functions is required to restore **both** receipt and placement; checking link hashes alone is insufficient.
+
+## Preserve negative controls and source-reader boundary
+
+Existing historical mutation tests start from a successful positive (`acceptedCallablePositive:779-783`; `mutation:785-791`) and then operate on exact clock/vector-era literals, including nativeAsyncProviderMismatch/vectorProviderMismatch and old callable lookup tails. Those literals are absent from raw current main. Therefore simply putting an inverse behind acceptedHistoricalDeclarations would leave controls with missing anchors or unrelated setup failures.
+
+Use an explicitly checked historical source view for those existing controls: validate the real current input and normalize once, then inject each old mutation **after** that layer and before the unchanged old ten/five/stage/historical checks. Assert actual source alteration, syntactic validity where already required, and the original intended failure. Separately add raw-current controls for the new inverse layer. Do not accept arbitrary already-normalized sources by trying either current or historical hash; do not silently repair injected mutants by renormalizing after mutation.
+
+Required new controls: complete genuine live positive and nonzero declaration/donor census; all 21 individual missing/duplicate/altered/reordered span operands; retained-source changes outside every span; receipt tampering; unrecorded path; each donor function missing/renamed/duplicated/reordered/body/docs change; donor import/forward changes; wrong source/entry provenance; current branch/merge data ambiguity; exact full inverse then forward replay. Every removed later addition must have a mutation refusal before removal. Re-run all original negatives rather than reducing their matrix. These are proposed controls, not executed results.
+
+## Dependencies, exclusions and remaining unknowns
+
+This report does not implement or duplicate the separately owned Program/Core inverses. Current `runtime/contracts/manifest.ts` retains the old link hash but has changed RuntimeFeature/RuntimeProviderId and native Number/Boolean/ordinary-object declarations; its old ordered census and later historical receipts still require a coordinated inverse. Core Boolean intrinsic and provider-policy changes also sit outside these five paths. The complete runtime repair must compose that other owner's normalized live view, rather than assume that restoring these four modules alone makes acceptedHistoricalDeclarations pass.
+
+Unknown/unmeasured here: acceptance of a future integrated inverse implementation, all existing negative controls, frontend/TS compiler results, complete suite collection, emission/runtime behavior and global migration completion. No success is inferred from the source arithmetic, declaration counts or unchanged donor bodies.

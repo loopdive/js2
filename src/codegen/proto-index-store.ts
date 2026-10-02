@@ -1094,6 +1094,7 @@ function fillBrandOffBody(ctx: CodegenContext): void {
               boxNumberTypeIdx: ctx.nativeBoxNumberTypeIdx,
               anyStringTypeIdx: ctx.anyStrTypeIdx,
               errorTypeIdx: ctx.errorStructTypeIdx,
+              fnctorInstanceTypeIdxs: fnctorInstanceTypeIdxs(ctx),
               isClosureCarrier: ctx.funcMap.get("__is_closure_prop_carrier"),
             },
           });
@@ -1304,4 +1305,19 @@ function spliceNativeProtoDirectReadArms(ctx: CodegenContext): void {
   };
   splice("__extern_get_idx", false, getFIdx);
   splice("__extern_has_idx", true, hasFIdx);
+}
+
+/**
+ * The `new F()` instance layouts — the same set `closure-props.ts`
+ * (`fnctorInstanceCarrierTypeIdxs`) adds to `__is_closure_prop_carrier`. Read
+ * from the same two registries so the brand classifier claims exactly the
+ * instances that predicate admits. Not imported from there: closure-props
+ * imports this module.
+ */
+function fnctorInstanceTypeIdxs(ctx: CodegenContext): number[] {
+  const out = [...ctx.fnctorReservedTypeIdx.values()];
+  for (const [name, typeIdx] of ctx.structMap) {
+    if (name.startsWith("__fnctor_") && !out.includes(typeIdx)) out.push(typeIdx);
+  }
+  return out;
 }

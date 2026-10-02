@@ -210,6 +210,103 @@ function dataText(data: PhysicalData): string {
   return encode(data);
 }
 
+type FunctionSnapshot =
+  | string
+  | bigint
+  | boolean
+  | undefined
+  | null
+  | { readonly kind: "number"; readonly high: number; readonly low: number }
+  | {
+      readonly kind: "object";
+      readonly tag: string;
+      readonly fields: readonly (readonly [string, FunctionSnapshot])[];
+    };
+
+/** Immutable expected data only. Never retain live objects or a successful-validation cache. */
+function captureFunctionSnapshot(data: PhysicalData): FunctionSnapshot {
+  const active = new Set<object>(),
+    numberBits = new DataView(new ArrayBuffer(8));
+  const capture = (value: object | string | number | bigint | boolean | undefined | null): FunctionSnapshot => {
+    if (value === null || value === undefined) return value;
+    switch (typeof value) {
+      case "string":
+      case "boolean":
+      case "bigint":
+        return value;
+      case "number":
+        numberBits.setFloat64(0, value, true);
+        return Object.freeze({
+          kind: "number",
+          high: numberBits.getUint32(4, true),
+          low: numberBits.getUint32(0, true),
+        });
+      case "object": {
+        if (active.has(value)) throw new Error("cyclic physical descriptor");
+        active.add(value);
+        const tag = Array.isArray(value) ? `array:${value.length}` : value instanceof Uint8Array ? "bytes" : "object";
+        // Object.entries captures ALL sibling values before descending into any child, as dataText does.
+        const fields = Object.entries(value).map(([key, entry]) => Object.freeze([key, capture(entry)] as const));
+        active.delete(value);
+        return Object.freeze({ kind: "object", tag, fields: Object.freeze(fields) });
+      }
+      default:
+        throw new Error("unsupported physical descriptor value");
+    }
+  };
+  return capture(data);
+}
+
+/** Walk every live child, even after mismatch: later getters/errors/cycles retain their original precedence. */
+function matchesFunctionSnapshot(data: PhysicalData, expected: FunctionSnapshot): boolean {
+  const active = new Set<object>(),
+    numberBits = new DataView(new ArrayBuffer(8));
+  const matches = (
+    value: object | string | number | bigint | boolean | undefined | null,
+    snapshot: FunctionSnapshot,
+  ): boolean => {
+    if (value === null || value === undefined) return value === snapshot;
+    switch (typeof value) {
+      case "string":
+      case "boolean":
+      case "bigint":
+        return value === snapshot;
+      case "number": {
+        numberBits.setFloat64(0, value, true);
+        const high = numberBits.getUint32(4, true),
+          low = numberBits.getUint32(0, true);
+        return (
+          typeof snapshot === "object" &&
+          snapshot !== null &&
+          snapshot.kind === "number" &&
+          snapshot.high === high &&
+          snapshot.low === low
+        );
+      }
+      case "object": {
+        if (active.has(value)) throw new Error("cyclic physical descriptor");
+        active.add(value);
+        const tag = Array.isArray(value) ? `array:${value.length}` : value instanceof Uint8Array ? "bytes" : "object";
+        const fields = Object.entries(value),
+          prior =
+            typeof snapshot === "object" && snapshot !== null && snapshot.kind === "object" ? snapshot : undefined;
+        let equal = prior !== undefined && prior.tag === tag && prior.fields.length === fields.length;
+        for (let index = 0; index < fields.length; index++) {
+          const [key, entry] = fields[index]!;
+          const field = prior?.fields[index];
+          if (field?.[0] !== key) equal = false;
+          if (!matches(entry, field?.[1])) equal = false;
+        }
+        active.delete(value);
+        return equal;
+      }
+      default:
+        throw new Error("unsupported physical descriptor value");
+    }
+  };
+  return matches(data, expected);
+}
+
 /**
  * Completion ledger around the existing module allocator. Start on empty
  * physical storage; reserve the complete ordered demand set, freeze, fill,
@@ -228,7 +325,10 @@ export class PhysicalModuleReservations {
   readonly #typeRecords = new Map<TypeDef, { text: string; members: readonly TypeDef[] }>();
   readonly #arrays: { [K in PopulationKey]: PhysicalModuleStorage[K] };
   readonly #expected: { [K in PopulationKey]: PhysicalModuleStorage[K] };
-  readonly #filledFunctions = new Map<FunctionReservation, { locals: LocalDef[]; body: Instr[]; text: string }>();
+  readonly #filledFunctions = new Map<
+    FunctionReservation,
+    { locals: LocalDef[]; body: Instr[]; snapshot: FunctionSnapshot }
+  >();
   readonly #filledGlobals = new Map<GlobalReservation, { init: Instr[]; text: string }>();
   readonly #publications = new Map<Element | WasmExport, string>();
   readonly #exportNames = new Set<string>();
@@ -298,6 +398,22 @@ export class PhysicalModuleReservations {
   #snapshot(data: PhysicalData): string {
     try {
       return dataText(data);
+    } catch (error) {
+      return this.#fail(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  #captureFunction(data: PhysicalData): FunctionSnapshot {
+    try {
+      return captureFunctionSnapshot(data);
+    } catch (error) {
+      return this.#fail(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  #matchesFunction(data: PhysicalData, expected: FunctionSnapshot): boolean {
+    try {
+      return matchesFunctionSnapshot(data, expected);
     } catch (error) {
       return this.#fail(error instanceof Error ? error.message : String(error));
     }
@@ -382,7 +498,7 @@ export class PhysicalModuleReservations {
       if (
         token.object.locals !== fill.locals ||
         token.object.body !== fill.body ||
-        this.#snapshot(token.object) !== fill.text
+        !this.#matchesFunction(token.object, fill.snapshot)
       )
         this.#fail(`altered completed function ${token.key}`);
     }
@@ -469,6 +585,22 @@ export class PhysicalModuleReservations {
     key: PhysicalResourceKey,
     definition: SelfReferentialStructDefinition,
   ): TypeReservation {
+    return this.#reserveSelfReferentialStructType(key, definition, false);
+  }
+
+  /** Explicit extensible root; callers still cannot supply a parent or self coordinate. */
+  reserveExtensibleSelfReferentialStructType(
+    key: PhysicalResourceKey,
+    definition: SelfReferentialStructDefinition,
+  ): TypeReservation {
+    return this.#reserveSelfReferentialStructType(key, definition, true);
+  }
+
+  #reserveSelfReferentialStructType(
+    key: PhysicalResourceKey,
+    definition: SelfReferentialStructDefinition,
+    extensible: boolean,
+  ): TypeReservation {
     this.#require("reserving");
     if (typeof key !== "string" || !key || this.#keys.has(key)) this.#fail("empty or duplicate self-type key");
     const next = this.#flatTypes().length;
@@ -513,7 +645,12 @@ export class PhysicalModuleReservations {
         resolvedFields.push({ name: row.name, type: value, mutable: row.mutable });
       }
       if (selfFields === 0) this.#fail("missing self reference field");
-      resolved = { kind: "struct", name: input.name, fields: resolvedFields };
+      resolved = {
+        kind: "struct",
+        name: input.name,
+        fields: resolvedFields,
+        ...(extensible ? { superTypeIdx: -1, final: false } : {}),
+      };
     } finally {
       this.#checkingSelfDefinition = false;
     }
@@ -700,6 +837,42 @@ export class PhysicalModuleReservations {
     }
   }
 
+  /** One fresh layout audit for a dense own-data list; never invoke its getters or iterator. */
+  physicalIndices(tokens: readonly PhysicalReservation[]): readonly number[] {
+    if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
+    if (!Array.isArray(tokens)) this.#fail("physical indices require a dense own-data array");
+    const length = Object.getOwnPropertyDescriptor(tokens, "length");
+    if (!length || !("value" in length) || !Number.isSafeInteger(length.value) || length.value < 0)
+      this.#fail("physical indices require an own-data length");
+    const captured: PhysicalReservation[] = [];
+    for (let index = 0; index < length.value; index++) {
+      const descriptor = Object.getOwnPropertyDescriptor(tokens, index);
+      if (!descriptor || !("value" in descriptor)) this.#fail("physical indices require dense own-data entries");
+      captured.push(descriptor.value);
+    }
+    // A Proxy descriptor trap can run during capture. Audit only after capture,
+    // then use private frozen tokens/positions without reading public arrays.
+    if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
+    this.#verifyLayout();
+    if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
+    const offsets = { function: 0, global: 0, tag: 0 };
+    for (const token of this.#tokens) {
+      if (token.kind === "function-import") offsets.function++;
+      else if (token.kind === "global-import") offsets.global++;
+      else if (token.kind === "tag-import") offsets.tag++;
+    }
+    const indices: number[] = [];
+    for (const token of captured) {
+      this.#owned(token);
+      const offset =
+        token.kind === "function" || token.kind === "global" || token.kind === "tag" ? offsets[token.kind] : 0;
+      // The allocator admits no table/memory imports. Their positions, like
+      // imported resources and flat type coordinates, are already final.
+      indices.push(this.#positions.get(token)! + offset);
+    }
+    return Object.freeze(indices);
+  }
+
   /** Authenticate producer completion without sealing unrelated reservations. */
   assertCompletedReservation(token: FunctionReservation | GlobalReservation): void {
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`completion requested in ${this.#state}`);
@@ -721,7 +894,7 @@ export class PhysicalModuleReservations {
     this.#validateInstructions(definition.body);
     token.object.locals = definition.locals;
     token.object.body = definition.body;
-    this.#filledFunctions.set(token, { ...definition, text: this.#snapshot(token.object) });
+    this.#filledFunctions.set(token, { ...definition, snapshot: this.#captureFunction(token.object) });
   }
 
   fillGlobal(token: GlobalReservation, initializer: Instr[]): void {

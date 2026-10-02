@@ -2,14 +2,22 @@
 /**
  * `for await` synchronous-drive helpers (#2978): per-element Await unwrap under
  * the native $Promise carrier (§27.1.4.4 AsyncFromSyncIteratorContinuation:
- * REJECTED→throw, FULFILLED→unwrap, PENDING→leave) and the iteration step-cap.
- * Emitted only by the two iterator drivers in loops.ts
- * (compileForOfDirectIterator, compileForOfIterator), which import them back.
+ * REJECTED→throw, FULFILLED→unwrap, PENDING→leave), the host-lane element
+ * mark-handled (#6791) and the iteration step-cap. Emitted by the for-of
+ * drivers in loops.ts, which import them back.
  */
-import { getOrRegisterPromiseType, PROMISE_STATE_FULFILLED, PROMISE_STATE_REJECTED } from "../async-scheduler.js";
+import type { ValType } from "../../ir/types.js";
+import type { ts } from "../../ts-api.js";
+import {
+  getOrRegisterPromiseType,
+  isStandalonePromiseActive,
+  PROMISE_STATE_FULFILLED,
+  PROMISE_STATE_REJECTED,
+} from "../async-scheduler.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { emitThrowTypeError } from "../expressions/helpers.js";
+import { ensureLateImport, flushLateImportShifts } from "../expressions/late-imports.js";
 import { ensureExnTag } from "../registry/imports.js";
 import { collectInstrs } from "./shared.js";
 
@@ -152,4 +160,81 @@ export function emitForAwaitStepCapCheck(ctx: CodegenContext, fctx: FunctionCont
     then: throwInstrs,
     else: [],
   });
+}
+
+/**
+ * (#2978) Allocate and zero the `for await` step counter immediately before the
+ * loop (see `emitForAwaitStepCapCheck`); -1 when the loop is not `for await`.
+ */
+export function initForAwaitStepCap(fctx: FunctionContext, isForAwait: boolean): number {
+  if (!isForAwait) return -1;
+  const capLocal = allocLocal(fctx, `__forawait_steps_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: capLocal });
+  return capLocal;
+}
+
+/** (#6791) Host import that marks a `for await` sync-drive element handled. */
+const FOR_AWAIT_MARK_HANDLED = "__forawait_mark_handled";
+
+/**
+ * (#6791) A `for await` driven SYNCHRONOUSLY on the JS-host promise lane binds
+ * each element without awaiting it (the sync body cannot yield), where natively
+ * the loop's Await reacts to every element promise. A rejected element the drive
+ * drops — one per step of a capped #2978 loop — must not surface as a host
+ * unhandled rejection the native program never has. The runtime used to mask
+ * this by pre-marking EVERY `Promise.reject` result handled, which also silenced
+ * rejections the program itself drops. The native `$Promise` carrier awaits
+ * elements itself (`emitForAwaitElementUnwrap`) and standalone/WASI have no host
+ * rejection tracker, so only the host lane marks.
+ */
+function hostLaneForAwait(ctx: CodegenContext, stmt: ts.ForOfStatement): boolean {
+  return !!stmt.awaitModifier && !ctx.standalone && !ctx.wasi && !isStandalonePromiseActive(ctx);
+}
+
+/**
+ * (#6791) Register the mark-handled import for a host-lane `for await`. Call it
+ * before a driver captures any function index — a late import shifts them.
+ */
+export function ensureForAwaitMarkHandled(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ForOfStatement): void {
+  if (!hostLaneForAwait(ctx, stmt)) return;
+  ensureLateImport(ctx, FOR_AWAIT_MARK_HANDLED, [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+}
+
+/**
+ * (#6791) Mark the element on top of the stack handled (a pass-through call) on
+ * a host-lane `for await` whose element is an externref; no-op otherwise.
+ */
+export function emitForAwaitMarkHandled(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.ForOfStatement,
+  elemType: ValType,
+): void {
+  if (elemType.kind !== "externref" || !hostLaneForAwait(ctx, stmt)) return;
+  const markIdx = ctx.funcMap.get(FOR_AWAIT_MARK_HANDLED);
+  if (markIdx !== undefined) fctx.body.push({ op: "call", funcIdx: markIdx });
+}
+
+/**
+ * Per-element `for await` handling of the element on top of the stack in the
+ * direct struct-iterator drive: the carrier Await (#2978) or the host-lane
+ * mark-handled (#6791). Leaves the (possibly unwrapped) element on the stack.
+ */
+export function emitForAwaitStackElement(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.ForOfStatement,
+  elemType: ValType,
+  carrierAwait: boolean,
+): void {
+  if (!carrierAwait) {
+    emitForAwaitMarkHandled(ctx, fctx, stmt, elemType);
+    return;
+  }
+  const awaitTmp = allocLocal(fctx, `__forawait_val_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: awaitTmp });
+  emitForAwaitElementUnwrap(ctx, fctx, awaitTmp);
+  fctx.body.push({ op: "local.get", index: awaitTmp });
 }

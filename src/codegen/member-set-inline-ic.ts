@@ -83,6 +83,7 @@
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { setMemberF64Enabled } from "./member-set-f64.js";
+import { readEnv } from "../env.js";
 
 type AnyInstr = Instr & {
   op: string;
@@ -99,7 +100,7 @@ type AnyInstr = Instr & {
 
 /** Candidate cap, or 0 when the pass is off. */
 function icCap(): number {
-  const raw = process.env.JS2WASM_SET_MEMBER_IC;
+  const raw = readEnv("JS2WASM_SET_MEMBER_IC");
   if (raw === undefined) return 0;
   const t = raw.trim().toLowerCase();
   if (t === "" || t === "0" || t === "off" || t === "false" || t === "no") return 0;
@@ -270,8 +271,8 @@ function rewriteInstrs(
 export function inlineMemberSetCallSites(ctx: CodegenContext): void {
   const cap = icCap();
   if (cap <= 0) return; // DEFAULT OFF — byte-identical to base.
-  const debug = process.env.JS2WASM_SET_MEMBER_IC_DEBUG === "1";
-  const poison = process.env.JS2WASM_SET_MEMBER_IC_POISON === "1";
+  const debug = readEnv("JS2WASM_SET_MEMBER_IC_DEBUG") === "1";
+  const poison = readEnv("JS2WASM_SET_MEMBER_IC_POISON") === "1";
 
   const plans = new Map<number, SetIcPlan>();
   const declines = new Map<string, number>();

@@ -82,7 +82,25 @@ export function isStrictMode(node: ts.Node): boolean {
   const chain: ts.Node[] = [];
   let result: boolean | undefined;
   let current: ts.Node | undefined = node;
+  let child: ts.Node | undefined;
   while (current) {
+    // A class body is always strict, but a direct class decorator expression
+    // is evaluated in the enclosing [Yield]/strict context. Bypass only this
+    // edge before reading the class cache: a previous body query may have
+    // cached `true`, while caching the outer result here would later poison a
+    // body query. Member decorators reach the class through their member and
+    // deliberately retain the ordinary class-strict terminal.
+    if (
+      child !== undefined &&
+      ts.isDecorator(child) &&
+      (ts.isClassDeclaration(current) || ts.isClassExpression(current)) &&
+      ts.getDecorators(current)?.some((decorator) => decorator === child)
+    ) {
+      child = current;
+      current = current.parent;
+      continue;
+    }
+
     const cached = strictModeCache.get(current);
     if (cached !== undefined) {
       result = cached;
@@ -122,6 +140,7 @@ export function isStrictMode(node: ts.Node): boolean {
       result = true;
       break;
     }
+    child = current;
     current = current.parent;
   }
   const final = result ?? false;

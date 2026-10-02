@@ -78,6 +78,86 @@ export function buildPromiseSettleLocals(callbackTypeIdx: TypeHandle): LocalDef[
   return [
     { name: "$callbacks", type: { kind: "externref" } },
     { name: "$callback", type: { kind: "ref", typeIdx: callbackTypeIdx } },
+    { name: "$fifo", type: { kind: "externref" } }, // (#5197 r3) the list in attach order
+  ];
+}
+
+/**
+ * (#5197 r3 Step 2) §27.2.1.8 TriggerPromiseReactions runs reactions in the order
+ * they were attached, but every attach site PREPENDS its node (O(1)). With two or
+ * more nodes the detached list is rebuilt in reverse into `fifoLocal` — fresh
+ * nodes, so `$PromiseCallback` stays immutable and every twin declaration of it
+ * is untouched — and handed back through `callbacksLocal`. One node needs nothing.
+ */
+function reverseDetachedCallbacks(
+  callbackTypeIdx: TypeHandle,
+  callbacksLocal: number,
+  callbackLocal: number,
+  fifoLocal: number,
+): Instr[] {
+  const node = (fieldIdx: number): Instr[] => [
+    { op: "local.get", index: callbackLocal },
+    { op: "struct.get", typeIdx: callbackTypeIdx, fieldIdx },
+  ];
+  const hasTwo: Instr[] = [
+    { op: "local.get", index: callbacksLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 0 }],
+      else: [
+        { op: "local.get", index: callbacksLocal },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: callbackTypeIdx },
+        { op: "struct.get", typeIdx: callbackTypeIdx, fieldIdx: 4 },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+      ],
+    },
+  ];
+  return [
+    ...hasTwo,
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "ref.null.extern" },
+        { op: "local.set", index: fifoLocal },
+        {
+          op: "block",
+          blockType: { kind: "empty" },
+          body: [
+            {
+              op: "loop",
+              blockType: { kind: "empty" },
+              body: [
+                { op: "local.get", index: callbacksLocal },
+                { op: "ref.is_null" },
+                { op: "br_if", depth: 1 },
+                { op: "local.get", index: callbacksLocal },
+                { op: "any.convert_extern" },
+                { op: "ref.cast", typeIdx: callbackTypeIdx },
+                { op: "local.set", index: callbackLocal },
+                ...node(0),
+                ...node(1),
+                ...node(2),
+                ...node(3),
+                { op: "local.get", index: fifoLocal },
+                { op: "struct.new", typeIdx: callbackTypeIdx },
+                { op: "extern.convert_any" },
+                { op: "local.set", index: fifoLocal },
+                ...node(4),
+                { op: "local.set", index: callbacksLocal },
+                { op: "br", depth: 0 },
+              ],
+            },
+          ],
+        },
+        { op: "local.get", index: fifoLocal },
+        { op: "local.set", index: callbacksLocal },
+      ],
+    },
   ];
 }
 
@@ -90,6 +170,7 @@ export function buildPromiseSettleBody(
   const valueLocal = 1;
   const callbacksLocal = 2;
   const callbackLocal = 3;
+  const fifoLocal = 4;
   const fnFieldIdx = settledState === PROMISE_STATE_FULFILLED ? 0 : 2;
   const capsFieldIdx = settledState === PROMISE_STATE_FULFILLED ? 1 : 3;
 
@@ -146,6 +227,8 @@ export function buildPromiseSettleBody(
           },
         ] satisfies Instr[])
       : []),
+
+    ...reverseDetachedCallbacks(callbackTypeIdx, callbacksLocal, callbackLocal, fifoLocal),
 
     {
       op: "block",

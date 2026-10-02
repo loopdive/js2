@@ -16,6 +16,23 @@
  *      ratcheted edition that goes pass -> not-pass fails the gate, even when
  *      the edition's total is flat or up. A count-only ratchet lets you break
  *      test A and fix test B and call it even; that is not "no regressions".
+ *   3. COMPLETED — an edition marked `completed` (it reached 100 %) is
+ *      zero-tolerance: EVERY row of it present in the run must pass, except
+ *      rows listed in its `exceptions` with a reason. This needs no compare
+ *      baseline and no full coverage — a partial run is checked on the rows it
+ *      has — so it cannot be switched off by a lagging baseline or a scoped
+ *      shard. `--update` sets `completed` the first time a full run measures
+ *      pass == total, and never clears it. (Project-lead rule, 2026-09-29: no
+ *      regression is allowed inside an edition that has reached 100 %. ES5 lost
+ *      7 rows between 2026-09-23 and 09-28 while this gate reported OK, because
+ *      CI classified every row as "Unclassified (legacy)" — see the test262
+ *      check below.)
+ *
+ * THE CLASSIFIER READS TEST262. Each row's edition comes from its test file's
+ * frontmatter. Without a test262 checkout every row classifies as
+ * "Unclassified (legacy)", every real edition reads as NOT COVERED, and the
+ * gate passes having checked nothing. So a missing checkout is refused (exit 2),
+ * never scored.
  *
  * PARTIAL RUNS ARE REFUSED, NOT SCORED. A path-filtered or sharded run sees
  * only some of an edition's tests, so its pass count is meaninglessly low. The
@@ -45,6 +62,9 @@ const ROOT = join(__dirname, "..");
 const DEFAULT_BASELINE = join(ROOT, "scripts", "test262-edition-ratchet-baseline.json");
 
 function findTest262Root(base: string): string {
+  // Test hook: lets the gate's own tests prove it refuses a missing checkout.
+  const override = process.env.EDITION_RATCHET_TEST262_ROOT;
+  if (override) return override;
   const direct = join(base, "test262");
   if (existsSync(join(direct, "test"))) return direct;
   const fromMain = join(base, "..", "..", "..", "test262");
@@ -83,6 +103,19 @@ interface EditionEntry {
   compile_error: number;
   other: number;
   total: number;
+  /**
+   * The edition reached 100 %: every row of it must pass from now on (check 3).
+   * Set by `--update` when a full run measures pass == total; never cleared by
+   * the tool. Clearing it is a hand edit with a reason, like lowering a floor.
+   */
+  completed?: boolean;
+  /**
+   * Rows of a completed edition that may be non-pass, each with its reason:
+   * a row that cannot pass on this target by construction, or a known failure
+   * that has never passed since the floor was seeded. Never a regression — a
+   * row that passed and stopped passing is exactly what this gate refuses.
+   */
+  exceptions?: { file: string; reason: string }[];
 }
 
 interface Baseline {
@@ -205,6 +238,16 @@ function main(): void {
     process.exit(2);
   }
 
+  if (!existsSync(join(TEST262_ROOT, "test"))) {
+    console.error(
+      `REFUSED: no test262 checkout at ${TEST262_ROOT} — cannot classify a single row by edition.\n` +
+        `  Without it every row reads as "Unclassified (legacy)" and every real edition as NOT COVERED,\n` +
+        `  so the gate would report OK having checked nothing (this is how ES5 lost 7 rows,\n` +
+        `  2026-09-23 → 09-28, under a green ratchet). Check out the test262 submodule first.`,
+    );
+    process.exit(2);
+  }
+
   const rows = readRows(resultsPath);
   const cur = tally(rows);
   console.log(`test262-edition-ratchet: ${rows.length} rows from ${resultsPath} (target ${target})`);
@@ -306,6 +349,18 @@ function main(): void {
       );
       process.exit(1);
     }
+    const violations = findCompletedViolations(rows, base);
+    if (violations.length > 0 && !force) {
+      console.error(
+        `\nREFUSED to update: ${violations.length} row(s) of a COMPLETED edition do not pass:\n` +
+          violations
+            .slice(0, 20)
+            .map((v) => `  ${name(v.ed)}: ${v.status} ${v.file}`)
+            .join("\n") +
+          `\n  A completed edition allows no regression. Fix the rows first.`,
+      );
+      process.exit(1);
+    }
     writeBaseline(baselinePath, cur, target, base, evalEngine);
     console.log(`\nUPDATED ${baselinePath}`);
     return;
@@ -353,9 +408,25 @@ function main(): void {
     if (perTest.length > 50) console.log(`  ... and ${perTest.length - 50} more`);
   }
 
+  // ── Check 3: a COMPLETED edition is zero-tolerance, row by row ──────────
+  const completedViolations = findCompletedViolations(rows, base);
+  const completedEditions = Object.entries(base.editions)
+    .filter(([, e]) => e.completed && e.ratcheted)
+    .map(([k]) => name(Number(k)));
+  if (completedEditions.length > 0) {
+    console.log(
+      `\ncompleted editions (every row must pass): ${completedEditions.join(", ")} — ` +
+        `${completedViolations.length} row(s) not passing`,
+    );
+    for (const v of completedViolations.slice(0, 50)) {
+      console.log(`  ${name(v.ed).padEnd(10)} ${v.status.padEnd(14)} ${v.file}`);
+    }
+    if (completedViolations.length > 50) console.log(`  ... and ${completedViolations.length - 50} more`);
+  }
+
   if (improvements.length > 0) console.log(`\nimprovements: ${improvements.join(", ")}`);
 
-  if (countRegressions.length === 0 && perTest.length === 0) {
+  if (countRegressions.length === 0 && perTest.length === 0 && completedViolations.length === 0) {
     console.log(`\ntest262-edition-ratchet: OK — no ratcheted edition regressed.`);
     process.exit(0);
   }
@@ -365,11 +436,58 @@ function main(): void {
   if (perTest.length > 0) {
     console.error(`  ${perTest.length} individual test(s) went pass -> not-pass in a ratcheted edition`);
   }
+  if (completedViolations.length > 0) {
+    console.error(
+      `  ${completedViolations.length} row(s) of a COMPLETED edition do not pass — a 100 % edition allows no regression`,
+    );
+  }
   console.error(
     `\n  A completed ES edition may not go backwards. If a drop is genuinely intended,\n` +
       `  say so explicitly by editing ${baselinePath} in the same change, with a reason.`,
   );
   process.exit(1);
+}
+
+/**
+ * `completed` is sticky: once set it survives every rewrite. It is newly set
+ * only when this measurement covers at least the recorded total and every row
+ * passed — a partial run (fewer rows than the floor knows) can never mark an
+ * edition complete.
+ */
+function completionFields(
+  before: EditionEntry | undefined,
+  pass: number,
+  total: number,
+): Pick<EditionEntry, "completed" | "exceptions"> {
+  const nowComplete = total > 0 && pass === total && total >= (before?.total ?? 0);
+  return {
+    ...(before?.completed || nowComplete ? { completed: true } : {}),
+    ...(before?.exceptions?.length ? { exceptions: before.exceptions } : {}),
+  };
+}
+
+/**
+ * Every row of a completed edition that is present in `rows` and does not
+ * pass, minus the edition's listed exceptions. Works on partial runs: it
+ * checks the rows it has and says nothing about the ones it does not.
+ */
+function findCompletedViolations(rows: Row[], base: Baseline): { ed: number; file: string; status: string }[] {
+  const out: { ed: number; file: string; status: string }[] = [];
+  const excepted = new Map<string, Set<string>>();
+  for (const [key, entry] of Object.entries(base.editions)) {
+    // An explicit opt-out (`ratcheted: false`, with its reason) wins: it is the
+    // one reviewed way to stop gating an edition, completed or not.
+    if (entry.completed && entry.ratcheted) excepted.set(key, new Set((entry.exceptions ?? []).map((e) => e.file)));
+  }
+  if (excepted.size === 0) return out;
+  for (const r of rows) {
+    if (r.status === "pass") continue;
+    const ed = editionOf(r.file);
+    const ex = excepted.get(String(ed));
+    if (ex === undefined || ex.has(r.file)) continue;
+    out.push({ ed, file: r.file, status: r.status });
+  }
+  return out;
 }
 
 /**
@@ -414,6 +532,7 @@ function seedFromEditionsArtifact(
       compile_error: r.ce,
       other: r.skip ?? 0,
       total: r.total,
+      ...completionFields(before, r.pass, r.total),
     };
   }
   let commit = "unknown";
@@ -461,6 +580,7 @@ function writeBaseline(
       compile_error: t.compile_error,
       other: t.other,
       total: t.total,
+      ...completionFields(before, t.pass, t.total),
     };
   }
   let commit = "unknown";

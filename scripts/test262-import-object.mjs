@@ -57,6 +57,15 @@ import { resetTemporalRealmGlobals } from "./test262-temporal.mjs";
 
 export { RUNTIME_EVAL_IMPORT_MODULE };
 
+/**
+ * (#6779) The dynamic-code policy every test262 lane builds imports with. The
+ * library default is `deny`; test262 measures `eval` / `new Function` the way
+ * the host lane always ran them — a js2wasm child module first, the host
+ * realm's eval / Function when that module cannot be built — so each lane's
+ * `buildImports` passes this explicitly, and linked providers get it below.
+ */
+export const TEST262_DYNAMIC_CODE_POLICY = "hostEval";
+
 // ── Runtime-eval provider (#2928 E6/E7) ────────────────────────────────
 // One selection per process, memoised: `selectCachedRuntimeEvalProvider()`
 // reads the cache and (for the interpreter tier) reassembles the provider
@@ -119,12 +128,18 @@ export function resetTest262RuntimeEvalProviderForTest() {
  *
  * @param {WebAssembly.Module} wasmModule the compiled test module
  * @param {Record<string, unknown>} importObj base imports from `buildImports`
- * @param {{ providerLabel?: string }} [options]
+ * @param {{ providerLabel?: string, linkedProviderModules?: readonly WebAssembly.Module[] }} [options]
  * @returns {Record<string, unknown>} the same `importObj`
  */
 export function attachConditionalImportNamespaces(wasmModule, importObj, options = {}) {
-  const needsRuntimeEval = WebAssembly.Module.imports(wasmModule).some(
-    (entry) => entry.module === RUNTIME_EVAL_IMPORT_MODULE,
+  // (#6723 D1) A linked STANDALONE provider (the compile-once test262 harness)
+  // can import the namespace while its consumer does not: the harness's
+  // `$262.evalScript` direct eval lives in the provider. The provider inherits
+  // every non-env namespace from this import object, so the row supplies ONE
+  // instance to both — the same single instance the honest whole-assembly
+  // module gets.
+  const needsRuntimeEval = [wasmModule, ...(options.linkedProviderModules ?? [])].some((module) =>
+    WebAssembly.Module.imports(module).some((entry) => entry.module === RUNTIME_EVAL_IMPORT_MODULE),
   );
   if (needsRuntimeEval) {
     const provider = getTest262RuntimeEvalProviderModule(options.providerLabel);
@@ -166,6 +181,23 @@ function announceMissingLinkedProjectReset() {
   console.error(
     "[test262] linked runtime has no resetLinkedProjectRegistry — cross-row decoder contamination is NOT suppressed " +
       "(rebuild scripts/runtime-bundle.mjs from scripts/runtime-bundle-entry.ts)",
+  );
+}
+
+// (#6723) Per-artifact memo: the worker hands the SAME provider artifact to
+// every row of an include-set, so its import list is read once, not per row.
+const providerModules = new WeakMap();
+function providerModuleFor(artifact) {
+  let module = providerModules.get(artifact);
+  if (!module) {
+    module = new WebAssembly.Module(artifact.binary);
+    providerModules.set(artifact, module);
+  }
+  return module;
+}
+function providerNeedsRuntimeEval(artifact) {
+  return WebAssembly.Module.imports(providerModuleFor(artifact)).some(
+    (entry) => entry.module === RUNTIME_EVAL_IMPORT_MODULE,
   );
 }
 
@@ -257,7 +289,10 @@ export async function instantiateTest262Module(binary, importObj, options = {}) 
     // when no polyfill has run.
     resetTemporalRealmGlobals();
     const wasmModule = new WebAssembly.Module(binary);
-    attachConditionalImportNamespaces(wasmModule, importObj, options);
+    attachConditionalImportNamespaces(wasmModule, importObj, {
+      ...options,
+      linkedProviderModules: linkedModules.filter(providerNeedsRuntimeEval).map(providerModuleFor),
+    });
     // (#6475) A provider's `env` is rebuilt, not inherited — so without the
     // embedder's host context it resolves the AMBIENT realm's intrinsics and
     // the real console, while the consumer's `importObj` was built against this
@@ -265,7 +300,12 @@ export async function instantiateTest262Module(binary, importObj, options = {}) 
     // different identity, and a `$DONE` marker printed where nobody is looking
     // (#6476). `linkedHost` carries the same `{deps, options}` the lane passed
     // to `buildImports` for the consumer; absent, behaviour is unchanged.
-    instantiateLinkedProviders(linkedModules, importObj, options.linkedHost);
+    // (#6779) A provider's own eval / Function imports follow the lane policy.
+    const linkedHost = options.linkedHost ?? {};
+    instantiateLinkedProviders(linkedModules, importObj, {
+      ...linkedHost,
+      options: { dynamicCode: TEST262_DYNAMIC_CODE_POLICY, ...linkedHost.options },
+    });
     const instance = await WebAssembly.instantiate(wasmModule, importObj);
     wireCompiledInstance(importObj, instance, true);
     // (#6477) A linked harness body is compiled with `deferTopLevelInit`

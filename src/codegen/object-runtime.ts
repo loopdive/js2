@@ -262,6 +262,14 @@ import {
 // `ensureObjectRuntime` (imported back here); `fillProxyDispatch` is re-exported
 // so `index.ts`s `from "./object-runtime.js"` importer keeps resolving.
 import { ensureProxyRuntime } from "./object-runtime-proxy.js";
+import {
+  PROTO_LINK_FIELD,
+  fillProtoLinkArms,
+  protoLinkActive,
+  reserveProtoLinkSetWalk,
+  protoLinkSetWalkArm,
+  withProtoLinkNull,
+} from "./object-runtime-proxy-chain.js"; // (#6766) a Proxy as [[Prototype]]
 import { ensureArgcGlobal } from "./statements/nested-declarations.js";
 import { buildLazyNativeProtoGetInstrs, flushPendingNativeProtoSeeders, getBuiltinBrand } from "./native-proto.js";
 import { applyUndefinedInstrs } from "./apply-closure-args.js";
@@ -294,6 +302,7 @@ import {
   captureReversePeerReadBinding,
   reverseMethodCallArmInstrs,
 } from "./standalone-link-reverse-peer.js"; // (#5383 S17 / #6600) the REVERSE hop
+import { stringWrapperLengthArm } from "./string-wrapper-dynamic-length.js"; // (#6651 C5)
 import { captureWrapperPrimitiveKey } from "./to-primitive-wrapper-slot.js"; // (#4492 wave-5) __to_primitive's [[PrimitiveValue]] arms
 import { buildToPrimitiveBody } from "../runtime/wasmgc/values/to-primitive-bodies.js";
 import type {
@@ -1228,7 +1237,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // string keys were first added. Powers OrdinaryOwnPropertyKeys insertion
     // ordering for Object.keys/values/entries/for-in/spread/JSON.stringify.
     { name: "nextSeq", type: { kind: "i32" }, mutable: true },
+    // (#6766) A Proxy in [[Prototype]] position: non-null only on a LINK — an
+    // empty `$Object` standing in `$proto` for the `$Proxy` it holds. Appended
+    // (never renumber); see object-runtime-proxy-chain.ts.
+    { name: "protoLink", type: { kind: "anyref" }, mutable: true },
   ];
+  if (objectFields.length !== PROTO_LINK_FIELD + 1) throw new Error("$Object.protoLink must stay the last field");
   // `$Object` is a plain (final) struct. NOTE (#1100): an earlier attempt made
   // this a NON-FINAL `sub` so the standalone `$Proxy` could extend it, but
   // opening `$Object` up triggered WasmGC iso-recursive canonicalization
@@ -1707,7 +1721,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       propMapTypeIdx,
       initialCapacity: INITIAL_CAP,
     });
-    registerNative("__new_plain_object", [], [{ kind: "externref" }], [], body);
+    registerNative("__new_plain_object", [], [{ kind: "externref" }], [], withProtoLinkNull(body, objectTypeIdx));
   }
 
   // ── $__obj_find(ref $Object, externref key) -> ref null $PropEntry ────────
@@ -2253,6 +2267,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     { op: "i32.const", value: 0 }, // tombstones
     { op: "i32.const", value: 0 }, // flags
     { op: "i32.const", value: 1 }, // nextSeq (slot consumes seq 0)
+    { op: "ref.null", typeIdx: NONE_HEAP }, // protoLink (#6766)
     { op: "struct.new", typeIdx: objectTypeIdx },
     { op: "local.set", index: objLocal },
     // __obj_insert(o, WRAPPER_PRIMITIVE_KEY, any.convert_extern(value),
@@ -2427,6 +2442,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   const SET_RESULT_SUCCESS = 1;
   const SET_RESULT_REFUSED = 2;
   let externSetResultGlobalIdx: number | undefined;
+  // (#6766) Without #4504's decide walk, a Proxy link on the chain is found by
+  // its own reserved walk (filled once the Proxy dispatch exists).
+  const protoLinkSetWalkIdx = inheritedSetRuntimeActive ? undefined : reserveProtoLinkSetWalk(ctx);
 
   // ── __extern_set(externref obj, externref key, externref value) -> void ──
   //
@@ -2691,7 +2709,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           ...(protoIndexSetDecisionInstrs(ctx, 0, 2, 3) ?? [{ op: "i32.const", value: SET_DECISION_MISS }]),
         ],
       );
-
+    }
+    // (#6766) Also registered for a Proxy-as-prototype module without #4504:
+    // §10.1.9.2's receiver-side write must be OWN-only, or a link walk re-enters.
+    if (inheritedSetRuntimeActive || protoLinkActive(ctx)) {
       // Allowed own data updates/creates are centralized here so carrier bags
       // never recurse through `__extern_set` as the hidden bag receiver.  That
       // would restart an Object companion walk with the wrong `this`.
@@ -3169,6 +3190,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       // creating one. Runs AFTER the own-entry block (which returns for every
       // own case) and BEFORE the frozen gate + own-create below.
       ...inheritedAccessorArm,
+      // (#6766) …and a Proxy link on that chain takes the write (§10.1.9.2 2.b).
+      ...protoLinkSetWalkArm(protoLinkSetWalkIdx),
       // #1472 Phase B Blocker A Half 2 — FROZEN write gate. A frozen object
       // refuses ALL data writes (update AND new key) per ES §10.4.7 / the
       // [[Set]] invariant on non-writable own data properties. Sloppy-mode
@@ -3407,6 +3430,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           { op: "return" },
         ],
       },
+      // (#6766) Missing own property: a Proxy link on the chain answers first.
+      ...protoLinkSetWalkArm(protoLinkSetWalkIdx, 6),
       // Missing own property: non-extensible objects refuse the new key.
       { op: "local.get", index: 4 },
       { op: "ref.as_non_null" },
@@ -3432,6 +3457,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         { name: "any", type: { kind: "anyref" } },
         { name: "o", type: objRefNull },
         { name: "e", type: entryRefNull },
+        ...(protoLinkSetWalkIdx === undefined ? [] : [{ name: "linkSet", type: { kind: "i32" } as ValType }]),
       ],
       body,
     );
@@ -5549,6 +5575,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   reserveOrdinarySetWithReceiver(ctx);
 
   ensureProxyRuntime(ctx, types, registerNative);
+  fillProtoLinkArms(ctx, types, registerNative); // (#6766) per-hop Proxy arms in the prototype walkers
 
   // (#4749) Fill Object.assign's standalone Proxy-source CopyDataProperties
   // arm now that descriptor helpers and Proxy dispatch front-guards exist.
@@ -7454,6 +7481,8 @@ interface ExternGetIdxBodyParams {
   numberToStringIdx: number;
   /** funcIdx of `__extern_get` (only used when objArrayLikeArms). */
   externGetIdx: number;
+  /** (#6651 H6) `$Proxy` type: its indexed read is the same `Get(O, ToString(i))`. */
+  proxyTypeIdx?: number;
   /** Pre-built per-`__vec_<k>` dispatch arms (empty at registration time). */
   vecArms: Instr[];
   /** (#2106 S1) Factory for the miss ("index absent") result instrs. A FACTORY
@@ -7483,6 +7512,13 @@ export function buildExternGetIdxBody(p: ExternGetIdxBodyParams): Instr[] {
     ? [
         { op: "local.get", index: 2 },
         { op: "ref.test", typeIdx: objectTypeIdx },
+        ...(p.proxyTypeIdx === undefined
+          ? []
+          : ([
+              { op: "local.get", index: 2 },
+              { op: "ref.test", typeIdx: p.proxyTypeIdx },
+              { op: "i32.or" },
+            ] satisfies Instr[])),
         {
           op: "if",
           blockType: { kind: "empty" },
@@ -9698,6 +9734,7 @@ export function unshiftExternGetStringExoticArm(ctx: CodegenContext): void {
           op: "if",
           blockType: { kind: "empty" },
           then: [
+            ...stringWrapperLengthArm(ctx, 1, stringData), // (#6651 C5) `length`
             // n = ToNumber(key), then require Number::toString(n) to equal the
             // original key. This rejects 01, 1.0, NaN, and other non-canonical
             // numeric strings before the String-exotic arm runs.

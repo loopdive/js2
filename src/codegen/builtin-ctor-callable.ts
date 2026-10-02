@@ -42,6 +42,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { runtimeToNumberInstrs } from "./coercion-engine.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
+import { builtinCtorValueCallArmInstrs } from "./builtin-ctor-value-invoke.js";
 import { addUnionImportsViaRegistry } from "./shared.js";
 
 type CallableArmLocals = { name: string; type: { kind: "f64" } | { kind: "externref" } };
@@ -286,8 +287,15 @@ const CALLABLE_WRAPPER_CTORS = ["String", "Number", "Boolean", "BigInt"] as cons
  * before the fast-carrier locals initialize). Returns `[]` when no carrier was
  * demanded or a structural prerequisite is missing, so the caller can splice
  * unconditionally.
+ *
+ * (#6713) The RegExp / Error-family carrier arms ride in front — see
+ * builtin-ctor-value-invoke.ts.
  */
 export function builtinCtorCallableArmInstrs(ctx: CodegenContext, argOf: (k: number) => Instr[]): Instr[] {
+  return [...builtinCtorValueCallArmInstrs(ctx, argOf), ...wrapperCtorCallableArmInstrs(ctx, argOf)];
+}
+
+function wrapperCtorCallableArmInstrs(ctx: CodegenContext, argOf: (k: number) => Instr[]): Instr[] {
   if (!ctx.standalone) return [];
   const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
   const externLengthIdx = ctx.funcMap.get("__extern_length");

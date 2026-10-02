@@ -1451,13 +1451,15 @@ function collectMixinMembersLib(
 
 // ── Declared globals (e.g. declare const document: Document) ────────
 
-export function collectDeclaredGlobals(
-  ctx: CodegenContext,
-  libFile: ts.SourceFile,
-  userFile: ts.SourceFile,
-  libIndex?: LibDeclIndex,
-  allUserFiles?: readonly ts.SourceFile[],
-): void {
+/**
+ * (#6737) The user-program name sets `collectDeclaredGlobals` filters lib
+ * declarations by depend only on the user files, yet the multi-source caller
+ * runs once per (lib file x user source): memoized on the `allUserFiles` array.
+ */
+type UserProgramNames = Record<"referencedNames" | "valueRefNames" | "userModuleBindings", ReadonlySet<string>>;
+const userProgramNamesCache = new WeakMap<readonly ts.SourceFile[], UserProgramNames>();
+
+function userProgramNames(bindingSourceFiles: readonly ts.SourceFile[]): UserProgramNames {
   // First collect identifiers referenced in user source
   const referencedNames = new Set<string>();
   // #2520 — also track names used as a VALUE (vs. a pure call/new callee or a
@@ -1497,7 +1499,6 @@ export function collectDeclaredGlobals(
     }
     forEachChild(node, collectRefs);
   };
-  const bindingSourceFiles = allUserFiles ?? [userFile];
   for (const sourceFile of bindingSourceFiles) {
     for (const stmt of sourceFile.statements) {
       forEachChild(stmt, collectRefs);
@@ -1543,6 +1544,21 @@ export function collectDeclaredGlobals(
       }
     }
   }
+
+  return { referencedNames, valueRefNames, userModuleBindings };
+}
+
+export function collectDeclaredGlobals(
+  ctx: CodegenContext,
+  libFile: ts.SourceFile,
+  userFile: ts.SourceFile,
+  libIndex?: LibDeclIndex,
+  allUserFiles?: readonly ts.SourceFile[],
+): void {
+  const names =
+    (allUserFiles && userProgramNamesCache.get(allUserFiles)) || userProgramNames(allUserFiles ?? [userFile]);
+  if (allUserFiles) userProgramNamesCache.set(allUserFiles, names);
+  const { referencedNames, valueRefNames, userModuleBindings } = names;
 
   for (const stmt of libFile.statements) {
     if (!ts.isVariableStatement(stmt) || !hasDeclareModifier(stmt)) continue;

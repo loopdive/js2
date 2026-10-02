@@ -1,5 +1,6 @@
 import { buildPromisePeelValue } from "../runtime/wasmgc/promise/thenable-bodies.js";
 import { finalizePromiseThenableLookup } from "./promise-thenable-lookup.js";
+import { arrayThenObservable } from "./promise-species-then.js"; // (#5197 r3)
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * #2151 — standalone any-receiver method dispatch over CLOSED object-literal
@@ -82,6 +83,7 @@ import { closedDispatchGuardsOwnSlot } from "./expressions/own-property-method-s
 import { classArmClaimInstrs } from "./class-arm-tag-guard.js"; // (#6608) nominal `__tag` arm guard
 import { arraySubclassOwnMethodShadowTest } from "./array-subclass-receiver.js"; // (#2917)
 import { standaloneDispatchArityPads } from "./zero-arg-method-pad.js"; // (#6693) JS call arity
+import { readEnv } from "../env.js";
 
 /**
  * (#2583) The callback-free, argument-taking array search/predicate methods
@@ -92,6 +94,35 @@ import { standaloneDispatchArityPads } from "./zero-arg-method-pad.js"; // (#669
  * `indexOf`/`lastIndexOf` use Strict Equality.
  */
 const VEC_SEARCH_METHODS = new Set(["indexOf", "lastIndexOf", "includes"]);
+/** (#6769 S4) `__ta_dyn_<m>` producers the dispatcher routes a dyn-view receiver to. */
+const TA_DYN_PRODUCER_METHODS = new Set(["map", "filter", "slice", "sort"]);
+
+/**
+ * (#5194 r3-2, #6769 S4) The native `__ta_dyn_<m>` helper the dispatcher's
+ * dyn-view arm calls: the search trio, and the live-receiver species producers
+ * — whose generic vec answer (`__hof_map` & co.) is an Array, not a
+ * TypedArraySpeciesCreate result.
+ */
+function taDynDispatchHelperIdx(ctx: CodegenContext, methodName: string): number | undefined {
+  return VEC_SEARCH_METHODS.has(methodName) || TA_DYN_PRODUCER_METHODS.has(methodName)
+    ? ctx.funcMap.get(`__ta_dyn_${methodName}`)
+    : undefined;
+}
+
+/**
+ * (#6769 S4) Conjunct appended to the native Array-HOF arm's target test: a dyn
+ * view (a `$__vec_base` subtype) with a live-receiver producer falls past the
+ * Array loop to the producer arm beneath it. Empty when no producer exists.
+ */
+function taDynProducerHofExclusion(ctx: CodegenContext, methodName: string, anyLocalIdx: number): Instr[] {
+  if (!TA_DYN_PRODUCER_METHODS.has(methodName) || !ctx.funcMap.has(`__ta_dyn_${methodName}`)) return [];
+  return [
+    { op: "local.get", index: anyLocalIdx },
+    { op: "ref.test", typeIdx: ctx.taDynViewTypeIdx },
+    { op: "i32.eqz" },
+    { op: "i32.and" },
+  ];
+}
 
 /**
  * (#2927 / #2784 residual) The in-place array MUTATION methods that get a native
@@ -1337,7 +1368,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // Scoped to the search trio: those are the names whose helper this wave
     // measured. The mutators keep their call-site two-arm and are deliberately
     // NOT routed here.
-    const taDynIdx = VEC_SEARCH_METHODS.has(methodName) ? ctx.funcMap.get(`__ta_dyn_${methodName}`) : undefined;
+    const taDynIdx = taDynDispatchHelperIdx(ctx, methodName); // (#6769 S4) + the live-receiver producers
     const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
     if (taDynIdx !== undefined && ctx.taDynViewTypeIdx >= 0) {
       addStringConstantGlobal(ctx, methodName);
@@ -1521,6 +1552,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
           { op: "local.get", index: anyLocalIdx },
           { op: "ref.test", typeIdx: ctx.vecBaseTypeIdx },
           ...arraySubclassOwnMethodShadowTest(ctx, methodName), // (#6683)
+          ...taDynProducerHofExclusion(ctx, methodName, anyLocalIdx), // (#6769 S6) a dyn view sorts as a TypedArray
           {
             op: "if",
             blockType: { kind: "val", type: { kind: "externref" } },
@@ -1685,6 +1717,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
           { op: "call", funcIdx: hofFuncIdx },
         ];
         const arrayHofTargetTest = buildFnctorArrayHofTargetTest(ctx, anyLocalIdx, ctx.vecBaseTypeIdx, objVecTypeIdx);
+        arrayHofTargetTest.push(...taDynProducerHofExclusion(ctx, methodName, anyLocalIdx)); // (#6769 S4)
         current = [
           ...arrayHofTargetTest,
           {
@@ -1769,7 +1802,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
             else: fallback,
           },
         ];
-        if (process.env.JS2WASM_REGEXP_TEST_OUTER_BRAND === "0") {
+        if (readEnv("JS2WASM_REGEXP_TEST_OUTER_BRAND") === "0") {
           current = wrapNativeRegExpTest(current);
         }
       }
@@ -1882,7 +1915,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // the regex engine instead of walking the generated user-method ladder.
     // The inner arm remains the fallback under the kill switch and keeps the
     // construction order of all unrelated dispatchers byte-identical.
-    if (process.env.JS2WASM_REGEXP_TEST_OUTER_BRAND !== "0" && wrapNativeRegExpTest !== undefined) {
+    if (readEnv("JS2WASM_REGEXP_TEST_OUTER_BRAND") !== "0" && wrapNativeRegExpTest !== undefined) {
       current = wrapNativeRegExpTest(current);
     }
 
@@ -2100,6 +2133,8 @@ export function fillPromiseThenableHelpers(ctx: CodegenContext): void {
             thenStringInstrs: stringConstantExternrefInstrs(ctx, "then"),
           }
         : null,
+    // (#5197 r3 Step 3) only when the module may install `Array.prototype.then`.
+    vecTypeIdxs: arrayThenObservable(ctx) ? [...new Set(ctx.vecTypeMap.values())].sort((a, b) => a - b) : [],
   };
   finalizePromiseThenableLookup(ctx, predFn, inventory);
 }

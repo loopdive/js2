@@ -61,7 +61,7 @@ export function pinPerfFlags(flags: Record<string, string>): void {
   afterAll(() => {
     for (const key of Object.keys(flags)) {
       const previous = saved[key];
-      // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
+      // Only `delete` truly unsets an env var
       if (previous === undefined) delete process.env[key];
       else process.env[key] = previous;
     }

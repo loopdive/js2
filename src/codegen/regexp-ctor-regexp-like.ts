@@ -115,23 +115,9 @@ export function tryCompileRegExpCtorFromObject(
   if (!patternIsObjectLike(ctx, patternArg)) return undefined;
   const isCall = ts.isCallExpression(node);
 
-  const matchId = getWellKnownSymbolId("match");
-  if (matchId === undefined) return undefined;
-  // Register every native BEFORE any operand is compiled, then resolve all of
-  // them by NAME after the operands: compiling an operand may register a late
-  // import, which shifts every defined-function index (#2043).
-  if (prepareRegExpExecProtocol(ctx, fctx) === undefined) return undefined;
-  ensureLateImport(ctx, "__box_symbol", [I32], [EXTERNREF]);
-  ensureLateImport(ctx, "__extern_is_undefined", [EXTERNREF], [I32]);
-  emitToBoolean(ctx, EXTERNREF, []); // registers the ToBoolean provider; output discarded
-  for (const key of ["constructor", "source", "flags", ""]) addStringConstantGlobal(ctx, key);
-  const ctorGlobal = isCall ? reserveBuiltinConstructorIdentityGlobal(ctx, "RegExp") : -1;
-  // Flush BEFORE the compiler registration: its own flush runs without this
-  // function's body and would leave the calls above stale.
-  flushLateImportShifts(ctx, fctx);
-  ensureDynamicStandaloneRegExpCompiler(ctx);
-  const structTypeIdx = ensureStandaloneRegExpStruct(ctx);
-  flushLateImportShifts(ctx, fctx);
+  const registered = registerRegExpCtorRuntime(ctx, fctx, isCall);
+  if (registered === undefined) return undefined;
+  const { structTypeIdx, ctorGlobal } = registered;
 
   const patLocal = allocLocal(fctx, `__rector_pat_${fctx.locals.length}`, EXTERNREF);
   const flgLocal = allocLocal(fctx, `__rector_flg_${fctx.locals.length}`, EXTERNREF);
@@ -157,6 +143,79 @@ export function tryCompileRegExpCtorFromObject(
   fctx.body.push({ op: "local.set", index: flgLocal });
   flushLateImportShifts(ctx, fctx);
 
+  const ops = resolveRegExpCtorOps(ctx, structTypeIdx);
+  if (ops === undefined) {
+    // Operands are already on the books; keep the stack shape honest.
+    fctx.body.push({ op: "unreachable" });
+    return isCall ? EXTERNREF : { kind: "ref", typeIdx: structTypeIdx };
+  }
+  const locals: RegExpCtorLocals = {
+    pat: patLocal,
+    flg: flgLocal,
+    isRe: isReLocal,
+    tmp: tmpLocal,
+    p: pLocal,
+    f: fLocal,
+  };
+  fctx.body.push(...regExpCtorOperationInstrs(ctx, ops, locals, isCall ? { ctorGlobal } : undefined));
+  return isCall ? EXTERNREF : { kind: "ref", typeIdx: structTypeIdx };
+}
+
+/**
+ * Register every native the §22.2.4.1 sequence calls — BEFORE any operand is
+ * compiled; the caller resolves them by NAME afterwards (`resolveRegExpCtorOps`),
+ * because compiling an operand may register a late import, which shifts every
+ * defined-function index (#2043). `withCtorGlobal` reserves the `%RegExp%`
+ * carrier slot the call spelling's step-2 identity test compares against.
+ */
+export function registerRegExpCtorRuntime(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  withCtorGlobal: boolean,
+): { structTypeIdx: number; ctorGlobal: number } | undefined {
+  const matchId = getWellKnownSymbolId("match");
+  if (matchId === undefined) return undefined;
+  if (prepareRegExpExecProtocol(ctx, fctx) === undefined) return undefined;
+  ensureLateImport(ctx, "__box_symbol", [I32], [EXTERNREF]);
+  ensureLateImport(ctx, "__extern_is_undefined", [EXTERNREF], [I32]);
+  emitToBoolean(ctx, EXTERNREF, []); // registers the ToBoolean provider; output discarded
+  for (const key of ["constructor", "source", "flags", ""]) addStringConstantGlobal(ctx, key);
+  const ctorGlobal = withCtorGlobal ? reserveBuiltinConstructorIdentityGlobal(ctx, "RegExp") : -1;
+  // Flush BEFORE the compiler registration: its own flush runs without this
+  // function's body and would leave the calls above stale.
+  flushLateImportShifts(ctx, fctx);
+  ensureDynamicStandaloneRegExpCompiler(ctx);
+  const structTypeIdx = ensureStandaloneRegExpStruct(ctx);
+  flushLateImportShifts(ctx, fctx);
+  return { structTypeIdx, ctorGlobal };
+}
+
+/** The natives the sequence calls, resolved by name once registration settled. */
+export interface RegExpCtorOps {
+  readonly matchId: number;
+  readonly boxSymbol: number;
+  readonly isUndefinedFn: number;
+  readonly toBoolean: Instr[];
+  readonly externGet: number;
+  readonly sameValueZero: number;
+  readonly toStr: number;
+  readonly dynamicCompiler: number;
+  readonly structTypeIdx: number;
+  readonly anyStrTypeIdx: number;
+}
+
+/** Locals the sequence reads (`pat`, `flg`: the operands) and scratches (`isRe` is i32). */
+export interface RegExpCtorLocals {
+  readonly pat: number;
+  readonly flg: number;
+  readonly isRe: number;
+  readonly tmp: number;
+  readonly p: number;
+  readonly f: number;
+}
+
+export function resolveRegExpCtorOps(ctx: CodegenContext, structTypeIdx: number): RegExpCtorOps | undefined {
+  const matchId = getWellKnownSymbolId("match");
   const boxSymbol = ctx.funcMap.get("__box_symbol");
   const isUndefinedFn = ctx.funcMap.get("__extern_is_undefined");
   const toBoolean = emitToBoolean(ctx, EXTERNREF, []);
@@ -164,8 +223,8 @@ export function tryCompileRegExpCtorFromObject(
   const sameValueZero = ctx.funcMap.get("__same_value_zero");
   const toStr = ctx.funcMap.get("__extern_to_string_spec") ?? getExternrefToStringProvider(ctx);
   const dynamicCompiler = ctx.nativeRegexHelpers.get("__regex_compile_dynamic_simple");
-  const re = { structTypeIdx, anyStrTypeIdx: ctx.anyStrTypeIdx };
   if (
+    matchId === undefined ||
     boxSymbol === undefined ||
     isUndefinedFn === undefined ||
     externGet === undefined ||
@@ -173,10 +232,46 @@ export function tryCompileRegExpCtorFromObject(
     toStr === undefined ||
     dynamicCompiler === undefined
   ) {
-    // Operands are already on the books; keep the stack shape honest.
-    fctx.body.push({ op: "unreachable" });
-    return isCall ? EXTERNREF : { kind: "ref", typeIdx: re.structTypeIdx };
+    return undefined;
   }
+  return {
+    matchId,
+    boxSymbol,
+    isUndefinedFn,
+    toBoolean,
+    externGet,
+    sameValueZero,
+    toStr,
+    dynamicCompiler,
+    structTypeIdx,
+    anyStrTypeIdx: ctx.anyStrTypeIdx,
+  };
+}
+
+/**
+ * §22.2.4.1 steps 1-8 over already-evaluated operands in `locals.pat` /
+ * `locals.flg`. `call === undefined` is the `new` spelling (leaves the fresh
+ * `$NativeRegExp` ref); otherwise the CALL spelling (leaves an externref, and
+ * may answer the pattern itself — step 2). `call.gate`, when present, is an
+ * extra `[] -> [i32]` conjunct on step 2, so one helper body can serve both
+ * spellings with a runtime NewTarget bit (#6713).
+ */
+export function regExpCtorOperationInstrs(
+  ctx: CodegenContext,
+  ops: RegExpCtorOps,
+  locals: RegExpCtorLocals,
+  call: { ctorGlobal: number; gate?: Instr[] } | undefined,
+): Instr[] {
+  const { boxSymbol, isUndefinedFn, externGet, sameValueZero, toStr, dynamicCompiler, matchId } = ops;
+  const toBoolean = ops.toBoolean;
+  const re = { structTypeIdx: ops.structTypeIdx, anyStrTypeIdx: ops.anyStrTypeIdx };
+  const patLocal = locals.pat;
+  const flgLocal = locals.flg;
+  const isReLocal = locals.isRe;
+  const tmpLocal = locals.tmp;
+  const pLocal = locals.p;
+  const fLocal = locals.f;
+  const out: Instr[] = [];
 
   /** `[] → [i32]` — the value in `local` is `undefined` (null too, outside the #2106 regime). */
   const isUndef = (local: number): Instr[] => {
@@ -200,7 +295,7 @@ export function tryCompileRegExpCtorFromObject(
   ];
 
   // Step 1 — IsRegExp(pattern). §7.2.8: a non-Object is never a RegExp.
-  fctx.body.push(
+  out.push(
     { op: "i32.const", value: 0 },
     { op: "local.set", index: isReLocal },
     { op: "local.get", index: patLocal },
@@ -307,25 +402,26 @@ export function tryCompileRegExpCtorFromObject(
     { op: "if", blockType: { kind: "val", type: structRef }, then: brandedArm, else: objectArm },
   ];
 
-  if (!isCall) {
-    fctx.body.push(...construct);
-    return structRef;
+  if (call === undefined) {
+    out.push(...construct);
+    return out;
   }
 
   // Step 2 — the call spelling's identity short-circuit.
-  fctx.body.push({
+  out.push({
     op: "block",
     blockType: { kind: "val", type: EXTERNREF },
     body: [
       { op: "local.get", index: isReLocal },
       ...isUndef(flgLocal),
       { op: "i32.and" },
+      ...(call.gate === undefined ? [] : [...call.gate, { op: "i32.and" } as Instr]),
       {
         op: "if",
         blockType: { kind: "empty" },
         then: [
           ...getKey(patLocal, "constructor"),
-          { op: "global.get", index: ctorGlobal },
+          { op: "global.get", index: call.ctorGlobal },
           { op: "call", funcIdx: sameValueZero },
           {
             op: "if",
@@ -341,5 +437,5 @@ export function tryCompileRegExpCtorFromObject(
       { op: "extern.convert_any" },
     ],
   });
-  return EXTERNREF;
+  return out;
 }

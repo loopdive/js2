@@ -170,6 +170,25 @@ export interface OrdinaryToPrimitiveProbeOpts {
    * brand check threw "invalid receiver" (the S2h reason `methodCall` exists).
    */
   readonly ownerCall?: { readonly ownsIdx: number; readonly methodCallIdx: number; readonly argsNewIdx: number };
+  /**
+   * (#6651 H1) Finish §7.1.1.1 instead of declining: emitted (must not fall
+   * through — a TypeError throw) when every step was REACHED and none yielded a
+   * primitive. Implies the nested regime, and changes two step outcomes from
+   * "decline" to "next step": a present but NON-CALLABLE member (step 2.b's
+   * IsCallable skip — `{toString: 1, valueOf(){…}}`), and, for a leading
+   * `valueOf`, an ABSENT one (the inherited `Object.prototype.valueOf` answers
+   * the object itself). An absent `toString` still declines (the inherited one
+   * answers a primitive), as does an absent trailing `valueOf` and a nullish
+   * method result — the cases this walk cannot prove.
+   */
+  readonly onExhausted?: () => Instr[];
+  /**
+   * (#6651 H1) A method's NULL result is the primitive `null`, not an
+   * undecidable value — true under the #2106 `undefined` singleton regime,
+   * where `undefined` is never the null ref. `{valueOf(){return null},
+   * toString: null}` then converts to `null` instead of falling through.
+   */
+  readonly nullResultIsPrimitive?: boolean;
 }
 
 export function buildOrdinaryToPrimitiveProbe(
@@ -181,15 +200,16 @@ export function buildOrdinaryToPrimitiveProbe(
   const { recv, methodLocal, resultLocal, order, onPrimitive, stopWhenFirstAbsent, userInstalledOnly, ownerCall } =
     opts;
   const gateInstalled = userInstalledOnly === true && hasOwnIdx !== undefined;
+  const onExhausted = opts.onExhausted;
 
   // When the first step is ABSENT, `stopWhenFirstAbsent` means the inherited
   // intrinsic would have answered — so the later steps must NOT run as siblings;
   // they move inside the "present but non-primitive" branch of step i.
-  const nested = stopWhenFirstAbsent === true;
+  const nested = stopWhenFirstAbsent === true || onExhausted !== undefined;
 
   /** Steps `[i…]` of the walk. `rest` runs when step `i` yields a non-primitive. */
   const probe = (i: number): Instr[] => {
-    if (i >= order.length) return [];
+    if (i >= order.length) return onExhausted?.() ?? [];
     const name = order[i]!;
     addStringConstantGlobal(ctx, name);
     // A FACTORY for the same reason `onPrimitive` is one: the #2917 owner arm
@@ -234,8 +254,15 @@ export function buildOrdinaryToPrimitiveProbe(
               { op: "local.get", index: resultLocal },
               { op: "ref.is_null" },
               { op: "i32.eqz" },
-              { op: "if", blockType: { kind: "empty" }, then: afterCall() },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: afterCall(),
+                ...(opts.nullResultIsPrimitive === true ? { else: onPrimitive() } : {}),
+              },
             ],
+            // (#6651 H1) step 2.b: a non-callable member is skipped.
+            ...(onExhausted !== undefined ? { else: probe(i + 1) } : {}),
           },
         ],
         // (#6651 RS1) SHADOWED-TO-NULLISH is not ABSENT. `stopWhenFirstAbsent`
@@ -252,14 +279,16 @@ export function buildOrdinaryToPrimitiveProbe(
         // predicate (`tryOrdinaryMethod`'s `__extern_has` guard); only the
         // nested probe conflated the two states.
         else:
-          nested && i + 1 < order.length && hasOwnIdx !== undefined
-            ? [
-                ...recv(),
-                ...stringConstantExternrefInstrs(ctx, name),
-                { op: "call", funcIdx: hasOwnIdx },
-                { op: "if", blockType: { kind: "empty" }, then: probe(i + 1) },
-              ]
-            : [],
+          onExhausted !== undefined && i === 0 && name === "valueOf"
+            ? probe(i + 1)
+            : nested && (i + 1 < order.length || onExhausted !== undefined) && hasOwnIdx !== undefined
+              ? [
+                  ...recv(),
+                  ...stringConstantExternrefInstrs(ctx, name),
+                  { op: "call", funcIdx: hasOwnIdx },
+                  { op: "if", blockType: { kind: "empty" }, then: probe(i + 1) },
+                ]
+              : [],
       },
     ];
     // (#2917) Provider-owned receiver → the owner resolves and invokes. Its

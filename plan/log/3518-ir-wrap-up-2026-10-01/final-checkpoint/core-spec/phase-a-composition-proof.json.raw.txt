@@ -1,0 +1,284 @@
+{
+  "kind": "static-phase-a-to-core-vocabulary-composition",
+  "root": "/private/tmp/js2-ir-source-contracts-main-20261001",
+  "helper": {
+    "path": "tests/helpers/ir-source-contract-relocation.ts",
+    "sha256": "b8437b4b95231f06d4ad73c5130b76bf573d8b3a976b99c8b061979adafa90b6",
+    "gitBlob": "da28e69f4795a165ccad1ccb89c8da001383500a",
+    "bytes": 11262,
+    "matchesFrozenWriter": true
+  },
+  "receipt": {
+    "path": "tests/helpers/ir-source-contract-relocation.json",
+    "sha256": "0b8fefeeae71e66e2b95726320609d60427cbc7ef4f7ce53a8c094d8a971940b",
+    "gitBlob": "07d8638868b34086bb9b083c47842082481bf517",
+    "bytes": 494067
+  },
+  "currentOwners": [
+    {
+      "path": "src/ir/outcomes.ts",
+      "sha256": "93f3f441f104cbadc366ee5f884b465f398931da5bdf95e8d689f79038030b9e",
+      "gitBlob": "d85f82cd94071a20c3da543c5d7431136ceff2a0",
+      "bytes": 9287
+    },
+    {
+      "path": "src/ir/abi-bindings.ts",
+      "sha256": "e13e7e5b6fdfb9ed487c4e6cf9b8fcfbde95ef4d6472a3d274621a80b768aadb",
+      "gitBlob": "1c395f380c04f8e18e3264b5e210050755053d61",
+      "bytes": 11312
+    },
+    {
+      "path": "src/ir/declared-types.ts",
+      "sha256": "f281af0bc46bc85cfb79679c15ef969a15aea1256395c60c48b629c613af29d6",
+      "gitBlob": "8ea5200dda809d056b1b66c4f406dbd7de4270d4",
+      "bytes": 218
+    },
+    {
+      "path": "src/ir/fnctor-abi.ts",
+      "sha256": "afd17658edbbe323c13b4bb3c861e3dfb6eba07311e3afcc6b761904e5c26973",
+      "gitBlob": "c45b22ab0df300e9110d7ffd847b22fa59b5c63c",
+      "bytes": 341
+    },
+    {
+      "path": "src/ir/tag-domain.ts",
+      "sha256": "e2fb240ab8b0bb4b23e45c82ddd6c3d3b4a2fb46e1ecf83db7539ac92d28d275",
+      "gitBlob": "28d926edba76af1df4bc46dcd815b71beabdc4e2",
+      "bytes": 348
+    },
+    {
+      "path": "src/ir/js-tag-domain.ts",
+      "sha256": "810b9e6ad30b740dd0089aff9d211e7cef0511173c5dd985d6af326908f6bfef",
+      "gitBlob": "15f1a5a6b1ad3d2237a87434fb710e54216bbc88",
+      "bytes": 180
+    },
+    {
+      "path": "src/ir/producer.ts",
+      "sha256": "9b8361c1334cbf45e1b7f1dfebe1e3b4d3d55336f9c19d4ac3722b3de86a0a75",
+      "gitBlob": "2941be28bf6e0b1575264078795e4518f740db4a",
+      "bytes": 245
+    },
+    {
+      "path": "src/ir/string-runtime.ts",
+      "sha256": "a5fa89cf7560a631f3dea63d1c5948c68befe7900095319702772e4cf650630b",
+      "gitBlob": "95755a6eb5bffa94107b812a44cf7554b0de5abc",
+      "bytes": 1007
+    },
+    {
+      "path": "src/ir/counted-string-append-provenance.ts",
+      "sha256": "1e1de4d0fe1ffafc6dae1eab0a63ecd18ad34d61237f79b856ff1cf7291865a2",
+      "gitBlob": "cfe3fc20e6162b70d35660fbfb4521fcfb132c84",
+      "bytes": 9915
+    },
+    {
+      "path": "src/string-surrogate.ts",
+      "sha256": "5b47fdef3d69a4409ed05726f524ca0739ed391f926728b9a8777de1785e0bc1",
+      "gitBlob": "6698fcdc70f375709dc597c170cf2e6c465dc76f",
+      "bytes": 197
+    },
+    {
+      "path": "src/ir/runtime-symbols.ts",
+      "sha256": "b25ecf5d68f1bb4e4e2cf49d2ab51473053b74d0b85a43aedabf0d4d1d41e2ff",
+      "gitBlob": "9e51d916ffddde1c3401a9bcf03aef4e9e1f1a0a",
+      "bytes": 235
+    },
+    {
+      "path": "src/ir/date-runtime.ts",
+      "sha256": "908101fcb3e308dcf51e1ea3878792253a301247cfde3d40c6b565568bc86ec3",
+      "gitBlob": "1889c0b530871f12daa5e9bf4f4efdc5d953493c",
+      "bytes": 222
+    },
+    {
+      "path": "src/ir/ast-lowering-plans.ts",
+      "sha256": "f261a63bc2e5e4c28e724ef93f97321568e78d87a2bac78736856507bb59e829",
+      "gitBlob": "d8cf9db0dfff83374d58e9d204f724190237fe88",
+      "bytes": 19104
+    },
+    {
+      "path": "src/shared/contracts/ir-preparation-errors.ts",
+      "sha256": "b19a1971c578cf72d73e6d26d78f02e6e946b670bdcb69399b870543e14cbbf7",
+      "gitBlob": "0673767d18df9bcae3b17fa0ec1d32fc84f566d9",
+      "bytes": 3391
+    },
+    {
+      "path": "src/ir/core/global-binding-keys.ts",
+      "sha256": "bfbcb9e5c0f929b7bf2c509c654cc88cd58b8c453a74744cf561c4bc430c4bbb",
+      "gitBlob": "14e62f08b7c73577404d3ad834093a28719af8d1",
+      "bytes": 1570
+    },
+    {
+      "path": "src/ir/core/declared-types.ts",
+      "sha256": "f167423631f7e856102a532db9392f6d3d3538b68c8c4be5d1e123518353bbcc",
+      "gitBlob": "9f8b8c1e26f546d370a822136c5ab05fd98361dc",
+      "bytes": 7078
+    },
+    {
+      "path": "src/ir/core/fnctor-abi.ts",
+      "sha256": "0fca9decc63f7daad9332b58e3e810cecb55cd620e74166bd20e65d34f3431eb",
+      "gitBlob": "cfbd94c96d785538b5662cc820c61e1d7bfd8bea",
+      "bytes": 12944
+    },
+    {
+      "path": "src/ir/core/tag-domain.ts",
+      "sha256": "479aeeaacd739699cd66137b21335cae7205db01b9950b8eeaaac65b07634e20",
+      "gitBlob": "5b446c95b5475e621dc9b0da3b58265ca881cb74",
+      "bytes": 11303
+    },
+    {
+      "path": "src/ir/runtime/js-tag-domain.ts",
+      "sha256": "638c06163bcab51c2982103d869c199feccc438e5e5cddfc6b2ef2503ec60a5c",
+      "gitBlob": "a6e804504790c0eb80ec04bab78be9672e3989ed",
+      "bytes": 13605
+    },
+    {
+      "path": "src/ir/runtime/producer.ts",
+      "sha256": "3cee19f99b1d64d4c355841b95434135d9fa3e0633fc51129e6e49ee202c5d90",
+      "gitBlob": "b820def25b21e0716b090057c32ac39425857b19",
+      "bytes": 2648
+    },
+    {
+      "path": "src/ir/core/string-runtime.ts",
+      "sha256": "632e60dc92a6145b74f33a2434eb2b24f461e2a83d888354f03e02ecc4d92a3c",
+      "gitBlob": "aae4702b8e27f8099d953fd67ce2bad8e90e83ab",
+      "bytes": 7599
+    },
+    {
+      "path": "src/shared/contracts/ir-counted-string-site-id.ts",
+      "sha256": "398bcf62a3c6c1002a9728460654384410db93f120eeffb2da435c02ed5e3fcb",
+      "gitBlob": "11565b21d8a9bf4bb3b578ae1ed1fcc3089fdfdd",
+      "bytes": 7802
+    },
+    {
+      "path": "src/shared/contracts/string-surrogate.ts",
+      "sha256": "782969df8b156eec18455d8e7f33acd1902cfa1b8d1e3f2e94dbb494a5ff49a4",
+      "gitBlob": "72c214269243a8abd22cad433768a6280588f633",
+      "bytes": 2435
+    },
+    {
+      "path": "src/ir/core/runtime-symbols.ts",
+      "sha256": "840622cc672ccb7a0e7ccb5bc5e7e5e5846205a837a12637835424fa244bd6e1",
+      "gitBlob": "cf31cd311fed238984b399ee140e22c81a1de112",
+      "bytes": 418
+    },
+    {
+      "path": "src/ir/core/date-callables.ts",
+      "sha256": "4cef6c7ca2b22967092651e3c3c0bf2c00e75f4d4b2f8cc38618e657285935f2",
+      "gitBlob": "1dcd60af884b36b21f8647b510188fef486f7476",
+      "bytes": 730
+    }
+  ],
+  "staticProof": {
+    "inverseDonors": 13,
+    "forwardOwners": 25,
+    "allWholeBytePinsAndReplay": true,
+    "compilerOrTestExecution": false
+  },
+  "donorChecks": [
+    {
+      "path": "src/ir/outcomes.ts",
+      "sha256": "d2d6e6ca0603e936901f31d875cb6474748f56b42b2e398e6cccedf0f25256be",
+      "gitBlob": "c8b6ac218f32e22cd71669195b5eecfd53c472ba",
+      "bytes": 12354,
+      "equalTargetMain": true
+    },
+    {
+      "path": "src/ir/abi-bindings.ts",
+      "sha256": "66ed6871b28bad9610053cb56ac30a3bbd99abb6a28e55b87f83a1e0c43cc65b",
+      "gitBlob": "6f84289b1fefd431f50a32141676d95bca7aa51c",
+      "bytes": 12506,
+      "equalTargetMain": true
+    },
+    {
+      "path": "src/ir/declared-types.ts",
+      "sha256": "d3f0575647d597c6a5f3f309e9da1d3dccf640756b524c2f6fade3a5f17118e3",
+      "gitBlob": "8e7d05c1e5f07ade09b8ff0dd7665b199eb8cdeb",
+      "bytes": 7022,
+      "equalTargetMain": true
+    },
+    {
+      "path": "src/ir/fnctor-abi.ts",
+      "sha256": "e72be1d68751ec3554a71937c95628459d1cc1be6a38b6afb484c5c6e7227dbe",
+      "gitBlob": "af1a3abe9ce09dc72ab9937b257e0aea196e16a4",
+      "bytes": 12964,
+      "equalTargetMain": true
+    },
+    {
+      "path": "src/ir/tag-domain.ts",
+      "sha256": "4fc990305f5e6e3da738e8750caa32c27244098ef599d9f60e276ca712da24d8",
+      "gitBlob": "84fa34f7528baa92d7701b920a977b81d39242ed",
+      "bytes": 11318,
+      "equalTargetMain": true
+    },
+    {
+      "path": "src/ir/js-tag-domain.ts",
+      "sha256": "46623e973ed0450476d648ae6931612c0b1cd9b63e8ed1decf48a6cded3d2fc5",
+      "gitBlob": "ef54e53c4598beeaeeb1a12196a6314ce5d97ebe",
+      "bytes": 13570,
+      "equalTargetMain": true
+    },
+    {
+      "path": "src/ir/producer.ts",
+      "sha256": "655233a5ac2a8a8c975e1eebe948524daeeb7a1281f5c743f7e8bb2ab2ae2032",
+      "gitBlob": "9e16c434ac55f12ba08d81a2ef8605dc53c85a29",
+      "bytes": 2642,
+      "equalTargetMain": true
+    },
+    {
+      "path": "src/ir/string-runtime.ts",
+      "sha256": "647e05b78186d63ab65bc2047500cc8a6e23102a408c1506e81c4a92b6861748",
+      "gitBlob": "389a6973df7e89cc75c7231953d2f7b83f90325a",
+      "bytes": 7621,
+      "equalTargetMain": true
+    },
+    {
+      "path": "src/ir/counted-string-append-provenance.ts",
+      "sha256": "a0d595166b0a209e17d6b2b59caf66f4a30e9f2d4b17051d14cda07cc57b4d0e",
+      "gitBlob": "9b55b342e0a7e06b6f7ac1e147bdd5cf7612177b",
+      "bytes": 17037,
+      "equalTargetMain": true
+    },
+    {
+      "path": "src/string-surrogate.ts",
+      "sha256": "782969df8b156eec18455d8e7f33acd1902cfa1b8d1e3f2e94dbb494a5ff49a4",
+      "gitBlob": "72c214269243a8abd22cad433768a6280588f633",
+      "bytes": 2435,
+      "equalTargetMain": true
+    },
+    {
+      "path": "src/ir/runtime-symbols.ts",
+      "sha256": "840622cc672ccb7a0e7ccb5bc5e7e5e5846205a837a12637835424fa244bd6e1",
+      "gitBlob": "cf31cd311fed238984b399ee140e22c81a1de112",
+      "bytes": 418,
+      "equalTargetMain": true
+    },
+    {
+      "path": "src/ir/date-runtime.ts",
+      "sha256": "a78f87a50815e36c24509b63ef8d1fba4e58725bbd069d85460c523a727893f0",
+      "gitBlob": "e5a1a84a0b74ebf50a9a124a80f673f99a9e8ba8",
+      "bytes": 724,
+      "equalTargetMain": true
+    },
+    {
+      "path": "src/ir/ast-lowering-plans.ts",
+      "sha256": "23fe4760963926f2666fae5388fc623b6a664a903e2cb21264c25694090b1580",
+      "gitBlob": "e14c6798c05f8b10ce31f154e1d6a5fa3c5940f0",
+      "bytes": 19035,
+      "equalTargetMain": true
+    }
+  ],
+  "bridge": [
+    {
+      "path": "src/ir/string-runtime.ts",
+      "phaseAInverseEqualsPreAOwner": true,
+      "sha256": "647e05b78186d63ab65bc2047500cc8a6e23102a408c1506e81c4a92b6861748",
+      "gitBlob": "389a6973df7e89cc75c7231953d2f7b83f90325a",
+      "bytes": 7621
+    },
+    {
+      "path": "src/ir/counted-string-append-provenance.ts",
+      "phaseAInverseEqualsPreAOwner": true,
+      "sha256": "a0d595166b0a209e17d6b2b59caf66f4a30e9f2d4b17051d14cda07cc57b4d0e",
+      "gitBlob": "9b55b342e0a7e06b6f7ac1e147bdd5cf7612177b",
+      "bytes": 17037
+    }
+  ]
+}

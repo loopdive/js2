@@ -55,6 +55,7 @@ import { allocLocal } from "./context/locals.js";
 import { collectClosureBaseWrapperTypeIdxs as closureBaseWrapperTypeIdxs } from "./closure-classifier.js"; // (#2175 V2-S1) shared list
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { boxToAny } from "./value-tags.js";
+import { readEnv } from "../env.js";
 
 // `$AnyValue` tag constants (mirror any-helpers.ts box helpers).
 const TAG_NULL = 0;
@@ -81,7 +82,7 @@ export function ensureDynReadHelpers(ctx: CodegenContext): void {
   // call site — the M0 self-test that the bodies are VALID Wasm (host +
   // standalone) before M1 wires real call sites. Off by default; never set in
   // production, so it cannot affect any normal/CI compile.
-  if (process.env.JS2WASM_FORCE_DYN_READ === "1") ctx.usesDynRead = true;
+  if (readEnv("JS2WASM_FORCE_DYN_READ") === "1") ctx.usesDynRead = true;
   if (!ctx.usesDynRead) return; // M0 / dynamic-read-free modules: byte-identical.
   if (ctx.dynReadHelpersEmitted) return;
   ctx.dynReadHelpersEmitted = true;
@@ -565,7 +566,7 @@ const AV_EXT = 4;
  * call site keeps its prior lowering — no regression).
  */
 export function ensureDynMemberGet(ctx: CodegenContext): void {
-  const forceSelfTest = process.env.JS2WASM_FORCE_DYN_MEMBER_GET === "1";
+  const forceSelfTest = readEnv("JS2WASM_FORCE_DYN_MEMBER_GET") === "1";
   if (forceSelfTest) ctx.usesDynMemberGet = true;
   if (!ctx.usesDynMemberGet) return; // U0 / member-get-free modules: byte-identical.
   if (ctx.dynMemberGetHelpersEmitted) return;
@@ -985,7 +986,7 @@ export function ensureDynMemberSet(ctx: CodegenContext): void {
         ...finishStrictSet(),
       ],
     );
-    if (dmsIdx !== undefined && process.env.JS2WASM_FORCE_DYN_MEMBER_SET === "1") {
+    if (dmsIdx !== undefined && readEnv("JS2WASM_FORCE_DYN_MEMBER_SET") === "1") {
       emitDynMemberSetNullishSelfTest(ctx);
       emitDynMemberSetPrivateNameSelfTest(ctx);
     }
@@ -1012,7 +1013,7 @@ export function ensureDynMemberSet(ctx: CodegenContext): void {
       ...finishStrictSet(),
     ],
   );
-  if (dmsIdx !== undefined && process.env.JS2WASM_FORCE_DYN_MEMBER_SET === "1") {
+  if (dmsIdx !== undefined && readEnv("JS2WASM_FORCE_DYN_MEMBER_SET") === "1") {
     emitDynMemberSetNullishSelfTest(ctx);
     emitDynMemberSetPrivateNameSelfTest(ctx);
   }

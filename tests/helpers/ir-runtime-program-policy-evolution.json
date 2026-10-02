@@ -1,0 +1,203 @@
+{
+  "schema": 1,
+  "kind": "c1-exact-runtime-program-policy-evolution",
+  "provenance": {
+    "reviewedBase": "23ddb71a0ecfa3ef2bede4546e551321e66f34f6",
+    "planSha256": "fe4af08ef5f28fb2922e38e706cbfd4fcc17e113b51a706d7da1492329809b0e",
+    "immutableInputs": [
+      {
+        "path": "src/ir/program.ts",
+        "bytes": 20480,
+        "sha256": "bbc4c4e092fc98053434dea89451e54b0db80d994c479aa2f4e519285a71ea50"
+      },
+      {
+        "path": "src/ir/program-abi-contracts.ts",
+        "bytes": 10561,
+        "sha256": "ec7abc6488f3a77c24b65348713efec386c02f8ad065836d5e14814cec6656b9"
+      },
+      {
+        "path": "src/ir/prepared-component-dependencies.ts",
+        "bytes": 70294,
+        "sha256": "7954d8385517afb23689382abb066a8cec016a50b277ae37fd81e895c6fcf10f"
+      },
+      {
+        "path": "src/ir/generator-support.ts",
+        "bytes": 329,
+        "sha256": "b15757be319275f1872dab77541600551d32795624d530d4b71f9eaf474862f5"
+      },
+      {
+        "path": "src/ir/program/owner.ts",
+        "bytes": 1323,
+        "sha256": "3b25543059427df6f91cce6892a7bfb9b0104ec2f078bc41517a1d6c42fb6b19"
+      },
+      {
+        "path": "src/ir/program/draft-abi-lookup.ts",
+        "bytes": 714,
+        "sha256": "b360370fdcac3c633a0f09f23e11ae71833ceecbed61cdf153da29d91c33aa24"
+      },
+      {
+        "path": "src/ir/program/runtime-support-dependencies.ts",
+        "bytes": 4661,
+        "sha256": "269d0476bd2f81f57057a8a8507896931e3c13d6176b5585ce08dcb1ee1b54b9"
+      },
+      {
+        "path": "src/ir/runtime/generator-support.ts",
+        "bytes": 8956,
+        "sha256": "afc937aaacb916d39447df1254ac0da67877778b9c7df09e7891e3fc7c861c39"
+      },
+      {
+        "path": "tests/issue-3518-runtime-program-c1-relocation.test.ts",
+        "bytes": 24062,
+        "sha256": "68a40cd9a5e67fc702e202a4f6307d4021dfed73fdaf0e2dbccd97a4ec6f7aed"
+      },
+      {
+        "path": "tests/helpers/ir-runtime-program-relocation.ts",
+        "bytes": 19615,
+        "sha256": "6be4b992fb5a3aafab89112e7f3a4dfcacb67ad7f53edb1c99a17fe55c7c5141"
+      },
+      {
+        "path": "tests/helpers/ir-runtime-program-relocation.json",
+        "bytes": 680099,
+        "sha256": "aeeae92fa9c31d8d7ae6aa8805c91862cb1fa2b79486fa4d69cce29d7d065763"
+      },
+      {
+        "path": "tests/issue-3518-runtime-program-relocation.test.ts",
+        "bytes": 21449,
+        "sha256": "324fa026106c484167f6631158043bf16298d07d6f82f1136808fa07054dcc6b"
+      },
+      {
+        "path": "tests/issue-3518-program-data-contract-seam.test.ts",
+        "bytes": 35973,
+        "sha256": "84f249d70f2546cb9ac025f72c7817d5d58e4950c00691fd585caba7bd0cffda"
+      },
+      {
+        "path": "tests/issue-3518-program-ownership-runtime-seam.test.ts",
+        "bytes": 36546,
+        "sha256": "66dfa1235ce24d821a9530a5c3531b56eef2817033d89f0d3e8109f9ead13220"
+      },
+      {
+        "path": "tests/issue-3518-program-pre-a-evolution.test.ts",
+        "bytes": 17640,
+        "sha256": "0ee5b4d09d0efd9bd5f084fde4fb87bf316ad4aae85867c30d9903cce9353068"
+      },
+      {
+        "path": "tests/issue-3518-program-initial-graph-evolution.test.ts",
+        "bytes": 24556,
+        "sha256": "44f5ac79766e9046aa4ed3ccc32c5e609209d0000ffe4d7b06d9afcc8049c2e6"
+      },
+      {
+        "path": "tests/helpers/ir-validation-policy-evolution.ts",
+        "bytes": 11095,
+        "sha256": "a962c04960b945705e9ac5a354da3e96c8e0cf5543382847231dd3df9204fb40"
+      },
+      {
+        "path": "tests/helpers/ir-validation-policy-evolution.json",
+        "bytes": 51450,
+        "sha256": "39dacc9d17fb52b6a369ed81d7498afc30b00bc06d89362bba039305aa96fa0e"
+      }
+    ]
+  },
+  "before": {
+    "source": {
+      "bytes": 564180,
+      "sha256": "88d8916fea2c0d8a9685b652d1b4a3ec6c4593b98de2d2180761d7bd4cba7330",
+      "gitBlob": "4184f8ec3d808930a1dba57f6511d32b6d796a8b"
+    },
+    "dataSha256": "e8d0034c26f59e042da49dfcc4af562436b562421b9e231ae78d664ab70c73e3",
+    "fileCount": 1765,
+    "filesSha256": "7d74424329d2bd52e02a282b257b4d950e81346cb0d1ced455e9beb246b6c2ae",
+    "activationCount": 94,
+    "activationHistorySha256": "b299da75bbd99efdcf3ba51ae52ead964ebfb4b2b36f3b78d739f02ec4efe4b0",
+    "layersSha256": "248d066f41ea35249cb74655101b154f2f9e4fe235b6fe9ae63e9a49d56c529d"
+  },
+  "current": {
+    "source": {
+      "bytes": 565188,
+      "sha256": "460eb6835dff1d22322ac9fb0fdd9526f04cd09d99d4dec8138f8e66b91ffd57",
+      "gitBlob": "5395e0265ca6fef778141101ea688e456417c558"
+    },
+    "dataSha256": "f24c0f10d4e8e9b5dc23471ec327f2fab7312890a5d4db035066e8c189ed2a11",
+    "fileCount": 1769,
+    "filesSha256": "c1e4f0b02ab0d5a42e0dbef3f725d64c427fc2c866e4989b5d0da8313cd92616",
+    "activationCount": 96,
+    "activationHistorySha256": "1c64b137373008c3bce05ac01a50808d2d3c2198b20b779d4f24f3bfcbdfed70",
+    "layersSha256": "c1be051d77d0857faeec740a200f3291fca0be93f2eb1bab8f93d9f2e12e9e36"
+  },
+  "allowedEdgesSha256": "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7",
+  "layerDeltas": [
+    {
+      "index": 9,
+      "id": "ir-program",
+      "beforeEntries": 40,
+      "currentEntries": 43,
+      "beforeMinModules": 40,
+      "currentMinModules": 43,
+      "roots": ["src/ir/program"],
+      "additions": [
+        "src/ir/program/owner.ts",
+        "src/ir/program/draft-abi-lookup.ts",
+        "src/ir/program/runtime-support-dependencies.ts"
+      ]
+    },
+    {
+      "index": 8,
+      "id": "ir-runtime",
+      "beforeEntries": 18,
+      "currentEntries": 19,
+      "beforeMinModules": 18,
+      "currentMinModules": 19,
+      "roots": ["src/ir/runtime"],
+      "additions": ["src/ir/runtime/generator-support.ts"]
+    }
+  ],
+  "addedFiles": [
+    {
+      "path": "src/ir/program/owner.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/draft-abi-lookup.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/runtime-support-dependencies.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/runtime/generator-support.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    }
+  ],
+  "activationAdditions": [
+    {
+      "layer": "ir-program",
+      "entries": [
+        "src/ir/program/owner.ts",
+        "src/ir/program/draft-abi-lookup.ts",
+        "src/ir/program/runtime-support-dependencies.ts"
+      ],
+      "minModules": 3
+    },
+    {
+      "layer": "ir-runtime",
+      "entries": ["src/ir/runtime/generator-support.ts"],
+      "minModules": 1
+    }
+  ],
+  "census": {
+    "layers": 20,
+    "requiredProgram": 43,
+    "requiredRuntime": 19,
+    "requiredNative": 98,
+    "nativeFloor": 97,
+    "requiredAnalysis": 11,
+    "requiredCore": 29,
+    "classifiedProgram": 44,
+    "classifiedRuntime": 19,
+    "classifiedNative": 103
+  }
+}

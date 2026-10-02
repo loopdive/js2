@@ -41,8 +41,9 @@
  */
 
 import type { CodegenContext } from "./context/types.js";
-import type { Instr, WasmFunction } from "../ir/types.js";
+import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { addFuncType } from "./registry/types.js";
+import { undefinedSingletonActive } from "./any-helpers.js";
 import { toPrimitivePresenceName } from "./to-primitive-dispatch-presence.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -117,7 +118,7 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
       { name: "rv", type: { kind: "externref" } },
       { name: "rs", type: { kind: "externref" } },
     ];
-    const runtimeWalk = buildClassToPrimitiveRuntimeWalk(ctx, fn);
+    const runtimeWalk = buildClassToPrimitiveRuntimeWalk(ctx, fn, exhaustiveWalkThrow(ctx));
     fn.body = [...runtimeWalk, { op: "local.get", index: 0 }];
     return;
   }
@@ -177,9 +178,8 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
     return;
   }
 
-  const exnTagIdx = ensureExnTag(ctx);
+  ensureExnTag(ctx);
   const OBJECT_TAG = "[object Object]";
-  const TYPE_ERR_MSG = "Cannot convert object to primitive value";
   addStringConstantGlobal(ctx, OBJECT_TAG);
   addStringConstantGlobal(ctx, TYPE_ERR_MSG);
 
@@ -203,11 +203,7 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
   ];
 
   const returnObjectTag = (): Instr[] => [...stringConstantExternrefInstrs(ctx, OBJECT_TAG), { op: "return" }];
-  const throwTypeError = (): Instr[] => [
-    ...stringConstantExternrefInstrs(ctx, TYPE_ERR_MSG),
-    { op: "call", funcIdx: typeErrorCtorIdx },
-    { op: "throw", tagIdx: exnTagIdx },
-  ];
+  const throwTypeError = classToPrimitiveTypeError(ctx)!;
 
   // A matched call may return null, undefined, another primitive, or an object.
   // The separate local survives recursive conversions and never triggers a
@@ -342,7 +338,7 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
     { name: "has_rs", type: { kind: "i32" } },
   ];
 
-  const runtimeWalk = buildClassToPrimitiveRuntimeWalk(ctx, fn);
+  const runtimeWalk = buildClassToPrimitiveRuntimeWalk(ctx, fn, exhaustiveWalkThrow(ctx));
 
   fn.body = [
     { op: "local.get", index: L_HINT },
@@ -358,6 +354,63 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
     // exactly as the pre-#2638 fall-through did (no regression).
     { op: "local.get", index: 0 },
   ];
+}
+
+const TYPE_ERR_MSG = "Cannot convert object to primitive value";
+
+/**
+ * (#6651 H1) Modules whose runtime walk must FINISH §7.1.1.1 (skip a
+ * non-callable member, throw when nothing converts) instead of declining.
+ *
+ * Opt-in, and set only by a site that hands the runtime engine a value whose
+ * members the compile-time dispatchers were never asked about — an
+ * object-literal `String.prototype.*` argument (spec-arg-coercion.ts). The walk
+ * is emitted into every standalone module that reserves this driver, and the
+ * declining walk is what every other module was measured against; this keeps
+ * their bytes identical rather than asking one slice to re-measure the corpus.
+ */
+const exhaustiveModules = new WeakSet<CodegenContext>();
+
+export function requireExhaustiveClassToPrimitive(ctx: CodegenContext): void {
+  exhaustiveModules.add(ctx);
+}
+
+function exhaustiveWalkThrow(ctx: CodegenContext): (() => Instr[]) | undefined {
+  return exhaustiveModules.has(ctx) ? classToPrimitiveTypeError(ctx) : undefined;
+}
+
+/**
+ * The box for a `__call_valueOf`/`__call_toString` dispatcher's BRANDED i32
+ * result in the same modules: `__box_symbol` / `__box_boolean`, where the
+ * dispatchers box every i32 as a NUMBER. A `toString` returning `true` then
+ * renders "1", and one returning a Symbol a digit instead of throwing — the
+ * compile-time dispatch those modules' routed arguments no longer take read
+ * the brand; this is the runtime twin. `undefined` → keep the number box.
+ */
+export function brandedI32ResultBoxIdx(ctx: CodegenContext, t: ValType | null | undefined): number | undefined {
+  if (!exhaustiveModules.has(ctx) || !t || t.kind !== "i32") return undefined;
+  if (t.symbol === true) return ctx.funcMap.get("__box_symbol");
+  return t.boolean === true ? ctx.funcMap.get("__box_boolean") : undefined;
+}
+
+/**
+ * §7.1.1.1 step 6's TypeError as a factory (fresh instructions per use), or
+ * `undefined` without `__new_TypeError`. The tag and message constant register
+ * on first USE, so a dispatcher-free driver whose runtime walk is empty
+ * registers nothing new (#6651 H1).
+ */
+function classToPrimitiveTypeError(ctx: CodegenContext): (() => Instr[]) | undefined {
+  const typeErrorCtorIdx = ctx.funcMap.get("__new_TypeError");
+  if (typeErrorCtorIdx === undefined) return undefined;
+  return () => {
+    const exnTagIdx = ensureExnTag(ctx);
+    addStringConstantGlobal(ctx, TYPE_ERR_MSG);
+    return [
+      ...stringConstantExternrefInstrs(ctx, TYPE_ERR_MSG),
+      { op: "call", funcIdx: typeErrorCtorIdx },
+      { op: "throw", tagIdx: exnTagIdx },
+    ];
+  };
 }
 
 /**
@@ -388,7 +441,7 @@ export function fillClassToPrimitive(ctx: CodegenContext): void {
  * unaffected) and returns `[]` — emitting nothing, growing nothing — when the
  * walk's runtime natives are unavailable.
  */
-function buildClassToPrimitiveRuntimeWalk(ctx: CodegenContext, fn: WasmFunction): Instr[] {
+function buildClassToPrimitiveRuntimeWalk(ctx: CodegenContext, fn: WasmFunction, onExhausted?: () => Instr[]): Instr[] {
   const probeDeps = resolveOrdinaryToPrimitiveProbeDeps(ctx);
   if (probeDeps === undefined) return [];
   const L_OBJ = 0;
@@ -421,6 +474,8 @@ function buildClassToPrimitiveRuntimeWalk(ctx: CodegenContext, fn: WasmFunction)
       // check #13 measures exactly that.
       stopWhenFirstAbsent: order[0] === "toString",
       ownerCall,
+      onExhausted,
+      nullResultIsPrimitive: onExhausted !== undefined && undefinedSingletonActive(ctx),
     });
 
   // The same object/function guard `emitAddOrdinaryToPrimitiveResidue` uses:

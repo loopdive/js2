@@ -14,6 +14,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { typedArrayVecStorage } from "./index.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 
@@ -46,6 +47,83 @@ function ensureEncodeIntoResultStruct(ctx: CodegenContext): number {
   return typeIdx;
 }
 
+/**
+ * (#6714) The encode-result / decode-argument carrier is whatever `Uint8Array`
+ * lowers to in this compilation (`typedArrayVecStorage`): the packed-`i8`
+ * `$__vec_i8_byte` (the `final`-branded TypedArray carrier, #5349) under
+ * standalone/WASI — the backing `new Uint8Array` / `fromHex` / `fromBase64` /
+ * `toHex` use — and `$__vec_f64` elsewhere. Before #6714 it was hard-wired to
+ * `$__vec_f64`, so under standalone an encode result flowing through a slot
+ * typed `Uint8Array` (a closure's declared result, a parameter) was an invalid
+ * module: `expected (ref null $__vec_i8_byte), got (ref null $__vec_f64)`
+ * (axios `lib/adapters/fetch.js`). The `f64` arm keeps the pre-#6714 bytes.
+ */
+function uint8Carrier(ctx: CodegenContext): {
+  packed: boolean;
+  vecTypeIdx: number;
+} {
+  const storage = typedArrayVecStorage(ctx, "Uint8Array");
+  return {
+    packed: storage.type.kind === "i8",
+    vecTypeIdx: getOrRegisterVecType(ctx, storage.key, storage.type),
+  };
+}
+
+/** i32 byte -> element conversion before `array.set` (a packed `i8` set truncates itself). */
+function byteStoreConversion(packed: boolean): Instr[] {
+  return packed ? [] : [{ op: "f64.convert_i32_u" }];
+}
+
+/** `array.get` of one byte as an unsigned i32 in 0..255. */
+function byteLoad(packed: boolean, arrTypeIdx: number): Instr[] {
+  if (packed) return [{ op: "array.get_u", typeIdx: arrTypeIdx }];
+  return [
+    { op: "array.get", typeIdx: arrTypeIdx },
+    { op: "i32.trunc_sat_f64_u" },
+    { op: "i32.const", value: 0xff },
+    { op: "i32.and" },
+  ];
+}
+
+/**
+ * Scratch capacity from the UTF-16 length on the stack. Packed: worst case 3
+ * UTF-8 bytes per UTF-16 unit (a surrogate pair is 2 units -> 4 bytes; a lone
+ * surrogate is 1 unit -> U+FFFD, 3 bytes).
+ */
+function encodeScratchCapacity(packed: boolean): Instr[] {
+  return packed
+    ? [{ op: "i32.const", value: 3 }, { op: "i32.mul" }]
+    : [{ op: "i32.const", value: 2 }, { op: "i32.shl" }];
+}
+
+/**
+ * Packed carrier: trim the worst-case scratch buffer to the exact byte length
+ * so `.buffer.byteLength` and every `array.len`-based consumer see the encoded
+ * length (as `fromBase64` does). Leaves the trimmed array in `outLocal`.
+ */
+function trimEncodeOutput(
+  packed: boolean,
+  arrTypeIdx: number,
+  lenLocal: number,
+  outLocal: number,
+  finalLocal: number,
+): Instr[] {
+  if (!packed) return [];
+  return [
+    { op: "local.get", index: lenLocal },
+    { op: "array.new_default", typeIdx: arrTypeIdx },
+    { op: "local.set", index: finalLocal },
+    { op: "local.get", index: finalLocal },
+    { op: "i32.const", value: 0 },
+    { op: "local.get", index: outLocal },
+    { op: "i32.const", value: 0 },
+    { op: "local.get", index: lenLocal },
+    { op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx },
+    { op: "local.get", index: finalLocal },
+    { op: "local.set", index: outLocal },
+  ];
+}
+
 export function ensureTextEncodingHelpers(ctx: CodegenContext): {
   encodeIdx: number;
   decodeU8Idx: number;
@@ -56,8 +134,7 @@ export function ensureTextEncodingHelpers(ctx: CodegenContext): {
 
   const existingEncode = ctx.funcMap.get("__textencoder_encode");
   const existingDecode = ctx.funcMap.get("__textdecoder_decode_u8");
-  const elemType: ValType = { kind: "f64" };
-  const vecTypeIdx = getOrRegisterVecType(ctx, "f64", elemType);
+  const { packed, vecTypeIdx } = uint8Carrier(ctx);
   const vecArrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   const resultTypeIdx = ensureEncodeIntoResultStruct(ctx);
   if (existingEncode !== undefined && existingDecode !== undefined) {
@@ -101,12 +178,13 @@ export function ensureTextEncodingHelpers(ctx: CodegenContext): {
     const CU = 9;
     const CP = 10;
     const LO = 11;
+    const FINAL = 12;
 
     const writeByte = (valueInstrs: Instr[]): Instr[] => [
       { op: "local.get", index: OUT },
       { op: "local.get", index: O },
       ...valueInstrs,
-      { op: "f64.convert_i32_u" },
+      ...byteStoreConversion(packed),
       { op: "array.set", typeIdx: vecArrTypeIdx },
       { op: "local.get", index: O },
       { op: "i32.const", value: 1 },
@@ -330,8 +408,7 @@ export function ensureTextEncodingHelpers(ctx: CodegenContext): {
       { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 },
       { op: "local.set", index: DATA },
       { op: "local.get", index: LEN },
-      { op: "i32.const", value: 2 },
-      { op: "i32.shl" },
+      ...encodeScratchCapacity(packed),
       { op: "array.new_default", typeIdx: vecArrTypeIdx },
       { op: "local.set", index: OUT },
       { op: "i32.const", value: 0 },
@@ -356,6 +433,7 @@ export function ensureTextEncodingHelpers(ctx: CodegenContext): {
           },
         ],
       },
+      ...trimEncodeOutput(packed, vecArrTypeIdx, O, OUT, FINAL),
       { op: "local.get", index: O },
       { op: "local.get", index: OUT },
       { op: "struct.new", typeIdx: vecTypeIdx },
@@ -376,6 +454,7 @@ export function ensureTextEncodingHelpers(ctx: CodegenContext): {
         { name: "cu", type: { kind: "i32" } },
         { name: "cp", type: { kind: "i32" } },
         { name: "lo", type: { kind: "i32" } },
+        ...(packed ? [{ name: "final", type: vecArrRef }] : []),
       ],
       body,
       exported: false,
@@ -403,10 +482,7 @@ export function ensureTextEncodingHelpers(ctx: CodegenContext): {
     const readByteTo = (local: number): Instr[] => [
       { op: "local.get", index: DATA },
       { op: "local.get", index: I },
-      { op: "array.get", typeIdx: vecArrTypeIdx },
-      { op: "i32.trunc_sat_f64_u" },
-      { op: "i32.const", value: 0xff },
-      { op: "i32.and" },
+      ...byteLoad(packed, vecArrTypeIdx),
       { op: "local.set", index: local },
       { op: "local.get", index: I },
       { op: "i32.const", value: 1 },

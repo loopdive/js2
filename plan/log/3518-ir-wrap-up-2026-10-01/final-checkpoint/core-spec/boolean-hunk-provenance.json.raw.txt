@@ -1,0 +1,238 @@
+{
+  "kind": "exact-Boolean-evolution-authoring-hunks",
+  "provenance": "c2fb27fed2ae2cbe3559b26acd42d53d61da80d0",
+  "current": "1265c47d6fc41300a380ef7e4abc45fdfcfd2c61",
+  "offsetUnit": "Unicode code points in this hunk-provenance supplement; main reconstruction-spec uses TypeScript UTF-16 code units",
+  "files": [
+    {
+      "path": "src/ir/intrinsics.ts",
+      "current": {
+        "bytes": 2316,
+        "sha256": "1e037410c4702272ae7f16a3b20b2a352f4c31525feb20419428399dac20e091",
+        "gitBlob": "5e3a09f86e5743867318740e4706607eb0ea30bb"
+      },
+      "before": {
+        "bytes": 2272,
+        "sha256": "c39593810291752471e1f7c513b4e6e7b254d28aa236c0122a4587ab7a71f2b7",
+        "gitBlob": "3356bc74ab47b9598ab854701950569b95b59c3c"
+      },
+      "beforeEquals545923d": true,
+      "hunks": [
+        {
+          "kind": "insert",
+          "beforeLines": [
+            49,
+            49
+          ],
+          "currentLines": [
+            49,
+            50
+          ],
+          "beforeSpan": {
+            "start": 1549,
+            "end": 1549,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "currentSpan": {
+            "start": 1549,
+            "end": 1593,
+            "sha256": "0c2e48ea269dda07f42f9a962ee6d3deb378fd7632abbb73251fda5ca4ccaeb8"
+          },
+          "oldByteCount": 0,
+          "currentByteCount": 44
+        }
+      ],
+      "inverseExact": true,
+      "forwardExact": true
+    },
+    {
+      "path": "src/ir/core/intrinsic-vocabulary.ts",
+      "current": {
+        "bytes": 3446,
+        "sha256": "2aa5c040d09473d683daace9007c4d483cfc76f45eef707b50c7205c7c86854d",
+        "gitBlob": "6e837f8b8b19626a71b13df0f0401921fac073ae"
+      },
+      "before": {
+        "bytes": 3859,
+        "sha256": "276b890af04a1c5f4f96c2764f7cbd7dcd5d3d12a8951c08c290e3577b9a7ef3",
+        "gitBlob": "528bebdab2e8b74d5b6d85584b1e8a325c097cdc"
+      },
+      "beforeEquals545923d": true,
+      "hunks": [
+        {
+          "kind": "replace",
+          "beforeLines": [
+            62,
+            73
+          ],
+          "currentLines": [
+            62,
+            64
+          ],
+          "beforeSpan": {
+            "start": 1785,
+            "end": 2404,
+            "sha256": "4a03ac29e6f88edd3eca5b7690a15edaec5d8ad2a61733a48f832cb005346fa5"
+          },
+          "currentSpan": {
+            "start": 1785,
+            "end": 1997,
+            "sha256": "45fb4dae9d159347d7eaff3d364b9da0e7aca7d24fee7f64e48c8c3e93b9c85f"
+          },
+          "oldByteCount": 625,
+          "currentByteCount": 212
+        }
+      ],
+      "inverseExact": true,
+      "forwardExact": true
+    },
+    {
+      "path": "src/ir/runtime/contracts/intrinsics.ts",
+      "current": {
+        "bytes": 3101,
+        "sha256": "0392774476fc5beb79f6c0ac22e610fb098c3687e80d653a2aa468f85ef25ed2",
+        "gitBlob": "04e452f4a7041ddd094fa3cac9d579d4280febe7"
+      },
+      "before": {
+        "bytes": 3090,
+        "sha256": "401d18d79bb03d25924fb5f25de22209667067657e36861087be981230357f1f",
+        "gitBlob": "3bc31e819b9c7d9b7c5b27d9d7a6b70ad6f75e00"
+      },
+      "beforeEquals545923d": true,
+      "hunks": [
+        {
+          "kind": "replace",
+          "beforeLines": [
+            58,
+            60
+          ],
+          "currentLines": [
+            58,
+            60
+          ],
+          "beforeSpan": {
+            "start": 1400,
+            "end": 1569,
+            "sha256": "3e1247b851150829ac4ae8ff1965d253d603fba0f71f3b47d43fa047005ddafc"
+          },
+          "currentSpan": {
+            "start": 1400,
+            "end": 1580,
+            "sha256": "c71effc1fb71067f2f982fff56c596429d0e34d8f81a64f42d01f4ae42b69731"
+          },
+          "oldByteCount": 169,
+          "currentByteCount": 180
+        }
+      ],
+      "inverseExact": true,
+      "forwardExact": true
+    },
+    {
+      "path": "src/ir/core/intrinsics.ts",
+      "current": {
+        "bytes": 11038,
+        "sha256": "96b3368af4b8777f19abd9a0aa7ebf0a25f102075c1ca0db6504a8ec81aa569f",
+        "gitBlob": "a8d550388b00f810017a5e28213480063c70f014"
+      },
+      "before": {
+        "bytes": 10551,
+        "sha256": "dd020e9d33602174b4f1e60329e385f20fbb4bbd0eb2c87ab1ac2d5955ae0262",
+        "gitBlob": "b68b63191d636d3a995812d1030efc3bde266f74"
+      },
+      "beforeEquals545923d": true,
+      "hunks": [
+        {
+          "kind": "insert",
+          "beforeLines": [
+            69,
+            69
+          ],
+          "currentLines": [
+            69,
+            76
+          ],
+          "beforeSpan": {
+            "start": 2373,
+            "end": 2373,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "currentSpan": {
+            "start": 2373,
+            "end": 2764,
+            "sha256": "5077a120471a4877abed231cae9ae7808b696ec9a12aafbbfa8cbd34a7ad3857"
+          },
+          "oldByteCount": 0,
+          "currentByteCount": 391
+        },
+        {
+          "kind": "insert",
+          "beforeLines": [
+            193,
+            193
+          ],
+          "currentLines": [
+            200,
+            201
+          ],
+          "beforeSpan": {
+            "start": 7884,
+            "end": 7884,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "currentSpan": {
+            "start": 8275,
+            "end": 8371,
+            "sha256": "f459249e97c2e164ab5e7eff5edecf37dd7246f571fb357bb20d72b9d918fc31"
+          },
+          "oldByteCount": 0,
+          "currentByteCount": 96
+        }
+      ],
+      "inverseExact": true,
+      "forwardExact": true
+    },
+    {
+      "path": "src/ir/analysis/intrinsics.ts",
+      "current": {
+        "bytes": 4751,
+        "sha256": "57af60dfaf3f4b8fe5845b053442aab3863383519db48bc705e6dfb89caeba5d",
+        "gitBlob": "1a86a55e9ac08764d0105c288a68147915b4a786"
+      },
+      "before": {
+        "bytes": 4520,
+        "sha256": "58d4a7fdc7d374c838ebeb07744c5f8bae543573e5142bfab6bed7846f408651",
+        "gitBlob": "83b10ec4b2ec60d898a588e6af8287f41622b817"
+      },
+      "beforeEquals545923d": true,
+      "hunks": [
+        {
+          "kind": "insert",
+          "beforeLines": [
+            44,
+            44
+          ],
+          "currentLines": [
+            44,
+            49
+          ],
+          "beforeSpan": {
+            "start": 1786,
+            "end": 1786,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "currentSpan": {
+            "start": 1786,
+            "end": 2017,
+            "sha256": "dadcfeadf77b91faf792f0ef5c2e18346b95b3ed9eb3bcb2236256cde406d7e8"
+          },
+          "oldByteCount": 0,
+          "currentByteCount": 231
+        }
+      ],
+      "inverseExact": true,
+      "forwardExact": true
+    }
+  ],
+  "hunkTotal": 6,
+  "notRuntimeImplementation": "Full live reconstruction and token edits are in reconstruction-spec.json; this supplement only proves commit provenance and exact extents."
+}

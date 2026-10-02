@@ -106,7 +106,7 @@ describe("#3492 — honest Test262 fixture graph parity", () => {
   });
 
   it(
-    "lets compiler policy reject eager dynamic fixtures while reaching the fixed static cycle",
+    "rejects an out-of-graph dynamic fixture at runtime while reaching the fixed static cycle",
     { timeout: 60_000 },
     async () => {
       const tests = await loadOriginalHarnessTests([DYNAMIC_TLA_PATH, PENDING_CYCLE_PATH]);
@@ -116,14 +116,11 @@ describe("#3492 — honest Test262 fixture graph parity", () => {
         runTest(byPath.get(PENDING_CYCLE_PATH)!, "standalone"),
       ]);
 
-      expect(dynamic).toMatchObject({
-        pass: false,
-        phase: "compile",
-        reachedTest: false,
-      });
-      expect(dynamic.detail).toContain(
-        "Standalone dynamic import is unsupported until compileMulti provides internal module records and namespace objects",
-      );
+      // #3494 — the dynamic fixture is never promoted into the compiled graph,
+      // so the standalone import() compiles and REJECTS with a TypeError at
+      // runtime (no host loader); the row still fails, but no longer at compile.
+      expect(dynamic.pass).toBe(false);
+      expect(dynamic.detail ?? "").not.toContain("Standalone dynamic import is unsupported");
       expect(cycle).toMatchObject({
         pass: true,
         phase: "runtime",

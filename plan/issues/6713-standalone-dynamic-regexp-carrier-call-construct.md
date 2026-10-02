@@ -1,7 +1,8 @@
 ---
 id: 6713
 title: "standalone: calling or constructing a builtin constructor carrier held as a dynamic value (RegExp, Error, TypeError) does not yield an instance (lodash `reIsNative`)"
-status: ready
+status: done
+completed: 2026-09-28
 sprint: current
 created: 2026-09-27
 priority: high
@@ -12,7 +13,16 @@ task_type: bug
 area: compiler
 goal: standalone
 requested_by: ttraenkler/sendev-standalone
-related: [6711, 6703, 4394, 6651]
+related: [6711, 6703, 4394, 6651, 6736]
+# 2026-09-28 (#6713): three one-line hooks into the dynamic call / `new`
+# drivers; the lowering itself lives in src/codegen/builtin-ctor-value-invoke.ts.
+loc-budget-allow:
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/expressions/calls.ts
+func-budget-allow:
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/expressions/new-super.ts::emitDynamicNewFallback
+  - src/codegen/expressions/calls.ts::tryEmitInlineDynamicCall
 ---
 
 # #6713 — dynamic `[[Call]]` / `[[Construct]]` of the standalone `RegExp` carrier
@@ -91,3 +101,81 @@ Separately observed (not a lodash blocker): `typeof Function.prototype` reads
 `Function.prototype.toString.call(Object.prototype.hasOwnProperty)` throws at
 top level while the same call through a `context.Function` alias returns a
 string.
+
+## Implementation Plan
+
+(Executed 2026-09-28.)
+
+1. **Helpers, minted on demand** — new module
+   `src/codegen/builtin-ctor-value-invoke.ts`. When a call or `new` site's
+   callee TRACES to a constructor name (`X.RegExp` / `X["TypeError"]` off any
+   receiver, the ambient global, or a single-assignment alias of either —
+   `tracedBuiltinCtorValueName`), mint once per module:
+   - `__builtin_ctor_value_RegExp(pattern, flags, isCall)` — §22.2.4.1, the
+     exact sequence the static `RegExp(obj)` lane emits. That sequence was
+     factored out of `regexp-ctor-regexp-like.ts` into
+     `registerRegExpCtorRuntime` / `resolveRegExpCtorOps` /
+     `regExpCtorOperationInstrs` (byte-identical for the existing caller); the
+     step-2 call-spelling shortcut takes an extra runtime `isCall` conjunct.
+   - `__builtin_ctor_value_<Error|TypeError|RangeError|SyntaxError|ReferenceError|EvalError|URIError>(message)`
+     — §20.5.1.1: spec ToString (`__extern_to_string_spec`, a Symbol throws)
+     unless undefined, then the native `__new_<Name>` `$Error_struct` ctor.
+   The carrier slot is RESERVED (not materialized) at mint time so a later read
+   reuses it (`reserveBuiltinConstructorIdentityGlobal`, and a new
+   `reserveBuiltinNamespaceObjectGlobal` factored out of
+   `emitBuiltinNamespaceObject`).
+2. **`[[Call]]`** — `builtinCtorCallableArmInstrs` (the #4394 front guard of
+   `__apply_closure`) prepends one `ref.eq`-identity arm per minted helper.
+   `tryEmitInlineDynamicCall` mints the helper for a traced callee.
+3. **`[[Construct]]`** — `emitBuiltinCtorValueConstructOnNull` retries a null
+   dynamic-`new` result against the carrier: appended to the standalone
+   TypedArray/bound/runtime-eval chain in `compileNewExpression` and to
+   `emitDynamicNewFallback`'s standalone no-match base.
+   `resolvesToDynamicAnyCtorValue` no longer rejects a LOCAL binding named like
+   an extern class (`var RegExp = context.RegExp`) in the host-free lanes
+   (`shadowsExternClassName`); it fell to a `__new_RegExp` import that cannot
+   exist and constructed null without evaluating its arguments.
+4. **Typed aliases** — `var R = globalThis.RegExp; R(p)` / `new E(m)` carry the
+   lib constructor interface and took the typed closure-call / extern-class
+   lowerings (null-deref trap, `illegal cast`, or `undefined`).
+   `tryCompileBuiltinCtorAliasInvoke` (hooked in `tryRegExpConstructorCall` and
+   at the top of `compileNewExpression`) emits
+   `callee === carrier ? helper(args) : <today's lowering, re-entered>`;
+   declines for spread / function-bearing arguments.
+
+The runtime decision is always reference identity against the carrier global;
+the name trace only decides whether a helper is minted. Standalone only
+(`ctx.standalone && !ctx.wasi`); modules without a traced site are
+byte-identical, and the JS-host lane is byte-identical.
+
+## Resolution
+
+lodash 4.18.1 standalone-dynamic lane (`generate-npm-compat-report.mjs --only
+lodash --no-write --perf-only --lane standalone-dynamic`, 0 imports):
+
+- before (`2e23e49fb1`): `runtime-error (module-init): TypeError: Cannot read
+  properties of undefined (reading 'test')` — died at `lodash.js:1547`.
+- after: `runtime-error (module-init): TypeError: called value is not a
+  function` — module init now runs to `lodash.js:17127` (of 17226). Located with
+  step markers: `baseForOwn(LazyWrapper.prototype, …)` →
+  `isArrayLike(LazyWrapper.prototype)` is wrongly true because a function's
+  `prototype` object answers a numeric `.length` → filed as
+  [#6736](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6736-standalone-fnctor-prototype-length-reads-number).
+
+Regression test `tests/issue-6713-builtin-ctor-value-invoke.test.ts`: parent
+`95000` / null-deref trap; fix `127` / `63` (Node: `127` / `63`).
+
+Scoped standalone test262 (`run-test262-paths.mts --standalone`,
+`built-ins/RegExp/*.js` + `built-ins/Error/**` + `built-ins/NativeErrors/**`,
+675 rows): parent pass 614 / fail 52 / compile_error 9, fix pass 614 / fail 52 /
+compile_error 9 — the 61 non-pass rows are the identical set (no gains, no
+losses; none of these rows invokes a carrier through a variable). JS-host
+control: the lodash js-host binary is byte-identical parent vs fix
+(sha256 `b0fc935a6a428ee6…`, 1,286,632 B), as is a standalone module exercising
+the refactored static `RegExp(obj)` lane.
+
+Residuals (pre-existing, not addressed): `x instanceof <carrier value>` with a
+dynamic RHS (`e instanceof context.TypeError`) answers false even for a
+statically constructed error; on a `$NativeRegExp` receiver read through `any`,
+`re.constructor` / `re[Symbol.match]` read undefined, so `RegExp(re)` through
+the alias clones instead of returning `re` (§22.2.4.1 step 2).

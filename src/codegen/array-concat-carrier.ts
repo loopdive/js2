@@ -48,6 +48,7 @@
  */
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
+import { tracesToProxyValue } from "./proxy-value-provenance.js"; // (#6651 H6)
 
 /**
  * (#4655) Does this module have to route `Array.prototype.concat` through the
@@ -128,6 +129,23 @@ export function concatMustConsultIsConcatSpreadable(ctx: CodegenContext): boolea
   return ctx.targetProfile.semanticProviders === "native-first" && ctx.isConcatSpreadableDirty === true;
 }
 
+/**
+ * (#6651 H6) The FOURTH gate, per call: an operand — receiver included — that
+ * traces to a Proxy VALUE. TypeScript types a proxy as its target, so
+ * `[].concat(handle.proxy)` reaches the typed fast path, which `ref.cast`s the
+ * operand to a vec (`illegal cast`) instead of performing §23.1.3.1.1's
+ * `Get(E, @@isConcatSpreadable)` — the read that must throw on a revoked proxy
+ * (`is-concat-spreadable-proxy-revoked.js`). The spec loop performs that Get
+ * for every operand. `tracesToProxyValue` is the F-cluster predicate; a false
+ * positive costs the fast path, never an answer.
+ */
+export function concatOperandMayBeProxy(ctx: CodegenContext, call: ts.CallExpression): boolean {
+  if (ctx.targetProfile.semanticProviders !== "native-first" || !ctx.proxyDirty) return false;
+  const callee = unwrap(call.expression);
+  const operands = [...(ts.isPropertyAccessExpression(callee) ? [callee.expression] : []), ...call.arguments];
+  return operands.some((operand) => !ts.isSpreadElement(operand) && tracesToProxyValue(ctx, operand));
+}
+
 /** Strip the wrappers that can sit between a declaration and its call initializer. */
 function unwrap(expr: ts.Expression): ts.Expression {
   let current = expr;
@@ -199,5 +217,10 @@ export function concatCallYieldsDynamicCarrier(ctx: CodegenContext, expr: ts.Exp
   const callee = call.expression;
   if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "concat") return false;
   if (!receiverIsArrayShaped(ctx, callee.expression)) return false;
-  return call.arguments.length > 1 || concatMustConsultPrototypeChain(ctx) || concatMustConsultIsConcatSpreadable(ctx);
+  return (
+    call.arguments.length > 1 ||
+    concatMustConsultPrototypeChain(ctx) ||
+    concatMustConsultIsConcatSpreadable(ctx) ||
+    concatOperandMayBeProxy(ctx, call)
+  );
 }

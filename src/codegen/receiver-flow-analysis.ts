@@ -55,6 +55,7 @@
 import ts from "typescript";
 
 import { optInFlagEnabled } from "../perf-flags.js";
+import { readEnv } from "../env.js";
 
 /**
  * (#4405) `JS2WASM_RECEIVER_SPEC` — receiver-type specialisation for NON-`this`
@@ -66,7 +67,7 @@ import { optInFlagEnabled } from "../perf-flags.js";
  * between compiles in one process.
  */
 export function receiverSpecEnabled(): boolean {
-  return optInFlagEnabled(process.env.JS2WASM_RECEIVER_SPEC);
+  return optInFlagEnabled(readEnv("JS2WASM_RECEIVER_SPEC"));
 }
 
 /** A per-binding or per-parameter verdict: the single class it always holds. */
@@ -136,11 +137,29 @@ function resolveLocalBindingWithReason(id: ts.Identifier): {
   reason: "found" | "ambiguous" | "not-found";
 } {
   const name = id.text;
-  let found: ts.Node | undefined;
-  let scope: ts.Node | undefined = id.parent;
-  while (scope) {
-    const container = scope;
-    let hitsInThisScope = 0;
+  for (let scope: ts.Node | undefined = id.parent; scope; scope = scope.parent) {
+    const { hits, first } = scopeDeclarationsOf(scope, name);
+    if (hits > 1) return { decl: undefined, reason: "ambiguous" }; // fail closed
+    if (first) return { decl: first, reason: "found" };
+  }
+  return { decl: undefined, reason: "not-found" };
+}
+
+/**
+ * The `var`/parameter declarations of `name` directly inside `container` (not
+ * inside a nested function). The container's subtree is immutable during a
+ * compile, so one walk indexes every name it declares and later lookups are a
+ * map read: re-walking each enclosing scope up to the source file per receiver
+ * was quadratic in file size (jsdom standalone spent >50 CPU-minutes here).
+ */
+type ScopeDeclarations = { hits: number; first: ts.Node | undefined };
+const NO_DECLARATIONS: ScopeDeclarations = { hits: 0, first: undefined };
+const scopeDeclarationIndex = new WeakMap<ts.Node, Map<string, ScopeDeclarations>>();
+
+function scopeDeclarationsOf(container: ts.Node, name: string): ScopeDeclarations {
+  let index = scopeDeclarationIndex.get(container);
+  if (index === undefined) {
+    const built = new Map<string, ScopeDeclarations>();
     const scan = (node: ts.Node): void => {
       // Do not descend into nested functions — their locals are a different scope.
       if (
@@ -152,22 +171,17 @@ function resolveLocalBindingWithReason(id: ts.Identifier): {
       ) {
         return;
       }
-      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) {
-        hitsInThisScope++;
-        found ??= node;
-      }
-      if (ts.isParameter(node) && ts.isIdentifier(node.name) && node.name.text === name) {
-        hitsInThisScope++;
-        found ??= node;
+      if ((ts.isVariableDeclaration(node) || ts.isParameter(node)) && ts.isIdentifier(node.name)) {
+        const entry = built.get(node.name.text);
+        if (entry === undefined) built.set(node.name.text, { hits: 1, first: node });
+        else entry.hits++;
       }
       ts.forEachChild(node, scan);
     };
     scan(container);
-    if (hitsInThisScope > 1) return { decl: undefined, reason: "ambiguous" }; // fail closed
-    if (found) return { decl: found, reason: "found" };
-    scope = scope.parent;
+    scopeDeclarationIndex.set(container, (index = built));
   }
-  return { decl: undefined, reason: "not-found" };
+  return index.get(name) ?? NO_DECLARATIONS;
 }
 
 /**

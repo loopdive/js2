@@ -1,0 +1,13 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-validation-lowering-b-resume-20261001
+
+ ✓ .tmp/validation-lowering-b-resume/first-integration/graph-diagnostic.test.ts (2 tests) 1168ms
+   ✓ diagnoses the actual40-module graph without accepting changed historical edges  624ms
+   ✓ diagnoses the actual44-module graph without accepting changed historical edges  544ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  08:44:24
+   Duration  1.52s (transform 57ms, setup 0ms, collect 237ms, tests 1.17s, environment 0ms, prepare 38ms)
+
+JSON report written to /private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/first-integration/graph-diagnostic.json

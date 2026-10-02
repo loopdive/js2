@@ -17,6 +17,7 @@ import { ensureNativeStringHelpers, flatStringType } from "./native-strings.js";
 import { coerceType, compileExpression } from "./shared.js";
 import { emitTdzInit } from "./statements/tdz.js";
 import { isModuleInitChunkFunctionContext } from "./module-init-chunks.js";
+import { readEnv } from "../env.js";
 
 export function tryCompileDerivedAsciiCaseBinding(
   ctx: CodegenContext,
@@ -26,7 +27,7 @@ export function tryCompileDerivedAsciiCaseBinding(
 ): boolean {
   if (isModuleInitChunkFunctionContext(fctx)) return false;
   if (
-    process.env.JS2WASM_NATIVE_ASCII_CASE_SCALAR === "0" ||
+    readEnv("JS2WASM_NATIVE_ASCII_CASE_SCALAR") === "0" ||
     !ctx.nativeStrings ||
     !(stmt.declarationList.flags & ts.NodeFlags.Const) ||
     !ts.isIdentifier(decl.name) ||
@@ -131,7 +132,7 @@ export function selectProvenAsciiCaseHelper(
   proofAllowed: boolean,
 ): string {
   const values =
-    proofAllowed && process.env.JS2WASM_NATIVE_PROVEN_ASCII_CASE !== "0"
+    proofAllowed && readEnv("JS2WASM_NATIVE_PROVEN_ASCII_CASE") !== "0"
       ? staticConstStringValues(ctx, receiver)
       : undefined;
   return values?.length && values.every(isAscii) ? `${fallback}_ascii` : fallback;

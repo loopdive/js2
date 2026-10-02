@@ -35,6 +35,7 @@ import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.
 import { compileExpression } from "./shared.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { nativeStrHelperHandle } from "./func-space.js";
+import { readEnv } from "../env.js";
 
 /**
  * #1761 — presize info for a string-builder whose final length is provably a
@@ -139,7 +140,7 @@ function computePresizeInfo(ctx: CodegenContext, cand: CandidateHead, scope: ts.
   // Escape hatch / A-B harness: disable the presize to compare against the
   // doubling-buffer baseline (used by the #1760 warm benchmark and as a
   // safety valve if a regression is ever traced here).
-  if (process.env.JS2WASM_DISABLE_STRING_PRESIZE === "1") return null;
+  if (readEnv("JS2WASM_DISABLE_STRING_PRESIZE") === "1") return null;
   // (1) canonical for-loop shape.
   if (!ts.isForStatement(cand.loop)) return null;
   const loop = cand.loop;

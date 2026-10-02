@@ -1,0 +1,174 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-source-contracts-integration-20261001
+
+ ❯ tests/issue-3518-compiler-boundaries.test.ts (125 tests | 1 failed) 35378ms
+   × records exactly the existing frontend debt affected by contracts-only activation 6ms
+     → expected { id: 'frontend-ts', …(5) } to deeply equal { id: 'frontend-ts', …(5) }
+   ✓ formatter contracts cannot import frontend-ts debt via type  307ms
+   ✓ formatter contracts cannot import frontend-ts debt via value  319ms
+   ✓ formatter contracts cannot import mixed-needs-split debt via type  319ms
+   ✓ formatter contracts cannot import mixed-needs-split debt via value  315ms
+   ✓ keeps formatter support contracts and the canonical type factory mandatory 3ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-delay-combinator.ts rejects delete after its positive control  321ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-delay-combinator.ts rejects demote after its positive control  323ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-delay-combinator.ts rejects type-import after its positive control  317ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-delay-combinator.ts rejects value-import after its positive control  320ms
+   ✓ formatter boundary src/frontend/builtins/contracts.ts rejects delete after its positive control  307ms
+   ✓ formatter boundary src/frontend/builtins/contracts.ts rejects demote after its positive control  316ms
+   ✓ formatter boundary src/frontend/builtins/contracts.ts rejects type-import after its positive control  312ms
+   ✓ formatter boundary src/frontend/builtins/contracts.ts rejects value-import after its positive control  315ms
+   ✓ formatter boundary src/ir/core/type-references.ts rejects delete after its positive control  315ms
+   ✓ formatter boundary src/ir/core/type-references.ts rejects demote after its positive control  316ms
+   ✓ formatter boundary src/ir/core/type-references.ts rejects type-import after its positive control  316ms
+   ✓ formatter boundary src/ir/core/type-references.ts rejects value-import after its positive control  320ms
+   ✓ formatter boundary src/ir/program/runtime-support.ts rejects delete after its positive control  315ms
+   ✓ formatter boundary src/ir/program/runtime-support.ts rejects demote after its positive control  314ms
+   ✓ formatter boundary src/ir/program/runtime-support.ts rejects type-import after its positive control  319ms
+   ✓ formatter boundary src/ir/program/runtime-support.ts rejects value-import after its positive control  317ms
+   ✓ formatter boundary src/ir/program/formatter-support.ts rejects delete after its positive control  313ms
+   ✓ formatter boundary src/ir/program/formatter-support.ts rejects demote after its positive control  315ms
+   ✓ formatter boundary src/ir/program/formatter-support.ts rejects type-import after its positive control  313ms
+   ✓ formatter boundary src/ir/program/formatter-support.ts rejects value-import after its positive control  320ms
+   ✓ formatter boundary src/ir/program/native-number-format-requirements.ts rejects delete after its positive control  319ms
+   ✓ formatter boundary src/ir/program/native-number-format-requirements.ts rejects demote after its positive control  312ms
+   ✓ formatter boundary src/ir/program/native-number-format-requirements.ts rejects type-import after its positive control  320ms
+   ✓ formatter boundary src/ir/program/native-number-format-requirements.ts rejects value-import after its positive control  319ms
+   ✓ formatter boundary src/backend/wasmgc/program/native-number-format.ts rejects delete after its positive control  315ms
+   ✓ formatter boundary src/backend/wasmgc/program/native-number-format.ts rejects demote after its positive control  317ms
+   ✓ formatter boundary src/backend/wasmgc/program/native-number-format.ts rejects type-import after its positive control  321ms
+   ✓ formatter boundary src/backend/wasmgc/program/native-number-format.ts rejects value-import after its positive control  321ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-number-ryu.ts rejects delete after its positive control  319ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-number-ryu.ts rejects demote after its positive control  323ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-number-ryu.ts rejects type-import after its positive control  328ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-number-ryu.ts rejects value-import after its positive control  313ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-number-format.ts rejects delete after its positive control  320ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-number-format.ts rejects demote after its positive control  316ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-number-format.ts rejects type-import after its positive control  316ms
+   ✓ formatter boundary src/backend/wasmgc/resources/native-number-format.ts rejects value-import after its positive control  318ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-tables.ts rejects delete after its positive control  322ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-tables.ts rejects demote after its positive control  320ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-tables.ts rejects type-import after its positive control  316ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-tables.ts rejects value-import after its positive control  318ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-bodies.ts rejects delete after its positive control  316ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-bodies.ts rejects demote after its positive control  318ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-bodies.ts rejects type-import after its positive control  316ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-bodies.ts rejects value-import after its positive control  317ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-digits.ts rejects delete after its positive control  324ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-digits.ts rejects demote after its positive control  309ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-digits.ts rejects type-import after its positive control  314ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-digits.ts rejects value-import after its positive control  319ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-to-buffer.ts rejects delete after its positive control  314ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-to-buffer.ts rejects demote after its positive control  318ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-to-buffer.ts rejects type-import after its positive control  313ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-to-buffer.ts rejects value-import after its positive control  319ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-signatures.ts rejects delete after its positive control  305ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-signatures.ts rejects demote after its positive control  314ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-signatures.ts rejects type-import after its positive control  313ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-ryu-signatures.ts rejects value-import after its positive control  318ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-format-bodies.ts rejects delete after its positive control  316ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-format-bodies.ts rejects demote after its positive control  320ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-format-bodies.ts rejects type-import after its positive control  311ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-format-bodies.ts rejects value-import after its positive control  313ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-format-radix-bodies.ts rejects delete after its positive control  318ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-format-radix-bodies.ts rejects demote after its positive control  320ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-format-radix-bodies.ts rejects type-import after its positive control  318ms
+   ✓ formatter boundary src/runtime/wasmgc/values/number-format-radix-bodies.ts rejects value-import after its positive control  326ms
+   ✓ formatter boundary src/runtime/wasmgc/values/string-concat-bodies.ts rejects delete after its positive control  314ms
+   ✓ formatter boundary src/runtime/wasmgc/values/string-concat-bodies.ts rejects demote after its positive control  312ms
+   ✓ formatter boundary src/runtime/wasmgc/values/string-concat-bodies.ts rejects type-import after its positive control  316ms
+   ✓ formatter boundary src/runtime/wasmgc/values/string-concat-bodies.ts rejects value-import after its positive control  313ms
+   ✓ formatter boundary src/runtime/wasmgc/values/stdout-bodies.ts rejects delete after its positive control  318ms
+   ✓ formatter boundary src/runtime/wasmgc/values/stdout-bodies.ts rejects demote after its positive control  311ms
+   ✓ formatter boundary src/runtime/wasmgc/values/stdout-bodies.ts rejects type-import after its positive control  313ms
+   ✓ formatter boundary src/runtime/wasmgc/values/stdout-bodies.ts rejects value-import after its positive control  316ms
+   ✓ formatter boundary src/runtime/wasmgc/promise/delay-combinator-layouts.ts rejects delete after its positive control  311ms
+   ✓ formatter boundary src/runtime/wasmgc/promise/delay-combinator-layouts.ts rejects demote after its positive control  317ms
+   ✓ formatter boundary src/runtime/wasmgc/promise/delay-combinator-layouts.ts rejects type-import after its positive control  318ms
+   ✓ formatter boundary src/runtime/wasmgc/promise/delay-combinator-layouts.ts rejects value-import after its positive control  320ms
+   ✓ #3518 real compiler boundary detector > visits a nonempty clean graph, real roots and .js-to-.ts type edges 159ms
+   ✓ #3518 real compiler boundary detector > rejects real forbidden syntax: import { parser } from "../frontend/parser.js"; 158ms
+   ✓ #3518 real compiler boundary detector > rejects real forbidden syntax: import type { Parsed } from "../frontend/parser.js"; 157ms
+   ✓ #3518 real compiler boundary detector > rejects real forbidden syntax: type T = import("../frontend/parser.js").Parsed; 153ms
+   ✓ #3518 real compiler boundary detector > rejects real forbidden syntax: export type { Parsed } from "../frontend/parser.js"; 154ms
+   ✓ #3518 real compiler boundary detector > rejects real forbidden syntax: import "../frontend/parser.js"; 158ms
+   ✓ #3518 real compiler boundary detector > rejects real forbidden syntax: import type { Parsed } from "@front/parser"; 157ms
+   ✓ #3518 real compiler boundary detector > rejects real forbidden syntax: const x = import("../frontend/parser.js"); 160ms
+   ✓ #3518 real compiler boundary detector > rejects real forbidden syntax: const x = require("../frontend/parser.js"); 158ms
+   ✓ #3518 real compiler boundary detector > rejects real forbidden syntax: import x = require("../frontend/parser.js"); 156ms
+   ✓ #3518 real compiler boundary detector > follows a type-only frontend edge through an export-star barrel 157ms
+   ✓ #3518 real compiler boundary detector > reports nonliteral import(name) as unknown, with unmigrated debt distinct from clean failure  463ms
+   ✓ #3518 real compiler boundary detector > reports nonliteral require(name) as unknown, with unmigrated debt distinct from clean failure  463ms
+   ✓ #3518 real compiler boundary detector > handles extensionless directory imports and declarations 156ms
+   ✓ #3518 real compiler boundary detector > uses package exports and enforces external type packages by layer  314ms
+   ✓ #3518 real compiler boundary detector > does not permit parser packages in foundations even through an external allow rule 157ms
+   ✓ #3518 real compiler boundary detector > requires explicit built-in policy and exposes missing external resolution  464ms
+   ✓ #3518 real compiler boundary detector > resolves import and require against their distinct package export conditions 156ms
+   ✓ #3518 real compiler boundary detector > reports a concrete external parser path through a type barrel 166ms
+   ✓ #3518 real compiler boundary detector > keeps the ts-api wrapper frontend-only even when its current concern label is ambiguous 161ms
+   ✓ #3518 real compiler boundary detector > visits every supported JS/TS variant including declaration modules 163ms
+   ✓ #3518 real compiler boundary detector > does not treat a relative escape into node_modules as an allowed package import 160ms
+   ✓ #3518 real compiler boundary detector > allows exact JSON metadata policy without allowing implementation escapes  441ms
+   ✓ #3518 real compiler boundary detector > rejects relative source escapes 153ms
+   ✓ #3518 real compiler boundary detector > fails closed for missing-module 166ms
+   ✓ #3518 real compiler boundary detector > fails closed for missing-config 133ms
+   ✓ #3518 real compiler boundary detector > fails closed for missing-src 146ms
+   ✓ #3518 real compiler boundary detector > fails closed for extra 153ms
+   ✓ #3518 real compiler boundary detector > fails closed for duplicate 133ms
+   ✓ #3518 real compiler boundary detector > fails closed for stale 158ms
+   ✓ #3518 real compiler boundary detector > stays silent on stderr when the inventory is valid (#6418) 155ms
+   ✓ #3518 real compiler boundary detector > reports a controlled unreadable file even under privileged runners 157ms
+   ✓ #3518 real compiler boundary detector > resolves symlinks to their forbidden source layer 158ms
+   ✓ #3518 real compiler boundary detector > reports planned empty layers as pending and fails the default check  315ms
+   ✓ #3518 real compiler boundary detector > cannot shrink an activated root by deleting its source and classification 153ms
+   ✓ #3518 real compiler boundary detector > cannot demote activation recorded in policy history 135ms
+   ✓ #3518 real compiler boundary detector > rejects committed demotion and erased history against an independently pinned base  375ms
+   ✓ #3518 real compiler boundary detector > rejects committed removal of held evidence against the earlier policy 204ms
+   ✓ #3518 real compiler boundary detector > distinguishes a verified initial introduction from an unreadable or missing base  509ms
+   ✓ #3518 real compiler boundary detector > ignores inherited GIT_DIR, worktree and index when reading fixture provenance 225ms
+   ✓ #3518 real compiler boundary detector > tracks current source including untracked modules and fingerprints dirty content  321ms
+   ✓ #3518 real compiler boundary detector > requires explicit nonmodule rationale and never excludes declarations  466ms
+   ✓ #3518 real compiler boundary detector > preserves all ten held B findings across moves, dummy callers and removed exports  839ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-compiler-boundaries.test.ts > records exactly the existing frontend debt affected by contracts-only activation
+AssertionError: expected { id: 'frontend-ts', …(5) } to deeply equal { id: 'frontend-ts', …(5) }
+
+- Expected
++ Received
+
+  {
+    "entries": [
+      "src/frontend/builtins/contracts.ts",
++     "src/frontend/builtins/prepare-string-output.ts",
++     "src/frontend/typescript.ts",
+    ],
+    "id": "frontend-ts",
+-   "minModules": 1,
++   "minModules": 3,
+    "required": true,
+    "roots": [
+      "src/frontend/builtins/contracts.ts",
++     "src/frontend/builtins/prepare-string-output.ts",
++     "src/frontend/typescript.ts",
+    ],
+    "status": "active",
+  }
+
+ ❯ tests/issue-3518-compiler-boundaries.test.ts:146:81
+    144|       layer: "frontend-ts",
+    145|     });
+    146|   expect(policy.layers.find((row: { id: string }) => row.id === "front…
+       |                                                                                 ^
+    147|     id: "frontend-ts",
+    148|     status: "active",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 124 passed (125)
+   Start at  04:59:01
+   Duration  35.55s (transform 24ms, setup 0ms, collect 27ms, tests 35.38s, environment 0ms, prepare 30ms)
+
+JSON report written to /private/tmp/js2-ir-source-contracts-integration-20261001/.tmp/contracts-integration/boundaries.json

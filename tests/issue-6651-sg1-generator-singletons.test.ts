@@ -27,13 +27,12 @@
  *    members of the same test262 family PASSED on base — that asymmetry is what
  *    localised it — and they are pinned here as negative controls.
  *
- * DELIBERATELY NOT FIXED. Two are pinned below in their current spec-WRONG state
+ * DELIBERATELY NOT FIXED. Two were pinned below in their spec-WRONG state
  * so a later lane trips an assertion instead of moving the boundary silently:
- * calling `%GeneratorFunction%` (CreateDynamicFunction, which
- * `generator-function-intrinsic.ts` documents as out of scope — costs
- * `GeneratorFunction/instance-{length,name}.js`), and `yield *` before a newline
- * (invalid Wasm from a `yield*` delegation-slot type disagreement — costs
- * `statements/generators/yield-star-before-newline.js`).
+ * calling `%GeneratorFunction%` (CreateDynamicFunction — slice A9 moved that
+ * boundary, and its case now pins the new provider linkage), and `yield *` before
+ * a newline (invalid Wasm from a `yield*` delegation-slot type disagreement —
+ * costs `statements/generators/yield-star-before-newline.js`).
  *
  * A THIRD is diagnosed but deliberately NOT pinned, because its wrong answer is
  * not reachable from this harness: `delete` on a closed-struct own property
@@ -355,26 +354,25 @@ describe("#6651 SG1 · residuals pinned in their current (spec-WRONG) state", ()
     expect(await run(src, { sloppy: true })).toBe(1);
   });
 
-  it("PINNED WRONG — calling %GeneratorFunction% does not CreateDynamicFunction", async () => {
-    // `generator-function-intrinsic.ts` documents this as out of scope: the
-    // carrier is branded callable so `typeof` answers "function", but invoking
-    // it yields a NON-CALLABLE object whose `length`/`name` read as null rather
-    // than a generator function with `length` 1 / `name` "anonymous". The
-    // ordinary `Function("x","")` route is correct and is asserted alongside as
-    // the positive control for the dynamic-function substrate.
+  it("BOUNDARY MOVED (#6651 A9) — calling %GeneratorFunction% now links the runtime-eval provider", async () => {
+    // This case used to pin the spec-WRONG answer (15: the call yielded a
+    // non-callable object). Slice A9 routes the call to the realm's own
+    // CreateDynamicFunction, so the module can no longer instantiate with the
+    // empty import object this harness uses: it imports exactly the two provider
+    // entries, and nothing else. The behaviour itself is pinned against a linked
+    // provider in `issue-6651-a9-generator-function.test.ts`.
     const src = `export function test(): number {
   const GF: any = Object.getPrototypeOf(function* () {}).constructor;
-  let r = 0;
-  if (typeof GF === "function") r |= 1;
   const made: any = GF("x", "");
-  if (typeof made !== "function") r |= 2;
-  if (made === null || made.length === null || made.length === undefined) r |= 4;
-  const ok: any = Function("x", "");
-  if (typeof ok === "function" && ok.length === 1 && ok.name === "anonymous") r |= 8;
-  return r;
+  return typeof made === "function" ? 1 : 0;
 }`;
-    // Spec-correct would be 1 | 8 = 9 with bits 2 and 4 unset.
-    expect(await run(src)).toBe(15);
+    const r = (await compile(src, { fileName: "t.ts", target: "standalone" })) as unknown as Compiled;
+    expect(r.success).toBe(true);
+    const imports = WebAssembly.Module.imports(new WebAssembly.Module(r.binary)).map((i) => `${i.module}::${i.name}`);
+    expect(imports.sort()).toEqual([
+      "js2wasm:runtime-eval::__runtime_apply_interpreted",
+      "js2wasm:runtime-eval::__runtime_indirect_eval",
+    ]);
   });
 
   it("PINNED WRONG — `yield *` before a newline emits INVALID Wasm", async () => {

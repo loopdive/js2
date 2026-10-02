@@ -4,7 +4,7 @@ title: "ES2015 standalone: generators conformance wave 1"
 status: in-review
 sprint: current
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-09-28
 priority: high
 horizon: l
 feasibility: medium
@@ -194,6 +194,125 @@ Regenerate the list; do not trust this table's error text after step 1.
   `sourceFileIsModule === false`; if not, the bug is in the runner's
   script/module goal selection — fix the early-error rule's input, NOT the
   runner.
+
+### 2026-09-28 follow-up — decorator expression inherits outer `[Yield]` context
+
+**Status: validated narrow early-error slice; no decorator runtime-semantics
+claim.** The frozen original
+`test/language/statements/class/decorator/syntax/valid/decorator-member-expr-identifier-reference-yield.js`
+is a `noStrict` script whose relevant shape is `function yield() {}; @yield
+class C {}`. It is currently rejected by this repository's own
+`checkReservedIdentifiers` message, not merely by the TypeScript parser.
+
+The source-supported boundary is narrower than the existing Cluster-D
+function-boundary repair. `checkReservedIdentifiers` rejects `yield` when
+`isStrictMode(node) || sourceFileIsModule || isInYieldParamContext(node)`.
+`isStrictMode` currently climbs from the decorator expression into its enclosing
+class and treats every class as a strict terminal. A class *body* is strict, but
+evaluation of a direct class decorator expression uses the enclosing context;
+in a sloppy script it is therefore `[~Yield]`. A member decorator is different:
+its ancestry reaches the class through the member, so it remains within the
+class's strict context.
+
+**Narrow implementation and proof.** In
+`src/compiler/early-errors/predicates.ts::isStrictMode`, retain the immediate
+child while walking ancestors. Before consulting `strictModeCache` or applying
+the class terminal, recognise only a direct `Decorator` listed by
+`ts.getDecorators(currentClass)`. For that one edge, continue to the class's
+parent without reading or writing a cache entry for the class itself. This
+prevents a prior class-body query cached as `true` from rejecting the decorator,
+and prevents the sloppy outer result from poisoning later class-body queries.
+All other class descendants — class name, heritage, body, and member decorators
+— keep the existing strict terminal. `module-rules.ts` should remain the sole
+consumer unless validation exposes a separate contextual rule.
+
+**Focused proof plan.** Add a dedicated early-error test with relevant-body
+reproductions of the no-strict original and expression twin. It must separately
+retain rejection for: an outer `"use strict"` script; module-goal source; a
+valid-AST generator `[Yield]` identifier; a class body occurrence; and a member
+decorator occurrence. Query the same parsed AST in both orders (body then
+decorator, decorator then body) to pin the cache boundary. Keep the direct
+decorator-in-generator source as a parser-recovery diagnostic rather than an
+early-error AST control. Run the actual original through the maintained
+standalone Test262 path only after the focused check is green, and keep
+decorator evaluation out of the claimed outcome unless that later runtime route
+is measured.
+
+**Authoritative post-unit cohort.** Do not treat a native Node syntax check as
+a decorator oracle: it does not parse this proposal. Once a lease is available,
+run the maintained runner with the original flags intact over all six frozen
+no-strict decorator-`yield` rows:
+
+- `language/statements/class/decorator/syntax/valid/decorator-member-expr-identifier-reference-yield.js`
+- `language/statements/class/decorator/syntax/valid/decorator-call-expr-identifier-reference-yield.js`
+- `language/statements/class/decorator/syntax/valid/decorator-parenthesized-expr-identifier-reference-yield.js`
+- `language/expressions/class/decorator/syntax/valid/decorator-member-expr-identifier-reference-yield.js`
+- `language/expressions/class/decorator/syntax/valid/decorator-call-expr-identifier-reference-yield.js`
+- `language/expressions/class/decorator/syntax/valid/decorator-parenthesized-expr-identifier-reference-yield.js`
+
+Pair them with the source-verified corpus negatives for generator `[Yield]`
+and strict code:
+`language/expressions/generators/yield-as-identifier-reference.js` and
+`language/expressions/generators/yield-identifier-strict.js`. Add a relevant
+decorator identifier-reference control only after a baseline receipt establishes
+it as passing. Preserve the noStrict/module/strict flags rather than reproducing
+the paths through an ad-hoc parser. The unit fixture proves only early-error
+admission; a Test262 gain is not credited until this cohort has a complete
+baseline/candidate receipt.
+
+**Authoritative matched receipt (2026-09-28).** The maintained standalone
+runner used the same validated nine-path manifest in both arms (manifest
+SHA-256 `75c5c6cbc6311db8c37957ab7bf7cc07d0a3673812ea8704628da28f19e602a3`),
+with Node 24.19, QuickJS, `auto` semantic providers, one 4-GiB fork, recycled
+realms, UTC, proposals enabled, and the Temporal provider deliberately
+unlinked. The baseline was source base
+`45ce4a8e207742df5ca3888c0a458e8a48ee1655` with the predicate pre-change;
+it completed 9/9 verdicts: 3 pass and all six no-strict decorator-`yield`
+originals as compile errors. The candidate restored only this direct-decorator
+edge change and completed 9/9: all nine pass. Thus the six exact originals
+transitioned CE → pass, while the two corpus negative controls and the distinct
+decorator identifier-reference control remained pass → pass; there were no
+exclusions or missing callbacks.
+
+Baseline evidence: JSONL SHA-256
+`9a0ceb6df49328bb96ee623d645c3e65f36ab7fc27c4d1eae96eaedc291a24e3`,
+completion SHA-256
+`effa56c6d3b6ebaa85155a05f229a050723ac4aab6a55f7510ae6ebd8055ae6a`,
+compiler-bundle key `3be400279eb53978`, and QuickJS adapter key
+`ac848c5ba005512d`. Candidate evidence: terminal runner receipt `62420`,
+exit 0 in 19.48 s; JSONL SHA-256
+`7aa6cc72b9454139de1b421cdbe0f8c8d611d961f41ee3b906f8662d9af258c0`,
+completion SHA-256
+`c0e8a1cb17e2e29f3fca031f2687906e0e736b02d683c743c2e743d3fd2c8e51`,
+compiler-bundle key `efaf883716817c63`, and QuickJS adapter key
+`63b801db0571a47c`. The shared QuickJS artifact was
+`e9f8d30bc347dbc56f31b3389f7696eb6dedc9f05ea729781fc412f09a3e6b17`.
+This closes only the decorator-yield early-error sub-slice; the broader
+generator-conformance issue remains in review.
+
+**Focused unit receipt (2026-09-28; source base
+`45ce4a8e207742df5ca3888c0a458e8a48ee1655`).** The focused fixture SHA-256
+was `648b843335922304fed6bdbae68096827b6eb6fec2233e15812b853e7c267bda`
+for both arms. With the pre-change predicate SHA-256
+`527940ea88ef1ece8cce7f296e0ed91f801a64a416ca26024520676955064620`, the
+single-fork Node 24.19 Vitest receipt `7d6037` was terminal exit 1: 3 passed,
+2 failed (the two intended no-strict/cache-boundary positives). After the
+direct-decorator edge change, predicate SHA-256
+`6383830df32a15b3a9c11a09b111cd5a5a49ce5c41c2ea0faeeefe2b82914434`, receipt
+`a0ea72` was terminal exit 0: 5 passed. These are terminal tool-receipt IDs,
+not retained process/session handles. Strictness neighbors
+`issue-1931.test.ts` and `issue-6491-r2-real-early-errors.test.ts` then passed
+33/33 in terminal receipt `16e56e`; TS7 `pnpm typecheck` passed in terminal
+receipt `522953`. `function* g() { @yield class C {} }` remains a separate
+parse-aware diagnostic: TypeScript reports TS1109 and creates no `yield`
+Identifier, while the compiler may tolerate parser diagnostics elsewhere. It
+is not evidence of full-compiler rejection or decorator execution.
+
+For final publication preparation, Prettier changed only formatting in the
+focused fixture; the final fixture SHA-256 is
+`1f15d3e214bbd3701dc0bcbd9ab450d0a6afa64491129e9e95fdda79e5ce371f`.
+The preceding terminal receipts retain their original fixture hash and are not
+being relabeled as byte-identical final-fixture measurements.
 
 **Step 6 — Clusters C, G, E (19) — as capacity allows.**
 - C: pattern-param rehydration into the frame (`storeSpills`/#3386 seam in

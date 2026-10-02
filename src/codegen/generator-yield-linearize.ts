@@ -58,6 +58,7 @@ import { buildStandardTryTable } from "../ir/try-table.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { ensureExternStrictEqHelper } from "./any-helpers.js";
 import { buildDestructureNullThrow } from "./destructuring-params.js";
 import {
   emitResolvedIdentifierWriteFromStack,
@@ -92,7 +93,9 @@ type LinearOp =
   | { kind: "get-prop"; obj: string; key: string; to: string }
   | { kind: "put-ident"; target: ts.Identifier; value: string }
   | { kind: "put-member"; obj: string; key: string; value: string }
-  | { kind: "close"; iter: string; done: string };
+  | { kind: "close"; iter: string; done: string }
+  // (#6731) IsStrictlyEqual of two externref spills (a `switch` case selector).
+  | { kind: "strict-eq"; a: string; b: string; flag: string };
 
 interface LinearOpRecord {
   op: LinearOp;
@@ -123,12 +126,26 @@ export interface LinearizeHost<U> {
   branch(flag: string, thenState: number, elseState: number): void;
   /** Finish the current state with a non-suspending jump. */
   jump(next: number): void;
-  lowerBody(statements: readonly ts.Statement[], unwind: readonly U[]): boolean;
+  /**
+   * Lower a loop body. (#6731) `loop` names the states a `break` / `continue`
+   * of this loop lands on and the unwind depth each leaves at.
+   */
+  lowerBody(statements: readonly ts.Statement[], unwind: readonly U[], loop?: LinearLoopTargets): boolean;
   /** The unwind-chain entry that closes `entry` on an abrupt resume. */
   closeEntry(entry: LinearCloseEntry): U;
 }
 
 export type LinearizeAttempt = "lowered" | "not-applicable" | "failed";
+
+/** (#6731) A linearised for-of's jump targets, handed to `LinearizeHost.lowerBody`. */
+export interface LinearLoopTargets {
+  breakState: number;
+  continueState: number;
+  /** Unwind length outside the loop (a `break` closes the loop's own record). */
+  breakDepth: number;
+  /** Unwind length inside the loop (a `continue` keeps the record open). */
+  continueDepth: number;
+}
 
 function unwrapParens(expr: ts.Expression): ts.Expression {
   let cur = expr;
@@ -504,36 +521,6 @@ function planAssignmentStatement<U>(
   return "lowered";
 }
 
-/** A `return` in THIS function (nested functions own theirs). */
-function containsReturn(node: ts.Node): boolean {
-  let found = false;
-  const visit = (n: ts.Node): void => {
-    if (found || isFunctionLikeScope(n)) return;
-    if (ts.isReturnStatement(n)) {
-      found = true;
-      return;
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(node);
-  return found;
-}
-
-/** A `yield*` in THIS function. */
-function containsDelegation(node: ts.Node): boolean {
-  let found = false;
-  const visit = (n: ts.Node): void => {
-    if (found || isFunctionLikeScope(n)) return;
-    if (ts.isYieldExpression(n) && n.asteriskToken) {
-      found = true;
-      return;
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(node);
-  return found;
-}
-
 /**
  * `for (<pattern> of <iterable>) body` — §14.7.5.6/§14.7.5.7 with the head's
  * DestructuringAssignmentEvaluation able to suspend:
@@ -545,22 +532,185 @@ function containsDelegation(node: ts.Node): boolean {
  *
  * The loop's record is the OUTER close entry for the head and the body, so a
  * throw from the head, or an abrupt resume anywhere inside, closes it.
- * Refused (the same reasons A2's `lowerForOf` records): a `return` or `yield*`
- * in the body (neither path walks this chain), `break`/`continue`, `for await`.
+ * Refused: `for await`, a yield in the subject.
  */
-function planForOfPatternHead<U>(
-  p: Planner<U>,
-  stmt: ts.ForOfStatement,
-  unwind: readonly U[],
-  bodyJumpOk: (body: ts.Statement) => boolean,
-): LinearizeAttempt {
+function planForOfPatternHead<U>(p: Planner<U>, stmt: ts.ForOfStatement, unwind: readonly U[]): LinearizeAttempt {
   if (ts.isVariableDeclarationList(stmt.initializer)) return "not-applicable";
   const head = unwrapParens(stmt.initializer);
   if (!isAssignPattern(head) || !hasYield(head)) return "not-applicable";
-  if (stmt.awaitModifier || hasYield(stmt.expression)) return "failed";
-  if (!bodyJumpOk(stmt.statement) || containsReturn(stmt.statement) || containsDelegation(stmt.statement)) {
-    return "failed";
+  return planForOfLoop(p, stmt, unwind, (value, stack, loopUnwind) => {
+    if (ts.isArrayLiteralExpression(head)) planArrayPattern(p, head, value, stack, loopUnwind);
+    else planObjectPattern(p, head, value, stack, loopUnwind);
+  });
+}
+
+/**
+ * (#680) `for (let|const|var x of <iterable>) body` with a yield in the body,
+ * standalone/WASI. The typed-iterator subject keeps A2's `for-of-step`
+ * terminator (`lowerForOf`); this is the arm for every OTHER subject — an
+ * array, a string, a Set, or an untyped (`any`) JS value, which `__gen_delegate_*`
+ * traps on. The same loop skeleton as the pattern head, with the head reduced
+ * to one PutValue of the stepped value into the loop binding.
+ */
+export function lowerLinearForOfBinding<U>(
+  host: LinearizeHost<U>,
+  stmt: ts.ForOfStatement,
+  unwind: readonly U[],
+): LinearizeAttempt {
+  const init = stmt.initializer;
+  if (!ts.isVariableDeclarationList(init) || init.declarations.length !== 1) return "not-applicable";
+  const declarator = init.declarations[0]!;
+  if (declarator.initializer) return "not-applicable";
+  const p: Planner<U> = { host, fail: false };
+  const name = declarator.name;
+  if (!ts.isIdentifier(name)) {
+    // (#6731) `for (let [k, v] of m)` — the declaration's BindingPattern is
+    // driven by the same ops as an assignment pattern (§14.7.5.7 step 6.g:
+    // BindingInitialization of the stepped value). A yield in the pattern
+    // (a default) is not modelled here.
+    if (hasYield(name)) return "not-applicable";
+    return planForOfLoop(p, stmt, unwind, (value, stack, loopUnwind) => {
+      planBindingPattern(p, name, value, stack, loopUnwind);
+    });
   }
+  return planForOfLoop(p, stmt, unwind, (value, stack) => {
+    pushOp(p, { kind: "put-ident", target: name, value }, stack);
+  });
+}
+
+/**
+ * (#6731) BindingInitialization of a declaration pattern over the value in
+ * spill `src`: §14.3.3.6 IteratorBindingInitialization (array) /
+ * §14.3.3.5 PropertyBindingInitialization (object). Same op vocabulary as the
+ * assignment patterns above; every name is a plain identifier target (the
+ * planner registered it as a frame spill), so no Reference precedes a Get.
+ * Object rest (`...r`) is not modelled.
+ */
+function planBindingPattern<U>(
+  p: Planner<U>,
+  pattern: ts.BindingPattern,
+  src: string,
+  stack: readonly LinearCloseEntry[],
+  unwind: readonly U[],
+): void {
+  const bind = (
+    el: ts.BindingElement,
+    value: string,
+    inner: readonly LinearCloseEntry[],
+    innerUnwind: readonly U[],
+  ) => {
+    if (el.initializer) {
+      planDefault(
+        p,
+        value,
+        el.initializer,
+        ts.isArrayBindingPattern(el.name) && ts.isArrayLiteralExpression(unwrapParens(el.initializer)),
+        inner,
+        innerUnwind,
+      );
+      if (p.fail) return;
+    }
+    if (ts.isIdentifier(el.name)) pushOp(p, { kind: "put-ident", target: el.name, value }, inner);
+    else planBindingPattern(p, el.name, value, inner, innerUnwind);
+  };
+  if (ts.isArrayBindingPattern(pattern)) {
+    const iter = p.host.spill(EXTERNREF, "iter");
+    const done = p.host.spill(I32, "done");
+    pushOp(p, { kind: "get-iter", src, iter, done }, stack);
+    const entry: LinearCloseEntry = { iter, done };
+    const inner = [...stack, entry];
+    const innerUnwind = [...unwind, p.host.closeEntry(entry)];
+    for (const el of pattern.elements) {
+      if (p.fail) return;
+      if (ts.isOmittedExpression(el)) {
+        pushOp(p, { kind: "step", iter, done, to: p.host.spill(EXTERNREF, "hole") }, inner);
+        continue;
+      }
+      const value = p.host.spill(EXTERNREF, el.dotDotDotToken ? "rest" : "val");
+      pushOp(
+        p,
+        el.dotDotDotToken ? { kind: "rest", iter, done, to: value } : { kind: "step", iter, done, to: value },
+        inner,
+      );
+      bind(el, value, inner, innerUnwind);
+    }
+    if (!p.fail) pushOp(p, { kind: "close", iter, done }, stack);
+    return;
+  }
+  pushOp(p, { kind: "coercible", value: src }, stack);
+  for (const el of pattern.elements) {
+    if (p.fail) return;
+    const keyNode = el.propertyName ?? el.name;
+    if (el.dotDotDotToken) {
+      p.fail = true;
+      return;
+    }
+    let key: string | undefined;
+    if (ts.isIdentifier(keyNode) || ts.isStringLiteral(keyNode) || ts.isNumericLiteral(keyNode)) {
+      key = p.host.spill(EXTERNREF, "key");
+      const text = ts.isNumericLiteral(keyNode) ? String(Number(keyNode.text)) : keyNode.text;
+      pushOp(p, { kind: "key-const", name: text, to: key }, stack);
+    } else if (ts.isComputedPropertyName(keyNode)) {
+      key = evalToSpill(p, keyNode.expression, stack, unwind, "key");
+    } else {
+      p.fail = true;
+    }
+    if (key === undefined) return;
+    const value = p.host.spill(EXTERNREF, "val");
+    pushOp(p, { kind: "get-prop", obj: src, key, to: value }, stack);
+    bind(el, value, stack, unwind);
+  }
+}
+
+/**
+ * (#6731) Planner entry points the structured-jump / `switch` lowering
+ * (`generator-structured-jumps.ts`, via `generators-native.ts`) composes from
+ * the same op vocabulary.
+ */
+export function planLinearEval<U>(
+  host: LinearizeHost<U>,
+  expr: ts.Expression,
+  unwind: readonly U[],
+  tag: string,
+): string | undefined {
+  const p: Planner<U> = { host, fail: false };
+  const to = evalToSpill(p, expr, [], unwind, tag);
+  return p.fail ? undefined : to;
+}
+
+/** (#6731) An i32 spill holding IsStrictlyEqual(`a`, `b`) of two externref spills. */
+export function planLinearStrictEq<U>(host: LinearizeHost<U>, a: string, b: string): string {
+  const flag = host.spill(I32, "eq");
+  pushOp({ host, fail: false }, { kind: "strict-eq", a, b, flag }, []);
+  return flag;
+}
+
+/**
+ * (#6731) Normal-completion IteratorClose of a record a jump / `return` leaves
+ * (§14.7.5.7 step 6 with a break / return completion — the close's own throw
+ * or non-Object result IS the completion). `outer` are the records still open
+ * around it, closed with the throw suppressed if this close throws.
+ */
+export function planLinearClose<U>(
+  host: LinearizeHost<U>,
+  entry: LinearCloseEntry,
+  outer: readonly LinearCloseEntry[],
+): void {
+  pushOp({ host, fail: false }, { kind: "close", iter: entry.iter, done: entry.done }, outer);
+}
+
+/** The shared `for-of` skeleton: GetIterator once, step per header entry, bind, body. */
+function planForOfLoop<U>(
+  p: Planner<U>,
+  stmt: ts.ForOfStatement,
+  unwind: readonly U[],
+  bindHead: (value: string, stack: readonly LinearCloseEntry[], loopUnwind: readonly U[]) => void,
+): LinearizeAttempt {
+  if (stmt.awaitModifier || hasYield(stmt.expression)) return "failed";
+  // (#6731) `return`, `break` / `continue` and `yield*` in the body are the
+  // planner's to lower: a `return` / `break` closes this loop's record through
+  // its `dstr-close` entry, a delegation walks the same chain on an abrupt
+  // resume (generator-structured-jumps.ts).
   const subject = evalToSpill(p, stmt.expression, [], unwind, "subj");
   if (subject === undefined) return "failed";
   const iter = p.host.spill(EXTERNREF, "loopiter");
@@ -582,11 +732,16 @@ function planForOfPatternHead<U>(
   p.host.branch(done, exit, bodyEntry);
 
   p.host.enter(bodyEntry);
-  if (ts.isArrayLiteralExpression(head)) planArrayPattern(p, head, value, stack, loopUnwind);
-  else planObjectPattern(p, head, value, stack, loopUnwind);
+  bindHead(value, stack, loopUnwind);
   if (p.fail) return "failed";
   const body = ts.isBlock(stmt.statement) ? stmt.statement.statements : [stmt.statement];
-  if (!p.host.lowerBody(body, loopUnwind)) return "failed";
+  const loop: LinearLoopTargets = {
+    breakState: exit,
+    continueState: header,
+    breakDepth: unwind.length,
+    continueDepth: loopUnwind.length,
+  };
+  if (!p.host.lowerBody(body, loopUnwind, loop)) return "failed";
   p.host.jump(header);
   p.host.enter(exit);
   return "lowered";
@@ -600,11 +755,10 @@ export function lowerLinearizedStatement<U>(
   host: LinearizeHost<U>,
   stmt: ts.Statement,
   unwind: readonly U[],
-  bodyJumpOk: (body: ts.Statement) => boolean,
 ): LinearizeAttempt {
   const p: Planner<U> = { host, fail: false };
   if (ts.isExpressionStatement(stmt)) return planAssignmentStatement(p, stmt, unwind);
-  if (ts.isForOfStatement(stmt)) return planForOfPatternHead(p, stmt, unwind, bodyJumpOk);
+  if (ts.isForOfStatement(stmt)) return planForOfPatternHead(p, stmt, unwind);
   return "not-applicable";
 }
 
@@ -784,6 +938,13 @@ function emitOpBody(ctx: CodegenContext, fctx: FunctionContext, op: LinearOp): v
       b.push({ op: "local.get", index: local(fctx, op.obj) }, { op: "local.get", index: local(fctx, op.key) });
       b.push({ op: "local.get", index: local(fctx, op.value) }, call(ctx, "__extern_set_strict"));
       return;
+    case "strict-eq": {
+      const eq = ensureExternStrictEqHelper(ctx);
+      if (eq === undefined) throw new Error("generator-yield-linearize: __extern_strict_eq is unavailable");
+      b.push({ op: "local.get", index: local(fctx, op.a) }, { op: "local.get", index: local(fctx, op.b) });
+      b.push({ op: "call", funcIdx: eq }, { op: "local.set", index: local(fctx, op.flag) });
+      return;
+    }
     case "close": {
       // Normal-completion IteratorClose: its throw / non-Object result is the
       // statement's completion. [[Done]] goes up first so no wrapper re-closes.
@@ -834,6 +995,20 @@ function suppressedClose(ctx: CodegenContext, fctx: FunctionContext, entry: Line
  * Emit a marker statement's op into `fctx.body`. Returns false when `stmt` is
  * not a marker (the caller compiles it as source).
  */
+/**
+ * (#6731) The source node an op marker compiles (its identifiers resolve at
+ * that position — `generator-lexical-renames.ts`): `null` when `stmt` is not
+ * an op marker, `undefined` for an op that reads only spills.
+ */
+export function linearOpSourceNode(stmt: ts.Statement): ts.Node | undefined | null {
+  const op = LINEAR_OPS.get(stmt)?.op;
+  if (!op) return null;
+  if (op.kind === "eval") return op.expr;
+  if (op.kind === "put-ident") return op.target;
+  if (op.kind === "default") return op.init;
+  return undefined;
+}
+
 export function emitLinearOpStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.Statement): boolean {
   const rec = LINEAR_OPS.get(stmt);
   if (!rec) return false;

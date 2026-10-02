@@ -1,0 +1,6225 @@
+{
+  "ref_read": "ok",
+  "ref": "issue-assignments",
+  "tip": "090a127dfe54e9f52b568521f9da1b22410b504d",
+  "total_records": 2555,
+  "held_count": 777,
+  "held": [
+    {
+      "id": "680",
+      "slice": "expr-continuations",
+      "assignee": "ttraenkler/codex-680-expr-continuations-terra",
+      "status": "in-progress",
+      "branch": "codex/680-generator-expression-continuations-terra",
+      "claimed_at": "2026-08-30T17:27:18Z"
+    },
+    {
+      "id": "745",
+      "slice": "",
+      "assignee": "ttraenkler/sr-745-s45",
+      "status": "in-progress",
+      "branch": "issue-745-s45-flip",
+      "claimed_at": "2026-07-19T08:41:07Z"
+    },
+    {
+      "id": "802",
+      "slice": "",
+      "assignee": "ttraenkler/fable-dev-2",
+      "status": "in-progress",
+      "branch": "issue-802-impl-bc",
+      "claimed_at": "2026-07-17T21:54:08Z"
+    },
+    {
+      "id": "808",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-808-extract-imports",
+      "claimed_at": "2026-07-14T02:45:28Z"
+    },
+    {
+      "id": "820",
+      "slice": "",
+      "assignee": "ttraenkler/sd-4",
+      "status": "in-progress",
+      "branch": "issue-820-nullish-umbrella",
+      "claimed_at": "2026-06-21T10:30:07Z"
+    },
+    {
+      "id": "838",
+      "slice": "",
+      "assignee": "ttraenkler/fable-3273-fix",
+      "status": "in-progress",
+      "branch": "issue-838-bigint-typed-arrays",
+      "claimed_at": "2026-07-18T04:23:20Z"
+    },
+    {
+      "id": "1095",
+      "slice": "",
+      "assignee": "ttraenkler/dev-4",
+      "status": "in-progress",
+      "branch": "issue-1095-remove-instr-casts",
+      "claimed_at": "2026-06-17T03:15:38Z"
+    },
+    {
+      "id": "1100",
+      "slice": "",
+      "assignee": "ttraenkler/sen-a",
+      "status": "in-progress",
+      "branch": "issue-1100-standalone-proxy-phase1",
+      "claimed_at": "2026-06-16T07:58:48Z"
+    },
+    {
+      "id": "1325",
+      "slice": "",
+      "assignee": "ttraenkler/dev-std-3",
+      "status": "in-progress",
+      "branch": "issue-1325-instanceof-builtin-tags",
+      "claimed_at": "2026-07-24T08:37:37Z"
+    },
+    {
+      "id": "1336",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-soundness",
+      "status": "in-progress",
+      "branch": "issue-1336-object-assign-getters-symbols",
+      "claimed_at": "2026-06-28T00:11:46Z"
+    },
+    {
+      "id": "1355",
+      "slice": "",
+      "assignee": "ttraenkler/sen-a",
+      "status": "in-progress",
+      "branch": "issue-1355-proxy-traps",
+      "claimed_at": "2026-06-16T10:17:18Z"
+    },
+    {
+      "id": "1373b",
+      "slice": "",
+      "assignee": "ttraenkler/sen-b",
+      "status": "in-progress",
+      "branch": "issue-1373b-ir-async-cps",
+      "claimed_at": "2026-06-16T10:07:07Z"
+    },
+    {
+      "id": "1536c",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-closures",
+      "status": "in-progress",
+      "branch": "issue-1536c-standalone-error-subclass",
+      "claimed_at": "2026-06-17T00:41:21Z"
+    },
+    {
+      "id": "1472",
+      "slice": "getprototypeof-es5",
+      "assignee": "ttraenkler/codex-es5-object-getprototypeof",
+      "status": "in-progress",
+      "branch": "codex/1472-es5-object-getprototypeof",
+      "claimed_at": "2026-07-28T19:34:48Z"
+    },
+    {
+      "id": "1627",
+      "slice": "",
+      "assignee": "ttraenkler/agent-a20aa13da21b8d592",
+      "status": "in-progress",
+      "branch": "issue-1627-set-like-arg",
+      "claimed_at": "2026-06-27T23:56:05Z"
+    },
+    {
+      "id": "1642",
+      "slice": "",
+      "assignee": "ttraenkler/sd-iterclose",
+      "status": "in-progress",
+      "branch": "issue-1642-iterclose-slice1",
+      "claimed_at": "2026-06-26T06:10:04Z"
+    },
+    {
+      "id": "1645",
+      "slice": "",
+      "assignee": "ttraenkler/fable-es2015",
+      "status": "in-progress",
+      "branch": "claude/es6-1645-detached-buffer-guards",
+      "claimed_at": "2026-09-17T09:06:31Z"
+    },
+    {
+      "id": "1691",
+      "slice": "5063-conflict-repair",
+      "assignee": "ttraenkler/codex-queue-shepherd",
+      "status": "in-progress",
+      "branch": "codex/5063-conflict-repair-20260909",
+      "claimed_at": "2026-09-09T06:10:16Z"
+    },
+    {
+      "id": "1694",
+      "slice": "",
+      "assignee": "ttraenkler/cs-1694",
+      "status": "in-progress",
+      "branch": "issue-1694-promise-combinators",
+      "claimed_at": "2026-06-17T02:17:50Z"
+    },
+    {
+      "id": "1712",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-acorn",
+      "status": "in-progress",
+      "branch": "issue-1712-3267-exactfield-lane-regression",
+      "claimed_at": "2026-07-23T19:46:11Z"
+    },
+    {
+      "id": "1804",
+      "slice": "",
+      "assignee": "ttraenkler/tld-2139",
+      "status": "in-progress",
+      "branch": "issue-1804-vec-new-fixed",
+      "claimed_at": "2026-06-16T16:35:38Z"
+    },
+    {
+      "id": "1907",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-1907-builtin-static-value-read",
+      "claimed_at": "2026-07-21T17:32:46Z"
+    },
+    {
+      "id": "1910-s2",
+      "slice": "",
+      "assignee": "ttraenkler/sdev-standalone",
+      "status": "in-progress",
+      "branch": "issue-1910-s2-boxed-primitive-toprimitive",
+      "claimed_at": "2026-06-17T04:38:45Z"
+    },
+    {
+      "id": "1919",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-spec-compile",
+      "status": "in-progress",
+      "branch": "issue-1919-transactional-speculative-compile",
+      "claimed_at": "2026-06-21T21:21:41Z"
+    },
+    {
+      "id": "1920",
+      "slice": "",
+      "assignee": "ttraenkler/dev-b",
+      "status": "in-progress",
+      "branch": "issue-1920-peephole-catchall",
+      "claimed_at": "2026-06-16T09:19:34Z"
+    },
+    {
+      "id": "1926",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-1926",
+      "status": "in-progress",
+      "branch": "issue-1926-irtype-symbolic",
+      "claimed_at": "2026-06-21T21:21:58Z"
+    },
+    {
+      "id": "1931",
+      "slice": "",
+      "assignee": "ttraenkler/cs-1931",
+      "status": "in-progress",
+      "branch": "issue-1931-decompose-early-errors",
+      "claimed_at": "2026-06-17T02:14:16Z"
+    },
+    {
+      "id": "2009",
+      "slice": "",
+      "assignee": "ttraenkler/sen-1",
+      "status": "in-progress",
+      "branch": "issue-2009-r3b-insertion-order",
+      "claimed_at": "2026-06-19T03:13:39Z"
+    },
+    {
+      "id": "2011",
+      "slice": "",
+      "assignee": "ttraenkler/cs-2161",
+      "status": "in-progress",
+      "branch": "issue-2011-accessor-closures",
+      "claimed_at": "2026-06-17T02:14:38Z"
+    },
+    {
+      "id": "2017",
+      "slice": "",
+      "assignee": "ttraenkler/sd-b",
+      "status": "in-progress",
+      "branch": "issue-2017-getter-only-assignment-typeerror",
+      "claimed_at": "2026-06-17T00:38:15Z"
+    },
+    {
+      "id": "2026",
+      "slice": "",
+      "assignee": "ttraenkler/cs-2158",
+      "status": "in-progress",
+      "branch": "issue-2026-class-first-class-new",
+      "claimed_at": "2026-06-18T10:00:26Z"
+    },
+    {
+      "id": "2029",
+      "slice": "",
+      "assignee": "ttraenkler/cs-2160",
+      "status": "in-progress",
+      "branch": "issue-2029-u32-out-of-range",
+      "claimed_at": "2026-06-18T09:50:23Z"
+    },
+    {
+      "id": "2036",
+      "slice": "",
+      "assignee": "ttraenkler/dev-2",
+      "status": "in-progress",
+      "branch": "issue-2036-s6-step1-borrowed-receiver-refuse",
+      "claimed_at": "2026-06-17T04:02:40Z"
+    },
+    {
+      "id": "2040",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-3164-conflict",
+      "status": "in-progress",
+      "branch": "issue-2040-tag5-classifier-flip",
+      "claimed_at": "2026-07-16T19:39:02Z"
+    },
+    {
+      "id": "2044",
+      "slice": "",
+      "assignee": "ttraenkler/dev-2138f",
+      "status": "in-progress",
+      "branch": "issue-2044-bigint-i64-brand-decision",
+      "claimed_at": "2026-07-02T19:45:37Z"
+    },
+    {
+      "id": "2083",
+      "slice": "",
+      "assignee": "ttraenkler/dev-2083",
+      "status": "in-progress",
+      "branch": "issue-2083-host-glue-size",
+      "claimed_at": "2026-06-25T15:52:20Z"
+    },
+    {
+      "id": "2088",
+      "slice": "",
+      "assignee": "ttraenkler/cs-2088",
+      "status": "in-progress",
+      "branch": "issue-2088-per-builtin-rep-scaffold",
+      "claimed_at": "2026-06-17T02:37:21Z"
+    },
+    {
+      "id": "2102",
+      "slice": "",
+      "assignee": "ttraenkler/sd-b",
+      "status": "in-progress",
+      "branch": "issue-2102-shared-throwjserror",
+      "claimed_at": "2026-06-17T01:03:22Z"
+    },
+    {
+      "id": "2103",
+      "slice": "",
+      "assignee": "ttraenkler/cs-2103",
+      "status": "in-progress",
+      "branch": "issue-2103-shared-binding-info",
+      "claimed_at": "2026-06-17T02:37:25Z"
+    },
+    {
+      "id": "2107:any-add-concat",
+      "slice": "",
+      "assignee": "ttraenkler/dev-4",
+      "status": "in-progress",
+      "branch": "fix-any-add-local-concat",
+      "claimed_at": "2026-06-17T04:44:13Z"
+    },
+    {
+      "id": "2119",
+      "slice": "",
+      "assignee": "ttraenkler/dev-3",
+      "status": "in-progress",
+      "branch": "issue-2119-module-strict-arguments",
+      "claimed_at": "2026-06-17T03:15:27Z"
+    },
+    {
+      "id": "2135",
+      "slice": "",
+      "assignee": "ttraenkler/dev-2138f",
+      "status": "in-progress",
+      "branch": "issue-2135-ir-capability-predicate",
+      "claimed_at": "2026-07-02T05:18:55Z"
+    },
+    {
+      "id": "2136",
+      "slice": "",
+      "assignee": "ttraenkler/dev-resume",
+      "status": "in-progress",
+      "branch": "issue-2136-ir-loop-cond-toboolean",
+      "claimed_at": "2026-06-16T23:12:55Z"
+    },
+    {
+      "id": "2140",
+      "slice": "",
+      "assignee": "ttraenkler/dev-2875f",
+      "status": "in-progress",
+      "branch": "issue-2140-fixbranchtype-coerce-or-throw",
+      "claimed_at": "2026-07-02T14:43:47Z"
+    },
+    {
+      "id": "2146",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev-shared",
+      "status": "in-progress",
+      "branch": "issue-2146-retire-shared-di",
+      "claimed_at": "2026-06-21T21:21:50Z"
+    },
+    {
+      "id": "2151",
+      "slice": "",
+      "assignee": "ttraenkler/sen-1",
+      "status": "in-progress",
+      "branch": "issue-2151-dynamic-spread-dispatch",
+      "claimed_at": "2026-06-19T03:31:48Z"
+    },
+    {
+      "id": "2158",
+      "slice": "",
+      "assignee": "ttraenkler/cs-2158",
+      "status": "in-progress",
+      "branch": "issue-2158-class-proto-finish",
+      "claimed_at": "2026-06-18T09:15:25Z"
+    },
+    {
+      "id": "2160",
+      "slice": "",
+      "assignee": "ttraenkler/agent-a8b4e72435ca30db7",
+      "status": "in-progress",
+      "branch": "issue-2160-string-residual-s65",
+      "claimed_at": "2026-06-24T06:28:58Z"
+    },
+    {
+      "id": "2162",
+      "slice": "",
+      "assignee": "ttraenkler/cs-2163",
+      "status": "in-progress",
+      "branch": "issue-2162-mapset-finish",
+      "claimed_at": "2026-06-18T09:36:12Z"
+    },
+    {
+      "id": "2174",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-args-closure",
+      "status": "in-progress",
+      "branch": "issue-2174-standalone-async-args-closure",
+      "claimed_at": "2026-06-16T04:57:58Z"
+    },
+    {
+      "id": "2175",
+      "slice": "",
+      "assignee": "claude/es6-team-reflection",
+      "status": "in-progress",
+      "branch": "claude/es6-100-percent-pass-rate-wedr55",
+      "claimed_at": "2026-08-15T16:47:44Z"
+    },
+    {
+      "id": "2176",
+      "slice": "",
+      "assignee": "ttraenkler/agent-a8fb202e",
+      "status": "in-progress",
+      "branch": "issue-2176-tl-interp",
+      "claimed_at": "2026-06-16T04:20:11Z"
+    },
+    {
+      "id": "2178",
+      "slice": "",
+      "assignee": "ttraenkler/cs-2178",
+      "status": "in-progress",
+      "branch": "issue-2178-baseline-floor-staleness",
+      "claimed_at": "2026-06-17T02:33:32Z"
+    },
+    {
+      "id": "2182",
+      "slice": "",
+      "assignee": "ttraenkler/dev-resume",
+      "status": "in-progress",
+      "branch": "issue-2182-detached-body-late-import-audit",
+      "claimed_at": "2026-06-16T23:36:09Z"
+    },
+    {
+      "id": "2184",
+      "slice": "",
+      "assignee": "ttraenkler/dev-resume",
+      "status": "in-progress",
+      "branch": "issue-2184-linear-logical-operand-values",
+      "claimed_at": "2026-06-16T22:54:28Z"
+    },
+    {
+      "id": "2200",
+      "slice": "",
+      "assignee": "ttraenkler/dev-1769",
+      "status": "in-progress",
+      "branch": "issue-2200-annexb-phase2",
+      "claimed_at": "2026-06-20T15:14:16Z"
+    },
+    {
+      "id": "2201",
+      "slice": "",
+      "assignee": "ttraenkler/sd2",
+      "status": "in-progress",
+      "branch": "issue-2201-logical-assign-named-eval",
+      "claimed_at": "2026-06-19T01:09:51Z"
+    },
+    {
+      "id": "2374",
+      "slice": "",
+      "assignee": "ttraenkler/sd4",
+      "status": "in-progress",
+      "branch": "issue-2400-object-rest-destructuring",
+      "claimed_at": "2026-06-19T01:22:08Z"
+    },
+    {
+      "id": "2500",
+      "slice": "",
+      "assignee": "ttraenkler/sd5",
+      "status": "in-progress",
+      "branch": "issue-2500-uri-percent-encoding",
+      "claimed_at": "2026-06-19T02:42:23Z"
+    },
+    {
+      "id": "2502",
+      "slice": "",
+      "assignee": "ttraenkler/sd5",
+      "status": "in-progress",
+      "branch": "issue-2502-isort-externref",
+      "claimed_at": "2026-06-19T03:12:58Z"
+    },
+    {
+      "id": "2503b",
+      "slice": "",
+      "assignee": "ttraenkler/dev2",
+      "status": "in-progress",
+      "branch": "issue-2503b-any-string-loose-eq-coercion",
+      "claimed_at": "2026-06-20T14:30:24Z"
+    },
+    {
+      "id": "2515",
+      "slice": "",
+      "assignee": "ttraenkler/sd-6",
+      "status": "in-progress",
+      "branch": "issue-2515-s0b-residual-producers",
+      "claimed_at": "2026-06-21T12:42:12Z"
+    },
+    {
+      "id": "2520",
+      "slice": "",
+      "assignee": "ttraenkler/sd-standalone",
+      "status": "in-progress",
+      "branch": "issue-2520-quiet-host-import-warnings",
+      "claimed_at": "2026-06-20T18:22:12Z"
+    },
+    {
+      "id": "2530",
+      "slice": "",
+      "assignee": "ttraenkler/sd3",
+      "status": "in-progress",
+      "branch": "issue-2530-pr-time-dup-id-gate",
+      "claimed_at": "2026-06-20T12:19:23Z"
+    },
+    {
+      "id": "2531",
+      "slice": "",
+      "assignee": "ttraenkler/dev-allocation",
+      "status": "in-progress",
+      "branch": "issue-2531-atomic-issue-id-allocation",
+      "claimed_at": "2026-06-20T12:23:58Z"
+    },
+    {
+      "id": "2547",
+      "slice": "",
+      "assignee": "ttraenkler/dev",
+      "status": "in-progress",
+      "branch": "auto-park-merge-group-failures",
+      "claimed_at": "2026-06-20T13:23:17Z"
+    },
+    {
+      "id": "2548",
+      "slice": "",
+      "assignee": "ttraenkler/sd3",
+      "status": "in-progress",
+      "branch": "issue-2548-agents-stop-self-enqueue",
+      "claimed_at": "2026-06-20T13:54:23Z"
+    },
+    {
+      "id": "2549",
+      "slice": "",
+      "assignee": "ttraenkler/dev-sd3",
+      "status": "in-progress",
+      "branch": "issue-2549-auto-enqueue-author-trust-gate",
+      "claimed_at": "2026-06-20T14:01:16Z"
+    },
+    {
+      "id": "2552",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-funcidx",
+      "status": "in-progress",
+      "branch": "issue-2552-annexb-phase2-tdz-narrow",
+      "claimed_at": "2026-06-21T11:24:42Z"
+    },
+    {
+      "id": "2560",
+      "slice": "",
+      "assignee": "ttraenkler/dev-backoff",
+      "status": "in-progress",
+      "branch": "issue-2560-autoenqueue-trailing-add",
+      "claimed_at": "2026-06-20T16:57:25Z"
+    },
+    {
+      "id": "2561",
+      "slice": "",
+      "assignee": "ttraenkler/dev-docs",
+      "status": "in-progress",
+      "branch": "issue-2561-dev-self-enqueue-once",
+      "claimed_at": "2026-06-20T17:47:40Z"
+    },
+    {
+      "id": "2563",
+      "slice": "",
+      "assignee": "ttraenkler/sd-privatefield",
+      "status": "in-progress",
+      "branch": "issue-2563-privatefield-typeerror",
+      "claimed_at": "2026-06-20T20:52:25Z"
+    },
+    {
+      "id": "2568",
+      "slice": "",
+      "assignee": "ttraenkler/sd-5",
+      "status": "in-progress",
+      "branch": "issue-2568-nested-dstr-default",
+      "claimed_at": "2026-06-21T12:19:21Z"
+    },
+    {
+      "id": "2581",
+      "slice": "",
+      "assignee": "ttraenkler/sd-2",
+      "status": "in-progress",
+      "branch": "issue-2581-objlit-method-generators",
+      "claimed_at": "2026-06-21T16:38:57Z"
+    },
+    {
+      "id": "2582",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-acorn-identity",
+      "status": "in-progress",
+      "branch": "issue-2582-numkey-objread",
+      "claimed_at": "2026-06-21T16:47:13Z"
+    },
+    {
+      "id": "2586",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-acorn-identity",
+      "status": "in-progress",
+      "branch": "issue-2586-new-this-fnctor",
+      "claimed_at": "2026-06-21T17:50:49Z"
+    },
+    {
+      "id": "2588",
+      "slice": "",
+      "assignee": "ttraenkler/dev-regex-2588",
+      "status": "in-progress",
+      "branch": "issue-2588-89-regexp-groups-indices",
+      "claimed_at": "2026-06-22T07:24:18Z"
+    },
+    {
+      "id": "2589",
+      "slice": "",
+      "assignee": "ttraenkler/dev-regex-2588",
+      "status": "in-progress",
+      "branch": "issue-2588-89-regexp-groups-indices",
+      "claimed_at": "2026-06-22T07:24:38Z"
+    },
+    {
+      "id": "2590",
+      "slice": "",
+      "assignee": "ttraenkler/agent-regexp-escape",
+      "status": "in-progress",
+      "branch": "issue-2590-regexp-escape",
+      "claimed_at": "2026-06-22T06:39:58Z"
+    },
+    {
+      "id": "2591",
+      "slice": "",
+      "assignee": "ttraenkler/dev-regex-2591",
+      "status": "in-progress",
+      "branch": "issue-2591-vflag-q-string-disjunction",
+      "claimed_at": "2026-06-22T06:40:16Z"
+    },
+    {
+      "id": "2596",
+      "slice": "",
+      "assignee": "ttraenkler/agent-typedarray-2595-2597",
+      "status": "in-progress",
+      "branch": "issue-2596-typedarray-buffer-accessor",
+      "claimed_at": "2026-06-22T09:20:55Z"
+    },
+    {
+      "id": "2605",
+      "slice": "",
+      "assignee": "ttraenkler/dev-collections",
+      "status": "in-progress",
+      "branch": "issue-2605-2606-standalone-collections",
+      "claimed_at": "2026-06-22T12:34:56Z"
+    },
+    {
+      "id": "2606",
+      "slice": "",
+      "assignee": "ttraenkler/dev-collections",
+      "status": "in-progress",
+      "branch": "issue-2605-2606-standalone-collections",
+      "claimed_at": "2026-06-22T12:35:09Z"
+    },
+    {
+      "id": "2612",
+      "slice": "",
+      "assignee": "ttraenkler/async-2612-2613",
+      "status": "in-progress",
+      "branch": "issue-2612-2613-async-thenable",
+      "claimed_at": "2026-06-22T11:48:26Z"
+    },
+    {
+      "id": "2613",
+      "slice": "",
+      "assignee": "ttraenkler/async-2612-2613",
+      "status": "in-progress",
+      "branch": "issue-2612-2613-async-thenable",
+      "claimed_at": "2026-06-22T11:48:39Z"
+    },
+    {
+      "id": "2614",
+      "slice": "",
+      "assignee": "ttraenkler/senior-developer",
+      "status": "in-progress",
+      "branch": "issue-2614-promise-combinator-resolve",
+      "claimed_at": "2026-06-22T12:55:35Z"
+    },
+    {
+      "id": "2615",
+      "slice": "",
+      "assignee": "ttraenkler/agent-acc861f0e7aea64c8",
+      "status": "in-progress",
+      "branch": "issue-2615-proxy-result-externref",
+      "claimed_at": "2026-06-22T11:48:47Z"
+    },
+    {
+      "id": "2616",
+      "slice": "",
+      "assignee": "ttraenkler/agent-acc861f0e7aea64c8",
+      "status": "in-progress",
+      "branch": "issue-2616-proxy-noncallable-trap",
+      "claimed_at": "2026-06-22T12:15:50Z"
+    },
+    {
+      "id": "2617",
+      "slice": "",
+      "assignee": "ttraenkler/agent-acc861f0e7aea64c8",
+      "status": "in-progress",
+      "branch": "issue-2617-proxy-trap-throw-propagation",
+      "claimed_at": "2026-06-22T15:51:14Z"
+    },
+    {
+      "id": "2618",
+      "slice": "",
+      "assignee": "ttraenkler/sd-2618",
+      "status": "in-progress",
+      "branch": "issue-2618-apply-dispatch",
+      "claimed_at": "2026-06-24T06:06:42Z"
+    },
+    {
+      "id": "2619",
+      "slice": "",
+      "assignee": "ttraenkler/dev-symbol-2610",
+      "status": "in-progress",
+      "branch": "issue-2619-string-hash-perf",
+      "claimed_at": "2026-06-22T12:59:47Z"
+    },
+    {
+      "id": "2636",
+      "slice": "",
+      "assignee": "ttraenkler/sd-2580-bpre",
+      "status": "in-progress",
+      "branch": "issue-2636-standalone-reflective-callback-leak",
+      "claimed_at": "2026-06-23T22:43:14Z"
+    },
+    {
+      "id": "2637",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-2623a",
+      "status": "in-progress",
+      "branch": "doc-2623-executor-body-handoff",
+      "claimed_at": "2026-06-24T06:19:24Z"
+    },
+    {
+      "id": "2649",
+      "slice": "",
+      "assignee": "ttraenkler/agent-a3bfd116a51704f18",
+      "status": "in-progress",
+      "branch": "issue-2649-typedarray-subarray-length",
+      "claimed_at": "2026-06-28T00:53:41Z"
+    },
+    {
+      "id": "2654",
+      "slice": "",
+      "assignee": "ttraenkler/agent-a2bb2065788d7244b",
+      "status": "in-progress",
+      "branch": "issue-2653-standalone-parsefloat-fraction-precision",
+      "claimed_at": "2026-06-25T00:26:01Z"
+    },
+    {
+      "id": "2655",
+      "slice": "",
+      "assignee": "ttraenkler/sendev",
+      "status": "in-progress",
+      "branch": "issue-2655-member-write-struct-slot",
+      "claimed_at": "2026-06-25T05:04:35Z"
+    },
+    {
+      "id": "2660",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-2660-m3-closure-prototype-edge",
+      "claimed_at": "2026-08-15T06:33:39Z"
+    },
+    {
+      "id": "2662",
+      "slice": "",
+      "assignee": "ttraenkler/fable-dev-1",
+      "status": "in-progress",
+      "branch": "issue-2662-gc-lazy-generators",
+      "claimed_at": "2026-07-17T21:54:57Z"
+    },
+    {
+      "id": "2669",
+      "slice": "",
+      "assignee": "ttraenkler/dev-dstr2669",
+      "status": "in-progress",
+      "branch": "issue-2669-dstr-residual-verify",
+      "claimed_at": "2026-06-26T09:45:18Z"
+    },
+    {
+      "id": "2676",
+      "slice": "",
+      "assignee": "ttraenkler/es3-2676",
+      "status": "in-progress",
+      "branch": "issue-2676-mapped-args-strict-delete",
+      "claimed_at": "2026-06-30T19:01:40Z"
+    },
+    {
+      "id": "2680",
+      "slice": "",
+      "assignee": "ttraenkler/dev2",
+      "status": "in-progress",
+      "branch": "issue-2680-topropertydescriptor-proto-walk",
+      "claimed_at": "2026-06-26T23:38:31Z"
+    },
+    {
+      "id": "2682",
+      "slice": "",
+      "assignee": "ttraenkler/sd-strhash",
+      "status": "in-progress",
+      "branch": "issue-2682-strhash-fastpath",
+      "claimed_at": "2026-06-26T06:08:14Z"
+    },
+    {
+      "id": "2706",
+      "slice": "",
+      "assignee": "ttraenkler/Esch",
+      "status": "in-progress",
+      "branch": "issue-2706-forin-enum-order",
+      "claimed_at": "2026-06-26T20:55:43Z"
+    },
+    {
+      "id": "2707",
+      "slice": "",
+      "assignee": "ttraenkler/dev3",
+      "status": "in-progress",
+      "branch": "issue-2707-operators-nullish-strict-eq-tco",
+      "claimed_at": "2026-06-26T19:09:10Z"
+    },
+    {
+      "id": "2709",
+      "slice": "",
+      "assignee": "ttraenkler/sd-super2709",
+      "status": "in-progress",
+      "branch": "issue-2709-super-subcases",
+      "claimed_at": "2026-06-26T11:32:19Z"
+    },
+    {
+      "id": "2711",
+      "slice": "",
+      "assignee": "ttraenkler/dev-2711b",
+      "status": "in-progress",
+      "branch": "issue-2711-differential-parity-ci-gate",
+      "claimed_at": "2026-06-26T13:14:34Z"
+    },
+    {
+      "id": "2712",
+      "slice": "",
+      "assignee": "ttraenkler/fable-3058",
+      "status": "in-progress",
+      "branch": "issue-2712-bool-brand-total",
+      "claimed_at": "2026-07-09T18:57:52Z"
+    },
+    {
+      "id": "2713",
+      "slice": "",
+      "assignee": "ttraenkler/dev-2713b",
+      "status": "in-progress",
+      "branch": "issue-2713-ir-legacy-parity",
+      "claimed_at": "2026-06-26T13:14:51Z"
+    },
+    {
+      "id": "2714",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-soundness",
+      "status": "in-progress",
+      "branch": "issue-2714-object-spread-enumerable",
+      "claimed_at": "2026-06-28T00:40:03Z"
+    },
+    {
+      "id": "2717",
+      "slice": "",
+      "assignee": "ttraenkler/dev-serve",
+      "status": "in-progress",
+      "branch": "issue-2717-flatmap-standalone-native",
+      "claimed_at": "2026-07-21T22:33:39Z"
+    },
+    {
+      "id": "2729",
+      "slice": "",
+      "assignee": "ttraenkler/agent-aa6c288d8cd3cb14b",
+      "status": "in-progress",
+      "branch": "issue-2729-uint8array-touint8",
+      "claimed_at": "2026-06-28T01:50:11Z"
+    },
+    {
+      "id": "2734",
+      "slice": "",
+      "assignee": "ttraenkler/dev2",
+      "status": "in-progress",
+      "branch": "issue-2734-standalone-object-identity-eq",
+      "claimed_at": "2026-06-26T22:08:51Z"
+    },
+    {
+      "id": "2739",
+      "slice": "",
+      "assignee": "ttraenkler/dev2",
+      "status": "in-progress",
+      "branch": "issue-2739-forin-prototype-chain",
+      "claimed_at": "2026-06-27T08:10:12Z"
+    },
+    {
+      "id": "2741",
+      "slice": "",
+      "assignee": "ttraenkler/dev1",
+      "status": "in-progress",
+      "branch": "issue-2741-in-operator",
+      "claimed_at": "2026-06-27T08:18:05Z"
+    },
+    {
+      "id": "2744",
+      "slice": "",
+      "assignee": "ttraenkler/esch",
+      "status": "in-progress",
+      "branch": "issue-2744-extensibility-routing",
+      "claimed_at": "2026-06-27T08:35:11Z"
+    },
+    {
+      "id": "2746",
+      "slice": "",
+      "assignee": "ttraenkler/agent-a4c75e2b30",
+      "status": "in-progress",
+      "branch": "issue-2746-object-keys-own-listing",
+      "claimed_at": "2026-06-27T09:15:09Z"
+    },
+    {
+      "id": "2750",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-soundness",
+      "status": "in-progress",
+      "branch": "issue-2750-s1-js-strict",
+      "claimed_at": "2026-06-27T23:44:56Z"
+    },
+    {
+      "id": "2756",
+      "slice": "",
+      "assignee": "ttraenkler/sd-dstr-objdefault",
+      "status": "in-progress",
+      "branch": "issue-2756-array-obj-class-default",
+      "claimed_at": "2026-06-28T00:24:43Z"
+    },
+    {
+      "id": "2757",
+      "slice": "",
+      "assignee": "ttraenkler/dev-acorn",
+      "status": "in-progress",
+      "branch": "issue-2757-dstr-assign-rest-undef",
+      "claimed_at": "2026-06-28T00:37:45Z"
+    },
+    {
+      "id": "2764",
+      "slice": "",
+      "assignee": "ttraenkler/agent-a2da3f181c62e4768",
+      "status": "in-progress",
+      "branch": "issue-2764-hasinstance-arity",
+      "claimed_at": "2026-06-28T01:50:52Z"
+    },
+    {
+      "id": "2766",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-2766",
+      "status": "in-progress",
+      "branch": "issue-2766-elementaccess-prove-specialize",
+      "claimed_at": "2026-06-28T04:55:05Z"
+    },
+    {
+      "id": "2769",
+      "slice": "",
+      "assignee": "ttraenkler/forof769",
+      "status": "in-progress",
+      "branch": "issue-2769-impl",
+      "claimed_at": "2026-06-28T20:04:34Z"
+    },
+    {
+      "id": "2780",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-arraylit-widening",
+      "status": "in-progress",
+      "branch": "issue-2780-arraylit-widening-escape",
+      "claimed_at": "2026-06-28T07:51:05Z"
+    },
+    {
+      "id": "2789",
+      "slice": "",
+      "assignee": "ttraenkler/senior-developer",
+      "status": "in-progress",
+      "branch": "issue-2787-hybrid-packed-i32-readside-proof",
+      "claimed_at": "2026-06-28T12:47:49Z"
+    },
+    {
+      "id": "2790",
+      "slice": "",
+      "assignee": "ttraenkler/agent-af367ef55d7ab6b0d",
+      "status": "in-progress",
+      "branch": "issue-2788-i32-number-local-nobox",
+      "claimed_at": "2026-06-28T12:58:23Z"
+    },
+    {
+      "id": "2792",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-symbox",
+      "status": "in-progress",
+      "branch": "issue-2792-hybrid-symbol-array-oob-undefined",
+      "claimed_at": "2026-06-28T13:38:24Z"
+    },
+    {
+      "id": "2796",
+      "slice": "",
+      "assignee": "ttraenkler/diff-host",
+      "status": "in-progress",
+      "branch": "issue-2795-2796-diff-host-fidelity",
+      "claimed_at": "2026-06-28T16:58:19Z"
+    },
+    {
+      "id": "2808",
+      "slice": "",
+      "assignee": "ttraenkler/dstr2",
+      "status": "in-progress",
+      "branch": "issue-2669-dstr-next",
+      "claimed_at": "2026-06-28T20:51:57Z"
+    },
+    {
+      "id": "2811",
+      "slice": "",
+      "assignee": "ttraenkler/dstr3",
+      "status": "in-progress",
+      "branch": "issue-2669-dstr-3",
+      "claimed_at": "2026-06-28T23:04:12Z"
+    },
+    {
+      "id": "2814",
+      "slice": "",
+      "assignee": "ttraenkler/bugC",
+      "status": "in-progress",
+      "branch": "issue-2669-bugc",
+      "claimed_at": "2026-06-28T23:54:29Z"
+    },
+    {
+      "id": "2820",
+      "slice": "",
+      "assignee": "ttraenkler/bugC",
+      "status": "in-progress",
+      "branch": "",
+      "claimed_at": "2026-06-29T01:26:37Z"
+    },
+    {
+      "id": "2825",
+      "slice": "",
+      "assignee": "ttraenkler/impl2825",
+      "status": "in-progress",
+      "branch": "issue-2825-class-method-capture",
+      "claimed_at": "2026-06-29T02:47:01Z"
+    },
+    {
+      "id": "2844",
+      "slice": "",
+      "assignee": "ttraenkler/restobj",
+      "status": "in-progress",
+      "branch": "issue-2844-rest-nested-target",
+      "claimed_at": "2026-06-29T21:24:02Z"
+    },
+    {
+      "id": "2845",
+      "slice": "",
+      "assignee": "ttraenkler/dstr4",
+      "status": "in-progress",
+      "branch": "issue-2669-dstr-4",
+      "claimed_at": "2026-06-29T21:25:45Z"
+    },
+    {
+      "id": "2856",
+      "slice": "",
+      "assignee": "ttraenkler/dev-2856f",
+      "status": "in-progress",
+      "branch": "issue-2856-reject-leaf-why",
+      "claimed_at": "2026-07-02T01:41:59Z"
+    },
+    {
+      "id": "2864",
+      "slice": "",
+      "assignee": "ttraenkler/fable-es2015",
+      "status": "in-progress",
+      "branch": "claude/es6-2864-generator-carrier",
+      "claimed_at": "2026-09-18T07:08:34Z"
+    },
+    {
+      "id": "2867",
+      "slice": "",
+      "assignee": "claude/es6-team-promise",
+      "status": "in-progress",
+      "branch": "claude/es6-100-percent-pass-rate-wedr55",
+      "claimed_at": "2026-08-15T16:47:40Z"
+    },
+    {
+      "id": "2869",
+      "slice": "",
+      "assignee": "ttraenkler/member2869",
+      "status": "in-progress",
+      "branch": "issue-2869-member-target-impl",
+      "claimed_at": "2026-06-30T02:46:44Z"
+    },
+    {
+      "id": "2875",
+      "slice": "",
+      "assignee": "ttraenkler/lead-es5",
+      "status": "in-progress",
+      "branch": "claude/es5-string-proto-slice-harvest",
+      "claimed_at": "2026-08-06T08:39:09Z"
+    },
+    {
+      "id": "2880",
+      "slice": "",
+      "assignee": "ttraenkler/explore2",
+      "status": "in-progress",
+      "branch": "issue-surrogate-string-constants",
+      "claimed_at": "2026-06-30T04:11:42Z"
+    },
+    {
+      "id": "2881",
+      "slice": "",
+      "assignee": "ttraenkler/explore3",
+      "status": "in-progress",
+      "branch": "explore-array-num",
+      "claimed_at": "2026-06-30T04:36:41Z"
+    },
+    {
+      "id": "2882",
+      "slice": "",
+      "assignee": "ttraenkler/explore1",
+      "status": "in-progress",
+      "branch": "",
+      "claimed_at": "2026-06-30T04:53:37Z"
+    },
+    {
+      "id": "2887",
+      "slice": "",
+      "assignee": "ttraenkler/explore5",
+      "status": "in-progress",
+      "branch": "explore-math-tmpl",
+      "claimed_at": "2026-06-30T06:21:33Z"
+    },
+    {
+      "id": "2897",
+      "slice": "",
+      "assignee": "ttraenkler/es3-2897",
+      "status": "in-progress",
+      "branch": "issue-2897-arguments-assign-target",
+      "claimed_at": "2026-06-30T19:02:03Z"
+    },
+    {
+      "id": "2898",
+      "slice": "",
+      "assignee": "ttraenkler/es3-2898",
+      "status": "in-progress",
+      "branch": "issue-2898-yield-assign-target-early",
+      "claimed_at": "2026-06-30T19:05:33Z"
+    },
+    {
+      "id": "2899",
+      "slice": "",
+      "assignee": "ttraenkler/es3-2899",
+      "status": "in-progress",
+      "branch": "issue-2899-caller-poison-pill",
+      "claimed_at": "2026-06-30T19:00:43Z"
+    },
+    {
+      "id": "2906",
+      "slice": "",
+      "assignee": "claude/es6-team-generators",
+      "status": "in-progress",
+      "branch": "claude/es6-100-percent-pass-rate-wedr55",
+      "claimed_at": "2026-08-15T16:47:54Z"
+    },
+    {
+      "id": "2910",
+      "slice": "",
+      "assignee": "ttraenkler/impl2910",
+      "status": "in-progress",
+      "branch": "issue-2910-editions-reconcile",
+      "claimed_at": "2026-07-01T01:05:54Z"
+    },
+    {
+      "id": "2911",
+      "slice": "",
+      "assignee": "ttraenkler/lead",
+      "status": "in-progress",
+      "branch": "",
+      "claimed_at": "2026-07-01T01:01:26Z"
+    },
+    {
+      "id": "2912",
+      "slice": "",
+      "assignee": "ttraenkler/fix2912",
+      "status": "in-progress",
+      "branch": "issue-2912-negative-verdict",
+      "claimed_at": "2026-07-01T01:36:04Z"
+    },
+    {
+      "id": "2916",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-2916-standalone-dynamic-instanceof",
+      "claimed_at": "2026-08-15T02:43:29Z"
+    },
+    {
+      "id": "2917",
+      "slice": "",
+      "assignee": "ttraenkler/claude-s74b",
+      "status": "in-progress",
+      "branch": "claude/project-thread-z0xiwi",
+      "claimed_at": "2026-09-23T05:12:19Z"
+    },
+    {
+      "id": "2930",
+      "slice": "",
+      "assignee": "ttraenkler/dev-2900",
+      "status": "in-progress",
+      "branch": "issue-2900-module-indirect-default-binding",
+      "claimed_at": "2026-07-01T23:36:42Z"
+    },
+    {
+      "id": "2933",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-3149-takeover",
+      "status": "in-progress",
+      "branch": "issue-2933-variadic-math-value",
+      "claimed_at": "2026-07-16T15:21:32Z"
+    },
+    {
+      "id": "2934",
+      "slice": "",
+      "assignee": "ttraenkler/dev-2934f",
+      "status": "in-progress",
+      "branch": "issue-2934-hostbridge-iscallable",
+      "claimed_at": "2026-07-02T14:35:26Z"
+    },
+    {
+      "id": "2949",
+      "slice": "",
+      "assignee": "ttraenkler/fable-lead",
+      "status": "in-progress",
+      "branch": "codex/2949-acorn-recursive-bool",
+      "claimed_at": "2026-08-21T21:31:47Z"
+    },
+    {
+      "id": "2956",
+      "slice": "l2-vec",
+      "assignee": "ttraenkler/codex-l2-vec",
+      "status": "in-progress",
+      "branch": "codex/2956-l2-vec",
+      "claimed_at": "2026-07-16T04:01:51Z"
+    },
+    {
+      "id": "2972",
+      "slice": "",
+      "assignee": "ttraenkler/dev-2138f",
+      "status": "in-progress",
+      "branch": "issue-2972-ir-string-elem-inbounds-read",
+      "claimed_at": "2026-07-02T14:38:54Z"
+    },
+    {
+      "id": "2978",
+      "slice": "",
+      "assignee": "ttraenkler/fable-2978",
+      "status": "in-progress",
+      "branch": "issue-2978-forawait-rejected-promise",
+      "claimed_at": "2026-07-09T19:35:42Z"
+    },
+    {
+      "id": "2990",
+      "slice": "",
+      "assignee": "ttraenkler/dev-2912f",
+      "status": "in-progress",
+      "branch": "issue-2990-ir-effects-slice3",
+      "claimed_at": "2026-07-02T19:33:44Z"
+    },
+    {
+      "id": "2992",
+      "slice": "array-from-deleted-source",
+      "assignee": "ttraenkler/codex-array-from-deleted-source",
+      "status": "in-progress",
+      "branch": "codex/2992-array-from-deleted-source",
+      "claimed_at": "2026-09-28T08:40:14Z"
+    },
+    {
+      "id": "3004",
+      "slice": "",
+      "assignee": "ttraenkler/dev-unwedge",
+      "status": "in-progress",
+      "branch": "issue-3004-vacuous-gate-excusal",
+      "claimed_at": "2026-07-02T20:43:59Z"
+    },
+    {
+      "id": "3015",
+      "slice": "",
+      "assignee": "ttraenkler/dev-std-1",
+      "status": "in-progress",
+      "branch": "issue-3015-array-cb-native",
+      "claimed_at": "2026-07-24T08:12:14Z"
+    },
+    {
+      "id": "3017",
+      "slice": "poison-pill",
+      "assignee": "ttraenkler/codex-es5-function-poison-pill",
+      "status": "in-progress",
+      "branch": "codex/3017-es5-function-poison-pill",
+      "claimed_at": "2026-07-28T19:09:45Z"
+    },
+    {
+      "id": "3024",
+      "slice": "",
+      "assignee": "ttraenkler/agent-a3fa3add",
+      "status": "in-progress",
+      "branch": "issue-3024-invalid-wasm-remeasure",
+      "claimed_at": "2026-07-24T13:10:35Z"
+    },
+    {
+      "id": "3026",
+      "slice": "",
+      "assignee": "ttraenkler/dev-3026",
+      "status": "in-progress",
+      "branch": "issue-3026-dup-destructuring-params",
+      "claimed_at": "2026-07-04T22:28:47Z"
+    },
+    {
+      "id": "3031",
+      "slice": "",
+      "assignee": "ttraenkler/fable-3031",
+      "status": "in-progress",
+      "branch": "issue-3031-proxy-apply-trap",
+      "claimed_at": "2026-07-09T14:21:57Z"
+    },
+    {
+      "id": "3033",
+      "slice": "",
+      "assignee": "ttraenkler/dev-b2b-memberread",
+      "status": "in-progress",
+      "branch": "issue-3033-b2b-memberread",
+      "claimed_at": "2026-07-12T11:33:08Z"
+    },
+    {
+      "id": "3036",
+      "slice": "",
+      "assignee": "ttraenkler/dev-3036",
+      "status": "in-progress",
+      "branch": "issue-3036-accessor-method-boxed-capture",
+      "claimed_at": "2026-07-05T01:13:20Z"
+    },
+    {
+      "id": "3040",
+      "slice": "",
+      "assignee": "ttraenkler/dev-3040",
+      "status": "in-progress",
+      "branch": "issue-3040-captured-iterable-param-default",
+      "claimed_at": "2026-07-06T11:28:53Z"
+    },
+    {
+      "id": "3043",
+      "slice": "",
+      "assignee": "ttraenkler/fable-3022",
+      "status": "in-progress",
+      "branch": "issue-3043-static-lane-transition",
+      "claimed_at": "2026-07-09T18:58:31Z"
+    },
+    {
+      "id": "3048",
+      "slice": "",
+      "assignee": "ttraenkler/dev-3044",
+      "status": "in-progress",
+      "branch": "issue-3048-make-getter-callback-import",
+      "claimed_at": "2026-07-05T05:19:28Z"
+    },
+    {
+      "id": "3049",
+      "slice": "",
+      "assignee": "ttraenkler/fable-proto",
+      "status": "in-progress",
+      "branch": "issue-3049-toplevel-fnctor-proto-init",
+      "claimed_at": "2026-07-09T19:54:18Z"
+    },
+    {
+      "id": "3068",
+      "slice": "",
+      "assignee": "ttraenkler/dev-cycleE",
+      "status": "in-progress",
+      "branch": "issue-wellformed-standalone",
+      "claimed_at": "2026-07-06T03:29:52Z"
+    },
+    {
+      "id": "3074",
+      "slice": "",
+      "assignee": "ttraenkler/dev-keystone",
+      "status": "in-progress",
+      "branch": "issue-3074-gc-lane-harness-dispatch",
+      "claimed_at": "2026-07-07T00:17:03Z"
+    },
+    {
+      "id": "3079",
+      "slice": "",
+      "assignee": "ttraenkler/dev-A",
+      "status": "in-progress",
+      "branch": "fix-claim-issue-allocate-timeout",
+      "claimed_at": "2026-07-06T22:08:10Z"
+    },
+    {
+      "id": "3088",
+      "slice": "",
+      "assignee": "ttraenkler/dev-ta",
+      "status": "in-progress",
+      "branch": "issue-3088-ta-shim-2arg",
+      "claimed_at": "2026-07-08T14:31:43Z"
+    },
+    {
+      "id": "3089",
+      "slice": "",
+      "assignee": "ttraenkler/dev-ta",
+      "status": "in-progress",
+      "branch": "issue-3089-bigint-ta-emit",
+      "claimed_at": "2026-07-08T14:40:54Z"
+    },
+    {
+      "id": "3090",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dead",
+      "status": "in-progress",
+      "branch": "issue-3090-delete-dead-handlers",
+      "claimed_at": "2026-07-13T07:53:23Z"
+    },
+    {
+      "id": "3095",
+      "slice": "",
+      "assignee": "ttraenkler/dev-builtins",
+      "status": "in-progress",
+      "branch": "issue-PLACEHOLDER",
+      "claimed_at": "2026-07-08T14:40:40Z"
+    },
+    {
+      "id": "3099",
+      "slice": "",
+      "assignee": "ttraenkler/dev-proxy",
+      "status": "in-progress",
+      "branch": "issue-3099-method-shorthand-own-prop",
+      "claimed_at": "2026-07-09T11:18:32Z"
+    },
+    {
+      "id": "3101",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-3101-bytecode-isa",
+      "claimed_at": "2026-07-17T06:44:08Z"
+    },
+    {
+      "id": "3102",
+      "slice": "",
+      "assignee": "ttraenkler/dev-consolidate",
+      "status": "in-progress",
+      "branch": "issue-3102-loc-budget-ratchet",
+      "claimed_at": "2026-07-09T11:20:31Z"
+    },
+    {
+      "id": "3103",
+      "slice": "",
+      "assignee": "ttraenkler/opus-forin-2",
+      "status": "in-progress",
+      "branch": "issue-3103-runtime-split-imports-dispatch",
+      "claimed_at": "2026-08-08T09:30:20Z"
+    },
+    {
+      "id": "3105",
+      "slice": "",
+      "assignee": "ttraenkler/dev-opus-1",
+      "status": "in-progress",
+      "branch": "issue-3105-emit-idioms-hashprobe-initial",
+      "claimed_at": "2026-07-23T23:08:14Z"
+    },
+    {
+      "id": "3109",
+      "slice": "",
+      "assignee": "ttraenkler/dev-serve",
+      "status": "in-progress",
+      "branch": "issue-3109-helper-consolidation-slice4",
+      "claimed_at": "2026-07-21T23:36:09Z"
+    },
+    {
+      "id": "3110",
+      "slice": "",
+      "assignee": "ttraenkler/dev-consolidate",
+      "status": "in-progress",
+      "branch": "issue-3110-dead-export-sweep",
+      "claimed_at": "2026-07-09T11:35:22Z"
+    },
+    {
+      "id": "3113",
+      "slice": "",
+      "assignee": "ttraenkler/opus-3113",
+      "status": "in-progress",
+      "branch": "claude/issue-3113-ir-layering-ratchet",
+      "claimed_at": "2026-08-21T10:40:33Z"
+    },
+    {
+      "id": "3117",
+      "slice": "",
+      "assignee": "ttraenkler/fable-3100s4",
+      "status": "in-progress",
+      "branch": "issue-objfn-protocol",
+      "claimed_at": "2026-07-09T17:27:04Z"
+    },
+    {
+      "id": "3121",
+      "slice": "",
+      "assignee": "ttraenkler/fable-3121",
+      "status": "in-progress",
+      "branch": "issue-3121-closure-capture-aliasing",
+      "claimed_at": "2026-07-09T21:28:21Z"
+    },
+    {
+      "id": "3124",
+      "slice": "",
+      "assignee": "ttraenkler/fable-3124",
+      "status": "in-progress",
+      "branch": "issue-3124-inherited-reads-struct-proto-chain",
+      "claimed_at": "2026-07-10T07:29:03Z"
+    },
+    {
+      "id": "3128",
+      "slice": "",
+      "assignee": "ttraenkler/fable-3128",
+      "status": "in-progress",
+      "branch": "issue-3128-rhs-closure-self-capture",
+      "claimed_at": "2026-07-10T07:25:45Z"
+    },
+    {
+      "id": "3130",
+      "slice": "",
+      "assignee": "ttraenkler/fable-3130",
+      "status": "in-progress",
+      "branch": "issue-3130-standalone-error-ctor-name",
+      "claimed_at": "2026-07-10T09:00:49Z"
+    },
+    {
+      "id": "3131",
+      "slice": "",
+      "assignee": "ttraenkler/fable-locfix",
+      "status": "in-progress",
+      "branch": "issue-3131-loc-gate-no-pr-baseline",
+      "claimed_at": "2026-07-10T10:41:09Z"
+    },
+    {
+      "id": "3141",
+      "slice": "",
+      "assignee": "ttraenkler/fable-finally",
+      "status": "in-progress",
+      "branch": "issue-3141-standalone-promise-capability",
+      "claimed_at": "2026-07-11T00:23:33Z"
+    },
+    {
+      "id": "3145",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev-a7a4",
+      "status": "in-progress",
+      "branch": "issue-3145-atomics-nonshared",
+      "claimed_at": "2026-07-14T02:44:13Z"
+    },
+    {
+      "id": "3146",
+      "slice": "",
+      "assignee": "ttraenkler/dev-iterators",
+      "status": "in-progress",
+      "branch": "issue-3146-standalone-iterator-helpers",
+      "claimed_at": "2026-07-12T04:37:50Z"
+    },
+    {
+      "id": "3169",
+      "slice": "",
+      "assignee": "ttraenkler/dev-array-hof",
+      "status": "in-progress",
+      "branch": "issue-3169-standalone-array-hof",
+      "claimed_at": "2026-07-12T12:34:22Z"
+    },
+    {
+      "id": "3170",
+      "slice": "",
+      "assignee": "ttraenkler/opus-3170",
+      "status": "in-progress",
+      "branch": "issue-3170-standalone-array-search-value-arraylike",
+      "claimed_at": "2026-07-13T06:39:35Z"
+    },
+    {
+      "id": "3176",
+      "slice": "",
+      "assignee": "ttraenkler/dev-json",
+      "status": "in-progress",
+      "branch": "issue-3176-standalone-json-residual",
+      "claimed_at": "2026-07-12T13:02:44Z"
+    },
+    {
+      "id": "3178",
+      "slice": "",
+      "assignee": "ttraenkler/fable-3417",
+      "status": "in-progress",
+      "branch": "issue-3178-async-not-iterable",
+      "claimed_at": "2026-07-23T09:22:41Z"
+    },
+    {
+      "id": "3179",
+      "slice": "",
+      "assignee": "ttraenkler/dev-boxed-index",
+      "status": "in-progress",
+      "branch": "issue-3179-boxed-index-read",
+      "claimed_at": "2026-07-12T15:35:43Z"
+    },
+    {
+      "id": "3181",
+      "slice": "",
+      "assignee": "ttraenkler/dev-number-resid",
+      "status": "in-progress",
+      "branch": "issue-3181-number-proto-residual",
+      "claimed_at": "2026-07-12T17:09:51Z"
+    },
+    {
+      "id": "3190",
+      "slice": "",
+      "assignee": "ttraenkler/dev-vec-arms",
+      "status": "in-progress",
+      "branch": "issue-3190-extern-set-vec-write",
+      "claimed_at": "2026-07-12T17:54:51Z"
+    },
+    {
+      "id": "3191",
+      "slice": "",
+      "assignee": "ttraenkler/dev-number-resid",
+      "status": "in-progress",
+      "branch": "issue-3191-unify-error-throw",
+      "claimed_at": "2026-07-12T18:24:45Z"
+    },
+    {
+      "id": "3192",
+      "slice": "",
+      "assignee": "ttraenkler/dev-find-wasm",
+      "status": "in-progress",
+      "branch": "issue-3192-dataview-regexp-brand",
+      "claimed_at": "2026-07-12T19:09:46Z"
+    },
+    {
+      "id": "3197",
+      "slice": "",
+      "assignee": "ttraenkler/dev-number-resid",
+      "status": "in-progress",
+      "branch": "issue-3197-forawait-drive",
+      "claimed_at": "2026-07-12T18:11:18Z"
+    },
+    {
+      "id": "3199",
+      "slice": "",
+      "assignee": "ttraenkler/dev-array-generics",
+      "status": "in-progress",
+      "branch": "issue-3199-fold-predicate-generics",
+      "claimed_at": "2026-07-12T18:05:39Z"
+    },
+    {
+      "id": "3206",
+      "slice": "",
+      "assignee": "ttraenkler/opus-arrayfrom",
+      "status": "in-progress",
+      "branch": "issue-arrayfrom-mapfn-standalone",
+      "claimed_at": "2026-07-13T01:11:59Z"
+    },
+    {
+      "id": "3207",
+      "slice": "",
+      "assignee": "ttraenkler/opus-asyncgen",
+      "status": "in-progress",
+      "branch": "issue-2906-3diii-yieldawait",
+      "claimed_at": "2026-07-13T01:33:19Z"
+    },
+    {
+      "id": "3216",
+      "slice": "",
+      "assignee": "ttraenkler/opus-substrate",
+      "status": "in-progress",
+      "branch": "issue-3216-any-native-string-strict-eq",
+      "claimed_at": "2026-07-13T02:41:49Z"
+    },
+    {
+      "id": "3219",
+      "slice": "",
+      "assignee": "ttraenkler/opus-date",
+      "status": "in-progress",
+      "branch": "issue-3215-standalone-date-reflective-getters",
+      "claimed_at": "2026-07-13T03:14:30Z"
+    },
+    {
+      "id": "3227",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-3165-conflict",
+      "status": "in-progress",
+      "branch": "issue-3227-s2-await-nan",
+      "claimed_at": "2026-07-16T19:39:22Z"
+    },
+    {
+      "id": "3251",
+      "slice": "",
+      "assignee": "ttraenkler/L2-fable-array-exotic",
+      "status": "in-progress",
+      "branch": "issue-3251-s2-port",
+      "claimed_at": "2026-08-06T10:00:11Z"
+    },
+    {
+      "id": "3263",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-split",
+      "status": "in-progress",
+      "branch": "issue-3263-split",
+      "claimed_at": "2026-07-14T03:06:49Z"
+    },
+    {
+      "id": "3264",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-array-split",
+      "status": "in-progress",
+      "branch": "issue-3264-split",
+      "claimed_at": "2026-07-14T03:12:40Z"
+    },
+    {
+      "id": "3265",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev-splitproxy",
+      "status": "in-progress",
+      "branch": "issue-3265-split",
+      "claimed_at": "2026-07-14T03:07:57Z"
+    },
+    {
+      "id": "3266",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-splitassign",
+      "status": "in-progress",
+      "branch": "issue-3266-split",
+      "claimed_at": "2026-07-14T03:11:52Z"
+    },
+    {
+      "id": "3267",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev-split",
+      "status": "in-progress",
+      "branch": "issue-3267-split",
+      "claimed_at": "2026-07-14T03:13:23Z"
+    },
+    {
+      "id": "3270",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-closures",
+      "status": "in-progress",
+      "branch": "issue-3270-refactor",
+      "claimed_at": "2026-07-14T04:08:54Z"
+    },
+    {
+      "id": "3271",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev-3271",
+      "status": "in-progress",
+      "branch": "issue-3271-refactor",
+      "claimed_at": "2026-07-14T04:11:44Z"
+    },
+    {
+      "id": "3272",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-godfile",
+      "status": "in-progress",
+      "branch": "issue-3272-refactor",
+      "claimed_at": "2026-07-14T04:13:42Z"
+    },
+    {
+      "id": "3273",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev-oracle",
+      "status": "in-progress",
+      "branch": "issue-3273-oracle-ratchet-change-scoped",
+      "claimed_at": "2026-07-14T05:54:56Z"
+    },
+    {
+      "id": "3276",
+      "slice": "",
+      "assignee": "ttraenkler/Dev-WaveB-PropAccess",
+      "status": "in-progress",
+      "branch": "issue-3276-split-property-access",
+      "claimed_at": "2026-07-14T11:07:10Z"
+    },
+    {
+      "id": "3277",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-natstr",
+      "status": "in-progress",
+      "branch": "issue-3276-split-native-strings-core",
+      "claimed_at": "2026-07-14T11:15:05Z"
+    },
+    {
+      "id": "3278",
+      "slice": "",
+      "assignee": "ttraenkler/Dev-WaveB-Closures",
+      "status": "in-progress",
+      "branch": "issue-3278-split-closures-arrow",
+      "claimed_at": "2026-07-14T11:32:27Z"
+    },
+    {
+      "id": "3279",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev-coercion",
+      "status": "in-progress",
+      "branch": "issue-3279-coercion-sites-net-per-field",
+      "claimed_at": "2026-07-14T12:10:17Z"
+    },
+    {
+      "id": "3280",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-binops",
+      "status": "in-progress",
+      "branch": "issue-3280-split-binary-ops",
+      "claimed_at": "2026-07-14T16:27:31Z"
+    },
+    {
+      "id": "3281",
+      "slice": "",
+      "assignee": "ttraenkler/Dev-WaveC-New",
+      "status": "in-progress",
+      "branch": "issue-3281-split-new-super",
+      "claimed_at": "2026-07-14T16:27:00Z"
+    },
+    {
+      "id": "3283",
+      "slice": "",
+      "assignee": "ttraenkler/Dev-Opus-3283",
+      "status": "in-progress",
+      "branch": "issue-3283-standalone-dstr-opus-slices",
+      "claimed_at": "2026-07-14T18:13:01Z"
+    },
+    {
+      "id": "3284",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-3256",
+      "status": "in-progress",
+      "branch": "issue-3284-rc1-native-fnobj-dispatch",
+      "claimed_at": "2026-07-16T11:57:29Z"
+    },
+    {
+      "id": "3285",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-3303",
+      "status": "in-progress",
+      "branch": "issue-3285-assert-throws-error-type",
+      "claimed_at": "2026-07-16T14:06:55Z"
+    },
+    {
+      "id": "3287",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-3287-wrong-error-type",
+      "claimed_at": "2026-07-15T09:40:08Z"
+    },
+    {
+      "id": "3301",
+      "slice": "",
+      "assignee": "ttraenkler/dev-conform",
+      "status": "in-progress",
+      "branch": "issue-3301-eval-regex-flags",
+      "claimed_at": "2026-07-17T18:16:06Z"
+    },
+    {
+      "id": "3315",
+      "slice": "",
+      "assignee": "ttraenkler/fable-a419",
+      "status": "in-progress",
+      "branch": "issue-3315-standalone-extra-arg-dstr-corruption",
+      "claimed_at": "2026-07-16T22:33:34Z"
+    },
+    {
+      "id": "3317",
+      "slice": "",
+      "assignee": "ttraenkler/fable-3317",
+      "status": "in-progress",
+      "branch": "issue-3317-array-search-tonumber-coercion",
+      "claimed_at": "2026-07-16T20:19:56Z"
+    },
+    {
+      "id": "3318",
+      "slice": "",
+      "assignee": "ttraenkler/agent-a4eb138f",
+      "status": "in-progress",
+      "branch": "issue-3318-declaredtype-crash",
+      "claimed_at": "2026-07-16T20:42:23Z"
+    },
+    {
+      "id": "3321",
+      "slice": "",
+      "assignee": "ttraenkler/fable-3316",
+      "status": "in-progress",
+      "branch": "issue-3321-gc-gopd-miss-host-undefined",
+      "claimed_at": "2026-07-16T16:21:49Z"
+    },
+    {
+      "id": "3324",
+      "slice": "",
+      "assignee": "ttraenkler/fable-3317",
+      "status": "in-progress",
+      "branch": "issue-3324-booltostring-init-cycle",
+      "claimed_at": "2026-07-16T21:25:47Z"
+    },
+    {
+      "id": "3327",
+      "slice": "",
+      "assignee": "ttraenkler/fable-3317",
+      "status": "in-progress",
+      "branch": "issue-3327-coercion-plan-cast-null",
+      "claimed_at": "2026-07-16T21:56:18Z"
+    },
+    {
+      "id": "3328",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-date-3174",
+      "status": "in-progress",
+      "branch": "issue-3328-capturing-closure-toprimitive-dispatch",
+      "claimed_at": "2026-07-16T22:26:45Z"
+    },
+    {
+      "id": "3340",
+      "slice": "",
+      "assignee": "ttraenkler/dev-opus-search",
+      "status": "in-progress",
+      "branch": "issue-3340-inverted-sentinel-baseline",
+      "claimed_at": "2026-07-24T15:37:25Z"
+    },
+    {
+      "id": "3343",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-3343-object-recursive-read-runaway",
+      "claimed_at": "2026-07-17T14:53:27Z"
+    },
+    {
+      "id": "3371",
+      "slice": "",
+      "assignee": "ttraenkler/fable-es6",
+      "status": "in-progress",
+      "branch": "claude/es6-test262-standalone-g10c7u",
+      "claimed_at": "2026-09-04T23:21:37Z"
+    },
+    {
+      "id": "3381",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-3381-3382-baseline-standalone-and-velocity",
+      "claimed_at": "2026-07-17T19:44:13Z"
+    },
+    {
+      "id": "3382",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-3381-3382-baseline-standalone-and-velocity",
+      "claimed_at": "2026-07-17T19:44:29Z"
+    },
+    {
+      "id": "3387",
+      "slice": "",
+      "assignee": "ttraenkler/fable-dev-3",
+      "status": "in-progress",
+      "branch": "issue-3387-nested-asyncgen-forawait-drive",
+      "claimed_at": "2026-07-17T21:54:48Z"
+    },
+    {
+      "id": "3388",
+      "slice": "",
+      "assignee": "ttraenkler/fable-dev-2",
+      "status": "in-progress",
+      "branch": "issue-3388-asyncgen-yieldstar",
+      "claimed_at": "2026-07-18T00:05:05Z"
+    },
+    {
+      "id": "3389",
+      "slice": "",
+      "assignee": "ttraenkler/fable-dev-3",
+      "status": "in-progress",
+      "branch": "issue-3389-asyncgen-return-throw",
+      "claimed_at": "2026-07-18T01:22:34Z"
+    },
+    {
+      "id": "3390",
+      "slice": "",
+      "assignee": "ttraenkler/fable-dev-3",
+      "status": "in-progress",
+      "branch": "issue-3390-promise-combinator-receivers",
+      "claimed_at": "2026-07-18T00:06:22Z"
+    },
+    {
+      "id": "3392",
+      "slice": "",
+      "assignee": "ttraenkler/dev-opus-1",
+      "status": "in-progress",
+      "branch": "chore-reconcile-3392-promote-clone-done",
+      "claimed_at": "2026-07-24T00:17:26Z"
+    },
+    {
+      "id": "3393",
+      "slice": "",
+      "assignee": "loopdive/porffor-scrum",
+      "status": "in-progress",
+      "branch": "",
+      "claimed_at": "2026-07-17T22:24:44Z"
+    },
+    {
+      "id": "3394",
+      "slice": "",
+      "assignee": "ttraenkler/fable-dev-1",
+      "status": "in-progress",
+      "branch": "issue-3394-bigint-i64-box",
+      "claimed_at": "2026-07-18T00:56:32Z"
+    },
+    {
+      "id": "3395",
+      "slice": "",
+      "assignee": "ttraenkler/fable-dev-1",
+      "status": "in-progress",
+      "branch": "issue-3395-extern-boxing",
+      "claimed_at": "2026-07-18T01:31:09Z"
+    },
+    {
+      "id": "3418",
+      "slice": "",
+      "assignee": "ttraenkler/fable-dev-6",
+      "status": "in-progress",
+      "branch": "issue-3418-standalone-shim-import-leak",
+      "claimed_at": "2026-07-18T07:44:28Z"
+    },
+    {
+      "id": "3420",
+      "slice": "species-result-store",
+      "assignee": "ttraenkler/codex-es5-3420",
+      "status": "in-progress",
+      "branch": "codex/3420-species-result-store",
+      "claimed_at": "2026-07-28T14:53:01Z"
+    },
+    {
+      "id": "3423",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-3423-module-global-representation",
+      "claimed_at": "2026-07-20T00:08:52Z"
+    },
+    {
+      "id": "3429",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-3429-assert-throws-ctor-identity",
+      "claimed_at": "2026-07-19T21:49:59Z"
+    },
+    {
+      "id": "3430",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-3430-integrity-level-typeerror",
+      "claimed_at": "2026-07-19T21:50:27Z"
+    },
+    {
+      "id": "3431",
+      "slice": "",
+      "assignee": "ttraenkler/ci-shard-fix",
+      "status": "in-progress",
+      "branch": "issue-3431-consolidate-mergegroup-shards",
+      "claimed_at": "2026-07-18T11:44:25Z"
+    },
+    {
+      "id": "3433",
+      "slice": "",
+      "assignee": "ttraenkler/fable-dev-7",
+      "status": "in-progress",
+      "branch": "issue-3433-test262-prelude-compile-cache",
+      "claimed_at": "2026-07-18T12:48:46Z"
+    },
+    {
+      "id": "3444",
+      "slice": "newtarget-arrow",
+      "assignee": "ttraenkler/codex-3444-newtarget-arrow",
+      "status": "in-progress",
+      "branch": "codex/3444-newtarget-arrow-20260913",
+      "claimed_at": "2026-09-13T03:57:58Z"
+    },
+    {
+      "id": "3447",
+      "slice": "",
+      "assignee": "ttraenkler/dev-3447",
+      "status": "in-progress",
+      "branch": "issue-3447-ci-compile-timeout-guard-contention-tolerant",
+      "claimed_at": "2026-07-19T00:46:29Z"
+    },
+    {
+      "id": "3448",
+      "slice": "",
+      "assignee": "ttraenkler/dev-3448",
+      "status": "in-progress",
+      "branch": "issue-3448-ci-promote-baseline-from-mergegroup-artifacts",
+      "claimed_at": "2026-07-19T00:46:48Z"
+    },
+    {
+      "id": "3451",
+      "slice": "",
+      "assignee": "ttraenkler/claude-fable",
+      "status": "in-progress",
+      "branch": "claude/compiler-performance-bn5g3l",
+      "claimed_at": "2026-09-13T23:40:01Z"
+    },
+    {
+      "id": "3458",
+      "slice": "",
+      "assignee": "ttraenkler/dev-web",
+      "status": "in-progress",
+      "branch": "issue-3458-standalone-edition-cumulative",
+      "claimed_at": "2026-07-19T01:22:10Z"
+    },
+    {
+      "id": "3460",
+      "slice": "",
+      "assignee": "ttraenkler/dev-opus-arrayhof",
+      "status": "in-progress",
+      "branch": "issue-3460-unmatched-callable-null-deref",
+      "claimed_at": "2026-07-24T14:19:53Z"
+    },
+    {
+      "id": "3461",
+      "slice": "",
+      "assignee": "ttraenkler/sr-3461",
+      "status": "in-progress",
+      "branch": "issue-3461-native-harness-fast-oracle",
+      "claimed_at": "2026-07-19T06:40:33Z"
+    },
+    {
+      "id": "3462",
+      "slice": "",
+      "assignee": "ttraenkler/sr-3462",
+      "status": "in-progress",
+      "branch": "issue-3462-oracle-lane-plumbing",
+      "claimed_at": "2026-07-19T06:35:54Z"
+    },
+    {
+      "id": "3469",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev-async-sink",
+      "status": "in-progress",
+      "branch": "issue-3469-standalone-async-completion-marker-host-free-channel",
+      "claimed_at": "2026-07-19T15:05:17Z"
+    },
+    {
+      "id": "3472",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-3472-standalone-fnexpr-strconcat-param-invalid-wasm",
+      "claimed_at": "2026-07-19T18:25:34Z"
+    },
+    {
+      "id": "3474",
+      "slice": "",
+      "assignee": "ttraenkler/dev-opus-3",
+      "status": "in-progress",
+      "branch": "issue-3474-done-status-integrity",
+      "claimed_at": "2026-07-24T00:43:59Z"
+    },
+    {
+      "id": "3475",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-3475-logical-and-assign-truthy-branch",
+      "claimed_at": "2026-07-19T22:48:50Z"
+    },
+    {
+      "id": "3479",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-3479-static-class-member-hasown-reflection",
+      "claimed_at": "2026-07-20T00:24:38Z"
+    },
+    {
+      "id": "3481",
+      "slice": "",
+      "assignee": "ttraenkler/opus-3481",
+      "status": "in-progress",
+      "branch": "claude/issue-3481-toprimitive-unwrap",
+      "claimed_at": "2026-08-27T12:06:04Z"
+    },
+    {
+      "id": "3482",
+      "slice": "",
+      "assignee": "ttraenkler/porffor-3482-dev",
+      "status": "in-progress",
+      "branch": "codex/3482-direct-porffor-ab",
+      "claimed_at": "2026-07-20T00:57:10Z"
+    },
+    {
+      "id": "3488",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-3488-typedarray-trap-impl",
+      "claimed_at": "2026-07-20T23:27:25Z"
+    },
+    {
+      "id": "3498",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-3498",
+      "status": "in-progress",
+      "branch": "codex/3498-landing-four-lane-benchmark-impl",
+      "claimed_at": "2026-07-20T14:33:27Z"
+    },
+    {
+      "id": "3507",
+      "slice": "",
+      "assignee": "ttraenkler/fix_3507_standalone_regexp_carrier",
+      "status": "in-progress",
+      "branch": "codex/standalone-regexp-carrier",
+      "claimed_at": "2026-07-20T21:03:12Z"
+    },
+    {
+      "id": "3511",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-3511-symbol-key-index-probe",
+      "claimed_at": "2026-07-21T00:47:28Z"
+    },
+    {
+      "id": "3518",
+      "slice": "5753-data-fields-key-boundary",
+      "assignee": "ttraenkler/codex-5753-shepherd",
+      "status": "in-progress",
+      "branch": "codex/5753-boundary-inventory-repair",
+      "claimed_at": "2026-09-09T00:38:23Z"
+    },
+    {
+      "id": "3518",
+      "slice": "5753-semantic-type-keys-boundary",
+      "assignee": "ttraenkler/codex-5753-shepherd",
+      "status": "in-progress",
+      "branch": "codex/5753-boundary-inventory-repair",
+      "claimed_at": "2026-09-09T01:00:55Z"
+    },
+    {
+      "id": "3518",
+      "slice": "allocation-ownership-runtime",
+      "assignee": "ttraenkler/codex-astra-allocation-ownership-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-allocation-ownership-20260908",
+      "claimed_at": "2026-09-08T07:37:05Z"
+    },
+    {
+      "id": "3518",
+      "slice": "application-evidence",
+      "assignee": "ttraenkler/luna-ir-evidence-d-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-whole-program-d-20260905",
+      "claimed_at": "2026-09-05T21:20:26Z"
+    },
+    {
+      "id": "3518",
+      "slice": "async-iife-return-scope",
+      "assignee": "ttraenkler/astra-ir-producers-b-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-async-iife-return-scope-20260906",
+      "claimed_at": "2026-09-06T22:12:01Z"
+    },
+    {
+      "id": "3518",
+      "slice": "authoritative-preparation",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-whole-program-a-20260905",
+      "claimed_at": "2026-09-05T21:20:15Z"
+    },
+    {
+      "id": "3518",
+      "slice": "b1-delay-canonical-factories-20260909",
+      "assignee": "ttraenkler/codex-pr-shepherd",
+      "status": "in-progress",
+      "branch": "codex/3518-b1-delay-canonical-factories-20260909",
+      "claimed_at": "2026-09-09T11:30:12Z"
+    },
+    {
+      "id": "3518",
+      "slice": "b3-checked-reservation-checkpoint-20260909",
+      "assignee": "ttraenkler/codex-pr-shepherd",
+      "status": "in-progress",
+      "branch": "codex/3518-b3-checked-reservations-20260909",
+      "claimed_at": "2026-09-09T13:31:11Z"
+    },
+    {
+      "id": "3518",
+      "slice": "backend-consumption-replay",
+      "assignee": "ttraenkler/claude-fable-ir-backend-c-20260906",
+      "status": "in-progress",
+      "branch": "claude/3518-whole-program-c-20260906",
+      "claimed_at": "2026-09-05T22:10:50Z"
+    },
+    {
+      "id": "3518",
+      "slice": "bench-string-c2",
+      "assignee": "ttraenkler/codex-3518-bench-string-prepared-cutover",
+      "status": "in-progress",
+      "branch": "codex/3518-bench-string-prepared-cutover",
+      "claimed_at": "2026-08-27T04:32:09Z"
+    },
+    {
+      "id": "3518",
+      "slice": "boundary-foundation-integration",
+      "assignee": "ttraenkler/codex-ir-coordinator-20260907",
+      "status": "in-progress",
+      "branch": "codex/3518-ir-foundation-checkpoint-20260907",
+      "claimed_at": "2026-09-07T21:02:44Z"
+    },
+    {
+      "id": "3518",
+      "slice": "call-arg-ref-nullability",
+      "assignee": "ttraenkler/astra-ir-producers-b-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-call-arg-ref-nullability-20260906",
+      "claimed_at": "2026-09-06T19:16:00Z"
+    },
+    {
+      "id": "3518",
+      "slice": "callable-historical-reconstruction",
+      "assignee": "ttraenkler/codex-astra-callable-historical-reconstruction-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-callable-historical-reconstruction-20260908",
+      "claimed_at": "2026-09-08T15:44:53Z"
+    },
+    {
+      "id": "3518",
+      "slice": "capability-schema-separation",
+      "assignee": "ttraenkler/codex-astra-capability-schema-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-capability-schema-worker-20260908",
+      "claimed_at": "2026-09-08T01:18:28Z"
+    },
+    {
+      "id": "3518",
+      "slice": "certified-delay-source-admission",
+      "assignee": "ttraenkler/codex-astra-certified-delay-source-admission-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-certified-delay-source-admission-20260908",
+      "claimed_at": "2026-09-08T12:05:33Z"
+    },
+    {
+      "id": "3518",
+      "slice": "clock-projection",
+      "assignee": "ttraenkler/codex-3518-clock-projection-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-clock-projection-20260908",
+      "claimed_at": "2026-09-08T15:28:53Z"
+    },
+    {
+      "id": "3518",
+      "slice": "compiler-boundaries-d0",
+      "assignee": "ttraenkler/codex-astra-boundaries-d0-20260907",
+      "status": "in-progress",
+      "branch": "codex/3518-boundary-d0-20260907",
+      "claimed_at": "2026-09-07T20:23:54Z"
+    },
+    {
+      "id": "3518",
+      "slice": "compiler-result-finalizer",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-result-finalizer-20260906",
+      "claimed_at": "2026-09-06T15:53:55Z"
+    },
+    {
+      "id": "3518",
+      "slice": "core-nodes-separation",
+      "assignee": "ttraenkler/codex-astra-core-nodes-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-core-nodes-worker-20260908",
+      "claimed_at": "2026-09-08T02:03:29Z"
+    },
+    {
+      "id": "3518",
+      "slice": "core-type-separation",
+      "assignee": "ttraenkler/codex-astra-core-types-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-core-types-worker-20260908",
+      "claimed_at": "2026-09-08T00:25:47Z"
+    },
+    {
+      "id": "3518",
+      "slice": "core-vocabulary-separation",
+      "assignee": "ttraenkler/codex-astra-core-vocabulary-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-core-vocabulary-worker-20260908",
+      "claimed_at": "2026-09-08T02:03:35Z"
+    },
+    {
+      "id": "3518",
+      "slice": "driver-output-planning",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-driver-output-plan-20260906",
+      "claimed_at": "2026-09-06T14:37:15Z"
+    },
+    {
+      "id": "3518",
+      "slice": "e2-generic-output-integration",
+      "assignee": "ttraenkler/codex-e2-generic-output-integration",
+      "status": "in-progress",
+      "branch": "codex/3518-e2-generic-output-integration-20260909",
+      "claimed_at": "2026-09-09T14:19:33Z"
+    },
+    {
+      "id": "3518",
+      "slice": "error-message-bridge-leaves",
+      "assignee": "ttraenkler/astra-reference-error-runtime-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-error-message-bridge-20260906",
+      "claimed_at": "2026-09-06T15:17:38Z"
+    },
+    {
+      "id": "3518",
+      "slice": "evidence-runner-acceptance",
+      "assignee": "ttraenkler/astra-evidence-acceptance-b-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-evidence-acceptance-b-20260906",
+      "claimed_at": "2026-09-06T01:44:35Z"
+    },
+    {
+      "id": "3518",
+      "slice": "explicit-rec-emission",
+      "assignee": "ttraenkler/codex-3518-explicit-rec-emission-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-explicit-rec-emission-20260908",
+      "claimed_at": "2026-09-08T14:12:55Z"
+    },
+    {
+      "id": "3518",
+      "slice": "export-marshalling",
+      "assignee": "ttraenkler/astra-reference-error-runtime-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-export-marshalling-20260907",
+      "claimed_at": "2026-09-07T01:45:38Z"
+    },
+    {
+      "id": "3518",
+      "slice": "formatter-consumer-plan-tests",
+      "assignee": "ttraenkler/codex-formatter-consumer-plan-tests",
+      "status": "in-progress",
+      "branch": "codex/3518-formatter-consumer-plan-tests-20260909",
+      "claimed_at": "2026-09-09T07:29:27Z"
+    },
+    {
+      "id": "3518",
+      "slice": "formatter-source-kernel",
+      "assignee": "ttraenkler/codex-formatter-source-kernel",
+      "status": "in-progress",
+      "branch": "codex/3518-formatter-source-kernel-20260909",
+      "claimed_at": "2026-09-09T03:45:33Z"
+    },
+    {
+      "id": "3518",
+      "slice": "generic-concat-callable-admission",
+      "assignee": "ttraenkler/codex-generic-concat-callable-admission",
+      "status": "in-progress",
+      "branch": "codex/3518-generic-concat-callable-admission-20260909",
+      "claimed_at": "2026-09-09T11:29:27Z"
+    },
+    {
+      "id": "3518",
+      "slice": "historical-runtime-receipts",
+      "assignee": "ttraenkler/codex-astra-historical-runtime-receipts-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-provider-verification-20260908",
+      "claimed_at": "2026-09-08T09:18:55Z"
+    },
+    {
+      "id": "3518",
+      "slice": "host-js-string-provider",
+      "assignee": "ttraenkler/astra-reference-error-runtime-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-host-js-string-provider-20260907",
+      "claimed_at": "2026-09-07T00:38:42Z"
+    },
+    {
+      "id": "3518",
+      "slice": "host-value-service",
+      "assignee": "ttraenkler/astra-reference-error-runtime-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-host-value-service-20260906",
+      "claimed_at": "2026-09-06T16:44:59Z"
+    },
+    {
+      "id": "3518",
+      "slice": "identity-foundations-f0",
+      "assignee": "ttraenkler/codex-astra-foundations-f0-20260907",
+      "status": "in-progress",
+      "branch": "codex/3518-foundations-f0-20260907",
+      "claimed_at": "2026-09-07T20:35:17Z"
+    },
+    {
+      "id": "3518",
+      "slice": "initializer-evidence-consumer",
+      "assignee": "ttraenkler/astra-evidence-acceptance-b-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-evidence-acceptance-b-20260906",
+      "claimed_at": "2026-09-06T14:05:32Z"
+    },
+    {
+      "id": "3518",
+      "slice": "integration-consolidation",
+      "assignee": "ttraenkler/astra-ir-integration-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-ir-integration-20260905",
+      "claimed_at": "2026-09-05T17:37:34Z"
+    },
+    {
+      "id": "3518",
+      "slice": "ir-source-positions",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/44-ir-source-positions-20260906",
+      "claimed_at": "2026-09-06T18:00:51Z"
+    },
+    {
+      "id": "3518",
+      "slice": "js-tag-abi-contract-20260930",
+      "assignee": "ttraenkler/codex-js-tag-abi-contract-20260930",
+      "status": "in-progress",
+      "branch": "codex/3518-js-tag-contract-20260930",
+      "claimed_at": "2026-09-30T10:04:41Z"
+    },
+    {
+      "id": "3518",
+      "slice": "logical-vector-lowering",
+      "assignee": "ttraenkler/codex-astra-logical-vector-lowering-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-logical-vector-lowering-20260908",
+      "claimed_at": "2026-09-08T12:57:02Z"
+    },
+    {
+      "id": "3518",
+      "slice": "lowering-cycle-separation",
+      "assignee": "ttraenkler/codex-astra-lowering-cycle-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-lowering-cycle-20260908",
+      "claimed_at": "2026-09-07T23:10:32Z"
+    },
+    {
+      "id": "3518",
+      "slice": "module-init-source-audit",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-module-init-source-audit-20260906",
+      "claimed_at": "2026-09-06T13:33:13Z"
+    },
+    {
+      "id": "3518",
+      "slice": "moved-runtime-reachability",
+      "assignee": "ttraenkler/codex-astra-moved-runtime-gate-20260907",
+      "status": "in-progress",
+      "branch": "codex/3518-moved-runtime-gate",
+      "claimed_at": "2026-09-07T21:33:12Z"
+    },
+    {
+      "id": "3518",
+      "slice": "n1-native-foundation",
+      "assignee": "ttraenkler/codex-astra-n1-20260907",
+      "status": "in-progress",
+      "branch": "codex/3518-n1-native-foundation",
+      "claimed_at": "2026-09-07T21:30:46Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-async-frame-bodies",
+      "assignee": "ttraenkler/codex-astra-native-async-frame-bodies-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-native-async-frame-bodies-20260908",
+      "claimed_at": "2026-09-08T11:49:55Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-async-integration",
+      "assignee": "ttraenkler/codex-native-async-integration",
+      "status": "in-progress",
+      "branch": "codex/3518-native-async-integration-20260909",
+      "claimed_at": "2026-09-09T02:51:14Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-async-resource-declarations",
+      "assignee": "ttraenkler/codex-native-async-resource-declarations",
+      "status": "in-progress",
+      "branch": "codex/3518-native-async-resource-declarations-20260909",
+      "claimed_at": "2026-09-09T03:12:13Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-closures",
+      "assignee": "codex-native-closures",
+      "status": "in-progress",
+      "branch": "codex/3518-native-closures-20260908",
+      "claimed_at": "2026-09-08T21:09:39Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-delay-combinator-bodies",
+      "assignee": "ttraenkler/codex-astra-native-delay-combinator-bodies-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-native-delay-combinator-bodies-20260908",
+      "claimed_at": "2026-09-08T14:00:35Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-delay-combinator-reservations",
+      "assignee": "ttraenkler/codex-native-delay-combinator-reservations",
+      "status": "in-progress",
+      "branch": "codex/3518-native-delay-combinator-reservations-20260909",
+      "claimed_at": "2026-09-09T13:00:18Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-family-callables",
+      "assignee": "ttraenkler/codex-astra-native-family-callables-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-native-family-callables-20260908",
+      "claimed_at": "2026-09-08T14:28:04Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-family-source",
+      "assignee": "ttraenkler/codex-astra-native-family-source-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-native-family-source-20260908",
+      "claimed_at": "2026-09-08T13:26:58Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-number-format-D2",
+      "assignee": "ttraenkler/codex-native-number-format",
+      "status": "in-progress",
+      "branch": "codex/3518-native-number-format-20260909",
+      "claimed_at": "2026-09-09T05:18:25Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-number-ryu-D2",
+      "assignee": "ttraenkler/codex-native-number-ryu",
+      "status": "in-progress",
+      "branch": "codex/3518-native-number-ryu-20260909",
+      "claimed_at": "2026-09-09T05:19:49Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-promise-closure-join",
+      "assignee": "ttraenkler/codex-native-promise-closure-join",
+      "status": "in-progress",
+      "branch": "codex/3518-native-promise-closure-join-20260909",
+      "claimed_at": "2026-09-08T22:32:17Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-promise-resources",
+      "assignee": "ttraenkler/codex-3518-native-promise-resources-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-native-promise-resources-20260908",
+      "claimed_at": "2026-09-08T17:10:28Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-promise-settlement-bodies",
+      "assignee": "ttraenkler/codex-astra-native-promise-settlement-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-native-promise-settlement-20260908",
+      "claimed_at": "2026-09-08T11:09:30Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-resource-declarations-checkpoint",
+      "assignee": "ttraenkler/codex-native-resource-declarations-checkpoint",
+      "status": "in-progress",
+      "branch": "codex/3518-native-resource-declarations-checkpoint-20260909",
+      "claimed_at": "2026-09-09T00:51:32Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-string-consumer-execution-tests",
+      "assignee": "ttraenkler/codex-native-string-consumer-execution-tests",
+      "status": "in-progress",
+      "branch": "codex/3518-native-string-consumer-execution-tests-20260909",
+      "claimed_at": "2026-09-09T00:36:51Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-string-flatten",
+      "assignee": "ttraenkler/codex-3518-native-string-flatten-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-native-string-flatten-20260908",
+      "claimed_at": "2026-09-08T20:43:39Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-string-number",
+      "assignee": "ttraenkler/codex-astra-native-string-number-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-native-string-number-20260908",
+      "claimed_at": "2026-09-08T20:39:15Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-string-output-extraction",
+      "assignee": "ttraenkler/codex-native-string-output-extraction",
+      "status": "in-progress",
+      "branch": "codex/3518-native-string-output-extraction-20260909",
+      "claimed_at": "2026-09-09T04:28:49Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-string-output-resources",
+      "assignee": "ttraenkler/codex-native-string-output-resources",
+      "status": "in-progress",
+      "branch": "codex/3518-native-string-output-resources-20260909",
+      "claimed_at": "2026-09-09T10:25:24Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-string-source-admission",
+      "assignee": "ttraenkler/codex-native-string-source-admission",
+      "status": "in-progress",
+      "branch": "codex/3518-native-string-source-admission-20260909",
+      "claimed_at": "2026-09-08T23:31:56Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-string-types-split",
+      "assignee": "ttraenkler/codex-native-string-types-split",
+      "status": "in-progress",
+      "branch": "codex/3518-native-string-types-split-20260909",
+      "claimed_at": "2026-09-08T23:13:56Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-string-value-abi-planning",
+      "assignee": "ttraenkler/codex-native-string-value-abi-planning",
+      "status": "in-progress",
+      "branch": "codex/3518-native-string-value-abi-planning-20260909",
+      "claimed_at": "2026-09-09T00:46:32Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-string-value-consumer",
+      "assignee": "ttraenkler/codex-native-string-value-consumer",
+      "status": "in-progress",
+      "branch": "codex/3518-native-string-value-consumer-20260909",
+      "claimed_at": "2026-09-08T23:43:21Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-string-value-demands",
+      "assignee": "ttraenkler/codex-native-string-value-demands",
+      "status": "in-progress",
+      "branch": "codex/3518-native-string-value-demands-20260909",
+      "claimed_at": "2026-09-08T23:41:11Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-string-value-materialization",
+      "assignee": "ttraenkler/codex-native-string-value-materialization",
+      "status": "in-progress",
+      "branch": "codex/3518-native-string-value-materialization-20260909",
+      "claimed_at": "2026-09-08T23:50:28Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-values",
+      "assignee": "ttraenkler/codex-astra-native-values-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-native-values-20260908",
+      "claimed_at": "2026-09-08T18:29:46Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-values-completion",
+      "assignee": "ttraenkler/codex-native-values-completion",
+      "status": "in-progress",
+      "branch": "codex/3518-native-values-completion-20260909",
+      "claimed_at": "2026-09-09T13:36:52Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-vector-consumer",
+      "assignee": "ttraenkler/codex-astra-native-vector-consumer-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-native-vector-consumer-20260908",
+      "claimed_at": "2026-09-08T16:18:54Z"
+    },
+    {
+      "id": "3518",
+      "slice": "native-vector-resources",
+      "assignee": "ttraenkler/codex-3518-native-vector-resources-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-native-vector-resources-20260908",
+      "claimed_at": "2026-09-08T16:16:30Z"
+    },
+    {
+      "id": "3518",
+      "slice": "number-bigint-to-f64-20260928",
+      "assignee": "ttraenkler/codex-number-bigint-to-f64-20260928",
+      "status": "in-progress",
+      "branch": "codex/3518-number-bigint-to-f64-20260928",
+      "claimed_at": "2026-09-28T11:05:51Z"
+    },
+    {
+      "id": "3518",
+      "slice": "number-callable-coverage-20260928",
+      "assignee": "ttraenkler/codex-number-callable-coverage-20260928",
+      "status": "in-progress",
+      "branch": "codex/3518-number-callable-coverage-20260928",
+      "claimed_at": "2026-09-28T16:43:38Z"
+    },
+    {
+      "id": "3518",
+      "slice": "number-format-consumer-D2",
+      "assignee": "ttraenkler/codex-number-format-consumer",
+      "status": "in-progress",
+      "branch": "codex/3518-number-format-consumer-20260909",
+      "claimed_at": "2026-09-09T07:04:06Z"
+    },
+    {
+      "id": "3518",
+      "slice": "number-from-value-body-20260928",
+      "assignee": "ttraenkler/codex-number-from-value-body-20260928",
+      "status": "in-progress",
+      "branch": "codex/3518-number-bigint-to-f64-20260928",
+      "claimed_at": "2026-09-28T11:41:20Z"
+    },
+    {
+      "id": "3518",
+      "slice": "number-get-dispatch-grant-20260928",
+      "assignee": "ttraenkler/codex-number-get-dispatch-grant-20260928",
+      "status": "in-progress",
+      "branch": "codex/3518-public-number-object-get-712-20260928",
+      "claimed_at": "2026-09-28T15:57:24Z"
+    },
+    {
+      "id": "3518",
+      "slice": "number-get-receiver-abi-20260928",
+      "assignee": "ttraenkler/codex-number-get-receiver-abi-20260928",
+      "status": "in-progress",
+      "branch": "codex/3518-public-number-object-get-712-20260928",
+      "claimed_at": "2026-09-28T14:21:15Z"
+    },
+    {
+      "id": "3518",
+      "slice": "number-method-effects-20260928",
+      "assignee": "ttraenkler/codex-number-method-effects-20260928",
+      "status": "in-progress",
+      "branch": "codex/3518-number-method-effects-20260928",
+      "claimed_at": "2026-09-28T18:00:22Z"
+    },
+    {
+      "id": "3518",
+      "slice": "number-object-source-plans-20260928",
+      "assignee": "ttraenkler/codex-number-object-source-plans-20260928",
+      "status": "in-progress",
+      "branch": "codex/3518-public-number-object-get-712-20260928",
+      "claimed_at": "2026-09-28T11:48:13Z"
+    },
+    {
+      "id": "3518",
+      "slice": "number-primitive-classifier-20260928",
+      "assignee": "ttraenkler/codex-number-primitive-classifier-20260928",
+      "status": "in-progress",
+      "branch": "codex/3518-number-bigint-to-f64-20260928",
+      "claimed_at": "2026-09-28T12:03:58Z"
+    },
+    {
+      "id": "3518",
+      "slice": "object-emitter-function-layout",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/33-object-function-layout-20260906",
+      "claimed_at": "2026-09-06T21:39:56Z"
+    },
+    {
+      "id": "3518",
+      "slice": "object-link-function-indices",
+      "assignee": "ttraenkler/astra-reference-error-runtime-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-object-link-function-indices-20260906",
+      "claimed_at": "2026-09-06T21:31:05Z"
+    },
+    {
+      "id": "3518",
+      "slice": "object-prototype-to-string-body-20260928",
+      "assignee": "ttraenkler/codex-object-prototype-to-string-body-20260928",
+      "status": "in-progress",
+      "branch": "codex/3518-number-bigint-to-f64-20260928",
+      "claimed_at": "2026-09-28T14:14:30Z"
+    },
+    {
+      "id": "3518",
+      "slice": "object-result-finalizer",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-object-result-finalizer-20260906",
+      "claimed_at": "2026-09-06T20:03:20Z"
+    },
+    {
+      "id": "3518",
+      "slice": "objvec",
+      "assignee": "codex-native-argument-vectors",
+      "status": "in-progress",
+      "branch": "",
+      "claimed_at": "2026-09-08T20:31:03Z"
+    },
+    {
+      "id": "3518",
+      "slice": "physical-module-completion-kernel",
+      "assignee": "ttraenkler/codex-astra-physical-module-completion-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-provider-verification-20260908",
+      "claimed_at": "2026-09-08T10:05:41Z"
+    },
+    {
+      "id": "3518",
+      "slice": "pr5781-stack-conflict",
+      "assignee": "ttraenkler/codex-pr-shepherd",
+      "status": "in-progress",
+      "branch": "codex/5781-conflict-repair-20260909",
+      "claimed_at": "2026-09-09T10:36:56Z"
+    },
+    {
+      "id": "3518",
+      "slice": "pr5786-stack-conflict",
+      "assignee": "ttraenkler/codex-pr-shepherd",
+      "status": "in-progress",
+      "branch": "codex/5786-conflict-repair-20260909",
+      "claimed_at": "2026-09-09T10:37:13Z"
+    },
+    {
+      "id": "3518",
+      "slice": "pr6205-undefined-shift-receipt",
+      "assignee": "ttraenkler/codex-pr6205-receipt-20260928",
+      "status": "in-progress",
+      "branch": "codex/3518-pr6205-receipt-20260928",
+      "claimed_at": "2026-09-28T02:08:56Z"
+    },
+    {
+      "id": "3518",
+      "slice": "prepared-async-frame-engine",
+      "assignee": "ttraenkler/astra-ir-producers-b-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-prepared-async-frame-reconciled-20260907",
+      "claimed_at": "2026-09-07T00:49:54Z"
+    },
+    {
+      "id": "3518",
+      "slice": "presentation-output-split",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-presentation-output-20260906",
+      "claimed_at": "2026-09-06T15:06:06Z"
+    },
+    {
+      "id": "3518",
+      "slice": "private-observation-collector",
+      "assignee": "ttraenkler/astra-evidence-acceptance-b-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-evidence-acceptance-b-20260906",
+      "claimed_at": "2026-09-06T13:31:08Z"
+    },
+    {
+      "id": "3518",
+      "slice": "program-abi-seam",
+      "assignee": "ttraenkler/codex-astra-program-abi-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-program-abi-seam-20260908",
+      "claimed_at": "2026-09-07T22:05:49Z"
+    },
+    {
+      "id": "3518",
+      "slice": "program-data-contracts",
+      "assignee": "ttraenkler/codex-astra-program-data-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-program-data-contracts-20260908",
+      "claimed_at": "2026-09-08T06:26:31Z"
+    },
+    {
+      "id": "3518",
+      "slice": "program-observation-authority",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-whole-program-a-20260905",
+      "claimed_at": "2026-09-06T13:19:20Z"
+    },
+    {
+      "id": "3518",
+      "slice": "program-ownership-runtime",
+      "assignee": "ttraenkler/codex-astra-program-ownership-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-program-ownership-20260908",
+      "claimed_at": "2026-09-08T07:37:42Z"
+    },
+    {
+      "id": "3518",
+      "slice": "promise-resolution",
+      "assignee": "ttraenkler/codex-astra-promise-resolution-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-promise-resolution-20260908",
+      "claimed_at": "2026-09-08T17:08:03Z"
+    },
+    {
+      "id": "3518",
+      "slice": "provider-verification-ownership",
+      "assignee": "ttraenkler/codex-astra-provider-verification-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-provider-verification-20260908",
+      "claimed_at": "2026-09-08T08:44:45Z"
+    },
+    {
+      "id": "3518",
+      "slice": "public-number-object-get-712-20260928",
+      "assignee": "ttraenkler/codex-public-number-object-get-712-20260928",
+      "status": "in-progress",
+      "branch": "codex/3518-public-number-object-get-712-20260928",
+      "claimed_at": "2026-09-28T10:54:25Z"
+    },
+    {
+      "id": "3518",
+      "slice": "reference-error-host-adapter",
+      "assignee": "ttraenkler/astra-reference-error-runtime-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-reference-error-runtime-20260906",
+      "claimed_at": "2026-09-06T14:08:10Z"
+    },
+    {
+      "id": "3518",
+      "slice": "reference-error-materialization",
+      "assignee": "ttraenkler/astra-reference-error-runtime-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-reference-error-runtime-20260906",
+      "claimed_at": "2026-09-06T13:08:53Z"
+    },
+    {
+      "id": "3518",
+      "slice": "reference-error-runtime",
+      "assignee": "ttraenkler/astra-reference-error-runtime-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-reference-error-runtime-20260906",
+      "claimed_at": "2026-09-06T10:11:43Z"
+    },
+    {
+      "id": "3518",
+      "slice": "runtime-callable-abi",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-whole-program-a-20260905",
+      "claimed_at": "2026-09-06T10:13:42Z"
+    },
+    {
+      "id": "3518",
+      "slice": "runtime-data-contracts",
+      "assignee": "ttraenkler/codex-astra-runtime-data-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-runtime-data-contracts-20260908",
+      "claimed_at": "2026-09-08T06:26:54Z"
+    },
+    {
+      "id": "3518",
+      "slice": "runtime-support-transport",
+      "assignee": "ttraenkler/codex-runtime-support-transport",
+      "status": "in-progress",
+      "branch": "codex/3518-runtime-support-transport-20260909",
+      "claimed_at": "2026-09-09T03:43:37Z"
+    },
+    {
+      "id": "3518",
+      "slice": "semantic-provider-source-acceptance",
+      "assignee": "ttraenkler/codex-astra-semantic-provider-source-acceptance-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-semantic-verification-20260908",
+      "claimed_at": "2026-09-08T09:27:43Z"
+    },
+    {
+      "id": "3518",
+      "slice": "semantic-runtime-producers",
+      "assignee": "ttraenkler/astra-ir-producers-b-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-whole-program-b-20260905",
+      "claimed_at": "2026-09-05T21:20:20Z"
+    },
+    {
+      "id": "3518",
+      "slice": "semantic-verification-ownership",
+      "assignee": "ttraenkler/codex-astra-semantic-verification-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-semantic-verification-20260908",
+      "claimed_at": "2026-09-08T08:44:39Z"
+    },
+    {
+      "id": "3518",
+      "slice": "staged-closure-reservations",
+      "assignee": "ttraenkler/codex-staged-closure-reservations",
+      "status": "in-progress",
+      "branch": "codex/3518-staged-closure-reservations-20260909",
+      "claimed_at": "2026-09-09T07:20:47Z"
+    },
+    {
+      "id": "3518",
+      "slice": "startup-contract-separation",
+      "assignee": "ttraenkler/codex-astra-startup-contract-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-startup-contract-20260908",
+      "claimed_at": "2026-09-07T23:57:19Z"
+    },
+    {
+      "id": "3518",
+      "slice": "symbolic-support-ref",
+      "assignee": "ttraenkler/codex-symbolic-support-ref",
+      "status": "in-progress",
+      "branch": "codex/3518-symbolic-support-ref-20260909",
+      "claimed_at": "2026-09-09T03:43:04Z"
+    },
+    {
+      "id": "3518",
+      "slice": "typed-program-preparation-boundary",
+      "assignee": "ttraenkler/codex-astra-typed-preparation-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-typed-preparation-checkpoint-20260908",
+      "claimed_at": "2026-09-08T03:58:51Z"
+    },
+    {
+      "id": "3518",
+      "slice": "utf8-rope-flatten-repair",
+      "assignee": "ttraenkler/codex-native-string-output-extraction",
+      "status": "in-progress",
+      "branch": "codex/3518-native-string-output-extraction-20260909",
+      "claimed_at": "2026-09-09T05:44:11Z"
+    },
+    {
+      "id": "3518",
+      "slice": "vector-callable-admission",
+      "assignee": "ttraenkler/codex-astra-vector-callable-admission-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-vector-callable-admission-20260908",
+      "claimed_at": "2026-09-08T15:42:51Z"
+    },
+    {
+      "id": "3518",
+      "slice": "vector-data-nonnull",
+      "assignee": "ttraenkler/codex-vector-data-nonnull",
+      "status": "in-progress",
+      "branch": "codex/3518-vector-data-nonnull-20260909",
+      "claimed_at": "2026-09-09T02:29:45Z"
+    },
+    {
+      "id": "3518",
+      "slice": "vector-grow-store",
+      "assignee": "ttraenkler/codex-astra-vector-grow-store-20260908",
+      "status": "in-progress",
+      "branch": "codex/3518-vector-grow-store-20260908",
+      "claimed_at": "2026-09-08T16:12:55Z"
+    },
+    {
+      "id": "3518",
+      "slice": "wasi-startup-handoff",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-wasi-startup-handoff-20260907",
+      "claimed_at": "2026-09-07T01:43:35Z"
+    },
+    {
+      "id": "3518",
+      "slice": "well-known-symbol-ir-contract-20260928",
+      "assignee": "ttraenkler/codex-well-known-symbol-ir-contract-20260928",
+      "status": "in-progress",
+      "branch": "codex/3518-public-number-object-get-712-20260928",
+      "claimed_at": "2026-09-28T13:05:11Z"
+    },
+    {
+      "id": "3518",
+      "slice": "well-known-symbol-producer-20260928",
+      "assignee": "ttraenkler/codex-well-known-symbol-producer-20260928",
+      "status": "in-progress",
+      "branch": "codex/3518-number-bigint-to-f64-20260928",
+      "claimed_at": "2026-09-28T13:06:14Z"
+    },
+    {
+      "id": "3518",
+      "slice": "well-known-symbol-source-20260928",
+      "assignee": "ttraenkler/codex-well-known-symbol-source-20260928",
+      "status": "in-progress",
+      "branch": "codex/3518-public-number-object-get-712-20260928",
+      "claimed_at": "2026-09-28T13:32:42Z"
+    },
+    {
+      "id": "3520",
+      "slice": "c30-vec-host-bridge",
+      "assignee": "ttraenkler/codex-r1-c30",
+      "status": "in-progress",
+      "branch": "codex/3520-c30-vec-host-bridge",
+      "claimed_at": "2026-07-30T04:44:42Z"
+    },
+    {
+      "id": "3520",
+      "slice": "c31-closure-host-bridge",
+      "assignee": "ttraenkler/codex-r1-c31",
+      "status": "in-progress",
+      "branch": "codex/3520-c31-closure-host-bridge",
+      "claimed_at": "2026-07-30T06:03:22Z"
+    },
+    {
+      "id": "3520",
+      "slice": "c32-date-civil-support",
+      "assignee": "ttraenkler/codex-c32-date-civil-019f7cb9",
+      "status": "in-progress",
+      "branch": "codex/3520-c32-date-civil-support",
+      "claimed_at": "2026-07-30T06:34:53Z"
+    },
+    {
+      "id": "3520",
+      "slice": "w1g-implicit-ctor-param",
+      "assignee": "ttraenkler/opus-3520-w1g",
+      "status": "in-progress",
+      "branch": "claude/issue-3520-w1g-implicit-ctor-param",
+      "claimed_at": "2026-09-04T03:26:41Z"
+    },
+    {
+      "id": "3521",
+      "slice": "prepared-program-core",
+      "assignee": "ttraenkler/codex-3521-prepared-core-019f7cb9",
+      "status": "in-progress",
+      "branch": "codex/3521-r2-prepared-program-core",
+      "claimed_at": "2026-07-30T07:33:48Z"
+    },
+    {
+      "id": "3521",
+      "slice": "production-routing",
+      "assignee": "ttraenkler/codex-lead",
+      "status": "in-progress",
+      "branch": "codex/3521-r2-production-routing",
+      "claimed_at": "2026-07-30T12:52:02Z"
+    },
+    {
+      "id": "3521",
+      "slice": "program-abi-session-seal",
+      "assignee": "ttraenkler/codex-r2-session",
+      "status": "in-progress",
+      "branch": "codex/3521-r2-program-abi-session-seal",
+      "claimed_at": "2026-07-30T05:22:50Z"
+    },
+    {
+      "id": "3521",
+      "slice": "r2f1",
+      "assignee": "ttraenkler/opus-3521-r2f1",
+      "status": "in-progress",
+      "branch": "claude/issue-3521-r2f1-fast-mixed-signature",
+      "claimed_at": "2026-09-02T21:54:38Z"
+    },
+    {
+      "id": "3521",
+      "slice": "scoped-prepared-abi-seal",
+      "assignee": "codex-3521-scoped-abi",
+      "status": "in-progress",
+      "branch": "",
+      "claimed_at": "2026-07-30T08:54:39Z"
+    },
+    {
+      "id": "3522",
+      "slice": "w1c-super-accessor",
+      "assignee": "ttraenkler/opus-3522-w1c",
+      "status": "in-progress",
+      "branch": "claude/issue-3522-w1c-super-accessor",
+      "claimed_at": "2026-09-04T02:49:03Z"
+    },
+    {
+      "id": "3523",
+      "slice": "r4m1",
+      "assignee": "ttraenkler/opus-3523-r4m1",
+      "status": "in-progress",
+      "branch": "claude/issue-3523-r4m1-string-module-storage",
+      "claimed_at": "2026-09-03T00:05:13Z"
+    },
+    {
+      "id": "3523",
+      "slice": "w2b",
+      "assignee": "ttraenkler/fable-3523-w2b",
+      "status": "in-progress",
+      "branch": "fable-3523-w2b",
+      "claimed_at": "2026-09-03T17:15:28Z"
+    },
+    {
+      "id": "3525",
+      "slice": "m2-p2a-atomic-init-batch",
+      "assignee": "ttraenkler/luna-ir-r5-m2p2a-20260905",
+      "status": "in-progress",
+      "branch": "codex/3525-m2-p2a-luna-20260905",
+      "claimed_at": "2026-09-05T11:16:23Z"
+    },
+    {
+      "id": "3526",
+      "slice": "a1",
+      "assignee": "ttraenkler/codex",
+      "status": "in-progress",
+      "branch": "codex/3526-async-capability-catalog-plan",
+      "claimed_at": "2026-08-26T03:53:45Z"
+    },
+    {
+      "id": "3526",
+      "slice": "f3s1",
+      "assignee": "ttraenkler/opus-3526-f3s1",
+      "status": "in-progress",
+      "branch": "claude/issue-3526-f3s1-host-callback-maker",
+      "claimed_at": "2026-09-02T14:26:54Z"
+    },
+    {
+      "id": "3526",
+      "slice": "f3s2",
+      "assignee": "ttraenkler/opus-3526-f3s2",
+      "status": "in-progress",
+      "branch": "claude/issue-3526-f3s2-callable-schema",
+      "claimed_at": "2026-09-02T21:09:40Z"
+    },
+    {
+      "id": "3526",
+      "slice": "f3s3",
+      "assignee": "ttraenkler/opus-3526-f3s3",
+      "status": "in-progress",
+      "branch": "claude/issue-3526-f3s3-function-prototype-call",
+      "claimed_at": "2026-09-03T17:12:33Z"
+    },
+    {
+      "id": "3527",
+      "slice": "c-prepared-async-integration",
+      "assignee": "ttraenkler/astra-low-c",
+      "status": "in-progress",
+      "branch": "codex/3527-c-prepared-async-integration",
+      "claimed_at": "2026-09-07T19:07:10Z"
+    },
+    {
+      "id": "3527",
+      "slice": "r7-b2-linear-suspension-liveness",
+      "assignee": "ttraenkler/luna-ir-r7-b2-20260905",
+      "status": "in-progress",
+      "branch": "codex/3527-b2-luna-20260905",
+      "claimed_at": "2026-09-05T09:49:15Z"
+    },
+    {
+      "id": "3527",
+      "slice": "r7-b3-settled-nonthenable-owners",
+      "assignee": "ttraenkler/luna-ir-r7-b3-20260905",
+      "status": "in-progress",
+      "branch": "codex/3527-b3-luna-20260905",
+      "claimed_at": "2026-09-05T12:15:45Z"
+    },
+    {
+      "id": "3528",
+      "slice": "l0-p1-frozen-body-batch",
+      "assignee": "ttraenkler/luna-ir-r8-l0p1-20260905",
+      "status": "in-progress",
+      "branch": "codex/3528-l0-p1-luna-20260905",
+      "claimed_at": "2026-09-05T11:52:00Z"
+    },
+    {
+      "id": "3529",
+      "slice": "p1",
+      "assignee": "ttraenkler/codex-3529-p1",
+      "status": "in-progress",
+      "branch": "symphony/3529-p1-selector-preclaim",
+      "claimed_at": "2026-07-21T14:28:21Z"
+    },
+    {
+      "id": "3529",
+      "slice": "p2",
+      "assignee": "ttraenkler/codex-3529-p2",
+      "status": "in-progress",
+      "branch": "symphony/3519-ir-outcomes",
+      "claimed_at": "2026-07-21T14:36:36Z"
+    },
+    {
+      "id": "3529",
+      "slice": "p4",
+      "assignee": "ttraenkler/codex-3529-p4",
+      "status": "in-progress",
+      "branch": "symphony/3529-p4-integration-preflight",
+      "claimed_at": "2026-07-21T14:30:08Z"
+    },
+    {
+      "id": "3529",
+      "slice": "p5",
+      "assignee": "ttraenkler/codex-3529-p5",
+      "status": "in-progress",
+      "branch": "symphony/3519-ir-outcomes",
+      "claimed_at": "2026-07-21T14:54:29Z"
+    },
+    {
+      "id": "3537",
+      "slice": "",
+      "assignee": "ttraenkler/fable-exposed",
+      "status": "in-progress",
+      "branch": "issue-3537-vec-expando-props",
+      "claimed_at": "2026-07-23T10:05:57Z"
+    },
+    {
+      "id": "3544",
+      "slice": "",
+      "assignee": "ttraenkler/fable-3544b",
+      "status": "in-progress",
+      "branch": "issue-3544-call-dispatch",
+      "claimed_at": "2026-07-23T14:56:56Z"
+    },
+    {
+      "id": "3553",
+      "slice": "",
+      "assignee": "ttraenkler/fable-3549",
+      "status": "in-progress",
+      "branch": "issue-3553-ir-regexp-test-externref-regression",
+      "claimed_at": "2026-07-23T15:06:33Z"
+    },
+    {
+      "id": "3558",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-3558-stale-guard-tests-import-shape",
+      "claimed_at": "2026-07-23T20:46:32Z"
+    },
+    {
+      "id": "3562",
+      "slice": "",
+      "assignee": "ttraenkler/dev-opus-2",
+      "status": "in-progress",
+      "branch": "issue-3562-array-isarray-byte-carriers",
+      "claimed_at": "2026-07-24T09:12:57Z"
+    },
+    {
+      "id": "3573",
+      "slice": "",
+      "assignee": "ttraenkler/dev-mapset-opus",
+      "status": "in-progress",
+      "branch": "issue-3573-set-foreach-noncallable",
+      "claimed_at": "2026-07-24T12:06:56Z"
+    },
+    {
+      "id": "3576",
+      "slice": "",
+      "assignee": "ttraenkler/sdev-3576",
+      "status": "in-progress",
+      "branch": "issue-3576-array-callback-trampoline-arity",
+      "claimed_at": "2026-07-24T15:27:03Z"
+    },
+    {
+      "id": "3579",
+      "slice": "",
+      "assignee": "ttraenkler/dev-opus-search",
+      "status": "in-progress",
+      "branch": "issue-3579-default-sort-any-element",
+      "claimed_at": "2026-07-24T14:52:44Z"
+    },
+    {
+      "id": "3585",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev-vacuity",
+      "status": "in-progress",
+      "branch": "issue-3585-toplevel-throw",
+      "claimed_at": "2026-07-24T22:13:57Z"
+    },
+    {
+      "id": "3585",
+      "slice": "direct-result-equality",
+      "assignee": "ttraenkler/codex-3585-map-result-equality",
+      "status": "in-progress",
+      "branch": "codex/3585-map-result-equality",
+      "claimed_at": "2026-09-28T05:26:32Z"
+    },
+    {
+      "id": "3603",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev-vp",
+      "status": "in-progress",
+      "branch": "issue-3596-verifyproperty-vacuity",
+      "claimed_at": "2026-07-25T01:57:30Z"
+    },
+    {
+      "id": "3611",
+      "slice": "",
+      "assignee": "ttraenkler/dev-ci-3915",
+      "status": "in-progress",
+      "branch": "issue-3611-promote-skip-highwater",
+      "claimed_at": "2026-08-01T00:02:34Z"
+    },
+    {
+      "id": "3626",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "es5-census",
+      "claimed_at": "2026-07-25T14:40:26Z"
+    },
+    {
+      "id": "3636",
+      "slice": "",
+      "assignee": "ttraenkler/dev-claim-reliability",
+      "status": "in-progress",
+      "branch": "issue-3636-openpr-scan-drops-firstpage",
+      "claimed_at": "2026-07-31T14:15:55Z"
+    },
+    {
+      "id": "3643",
+      "slice": "",
+      "assignee": "ttraenkler/dev-core-semantics",
+      "status": "in-progress",
+      "branch": "issue-3643-host-lane-gaps",
+      "claimed_at": "2026-07-31T08:47:39Z"
+    },
+    {
+      "id": "3672",
+      "slice": "",
+      "assignee": "ttraenkler/dev-eslint-ir",
+      "status": "in-progress",
+      "branch": "issue-3672-eslint-graph-compile-budget",
+      "claimed_at": "2026-07-31T00:09:55Z"
+    },
+    {
+      "id": "3741",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "claude/issue-3741-i32-loop-shadow",
+      "claimed_at": "2026-07-28T13:30:42Z"
+    },
+    {
+      "id": "3782",
+      "slice": "",
+      "assignee": "Compile linked Acorn benchmark driver for standalone without stack overflow",
+      "status": "in-progress",
+      "branch": "",
+      "claimed_at": "2026-07-29T05:25:52Z"
+    },
+    {
+      "id": "3784",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "claude/fix-3783-local-var-demote",
+      "claimed_at": "2026-07-29T22:16:56Z"
+    },
+    {
+      "id": "3785",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "claude/fix-3777-warm-js-lane",
+      "claimed_at": "2026-07-29T22:49:17Z"
+    },
+    {
+      "id": "3786",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "claude/loop-beat-js",
+      "claimed_at": "2026-07-29T23:13:33Z"
+    },
+    {
+      "id": "3797",
+      "slice": "selector-preclaim",
+      "assignee": "ttraenkler/codex-finish-node-at-selector",
+      "status": "in-progress",
+      "branch": "codex/3797-finish-node-at-selector",
+      "claimed_at": "2026-07-30T12:39:10Z"
+    },
+    {
+      "id": "3877",
+      "slice": "",
+      "assignee": "ttraenkler/dev-eslint-graph",
+      "status": "in-progress",
+      "branch": "issue-3877-assigned-string-method-this-coercion",
+      "claimed_at": "2026-07-31T06:42:38Z"
+    },
+    {
+      "id": "3878",
+      "slice": "",
+      "assignee": "ttraenkler/pr-shepherd",
+      "status": "in-progress",
+      "branch": "issue-3878-release-pending-fork-head",
+      "claimed_at": "2026-07-31T06:32:05Z"
+    },
+    {
+      "id": "3880",
+      "slice": "",
+      "assignee": "ttraenkler/dev-claim-reliability",
+      "status": "in-progress",
+      "branch": "issue-3880-claim-issue-reliability",
+      "claimed_at": "2026-07-31T12:26:39Z"
+    },
+    {
+      "id": "3897",
+      "slice": "",
+      "assignee": "ttraenkler/dev-es3-editions",
+      "status": "in-progress",
+      "branch": "issue-3178-privgen-probe",
+      "claimed_at": "2026-07-31T11:48:09Z"
+    },
+    {
+      "id": "3915",
+      "slice": "",
+      "assignee": "ttraenkler/dev-ci-3915",
+      "status": "in-progress",
+      "branch": "issue-3915-benchmark-refresh-off-main",
+      "claimed_at": "2026-07-31T23:18:17Z"
+    },
+    {
+      "id": "3920",
+      "slice": "",
+      "assignee": "ttraenkler/opus-forin-2",
+      "status": "in-progress",
+      "branch": "issue-3920-closed-struct-reflection",
+      "claimed_at": "2026-08-07T23:50:34Z"
+    },
+    {
+      "id": "3954",
+      "slice": "",
+      "assignee": "ttraenkler/claude-js-ir-generalization",
+      "status": "in-progress",
+      "branch": "claude/js-ir-generalization-9v7m8j",
+      "claimed_at": "2026-08-19T00:39:28Z"
+    },
+    {
+      "id": "3969",
+      "slice": "",
+      "assignee": "ttraenkler/dev-budget-pick",
+      "status": "in-progress",
+      "branch": "issue-3969-reconcile-tasklist-attribution",
+      "claimed_at": "2026-08-01T08:38:47Z"
+    },
+    {
+      "id": "3972",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev-subclass-builtins",
+      "status": "in-progress",
+      "branch": "issue-3972-standalone-subclass-builtins",
+      "claimed_at": "2026-08-01T11:19:23Z"
+    },
+    {
+      "id": "3973",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-untagged",
+      "status": "in-progress",
+      "branch": "issue-3973-any-string-dynamic-index",
+      "claimed_at": "2026-08-01T12:02:25Z"
+    },
+    {
+      "id": "3983",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-descwrite",
+      "status": "in-progress",
+      "branch": "issue-3983-descriptor-write-path",
+      "claimed_at": "2026-08-01T15:49:01Z"
+    },
+    {
+      "id": "3985",
+      "slice": "",
+      "assignee": "ttraenkler/g-prologue",
+      "status": "in-progress",
+      "branch": "issue-3985-strict-prologue-unresolvable-assign",
+      "claimed_at": "2026-08-01T14:03:55Z"
+    },
+    {
+      "id": "3992",
+      "slice": "",
+      "assignee": "ttraenkler/L-strwith",
+      "status": "in-progress",
+      "branch": "issue-3992-transferred-native-proto-receiver",
+      "claimed_at": "2026-08-01T18:41:50Z"
+    },
+    {
+      "id": "3995",
+      "slice": "gaps",
+      "assignee": "ttraenkler/codex",
+      "status": "in-progress",
+      "branch": "codex/3995-upstream-gap-fixes",
+      "claimed_at": "2026-08-12T06:42:33Z"
+    },
+    {
+      "id": "3995",
+      "slice": "hlm",
+      "assignee": "ttraenkler/codex",
+      "status": "in-progress",
+      "branch": "codex/npm-upstream-tests-20260812",
+      "claimed_at": "2026-08-11T23:15:17Z"
+    },
+    {
+      "id": "4010",
+      "slice": "",
+      "assignee": "ttraenkler/senior-4010-s3",
+      "status": "in-progress",
+      "branch": "issue-4010-s3-visibility",
+      "claimed_at": "2026-08-03T13:42:20Z"
+    },
+    {
+      "id": "4032",
+      "slice": "",
+      "assignee": "ttraenkler/M-cleanwins",
+      "status": "in-progress",
+      "branch": "issue-4032-builtin-extensible-slot",
+      "claimed_at": "2026-08-01T22:53:03Z"
+    },
+    {
+      "id": "4062",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4062-array-named-key-hasownproperty",
+      "claimed_at": "2026-08-15T09:44:18Z"
+    },
+    {
+      "id": "4070",
+      "slice": "",
+      "assignee": "ttraenkler/opus-ir-1",
+      "status": "in-progress",
+      "branch": "issue-4070-ir-verify-never-exhaustiveness",
+      "claimed_at": "2026-08-16T03:44:01Z"
+    },
+    {
+      "id": "4072",
+      "slice": "",
+      "assignee": "ttraenkler/claude",
+      "status": "in-progress",
+      "branch": "claude/lamdimg-binary-size-ua4a08",
+      "claimed_at": "2026-08-02T03:25:45Z"
+    },
+    {
+      "id": "4074",
+      "slice": "",
+      "assignee": "ttraenkler/claude",
+      "status": "in-progress",
+      "branch": "claude/acorn-performance-optimization-hagjht",
+      "claimed_at": "2026-08-02T04:13:00Z"
+    },
+    {
+      "id": "4098",
+      "slice": "",
+      "assignee": "ttraenkler/dev-4098-g1",
+      "status": "in-progress",
+      "branch": "issue-4098-g1-build",
+      "claimed_at": "2026-08-03T23:27:37Z"
+    },
+    {
+      "id": "4119",
+      "slice": "",
+      "assignee": "ttraenkler/dev-4119-g4",
+      "status": "in-progress",
+      "branch": "issue-4119-ladder-build",
+      "claimed_at": "2026-08-03T23:17:22Z"
+    },
+    {
+      "id": "4120",
+      "slice": "",
+      "assignee": "ttraenkler/dev-4120-typeof",
+      "status": "in-progress",
+      "branch": "issue-4120-typeof-reified-builtin",
+      "claimed_at": "2026-08-03T13:42:28Z"
+    },
+    {
+      "id": "4121",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4121",
+      "status": "in-progress",
+      "branch": "claude/issue-4121-unboxing-admission",
+      "claimed_at": "2026-08-21T10:40:42Z"
+    },
+    {
+      "id": "4131",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-4131-annexb-existing-var-update",
+      "claimed_at": "2026-08-03T07:07:37Z"
+    },
+    {
+      "id": "4137",
+      "slice": "",
+      "assignee": "ttraenkler/L3-annexb-hoisting",
+      "status": "in-progress",
+      "branch": "issue-4137-interp-eval-residuals",
+      "claimed_at": "2026-08-06T08:56:32Z"
+    },
+    {
+      "id": "4155",
+      "slice": "",
+      "assignee": "ttraenkler/claude",
+      "status": "in-progress",
+      "branch": "claude/acorn-performance-optimization-hagjht",
+      "claimed_at": "2026-08-04T10:17:35Z"
+    },
+    {
+      "id": "4157",
+      "slice": "",
+      "assignee": "ttraenkler/claude-fable",
+      "status": "in-progress",
+      "branch": "claude/acorn-performance-optimization-hagjht",
+      "claimed_at": "2026-08-04T18:29:21Z"
+    },
+    {
+      "id": "4159",
+      "slice": "",
+      "assignee": "ttraenkler/W15",
+      "status": "in-progress",
+      "branch": "issue-4159-typed-lane-overlay-routing",
+      "claimed_at": "2026-08-07T01:02:57Z"
+    },
+    {
+      "id": "4163",
+      "slice": "",
+      "assignee": "ttraenkler/W2-prototype-chain",
+      "status": "in-progress",
+      "branch": "issue-4163-standalone-proto-chain-live",
+      "claimed_at": "2026-08-06T10:09:33Z"
+    },
+    {
+      "id": "4165",
+      "slice": "",
+      "assignee": "ttraenkler/W29",
+      "status": "in-progress",
+      "branch": "issue-4165-reflective-mop-bags",
+      "claimed_at": "2026-08-07T15:54:24Z"
+    },
+    {
+      "id": "4176",
+      "slice": "",
+      "assignee": "ttraenkler/W4-proto-followups",
+      "status": "in-progress",
+      "branch": "issue-4176-standalone-proto-named-keys",
+      "claimed_at": "2026-08-06T12:03:09Z"
+    },
+    {
+      "id": "4178",
+      "slice": "",
+      "assignee": "ttraenkler/W3-runtime-eval-ternary",
+      "status": "in-progress",
+      "branch": "issue-4178-mixed-ternary-ir-box",
+      "claimed_at": "2026-08-06T14:35:08Z"
+    },
+    {
+      "id": "4180",
+      "slice": "",
+      "assignee": "ttraenkler/W5-descriptor-residue",
+      "status": "in-progress",
+      "branch": "issue-4180-descriptor-struct-reify",
+      "claimed_at": "2026-08-06T13:46:51Z"
+    },
+    {
+      "id": "4181",
+      "slice": "",
+      "assignee": "ttraenkler/W6-dynamic-scope",
+      "status": "in-progress",
+      "branch": "issue-4181-modinit-telemetry-hole",
+      "claimed_at": "2026-08-06T14:25:27Z"
+    },
+    {
+      "id": "4186",
+      "slice": "",
+      "assignee": "ttraenkler/claude-fable-8",
+      "status": "in-progress",
+      "branch": "claude/issue-4186-parity-signature",
+      "claimed_at": "2026-08-06T20:01:29Z"
+    },
+    {
+      "id": "4187",
+      "slice": "",
+      "assignee": "ttraenkler/W29",
+      "status": "in-progress",
+      "branch": "issue-4165-reflective-mop-bags",
+      "claimed_at": "2026-08-07T15:54:29Z"
+    },
+    {
+      "id": "4188",
+      "slice": "",
+      "assignee": "ttraenkler/W10-namespace-error-carriers",
+      "status": "in-progress",
+      "branch": "issue-4188-namespace-carrier-toplevel-write",
+      "claimed_at": "2026-08-06T20:48:19Z"
+    },
+    {
+      "id": "4189",
+      "slice": "",
+      "assignee": "ttraenkler/W11-with-tier2-residue",
+      "status": "in-progress",
+      "branch": "issue-4189-string-global-any-widening",
+      "claimed_at": "2026-08-06T20:50:09Z"
+    },
+    {
+      "id": "4196",
+      "slice": "",
+      "assignee": "ttraenkler/W19",
+      "status": "in-progress",
+      "branch": "issue-4196-bind-construct",
+      "claimed_at": "2026-08-07T05:12:30Z"
+    },
+    {
+      "id": "4197",
+      "slice": "",
+      "assignee": "ttraenkler/W16",
+      "status": "in-progress",
+      "branch": "issue-4197-consumer-mode-fn-decl-getter",
+      "claimed_at": "2026-08-07T01:56:26Z"
+    },
+    {
+      "id": "4199",
+      "slice": "",
+      "assignee": "ttraenkler/W17",
+      "status": "in-progress",
+      "branch": "issue-4199-namespace-expando-keep",
+      "claimed_at": "2026-08-07T05:00:32Z"
+    },
+    {
+      "id": "4200",
+      "slice": "",
+      "assignee": "ttraenkler/W18",
+      "status": "in-progress",
+      "branch": "issue-4200-builtin-proto-constructor",
+      "claimed_at": "2026-08-07T05:40:42Z"
+    },
+    {
+      "id": "4201",
+      "slice": "",
+      "assignee": "ttraenkler/W20",
+      "status": "in-progress",
+      "branch": "issue-4201-standalone-wrapper-valueof",
+      "claimed_at": "2026-08-07T07:55:35Z"
+    },
+    {
+      "id": "4203",
+      "slice": "",
+      "assignee": "ttraenkler/W22",
+      "status": "in-progress",
+      "branch": "issue-4203-receiver-boundness",
+      "claimed_at": "2026-08-07T09:57:46Z"
+    },
+    {
+      "id": "4204",
+      "slice": "",
+      "assignee": "ttraenkler/W24",
+      "status": "in-progress",
+      "branch": "issue-4204-heterogeneous-var-widening",
+      "claimed_at": "2026-08-07T10:19:59Z"
+    },
+    {
+      "id": "4205",
+      "slice": "",
+      "assignee": "ttraenkler/W25",
+      "status": "in-progress",
+      "branch": "issue-4205-script-goal-global-object",
+      "claimed_at": "2026-08-07T10:34:52Z"
+    },
+    {
+      "id": "4206",
+      "slice": "",
+      "assignee": "claude/es5-team-with",
+      "status": "in-progress",
+      "branch": "claude/es6-100-percent-pass-rate-wedr55",
+      "claimed_at": "2026-08-15T20:23:51Z"
+    },
+    {
+      "id": "4207",
+      "slice": "",
+      "assignee": "ttraenkler/W28",
+      "status": "in-progress",
+      "branch": "issue-4207-transferred-proto-method",
+      "claimed_at": "2026-08-07T15:04:00Z"
+    },
+    {
+      "id": "4210",
+      "slice": "",
+      "assignee": "ttraenkler/W31",
+      "status": "in-progress",
+      "branch": "issue-4210-error-carrier-bag",
+      "claimed_at": "2026-08-07T19:50:40Z"
+    },
+    {
+      "id": "4218",
+      "slice": "",
+      "assignee": "ttraenkler/fable-remote",
+      "status": "in-progress",
+      "branch": "claude/js2wasm-c-port-perf-lxd6bd",
+      "claimed_at": "2026-08-08T19:35:11Z"
+    },
+    {
+      "id": "4225",
+      "slice": "",
+      "assignee": "ttraenkler/opus-forin-2",
+      "status": "in-progress",
+      "branch": "issue-4225-cold-tail-fold-follow-up",
+      "claimed_at": "2026-08-08T09:52:55Z"
+    },
+    {
+      "id": "4235",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4235-multifile",
+      "status": "in-progress",
+      "branch": "issue-4235-multifile-fnctor-pipeline",
+      "claimed_at": "2026-08-09T00:02:14Z"
+    },
+    {
+      "id": "4250",
+      "slice": "",
+      "assignee": "ttraenkler/fable-743-fixpoint",
+      "status": "in-progress",
+      "branch": "issue-4250-write-kind-verdict",
+      "claimed_at": "2026-08-08T23:20:30Z"
+    },
+    {
+      "id": "4261",
+      "slice": "",
+      "assignee": "ttraenkler/fable-4261-method-result",
+      "status": "in-progress",
+      "branch": "issue-4261-method-result-corruption",
+      "claimed_at": "2026-08-09T03:08:37Z"
+    },
+    {
+      "id": "4268",
+      "slice": "",
+      "assignee": "ttraenkler/typescript-upstream-source-build",
+      "status": "in-progress",
+      "branch": "codex/npm-compat-goal",
+      "claimed_at": "2026-08-09T05:18:52Z"
+    },
+    {
+      "id": "4269",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-recv-bind-objlit",
+      "claimed_at": "2026-08-09T05:27:50Z"
+    },
+    {
+      "id": "4270",
+      "slice": "",
+      "assignee": "ttraenkler/typescript-upstream-source-build",
+      "status": "in-progress",
+      "branch": "codex/issue-4268-generic",
+      "claimed_at": "2026-08-09T05:34:08Z"
+    },
+    {
+      "id": "4272",
+      "slice": "",
+      "assignee": "ttraenkler/typescript-upstream-source-build",
+      "status": "in-progress",
+      "branch": "codex/issue-4268-generic",
+      "claimed_at": "2026-08-09T05:45:28Z"
+    },
+    {
+      "id": "4276",
+      "slice": "wrapper-instanceof-strict-this",
+      "assignee": "ttraenkler/codex-es5-biggest-20260812",
+      "status": "in-progress",
+      "branch": "codex/es5-biggest-residual-20260812",
+      "claimed_at": "2026-08-12T19:45:08Z"
+    },
+    {
+      "id": "4309",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-4309-direct-eval-script-global-routing",
+      "claimed_at": "2026-08-09T22:04:18Z"
+    },
+    {
+      "id": "4376",
+      "slice": "5784-array-hole-diagnosis",
+      "assignee": "ttraenkler/codex-5784-shepherd",
+      "status": "in-progress",
+      "branch": "codex/5784-array-hole-diagnosis",
+      "claimed_at": "2026-09-09T01:37:35Z"
+    },
+    {
+      "id": "4376",
+      "slice": "5784-equivalence-undefined-import",
+      "assignee": "ttraenkler/codex-5784-shepherd",
+      "status": "in-progress",
+      "branch": "codex/5784-array-hole-diagnosis",
+      "claimed_at": "2026-09-09T01:48:27Z"
+    },
+    {
+      "id": "4376",
+      "slice": "5784-host-join-sentinel",
+      "assignee": "ttraenkler/codex-5784-shepherd",
+      "status": "in-progress",
+      "branch": "codex/5784-array-hole-diagnosis",
+      "claimed_at": "2026-09-09T03:23:05Z"
+    },
+    {
+      "id": "4376",
+      "slice": "5784-inventory-debt",
+      "assignee": "ttraenkler/codex-5784-shepherd",
+      "status": "in-progress",
+      "branch": "codex/5784-array-hole-diagnosis",
+      "claimed_at": "2026-09-09T02:20:07Z"
+    },
+    {
+      "id": "4376",
+      "slice": "5784-smoke-context-abi",
+      "assignee": "ttraenkler/codex-5784-shepherd",
+      "status": "in-progress",
+      "branch": "codex/5784-array-hole-diagnosis",
+      "claimed_at": "2026-09-09T02:02:19Z"
+    },
+    {
+      "id": "4376",
+      "slice": "5784-temporal-acquisition",
+      "assignee": "ttraenkler/codex-5784-shepherd",
+      "status": "in-progress",
+      "branch": "codex/5784-temporal-acquisition",
+      "claimed_at": "2026-09-09T03:32:04Z"
+    },
+    {
+      "id": "4405",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "impl-4405-receiver-spec",
+      "claimed_at": "2026-08-14T20:54:03Z"
+    },
+    {
+      "id": "4406",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4406",
+      "status": "in-progress",
+      "branch": "claude/issue-4406-ret-unbox-abi",
+      "claimed_at": "2026-08-27T12:05:58Z"
+    },
+    {
+      "id": "4414",
+      "slice": "",
+      "assignee": "ttraenkler/fable-lead",
+      "status": "in-progress",
+      "branch": "issue-4414-boolean-direct-call",
+      "claimed_at": "2026-08-14T21:07:50Z"
+    },
+    {
+      "id": "4418",
+      "slice": "",
+      "assignee": "ttraenkler/fable-lead",
+      "status": "in-progress",
+      "branch": "issue-4418-ir-dominance",
+      "claimed_at": "2026-08-14T23:57:51Z"
+    },
+    {
+      "id": "4420",
+      "slice": "",
+      "assignee": "ttraenkler/claude-fable",
+      "status": "in-progress",
+      "branch": "claude/compiler-speedup-xqgm1z",
+      "claimed_at": "2026-08-15T11:52:22Z"
+    },
+    {
+      "id": "4427",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4427-compound-assign-invalid-module",
+      "claimed_at": "2026-08-15T02:43:34Z"
+    },
+    {
+      "id": "4428",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4428-array-ctor-wrapper-identity",
+      "claimed_at": "2026-08-15T02:43:39Z"
+    },
+    {
+      "id": "4429",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4429-string-hint-this-binding",
+      "claimed_at": "2026-08-15T02:43:44Z"
+    },
+    {
+      "id": "4430",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4430-filter-holes-invalid-module",
+      "claimed_at": "2026-08-15T02:43:50Z"
+    },
+    {
+      "id": "4436",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4436-function-instance-own-properties",
+      "claimed_at": "2026-08-15T06:35:33Z"
+    },
+    {
+      "id": "4437",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4437-per-function-meta",
+      "claimed_at": "2026-08-15T08:01:27Z"
+    },
+    {
+      "id": "4438",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4438-runtime-eval-construct",
+      "claimed_at": "2026-08-15T08:02:02Z"
+    },
+    {
+      "id": "4439",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4439-reflective-match-search",
+      "claimed_at": "2026-08-15T09:44:22Z"
+    },
+    {
+      "id": "4440",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4440-function-meta-methods-attrs",
+      "claimed_at": "2026-08-15T09:44:27Z"
+    },
+    {
+      "id": "4442",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4442-function-intrinsic-carrier",
+      "claimed_at": "2026-08-15T12:07:02Z"
+    },
+    {
+      "id": "4443",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4443-match-vec-proto-index",
+      "claimed_at": "2026-08-15T12:07:07Z"
+    },
+    {
+      "id": "4448",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4448",
+      "status": "in-progress",
+      "branch": "claude/ir-4448-preclaim-fix",
+      "claimed_at": "2026-08-15T14:36:17Z"
+    },
+    {
+      "id": "4451",
+      "slice": "",
+      "assignee": "ttraenkler/claude-fable",
+      "status": "in-progress",
+      "branch": "issue-4451-cb-tuple-struct-f64",
+      "claimed_at": "2026-08-15T12:42:18Z"
+    },
+    {
+      "id": "4452",
+      "slice": "",
+      "assignee": "ttraenkler/claude-fable",
+      "status": "in-progress",
+      "branch": "issue-4452-selfhost-frontend-tsconfig",
+      "claimed_at": "2026-08-15T12:42:23Z"
+    },
+    {
+      "id": "4453",
+      "slice": "",
+      "assignee": "ttraenkler/claude-fable",
+      "status": "in-progress",
+      "branch": "issue-4453-tdz-shadowed-block",
+      "claimed_at": "2026-08-15T12:42:28Z"
+    },
+    {
+      "id": "4454",
+      "slice": "",
+      "assignee": "ttraenkler/claude-fable",
+      "status": "in-progress",
+      "branch": "issue-4454-make-getter-callback",
+      "claimed_at": "2026-08-15T12:42:33Z"
+    },
+    {
+      "id": "4455",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4455-class-proto-accessor-gopd",
+      "claimed_at": "2026-08-15T13:49:07Z"
+    },
+    {
+      "id": "4456",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4456-nested-fn-aliasing",
+      "claimed_at": "2026-08-15T13:49:12Z"
+    },
+    {
+      "id": "4457",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4457",
+      "status": "in-progress",
+      "branch": "claude/ir-4457-standalone-bodyshape",
+      "claimed_at": "2026-08-15T14:36:27Z"
+    },
+    {
+      "id": "4458",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4458",
+      "status": "in-progress",
+      "branch": "claude/ir-4458-legacy-assertion-fix",
+      "claimed_at": "2026-08-15T14:36:32Z"
+    },
+    {
+      "id": "4459",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4459",
+      "status": "in-progress",
+      "branch": "claude/ir-4459-value-discard",
+      "claimed_at": "2026-08-15T16:42:53Z"
+    },
+    {
+      "id": "4460",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4460-class-expr-static-member",
+      "claimed_at": "2026-08-15T15:00:00Z"
+    },
+    {
+      "id": "4461",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4461",
+      "status": "in-progress",
+      "branch": "claude/ir-4461-native-map",
+      "claimed_at": "2026-08-15T16:42:58Z"
+    },
+    {
+      "id": "4462",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4462",
+      "status": "in-progress",
+      "branch": "claude/ir-4462-console-tostring",
+      "claimed_at": "2026-08-15T16:44:15Z"
+    },
+    {
+      "id": "4464",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4464-fn-statements-bucket",
+      "claimed_at": "2026-08-15T16:18:54Z"
+    },
+    {
+      "id": "4465",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4465-string-proto-generic",
+      "claimed_at": "2026-08-15T17:09:36Z"
+    },
+    {
+      "id": "4467",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4467",
+      "status": "in-progress",
+      "branch": "claude/ir-4467-template-numeric",
+      "claimed_at": "2026-08-15T16:44:27Z"
+    },
+    {
+      "id": "4468",
+      "slice": "",
+      "assignee": "ttraenkler/claude-fable",
+      "status": "in-progress",
+      "branch": "issue-4468-marked-shape-regressions",
+      "claimed_at": "2026-08-15T16:51:46Z"
+    },
+    {
+      "id": "4469",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4469",
+      "status": "in-progress",
+      "branch": "claude/ir-4469-homeobject-regression",
+      "claimed_at": "2026-08-15T17:30:07Z"
+    },
+    {
+      "id": "4470",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4470",
+      "status": "in-progress",
+      "branch": "claude/ir-4470-forof-destructuring",
+      "claimed_at": "2026-08-15T18:43:16Z"
+    },
+    {
+      "id": "4471",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4471",
+      "status": "in-progress",
+      "branch": "claude/ir-4471-empty-objectlit",
+      "claimed_at": "2026-08-15T18:43:22Z"
+    },
+    {
+      "id": "4479",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4479",
+      "claimed_at": "2026-08-15T19:43:02Z"
+    },
+    {
+      "id": "4480",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4480",
+      "claimed_at": "2026-08-15T19:43:07Z"
+    },
+    {
+      "id": "4481",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4481",
+      "claimed_at": "2026-08-15T19:43:11Z"
+    },
+    {
+      "id": "4482",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4482",
+      "claimed_at": "2026-08-15T19:43:16Z"
+    },
+    {
+      "id": "4483",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4483",
+      "claimed_at": "2026-08-15T19:43:21Z"
+    },
+    {
+      "id": "4484",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4484",
+      "claimed_at": "2026-08-15T19:43:26Z"
+    },
+    {
+      "id": "4485",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4485",
+      "claimed_at": "2026-08-15T19:43:31Z"
+    },
+    {
+      "id": "4486",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4486",
+      "status": "in-progress",
+      "branch": "claude/ir-4486-invariant-demote",
+      "claimed_at": "2026-08-15T21:35:50Z"
+    },
+    {
+      "id": "4487",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4487",
+      "status": "in-progress",
+      "branch": "claude/ir-4487-array-spread",
+      "claimed_at": "2026-08-15T19:45:56Z"
+    },
+    {
+      "id": "4489",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4489",
+      "claimed_at": "2026-08-15T20:09:27Z"
+    },
+    {
+      "id": "4491",
+      "slice": "",
+      "assignee": "ttraenkler/dev-4491",
+      "status": "in-progress",
+      "branch": "claude/es5-standalone-pass-rate-6tk9rb",
+      "claimed_at": "2026-08-23T12:54:47Z"
+    },
+    {
+      "id": "4492",
+      "slice": "",
+      "assignee": "ttraenkler/dev-4492",
+      "status": "in-progress",
+      "branch": "claude/es5-standalone-pass-rate-6tk9rb",
+      "claimed_at": "2026-08-23T16:24:28Z"
+    },
+    {
+      "id": "4493",
+      "slice": "",
+      "assignee": "ttraenkler/claude-fable",
+      "status": "in-progress",
+      "branch": "issue-4493-object-entries-struct-cast",
+      "claimed_at": "2026-08-15T21:12:18Z"
+    },
+    {
+      "id": "4494",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4494",
+      "status": "in-progress",
+      "branch": "claude/ir-4494-preparability-parity",
+      "claimed_at": "2026-08-15T21:15:36Z"
+    },
+    {
+      "id": "4502",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4502",
+      "status": "in-progress",
+      "branch": "claude/ir-4502-type-bare-throws",
+      "claimed_at": "2026-08-15T22:34:03Z"
+    },
+    {
+      "id": "4503",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4503",
+      "status": "in-progress",
+      "branch": "claude/ir-4503-boolean-brand",
+      "claimed_at": "2026-08-15T22:34:08Z"
+    },
+    {
+      "id": "4506",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4506",
+      "claimed_at": "2026-08-15T23:11:36Z"
+    },
+    {
+      "id": "4507",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4507h",
+      "status": "in-progress",
+      "branch": "claude/ir-4507-harness-string-constants",
+      "claimed_at": "2026-08-15T23:32:58Z"
+    },
+    {
+      "id": "4508",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4508",
+      "status": "in-progress",
+      "branch": "claude/ir-4508-component-edges",
+      "claimed_at": "2026-08-15T23:32:52Z"
+    },
+    {
+      "id": "4513",
+      "slice": "",
+      "assignee": "ttraenkler/dev-computed-keys",
+      "status": "in-progress",
+      "branch": "claude/ir-computed-object-keys",
+      "claimed_at": "2026-08-16T03:24:58Z"
+    },
+    {
+      "id": "4515",
+      "slice": "",
+      "assignee": "ttraenkler/dev-4515",
+      "status": "in-progress",
+      "branch": "claude/es5-standalone-pass-rate-6tk9rb",
+      "claimed_at": "2026-08-23T16:24:33Z"
+    },
+    {
+      "id": "4517",
+      "slice": "",
+      "assignee": "ttraenkler/fable-lead",
+      "status": "in-progress",
+      "branch": "fix-stringhash-x64",
+      "claimed_at": "2026-08-16T04:59:35Z"
+    },
+    {
+      "id": "4518",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4518",
+      "claimed_at": "2026-08-23T00:44:50Z"
+    },
+    {
+      "id": "4519",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4519",
+      "claimed_at": "2026-08-23T00:44:54Z"
+    },
+    {
+      "id": "4523",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4523",
+      "status": "in-progress",
+      "branch": "claude/issue-4523-type-rule-coverage",
+      "claimed_at": "2026-08-21T10:40:37Z"
+    },
+    {
+      "id": "4527",
+      "slice": "",
+      "assignee": "claude/curated-npm-tests",
+      "status": "in-progress",
+      "branch": "claude/curated-npm-packages-tests-2t7fid",
+      "claimed_at": "2026-08-21T22:42:04Z"
+    },
+    {
+      "id": "4540",
+      "slice": "",
+      "assignee": "ttraenkler/claude-opus",
+      "status": "in-progress",
+      "branch": "claude/linear-memory-quickjs-backend-gkhszu",
+      "claimed_at": "2026-08-19T00:47:25Z"
+    },
+    {
+      "id": "4542",
+      "slice": "",
+      "assignee": "ttraenkler/claude-opus",
+      "status": "in-progress",
+      "branch": "claude/linear-memory-quickjs-backend-gkhszu",
+      "claimed_at": "2026-08-19T00:41:56Z"
+    },
+    {
+      "id": "4544",
+      "slice": "",
+      "assignee": "ttraenkler/claude-opus",
+      "status": "in-progress",
+      "branch": "claude/linear-memory-quickjs-backend-gkhszu",
+      "claimed_at": "2026-08-19T03:15:09Z"
+    },
+    {
+      "id": "4551",
+      "slice": "",
+      "assignee": "ttraenkler/claude-js-ir-generalization",
+      "status": "in-progress",
+      "branch": "claude/js-ir-generalization-9v7m8j",
+      "claimed_at": "2026-08-19T00:39:33Z"
+    },
+    {
+      "id": "4552",
+      "slice": "",
+      "assignee": "ttraenkler/fable-4552",
+      "status": "in-progress",
+      "branch": "claude/issue-4552-dialect-review",
+      "claimed_at": "2026-08-21T15:09:53Z"
+    },
+    {
+      "id": "4601",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4601a",
+      "status": "in-progress",
+      "branch": "claude/issue-4601-analysis-pair-move",
+      "claimed_at": "2026-08-21T15:09:58Z"
+    },
+    {
+      "id": "4602",
+      "slice": "",
+      "assignee": "loopdive/claude",
+      "status": "in-progress",
+      "branch": "claude/acorn-clsx-perf-regression-v3io3a",
+      "claimed_at": "2026-08-21T12:51:26Z"
+    },
+    {
+      "id": "4604",
+      "slice": "",
+      "assignee": "loopdive/claude",
+      "status": "in-progress",
+      "branch": "claude/acorn-clsx-perf-regression-v3io3a",
+      "claimed_at": "2026-08-21T19:12:58Z"
+    },
+    {
+      "id": "4605",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4605",
+      "status": "in-progress",
+      "branch": "claude/issue-4605-declared-type-table",
+      "claimed_at": "2026-08-21T21:09:40Z"
+    },
+    {
+      "id": "4606",
+      "slice": "",
+      "assignee": "ttraenkler/opus-bugs",
+      "status": "in-progress",
+      "branch": "claude/issue-4606-4607-carrier-stringification",
+      "claimed_at": "2026-08-21T21:44:20Z"
+    },
+    {
+      "id": "4607",
+      "slice": "",
+      "assignee": "ttraenkler/opus-bugs",
+      "status": "in-progress",
+      "branch": "claude/issue-4606-4607-carrier-stringification",
+      "claimed_at": "2026-08-21T21:44:25Z"
+    },
+    {
+      "id": "4609",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4609",
+      "status": "in-progress",
+      "branch": "claude/issue-4609-equivalence-baseline",
+      "claimed_at": "2026-08-21T23:21:24Z"
+    },
+    {
+      "id": "4613",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4613",
+      "status": "in-progress",
+      "branch": "claude/issue-4613-2949-suite-reground",
+      "claimed_at": "2026-08-22T00:55:33Z"
+    },
+    {
+      "id": "4618",
+      "slice": "",
+      "assignee": "ttraenkler/inventory_react_family",
+      "status": "in-progress",
+      "branch": "codex/4618-react-upstream-next",
+      "claimed_at": "2026-08-26T11:17:00Z"
+    },
+    {
+      "id": "4619",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4619",
+      "claimed_at": "2026-08-22T22:01:38Z"
+    },
+    {
+      "id": "4620",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4620",
+      "claimed_at": "2026-08-22T22:01:42Z"
+    },
+    {
+      "id": "4621",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4621",
+      "claimed_at": "2026-08-22T22:01:46Z"
+    },
+    {
+      "id": "4622",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4622",
+      "claimed_at": "2026-08-23T04:58:51Z"
+    },
+    {
+      "id": "4623",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4623",
+      "claimed_at": "2026-08-23T04:58:55Z"
+    },
+    {
+      "id": "4624",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4624",
+      "claimed_at": "2026-08-23T04:59:00Z"
+    },
+    {
+      "id": "4625",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4625",
+      "claimed_at": "2026-08-23T04:59:04Z"
+    },
+    {
+      "id": "4627",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-4627",
+      "status": "in-progress",
+      "branch": "issue-4627-captured-global-coercion",
+      "claimed_at": "2026-08-23T06:46:48Z"
+    },
+    {
+      "id": "4628",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-temporal-wire",
+      "status": "in-progress",
+      "branch": "issue-4628-temporal-wire",
+      "claimed_at": "2026-08-30T18:42:59Z"
+    },
+    {
+      "id": "4630",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4630b",
+      "status": "in-progress",
+      "branch": "claude/4630-return-not-thenable",
+      "claimed_at": "2026-08-23T17:53:47Z"
+    },
+    {
+      "id": "4637",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4637",
+      "claimed_at": "2026-08-23T07:27:17Z"
+    },
+    {
+      "id": "4638",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4638",
+      "claimed_at": "2026-08-23T07:27:21Z"
+    },
+    {
+      "id": "4639",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4639",
+      "claimed_at": "2026-08-23T07:27:25Z"
+    },
+    {
+      "id": "4640",
+      "slice": "",
+      "assignee": "ttraenkler/claude-es5-standalone",
+      "status": "in-progress",
+      "branch": "issue-4640",
+      "claimed_at": "2026-08-23T07:27:29Z"
+    },
+    {
+      "id": "4641",
+      "slice": "",
+      "assignee": "ttraenkler/dev-4641",
+      "status": "in-progress",
+      "branch": "claude/es5-standalone-pass-rate-6tk9rb",
+      "claimed_at": "2026-08-23T12:54:33Z"
+    },
+    {
+      "id": "4642",
+      "slice": "",
+      "assignee": "ttraenkler/dev-4647",
+      "status": "in-progress",
+      "branch": "claude/es5-standalone-pass-rate-6tk9rb",
+      "claimed_at": "2026-08-23T12:54:42Z"
+    },
+    {
+      "id": "4643",
+      "slice": "",
+      "assignee": "ttraenkler/dev-4643",
+      "status": "in-progress",
+      "branch": "claude/es5-standalone-pass-rate-6tk9rb",
+      "claimed_at": "2026-08-23T12:54:28Z"
+    },
+    {
+      "id": "4645",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-4645",
+      "status": "in-progress",
+      "branch": "issue-4645-superlinear-compile",
+      "claimed_at": "2026-08-28T21:14:02Z"
+    },
+    {
+      "id": "4646",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-4646",
+      "status": "in-progress",
+      "branch": "issue-4646-structmap-node-keying",
+      "claimed_at": "2026-08-28T22:38:27Z"
+    },
+    {
+      "id": "4647",
+      "slice": "",
+      "assignee": "ttraenkler/dev-4647",
+      "status": "in-progress",
+      "branch": "claude/es5-standalone-pass-rate-6tk9rb",
+      "claimed_at": "2026-08-23T12:54:38Z"
+    },
+    {
+      "id": "4648",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4648",
+      "status": "in-progress",
+      "branch": "claude/4648-jshost-async",
+      "claimed_at": "2026-08-23T13:53:30Z"
+    },
+    {
+      "id": "4649",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4649",
+      "status": "in-progress",
+      "branch": "claude/4649-jshost-reflect",
+      "claimed_at": "2026-08-23T13:53:35Z"
+    },
+    {
+      "id": "4650",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4650",
+      "status": "in-progress",
+      "branch": "claude/4650-jshost-plumbing",
+      "claimed_at": "2026-08-23T13:53:38Z"
+    },
+    {
+      "id": "4653",
+      "slice": "",
+      "assignee": "ttraenkler/dev-4653",
+      "status": "in-progress",
+      "branch": "claude/es5-standalone-pass-rate-6tk9rb",
+      "claimed_at": "2026-08-23T16:24:19Z"
+    },
+    {
+      "id": "4654",
+      "slice": "",
+      "assignee": "ttraenkler/dev-4654",
+      "status": "in-progress",
+      "branch": "claude/es5-standalone-pass-rate-6tk9rb",
+      "claimed_at": "2026-08-23T16:24:24Z"
+    },
+    {
+      "id": "4655",
+      "slice": "",
+      "assignee": "ttraenkler/dev-4655",
+      "status": "in-progress",
+      "branch": "claude/es5-standalone-pass-rate-6tk9rb",
+      "claimed_at": "2026-08-23T16:43:44Z"
+    },
+    {
+      "id": "4656",
+      "slice": "",
+      "assignee": "ttraenkler/dev-4656",
+      "status": "in-progress",
+      "branch": "claude/es5-standalone-pass-rate-6tk9rb",
+      "claimed_at": "2026-08-23T16:43:50Z"
+    },
+    {
+      "id": "4657",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4657",
+      "status": "in-progress",
+      "branch": "claude/4657-jshost-intrinsics",
+      "claimed_at": "2026-08-23T17:53:01Z"
+    },
+    {
+      "id": "4660",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4660",
+      "status": "in-progress",
+      "branch": "claude/4660-driven-async-error-ctor",
+      "claimed_at": "2026-08-23T18:38:28Z"
+    },
+    {
+      "id": "4661",
+      "slice": "",
+      "assignee": "ttraenkler/opus-4661",
+      "status": "in-progress",
+      "branch": "claude/4661-is-constructor-bit",
+      "claimed_at": "2026-08-23T19:22:32Z"
+    },
+    {
+      "id": "4739",
+      "slice": "",
+      "assignee": "ttraenkler/es6_next_residual_wave19",
+      "status": "in-progress",
+      "branch": "codex/4739-es2015-function-hasinstance-descriptor",
+      "claimed_at": "2026-08-25T20:35:33Z"
+    },
+    {
+      "id": "4757",
+      "slice": "",
+      "assignee": "ttraenkler/inventory_tooling_family",
+      "status": "in-progress",
+      "branch": "codex/4757-typescript-pseudobigint",
+      "claimed_at": "2026-08-26T11:01:26Z"
+    },
+    {
+      "id": "4776",
+      "slice": "",
+      "assignee": "ttraenkler/es6-next-residual",
+      "status": "in-progress",
+      "branch": "codex/es6-next-residual",
+      "claimed_at": "2026-08-27T13:43:00Z"
+    },
+    {
+      "id": "4778",
+      "slice": "",
+      "assignee": "ttraenkler/es6-next-bounded-fix-3",
+      "status": "in-progress",
+      "branch": "codex/4778-es2015-arraybuffer-isview-no-arg",
+      "claimed_at": "2026-08-27T15:20:12Z"
+    },
+    {
+      "id": "4781",
+      "slice": "",
+      "assignee": "ttraenkler/es6-next-bounded-fix-5",
+      "status": "in-progress",
+      "branch": "codex/es2015-next-bounded-fix-5",
+      "claimed_at": "2026-08-27T16:16:43Z"
+    },
+    {
+      "id": "4783",
+      "slice": "",
+      "assignee": "ttraenkler/es2015-next-bounded-fix-7",
+      "status": "in-progress",
+      "branch": "codex/es2015-next-bounded-fix-7",
+      "claimed_at": "2026-08-27T17:25:11Z"
+    },
+    {
+      "id": "4788",
+      "slice": "",
+      "assignee": "ttraenkler/es2015-next-bounded-fix-9",
+      "status": "in-progress",
+      "branch": "codex/es2015-next-bounded-fix-9",
+      "claimed_at": "2026-08-27T20:11:53Z"
+    },
+    {
+      "id": "5104",
+      "slice": "",
+      "assignee": "ttraenkler/es2015-next-lane-b2",
+      "status": "in-progress",
+      "branch": "codex/es2015-next-lane-b2",
+      "claimed_at": "2026-08-27T23:25:42Z"
+    },
+    {
+      "id": "5141",
+      "slice": "decorator-yield-context",
+      "assignee": "ttraenkler/codex-decorator-yield-context",
+      "status": "in-progress",
+      "branch": "codex/5141-decorator-yield-context",
+      "claimed_at": "2026-09-28T06:18:07Z"
+    },
+    {
+      "id": "5145",
+      "slice": "copywithin-reflective",
+      "assignee": "ttraenkler/codex-copywithin-reflective",
+      "status": "in-progress",
+      "branch": "codex/5145-copywithin-reflective",
+      "claimed_at": "2026-09-28T07:55:38Z"
+    },
+    {
+      "id": "5151",
+      "slice": "dynamic-size-descriptor",
+      "assignee": "ttraenkler/codex-5151-size-descriptor",
+      "status": "in-progress",
+      "branch": "codex/5151-dynamic-size-descriptor",
+      "claimed_at": "2026-09-28T01:44:58Z"
+    },
+    {
+      "id": "5152",
+      "slice": "closed-struct-raw-readers",
+      "assignee": "ttraenkler/codex-5152-raw-readers",
+      "status": "in-progress",
+      "branch": "codex/5152-string-raw-audit-20260919",
+      "claimed_at": "2026-09-19T21:04:05Z"
+    },
+    {
+      "id": "5157",
+      "slice": "eval-spread-arguments",
+      "assignee": "ttraenkler/codex-eval-spread-arguments",
+      "status": "in-progress",
+      "branch": "codex/5157-eval-spread-arguments",
+      "claimed_at": "2026-09-28T07:22:30Z"
+    },
+    {
+      "id": "5169",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-5169",
+      "status": "in-progress",
+      "branch": "issue-5169-immutable-global-jsbi",
+      "claimed_at": "2026-08-29T02:00:26Z"
+    },
+    {
+      "id": "5173",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-5173",
+      "status": "in-progress",
+      "branch": "issue-5173-temporal-official-reclass",
+      "claimed_at": "2026-08-29T01:03:01Z"
+    },
+    {
+      "id": "5178",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-5178",
+      "status": "in-progress",
+      "branch": "issue-5178-method-return-struct-type",
+      "claimed_at": "2026-08-29T02:39:59Z"
+    },
+    {
+      "id": "5180",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-5180",
+      "status": "in-progress",
+      "branch": "issue-5180-struct-field-index-oob",
+      "claimed_at": "2026-08-29T04:58:28Z"
+    },
+    {
+      "id": "5181",
+      "slice": "",
+      "assignee": "ttraenkler/opus-5181-ab",
+      "status": "in-progress",
+      "branch": "claude/issue-5181-standalone-rootcause-unblock",
+      "claimed_at": "2026-08-29T06:21:52Z"
+    },
+    {
+      "id": "5182",
+      "slice": "",
+      "assignee": "ttraenkler/fable-ir-takeover",
+      "status": "in-progress",
+      "branch": "claude/issue-5181-standalone-rootcause-unblock",
+      "claimed_at": "2026-08-29T04:47:40Z"
+    },
+    {
+      "id": "5186",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-5186",
+      "status": "in-progress",
+      "branch": "issue-5186-stack-balance-family",
+      "claimed_at": "2026-08-29T06:14:50Z"
+    },
+    {
+      "id": "5187",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-5180",
+      "status": "in-progress",
+      "branch": "issue-5187-regexp-exec-index",
+      "claimed_at": "2026-08-29T06:26:24Z"
+    },
+    {
+      "id": "5191",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-5191",
+      "status": "in-progress",
+      "branch": "issue-5191-builtin-derived-class-value",
+      "claimed_at": "2026-08-29T10:55:03Z"
+    },
+    {
+      "id": "5193",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-5193",
+      "status": "in-progress",
+      "branch": "issue-5193-host-typedarray-marshal",
+      "claimed_at": "2026-08-29T14:23:49Z"
+    },
+    {
+      "id": "5197",
+      "slice": "",
+      "assignee": "ttraenkler/opus-5197",
+      "status": "in-progress",
+      "branch": "issue-5197-r3-promise",
+      "claimed_at": "2026-09-30T10:46:28Z"
+    },
+    {
+      "id": "5198",
+      "slice": "exec-lastindex-identity",
+      "assignee": "ttraenkler/regexp-residual-20260913",
+      "status": "in-progress",
+      "branch": "codex/5198-regexp-exec-identity-20260913",
+      "claimed_at": "2026-09-13T01:43:38Z"
+    },
+    {
+      "id": "5198",
+      "slice": "exec-match-cursor",
+      "assignee": "ttraenkler/regexp-residual-20260913",
+      "status": "in-progress",
+      "branch": "codex/5198-regexp-match-cursor-20260913",
+      "claimed_at": "2026-09-12T23:16:14Z"
+    },
+    {
+      "id": "5198",
+      "slice": "exec-protocol-recovery",
+      "assignee": "ttraenkler/codex-5198-protocol-recovery",
+      "status": "in-progress",
+      "branch": "codex/5198-protocol-recovery-20260919",
+      "claimed_at": "2026-09-19T20:33:37Z"
+    },
+    {
+      "id": "5199",
+      "slice": "default-proto",
+      "assignee": "ttraenkler/codex-5199-generator-default-proto-20260913",
+      "status": "in-progress",
+      "branch": "codex/5199-generator-default-proto-20260913",
+      "claimed_at": "2026-09-13T01:11:22Z"
+    },
+    {
+      "id": "5201",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-5201",
+      "status": "in-progress",
+      "branch": "issue-5201-builtin-derived-method-dispatch",
+      "claimed_at": "2026-08-29T15:13:04Z"
+    },
+    {
+      "id": "5202",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-5202",
+      "status": "in-progress",
+      "branch": "issue-5202-init-window-prototypes",
+      "claimed_at": "2026-08-29T16:56:54Z"
+    },
+    {
+      "id": "5203",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-5203",
+      "status": "in-progress",
+      "branch": "issue-5203-init-static-dispatch",
+      "claimed_at": "2026-08-29T17:38:33Z"
+    },
+    {
+      "id": "5204",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-5203",
+      "status": "in-progress",
+      "branch": "issue-5204-bridge-f64-params",
+      "claimed_at": "2026-08-29T17:38:42Z"
+    },
+    {
+      "id": "5205",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-5205",
+      "status": "in-progress",
+      "branch": "issue-5205-fromentries-marshal",
+      "claimed_at": "2026-08-29T20:17:50Z"
+    },
+    {
+      "id": "5206",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-5206",
+      "status": "in-progress",
+      "branch": "issue-5206-intl-global",
+      "claimed_at": "2026-08-29T21:47:40Z"
+    },
+    {
+      "id": "5207",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-5207",
+      "status": "in-progress",
+      "branch": "issue-5207-iife-arg-scope",
+      "claimed_at": "2026-08-29T23:03:18Z"
+    },
+    {
+      "id": "5208",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5208",
+      "status": "in-progress",
+      "branch": "issue-5208-compiled-date-host-bridge",
+      "claimed_at": "2026-09-06T04:43:32Z"
+    },
+    {
+      "id": "5209",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-5209",
+      "status": "in-progress",
+      "branch": "issue-5209-ctor-arg-vec-filter",
+      "claimed_at": "2026-08-30T00:58:06Z"
+    },
+    {
+      "id": "5211",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-5211",
+      "status": "in-progress",
+      "branch": "issue-5211-init-sort-comparator",
+      "claimed_at": "2026-08-30T02:31:14Z"
+    },
+    {
+      "id": "5216",
+      "slice": "",
+      "assignee": "ttraenkler/luna-es2015-object-spread-call",
+      "status": "in-progress",
+      "branch": "codex/es2015-object-spread-call",
+      "claimed_at": "2026-08-30T09:24:12Z"
+    },
+    {
+      "id": "5221",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-5221",
+      "status": "in-progress",
+      "branch": "issue-5221-plaindate-from-nullderef",
+      "claimed_at": "2026-08-30T20:43:24Z"
+    },
+    {
+      "id": "5222",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev-5222",
+      "status": "in-progress",
+      "branch": "issue-5222-now-provider-boundary",
+      "claimed_at": "2026-08-30T20:43:28Z"
+    },
+    {
+      "id": "5223",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5223",
+      "status": "in-progress",
+      "branch": "issue-5223-instance-tostring-dispatch",
+      "claimed_at": "2026-08-30T23:10:33Z"
+    },
+    {
+      "id": "5225",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5225",
+      "status": "in-progress",
+      "branch": "issue-5225-consumer-literal-seam",
+      "claimed_at": "2026-08-31T13:47:28Z"
+    },
+    {
+      "id": "5226",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5226",
+      "status": "in-progress",
+      "branch": "issue-5226-provider-error-identity",
+      "claimed_at": "2026-08-31T16:33:55Z"
+    },
+    {
+      "id": "5237",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5237",
+      "status": "in-progress",
+      "branch": "issue-5237-cross-module-member-resolution",
+      "claimed_at": "2026-08-31T00:40:25Z"
+    },
+    {
+      "id": "5239",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5239",
+      "status": "in-progress",
+      "branch": "issue-5239-objcreate-proto-dispatch",
+      "claimed_at": "2026-08-31T02:25:48Z"
+    },
+    {
+      "id": "5241",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5241",
+      "status": "in-progress",
+      "branch": "issue-5241-parametered-bridge-calls",
+      "claimed_at": "2026-08-31T03:58:42Z"
+    },
+    {
+      "id": "5242",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5242",
+      "status": "in-progress",
+      "branch": "issue-5242-class-value-ctor-bridge",
+      "claimed_at": "2026-08-31T06:06:33Z"
+    },
+    {
+      "id": "5243",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5243",
+      "status": "in-progress",
+      "branch": "issue-5243-bridge-object-arg-null",
+      "claimed_at": "2026-08-31T09:44:39Z"
+    },
+    {
+      "id": "5244",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5244",
+      "status": "in-progress",
+      "branch": "issue-5244-ctor-mirror-arg-loss",
+      "claimed_at": "2026-08-31T11:02:32Z"
+    },
+    {
+      "id": "5247",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5247",
+      "status": "in-progress",
+      "branch": "issue-5247-uncaught-throw-export-boundary",
+      "claimed_at": "2026-09-06T00:25:25Z"
+    },
+    {
+      "id": "5248",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5248",
+      "status": "in-progress",
+      "branch": "issue-5248-test262-temporal-provider-wiring",
+      "claimed_at": "2026-08-31T17:40:15Z"
+    },
+    {
+      "id": "5249",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5249",
+      "status": "in-progress",
+      "branch": "issue-5249-adjustcalendardate-unreachable",
+      "claimed_at": "2026-09-02T20:14:41Z"
+    },
+    {
+      "id": "5250",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5250",
+      "status": "in-progress",
+      "branch": "issue-5250-temporal-error-semantics",
+      "claimed_at": "2026-09-05T21:32:51Z"
+    },
+    {
+      "id": "5251",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5251",
+      "status": "in-progress",
+      "branch": "issue-5251-temporal-value-seam",
+      "claimed_at": "2026-09-05T23:32:44Z"
+    },
+    {
+      "id": "5276",
+      "slice": "",
+      "assignee": "ttraenkler/opus-5276-forhead-index",
+      "status": "in-progress",
+      "branch": "claude/issue-5276-forhead-stale-global-index",
+      "claimed_at": "2026-09-02T20:35:51Z"
+    },
+    {
+      "id": "5280",
+      "slice": "",
+      "assignee": "ttraenkler/opus-5280-queue-flake",
+      "status": "in-progress",
+      "branch": "claude/issue-5280-queue-flake",
+      "claimed_at": "2026-09-02T22:35:16Z"
+    },
+    {
+      "id": "5285",
+      "slice": "",
+      "assignee": "ttraenkler/opus-5285-survey",
+      "status": "in-progress",
+      "branch": "claude/issue-5285-module-init-refusal-survey",
+      "claimed_at": "2026-09-03T02:48:28Z"
+    },
+    {
+      "id": "5286",
+      "slice": "",
+      "assignee": "ttraenkler/opus-5286-buckets",
+      "status": "in-progress",
+      "branch": "claude/issue-5286-audit-bucket-provenance",
+      "claimed_at": "2026-09-03T02:56:50Z"
+    },
+    {
+      "id": "5306",
+      "slice": "",
+      "assignee": "ttraenkler/opus-5306",
+      "status": "in-progress",
+      "branch": "claude/issue-5306-harness-budget-bisect",
+      "claimed_at": "2026-09-04T02:08:59Z"
+    },
+    {
+      "id": "5312",
+      "slice": "",
+      "assignee": "ttraenkler/opus-5312",
+      "status": "in-progress",
+      "branch": "claude/issue-5312-uninitialised-field-undefined",
+      "claimed_at": "2026-09-04T05:40:27Z"
+    },
+    {
+      "id": "5313",
+      "slice": "",
+      "assignee": "ttraenkler/opus-5313",
+      "status": "in-progress",
+      "branch": "claude/issue-5313-with-scan-gating",
+      "claimed_at": "2026-09-04T04:03:44Z"
+    },
+    {
+      "id": "5316",
+      "slice": "",
+      "assignee": "ttraenkler/fable-es6",
+      "status": "in-progress",
+      "branch": "claude/es6-test262-standalone-g10c7u",
+      "claimed_at": "2026-09-04T23:21:21Z"
+    },
+    {
+      "id": "5317",
+      "slice": "",
+      "assignee": "ttraenkler/fable-es6",
+      "status": "in-progress",
+      "branch": "claude/es6-test262-standalone-g10c7u",
+      "claimed_at": "2026-09-04T23:21:26Z"
+    },
+    {
+      "id": "5318",
+      "slice": "",
+      "assignee": "ttraenkler/fable-es6",
+      "status": "in-progress",
+      "branch": "claude/es6-test262-standalone-g10c7u",
+      "claimed_at": "2026-09-04T23:21:32Z"
+    },
+    {
+      "id": "5320",
+      "slice": "",
+      "assignee": "ttraenkler/claude",
+      "status": "in-progress",
+      "branch": "claude/conditional-box-dominating-materialisation",
+      "claimed_at": "2026-09-05T03:22:31Z"
+    },
+    {
+      "id": "5321",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-5321-namespace-host-reexport",
+      "claimed_at": "2026-09-05T02:38:31Z"
+    },
+    {
+      "id": "5323",
+      "slice": "",
+      "assignee": "ttraenkler/claude",
+      "status": "in-progress",
+      "branch": "issue-capture-cell-identity-split",
+      "claimed_at": "2026-09-05T06:58:48Z"
+    },
+    {
+      "id": "5327",
+      "slice": "",
+      "assignee": "ttraenkler/claude",
+      "status": "in-progress",
+      "branch": "issue-5327-call-produced-array-element-carrier",
+      "claimed_at": "2026-09-05T12:35:34Z"
+    },
+    {
+      "id": "5331",
+      "slice": "",
+      "assignee": "codex-npm-edition",
+      "status": "in-progress",
+      "branch": "",
+      "claimed_at": "2026-09-05T13:35:04Z"
+    },
+    {
+      "id": "5335",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-5335-nested-closure-pass2-skip",
+      "claimed_at": "2026-09-05T17:16:40Z"
+    },
+    {
+      "id": "5338",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-5338-hono-ipaddr-null-split",
+      "claimed_at": "2026-09-06T05:39:55Z"
+    },
+    {
+      "id": "5344",
+      "slice": "",
+      "assignee": "ttraenkler/senior-developer",
+      "status": "in-progress",
+      "branch": "issue-5344-diff-test-baseline-refresh-v3",
+      "claimed_at": "2026-09-06T02:54:12Z"
+    },
+    {
+      "id": "5345",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-5345-marked-hooks-residual",
+      "claimed_at": "2026-09-05T23:56:44Z"
+    },
+    {
+      "id": "5347",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev",
+      "status": "in-progress",
+      "branch": "issue-5347-getprototypeof-compiled-class",
+      "claimed_at": "2026-09-06T05:59:28Z"
+    },
+    {
+      "id": "5348",
+      "slice": "",
+      "assignee": "ttraenkler/claude",
+      "status": "in-progress",
+      "branch": "issue-5348-shapeless-union-struct-registration",
+      "claimed_at": "2026-09-05T20:40:31Z"
+    },
+    {
+      "id": "5350",
+      "slice": "",
+      "assignee": "ttraenkler/opus-5350",
+      "status": "in-progress",
+      "branch": "issue-5350-r2-super-property-write",
+      "claimed_at": "2026-09-30T02:07:08Z"
+    },
+    {
+      "id": "5352",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5352",
+      "status": "in-progress",
+      "branch": "issue-5352-open-receiver-static-bind",
+      "claimed_at": "2026-09-05T21:32:46Z"
+    },
+    {
+      "id": "5353",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5353",
+      "status": "in-progress",
+      "branch": "issue-5353-test262-sharded-temporal",
+      "claimed_at": "2026-09-05T22:49:23Z"
+    },
+    {
+      "id": "5354",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5354",
+      "status": "in-progress",
+      "branch": "issue-5354-linked-class-instanceof",
+      "claimed_at": "2026-09-06T02:54:20Z"
+    },
+    {
+      "id": "5355",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5355",
+      "status": "in-progress",
+      "branch": "issue-5355-intl-datetimeformat-bridge",
+      "claimed_at": "2026-09-06T03:21:36Z"
+    },
+    {
+      "id": "5356",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-5356",
+      "status": "in-progress",
+      "branch": "issue-5356-eager-capture-box-tdz",
+      "claimed_at": "2026-09-06T10:58:03Z"
+    },
+    {
+      "id": "5357",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-5357",
+      "status": "in-progress",
+      "branch": "issue-5357-nullish-ref-strict-eq",
+      "claimed_at": "2026-09-06T10:56:47Z"
+    },
+    {
+      "id": "5358",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-5358",
+      "status": "in-progress",
+      "branch": "issue-5358-runtime-key-class-method-read",
+      "claimed_at": "2026-09-06T09:39:44Z"
+    },
+    {
+      "id": "5360",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5360",
+      "status": "in-progress",
+      "branch": "issue-5360-temporal-era-seam",
+      "claimed_at": "2026-09-06T05:20:05Z"
+    },
+    {
+      "id": "5363",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5363",
+      "status": "in-progress",
+      "branch": "issue-5363-thrown-error-seam",
+      "claimed_at": "2026-09-06T07:15:00Z"
+    },
+    {
+      "id": "5364",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5364",
+      "status": "in-progress",
+      "branch": "issue-5364-linked-project-scope",
+      "claimed_at": "2026-09-06T09:37:34Z"
+    },
+    {
+      "id": "5367",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-5372",
+      "status": "in-progress",
+      "branch": "issue-5367-5372-await-in-initializer",
+      "claimed_at": "2026-09-06T15:05:20Z"
+    },
+    {
+      "id": "5369",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-5369",
+      "status": "in-progress",
+      "branch": "issue-5369-unhandled-host-rejection",
+      "claimed_at": "2026-09-12T12:12:42Z"
+    },
+    {
+      "id": "5371",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-5371",
+      "status": "in-progress",
+      "branch": "issue-5371-await-host-promise",
+      "claimed_at": "2026-09-12T13:35:03Z"
+    },
+    {
+      "id": "5372",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-5372",
+      "status": "in-progress",
+      "branch": "issue-5367-5372-await-in-initializer",
+      "claimed_at": "2026-09-06T15:05:12Z"
+    },
+    {
+      "id": "5373",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5373",
+      "status": "in-progress",
+      "branch": "issue-5373-array-subclass-tostring",
+      "claimed_at": "2026-09-06T11:32:47Z"
+    },
+    {
+      "id": "5374",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5374",
+      "status": "in-progress",
+      "branch": "issue-5374-valueof-across-seam",
+      "claimed_at": "2026-09-06T11:34:43Z"
+    },
+    {
+      "id": "5376",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5376",
+      "status": "in-progress",
+      "branch": "issue-5376-accessor-valueof-field-read",
+      "claimed_at": "2026-09-06T15:16:27Z"
+    },
+    {
+      "id": "5377",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5377",
+      "status": "in-progress",
+      "branch": "issue-5377-compiled-class-constructor-identity",
+      "claimed_at": "2026-09-06T15:11:43Z"
+    },
+    {
+      "id": "5378",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5378",
+      "status": "in-progress",
+      "branch": "issue-5378-zoneddatetime-iso-reads",
+      "claimed_at": "2026-09-07T04:25:29Z"
+    },
+    {
+      "id": "5379",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5379",
+      "status": "in-progress",
+      "branch": "issue-5379-stale-export-map",
+      "claimed_at": "2026-09-07T04:25:35Z"
+    },
+    {
+      "id": "5380",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5380",
+      "status": "in-progress",
+      "branch": "issue-5380-fdiv-loop",
+      "claimed_at": "2026-09-07T08:13:11Z"
+    },
+    {
+      "id": "5381",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5381",
+      "status": "in-progress",
+      "branch": "issue-5381-intl-options-bag",
+      "claimed_at": "2026-09-07T08:13:17Z"
+    },
+    {
+      "id": "5382",
+      "slice": "",
+      "assignee": "ttraenkler/astra-low-temporal-publication",
+      "status": "in-progress",
+      "branch": "codex/5382-temporal-atomic-publication",
+      "claimed_at": "2026-09-07T13:27:22Z"
+    },
+    {
+      "id": "5383",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5383-s2d",
+      "status": "in-progress",
+      "branch": "issue-5383-standalone-temporal-s2d",
+      "claimed_at": "2026-09-08T18:10:21Z"
+    },
+    {
+      "id": "5384",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5384",
+      "status": "in-progress",
+      "branch": "issue-5384-standalone-exn-render",
+      "claimed_at": "2026-09-07T15:51:59Z"
+    },
+    {
+      "id": "5385",
+      "slice": "",
+      "assignee": "ttraenkler/codex-5385",
+      "status": "in-progress",
+      "branch": "codex/5385-native-lanes",
+      "claimed_at": "2026-09-07T19:37:29Z"
+    },
+    {
+      "id": "5386",
+      "slice": "",
+      "assignee": "ttraenkler/codex-alias",
+      "status": "in-progress",
+      "branch": "",
+      "claimed_at": "2026-09-08T06:14:16Z"
+    },
+    {
+      "id": "5387",
+      "slice": "",
+      "assignee": "ttraenkler/codex-unsoundness",
+      "status": "in-progress",
+      "branch": "",
+      "claimed_at": "2026-09-08T06:35:36Z"
+    },
+    {
+      "id": "5388",
+      "slice": "",
+      "assignee": "ttraenkler/codex-primitive-flow",
+      "status": "in-progress",
+      "branch": "",
+      "claimed_at": "2026-09-08T06:42:39Z"
+    },
+    {
+      "id": "5389",
+      "slice": "",
+      "assignee": "ttraenkler/codex-lookups",
+      "status": "in-progress",
+      "branch": "",
+      "claimed_at": "2026-09-08T06:42:49Z"
+    },
+    {
+      "id": "5390",
+      "slice": "",
+      "assignee": "ttraenkler/codex-structural-aliases",
+      "status": "in-progress",
+      "branch": "",
+      "claimed_at": "2026-09-08T06:42:59Z"
+    },
+    {
+      "id": "5391",
+      "slice": "",
+      "assignee": "ttraenkler/codex-generic-spread",
+      "status": "in-progress",
+      "branch": "",
+      "claimed_at": "2026-09-08T06:43:09Z"
+    },
+    {
+      "id": "5392",
+      "slice": "",
+      "assignee": "ttraenkler/codex-standalone-output",
+      "status": "in-progress",
+      "branch": "",
+      "claimed_at": "2026-09-08T06:43:19Z"
+    },
+    {
+      "id": "5398",
+      "slice": "",
+      "assignee": "ttraenkler/codex-generator-safety",
+      "status": "in-progress",
+      "branch": "codex/generator-safety",
+      "claimed_at": "2026-09-08T07:55:12Z"
+    },
+    {
+      "id": "5401",
+      "slice": "",
+      "assignee": "ttraenkler/codex-enumeration-safety",
+      "status": "in-progress",
+      "branch": "",
+      "claimed_at": "2026-09-08T08:06:59Z"
+    },
+    {
+      "id": "5402",
+      "slice": "",
+      "assignee": "ttraenkler/codex-generator-safety",
+      "status": "in-progress",
+      "branch": "codex/generator-safety",
+      "claimed_at": "2026-09-08T08:17:12Z"
+    },
+    {
+      "id": "5407",
+      "slice": "",
+      "assignee": "ttraenkler/temporal-new-size",
+      "status": "in-progress",
+      "branch": "temporal-new-size-shared-ta-ctor",
+      "claimed_at": "2026-09-24T06:54:01Z"
+    },
+    {
+      "id": "6411",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dev",
+      "status": "in-progress",
+      "branch": "issue-6411-host-bridge-concat-spread",
+      "claimed_at": "2026-09-12T08:12:33Z"
+    },
+    {
+      "id": "6436",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-6436",
+      "status": "in-progress",
+      "branch": "issue-6436",
+      "claimed_at": "2026-09-13T13:24:42Z"
+    },
+    {
+      "id": "6442",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5383-s9",
+      "status": "in-progress",
+      "branch": "issue-5383-standalone-temporal-s9",
+      "claimed_at": "2026-09-13T01:29:23Z"
+    },
+    {
+      "id": "6464",
+      "slice": "",
+      "assignee": "ttraenkler/dev-5383-s13",
+      "status": "in-progress",
+      "branch": "issue-5383-standalone-temporal-s13",
+      "claimed_at": "2026-09-13T12:11:02Z"
+    },
+    {
+      "id": "6492",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6492",
+      "status": "in-progress",
+      "branch": "issue-6492-linked-residual-buckets",
+      "claimed_at": "2026-09-16T22:19:28Z"
+    },
+    {
+      "id": "6495",
+      "slice": "",
+      "assignee": "ttraenkler/senior-dev-6482-r2",
+      "status": "in-progress",
+      "branch": "issue-6482-r2-linked-descriptor-residual",
+      "claimed_at": "2026-09-17T19:13:24Z"
+    },
+    {
+      "id": "6650",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-s70",
+      "status": "in-progress",
+      "branch": "issue-5383-standalone-temporal-s70",
+      "claimed_at": "2026-09-20T14:30:32Z"
+    },
+    {
+      "id": "6651",
+      "slice": "",
+      "assignee": "ttraenkler/project-thread-yhj9pp",
+      "status": "in-progress",
+      "branch": "claude/project-thread-yhj9pp",
+      "claimed_at": "2026-09-24T02:09:54Z"
+    },
+    {
+      "id": "6656",
+      "slice": "",
+      "assignee": "ttraenkler/claude-s74b",
+      "status": "in-progress",
+      "branch": "issue-5383-standalone-temporal-s74b",
+      "claimed_at": "2026-09-21T08:07:10Z"
+    },
+    {
+      "id": "6677",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-standalone",
+      "status": "in-progress",
+      "branch": "issue-marked-dynamic-regexp",
+      "claimed_at": "2026-09-26T09:04:02Z"
+    },
+    {
+      "id": "6685",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6685",
+      "status": "in-progress",
+      "branch": "issue-6685-s1-console-capability",
+      "claimed_at": "2026-09-26T09:29:20Z"
+    },
+    {
+      "id": "6686",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6686",
+      "status": "in-progress",
+      "branch": "issue-6686-s2-js-value-boundary",
+      "claimed_at": "2026-09-26T14:44:30Z"
+    },
+    {
+      "id": "6687",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6687",
+      "status": "in-progress",
+      "branch": "issue-6687-s3a-dstr-box-index",
+      "claimed_at": "2026-09-26T14:45:24Z"
+    },
+    {
+      "id": "6689",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6689",
+      "status": "in-progress",
+      "branch": "issue-6689-s3c-extern-set-decide",
+      "claimed_at": "2026-09-26T18:55:03Z"
+    },
+    {
+      "id": "6697",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6686",
+      "status": "in-progress",
+      "branch": "issue-6697-3520-test-heap",
+      "claimed_at": "2026-09-26T19:17:15Z"
+    },
+    {
+      "id": "6704",
+      "slice": "",
+      "assignee": "ttraenkler/sendev-standalone",
+      "status": "in-progress",
+      "branch": "issue-6704-callable-property-optional-param",
+      "claimed_at": "2026-09-27T22:25:42Z"
+    },
+    {
+      "id": "6706",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6706",
+      "status": "in-progress",
+      "branch": "issue-6706-s4-lane-parity",
+      "claimed_at": "2026-09-27T05:54:48Z"
+    },
+    {
+      "id": "6707",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6707",
+      "status": "in-progress",
+      "branch": "issue-6707-s3e-shared-exn-tag",
+      "claimed_at": "2026-09-27T10:05:15Z"
+    },
+    {
+      "id": "6709",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6709",
+      "status": "in-progress",
+      "branch": "issue-6709-s3b-reduce-as-value",
+      "claimed_at": "2026-09-27T12:34:33Z"
+    },
+    {
+      "id": "6710",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6710",
+      "status": "in-progress",
+      "branch": "issue-6710-s3f-promise-reaction-cast",
+      "claimed_at": "2026-09-27T13:04:10Z"
+    },
+    {
+      "id": "6712",
+      "slice": "",
+      "assignee": "ttraenkler/codex-es2015-manifest",
+      "status": "in-progress",
+      "branch": "codex/6712-exact-manifest-discovery-20260928",
+      "claimed_at": "2026-09-27T22:13:12Z"
+    },
+    {
+      "id": "6715",
+      "slice": "",
+      "assignee": "ttraenkler/codex-undefined-index",
+      "status": "in-progress",
+      "branch": "codex/6715-undefined-global-index",
+      "claimed_at": "2026-09-27T22:57:10Z"
+    },
+    {
+      "id": "6721",
+      "slice": "",
+      "assignee": "ttraenkler/codex-regexp-identity-escape",
+      "status": "in-progress",
+      "branch": "codex/6721-regexp-identity-escape",
+      "claimed_at": "2026-09-28T03:51:11Z"
+    },
+    {
+      "id": "6723",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6723-d4-rest",
+      "status": "in-progress",
+      "branch": "issue-6723-d4-rest",
+      "claimed_at": "2026-09-29T05:55:50Z"
+    },
+    {
+      "id": "6724",
+      "slice": "",
+      "assignee": "ttraenkler/codex-script-global-gdi",
+      "status": "in-progress",
+      "branch": "codex/script-global-gdi-plan",
+      "claimed_at": "2026-09-28T10:13:33Z"
+    },
+    {
+      "id": "6726",
+      "slice": "",
+      "assignee": "ttraenkler/codex-proxy-ownkeys-symbol-invariant",
+      "status": "in-progress",
+      "branch": "",
+      "claimed_at": "2026-09-28T11:05:04Z"
+    },
+    {
+      "id": "6729",
+      "slice": "",
+      "assignee": "ttraenkler/arraybuffer-slice-reflective",
+      "status": "in-progress",
+      "branch": "codex/arraybuffer-slice-reflective",
+      "claimed_at": "2026-09-28T11:49:02Z"
+    },
+    {
+      "id": "6739",
+      "slice": "",
+      "assignee": "ttraenkler/codex-strict-vec-iterator-override",
+      "status": "in-progress",
+      "branch": "codex/6739-strict-vec-iterator-override",
+      "claimed_at": "2026-09-28T16:29:40Z"
+    },
+    {
+      "id": "6748",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6748",
+      "status": "in-progress",
+      "branch": "issue-6748-s3g-temporal-init",
+      "claimed_at": "2026-09-29T02:21:17Z"
+    },
+    {
+      "id": "6749",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6749",
+      "status": "in-progress",
+      "branch": "issue-6749-s3h-npm-regime-parity",
+      "claimed_at": "2026-09-29T02:21:06Z"
+    },
+    {
+      "id": "6759",
+      "slice": "",
+      "assignee": "ttraenkler/opus-standalone-repair-passes",
+      "status": "in-progress",
+      "branch": "issue-standalone-repair-passes",
+      "claimed_at": "2026-09-29T06:32:59Z"
+    },
+    {
+      "id": "6766",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6766",
+      "status": "in-progress",
+      "branch": "issue-6766-proxy-proto-link",
+      "claimed_at": "2026-09-30T02:06:58Z"
+    },
+    {
+      "id": "6767",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6767",
+      "status": "in-progress",
+      "branch": "issue-6767-class-definition-reflective",
+      "claimed_at": "2026-09-30T02:07:03Z"
+    },
+    {
+      "id": "6769",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6769",
+      "status": "in-progress",
+      "branch": "issue-6769-typedarray-residue",
+      "claimed_at": "2026-09-30T10:44:06Z"
+    },
+    {
+      "id": "6770",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6770",
+      "status": "in-progress",
+      "branch": "issue-6770-object-reflect-residue",
+      "claimed_at": "2026-09-30T19:46:41Z"
+    },
+    {
+      "id": "6771",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6771",
+      "status": "in-progress",
+      "branch": "issue-6771-array-residue",
+      "claimed_at": "2026-09-30T19:47:32Z"
+    },
+    {
+      "id": "6772",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6772",
+      "status": "in-progress",
+      "branch": "issue-6772-class-residue",
+      "claimed_at": "2026-09-30T20:11:17Z"
+    },
+    {
+      "id": "6773",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6773",
+      "status": "in-progress",
+      "branch": "issue-6773-iterator-chunks-windows",
+      "claimed_at": "2026-09-30T20:26:27Z"
+    },
+    {
+      "id": "6774",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6774",
+      "status": "in-progress",
+      "branch": "issue-6774-es2015-expressions-residue",
+      "claimed_at": "2026-09-30T21:06:30Z"
+    },
+    {
+      "id": "6775",
+      "slice": "",
+      "assignee": "ttraenkler/opus-6775",
+      "status": "in-progress",
+      "branch": "issue-6775-es2015-builtins-misc-residue",
+      "claimed_at": "2026-09-30T21:05:49Z"
+    },
+    {
+      "id": "983d",
+      "slice": "",
+      "assignee": "ttraenkler/sd-3",
+      "status": "in-progress",
+      "branch": "issue-983d-host-method-gate",
+      "claimed_at": "2026-06-21T18:11:30Z"
+    }
+  ]
+}

@@ -16,7 +16,27 @@ import {
   type SourceReader,
 } from "./helpers/ir-historical-runtime-reconstruction.js";
 
-const read = liveSourceReader(resolve(import.meta.dirname, ".."));
+import {
+  readRuntimeContractReceiptSource,
+  reconstructRuntimeContractReceiptSources,
+  runtimeContractCurrentPaths,
+} from "./helpers/ir-runtime-contract-evolution.js";
+
+const rawRead = liveSourceReader(resolve(import.meta.dirname, ".."));
+const read: SourceReader = (path) => readRuntimeContractReceiptSource(path, rawRead);
+function currentHistoricalRead(): SourceReader {
+  // One fresh authenticated capture per top-level proof, before any historical mutant.
+  const sources = reconstructRuntimeContractReceiptSources(rawRead);
+  if (sources.size !== runtimeContractCurrentPaths.length) throw Error("missing runtime historical population");
+  for (const path of runtimeContractCurrentPaths)
+    if (!sources.has(path)) throw Error("missing required runtime historical source " + path);
+  return (path) => {
+    if (!runtimeContractCurrentPaths.includes(path)) return rawRead(path);
+    const source = sources.get(path);
+    if (source === undefined) throw Error("missing required runtime historical source " + path);
+    return source;
+  };
+}
 const contract = "src/ir/runtime/contracts/intrinsics.ts";
 const core = "src/ir/core/intrinsic-contracts.ts";
 const intrinsic = "src/ir/core/intrinsics.ts";
@@ -371,9 +391,10 @@ describe("final clock/vector source before reverse-composition historical accept
   const runtimeCaller = "src/ir/runtime-program-manifest.ts";
 
   it("pins explicit intermediate views, overload ordinals and exact historical denominators", () => {
-    acceptedCallablePositive();
-    const middle = callableSourceView(read, "pre-vector-clock");
-    const preClockView = callableSourceView(read, "pre-clock-callable");
+    const historical = currentHistoricalRead();
+    acceptedCallablePositive(historical);
+    const middle = callableSourceView(historical, "pre-vector-clock");
+    const preClockView = callableSourceView(historical, "pre-clock-callable");
     const census = (source: SourceReader) => {
       const file = parseLive(manifestContract, source);
       return [
@@ -383,7 +404,7 @@ describe("final clock/vector source before reverse-composition historical accept
         file.statements.filter((node) => ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)).length,
       ];
     };
-    expect(census(read)).toEqual([75, 42]);
+    expect(census(historical)).toEqual([75, 42]);
     expect(census(middle)).toEqual([71, 40]);
     expect(census(preClockView)).toEqual([71, 40]);
     expect(middle(support)).toContain('Object.hasOwn(nested, "alloc")');
@@ -401,7 +422,7 @@ describe("final clock/vector source before reverse-composition historical accept
         builder.members.filter((member) => ts.isMethodDeclaration(member) && !member.body).length,
       ];
     };
-    expect(builderCensus(read)).toEqual([37, 6]);
+    expect(builderCensus(historical)).toEqual([37, 6]);
     expect(builderCensus(middle)).toEqual([36, 5]);
     expect(builderCensus(preClockView)).toEqual([36, 5]);
     for (const source of [middle, preClockView]) {
@@ -409,7 +430,7 @@ describe("final clock/vector source before reverse-composition historical accept
       const overloads = file.statements.filter(
         (node) => ts.isFunctionDeclaration(node) && node.name?.text === "prepareIrRuntimeManifest",
       );
-      const live = currentDeclarations(support, read).filter((row) => row.name === "prepareIrRuntimeManifest");
+      const live = currentDeclarations(support, historical).filter((row) => row.name === "prepareIrRuntimeManifest");
       expect(overloads).toHaveLength(3);
       expect(overloads.slice(0, 2).map((node) => node.getText())).toEqual(live.slice(0, 2).map((row) => row.text));
     }
@@ -418,14 +439,14 @@ describe("final clock/vector source before reverse-composition historical accept
       [vector, 12, 6],
       [clockValidation, 3, 3],
     ] as const) {
-      const rows = currentDeclarations(path, read);
+      const rows = currentDeclarations(path, historical);
       expect(rows).toHaveLength(count);
       expect(rows.filter((row) => row.kind === "function")).toHaveLength(functions);
     }
-    const error = currentDeclarations(vector, read).find((row) => row.name === "IrVectorCallableError")!;
+    const error = currentDeclarations(vector, historical).find((row) => row.name === "IrVectorCallableError")!;
     if (!ts.isClassDeclaration(error.node)) throw Error("missing actual vector error class");
     expect(error.node.members.filter(ts.isConstructorDeclaration)).toHaveLength(1);
-    const facade = parseLive(vectorFacade, read);
+    const facade = parseLive(vectorFacade, historical);
     const exports = facade.statements.filter(ts.isExportDeclaration);
     expect(exports).toHaveLength(2);
     expect(
@@ -776,19 +797,21 @@ describe("final clock/vector source before reverse-composition historical accept
   });
 });
 
-function acceptedCallablePositive(source: SourceReader = read): void {
+function acceptedCallablePositive(source: SourceReader = currentHistoricalRead()): void {
   assertCallableExtension(source);
   for (const path of [callables, manifestContract, "src/ir/runtime-manifest.ts", support])
     acceptedHistoricalDeclarations(path, source);
 }
 
 function mutation(path: string, edit: (text: string) => string): SourceReader {
+  // One fresh raw capture belongs to this proof; no successful view survives it.
+  const historical = currentHistoricalRead();
   // A broken positive may never make mutation controls look green.
-  acceptedCallablePositive();
-  const before = read(path),
+  acceptedCallablePositive(historical);
+  const before = historical(path),
     after = edit(before);
   expect(after, "control must actually alter " + path).not.toBe(before);
-  return (file) => (file === path ? after : read(file));
+  return (file) => (file === path ? after : historical(file));
 }
 
 function declarationMutation(

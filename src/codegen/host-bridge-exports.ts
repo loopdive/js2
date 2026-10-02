@@ -119,8 +119,10 @@ export function isHostBridgeExportName(name: string): boolean {
  * yields a GC ref no host of any kind can read — every host-free standalone
  * throw rendered as `"uncaught Wasm-GC exception (non-stringifiable payload)"`,
  * and #5383's standalone Temporal provider could not be diagnosed at all.
- * They are kept iff the source has a `throw` statement
- * (`ctx.usesSourceThrowStatement`); gating on `ctx.exnTagIdx >= 0` instead
+ * (#6666) They are always kept; the EMITTER picks the flavor — the full
+ * `__any_to_string` renderer iff the source has a `throw` statement
+ * (`ctx.usesSourceThrowStatement`), else the lite `$Error_struct`/string
+ * renderer (`exn-render-lite.ts`). Publishing the full one on `ctx.exnTagIdx >= 0` instead
  * would republish them for every module, because the export-boundary bridge
  * arms the tag before any user code is read — see the field doc in
  * `context/types.ts` for the 6,076 → 49,032 B measurement that rules that out.
@@ -162,7 +164,10 @@ export function stripHostBridgeExports(ctx: CodegenContext): number {
     // source `throw` — see the doc above. Deliberately checked here rather than
     // by removing the prefix, so `isHostBridgeExportName` keeps naming the full
     // family for every other caller.
-    if (ctx.usesSourceThrowStatement && ex.name.startsWith("__exn_render_")) return true;
+    // (#6666) A module WITHOUT a source throw keeps it too: the emitter then
+    // publishes the lite body (compiler-synthesized `$Error_struct` / string
+    // payloads only, no number formatter), so the #4034 floor is unaffected.
+    if (ex.name.startsWith("__exn_render_")) return true;
     return !isHostBridgeExportName(ex.name);
   });
   return before - mod.exports.length;

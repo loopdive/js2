@@ -46,6 +46,7 @@ import {
 } from "./source-closure-invocation.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { resolveOrdinaryObjectClosureSignature } from "./ordinary-object-closure-signatures.js";
+import { isDirectObjectCreateNullCall } from "../frontend/builtins/prepare-object-create.js";
 
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import {
@@ -275,6 +276,7 @@ import {
   irVecElemSetSymbol,
   irVecNewSizedSymbol,
 } from "./vector-runtime.js";
+import { readEnv } from "../env.js";
 
 interface ResolvedIrVecType {
   readonly lowering: IrVecLowering;
@@ -801,6 +803,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   isAmbientBinding?(node: ts.Identifier): boolean;
   /** Exact source-bound Number call; no physical conversion provider is implied. */
   preparedNumberCall?(call: ts.CallExpression): boolean;
+  /** Exact current ambient Object.create(null) source call; symbolic provider only. */
+  preparedObjectCreateCall?(call: ts.CallExpression): "null" | undefined;
   /** Source-owned ordinary descriptor read; actual allocation provenance is revalidated downstream. */
   preparedOrdinaryPropertyRead?(
     expression: ts.PropertyAccessExpression,
@@ -888,6 +892,8 @@ export interface AstToIrOptions {
    * accepts bare `return;` and fall-through tails.
    */
   readonly returnTypeOverride?: IrType | null;
+  /** Exact source candidate; caller audits every lowered return. Omission preserves legacy lowering. */
+  readonly booleanReturnBoundary?: ts.FunctionDeclaration;
   /**
    * Map from callee function name to that callee's IR types (param +
    * return). Consulted when lowering a CallExpression whose callee is a
@@ -1357,6 +1363,7 @@ export function lowerFunctionAstToIr(
   );
   const cx: LowerCtx = {
     builder,
+    booleanReturnBuilder: options.booleanReturnBoundary === fn ? builder : undefined,
     scope,
     funcName: name,
     ownerUnitId: options.ownerUnitId,
@@ -1737,6 +1744,10 @@ function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void 
     // as `class.set` or `object.set` based on the receiver's IrType.
     if (ts.isExpressionStatement(s)) {
       if (ts.isCallExpression(s.expression)) {
+        if (cx.resolver?.preparedObjectCreateCall?.(s.expression) === "null") {
+          void lowerCall(s.expression, cx, /* statementPosition */ true);
+          continue;
+        }
         // (#2856) Method-shaped statement calls go through lowerMethodCall
         // in STATEMENT position so void extern/console methods are legal
         // (`host.appendChild(box);`, `console.log("…");`). Expression
@@ -2012,6 +2023,10 @@ function lowerDiscardedExpression(expr: ts.Expression, cx: LowerCtx): void {
     return;
   }
   if (ts.isCallExpression(expr)) {
+    if (cx.resolver?.preparedObjectCreateCall?.(expr) === "null") {
+      void lowerCall(expr, cx, /* statementPosition */ true);
+      return;
+    }
     const hostDateGetter = lowerHostDateGetterCall(expr, cx);
     if (hostDateGetter !== undefined) return;
     if (ts.isPropertyAccessExpression(expr.expression) && !expr.questionDotToken) {
@@ -2377,6 +2392,8 @@ interface NestedCapture {
 
 interface LowerCtx {
   readonly builder: IrFunctionBuilder;
+  /** Builder identity prevents a main-body proof leaking into lifted/nested bodies. */
+  readonly booleanReturnBuilder?: IrFunctionBuilder;
   readonly stringNumericCoercion?: AstToIrOptions["stringNumericCoercion"];
   readonly numericThrow?: AstToIrOptions["numericThrow"];
   readonly logicalVectorTypes?: AstToIrOptions["logicalVectorTypes"];
@@ -6852,6 +6869,17 @@ function lowerPreparedNumberCall(expr: ts.CallExpression, cx: LowerCtx): IrValue
 }
 
 function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
+  if (cx.resolver?.preparedObjectCreateCall?.(expr) === "null") {
+    if (!isDirectObjectCreateNullCall(expr))
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: Object.create(null) plan has unsupported call syntax (${cx.funcName})`,
+      );
+    const result = cx.builder.emitCall(irIntrinsicFuncRef("js.object.create-null"), [], irVal({ kind: "externref" }));
+    if (result === null) throw new Error("Object.create(null) contract returned no value");
+    return result;
+  }
   const promiseDelay = tryLowerPromiseDelayCall(expr, statementPosition, cx.promiseDelays, () =>
     makePromiseDelayLoweringHost(cx),
   );
@@ -10168,22 +10196,15 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
   if (actual.kind === "val" && actual.val.kind === "externref") {
     return value;
   }
-  // Native scalar → externref needs a box helper the IR lacks; defer the whole
-  // function to legacy. (#2785) Legacy's box is now TYPE-AWARE — `coerceType(i32
-  // → externref)` picks `__box_boolean` / `__box_symbol` / `__box_number` from
-  // the value's brand — so this demote is type-correct for a `boolean`/`symbol`
-  // scalar too, not only a number. The IR still has no box primitive of its own;
-  // it inherits the type-aware box for free via demote-to-legacy.
+  // Preserve the Boolean brand at this escape edge through the canonical
+  // semantic boundary; other scalar carriers retain their existing refusal.
   const actualVal = asVal(actual);
-  // #2782 (hybrid Row 5) — the no-box NUMBER escape edge. An unboxed `f64`
-  // number returned into an `any` (externref) result is the canonical "number
-  // local / value sinks to an `any` sink" case: the IR keeps numbers unboxed
-  // (no runtime tag), so handing one to the dynamic `any` result without an
-  // explicit box would lose its identity. The IR has no box primitive, so the
-  // SAFE lowering is to demote to legacy (which boxes via `__box_number`). This
-  // is the reachable, claimable counterpart to the `lowerVarDecl` declaration
-  // gate (`proveUnboxedNumberLocal`): together they keep the value unboxed only
-  // while it is provably a pure number AND box it at the proven escape edge.
+  if (cx.booleanReturnBuilder === cx.builder && actualVal?.kind === "i32" && actualVal.boolean === true) {
+    return cx.builder.emitIntrinsic("js.boolean.box", [value]);
+  }
+  // #2782 (hybrid Row 5): an unboxed Number still requires its separate
+  // escape proof. Retain the existing legacy fallback, which boxes through
+  // __box_number; Boolean return certification grants no numeric boundary.
   if (actualVal && actualVal.kind === "f64") {
     demoteToLegacy(
       "return-type-legacy-coupling",
@@ -12500,7 +12521,7 @@ function proveExactMixedPrimitiveWrapperCall(
   cx: LowerCtx,
 ): ExactMixedPrimitiveWrapperProof | null {
   if (
-    process.env.JS2WASM_IR_MIXED_PRIMITIVE_CONDITIONAL === "0" ||
+    readEnv("JS2WASM_IR_MIXED_PRIMITIVE_CONDITIONAL") === "0" ||
     !ts.isIdentifier(expr.expression) ||
     (expr.expression.text !== "String" && expr.expression.text !== "Number") ||
     cx.scope.has(expr.expression.text) ||
@@ -12657,7 +12678,7 @@ function proveMixedPrimitiveConditional(
 ): MixedPrimitiveConditionalProof | null {
   const claim = mixedPrimitiveConditionalClaim(expr, cx);
   if (claim === null) return null;
-  return process.env.JS2WASM_TEST_TAMPER_IR_MIXED_PRIMITIVE_CONDITIONAL === "proof" ? null : claim;
+  return readEnv("JS2WASM_TEST_TAMPER_IR_MIXED_PRIMITIVE_CONDITIONAL") === "proof" ? null : claim;
 }
 
 /**
@@ -12711,7 +12732,7 @@ function boxMixedConditionalArm(
 
   const expectedTag =
     family === "number" ? JS_TAG_IDS.NumberF64 : family === "boolean" ? JS_TAG_IDS.Boolean : JS_TAG_IDS.String;
-  const tamper = process.env.JS2WASM_TEST_TAMPER_IR_MIXED_PRIMITIVE_CONDITIONAL;
+  const tamper = readEnv("JS2WASM_TEST_TAMPER_IR_MIXED_PRIMITIVE_CONDITIONAL");
   const emittedTag = (tamper === "1" || tamper === "tag") && arm === "then" ? JS_TAG_IDS.String : expectedTag;
   if (emittedTag !== expectedTag) {
     throw new IrInvariantError(
@@ -12773,7 +12794,7 @@ function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx): IrValue
       });
 
       joinScopeStringEncodingFacts(cx.scope, [thenCx.scope, elseCx.scope]);
-      const tamper = process.env.JS2WASM_TEST_TAMPER_IR_MIXED_PRIMITIVE_CONDITIONAL;
+      const tamper = readEnv("JS2WASM_TEST_TAMPER_IR_MIXED_PRIMITIVE_CONDITIONAL");
       const resultType = tamper === "result" ? trueConcreteType : irDynamic();
       const result = cx.builder.emitIfElse({
         cond,

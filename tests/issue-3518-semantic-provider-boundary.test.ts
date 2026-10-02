@@ -8,6 +8,17 @@ import { dirname, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import ts from "typescript";
+import {
+  beforeIrValidationPolicyActivations,
+  irValidationPolicyActivations,
+} from "./helpers/ir-validation-policy-evolution.js";
+import {
+  authenticateNumberPrerequisitePolicy,
+  beforeNumberPrerequisitePolicy,
+  beforeWellKnownSymbolPolicy,
+  beforeIrRuntimeProgramPolicy,
+  type MutableIrRuntimeProgramPolicy,
+} from "./helpers/ir-runtime-program-policy-evolution.js";
 
 const repository = resolve(import.meta.dirname, "..");
 // Fixed specification population, independent of discovered imports and policy.
@@ -222,8 +233,60 @@ const semanticCallableAdditions = [
   "src/ir/runtime/number-conversion-callable.ts",
   "src/ir/runtime/ordinary-object-callables.ts",
 ];
+// Fixed realm-join dependency census, reviewed from actual imports. The
+// historical fixture population and signed policy receipts remain unchanged.
+const realmFixtureAdditions = {
+  "ir-program": ["src/ir/program/native-realm-requirements.ts"],
+  "backend-wasmgc": [
+    "src/backend/wasmgc/program/native-realm-literals.ts",
+    "src/backend/wasmgc/resources/native-builtin-function-requests.ts",
+    "src/backend/wasmgc/resources/native-object-descriptors.ts",
+    "src/backend/wasmgc/resources/native-string-descriptor-selection.ts",
+    "src/backend/wasmgc/resources/native-object-storage.ts",
+    "src/backend/wasmgc/resources/native-object-same-value.ts",
+    "src/backend/wasmgc/resources/native-string-exotic-own-descriptors.ts",
+    "src/backend/wasmgc/resources/native-object-access.ts",
+    "src/backend/wasmgc/resources/native-bigint.ts",
+    "src/backend/wasmgc/resources/native-string-equality.ts",
+    "src/backend/wasmgc/resources/native-primitive-wrapper-layouts.ts",
+    "src/backend/wasmgc/resources/native-object-layouts.ts",
+    "src/backend/wasmgc/resources/native-symbol-carrier.ts",
+    "src/backend/wasmgc/resources/native-object-access-declarations.ts",
+    "src/backend/wasmgc/resources/native-realm-object-layouts.ts",
+  ],
+  "runtime-contracts": ["src/runtime/contracts/native-realm-catalog.ts"],
+  "native-runtime": [
+    "src/runtime/wasmgc/values/ordinary-object-descriptor-common.ts",
+    "src/runtime/wasmgc/values/ordinary-object-descriptor-definitions.ts",
+    "src/runtime/wasmgc/values/ordinary-object-descriptor-data.ts",
+    "src/runtime/wasmgc/values/ordinary-object-descriptor-accessor.ts",
+    "src/runtime/wasmgc/values/closure-receiver-bodies.ts",
+    "src/runtime/wasmgc/values/ordinary-object-storage-definitions.ts",
+    "src/runtime/wasmgc/values/object-same-value-body.ts",
+    "src/runtime/wasmgc/values/string-exotic-bodies.ts",
+    "src/runtime/wasmgc/values/string-exotic-define-body.ts",
+    "src/runtime/wasmgc/values/ordinary-object-storage-bodies.ts",
+    "src/runtime/wasmgc/values/ordinary-object-key-definitions.ts",
+    "src/runtime/wasmgc/values/ordinary-object-access-bodies.ts",
+    "src/runtime/wasmgc/values/bigint-carrier-body.ts",
+    "src/runtime/wasmgc/values/bigint-carrier-layouts.ts",
+    "src/runtime/wasmgc/values/bigint-finalized-layouts.ts",
+    "src/runtime/wasmgc/values/string-equality-body.ts",
+    "src/runtime/wasmgc/values/primitive-wrapper-layouts.ts",
+    "src/runtime/wasmgc/values/realm-object-layouts.ts",
+    "src/runtime/wasmgc/values/object-key-bodies.ts",
+    "src/runtime/wasmgc/values/object-layouts.ts",
+    "src/runtime/wasmgc/values/symbol-carrier-bodies.ts",
+    "src/runtime/wasmgc/values/closure-capture-layouts.ts",
+  ],
+};
 const liveFixtureGroups = {
   ...groups,
+  "runtime-contracts": [
+    ...groups["runtime-contracts"],
+    "src/runtime/contracts/js-value-tags.ts",
+    ...realmFixtureAdditions["runtime-contracts"],
+  ],
   "ir-runtime": [
     ...groups["ir-runtime"],
     ...semanticCallableAdditions,
@@ -237,13 +300,24 @@ const liveFixtureGroups = {
   ],
   "ir-program": [
     ...groups["ir-program"],
+    ...realmFixtureAdditions["ir-program"],
     "src/ir/program/native-string-output-requirements.ts",
     "src/ir/program/population.ts",
     "src/ir/program/abi-signatures.ts",
     "src/ir/program/callable-results.ts",
+    "src/ir/program/native-source-closure-requirements.ts",
+    "src/ir/program/native-ref-cell-requirements.ts",
+    "src/ir/program/runtime-abi-identity.ts",
+    "src/ir/program/native-promise-inventory.ts",
+    "src/ir/program/native-object-access-requirements.ts",
+    "src/ir/program/native-object-result-values.ts",
+    "src/ir/program/native-object-result-requirements.ts",
+    "src/ir/program/native-getter-invocation-requirements.ts",
+    "src/ir/program/native-invocation-requirements.ts",
   ],
   "native-runtime": [
     ...groups["native-runtime"],
+    ...realmFixtureAdditions["native-runtime"],
     "src/runtime/wasmgc/values/boolean-bodies.ts",
     "src/runtime/wasmgc/values/bigint-primitive-bodies.ts",
     "src/runtime/wasmgc/values/string-concat-bodies.ts",
@@ -251,9 +325,12 @@ const liveFixtureGroups = {
   ],
   "backend-wasmgc": [
     ...groups["backend-wasmgc"],
+    ...realmFixtureAdditions["backend-wasmgc"],
     "src/backend/wasmgc/resources/native-booleans.ts",
     "src/backend/wasmgc/program/native-string-output.ts",
     "src/backend/wasmgc/resources/native-string-output.ts",
+    "src/backend/wasmgc/program/native-invocation-abi.ts",
+    "src/backend/wasmgc/program/native-primitive-boundary-abi.ts",
   ],
 };
 const liveRequired = Object.values(liveFixtureGroups).flat();
@@ -319,7 +396,11 @@ const additions = [
   "src/ir/runtime/async-attachment.ts",
   "src/ir/runtime/intrinsic-verification.ts",
 ];
-const policy = () => JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
+const policy = () => {
+  const actual = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
+  authenticateNumberPrerequisitePolicy(actual);
+  return actual;
+};
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 // Preserve the exact published prerequisite composition as an ordered subsequence,
 // alongside the complete delivered-main history. The first two records retain
@@ -708,8 +789,42 @@ const mergedInvocationActivations = [
     minModules: 8,
   },
 ];
+const sourceContractActivations = [
+  {
+    layer: "foundation",
+    entries: [
+      "src/shared/contracts/ir-preparation-errors.ts",
+      "src/shared/contracts/ir-counted-string-site-id.ts",
+      "src/shared/contracts/string-surrogate.ts",
+    ],
+    minModules: 3,
+  },
+  {
+    layer: "ir-core",
+    entries: [
+      "src/ir/core/global-binding-keys.ts",
+      "src/ir/core/declared-types.ts",
+      "src/ir/core/fnctor-abi.ts",
+      "src/ir/core/tag-domain.ts",
+      "src/ir/core/string-runtime.ts",
+      "src/ir/core/runtime-symbols.ts",
+      "src/ir/core/date-callables.ts",
+    ],
+    minModules: 7,
+  },
+  {
+    layer: "ir-runtime",
+    entries: ["src/ir/runtime/js-tag-domain.ts", "src/ir/runtime/producer.ts"],
+    minModules: 2,
+  },
+];
+
 // Authenticate the additive prefix before examining the unchanged old history.
 function assertCurrentActivations(history: unknown[]) {
+  history = beforeIrValidationPolicyActivations(history);
+  expect(history).toHaveLength(91);
+  expect(history.slice(88)).toEqual(sourceContractActivations);
+  history = history.slice(0, 88);
   expect(history).toHaveLength(88);
   expect(history.slice(85)).toEqual(mergedInvocationActivations);
   expect(history.slice(75, 81)).toEqual(interveningActivations);
@@ -881,7 +996,10 @@ describe("semantic verification and provider ownership boundary", () => {
     ])
       expect(required).toContain(path);
     const p = policy();
-    assertCurrentActivations(p.activationHistory);
+    authenticateNumberPrerequisitePolicy(p);
+    assertCurrentActivations(
+      beforeIrRuntimeProgramPolicy(beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(p))).activationHistory,
+    );
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
     for (const [id, entries] of Object.entries(currentLayerGroups)) {
       const layer = p.layers.find((row: { id: string }) => row.id === id);
@@ -907,6 +1025,7 @@ describe("semantic verification and provider ownership boundary", () => {
           "src/backend/wasmgc/resources/native-object-descriptors.ts",
           "src/backend/wasmgc/resources/native-prototype-layouts.ts",
           "src/backend/wasmgc/resources/native-prototype-seeder-bindings.ts",
+          "src/backend/wasmgc/resources/native-object-get.ts",
         );
       if (id === "native-runtime")
         additions.push(
@@ -918,9 +1037,82 @@ describe("semantic verification and provider ownership boundary", () => {
           "src/runtime/wasmgc/values/prototype-singleton-bodies.ts",
           "src/runtime/wasmgc/values/own-property-bodies.ts",
           "src/runtime/wasmgc/values/prototype-seeder-bodies.ts",
+          "src/runtime/wasmgc/values/prototype-chain-bodies.ts",
         );
       if (id === "runtime-contracts")
         additions.push("src/runtime/contracts/builtin-brands.ts", "src/runtime/contracts/collection-kind.ts");
+      if (id === "backend-wasmgc") additions.push("src/backend/wasmgc/program/native-primitive-boundary-abi.ts");
+      if (id === "native-runtime")
+        additions.push(
+          "src/runtime/wasmgc/values/primitive-wrapper-layouts.ts",
+          "src/runtime/wasmgc/values/primitive-wrapper-bodies.ts",
+        );
+      if (id === "backend-wasmgc")
+        additions.push(
+          "src/backend/wasmgc/resources/native-primitive-wrapper-layouts.ts",
+          "src/backend/wasmgc/resources/native-primitive-wrapper-storage.ts",
+        );
+      if (id === "native-runtime") additions.push("src/runtime/wasmgc/values/to-object-body.ts");
+      if (id === "native-runtime")
+        additions.push(
+          "src/runtime/wasmgc/values/object-prototype-method-bodies.ts",
+          "src/runtime/wasmgc/values/object-prototype-accessor-bodies.ts",
+          "src/runtime/wasmgc/values/object-constructor-body.ts",
+        );
+      if (id === "runtime-contracts") additions.push("src/runtime/contracts/js-value-tags.ts");
+      if (id === "backend-wasmgc")
+        additions.push(
+          "src/backend/wasmgc/resources/native-builtin-function-requests.ts",
+          "src/backend/wasmgc/resources/native-builtin-functions.ts",
+        );
+      if (id === "backend-wasmgc") additions.push("src/backend/wasmgc/resources/native-invocation-substrate.ts");
+      if (id === "native-runtime")
+        additions.push(
+          "src/runtime/wasmgc/values/builtin-function-layouts.ts",
+          "src/runtime/wasmgc/values/builtin-function-bodies.ts",
+          "src/runtime/wasmgc/values/builtin-function-property-bodies.ts",
+          "src/runtime/wasmgc/values/builtin-function-prototype-bodies.ts",
+        );
+      if (id === "native-runtime")
+        additions.push(
+          "src/runtime/wasmgc/values/create-list-from-array-like-body.ts",
+          "src/runtime/wasmgc/values/function-prototype-invoker-bodies.ts",
+        );
+      if (id === "runtime-contracts") additions.push("src/runtime/contracts/native-realm-catalog.ts");
+      if (id === "ir-program") additions.push("src/ir/program/native-realm-requirements.ts");
+      if (id === "backend-wasmgc")
+        additions.push(
+          "src/backend/wasmgc/program/native-realm-literals.ts",
+          "src/backend/wasmgc/program/native-realm.ts",
+        );
+      if (id === "native-runtime") additions.push("src/runtime/wasmgc/values/realm-object-layouts.ts");
+      if (id === "backend-wasmgc") additions.push("src/backend/wasmgc/resources/native-realm-object-layouts.ts");
+      if (id === "backend-wasmgc") additions.push("src/backend/wasmgc/resources/native-object-realm.ts");
+      if (id === "native-runtime") additions.push("src/runtime/wasmgc/values/mixed-object-access-bodies.ts");
+      if (id === "backend-wasmgc") additions.push("src/backend/wasmgc/resources/native-mixed-object-access.ts");
+      const contracts = sourceContractActivations.find((record) => record.layer === id);
+      if (contracts) additions.push(...contracts.entries);
+      const validation = irValidationPolicyActivations.find((record) => record.layer === id);
+      if (validation) additions.push(...validation.entries);
+      if (id === "ir-program")
+        additions.push(
+          "src/ir/program/owner.ts",
+          "src/ir/program/draft-abi-lookup.ts",
+          "src/ir/program/runtime-support-dependencies.ts",
+        );
+      if (id === "ir-runtime") additions.push("src/ir/runtime/generator-support.ts");
+      if (id === "runtime-contracts") additions.push("src/runtime/contracts/well-known-symbols.ts");
+      if (id === "backend-wasmgc") additions.push("src/backend/wasmgc/resources/native-well-known-symbols.ts");
+      if (id === "native-runtime")
+        additions.push(
+          "src/runtime/wasmgc/values/bigint-to-number-body.ts",
+          "src/runtime/wasmgc/values/number-from-value-body.ts",
+        );
+      if (id === "backend-wasmgc")
+        additions.push(
+          "src/backend/wasmgc/resources/native-bigint-number.ts",
+          "src/backend/wasmgc/resources/native-number-primitive-classifier.ts",
+        );
       const signedEntries = additions.length ? layer.entries.slice(0, -additions.length) : layer.entries;
       if (additions.length) expect(layer.entries.slice(-additions.length)).toEqual(additions);
       const receipt = signedLayerComposition[id as keyof typeof signedLayerComposition];
@@ -942,9 +1134,9 @@ describe("semantic verification and provider ownership boundary", () => {
     const r = fixture().run();
     expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
     expect(required).toHaveLength(106);
-    expect(liveRequired).toHaveLength(123);
-    expect(new Set(liveRequired).size).toBe(123);
-    expect(r.report.counts.total).toBe(123);
+    expect(liveRequired).toHaveLength(174);
+    expect(new Set(liveRequired).size).toBe(174);
+    expect(r.report.counts.total).toBe(174);
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
@@ -957,18 +1149,29 @@ describe("semantic verification and provider ownership boundary", () => {
     // dependencies. Counts below include import-type nodes and erased named imports.
     // Invocation adds six reachable modules; static reference census includes
     // their complete dependency closure without admitting unrelated owner modules.
+    // The previous 123-module graph had 506 edges (298 type-only / 208 runtime).
+    // The getter/Boolean join adds eleven actual dependencies with 100 edges
+    // (40 type-only / 60 runtime), plus six imports in existing owners
+    // (two type-only / four runtime). Every copied dependency remains real source.
+    // The import-free canonical tag leaf adds one real module and zero edges.
+    // Realm literals/requirements add the fixed 39-module dependency closure:
+    // 168 further edges (62 type-only / 106 runtime), measured by the detector.
+    // Public builtin requests add one realm-requirements runtime import and
+    // one catalog type-only import; both modules already belong to this closure.
     // Historical parent and published activation records remain unchanged.
     expect({ edges: r.report.resolvedEdgeCount, ...r.report.counts.resolvedEdgesByType }).toEqual({
-      edges: 506,
-      typeOnly: 298,
-      runtime: 208,
+      edges: 782,
+      typeOnly: 403,
+      runtime: 379,
     });
   });
 
   it.each(["delete", "reorder", "layer", "entries", "minimum", "extra"] as const)(
     "rejects %s corruption of the independently pinned twelve-record prefix",
     (mutation) => {
-      const history = policy().activationHistory;
+      const history = beforeIrRuntimeProgramPolicy(
+        beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(policy())),
+      ).activationHistory;
       assertCurrentActivations(history);
       const before = digest(history);
       if (mutation === "delete") history.splice(0, 1);
@@ -983,14 +1186,27 @@ describe("semantic verification and provider ownership boundary", () => {
   );
 
   it.each([81, 82, 83, 84])("rejects a changed primitive composition record %i", (index) => {
-    const history = policy().activationHistory;
+    const history = beforeIrRuntimeProgramPolicy(
+      beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(policy())),
+    ).activationHistory;
     assertCurrentActivations(history);
     history[index].entries[0] += ".lookalike";
     expect(() => assertCurrentActivations(history)).toThrow();
   });
 
   it.each([85, 86, 87])("rejects changed merged invocation record %i", (index) => {
-    const history = policy().activationHistory;
+    const history = beforeIrRuntimeProgramPolicy(
+      beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(policy())),
+    ).activationHistory;
+    assertCurrentActivations(history);
+    history[index].entries[0] += ".lookalike";
+    expect(() => assertCurrentActivations(history)).toThrow();
+  });
+
+  it.each([88, 89, 90])("rejects changed source contract activation %i", (index) => {
+    const history = beforeIrRuntimeProgramPolicy(
+      beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(policy())),
+    ).activationHistory;
     assertCurrentActivations(history);
     history[index].entries[0] += ".lookalike";
     expect(() => assertCurrentActivations(history)).toThrow();
@@ -1036,7 +1252,10 @@ describe("semantic verification and provider ownership boundary", () => {
       (["delete", "reorder", "layer", "entries", "minimum"] as const).map((mutation) => ({ index, mutation })),
     ),
   )("rejects $mutation corruption of formatter activation record $index", ({ index, mutation }) => {
-    const history = assertCurrentActivations(policy().activationHistory);
+    const history = assertCurrentActivations(
+      beforeIrRuntimeProgramPolicy(beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(policy())))
+        .activationHistory,
+    ) as MutableIrRuntimeProgramPolicy["activationHistory"];
     assertNewActivations(history);
     const before = digest(history);
     if (mutation === "delete") history.splice(index, 1);
@@ -1051,7 +1270,10 @@ describe("semantic verification and provider ownership boundary", () => {
   it.each(["delete", "reorder", "layer", "entries", "minimum"] as const)(
     "rejects %s corruption of the new activation records",
     (mutation) => {
-      const history = assertCurrentActivations(policy().activationHistory);
+      const history = assertCurrentActivations(
+        beforeIrRuntimeProgramPolicy(beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(policy())))
+          .activationHistory,
+      ) as MutableIrRuntimeProgramPolicy["activationHistory"];
       assertNewActivations(history);
       const before = digest(history);
       if (mutation === "delete") history.splice(5, 1);
@@ -1079,7 +1301,10 @@ describe("semantic verification and provider ownership boundary", () => {
       })),
     ),
   )("rejects $mutation corruption of the $owner activation record", ({ index, mutation }) => {
-    const history = assertCurrentActivations(policy().activationHistory);
+    const history = assertCurrentActivations(
+      beforeIrRuntimeProgramPolicy(beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(policy())))
+        .activationHistory,
+    ) as MutableIrRuntimeProgramPolicy["activationHistory"];
     assertNewActivations(history);
     const before = digest(history);
     if (mutation === "delete") history.splice(index, 1);
@@ -1096,7 +1321,10 @@ describe("semantic verification and provider ownership boundary", () => {
       (["delete", "reorder", "layer", "entries", "minimum"] as const).map((mutation) => ({ offset, mutation })),
     ),
   )("rejects $mutation corruption of original prerequisite activation records at $offset", ({ offset, mutation }) => {
-    const history = assertCurrentActivations(policy().activationHistory);
+    const history = assertCurrentActivations(
+      beforeIrRuntimeProgramPolicy(beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(policy())))
+        .activationHistory,
+    ) as MutableIrRuntimeProgramPolicy["activationHistory"];
     assertNewActivations(history);
     const index = 3 + originalCompositionOffsets[offset]!;
     const next = 3 + originalCompositionOffsets[offset + 1]!;

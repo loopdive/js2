@@ -23,6 +23,36 @@
 import type { Instr, ValType } from "../ir/types.js";
 import { getClosureFuncSelfTypeIdx } from "./closures/funcref-wrapper-types.js";
 import type { CodegenContext } from "./context/types.js";
+import { BFN_ID_FIELD_IDX } from "./builtin-fn-meta.js";
+
+/** A rest callback can share the builtin's signature, but not its identity. */
+function variadicBuiltinIdentity(ctx: CodegenContext): Instr[] {
+  const body: Instr[] = [{ op: "i32.const", value: 0 }];
+  for (const key of ["static:Math.max", "static:Math.min", "static:String.fromCharCode"]) {
+    const typeIdx = ctx.builtinFnMetaTypeByKey?.get(key);
+    if (typeIdx === undefined) continue;
+    body.push(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx },
+          { op: "struct.get", typeIdx, fieldIdx: BFN_ID_FIELD_IDX },
+          { op: "i32.const", value: typeIdx },
+          { op: "i32.eq" },
+        ],
+        else: [{ op: "i32.const", value: 0 }],
+      },
+      { op: "i32.or" },
+    );
+  }
+  return body;
+}
 
 /**
  * Build the arm for `__apply_closure` (params 0=fn 1=recv 2=args; local
@@ -52,9 +82,11 @@ export function buildVariadicBuiltinApplyArm(
     { op: "ref.cast", typeIdx },
   ];
   return [
-    { op: "local.get", index: 0 },
-    { op: "any.convert_extern" },
-    { op: "ref.test", typeIdx: structTypeIdx },
+    // Signature equality alone also admits user `function (...args)` bodies.
+    // This shortcut deliberately does not install a receiver, so only the
+    // three receiver-independent builtin identities may bypass the method
+    // dispatcher. The metadata id disambiguates canonicalized sibling types.
+    ...variadicBuiltinIdentity(ctx),
     {
       op: "if",
       blockType: { kind: "empty" },

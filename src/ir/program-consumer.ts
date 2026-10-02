@@ -32,6 +32,19 @@ import {
   type NativeInvocationRequirements,
 } from "./program/native-invocation-requirements.js";
 import {
+  deriveNativeRealmRequirements,
+  assertNativeRealmRequirementsCurrent,
+  type NativeRealmRequirements,
+} from "./program/native-realm-requirements.js";
+import {
+  prepareNativeProgramStringInput,
+  reserveNativeProgramFoundation,
+  reserveNativeRealmKernel,
+  nativeRealmReservationInventory,
+  fillNativeRealmResources,
+  requireCompletedNativeRealmBootstrap,
+} from "../backend/wasmgc/program/native-realm.js";
+import {
   reserveNativeInvocationResources,
   nativeInvocationFunctions,
   fillNativeInvocationResources,
@@ -55,7 +68,6 @@ import {
   emitPreparedNativeStringConcat,
   type NativeStringValueReservationInput,
 } from "../backend/wasmgc/program/native-string-values.js";
-import { deriveNativeStringOutputRequirements } from "./program/native-string-output-requirements.js";
 import { collectNativeStringValueDemands } from "./program/native-string-value-demands.js";
 import { reserveNativeRefCells } from "../backend/wasmgc/resources/native-ref-cells.js";
 import {
@@ -72,15 +84,15 @@ import {
   assertNativeSourceClosureRequirementsCurrent,
   type NativeSourceClosureRequirements,
 } from "./program/native-source-closure-requirements.js";
-import { deriveNativeValueResourcePlan, assertNativeValueResourcePlanFor } from "./program/native-value-resources.js";
+import { assertNativeValueResourcePlanFor } from "./program/native-value-resources.js";
 import { freezePreparedIrValue, preparedIrDataMismatch } from "./program/data.js";
 import {
-  reserveNativeStringLiteralTypes,
   reserveNativeStringLiteralResources,
   nativeStringLiteralReservationInventory,
   fillNativeStringLiteralResources,
   requireCompletedNativeStringLiterals,
   type NativeStringLiteralReservations,
+  type NativeStringLiteralTypeReservations,
 } from "../backend/wasmgc/resources/native-string-literals.js";
 import {
   reserveNativeNumberFormatResources,
@@ -106,12 +118,12 @@ import type { PreparedIrRuntimeManifest, PreparedIrFunction } from "./runtime/co
 import { compareNativeResourceDeclarationShape } from "../backend/wasmgc/resources/native-resource-declarations.js";
 import { indexPhysicalTypes } from "../wasm/physical/type-layout.js";
 import {
-  reserveNativeVectorTypes,
   reserveNativeVectorHelper,
   fillNativeVectorHelper,
   nativeVectorPhysicalType,
   resolveNativeVector,
   resolveNativeVectorForElement,
+  type NativeVectorTypeReservations,
 } from "../backend/wasmgc/resources/native-vectors.js";
 import {
   PhysicalModuleReservations,
@@ -159,6 +171,7 @@ interface AcceptanceRecord {
   readonly nativeNumberFormat?: AcceptedNativeNumberFormat;
   readonly sourceClosures?: NativeSourceClosureRequirements;
   readonly nativeInvocation?: NativeInvocationRequirements;
+  readonly nativeRealm?: NativeRealmRequirements;
 }
 interface AcceptedNativeNumberFormat {
   readonly requirements: NativeNumberFormatRequirements;
@@ -358,37 +371,19 @@ export function acceptPreparedIrProgram(
     }
   }
 
-  let nativeStrings: NativeStringValueReservationInput | undefined;
-  if (options.backend === "wasmgc" && options.target === "standalone") {
-    const demands = collectNativeStringValueDemands(program, runtime);
-    const native = planNativeStringValuePhysical(demands, {
-      representation: "native-string",
-      utf8Storage: options.utf8Storage === true,
-      stringConcatEmptyIdentity: options.stringConcatEmptyIdentity ?? true,
-    });
-    if (native.kind !== "none" && native.kind !== "planned") return native;
-    if (native.kind === "planned") {
-      const outputRequirements = native.plan.output
-        ? deriveNativeStringOutputRequirements(demands, native.plan.output.options)
-        : undefined;
-      if (outputRequirements && "kind" in outputRequirements) return outputRequirements;
-      nativeStrings = Object.freeze({
-        ...(outputRequirements ? { outputRequirements } : {}),
-        demands,
-        plan: native.plan,
-        ...(native.plan.mode === "number-boundary"
-          ? { valueRequirements: deriveNativeValueResourcePlan(program, runtime, "native-string") }
-          : {}),
-      });
-    }
-  }
-  const nativeNumberFormat = prepareNativeNumberFormat(program, options, runtime);
   const sourceClosures =
     options.backend === "wasmgc" && options.target === "standalone"
       ? prepareNativeSourceClosureInput(program, runtime)
       : undefined;
   const nativeInvocation =
     sourceClosures && planNativeInvocationRequirements(sourceClosures, { utf8Storage: options.utf8Storage === true });
+  const standalone = options.backend === "wasmgc" && options.target === "standalone";
+  const nativeRealm = standalone ? deriveNativeRealmRequirements(program, runtime, sourceClosures) : undefined;
+  const nativeStrings = standalone
+    ? prepareNativeProgramStringInput(program, runtime, options, nativeInvocation, nativeRealm)
+    : undefined;
+  if (nativeStrings && "kind" in nativeStrings) return nativeStrings;
+  const nativeNumberFormat = prepareNativeNumberFormat(program, options, runtime);
   const physical = planPhysicalSetup(program, options, runtime, nativeStrings, nativeNumberFormat);
   if (physical.kind !== "planned") return physical;
 
@@ -406,6 +401,7 @@ export function acceptPreparedIrProgram(
       ...(nativeNumberFormat ? { nativeNumberFormat } : {}),
       ...(sourceClosures ? { sourceClosures } : {}),
       ...(nativeInvocation ? { nativeInvocation } : {}),
+      ...(nativeRealm ? { nativeRealm } : {}),
     }),
   );
   observePreparedIrProgram({ phase: "accepted", program, backend: options.backend, target: options.target });
@@ -510,12 +506,24 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
   const { program, runtime } = accepted;
   const record = acceptances.get(accepted);
   if (!record || record.physical !== plan) emissionFailed("physical plan does not belong to acceptance");
+  if (Boolean(record.nativeRealm) !== Boolean(plan.nativeRealm))
+    emissionFailed("realm acceptance/physical plan mismatch");
+  if (record.nativeRealm) {
+    assertNativeRealmRequirementsCurrent(record.nativeRealm);
+    if (
+      record.nativeRealm !== record.nativeStrings?.realmRequirements ||
+      record.nativeRealm.source !== record.sourceClosures ||
+      preparedIrDataMismatch(record.nativeRealm.description, plan.nativeRealm) !== undefined
+    )
+      emissionFailed("realm input differs from its accepted program/source owner");
+  }
   if (Boolean(record.nativeInvocation) !== Boolean(plan.nativeInvocation))
     emissionFailed("native invocation acceptance/physical plan mismatch");
   if (record.nativeInvocation) {
     assertNativeInvocationRequirementsCurrent(record.nativeInvocation);
     if (
       record.nativeInvocation.source !== record.sourceClosures ||
+      record.nativeStrings?.invocationRequirements !== record.nativeInvocation ||
       record.nativeInvocation.key !== plan.nativeInvocation?.key
     )
       emissionFailed("native invocation input differs from its selected source owner");
@@ -786,8 +794,8 @@ function recordEmissionObservation(
 }
 
 function physicalSignatureConverter(
-  vectorTypes: ReturnType<typeof reserveNativeVectorTypes>,
-  stringTypes: ReturnType<typeof reserveNativeStringLiteralTypes> | undefined,
+  vectorTypes: NativeVectorTypeReservations,
+  stringTypes: NativeStringLiteralTypeReservations | undefined,
   formatterScratch: NonNullable<PhysicalSetupPlan["nativeStrings"]>["formatterScratch"],
   reservations: PhysicalModuleReservations,
   sourceClosures?: NativeSourceClosureEmission,
@@ -1057,8 +1065,8 @@ function indexSupportFunctions(rows: readonly NativeNumberFormatResourceRow[]): 
 /** Resolve body references only through this transaction's reserved resources. */
 function physicalBodyResolver(
   context: NativeReconciliationContext,
-  vectorTypes: ReturnType<typeof reserveNativeVectorTypes>,
-  stringTypes: ReturnType<typeof reserveNativeStringLiteralTypes> | undefined,
+  vectorTypes: NativeVectorTypeReservations,
+  stringTypes: NativeStringLiteralTypeReservations | undefined,
   exnTagIdx: number | undefined,
   sourceClosures: NativeSourceClosureEmission | undefined,
 ): IrLowerResolver {
@@ -1162,6 +1170,25 @@ function fillPhysicalGlobals(plan: PhysicalSetupPlan, context: NativeReconciliat
   }
 }
 
+/** Bind selected invocation entry points to their exact, uniquely owned resources. */
+function reconcileInvocationBindings(
+  plan: PhysicalSetupPlan,
+  functions: readonly FunctionReservation[],
+  { functionsByKey, resourcesByBinding }: NativeReconciliationContext,
+): void {
+  for (const binding of plan.nativeInvocation?.bindings ?? []) {
+    const token = functions.find((row) => row.key === binding.resourceKey);
+    if (
+      !token ||
+      functionsByKey.has(irCallableBindingKey(binding.reference.binding)) ||
+      resourcesByBinding.has(binding.entry.id)
+    )
+      emissionFailed("invocation semantic binding lacks its unique actual resource");
+    functionsByKey.set(irCallableBindingKey(binding.reference.binding), token);
+    resourcesByBinding.set(binding.entry.id, token);
+  }
+}
+
 function materializePhysicalProgram(
   accepted: AcceptedPreparedIrProgram,
   plan: PhysicalSetupPlan,
@@ -1187,25 +1214,28 @@ function materializePhysicalProgram(
       )
     : undefined;
 
-  const vectorTypes = reserveNativeVectorTypes(reservations, plan.vectors);
-  const stringTypes = native
-    ? reserveNativeStringLiteralTypes(
-        reservations,
-        native.resources.key,
-        native.resources.literalRequirements.utf8Storage,
-      )
-    : undefined;
+  const { vectorTypes, stringTypes, earlyStrings, realm } = reserveNativeProgramFoundation(
+    reservations,
+    plan.vectors,
+    native?.resources.literalRequirements,
+    record.nativeStrings,
+  );
   const sourceClosures = record.sourceClosures
-    ? beginNativeSourceClosureEmission(reservations, record.sourceClosures, {
-        vectors: vectorTypes,
-        vectorPlan: plan.vectors,
-        ...(record.sourceClosures.refCells.length
-          ? { refCells: reserveNativeRefCells(reservations, record.sourceClosures) }
-          : {}),
-        ...(stringTypes
-          ? { strings: { types: stringTypes, key: stringTypes.key, utf8Storage: stringTypes.utf8Storage } }
-          : {}),
-      })
+    ? beginNativeSourceClosureEmission(
+        reservations,
+        record.sourceClosures,
+        {
+          vectors: vectorTypes,
+          vectorPlan: plan.vectors,
+          ...(record.sourceClosures.refCells.length
+            ? { refCells: reserveNativeRefCells(reservations, record.sourceClosures) }
+            : {}),
+          ...(stringTypes
+            ? { strings: { types: stringTypes, key: stringTypes.key, utf8Storage: stringTypes.utf8Storage } }
+            : {}),
+        },
+        realm?.requests,
+      )
     : undefined;
   const physicalSignature = physicalSignatureConverter(
     vectorTypes,
@@ -1237,9 +1267,10 @@ function materializePhysicalProgram(
     resourcesByBinding.set(imported.bindingId, reserved);
   }
   const nativePack =
-    native && stringTypes && record.nativeStrings
+    earlyStrings ??
+    (native && stringTypes && record.nativeStrings
       ? reserveNativeStringValueResources(reservations, record.nativeStrings, stringTypes)
-      : undefined;
+      : undefined);
   const strings =
     nativePack?.strings ??
     (native?.resources.mode === "formatter-layout" && stringTypes
@@ -1285,33 +1316,27 @@ function materializePhysicalProgram(
           values: nativePack.number.values,
           valuePlan: record.nativeStrings.valueRequirements,
           valueDependencies: nativePack.number.dependencies,
+          ...(nativePack.number.booleanBoxes ? { booleanBoxes: nativePack.number.booleanBoxes } : {}),
           strings: nativePack.strings,
           vectors: vectorTypes,
           vectorPlan: plan.vectors,
+          ...(realm ? { substrate: realm.substrate } : {}),
         })
       : undefined;
   if (Boolean(invocationPack) !== Boolean(plan.nativeInvocation))
     emissionFailed("native invocation prerequisites were not reserved");
   const invocationFunctions = invocationPack ? nativeInvocationFunctions(reservations, invocationPack) : [];
-  for (const token of invocationFunctions) {
+  if (realm) reserveNativeRealmKernel(reservations, realm, sourceClosures?.types);
+  const realmFunctions = realm ? nativeRealmReservationInventory(reservations, realm).functions : [];
+  for (const token of [...invocationFunctions, ...realmFunctions]) {
     if (nativeFunctions.has(token.object)) emissionFailed("invocation function has competing native owners");
     nativeFunctions.add(token.object);
   }
-  for (const binding of plan.nativeInvocation?.bindings ?? []) {
-    const token = invocationFunctions.find((row) => row.key === binding.resourceKey);
-    if (
-      !token ||
-      functionsByKey.has(irCallableBindingKey(binding.reference.binding)) ||
-      resourcesByBinding.has(binding.entry.id)
-    )
-      emissionFailed("invocation semantic binding lacks its unique actual resource");
-    functionsByKey.set(irCallableBindingKey(binding.reference.binding), token);
-    resourcesByBinding.set(binding.entry.id, token);
-  }
+  reconcileInvocationBindings(plan, invocationFunctions, reconciliation);
   const asyncReservations = new Map<IrUnitId, PreparedAsyncFrameReservations>();
   const asyncHelpers = new Set<WasmFunction>();
   const supportFunctions = indexSupportFunctions([...nativeRows, ...formatterRows]);
-  for (const token of invocationFunctions) supportFunctions.set(token.object, token);
+  for (const token of [...invocationFunctions, ...realmFunctions]) supportFunctions.set(token.object, token);
   for (const frame of plan.asyncFrames?.frames ?? []) {
     const entry = slots.get(frame.owner);
     if (!entry || !exceptionTag) emissionFailed("async frame has no reserved entry or exception tag");
@@ -1360,6 +1385,7 @@ function materializePhysicalProgram(
   bindPhysicalAbi(abi, plan, { ...reconciliation, slots, vectorHelper });
   if (nativePack) fillNativeStringValueResources(reservations, nativePack);
   else if (strings) fillNativeStringLiteralResources(reservations, strings);
+  if (realm) fillNativeRealmResources(reservations, realm);
   if (formatterPack) fillNativeNumberFormatResources(reservations, formatterPack);
   if (vectorHelper) fillNativeVectorHelper(reservations, vectorHelper);
   if (invocationPack) {
@@ -1420,6 +1446,7 @@ function materializePhysicalProgram(
   if (nativePack?.output) publishNativeStringValueOutput(reservations, nativePack);
   reservations.seal();
   if (sourceClosures) requireCompletedNativeSourceClosures(reservations, sourceClosures);
+  if (realm) requireCompletedNativeRealmBootstrap(reservations, realm);
   if (invocationPack) requireCompletedNativeInvocation(reservations, invocationPack);
   if (nativePack) requireCompletedNativeStringValues(reservations, nativePack);
   else if (strings) requireCompletedNativeStringLiterals(reservations, strings);

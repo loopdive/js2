@@ -29,10 +29,12 @@ import {
   getDrainFuncIdxForWasiStart,
   getOrRegisterPromiseType,
   isStandalonePromiseActive,
+  isStandaloneThenChainNativeActive,
   emitDrainMicrotasks,
   PROMISE_STATE_FULFILLED,
   PROMISE_STATE_REJECTED,
 } from "./async-scheduler.js";
+import { promiseSubclassNameOfType } from "./expressions/promise-subclass.js"; // (#5197 r3)
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { ensureExnTag } from "./registry/imports.js"; // (#3178) async-call rejection payload
 import { allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
@@ -97,6 +99,7 @@ import { brandBooleanBinaryResult, compileBinaryExpression } from "./binary-ops.
 import { compileArrayLiteral, compileObjectLiteral } from "./literals.js";
 import { compileElementAccess, compilePropertyAccess, maybeWrapAnyReadEqualityCarrier } from "./property-access.js";
 import { tryEmitLinkedStaticComputedRead } from "./standalone-linked-static-inheritance.js"; // (#6644)
+import { notePromiseDynamicMemberRead } from "./promise-dynamic-member-read.js"; // (#6651 D5)
 import { compileTaggedTemplateExpression, compileTemplateExpression } from "./string-ops.js";
 import { compileDeleteExpression, compileRegExpLiteral, compileTypeofExpression } from "./typeof-delete.js";
 import { describeInternalError } from "./internal-error.js";
@@ -247,8 +250,17 @@ function isAsyncCallExpression(ctx: CodegenContext, expr: ts.CallExpression): bo
   ) {
     const receiverType = ctx.checker.getTypeAtLocation(expr.expression.expression);
     const receiverSym = receiverType.getSymbol()?.name;
-    const apparentSym = ctx.checker.getApparentType(receiverType).getSymbol()?.name;
+    const apparentType = ctx.checker.getApparentType(receiverType);
+    const apparentSym = apparentType.getSymbol()?.name;
     if (receiverSym === "Promise" || apparentSym === "Promise") {
+      return false;
+    }
+    // (#5197 r3) A Promise-subclass receiver on the native lane is §27.2.5.4 too: a throwing
+    // species constructor must propagate synchronously, not become a rejection.
+    if (
+      isStandaloneThenChainNativeActive(ctx) &&
+      promiseSubclassNameOfType(ctx, receiverType, apparentType) !== undefined
+    ) {
       return false;
     }
   }
@@ -1169,7 +1181,7 @@ function compileExpressionInner(
   }
 
   if (expr.kind === ts.SyntaxKind.ThisKeyword) {
-    return compileThisKeyword(ctx, fctx, expr);
+    return compileThisKeyword(ctx, fctx, expr, expectedType);
   }
 
   if (ts.isIdentifier(expr)) {
@@ -1425,6 +1437,7 @@ function compileExpressionInner(
     // agree. Declines for every non-syntactic receiver — see the module header.
     const coercible = tryEmitNullishReceiverMemberRead(ctx, fctx, expr);
     if (coercible !== undefined) return coercible;
+    notePromiseDynamicMemberRead(ctx, fctx, expr); // (#6651 D5) `p.then` as a VALUE
   }
 
   if (ts.isPropertyAccessExpression(expr)) {

@@ -68,6 +68,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { smiFastPathAllValues, smiFastPathEnabled } from "./tonumber-fast-paths.js";
 import { walkChildren } from "./walk-instructions.js";
+import { readEnv } from "../env.js";
 
 /** Every instruction array in a body, including nested `if`/`block`/`loop` arms. */
 function everyArray(instrs: Instr[]): Instr[][] {
@@ -177,7 +178,7 @@ export function inlineSmiBoxGuards(ctx: CodegenContext): void {
   const boxIdx = ctx.funcMap.get("__box_number");
   if (boxIdx === undefined) return;
   const all = smiFastPathAllValues();
-  const debug = process.env.JS2WASM_SMI_BOX_DEBUG === "1";
+  const debug = readEnv("JS2WASM_SMI_BOX_DEBUG") === "1";
   let i32Sites = 0;
   let f64Sites = 0;
   let declined = 0;

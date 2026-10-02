@@ -22,6 +22,12 @@
  *     directive.  Wasm compilation needs only `'wasm-unsafe-eval'` — a
  *     narrower, separately-grantable capability.
  *
+ * (#6779) The runtime's `__extern_eval` / `__extern_new_function` imports use
+ * these shims only under the explicit `hostEval` policy, and hand a string to
+ * the host realm only when the shim fails to BUILD its child module — never
+ * after the string has started running. The default policy, `deny`, runs
+ * nothing (src/runtime/dynamic-code-policy.ts).
+ *
  * ## Capability model
  *
  * The child Wasm module receives only the imports the host explicitly
@@ -68,6 +74,7 @@ import { ts } from "./ts-api.js";
 import { compileSourceSync } from "./compiler.js";
 import { runWithTs5Pinned } from "./ts-api.js";
 import { buildImports, buildStringConstants, jsString } from "./runtime.js";
+import { type DynamicCodePolicy, markDynamicCodeBuildFailure } from "./runtime/dynamic-code-policy.js";
 
 /**
  * Options for {@link createEvalShim}.
@@ -138,6 +145,21 @@ export interface EvalShimOptions {
    * through fixes the whole family at once rather than per name.
    */
   globalSandbox?: Record<string, any>;
+
+  /**
+   * (#6779) Dynamic-code policy for the CHILD module's own `eval` /
+   * `new Function` imports, so a nested eval obeys the parent's policy rather
+   * than the library default (`deny`).
+   */
+  dynamicCode?: DynamicCodePolicy;
+
+  /**
+   * (#6779) The caller runs a string elsewhere when this shim reports a BUILD
+   * failure (the runtime's `hostEval` policy). A source naming a binding the
+   * child module cannot see is then refused before any of it runs, rather
+   * than run until it reaches that name.
+   */
+  hostFallback?: boolean;
 }
 
 const TEST262_ASSERT_METHODS = new Set([
@@ -265,6 +287,7 @@ export function createEvalShim(options: EvalShimOptions = {}): (src: any, isDire
   const selectiveImports = options.selectiveImports ?? {};
   const onCompiled = options.onCompiled;
   const sandbox = options.sandbox === true;
+  const childImportOptions = options.dynamicCode === undefined ? undefined : { dynamicCode: options.dynamicCode };
 
   // #1229 — LRU cache: source-string → { instance, entry }. Eval calls in
   // tight loops (e.g. test262's BMP-codepoint regex tests, eval-as-DSL
@@ -279,23 +302,21 @@ export function createEvalShim(options: EvalShimOptions = {}): (src: any, isDire
   // delete + reinsert to refresh recency. Cap chosen to bound memory at
   // ~256 small Wasm modules; pure expression evals fit well below this.
   const EVAL_CACHE_MAX = 256;
-  const evalCache = new Map<string, { instance: WebAssembly.Instance; entry: () => unknown }>();
+  const evalCache = new Map<string, EvalModule>();
   // Negative cache: source strings that fail to compile shouldn't be
   // re-tried in tight loops either. Stores the SyntaxError so subsequent
   // hits throw the same error without re-running the parser.
   const NEG_CACHE_MAX = 256;
-  const evalNegCache = new Map<string, SyntaxError>();
+  const evalNegCache = new Map<string, Error>();
 
-  return function __extern_eval(src: any, isDirect: number): any {
-    // Spec: PerformEval step 2 — if x is not a String, return x unchanged.
-    if (typeof src !== "string") return src;
-
-    // Cache hit — refresh recency and call the cached entry.
+  // Compile + instantiate the child module for `src`. Runs none of `src`.
+  function buildEvalModule(src: string, isDirect: number): EvalModule | undefined {
+    // Cache hit — refresh recency and reuse the cached entry.
     const cached = evalCache.get(src);
     if (cached !== undefined) {
       evalCache.delete(src);
       evalCache.set(src, cached);
-      return cached.entry();
+      return cached;
     }
     const negCached = evalNegCache.get(src);
     if (negCached !== undefined) {
@@ -355,6 +376,11 @@ export function createEvalShim(options: EvalShimOptions = {}): (src: any, isDire
           // the `catch` below swallows — silently degrading a correct answer to
           // `undefined`. Always take the proven legacy-then-overlay pipeline.
           disableIrFirst: true,
+          // (#6776) The shim builds the Module itself below and maps an engine
+          // rejection to SyntaxError. Validating in the compile would decode
+          // twice and send a rejected expression form to the statement-form
+          // retry, which answers `undefined` instead of throwing.
+          validate: false,
         }),
       );
     } catch {
@@ -371,8 +397,9 @@ export function createEvalShim(options: EvalShimOptions = {}): (src: any, isDire
             fileName: filename,
             allowJs: true,
             skipSemanticDiagnostics: true,
-            // (#2973) Same opt-out as the expression-form wrapper above.
+            // (#2973, #6776) Same opt-outs as the expression-form wrapper above.
             disableIrFirst: true,
+            validate: false,
           }),
         );
       } catch (e: any) {
@@ -384,6 +411,7 @@ export function createEvalShim(options: EvalShimOptions = {}): (src: any, isDire
         throw new SyntaxError(`eval: ${msg}`);
       }
     }
+    if (options.hostFallback === true) refuseUnboundNames(evalNegCache, NEG_CACHE_MAX, src, result, parseProbe);
 
     if (onCompiled) {
       onCompiled({ src, binarySize: result.binary.byteLength, isDirect: isDirect === 1 });
@@ -417,7 +445,7 @@ export function createEvalShim(options: EvalShimOptions = {}): (src: any, isDire
     if (!sandbox) {
       // Auto-fill default helpers from buildImports — uses the child's own
       // import manifest so we get exactly the helpers it declared.
-      const auto = buildImports(result.imports, undefined, result.stringPool);
+      const auto = buildImports(result.imports, undefined, result.stringPool, childImportOptions);
       // The runtime supplies `setExports` for late-binding callbacks.  Wire
       // it after instantiation below.
       const autoSetExports: ((exports: Record<string, Function>) => void) | undefined = (
@@ -534,15 +562,122 @@ export function createEvalShim(options: EvalShimOptions = {}): (src: any, isDire
       const oldest = evalCache.keys().next().value;
       if (oldest !== undefined) evalCache.delete(oldest);
     }
-    evalCache.set(src, { instance, entry: entry as () => unknown });
+    const built: EvalModule = { instance, entry: entry as () => unknown };
+    evalCache.set(src, built);
+    return built;
+  }
+  function __extern_eval(src: any, isDirect: number): any {
+    // Spec: PerformEval step 2 — if x is not a String, return x unchanged.
+    return typeof src === "string" ? runEvalModule(buildEvalModule, src, isDirect) : src;
+  }
+  return __extern_eval;
+}
 
-    // Synchronous call.  Any thrown value (including js2wasm's
-    // exception-tag-tagged user throws) propagates back to the caller's
-    // catch frame in the parent module.  This is the spec-mandated
-    // behavior: an exception thrown inside an eval string is observable to
-    // the caller as if the throw were inline.
-    return (entry as () => unknown)();
+type EvalModule = { instance: WebAssembly.Instance; entry: () => unknown };
+
+/**
+ * (#6779) The entry call is the stage boundary: a failure while building the
+ * child module ran none of `src` and is marked as a BUILD failure (a `hostEval`
+ * host may run the string elsewhere); a throw from the entry call is the
+ * string's own and propagates once, unchanged.
+ */
+function runEvalModule(
+  build: (src: string, isDirect: number) => EvalModule | undefined,
+  src: string,
+  isDirect: number,
+): unknown {
+  let built: EvalModule | undefined;
+  try {
+    built = build(src, isDirect);
+  } catch (e) {
+    throw markDynamicCodeBuildFailure(e);
+  }
+  return built === undefined ? undefined : callChildExport(built.entry, undefined, [], built.instance.exports);
+}
+
+/**
+ * (#6779) The `hostFallback` pre-check: refuse a source naming a binding the
+ * child module cannot see (see {@link unboundNamesError}) before any of it runs,
+ * and remember the refusal in the negative cache like a parse failure.
+ */
+function refuseUnboundNames(
+  negCache: Map<string, Error>,
+  max: number,
+  src: string,
+  result: { stringPool?: readonly string[] },
+  source: ts.SourceFile,
+): void {
+  const refused = unboundNamesError(result.stringPool, source);
+  if (refused === undefined) return;
+  if (negCache.size >= max) negCache.delete(negCache.keys().next().value!);
+  negCache.set(src, refused);
+  throw refused;
+}
+
+/**
+ * (#6779) Refuse — as a BUILD failure, before any of the source runs — a child
+ * module that would have to throw `ReferenceError` for a name it cannot bind.
+ * Returns that error, or `undefined` when every name is bound.
+ *
+ * Such a name is a free identifier of the eval source that lives in the
+ * caller's global environment (a test262 harness function, a host global); a
+ * fresh child module has no view of it, so the compiler lowered every
+ * reference to a static "<name> is not defined" throw. A host that can run the
+ * string elsewhere (`hostFallback`) must do so up front: running the child
+ * until it reaches that name and THEN falling back would execute the string's
+ * earlier side effects twice. A TDZ check also throws "<name> is not defined",
+ * but names a binding the source itself declares; that throw is the string's
+ * own and stays in the child.
+ */
+function unboundNamesError(stringPool: readonly string[] | undefined, source: ts.SourceFile): Error | undefined {
+  const referenced = (stringPool ?? []).flatMap((text) => /^(\S+) is not defined$/.exec(text)?.[1] ?? []);
+  if (referenced.length === 0) return undefined;
+  const declared = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    const name = (node as { name?: ts.Node }).name;
+    if (
+      name !== undefined &&
+      ts.isIdentifier(name) &&
+      (ts.isVariableDeclaration(node) ||
+        ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isClassDeclaration(node) ||
+        ts.isClassExpression(node) ||
+        ts.isParameter(node) ||
+        ts.isBindingElement(node))
+    ) {
+      declared.add(name.text);
+    }
+    ts.forEachChild(node, visit);
   };
+  visit(source);
+  const unbound = referenced.filter((name) => !declared.has(name));
+  return unbound.length > 0
+    ? new ReferenceError(`eval: the child module cannot bind ${unbound.join(", ")}`)
+    : undefined;
+}
+
+/**
+ * Call a child module's export. A user throw inside the child crosses the JS
+ * API boundary as a `WebAssembly.Exception` carrying the child's private tag;
+ * re-expose its externref payload so the parent module observes the original
+ * JS value (a `TypeError` stays a `TypeError`), not the transport envelope.
+ */
+function callChildExport(fn: Function, thisArg: unknown, args: unknown[], childExports: WebAssembly.Exports): unknown {
+  try {
+    return Reflect.apply(fn, thisArg, args);
+  } catch (error) {
+    const WasmException = (WebAssembly as unknown as { Exception?: Function }).Exception;
+    const tag = (childExports as Record<string, unknown>).__exn_tag ?? (childExports as Record<string, unknown>).__tag;
+    if (typeof WasmException !== "function" || !(error instanceof WasmException) || tag === undefined) throw error;
+    let payload: unknown;
+    try {
+      payload = (error as { getArg(tag: unknown, index: number): unknown }).getArg(tag, 0);
+    } catch {
+      throw error;
+    }
+    throw payload;
+  }
 }
 
 /**
@@ -622,7 +757,8 @@ export function createNewFunctionShim(options: EvalShimOptions = {}): (params: a
   const fnCache = new Map<string, Function>();
   const fnNegCache = new Map<string, SyntaxError>();
 
-  return function __extern_new_function(params: any, body: any): any {
+  // Compile + instantiate the child module for one constructed function.
+  function buildNewFunction(params: any, body: any): Function {
     const paramStr = params == null ? "" : String(params);
     const bodyStr = body == null ? "" : String(body);
     const key = paramStr + " " + bodyStr;
@@ -654,6 +790,8 @@ export function createNewFunctionShim(options: EvalShimOptions = {}): (params: a
             // (#2973) Same rationale as the eval shim — take the proven legacy
             // pipeline, not the IR-first measurement path.
             disableIrFirst: true,
+            // (#6776) Builds and checks the Module itself just below.
+            validate: false,
           }) as typeof result,
       );
     } catch (e: any) {
@@ -681,12 +819,10 @@ export function createNewFunctionShim(options: EvalShimOptions = {}): (params: a
     // declared, plus a recursive `__extern_new_function` for nested cases.
     // (#4657) …and the PARENT's realm, so the child's `global_<Name>` /
     // `__get_globalThis` imports resolve to the same objects the caller sees.
-    const auto = buildImports(
-      result.imports,
-      undefined,
-      result.stringPool,
-      options.globalSandbox === undefined ? undefined : { globalSandbox: options.globalSandbox },
-    );
+    const auto = buildImports(result.imports, undefined, result.stringPool, {
+      globalSandbox: options.globalSandbox,
+      dynamicCode: options.dynamicCode, // (#6779) a nested eval obeys the parent's policy
+    });
     const autoSetExports = (auto as { setExports?: (exports: Record<string, Function>) => void }).setExports;
     const importObj: Record<string, Record<string, unknown>> = {
       env: { ...auto.env },
@@ -722,36 +858,29 @@ export function createNewFunctionShim(options: EvalShimOptions = {}): (params: a
     if (typeof fn !== "function") {
       throw new SyntaxError("new Function: compiled module did not export the constructed function");
     }
-    // A user throw from the child export crosses the JS API boundary as a
-    // WebAssembly.Exception. Re-expose its externref payload so the parent
-    // module observes the original JS value (not the transport envelope).
+    // A user throw from the child export keeps its JS identity in the parent.
     // This matters for folded eval early errors in a constructed function:
     // `assert.throws(SyntaxError, () => new Function(... )())` must see the
     // SyntaxError instance carried by the child's `__exn` tag.
     const callable = function (this: unknown, ...args: unknown[]): unknown {
-      try {
-        return Reflect.apply(fn, this, args);
-      } catch (error) {
-        const WasmException = (WebAssembly as unknown as { Exception?: Function }).Exception;
-        if (typeof WasmException === "function" && error instanceof WasmException) {
-          const tag = childExports.__exn_tag ?? childExports.__tag;
-          if (tag !== undefined) {
-            let payload: unknown;
-            try {
-              payload = (error as { getArg(tag: unknown, index: number): unknown }).getArg(tag, 0);
-            } catch {
-              throw error;
-            }
-            throw payload;
-          }
-        }
-        throw error;
-      }
+      return callChildExport(fn, this, args, instance.exports);
     };
     if (fnCache.size >= FN_CACHE_MAX) fnCache.delete(fnCache.keys().next().value!);
     fnCache.set(key, callable);
     return callable;
-  };
+  }
+
+  // (#6779) Constructing the function never runs its body, so every failure
+  // here is a BUILD failure (marked so a `hostEval` host may use the host
+  // `Function` instead). A throw from the body surfaces later, from `callable`.
+  function __extern_new_function(params: any, body: any): any {
+    try {
+      return buildNewFunction(params, body);
+    } catch (e) {
+      throw markDynamicCodeBuildFailure(e);
+    }
+  }
+  return __extern_new_function;
 }
 
 /**

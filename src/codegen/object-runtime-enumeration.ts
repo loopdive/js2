@@ -35,6 +35,7 @@ import { bagKeysTail, buildBagPushKeys } from "./carrier-bag-visibility.js"; // 
 import { protoIndexForInPushInstrs, protoIndexHasIdxInstrs } from "./proto-index-store.js";
 import { stringExoticPushKeysPrologue } from "./string-exotic-own-props.js"; // (#4491) §10.4.3 own index keys
 import { definedFuncAt } from "./func-space.js";
+import { orProxyArrayLikeTest, proxyArrayLikeTypeIdx } from "./proxy-array-like.js"; // (#6651 H6)
 
 /**
  * Everything the enumeration/array-like/object-static block reads from the
@@ -232,6 +233,7 @@ function buildObjectArrayLikeLengthArm(ctx: CodegenContext, objectTypeIdx: numbe
   return [
     { op: "local.get", index: 1 },
     { op: "ref.test", typeIdx: objectTypeIdx },
+    ...orProxyArrayLikeTest(ctx, 1), // (#6651 H6) §7.3.18 on a Proxy
     {
       op: "if",
       blockType: { kind: "val", type: { kind: "f64" } },
@@ -741,6 +743,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       objVecArrTypeIdx,
       numberToStringIdx: objArrayLikeArms ? ctx.funcMap.get("number_toString")! : -1,
       externGetIdx: objArrayLikeArms ? ctx.funcMap.get("__extern_get")! : -1,
+      proxyTypeIdx: objArrayLikeArms ? proxyArrayLikeTypeIdx(ctx) : undefined, // (#6651 H6)
       vecArms: [],
       // (#2106 S1) OOB / non-indexable miss = undefined under the singleton
       // regime (`arr[oob] === undefined`), consistent with the `$Object` arm
@@ -988,6 +991,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       ? [
           { op: "local.get", index: 2 },
           { op: "ref.test", typeIdx: objectTypeIdx },
+          ...orProxyArrayLikeTest(ctx, 2), // (#6651 H6) HasProperty on a Proxy
           {
             op: "if",
             blockType: { kind: "empty" },

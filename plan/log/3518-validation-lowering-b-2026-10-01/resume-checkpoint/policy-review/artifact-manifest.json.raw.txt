@@ -1,0 +1,52 @@
+{
+  "actual-verifier-budget-spans.json": {
+    "sha256": "2a85f1d0505615cff3ef192ab0fcc2b27c7c2d75fbcf647feb9af05d756cb275",
+    "gitBlob": "23350fde1b50da16ec3b51f01df097db0303ba40",
+    "bytes": 1329
+  },
+  "direct-reader-candidates.json": {
+    "sha256": "601c80234d0d86ab5ffd5b27b193916535d39f3b60ce9feda5bad3d2081ab2ce",
+    "gitBlob": "5eced7dbb3feb9c279fe24836c1164f2caada303",
+    "bytes": 20174
+  },
+  "donor-before-pins.json": {
+    "sha256": "960a4394fcd96fd3fc6010d04ee9eb1de72ac6241cd69c567d6bdd52d7202e49",
+    "gitBlob": "6cfea12b7bd90c59f6f465afc672bc96689b8e54",
+    "bytes": 2370
+  },
+  "donor-review-drift.json": {
+    "sha256": "53fd07cd1d3146414c5c044bf708621b295db1407c174bd8dbb200cfaf1c9e89",
+    "gitBlob": "90ddfd0e49fa3d4d6fdc70ed66c19c89381bef34",
+    "bytes": 60
+  },
+  "final-review-status.json": {
+    "sha256": "91d5d6f74d0e4b352539881dbf35c0a29964a7492aaa4d60ed68974c97290bb6",
+    "gitBlob": "f47184cb7468c92a307a9abd3185420e20b6cf73",
+    "bytes": 1290
+  },
+  "findings.md": {
+    "sha256": "5a4826a98b5e7ead8ed0c8ab8026ead1db3910fa908b350458c05541725c8d14",
+    "gitBlob": "4fac7f2079e16c5fe168019cd7ac753068cf7bde",
+    "bytes": 22844
+  },
+  "policy-evolution-proposal.json": {
+    "sha256": "d1d73c0b3e7e62567a4062602a42518aa22d4b1a5acffc1c8e104a612da3e636",
+    "gitBlob": "0a7a22e58202e1e3af907a486da5b2fa2efb9974",
+    "bytes": 34461
+  },
+  "program-data-observed-root-edit.ts.txt": {
+    "sha256": "83b10069f7b32298705f779df2121bcea0064f28cc7dbe10e4d113c2d32dfda6",
+    "gitBlob": "1b3953ea03a75d507c888a99f81355cbaf1974d8",
+    "bytes": 25359
+  },
+  "receipt-domains.json": {
+    "sha256": "71c74969ac0b0adb299335a87f928b85356e023cee3b4f5ad507d9cbf3917476",
+    "gitBlob": "7af84031a8c016c8960535c09d8739d1b66a8a0e",
+    "bytes": 5626
+  },
+  "review-input-pins.json": {
+    "sha256": "51ba3bce659bec2a8d49f0d5ea5f4f11d8b00d8ebae68e99e6745275e1632b12",
+    "gitBlob": "96b9673b32843a34a6aefe16f510a748014cc053",
+    "bytes": 9950
+  }
+}

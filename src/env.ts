@@ -95,6 +95,20 @@ export function getDefaultEnvironment(): Environment {
 }
 
 /**
+ * Read one environment variable without assuming a global `process` (#6782).
+ *
+ * The compiler core is also bundled for browsers and other hosts that have no
+ * `process`, so `src/` reads its `JS2WASM_*` switches through this accessor
+ * instead of `process.env.X`. A host without `process.env` reads every
+ * variable as `undefined` — the same value an unset variable has under Node.
+ * Reads are live, not cached: a test that sets `process.env.X` is seen by the
+ * next call.
+ */
+export function readEnv(name: string): string | undefined {
+  return (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.[name];
+}
+
+/**
  * Override the default environment. Useful for:
  * - Embedding contexts where the runtime can't be probed (e.g. Wasm host).
  * - Test harnesses that want to inject mocked filesystem behavior.

@@ -72,6 +72,7 @@ import {
   type NativeCombinator,
 } from "./promise-combinators.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js";
+import { demandPromiseDynamicMember } from "./promise-dynamic-member-read.js"; // (#6651 D5)
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
@@ -989,6 +990,7 @@ function emitStandalonePromiseCustomCombinator(
   addStringConstantGlobal(ctx, notIterableMsg);
   addStringConstantGlobal(ctx, `Promise.${method} resolve is not callable`);
   addStringConstantGlobal(ctx, "resolve");
+  demandPromiseDynamicMember(ctx, "then", fctx); // (#6651 D5) Invoke(next, "then") on a native promise
 
   const stateLocal = allocLocal(fctx, `__promise_capability_state_${fctx.locals.length}`, {
     kind: "ref",

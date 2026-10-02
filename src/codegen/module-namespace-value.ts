@@ -223,14 +223,33 @@ function nodeBuiltinReexport(symbol: ts.Symbol): { moduleName: string; propertyN
   return undefined;
 }
 
-/** `export const x = …` at the top level of the exporting module. */
-function immutableTopLevelConstName(ctx: CodegenContext, node: ts.Declaration): string | undefined {
-  if (!ts.isVariableDeclaration(node) || !ts.isIdentifier(node.name)) return undefined;
-  const list = node.parent;
-  if (!ts.isVariableDeclarationList(list) || (list.flags & ts.NodeFlags.Const) === 0) return undefined;
+/** The module-global cell of a simple or destructured top-level binding. */
+function topLevelVariableBinding(
+  ctx: CodegenContext,
+  node: ts.Declaration,
+): { name: string; list: ts.VariableDeclarationList } | undefined {
+  if (!(ts.isVariableDeclaration(node) || ts.isBindingElement(node)) || !ts.isIdentifier(node.name)) {
+    return undefined;
+  }
+  const name = node.name.text;
+  let owner: ts.Node = node;
+  // Nested object/array patterns still belong to one VariableDeclaration.
+  // Do not admit parameters, catch bindings, or function-local variables.
+  while (ts.isBindingElement(owner) || ts.isObjectBindingPattern(owner) || ts.isArrayBindingPattern(owner)) {
+    owner = owner.parent;
+  }
+  if (!ts.isVariableDeclaration(owner)) return undefined;
+  const list = owner.parent;
+  if (!ts.isVariableDeclarationList(list)) return undefined;
   const statement = list.parent;
   if (!ts.isVariableStatement(statement) || statement.parent !== statement.getSourceFile()) return undefined;
-  return ctx.moduleGlobals.has(node.name.text) ? node.name.text : undefined;
+  return ctx.moduleGlobals.has(name) ? { name, list } : undefined;
+}
+
+/** `const` module exports, including destructured bindings. */
+function immutableTopLevelConstName(ctx: CodegenContext, node: ts.Declaration): string | undefined {
+  const binding = topLevelVariableBinding(ctx, node);
+  return binding !== undefined && (binding.list.flags & ts.NodeFlags.Const) !== 0 ? binding.name : undefined;
 }
 
 /**
@@ -243,12 +262,8 @@ function immutableTopLevelConstName(ctx: CodegenContext, node: ts.Declaration): 
  * (const) or must hold a live getter (var/let).
  */
 function mutableTopLevelBindingName(ctx: CodegenContext, node: ts.Declaration): string | undefined {
-  if (!ts.isVariableDeclaration(node) || !ts.isIdentifier(node.name)) return undefined;
-  const list = node.parent;
-  if (!ts.isVariableDeclarationList(list) || (list.flags & ts.NodeFlags.Const) !== 0) return undefined;
-  const statement = list.parent;
-  if (!ts.isVariableStatement(statement) || statement.parent !== statement.getSourceFile()) return undefined;
-  return ctx.moduleGlobals.has(node.name.text) ? node.name.text : undefined;
+  const binding = topLevelVariableBinding(ctx, node);
+  return binding !== undefined && (binding.list.flags & ts.NodeFlags.Const) === 0 ? binding.name : undefined;
 }
 
 /**
@@ -1326,6 +1341,23 @@ export function tryEmitCompiledModuleNamespaceObject(
   if (declaration === undefined || !ts.isNamespaceImport(declaration)) return undefined;
   const exports = namespaceFunctionExports(ctx, declaration);
   return exports ? emitNamespaceObject(ctx, fctx, declaration, exports, true) : undefined;
+}
+
+/**
+ * The namespace object of one compiled ES module source file, keyed by its
+ * module symbol so every `import()` of the module (and a nested `export * as`)
+ * shares one object identity. `undefined` when the export list cannot be
+ * materialized honestly (the caller must not fabricate a substitute).
+ */
+export function tryEmitModuleNamespaceObjectForSource(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  sourceFile: ts.SourceFile,
+): ValType | undefined {
+  const moduleSymbol = (sourceFile as unknown as { symbol?: ts.Symbol }).symbol;
+  if (moduleSymbol === undefined || moduleSourceFile(moduleSymbol) !== sourceFile) return undefined;
+  const exports = moduleSymbolNamespaceExports(ctx, moduleSymbol, new Set());
+  return exports ? emitNamespaceObject(ctx, fctx, moduleSymbol, exports, true) : undefined;
 }
 
 function namespaceMemberAccessForIdentifier(

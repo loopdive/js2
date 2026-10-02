@@ -27,9 +27,10 @@
  *
  * Everything here is asserted on the STANDALONE target with
  * `imports === []`, because the host-import leak is the whole point of #2864.
- * The last two cases pin the deliberate boundary (a member assignment target
- * and a yield nested in a yield operand stay refused) and the standalone
- * gating (the gc lane keeps its eager host buffer, unchanged).
+ * The last cases pin the deliberate boundary (a member assignment target stays
+ * refused; a yield nested in a yield operand was refused here until #6651 A6
+ * lowered it) and the standalone gating (the gc lane keeps its eager host
+ * buffer, unchanged).
  */
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
@@ -184,17 +185,18 @@ ${DRIVE}`,
     expect(r.errors?.[0]?.message ?? "").toContain("#680");
   });
 
-  it("BOUNDARY: a yield NESTED in a yield operand stays on the host path", async () => {
-    const r = await compile(
-      `function* g(): Generator<number, void, number> {
+  // (#6651 A6) This case pinned the REFUSAL of a yield nested in a yield
+  // operand. A6 lowers it natively (`generator-yield-nested.ts`: the inner yield
+  // suspends first, its sent value is the outer yield's operand), so it now pins
+  // the answer. More shapes: `tests/issue-6651-a6-nested-yield-operands.test.ts`.
+  it("a yield NESTED in a yield operand re-yields the inner's sent value (#6651 A6)", async () => {
+    expect(
+      await runStandalone(`function* g(): Generator<number, void, number> {
   const a = [yield ((yield 1) as number)];
   yield a[0];
 }
-${DRIVE}`,
-      { fileName: "test.ts", target: "standalone" },
-    );
-    expect(r.success).toBe(false);
-    expect(r.errors?.[0]?.message ?? "").toContain("#680");
+${DRIVE}`),
+    ).toBe(7);
   });
 
   it("BOUNDARY: a destructuring DEFAULT stays on the host path (conditional suspension)", async () => {

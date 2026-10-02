@@ -92,6 +92,7 @@ import {
   IrPlanningIdentityInvariantError,
   type IrPlanningIdentityContext,
 } from "./planning-identity.js";
+import { readEnv } from "../env.js";
 
 // ---------------------------------------------------------------------------
 // Public shapes
@@ -164,7 +165,7 @@ export const LATTICE_OBJECT_SHAPE_MAX_DEPTH = 3;
  * flips to ON and the env var becomes an opt-out (`=0`) emergency hatch.
  */
 function i32DomainEnabled(): boolean {
-  return process.env.JS2WASM_IR_I32_DOMAIN === "1";
+  return readEnv("JS2WASM_IR_I32_DOMAIN") === "1";
 }
 
 // Range constants for integer-domain literal classification.

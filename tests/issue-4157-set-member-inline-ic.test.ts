@@ -150,7 +150,7 @@ async function build(env: Partial<Record<(typeof ENV_KEYS)[number], string>>): P
   const saved = new Map<string, string | undefined>(ENV_KEYS.map((k) => [k, process.env[k]]));
   const set = (key: string, value: string | undefined): void => {
     // `= undefined` coerces to the STRING "undefined", which reads as "set".
-    // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
+    // Only `delete` truly unsets an env var
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   };

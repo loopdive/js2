@@ -33,6 +33,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
+import { liteExnRenderPrepareBody, usesLiteExnRender } from "./exn-render-lite.js"; // (#6666)
 import { pendingStringConstantGlobalGet } from "./registry/imports.js";
 import { addImport, addUnionImports } from "./registry/imports.js";
 import {
@@ -1839,23 +1840,21 @@ export function emitExceptionRenderExports(ctx: CodegenContext): void {
         );
       }
     }
-    const body: Instr[] = [
-      { op: "local.get", index: 0 },
-      { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: -1 }, { op: "return" }],
-      },
-      ...fnctorArmInstrs,
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "call", funcIdx: anyToStrIdx },
-      { op: "call", funcIdx: flattenIdx },
-      { op: "global.set", index: bufGlobalIdx },
-      { op: "global.get", index: bufGlobalIdx },
-      { op: "struct.get", typeIdx: flatTypeIdx, fieldIdx: 0 }, // len
-    ];
+    const body: Instr[] = usesLiteExnRender(ctx) // (#6666)
+      ? liteExnRenderPrepareBody(ctx, bufGlobalIdx, flattenIdx, flatTypeIdx)
+      : [
+          { op: "local.get", index: 0 },
+          { op: "ref.is_null" },
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: -1 }, { op: "return" }] },
+          ...fnctorArmInstrs,
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "call", funcIdx: anyToStrIdx },
+          { op: "call", funcIdx: flattenIdx },
+          { op: "global.set", index: bufGlobalIdx },
+          { op: "global.get", index: bufGlobalIdx },
+          { op: "struct.get", typeIdx: flatTypeIdx, fieldIdx: 0 }, // len
+        ];
     ctx.funcMap.set("__exn_render_prepare", funcIdx);
     pushDefinedFunc(ctx, funcIdx, {
       name: "__exn_render_prepare",

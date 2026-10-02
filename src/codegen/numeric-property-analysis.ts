@@ -107,6 +107,7 @@
  * definitions) recovers the precision without a symbol table.
  */
 import { forEachChild, ts } from "../ts-api.js";
+import { readEnv } from "../env.js";
 
 /** The host facts this analysis needs; kept tiny so it can run standalone. */
 export interface NumericPropertyAnalysisHost {
@@ -556,7 +557,7 @@ interface NumericFlowFacts {
  */
 function notePoison(facts: { poisoned: boolean }, node: ts.Node): void {
   facts.poisoned = true;
-  if (process.env.JS2WASM_NUMERIC_FIELDS_DEBUG === "1") {
+  if (readEnv("JS2WASM_NUMERIC_FIELDS_DEBUG") === "1") {
     process.stderr.write(`[numeric-fields] poison site: ${node.getText().slice(0, 90).replace(/\s+/g, " ")}\n`);
   }
 }
@@ -1202,7 +1203,7 @@ function makeProver(
 
 /** `JS2WASM_NUMERIC_FIELDS_DEBUG=1` — print the verdict set once per compile. */
 function debugEnabled(): boolean {
-  return process.env.JS2WASM_NUMERIC_FIELDS_DEBUG === "1";
+  return readEnv("JS2WASM_NUMERIC_FIELDS_DEBUG") === "1";
 }
 
 /**
@@ -1346,7 +1347,7 @@ export function analyzeNumericPropertyNames(
   // Kill-switch: `JS2WASM_NUMERIC_FIELDS=0` reproduces the pre-S4a field
   // shapes byte-for-byte on any program, which is what makes the twin/generic
   // and promoted/unpromoted differentials in the pin suite possible.
-  if (process.env.JS2WASM_NUMERIC_FIELDS === "0") return noVerdicts();
+  if (readEnv("JS2WASM_NUMERIC_FIELDS") === "0") return noVerdicts();
   const scopes = buildScopes(sourceFiles);
   const facts = collectNumericFlowFacts(sourceFiles, scopes, host);
   if (facts.poisoned) {
@@ -1568,7 +1569,7 @@ export function analyzeNumericPropertyNames(
   // `JS2WASM_NUMERIC_FIELDS_EXPLAIN=pos,start` — per-write verdicts for the
   // named properties. This is the tuning instrument: one demoting write
   // anywhere in a 230 KB module is otherwise invisible.
-  const explain = process.env.JS2WASM_NUMERIC_FIELDS_EXPLAIN;
+  const explain = readEnv("JS2WASM_NUMERIC_FIELDS_EXPLAIN");
   if (explain) {
     for (const name of explain.split(",")) {
       const writes = writesByName.get(name) ?? [];
@@ -1588,7 +1589,7 @@ export function analyzeNumericPropertyNames(
                 : prover.isOpaqueParamRead(write.value)
                   ? "opaque-param"
                   : "REJECT";
-          if (verdict !== "REJECT" && verdict !== "UNKNOWN" && process.env.JS2WASM_NUMERIC_FIELDS_EXPLAIN_ALL !== "1") {
+          if (verdict !== "REJECT" && verdict !== "UNKNOWN" && readEnv("JS2WASM_NUMERIC_FIELDS_EXPLAIN_ALL") !== "1") {
             continue;
           }
           const text = write.value ? write.value.getText().slice(0, 72).replace(/\s+/g, " ") : "<none>";
@@ -1641,7 +1642,7 @@ export function applyNumericPropertyAnalysis(
   // values through AOT functions without a statically visible call site. The
   // parameter fixpoint may still derive field/return facts, but its local
   // carrier oracle must not narrow those dynamically reached bindings.
-  if (process.env.JS2WASM_NUMERIC_LOCALS !== "0" && target.runtimeEvalCallableBoundaryEnabled !== true) {
+  if (readEnv("JS2WASM_NUMERIC_LOCALS") !== "0" && target.runtimeEvalCallableBoundaryEnabled !== true) {
     target.usageInference.setNumericLocalOracle(verdicts.isNumericLocal);
     target.numericLocalVerdict = verdicts.isNumericLocal;
   }
@@ -1674,7 +1675,7 @@ export function refineNumericLocalsWithCallReturns(
   callEvidence: ((call: ts.CallExpression) => boolean) | undefined,
 ): boolean {
   if (callEvidence === undefined) return false;
-  if (process.env.JS2WASM_NUMERIC_LOCALS === "0" || target.runtimeEvalCallableBoundaryEnabled === true) return false;
+  if (readEnv("JS2WASM_NUMERIC_LOCALS") === "0" || target.runtimeEvalCallableBoundaryEnabled === true) return false;
   const refined = analyzeNumericPropertyNames({ ...host, provenNumericCallReturn: callEvidence }, sourceFiles);
   target.usageInference.setNumericLocalOracle(refined.isNumericLocal);
   target.numericLocalVerdict = refined.isNumericLocal;

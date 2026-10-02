@@ -649,3 +649,33 @@ isolated worktrees) on the Temporal goal. The owner's direction at ~14:00 UTC:
   2 %, not 3.3×; S2p: the penalty was a per-call-site splice) — both cheap to
   correct only because each measured first.
 - **Handoff**: `plan/agent-context/temporal-standalone-handover-2026-09-12.md`.
+
+## 2026-09-05 → 2026-09-29 — merging the JS-host lane into the native regime (#5385)
+
+- **Question answered.** JS-host mode does not earn its keep through interop:
+  the value adapter is a separate axis (#4396/#4399); host mode is a second,
+  borrowed-from-V8 ECMAScript implementation. Plan v2 in #5385.
+- **Finding that changed the plan.** The nightly native-first lane compiled
+  only 9 % of test262 because the harness hit `ctx.standalone`-gated host
+  paths; the standalone codegen regime IS the native core. Switching a JS
+  build onto that regime (plus the JS value bridge) took a 321-row sample
+  from 0 to 218 passes; the full lane went 4,411 → 35,384 → 36,327 (host
+  34,099, standalone 35,237).
+- **Landed** (all byte-identical for default gc/standalone/wasi): S0 axis
+  #6083, S1 #6147, S1b #6156, S2 #6153, S3-a #6152, S3-b #6202, S3-c #6178,
+  S3-e #6199, S3-f #6291, S4 #6186, S5 #6191 (regime on by default for
+  native-first, kill switch `JS2WASM_NATIVE_REGIME_JS=0`), #6697 test heap.
+- **New issues filed**: #5385 umbrella; #6685/#6686/#6687/#6689/#6697/#6706/
+  #6707/#6708/#6709/#6710/#6748/#6749/#6750 slices.
+- **S6 (default flip) verdict: not yet** — npm-compat regime lane has three
+  wrong checksums (#6749, critical), the per-edition ratchet is below floor
+  on ES5/ES2026 (#6750), the regime Temporal provider dies at init (#6748).
+- **Key learnings.** (1) The census, not the total, decides: +1.6k rows hid
+  ES5 −99. (2) Two spec root causes were wrong and only the implementer's
+  measurement caught it (S3-a: stale index from a late import, not a
+  pre-shift read; S3-f: a padded `undefined` cast in the dispatcher, not the
+  reaction job) — specs must name the repro and the guard, not assert the
+  cause. (3) Environment hazards (stale `.git/config.lock`, unprovisioned
+  agent worktrees, the #3008 whole-file gate, load-gated spawns) cost more
+  wall-clock than any codegen problem; they are listed in the handoff.
+- **Handoff**: `plan/agent-context/host-lane-merge-handoff-2026-09-29.md`.

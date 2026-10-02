@@ -103,6 +103,25 @@ export function markClassValueConstructSite(ctx: CodegenContext): void {
 }
 
 /**
+ * (#6651 D4) Modules that read a `class … extends Promise` as a standalone VALUE.
+ * Only such a module can hand that class object to a construct driver, and every
+ * one of them failed to compile before D4 (the value read leaked
+ * `env::__promise_subclass_ctor`), so admitting Promise-rooted classes as
+ * construct candidates here moves no previously-compiling module's bytes.
+ */
+const promiseSubclassValueReads = new WeakSet<CodegenContext>();
+
+/** Record that this module reads a Promise-subclass class object as a value (standalone). */
+export function markPromiseSubclassValueRead(ctx: CodegenContext): void {
+  promiseSubclassValueReads.add(ctx);
+}
+
+/** A builtin-parent class the dispatcher may construct: a Promise subclass read as a value. */
+function admitsBuiltinParentConstruct(ctx: CodegenContext, className: string): boolean {
+  return promiseSubclassValueReads.has(ctx) && ctx.classBuiltinParentMap.get(className) === "Promise";
+}
+
+/**
  * The one gate for everything in this module: a `new <value>` site here, or a
  * provider whose consumer is wasm (its boundary terminal is the other caller).
  * Every other standalone module emits exactly the bytes it did before.
@@ -168,8 +187,10 @@ interface ClassConstructCandidate {
 function collectCandidates(ctx: CodegenContext): ClassConstructCandidate[] {
   const out: ClassConstructCandidate[] = [];
   for (const className of [...ctx.classObjectGlobals.keys()].sort()) {
-    // An externref-backed builtin subclass keeps its own construction path.
-    if (ctx.classBuiltinParentMap.has(className)) continue;
+    // An externref-backed builtin subclass keeps its own construction path —
+    // except a Promise subclass read as a value (#6651 D4): its `<C>_new` builds
+    // the native `$Promise` carrier, and NewPromiseCapability(C) needs [[Construct]].
+    if (ctx.classBuiltinParentMap.has(className) && !admitsBuiltinParentConstruct(ctx, className)) continue;
     if (ctx.structMap.get(className) === undefined) continue;
     const classObjectGlobalIdx = ctx.classObjectGlobals.get(className);
     const ctorFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, `${className}_new`));

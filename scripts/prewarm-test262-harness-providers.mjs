@@ -24,9 +24,9 @@
  * a CI step that would rather stop than silently pay the cost.
  *
  * Usage:
- *   JS2WASM_TEST262_HARNESS_CACHE=<dir> node scripts/prewarm-test262-harness-providers.mjs
- *   node scripts/prewarm-test262-harness-providers.mjs --cache-dir <dir> --target standalone
- *   node scripts/prewarm-test262-harness-providers.mjs --limit 8   # smoke
+ *   JS2WASM_TEST262_HARNESS_CACHE=<dir> node --import tsx scripts/prewarm-test262-harness-providers.mjs
+ *   node --import tsx scripts/prewarm-test262-harness-providers.mjs --cache-dir <dir> --target standalone
+ *   node --import tsx scripts/prewarm-test262-harness-providers.mjs --limit 8   # smoke
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -69,7 +69,9 @@ function* walkJs(dir) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const cacheDir = args.cacheDir ?? test262HarnessProviderCacheDir();
+  // `--cache-dir` is a ROOT, like the env override: the compiler-bundle suffix
+  // (#6723 P1) is appended here exactly as the worker appends it.
+  const cacheDir = test262HarnessProviderCacheDir({ root: args.cacheDir });
 
   // The runner's own split and metadata parse — imported, never reimplemented.
   // A pre-warm keyed by a DIFFERENT prefix than the worker asks for is not a

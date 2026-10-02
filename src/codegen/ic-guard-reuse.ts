@@ -79,13 +79,14 @@
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { readEnv } from "../env.js";
 
 /** `index` → the declared kind of that local, or `undefined` if unknown. */
 export type LocalKind = (index: number) => string | undefined;
 
 /** Flag gate. Default OFF ⇒ every IC site keeps its own guard. */
 export function icGuardReuseEnabled(): boolean {
-  const raw = process.env.JS2WASM_IC_GUARD_REUSE;
+  const raw = readEnv("JS2WASM_IC_GUARD_REUSE");
   return raw !== undefined && raw !== "" && raw !== "0" && raw !== "off";
 }
 
@@ -475,7 +476,7 @@ export function planGuardReuse(
 const censusGlobals = new WeakMap<CodegenContext, number>();
 
 function censusGlobalFor(ctx: CodegenContext): number {
-  if (process.env.JS2WASM_IC_GUARD_REUSE_CENSUS !== "1") return -1;
+  if (readEnv("JS2WASM_IC_GUARD_REUSE_CENSUS") !== "1") return -1;
   const cached = censusGlobals.get(ctx);
   if (cached !== undefined) return cached;
   const name = "__ic_guard_reuse_hits";
@@ -554,14 +555,14 @@ export function emitReusedGuard(
     guardReuseStats.declinedRelocated++;
     return undefined;
   }
-  const limit = process.env.JS2WASM_IC_GUARD_REUSE_LIMIT;
+  const limit = readEnv("JS2WASM_IC_GUARD_REUSE_LIMIT");
   if (limit !== undefined && guardReuseStats.reuses >= Number(limit)) return undefined;
   const key = plan.keys.get(site)!;
   if (alreadyAny) out.pop();
   if (key.producer === "pop") out.pop();
   else out[out.length - 1] = { op: "local.set", index: key.local };
   const cast: Instr =
-    process.env.JS2WASM_IC_GUARD_REUSE_POISON === "1"
+    readEnv("JS2WASM_IC_GUARD_REUSE_POISON") === "1"
       ? { op: "ref.null", typeIdx: entry.structTypeIdx }
       : { op: "local.get", index: entry.castLocal };
   guardReuseStats.reuses++;

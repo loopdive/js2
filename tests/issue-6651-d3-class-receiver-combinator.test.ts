@@ -6,9 +6,9 @@
 //
 // Every behaviour case was RED on the slice's base: a class receiver fell through to the
 // `env::Promise_<method>` host import, which a standalone module cannot satisfy, so the source
-// did not compile host-free at all. The two controls pin what must NOT move: a Promise-subclass
-// receiver (#5197 G9, a separate value-representation question) is not admitted, and the host
-// (gc) lane never names the drive while standalone does.
+// did not compile host-free at all. The control pins what must NOT move: the host (gc) lane never
+// names the drive while standalone does. (A Promise-subclass receiver — #5197 G9 — was a second,
+// negative control until D4 gave it a standalone representation; it is now admitted.)
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 
@@ -153,13 +153,13 @@ export function test(): number { Promise.all.call(K, []); return 1; }`;
     expect(new TextDecoder("latin1").decode(standalone).includes("__promise_class_drive")).toBe(true);
   });
 
-  it("control: a Promise-subclass receiver (#5197 G9) is not admitted", async () => {
+  it("a Promise-subclass receiver (#5197 G9) is admitted since D4 — its class object is constructible", async () => {
     const result = await compile(
       `class S extends Promise<any> {}
 export function test(): number { Promise.all.call(S, []); return 1; }`,
       { fileName: "issue-6651-d3-subclass.ts", target: "standalone", nativeStrings: true },
     );
     const text = result.success ? new TextDecoder("latin1").decode(result.binary) : "";
-    expect(text.includes("__promise_class_drive")).toBe(false);
+    expect(text.includes("__promise_class_drive")).toBe(true);
   });
 });

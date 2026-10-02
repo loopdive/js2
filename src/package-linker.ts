@@ -1379,6 +1379,18 @@ function topoPackages(packages: Map<string, PackageNode>): { order?: PackageNode
 }
 
 /**
+ * (#6723 D1) Namespaces a separately linked provider may import beyond the
+ * string/env set: a standalone provider that reaches eval or `Function(src)`
+ * imports the `js2wasm:runtime-eval` ABI exactly as a standalone root does,
+ * and inherits it from the root import object (`buildProviderImportObject`
+ * passes every non-env namespace through). `runtimeEvalProvider: false`
+ * (#6676) promises no provider will be linked, so it stays out.
+ */
+function standaloneProviderRuntimeImports(options: CompileOptions): string[] {
+  return options.target === "standalone" && options.runtimeEvalProvider !== false ? ["js2wasm:runtime-eval"] : [];
+}
+
+/**
  * Attempt separate npm package compilation. The caller owns the bundled
  * fallback so that the existing compileProject route remains byte-stable for
  * unsupported graphs.
@@ -1936,6 +1948,7 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       "wasm:js-string",
       "string_constants",
       "string_constants16",
+      ...standaloneProviderRuntimeImports(input.options),
       ...(input.options.link ?? []),
       ...Array.from(dependencyBindings.values(), (binding) => binding.module),
     ]);

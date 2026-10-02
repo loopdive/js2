@@ -69,6 +69,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
+import { protoLinkActive } from "./object-runtime-proxy-chain.js"; // (#6766)
 
 /** `__create_descriptor`'s attribute bits: writable (0x01) | enumerable (0x02)
  *  | configurable (0x04) — the §7.3.5 CreateDataProperty descriptor. */
@@ -272,14 +273,43 @@ export function fillOrdinarySetWithReceiver(ctx: CodegenContext): number | undef
   // 3-argument front guard (`object-runtime-proxy.ts` builds both from the same
   // `buildDispatch`). Absent on a tree without the Proxy carrier ⇒ no arm.
   const proxySetReceiverIdx = proxyCarrierPresent ? ctx.funcMap.get("__proxy_set_receiver_dispatch") : undefined;
+  const isExtensibleObjIdx = ctx.funcMap.get("__object_isExtensible_obj"); // (#5350 r2)
 
   // params 0=target 1=key 2=value 3=receiver
   const O = 4;
   const OWN = 5;
   const PARENT = 6;
   const TMP = 7;
+  const OWN_RESULT = 8; // (#6766) i32, only with `ownSetIdx`
 
   const { absent, keyOf, getField, isAccessor, notObject, refuseIf } = makeSetWalkEmitters(ctx, prims);
+  // (#6766) With a Proxy LINK in a receiver's chain, `__extern_set(receiver)`
+  // is a full [[Set]] that walks back into the link → this walk → forever. The
+  // receiver-side write of §10.1.9.2 steps 3.d-e is OWN-only
+  // (CreateDataProperty / [[DefineOwnProperty]]{value}), which `__extern_set_own`
+  // is for an ordinary `$Object`; its UNADMITTED answer (0: not a `$Object`)
+  // keeps the `__extern_set` write below.
+  const ownSetIdx = protoLinkActive(ctx) ? ctx.funcMap.get("__extern_set_own") : undefined;
+  const ownWriteFirst = (): Instr[] =>
+    ownSetIdx === undefined
+      ? []
+      : [
+          { op: "local.get", index: 3 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: ownSetIdx },
+          { op: "local.tee", index: OWN_RESULT },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: OWN_RESULT },
+              { op: "i32.const", value: 1 }, // SET_RESULT_SUCCESS
+              { op: "i32.eq" },
+              { op: "return" },
+            ],
+          },
+        ];
 
   /**
    * §10.1.9.2 steps 3.b-3.f: everything after "the own descriptor is a WRITABLE
@@ -329,6 +359,22 @@ export function fillOrdinarySetWithReceiver(ctx: CodegenContext): number | undef
               },
             ] satisfies Instr[])
           : []),
+        // (#5350 r2) §10.1.6.3 ValidateAndApplyPropertyDescriptor step 2: a
+        // new property on a NON-EXTENSIBLE receiver fails. `__extern_set`
+        // quietly skips that store, so without this the walk answered `true`
+        // for a write that did not happen — `super.y = 9` on a frozen receiver
+        // raised no strict-mode TypeError, and `Reflect.set({}, k, v, frozen)`
+        // answered `true` (probe a1). The `_obj` predicate is the ordinary-
+        // object variant: an unregistered carrier counts as extensible.
+        ...(isExtensibleObjIdx === undefined
+          ? []
+          : ([
+              { op: "local.get", index: 3 },
+              { op: "call", funcIdx: isExtensibleObjIdx },
+              { op: "i32.eqz" },
+              ...refuseIf(),
+            ] satisfies Instr[])),
+        ...ownWriteFirst(),
         { op: "local.get", index: 3 },
         { op: "local.get", index: 1 },
         { op: "local.get", index: 2 },
@@ -374,6 +420,7 @@ export function fillOrdinarySetWithReceiver(ctx: CodegenContext): number | undef
           },
         ] satisfies Instr[])
       : []),
+    ...ownWriteFirst(),
     { op: "local.get", index: 3 },
     { op: "local.get", index: 1 },
     { op: "local.get", index: 2 },
@@ -482,6 +529,7 @@ export function fillOrdinarySetWithReceiver(ctx: CodegenContext): number | undef
     { name: "own", type: EXTERNREF },
     { name: "parent", type: EXTERNREF },
     { name: "tmp", type: EXTERNREF },
+    ...(ownSetIdx === undefined ? [] : [{ name: "ownResult", type: I32 }]),
   ];
   func.body = body;
   return funcIdx;

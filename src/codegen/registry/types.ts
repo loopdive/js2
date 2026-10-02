@@ -153,6 +153,35 @@ export function withSuppressedVecUsage<T>(ctx: CodegenContext, fn: () => T): T {
 }
 
 /**
+ * `boolean[]` and the #1197 integer-specialised `number[]` both lower to an
+ * `i32` element, and the vec registry keys them both as `"i32"` — so whichever
+ * registers FIRST fixes the element type both share, including its `boolean`
+ * brand. Every static widening of the vec (`emitVecToVecBody`'s element
+ * coercion) boxes by that brand, so a `boolean[]` registered after a runtime's
+ * integer array printed `true` as `1` (ES5 S15.4.4.2_A1_T3, 2026-09-26: #6129
+ * pulled a Promise runtime into every test262 module, and its integer array
+ * registered first).
+ *
+ * Give the SECOND flavour its own key, as `symbol[]` already has
+ * (`i32_symbol`). A module that uses only one flavour keeps `"i32"` and stays
+ * byte-identical; only a module mixing the two gains a type.
+ */
+/** Second-flavour `i32` vecs, per context (see {@link disambiguateI32VecKey}). */
+const i32FlavourVecs = new WeakMap<CodegenContext, Map<string, number>>();
+
+function disambiguateI32VecKey(ctx: CodegenContext, elemKind: string, elemTypeOverride?: ValType): string {
+  if (elemKind !== "i32") return elemKind;
+  const existing = ctx.vecTypeMap.get("i32");
+  if (existing === undefined) return elemKind;
+  const arrIdx = ctx.arrayTypeMap.get("i32");
+  const arrDef = arrIdx === undefined ? undefined : ctx.mod.types[arrIdx];
+  const existingIsBoolean = arrDef?.kind === "array" && (arrDef.element as { boolean?: boolean }).boolean === true;
+  const requestedIsBoolean = (elemTypeOverride as { boolean?: boolean } | undefined)?.boolean === true;
+  if (existingIsBoolean === requestedIsBoolean) return elemKind;
+  return requestedIsBoolean ? "i32_boolean" : "i32_number";
+}
+
+/**
  * Get or register a vec struct type wrapping a Wasm GC array.
  * The vec struct has {length: i32, data: (ref $__arr_<elemKind>)}.
  */
@@ -177,9 +206,17 @@ export function getOrRegisterVecType(ctx: CodegenContext, elemKind: string, elem
     elemTypeOverride &&
     (elemTypeOverride.kind === "ref" || elemTypeOverride.kind === "ref_null")
       ? `ref_${(elemTypeOverride as { typeIdx: number }).typeIdx}`
-      : elemKind;
-  const existing = ctx.vecTypeMap.get(cacheKey);
+      : disambiguateI32VecKey(ctx, elemKind, elemTypeOverride);
+  // A second `i32` flavour stays OUT of `vecTypeMap`: a dozen emitters
+  // switch on that map's key strings, and its struct is structurally identical
+  // to `__vec_i32`, so every runtime `ref.test` arm built for `"i32"` already
+  // covers it. Only its static element type (the `boolean` brand) differs.
+  const secondFlavour = cacheKey !== elemKind && elemKind === "i32";
+  const existing = secondFlavour ? i32FlavourVecs.get(ctx)?.get(cacheKey) : ctx.vecTypeMap.get(cacheKey);
   if (existing !== undefined) return existing;
+  // The array registry keys by the same string, so a disambiguated key must
+  // reach it too (as `i32_symbol` does).
+  const arrayKind = secondFlavour ? cacheKey : elemKind;
 
   // (#2186) Ensure the shared `$__vec_base` length supertype exists before
   // registering any concrete vec. Every `__vec_<elemKind>` subtypes it so a
@@ -189,7 +226,7 @@ export function getOrRegisterVecType(ctx: CodegenContext, elemKind: string, elem
   // (open / non-final) so vecs may extend it.
   const vecBaseIdx = getOrRegisterVecBaseType(ctx);
 
-  const arrTypeIdx = getOrRegisterArrayType(ctx, elemKind, elemTypeOverride);
+  const arrTypeIdx = getOrRegisterArrayType(ctx, arrayKind, elemTypeOverride);
   const vecIdx = ctx.mod.types.length;
   ctx.mod.types.push(
     createVectorCarrierType({
@@ -211,7 +248,13 @@ export function getOrRegisterVecType(ctx: CodegenContext, elemKind: string, elem
       ...(cacheKey === "i8_byte" ? { final: true } : {}),
     }),
   );
-  ctx.vecTypeMap.set(cacheKey, vecIdx);
+  if (secondFlavour) {
+    let flavours = i32FlavourVecs.get(ctx);
+    if (!flavours) i32FlavourVecs.set(ctx, (flavours = new Map()));
+    flavours.set(cacheKey, vecIdx);
+  } else {
+    ctx.vecTypeMap.set(cacheKey, vecIdx);
+  }
 
   const vecStructName = `__vec_${cacheKey}`;
   ctx.structMap.set(vecStructName, vecIdx);

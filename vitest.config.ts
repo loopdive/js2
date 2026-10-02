@@ -1,8 +1,16 @@
-import { availableParallelism } from "node:os";
+import { availableParallelism, freemem } from "node:os";
 import { defineConfig } from "vitest/config";
 import { resolveVitestMaxConcurrency } from "./scripts/test262-concurrency.mjs";
 
-const forkMaxOldSpaceSize = process.env.VITEST_FORK_MAX_OLD_SPACE_SIZE || "512";
+/**
+ * (#6785) Per-fork V8 heap. Was 512 MB, at which `npx vitest run
+ * tests/equivalence` died with "Reached heap limit" + ERR_IPC_CHANNEL_CLOSED
+ * after ~100 files on a 4-core / 16 GB box, while `scripts/equivalence-gate.mjs`
+ * (1024 MB forks) completes the same suite. The default now matches the gate;
+ * the fork count below is capped by RAM so the larger heap cannot
+ * oversubscribe a smaller box.
+ */
+const forkMaxOldSpaceSize = process.env.VITEST_FORK_MAX_OLD_SPACE_SIZE || "1024";
 
 /**
  * (#4413) How many test files may run at once.
@@ -34,7 +42,17 @@ const forkMaxOldSpaceSize = process.env.VITEST_FORK_MAX_OLD_SPACE_SIZE || "512";
  * profile the single-fork rule was actually protecting.
  */
 const isTest262Run = Boolean(process.env.TEST262_TARGET || process.env.TEST262_RESULT_PREFIX);
-const maxForks = isTest262Run ? 1 : Math.max(1, Number(process.env.VITEST_MAX_FORKS) || availableParallelism() - 1);
+/**
+ * (#6785) Forks that fit in the RAM available right now, budgeting 1.5x the
+ * V8 heap limit per fork (heap plus off-heap compiler/wasm buffers) — 1.5 GB
+ * at the 1 GB default. On an idle 4-core / 16 GB box this leaves the
+ * core-derived 3 forks alone; on a loaded or smaller box it shrinks the count
+ * instead of letting the forks exhaust RAM together.
+ */
+const forksByRam = Math.floor(freemem() / ((Number(forkMaxOldSpaceSize) || 1024) * 1.5 * 1024 * 1024));
+const maxForks = isTest262Run
+  ? 1
+  : Math.max(1, Number(process.env.VITEST_MAX_FORKS) || Math.min(availableParallelism() - 1, forksByRam));
 
 export default defineConfig({
   test: {

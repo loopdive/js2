@@ -75,7 +75,7 @@ export { getOrRegisterErrorStructType } from "./types.js";
  * struct construction in WASI mode. Order matches the order in which test262
  * tests typically reference them.
  */
-const WASI_ERROR_NAMES = [
+export const WASI_ERROR_NAMES = [
   "Error",
   "TypeError",
   "RangeError",
@@ -581,6 +581,19 @@ export function ensureNativeSuppressedErrorCtor(ctx: CodegenContext): number | u
 }
 
 /**
+ * Does `fillExternGetErrorProps` build the `constructor` arm for user error
+ * constructor `name`? When this module mints `$Error_struct` instances for it
+ * — and (#6723 D4) always in a wasm-consumed standalone PROVIDER, which must
+ * also answer for instances its CONSUMER minted: the linked consumer lowers
+ * `new Test262Error(…)` to its own `$Error_struct` (a canonical type, so this
+ * arm sees it), and the provider's function value is the constructor both
+ * modules name.
+ */
+function userErrorCtorArmApplies(ctx: CodegenContext, name: string): boolean {
+  return ctx.funcMap.has(`__new_${name}`) || (ctx.standalone && ctx.exportsConsumedByWasm === true);
+}
+
+/**
  * (#3130) Finalize-time fill: teach `__extern_get` — the universal dynamic
  * property reader every `any`-receiver read terminally routes through
  * (`__dyn_get`, the `__get_member_<name>` dispatcher fallbacks, typed reads
@@ -736,7 +749,7 @@ export function fillExternGetErrorProps(ctx: CodegenContext): void {
   // signature. See src/codegen/error-substrate.ts for the measured evidence.
   const userCtorArms: Instr[] = [];
   for (const name of USER_ERROR_CTOR_IDENTITY_NAMES) {
-    if (!ctx.funcMap.has(`__new_${name}`)) continue;
+    if (!userErrorCtorArmApplies(ctx, name)) continue;
     const closureGlobalIdx = userErrorCtorCarrierGlobal(ctx, name);
     if (closureGlobalIdx === undefined) continue;
     userCtorArms.push(

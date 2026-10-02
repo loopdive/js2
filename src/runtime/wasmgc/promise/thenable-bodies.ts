@@ -25,6 +25,12 @@ export interface PromiseThenableInventory {
     readonly externGetFuncIdx: FuncHandle;
     readonly thenStringInstrs: readonly Instr[];
   } | null;
+  /**
+   * (#5197 r3 Step 3) Array carriers whose `then` is a real `Get` — an Array
+   * inherits `%Array.prototype%.then`, which user code can install (the
+   * `Promise.all` aggregate is resolved with such an array). Absent ⇒ no arms.
+   */
+  readonly vecTypeIdxs?: readonly TypeHandle[];
 }
 
 export function buildPromisePeelValue(layout: PromiseAnyValueLayout | null): { locals: LocalDef[]; body: Instr[] } {
@@ -250,6 +256,22 @@ function buildThenableLookup(
   // OUT of this predicate) + closure test.
   const externGetIdx = openObject?.externGetFuncIdx;
   const objectTypeIdx = openObject?.typeIdx;
+  // (#5197 r3 Step 3) Array arms — the same spec Get: `__extern_get` reaches the
+  // Array prototype companion, so an installed / poisoned `Array.prototype.then`
+  // is observed exactly as on an `$Object`.
+  for (const vecTypeIdx of externGetIdx === undefined ? [] : (resources.vecTypeIdxs ?? [])) {
+    body.push({ op: "local.get", index: anyLocalIdx });
+    body.push({ op: "ref.test", typeIdx: vecTypeIdx });
+    body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: closureTest([
+        { op: "local.get", index: peeledLocalIdx },
+        ...structuredClone(openObject!.thenStringInstrs),
+        { op: "call", funcIdx: externGetIdx! },
+      ]),
+    });
+  }
   if (externGetIdx !== undefined && objectTypeIdx !== undefined) {
     body.push({ op: "local.get", index: anyLocalIdx });
     body.push({ op: "ref.test", typeIdx: objectTypeIdx });

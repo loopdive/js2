@@ -84,6 +84,7 @@ import { isObjectFamilyCtorName, tryEmitNativeObjectFamilyInstanceOf } from "../
 import { emitTaCtorValue } from "../dataview-native.js";
 import { taCtorKindOf } from "../registry/types.js";
 import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "./helpers.js";
+import { tryEmitPromiseSubclassInstanceOf } from "../promise-subclass-proto-link.js";
 import { emitDynamicWithGet, emitWithBindingGet, resolveWithBinding } from "../with-scope.js";
 import {
   emitBuiltinConstructorIdentity,
@@ -92,7 +93,7 @@ import {
   isSupportedBuiltinNamespace,
 } from "../builtin-static-globals.js";
 import {
-  emitPromiseSubclassCtor,
+  emitPromiseSubclassValueRead,
   resolvePromiseSubclassIdentifier,
   tryEmitPromiseSubclassValue,
 } from "./promise-subclass.js";
@@ -1266,7 +1267,7 @@ function compileIdentifierCore(
     }
 
     const promiseSubclass = resolvePromiseSubclassIdentifier(ctx, id);
-    if (promiseSubclass !== undefined && emitPromiseSubclassCtor(ctx, fctx, promiseSubclass)) {
+    if (promiseSubclass !== undefined && emitPromiseSubclassValueRead(ctx, fctx, promiseSubclass)) {
       return { kind: "externref" };
     }
 
@@ -1491,7 +1492,7 @@ function compileIdentifierCore(
   const declaredClass = resolvedValueDeclaration;
   if (declaredClass && (ts.isClassDeclaration(declaredClass) || ts.isClassExpression(declaredClass))) {
     const promiseSubclass = resolvePromiseSubclassIdentifier(ctx, id);
-    if (promiseSubclass !== undefined && emitPromiseSubclassCtor(ctx, fctx, promiseSubclass)) {
+    if (promiseSubclass !== undefined && emitPromiseSubclassValueRead(ctx, fctx, promiseSubclass)) {
       return { kind: "externref" };
     }
     const classIdentity =
@@ -2926,7 +2927,7 @@ function nativeBuiltinInstanceOfTypeIdxs(ctx: CodegenContext, ctorName: string):
 }
 
 function isStandaloneWrapperConstructorName(ctorName: string): ctorName is StandaloneWrapperConstructorName {
-  return ctorName === "Number" || ctorName === "String" || ctorName === "Boolean" || ctorName === "BigInt";
+  return ["Number", "String", "Boolean", "BigInt", "Symbol"].includes(ctorName);
 }
 
 /** Emit the real standalone wrapper-brand predicate over the LHS carrier. */
@@ -3070,6 +3071,8 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     if (namespaceThrow) return namespaceThrow;
   }
 
+  const promiseLinked = tryEmitPromiseSubclassInstanceOf(ctx, fctx, expr); // (#6651 D4) standalone bag link
+  if (promiseLinked) return promiseLinked;
   // Promise subclasses are represented by cached host constructors. Their
   // instances therefore need the actual RHS value, not the name-based user
   // class/tag predicate used for WasmGC classes and other builtin subclasses.

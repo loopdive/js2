@@ -3,12 +3,12 @@
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
+import { allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 import { addOperandCallableSourceText, emitAddOrdinaryToPrimitiveResidue } from "./add-to-primitive.js";
 import { admitsObjectAddition } from "./addition-to-primitive.js";
 import { callableToStringLiteral } from "./callable-to-string.js";
 import { getExternrefToStringProvider } from "./coercion-engine.js";
-import { addStringConstantGlobal } from "./registry/imports.js";
+import { addStringConstantGlobal, localGlobalIdx } from "./registry/imports.js";
 import { stringConstantExternrefInstrs, ensureNativeStringHelpers } from "./native-strings.js";
 import { resolveStructNameForExpr, resolveStructName } from "./property-access.js";
 import { compileExpression, coerceType, flushLateImportShifts } from "./shared.js";
@@ -18,6 +18,7 @@ import { ensureLateImport } from "./expressions/late-imports.js";
 import { buildThrowJsErrorInstrs, noJsHost } from "./expressions/helpers.js";
 import { collectConcatOperands } from "./native-batched-concat.js";
 import { compileStringBinaryOp } from "./string-ops.js";
+import { readEnv } from "../env.js";
 
 // (#3753 S2) An `any`-typed operand the whole-program fixpoint already PROVED
 // numeric is not really `any` for arithmetic purposes. Inside a fnctor
@@ -31,7 +32,7 @@ import { compileStringBinaryOp } from "./string-ops.js";
 // so trusting them here is consistent with the representation those fields
 // ALREADY have, not a new claim. Standalone-only, like the verdicts.
 export function provenNumericOperand(ctx: CodegenContext, e: ts.Expression): boolean {
-  if (!ctx.standalone || process.env.JS2WASM_NUMERIC_OPERANDS === "0") return false;
+  if (!ctx.standalone || readEnv("JS2WASM_NUMERIC_OPERANDS") === "0") return false;
   const bare = ts.isParenthesizedExpression(e) ? e.expression : e;
   // `this.f` where every write to `f` is numeric.
   if (
@@ -59,9 +60,42 @@ export function provenNumericOperand(ctx: CodegenContext, e: ts.Expression): boo
   return false;
 }
 
+/**
+ * An `any`-typed operand whose LOCAL representation is already numeric, so
+ * `+` over it cannot concatenate: a numeric (non-BigInt) local, or `.length` of
+ * a local that inference typed as a native string. The native-first any-add
+ * admission below otherwise boxes `input.length + 1` through the generic
+ * `ToPrimitive` addition (~35x slower on the npm-compat react/standalone lane).
+ */
+function representationallyNumericOperand(ctx: CodegenContext, fctx: FunctionContext, e: ts.Expression): boolean {
+  let bare = e;
+  while (ts.isParenthesizedExpression(bare)) bare = bare.expression;
+  const localTypeOf = (node: ts.Expression): ValType | undefined => {
+    if (!ts.isIdentifier(node)) return undefined;
+    const index = fctx.localMap.get(node.text);
+    return index === undefined ? undefined : getLocalType(fctx, index);
+  };
+  if (ts.isIdentifier(bare)) {
+    const type = localTypeOf(bare);
+    return type?.kind === "f64" || type?.kind === "i32";
+  }
+  if (ts.isPropertyAccessExpression(bare) && bare.name.text === "length") {
+    const type = localTypeOf(bare.expression);
+    if (type?.kind !== "ref" && type?.kind !== "ref_null") return false;
+    return (
+      type.typeIdx >= 0 &&
+      (type.typeIdx === ctx.anyStrTypeIdx ||
+        type.typeIdx === ctx.nativeStrTypeIdx ||
+        type.typeIdx === ctx.consStrTypeIdx)
+    );
+  }
+  return false;
+}
+
 /** Admit any/unknown operands through the existing host or native string-capable addition lane. */
 export function admitsAnyAdditionOperands(
   ctx: CodegenContext,
+  fctx: FunctionContext,
   expr: ts.BinaryExpression,
   left: ts.Type,
   right: ts.Type,
@@ -73,12 +107,10 @@ export function admitsAnyAdditionOperands(
     // The earlier AnyValue arm uses this proof only for nonnegative indices.
     // Keep the original negative-index admission unchanged.
     const usesGroundedProof = ctx.anyValueTypeIdx >= 0;
-    const leftIsAnyish =
-      (left.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 &&
-      (!usesGroundedProof || !provenNumericOperand(ctx, expr.left));
-    const rightIsAnyish =
-      (right.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 &&
-      (!usesGroundedProof || !provenNumericOperand(ctx, expr.right));
+    const numeric = (operand: ts.Expression): boolean =>
+      usesGroundedProof && (provenNumericOperand(ctx, operand) || representationallyNumericOperand(ctx, fctx, operand));
+    const leftIsAnyish = (left.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 && !numeric(expr.left);
+    const rightIsAnyish = (right.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 && !numeric(expr.right);
     return leftIsAnyish || rightIsAnyish;
   }
   return false;
@@ -539,17 +571,61 @@ export function emitAnyAddFromExternTemps(
   return { kind: "f64" };
 }
 
-/** Positive syntactic proof only: annotations and names cannot establish values. */
-export function isPrimitiveConcatProducer(expression: ts.Expression): boolean {
+/** Operators whose result is a Number or BigInt, whatever their operands are. */
+const NUMERIC_RESULT_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.AsteriskToken,
+  ts.SyntaxKind.SlashToken,
+  ts.SyntaxKind.PercentToken,
+  ts.SyntaxKind.AsteriskAsteriskToken,
+  ts.SyntaxKind.AmpersandToken,
+  ts.SyntaxKind.BarToken,
+  ts.SyntaxKind.CaretToken,
+  ts.SyntaxKind.LessThanLessThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+]);
+
+/** A local or module binding whose physical slot can only hold a primitive (native string, number, boolean). */
+function primitiveBindingSlot(ctx: CodegenContext, fctx: FunctionContext, node: ts.Identifier): boolean {
+  const localIdx = fctx.localMap.get(node.text);
+  let type: ValType | undefined;
+  if (localIdx !== undefined) type = getLocalType(fctx, localIdx);
+  else {
+    const globalIdx = ctx.moduleGlobals.get(node.text);
+    if (globalIdx !== undefined) type = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type;
+  }
+  // i32 slots hold numbers or booleans; i64 (BigInt) is deliberately excluded.
+  if (type?.kind === "f64" || type?.kind === "i32") return true;
+  if (type?.kind !== "ref" && type?.kind !== "ref_null") return false;
+  return (
+    type.typeIdx >= 0 &&
+    (type.typeIdx === ctx.anyStrTypeIdx || type.typeIdx === ctx.nativeStrTypeIdx || type.typeIdx === ctx.consStrTypeIdx)
+  );
+}
+
+/**
+ * Positive proof only: annotations and names cannot establish values. With a
+ * function context, a binding whose physical slot is a native string, f64 or i32 is
+ * primitive by representation (not by its declared type).
+ */
+export function isPrimitiveConcatProducer(
+  expression: ts.Expression,
+  ctx?: CodegenContext,
+  fctx?: FunctionContext,
+): boolean {
   let node = expression;
+  let asserted = false;
   while (
     ts.isParenthesizedExpression(node) ||
     ts.isAsExpression(node) ||
     ts.isTypeAssertionExpression(node) ||
     ts.isNonNullExpression(node) ||
     ts.isSatisfiesExpression(node)
-  )
+  ) {
+    if (!ts.isParenthesizedExpression(node)) asserted = true;
     node = node.expression;
+  }
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isNumericLiteral(node)) return true;
   if (
     node.kind === ts.SyntaxKind.TrueKeyword ||
@@ -557,37 +633,43 @@ export function isPrimitiveConcatProducer(expression: ts.Expression): boolean {
     node.kind === ts.SyntaxKind.NullKeyword
   )
     return true;
+  // An assertion (`n as string`) makes the chain's static string type a lie:
+  // numeric slots must then keep the dynamic `+` dispatch.
+  if (ctx && fctx && ts.isIdentifier(node)) return !asserted && primitiveBindingSlot(ctx, fctx, node);
   // These operators produce primitive values even when their operand evaluates
   // an object. Evaluation (including throws) still occurs at its original node.
   if (ts.isTypeOfExpression(node) || ts.isVoidExpression(node) || ts.isTemplateExpression(node)) return true;
   if (ts.isPrefixUnaryExpression(node))
-    return node.operator === ts.SyntaxKind.ExclamationToken || isPrimitiveConcatProducer(node.operand);
+    return (
+      node.operator === ts.SyntaxKind.ExclamationToken ||
+      // Unary `+` is ToNumber (throws on BigInt), so it always yields a Number.
+      node.operator === ts.SyntaxKind.PlusToken ||
+      isPrimitiveConcatProducer(node.operand, ctx, fctx)
+    );
   if (ts.isConditionalExpression(node))
-    return isPrimitiveConcatProducer(node.whenTrue) && isPrimitiveConcatProducer(node.whenFalse);
+    return isPrimitiveConcatProducer(node.whenTrue, ctx, fctx) && isPrimitiveConcatProducer(node.whenFalse, ctx, fctx);
   if (ts.isBinaryExpression(node)) {
     const op = node.operatorToken.kind;
-    // Only recursively primitive arithmetic/logical expressions earn batching.
-    // Unknown operations (assignment, comma, comparison of objects) decline.
+    // Arithmetic and bitwise operators apply ToNumeric at their own node. With
+    // a Number literal operand (or `>>>`), mixing in a BigInt throws there, so
+    // the result is a Number even over object operands (`seed % 7`).
     if (
-      [
-        ts.SyntaxKind.PlusToken,
-        ts.SyntaxKind.MinusToken,
-        ts.SyntaxKind.AsteriskToken,
-        ts.SyntaxKind.SlashToken,
-        ts.SyntaxKind.PercentToken,
-        ts.SyntaxKind.AsteriskAsteriskToken,
-        ts.SyntaxKind.AmpersandToken,
-        ts.SyntaxKind.BarToken,
-        ts.SyntaxKind.CaretToken,
-        ts.SyntaxKind.LessThanLessThanToken,
-        ts.SyntaxKind.GreaterThanGreaterThanToken,
-        ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
-        ts.SyntaxKind.AmpersandAmpersandToken,
-        ts.SyntaxKind.BarBarToken,
-        ts.SyntaxKind.QuestionQuestionToken,
-      ].includes(op)
+      NUMERIC_RESULT_OPERATORS.has(op) &&
+      (op === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken ||
+        ts.isNumericLiteral(node.left) ||
+        ts.isNumericLiteral(node.right))
+    )
+      return true;
+    // Otherwise only recursively primitive operands earn batching. Unknown
+    // operations (assignment, comma, comparison of objects) decline.
+    if (
+      NUMERIC_RESULT_OPERATORS.has(op) ||
+      op === ts.SyntaxKind.PlusToken ||
+      op === ts.SyntaxKind.AmpersandAmpersandToken ||
+      op === ts.SyntaxKind.BarBarToken ||
+      op === ts.SyntaxKind.QuestionQuestionToken
     ) {
-      return isPrimitiveConcatProducer(node.left) && isPrimitiveConcatProducer(node.right);
+      return isPrimitiveConcatProducer(node.left, ctx, fctx) && isPrimitiveConcatProducer(node.right, ctx, fctx);
     }
   }
   return false;
@@ -607,7 +689,7 @@ export function compileStringBinaryOpWithNativeAddition(
     !noJsHost(ctx) ||
     !ctx.nativeStrings ||
     ctx.anyStrTypeIdx < 0 ||
-    collectConcatOperands(ctx, expr).every(isPrimitiveConcatProducer)
+    collectConcatOperands(ctx, expr).every((operand) => isPrimitiveConcatProducer(operand, ctx, fctx))
   )
     return compileStringBinaryOp(ctx, fctx, expr, op);
   // The existing object-addition arm declines callables whose runtime closure

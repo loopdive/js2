@@ -5,7 +5,11 @@ import {
   planNativeInvocationRequirements,
   type NativeInvocationRequirements,
 } from "../../../ir/program/native-invocation-requirements.js";
-import type { NativeSourceClosureRequirements } from "../../../ir/program/native-source-closure-requirements.js";
+import {
+  planNativeSourceClosureRequirements,
+  type NativeSourceClosureRequirements,
+} from "../../../ir/program/native-source-closure-requirements.js";
+import type { NativeStringValueDemands } from "../../../ir/program/native-string-value-demands.js";
 import type { NativeStringValueReservationInput } from "./native-string-values.js";
 import type { IrUnitId } from "../../../shared/contracts/ir-identity.js";
 import { nativeAsyncCallableValueTypes } from "../../../ir/runtime/native-async-callables.js";
@@ -31,7 +35,28 @@ export interface NativeInvocationPhysicalSetup {
   readonly methodArities: readonly number[];
   readonly applyVector: boolean;
   readonly sourceUseCount: number;
+  readonly getterUseCount: number;
   readonly completionScope: "selected-source-invocation";
+}
+
+/** Select from actual source/Get occurrences, retaining the issued C1/C2 graph. */
+export function nativeStringInvocationRequirements(
+  demands: NativeStringValueDemands,
+  utf8Storage: boolean,
+  expected?: NativeInvocationRequirements,
+): NativeInvocationRequirements | undefined {
+  if (expected) {
+    assertNativeInvocationRequirementsCurrent(expected);
+    if (
+      expected.source.demands.program !== demands.program ||
+      expected.source.demands.projection !== demands.projection ||
+      expected.runtimeCreated.options.utf8Storage !== utf8Storage
+    )
+      throw new Error("native invocation ABI: foreign string/value demand owner");
+    return expected;
+  }
+  const source = planNativeSourceClosureRequirements(demands.program, demands.projection);
+  return source && planNativeInvocationRequirements(source, { utf8Storage });
 }
 
 /** Retain requirement and resource gaps before computing supplemental ABI order. */
@@ -43,9 +68,12 @@ export function planNativeInvocationInput(
   readonly requirements: NativeInvocationRequirements | undefined;
   readonly gaps: readonly { readonly detail: string; readonly unitId: IrUnitId | undefined }[];
 } {
-  const requirements = source && planNativeInvocationRequirements(source, { utf8Storage });
+  const requirements =
+    native?.invocationRequirements ?? (source && planNativeInvocationRequirements(source, { utf8Storage }));
   const gaps: { detail: string; unitId: IrUnitId | undefined }[] = [];
   if (requirements) {
+    assertNativeInvocationRequirementsCurrent(requirements);
+    if (requirements.source !== source) throw new Error("native invocation ABI: different source resource owner");
     for (const gap of requirements.gaps) gaps.push({ detail: gap.detail, unitId: gap.unitId });
     if (native?.plan.mode !== "number-boundary" || !native.valueRequirements)
       gaps.push({
@@ -68,6 +96,7 @@ export function nativeInvocationSetup(
         methodArities: requirements.methodArities,
         applyVector: requirements.applyVector,
         sourceUseCount: requirements.uses.length,
+        getterUseCount: requirements.getterUses.length,
         completionScope: requirements.completionScope,
       }
     : undefined;

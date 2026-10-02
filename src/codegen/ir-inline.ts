@@ -179,6 +179,7 @@ import { IR_NUMBER_TO_FIXED_FN } from "../ir/string-runtime.js";
 import { EXEC_CENSUS_PREFIX } from "./exec-census.js";
 import type { CodegenContext } from "./context/types.js";
 import { IR_NATIVE_MAP_GET_NUM_FN, IR_NATIVE_MAP_NEW_FN, IR_NATIVE_MAP_SET_NUM_FN } from "./ir-native-map.js";
+import { readEnv } from "../env.js";
 
 // ---------------------------------------------------------------------------
 // Options
@@ -408,7 +409,10 @@ function calleeFamily(name: string): string {
 // Traversal primitives
 // ---------------------------------------------------------------------------
 
-function childBodies(instr: Instr): Instr[][] {
+/** (#6759) Shared answer for every non-structured instruction; never mutated. */
+const NO_CHILD_BODIES: readonly Instr[][] = Object.freeze([]);
+
+function childBodies(instr: Instr): readonly Instr[][] {
   switch (instr.op) {
     case "block":
     case "loop":
@@ -423,7 +427,7 @@ function childBodies(instr: Instr): Instr[][] {
       return out;
     }
     default:
-      return [];
+      return NO_CHILD_BODIES;
   }
 }
 
@@ -446,14 +450,15 @@ interface SharedInstructionArrayOwnership {
  */
 function inspectSharedInstructionArrayOwnership(mod: WasmModule): SharedInstructionArrayOwnership {
   const incoming = new WeakMap<Instr[], number>();
-  const discovered = new WeakSet<Instr[]>();
   const arrays: Instr[][] = [];
   const pending: Instr[][] = [];
 
+  // (#6759) `incoming` already records discovery: an array is new exactly when
+  // it has no count yet, so no separate discovered-set is kept.
   const noteReference = (arr: Instr[]): void => {
-    incoming.set(arr, (incoming.get(arr) ?? 0) + 1);
-    if (discovered.has(arr)) return;
-    discovered.add(arr);
+    const prior = incoming.get(arr);
+    incoming.set(arr, (prior ?? 0) + 1);
+    if (prior !== undefined) return;
     arrays.push(arr);
     pending.push(arr);
   };
@@ -496,6 +501,9 @@ function inspectSharedInstructionArrayOwnership(mod: WasmModule): SharedInstruct
   }
 
   const sharedFunctionPositions = new Set<number>();
+  // (#6759) With no multiply-parented array no function can reach one, so the
+  // per-function reachability walk below would find nothing.
+  if (sharedSeeds.length === 0) return { sharedFunctionPositions, sharedRegionFuncHandles };
   for (let position = 0; position < mod.functions.length; position++) {
     const seen = new WeakSet<Instr[]>();
     const stack = [mod.functions[position]!.body];
@@ -593,18 +601,6 @@ export type DeclineReason =
   | "growth-cap"
   | "loop-in-callee"
   | "no-rule";
-
-function calleeIsSafe(fn: WasmFunction, results: ValType[]): DeclineReason | null {
-  if (fn.body.length === 0) return "unsafe:empty-body";
-  if (results.length > 1) return "unsafe:multi-result";
-  let bad: DeclineReason | null = null;
-  forEachInstr(fn.body, (i) => {
-    if (bad) return;
-    if (i.op === "return_call" || i.op === "return_call_ref") bad = "unsafe:return-call";
-    else if (i.op === "try" || i.op === "try_table" || i.op === "rethrow") bad = "unsafe:try";
-  });
-  return bad;
-}
 
 // ---------------------------------------------------------------------------
 // Body cloning + relocation
@@ -791,6 +787,13 @@ function constArgs(body: Instr[], callIdx: number, params: ValType[]): (ConstVal
     k--;
   }
   return out;
+}
+
+/** (#6759) Exact identity of a constant-argument vector (distinguishes -0). */
+function constArgsKey(consts: readonly (ConstVal | null)[]): string {
+  let key = "";
+  for (const c of consts) key += c === null ? "_," : `${c.op}:${Object.is(c.value, -0) ? "-0" : String(c.value)},`;
+  return key;
 }
 
 /**
@@ -1058,6 +1061,94 @@ interface ModuleInitInlineBoundary {
   callee(name: string): boolean;
 }
 
+/** Static hotness weight per enclosing `loop` (10^loopDepth). */
+const LOOP_WEIGHT = 10;
+
+/**
+ * The call graph (`callerCount`, `addressTaken`, and whether a body holds any
+ * `call` at all) and the static hotness: 10^loopDepth, propagated one step.
+ * Hotness is a property of the PROGRAM, not of any corpus — see the module
+ * header on why #3927 §7's objection to frequency ranking does not reach it.
+ *
+ * (#6759) One walk per function feeds both. A function that reaches no
+ * multiply-parented array is a tree, so the DAG walk the call graph needs and
+ * the tree walk hotness needs visit the same instructions: its direct call
+ * sites are recorded once as (callee position, 10^loopDepth) pairs and replayed
+ * in both hotness rounds. Shared functions keep the DAG walk and, as before,
+ * contribute no hotness.
+ */
+function callGraphAndHotness(
+  mod: WasmModule,
+  posOf: (h: number) => number,
+  sharedFunctionPositions: ReadonlySet<number>,
+): { callerCount: Int32Array; addressTaken: Uint8Array; hasAnyCall: Uint8Array; hot: Float64Array } {
+  const callerCount = new Int32Array(mod.functions.length);
+  const addressTaken = new Uint8Array(mod.functions.length);
+  const callSitesOf: (number[] | undefined)[] = new Array(mod.functions.length);
+  const hasAnyCall = new Uint8Array(mod.functions.length);
+  for (let ci = 0; ci < mod.functions.length; ci++) {
+    const fn = mod.functions[ci];
+    if (sharedFunctionPositions.has(ci)) {
+      forEachInstrDag(fn.body, (i) => {
+        if (i.op === "call") {
+          hasAnyCall[ci] = 1;
+          const p = posOf(i.funcIdx);
+          if (p >= 0 && p < callerCount.length) callerCount[p]++;
+        } else if (i.op === "ref.func") {
+          const p = posOf(i.funcIdx);
+          if (p >= 0 && p < addressTaken.length) addressTaken[p] = 1;
+        }
+      });
+      continue;
+    }
+    const sites: number[] = [];
+    const walk = (body: Instr[], depth: number): void => {
+      for (const instr of body) {
+        if (instr.op === "call") {
+          hasAnyCall[ci] = 1;
+          const p = posOf(instr.funcIdx);
+          if (p >= 0 && p < callerCount.length) {
+            callerCount[p]++;
+            sites.push(p, Math.pow(LOOP_WEIGHT, depth));
+          }
+        } else if (instr.op === "ref.func") {
+          const p = posOf(instr.funcIdx);
+          if (p >= 0 && p < addressTaken.length) addressTaken[p] = 1;
+        }
+        if (instr.op === "loop") walk(instr.body, depth + 1);
+        else for (const child of childBodies(instr)) walk(child, depth);
+      }
+    };
+    walk(fn.body, 0);
+    callSitesOf[ci] = sites;
+  }
+  for (const el of mod.elements) {
+    for (const h of el.funcIndices) {
+      const p = posOf(h);
+      if (p >= 0 && p < addressTaken.length) addressTaken[p] = 1;
+    }
+  }
+
+  const hot = new Float64Array(mod.functions.length).fill(1);
+  for (let round = 0; round < 2; round++) {
+    const next = Float64Array.from(hot);
+    for (let ci = 0; ci < mod.functions.length; ci++) {
+      // Loop depth is an incoming-context property. A multiply-parented array
+      // can have incompatible depths, so leave the whole caller opaque rather
+      // than selecting an arbitrary parent.
+      const sites = callSitesOf[ci];
+      if (sites === undefined) continue;
+      for (let k = 0; k < sites.length; k += 2) {
+        const p = sites[k];
+        const w = hot[ci] * sites[k + 1];
+        if (w > next[p]) next[p] = Math.min(w, 1e9);
+      }
+    }
+    hot.set(next);
+  }
+  return { callerCount, addressTaken, hasAnyCall, hot };
+}
+
 /** Keep bounded module-init bodies opaque to the late user-function inliner. */
 function moduleInitInlineBoundary(helperNames: ReadonlySet<string>): ModuleInitInlineBoundary {
   const hasChunks = helperNames.size > 0;
@@ -1090,7 +1181,7 @@ function shouldSkipModuleInitInlineCallee(
 }
 
 export function inlineUserFunctions(ctx: CodegenContext): void {
-  const opts = parseInlineOptions(process.env.JS2WASM_IR_INLINE);
+  const opts = parseInlineOptions(readEnv("JS2WASM_IR_INLINE"));
   if (!opts.enabled) return;
   const mod = ctx.mod;
   const moduleInitBoundary = moduleInitInlineBoundary(ctx.moduleInitChunkHelperNames);
@@ -1123,8 +1214,6 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
     ctx.sourceFunctionStrictnessByBody.get(fn.body) ?? ctx.sourceFunctionStrictness.get(fn.name);
 
   // --- call graph -----------------------------------------------------------
-  const callerCount = new Int32Array(mod.functions.length);
-  const addressTaken = new Uint8Array(mod.functions.length);
   const posOf = (h: number): number => absoluteFuncIndex(mod, h) - numImportFuncs;
   const { sharedFunctionPositions, sharedRegionFuncHandles } = inspectSharedInstructionArrayOwnership(mod);
   const singleCallerIneligible = new Set<number>();
@@ -1133,53 +1222,7 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
     if (position >= 0 && position < mod.functions.length) singleCallerIneligible.add(position);
   }
 
-  for (const fn of mod.functions) {
-    forEachInstrDag(fn.body, (i) => {
-      if (i.op === "call") {
-        const p = posOf(i.funcIdx);
-        if (p >= 0 && p < callerCount.length) callerCount[p]++;
-      } else if (i.op === "ref.func") {
-        const p = posOf(i.funcIdx);
-        if (p >= 0 && p < addressTaken.length) addressTaken[p] = 1;
-      }
-    });
-  }
-  for (const el of mod.elements) {
-    for (const h of el.funcIndices) {
-      const p = posOf(h);
-      if (p >= 0 && p < addressTaken.length) addressTaken[p] = 1;
-    }
-  }
-
-  // --- static hotness: 10^loopDepth, propagated one step ---------------------
-  // Property of the PROGRAM, not of any corpus — see the module header on why
-  // #3927 §7's objection to frequency ranking does not reach this.
-  const LOOP_WEIGHT = 10;
-  const hot = new Float64Array(mod.functions.length).fill(1);
-  for (let round = 0; round < 2; round++) {
-    const next = Float64Array.from(hot);
-    for (let ci = 0; ci < mod.functions.length; ci++) {
-      // Loop depth is an incoming-context property. A multiply-parented array
-      // can have incompatible depths, so leave the whole caller opaque rather
-      // than selecting an arbitrary parent.
-      if (sharedFunctionPositions.has(ci)) continue;
-      const walk = (body: Instr[], depth: number): void => {
-        for (const instr of body) {
-          if (instr.op === "call") {
-            const p = posOf(instr.funcIdx);
-            if (p >= 0 && p < next.length) {
-              const w = hot[ci] * Math.pow(LOOP_WEIGHT, depth);
-              if (w > next[p]) next[p] = Math.min(w, 1e9);
-            }
-          }
-          if (instr.op === "loop") walk(instr.body, depth + 1);
-          else for (const child of childBodies(instr)) walk(child, depth);
-        }
-      };
-      walk(mod.functions[ci].body, 0);
-    }
-    hot.set(next);
-  }
+  const { callerCount, addressTaken, hasAnyCall, hot } = callGraphAndHotness(mod, posOf, sharedFunctionPositions);
 
   // --- counter global (needs to exist before any body references it) --------
   const counterGlobalIdx = installInlineCounter(ctx, opts);
@@ -1195,6 +1238,8 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
   );
   // Per-callee analysis cache — see the comment at its use in the site loop.
   const calleeFacts = new Map<number, CalleeFacts>();
+  // (#6759) callee position -> constants key -> specialised effective size.
+  const specialisedSizes = new Map<number, Map<string, number>>();
 
   const stats: Stats = {
     functions: mod.functions.length,
@@ -1220,6 +1265,8 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
   for (const ci of callerOrder) {
     const caller = mod.functions[ci];
     if (shouldSkipInlineCaller(ci, caller, moduleInitBoundary, sharedFunctionPositions)) continue;
+    // (#6759) No `call` anywhere in the body: the rewrite below would only walk.
+    if (!hasAnyCall[ci]) continue;
     const callerType = funcTypeOf(caller);
     if (!callerType) continue;
 
@@ -1284,13 +1331,7 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
         // every cached value is exactly what the per-site computation returned.
         let facts = calleeFacts.get(cp);
         if (facts === undefined) {
-          facts = {
-            unsafe: calleeIsSafe({ ...callee, body: calleeBody }, calleeType.results),
-            rawSize: countInstrs(calleeBody),
-            effSize: effectiveSize(calleeBody),
-            isLeaf: !hasCall(calleeBody),
-            loops: hasLoop(calleeBody),
-          };
+          facts = computeCalleeFacts(calleeBody, calleeType.results);
           calleeFacts.set(cp, facts);
         }
         const unsafe = facts.unsafe;
@@ -1311,9 +1352,25 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
         if (opts.specialise && nParams > 0) {
           const consts = constArgs(body, k, calleeType.params);
           if (consts.some((c) => c !== null)) {
-            const s = specialise(calleeBody.map(cloneInstr), consts);
-            specSize = effectiveSize(s);
-            if (specSize < effSize) specBody = s;
+            // (#6759) `specialise` never mutates its input and a clone is
+            // content-equal, so size the specialisation on the ORIGINAL body
+            // and clone only when it is kept — most probes are discarded. The
+            // size is a function of the callee's original content and the
+            // constants, so it is memoized per (callee, constants) — except for
+            // a precomposed adapter, whose LIVE body can change between sites.
+            const live = precomposedAdapterPositions.has(cp);
+            const key = live ? "" : constArgsKey(consts);
+            let sizes = live ? undefined : specialisedSizes.get(cp);
+            let size = sizes?.get(key);
+            if (size === undefined) {
+              size = effectiveSize(specialise(calleeBody, consts));
+              if (!live) {
+                if (!sizes) specialisedSizes.set(cp, (sizes = new Map()));
+                sizes.set(key, size);
+              }
+            }
+            specSize = size;
+            if (specSize < effSize) specBody = specialise(calleeBody.map(cloneInstr), consts);
           }
         }
 
@@ -1384,7 +1441,9 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
         // First mutation of this caller: preserve its original body NOW, so a
         // later read of it as a CALLEE still sees the pre-pass content
         // (copy-on-write contract of `snapshot`, see its declaration).
-        preserveOriginal(ci);
+        // (#6759) `originalOf` is only ever read for a CALLEE, at a `call` site
+        // in pre-pass code, so a function nothing calls never needs the copy.
+        if (callerCount[ci] > 0) preserveOriginal(ci);
         const base = callerType.params.length + caller.locals.length;
         const fresh: LocalDef[] = [];
         for (let p = 0; p < nParams; p++)
@@ -1439,24 +1498,38 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
   report(stats, opts, mod, sharedFunctionPositions);
 }
 
-function hasCall(body: Instr[]): boolean {
-  let found = false;
-  forEachInstr(body, (i) => {
-    if (i.op === "call" || i.op === "call_ref" || i.op === "call_indirect") found = true;
-  });
-  return found;
-}
-
 /**
- * Rule 5 — does the callee's own body contain a `loop`? See the module header
- * for why a loop-carrying callee is excluded from the loop-leaf rule.
+ * (#6759) Every per-callee fact in one pre-order walk. Equal, field by field,
+ * to the five separate walks it replaces: `calleeIsSafe` (first unsafe op in
+ * pre-order, after the empty-body / multi-result checks), `countInstrs`,
+ * `effectiveSize` (instructions outside any cold region), `!hasCall` and
+ * `hasLoop` — the rule-5 question of whether the callee's own body contains a
+ * `loop` (see the module header for why that excludes it from loop-leaf).
  */
-function hasLoop(body: Instr[]): boolean {
-  let found = false;
-  forEachInstr(body, (i) => {
-    if (i.op === "loop") found = true;
-  });
-  return found;
+function computeCalleeFacts(body: Instr[], results: ValType[]): CalleeFacts {
+  let unsafe: DeclineReason | null =
+    body.length === 0 ? "unsafe:empty-body" : results.length > 1 ? "unsafe:multi-result" : null;
+  const scanUnsafe = unsafe === null;
+  let rawSize = 0;
+  let effSize = 0;
+  let anyCall = false;
+  let loops = false;
+  const walk = (b: Instr[], cold: boolean): void => {
+    for (const i of b) {
+      rawSize++;
+      if (!cold) effSize++;
+      const op = i.op;
+      if (op === "call" || op === "call_ref" || op === "call_indirect") anyCall = true;
+      else if (op === "loop") loops = true;
+      if (scanUnsafe && unsafe === null) {
+        if (op === "return_call" || op === "return_call_ref") unsafe = "unsafe:return-call";
+        else if (op === "try" || op === "try_table" || op === "rethrow") unsafe = "unsafe:try";
+      }
+      for (const child of childBodies(i)) walk(child, cold || isColdRegion(child));
+    }
+  };
+  walk(body, false);
+  return { unsafe, rawSize, effSize, isLeaf: !anyCall, loops };
 }
 
 function report(
@@ -1468,7 +1541,7 @@ function report(
   // Three dense lines per compile is a diagnostic, not a compiler message.
   // Printed when the operator asked for the flag (including `report`, whose
   // whole purpose is the print) — silent on a plain default build.
-  if (!opts.report && !opts.verbose && !tunedFlagExplicit(process.env.JS2WASM_IR_INLINE)) return;
+  if (!opts.report && !opts.verbose && !tunedFlagExplicit(readEnv("JS2WASM_IR_INLINE"))) return;
   const w = (s: string): void => void process.stderr.write(s);
   const sizes = mod.functions
     .map((f, index) => (sharedFunctionPositions.has(index) ? countInstrsDag(f.body) : countInstrs(f.body)))

@@ -2532,7 +2532,8 @@ function emitPromiseProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, 
       // is receivers the spec already rejects. Without it `emitStandalonePromiseThen`'s
       // `ref.cast` trapped on a foreign `this` instead of throwing.
       emitPromiseReceiverIsPromiseGuard(ctx, fctx);
-      emitStandalonePromiseThen(ctx, fctx, receiver, dynamicPromiseHandler(2), dynamicPromiseHandler(3));
+      // (#6651 D7) `true`: this IS the intrinsic `then` — an own `p.then` must not re-dispatch.
+      emitStandalonePromiseThen(ctx, fctx, receiver, dynamicPromiseHandler(2), dynamicPromiseHandler(3), true);
       return { kind: "externref" };
     case "catch": {
       const generic = emitPromiseProtoCatchBody(ctx, fctx);

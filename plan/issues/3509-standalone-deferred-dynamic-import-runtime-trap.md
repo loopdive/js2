@@ -138,3 +138,10 @@ does `language/module-code/top-level-await/module-graphs-does-not-hang.js` under
 - `pnpm run format:check`: pass.
 - Issue index, issue/spec coverage, issue-ID, Test262 hard-error, and IR fallback
   gates: pass (IR unintended fallback delta **0**).
+
+## Superseded (2026-09-28)
+
+#3494 replaced the synchronous call-site trap with a native Promise: an
+in-graph evaluated target resolves to its namespace, every other standalone
+`import()` rejects with a TypeError. The `deferredDynamicImportTrap` marker is
+gone.

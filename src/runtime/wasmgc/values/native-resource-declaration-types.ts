@@ -5,8 +5,10 @@ import type { FieldDef } from "../../../wasm/model/module-records.js";
 export type NativeDeclaredValType =
   | Exclude<ValType, { kind: "ref" | "ref_null" }>
   | { readonly kind: "ref" | "ref_null"; readonly typeKey: string };
-// A plain final struct field may use its own declaration key. Other references
-// (including arrays, parents, globals and signatures) still require prior keys.
+// A struct field may use its own declaration key only for a plain final struct
+// or an explicit extensible root (parent: { kind: "root" }, final: false).
+// Other references (including parents) still require prior keys; a self field
+// never authorizes a self-parent or a mutually recursive declaration population.
 export interface NativeDeclaredSignature {
   readonly params: readonly NativeDeclaredValType[];
   readonly results: readonly NativeDeclaredValType[];

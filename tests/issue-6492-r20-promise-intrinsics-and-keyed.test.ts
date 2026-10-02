@@ -135,7 +135,7 @@ describe("#6492 r20 — symbol keys and function metadata are restored", () => {
     const target: any = {};
     Object.defineProperty(target, Symbol.toStringTag, { value: "Thing", configurable: true });
     const snap = snapshotSymbolAndAccessorMeta(target);
-    // biome-ignore lint/performance/noDelete: reproducing test262's verifyProperty probe verbatim
+    // Reproducing test262's verifyProperty probe verbatim
     delete target[Symbol.toStringTag];
     expect(Object.getOwnPropertySymbols(target)).toHaveLength(0);
     restoreSymbolAndAccessorMeta(target, snap);

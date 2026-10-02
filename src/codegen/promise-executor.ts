@@ -40,7 +40,8 @@ import { ensureExnTag } from "./registry/imports.js";
 import { coerceType, emitGuardedFuncRefCast, pushDefaultValue } from "./type-coercion.js";
 import { emitNullCheckThrow } from "./property-access.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
-import { addUnionImportsViaRegistry } from "./shared.js";
+import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { buildStandardTryTable } from "../ir/try-table.js";
 import {
   PROMISE_STATE_PENDING,
@@ -57,6 +58,7 @@ import {
   buildPromiseSettleClosureInstrs,
   isStandalonePromiseActive,
 } from "./async-scheduler.js";
+import { buildSettlePairUnresolvedInstrs } from "../runtime/wasmgc/promise/resolution-bodies.js"; // (#5197 r3)
 
 /**
  * #2959 — Emit the native standalone `new Promise(executor)` lowering.
@@ -200,10 +202,22 @@ export function emitStandalonePromiseFromExecutor(
         payloadType: { kind: "externref" },
         body: [
           { op: "local.set", index: reasonLocal },
-          { op: "local.get", index: pLocal },
-          { op: "local.get", index: reasonLocal },
-          { op: "call", funcIdx: rejectFuncIdx },
-          { op: "drop" },
+          // (#5197 r3) [[AlreadyResolved]]: a throw after resolve/reject ran is ignored.
+          ...buildSettlePairUnresolvedInstrs(
+            closures.capTypeIdx,
+            [{ op: "local.get", index: rvLocal }],
+            [{ op: "local.get", index: rjLocal }],
+          ),
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: pLocal },
+              { op: "local.get", index: reasonLocal },
+              { op: "call", funcIdx: rejectFuncIdx },
+              { op: "drop" },
+            ],
+          },
         ],
       },
     ]),
@@ -213,6 +227,26 @@ export function emitStandalonePromiseFromExecutor(
   fctx.body.push({ op: "local.get", index: pLocal });
   fctx.body.push({ op: "extern.convert_any" });
   return true;
+}
+
+/**
+ * (#6651 C5) The §27.2.3.1 step-2 guard's pieces: the `typeof`-function
+ * classifier and the TypeError throw, both registered before the caller bakes
+ * any funcIdx. `undefined` (no guard, the pre-C5 shape) when the classifier
+ * cannot be registered.
+ */
+function ensureNotCallableGuard(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+): { typeofFunctionIdx: number; throwInstrs: Instr[] } | undefined {
+  ensureLateImport(ctx, "__typeof_function", [{ kind: "externref" }], [{ kind: "i32" }]);
+  const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "Promise resolver is not a function", {
+    flush: fctx,
+    forceInModuleCtor: true,
+  });
+  flushLateImportShifts(ctx, fctx);
+  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+  return typeofFunctionIdx === undefined ? undefined : { typeofFunctionIdx, throwInstrs };
 }
 
 /**
@@ -234,10 +268,10 @@ export function emitStandalonePromiseFromExecutor(
  * when inapplicable (host/gc mode, deps unavailable), so the caller falls
  * through to the `Promise_new` host path byte-unchanged.
  *
- * BOUNDARY: a non-callable executor value is dispatched through
- * `__apply_closure` (which no-ops / returns undefined on a non-closure) rather
- * than throwing the spec §27.2.3.1-step-2 TypeError — the same no-throw
- * discipline as the other #2903 native bodies; the promise simply stays pending.
+ * (#6651 C5) A non-callable executor value throws the §27.2.3.1-step-2
+ * TypeError before the promise is allocated. It used to be dispatched through
+ * `__apply_closure` (a no-op on a non-closure), leaving a pending promise —
+ * which is how `class P extends Promise {}; new P()` completed normally.
  */
 export function emitStandalonePromiseFromExecutorValue(
   ctx: CodegenContext,
@@ -254,6 +288,11 @@ export function emitStandalonePromiseFromExecutorValue(
   // Open-`any` closure bridge + the boxed-any args vec builders.
   ensureObjectRuntime(ctx);
   addUnionImportsViaRegistry(ctx);
+  // (#6651 C5) §27.2.3.1 step 2 — `IsCallable(executor)` false → TypeError,
+  // BEFORE the promise exists. Registered here, ahead of every funcIdx this
+  // lowering bakes. `typeof` is the IsCallable test (§13.5.3: "function" iff
+  // the object has [[Call]]), not `__is_callable`, which excludes classes.
+  const notCallable = ensureNotCallableGuard(ctx, fctx);
   const applyClosureIdx = reserveApplyClosure(ctx);
   const objVecNewIdx = ctx.funcMap.get("__objvec_new");
   const objVecPushIdx = ctx.funcMap.get("__objvec_push");
@@ -264,6 +303,14 @@ export function emitStandalonePromiseFromExecutorValue(
   const execLocal = allocLocal(fctx, `__pexecv_fn_${fctx.locals.length}`, { kind: "externref" });
   compileExecutorValue();
   fctx.body.push({ op: "local.set", index: execLocal });
+  if (notCallable) {
+    fctx.body.push(
+      { op: "local.get", index: execLocal },
+      { op: "call", funcIdx: ctx.funcMap.get("__typeof_function") ?? notCallable.typeofFunctionIdx },
+      { op: "i32.eqz" },
+      { op: "if", blockType: { kind: "empty" }, then: notCallable.throwInstrs },
+    );
+  }
 
   // 2. Allocate the pending $Promise.
   const pLocal = allocLocal(fctx, `__pexecv_p_${fctx.locals.length}`, { kind: "ref", typeIdx: promiseTypeIdx });
@@ -313,10 +360,22 @@ export function emitStandalonePromiseFromExecutorValue(
         payloadType: { kind: "externref" },
         body: [
           { op: "local.set", index: reasonLocal },
-          { op: "local.get", index: pLocal },
-          { op: "local.get", index: reasonLocal },
-          { op: "call", funcIdx: rejectFuncIdx },
-          { op: "drop" },
+          // (#5197 r3) [[AlreadyResolved]]: a throw after resolve/reject ran is ignored.
+          ...buildSettlePairUnresolvedInstrs(
+            closures.capTypeIdx,
+            [{ op: "local.get", index: rvLocal }],
+            [{ op: "local.get", index: rjLocal }],
+          ),
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: pLocal },
+              { op: "local.get", index: reasonLocal },
+              { op: "call", funcIdx: rejectFuncIdx },
+              { op: "drop" },
+            ],
+          },
         ],
       },
     ]),

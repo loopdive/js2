@@ -36,9 +36,8 @@
  *   - a value whose serialisation is *undefined* (function / symbol / an
  *     unsupported ref) returns a null `$AnyString` from the recursion — the
  *     array arm emits `null` for it, the object arm omits the property.
- *   - circular references: bounded by a recursion-depth cap (returns the
- *     empty serialisation on overflow rather than trapping). A proper
- *     TypeError-throwing seen-set is a follow-up (noted in the issue file).
+ *   - circular references: a TypeError via the depth-indexed stack in
+ *     json-stringify-carriers.ts (#1599); the 512 depth cap stays as a bound.
  */
 import type { Instr, ValType } from "../ir/types.js";
 import { ensureAnyValueType, undefinedSingletonActive } from "./any-helpers.js";
@@ -58,6 +57,12 @@ import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { reserveReplacerDriver, reserveReviverDriver, reserveToJsonDriver } from "./accessor-driver.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 import { buildRawJsonSymbolToStringGuard, prepareRawJsonSymbolToString } from "./json-rawjson-symbol.js";
+import {
+  jsonClosedStructTestInstrs,
+  jsonCycleEnterInstrs,
+  jsonToJsonMethodLookupInstrs,
+  scopeJsonCycleStackToRoots,
+} from "./json-stringify-carriers.js";
 const EQ_HEAP_TYPE = -19; // signed LEB128 → 0x6d → TYPE.eq (for ref.null any/eq)
 
 /**
@@ -278,6 +283,8 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
   const L_PXTMP = 31; // externref — scratch holder for ToLength(Get(proxy,"length"))
 
   const litStr = (s: string): Instr[] => nativeStringLiteralInstrs(ctx, s);
+  // (#1599) closed user struct screen (undefined outside standalone).
+  const closedStructTest = jsonClosedStructTestInstrs(ctx, L_ANY);
 
   // out = __str_concat(out, <piece in L_PIECE, non-null>)
   const appendPiece: Instr[] = [
@@ -1169,16 +1176,20 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
       : ([
           { op: "local.get", index: L_ANY },
           { op: "ref.test", typeIdx: objectTypeIdx },
+          // (#1599) …or a closed user struct (method field / class member).
+          ...(closedStructTest === undefined ? [] : ([...closedStructTest, { op: "i32.or" }] satisfies Instr[])),
           {
             op: "if",
             blockType: { kind: "empty" },
             then: [
               // m = __extern_get(extern.convert_any(any), "toJSON")
-              { op: "local.get", index: L_ANY },
-              { op: "extern.convert_any" },
-              ...litStr("toJSON"),
-              { op: "extern.convert_any" },
-              { op: "call", funcIdx: externGetIdxTJ },
+              ...jsonToJsonMethodLookupInstrs(ctx, L_ANY, [
+                { op: "local.get", index: L_ANY },
+                { op: "extern.convert_any" },
+                ...litStr("toJSON"),
+                { op: "extern.convert_any" },
+                { op: "call", funcIdx: externGetIdxTJ },
+              ]),
               { op: "local.set", index: L_TJM },
               // if m is a closure (non-null ref that any.convert_extern tests as
               // a $Closure-family struct) → call it. We approximate IsCallable by
@@ -1236,6 +1247,8 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
           },
         ] satisfies Instr[])),
     ...buildRawJsonStringifyArm(ctx, L_ANY, objectTypeIdx, anyStrTypeIdx, externGetIdxTJ),
+    // (#1599) §25.5.2.5/6 step 1 — a value already on the stack is a cycle.
+    ...jsonCycleEnterInstrs(ctx, objVecArrTypeIdx, L_ANY, P_DEPTH),
     // (#5269 G-2) `$Proxy` BEFORE `$Object` — a proxy is its own opaque carrier,
     // so the object arm's `__obj_ordered` would read the (empty) proxy struct's
     // own bag instead of running the traps.
@@ -1257,6 +1270,12 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
       blockType: { kind: "empty" },
       then: objectArm,
     },
+    // (#1599) A closed user struct (class instance / nominal object literal) is
+    // an ordinary object to §25.5.2.5: walk it with the same MOP reads the
+    // proxy object arm uses (`__object_keys` + `__extern_get`).
+    ...(closedStructTest === undefined || !proxyArmsReady
+      ? []
+      : ([...closedStructTest, { op: "if", blockType: { kind: "empty" }, then: proxyObjectArmSV }] satisfies Instr[])),
     // (#4085) $__vec_base (a REAL JS array) → normalise to $ObjVec, then fall
     // into the $ObjVec arm below. Elements are read through `__extern_get_idx`,
     // which is already `$__vec_base`-aware (#2190) and handles every element
@@ -1900,6 +1919,13 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
     } as unknown as (typeof ctx.mod.functions)[number]);
   }
 
+  // (#1599) Fresh cycle stack per root call (re-entrancy from toJSON/replacer).
+  scopeJsonCycleStackToRoots(ctx, objVecArrTypeIdx, [
+    "__json_stringify_root",
+    "__json_stringify_root_indent",
+    "__json_stringify_root_replacer",
+    "__json_stringify_root_replacer_dyn",
+  ]);
   return funcIdx;
 }
 

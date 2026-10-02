@@ -23,6 +23,13 @@ export interface PrototypeRemainingCarriers {
   readonly boxNumberTypeIdx: number;
   readonly anyStringTypeIdx: number;
   readonly errorTypeIdx: number;
+  /**
+   * Instances built by `new F()` for a plain function `F` (the `__fnctor_*`
+   * layouts). They share the closure-carrier predicate below only so they can
+   * hold expandos; their prototype chain is F.prototype → Object.prototype, so
+   * they classify as Object, never as Function.
+   */
+  readonly fnctorInstanceTypeIdxs?: readonly number[];
   readonly isClosureCarrier?: number;
 }
 export type PrototypeBrandRequest = { readonly kind: "wrapper-key" | "remaining-carriers" };
@@ -285,6 +292,13 @@ export function* buildPrototypeBrandOffsetDefinition(d: PrototypeBrandOffsetReso
   body.push(...testArm(I31_HEAP_TYPE, NUMBER_OFF));
   body.push(...testArm(remaining.anyStringTypeIdx >= 0 ? remaining.anyStringTypeIdx : undefined, STRING_OFF));
   body.push(...testArm(remaining.errorTypeIdx >= 0 ? remaining.errorTypeIdx : undefined, ERROR_OFF));
+  // `__is_closure_prop_carrier` also answers true for `new F()` instances (they
+  // need its expando bag), so they must be claimed as Object BEFORE its
+  // Function arm. Unclaimed, `inst.toString` resolved to
+  // Function.prototype.toString once #6131 seeded the Function companion —
+  // `(new F()).x.toString()` threw its brand TypeError (ES5
+  // S11.1.1_A3.2, 2026-09-26).
+  for (const typeIdx of remaining.fnctorInstanceTypeIdxs ?? []) body.push(...testArm(typeIdx, OBJ_OFF));
   const isClosureCarrierIdx = remaining.isClosureCarrier;
   if (isClosureCarrierIdx !== undefined) {
     body.push(

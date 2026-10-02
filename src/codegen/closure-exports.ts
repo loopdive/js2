@@ -538,6 +538,32 @@ function externToClosureParamRef(ctx: CodegenContext, paramType: ValType): Instr
   return buildClosureReferenceArgument(paramType);
 }
 
+/**
+ * (#6710) The parameter type a dispatcher arm converts a host argument to.
+ * `widenNonDefaultableTypes` (src/compiler/output.ts) rewrites every func-type
+ * `ref $T` param to `ref null $T` after codegen, so a `(ref $AnyString)` formal
+ * emitted here is `(ref null $AnyString)` in the binary — structurally the same
+ * type as a sibling closure's nullable formal, so its `ref.test` arm also
+ * catches that sibling's funcref. Under the JS value bridge a JS `undefined`
+ * (explicit, or padded by a widened under-applied call such as `$DONE()`
+ * dispatched through `__runtime_eval_call_aot`) then met a non-null
+ * `ref.cast` and trapped. Convert to the type the callee actually declares, so
+ * the omitted/undefined argument takes the `ref.null` arm below. Scoped to the
+ * native regime in a JS environment: the host-assisted default and host-free
+ * standalone projections stay byte-identical (#5385 slice rule).
+ */
+function closureDispatchParamType(ctx: CodegenContext, paramType: ValType | undefined): ValType | undefined {
+  return paramType?.kind === "ref" && ctx.standalone && jsValueBoundary(ctx)
+    ? { kind: "ref_null", typeIdx: paramType.typeIdx }
+    : paramType;
+}
+
+/** Does any user formal of this closure func type convert as a nullable ref? */
+function hasNullableRefFormal(ctx: CodegenContext, funcTypeIdx: number): boolean {
+  const def = ctx.mod.types[funcTypeIdx];
+  return def?.kind === "func" && def.params.slice(1).some((p) => closureDispatchParamType(ctx, p)?.kind === "ref_null");
+}
+
 /** Preserve explicit host `undefined` for numeric default-parameter checks. */
 
 /** Lower a host argument into the closure's native i64 carrier. */
@@ -740,10 +766,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
         funcTypeDef.params.slice(1).some((param) => param.kind === "ref" || param.kind === "ref_null")
       );
     });
-  const needsExplicitUndefinedRefNormalization = entries.some((entry) => {
-    const funcTypeDef = mod.types[entry.funcTypeIdx];
-    return funcTypeDef?.kind === "func" && funcTypeDef.params.slice(1).some((param) => param.kind === "ref_null");
-  });
+  const needsExplicitUndefinedRefNormalization = entries.some((entry) => hasNullableRefFormal(ctx, entry.funcTypeIdx));
   if (needsHostFacadeUnwrap) {
     ensureLateImport(ctx, "__unwrap_for_wasm", [{ kind: "externref" }], [{ kind: "externref" }]);
   }
@@ -857,7 +880,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
     for (let i = 0; i < entry.closureArity; i++) {
       const paramType =
         funcTypeDef?.kind === "func" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;
-      argInstrs.push(...buildArgConversion(i + 1, paramType));
+      argInstrs.push(...buildArgConversion(i + 1, closureDispatchParamType(ctx, paramType)));
     }
     if (entry.rest) {
       argInstrs.push(
@@ -1404,10 +1427,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
         funcTypeDef.params.slice(1).some((param) => param.kind === "ref" || param.kind === "ref_null")
       );
     });
-  const needsExplicitUndefinedRefNormalization = entries.some((entry) => {
-    const funcTypeDef = mod.types[entry.funcTypeIdx];
-    return funcTypeDef?.kind === "func" && funcTypeDef.params.slice(1).some((param) => param.kind === "ref_null");
-  });
+  const needsExplicitUndefinedRefNormalization = entries.some((entry) => hasNullableRefFormal(ctx, entry.funcTypeIdx));
   if (needsHostFacadeUnwrap) {
     ensureLateImport(ctx, "__unwrap_for_wasm", [{ kind: "externref" }], [{ kind: "externref" }]);
   }
@@ -1504,7 +1524,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
     for (let i = 0; i < entry.closureArity; i++) {
       const paramType =
         funcTypeDef?.kind === "func" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;
-      argInstrs.push(...buildArgConversion(i + 2, i, paramType));
+      argInstrs.push(...buildArgConversion(i + 2, i, closureDispatchParamType(ctx, paramType)));
     }
     if (entry.rest) {
       argInstrs.push(

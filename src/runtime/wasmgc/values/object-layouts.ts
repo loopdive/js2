@@ -36,3 +36,10 @@ export function createOpenObjectDeclaration(objectKey: string, mapKey: string): 
     ],
   };
 }
+
+/** Explicit native-only opt-in for private-slot subtypes; the default layout stays final. */
+export function createExtensibleOpenObjectDeclaration(objectKey: string, mapKey: string): NativeDeclaredType {
+  const ordinary = createOpenObjectDeclaration(objectKey, mapKey);
+  if (ordinary.kind !== "struct") throw new Error("ordinary object declaration is not a struct");
+  return { ...ordinary, parent: { kind: "root" }, final: false };
+}

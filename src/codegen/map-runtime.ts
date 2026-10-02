@@ -482,15 +482,16 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
             { op: "call", funcIdx: flatten },
             { op: "ref.cast", typeIdx: strTypeIdx },
             { op: "local.tee", index: 5 },
-            // data array (field 3 of NativeString: len,byteLen?,off,data — use struct.get by name index)
-            // NativeString layout: { len(i32), ..., data }. We read length via array.len of data.
+            // NativeString is a view: hash only its logical UTF-16 contents,
+            // not spare capacity or characters outside a substring's bounds.
             {
               op: "struct.get",
               typeIdx: strTypeIdx,
               fieldIdx: nativeStrDataFieldIdx(ctx),
             },
-            { op: "local.tee", index: 6 },
-            { op: "array.len" },
+            { op: "local.set", index: 6 },
+            { op: "local.get", index: 5 },
+            { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 },
             { op: "local.set", index: 7 },
             { op: "i32.const", value: 0x811c9dc5 | 0 },
             { op: "local.set", index: 3 },
@@ -511,7 +512,10 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
                     // h ^= cu
                     { op: "local.get", index: 3 },
                     { op: "local.get", index: 6 },
+                    { op: "local.get", index: 5 },
+                    { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 },
                     { op: "local.get", index: 4 },
+                    { op: "i32.add" },
                     {
                       op: "array.get_u",
                       typeIdx: dataTypeIdx,

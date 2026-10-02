@@ -23,6 +23,7 @@ import { ensureReflectIsConstructor } from "./reflect-construct-native.js";
 import { ensureExternStrictEqHelper } from "./any-helpers.js";
 import { registerProxyInvariantValidators } from "./object-runtime-proxy-invariants.js"; // (#5316) §10.5 descriptor-model half
 import { reserveStandaloneLinkReversePeer, reverseProxyGetArmInstrs } from "./standalone-link-reverse-peer.js"; // (#6637 S63)
+import { protoLinkReceiverSetForward } from "./object-runtime-proxy-chain.js"; // (#6766)
 
 /** (#1100/#1355) Reserved trap-invoke driver names — filled by `fillProxyDispatch`. */
 const PROXY_CALL_GET = "__proxy_call_get";
@@ -317,6 +318,10 @@ export function ensureProxyRuntime(
   // else — the revoked check, GetMethod's callable guard, the trap call, the
   // §10.5.9 step 9-10 invariant validation — is shared, so there is exactly one
   // implementation of the set-trap protocol.
+  // (#6766) the trap-absent [[Set]] forward keeps Receiver = the proxy when a
+  // gopd/defineProperty trap can observe it — see `protoLinkReceiverSetForward`.
+  const setLayout = { proxyTypeIdx, proxyTrapsTypeIdx, targetField: F_PTARGET, trapsField: F_PTRAPS } as const;
+  const setTraps = { gopdTrap: TRAP_GOPD, defineTrap: TRAP_DEFINE } as const;
   const buildDispatch = (
     trapFieldIdx: number,
     forwardName: string,
@@ -435,6 +440,7 @@ export function ensureProxyRuntime(
             ]
           : isSet
             ? [
+                ...protoLinkReceiverSetForward(ctx, P, { ...setLayout, ...setTraps }),
                 // __extern_set(target, key, value) -> (void) ; push undefined
                 { op: "local.get", index: P },
                 { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },

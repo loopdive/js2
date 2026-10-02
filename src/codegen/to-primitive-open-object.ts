@@ -75,7 +75,21 @@ function toPrimitiveAssignmentTargets(file: ts.SourceFile): ReadonlySet<string> 
   return names;
 }
 
-/** True for a computed property name spelled exactly `[Symbol.toPrimitive]`. */
+/**
+ * The well-known symbols whose ONLY consumer is a runtime MOP lookup on an
+ * open `$Object` (`__extern_get(o, __box_symbol(N))`), so a literal member
+ * keyed by one of them must live on the open object to be seen at all:
+ *  - `toPrimitive` (#5269 H-1): the #5102 ToPrimitive probe.
+ *  - `species` (#6769 S2): SpeciesConstructor's `Get(C, @@species)` — the
+ *    TypedArray/Array/ArrayBuffer/Promise species ladders. No codegen path
+ *    reads an `@@species` struct field statically, so the closed layout buys
+ *    nothing, while it hides the member from every dynamic reader (`o[k]`,
+ *    `Reflect.get`, `in`, `getOwnPropertySymbols`) and leaks it as a STRING
+ *    key `"@@species"` to the closed-struct name arms instead.
+ */
+const OPEN_PATH_WELL_KNOWN_SYMBOLS: ReadonlySet<string> = new Set(["toPrimitive", "species"]);
+
+/** True for a computed property name spelled `[Symbol.<id>]` for an id in {@link OPEN_PATH_WELL_KNOWN_SYMBOLS}. */
 function isToPrimitiveComputedName(name: ts.PropertyName | undefined): boolean {
   if (name === undefined || !ts.isComputedPropertyName(name)) return false;
   const inner = name.expression;
@@ -83,22 +97,25 @@ function isToPrimitiveComputedName(name: ts.PropertyName | undefined): boolean {
     ts.isPropertyAccessExpression(inner) &&
     ts.isIdentifier(inner.expression) &&
     inner.expression.text === "Symbol" &&
-    inner.name.text === "toPrimitive"
+    OPEN_PATH_WELL_KNOWN_SYMBOLS.has(inner.name.text)
   );
 }
 
 /**
  * (#5269 H-1) True when the literal carries a `[Symbol.toPrimitive]` key —
- * property form or method form.
+ * property form or method form. (#6769 S2) `[Symbol.species]` too — see
+ * {@link OPEN_PATH_WELL_KNOWN_SYMBOLS}.
  *
  * `_hasRuntimeComputedKey` deliberately keeps well-known-symbol keys on the
  * CLOSED-struct path: `[Symbol.iterator]() {}` becomes an `@@1` struct field
  * that the iterator arm reads directly, and moving every well-known key to the
- * open object would give that up. `Symbol.toPrimitive` is the one id whose only
+ * open object would give that up. `Symbol.toPrimitive` is an id whose only
  * consumer is the RUNTIME ToPrimitive probe (#5102), which looks the method up
  * as `__box_symbol(3)` on `$Object`s and cannot see an `@@3` struct field at
- * all. Narrow to that one id on purpose; widening this would undo the `@@1`
- * layout.
+ * all; `Symbol.species` is the same case for SpeciesConstructor. Narrow to
+ * those ids on purpose; widening this to ids with static struct consumers
+ * (`@@iterator`, `@@hasInstance`, the RegExp protocol ids) would undo their
+ * layouts.
  */
 export function hasToPrimitiveComputedKey(expr: ts.ObjectLiteralExpression): boolean {
   return expr.properties.some(

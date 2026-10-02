@@ -48,6 +48,7 @@ import {
   isHostTypedArrayCarrierName,
 } from "../expressions/typed-array-host-carrier.js";
 import { buildThrowJsErrorInstrs } from "../js-errors.js";
+import { readEnv } from "../../env.js";
 
 /**
  * (#2061) Compute the extra nesting depth between a finally-inline site and the
@@ -1182,7 +1183,7 @@ function isProvenNumericLocalSwitchDiscriminant(
   fctx: FunctionContext,
   expr: ts.Expression,
 ): boolean {
-  if (process.env.JS2WASM_GROUNDED_NUMERIC_SWITCHES === "0") return false;
+  if (readEnv("JS2WASM_GROUNDED_NUMERIC_SWITCHES") === "0") return false;
   if (!ts.isIdentifier(expr)) return false;
   const localIdx = fctx.localMap.get(expr.text);
   if (localIdx !== undefined && getLocalType(fctx, localIdx)?.kind === "f64") return true;

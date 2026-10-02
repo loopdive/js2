@@ -3,7 +3,7 @@ id: 4376
 title: "Spike v8x as a rusty_v8-compatible js2wasm backend for a compiler-free Deno runtime"
 status: in-progress
 created: 2026-08-12
-updated: 2026-08-31
+updated: 2026-09-08
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -17,6 +17,16 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-09-30: explicit merge of loopdive/js2 main imports 116328 net src
+  # lines since this branch's September 8 base. This is already-landed main
+  # history, not new Deno implementation growth.
+  - total
+  # Destructured module exports use existing snapshot/live-binding routes.
+  - src/codegen/module-namespace-value.ts
+  - src/codegen/expressions/call-namespace-static.ts
+  - src/checker/usage-inference.ts
+  - src/codegen/map-runtime.ts
+  - src/codegen/apply-closure-variadic-builtin.ts
   # 2026-08-28: PR #5148 checkpoint (Deno runtime integration — linked
   # shared-realm/callable boundaries, runtime-eval + exception transport,
   # Promise/reflection/buffer-view/finalizer behavior). Broad, measured
@@ -75,6 +85,10 @@ loc-budget-allow:
   - src/codegen/expressions/late-imports.ts
   - src/codegen/async-scheduler.ts
 func-budget-allow:
+  # Hash the logical native-string view instead of the backing allocation.
+  - src/codegen/map-runtime.ts::ensureMapHelpers
+  # Runtime operand validation reuses the shared Reflect object classifier.
+  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   - src/codegen/expressions/calls-closures.ts::compileCallablePropertyCall
   - src/codegen/statements/variables.ts::compileVariableStatement
   - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
@@ -552,6 +566,109 @@ by 3,006 bytes; the larger artifact size predates it.
 
 ## Handover
 
+### 2026-09-30: callback receiver isolation
+
+- Merged latest `loopdive/js2` main (`fd0cf19cb95`) at `347f83b5078`, preserving
+  unrelated dirty files without stashing.
+- The exact bridge probe failed before Rust: `host.call(object, ...)` sent the
+  global object's handle as `this`, not the object's handle. The variadic
+  builtin apply shortcut admitted an ordinary rest callback sharing its
+  Wasm signature and bypassed receiver installation. Restrict that shortcut
+  to the three builtin metadata identities, including their discriminator
+  fields, instead of signature shape alone.
+- The self-contained regression with the original signature-only guard passes
+  1/2 (`call` fails, `apply` is the control). The fixed full bridge passes
+  receiver identity and nested reentry. Compiler regression and controls pass
+  25/25, including the exact Deno bootstrap and destructured namespace cases;
+  TS7 typecheck passes.
+- Native callback verification now passes the receiver assertion and nested
+  callback mutation, then fails later at `exerciseThrow` (returns -2, expected
+  1). Host callback construction rejection is a separate remaining defect,
+  also reproduced by the JavaScript-only bridge probe. The native test is
+  terminal (0/1 overall); do not report it as passing.
+
+### 2026-09-30: string-handle lookup verification
+
+- The bridge decodes an empty string with the correct string brand and length,
+  but receives a new handle instead of reusing the literal's Map entry.
+- A minimal decode/delete control passes. Testing sliced strings to check
+  whether collection hashing wrongly uses the whole backing array rather than
+  the native string's logical length and offset. NativeString layout is
+  `{len, off, data}`; the current Map hash scans `data.length` from index zero.
+- Confirmed by a substring Map-key regression: 2/3 controls pass on the parent,
+  the nonzero-offset substring lookup fails. Hashing logical length and offset
+  makes 3/3 pass and the full context bridge fixture passes all assertions,
+  including 512 transient-packet retirement checks. Native adapter verification
+  is now running against the freshly compiled artifact, not a stale binary.
+- Expanded Map/Set logical-view coverage including a surrogate-pair substring:
+  4/4 regressions pass. Collection controls pass 24/24, and the exact Deno
+  bootstrap remains passing (1/1). The native debug suite is live in session
+  `12218`, process `22093`; it was using 572% CPU after 2m32s, not stalled.
+  One selected function-name test failed immediately because its separate
+  `V8X_JS2WASM_FUNCTION_NAMES_WASM` variable was missing. Its source fixture is
+  included in the same context artifact; rerun with that variable after the
+  current run completes. Do not restart the running suite on a wait timeout.
+- Native run is now terminal (exit 101/SIGABRT), not still compiling. Numeric
+  coercion/exception identity passed in Rust. Reentrant callback test aborts at
+  `realm_host_mutate`: `args.this()` is not strictly equal to argument zero.
+  This is an unresolved receiver-identity boundary defect; the aborted suite
+  does not establish results for the other still-running tests.
+
+### 2026-09-30: coercion exception ordering
+
+- The context bridge fails specifically on `throwingCoercion` during ToNumber.
+  Direct `valueOf()` and direct throw controls pass; unary `+value` fails.
+- Emitted WAT shows the `any` local promoted to `f64`, calling ToNumber in
+  the initializer before entering its `try_table`. This moves the observable
+  `valueOf()` call and exception outside the source catch.
+- Restrict the usage-only numeric-local route to writes with inert primitive
+  conversion. Grounded-number definition proofs remain eligible. Pending
+  regression and full bridge verification; full Deno integration remains open.
+- Verified 97/97 focused numeric-local, coercion, usage-inference and prototype
+  tests. Three envelope controls now pass; the original unary-plus case failed
+  on the parent while direct calls and direct throws passed. An additional
+  regression proves conversion is not invoked on an untaken read after an
+  object assignment. Two old representation assertions required eager
+  conversion of unknown writes and were corrected to require boxed carriers;
+  their semantic checks remain unchanged.
+- Full context fixture now passes numeric coercion and exception identity. Its
+  next stop is empty-string canonical handle reuse after buffer decoding (not
+  signed zero: extra checks prove signed-zero stability throughout handle
+  growth). The fixture still stops before artifact publication.
+- Exact two-store Deno bootstrap and destructured namespaces remain passing
+  (4/4 tests). Typecheck also passes. Native namespace export publication is
+  still the next integration step once the full context bridge is verified.
+
+### 2026-09-30: resume native adapter after compiler namespace fix
+
+- Restored the published v8x branch at `83f5554c398f94a77ac32e110104c45460969695`
+  in `/private/tmp/v8x-deno-resume-20260930.o0sxeO/repo`.
+- First native adapter build stopped in vendor setup while downloading Chromium
+  ICU test data. The adapter test does not embed that file; js2wasm setup now
+  skips it, while manual `rusty_v8` setup retains upstream test support.
+- Next verification is the native adapter suite and compiled module namespace
+  publication. This checkpoint does not establish complete Deno integration.
+- Native adapter baseline: 23/23 executed tests passed, 2 artifact-dependent
+  tests ignored. Fresh compiled context fixture stopped on an invalid dynamic
+  `Reflect.setPrototypeOf` prototype that should throw. A compiler regression
+  reproducer rejected 0/9 invalid operands before adding runtime validation.
+- Runtime validation now rejects 9/9 invalid operands. Focused namespace,
+  prototype refusal, proxy, and Symbol tests: 44/44 passed; TS7 typecheck passed.
+  The context fixture advances past prototype/identity/buffer checks but still
+  fails later in numeric coercion with a Wasm exception, before writing a usable
+  artifact. Do not claim the native compiled bridge suite passed.
+- Runtime-compile native suite: 26 passed, 2 failed because their required raw
+  Deno/runtime-eval artifacts are absent, 21 ignored. Compiler-free suite:
+  23 passed, 2 ignored. Manual `setup_vendor.sh js2wasm` also succeeds.
+
+2026-09-30 namespace validation complete: 22/23 focused tests pass with explicit exnref worker support. The sole failure in `issue-3188-module-namespace-tostringtag.test.ts`'s standalone TypeScript runtime-namespace callable projection reports `dynamic array length fill requires a pre-reserved Hole global`; pristine detached control `10ec2abc3a4` reproduces the identical failure (7/8 in that file). Three new destructured-export regressions were 0/3 on baseline and 3/3 on candidate. Exact two-store Deno bootstrap passes with namespace score 3 and no recorded blocker. TS7 and diff whitespace checks pass. New source only extends declaration admission; it reuses the existing snapshot and mutable getter machinery. Restored v8x checkout is clean at published `83f5554` with rusty_v8 pinned `dd1b4e9c743b7a11dbeb99d4d0dc55979218b905`; native rebuild and broader op/module/promise integration remain ahead. Original uncommitted ABI comment and Acorn artifact are preserved outside this fix.
+
+2026-09-30 destructured namespace repair: baseline `10ec2abc3a4` fails all three new standalone regressions with raw Wasm exceptions. Candidate recognizes top-level BindingElement declarations, including nested object/array patterns, and routes const bindings to existing snapshots and let/var to existing live getters. The three regressions pass; the actual two-store Deno bootstrap checkpoint now returns namespace identity score 3 with no blocker, replacing the previous expected exception, and exact hello-world/host effects still pass. First broader run 8/9 passes; the only failure is the test worker's missing `--experimental-wasm-exnref` flag for a generator fixture. Rerun with explicit worker flag pending. TS7 typecheck passes. Full native v8x replay is not re-established yet; restored runtime checkout lacks initialized rusty_v8 submodule. This is compiler namespace progress, not completion of native namespace handles or full Deno integration.
+
+2026-09-30 full bootstrap envelope rerun passes 1/1, including all source hashes, exact imports/exports, two isolated stores, wrapper/module/usage stages, host output and no provider calls. The remaining namespace failure is traced to `mod.js`'s `const {core, internals, primordials} = bootstrap; export {...}`: `module-namespace-value.ts` only accepts Identifier VariableDeclaration exports; the checker represents these bindings as BindingElement declarations, so it declines the whole namespace. Adding a regression for object aliases, array bindings, and nested mutable bindings before extending the existing snapshot/live-getter routes. Namespace success must then replace the bootstrap test's expected-exception checkpoint.
+
+2026-09-30 resumed integration after main merge `10ec2abc3a4`: primordial substrate tests pass 17/17. Full unchanged-core child probe exits successfully and emits 2,697,863 bytes; the enclosing test stops at its stale 6.2–6.75 MB envelope before checking later assertions. Envelope updated to 2.5–2.9 MB, with source hashes, exact imports/exports, two-store stages, host calls and output assertions retained; rerun pending. Published v8x PR 2 remains open at `83f5554`, compiler PR 5784 remains open at `5aa3d8f85743bb`; original temporary checkouts now contain only leftover build directories. Restoring runtime source from its published branch in `/private/tmp/v8x-deno-resume-20260930.o0sxeO/repo`. Module namespace test currently expects a recorded raw Wasm exception, so general namespace support remains an explicit integration gap.
+
 The exact pins, stop point, reproduction steps, rejected shortcuts, and safest
 next slice are recorded in
 [`plan/agent-context/v8x-js2wasm-deno-handover-2026-08-12.md`](../agent-context/v8x-js2wasm-deno-handover-2026-08-12.md).
@@ -566,6 +683,12 @@ tracked in
 through commit `3095ded9b69055ecc936109cf71d270d4acf6c79`, which adds the strict
 unchanged-`deno_core` proof on top of the earlier public `Script::Run` bridge.
 
+## 2026-09-08 upstream-main sync
+
+The branch is synchronized with `loopdive/js2` main at `16498efb481cb022ee5c4dcc9bb137b6d4c91a50`. That sync exposed a reserved nested-parameter ABI regression in the Deno primordial graph: body compilation was re-registering a carrier already reserved by the hoist lane, changing an `externref` parameter to `ref_null`. The Deno-scoped guard in `src/codegen/statements/nested-declarations.ts` preserves the hoisted carrier order while leaving the general reservation fix enabled for other targets.
+
+The focused reservation and Deno bootstrap suite passes after the guard, and `pnpm run typecheck` passes.
+
 ### PR 5784 Temporal acquisition race repair (2026-09-09, pending validation)
 
 Actual merge-group run `34303910910`, host shard 9 job `102316820369`, contains all 26 Temporal regressions. One worker logged `Temporal provider NOT linked` after the JSBI source-link assertion failed at 02:39:20Z; three others loaded the same prewarmed provider successfully two seconds later. The acquisition helper formerly extracted directly into a shared root and treated entry-file existence as completion. This permits a reader to observe a file while another process is still extracting it. The source assertion remains correct and must not be relaxed.
@@ -575,3 +698,7 @@ The separately owned acquisition repair stages both pinned packages privately, v
 Focused deterministic tests cover the partial-file visibility window, the unchanged old-reader link assertion, concurrent publication winner/loser behavior, failed extraction, corrupt tarballs despite an existing generation, and force preserving prior returned paths. These tests are written but not yet executed; no race reproduction or repair pass is claimed at this checkpoint. Compiler, runtime, workflows, baselines, pin contents and link assertions are unchanged. The join/presence and TypedArray blockers remain separate, and PR 5784 stays held.
 
 The five acquisition tests subsequently passed (session 23374, exit 0, 1.86 seconds, Node 22.23.2 Darwin). The deterministic barrier exposes incomplete JSBI bytes and proves the unchanged old-reader link assertion rejects them; it does not execute the full old setup implementation. Concurrent new callers instead return the same completed generation and source hash, with no leftover staging directory. Negative controls retain tarball integrity and incomplete-generation refusal, and a failure extracting the second package publishes neither package. Cleanup releases the owned barrier and awaits acquisition-process close before deleting private fixtures, including assertion-failure paths. This is bounded acquisition evidence only: the 26 actual Temporal rows have not been rerun, and other held PRs are not cleared by this test result. Final review and normal publication gates remain pending.
+
+## 2026-09-30 upstream-main sync
+
+Merged `loopdive/js2` main at `eb57f327340aaecb4ffd664417ff15fe4ba13905` into `codex/4376-deno-followup-20260908`. The sole conflict was this handover: retained both the branch's Deno parameter-reservation guard record and main's Temporal acquisition race repair record. Compiler source merged automatically. Existing uncommitted documentation beside `IrLoweredSignature` is preserved at its new declaration location in `src/ir/backend/lower-contracts.ts`; the uncommitted Acorn Wasm artifact and unrelated untracked files remain outside the merge commit. This synchronization does not establish completion of Deno integration.

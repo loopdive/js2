@@ -515,16 +515,15 @@ describe("#5269 F1 — a replacer must not knock a primitive off the primitive f
      ${check("JSON.stringify(1.5, ['a'])", "1.5")}`,
   );
 
-  // r6 pins the SHAPE of the remaining gap, not a wish. For a primitive the
-  // replacer's RETURN is still ignored, so this answers `1` where node answers
-  // `"wrapped:1"` — pre-existing on both lanes and out of scope here. What must
+  // r6: the replacer's RETURN is serialised for a primitive root (#1599 Phase 2
+  // routes a callable replacer past the fold) — node's `"wrapped:1"`. What must
   // never come back is `"wrapped:null"`, i.e. the replacer being handed a null
-  // value, which is what the regression produced.
+  // value, which is what the G-3 regression produced.
   standaloneOnly(
     "F1 r6 — the replacer never sees a nulled-out primitive",
     `var r = JSON.stringify(1, function (k, v) { return "wrapped:" + v; });
      if (String(r).indexOf("null") >= 0) { throw new Error("replacer saw null: " + r); }
-     ${check("r", "1")}`,
+     ${check("r", '"wrapped:1"')}`,
   );
 });
 

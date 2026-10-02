@@ -19,6 +19,10 @@ import {
   type NativeInvocationPhysicalSetup,
 } from "../backend/wasmgc/program/native-invocation-abi.js";
 import { nativeStringOutputAbiBindings } from "../backend/wasmgc/program/native-string-output-abi.js";
+import {
+  nativeBooleanAbiBindings,
+  nativeNumberBinding,
+} from "../backend/wasmgc/program/native-primitive-boundary-abi.js";
 import { planHostNumberBoundary, type HostNumberBoundarySetup } from "./program/host-number-boundary-setup.js";
 import { planHostAsyncDynamicUnits, preparedHostAsyncDynamicCarrier } from "./program/host-async-dynamic.js";
 import { irGlobalBindingKey, irTypeBindingKey, irSupportGlobalRef, irSourceTypeRef } from "./abi-bindings.js";
@@ -30,8 +34,6 @@ import {
 } from "./callable-bindings.js";
 import type { IrFuncRef, IrGlobalRef } from "./core/value-references.js";
 import type { IrTypeRef } from "./core/types.js";
-import { INTRINSIC_DEFINITIONS } from "./core/intrinsics.js";
-import { NUMBER_BOUNDARY_RUNTIME_PROVIDERS } from "./runtime/manifest.js";
 import { ProgramAbiMap, type ProgramAbiPlanEntry } from "./program/abi.js";
 import { preparedIrCallableSignature, preparedIrTypeKey, preparedIrDataKey } from "./program-abi-contracts.js";
 import { preparedIrRuntimeAbiAnchor, preparedIrRuntimeCallableBindingId } from "./program-runtime-abi.js";
@@ -41,6 +43,8 @@ import {
   type NativeStringValuePhysicalPlan,
   type NativeStringValueReservationInput,
 } from "../backend/wasmgc/program/native-string-values.js";
+import { readNativeRealmLiteralInput } from "../backend/wasmgc/program/native-realm-literals.js";
+import type { NativeRealmDescription } from "./program/native-realm-requirements.js";
 import type {
   NativeResourceRecipe,
   NativeDeclaredValType,
@@ -66,7 +70,7 @@ import { collectNativeStringValueDemands } from "./program/native-string-value-d
 import { numberFormatRadixSupportDeclarations } from "./program/formatter-support.js";
 import { NATIVE_ASYNC_CALLABLE_DECLARATIONS } from "./runtime/native-async-callables.js";
 import type { IrBindingId, IrUnitId } from "./identity.js";
-import { forEachInstrDeep, type IrFunction, type IrType } from "./nodes.js";
+import { forEachInstrDeep, type IrFunction, type IrType, type IrInstrIntrinsic } from "./nodes.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 import {
   freezePreparedIrValue,
@@ -191,6 +195,7 @@ export interface PhysicalSetupPlan {
   readonly vectors: NativeVectorResourcePlan;
   readonly sourceClosures?: Omit<NativeSourceClosureRequirements, "demands">;
   readonly nativeInvocation?: NativeInvocationPhysicalSetup;
+  readonly nativeRealm?: NativeRealmDescription;
   readonly asyncFrames?: AsyncFrameSetup;
   /** Descriptive only: the issued reservation input stays in the consumer's private record. */
   readonly nativeStrings?: PhysicalNativeStringSetup;
@@ -511,96 +516,6 @@ function literalNativeBinding(
   return { resourceKey: declaration.key, entry: plan, reference };
 }
 
-function nativeNumberBinding(
-  context: NativeAbiContext,
-  input: NativeStringValueReservationInput,
-  declarationOrder: number,
-  direction: "box" | "unbox",
-): NativeStringValueAbiBinding | undefined {
-  const { projection } = input.demands;
-  if (direction === "box" && projection.prepared.manifest.policy.numberBoundary.box !== "native") return undefined;
-  const feature = direction === "box" ? "js.number.box" : "js.number.unbox";
-  const demands = input.demands.intrinsics.filter(
-    (row) =>
-      row.instruction.id === feature &&
-      input.demands.buffers[input.demands.occurrences[row.occurrence]!.bufferIndex]!.view === "projection",
-  );
-  if (!demands.length) return undefined;
-  const canonical = NUMBER_BOUNDARY_RUNTIME_PROVIDERS.filter((row) => row.id === `native.${feature}`);
-  if (canonical.length !== 1) nativeInvalid(`canonical ${direction} provider is not unique`);
-  const provider = canonical[0]!;
-  if (provider.implementation.kind !== "runtime-callable" || !provider.signature)
-    nativeInvalid(`canonical ${direction} contract is not callable`);
-  const manifest = projection.prepared.manifest;
-  const selected = manifest.providers.filter((row) => row.id === provider.id || row.feature === provider.feature);
-  if (
-    input.plan.mode !== "number-boundary" ||
-    manifest.policy.numberBoundary[direction] !== "native" ||
-    selected.length !== 1
-  )
-    nativeInvalid(`${direction} requires the unique selected native number-boundary policy/provider`);
-  nativeSame(selected[0], provider, `manifest ${direction} provider differs from complete canonical definition`);
-  nativeSame(
-    projection.prepared.providers.get(feature),
-    provider,
-    `selected ${direction} lookup differs from canonical provider`,
-  );
-  nativeSame(
-    provider.signature,
-    INTRINSIC_DEFINITIONS[feature].signature,
-    `canonical intrinsic/${direction} signatures differ`,
-  );
-  const reference = irRuntimeFuncRef(provider.implementation.symbol);
-  for (const { instruction } of demands) {
-    if (instruction.provider?.kind !== "callable") nativeInvalid(`${direction} attachment is not callable`);
-    nativeSame(
-      instruction.provider.target.binding,
-      reference.binding,
-      `${direction} attachment target is not the selected runtime binding`,
-    );
-  }
-  const declaration = declarationForRole(context.resources, ["values", `${direction}-number`]);
-  if (declaration.space !== "function") nativeInvalid(`${direction} declaration is not a function`);
-  const physical = (type: IrType): ValType => {
-    if (type.kind !== "val" || Object.hasOwn(type, "typeRef"))
-      nativeInvalid("canonical number-boundary signature has a non-scalar carrier");
-    return type.val;
-  };
-  nativeSame(
-    declaration.signature,
-    { params: provider.signature.params.map(physical), results: [physical(provider.signature.result)] },
-    `${direction} recipe disagrees with canonical carriers`,
-  );
-  const signature = preparedIrCallableSignature(provider.signature.params, [provider.signature.result]);
-  const id = preparedIrRuntimeCallableBindingId(context.program.inventory, reference);
-  const entry: ProgramAbiPlanEntry = {
-    id,
-    order: { sourceOrder: preparedIrRuntimeAbiAnchor(context.program.inventory).order, declarationOrder },
-    displayName: reference.name,
-    structuralReferenceKey: irCallableBindingKey(reference.binding),
-    slotPolicy: "required",
-    slotSpace: "function",
-    intent: { kind: "callable", origin: "runtime", signature },
-  };
-  const previous = context.entries.get(id);
-  if (previous) {
-    nativeSame(
-      previous.plan,
-      { ...entry, order: previous.plan.order, displayName: previous.plan.displayName },
-      `existing runtime ${direction} ABI entry contradicts its canonical contract`,
-    );
-    if (previous.contract.kind !== "callable" || Object.hasOwn(previous.contract, "promise"))
-      nativeInvalid(`existing ${direction} semantic contract is not synchronous callable`);
-    nativeSame(previous.contract.ref.binding, reference.binding, `existing ${direction} reference differs`);
-    nativeSame(
-      preparedIrCallableSignature(previous.contract.params, previous.contract.results),
-      signature,
-      `existing ${direction} semantic signature differs`,
-    );
-  }
-  return { resourceKey: declaration.key, entry: previous?.plan ?? entry, reference };
-}
-
 /** Complete descriptive ABI join. It never reserves or clones an issued native plan. */
 function nativeStringSetup(
   program: PreparedIrProgram,
@@ -615,14 +530,23 @@ function nativeStringSetup(
     input.demands.projection !== projection
   )
     nativeInvalid("native input does not belong to the selected standalone program/projection");
-  const current = planNativeStringValuePhysical(input.demands, {
-    representation: "native-string",
-    utf8Storage: options.utf8Storage,
-    stringConcatEmptyIdentity: options.stringConcatEmptyIdentity ?? true,
-  });
+  const realm = readNativeRealmLiteralInput(input, options.utf8Storage);
+  const current = planNativeStringValuePhysical(
+    input.demands,
+    {
+      representation: "native-string",
+      utf8Storage: options.utf8Storage,
+      stringConcatEmptyIdentity: options.stringConcatEmptyIdentity ?? true,
+    },
+    input.invocationRequirements,
+    realm?.realmRequirements,
+  );
   if (current.kind !== "planned") nativeInvalid("native input has no supported current physical recipe");
+  if (current.invocationRequirements !== input.invocationRequirements)
+    nativeInvalid("missing exact invocation demand owner");
+  if (current.realmLiterals !== realm?.realmLiterals) nativeInvalid("missing exact realm literal owner");
   nativeSame(input.plan, current.plan, "native declarations or selection changed");
-  if (input.plan.mode === "number-boundary") {
+  if (input.plan.mode !== "literals") {
     if (!input.valueRequirements) nativeInvalid("missing exact issued native value plan");
     assertNativeValueResourcePlanFor(input.valueRequirements, program, projection, "native-string");
   } else if (input.valueRequirements !== undefined)
@@ -705,6 +629,7 @@ function nativeStringSetup(
     const binding = nativeNumberBinding(context, input, baseOrder + index, direction);
     if (binding) add(binding);
   }
+  nativeBooleanAbiBindings(input, baseOrder).forEach(add);
   if (input.plan.output) {
     if (!input.outputRequirements) nativeInvalid("missing output requirements for ABI join");
     const offset = input.plan.declarations.findIndex((row) => row.key === input.plan.output!.declarations[0]?.key);
@@ -1133,10 +1058,11 @@ function planSourceClosureSetup(
   vectors: NativeVectorResourcePlan,
   nativeStrings: PhysicalNativeStringSetup | undefined,
   gaps: Gaps,
+  expected?: NativeSourceClosureRequirements,
 ): NativeSourceClosureRequirements | undefined {
   const sourceClosures =
     options.backend === "wasmgc" && options.target === "standalone"
-      ? planNativeSourceClosureRequirements(program, projection)
+      ? (expected ?? planNativeSourceClosureRequirements(program, projection))
       : undefined;
   if (sourceClosures) {
     for (const gap of sourceClosures.gaps) gaps.add(gap.detail, gap.unitId);
@@ -1194,6 +1120,39 @@ function planPhysicalStartup(
   return { units: startupUnits, adapter };
 }
 
+/** Exact materialization guard after canonical native bindings have been authenticated. */
+function missingIntrinsicMaterialization(
+  instruction: IrInstrIntrinsic,
+  provider: NonNullable<IrInstrIntrinsic["provider"]>,
+  reserved: ReadonlySet<string>,
+  projection: PreparedIrProgramRuntimeProjection,
+  nativeStrings: PhysicalNativeStringSetup | undefined,
+  hostNumberBoundary: HostNumberBoundarySetup | undefined,
+): boolean {
+  return (
+    !(
+      provider.kind === "callable" &&
+      reserved.has(irCallableBindingKey(provider.target.binding)) &&
+      ((nativeStrings &&
+        (instruction.id === "js.number.unbox" ||
+          (instruction.id === "js.number.box" && projection.prepared.manifest.policy.numberBoundary.box === "native") ||
+          ((instruction.id === "js.boolean.box" || instruction.id === "js.boolean.unbox") &&
+            nativeStrings.bindings.some(
+              (row) =>
+                row.reference.kind === "func" &&
+                irCallableBindingKey(row.reference.binding) === irCallableBindingKey(provider.target.binding),
+            )))) ||
+        (instruction.id === "js.number.box" &&
+          hostNumberBoundary?.imports.some(
+            (row) => row.referenceKey === irCallableBindingKey(provider.target.binding),
+          )))
+    ) &&
+    provider.kind !== "backend-op" &&
+    provider.kind !== "backend-sequence" &&
+    provider.kind !== "backend-composite"
+  );
+}
+
 /**
  * Derive the physical setup for one projection, or the first located gap.
  * Only scalar carriers, unit/import callables, source/import globals, export
@@ -1229,7 +1188,16 @@ export function planPhysicalSetup(
   }
   const nativeNumberFormat =
     formatter && nativeStrings ? nativeFormatterSetup(program, nativeStrings, formatter.requirements) : undefined;
-  const sourceClosures = planSourceClosureSetup(program, options, projection, bodies, vectors, nativeStrings, gaps);
+  const sourceClosures = planSourceClosureSetup(
+    program,
+    options,
+    projection,
+    bodies,
+    vectors,
+    nativeStrings,
+    gaps,
+    native?.invocationRequirements?.source ?? native?.realmRequirements?.source,
+  );
   const invocation = planNativeInvocationInput(sourceClosures, options.utf8Storage === true, native);
   for (const gap of invocation.gaps) gaps.add(gap.detail, gap.unitId);
   const priorBindings = [...(nativeStrings?.bindings ?? []), ...(nativeNumberFormat?.bindings ?? [])];
@@ -1399,21 +1367,14 @@ export function planPhysicalSetup(
             if (!provider)
               gaps.add(`body ${fn.name} intrinsic ${instruction.id} has no physical provider`, diagnosticUnit);
             else if (
-              !(
-                provider.kind === "callable" &&
-                reserved.has(irCallableBindingKey(provider.target.binding)) &&
-                ((nativeStrings &&
-                  (instruction.id === "js.number.unbox" ||
-                    (instruction.id === "js.number.box" &&
-                      projection.prepared.manifest.policy.numberBoundary.box === "native"))) ||
-                  (instruction.id === "js.number.box" &&
-                    hostNumberBoundary?.imports.some(
-                      (row) => row.referenceKey === irCallableBindingKey(provider.target.binding),
-                    )))
-              ) &&
-              provider.kind !== "backend-op" &&
-              provider.kind !== "backend-sequence" &&
-              provider.kind !== "backend-composite"
+              missingIntrinsicMaterialization(
+                instruction,
+                provider,
+                reserved,
+                projection,
+                nativeStrings,
+                hostNumberBoundary,
+              )
             ) {
               gaps.add(
                 `body ${fn.name} intrinsic ${instruction.id} needs ${provider.kind} provider materialization`,
@@ -1484,6 +1445,7 @@ export function planPhysicalSetup(
         }
       : {}),
     ...(nativeInvocation ? { nativeInvocation } : {}),
+    ...(native?.realmRequirements ? { nativeRealm: native.realmRequirements.description } : {}),
     ...(asyncFrames?.frames.length ? { asyncFrames } : {}),
     ...(hostNumberBoundary?.imports.length ? { hostNumberBoundary } : {}),
     ...(nativeStrings ? { nativeStrings } : {}),

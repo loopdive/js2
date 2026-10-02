@@ -86,17 +86,17 @@ export function createBoundaryObjectAdapter(
         );
       };
     case "construct":
-      return (constructor: any, args: any, newTarget: any) => {
-        const exports = admittedExports(context, constructor);
-        if (!exports || typeof constructor !== "function") {
+      return (ctor: any, args: any, newTarget: any) => {
+        const exports = admittedExports(context, ctor);
+        if (!exports || typeof ctor !== "function") {
           throw new TypeError("Reflect.construct target is not an admitted JavaScript constructor");
         }
-        const hostNewTarget = newTarget == null ? constructor : context.toHostValue(newTarget, exports);
-        if (hostNewTarget !== constructor && !context.isAdmitted(hostNewTarget, exports)) {
+        const hostNewTarget = newTarget == null ? ctor : context.toHostValue(newTarget, exports);
+        if (hostNewTarget !== ctor && !context.isAdmitted(hostNewTarget, exports)) {
           throw new TypeError("Reflect.construct newTarget is not an admitted JavaScript constructor");
         }
         return context.fromHostValue(
-          Reflect.construct(constructor, context.readArguments(args, exports), hostNewTarget),
+          Reflect.construct(ctor, context.readArguments(args, exports), hostNewTarget),
           exports,
         );
       };
@@ -201,11 +201,11 @@ export function createBoundaryObjectAdapter(
         if (!exports || !context.isAdmitted(value, exports) || typeof value !== "function") return 0;
         let constructible = 0;
         try {
+          // biome-ignore lint/complexity/useArrowFunction: Reflect.construct needs a constructible target; an arrow is not one, so this IsConstructor probe would always throw.
           Reflect.construct(function () {}, [], value);
           constructible = 2;
         } catch {
-          // Callable-only values (arrows, methods, revoked callable-only
-          // proxies) deliberately keep only bit 0.
+          // Callable-only values (arrows, methods, revoked callable-only proxies) deliberately keep only bit 0.
         }
         return 1 | constructible;
       };

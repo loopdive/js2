@@ -77,6 +77,7 @@ import {
 } from "./fnctor-presence-bits.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
+import { readEnv } from "../env.js";
 
 /** Field name of the lazily-allocated cold tail on the main fnctor struct. */
 export const COLD_TAIL_FIELD = "$cold";
@@ -119,7 +120,7 @@ export const COLD_TAIL_DEFAULT_HOT_FIELDS = 20;
  * `0` is a legal, meaningful value (move every flow-grown field to the tail).
  */
 export function coldTailHotFieldLimit(): number | undefined {
-  const raw = process.env.JS2WASM_FNCTOR_HOT_FIELDS;
+  const raw = readEnv("JS2WASM_FNCTOR_HOT_FIELDS");
   if (raw === undefined || raw === "") return COLD_TAIL_DEFAULT_HOT_FIELDS;
   if (raw.trim().toLowerCase() === "off") return undefined;
   const parsed = Number(raw);
@@ -345,7 +346,7 @@ export function applyColdTailSplit(
   // printed alongside because the ordering is where the remaining headroom is
   // (see the issue's ranking section) and because a cut that lands inside a
   // large tie group is decided by the name tie-break, not by the proxy.
-  if (process.env.JS2WASM_FNCTOR_COLD_DIAG === "1") {
+  if (readEnv("JS2WASM_FNCTOR_COLD_DIAG") === "1") {
     const counts = flowFieldHotnessWeights(ctx, flowStructName);
     const hot = eligible.filter((name) => !coldNames.has(name));
     const show = (names: readonly string[]): string => names.map((n) => `${n}:${counts.get(n) ?? 0}`).join(",");

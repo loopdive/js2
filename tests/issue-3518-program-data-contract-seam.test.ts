@@ -6,9 +6,33 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { historicalSource } from "./helpers/ir-ownership-evolution.js";
+import { readBeforeIrSourceContractRelocation } from "./helpers/ir-source-contract-relocation.js";
+import { readBeforeProgramPreAEvolution } from "./helpers/ir-program-pre-a-evolution.js";
+
+import {
+  reconstructRuntimeProgramRelocationSources,
+  runtimeProgramRelocationPairs,
+} from "./helpers/ir-runtime-program-relocation.js";
 
 const root = resolve(import.meta.dirname, "..");
-const read = (path: string) => readFileSync(resolve(root, path), "utf8");
+const rawRead = (path: string) => readFileSync(resolve(root, path), "utf8");
+function beforeC1(readLive: (path: string) => string = rawRead): (path: string) => string {
+  const sources = reconstructRuntimeProgramRelocationSources(readLive);
+  return (path) => {
+    if (runtimeProgramRelocationPairs.some(([donor]) => donor === path)) {
+      const source = sources.get(path as Parameters<typeof sources.get>[0]);
+      if (source === undefined) throw new Error(`missing checked C1 output: ${path}`);
+      return source;
+    }
+    return readLive(path);
+  };
+}
+function historicalReader() {
+  const initialRead = beforeC1();
+  const phaseARead = (path: string) => readBeforeIrSourceContractRelocation(path, initialRead);
+  return (path: string) => historicalSource(path, readBeforeProgramPreAEvolution(path, phaseARead));
+}
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 
 // Complete declaration/documentation and retained-statement receipts measured
@@ -319,7 +343,7 @@ const receipts: readonly DeclarationReceipt[] = [
   },
 ];
 
-function parse(path: string, text = read(path)) {
+function parse(path: string, text: string) {
   const file = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
   expect((file as ts.SourceFile & { parseDiagnostics: readonly ts.Diagnostic[] }).parseDiagnostics, path).toEqual([]);
   return file;
@@ -338,7 +362,7 @@ function dataDeclarations(file: ts.SourceFile) {
   return file.statements.filter((node) => ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node));
 }
 
-function verifyDestination(path: string, text = read(path)) {
+function verifyDestination(path: string, text: string) {
   const file = parse(path, text);
   const expected = receipts.filter((row) => row.target === path).flatMap((row) => row.names);
   expect(expected.length).toBeGreaterThan(0);
@@ -358,7 +382,12 @@ function verifyDestination(path: string, text = read(path)) {
   return file;
 }
 
-function verifyRetained(row: (typeof receipts)[number], text = read(row.old), overrides: Record<string, string> = {}) {
+function verifyRetained(
+  row: (typeof receipts)[number],
+  text: string,
+  overrides: Record<string, string>,
+  read: (path: string) => string,
+) {
   const statements = (path: string) =>
     parse(path, overrides[path] ?? read(path)).statements.filter(
       (node) => !ts.isImportDeclaration(node) && !ts.isExportDeclaration(node),
@@ -500,7 +529,7 @@ async function compileFixtures(sources: ReadonlyMap<string, string>): Promise<Fi
   return await new Promise((resolveCompilation, reject) => {
     const child = spawn(
       process.execPath,
-      ["--max-old-space-size=2048", "--input-type=commonjs", "-e", compilerFixtureChild],
+      ["--max-old-space-size=4096", "--input-type=commonjs", "-e", compilerFixtureChild],
       { cwd: root, stdio: ["pipe", "pipe", "pipe"] },
     );
     let stdout = "";
@@ -664,15 +693,18 @@ describe("connected program-data declaration seam", () => {
   });
 
   it.each([...new Set(receipts.map((row) => row.target))])("preserves exact declarations and docs in %s", (path) => {
-    verifyDestination(path);
+    const read = historicalReader();
+    verifyDestination(path, read(path));
   });
 
   it.each(receipts)("preserves every retained statement in $old", (row) => {
-    verifyRetained(row);
+    const read = historicalReader();
+    verifyRetained(row, read(row.old), {}, read);
   });
 
   it.each(receipts)("keeps explicit old-path compatibility exports in $old", (row) => {
-    const file = parse(row.old);
+    const read = historicalReader();
+    const file = parse(row.old, read(row.old));
     const movedNames = row.names.map((declaration) => declaration.name);
     expect(dataDeclarations(file).filter((node) => movedNames.includes(node.name.text))).toEqual([]);
     const found: string[] = [];
@@ -693,7 +725,8 @@ describe("connected program-data declaration seam", () => {
   });
 
   it("exports exactly three input, one controls and ten prepared types, with no runtime authority", () => {
-    const file = parse("src/ir/program/index.ts");
+    const read = historicalReader();
+    const file = parse("src/ir/program/index.ts", read("src/ir/program/index.ts"));
     expect(file.statements).toHaveLength(3);
     const expected = new Map([
       ["./input-contracts.js", inputExports],
@@ -724,20 +757,22 @@ describe("connected program-data declaration seam", () => {
     ["extra runtime authority", (text: string) => text + "\nexport class ProgramAbiMap {}\n"],
     ["malformed declaration", (text: string) => text + "\nexport interface Broken {\n"],
   ] as const)("rejects a %s in the declaration detector", (_label, change) => {
+    const read = historicalReader();
     const path = "src/ir/program/input-contracts.ts";
-    verifyDestination(path);
+    verifyDestination(path, read(path));
     const original = read(path);
     expect(change(original)).not.toBe(original);
     expect(() => verifyDestination(path, change(original))).toThrow();
   });
 
   it("detects a changed retained ownership algorithm", () => {
+    const read = historicalReader();
     const row = receipts.find((entry) => entry.old === "src/ir/program.ts")!;
-    verifyRetained(row);
+    verifyRetained(row, read(row.old), {}, read);
     const original = read(row.old);
     const changed = original.replace("if (!owner) return undefined;", "if (owner) return undefined;");
     expect(changed).not.toBe(original);
-    expect(() => verifyRetained(row, changed)).toThrow();
+    expect(() => verifyRetained(row, changed, {}, read)).toThrow();
   });
 
   it("actually compiles old/new identities, attachment joins and positive/negative type controls", async () => {
@@ -772,12 +807,13 @@ describe("connected program-data declaration seam", () => {
         ),
     ],
   ] as const)("rejects %s while reconstructing the original runtime receipt", (_label, change) => {
+    const read = historicalReader();
     const row = receipts.find((entry) => entry.old === "src/ir/program.ts")!;
-    verifyRetained(row);
+    verifyRetained(row, read(row.old), {}, read);
     const path = "src/ir/program/data.ts";
     const original = read(path);
     const changed = change(original);
     expect(changed).not.toBe(original);
-    expect(() => verifyRetained(row, read(row.old), { [path]: changed })).toThrow();
+    expect(() => verifyRetained(row, read(row.old), { [path]: changed }, read)).toThrow();
   });
 });

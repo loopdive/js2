@@ -75,11 +75,13 @@ describe("#684 usage-based any-local inference — representation", () => {
     expect(wat).not.toMatch(/__unbox_number/);
   });
 
-  it("narrows a `const` any local seeded from an any source", async () => {
+  it("keeps a `const` seeded from an unknown source boxed until conversion", async () => {
     const src = `declare function h(): any;
       export function f(): number { const z = h(); return z * 0 + 2; }`;
     const r = await compileOk(src);
-    expect(fBody(r.wat ?? "")).toMatch(/\(local \$z f64\)/);
+    // h() can return an object with observable/throwing valueOf. Numeric uses
+    // do not justify invoking that conversion when assigning z.
+    expect(fBody(r.wat ?? "")).toMatch(/\(local \$z externref\)/);
   });
 
   it("does NOT narrow when the flag is off (legacy boxed carrier retained)", async () => {

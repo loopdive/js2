@@ -13,6 +13,7 @@
 import type { ArrayTypeDef, Instr, StructTypeDef, SubTypeDef, TypeDef, ValType, WasmModule } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { walkInstructionDag } from "./walk-instructions.js";
+import { reachableFunctionPositions, stubUnreachableFunctions } from "./function-reachability-sweep.js";
 
 // --- Reference collection ---
 
@@ -287,7 +288,11 @@ function remapTD(td: TypeDef, remap: Map<number, number>): TypeDef {
  * no-op when no dead imports were removed (`fR.size === 0`), which is the common
  * case mid-finalize.
  */
-export function eliminateDeadImports(mod: WasmModule, ctx?: CodegenContext): void {
+export function eliminateDeadImports(
+  mod: WasmModule,
+  ctx?: CodegenContext,
+  options?: { sweepUnreachableFunctions?: boolean },
+): void {
   const numImpF = mod.imports.filter((i) => i.desc.kind === "func").length;
   // #2527: group identity is an ABI property. A module using one member must
   // retain the complete frozen group, otherwise separately compiled provider
@@ -334,6 +339,12 @@ export function eliminateDeadImports(mod: WasmModule, ctx?: CodegenContext): voi
     }
     return { usedF: usedFuncs, usedT: usedTypes };
   })();
+
+  // (#6768) Stub unreachable defined functions AFTER the reference scan above,
+  // so import/type liveness (and therefore every index space) is exactly what
+  // it is without the sweep, and BEFORE the remap walk below, so the remap and
+  // every later finalize pass skip the dead bodies.
+  if (options?.sweepUnreachableFunctions) stubUnreachableFunctions(mod, reachableFunctionPositions(mod));
 
   // --- Phase 2: Determine dead function imports ---
   let fi2 = 0;

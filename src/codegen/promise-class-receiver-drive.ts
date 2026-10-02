@@ -94,6 +94,11 @@ import {
 import { armConstructIsConstructorGuard } from "./construct-is-constructor-guard.js";
 import { armExternF64ArgTypeGuard, armExternRefArgTypeGuard } from "./extern-arg-marshal.js";
 import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dyn-member.js";
+import { resolvePromiseSubclassName } from "./expressions/promise-subclass.js"; // (#6651 D4)
+import { noJsHost } from "./js-errors.js";
+import { promiseSubclassResolveFallbackInstrs } from "./promise-subclass-proto-link.js";
+import { shadowsGlobalValueName } from "./promise-class-receiver-settle.js";
+import { demandPromiseDynamicMember } from "./promise-dynamic-member-read.js"; // (#6651 D5)
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -429,9 +434,10 @@ function ensureClassDriveRuntime(ctx: CodegenContext): ClassDriveRuntime | undef
 
 /**
  * The class `C` names, when the receiver is an identifier bound to a compiled class that does
- * not extend a builtin (a Promise subclass is #5197 G9, not this mechanism).
+ * not extend a builtin — or (#6651 D4 / #5197 G9) extends `Promise`, whose `<C>_new` builds the
+ * native `$Promise` carrier and so serves NewPromiseCapability(C) through the same construct call.
  */
-function resolveCompiledClassReceiver(ctx: CodegenContext, arg: ts.Expression): string | undefined {
+export function resolveCompiledClassReceiver(ctx: CodegenContext, arg: ts.Expression): string | undefined {
   if (!ts.isIdentifier(arg)) return undefined;
   const decl = ctx.oracle.valueDeclarationOf(arg);
   let node: ts.Node | undefined = decl;
@@ -444,7 +450,9 @@ function resolveCompiledClassReceiver(ctx: CodegenContext, arg: ts.Expression): 
     ctx.anonClassExprNames.get(node as ts.ClassLikeDeclaration) ??
     (node.name ? (ctx.classExprNameMap.get(node.name.text) ?? node.name.text) : undefined);
   if (name === undefined || !ctx.classSet.has(name)) return undefined;
-  // Transitively: a user class chain that reaches ANY builtin keeps its own path.
+  if (resolvePromiseSubclassName(ctx, name) !== undefined)
+    return noJsHost(ctx) && !shadowsGlobalValueName(arg) ? name : undefined;
+  // Transitively: a user class chain that reaches ANY other builtin keeps its own path.
   const seen = new Set<string>();
   for (let c: string | undefined = name; c !== undefined && !seen.has(c); c = ctx.classParentMap.get(c)) {
     seen.add(c);
@@ -454,8 +462,39 @@ function resolveCompiledClassReceiver(ctx: CodegenContext, arg: ts.Expression): 
   return name;
 }
 
+/**
+ * (#5197 r3) D1's admission, shared: `arg` (parens / `as` / `!` peeled) is an ordinary function —
+ * a function expression, or an identifier bound to a non-generator, non-async function declaration
+ * or to a variable whose initializer is a non-generator function expression.
+ */
+export function isOrdinaryFunctionCtorArg(ctx: CodegenContext, arg: ts.Expression): boolean {
+  const unwrap = (value: ts.Expression): ts.Expression => {
+    let current = value;
+    while (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isNonNullExpression(current) ||
+      ts.isTypeAssertionExpression(current)
+    ) {
+      current = current.expression;
+    }
+    return current;
+  };
+  const ctorArg = unwrap(arg);
+  const ctorDecl: ts.Node | undefined = ts.isIdentifier(ctorArg) ? ctx.oracle.valueDeclarationOf(ctorArg) : ctorArg;
+  const ctorInit = ctorDecl && ts.isVariableDeclaration(ctorDecl) ? ctorDecl.initializer : undefined;
+  const ctorExpr = ctorInit ? unwrap(ctorInit) : ctorDecl;
+  return (
+    (ctorExpr !== undefined && ts.isFunctionExpression(ctorExpr) && ctorExpr.asteriskToken === undefined) ||
+    (ctorDecl !== undefined &&
+      ts.isFunctionDeclaration(ctorDecl) &&
+      ctorDecl.asteriskToken === undefined &&
+      !(ctorDecl.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false))
+  );
+}
+
 /** Arm and reserve the one-argument native construct driver (the `new <value>(x)` prelude). */
-function reserveConstructDriver(ctx: CodegenContext, fctx: FunctionContext): number {
+export function reserveConstructDriver(ctx: CodegenContext, fctx: FunctionContext): number {
   ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
   ensureLateImport(ctx, "__object_create", [EXTERNREF], [EXTERNREF]);
   flushLateImportShifts(ctx, fctx);
@@ -497,6 +536,7 @@ function emitClassReceiverDrive(
   method: NativeCombinator,
   rt: ClassDriveRuntime,
   L: DriveLocals,
+  promiseRooted: boolean,
 ): void {
   const capability = ensureCustomCapabilityRuntime(ctx)!;
   const wrapperRoot = getFuncRefWrapperRootTypeIdx(ctx)!;
@@ -551,6 +591,9 @@ function emitClassReceiverDrive(
   );
 
   // ── GetPromiseResolve(C) — a throwing getter or a non-callable value rejects. ──
+  // (#6651 D4) A Promise subclass inherits `resolve` from `%Promise%`. Built after every
+  // registration above, so no later late-import shift can strand its baked indices.
+  const resolveFallback = promiseRooted ? (promiseSubclassResolveFallbackInstrs(ctx, fctx, L.resolveFn) ?? []) : [];
   fctx.body.push(
     buildTargetTaggedTry(
       ctx,
@@ -560,6 +603,7 @@ function emitClassReceiverDrive(
         ...stringConstantExternrefInstrs(ctx, "resolve"),
         { op: "call", funcIdx: fn("__extern_get") },
         { op: "local.set", index: L.resolveFn },
+        ...resolveFallback,
       ],
       catchToReject(),
     ),
@@ -902,7 +946,16 @@ export function tryEmitClassReceiverCombinatorCall(
   const ctorArg = expr.arguments[0];
   if (ctorArg === undefined || expr.arguments.length > 2) return undefined;
   const className = resolveCompiledClassReceiver(ctx, ctorArg);
-  if (className === undefined) return undefined;
+  // (#5197 r3 Step 5) …or an ordinary FUNCTION `C` over a non-literal iterable: D1 drains one
+  // through `__combinator_to_vec`, which cannot step an iterator (an expando `@@iterator` reads
+  // as "not iterable"); an array literal keeps D1. The drive constructs any `C` via the driver.
+  const iterable = expr.arguments[1];
+  const functionCtor =
+    className === undefined &&
+    (iterable === undefined || !ts.isArrayLiteralExpression(iterable)) &&
+    isOrdinaryFunctionCtorArg(ctx, ctorArg) &&
+    !shadowsGlobalValueName(ctorArg);
+  if (className === undefined && !functionCtor) return undefined;
 
   const snap = snapshotSpeculative(ctx, fctx);
   // Registration strictly precedes emission.
@@ -928,7 +981,10 @@ export function tryEmitClassReceiverCombinatorCall(
   }
   // `Get(C, "resolve")` is a runtime-key read of the class OBJECT: record the demand so the
   // class's static sidecar is materialised (#5383 S2i).
-  recordStandaloneRuntimeKeyClassMemberRead(ctx, ctx.structMap.get(className));
+  if (className !== undefined) recordStandaloneRuntimeKeyClassMemberRead(ctx, ctx.structMap.get(className));
+  // `Invoke(next, "then", …)` reads `then` off whatever `C.resolve` answers — a native promise
+  // included (#6651 D5): demand `%Promise.prototype%.then` so that read finds it.
+  demandPromiseDynamicMember(ctx, "then", fctx);
 
   const local = (name: string, type: ValType): number => allocLocal(fctx, `__pcd_${name}_${fctx.locals.length}`, type);
   const L: DriveLocals = {
@@ -963,6 +1019,7 @@ export function tryEmitClassReceiverCombinatorCall(
   };
   pushExtern(ctorArg, L.ctor);
   pushExtern(expr.arguments[1], L.arg);
-  emitClassReceiverDrive(ctx, fctx, method, rt, L);
+  const promiseRooted = className !== undefined && resolvePromiseSubclassName(ctx, className) !== undefined;
+  emitClassReceiverDrive(ctx, fctx, method, rt, L, promiseRooted);
   return EXTERNREF;
 }

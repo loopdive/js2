@@ -79,7 +79,9 @@ import { nextModuleGlobalIdx } from "./registry/imports.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { INITIAL_CAP } from "./object-runtime.js";
+import { protoLinkNull } from "./object-runtime-proxy-chain.js"; // (#6766) $Object.protoLink
 import { resolveFnctorSymbol } from "./fnctor-escape-gate.js"; // (#4163) proto-SOURCE marks
+import { readEnv } from "../env.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 
@@ -95,7 +97,7 @@ const EXTERNREF: ValType = { kind: "externref" };
 export function scanForDynamicProto(ctx: CodegenContext, root: ts.Node): void {
   // (#802 §8) one-line kill switch: no marks ⇒ no field append, no helper
   // emission, no prepended arms — Slice B/C disabled wholesale.
-  if (process.env.JS2WASM_NO_DYNPROTO === "1") return;
+  if (readEnv("JS2WASM_NO_DYNPROTO") === "1") return;
 
   const classParents = new Map<string, string>(); // declared class → extends-identifier
   const declaredClasses = new Set<string>();
@@ -183,7 +185,7 @@ export function scanForDynamicProto(ctx: CodegenContext, root: ts.Node): void {
     }
     if (!ts.isIdentifier(src)) return;
     const init = ctx.oracle.variableInitializerOf(src);
-    if (process.env.JS2WASM_LOG_PROTO_SOURCE === "1") {
+    if (readEnv("JS2WASM_LOG_PROTO_SOURCE") === "1") {
       // eslint-disable-next-line no-console
       console.error(`[#4163 proto-source] id=${src.text} init=${init ? ts.SyntaxKind[init.kind] : "none"}`);
     }
@@ -599,6 +601,7 @@ export function fillDynamicProtoHelpers(ctx: CodegenContext): void {
           { op: "i32.const", value: 0 }, // tombstones
           { op: "i32.const", value: 0 }, // flags
           { op: "i32.const", value: 0 }, // nextSeq
+          protoLinkNull(), // protoLink (#6766)
           { op: "struct.new", typeIdx: objectTypeIdx },
           { op: "extern.convert_any" },
           { op: "global.set", index: sentIdx },

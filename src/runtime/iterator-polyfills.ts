@@ -314,6 +314,7 @@ function _getGeneratorPrototype(): any {
     state.materialize = undefined;
     state.index = state.buf.length;
     state.retDone = true;
+    state.pendingThrow = null; // (#6781) completed: the eager body's deferred throw never surfaces
     return { value, done: true };
   });
 
@@ -326,6 +327,8 @@ function _getGeneratorPrototype(): any {
     state.thunk = undefined;
     state.materialize = undefined;
     state.index = state.buf.length;
+    state.pendingThrow = null; // (#6781) completed: a later next() is `{undefined, done: true}`,
+    state.retDone = true; // with no deferred body throw and no body return value
     throw e;
   });
 
@@ -1189,14 +1192,14 @@ function _installIteratorHelperPolyfills(): void {
   }
 
   if (typeof Iproto.reduce !== "function") {
-    _installBuiltinMethod(Iproto, "reduce", 1, function (this: any, reducer: any, initial?: any) {
+    _installBuiltinMethod(Iproto, "reduce", 1, function (this: any, reducer: any, ...rest: any[]) {
       const iter = _requireIteratorReceiver(this, "reduce");
       if (typeof reducer !== "function") {
         throw new TypeError("Iterator.prototype.reduce: reducer is not a function");
       }
       let counter = 0;
-      let acc: any = initial;
-      if (arguments.length < 2) {
+      let acc: any = rest[0];
+      if (rest.length === 0) {
         const first = iter.next();
         if (first && first.done) {
           throw new TypeError("Iterator.prototype.reduce: empty iterator with no initial value");

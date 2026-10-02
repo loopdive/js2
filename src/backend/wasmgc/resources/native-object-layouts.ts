@@ -5,6 +5,7 @@ import {
   createObjectPropertyEntryDeclaration,
   createObjectPropertyMapDeclaration,
   createOpenObjectDeclaration,
+  createExtensibleOpenObjectDeclaration,
 } from "../../../runtime/wasmgc/values/object-layouts.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
 import {
@@ -17,6 +18,8 @@ import {
 
 export interface NativeObjectLayoutRequirements {
   readonly key: string;
+  /** Explicit opt-in; absent preserves the final ordinary layout. */
+  readonly extensible?: true;
 }
 export interface NativeObjectLayoutDeclarationPlan extends NativeResourceRecipe {
   readonly key: string;
@@ -46,8 +49,11 @@ export function declareNativeObjectLayouts(
   requirements: NativeObjectLayoutRequirements,
 ): NativeObjectLayoutDeclarationPlan {
   const descriptor = Object.getOwnPropertyDescriptor(requirements, "key");
-  if (!descriptor || !("value" in descriptor) || typeof descriptor.value !== "string" || !descriptor.value)
+  if (!descriptor || !Object.hasOwn(descriptor, "value") || typeof descriptor.value !== "string" || !descriptor.value)
     fail("missing or non-data resource key");
+  const extensible = Object.getOwnPropertyDescriptor(requirements, "extensible");
+  if (extensible && (!Object.hasOwn(extensible, "value") || extensible.value !== true))
+    fail("extensible layout requires an explicit true data field");
   const key: string = descriptor.value;
   const types = { propEntry: key + ":entry", propMap: key + ":map", object: key + ":object" };
   const declarations = [
@@ -67,7 +73,9 @@ export function declareNativeObjectLayouts(
       key: types.object,
       role: ["object", "carrier"],
       space: "type" as const,
-      shape: createOpenObjectDeclaration(types.object, types.propMap),
+      shape: extensible
+        ? createExtensibleOpenObjectDeclaration(types.object, types.propMap)
+        : createOpenObjectDeclaration(types.object, types.propMap),
     },
   ];
   return freezeNativeResourceRecipe({

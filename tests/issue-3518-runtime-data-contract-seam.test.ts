@@ -41,8 +41,11 @@ import {
   receiptRows,
 } from "./helpers/ir-historical-runtime-reconstruction.js";
 
+import { readRuntimeContractReceiptSource } from "./helpers/ir-runtime-contract-evolution.js";
+
 const root = resolve(import.meta.dirname, "..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8");
+const historicalRead = (path: string) => readRuntimeContractReceiptSource(path, read);
 const hash = (rows: unknown) => createHash("sha256").update(JSON.stringify(rows)).digest("hex");
 
 // Measured from f95d8a0bf318e857d981863b1018a9d776483a46, source-qualified:
@@ -379,11 +382,11 @@ describe("#3518 canonical runtime data-contract seam", () => {
     const reconstructed =
       receipt.path === "src/ir/runtime/contracts/intrinsics.ts" ||
       receipt.path === "src/ir/runtime/contracts/manifest.ts"
-        ? acceptedHistoricalDeclarations(receipt.path, read)
+        ? acceptedHistoricalDeclarations(receipt.path, historicalRead)
         : undefined;
     const file = reconstructed
         ? parse(receipt.path, reconstructed.map((row) => (row.doc ? row.doc + "\n" : "") + row.text).join("\n\n"))
-        : parse(receipt.path),
+        : parse(receipt.path, historicalRead(receipt.path)),
       rows = declarationRows(file, receipt.path.endsWith("/prepared.ts"));
     expect(rows.map(([name]) => name)).toEqual(receipt.names);
     expect(
@@ -407,7 +410,7 @@ describe("#3518 canonical runtime data-contract seam", () => {
   it.each(retainedReceipts)(
     "checks historical retained $path receipt after checked extension reconstruction",
     (receipt) => {
-      const records = acceptedHistoricalDeclarations(receipt.path, read),
+      const records = acceptedHistoricalDeclarations(receipt.path, historicalRead),
         rows = receiptRows(records);
       expect(rows).toHaveLength(receipt.declarations);
       expect(records.filter((record) => ts.isFunctionDeclaration(record.node))).toHaveLength(receipt.functions);
@@ -423,7 +426,7 @@ describe("#3518 canonical runtime data-contract seam", () => {
     expect(retainedReceipts.reduce((count, receipt) => count + receipt.functions, 0)).toBe(118);
     expect(valueCases).toHaveLength(52);
     const old = parse("src/ir/async-plan.ts");
-    const historical = acceptedHistoricalDeclarations("src/ir/async-plan.ts", read);
+    const historical = acceptedHistoricalDeclarations("src/ir/async-plan.ts", historicalRead);
     expect(historical.filter((row) => ts.isFunctionDeclaration(row.node))).toHaveLength(39);
     const authority = currentDeclarations("src/ir/runtime/async-attachment.ts", read);
     expect(authority.filter((row) => row.name === "preparedManifestByPlan")).toHaveLength(1);

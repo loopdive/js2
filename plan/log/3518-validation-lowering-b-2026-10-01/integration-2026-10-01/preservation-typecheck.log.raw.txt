@@ -1,0 +1,5 @@
+tests/helpers/ir-program-initial-graph-evolution.ts(238,32): error TS7006: Parameter 'o' implicitly has an 'any' type.
+tests/helpers/ir-program-initial-graph-evolution.ts(260,31): error TS7006: Parameter 'c' implicitly has an 'any' type.
+tests/helpers/ir-validation-analysis-relocation.ts(120,12): error TS2352: Conversion of type 'Statement' to type 'NamedDeclaration' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Property '_declarationBrand' is missing in type 'Statement' but required in type 'NamedDeclaration'.
+tests/issue-3518-program-core-type-evolution.test.ts(290,19): error TS4104: The type 'readonly Change[]' is 'readonly' and cannot be assigned to the mutable type '{ role: string; current: { startByte: number; endByte: number; }; originalOffset: number; }[]'.

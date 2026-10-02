@@ -113,9 +113,14 @@ export function requireNativeStringFlattenReservations(
   const empty = requireNativeStringLiteral(tx, owner.stringPack, "", "wtf16");
   if (empty.kind !== "global" || empty.global !== owner.emptyLiteral) fail("substituted UTF-16 empty literal");
   if (tx.state !== "reserving") {
-    for (const token of [...pack.stringPack.types, pack.emptyLiteral, pack.worklist, pack.copyTree, pack.flatten])
-      tx.physicalIndex(token);
-    if (pack.utf8Decoder) tx.physicalIndex(pack.utf8Decoder);
+    tx.physicalIndices([
+      ...pack.stringPack.types,
+      pack.emptyLiteral,
+      pack.worklist,
+      pack.copyTree,
+      pack.flatten,
+      ...(pack.utf8Decoder ? [pack.utf8Decoder] : []),
+    ]);
   }
   return pack;
 }

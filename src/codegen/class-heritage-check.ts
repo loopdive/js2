@@ -16,8 +16,9 @@
 // SCOPE, deliberately narrow. This module answers the IsConstructor half only,
 // and only for a heritage the compiler can prove NOT to be a constructor by
 // reading the source. The §15.7.14 step 5.g.ii "Get(superclass, 'prototype')
-// is neither Object nor Null" half is NOT implemented here — see the residual
-// note in `plan/issues/5195-es2015-standalone-class-r2.md`.
+// is neither Object nor Null" half is implemented only for the intrinsic
+// `Proxy` (#6651 C5, `heritagePrototypeIsProvablyInvalid`) — see the residual
+// note in `plan/issues/5195-es2015-standalone-class-r2.md` for the rest.
 //
 // COMPILE-TIME PROOF ONLY (r3 review F1, 2026-09-04). The first cut also
 // admitted any heritage the compiler could not trace — a parameter, a
@@ -214,6 +215,47 @@ export function bindingIsUniqueAndNeverWritten(id: ts.Identifier, declaration: t
   return !written && bindings === 1 && ownBinding;
 }
 
+const mathWriteScan = new WeakMap<ts.SourceFile, boolean>();
+
+/**
+ * (#6767 step 3) True when no code in `sourceFile` can replace a member of
+ * `Math`: every occurrence of the name `Math` is the receiver of a member READ
+ * (`Math.abs`, `Math.abs.prototype = 42` — the write lands on the FUNCTION, not
+ * on `Math`), and the file has no `with` or `eval`. Any other use — `Math.x =
+ * …`, `delete Math.x`, `Math[k]`, passing `Math` to a function (which might
+ * `defineProperty` on it), a local binding named `Math` — declines. Whole-file
+ * and name-based on purpose, like {@link bindingIsUniqueAndNeverWritten}: a
+ * false decline costs a row, a false proof throws on a working program.
+ */
+function mathNamespaceIsNeverWritten(sourceFile: ts.SourceFile): boolean {
+  const cached = mathWriteScan.get(sourceFile);
+  if (cached !== undefined) return cached;
+  let clean = true;
+  const visit = (node: ts.Node): void => {
+    if (!clean) return;
+    if (ts.isWithStatement(node) || (ts.isIdentifier(node) && node.text === "eval")) {
+      clean = false;
+      return;
+    }
+    if (ts.isIdentifier(node) && node.text === "Math") {
+      const parent = node.parent;
+      const isMemberName =
+        (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+        (ts.isPropertyAssignment(parent) && parent.name === node);
+      const isMemberRead =
+        ts.isPropertyAccessExpression(parent) && parent.expression === node && !occurrenceIsWriteTarget(parent);
+      if (!isMemberName && !isMemberRead) {
+        clean = false;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  mathWriteScan.set(sourceFile, clean);
+  return clean;
+}
+
 /**
  * True when this identifier names an AMBIENT GLOBAL — no declaration at all, or
  * one that lives in a `.d.ts` lib file. A module-local binding of the same name
@@ -258,6 +300,20 @@ function heritageIsProvablyNotConstructor(ctx: CodegenContext, expr: ts.Expressi
   ) {
     return true;
   }
+  // (#6767 step 3) `Math.<anything>`: every own property of %Math% is a number
+  // or a built-in FUNCTION that is not a constructor (§21.3 — none is
+  // "identified as a constructor"), and a missing one reads `undefined`; all
+  // three are non-constructors. Provable only while no code in the file can
+  // replace a member — see {@link mathNamespaceIsNeverWritten}.
+  if (
+    ts.isPropertyAccessExpression(expr) &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "Math" &&
+    identifierIsAmbientGlobal(ctx, expr.expression) &&
+    mathNamespaceIsNeverWritten(expr.getSourceFile())
+  ) {
+    return true;
+  }
   if (!ts.isIdentifier(expr)) return false;
   const declaration = ctx.oracle.valueDeclarationOf(expr);
   // A bare `undefined` that resolves to no declaration is the global
@@ -279,6 +335,109 @@ function heritageIsProvablyNotConstructor(ctx: CodegenContext, expr: ts.Expressi
 }
 
 /**
+ * (#6651 C5) §15.7.14 step 5.g.ii — the half the header scopes out, for the one
+ * heritage whose answer is known from the source: the intrinsic `%Proxy%`. It is
+ * a constructor, but it has NO `prototype` property (§28.2.2 lists only
+ * `revocable`), so `Get(superclass, "prototype")` is undefined — neither an
+ * Object nor null — and `class P extends Proxy {}` throws a TypeError at
+ * definition time. A module-local `Proxy` binding is not the intrinsic and is
+ * declined, like every other heritage this module cannot prove.
+ */
+function heritagePrototypeIsProvablyInvalid(ctx: CodegenContext, expr: ts.Expression): boolean {
+  if (ts.isIdentifier(expr) && expr.text === "Proxy" && identifierIsAmbientGlobal(ctx, expr)) return true;
+  // (#6767 step 3) Standalone only, like the IsConstructor arms: the host lane
+  // registers every other runtime heritage through its own bridge.
+  return ctx.standalone === true && heritageIsProvablyPrototypelessBoundFunction(ctx, expr, 0);
+}
+
+/**
+ * `<plain function literal>.bind(…)`: a CONSTRUCTOR (BoundFunctionCreate copies
+ * the target's [[Construct]]) whose `prototype` read is `undefined` —
+ * §10.4.1.3 creates no own `prototype`, and the chain it inherits along
+ * (%Function.prototype% → %Object.prototype%) has none. So §15.7.14 step
+ * 5.g.ii throws (`definition/constructable-but-no-prototype.js`). A NON-
+ * constructor receiver is `heritageIsProvablyNotConstructor`'s, with its own
+ * message, and is left to it.
+ */
+function isPrototypelessBoundFunctionLiteral(expr: ts.Expression): boolean {
+  if (!ts.isCallExpression(expr) || !ts.isPropertyAccessExpression(expr.expression)) return false;
+  if (expr.expression.name.text !== "bind") return false;
+  const target = unwrapHeritage(expr.expression.expression);
+  return ts.isFunctionExpression(target) && !functionLikeIsProvablyNotConstructor(target);
+}
+
+/**
+ * The bound-function literal above, directly or through a unique, never-written
+ * `var` alias chain (the alias walk of {@link heritageIsProvablyNotConstructor}).
+ * An ALIAS additionally must not escape: every other reference to it in the
+ * file is an `extends` operand or `Object.defineProperty(<alias>, "prototype",
+ * {…})` with no `get`/`value` key — a setter-only accessor still reads
+ * `undefined` (`definition/prototype-setter.js`), while anything that could
+ * install a readable `prototype` (a `value`, a getter, an assignment, the
+ * alias passed anywhere else) declines.
+ */
+function heritageIsProvablyPrototypelessBoundFunction(
+  ctx: CodegenContext,
+  expr: ts.Expression,
+  depth: number,
+): boolean {
+  if (isPrototypelessBoundFunctionLiteral(expr)) return true;
+  if (!ts.isIdentifier(expr) || depth >= 4) return false;
+  const declaration = ctx.oracle.valueDeclarationOf(expr);
+  if (declaration === undefined || declaration.getSourceFile().isDeclarationFile) return false;
+  if (!ts.isVariableDeclaration(declaration) || declaration.initializer === undefined) return false;
+  if (!bindingIsUniqueAndNeverWritten(expr, declaration)) return false;
+  if (!boundAliasOnlyFeedsHeritage(ctx, expr.text, declaration)) return false;
+  return heritageIsProvablyPrototypelessBoundFunction(ctx, unwrapHeritage(declaration.initializer), depth + 1);
+}
+
+/** See {@link heritageIsProvablyPrototypelessBoundFunction}: the escape scan. */
+function boundAliasOnlyFeedsHeritage(ctx: CodegenContext, name: string, declaration: ts.VariableDeclaration): boolean {
+  let escapes = false;
+  const visit = (node: ts.Node): void => {
+    if (escapes) return;
+    if (ts.isIdentifier(node) && node.text === name && node !== declaration.name) {
+      const parent = node.parent;
+      const isPropertyName =
+        (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+        (ts.isPropertyAssignment(parent) && parent.name === node);
+      if (!isPropertyName && !isHeritageOperand(node) && !isSetterOnlyPrototypeDefine(ctx, node)) {
+        escapes = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(declaration.getSourceFile());
+  return !escapes;
+}
+
+function isHeritageOperand(node: ts.Node): boolean {
+  let current: ts.Node = node;
+  while (ts.isParenthesizedExpression(current.parent)) current = current.parent;
+  return ts.isExpressionWithTypeArguments(current.parent) && ts.isHeritageClause(current.parent.parent);
+}
+
+/** `Object.defineProperty(<node>, "prototype", { …no get/value… })`. */
+function isSetterOnlyPrototypeDefine(ctx: CodegenContext, node: ts.Node): boolean {
+  const call = node.parent;
+  if (!ts.isCallExpression(call) || call.arguments[0] !== node || call.arguments.length !== 3) return false;
+  const callee = call.expression;
+  if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "defineProperty") return false;
+  if (!ts.isIdentifier(callee.expression) || callee.expression.text !== "Object") return false;
+  if (!identifierIsAmbientGlobal(ctx, callee.expression)) return false;
+  const key = call.arguments[1]!;
+  const desc = call.arguments[2]!;
+  if (!ts.isStringLiteral(key) || key.text !== "prototype" || !ts.isObjectLiteralExpression(desc)) return false;
+  return desc.properties.every((property) => {
+    if (!ts.isPropertyAssignment(property) && !ts.isMethodDeclaration(property)) return false;
+    const propertyName = property.name;
+    if (!ts.isIdentifier(propertyName) && !ts.isStringLiteral(propertyName)) return false;
+    return propertyName.text !== "get" && propertyName.text !== "value";
+  });
+}
+
+/**
  * The heritage expression of `decl` that is PROVABLY not a constructor and so
  * must throw at class-definition time, or `undefined` when the compiler cannot
  * prove it — in which case the class keeps exactly the code the base tree
@@ -295,12 +454,17 @@ export function heritageExpressionNeedingRuntimeCheck(
   ctx: CodegenContext,
   decl: ts.ClassDeclaration | ts.ClassExpression,
 ): ts.Expression | undefined {
-  if (!ctx.standalone) return undefined;
   if (decl.heritageClauses === undefined) return undefined;
   for (const clause of decl.heritageClauses) {
     if (clause.token !== ts.SyntaxKind.ExtendsKeyword || clause.types.length === 0) continue;
     const expr = unwrapHeritage(clause.types[0]!.expression);
     if (expr.kind === ts.SyntaxKind.NullKeyword) return undefined;
+    // (#6651 C5) The `%Proxy%` prototype arm is target-independent: the host
+    // lane resolves an identifier heritage statically too and never read
+    // `Proxy.prototype` either. The IsConstructor arms stay standalone-only —
+    // the host registers every other runtime heritage through its own bridge.
+    if (heritagePrototypeIsProvablyInvalid(ctx, expr)) return expr;
+    if (!ctx.standalone) return undefined;
     return heritageIsProvablyNotConstructor(ctx, expr) ? expr : undefined;
   }
   return undefined;
@@ -339,11 +503,38 @@ export function emitStandaloneHeritageCheck(
       return { commit: false, value: undefined };
     }
     fctx.body.push({ op: "drop" });
+    const message = heritagePrototypeIsProvablyInvalid(ctx, expr)
+      ? "Class extends value does not have valid prototype property undefined"
+      : "Class extends value is not a constructor or null";
+    // Host lane: the ordinary `__new_TypeError` import, so the thrown value is
+    // the realm's own TypeError. Standalone: the in-module constructor.
     fctx.body.push(
-      ...buildThrowJsErrorInstrs(ctx, "TypeError", "Class extends value is not a constructor or null", {
-        forceInModuleCtor: true,
-      }),
+      ...buildThrowJsErrorInstrs(ctx, "TypeError", message, { forceInModuleCtor: ctx.standalone === true }),
     );
     return { commit: true, value: undefined };
   });
+}
+
+/**
+ * (#6651 C5) Is `className`'s heritage the intrinsic `%Symbol%`?
+ *
+ * `class S extends Symbol {}` is a LEGAL class definition — `Symbol` is a
+ * constructor and `Symbol.prototype` is an object — but every construction
+ * throws: `super()` performs `Construct(%Symbol%, args, NewTarget)`, and
+ * §20.4.1.1 step 1 throws a TypeError whenever NewTarget is not undefined. So
+ * the answer is known from the source and is the same on every target.
+ *
+ * Neither lane modelled it: `Symbol` is not a host-constructible builtin parent,
+ * so the class compiled as a root struct wearing a heritage clause, and both
+ * the implicit derived constructor and an explicit `super()` completed
+ * normally. A module-local `Symbol` binding is not the intrinsic and is
+ * declined.
+ */
+export function classHeritageIsIntrinsicSymbol(ctx: CodegenContext, className: string): boolean {
+  const decl = ctx.classDeclarationMap.get(className);
+  const clause = decl?.heritageClauses?.find((c) => c.token === ts.SyntaxKind.ExtendsKeyword);
+  const heritage = clause?.types[0]?.expression;
+  if (heritage === undefined) return false;
+  const expr = unwrapHeritage(heritage);
+  return ts.isIdentifier(expr) && expr.text === "Symbol" && identifierIsAmbientGlobal(ctx, expr);
 }

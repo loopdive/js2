@@ -99,6 +99,20 @@ export function setProgramAbiInheritedClassCallableAlias(
   ctx.funcMap.set(physicalName, funcIdx);
 }
 
+/**
+ * (#6733) Re-type one class member function and every inherited alias that was
+ * raised against its provisional collection-time type. A member typed before a
+ * forward-referenced class struct existed (`get t(): Later | null` resolves
+ * `Later` to externref) is re-resolved during class-body compilation; a child
+ * alias observed in between must follow, or retained planning sees two
+ * signatures for one function.
+ */
+export function retypeProgramAbiClassCallable(ctx: CodegenContext, func: WasmFunction, typeIdx: number): void {
+  if (func.typeIdx === typeIdx) return;
+  func.typeIdx = typeIdx;
+  ctx.programAbiClassCallables?.retypeInheritedAliases(func);
+}
+
 function hasStaticModifier(node: ts.Node): boolean {
   return (
     ts.canHaveModifiers(node) &&
@@ -420,6 +434,32 @@ export class ProgramAbiClassCallableRegistry {
       this.inheritedAliases.set(childClassId, aliasesByRole);
     }
     return canonicalUnitId;
+  }
+
+  /** Move every inherited alias of `func` to its current (re-resolved) type. */
+  retypeInheritedAliases(func: WasmFunction): void {
+    for (const aliasesByRole of this.inheritedAliases.values()) {
+      for (const [role, observation] of aliasesByRole) {
+        if (definedFuncAt(this.ctx, observation.funcIdx) !== func) continue;
+        this.assertOpen(observation.displayName);
+        const currentSignature = functionSignature(this.ctx, func);
+        const ref = irSupportFuncRef(
+          observation.childClassId,
+          observation.role,
+          observation.displayName,
+          observation.derivedOrdinal,
+        );
+        if (ref.binding.kind !== "support") {
+          throw new ProgramAbiInvariantError(
+            "invalid-binding-reference",
+            `inherited class callable ${observation.displayName} has no support alias to retype`,
+          );
+        }
+        this.session.retypeCallableAlias(ref.binding.bindingId, currentSignature);
+        const signature = canonicalProgramAbiCallableTypeContract(currentSignature);
+        aliasesByRole.set(role, Object.freeze({ ...observation, signature }));
+      }
+    }
   }
 
   /**

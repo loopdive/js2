@@ -51,10 +51,25 @@ for (const entry of entries) {
 
 // Single fork + no file parallelism: matches the #3008 per-PR gate's settings
 // so guard files with large compiler graphs don't defeat the bounded fork.
+//
+// The single fork accumulates heap across all guard files. By 2026-09-28 it
+// ended every file at 492–506 MB against vitest's 512 MB fork default, and
+// on origin/main @ 8273bc388e it reached the limit ("JavaScript heap out of
+// memory") with no PR involved. Opt in to the same 1024 MB fork heap the
+// equivalence and issue-tests gates already use; override with
+// GUARD_SUITE_FORK_HEAP_MB or an explicit VITEST_FORK_MAX_OLD_SPACE_SIZE.
+const GUARD_SUITE_FORK_HEAP_MB = process.env.GUARD_SUITE_FORK_HEAP_MB || "1024";
 const result = spawnSync(
   "pnpm",
   ["exec", "vitest", "run", ...files, "--pool=forks", "--poolOptions.forks.singleFork=true", "--no-file-parallelism"],
-  { cwd: repoRoot, stdio: "inherit" },
+  {
+    cwd: repoRoot,
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      VITEST_FORK_MAX_OLD_SPACE_SIZE: process.env.VITEST_FORK_MAX_OLD_SPACE_SIZE || GUARD_SUITE_FORK_HEAP_MB,
+    },
+  },
 );
 
 if (result.status !== 0) {

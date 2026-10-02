@@ -47,6 +47,34 @@ export function nativeGeneratorFunctionValueNeedsResultBridge(
   );
 }
 
+/**
+ * (#6651 A8) A top-level `g.prototype = v` on a sync generator DECLARATION,
+ * under the native generator lanes (standalone / WASI). The module-init
+ * collector keeps `F.prototype = …` only for a user constructor (#2660 S2) and
+ * excludes `prototype` from its function-static keep, so this write compiled
+ * to NOTHING: `g.prototype` still read the original object and every later
+ * `g()` inherited from it (`statements/generators/default-proto.js`). The same
+ * write inside a function body already reaches the function's own writable
+ * `prototype` (created by the initializer below); keeping the statement is the
+ * whole fix.
+ */
+export function isGeneratorDeclarationPrototypeWrite(ctx: CodegenContext, target: ts.Expression): boolean {
+  if (!(ctx.standalone || ctx.wasi) || !ts.isPropertyAccessExpression(target)) return false;
+  if (!ts.isIdentifier(target.name) || target.name.text !== "prototype") return false;
+  let receiver: ts.Expression = target.expression; // `(g as any).prototype` is the same write
+  while (ts.isParenthesizedExpression(receiver) || ts.isAsExpression(receiver) || ts.isNonNullExpression(receiver)) {
+    receiver = receiver.expression;
+  }
+  if (!ts.isIdentifier(receiver)) return false;
+  const declaration = ctx.oracle.valueDeclarationOf(receiver);
+  return (
+    declaration !== undefined &&
+    ts.isFunctionDeclaration(declaration) &&
+    declaration.asteriskToken !== undefined &&
+    !declaration.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)
+  );
+}
+
 export function initializeNativeGeneratorFunctionValue(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -56,7 +84,14 @@ export function initializeNativeGeneratorFunctionValue(
   if (
     !(ctx.standalone || ctx.wasi) ||
     !declaration ||
-    !(ts.isFunctionDeclaration(declaration) || ts.isFunctionExpression(declaration)) ||
+    // (#6651 A8) A generator METHOD is a generator function too: §15.5.4 /
+    // MethodDefinition evaluation gives it the same own `prototype`
+    // ({w:true, e:false, c:false}, [[Prototype]] %GeneratorPrototype%).
+    !(
+      ts.isFunctionDeclaration(declaration) ||
+      ts.isFunctionExpression(declaration) ||
+      ts.isMethodDeclaration(declaration)
+    ) ||
     !declaration.asteriskToken ||
     declaration.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)
   )

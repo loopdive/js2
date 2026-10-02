@@ -1,0 +1,374 @@
+{
+  "kind": "runtime-contract-live-evolution-test-reader-draft",
+  "state": "frozen-unvalidated",
+  "model": "Codex GPT-6 Astra Max",
+  "worktree": "/private/tmp/js2-ir-source-contracts-writer-20261001",
+  "branch": "codex/3518-source-contracts-writer-20261001",
+  "writerBase": "a8cd258d553278d8e5f908878f56a81377ba8e40",
+  "sourceProvenance": "1265c47d6fc41300a380ef7e4abc45fdfcfd2c61",
+  "golden": "6ed68535323e0756c3a0b15dde18fd480ad7fc9f",
+  "booleanBefore": "545923d1c9b0a30476f5a6e0dd7f5078be3c25c0",
+  "files": {
+    "tests/helpers/ir-runtime-contract-evolution.ts": {
+      "bytes": 19449,
+      "sha256": "579a39d3e2046ea8cc5efb129577d71579cf655d4ced730ef10a0a87b4b5244e",
+      "gitBlob": "0c58c16f2e5c22f7f15cd77535249d279c0f431a",
+      "lines": 478
+    },
+    "tests/helpers/ir-runtime-contract-evolution.json": {
+      "bytes": 1185011,
+      "sha256": "f7c21adce97a49db5b05106e8da21217be8c96c70133bf8d425054e38b7adafc",
+      "gitBlob": "2a0ffc32a9fa15cc683a76c62fd2e7aefd369964",
+      "lines": 30844
+    },
+    "tests/issue-3518-runtime-contract-evolution.test.ts": {
+      "bytes": 26282,
+      "sha256": "349b2318dc19fe646c6da1f8c8162cdb5a9b7804c2634ff97ab9e305c955dbf1",
+      "gitBlob": "02121424d3eb6ce4a80a05680783e2ca020f36ae",
+      "lines": 774
+    }
+  },
+  "protected": {
+    "manifests": [
+      {
+        "path": ".tmp/source-contracts-writer/phase-a-role-correction-qktlatcg/freeze.json",
+        "sha256": "58de81f1ec29953d2e50166132286bf163bf1626b90062509104aab46c85670f"
+      },
+      {
+        "path": ".tmp/source-contracts-writer/relocation-freeze-ngavd5/freeze.json",
+        "sha256": "4dc180501a2cd1b184aacc329591aa9add6fab255588d275e38ef6fbede616e4"
+      },
+      {
+        "path": ".tmp/source-contracts-writer/pre-a-freeze-ObLzMk/freeze.json",
+        "sha256": "13dec7ca04ddda2c23270edf4c9851a23abb7ceafddc37d5220f7937acdc7343"
+      },
+      {
+        "path": ".tmp/source-contracts-writer/core-vocabulary-freeze-gOZASp/freeze.json",
+        "sha256": "994f00785c72338a22b2e3080ce4b71a4c0ba793f9b236f8e2deba7cf19c557d"
+      }
+    ],
+    "currentFiles": 35,
+    "drift": []
+  },
+  "population": {
+    "rawCurrent": 27,
+    "changedSources": 11,
+    "boundedSpans": 34,
+    "liveSlices": 84,
+    "actualAbiFunctions": 2,
+    "currentOnlyDeclarations": 8,
+    "currentManifestDeclarations": 79,
+    "currentCallableDeclarations": 10,
+    "oldLinkReceipts": 10,
+    "oldOwnerReceipts": 5
+  },
+  "rawInputs": [
+    {
+      "path": "src/runtime/contracts/provider-policy.ts",
+      "bytes": 21289,
+      "sha256": "886c4898fe21558eac4a743cf478a7b9e7ab8edcf460436954dd1f9fda8faa56",
+      "gitBlob": "9e117958237449e8804c1907997f0487c16e3387"
+    },
+    {
+      "path": "src/ir/runtime/contracts/manifest.ts",
+      "bytes": 28324,
+      "sha256": "048358db8d8deeee38bb6d49e9fe9be41189441f6b26221733c832f16ce02cd1",
+      "gitBlob": "a9b945e529e106f61089a29440ae73d114d5d2c0"
+    },
+    {
+      "path": "src/ir/intrinsics.ts",
+      "bytes": 2316,
+      "sha256": "1e037410c4702272ae7f16a3b20b2a352f4c31525feb20419428399dac20e091",
+      "gitBlob": "5e3a09f86e5743867318740e4706607eb0ea30bb"
+    },
+    {
+      "path": "src/ir/core/intrinsic-vocabulary.ts",
+      "bytes": 3446,
+      "sha256": "2aa5c040d09473d683daace9007c4d483cfc76f45eef707b50c7205c7c86854d",
+      "gitBlob": "6e837f8b8b19626a71b13df0f0401921fac073ae"
+    },
+    {
+      "path": "src/ir/runtime/contracts/intrinsics.ts",
+      "bytes": 3101,
+      "sha256": "0392774476fc5beb79f6c0ac22e610fb098c3687e80d653a2aa468f85ef25ed2",
+      "gitBlob": "04e452f4a7041ddd094fa3cac9d579d4280febe7"
+    },
+    {
+      "path": "src/ir/core/intrinsics.ts",
+      "bytes": 11038,
+      "sha256": "96b3368af4b8777f19abd9a0aa7ebf0a25f102075c1ca0db6504a8ec81aa569f",
+      "gitBlob": "a8d550388b00f810017a5e28213480063c70f014"
+    },
+    {
+      "path": "src/ir/analysis/intrinsics.ts",
+      "bytes": 4751,
+      "sha256": "57af60dfaf3f4b8fe5845b053442aab3863383519db48bc705e6dfb89caeba5d",
+      "gitBlob": "1a86a55e9ac08764d0105c288a68147915b4a786"
+    },
+    {
+      "path": "src/ir/runtime/callable-declarations.ts",
+      "bytes": 5642,
+      "sha256": "6632f6ecb4221bf31e4cd733b51baf5095a0d7268da1b4f7d0ffa14c8cf27911",
+      "gitBlob": "81553cf192d6551d7a55b09553ad6cc6ee01e0f8"
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "bytes": 104292,
+      "sha256": "ff36567f298b2ef4946caf7159d9e1647e0e9fdf920296735547dffca15a9ec8",
+      "gitBlob": "aadd390ab836833d18daff12282ffc2524f598f5"
+    },
+    {
+      "path": "src/ir/intrinsic-support.ts",
+      "bytes": 49626,
+      "sha256": "03e5d583b91a7589481c80e1ca1dd5a621fee3e593f5ca9537f9c573b8925e40",
+      "gitBlob": "843e50acc3ac00b01e996a8c0bb24ade33c1fb51"
+    },
+    {
+      "path": "src/ir/program-runtime-abi.ts",
+      "bytes": 4475,
+      "sha256": "0f8eb92a65a87a4fe0275aa4e90f88a600f3f598f9278fd01edd198fff4c41a4",
+      "gitBlob": "d10bd411a6030ba898b8febe5bf3d0ff1d99e35f"
+    },
+    {
+      "path": "src/ir/program/runtime-abi-identity.ts",
+      "bytes": 1242,
+      "sha256": "a3d26cbc0e6b8f084825d83786c7c7b2e45714e2335c6c87b8b427c64476dd7f",
+      "gitBlob": "8899261896c18e71fe2226630e6f9a861023ea99"
+    },
+    {
+      "path": "src/ir/runtime-program-manifest.ts",
+      "bytes": 12069,
+      "sha256": "d9698e66ad1d048e51dd58f6a5b47b2adf65a61da1787c5d543b1ac6437036a9",
+      "gitBlob": "bd80eecc4f6937a72757ea0124bea7af92e3cf27"
+    },
+    {
+      "path": "src/ir/core/vector-runtime.ts",
+      "bytes": 2138,
+      "sha256": "936219b3246105de0222c65d06b2503d4f016795eb3a570e7a6e9ad5ffa657a9",
+      "gitBlob": "66276d1960d7d245e33186d966a5246c0807610e"
+    },
+    {
+      "path": "src/ir/vector-runtime.ts",
+      "bytes": 418,
+      "sha256": "3c55a99f4ded681cb44da3baec4939b80fd958770d966a047d20ec6d87e79c96",
+      "gitBlob": "2056a001def37f3b9d21702eb4834432cc325b79"
+    },
+    {
+      "path": "src/ir/runtime/vector-callables.ts",
+      "bytes": 6920,
+      "sha256": "b594f734f6126f5c449b7facef61418f9df7eacce8ebd5bf84560e97eec4d04f",
+      "gitBlob": "63c5ed3eeb7f0dd0fd9ac50ee3dc110b87566113"
+    },
+    {
+      "path": "src/ir/program-runtime-validation.ts",
+      "bytes": 8186,
+      "sha256": "bb4006f9bcdf641f665b6b1ee10ea6fd8ced30e168d09faf8439358d574f2b0c",
+      "gitBlob": "0e514564a61e077baaba01048ad5ca6a5688ebd9"
+    },
+    {
+      "path": "src/ir/core/async-callables.ts",
+      "bytes": 608,
+      "sha256": "147ae75a6c8a58f25344d96958ef8261af7b06589e4e499d43aa47a9dc98ba95",
+      "gitBlob": "1716b9018db4094e01772327e6c561f9868b1db2"
+    },
+    {
+      "path": "src/ir/runtime/native-async-callables.ts",
+      "bytes": 14710,
+      "sha256": "31b3cb6ab351fe33e543d2b95a1b8bac24d920f788b460153decfc8b750d5d27",
+      "gitBlob": "1694f8ed5c46459814b52e93b5bc59d157757449"
+    },
+    {
+      "path": "src/ir/core/intrinsic-contracts.ts",
+      "bytes": 1210,
+      "sha256": "ece37f6c4f48129187e326cdad4fd6207217e50c5078739acae1cf5393aa3932",
+      "gitBlob": "177f7aaf3163c4eb47866ae2a226001795745891"
+    },
+    {
+      "path": "src/ir/core/async-intents.ts",
+      "bytes": 1159,
+      "sha256": "411d7ae2cbfcae0da9c00f2a53e04be4a80ed45906c063c9f9b9ca1692909d0b",
+      "gitBlob": "573dd721ad90c6d3f49df6c1ae86b60ef67a4ccc"
+    },
+    {
+      "path": "src/ir/runtime/async-providers.ts",
+      "bytes": 9201,
+      "sha256": "8bbbe1f71ccc3a234d9bd894173829fb285fd39cb637c617aeea90dc6d3b0100",
+      "gitBlob": "ae8a6f9a76a509be854fee396bd7d068d9d344e3"
+    },
+    {
+      "path": "src/ir/analysis/async-plan.ts",
+      "bytes": 31637,
+      "sha256": "0589c846108f32bc41835f533fc7ef36f4373039849c92d237e2fdcc6483fa93",
+      "gitBlob": "a8bccc41f618c04d976677fe73cbfdfcb283fcd0"
+    },
+    {
+      "path": "src/ir/runtime/async-attachment.ts",
+      "bytes": 12783,
+      "sha256": "d85bb938c33068cafb05f29f5e8c30040ec85f168a616e74fefcfa3d48ff8818",
+      "gitBlob": "0661ee7dee9173baff8a3627c8a6ffa341e41153"
+    },
+    {
+      "path": "src/ir/runtime/intrinsic-verification.ts",
+      "bytes": 4860,
+      "sha256": "2fbc05033b8f62c71f0053ac439590b7f3183701bf855a621027b4ff818bdfbd",
+      "gitBlob": "c91ec8e7e0c088030359fe5ddf696e2a3ee25a3b"
+    },
+    {
+      "path": "src/runtime/contracts/async-provider-schema.ts",
+      "bytes": 3057,
+      "sha256": "5c40a91d9c21a96292a58cfe7d61d87e83ec0b6db916b2c9f714d60c5c93499a",
+      "gitBlob": "28ac7d2773d3b556c935ae3bf4e431d24657a7fd"
+    },
+    {
+      "path": "src/ir/runtime/contracts/prepared.ts",
+      "bytes": 4370,
+      "sha256": "5ad34666195a78cdca49005de505e8cd468af8b04b40d8ff5de88347489515e9",
+      "gitBlob": "6d3e003b0d8ac79060042c402029e830c734f0bd"
+    }
+  ],
+  "authoringRequirementSource": {
+    "path": "tests/issue-3518-runtime-data-contract-seam.test.ts",
+    "sha256": "8d32a071b57435f7d08d6101f1448d4779ac8edcab31b8d8f671a7b138f4bd52",
+    "bytes": 44714,
+    "gitBlob": "6b0986c882129c9f75a784fcd84308eba4af00f8",
+    "runtimeDependency": false
+  },
+  "staticDraftedRows": 331,
+  "testGroups": [
+    {
+      "name": "captures exactly 27 production sources once, without reading authoring test provenance",
+      "rows": 1
+    },
+    {
+      "name": "recovers exact target and complete reciprocal bytes for $path",
+      "rows": 27
+    },
+    {
+      "name": "retains the exact live manifest 79 and callable 10 declaration census",
+      "rows": 1
+    },
+    {
+      "name": "retains both actual live ABI function bodies and documentation in the old owner",
+      "rows": 1
+    },
+    {
+      "name": "preserves generic runtime specialization and actual core bodies outside the Boolean inverse",
+      "rows": 1
+    },
+    {
+      "name": "preserves all old link/owner checks and the %s stage",
+      "rows": 2
+    },
+    {
+      "name": "preserves the original $count declaration receipt for $path",
+      "rows": 8
+    },
+    {
+      "name": "requires the complete raw owner %s",
+      "rows": 27
+    },
+    {
+      "name": "rejects an outside-span raw edit in %s",
+      "rows": 27
+    },
+    {
+      "name": "rejects missing raw span $span.ordinal in $path",
+      "rows": 34
+    },
+    {
+      "name": "rejects duplicated raw span $span.ordinal in $path",
+      "rows": 34
+    },
+    {
+      "name": "rejects changed raw span $span.ordinal in $path",
+      "rows": 34
+    },
+    {
+      "name": "rejects shifted raw span $span.ordinal in $path",
+      "rows": 34
+    },
+    {
+      "name": "rejects reordered reviewed spans in $path",
+      "rows": 7
+    },
+    {
+      "name": "authenticates the removed live residue $path/$name before removing it",
+      "rows": 8
+    },
+    {
+      "name": "rejects a duplicate current-only residue $path/$name",
+      "rows": 8
+    },
+    {
+      "name": "rejects the valid-syntax mutation: %s",
+      "rows": 29
+    },
+    {
+      "name": "refuses missing actual ABI function $name",
+      "rows": 2
+    },
+    {
+      "name": "refuses duplicated actual ABI function $name",
+      "rows": 2
+    },
+    {
+      "name": "refuses changed order of the two actual ABI functions",
+      "rows": 1
+    },
+    {
+      "name": "refuses stale or caller-altered receipt authority: %s",
+      "rows": 26
+    },
+    {
+      "name": "checks Git blob independently of a correct full SHA256 and byte count",
+      "rows": 1
+    },
+    {
+      "name": "performs fresh raw authentication after a warmed successful reconstruction",
+      "rows": 1
+    },
+    {
+      "name": "refuses a second normalization of historical $path",
+      "rows": 11
+    },
+    {
+      "name": "normalizes the exact supplied initial source and authenticates the other 26 owners",
+      "rows": 1
+    },
+    {
+      "name": "passes an unknown external path through raw without mapping or other reads",
+      "rows": 1
+    },
+    {
+      "name": "keeps actual compiler inputs raw while the initial historical reader returns the old view",
+      "rows": 1
+    },
+    {
+      "name": "leaves an injected historical body mutant for the unchanged old owner checks",
+      "rows": 1
+    }
+  ],
+  "unknownTestGroups": [],
+  "checks": {
+    "format": "Prettier write/check exact three files only; passed",
+    "syntaxDiagnostics": 0,
+    "metadataArithmetic": "27 original whole pins and27 exact reciprocal current replays",
+    "compiler": "NOT RUN",
+    "testFunctions": "NOT RUN",
+    "Git": "NOT RUN",
+    "network": "NOT USED"
+  },
+  "interfaces": [
+    "runtimeContractCurrentPaths",
+    "readRuntimeContractReceiptSource(path, rawReader?)",
+    "beforeRuntimeContractReceiptSource(path, rawSource, rawReader?)",
+    "reconstructRuntimeContractReceiptSources(rawReader?, receiptText?)"
+  ],
+  "limits": [
+    "Helper runtime and new test assertions remain unexecuted.",
+    "Root owns initial historical reader plumbing for the existing75/631 suites; actual compiler/runtime/type readers remain raw.",
+    "The old optional-chain expression is absent intact; the fixed recipe is an explicit authenticated token/AST recomposition from the same live implementation, not an unchanged expression.",
+    "Sixteen mapped inputs are byte-identical at the target stage; exact same bytes remain valid, while changed historical outputs reject on repeated normalization.",
+    "No source Call, native provider, realm readiness, public Number parity or IR retirement is certified."
+  ]
+}

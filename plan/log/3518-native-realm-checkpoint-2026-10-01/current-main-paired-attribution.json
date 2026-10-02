@@ -1,0 +1,966 @@
+{
+  "baselineMain": "4c5a334669d3d9ac4db29e850f73d65965ba89f6",
+  "label": "actual main production with identical test-only historical input adapters",
+  "exitCode": 1,
+  "total": 204,
+  "passed": 131,
+  "failed": 73,
+  "candidateDifferences": [],
+  "productionDiff": "",
+  "rows": {
+    "argument vector historical source composition inverts and replays every later main change on authenticated actual source": {
+      "status": "failed",
+      "firstFailure": [
+        "Error: write relocated module mismatch: src/runtime/wasmgc/values/ordinary-object-descriptor-common.ts"
+      ]
+    },
+    "argument vector historical source composition reorders the signed Symbol span into the exact historical input and back": {
+      "status": "failed",
+      "firstFailure": [
+        "Error: write relocated module mismatch: src/runtime/wasmgc/values/ordinary-object-descriptor-common.ts"
+      ]
+    },
+    "argument vector historical source composition rejects missing span 0": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects changed span 0": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects duplicated span 0": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects missing span 1": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects changed span 1": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects duplicated span 1": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects missing span 2": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects changed span 2": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects duplicated span 2": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects missing span 3": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects changed span 3": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects duplicated span 3": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects missing span 4": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects changed span 4": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects duplicated span 4": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects missing span 5": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects changed span 5": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects duplicated span 5": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects missing span 6": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects changed span 6": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects duplicated span 6": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects missing span 7": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects changed span 7": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects duplicated span 7": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects missing span 8": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects changed span 8": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects duplicated span 8": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects missing span 9": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects changed span 9": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects duplicated span 9": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects missing span 10": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects changed span 10": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects duplicated span 10": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects missing span 11": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects changed span 11": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects duplicated span 11": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects missing span 12": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects changed span 12": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects duplicated span 12": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects missing span 13": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects changed span 13": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects duplicated span 13": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects missing span 14": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects changed span 14": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects duplicated span 14": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects missing span 15": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects changed span 15": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects duplicated span 15": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects missing span 16": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects changed span 16": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects duplicated span 16": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects missing span 17": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects changed span 17": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects duplicated span 17": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /span/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects reversed span order": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "argument vector historical source composition rejects unowned changes": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /complete input/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects receipt substitution": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "argument vector historical source composition rejects Symbol fixture substitution": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /receipt/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "argument vector historical source composition rejects Symbol replay on an unrelated source": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected [Function] to throw error matching /input/ but got 'write relocated module mismatch: src/\u2026'"
+      ]
+    },
+    "resume-main outer composition preserves exact earlier authority pins the actual signed prior, canonical main and common base independently": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority does not normalize fixture bytes or confer authority to unknown paths": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority reconstructs every prior byte and replays the actual merged src/codegen/any-helpers.ts": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/any-helpers.ts:0 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/any-helpers.ts:1 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/any-helpers.ts:2 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/any-helpers.ts:3 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/any-helpers.ts rejects retained-source edits, reordered spans and historical substitution": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority reconstructs every prior byte and replays the actual merged src/codegen/carrier-bag-visibility.ts": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/carrier-bag-visibility.ts:0 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/carrier-bag-visibility.ts:1 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/carrier-bag-visibility.ts:2 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/carrier-bag-visibility.ts:3 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/carrier-bag-visibility.ts:4 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/carrier-bag-visibility.ts:5 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/carrier-bag-visibility.ts:6 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/carrier-bag-visibility.ts rejects retained-source edits, reordered spans and historical substitution": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority reconstructs every prior byte and replays the actual merged src/codegen/closure-props.ts": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/closure-props.ts:0 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/closure-props.ts:1 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/closure-props.ts rejects retained-source edits, reordered spans and historical substitution": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority reconstructs every prior byte and replays the actual merged src/codegen/expressions/calls.ts": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:0 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:1 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:2 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:3 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:4 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:5 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:6 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:7 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:8 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:9 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:10 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:11 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:12 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:13 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:14 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:15 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:16 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:17 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:18 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:19 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:20 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:21 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:22 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:23 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:24 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:25 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:26 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:27 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:28 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:29 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:30 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts:31 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/expressions/calls.ts rejects retained-source edits, reordered spans and historical substitution": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority reconstructs every prior byte and replays the actual merged src/codegen/generators-native-protocol.ts": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected '883dbb58792e5cc37d49b6110f592f05edc58\u2026' to be '2493304a17cd48381fc68b438d7266843f9fe\u2026' // Object.is equality"
+      ]
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/generators-native-protocol.ts:0 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected '883dbb58792e5cc37d49b6110f592f05edc58\u2026' to be '2493304a17cd48381fc68b438d7266843f9fe\u2026' // Object.is equality"
+      ]
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/generators-native-protocol.ts:1 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected '883dbb58792e5cc37d49b6110f592f05edc58\u2026' to be '2493304a17cd48381fc68b438d7266843f9fe\u2026' // Object.is equality"
+      ]
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/generators-native-protocol.ts rejects retained-source edits, reordered spans and historical substitution": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected '883dbb58792e5cc37d49b6110f592f05edc58\u2026' to be '2493304a17cd48381fc68b438d7266843f9fe\u2026' // Object.is equality"
+      ]
+    },
+    "resume-main outer composition preserves exact earlier authority reconstructs every prior byte and replays the actual merged src/codegen/instance-props.ts": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/instance-props.ts:0 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/instance-props.ts:1 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/instance-props.ts rejects retained-source edits, reordered spans and historical substitution": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority reconstructs every prior byte and replays the actual merged src/codegen/native-strings.ts": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected 'b904de7dfcaf3cb1d7575218338a9c900a311\u2026' to be 'b873ada7720363eb9de28941747b05158d6eb\u2026' // Object.is equality"
+      ]
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/native-strings.ts:0 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected 'b904de7dfcaf3cb1d7575218338a9c900a311\u2026' to be 'b873ada7720363eb9de28941747b05158d6eb\u2026' // Object.is equality"
+      ]
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/native-strings.ts:1 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected 'b904de7dfcaf3cb1d7575218338a9c900a311\u2026' to be 'b873ada7720363eb9de28941747b05158d6eb\u2026' // Object.is equality"
+      ]
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/native-strings.ts:2 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected 'b904de7dfcaf3cb1d7575218338a9c900a311\u2026' to be 'b873ada7720363eb9de28941747b05158d6eb\u2026' // Object.is equality"
+      ]
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/native-strings.ts:3 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected 'b904de7dfcaf3cb1d7575218338a9c900a311\u2026' to be 'b873ada7720363eb9de28941747b05158d6eb\u2026' // Object.is equality"
+      ]
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/native-strings.ts rejects retained-source edits, reordered spans and historical substitution": {
+      "status": "failed",
+      "firstFailure": [
+        "AssertionError: expected 'b904de7dfcaf3cb1d7575218338a9c900a311\u2026' to be 'b873ada7720363eb9de28941747b05158d6eb\u2026' // Object.is equality"
+      ]
+    },
+    "resume-main outer composition preserves exact earlier authority reconstructs every prior byte and replays the actual merged src/codegen/object-runtime.ts": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:0 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:1 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:2 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:3 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:4 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:5 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:6 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:7 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:8 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:9 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:10 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:11 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:12 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:13 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:14 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:15 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:16 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:17 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:18 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:19 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:20 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:21 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:22 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:23 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:24 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts:25 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/object-runtime.ts rejects retained-source edits, reordered spans and historical substitution": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority reconstructs every prior byte and replays the actual merged src/codegen/proto-index-store.ts": {
+      "status": "failed",
+      "firstFailure": ["Error: prototype receiver builder mismatch"]
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/proto-index-store.ts:0 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "failed",
+      "firstFailure": ["Error: prototype receiver builder mismatch"]
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/proto-index-store.ts:1 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "failed",
+      "firstFailure": ["Error: prototype receiver builder mismatch"]
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/proto-index-store.ts rejects retained-source edits, reordered spans and historical substitution": {
+      "status": "failed",
+      "firstFailure": ["Error: prototype receiver builder mismatch"]
+    },
+    "resume-main outer composition preserves exact earlier authority reconstructs every prior byte and replays the actual merged src/codegen/registry/imports.ts": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/registry/imports.ts:0 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/registry/imports.ts:1 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/registry/imports.ts:2 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/registry/imports.ts:3 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/registry/imports.ts:4 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/registry/imports.ts:5 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/registry/imports.ts:6 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/registry/imports.ts:7 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/registry/imports.ts:8 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/registry/imports.ts rejects retained-source edits, reordered spans and historical substitution": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority reconstructs every prior byte and replays the actual merged src/codegen/runtime-ref-number.ts": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/runtime-ref-number.ts:0 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/runtime-ref-number.ts:1 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/runtime-ref-number.ts rejects retained-source edits, reordered spans and historical substitution": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority reconstructs every prior byte and replays the actual merged src/codegen/symbol-native.ts": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/symbol-native.ts:0 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/symbol-native.ts:1 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/symbol-native.ts:2 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/symbol-native.ts:3 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/symbol-native.ts rejects retained-source edits, reordered spans and historical substitution": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority reconstructs every prior byte and replays the actual merged src/codegen/type-coercion.ts": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/type-coercion.ts:0 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/type-coercion.ts:1 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/type-coercion.ts:2 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/type-coercion.ts:3 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/type-coercion.ts:4 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/type-coercion.ts:5 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/type-coercion.ts:6 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/codegen/type-coercion.ts rejects retained-source edits, reordered spans and historical substitution": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority reconstructs every prior byte and replays the actual merged src/runtime/wasmgc/values/to-primitive-bodies.ts": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/runtime/wasmgc/values/to-primitive-bodies.ts:0 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/runtime/wasmgc/values/to-primitive-bodies.ts:1 rejects damaged, missing and duplicated spans in both directions": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority src/runtime/wasmgc/values/to-primitive-bodies.ts rejects retained-source edits, reordered spans and historical substitution": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority authenticates the moved numeric helper and shared vec-own recipe as real current files": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority preserves the actual BigInt registry subtype adapter before restoring older donor checks": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority rejects prior receipt corruption after the actual positive receipt": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority rejects main receipt corruption after the actual positive receipt": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority rejects base receipt corruption after the actual positive receipt": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority rejects span receipt corruption after the actual positive receipt": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority rejects order receipt corruption after the actual positive receipt": {
+      "status": "passed",
+      "firstFailure": []
+    },
+    "resume-main outer composition preserves exact earlier authority rejects path receipt corruption after the actual positive receipt": {
+      "status": "passed",
+      "firstFailure": []
+    }
+  }
+}

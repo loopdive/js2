@@ -1,0 +1,60 @@
+{
+  "kind": "runtime-contract-shift-control-test-revision",
+  "state": "frozen-unvalidated-revision",
+  "model": "Codex GPT-6 Astra Max",
+  "worktree": "/private/tmp/js2-ir-source-contracts-writer-20261001",
+  "branch": "codex/3518-source-contracts-writer-20261001",
+  "writerBase": "a8cd258d553278d8e5f908878f56a81377ba8e40",
+  "files": {
+    "tests/issue-3518-runtime-contract-evolution.test.ts": {
+      "before": {
+        "sha256": "349b2318dc19fe646c6da1f8c8162cdb5a9b7804c2634ff97ab9e305c955dbf1",
+        "gitBlob": "02121424d3eb6ce4a80a05680783e2ca020f36ae",
+        "bytes": 26282,
+        "lines": 774
+      },
+      "after": {
+        "sha256": "fad69b1198683cd8e154b02004c9839679bcef9ba67decbacc723f887f38678c",
+        "gitBlob": "ec89a4df34454d62d703ef0a0a5e468906019957",
+        "bytes": 26364,
+        "lines": 775
+      }
+    }
+  },
+  "previousFreeze": {
+    "path": "/private/tmp/js2-ir-source-contracts-writer-20261001/.tmp/source-contracts-writer/runtime-evolution-freeze-yN0bkE",
+    "sha256": "33aa7477d4c73995d205622a6b9a47e5f0e6ad4ba1f9bb95fa56866ba0309e8b",
+    "allThreeFrozenBytesUnchanged": true
+  },
+  "protected": {
+    "earlierPaths": 35,
+    "drift": [],
+    "runtimeHelperAndReceiptUnchanged": true
+  },
+  "change": "A contextual span ending at EOF is relocated to the beginning; every other span retains end relocation. The altered-source positive and exact raw-owner refusal assertions are unchanged.",
+  "staticDraftedRows": 331,
+  "exactOneReplacement": true,
+  "baseline": {
+    "path": "/private/tmp/js2-ir-source-contracts-main-20261001/.tmp/source-contracts-main/runtime-resume/runtime-cohort.json",
+    "pin": {
+      "sha256": "5151c0f4921acdeb71149507fd243052e99662dcc82d8699ebbf4792be9c3b0a",
+      "gitBlob": "9e784d00dc880bbe08b496c9668f37d5aea46173",
+      "bytes": 155445,
+      "lines": 0
+    },
+    "numPassedTests": 405,
+    "numFailedTests": 1,
+    "originalRuntimeRows": "75/75 passed (root execution)",
+    "newRows": "330/331 passed (root execution)",
+    "failingRow": "rejects shifted raw span 1 in src/ir/runtime/callable-declarations.ts"
+  },
+  "checks": {
+    "format": "scoped Prettier write, unchanged",
+    "compiler": "NOT RUN",
+    "checker": "NOT RUN",
+    "tests": "NOT RUN",
+    "Git": "NOT RUN",
+    "network": "NOT USED"
+  },
+  "validationRequired": "Root runs strict serial validation; no revised result is inferred."
+}

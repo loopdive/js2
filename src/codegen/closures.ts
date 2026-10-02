@@ -130,11 +130,7 @@ export {
 // pulls the `async-cps`/`async-frame` chain which imports back into `closures`
 // (a cycle), so it must evaluate after this module's other deps are loaded to
 // avoid perturbing the init order of the coercion-engine/string-ops chain.
-import {
-  planAsyncClosureActivation,
-  emitAsyncClosureBody,
-  reportDeclinedAsyncRejectionHazard,
-} from "./async-activation.js";
+import { planAsyncClosureActivation, emitAsyncClosureBody, reportDeclinedAsyncBody } from "./async-activation.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js"; // (#2865) async-gen fn-expr producer
 import { asyncClosurePromiseWrapEnabled, reserveAsyncClosurePromiseWrapper } from "./async-closure-promise.js"; // (#4648)
 // (#3164) Native generator FUNCTION EXPRESSIONS (standalone/wasi): the lifted
@@ -145,6 +141,7 @@ import {
   isNativeGeneratorCandidate,
   registerNativeGenerator,
 } from "./generators-native.js";
+import { isGeneratorMethodWithYieldKey, namedFunctionOwnNameShadow } from "./generators-native-ast-scan.js"; // (#6651 A7, A10)
 import type { NativeGeneratorInfo } from "./context/types.js";
 // (#3270) Extracted closure subsystems. Re-exported below so external importers
 // that reference these symbols via `./closures.js` are unaffected.
@@ -234,6 +231,7 @@ import {
   ensureFuncClosureSingleton,
   emitCachedFuncClosureAccess,
 } from "./closures/method-trampolines.js";
+import { readEnv } from "../env.js";
 export {
   emitObjectMethodAsClosure,
   finalizeMethodTrampolines,
@@ -2192,10 +2190,14 @@ export function computeClosureWrapperSig(
 
   // 2. Return type (mirrors compileArrowAsClosure).
   const isAsync = arrow.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
-  const sig = ctx.checker.getSignatureFromDeclaration(arrow);
+  // (#6651 A10) `*[yield]() {}` inside another generator sends TypeScript's
+  // checker into unbounded recursion on this query; a generator returns its
+  // iterator object, so the answer is externref without asking.
+  const yieldKeyedGenerator = isGeneratorMethodWithYieldKey(arrow);
+  const sig = yieldKeyedGenerator ? undefined : ctx.checker.getSignatureFromDeclaration(arrow);
   let closureReturnType: ValType | null = null;
   let checkerReturnWasNever = false;
-  if (isGenerator) {
+  if (isGenerator || yieldKeyedGenerator) {
     closureReturnType = { kind: "externref" };
   } else if (sig) {
     let retType = ctx.checker.getReturnTypeOfSignature(sig);
@@ -2706,12 +2708,8 @@ function emitLiftedClosureArgumentsObject(
   // closure sees the TRUE call-site argument count (from __argc/__extras_argv
   // set by the closure call site, #1511) — not just its declared arity.
   // paramOffset is 1 because lifted closures carry __self at local index 0.
-  emitArgumentsVecBody(ctx, liftedFctx, arrowParams, 1, {
-    vecTypeIdx: vti,
-    arrTypeIdx: ati,
-    argsLocalIdx: argsLocal,
-    arrTmpIdx: arrTmp,
-  });
+  const locals = { vecTypeIdx: vti, arrTypeIdx: ati, argsLocalIdx: argsLocal, arrTmpIdx: arrTmp };
+  emitArgumentsVecBody(ctx, liftedFctx, arrowParams, 1, locals, true, argsParams);
 
   // (#4243) §10.6 step 13.a — `callee` on a non-strict arguments object.
   seedLiftedClosureArgumentsCallee(ctx, liftedFctx, arrow, argsLocal);
@@ -2784,7 +2782,6 @@ export function compileLiftedClosureBody(
     // class-object singleton rather than `undefined`.
     isStaticContext: fctx.isStaticContext,
     isGenerator,
-    deferredDynamicImportTrap: !isAsync && !isGenerator,
     // (#1636-S1) This lifted closure body can be dispatched from the host via
     // `__call_fn_method_N` (e.g. as a `JSON.stringify` replacer / `toJSON`),
     // which installs the host receiver into `__current_this`. Allow `this`
@@ -2993,7 +2990,11 @@ export function compileLiftedClosureBody(
   // closure struct).  Also register in closureMap so the call-site
   // compiler emits call_ref instead of a direct call.
   let funcExprName: string | undefined;
-  if (ts.isFunctionExpression(arrow) && arrow.name) {
+  // (#6651 A7) A parameter of the same name shadows the self binding in the
+  // parameters AND the body, so it is never registered; a body declaration
+  // shadows it only after the parameter prologue (see the var hoist below).
+  const ownNameShadow = ts.isFunctionExpression(arrow) ? namedFunctionOwnNameShadow(arrow) : undefined;
+  if (ts.isFunctionExpression(arrow) && arrow.name && ownNameShadow !== "params") {
     funcExprName = arrow.name.text;
     // Map the name to the __self param (index 0) inside the lifted body
     liftedFctx.localMap.set(funcExprName, 0);
@@ -3105,6 +3106,13 @@ export function compileLiftedClosureBody(
     if (presize.size > 0) liftedFctx.stringBuilderPresize = presize; // #1761
   }
 
+  // (#6651 A7) The parameter prologue above saw the fn-expr's self binding; a
+  // body var/function/lexical declaration of that name wins from here on.
+  if (funcExprName !== undefined && ownNameShadow === "body") {
+    liftedFctx.localMap.delete(funcExprName);
+    liftedFctx.readOnlyBindings?.delete(funcExprName);
+    ctx.closureMap.delete(funcExprName);
+  }
   // Pre-hoist function-scoped `var` declarations into the closure's localMap
   // (#1745). Regular functions run this in function-body.ts; closures/arrows
   // previously skipped it, so a `var x` inside a closure body that collided
@@ -3466,7 +3474,7 @@ function reportClosureFrameBreach(
   };
   walk(liftedFctx.body);
   if (worst < 0) return;
-  if (process.env?.JS2WASM_FRAME_OPS) {
+  if (readEnv("JS2WASM_FRAME_OPS")) {
     const flat: string[] = [];
     const dump = (instrs: readonly Instr[], depth: number): void => {
       for (const instr of instrs) {
@@ -3511,7 +3519,7 @@ function reportClosureFrameBreach(
  * Consumed by `scripts/profile-buckets.mjs`.
  */
 function reportClosureNameMap(arrow: ts.ArrowFunction | ts.FunctionExpression, closureName: string): void {
-  if (typeof process === "undefined" || !process.env?.JS2WASM_CLOSURE_NAME_MAP) return;
+  if (typeof process === "undefined" || !readEnv("JS2WASM_CLOSURE_NAME_MAP")) return;
   let label = ts.isFunctionExpression(arrow) && arrow.name ? arrow.name.text : "";
   if (!label) {
     const parent = arrow.parent;
@@ -3655,12 +3663,12 @@ export function compileArrowAsClosure(
       closureReturnType = { kind: "externref" };
       eagerAsyncPromiseWrap = true;
     }
-    // (#3587) Declined async arrow/fn-expr with a genuinely-suspending await
-    // inside a `try`: refuse loudly instead of silently compiling the legacy
-    // pass-through that cannot deliver awaited rejections. Still reported for
+    // (#3587/#6780) Declined async arrow/fn-expr with a suspension inside a `try`
+    // or only settled awaits: refuse loudly instead of silently compiling the
+    // legacy pass-through (lost rejections / inline continuations). Still reported for
     // the #4630 wrap — the wrap settles the COMPLETION value, it does not make
     // the parked pass-through deliver awaited rejections.
-    reportDeclinedAsyncRejectionHazard(ctx, arrow);
+    reportDeclinedAsyncBody(ctx, arrow);
   }
   // (#4648) NOTE — a DECLINED (await-free) async closure does NOT get the
   // Promise wrapper here; only the host-callback bridge does (see
@@ -3773,7 +3781,7 @@ export function compileArrowAsClosure(
   // together with the offending source text. The end-of-codegen checker can only
   // say which function is broken; this says which ARROW produced it, which is
   // the last link needed to reduce a fixture. Inert unless set.
-  if (typeof process !== "undefined" && process.env?.JS2WASM_CHECK_FRAMES) {
+  if (typeof process !== "undefined" && readEnv("JS2WASM_CHECK_FRAMES")) {
     reportClosureFrameBreach(ctx, arrow, closureName, liftedFuncTypeIdx, liftedFctx);
   }
   pushProgramAbiNestedCallable(ctx, arrow, liftedFuncIdx, {
@@ -4787,7 +4795,7 @@ export function compileArrowAsCallback(
         }
       } else {
         // Immutable capture or already-boxed: push directly
-        if (process.env?.JS2WASM_FRAME_OPS) {
+        if (readEnv("JS2WASM_FRAME_OPS")) {
           const liveFrame = fctx.params.length + fctx.locals.length;
           if (cap.localIdx >= liveFrame) {
             process.stderr.write(

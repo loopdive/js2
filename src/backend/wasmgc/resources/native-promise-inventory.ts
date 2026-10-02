@@ -14,6 +14,7 @@ import {
   deriveNativeStringOutputRequirements,
 } from "../../../ir/program/native-string-output-requirements.js";
 import {
+  assertNativeStringValueReservationInput,
   planNativeStringValuePhysical,
   type NativeStringValueReservationInput,
 } from "../program/native-string-values.js";
@@ -131,14 +132,20 @@ export function observeNativeStringValueProducer(
     )
       invalid("detached literal metadata");
   });
-  const current = planNativeStringValuePhysical(fresh, {
-    representation: "native-string",
-    utf8Storage: options.utf8Storage === true,
-    stringConcatEmptyIdentity: options.stringConcatEmptyIdentity ?? true,
-  });
+  assertNativeStringValueReservationInput(input);
+  const current = planNativeStringValuePhysical(
+    fresh,
+    {
+      representation: "native-string",
+      utf8Storage: options.utf8Storage === true,
+      stringConcatEmptyIdentity: options.stringConcatEmptyIdentity ?? true,
+    },
+    input.invocationRequirements,
+    input.realmRequirements,
+  );
   if (current.kind !== "planned") invalid("string declaration input has no current planned producer");
   same(input.plan, current.plan, "changed native string declaration recipe");
-  if (current.plan.mode === "number-boundary") {
+  if (current.plan.mode !== "literals") {
     if (!input.valueRequirements) invalid("missing value requirements");
     assertNativeValueResourcePlanFor(input.valueRequirements, program, projection, "native-string");
   } else if (input.valueRequirements !== undefined) invalid("unexpected native value requirements for literals mode");

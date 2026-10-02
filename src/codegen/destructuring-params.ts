@@ -1948,6 +1948,10 @@ export function destructureParamArray(
                 values.findIndex((candidate) => candidate.stateTypeIdx === info.stateTypeIdx) === index,
             );
       for (const nativeInfo of nativeStateInfos) {
+        // (#680) A native-STRING carrier (`ref $AnyString`) fits neither drain
+        // vec — draining it into the f64 vec was an invalid `array.set`. It keeps
+        // the fallback below.
+        if (nativeInfo.elemValType.kind === "ref" || nativeInfo.elemValType.kind === "ref_null") continue;
         const genElemKind = nativeInfo.elemValType.kind === "externref" ? "externref" : "f64";
         const genVecTypeIdx = getOrRegisterVecType(ctx, genElemKind);
         const genArrTypeIdx = getArrTypeIdxFromVec(ctx, genVecTypeIdx);

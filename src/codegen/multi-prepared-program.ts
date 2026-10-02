@@ -53,6 +53,7 @@ import type { ProgramAbiSession, PublishedProgramAbi } from "./program-abi-sessi
 import type { IrExactFunctionClaim } from "./ir-overlay-safety.js";
 import {
   assertMultiPreparedModuleInitCensusCurrent,
+  assertMultiPreparedModuleInitCensusSourceCurrent,
   buildMultiPreparedModuleInitCensus,
   isMultiPreparedModuleInitCensusObservedFor,
   projectMultiPreparedModuleInitCensus,
@@ -63,6 +64,7 @@ import {
   MultiPreparedCallablePublication,
   type MultiPreparedProgramCallableComponent,
 } from "./multi-prepared-callable-publication.js";
+import { readEnv } from "../env.js";
 
 export type { MultiPreparedProgramCallableComponent } from "./multi-prepared-callable-publication.js";
 
@@ -855,7 +857,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
       // after aggregate lowering but before owner registration.  Receipt
       // currentness must reject this without committing any sibling scope or
       // emitting an initializer outcome prefix.
-      if (process.env.JS2WASM_TEST_MUTATE_MULTI_PREPARED_MODULE_INIT_PENDING_BODY === "1") {
+      if (readEnv("JS2WASM_TEST_MUTATE_MULTI_PREPARED_MODULE_INIT_PENDING_BODY") === "1") {
         const last = preparation.contributors[preparation.contributors.length - 1];
         if (last) last.preparedFunction.body = [{ op: "unreachable" }];
       }
@@ -1504,7 +1506,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     this.#requireState("routes-complete");
     const batch = this.#moduleInitBatchPreparation;
     if (batch) {
-      if (process.env.JS2WASM_TEST_MUTATE_MULTI_PREPARED_MODULE_INIT_BODY === "1") {
+      if (readEnv("JS2WASM_TEST_MUTATE_MULTI_PREPARED_MODULE_INIT_BODY") === "1") {
         const first = batch.contributors[0];
         if (first) first.preparedFunction.body = [{ op: "unreachable" }];
       }
@@ -1541,7 +1543,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     }
     const preparation = this.#moduleInitPreparation;
     if (!preparation) return;
-    if (process.env.JS2WASM_TEST_MUTATE_MULTI_PREPARED_MODULE_INIT_BODY === "1") {
+    if (readEnv("JS2WASM_TEST_MUTATE_MULTI_PREPARED_MODULE_INIT_BODY") === "1") {
       preparation.preparedFunction.body = [{ op: "unreachable" }];
     }
     const registry = this.#ctx.programAbiModuleInitCallables;
@@ -1595,7 +1597,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
         }
         this.#ctx.mod.startFuncIdx = batch.adapterHandle;
       }
-      if (process.env.JS2WASM_TEST_MODULE_INIT_DOUBLE_ADAPTER === "1") {
+      if (readEnv("JS2WASM_TEST_MODULE_INIT_DOUBLE_ADAPTER") === "1") {
         if (exportModuleInit) this.#ctx.mod.startFuncIdx = batch.adapterHandle;
         else this.#ctx.mod.exports.push({ name: "__module_init", desc: { kind: "func", index: batch.adapterHandle } });
       }
@@ -1659,7 +1661,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
       }
       this.#ctx.mod.startFuncIdx = initHandle;
     }
-    if (process.env.JS2WASM_TEST_MODULE_INIT_DOUBLE_ADAPTER === "1") {
+    if (readEnv("JS2WASM_TEST_MODULE_INIT_DOUBLE_ADAPTER") === "1") {
       if (exportModuleInit || wasiStartExport) this.#ctx.mod.startFuncIdx = initHandle;
       else this.#ctx.mod.exports.push({ name: "__module_init", desc: { kind: "func", index: initHandle! } });
     }
@@ -2288,8 +2290,8 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
 
   #stateForBodySource(sourceFile: SourceFile): RouteState<Plan> | undefined {
     this.#requireState("body-boundary-sealed");
-    assertMultiPreparedModuleInitCensusCurrent(this.#moduleInitCensus);
     const expected = this.#sourceFiles[this.#bodyCursor];
+    assertMultiPreparedModuleInitCensusSourceCurrent(this.#moduleInitCensus, expected); // #6737: entered source only
     if (expected !== sourceFile) this.#fail("body-phase-order", `body source visit is out of semantic order`);
     this.#bodyCursor++;
     this.#bodySourceIds.push(this.#sourceId(sourceFile));
@@ -2298,7 +2300,9 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
 
   #stateForOverlaySource(sourceFile: SourceFile): RouteState<Plan> | undefined {
     this.#requireState("body-boundary-sealed");
-    assertMultiPreparedModuleInitCensusCurrent(this.#moduleInitCensus);
+    // #6737: the first overlay visit is the body-to-overlay boundary (whole program); later ones the entered source.
+    const entered = this.#overlayCursor === 0 ? undefined : this.#sourceFiles[this.#overlayCursor];
+    assertMultiPreparedModuleInitCensusSourceCurrent(this.#moduleInitCensus, entered);
     if (!this.#overlayEnabled) this.#fail("overlay-phase-order", "overlay state requested while overlay is disabled");
     if (this.#bodyCursor !== this.#sourceFiles.length)
       this.#fail("overlay-phase-order", "overlay began before all body visits");

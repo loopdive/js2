@@ -91,10 +91,36 @@ export function isStandaloneUnavailableConstructorGlobal(ctx: CodegenContext, na
  * realm's global. combined-stream's `!Buffer.isBuffer(stream)` (axios's
  * form-data) refused the whole axios graph.
  */
-export function isHostResolvedBuiltinReceiver(ctx: CodegenContext, receiver: ts.Expression): boolean {
+export function isHostResolvedBuiltinReceiver(
+  ctx: CodegenContext,
+  receiver: ts.Expression,
+  methodName: string,
+): boolean {
   if (!ts.isIdentifier(receiver) || !BUILTIN_CLASS_NAMES.has(receiver.text)) return false;
-  return !(ctx.standalone && receiver.text === "Buffer");
+  if (!ctx.standalone) return true;
+  if (receiver.text === "Buffer") return false;
+  return !(methodName === "captureStackTrace" && STANDALONE_ERROR_CONSTRUCTORS.has(receiver.text));
 }
+
+/**
+ * (#1472) The native error constructors of a host-free realm. V8's
+ * non-standard `Error.captureStackTrace` is not among their properties, so
+ * `Error.captureStackTrace(this, C)` reads `undefined` and — once reached —
+ * throws `TypeError` after its arguments are evaluated (EvaluateCall), exactly
+ * as `typeof Error.captureStackTrace` already answers "undefined" here. The
+ * receiver is therefore the ordinary native `Error` binding, not
+ * `__get_builtin("Error")`. tailwindcss's `CssSyntaxError` guards the call
+ * with `Error.captureStackTrace && ...`, which refused its whole graph.
+ */
+const STANDALONE_ERROR_CONSTRUCTORS: ReadonlySet<string> = new Set([
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "URIError",
+  "EvalError",
+  "ReferenceError",
+]);
 
 function unwrapParens(expr: ts.Expression): ts.Expression {
   let cur = expr;

@@ -93,6 +93,7 @@ import {
   tryEmitTransferredObjectToStringCall,
 } from "./expressions/transferred-proto-assignment.js";
 import { nativeStringRepr } from "./builtin-scaffold.js";
+import { emitRegExpProtoToStringBody } from "./regexp-proto-to-string.js";
 import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
@@ -5928,6 +5929,9 @@ function emitRegExpProtoMemberBody(
     }
     return protocolResult;
   }
+  // (#6651 B10) §22.2.6.17 is generic over any Object — no brand recovery.
+  const toStringResult = member === "toString" ? emitRegExpProtoToStringBody(ctx, fctx, 1) : null;
+  if (toStringResult !== null) return toStringResult;
 
   // Method bodies. Brand-recovery prologue: `this` is closure param index 1
   // (externref) → `$NativeRegExp` or a catchable TypeError on a wrong `this`.

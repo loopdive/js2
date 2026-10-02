@@ -10,10 +10,8 @@ import { parseTest262SemanticProviders } from "./test262-lane.mjs";
  * When execute=false: compile only, write to disk (for cache warming).
  * When execute=true: compile + instantiate + run test(), return full result.
  */
-import { readFileSync, writeFileSync } from "node:fs";
-import { createHash } from "node:crypto";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { createContext, runInContext } from "node:vm";
 import { compile, compileMulti, createIncrementalCompiler } from "./compiler-bundle.mjs";
 // (#5353) NAMESPACE imports, deliberately, for the two symbol sets this worker
@@ -48,7 +46,7 @@ import {
 // `js2wasm:runtime-eval` imports). This worker used to own that logic alone;
 // the in-process lanes did not have it, so their standalone runs died at
 // instantiate and MASKED the tests' real error signatures.
-import { instantiateTest262Module } from "./test262-import-object.mjs";
+import { instantiateTest262Module, TEST262_DYNAMIC_CODE_POLICY } from "./test262-import-object.mjs";
 // (#5353) ONE gate + ONE pre-warm contract for the compiled `Temporal` global,
 // shared with tests/test262-runner.ts and tests/test262-shared.ts.
 import {
@@ -58,7 +56,7 @@ import {
   temporalProviderDisabled,
   test262TemporalLaneEnabled,
 } from "./test262-temporal.mjs";
-import { test262HarnessProviderCacheDir } from "./test262-harness-cache.mjs";
+import { test262CompilerBundleHash, test262HarnessProviderCacheDir } from "./test262-harness-cache.mjs";
 
 // ── Bundle hash (#1521) ────────────────────────────────────────────────
 // Each cache entry written below carries a `bundle_hash` field. When the
@@ -72,19 +70,8 @@ import { test262HarnessProviderCacheDir } from "./test262-harness-cache.mjs";
 //   2. sha256 of the source-runner compiler bundle or packaged compiler entry
 //
 // Computed once per worker startup — cheap (a few MB read + sha256).
-const _workerDir = dirname(fileURLToPath(import.meta.url));
-function computeBundleHash() {
-  const fromEnv = process.env.TEST262_BUNDLE_HASH;
-  if (fromEnv && fromEnv.length > 0) return fromEnv;
-  for (const file of ["compiler-bundle.mjs", "index.js"]) {
-    try {
-      const buf = readFileSync(join(_workerDir, file));
-      return createHash("sha256").update(buf).digest("hex").slice(0, 16);
-    } catch {}
-  }
-  return "no-bundle";
-}
-const BUNDLE_HASH = computeBundleHash();
+// (#6723 P1) One implementation, shared with the harness-provider cache key.
+const BUNDLE_HASH = test262CompilerBundleHash();
 
 // ── Standalone runtime-eval provider (#2928 E6/E7, now shared — #4162) ──
 // A standalone module whose ONLY dynamic-code dependency is the core-Wasm
@@ -184,13 +171,16 @@ createFreshCompiler();
 // still override by passing its own `hostBridge`.
 const HARNESS_HOST_BRIDGE = { hostBridge: "always" };
 
+// #6776: the worker validates itself with source-mapped reporting; the library default would turn the negative-test arm's compile failure into an incidental pass (see #2920).
+const WORKER_SELF_VALIDATES = { validate: false };
+
 function compileSingleSource(source, options) {
-  const opts = { ...HARNESS_HOST_BRIDGE, ...options };
+  const opts = { ...HARNESS_HOST_BRIDGE, ...WORKER_SELF_VALIDATES, ...options };
   return incrementalCompiler ? incrementalCompiler.compile(source, opts) : compile(source, opts);
 }
 
 function compileMultipleSources(files, entryFile, options) {
-  const opts = { ...HARNESS_HOST_BRIDGE, ...options };
+  const opts = { ...HARNESS_HOST_BRIDGE, ...WORKER_SELF_VALIDATES, ...options };
   return incrementalCompiler?.compileMulti
     ? incrementalCompiler.compileMulti(files, entryFile, opts)
     : compileMulti(files, entryFile, opts);
@@ -1434,7 +1424,17 @@ function harnessProviderWiringAvailable() {
 function harnessProviderCompileOptions(target) {
   // Must match `compileHarnessLinkedBody`'s option set on the consumer side, or
   // the provider and the body disagree about the ABI they share.
-  return { allowJs: true, emitWat: false, skipSemanticDiagnostics: true, ...(target ? { target } : {}) };
+  // (#6723 D4) Both sides carry the harness's `hostBridge: "always"`, like
+  // every other worker compile site (HARNESS_HOST_BRIDGE): on standalone the
+  // default strips `__stdout_*`, so the provider's `print` (hence `$DONE`'s
+  // completion marker) wrote to a sink nothing could read.
+  return {
+    ...HARNESS_HOST_BRIDGE,
+    allowJs: true,
+    emitWat: false,
+    skipSemanticDiagnostics: true,
+    ...(target ? { target } : {}),
+  };
 }
 
 async function getWorkerHarnessProvider(harnessPrefix, target) {
@@ -1463,6 +1463,17 @@ async function getWorkerHarnessProvider(harnessPrefix, target) {
   });
   harnessProviderPromises.set(memoKey, promise);
   return promise;
+}
+
+/**
+ * (#6723 D3) The text a linked-lane row compiles when it falls back to the
+ * honest lane: the honest assembly of the same variant, as the parent built it.
+ * `prefix + source` is NOT that for a strict variant — the directive lands
+ * after the harness, where it is no longer a directive prologue, so a strict
+ * row silently ran sloppy (4 standalone rows flipped pass→fail on it).
+ */
+function linkedHarnessHonestSource(linkedHarness, source) {
+  return linkedHarness.honestSource ?? linkedHarness.harnessPrefix + source;
 }
 
 async function doCompile(
@@ -1598,9 +1609,10 @@ async function doCompile(
     if (linkedHarness) {
       linkedHarness.fellBack = true;
       linkedHarness.fallbackReason = "temporal row: honest compile (compileWithTemporalGlobal)";
-      temporalSource = linkedHarness.harnessPrefix + source;
+      temporalSource = linkedHarnessHonestSource(linkedHarness, source);
     }
     return compilerBundle.compileWithTemporalGlobal(temporalSource, temporal, {
+      ...WORKER_SELF_VALIDATES,
       allowJs: true,
       fileName: "test.js",
       sourceMap: true,
@@ -1627,6 +1639,8 @@ async function doCompile(
     // measurement, which is the one thing a shadow oracle must never do. So
     // the caller is told, and the row is stamped `linked-harness-fallback`.
     const bodyOptions = {
+      ...HARNESS_HOST_BRIDGE, // (#6723 D4) same bridge as the provider and the honest lane
+      ...WORKER_SELF_VALIDATES,
       allowJs: true,
       fileName: "test.js",
       sourceMap: true,
@@ -1663,7 +1677,7 @@ async function doCompile(
       linkedHarness.fallbackReason = "no harness provider in this fork";
     }
     linkedHarness.fellBack = true;
-    return compileSingleSource(linkedHarness.harnessPrefix + source, bodyOptions);
+    return compileSingleSource(linkedHarnessHonestSource(linkedHarness, source), bodyOptions);
   }
   if (originalHarness) {
     // The authoritative sharded-CI and test262.fyi lanes both compile literal
@@ -1754,7 +1768,21 @@ function extractWasmExceptionMessage(err, instance) {
       const t = typeof payload;
       if (t === "object" || t === "function") {
         const native = tryNativeExnRender(instance, payload);
-        if (native != null) return native;
+        // (#6723 D4) The consumer renders a PROVIDER-minted `Test262Error`
+        // (a provider fnctor instance) as the generic "[object Object]": its
+        // `toString` lives on the provider's prototype. Treat that answer as
+        // "not mine" when a linked peer can do better.
+        if (native != null && (native !== "[object Object]" || currentLinkedPeers.length === 0)) return native;
+        // (#6723) A STANDALONE linked row: the payload may be minted by the
+        // harness provider (a `Test262Error` thrown by `assert.*`), whose GC
+        // layout only the provider's own `__exn_render_*` exports can read.
+        let generic = native;
+        for (const peer of currentLinkedPeers) {
+          const viaPeer = tryNativeExnRender({ exports: peer }, payload);
+          if (viaPeer != null && viaPeer !== "[object Object]") return viaPeer;
+          generic ??= viaPeer;
+        }
+        if (generic != null) return generic;
       }
       return safeStringifyThrown(payload);
     }
@@ -1807,6 +1835,27 @@ function extractWasmExceptionMessage(err, instance) {
 function drainAndCaptureNativeStdout(instance, append) {
   const exp = instance?.exports;
   if (!exp) return null;
+  // (#6723) A standalone linked row has one microtask ring and one stdout sink
+  // PER MODULE: `$DONE` lives in the harness provider, so its completion marker
+  // lands in the provider's sink, and a continuation can hop between rings.
+  // Drain every ring until none makes progress, then read every sink.
+  const peers = currentLinkedPeers;
+  if (peers.length > 0) {
+    let drainError = null;
+    const modules = [exp, ...peers];
+    for (let round = 0; round < 8; round++) {
+      for (const moduleExports of modules) {
+        if (typeof moduleExports.__drain_microtasks !== "function") continue;
+        try {
+          moduleExports.__drain_microtasks();
+        } catch (err) {
+          drainError ??= err;
+        }
+      }
+    }
+    for (const moduleExports of modules) captureNativeStdout(moduleExports, append);
+    return drainError;
+  }
   let drainError = null;
   if (typeof exp.__drain_microtasks === "function") {
     try {
@@ -1815,6 +1864,12 @@ function drainAndCaptureNativeStdout(instance, append) {
       drainError = err;
     }
   }
+  captureNativeStdout(exp, append);
+  return drainError;
+}
+
+/** Mirror one module's native `__stdout_*` sink into `append`, line by line. */
+function captureNativeStdout(exp, append) {
   if (typeof exp.__stdout_prepare === "function" && typeof exp.__stdout_char === "function") {
     let len = 0;
     try {
@@ -1832,7 +1887,20 @@ function drainAndCaptureNativeStdout(instance, append) {
       }
     }
   }
-  return drainError;
+}
+
+/**
+ * (#6723) Export objects of the linked provider instances of the row being
+ * executed (standalone linked-harness lane), for exception rendering and the
+ * host-free async drain. Empty for every unlinked row.
+ */
+let currentLinkedPeers = [];
+
+function standaloneLinkedPeers(target, result, importObj) {
+  if (target !== "standalone") return [];
+  return (result.linkedModules ?? [])
+    .map((artifact) => importObj[artifact.namespace])
+    .filter((exports) => exports && typeof exports === "object");
 }
 
 function originalHarnessExceptionMatches(err, instance, expectedErrorType) {
@@ -1943,7 +2011,9 @@ function extractWatFunctionSnippet(wat, funcName) {
 async function buildInvalidBinaryError(source, sourceMapUrl, result, target) {
   let detailErr;
   try {
-    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const imports = buildImports(result.imports, undefined, result.stringPool, {
+      dynamicCode: TEST262_DYNAMIC_CODE_POLICY,
+    });
     // (#4162) Same shared seam. This path exists to name WHY a binary is
     // invalid; without the provider a standalone module would report the
     // unresolved `js2wasm:runtime-eval` import as the reason and bury the
@@ -1968,6 +2038,8 @@ async function buildInvalidBinaryError(source, sourceMapUrl, result, target) {
 
   try {
     const watResult = await compile(source, {
+      // The bytes are known invalid here; this re-compile only wants the WAT.
+      ...WORKER_SELF_VALIDATES,
       fileName: "test.ts",
       sourceMap: true,
       sourceMapUrl: sourceMapUrl || "test.wasm.map",
@@ -2010,12 +2082,12 @@ process.on("message", async (msg) => {
   const fixtureGraph = staticFixtureGraph || selfNamespaceGraph;
   const compileStart = performance.now();
 
-  // #3492/#3509 — Dynamic fixture discovery is transport metadata, not proof
-  // that a loader is needed during this test. Let the compiler distinguish an
-  // eager import (fatal #3494) from an ordinary deferred closure (host-free
-  // runtime trap, #3509). A blanket graph guard false-failed syntax-valid tests
-  // whose arrow was never invoked. No dynamic fixture is promoted to a static
-  // compileMulti edge here.
+  // #3492/#3509/#3494 — Dynamic fixture discovery is transport metadata, not
+  // proof that a loader is needed during this test. A standalone import() of a
+  // module outside the compiled graph settles as a rejected Promise at runtime
+  // (#3494). A blanket graph guard false-failed syntax-valid tests whose arrow
+  // was never invoked. No dynamic fixture is promoted to a static compileMulti
+  // edge here.
 
   // (#5353) The parent computes the PATH-or-`features:` gate (it is the side
   // that knows both) and this worker double-checks the two conditions it owns:
@@ -2053,6 +2125,9 @@ process.on("message", async (msg) => {
           harnessPrefix: msg.linkedHarnessPrefix,
           body: msg.linkedHarnessBody,
           strict: msg.linkedHarnessStrict === true,
+          // (#6723 D3) The honest assembly of THIS variant. Absent (an older
+          // parent) ⇒ the pre-#6723 `prefix + source` reconstruction.
+          honestSource: typeof msg.linkedHarnessHonestSource === "string" ? msg.linkedHarnessHonestSource : undefined,
           fellBack: false,
           fallbackReason: undefined,
         }
@@ -2346,12 +2421,15 @@ process.on("message", async (msg) => {
       result.imports,
       originalHarness ? { console: consoleProxy } : undefined,
       result.stringPool,
-      originalHarness ? { globalSandbox: harnessSandbox } : undefined,
+      originalHarness
+        ? { globalSandbox: harnessSandbox, dynamicCode: TEST262_DYNAMIC_CODE_POLICY }
+        : { dynamicCode: TEST262_DYNAMIC_CODE_POLICY },
     );
     if (REALM_CANARY_MODE) {
       runtimeIntrinsicCanarySnapshot = snapshotRuntimeIntrinsicSurface(importObj);
     }
 
+    currentLinkedPeers = [];
     try {
       // (#4162) The ONE shared instantiate seam. Standalone goes module-first
       // (import list inspectable → #2928 E6 provider attachment); the host lane
@@ -2379,7 +2457,9 @@ process.on("message", async (msg) => {
           ? { deps: { console: consoleProxy }, options: { globalSandbox: harnessSandbox } }
           : undefined,
       });
+      currentLinkedPeers = standaloneLinkedPeers(target, result, importObj);
     } catch (err) {
+      currentLinkedPeers = standaloneLinkedPeers(target, result, importObj);
       const execMs = performance.now() - execStart;
       // Real Wasm compile/link failures stay as compile_error. A throw from
       // the module's start function — which surfaces as WebAssembly.Exception

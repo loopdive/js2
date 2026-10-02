@@ -1,0 +1,23 @@
+{
+  "merge": "1265c47d6fc41300a380ef7e4abc45fdfcfd2c61",
+  "pr": 6371,
+  "head": "21c7922d5f8601aab52542690815d5b951796a14",
+  "ancestry_and_repair_content_verified": true,
+  "protected_test262_run": 36808651261,
+  "actual_shards": 102,
+  "families": {
+    "js-host": 20,
+    "standalone": 82
+  },
+  "all_actual_shards": "success",
+  "final_regression_gate": "success",
+  "merge_group_ci_run": 36808651216,
+  "merge_group_ci_issue_tests": "cancelled",
+  "pr_exact_head_quality": "success",
+  "pr_exact_head_issue_tests": "success",
+  "no_all_ci_green_claim": true,
+  "raw_job_artifacts": [
+    "/private/tmp/js2-ir-source-contracts-integration-20261001/.tmp/contracts-integration/pr6371-actual-conformance-jobs.json",
+    "/private/tmp/js2-ir-source-contracts-integration-20261001/.tmp/contracts-integration/pr6371-actual-ci-jobs.json"
+  ]
+}

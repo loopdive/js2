@@ -703,6 +703,7 @@ export function tryCompileIndexedBuiltinNew(
       if (resultType) return resultType;
       return { kind: "ref_null", typeIdx: vecTypeIdx };
     } else {
+      if (nativeDataView) return dvBrandThrow(); // (#6651 C5) §25.3.2.1 step 2: `undefined` buffer
       // No buffer — create empty ArrayBuffer-like vec
       const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
       fctx.body.push({ op: "i32.const", value: 0 });

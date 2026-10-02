@@ -13,8 +13,9 @@
  *
  * `__unbox_number` is exactly JS `Number()` (ToNumber). So storing the local
  * as f64 means every write coerces its source via `Number(source)`. This is
- * observationally equivalent to keeping the original value **iff every USE of
- * the variable already applies ToNumber to it** — i.e. the use is
+ * observationally equivalent only when every write is a primitive whose
+ * conversion cannot call user code or throw, and every USE of
+ * the variable already applies ToNumber to it — i.e. the use is
  * *ToNumber-invariant*:
  *
  *   - operand of a strictly-numeric operator (`* / % - ** << >> >>> & | ^`,
@@ -116,8 +117,8 @@ export class UsageInference {
    * The two routes prove the same conclusion — "an f64 slot is observationally
    * equivalent here" — from opposite ends:
    *
-   *  - the **use-site** route (#684, above) proves it because every USE already
-   *    applies ToNumber, which says nothing about what the variable holds;
+   *  - the **use-site** route (#684, above) proves every USE applies ToNumber
+   *    and every write has side-effect-free, non-throwing primitive conversion;
    *  - the **definition-site** route proves it because every DEFINITION is
    *    already a number, which makes every use safe *whatever it is*.
    *
@@ -260,6 +261,11 @@ function analyzeFunctionBody(
     // bigint operand traps. `let x: any = 5n; -x` (unary, no sibling to inspect)
     // is only caught here.
     if (decl.initializer && isStaticallyBigInt(checker, decl.initializer)) state.poisoned = true;
+    // Moving an object's ToNumber from a read to its initializer can invoke
+    // valueOf early, outside the read's try/catch, or on an untaken branch.
+    // Usage alone is not a proof that conversion is unobservable. The separate
+    // grounded-number definition route remains available below.
+    if (decl.initializer && !hasInertNumberConversion(checker, decl.initializer)) state.bailed = true;
     candidates.set(sym, state);
   };
 
@@ -311,8 +317,9 @@ function analyzeFunctionBody(
 
   for (const [sym, state] of candidates) {
     if (state.poisoned) continue;
-    // Route 1 (#684): every use is ToNumber-invariant, and at least one is real
-    // arithmetic. Route 2 (#3765): every definition is provably a number, which
+    // Route 1 (#684): every write has inert conversion, every use is
+    // ToNumber-invariant, and at least one is real arithmetic.
+    // Route 2 (#3765): every definition is provably a number, which
     // makes the uses irrelevant. Either alone suffices.
     const useSiteProven = !state.bailed && state.sawEvidence;
     const defSiteProven =
@@ -408,7 +415,7 @@ function classifyUse(checker: ts.TypeChecker, id: ts.Identifier): UseClass {
       // Plain assignment: safe ONLY as the write target (`x = …`); as a source
       // (`y = x`) the value escapes → bail. A bigint RHS poisons the slot.
       case ts.SyntaxKind.EqualsToken:
-        return isLeft ? (isStaticallyBigInt(checker, other) ? "bail" : "safe") : "bail";
+        return isLeft && hasInertNumberConversion(checker, other) ? "safe" : "bail";
       default:
         return "bail"; // ===, ==, &&, ||, ??, in, instanceof, comma, …
     }
@@ -434,6 +441,27 @@ function classifyUse(checker: ts.TypeChecker, id: ts.Identifier): UseClass {
   }
 
   return "bail";
+}
+
+/** ToNumber is side-effect-free and non-throwing for these primitive writes. */
+function hasInertNumberConversion(checker: ts.TypeChecker, expression: ts.Expression): boolean {
+  let expr = expression;
+  while (
+    ts.isParenthesizedExpression(expr) ||
+    ts.isAsExpression(expr) ||
+    ts.isTypeAssertionExpression(expr) ||
+    ts.isNonNullExpression(expr) ||
+    ts.isSatisfiesExpression(expr)
+  )
+    expr = expr.expression;
+  const type = checker.getTypeAtLocation(expr);
+  const admissible =
+    ts.TypeFlags.NumberLike |
+    ts.TypeFlags.StringLike |
+    ts.TypeFlags.BooleanLike |
+    ts.TypeFlags.Null |
+    ts.TypeFlags.Undefined;
+  return (type.isUnion() ? type.types : [type]).every((member) => (member.flags & admissible) !== 0);
 }
 
 /** Statically-numeric = the checker type is `number` / a number literal, and

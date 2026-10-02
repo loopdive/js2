@@ -25,6 +25,7 @@ import { join, relative } from "path";
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { CompilerPool, type TestResult } from "../scripts/compiler-pool.js";
 // (#5353) ONE Temporal gate across every lane — see scripts/test262-temporal.mjs.
+import { test262OracleLane } from "../scripts/test262-harness-cache.mjs";
 import { test262NeedsTemporalGlobal, test262TemporalLaneEnabled } from "../scripts/test262-temporal.mjs";
 // oracle-version-exempt: #5215 changes callback-completeness evidence only; Test262 scoring is unchanged.
 import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "../scripts/negative-verdict.mjs";
@@ -33,7 +34,7 @@ import { getTest262ShardCompletionPath } from "../scripts/validate-test262-compl
 import { discoverFixtureGraph, hasSelfModuleImport } from "../scripts/test262-fixture-graph.mjs";
 // (#4162) ONE import-object finaliser, shared with scripts/test262-worker.mjs
 // and tests/test262-runner.ts.
-import { instantiateTest262Module } from "../scripts/test262-import-object.mjs";
+import { instantiateTest262Module, TEST262_DYNAMIC_CODE_POLICY } from "../scripts/test262-import-object.mjs";
 import { isPoisonCompileError } from "../scripts/test262-poison-error.mjs";
 import { isRecordedVerdictSentinel } from "../scripts/verdict-once.mjs";
 import { findNthAssert } from "./test262-assert-locator.js";
@@ -181,13 +182,13 @@ const TEST262_SEMANTIC_PROVIDERS = parseTest262SemanticProviders(process.env.TES
 // they stay HONEST v8 even inside a fast-mode merge_group run. This mirrors the
 // worker's own rule (sr-3461): standalone target NEVER sets `nativeHarness`.
 const TEST262_ORACLE_MODE = process.env.TEST262_ORACLE_MODE;
-const IS_HOST_LANE = TEST262_TARGET === undefined;
-const ORACLE_LANE: "honest" | "fast-nativeharness" | "linked-harness" =
-  TEST262_ORACLE_MODE === "fast" && IS_HOST_LANE
-    ? "fast-nativeharness"
-    : TEST262_ORACLE_MODE === "linked" && IS_HOST_LANE
-      ? "linked-harness"
-      : "honest";
+// (#6723 P2) `TEST262_STANDALONE_LINKED=1` admits the linked arm on the
+// standalone target (shadow measurement only); unset => the host-only gate.
+const ORACLE_LANE = test262OracleLane({
+  oracleMode: TEST262_ORACLE_MODE,
+  target: TEST262_TARGET,
+  standaloneLinked: process.env.TEST262_STANDALONE_LINKED,
+});
 
 // (#3451 slice 3) Linked-harness shadow oracle — the harness prefix is compiled
 // ONCE per include-set into a separate provider module (#2527) and each body is
@@ -795,6 +796,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
               linkedHarnessPrefix?: string;
               linkedHarnessBody?: string;
               linkedHarnessStrict?: boolean;
+              linkedHarnessHonestSource?: string;
             } =
               linkedAssembly && !linkedAssembly.raw
                 ? {
@@ -802,6 +804,12 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                     linkedHarnessPrefix: linkedAssembly.harnessPrefix,
                     linkedHarnessBody: linkedAssembly.primary.body,
                     linkedHarnessStrict: linkedAssembly.primary.strict,
+                    // (#6723 D3) The per-row fallback compiles THIS — the
+                    // honest assembly of the same variant — not
+                    // `prefix + bodySource`, which puts a strict variant's
+                    // directive after the harness (no longer a prologue) and
+                    // skips the honest-only strata (#4626 `$262` rename).
+                    linkedHarnessHonestSource: harnessAssembly.primary.source,
                   }
                 : {};
             const inferModuleStrictArguments = isModuleGoal(category, meta, source);
@@ -834,11 +842,10 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
             // single-source test retain their existing path.
             const isModuleNamespaceTest = relPath.startsWith("test/language/module-code/namespace/");
             const selfModuleImport = isModuleNamespaceTest && hasSelfModuleImport(testRelativePath, source);
-            // #3509 — Dynamic fixture metadata alone does not mean this test
-            // executes import(). Compiler capability validation rejects eager
-            // #3494 cases while allowing an uncalled ordinary closure to reach
-            // the test with a host-free runtime trap in its body. Do not turn
-            // dynamic fixtures into eager compileMulti inputs.
+            // #3509/#3494 — Dynamic fixture metadata alone does not mean this
+            // test executes import(). Standalone import() of a module outside
+            // the compiled graph settles as a rejected Promise at runtime. Do
+            // not turn dynamic fixtures into eager compileMulti inputs.
             if (Object.keys(fixtureGraph.fixtureFiles).length > 0 || selfModuleImport) {
               // Fixture tests are rare — compile in-process
               try {
@@ -849,6 +856,8 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                 const multiCompile = await getCompileMulti();
                 const result = await multiCompile(vfiles, fixtureGraph.entryFile, {
                   skipSemanticDiagnostics: true,
+                  // #6776: this path instantiates and classifies the bytes itself; the library default would turn the negative-test arm's compile failure into an incidental pass (see #2920).
+                  validate: false,
                   target: TEST262_TARGET,
                   semanticProviders: TEST262_SEMANTIC_PROVIDERS,
                   inferModuleStrictArguments,
@@ -971,6 +980,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   };
                   const importObj = buildImports(result.imports, { console: consoleProxy }, result.stringPool, {
                     globalSandbox: createTestSandbox(consoleProxy as unknown as Console),
+                    dynamicCode: TEST262_DYNAMIC_CODE_POLICY,
                   });
                   // (#4162) The fixture-graph lane executes in this process
                   // instead of scripts/test262-worker.mjs. Both go through the
@@ -1224,6 +1234,11 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
               );
 
             let r = await runHarnessSource(compileSource, relPath);
+            // (#6723 D3) A linked row that fell back compiled the HONEST
+            // assembly, so its error lines are offset by the honest prefix.
+            if ((r as { linkedFallback?: boolean }).linkedFallback) {
+              lineAdjustOffset = harnessAssembly.primary.bodyLineOffset;
+            }
             if (r.status === "pass" && harnessAssembly.strictRerun) {
               const primaryCompileMs = r.compileMs ?? 0;
               const primaryExecMs = r.execMs ?? 0;
@@ -1243,8 +1258,12 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
               if (linkedAssembly?.strictRerun && !linkedAssembly.raw) {
                 linkedHarnessOpts.linkedHarnessBody = linkedAssembly.strictRerun.body;
                 linkedHarnessOpts.linkedHarnessStrict = linkedAssembly.strictRerun.strict;
+                linkedHarnessOpts.linkedHarnessHonestSource = harnessAssembly.strictRerun.source;
               }
               const strictResult = await runHarnessSource(compileSource, `${relPath} [strict rerun]`);
+              if ((strictResult as { linkedFallback?: boolean }).linkedFallback) {
+                lineAdjustOffset = harnessAssembly.strictRerun.bodyLineOffset;
+              }
               r = {
                 ...strictResult,
                 ...(strictResult.status === "pass"
@@ -1306,6 +1325,11 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                       scriptGoal,
                       temporal: needsTemporal,
                       ...nativeHarnessOpts,
+                      // (#6723 D2) `compileSource` is the linked BODY-ONLY unit
+                      // in a linked run; retrying it without the descriptor
+                      // compiled the body with no harness at all, so every
+                      // retried row scored `verifyProperty is not defined`.
+                      ...linkedHarnessOpts,
                     },
                     RETRY_TIMEOUT_MS,
                   ),
@@ -1381,6 +1405,11 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                       scriptGoal,
                       temporal: needsTemporal,
                       ...nativeHarnessOpts,
+                      // (#6723 D2) `compileSource` is the linked BODY-ONLY unit
+                      // in a linked run; retrying it without the descriptor
+                      // compiled the body with no harness at all, so every
+                      // retried row scored `verifyProperty is not defined`.
+                      ...linkedHarnessOpts,
                     },
                     RETRY_TIMEOUT_MS,
                   ),

@@ -163,6 +163,7 @@ import {
   saveArgumentLocalAsExtern,
 } from "./argc-extras.js";
 import { resolvePlainCallThisTrampoline } from "../named-this-call.js"; // (#6436)
+import { readEnv } from "../../env.js";
 
 function tryEmitGenericStructFactoryResult(
   ctx: CodegenContext,
@@ -2826,7 +2827,7 @@ function compileBoundIdentifierCall(
             if (reservedVecMaterializer) flushLateImportShifts(ctx, fctx);
           }
           const unmatchedClosureHostCall =
-            funcCandidates.length > 1 ? reserveUnmatchedClosureHostCall(ctx, fctx, expr.arguments.length) : undefined;
+            funcCandidates.length > 1 ? reserveUnmatchedClosureHostCall(ctx, fctx, expr) : undefined;
           // Preserve the JavaScript distinction between an omitted argument
           // and null. A preregistered callback with optional externref formals
           // can be wider than the public callable signature, so keep one
@@ -3781,7 +3782,7 @@ function compileBoundIdentifierCall(
           if (mapped !== undefined) {
             fctx.body.push({ op: "local.get", index: mapped });
           } else {
-            if (process.env?.JS2WASM_FRAME_OPS) {
+            if (readEnv("JS2WASM_FRAME_OPS")) {
               process.stderr.write(
                 `[js2:inline-unmapped] inlining '${funcName}' into ${fctx.name}: local.get ${(instr as any).index} ` +
                   `has no arg mapping (paramCount=${inlineInfo.paramCount}, argLocals=${argLocals.join(",")}), ` +
@@ -4289,6 +4290,8 @@ function compileBoundIdentifierCall(
       });
       // Wrap in vec struct: { length, data }
       fctx.body.push({ op: "struct.new", typeIdx: restInfo.vecTypeIdx });
+      // (#6651 I7) After every operand: `f(1)` for `f(x, y, ...a)` pads `y`; argc says it was absent.
+      maybeSetArgcForKnownCall(ctx, fctx, funcName, expr.arguments.length, restInfo.restIndex);
     } else if (hasSpreadArg && calleeReadsArgsEarly && !restInfo && !hasLinearParamsForCall && paramCountEarly <= 0) {
       // (#2202) Direct call to an `arguments`-reading function where the callee
       // has zero user params, so EVERY argument (spread or not) is an "extra".

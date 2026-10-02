@@ -245,6 +245,7 @@ function collectStaticSidecarEntries(
   ctx: CodegenContext,
   className: string,
   resolveMemberName: (member: ts.ClassElement) => string | undefined,
+  mode: StaticMemberObjectMode,
 ): StaticSidecarEntry[] {
   const decl = ctx.classDeclarationMap.get(className);
   if (!decl) return [];
@@ -272,7 +273,12 @@ function collectStaticSidecarEntries(
     if (!ts.isGetAccessorDeclaration(member) && !ts.isSetAccessorDeclaration(member)) continue;
     const isGetter = ts.isGetAccessorDeclaration(member);
     const half = ctx.funcMap.get(classMemberFuncKey(ctx, `${className}_${isGetter ? "get" : "set"}_${memberName}`));
-    if (half === undefined || !staticAccessorHalfIsReceiverFree(ctx, member, half)) continue;
+    if (half === undefined) continue;
+    // (#6767) The reflective view never becomes a receiver: its halves are
+    // handed out as VALUES (`gOPD(C, k).get`) or run with the CLASS OBJECT as
+    // `this`. The receiver-free restriction exists for exactly the invocation
+    // the view never performs.
+    if (mode === "sidecar" && !staticAccessorHalfIsReceiverFree(ctx, member, half)) continue;
     const slot = slotOf.get(memberName);
     const live = slot === undefined ? undefined : out[slot];
     // A sibling half under the SAME folded key merges; anything else (a method,
@@ -325,13 +331,43 @@ export function emitClassStaticSidecar(
 ): boolean {
   if (!classStaticSidecarApplies(ctx, className)) return false;
   const sidecarGlobalIdx = ctx.classStaticSidecarGlobals.get(className)!;
+  return emitClassStaticMemberObject(ctx, fctx, className, resolveMemberName, sidecarGlobalIdx, "sidecar");
+}
 
+/**
+ * Which static-member object is being built.
+ *
+ *  - `"sidecar"` — the #5195 Step 2 object `__extern_get` delegates READS to,
+ *    so an installed accessor half is INVOKED with it as the receiver and only
+ *    receiver-free halves may be installed.
+ *  - `"reflective-view"` — (#6767) the object the object-MOP natives consult
+ *    for a class OBJECT receiver (`class-static-descriptor.ts`). A read
+ *    through it passes the class object as the receiver
+ *    (`__reflect_get_receiver`), so every declared half is installed. Built
+ *    only for classes without runtime-keyed statics.
+ */
+export type StaticMemberObjectMode = "sidecar" | "reflective-view";
+
+/**
+ * Emit the lazily-built `$Object` carrying `className`'s declared static
+ * methods and accessors under `targetGlobalIdx`, leaving its externref on the
+ * stack. Shared by the static sidecar and the #6767 reflective view; `mode`
+ * selects which members are admitted (see {@link StaticMemberObjectMode}).
+ */
+export function emitClassStaticMemberObject(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  className: string,
+  resolveMemberName: (member: ts.ClassElement) => string | undefined,
+  sidecarGlobalIdx: number,
+  mode: StaticMemberObjectMode,
+): boolean {
   ensureObjectRuntime(ctx);
   const newObjectIdx = ctx.funcMap.get("__new_plain_object");
   const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
   if (newObjectIdx === undefined || defineValueIdx === undefined) return false;
 
-  const entries = collectStaticSidecarEntries(ctx, className, resolveMemberName);
+  const entries = collectStaticSidecarEntries(ctx, className, resolveMemberName, mode);
   if (entries.length === 0) return false;
   const hasAccessor = entries.some((entry) => entry.kind === "accessor");
   const defineAccessorIdx = hasAccessor ? ctx.funcMap.get("__defineProperty_accessor") : undefined;

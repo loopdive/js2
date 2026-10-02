@@ -264,6 +264,9 @@ export class CompilerPool {
       linkedHarnessPrefix?: string;
       linkedHarnessBody?: string;
       linkedHarnessStrict?: boolean;
+      // (#6723 D3) The honest whole-assembly text of the same variant — what
+      // the worker's per-row fallback compiles.
+      linkedHarnessHonestSource?: string;
     } = {},
     timeoutMs = 30_000,
   ): Promise<TestResult> {
@@ -295,6 +298,7 @@ export class CompilerPool {
         linkedHarnessPrefix: opts.linkedHarnessPrefix,
         linkedHarnessBody: opts.linkedHarnessBody,
         linkedHarnessStrict: opts.linkedHarnessStrict || false,
+        linkedHarnessHonestSource: opts.linkedHarnessHonestSource,
       },
       timeoutMs,
       opts.label,

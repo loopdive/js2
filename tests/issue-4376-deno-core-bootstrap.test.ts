@@ -59,13 +59,11 @@ describe("#4376 — unchanged deno_core bootstrap graph", () => {
     // though the graph and behavior are identical. Keep this deliberately
     // narrow ~300 KiB envelope around the artifact: it catches a lost graph or
     // runaway output without pinning one producer's section layout.
-    // (#6653, 2026-09-20) Re-centred from the checkpoint-era 10 MiB to the
-    // measured 6.46 MB: the inline-class-expression singleton route collapsed
-    // the duplicated per-class closure machinery, and every behavioral
-    // checkpoint below (stages, host ops, hello-world output) passes on the
-    // smaller artifact.
-    expect(report.bytes).toBeGreaterThanOrEqual(6_200_000);
-    expect(report.bytes).toBeLessThan(6_750_000);
+    // Re-centred after the 2026-09-30 main merge to the measured 2,697,863
+    // bytes. Source hashes, exports, imports, isolated stages, host effects,
+    // exact output and absence of deferred provider calls remain checked below.
+    expect(report.bytes).toBeGreaterThanOrEqual(2_500_000);
+    expect(report.bytes).toBeLessThan(2_900_000);
     // Keep reporting a digest for local artifact handoff, but pin the portable
     // source and runtime invariants below instead of one host's digest.
     expect(report.artifactSha256).toMatch(/^[0-9a-f]{64}$/);
@@ -170,8 +168,8 @@ describe("#4376 — unchanged deno_core bootstrap graph", () => {
       callbackBindings: 6,
       repeatedSetters: [0, 0, 0],
       namespace: {
-        value: null,
-        blocker: "module namespace checkpoint: [object WebAssembly.Exception]",
+        value: 3,
+        blocker: null,
       },
       usageBindings: { value: 2, blocker: null },
       usage: {
@@ -187,8 +185,8 @@ describe("#4376 — unchanged deno_core bootstrap graph", () => {
     // Named imports prove that mod.js exports the exact live bootstrap values.
     // Wrapper reads observe the retained tick/immediate arrays, all three
     // setters run exactly once, and indexed host writes round-trip in each
-    // isolated instance. The independent namespace-object checkpoint remains
-    // explicit while the exact named exports and usage both execute.
+    // isolated instance. The namespace also exposes the same three live
+    // bootstrap objects as the named imports.
     expect(report.stages).toEqual([expectedStage, expectedStage]);
     const expectedHostOps = {
       sumCommits: 2,

@@ -18,7 +18,6 @@ import type { IrType } from "./core/types.js";
 import type { IrGlobalRef } from "./core/value-references.js";
 import type { IrModuleInitPlan } from "./program/startup.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program/abi.js";
-import type { PreparedComponentAbiLookup } from "./program/abi-lookup.js";
 import { PreparedIrProgramInvariantError } from "./program.js";
 import type { PreparedIrAbiEntry } from "./program/prepared-contracts.js";
 import type { TypedIrProgramGlobal } from "./program/input-contracts.js";
@@ -33,15 +32,7 @@ import {
   preparedIrRuntimeCallableBindingId,
 } from "./program-runtime-abi.js";
 
-/** Read surface during preparation over the same entry vector that will be sealed. */
-export function preparedIrDraftAbiLookup(entries: readonly PreparedIrAbiEntry[]): PreparedComponentAbiLookup {
-  return {
-    get: (id) => entries.find((entry) => entry.plan.id === id)?.plan,
-    entries: () => entries.map((entry) => entry.plan),
-    bindingIdsForStructuralReference: (key) =>
-      entries.filter((entry) => entry.plan.structuralReferenceKey === key).map((entry) => entry.plan.id),
-  };
-}
+export { preparedIrDraftAbiLookup } from "./program/draft-abi-lookup.js";
 
 export interface PrepareIrProgramAbiInput {
   readonly inventory: IrUnitInventory;

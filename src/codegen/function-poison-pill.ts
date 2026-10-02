@@ -256,6 +256,22 @@ export function finalizeFunctionPoisonPillCalls(ctx: CodegenContext): void {
     if (registeredHandle !== undefined) sourceFuncIdxs.add(registeredHandle);
   }
 
+  // (#1058) A dynamic-call ladder with many candidates is outlined into a
+  // shared `__dyn_call_N` helper, so its `call_ref` sits in a function that is
+  // not a source function and is never instrumented. The call INTO the helper
+  // is the call site; mark it the way the inlined `call_ref` was marked.
+  // Without this a strict caller reached a Function()-built callee as
+  // non-strict and `callee.caller` stopped throwing (ES5 15.3.5.4_2-95gs,
+  // broken 2026-09-23 by the outlining).
+  const outlinedDynamicCallIdxs = new Set<number>();
+  for (const name of ctx.outlinedDynamicCallHelpers?.values() ?? []) {
+    const registered = ctx.funcMap.get(name);
+    if (registered !== undefined) outlinedDynamicCallIdxs.add(registered);
+    const fn = ctx.mod.functions.find((f) => f.name === name);
+    const handle = fn ? definedFuncHandleOf(ctx, fn) : undefined;
+    if (handle !== undefined) outlinedDynamicCallIdxs.add(handle);
+  }
+
   const marker = (strict: boolean): Instr[] => [
     { op: "i32.const", value: strict ? 1 : 0 },
     { op: "global.set", index: ctx.callerStrictGlobalIdx },
@@ -273,7 +289,10 @@ export function finalizeFunctionPoisonPillCalls(ctx: CodegenContext): void {
         const instr = instrs[i]!;
         const directSourceCall =
           (instr.op === "call" || instr.op === "return_call") && sourceFuncIdxs.has(instr.funcIdx);
-        const dynamicSourceCall = instr.op === "call_ref" || instr.op === "return_call_ref";
+        const dynamicSourceCall =
+          instr.op === "call_ref" ||
+          instr.op === "return_call_ref" ||
+          ((instr.op === "call" || instr.op === "return_call") && outlinedDynamicCallIdxs.has(instr.funcIdx));
         if (directSourceCall || dynamicSourceCall) {
           const prefix = marker(region.strict);
           instrs.splice(i, 0, ...prefix);

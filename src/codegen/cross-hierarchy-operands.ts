@@ -55,7 +55,13 @@
  */
 
 import type { Instr, TypeDef, ValType, WasmModule } from "../ir/types.js";
-import { locateOperandProducers } from "./call-arg-producers.js";
+import {
+  type InstrArraySharing,
+  instrArraySharing,
+  locateOperandProducers,
+  ownsInstrArrays,
+  visitedFor,
+} from "./call-arg-producers.js";
 import { callArgCoercionInstrs, getFullParamTypes, inferInstrType, resolveFuncType } from "./stack-balance.js";
 import type { CodegenError } from "./context/types.js";
 
@@ -68,41 +74,6 @@ interface Env {
   readonly diagnostics?: CodegenError[];
 }
 
-/** Every nested instruction list a structured instruction owns. */
-function nestedInstrArrays(instr: Instr): Instr[][] {
-  const nested: Instr[][] = [];
-  const any = instr as {
-    body?: Instr[];
-    then?: Instr[];
-    else?: Instr[];
-    catchAll?: Instr[];
-    catches?: { body?: Instr[] }[];
-  };
-  for (const arm of [any.body, any.then, any.else, any.catchAll]) if (Array.isArray(arm)) nested.push(arm);
-  if (Array.isArray(any.catches)) for (const c of any.catches) if (Array.isArray(c.body)) nested.push(c.body);
-  return nested;
-}
-
-/** Arrays whose local-index meaning differs because two functions own them. */
-function crossFunctionBodies(mod: WasmModule): WeakSet<Instr[]> {
-  const owners = new WeakMap<Instr[], (typeof mod.functions)[number]>();
-  const shared = new WeakSet<Instr[]>();
-  for (const func of mod.functions) {
-    const seen = new WeakSet<Instr[]>();
-    const pending = [func.body];
-    while (pending.length > 0) {
-      const body = pending.pop()!;
-      if (seen.has(body)) continue;
-      seen.add(body);
-      const owner = owners.get(body);
-      if (owner && owner !== func) shared.add(body);
-      else if (!owner) owners.set(body, func);
-      for (const instr of body) pending.push(...nestedInstrArrays(instr));
-    }
-  }
-  return shared;
-}
-
 /** `externref` and `(ref extern)` — the EXTERNAL reference hierarchy. */
 function isExternHierarchy(t: ValType): boolean {
   return t.kind === "externref" || t.kind === "ref_extern";
@@ -111,6 +82,19 @@ function isExternHierarchy(t: ValType): boolean {
 /** A CONCRETE internal (WasmGC) reference — `(ref $T)` / `(ref null $T)`. */
 function isConcreteInternalRef(t: ValType): boolean {
   return (t.kind === "ref" || t.kind === "ref_null") && (t as { typeIdx?: number }).typeIdx !== undefined;
+}
+
+/** The consumers {@link requiredOperandTypes} can answer for (#6759 filter). */
+function isModelledConsumer(op: string): boolean {
+  return (
+    op === "call" ||
+    op === "return_call" ||
+    op === "local.set" ||
+    op === "local.tee" ||
+    op === "global.set" ||
+    op === "struct.get" ||
+    op === "struct.set"
+  );
 }
 
 /**
@@ -188,12 +172,32 @@ function repairBody(
   let fixups = 0;
   // Nested arms are separate instruction lists with their own stack — walk each
   // on its own, exactly as the two legacy repairs do.
+  // Arm order: body, then, else, catchAll, catches (#6759: read in place
+  // rather than collecting each instruction's arms into a fresh array).
   for (const instr of body) {
-    for (const arm of nestedInstrArrays(instr))
-      fixups += repairBody(arm, localTypes, globalTypes, env, visited, contextBlocked, reportedBlocked);
+    if (!ownsInstrArrays(instr.op)) continue;
+    const n = instr as {
+      body?: Instr[];
+      then?: Instr[];
+      else?: Instr[];
+      catches?: { body?: Instr[] }[];
+      catchAll?: Instr[];
+    };
+    if (Array.isArray(n.body))
+      fixups += repairBody(n.body, localTypes, globalTypes, env, visited, contextBlocked, reportedBlocked);
+    if (Array.isArray(n.then))
+      fixups += repairBody(n.then, localTypes, globalTypes, env, visited, contextBlocked, reportedBlocked);
+    if (Array.isArray(n.else))
+      fixups += repairBody(n.else, localTypes, globalTypes, env, visited, contextBlocked, reportedBlocked);
+    if (Array.isArray(n.catchAll))
+      fixups += repairBody(n.catchAll, localTypes, globalTypes, env, visited, contextBlocked, reportedBlocked);
+    if (Array.isArray(n.catches))
+      for (const c of n.catches)
+        if (Array.isArray(c.body))
+          fixups += repairBody(c.body, localTypes, globalTypes, env, visited, contextBlocked, reportedBlocked);
   }
 
-  const producers = locateOperandProducers(body, env.mod);
+  const producers = locateOperandProducers(body, env.mod, isModelledConsumer);
   if (producers.size === 0) return fixups;
 
   // producerPos → coercion. One repair per producer slot: a producer that feeds
@@ -209,6 +213,10 @@ function repairBody(
       const want = expected[oi];
       const pos = operandPositions[oi]!;
       if (!want || pos >= consumerPos || queued.has(pos)) continue;
+      // (#6759) A crossing needs `want` on one side of the extern/internal
+      // divide; for any other slot type the (pure) producer inference below
+      // cannot change the outcome, so skip it.
+      if (!isExternHierarchy(want) && !isConcreteInternalRef(want)) continue;
       const actual = inferInstrType(body[pos]!, localTypes, globalTypes, env.types, env.mod, env.numImports);
       if (!actual) continue;
       const crossed =
@@ -232,7 +240,11 @@ function repairBody(
 }
 
 /** Repair every cross-hierarchy operand in the module. Returns the fixup count. */
-export function repairCrossHierarchyOperands(mod: WasmModule, diagnostics?: CodegenError[]): number {
+export function repairCrossHierarchyOperands(
+  mod: WasmModule,
+  diagnostics?: CodegenError[],
+  sharing: InstrArraySharing = instrArraySharing(mod),
+): number {
   const numImports = mod.imports.filter((imp) => imp.desc.kind === "func").length;
   const findFunc = (name: string): number | null => {
     const idx = mod.functions.findIndex((f) => f.name === name);
@@ -252,8 +264,9 @@ export function repairCrossHierarchyOperands(mod: WasmModule, diagnostics?: Code
   };
 
   let fixups = 0;
-  const contextBlocked = crossFunctionBodies(mod);
-  const visited = new WeakSet<Instr[]>();
+  // (#6759) Visited bookkeeping covers only the multi-parent arrays (`visitedFor`).
+  const contextBlocked = sharing.shared;
+  const visited = visitedFor(sharing);
   const reportedBlocked = new WeakSet<Instr[]>();
   for (const func of mod.functions) {
     const ft = resolveFuncType(mod.types, func.typeIdx);

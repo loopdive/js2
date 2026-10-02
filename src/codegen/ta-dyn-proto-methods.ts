@@ -17,14 +17,18 @@
  * an explicit `undefined` — which several §23.2.3 methods observe differently.
  */
 import type { Instr, ValType } from "../ir/types.js";
+import { ts } from "../ts-api.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import {
+  emitTaDynSpeciesCreate,
   emitTaDynViewToVec,
   emitTaDynViewValidate,
+  i32ByteVec,
   makeTaDynHelperFctx,
   pushTaDynMethodPreamble,
   pushTaDynRelativeIndex,
+  pushTaDynViewInBoundsLen,
 } from "./dataview-native.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { getArrTypeIdxFromVec } from "./index.js";
@@ -34,11 +38,20 @@ import {
   ITER_FAMILY_ARRAY,
   ITER_KIND_VEC,
 } from "./iterator-native.js";
-import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js";
+import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./js-errors.js";
+import { undefinedExternInstrs } from "./any-helpers.js";
+import { emitStableMergeSort } from "./merge-sort.js"; // (#6769 S6)
 import { ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
 import { addFuncType, getOrRegisterTaDynViewType, getOrRegisterVecType } from "./registry/types.js";
 import { ensureTaDynMopElemHelpers } from "./ta-dyn-mop.js";
-import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+import {
+  beginTaDynProducer,
+  ensureTaDynMapFilterHelper,
+  finishTaDynProducer,
+  taDynCountedLoop,
+  taDynResultStoreInstrs,
+} from "./ta-hof-map-filter.js"; // (#6769 S4) live-receiver species producers
+import { compileArrowAsClosure, compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
 
 /** The three §23.2.3 search methods this module serves. */
@@ -62,12 +75,63 @@ export function ensureTaDynProtoMethodHelper(ctx: CodegenContext, method: string
   if (SEARCH_METHODS.has(method)) return ensureTaDynSearchHelper(ctx, method);
   if (ITERATOR_METHODS.has(method)) return ensureTaDynIteratorHelper(ctx, method);
   if (method === "subarray") return ensureTaDynSubarrayHelper(ctx);
+  if (method === "map" || method === "filter") return ensureTaDynMapFilterHelper(ctx, method);
+  if (method === "slice") return ensureTaDynSliceHelper(ctx);
+  if (method === "sort") return ensureTaDynSortHelper(ctx);
   return undefined;
+}
+
+/** (#6769 S4/S6) The live-receiver producers (`sort` rewrites in place). */
+const PRODUCER_METHODS = new Set(["map", "filter", "slice", "sort"]);
+
+/**
+ * (#6769 S4) Call-site half of the producers: `helper(recv, a0, a1, a2, argc)`
+ * with the arguments evaluated left to right as §13.3.6 requires (every one of
+ * them, even past the three ABI slots — the extras are evaluated and dropped).
+ * A function-literal callback in slot 0 is compiled as a closure value. The
+ * result lands in a fresh externref local, whose index is returned; `null`
+ * (nothing emitted) for a spread argument list.
+ */
+export function emitTaDynProducerCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  recvExtLocal: number,
+  callExpr: ts.CallExpression,
+  helperIdx: number,
+  callbackInSlot0: boolean,
+): number | null {
+  const args = callExpr.arguments;
+  if (args.some((a) => ts.isSpreadElement(a))) return null;
+  const ext: ValType = { kind: "externref" };
+  const pushArg = (arg: ts.Expression, asClosure: boolean): void => {
+    const t =
+      asClosure && (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg))
+        ? compileArrowAsClosure(ctx, fctx, arg)
+        : compileExpression(ctx, fctx, arg, ext);
+    if (t === null) fctx.body.push({ op: "ref.null.extern" });
+    else if (t.kind !== "externref") coerceType(ctx, fctx, t, ext);
+  };
+  fctx.body.push({ op: "local.get", index: recvExtLocal });
+  for (let i = 0; i < 3; i++) {
+    const arg = args[i];
+    if (arg === undefined) fctx.body.push({ op: "ref.null.extern" });
+    else pushArg(arg, callbackInSlot0 && i === 0);
+  }
+  for (let i = 3; i < args.length; i++) {
+    pushArg(args[i]!, false);
+    fctx.body.push({ op: "drop" });
+  }
+  fctx.body.push({ op: "i32.const", value: args.length }, { op: "call", funcIdx: helperIdx });
+  const out = allocLocal(fctx, `__tadp_out_${fctx.locals.length}`, ext);
+  fctx.body.push({ op: "local.set", index: out });
+  return out;
 }
 
 /** Does a native dyn-view helper exist (or can it be minted) for `method`? */
 export function hasTaDynProtoMethodHelper(method: string): boolean {
-  return SEARCH_METHODS.has(method) || ITERATOR_METHODS.has(method) || method === "subarray";
+  return (
+    SEARCH_METHODS.has(method) || ITERATOR_METHODS.has(method) || method === "subarray" || PRODUCER_METHODS.has(method)
+  );
 }
 
 /**
@@ -252,6 +316,413 @@ function ensureTaDynSubarrayHelper(ctx: CodegenContext): number | undefined {
     exported: false,
   });
   return funcIdx;
+}
+
+/**
+ * (#6769 S4) §23.2.3.27 `%TypedArray%.prototype.slice(start, end)` over a
+ * `$__ta_dyn_view`, on the LIVE receiver — see the producer notes in
+ * `ta-hof-map-filter.ts`.
+ *
+ * ValidateTypedArray → `start`/`end` (ToIntegerOrInfinity, relative, clamped;
+ * an `undefined` end — absent or explicit — is `len`) → A =
+ * TypedArraySpeciesCreate(O, «count») → when `count > 0`: re-validate O (the
+ * species constructor may have detached it), clamp `end` to the current
+ * length, then copy. A same-kind dyn-view result takes the spec's FORWARD
+ * byte-by-byte copy — which is what makes a species result over O's own buffer
+ * at a higher offset read `[20, 20, 20, 60]` (the copy re-reads bytes it has
+ * just written) and what `array.copy`'s memmove semantics would get wrong; any
+ * other result takes the element loop `Set(A, n, Get(O, k))`.
+ */
+function ensureTaDynSliceHelper(ctx: CodegenContext): number | undefined {
+  const helperName = "__ta_dyn_slice";
+  const existing = ctx.funcMap.get(helperName);
+  if (existing !== undefined) return existing;
+  const ext: ValType = { kind: "externref" };
+  const i32: ValType = { kind: "i32" };
+  if (ensureLateImport(ctx, "__extern_is_undefined", [ext], [i32]) === undefined) return undefined;
+  const kit = beginTaDynProducer(ctx, helperName, ["start", "end", "unused"]);
+  if (kit === undefined) return undefined;
+  const { fctx, dynIdx, dv, es, len } = kit;
+  const { vecTypeIdx: byteVecIdx, arrTypeIdx: byteArrIdx } = i32ByteVec(ctx);
+  const f64: ValType = { kind: "f64" };
+  const lenF64 = allocLocal(fctx, "lenF64", f64);
+  const scratch = allocLocal(fctx, "scratch", f64);
+  const start = allocLocal(fctx, "startIdx", i32);
+  const end = allocLocal(fctx, "endIdx", i32);
+  const count = allocLocal(fctx, "count", i32);
+  const countBox = allocLocal(fctx, "countBox", ext);
+  const n = allocLocal(fctx, "n", i32);
+  const resDv = allocLocal(fctx, "resDv", { kind: "ref_null", typeIdx: dynIdx });
+  const src = allocLocal(fctx, "srcByte", i32);
+  const dst = allocLocal(fctx, "dstByte", i32);
+  const limit = allocLocal(fctx, "limitByte", i32);
+  const srcArr = allocLocal(fctx, "srcArr", { kind: "ref_null", typeIdx: byteArrIdx });
+  const dstArr = allocLocal(fctx, "dstArr", { kind: "ref_null", typeIdx: byteArrIdx });
+  const clampNonNeg = (local: number): Instr[] => [
+    { op: "local.get", index: local },
+    { op: "i32.const", value: 0 },
+    { op: "local.get", index: local },
+    { op: "i32.const", value: 0 },
+    { op: "i32.gt_s" },
+    { op: "select" },
+    { op: "local.set", index: local },
+  ];
+  const countFromBounds: Instr[] = [
+    { op: "local.get", index: end },
+    { op: "local.get", index: start },
+    { op: "i32.sub" },
+    { op: "local.set", index: count },
+    ...clampNonNeg(count),
+  ];
+
+  fctx.body.push({ op: "local.get", index: len }, { op: "f64.convert_i32_s" }, { op: "local.set", index: lenF64 });
+  pushTaDynRelativeIndex(ctx, fctx, 1, start, scratch, lenF64);
+  const resolveEnd: Instr[] = [];
+  {
+    const saved = fctx.body;
+    fctx.body = resolveEnd;
+    pushTaDynRelativeIndex(ctx, fctx, 2, end, scratch, lenF64);
+    fctx.body = saved;
+  }
+  fctx.body.push(
+    { op: "local.get", index: 4 },
+    { op: "i32.const", value: 2 },
+    { op: "i32.lt_s" },
+    { op: "local.get", index: 2 },
+    { op: "call", funcIdx: ctx.funcMap.get("__extern_is_undefined")! },
+    { op: "i32.or" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: len },
+        { op: "local.set", index: end },
+      ],
+      else: resolveEnd,
+    },
+    ...countFromBounds,
+    { op: "local.get", index: count },
+    { op: "f64.convert_i32_s" },
+    { op: "call", funcIdx: kit.boxNum },
+    { op: "local.set", index: countBox },
+  );
+  const result = emitTaDynSpeciesCreate(ctx, fctx, { dvLocal: dv, argLocals: [countBox], requestedLengthLocal: count });
+  if (result === null) return undefined;
+
+  // count > 0: re-validate, re-clamp, copy.
+  const copy: Instr[] = [];
+  {
+    const saved = fctx.body;
+    fctx.savedBodies.push(saved);
+    fctx.body = copy;
+    emitTaDynViewValidate(ctx, fctx, dv);
+    pushTaDynViewInBoundsLen(ctx, fctx, dv, es);
+    fctx.body = saved;
+    fctx.savedBodies.pop();
+  }
+  const byteLoopBody: Instr[] = [
+    { op: "local.get", index: dstArr },
+    { op: "ref.as_non_null" },
+    { op: "local.get", index: dst },
+    { op: "local.get", index: srcArr },
+    { op: "ref.as_non_null" },
+    { op: "local.get", index: src },
+    { op: "array.get_u", typeIdx: byteArrIdx },
+    { op: "array.set", typeIdx: byteArrIdx },
+    { op: "local.get", index: src },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "local.set", index: src },
+    { op: "local.get", index: dst },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "local.set", index: dst },
+  ];
+  const byteCopy: Instr[] = [
+    { op: "local.get", index: dv },
+    { op: "struct.get", typeIdx: dynIdx, fieldIdx: 2 },
+    { op: "local.get", index: start },
+    { op: "local.get", index: es },
+    { op: "i32.mul" },
+    { op: "i32.add" },
+    { op: "local.set", index: src },
+    { op: "local.get", index: resDv },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: dynIdx, fieldIdx: 2 },
+    { op: "local.tee", index: dst },
+    { op: "local.get", index: count },
+    { op: "local.get", index: es },
+    { op: "i32.mul" },
+    { op: "i32.add" },
+    { op: "local.set", index: limit },
+    { op: "local.get", index: dv },
+    { op: "struct.get", typeIdx: dynIdx, fieldIdx: 1 },
+    { op: "struct.get", typeIdx: byteVecIdx, fieldIdx: 1 },
+    { op: "local.set", index: srcArr },
+    { op: "local.get", index: resDv },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: dynIdx, fieldIdx: 1 },
+    { op: "struct.get", typeIdx: byteVecIdx, fieldIdx: 1 },
+    { op: "local.set", index: dstArr },
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            { op: "local.get", index: dst },
+            { op: "local.get", index: limit },
+            { op: "i32.ge_s" },
+            { op: "br_if", depth: 1 },
+            ...byteLoopBody,
+            { op: "br", depth: 0 },
+          ],
+        },
+      ],
+    },
+  ];
+  const elementCopy: Instr[] = taDynCountedLoop(
+    n,
+    count,
+    taDynResultStoreInstrs(kit, result, n, [
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: start },
+      { op: "local.get", index: n },
+      { op: "i32.add" },
+      { op: "f64.convert_i32_s" },
+      { op: "call", funcIdx: kit.getElem },
+    ]),
+  );
+  copy.push(
+    { op: "local.set", index: len },
+    { op: "local.get", index: end },
+    { op: "local.get", index: len },
+    { op: "local.get", index: end },
+    { op: "local.get", index: len },
+    { op: "i32.lt_s" },
+    { op: "select" },
+    { op: "local.set", index: end },
+    ...countFromBounds,
+    // same-kind dyn-view result → the spec's forward byte copy
+    { op: "local.get", index: result },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: dynIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: i32 },
+      then: [
+        { op: "local.get", index: result },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: dynIdx },
+        { op: "local.tee", index: resDv },
+        { op: "struct.get", typeIdx: dynIdx, fieldIdx: 3 },
+        { op: "local.get", index: kit.kind },
+        { op: "i32.eq" },
+      ],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+    { op: "if", blockType: { kind: "empty" }, then: byteCopy, else: elementCopy },
+  );
+  fctx.body.push(
+    { op: "local.get", index: count },
+    { op: "i32.const", value: 0 },
+    { op: "i32.gt_s" },
+    { op: "if", blockType: { kind: "empty" }, then: copy },
+  );
+  return finishTaDynProducer(ctx, kit, result);
+}
+
+/**
+ * (#6769 S6) §23.2.3.29 `%TypedArray%.prototype.sort(comparefn)` over a
+ * `$__ta_dyn_view`.
+ *
+ * The receiver used to fall to the dispatcher's generic `$__vec_base` arm — an
+ * ARRAY sort: the default comparator compared the ToString forms (`[20, 100,
+ * 3]` → `[100, 20, 3]`, and `-0`/`+0` kept input order), and a comparator's
+ * object result became NaN without ever running its `@@toPrimitive`.
+ *
+ * Steps, in order: (1) a present, non-`undefined`, non-callable `comparefn`
+ * throws TypeError — BEFORE ValidateTypedArray; (3) ValidateTypedArray; then
+ * SortIndexedProperties: read every element once (the f64 snapshot), sort it
+ * with the stable merge sort, and write each value back through the element
+ * setter. §23.2.4.7 TypedArraySortCompare with no comparator: numeric order,
+ * `-0` before `+0`, NaN last; with one: `ToNumber(Call(comparefn, undefined,
+ * «x, y»))`, NaN as `+0`. The write-back is `! Set(obj, j, v)`, which is a
+ * no-op on an index the comparator invalidated — a comparator that detaches
+ * the buffer makes `sort` return normally (`sort-tonumber.js`).
+ */
+function ensureTaDynSortHelper(ctx: CodegenContext): number | undefined {
+  const helperName = "__ta_dyn_sort";
+  const existing = ctx.funcMap.get(helperName);
+  if (existing !== undefined) return existing;
+  const ext: ValType = { kind: "externref" };
+  const i32: ValType = { kind: "i32" };
+  const f64: ValType = { kind: "f64" };
+  if (ensureLateImport(ctx, "__extern_is_undefined", [ext], [i32]) === undefined) return undefined;
+  const kit = beginTaDynProducer(ctx, helperName, ["comparefn", "unused1", "unused2"], false);
+  if (kit === undefined) return undefined;
+  const { fctx, dv } = kit;
+  const applyClosureIdx = ctx.funcMap.get("__apply_closure")!;
+  const objVecNewIdx = ctx.funcMap.get("__objvec_new")!;
+  const objVecPushIdx = ctx.funcMap.get("__objvec_push")!;
+  const hasCmp = allocLocal(fctx, "hasCmp", i32);
+  const x = allocLocal(fctx, "x", f64);
+  const y = allocLocal(fctx, "y", f64);
+  const args = allocLocal(fctx, "args", ext);
+  const j = allocLocal(fctx, "j", i32);
+  const n = allocLocal(fctx, "n", i32);
+
+  // step 1: comparefn is not undefined and not callable → TypeError.
+  const throwArm: Instr[] = [];
+  {
+    const saved = fctx.body;
+    fctx.savedBodies.push(saved);
+    fctx.body = throwArm;
+    emitThrowTypeError(ctx, fctx, "TypeError: %TypedArray%.prototype.sort: comparefn is not a function");
+    fctx.body = saved;
+    fctx.savedBodies.pop();
+  }
+  fctx.body.push(
+    { op: "local.get", index: 4 },
+    { op: "i32.const", value: 1 },
+    { op: "i32.ge_s" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: i32 },
+      then: [
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: ctx.funcMap.get("__extern_is_undefined")! },
+        { op: "i32.eqz" },
+      ],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+    { op: "local.tee", index: hasCmp },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: ctx.funcMap.get("__typeof_function")! },
+        { op: "i32.eqz" },
+        { op: "if", blockType: { kind: "empty" }, then: throwArm },
+      ],
+    },
+  );
+  // step 3: ValidateTypedArray; step 7: read every element once.
+  emitTaDynViewValidate(ctx, fctx, dv);
+  const f64VecIdx = emitTaDynViewToVec(ctx, fctx, dv);
+  const f64ArrIdx = getArrTypeIdxFromVec(ctx, f64VecIdx);
+  const vec = allocLocal(fctx, "vec", { kind: "ref", typeIdx: f64VecIdx });
+  const data = allocLocal(fctx, "data", { kind: "ref_null", typeIdx: f64ArrIdx });
+  fctx.body.push(
+    { op: "local.tee", index: vec },
+    { op: "struct.get", typeIdx: f64VecIdx, fieldIdx: 0 },
+    { op: "local.set", index: n },
+    { op: "local.get", index: vec },
+    { op: "struct.get", typeIdx: f64VecIdx, fieldIdx: 1 },
+    { op: "local.set", index: data },
+  );
+  const signBit = (local: number): Instr[] => [
+    { op: "local.get", index: local },
+    { op: "i64.reinterpret_f64" },
+    { op: "i64.const", value: 0n },
+    { op: "i64.lt_s" },
+  ];
+  // §23.2.4.7 with no comparator, as `cmp(x, y) > 0`.
+  const defaultGt: Instr[] = [
+    { op: "local.get", index: x },
+    { op: "local.get", index: x },
+    { op: "f64.ne" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: i32 },
+      // x is NaN: > 0 unless y is NaN too.
+      then: [{ op: "local.get", index: y }, { op: "local.get", index: y }, { op: "f64.eq" }],
+      else: [
+        { op: "local.get", index: x },
+        { op: "local.get", index: y },
+        { op: "f64.gt" },
+        // x == y == 0 with x = +0 and y = -0
+        { op: "local.get", index: x },
+        { op: "local.get", index: y },
+        { op: "f64.eq" },
+        ...signBit(y),
+        { op: "i32.and" },
+        ...signBit(x),
+        { op: "i32.eqz" },
+        { op: "i32.and" },
+        { op: "i32.or" },
+      ],
+    },
+  ];
+  // ToNumber through the coercion engine (ToPrimitive hint "number", then the
+  // unbox) — the comparator's object result must run its `@@toPrimitive`.
+  const toNumber: Instr[] = [];
+  {
+    const saved = fctx.body;
+    fctx.savedBodies.push(saved);
+    fctx.body = toNumber;
+    coerceType(ctx, fctx, ext, f64);
+    fctx.body = saved;
+    fctx.savedBodies.pop();
+  }
+  // ToNumber(Call(comparefn, undefined, «x, y»)) > 0 — NaN compares false.
+  const comparatorGt: Instr[] = [
+    { op: "call", funcIdx: objVecNewIdx },
+    { op: "local.tee", index: args },
+    { op: "local.get", index: x },
+    { op: "call", funcIdx: kit.boxNum },
+    { op: "call", funcIdx: objVecPushIdx },
+    { op: "local.get", index: args },
+    { op: "local.get", index: y },
+    { op: "call", funcIdx: kit.boxNum },
+    { op: "call", funcIdx: objVecPushIdx },
+    { op: "local.get", index: 1 },
+    ...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" as const }]),
+    { op: "local.get", index: args },
+    { op: "call", funcIdx: applyClosureIdx },
+    ...toNumber,
+    { op: "f64.const", value: 0 },
+    { op: "f64.gt" },
+  ];
+  emitStableMergeSort(fctx, {
+    arrTypeIdx: f64ArrIdx,
+    getOp: "array.get",
+    dataLocal: data,
+    lenLocal: n,
+    buildCompareGtZero: (pushLeft, pushRight) => [
+      ...pushLeft,
+      { op: "local.set", index: x },
+      ...pushRight,
+      { op: "local.set", index: y },
+      { op: "local.get", index: hasCmp },
+      {
+        op: "if",
+        blockType: { kind: "val", type: i32 },
+        then: comparatorGt.map((i) => ({ ...i })),
+        else: defaultGt.map((i) => ({ ...i })),
+      },
+    ],
+  });
+  // step 8: `! Set(obj, j, sortedList[j], true)` — silently skipped on an
+  // index the comparator made invalid.
+  fctx.body.push(
+    ...taDynCountedLoop(j, n, [
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: j },
+      { op: "f64.convert_i32_s" },
+      { op: "local.get", index: data },
+      { op: "ref.as_non_null" },
+      { op: "local.get", index: j },
+      { op: "array.get", typeIdx: f64ArrIdx },
+      { op: "call", funcIdx: kit.boxNum },
+      { op: "call", funcIdx: kit.setElem },
+      { op: "drop" },
+    ]),
+  );
+  return finishTaDynProducer(ctx, kit, 0);
 }
 
 /**

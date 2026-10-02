@@ -237,8 +237,8 @@ export function asyncFnNeedsHostDrive(
   if (!ASYNC_CPS_ENABLED) return false;
   if (ctx.wasi === true || ctx.standalone === true) return false; // host lane only
   if (plan.awaitPoints.length === 0) return false;
-  const anyRealSuspension = plan.awaitPoints.some((a) => plan.awaitedStaticallyResolved.get(a) !== true);
-  if (!anyRealSuspension) return false; // fully await-elidable → legacy sync path
+  // (#6780) No all-awaits-statically-resolved decline: `await null` still yields
+  // a microtask turn (§27.7.5.3), so only a ZERO-await body may run synchronously.
   // (#2967 slice 2b-2) Binding-pattern params are DRIVEN: the entry fn's
   // destructuring prologue has already derived the bound locals by the time
   // the activation emits (maybeActivateAsync / the closure body emit both run

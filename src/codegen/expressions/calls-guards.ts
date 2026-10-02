@@ -17,6 +17,7 @@ import { isBigIntType, isBooleanType, isNumberType, isStringType, isSymbolType }
 import { noJsHost } from "../js-errors.js";
 import { coerceType, pushDefaultValue } from "../type-coercion.js";
 import { compileStandaloneRegExpConstructor, isGlobalRegExpIdentifier } from "../regexp-standalone.js";
+import { tryCompileBuiltinCtorAliasInvoke } from "../builtin-ctor-value-invoke.js"; // (#6713)
 import { foreignReturnFunctionNames } from "../fnctor-foreign-return.js"; // (#4637 A2) §10.2.1.3 step 13
 import { isFreshOrdinaryObjectExpression } from "../native-ordinary-instanceof.js";
 import { isObjectLikeFact } from "../object-ctor-primitive-receiver.js";
@@ -598,6 +599,10 @@ export function tryRegExpConstructorCall(
   ) {
     return compileStandaloneRegExpConstructor(ctx, fctx, expr.arguments ?? [], expr);
   }
+  // (#6713) …and a typed ALIAS of the RegExp / Error-family constructor
+  // carriers (`var R = globalThis.RegExp; R(p)`), standalone only.
+  const alias = tryCompileBuiltinCtorAliasInvoke(ctx, fctx, expr);
+  if (alias !== undefined) return alias;
 
   if (
     !expr.questionDotToken &&

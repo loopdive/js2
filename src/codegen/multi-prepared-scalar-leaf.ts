@@ -27,6 +27,7 @@ import {
   type MultiPreparedDeclarationReplayReceipt,
 } from "./multi-prepared-function-value-declaration-replay.js";
 import { localGlobalIdx } from "./registry/imports.js";
+import { readEnv } from "../env.js";
 
 export interface MultiPreparedScalarLeafGraphSafety {
   readonly collisions: ReadonlySet<string>;
@@ -719,7 +720,7 @@ function resolveExactFunctionValueCandidate<Plan extends MultiPreparedFunctionVa
 ): MultiPreparedFunctionValueCandidateEvidence | undefined {
   const { ctx, declaration, plan, safeSelection, safety, sourceFile } = input;
   const reject = (detail: string): undefined => {
-    if (process.env.JS2WASM_TEST_REQUIRE_MULTI_PREPARED_BENCH_LOOP === "1") {
+    if (readEnv("JS2WASM_TEST_REQUIRE_MULTI_PREPARED_BENCH_LOOP") === "1") {
       invariant("resolve", `required multi-source function-value candidate rejected: ${detail}`);
     }
     return undefined;
@@ -869,7 +870,7 @@ export function functionValueSupportIsCurrent(
   const expectedTrampolineName = `__fn_tramp_${candidate.legacyName}_cached`;
   const expectedCacheName = `__fn_closure_${candidate.legacyName}`;
   const reject = (detail: string): false => {
-    if (process.env.JS2WASM_TEST_REQUIRE_MULTI_PREPARED_BENCH_LOOP === "1") {
+    if (readEnv("JS2WASM_TEST_REQUIRE_MULTI_PREPARED_BENCH_LOOP") === "1") {
       invariant("resolve", `required multi-source function-value support rejected: ${detail}`);
     }
     return false;
@@ -1315,14 +1316,14 @@ export function planEarlyMultiPreparedFunctionValueLeafRoute<Plan extends MultiP
 }): Map<ts.SourceFile, EarlyMultiPreparedScalarLeafState<Plan>> {
   const states = new Map<ts.SourceFile, EarlyMultiPreparedScalarLeafState<Plan>>();
   if (!input.active || collectMultiPreparedScalarLeafCandidates(input.sourceFiles).length !== 0) {
-    if (process.env.JS2WASM_TEST_REQUIRE_MULTI_PREPARED_BENCH_LOOP === "1") {
+    if (readEnv("JS2WASM_TEST_REQUIRE_MULTI_PREPARED_BENCH_LOOP") === "1") {
       invariant("resolve", "required multi-source function-value route failed its active/scalar-exclusion gate");
     }
     return states;
   }
   const candidates = collectMultiPreparedReductionLeafCandidates(input.ctx, input.sourceFiles);
   if (candidates.length !== 1) {
-    if (process.env.JS2WASM_TEST_REQUIRE_MULTI_PREPARED_BENCH_LOOP === "1") {
+    if (readEnv("JS2WASM_TEST_REQUIRE_MULTI_PREPARED_BENCH_LOOP") === "1") {
       invariant("resolve", `required multi-source function-value route found ${candidates.length} reduction leaves`);
     }
     return states;
@@ -1353,7 +1354,7 @@ export function planEarlyMultiPreparedFunctionValueLeafRoute<Plan extends MultiP
       }),
   });
   if (replay.kind !== "certified") {
-    if (process.env.JS2WASM_TEST_REQUIRE_MULTI_PREPARED_BENCH_LOOP === "1") {
+    if (readEnv("JS2WASM_TEST_REQUIRE_MULTI_PREPARED_BENCH_LOOP") === "1") {
       invariant("resolve", `required multi-source function-value route withdrew before skip: ${replay.detail}`);
     }
     return states;
@@ -1395,7 +1396,7 @@ export function assertMultiPreparedScalarLeafRouteCurrent(input: {
   readonly safety: MultiPreparedScalarLeafGraphSafety;
 }): void {
   const { ctx, finalSelection, route, safety } = input;
-  if (process.env.JS2WASM_TEST_TAMPER_MULTI_PREPARED_SCALAR_LEAF?.split(",").includes(route.legacyName)) {
+  if (readEnv("JS2WASM_TEST_TAMPER_MULTI_PREPARED_SCALAR_LEAF")?.split(",").includes(route.legacyName)) {
     route.allocatedFunction.name = `${route.legacyName}$tampered`;
   }
   const allocated = exactAllocatedNumericCallable(
@@ -1432,7 +1433,7 @@ export function assertMultiPreparedFunctionValueLeafRouteCurrent(input: {
   readonly safety: MultiPreparedScalarLeafGraphSafety;
 }): void {
   const { ctx, finalSelection, route, safety } = input;
-  if (process.env.JS2WASM_TEST_TAMPER_MULTI_PREPARED_FUNCTION_VALUE_LEAF?.split(",").includes(route.legacyName)) {
+  if (readEnv("JS2WASM_TEST_TAMPER_MULTI_PREPARED_FUNCTION_VALUE_LEAF")?.split(",").includes(route.legacyName)) {
     route.support.trampolineFunction.name = `${route.support.trampolineFunction.name}$tampered`;
   }
   const candidate: MultiPreparedFunctionValueCandidateEvidence = {

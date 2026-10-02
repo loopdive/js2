@@ -18,6 +18,53 @@ import {
   buildUnboxBooleanLocals,
   buildTypeofBooleanBody,
 } from "../../../runtime/wasmgc/values/boolean-bodies.js";
+import type { NativeStringValueDeclaration } from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
+import { freezeNativeResourceRecipe } from "./native-resource-declarations.js";
+
+/** Describe the existing owners in their exact function/true/false reservation order. */
+export function declareNativeBooleanResources(
+  key: string,
+  booleanTypeKey: string,
+  selection: { readonly boxMode?: "interned" | "allocating"; readonly unbox: boolean },
+) {
+  const declarations: NativeStringValueDeclaration[] = [];
+  if (selection.boxMode) {
+    declarations.push({
+      key: key + ":box",
+      role: ["values", "box-boolean"],
+      space: "function",
+      name: "__box_boolean",
+      signature: { params: [{ kind: "i32" }], results: [{ kind: "externref" }] },
+    });
+    if (selection.boxMode === "interned")
+      for (const value of ["true", "false"])
+        declarations.push({
+          key: key + ":" + value,
+          role: ["values", "boolean-" + value],
+          space: "global",
+          name: "__box_boolean_" + value,
+          valueType: { kind: "ref", typeKey: booleanTypeKey },
+          mutable: false,
+        });
+  }
+  if (selection.unbox)
+    for (const direction of ["typeof", "unbox"])
+      declarations.push({
+        key: key + ":" + direction + "-boolean",
+        role: ["values", direction + "-boolean"],
+        space: "function",
+        name: "__" + direction + "_boolean",
+        signature: { params: [{ kind: "externref" }], results: [{ kind: "i32" }] },
+      });
+  return freezeNativeResourceRecipe({
+    declarations,
+    reservationSteps: declarations.map((row) => ({
+      phase: "resources" as const,
+      kind: "reserve" as const,
+      resourceKey: row.key,
+    })),
+  });
+}
 
 export interface NativeBooleanReservations {
   readonly isBoolean: FunctionReservation;

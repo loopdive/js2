@@ -70,6 +70,8 @@ export interface ForOfStepObjDeps {
   sgetNextIdx?: number;
   keyInstrs: (name: string) => Instr[];
   missInstrs: () => Instr[];
+  /** (#6651 A9) Decodes a provider-created result's field read — see `readDecoder` in iterator-native.ts. */
+  decodeRead?: (locals: { name: string; type: ValType }[], paramCount: number) => Instr[];
 }
 
 interface ForOfStepFuncs {
@@ -277,10 +279,12 @@ export function fillForOfIteratorStep(
   // Result reads are the shared OBJ step's, verbatim: `$Object`/`$Proxy`
   // results through `__extern_get`, closed `{value, done}` structs through the
   // field getters, with the same done-degrade when no getter exists.
+  const decode = (): Instr[] => deps.decodeRead?.(step.locals, 2) ?? []; // (#6651 A9)
   const readObj: Instr[] = [
     { op: "local.get", index: 3 },
     ...deps.keyInstrs("done"),
     { op: "call", funcIdx: deps.externGetIdx },
+    ...decode(),
     { op: "call", funcIdx: deps.isTruthyIdx },
     { op: "local.set", index: 4 },
     { op: "local.get", index: 4 },
@@ -288,7 +292,12 @@ export function fillForOfIteratorStep(
       op: "if",
       blockType: { kind: "val", type: { kind: "externref" } },
       then: deps.missInstrs(),
-      else: [{ op: "local.get", index: 3 }, ...deps.keyInstrs("value"), { op: "call", funcIdx: deps.externGetIdx }],
+      else: [
+        { op: "local.get", index: 3 },
+        ...deps.keyInstrs("value"),
+        { op: "call", funcIdx: deps.externGetIdx },
+        ...decode(),
+      ],
     },
     { op: "local.set", index: 5 },
   ];

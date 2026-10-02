@@ -249,6 +249,9 @@ const STANDALONE_VALUE_HELPER_EXPORTS = [
   "__box_boolean",
   "__box_number",
   "__dynamic_boundary_tag",
+  // (#6666) the lite host-free renderer for compiler-synthesized throws
+  "__exn_render_char",
+  "__exn_render_prepare",
   "__exn_tag",
   "__to_bigint",
   "__typeof_bigint",
@@ -436,7 +439,7 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
   });
 
   it("strips exact compiler-owned suffixed aliases without deleting standalone or WASI user collisions", async () => {
-    const expectedNames = ["$v0$", "__exn_tag", "returnedValues"];
+    const expectedNames = ["$v0$", "__exn_render_char", "__exn_render_prepare", "__exn_tag", "returnedValues"];
     for (const target of ["standalone", "wasi"] as const) {
       const options = {
         fileName: `vec-host-free-physical-collision-${target}.ts`,

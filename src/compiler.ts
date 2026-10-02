@@ -60,6 +60,7 @@ import {
 } from "./compiler/output.js";
 import {
   detectEarlyErrors,
+  gateEmittedModule,
   pushSourceAnchoredDiagnostic,
   rewriteEvalSuperCallWithMap,
   validateHardenedMode,
@@ -89,12 +90,13 @@ import { normalizeScriptHtmlLikeComments } from "./compiler/html-like-comments.j
 import * as irIds from "./compiler/ir-outcome-inventory.js";
 import { buildLinearOptions } from "./compiler/linear-options.js";
 import type { CompileError, CompileOptions, CompileResult } from "./index.js";
-import { optimizeBinaryAsync, validateEmittedBinary } from "./optimize.js";
+import { optimizeBinaryAsync } from "./optimize.js";
 import { generateWit } from "./wit-generator.js";
 import {
   foldGroundCallsInMultiFilesForCompile as foldGroundCallsInMulti,
   foldGroundExportCallsForCompile as foldGroundCalls,
 } from "./compiler/ground-call-fold.js";
+import { readEnv } from "./env.js";
 export { compileToObjectSource } from "./compiler/output.js";
 export type { ObjectCompileResult } from "./compiler/output.js";
 
@@ -929,51 +931,6 @@ function isWasmException(e: unknown): boolean {
   );
 }
 
-const STANDALONE_DYNAMIC_IMPORT_ERROR =
-  "Standalone dynamic import is unsupported until compileMulti provides internal module records and namespace objects";
-
-/**
- * #3494 — catch eager import() before codegen, including top-level await paths
- * that the flattened module initializer may not lower through
- * compileCallExpression. A standalone binary cannot satisfy the host loader,
- * and compileMulti has no honest internal module-record substitute yet.
- *
- * #3509 — ordinary arrow/function-expression bodies are runtime-trap eligible:
- * creating one needs no loader, and calls.ts emits a host-free TypeError if its
- * import executes. Async/generator functions stay fatal here because a direct
- * synchronous throw would not preserve their rejection/lazy-throw semantics.
- */
-function detectStandaloneDynamicImports(sourceFile: ts.SourceFile): CompileError[] {
-  const errors: CompileError[] = [];
-  const canTrapAtRuntime = (call: ts.CallExpression): boolean => {
-    for (let parent: ts.Node | undefined = call.parent; parent; parent = parent.parent) {
-      if (!ts.isFunctionLike(parent)) continue;
-      if (!ts.isArrowFunction(parent) && !ts.isFunctionExpression(parent)) return false;
-      const isAsync = parent.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
-      const isGenerator = ts.isFunctionExpression(parent) && parent.asteriskToken !== undefined;
-      return !isAsync && !isGenerator;
-    }
-    return false;
-  };
-  const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
-      if (canTrapAtRuntime(node)) return;
-      const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
-      errors.push({
-        message: STANDALONE_DYNAMIC_IMPORT_ERROR,
-        line: line + 1,
-        column: character + 1,
-        severity: "error",
-        file: sourceFile.fileName,
-      });
-      return;
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sourceFile);
-  return errors;
-}
-
 /**
  * #1927 — the single, shared front-end pipeline core. Owns everything from ES
  * early-error detection down through binary/WAT/dts/WIT emit. It is SYNCHRONOUS
@@ -1028,16 +985,6 @@ function runPipeline(input: PipelineInput): CompileResult {
     if (hasNewError(earlyErrors)) {
       return failResult(errors);
     }
-  }
-
-  // Step 1a-ii: target-capability validation. This is deliberately independent
-  // of allowJs: Test262 module fixtures use JavaScript source, and silently
-  // skipping this gate there produced a success result with no runnable import
-  // semantics for top-level `await import(...)`.
-  if (targetProfile.target === "standalone") {
-    const dynamicImportErrors = userSourceFiles.flatMap(detectStandaloneDynamicImports);
-    errors.push(...dynamicImportErrors);
-    if (dynamicImportErrors.length > 0) return failResult(errors);
   }
 
   // Step 1b: Safe mode validation for all user source files.
@@ -1103,7 +1050,8 @@ function runPipeline(input: PipelineInput): CompileResult {
       // exactly the #3143 IR-first divergence population) so a whole test-suite
       // run doubles as an empirical throw-site meter. Same env-gated telemetry
       // pattern as JS2WASM_LOG_IR_FALLBACKS; inert (no fs touch) when unset.
-      if (process.env.JS2WASM_IR_POSTCLAIM_LOG && result.irPostClaimErrors?.length) {
+      const postClaimLog = readEnv("JS2WASM_IR_POSTCLAIM_LOG");
+      if (postClaimLog && result.irPostClaimErrors?.length) {
         try {
           // Dynamic import kept out of the module graph on purpose: this is
           // node-only telemetry and `compiler.ts` is also bundled for the
@@ -1119,7 +1067,7 @@ function runPipeline(input: PipelineInput): CompileResult {
           const lines = result.irPostClaimErrors
             .map((e) => JSON.stringify({ file, func: e.func, kind: e.kind, message: e.message }))
             .join("\n");
-          appendFileSync(process.env.JS2WASM_IR_POSTCLAIM_LOG, lines + "\n");
+          appendFileSync(postClaimLog, lines + "\n");
         } catch {
           // Telemetry must never fail a compile.
         }
@@ -1335,31 +1283,15 @@ function finalizePipelineModule(
   // low-level buildImports compatibility defaults.
   const importsHelper = generateImportsHelper(adapterManifest);
 
-  // Step 8 (#4420): opt-in engine validation. `success: true` above only says
-  // codegen finished — it is NOT a claim that the bytes form a module, and a
-  // miscompile therefore escaped as a green result (`compileFiles` on
-  // `src/emit/binary.ts` returned success with 268 KB the engine rejected).
+  // Step 8 (#4420, #6776): engine validation, ON unless `validate: false`.
   // Wired HERE, at the one exit every driver funnels through (compileSourceSync
   // / compileSource / compileMultiSource / compileFilesSource all return
   // runPipeline's result), so no caller can be validated while another is not.
-  // Runs BEFORE the async wasm-opt pass, which is deliberate: the optimizer
-  // validates its own output already (#1941, and it refuses to ship bytes it
-  // broke), so this gate answers for what CODEGEN produced. The binary is
+  // Runs BEFORE the async wasm-opt pass, which validates its own output
+  // (#1941), so this gate answers for what CODEGEN produced. The binary is
   // still returned on failure — a caller that just learned its module is
   // invalid needs the bytes to dump or diff.
-  let emittedBinaryAccepted = true;
-  if (options.validate === true && binary.length > 0) {
-    const validation = validateEmittedBinary(binary);
-    if (!validation.valid) {
-      emittedBinaryAccepted = false;
-      pushSourceAnchoredDiagnostic(
-        errors,
-        diagnosticAnchor,
-        `emitted WebAssembly failed validation${validation.detail ? ` — ${validation.detail}` : ""}`,
-        "error",
-      );
-    }
-  }
+  const emittedBinaryAccepted = gateEmittedModule(binary, options, errors, diagnosticAnchor);
 
   return {
     binary,
