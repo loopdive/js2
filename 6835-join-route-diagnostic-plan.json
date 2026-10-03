@@ -2,10 +2,11 @@
   "id": "6835",
   "slice": "join-route-diagnostic-plan",
   "assignee": "ttraenkler/es2015_join_route_diagnostic_plan_astra",
-  "requested_by": "ttraenkler/es2015_join_route_diagnostic_plan_astra",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/6651-full-verification-plan-astra",
   "claimed_at": "2026-10-03T20:07:02Z",
-  "updated_at": "2026-10-03T20:07:02Z",
-  "write_id": "78966-sxtalfo6"
+  "updated_at": "2026-10-03T20:16:20Z",
+  "write_id": "80280-r21kmk2r",
+  "released_at": "2026-10-03T20:16:20Z"
 }
