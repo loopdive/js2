@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { setImmediate } from "node:timers/promises";
 import ts from "typescript";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   assertProgramInitialGraphPin,
   assertProgramInitialGraphRecipe,
@@ -21,14 +22,19 @@ import {
 import { programPreAReceiptPath, reconstructProgramPreA } from "./helpers/ir-program-pre-a-evolution.js";
 
 import {
-  reconstructRuntimeProgramRelocationSources,
   runtimeProgramRelocationPairs,
   runtimeProgramRelocationPopulationPaths,
   runtimeProgramRelocationReceiptPath,
 } from "./helpers/ir-runtime-program-relocation.js";
+import { beforeCanonicalInstructionsSource, reconstructC1CurrentSources } from "./helpers/ir-c1-current-source.js";
+
+afterEach(async () => {
+  // Yield between synchronous source proofs so Vitest can process task-update RPCs.
+  await setImmediate();
+});
 
 function beforeC1(readLive: (path: string) => string = actual, captureCalls?: string[]): (path: string) => string {
-  const sources = reconstructRuntimeProgramRelocationSources((path) => {
+  const sources = reconstructC1CurrentSources((path) => {
     captureCalls?.push(path);
     return readLive(path);
   });
@@ -38,7 +44,8 @@ function beforeC1(readLive: (path: string) => string = actual, captureCalls?: st
       if (source === undefined) throw new Error(`missing checked C1 output: ${path}`);
       return source;
     }
-    return readLive(path);
+    const source = readLive(path);
+    return path === "src/wasm/model/instructions.ts" ? beforeCanonicalInstructionsSource(source) : source;
   };
 }
 

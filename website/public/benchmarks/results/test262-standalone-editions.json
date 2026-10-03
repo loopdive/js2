@@ -4305,8 +4305,8 @@
   {
     "edition": "Unclassified (untagged)",
     "pass": 4646,
-    "fail": 731,
-    "ce": 68,
+    "fail": 730,
+    "ce": 69,
     "skip": 0,
     "total": 5445,
     "pct": 85

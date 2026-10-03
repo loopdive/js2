@@ -23897,6 +23897,58 @@
           "standalone": {}
         }
       }
+    },
+    {
+      "generatedAt": "2026-10-03T08:06:36.531Z",
+      "sourceRevision": "fa80a1c0ef4479bc6be75084ae2686d830d3613c",
+      "optimizationLevels": {
+        "js-host": 4,
+        "js-host-native": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "react-dom": {
+          "jsHostNative": {},
+          "jsHost": {},
+          "standalone": {
+            "static": 0.37136168803168595,
+            "dynamic": 0.008105108669657005
+          }
+        },
+        "lit": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.008228767502941384
+          },
+          "standalone": {}
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-10-03T09:14:52.820Z",
+      "sourceRevision": "d3715cf80d8ff0c4005771b5e68372fadbe709b0",
+      "optimizationLevels": {
+        "js-host": 4,
+        "js-host-native": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "react-dom": {
+          "jsHostNative": {},
+          "jsHost": {},
+          "standalone": {
+            "static": 0.323681518914066,
+            "dynamic": 0.009060367749293674
+          }
+        },
+        "lit": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.0069806495989269135
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }

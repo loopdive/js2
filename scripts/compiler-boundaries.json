@@ -184,9 +184,10 @@
         "src/ir/runtime/js-tag-domain.ts",
         "src/ir/runtime/producer.ts",
         "src/ir/runtime/verify.ts",
-        "src/ir/runtime/generator-support.ts"
+        "src/ir/runtime/generator-support.ts",
+        "src/ir/runtime/intrinsic-preparation.ts"
       ],
-      "minModules": 19
+      "minModules": 20
     },
     {
       "id": "ir-program",
@@ -1804,6 +1805,11 @@
         "src/backend/wasmgc/resources/native-number-primitive-classifier.ts"
       ],
       "minModules": 2
+    },
+    {
+      "layer": "ir-runtime",
+      "entries": ["src/ir/runtime/intrinsic-preparation.ts"],
+      "minModules": 1
     }
   ],
   "nonModules": [
@@ -15241,6 +15247,11 @@
       "path": "src/backend/wasmgc/resources/native-number-primitive-classifier.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/ir/runtime/intrinsic-preparation.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
     }
   ]
 }

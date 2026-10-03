@@ -30,8 +30,40 @@ import type { PreparedIrAsyncRuntime, PreparedIrAsyncRuntimeInput } from "../src
 import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 import { currentDeclarations, historicalRuntimeDeclarations } from "./helpers/ir-historical-runtime-reconstruction.js";
 
+import { beforeRuntimePreparationRelocation } from "./helpers/ir-runtime-preparation-relocation.js";
+import {
+  reconstructRuntimeContractReceiptSources,
+  runtimeContractCurrentPaths,
+} from "./helpers/ir-runtime-contract-evolution.js";
+import {
+  NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
+  nativeAsyncProviderMismatch,
+} from "../src/ir/runtime/native-async-callables.js";
+import { VECTOR_CALLABLE_RUNTIME_PROVIDERS, vectorProviderMismatch } from "../src/ir/runtime/vector-callables.js";
+import {
+  ORDINARY_OBJECT_RUNTIME_PROVIDERS,
+  ordinaryObjectProviderMismatch,
+} from "../src/ir/runtime/ordinary-object-callables.js";
+import type { RuntimeManifestPolicy } from "../src/runtime/contracts/provider-policy.js";
+import type { RuntimeFeature, RuntimeProviderDefinition } from "../src/ir/runtime/contracts/manifest.js";
+
 const root = resolve(import.meta.dirname, "..");
-const read = (path: string): string => readFileSync(resolve(root, path), "utf8");
+const rawRead = (path: string): string => readFileSync(resolve(root, path), "utf8");
+function currentHistoricalRead(): (path: string) => string {
+  // Authenticate both current inverses once before any historical override.
+  const beforePreparation = beforeRuntimePreparationRelocation(rawRead);
+  const sources = reconstructRuntimeContractReceiptSources(beforePreparation);
+  if (sources.size !== runtimeContractCurrentPaths.length) throw Error("missing runtime historical population");
+  for (const path of runtimeContractCurrentPaths)
+    if (!sources.has(path)) throw Error("missing required runtime historical source " + path);
+  return (path) => {
+    if (!runtimeContractCurrentPaths.includes(path)) return beforePreparation(path);
+    const source = sources.get(path);
+    if (source === undefined) throw Error("missing required runtime historical source " + path);
+    return source;
+  };
+}
+const read = (path: string): string => currentHistoricalRead()(path);
 const hash = (rows: unknown): string => createHash("sha256").update(JSON.stringify(rows)).digest("hex");
 
 // Pinned from b4c116639a7e146e83611a988a8da28d77de9368. Tests do not need Git.
@@ -375,13 +407,11 @@ const destinations: Record<string, readonly string[]> = {
 };
 
 function parse(path: string, overrides: ReadonlyMap<string, string> = new Map()): ts.SourceFile {
-  const file = ts.createSourceFile(
-    path,
-    overrides.get(path) ?? read(path),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
+  const historicalRead = currentHistoricalRead();
+  return parseText(path, overrides.get(path) ?? historicalRead(path));
+}
+function parseText(path: string, text: string): ts.SourceFile {
+  const file = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   if ((file as ts.SourceFile & { parseDiagnostics: readonly ts.Diagnostic[] }).parseDiagnostics.length !== 0)
     throw new Error("syntax error in " + path);
   return file;
@@ -399,7 +429,8 @@ function nameOf(node: ts.Statement, file: ts.SourceFile): string {
 }
 
 function verifyLedger(receipt: (typeof receipts)[number], overrides: ReadonlyMap<string, string> = new Map()): void {
-  const source = (path: string) => overrides.get(path) ?? read(path);
+  const historicalRead = currentHistoricalRead();
+  const source = (path: string) => overrides.get(path) ?? historicalRead(path);
   // Current source order is checked before the independent historical order.
   for (const path of destinations[receipt.name]!) currentDeclarations(path, source);
   const rows =
@@ -417,7 +448,7 @@ function verifyLedger(receipt: (typeof receipts)[number], overrides: ReadonlyMap
     // Reparse the normalized declaration, including live ordinary comments.
     // row.node can otherwise still contain the current extra class overload.
     const leading = row.file.text.slice(row.node.getFullStart(), row.node.getStart());
-    const file = parse(row.path, new Map([[row.path, leading + row.text]]));
+    const file = parseText(row.path, leading + row.text);
     if (file.statements.length !== 1) throw new Error("reconstructed declaration population changed");
     const node = file.statements[0]!;
     return { name: row.name, file, node, text: node.getFullText(file).trim() };
@@ -617,7 +648,16 @@ describe("canonical provider identities and catalogs", () => {
   ])("forwards every existing $name value by identity", ({ historical, canonical }) => {
     const names = Object.keys(historical).sort();
     expect(names.length).toBeGreaterThan(0);
-    const added = historical === oldCallables ? ["REFERENCE_ERROR_RUNTIME_PROVIDERS", "REFERENCE_ERROR_SIGNATURE"] : [];
+    const added =
+      historical === oldCallables
+        ? [
+            "REFERENCE_ERROR_RUNTIME_PROVIDERS",
+            "REFERENCE_ERROR_SIGNATURE",
+            "SEMANTIC_CALLABLE_RUNTIME_PROVIDERS",
+            "semanticCallablePolicyMismatch",
+            "semanticCallableProviderMismatch",
+          ]
+        : [];
     expect([...names, ...added].sort()).toEqual(Object.keys(canonical).sort());
     for (const name of names) {
       expect(Reflect.get(canonical, name)).toBeDefined();
@@ -629,6 +669,59 @@ describe("canonical provider identities and catalogs", () => {
       expect(callables.REFERENCE_ERROR_SIGNATURE).toBe(
         manifest.RUNTIME_FEATURE_SIGNATURES["error.reference.construct"],
       );
+      expect(NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS).toHaveLength(5);
+      expect(VECTOR_CALLABLE_RUNTIME_PROVIDERS).toHaveLength(1);
+      expect(ORDINARY_OBJECT_RUNTIME_PROVIDERS).toHaveLength(8);
+      const semanticProviders = callables.SEMANTIC_CALLABLE_RUNTIME_PROVIDERS;
+      expect(Object.isFrozen(semanticProviders)).toBe(true);
+      expect(semanticProviders).toHaveLength(14);
+      const canonicalProviders = [
+        ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
+        ...VECTOR_CALLABLE_RUNTIME_PROVIDERS,
+        ...ORDINARY_OBJECT_RUNTIME_PROVIDERS,
+      ];
+      for (const [index, provider] of canonicalProviders.entries()) expect(semanticProviders[index]).toBe(provider);
+      for (const provider of callables.REFERENCE_ERROR_RUNTIME_PROVIDERS)
+        expect(semanticProviders).not.toContain(provider);
+      for (const [provider, familyMismatch] of [
+        [NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS[0]!, nativeAsyncProviderMismatch],
+        [VECTOR_CALLABLE_RUNTIME_PROVIDERS[0]!, vectorProviderMismatch],
+        [ORDINARY_OBJECT_RUNTIME_PROVIDERS[0]!, ordinaryObjectProviderMismatch],
+      ] as const) {
+        expect(callables.semanticCallableProviderMismatch(provider)).toBeUndefined();
+        expect(provider.supportedBackends).toEqual(["wasmgc"]);
+        const altered: RuntimeProviderDefinition = { ...provider, supportedBackends: ["linear"] };
+        const mismatch = callables.semanticCallableProviderMismatch(altered);
+        expect(typeof mismatch).toBe("string");
+        expect(mismatch?.length).toBeGreaterThan(0);
+        expect(mismatch).toBe(familyMismatch(altered));
+      }
+      const nativePolicy: RuntimeManifestPolicy = {
+        target: "standalone",
+        backend: "wasmgc",
+        stringConst: { storage: "native" },
+      };
+      const policyFeatures: readonly RuntimeFeature[] = [
+        "async.native.delay",
+        "js.vector.elem-set.externref",
+        "js.object.get",
+      ];
+      for (const feature of policyFeatures) {
+        expect(callables.semanticCallablePolicyMismatch(feature, nativePolicy)).toBeUndefined();
+        for (const policy of [
+          { ...nativePolicy, target: "host" as const },
+          { ...nativePolicy, backend: "linear" as const },
+        ])
+          expect(callables.semanticCallablePolicyMismatch(feature, policy)).toBe(
+            `${feature} requires standalone WasmGC`,
+          );
+      }
+      const noStringPolicy: RuntimeManifestPolicy = { target: "standalone", backend: "wasmgc" };
+      expect(callables.semanticCallablePolicyMismatch("async.native.delay", noStringPolicy)).toBe(
+        "async.native.delay requires explicit native string storage",
+      );
+      for (const feature of ["js.vector.elem-set.externref", "js.object.get"] as const)
+        expect(callables.semanticCallablePolicyMismatch(feature, noStringPolicy)).toBeUndefined();
     }
   });
 

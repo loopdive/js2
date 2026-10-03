@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { beforeRuntimePreparationRelocation } from "./helpers/ir-runtime-preparation-relocation.js";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -17,16 +18,21 @@ import {
   reconstructProgramInitialGraph,
 } from "./helpers/ir-program-initial-graph-evolution.js";
 import { programCoreTypePath, reconstructProgramCoreTypeEvolution } from "./helpers/ir-program-core-type-evolution.js";
-import {
-  reconstructRuntimeProgramRelocationSources,
-  runtimeProgramRelocationPairs,
-} from "./helpers/ir-runtime-program-relocation.js";
+import { runtimeProgramRelocationPairs } from "./helpers/ir-runtime-program-relocation.js";
+import { beforeCanonicalInstructionsSource, reconstructC1CurrentSources } from "./helpers/ir-c1-current-source.js";
 import { historicalIrValidationPolicyView } from "./helpers/ir-validation-policy-evolution.js";
 import {
+  captureCanonical489dPredecessorPolicy,
+  beforeCanonical3c6InventoryPolicy,
+  beforeGeneratorInventoryPolicy,
+  beforeHostCarrierInventoryPolicy,
+  beforeDynamicCodeInventoryPolicy,
+  beforeRuntimePreparationPolicy,
   authenticateNumberPrerequisitePolicy,
   beforeNumberPrerequisitePolicy,
   beforeWellKnownSymbolPolicy,
   beforeIrRuntimeProgramPolicy,
+  beforeCurrentMainInventoryPolicy,
 } from "./helpers/ir-runtime-program-policy-evolution.js";
 
 const repository = resolve(import.meta.dirname, "..");
@@ -131,7 +137,21 @@ const newModules = [
   ...groups["ir-runtime"],
 ];
 const policy = () => {
-  const actual = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
+  const actual = beforeRuntimePreparationPolicy(
+    beforeDynamicCodeInventoryPolicy(
+      beforeHostCarrierInventoryPolicy(
+        beforeGeneratorInventoryPolicy(
+          beforeCurrentMainInventoryPolicy(
+            beforeCanonical3c6InventoryPolicy(
+              captureCanonical489dPredecessorPolicy(
+                JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8")),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
   // Authenticate the whole current policy before any bounded historical view.
   authenticateNumberPrerequisitePolicy(actual);
   return actual;
@@ -174,7 +194,11 @@ function fixture(includeOwnership = false) {
   // Fresh complete live inputs are authenticated once for this initial copy.
   // The maps are never used by run/append/put or after mutant injection.
   const rawRead = liveSourceReader(repository);
-  const initialRuntimeSources = reconstructRuntimeContractReceiptSources(rawRead);
+  const historicalDependencyRead = (path: string): string => {
+    const source = rawRead(path);
+    return path === "src/wasm/model/instructions.ts" ? beforeCanonicalInstructionsSource(source) : source;
+  };
+  const initialRuntimeSources = reconstructRuntimeContractReceiptSources(beforeRuntimePreparationRelocation(rawRead));
   const historicalRuntimeRead = (path: string): string => {
     if (!runtimeContractCurrentPaths.includes(path)) return rawRead(path);
     const source = initialRuntimeSources.get(path);
@@ -182,9 +206,9 @@ function fixture(includeOwnership = false) {
     return source;
   };
   const initialIntrinsic = historicalIntrinsicSource(historicalRuntimeRead);
-  const initialC1ProgramSources: ReadonlyMap<string, string> = reconstructRuntimeProgramRelocationSources(rawRead);
+  const initialC1ProgramSources: ReadonlyMap<string, string> = reconstructC1CurrentSources(rawRead);
   const initialPreCProgramRead = (path: string): string => {
-    if (!runtimeProgramRelocationPairs.some(([donor]) => donor === path)) return rawRead(path);
+    if (!runtimeProgramRelocationPairs.some(([donor]) => donor === path)) return historicalDependencyRead(path);
     const source = initialC1ProgramSources.get(path);
     if (source === undefined) throw new Error(`missing authenticated pre-C program source ${path}`);
     return source;
@@ -192,7 +216,7 @@ function fixture(includeOwnership = false) {
   const initialProgramSources = reconstructProgramInitialGraph(initialPreCProgramRead);
   // Each inverse authenticates raw current inputs independently. This source
   // selection applies only to the initial copy, never to later fixture mutants.
-  const initialCoreTypeSources = reconstructProgramCoreTypeEvolution(rawRead);
+  const initialCoreTypeSources = reconstructProgramCoreTypeEvolution(historicalDependencyRead);
   for (const path of includeOwnership ? [...clean, ...ownershipModules] : clean) {
     let source: string;
     if (path === "src/ir/runtime/contracts/intrinsics.ts") source = initialIntrinsic;
