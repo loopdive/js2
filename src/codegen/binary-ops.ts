@@ -77,6 +77,7 @@ import {
 import { compileInstanceOf, compileTypeofComparison } from "./typeof-delete.js";
 import { compileTypedBinaryDispatch } from "./binary-ops-typed-dispatch.js";
 import { foldTypeDisjointThenPromote } from "./strict-eq-type-disjoint.js";
+import { persistentScriptUpdateMayBeBigInt } from "./expressions/persistent-script-rmw.js";
 import {
   bothOperandsAreBigIntCarriers,
   emitTypeDisjointStrictEq,
@@ -1815,7 +1816,9 @@ export function compileBinaryExpression(
       // undefined off that lane) so JS-host mode is untouched.
       if (isStrictEq || isStrictNeq) {
         const nonBigIntTsType0 = leftIsBigInt ? rightTsType : leftTsType;
-        const nonBigIntIsAnyish0 = (nonBigIntTsType0.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+        const nonBigIntIsAnyish0 =
+          (nonBigIntTsType0.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+          persistentScriptUpdateMayBeBigInt(ctx, fctx, leftIsBigInt ? expr.right : expr.left);
         // `ensureExternStrictEqHelper` needs `ctx.nativeBoxNumberTypeIdx` /
         // `ctx.nativeBoxBooleanTypeIdx`, which are only set once
         // `addUnionImports` has registered the native-first boxing helpers —

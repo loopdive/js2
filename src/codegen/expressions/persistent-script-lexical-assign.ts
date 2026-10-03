@@ -14,16 +14,21 @@ import {
   emitGlobalEnvironmentKey,
   ensureGlobalEnvironmentOperation,
 } from "../global-environment.js";
+import { emitThrowReferenceError } from "./helpers.js";
+
+export interface PersistentScriptReference {
+  name: string;
+  present: number;
+  global: { objLocalIdx: number; hasLocalIdx: number };
+}
 
 /** Resolve once before the RHS. A later-created lexical cannot retarget an
  * already resolved global Reference, and const/TDZ errors happen at PutValue. */
-export function compilePersistentScriptLexicalAssign(
+export function capturePersistentScriptReference(
   ctx: CodegenContext,
   fctx: FunctionContext,
   name: string,
-  right: ts.Expression,
-  strict: boolean,
-): ValType | null {
+): PersistentScriptReference {
   const ext: ValType = { kind: "externref" };
   const truthy = ensureLateImport(ctx, "__is_truthy", [ext], [{ kind: "i32" }]);
   flushLateImportShifts(ctx, fctx);
@@ -47,15 +52,54 @@ export function compilePersistentScriptLexicalAssign(
     { op: "i32.eqz" },
     { op: "if", blockType: { kind: "empty" }, then: capture },
   );
+  return { name, present, global };
+}
 
-  const resultType = compileExpression(ctx, fctx, right);
-  if (!resultType) return null;
-  const result = allocLocal(fctx, `__script_lexical_result_${fctx.locals.length}`, resultType);
-  fctx.body.push({ op: "local.set", index: result }, { op: "local.get", index: result });
-  if (resultType.kind !== "externref") coerceType(ctx, fctx, resultType, ext);
-  const value = allocLocal(fctx, `__script_lexical_value_${fctx.locals.length}`, ext);
-  fctx.body.push({ op: "local.set", index: value });
+/** GetValue of the captured Reference, never a fresh name lookup. */
+export function emitPersistentScriptReferenceRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  reference: PersistentScriptReference,
+): void {
+  const { name, present, global } = reference;
+  const savedRead = pushBody(fctx);
+  emitScriptLexicalOperation(ctx, fctx, name, SCRIPT_LEXICAL_OP.read);
+  const read = fctx.body;
+  popBody(fctx, savedRead);
+  fctx.savedBodies.push(read);
+  const savedMiss = pushBody(fctx);
+  const savedThrow = pushBody(fctx);
+  emitThrowReferenceError(ctx, fctx, `${name} is not defined`);
+  const missing = fctx.body;
+  popBody(fctx, savedThrow);
+  fctx.body.push(
+    { op: "local.get", index: global.hasLocalIdx },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: missing },
+  );
+  const get = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_get");
+  if (get === undefined) throw new Error("Persistent Script reference requires native global reads");
+  fctx.body.push({ op: "local.get", index: global.objLocalIdx });
+  emitGlobalEnvironmentKey(ctx, fctx, name);
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? get });
+  const miss = fctx.body;
+  popBody(fctx, savedMiss);
+  fctx.savedBodies.splice(fctx.savedBodies.lastIndexOf(read), 1);
+  fctx.body.push(
+    { op: "local.get", index: present },
+    { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: read, else: miss },
+  );
+}
 
+/** PutValue of the captured Reference. The value is an externref local. */
+export function emitPersistentScriptReferenceWrite(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  reference: PersistentScriptReference,
+  value: number,
+  strict: boolean,
+): void {
+  const { name, present, global } = reference;
   const savedWrite = pushBody(fctx);
   emitScriptLexicalOperation(ctx, fctx, name, SCRIPT_LEXICAL_OP.write, value);
   fctx.body.push({ op: "drop" });
@@ -80,7 +124,25 @@ export function compilePersistentScriptLexicalAssign(
   fctx.body.push(
     { op: "local.get", index: present },
     { op: "if", blockType: { kind: "empty" }, then: write, else: miss },
-    { op: "local.get", index: result },
   );
+}
+
+export function compilePersistentScriptLexicalAssign(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+  right: ts.Expression,
+  strict: boolean,
+): ValType | null {
+  const reference = capturePersistentScriptReference(ctx, fctx, name);
+  const resultType = compileExpression(ctx, fctx, right);
+  if (!resultType) return null;
+  const result = allocLocal(fctx, `__script_lexical_result_${fctx.locals.length}`, resultType);
+  fctx.body.push({ op: "local.set", index: result }, { op: "local.get", index: result });
+  if (resultType.kind !== "externref") coerceType(ctx, fctx, resultType, { kind: "externref" });
+  const value = allocLocal(fctx, `__script_lexical_value_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: value });
+  emitPersistentScriptReferenceWrite(ctx, fctx, reference, value, strict);
+  fctx.body.push({ op: "local.get", index: result });
   return resultType;
 }

@@ -97,6 +97,11 @@ import {
 } from "./assignment.js";
 import { tryEmitConstIdentifierCompoundAssignment } from "./identifier-assignment.js";
 import { hostTypedArrayCarrierNameForExpression } from "./typed-array-host-carrier.js";
+import {
+  compilePersistentScriptCompound,
+  compilePersistentScriptLogical,
+  usesPersistentScriptReference,
+} from "./persistent-script-rmw.js";
 
 /** Numeric and BigInt TypedArray view name for the native vec element lane. */
 function vecElementTypedArrayName(ctx: CodegenContext, receiver: ts.Expression): string | undefined {
@@ -139,6 +144,9 @@ export function compileLogicalAssignment(
   const name = expr.left.text;
 
   // Resolve the variable storage location
+  if (usesPersistentScriptReference(ctx, fctx, expr.left)) {
+    return compilePersistentScriptLogical(ctx, fctx, expr.left, expr.right, op);
+  }
   let storage:
     | { kind: "local"; index: number; type: ValType }
     | {
@@ -1904,6 +1912,12 @@ export function compileCompoundAssignment(
   // no `with` scope binds the name — then the pre-existing lowering runs.
   const withCompound = compileWithCompoundAssignment(ctx, fctx, expr.left, expr.right, op);
   if (withCompound !== undefined) return withCompound;
+
+  if (usesPersistentScriptReference(ctx, fctx, expr.left)) {
+    const binary = compoundBinaryOperator(op);
+    if (binary === undefined) throw new Error("Missing persistent Script compound operator");
+    return compilePersistentScriptCompound(ctx, fctx, expr.left, expr.right, binary);
+  }
 
   // const bindings — compound assignment throws TypeError at runtime
   if (tryEmitConstIdentifierCompoundAssignment(ctx, fctx, expr.left, expr.right)) return { kind: "f64" };

@@ -45,6 +45,8 @@ async function createRealm(lexicals = false) {
       return error===undefined?0:error.name==="TypeError"?2:error.name==="ReferenceError"?1:3;
     }
     export function retainedNumber():number {return Number(scriptLexicalOperation("retained",5,undefined));}
+    export function retainedIsBigInt():boolean {return typeof scriptLexicalOperation("retained",5,undefined)==="bigint";}
+    export function retainedIsWideLiteral():boolean {return String(scriptLexicalOperation("retained",5,undefined))==="18446744073709551616";}
     export function hasRetained():boolean {return Boolean(scriptLexicalOperation("retained",9,undefined));}
     export function hasFirst():boolean {return Boolean(scriptLexicalOperation("first",9,undefined));}
     `
@@ -180,6 +182,155 @@ it("checks const mutability in a later Script after evaluating the RHS", async (
   expect((realm.exports.retainedNumber as Function)()).toBe(41);
   expect((realm.exports.score as Function)()).toBe(1);
   expect((realm.exports.caughtKind as Function)()).toBe(2);
+});
+
+it("updates a prior lexical with compound arithmetic without leaking a property", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=40;", true, true);
+  await runScript(realm, '"use strict"; retained+=2; globalThis.published=retained;', true, true);
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("preserves prefix and postfix results for a prior lexical", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=40;", true, true);
+  await runScript(realm, '"use strict"; globalThis.score=retained++; globalThis.published=++retained;', true, true);
+  expect((realm.exports.score as Function)()).toBe(40);
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("reads the old lexical before compound RHS mutations and stores the computed value", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=40;", true, true);
+  await runScript(
+    realm,
+    '"use strict"; globalThis.score=0; retained+=(++globalThis.score,retained=100,2); globalThis.published=retained;',
+    true,
+    true,
+  );
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  expect((realm.exports.observed as Function)()).toBe(42);
+  expect((realm.exports.score as Function)()).toBe(1);
+});
+
+it("keeps dynamic string addition and numeric prefix/postfix coercion distinct", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, 'let retained:any="4";', true, true);
+  await runScript(realm, 'retained+="2"; globalThis.published=retained==="42"?42:0;', true, true);
+  expect((realm.exports.observed as Function)()).toBe(42);
+  await runScript(realm, "globalThis.score=retained--; globalThis.published=++retained;", true, true);
+  expect((realm.exports.score as Function)()).toBe(42);
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("throws for a missing compound target before RHS effects", async () => {
+  const realm = await createRealm(true);
+  await runScript(
+    realm,
+    "globalThis.score=0; try {missing+=(++globalThis.score,2);} catch(error){globalThis.caught=error;}",
+    true,
+    true,
+  );
+  expect((realm.exports.score as Function)()).toBe(0);
+  expect((realm.exports.caughtKind as Function)()).toBe(1);
+});
+
+it("keeps a prior const unchanged after compound and increment errors", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "const retained:any=40;", true, true);
+  await runScript(
+    realm,
+    "globalThis.score=0; try {retained+=(++globalThis.score,2);} catch(error){globalThis.caught=error;}",
+    true,
+    true,
+  );
+  expect((realm.exports.score as Function)()).toBe(1);
+  expect((realm.exports.caughtKind as Function)()).toBe(2);
+  expect((realm.exports.retainedNumber as Function)()).toBe(40);
+  await runScript(realm, "try {retained++;} catch(error){globalThis.caught=error;}", true, true);
+  expect((realm.exports.caughtKind as Function)()).toBe(2);
+  expect((realm.exports.retainedNumber as Function)()).toBe(40);
+});
+
+it("short-circuits logical writes to prior lexical cells", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=0;", true, true);
+  await runScript(
+    realm,
+    "globalThis.score=0; retained&&=(++globalThis.score,10); retained||=(++globalThis.score,42); retained??=(++globalThis.score,20); globalThis.published=retained;",
+    true,
+    true,
+  );
+  expect((realm.exports.score as Function)()).toBe(1);
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("preserves BigInt values across prior-lexical compound and update operations", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=39n;", true, true);
+  expect((realm.exports.retainedIsBigInt as Function)()).toBe(1);
+  await runScript(realm, "retained+=2n; globalThis.published=retained===41n?42:0;", true, true);
+  expect((realm.exports.retainedIsBigInt as Function)()).toBe(1);
+  expect((realm.exports.observed as Function)()).toBe(42);
+  await runScript(
+    realm,
+    "globalThis.score=retained++===41n?41:0; globalThis.published=retained===42n?42:0;",
+    true,
+    true,
+  );
+  expect((realm.exports.score as Function)()).toBe(41);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("fills a nullish lexical and skips a const logical write when no write is needed", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=undefined; const fixed:any=42;", true, true);
+  await runScript(
+    realm,
+    "globalThis.score=0; retained??=(++globalThis.score,42); fixed||=(++globalThis.score,0); globalThis.published=retained;",
+    true,
+    true,
+  );
+  expect((realm.exports.score as Function)()).toBe(1);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("refuses a wide BigInt increment without truncating or overwriting its cell", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=18446744073709551616n;", true, true);
+  expect((realm.exports.retainedIsWideLiteral as Function)()).toBe(1);
+  await runScript(
+    realm,
+    "try {retained++;} catch(error){globalThis.caught=error;} globalThis.published=retained===18446744073709551616n?42:0;",
+    true,
+    true,
+  );
+  expect((realm.exports.caughtKind as Function)()).toBe(2);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("refuses an overflowing narrow BigInt increment without wrapping its cell", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=9223372036854775807n;", true, true);
+  await runScript(
+    realm,
+    "try {retained++;} catch(error){globalThis.caught=error;} globalThis.published=retained===9223372036854775807n?42:0;",
+    true,
+    true,
+  );
+  expect((realm.exports.caughtKind as Function)()).toBe(2);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("reads and writes an existing object-record accessor once for compound assignment", async () => {
+  const realm = await createRealm(true);
+  (realm.exports.installAccessor as Function)();
+  await runScript(realm, '"use strict"; globalThis.score=(published+=41);', true, true);
+  expect((realm.exports.score as Function)()).toBe(42);
 });
 
 it("preserves strict global misses and sloppy global writes when no lexical exists", async () => {

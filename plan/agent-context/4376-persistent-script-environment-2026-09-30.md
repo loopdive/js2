@@ -179,6 +179,44 @@ changes; do not stage `lower-contracts.ts`, Acorn binaries or user scratch files
 
 ## Representation and ownership
 
+### 2026-10-04 handoff: captured read-modify-write references
+
+Checkpoint adds cross-Script compound and logical assignments and prefix/postfix
+updates through one captured Context Reference. GetValue precedes RHS effects;
+the RHS runs once; logical assignments retain short-circuit behavior; const
+writes throw after required RHS effects. Numeric strings are converted for
+updates, while small BigInts retain their brand and prefix/postfix results.
+`persistent-script-rmw.ts` contains the new routes. Synthetic compound RHS
+identifiers retain the original node so the existing emitter sees BigInt types;
+strict comparison narrowly recognizes potentially BigInt Script updates.
+
+TypeScript 7 passes. Focused tests report 35/36: 33 ordinary successes, two
+retained expected failures, and one ordinary wide-BigInt initialization failure.
+The five-file run reports 114/118 successes (112 ordinary, two expected), with
+that failure plus the same three previously documented baseline failures.
+Do not relabel the new wide control as expected or claim these files are green.
+
+A native standalone probe compiled the same lexical owner and independent
+Script on clean archive `b17fdc53504` and the current candidate, using the same
+tsx/exnref harness. Both report `exact: 0, zero: 1` for initialization with
+18446744073709551616n before any update. This establishes an existing literal
+representation defect, not correct wide update behavior. Update emission
+explicitly refuses wide carriers and narrow overflow with TypeError until
+exact native arithmetic exists. The wide test fails before reaching its guard.
+
+Main-relative LOC/function budgets (base `60f99e83450`), coercion and oracle
+ratchets pass. Dead-export exits zero but reports open dynamic-import evidence;
+runtime retirement is not certified. No native Deno artifact was rebuilt.
+
+Resume by fixing wide initializer representation at its IR/boxing seam, then
+implement exact wide update/arithmetic and test consumers of BigInt update
+results beyond strict equality. Also still required: destructuring writes,
+with/eval activation precedence, classes and typed lexical planning, function
+declaration/re-execution/completion semantics, provider wiring into native
+Deno packaging and unchanged full deno_core verification. PR #6468 remains a
+draft checkpoint targeting the existing integration branch, not main. Preserve
+unrelated lower-contracts and Acorn binary edits and other user dirt.
+
 ### 2026-10-04 continuation: merged main and cross-Script assignment
 
 Merge `ae009e6597a` incorporates the target integration branch at `60f99e83450`

@@ -17,6 +17,11 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-10-04: narrow opt-in routing to the captured-reference RMW leaf;
+  # direct BigInt update equality must not fold from an inferred Number type.
+  - src/codegen/expressions/operator-assignment.ts
+  - src/codegen/expressions/unary-updates.ts
+  - src/codegen/binary-ops.ts
   # 2026-10-04: later Script assignment resolves the Context lexical record
   # before RHS evaluation, preserving strict/sloppy global behavior on misses.
   - src/codegen/expressions/unresolvable-assign.ts
@@ -128,6 +133,11 @@ loc-budget-allow:
   - src/codegen/expressions/late-imports.ts
   - src/codegen/async-scheduler.ts
 func-budget-allow:
+  # 2026-10-04: exact opt-in calls into the persistent-reference leaf and
+  # dynamic equality for a persistent update whose checker assumes Number.
+  - src/codegen/expressions/operator-assignment.ts::compileCompoundAssignment
+  - src/codegen/expressions/unary-updates.ts::compilePrefixUpdate
+  - src/codegen/binary-ops.ts::compileBinaryExpression
   - src/ir/integration.ts::makeResolver
   # 2026-10-01: restate the pre-existing receiver-backed live next/latch arm
   # against merged main. keys/entries value construction is a separate helper;
@@ -2909,6 +2919,25 @@ credit a new native Deno artifact or full deno_core conformance. Persistent
 lexical cells, declaration preflight and completion values remain required.
 
 ## 2026-10-04 opt-in native lexical checkpoint
+
+Read-modify-write checkpoint now captures the Context Reference for compound,
+logical and prefix/postfix updates. Focused tests report 35/36: 33 ordinary
+passes, two existing expected failures and one ordinary wide-BigInt initializer
+failure. The five-file run is 114/118, including the same two expected failures
+and three previously recorded baseline failures. A native owner/Script probe
+on published `b17fdc53504` and the candidate returns `exact: 0, zero: 1` on both
+for the wide literal before updates. Keep this failure visible. Narrow BigInt
+updates pass; wide carriers and overflow currently throw instead of silently
+wrapping. Exact wide arithmetic remains required, not excluded from scope.
+TypeScript 7 and budget/coercion/oracle checks pass; dead-export does not certify
+runtime retirement. Draft PR #6468 and the persistent Script handoff capture
+this compiler checkpoint. Native Deno packaging and full conformance remain open.
+
+Current continuation adds compound/update controls and plans one captured
+Context Reference for read-modify-write operations. Reads must precede RHS
+effects, TDZ/missing-name reads must throw before them, and prefix/postfix
+results and const writes must match JavaScript semantics. General native Deno
+packaging is still part of this issue, not replaced by these compiler controls.
 
 Follow-up work: merge the newer integration branch/main history and implement
 later-Script lexical assignment. Before implementation, both new strict and
