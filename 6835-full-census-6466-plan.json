@@ -2,10 +2,11 @@
   "id": "6835",
   "slice": "full-census-6466-plan",
   "assignee": "ttraenkler/es2015_full_census_6466_plan_astra",
-  "requested_by": "ttraenkler/es2015_full_census_6466_plan_astra",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/6651-full-verification-plan-astra",
   "claimed_at": "2026-10-03T19:12:24Z",
-  "updated_at": "2026-10-03T19:12:24Z",
-  "write_id": "73324-q7xjfyc1"
+  "updated_at": "2026-10-03T19:16:29Z",
+  "write_id": "74203-wqae41ye",
+  "released_at": "2026-10-03T19:16:29Z"
 }
