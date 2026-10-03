@@ -179,6 +179,33 @@ changes; do not stage `lower-contracts.ts`, Acorn binaries or user scratch files
 
 ## Representation and ownership
 
+### 2026-10-04 continuation: exact first wide initializer
+
+After checkpoint `32708a6a99c`, the wide initializer defect is fixed at
+`bigint-wide.ts::tryFoldBigIntConstant`. The linked Script's first BigInt
+constant reached this routine before the native union carrier types existed.
+`ensureLateImport(__box_bigint)` alone is insufficient: that helper is outside
+the late-import union name set and may already have a pending import. Use the
+existing idempotent `addUnionImports` and flush index shifts before emitting the
+exact reference carrier. No IR demotion, interpreter or Deno source edit is added.
+
+Same native owner/Script probe: baseline `b17fdc53504` gives `exact: 0, zero: 1`;
+candidate gives `exact: 1, zero: 0`. Focused tests now report 41/41, comprising
+39 ordinary successes and the two existing expected failures. Five added
+ordinary controls cover signed-i64 boundaries, positive/negative 2^64 and a
+folded expression, with values inspected by a later independent Script.
+The original wide refusal test now reaches and verifies its guard, but that
+guard still rejects valid updates rather than implementing exact arithmetic.
+
+The three-file BigInt regression run before the five extra controls reported
+61/62, including two expected failures. The one failure is
+`issue-6656-bigint-wide-carrier.test.ts::narrowedString`. A separate native
+host-free compileMulti probe using that file's exact source reports
+`controls: 1, narrowedString: 0, dynamicString: 1` on both clean baseline
+`b17fdc53504` and candidate. This is a distinct existing narrow String route
+defect, not a new failure or a passing suite. No fresh five-file/Deno artifact
+run is credited. Exact wide arithmetic and native packaging still remain.
+
 ### 2026-10-04 handoff: captured read-modify-write references
 
 Checkpoint adds cross-Script compound and logical assignments and prefix/postfix

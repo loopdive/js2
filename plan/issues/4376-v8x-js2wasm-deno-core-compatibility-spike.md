@@ -2920,6 +2920,17 @@ lexical cells, declaration preflight and completion values remain required.
 
 ## 2026-10-04 opt-in native lexical checkpoint
 
+Follow-up fixes the first wide reference initializer by registering the native
+union carriers before constant materialization. The native owner/Script probe
+changes from baseline `b17fdc53504` (`exact: 0, zero: 1`) to candidate
+(`exact: 1, zero: 0`). Focused tests now report 39 ordinary passes and the two
+existing expected failures (41/41 reported). Positive, negative, signed-boundary
+and folded initializers retain exact values across independently compiled Scripts.
+The broader BigInt run has a separate `narrowedString` failure reproduced with
+the exact fixture and positive controls on baseline and candidate. Wide updates
+still deliberately throw; exact arithmetic is unfinished. See the handoff for
+the full provenance, limitations and native Deno resume order.
+
 Read-modify-write checkpoint now captures the Context Reference for compound,
 logical and prefix/postfix updates. Focused tests report 35/36: 33 ordinary
 passes, two existing expected failures and one ordinary wide-BigInt initializer

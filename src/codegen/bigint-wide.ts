@@ -61,6 +61,8 @@ import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { emitNativeBigIntFormat } from "./bigint-format-native.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
+import { addUnionImports } from "./registry/imports.js";
+import { flushLateImportShifts } from "./expressions/late-imports.js";
 
 const I64_MIN = -(1n << 63n);
 const I64_MAX = (1n << 63n) - 1n;
@@ -349,8 +351,15 @@ function tryFoldBigIntConstant(
     fctx.body.push({ op: "i64.const", value });
     return { kind: "i64", bigint: true };
   }
-  const types = wideTypes(ctx);
   const wantsRef = expectedType?.kind === "externref" || expectedType?.kind === "anyref";
+  // A linked Script can reach its first BigInt initializer before any boxing
+  // helper has seeded the native carrier types. Register them before deciding
+  // whether an exact constant fits the destination, not after truncating it.
+  if (wantsRef && wideTypes(ctx) === undefined) {
+    addUnionImports(ctx);
+    flushLateImportShifts(ctx, fctx);
+  }
+  const types = wideTypes(ctx);
   if (types === undefined || !wantsRef) {
     // No reference slot to hold it: the i64 this expression always produced.
     fctx.body.push({ op: "i64.const", value: BigInt.asIntN(64, value) });

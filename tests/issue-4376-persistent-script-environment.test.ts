@@ -299,6 +299,20 @@ it("fills a nullish lexical and skips a const logical write when no write is nee
   expect((realm.exports.observed as Function)()).toBe(42);
 });
 
+it.each([
+  ["18446744073709551616n", "18446744073709551616"],
+  ["-18446744073709551616n", "-18446744073709551616"],
+  ["9223372036854775808n", "9223372036854775808"],
+  ["-9223372036854775809n", "-9223372036854775809"],
+  ["(2n**64n)+1n", "18446744073709551617"],
+])("preserves an initial wide lexical %s before any boxing helper is requested", async (expression, expected) => {
+  const realm = await createRealm(true);
+  await runScript(realm, `let retained:any=${expression};`, true, true);
+  await runScript(realm, `globalThis.published=String(retained)===${JSON.stringify(expected)}?42:0;`, true, true);
+  expect((realm.exports.retainedIsBigInt as Function)()).toBe(1);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
 it("refuses a wide BigInt increment without truncating or overwriting its cell", async () => {
   const realm = await createRealm(true);
   await runScript(realm, "let retained:any=18446744073709551616n;", true, true);
