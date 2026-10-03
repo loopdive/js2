@@ -568,6 +568,11 @@ export interface CompileOptions {
    * Typed private slots are refused
    * until cross-Script mutation is incorporated into their planning. */
   standaloneScriptVarBindings?: boolean;
+  /** Experimental native Context declarative-record operation. Requires the
+   * shared Script-var mode. ABI: (name: externref, operation: f64,
+   * value: externref) -> externref; see shared-script-lexical-access.ts.
+   * This provider must use the shared realm exception tag. */
+  standaloneScriptLexicalImport?: { module: string; name: string };
   /** Opt-in allocation provenance predicate (externref) -> i32. Adds one hidden
    * owner-token field to GC structs; all linked graph artifacts must opt in. */
   standaloneAllocationOwnerExport?: string;

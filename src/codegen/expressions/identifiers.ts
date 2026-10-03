@@ -7,6 +7,7 @@ import {
   expressionHasWidenedPropertyType,
 } from "../strict-eq-stale-type.js";
 import { paramReadIsJsDefaultGuess } from "../js-default-param-type-guess.js";
+import { emitScriptLexicalOperation, SCRIPT_LEXICAL_OP } from "../shared-script-lexical-access.js";
 import { ts, forEachChild } from "../../ts-api.js";
 import {
   emitStandaloneUnavailableGlobalThrow,
@@ -913,6 +914,36 @@ function compileRuntimeEvalGlobalLexicalRead(
   const fallbackBody = fctx.body;
   popBody(fctx, savedFallback);
   return emitRuntimeEvalGlobalLexicalReadOrFallback(ctx, fctx, name, fallbackBody, { kind: "externref" });
+}
+
+function compilePersistentScriptLexicalRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+): ValType | null {
+  // Reserve the predicate and key before compiling a fallback that may add
+  // imports. Keep the condition on the stack while its branches are built.
+  const truthy = ensureLateImport(ctx, "__is_truthy", [{ kind: "externref" }], [{ kind: "i32" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (truthy === undefined) throw new Error("Persistent lexical lookup requires native truthiness");
+  emitScriptLexicalOperation(ctx, fctx, id.text, SCRIPT_LEXICAL_OP.has);
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__is_truthy") ?? truthy });
+  const savedRead = pushBody(fctx);
+  emitScriptLexicalOperation(ctx, fctx, id.text, SCRIPT_LEXICAL_OP.read);
+  const read = fctx.body;
+  popBody(fctx, savedRead);
+  // The read body is live during fallback compilation and must follow late
+  // import/global shifts, just like any other saved instruction buffer.
+  fctx.savedBodies.push(read);
+  const savedFallback = pushBody(fctx);
+  const type = compileIdentifierCore(ctx, fctx, id, true);
+  if (type && type.kind !== "externref") coerceType(ctx, fctx, type, { kind: "externref" });
+  const fallback = fctx.body;
+  popBody(fctx, savedFallback);
+  fctx.savedBodies.splice(fctx.savedBodies.lastIndexOf(read), 1);
+  if (!type) return null;
+  fctx.body.push({ op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: read, else: fallback });
+  return { kind: "externref" };
 }
 
 function shouldUseRuntimeEvalGlobalLexicalRead(
@@ -2285,6 +2316,9 @@ function compileIdentifierCore(
   // the other file's symbol — it must throw, not read a fallback default.
   const sym = identifierValueSymbol(ctx, id);
   if (!sym || unresolvedInModuleGoal) {
+    if (!sym && !ctx.sourceIsModule && !skipRuntimeEvalState && ctx.standaloneScriptLexicalImport) {
+      return compilePersistentScriptLexicalRead(ctx, fctx, id);
+    }
     // (#3505) `unresolvedInModuleGoal` means the name statically IS another
     // module's top-level binding, not a candidate runtime global — the
     // runtime-eval binding pool is graph-wide and would hand that foreign

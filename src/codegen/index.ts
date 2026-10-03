@@ -189,6 +189,7 @@ import { importStandaloneLinkErrorCtorCells } from "./standalone-link-error-ctor
 import { fillLinkBoundaryToStringTagTerminal } from "./link-boundary-tostring.js"; // (#5406)
 import { eliminateDeadLayoutAndPlanProgramAbi } from "./program-abi-finalization.js";
 import { prepareSharedScriptVarAccess, finalizeSharedScriptVarAccess } from "./shared-script-var-access.js";
+import { prepareSharedScriptLexicalAccess, finalizeSharedScriptLexicalAccess } from "./shared-script-lexical-access.js";
 import { sweepAfterInline, verifyFunctionSweep } from "./function-reachability-sweep.js"; // (#6768)
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
@@ -6402,6 +6403,7 @@ export function generateModule(
     // any consumer helper snapshots that registry. The fill only replaces
     // reserved bodies/locals; it registers no module state.
     prepareSharedScriptVarAccess(ctx);
+    prepareSharedScriptLexicalAccess(ctx, ast.sourceFile);
     fillDeferredCallablePropertyDispatches(ctx);
 
     // Emit the declared-arity classifier before filling `__apply_closure`.
@@ -7061,6 +7063,7 @@ export function generateModule(
     reportModuleScale("before-finalize", mod);
     validateFinalStructHierarchies(ctx);
     finalizeSharedScriptVarAccess(ctx);
+    finalizeSharedScriptLexicalAccess(ctx);
     profilePhase("finalize/dead-layout", () => eliminateDeadLayoutAndPlanProgramAbi(ctx)); // #1899 authoritative remap, then #3520 retained ABI
 
     // Repair struct.get/struct.set type mismatches (externref → struct ref conversion)

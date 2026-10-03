@@ -851,6 +851,20 @@ function buildCodegenOptions(
       );
     }
   }
+  if (options.standaloneScriptLexicalImport !== undefined) {
+    const { module, name } = options.standaloneScriptLexicalImport;
+    if (
+      !options.standaloneScriptVarBindings ||
+      !name ||
+      !module ||
+      module !== options.standaloneGlobalThisImport?.module ||
+      !options.link?.includes(module)
+    ) {
+      throw new Error(
+        "standaloneScriptLexicalImport requires shared Script var mode and a named operation in the same realm provider",
+      );
+    }
+  }
   return {
     irCutoverRoute: readIrCompileRoute(options, "compileSourceSync"),
     sourceMap: emitSourceMap,
@@ -889,6 +903,7 @@ function buildCodegenOptions(
     // the host runs it after setExports (symmetric with standalone `_start`).
     deferTopLevelInit: options.deferTopLevelInit,
     standaloneScriptVarBindings: options.standaloneScriptVarBindings,
+    standaloneScriptLexicalImport: options.standaloneScriptLexicalImport,
     strictNoHostImports: targetProfile.strictEnvImportGate,
     // (#2119) thread module-strictness inference uniformly across all drivers.
     inferModuleStrictArguments: options.inferModuleStrictArguments,

@@ -3,7 +3,7 @@ id: 4376
 title: "Spike v8x as a rusty_v8-compatible js2wasm backend for a compiler-free Deno runtime"
 status: in-progress
 created: 2026-08-12
-updated: 2026-10-01
+updated: 2026-10-04
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -17,6 +17,12 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-10-04: opt-in native lexical cells preserve declaration initialization
+  # through IR rather than treating it as an ordinary binding assignment.
+  - src/ir/core/nodes.ts
+  - src/ir/builder.ts
+  - src/ir/backend/wasmgc-emitter.ts
+  - src/wasm/model/instructions.ts
   # 2026-10-01: experimental shared Script var transport adds one config field
   # and preserves Context bindings rather than resetting private-slot seeds.
   - src/codegen/context/create-context.ts
@@ -2898,3 +2904,21 @@ identity. The eight-file regression run reports 73/73: 71 ordinary successes
 and two retained expected failures for general Script bindings. This does not
 credit a new native Deno artifact or full deno_core conformance. Persistent
 lexical cells, declaration preflight and completion values remain required.
+
+## 2026-10-04 opt-in native lexical checkpoint
+
+An experimental `standaloneScriptLexicalImport` now links Scripts to native
+Context-owned lexical cells, independently of globalThis properties. Whole
+declaration manifests are checked before cells are created or user code runs.
+Own lexical reads/writes/initialization use exact declaration storage;
+initialization metadata survives IR lowering. Later independently compiled
+Scripts can read symbol-less identifiers from the same Context record.
+
+The focused file reports 20/20 tests: 18 ordinary successes plus two retained
+expected failures for the default API. TypeScript 7 passes. This is a bounded
+compiler checkpoint, not fresh native Deno conformance evidence. The provider
+is not yet wired into the adapter/artifact builder. Later-Script writes,
+classes/destructuring, typed lexical storage, ambient shadows, function
+descriptor rules, re-execution and completion values remain required.
+See the updated persistent Script environment handoff for the operation ABI,
+verification limitations and resume order. The full integration stays open.

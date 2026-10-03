@@ -3748,7 +3748,7 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
             `${describeIrType(moduleBinding.type)} in ${cx.funcName}`,
         );
       }
-      cx.builder.emitGlobalSet(moduleBinding.globalRef, value);
+      cx.builder.emitGlobalSet(moduleBinding.globalRef, value, true);
       if (moduleBinding.tdzGlobalRef) {
         const one = cx.builder.emitConst({ kind: "i32", value: 1 }, irVal({ kind: "i32" }));
         cx.builder.emitGlobalSet(moduleBinding.tdzGlobalRef, one);

@@ -124,6 +124,59 @@ iteration kinds. Direct controls pass 20/20; eight regression files report
 71 ordinary successes and two expected Script failures. No new native Deno
 artifact was built for that change. It does not alter the lexical plan below.
 
+## 2026-10-04 lexical checkpoint and resume instructions
+
+Publish this slice on `codex/4376-deno-lexical-checkpoint-20261004`, based on
+local `9c9586301f5`. The previous remote branch advanced to `60f99e83450`
+with a main merge (270 commits ahead), so do not force-push over it. The follow-up
+PR targets that existing integration branch and must absorb its newer main
+before landing. Baseline comparisons below deliberately use the local base.
+
+This checkpoint adds an experimental `standaloneScriptLexicalImport` option,
+requiring shared Script var mode. A Context-owned, AOT-native provider is in
+`examples/v8x-js2wasm-spike/script-lexical-provider.ts`. Its private cells retain
+value, initialization state and const mutability without exposing properties.
+The operation ABI is `(externref, f64, externref) -> externref`, with operation
+numbers documented in `src/codegen/shared-script-lexical-access.ts`.
+
+Script entry checks the complete declaration manifest before creating cells
+or executing initializers. Exact own lexical global loads/stores use native
+read/write/initialize helpers. Declaration initialization is explicit metadata
+through AST-to-IR lowering and Wasm emission, not guessed from TDZ flags.
+Symbol-less reads in a later independently compiled Script consult the Context
+record before falling back to global lookup. The option remains off by default.
+
+Verification on the uncommitted checkpoint: TypeScript 7 exited successfully;
+the persistent Script environment file reports 20/20 tests, comprising 18
+ordinary successes and two existing expected failures for the default API.
+These focused controls cover cross-Script reads, Context isolation, declaration
+conflicts before effects, abrupt initialization and const retention. The const
+catch assertion and abrupt-initializer attribution still need stronger native
+error/side-effect controls; do not infer complete exception conformance.
+
+The five-file regression run reports 99/102 successes, including those two
+expected failures, with three failures in the existing module lexical assignment
+TDZ file. A clean archive of committed baseline `9c9586301f5`, using the same
+Vitest fork/exnref harness, reproduces exactly those three failures (43/46).
+They are not newly introduced by this checkpoint. TypeScript 7, formatting,
+source/function budgets against merged main `e303c5c7946`, coercion and oracle
+ratchets pass. The dead-export command exits zero but explicitly reports an open
+graph and incomplete dynamic-import evidence: retirement is NOT certified.
+
+This is NOT full persistent Script semantics or completed Deno integration.
+Later-Script lexical writes, ambient builtin shadowing, module consumers,
+function descriptor/identity rules, classes, lexical destructuring, typed-slot
+planning, re-execution and completion values remain unfinished. Unsupported
+classes/destructuring/typed lexical storage are refused explicitly. The native
+provider has not been wired into the Deno artifact builder or adapter, and no
+fresh deno_core binary/population was built for this checkpoint.
+
+Resume with later-Script assignment/reference semantics and stronger controls,
+then wire the native Context provider into artifact packaging. Re-run unchanged
+WebIDL and the full deno_core population only after general Script execution is
+available. Keep the full integration goal open and preserve unrelated worktree
+changes; do not stage `lower-contracts.ts`, Acorn binaries or user scratch files.
+
 ## Representation and ownership
 
 Each Context needs one GlobalEnvironmentRecord with an object record and a

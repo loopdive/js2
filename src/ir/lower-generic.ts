@@ -1404,7 +1404,7 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       case "global.set":
         emitValue(instr.value, out);
-        emitter.emitGlobalSet(resolver.resolveGlobal(instr.target), out);
+        emitter.emitGlobalSet(resolver.resolveGlobal(instr.target), out, instr.initializesBinding);
         return;
       case "binary": {
         const isJsBitwise =

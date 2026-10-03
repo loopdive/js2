@@ -240,8 +240,8 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
     out.push({ op: "global.get", index });
   }
 
-  emitGlobalSet(index: number, out: Instr[]): void {
-    out.push({ op: "global.set", index });
+  emitGlobalSet(index: number, out: Instr[], initializesBinding = false): void {
+    out.push({ op: "global.set", index, ...(initializesBinding ? { initializesBinding: true } : {}) });
   }
 
   emitDrop(out: Instr[]): void {

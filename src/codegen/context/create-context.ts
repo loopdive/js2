@@ -419,6 +419,7 @@ export function createCodegenContext(
     standalone: targetProfile.nativeRegime, // (#5385) the native semantic regime, not the environment
     ...(options?.standaloneGlobalThisImport ? { standaloneGlobalThisImport: options.standaloneGlobalThisImport } : {}),
     standaloneScriptVarBindings: options?.standaloneScriptVarBindings,
+    standaloneScriptLexicalImport: options?.standaloneScriptLexicalImport,
     ...(options?.standaloneMicrotaskNotifyImport
       ? { standaloneMicrotaskNotifyImport: options.standaloneMicrotaskNotifyImport }
       : {}),

@@ -1,11 +1,16 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
 import { compile } from "../src/index.js";
 import { compileMultiSource } from "../src/compiler.js";
 
-async function createRealm() {
+async function createRealm(lexicals = false) {
+  const provider = lexicals
+    ? await readFile(new URL("../examples/v8x-js2wasm-spike/script-lexical-provider.ts", import.meta.url), "utf8")
+    : "";
   const result = await compile(
-    `
+    provider +
+      `
     export function realm():any {return globalThis;}
     export function get(object:any,key:any,receiver:any):any {return Reflect.get(object,key,receiver);}
     export function observed():number {return (globalThis as any).published===42 ? 42 : -1;}
@@ -23,6 +28,21 @@ async function createRealm() {
       return reason;
     }
     export function caught():any {return (globalThis as any).caught;}
+    ${
+      lexicals
+        ? `
+    let lastLexicalOperation=0;
+    export function tracedLexical(name:any,operation:number,value:any):any {
+      lastLexicalOperation=operation;
+      return scriptLexicalOperation(name,operation,value);
+    }
+    export function lexicalTrace():number {return lastLexicalOperation;}
+    export function retainedNumber():number {return Number(scriptLexicalOperation("retained",5,undefined));}
+    export function hasRetained():boolean {return Boolean(scriptLexicalOperation("retained",9,undefined));}
+    export function hasFirst():boolean {return Boolean(scriptLexicalOperation("first",9,undefined));}
+    `
+        : ""
+    }
   `,
     { target: "standalone", standaloneAllocationOwnerExport: "owns" },
   );
@@ -30,7 +50,7 @@ async function createRealm() {
   return new WebAssembly.Instance(new WebAssembly.Module(result.binary), result.importObject);
 }
 
-async function runScript(owner: WebAssembly.Instance, source: string, sharedBindings = false) {
+async function runScript(owner: WebAssembly.Instance, source: string, sharedBindings = false, lexicals = false) {
   const result = await compile(source, {
     target: "standalone",
     scriptGoal: true,
@@ -38,6 +58,7 @@ async function runScript(owner: WebAssembly.Instance, source: string, sharedBind
     fileName: "script.ts",
     hostBridge: "always",
     standaloneScriptVarBindings: sharedBindings,
+    ...(lexicals ? { standaloneScriptLexicalImport: { module: "context", name: "tracedLexical" } } : {}),
     standaloneAllocationOwnerExport: "localOwns",
     standaloneGlobalThisImport: {
       module: "context",
@@ -58,6 +79,78 @@ it("executes explicit property writes in the shared realm without wrapping Scrip
   expect((realm.exports.observed as Function)()).toBe(-1);
   await runScript(realm, "globalThis.published=42;");
   expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("keeps a dynamic lexical value in the owning Context without exposing a property", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=41; retained+=1; globalThis.published=retained;", true, true);
+  expect((realm.exports.observed as Function)()).toBe(42);
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  await runScript(realm, "globalThis.published=retained;", true, true);
+  expect((realm.exports.observed as Function)()).toBe(42);
+  await runScript(
+    realm,
+    'if(Object.prototype.hasOwnProperty.call(globalThis,"retained")) throw new Error("leaked lexical");',
+    true,
+    true,
+  );
+});
+
+it("rejects a lexical redeclaration before user code and before creating earlier cells", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=42;", true, true);
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  await expect(
+    runScript(realm, "let first:any=1; let retained:any=0; globalThis.published=0;", true, true),
+  ).rejects.toBeInstanceOf(WebAssembly.Exception);
+  expect((realm.exports.hasFirst as Function)()).toBe(0);
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  expect((realm.exports.observed as Function)()).toBe(-1);
+});
+
+it("retains an uninitialized lexical after an abrupt initializer", async () => {
+  const realm = await createRealm(true);
+  await expect(
+    runScript(realm, 'let retained:any=(()=>{throw new Error("abort");})();', true, true),
+  ).rejects.toBeInstanceOf(WebAssembly.Exception);
+  expect((realm.exports.hasRetained as Function)()).toBe(1);
+  expect(() => (realm.exports.retainedNumber as Function)()).toThrow(WebAssembly.Exception);
+  await expect(runScript(realm, "globalThis.published=retained;", true, true)).rejects.toBeInstanceOf(
+    WebAssembly.Exception,
+  );
+});
+
+it("keeps lexical cells isolated between Contexts", async () => {
+  const first = await createRealm(true);
+  const second = await createRealm(true);
+  await runScript(first, "let retained:any=42;", true, true);
+  await runScript(second, "let retained:any=41;", true, true);
+  await runScript(first, "globalThis.published=retained;", true, true);
+  await runScript(second, "globalThis.published=retained;", true, true);
+  expect((first.exports.observedNumber as Function)()).toBe(42);
+  expect((second.exports.observedNumber as Function)()).toBe(41);
+});
+
+it("preserves a const cell after an attempted write", async () => {
+  const realm = await createRealm(true);
+  await runScript(
+    realm,
+    "const retained:any=42; try {retained=0;} catch(error) {globalThis.caught=error;}",
+    true,
+    true,
+  );
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  expect((realm.exports.caught as Function)()).toBeDefined();
+});
+
+it("rejects a var declaration conflicting with a prior lexical before effects", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=42;", true, true);
+  await expect(runScript(realm, "var retained:any; globalThis.published=0;", true, true)).rejects.toBeInstanceOf(
+    WebAssembly.Exception,
+  );
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  expect((realm.exports.observed as Function)()).toBe(-1);
 });
 
 it("shares dynamic Script var values and preserves initializer-free redeclarations", async () => {
