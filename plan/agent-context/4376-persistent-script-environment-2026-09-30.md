@@ -179,6 +179,58 @@ changes; do not stage `lower-contracts.ts`, Acorn binaries or user scratch files
 
 ## Representation and ownership
 
+### 2026-10-04 continuation: exact native BigInt updates
+
+The former wide/overflow TypeError refusals are replaced with native +/-1
+arithmetic over canonical BigInt carriers. The builder lives in
+`src/runtime/wasmgc/values/bigint-carrier-update.ts`; the codegen registrar
+reuses one `__bigint_carrier_update(externref, i32) -> externref` per module.
+Only the internal deltas +1 and -1 are admitted by the caller. Narrow overflow
+promotes; wide carry/borrow uses copied limbs, trims the result and demotes
+back to the narrow carrier when it fits. Postfix returns the primitive old
+carrier, never a mutated magnitude or the original pre-conversion object.
+No interpreter, compiler-at-runtime or Deno source modification is added.
+
+Same-Script top-level lexical updates now use the Context cell too, selected
+by exact source declaration identity instead of its name. Block and function
+shadows keep their private storage. The own-Script control failed before that
+routing change; it and the shadow control now pass. TDZ still throws before
+writing; const PutValue retains the old value after exact computation.
+
+The two replacement ordinary tests both threw before implementation and now
+verify actual wide/postfix and signed-boundary/prefix results. A 24-case
+runtime matrix passes for zero/sign changes, both signed-i64 boundaries and
+positive/negative 192-bit carry/borrow. Later independently compiled Scripts
+inspect both String results and native strict equality, including retained old
+values and canonical wide-to-narrow transitions. The intermediate focused run
+was 66/66 (64 ordinary successes plus two retained expected failures).
+
+Final five-file regression run: 143/147 reported successes, comprising 141
+ordinary successes and two existing expected failures. The persistent Script
+file is 69/70 (67 ordinary, two expected). Its one ordinary failure is the new
+cross-Script object/valueOf conversion control: the method isn't called.
+The other three failures are the previously documented module-assignment TDZ
+baseline failures. Selected files: persistent-script-environment, script-result,
+module-lexical-assignment-tdz, realm-structural-carrier and live-array-iterator.
+Do not claim a green final suite or mark the new conversion control expected.
+
+Native owner/independent-Script A/B, same tsx/exnref harness and exact source:
+clean `fbe1958bd79` archive and candidate both report `scoreControl: 41,
+objectControl: 1, score: 0, exact: 0`. The positive controls prove the shared
+property and object are present; the failing valueOf conversion predates this
+update implementation. Runtime ToPrimitive's foreign method visibility and
+callable carrier need investigation, as does wide return-value storage. Do not
+copy a nominal object into another object as a substitute for preserving identity,
+or enable the broad runtime-eval boundary flag without auditing its consumers.
+
+TypeScript 7, formatting, main-relative LOC/function budgets (base
+`60f99e83450`), coercion and oracle ratchets pass. The dead-export command exits
+zero but still reports open dynamic-import evidence, not certified retirement.
+No new native Deno artifact or full unchanged deno_core run is credited.
+Remaining goal includes foreign conversion/callable transport, other exact
+wide arithmetic, destructuring/with/eval/class/function/Script completion
+semantics, native lexical-provider packaging and full Deno verification.
+
 ### 2026-10-04 continuation: exact first wide initializer
 
 After checkpoint `32708a6a99c`, the wide initializer defect is fixed at

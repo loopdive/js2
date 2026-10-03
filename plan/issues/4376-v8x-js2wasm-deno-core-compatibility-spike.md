@@ -2920,6 +2920,27 @@ lexical cells, declaration preflight and completion values remain required.
 
 ## 2026-10-04 opt-in native lexical checkpoint
 
+Exact native BigInt +/-1 is implemented, replacing wide/overflow refusals.
+Copied limbs preserve old values; signed-i64 promotion/demotion and 192-bit
+carry/borrow pass 24 runtime cases. Own-Script lexical updates use exact source
+declaration identity; shadows, TDZ and const controls pass. Final focused file
+reports 69/70 (67 ordinary, two existing expected failures), with one new ordinary
+foreign object/valueOf conversion failure. The five-file regression run reports
+143/147, including those expected failures and the three known TDZ baseline
+failures. An A/B native probe on clean `fbe1958bd79` and candidate gives identical
+positive controls (`scoreControl: 41, objectControl: 1`) and failing conversion
+(`score: 0, exact: 0`). Keep the control visible and investigate foreign method
+and callable transport. No new Deno artifact is credited; full integration remains
+open. Detailed provenance and resume constraints are in the persistent Script handoff.
+
+Current continuation replaces the wide/overflow update refusals with exact
+native carrier increment/decrement. Runtime limb arithmetic must copy rather
+than mutate the old BigInt, propagate carry/borrow across arbitrary widths and
+normalize results back into the narrow carrier where possible. Verify actual
+prefix/postfix values through later independently compiled Scripts, including
+negative wide values and signed-i64 crossings. This does not discharge full
+Deno packaging, other arithmetic operators or general Script semantics.
+
 Follow-up fixes the first wide reference initializer by registering the native
 union carriers before constant materialization. The native owner/Script probe
 changes from baseline `b17fdc53504` (`exact: 0, zero: 1`) to candidate

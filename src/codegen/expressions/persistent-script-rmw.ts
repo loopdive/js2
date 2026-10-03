@@ -6,12 +6,15 @@ import { allocLocal } from "../context/locals.js";
 import { compileExpression } from "../expressions.js";
 import { coerceType } from "../type-coercion.js";
 import { emitToNumber, runtimeToPrimitiveInstrs } from "../coercion-engine.js";
-import { emitThrowTypeError } from "./helpers.js";
+import { ensureNativeBigIntCarrierUpdate } from "../bigint-carrier-update.js";
 import { pushBody, popBody } from "../context/bodies.js";
 import { ensureLateImport, flushLateImportShifts } from "../shared.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
 import { isUnresolvableIdent } from "./unresolvable-assign.js";
-import { identifierHasOnlyAmbientDeclarations } from "./identifier-module-storage.js";
+import {
+  identifierHasOnlyAmbientDeclarations,
+  identifierHasCurrentSourceTopLevelLexicalDeclaration,
+} from "./identifier-module-storage.js";
 import {
   capturePersistentScriptReference,
   emitPersistentScriptReferenceRead,
@@ -25,6 +28,26 @@ export function usesPersistentScriptReference(ctx: CodegenContext, fctx: Functio
     !fctx.withScopes?.length &&
     !identifierHasOnlyAmbientDeclarations(ctx, id) &&
     isUnresolvableIdent(ctx, fctx, id)
+  );
+}
+
+/** Own top-level lexicals use the same canonical cell as later Scripts. Never
+ * infer that ownership from a bare name: block/function shadows stay private. */
+export function usesPersistentScriptUpdateReference(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+): boolean {
+  if (usesPersistentScriptReference(ctx, fctx, id)) return true;
+  return (
+    !!ctx.standaloneScriptLexicalImport &&
+    !ctx.sourceIsModule &&
+    !fctx.withScopes?.length &&
+    !fctx.localMap.has(id.text) &&
+    !fctx.boxedCaptures?.has(id.text) &&
+    ctx.globalLexicalBindings?.has(id.text) === true &&
+    ctx.moduleGlobals.has(id.text) &&
+    identifierHasCurrentSourceTopLevelLexicalDeclaration(ctx, id)
   );
 }
 
@@ -43,7 +66,7 @@ export function persistentScriptUpdateMayBeBigInt(
     (ts.isPostfixUnaryExpression(expression) || ts.isPrefixUnaryExpression(expression)) &&
     (expression.operator === ts.SyntaxKind.PlusPlusToken || expression.operator === ts.SyntaxKind.MinusMinusToken) &&
     ts.isIdentifier(expression.operand) &&
-    usesPersistentScriptReference(ctx, fctx, expression.operand)
+    usesPersistentScriptUpdateReference(ctx, fctx, expression.operand)
   );
 }
 
@@ -112,45 +135,15 @@ export function compilePersistentScriptUpdate(
   );
 
   const savedBig = pushBody(fctx);
-  // Do not silently truncate wide carriers or wrap a signed-i64 boundary.
-  // General wide runtime arithmetic remains required by the integration goal.
-  const wide = ctx.nativeBigIntWideTypeIdx;
-  if (wide === undefined || wide < 0) throw new Error("Missing native wide BigInt layout");
-  const savedWideThrow = pushBody(fctx);
-  emitThrowTypeError(ctx, fctx, "Persistent Script wide BigInt update is not implemented");
-  const wideThrow = fctx.body;
-  popBody(fctx, savedWideThrow);
+  const update = ensureNativeBigIntCarrierUpdate(ctx);
+  flushLateImportShifts(ctx, fctx);
   fctx.body.push(
     { op: "local.get", index: primitive },
-    { op: "any.convert_extern" },
-    { op: "ref.test", typeIdx: wide },
-    { op: "if", blockType: { kind: "empty" }, then: wideThrow },
+    { op: "i32.const", value: increment ? 1 : -1 },
+    { op: "call", funcIdx: ctx.funcMap.get("__bigint_carrier_update") ?? update },
+    { op: "local.set", index: value },
+    { op: "local.get", index: prefix ? value : primitive },
   );
-  const bigType: ValType = { kind: "i64", bigint: true };
-  fctx.body.push({ op: "local.get", index: primitive });
-  coerceType(ctx, fctx, ext, bigType);
-  const oldBig = allocLocal(fctx, `__script_update_big_${fctx.locals.length}`, bigType);
-  fctx.body.push({ op: "local.set", index: oldBig });
-  const savedOverflow = pushBody(fctx);
-  emitThrowTypeError(ctx, fctx, "Persistent Script BigInt update requires wide runtime arithmetic");
-  const overflow = fctx.body;
-  popBody(fctx, savedOverflow);
-  fctx.body.push(
-    { op: "local.get", index: oldBig },
-    { op: "i64.const", value: increment ? 9223372036854775807n : -9223372036854775808n },
-    { op: "i64.eq" },
-    { op: "if", blockType: { kind: "empty" }, then: overflow },
-    { op: "local.get", index: oldBig },
-    { op: "i64.const", value: 1n },
-    { op: increment ? "i64.add" : "i64.sub" },
-  );
-  coerceType(ctx, fctx, bigType, ext);
-  fctx.body.push({ op: "local.set", index: value });
-  if (prefix) fctx.body.push({ op: "local.get", index: value });
-  else {
-    fctx.body.push({ op: "local.get", index: oldBig });
-    coerceType(ctx, fctx, bigType, ext);
-  }
   const bigintBody = fctx.body;
   popBody(fctx, savedBig);
   fctx.savedBodies.push(bigintBody);

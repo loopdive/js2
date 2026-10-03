@@ -313,13 +313,81 @@ it.each([
   expect((realm.exports.observed as Function)()).toBe(42);
 });
 
-it("refuses a wide BigInt increment without truncating or overwriting its cell", async () => {
+it("increments a wide BigInt without truncating it or mutating the old postfix value", async () => {
   const realm = await createRealm(true);
   await runScript(realm, "let retained:any=18446744073709551616n;", true, true);
   expect((realm.exports.retainedIsWideLiteral as Function)()).toBe(1);
   await runScript(
     realm,
-    "try {retained++;} catch(error){globalThis.caught=error;} globalThis.published=retained===18446744073709551616n?42:0;",
+    'globalThis.saved=retained++; globalThis.published=String(retained)==="18446744073709551617" && String(globalThis.saved)==="18446744073709551616"?42:0;',
+    true,
+    true,
+  );
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("promotes a narrow BigInt increment instead of wrapping at the signed boundary", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=9223372036854775807n;", true, true);
+  await runScript(
+    realm,
+    'globalThis.saved=++retained; globalThis.published=String(retained)==="9223372036854775808" && String(globalThis.saved)==="9223372036854775808"?42:0;',
+    true,
+    true,
+  );
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+const bigUpdateCases = [
+  [0n, 1n],
+  [0n, -1n],
+  [-1n, 1n],
+  [1n, -1n],
+  [-9223372036854775808n, -1n],
+  [-9223372036854775809n, 1n],
+  [9223372036854775808n, -1n],
+  [9223372036854775807n, 1n],
+  [(1n << 192n) - 1n, 1n],
+  [1n << 192n, -1n],
+  [-(1n << 192n), 1n],
+  [-((1n << 192n) - 1n), -1n],
+] as const;
+
+it.each(
+  bigUpdateCases.flatMap(([initial, delta]) => [[initial, delta, false] as const, [initial, delta, true] as const]),
+)("updates BigInt %s by %s with prefix=%s exactly", async (initial, delta, prefix) => {
+  const realm = await createRealm(true);
+  const updated = initial + delta;
+  const result = prefix ? updated : initial;
+  const operator = delta === 1n ? "++" : "--";
+  await runScript(realm, `let retained:any=${initial}n;`, true, true);
+  const expression = prefix ? `${operator}retained` : `retained${operator}`;
+  await runScript(realm, `globalThis.saved=${expression};`, true, true);
+  await runScript(
+    realm,
+    `globalThis.published=String(retained)===${JSON.stringify(String(updated))} && String(globalThis.saved)===${JSON.stringify(String(result))}?42:0;`,
+    true,
+    true,
+  );
+  expect((realm.exports.observed as Function)()).toBe(42);
+  expect((realm.exports.retainedIsBigInt as Function)()).toBe(1);
+  // Exact equality also verifies canonical narrow/wide normalization and that
+  // retaining the old postfix result didn't mutate its limb array.
+  await runScript(
+    realm,
+    `globalThis.published=retained===${updated}n && globalThis.saved===${result}n?42:0;`,
+    true,
+    true,
+  );
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("keeps a wide const and its old value intact when an exact update cannot be stored", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "const fixed:any=18446744073709551616n;", true, true);
+  await runScript(
+    realm,
+    'try {fixed++;} catch(error){globalThis.caught=error;} globalThis.published=String(fixed)==="18446744073709551616"?42:0;',
     true,
     true,
   );
@@ -327,16 +395,57 @@ it("refuses a wide BigInt increment without truncating or overwriting its cell",
   expect((realm.exports.observed as Function)()).toBe(42);
 });
 
-it("refuses an overflowing narrow BigInt increment without wrapping its cell", async () => {
+it("updates a wide lexical exactly in the Script that declares it", async () => {
   const realm = await createRealm(true);
-  await runScript(realm, "let retained:any=9223372036854775807n;", true, true);
   await runScript(
     realm,
-    "try {retained++;} catch(error){globalThis.caught=error;} globalThis.published=retained===9223372036854775807n?42:0;",
+    'let retained:any=18446744073709551616n; globalThis.saved=retained++; globalThis.published=String(retained)==="18446744073709551617" && String(globalThis.saved)==="18446744073709551616"?42:0;',
     true,
     true,
   );
-  expect((realm.exports.caughtKind as Function)()).toBe(2);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("does not route a same-name block or function local into the Context lexical", async () => {
+  const realm = await createRealm(true);
+  await runScript(
+    realm,
+    'let retained:any=18446744073709551616n; {let retained:any=10; retained++; globalThis.score=retained;} function local(){let retained:any=20; return ++retained;} globalThis.published=String(retained)==="18446744073709551616" && globalThis.score===11 && local()===21?42:0;',
+    true,
+    true,
+  );
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("checks TDZ for an own lexical update before writing or initializing the cell", async () => {
+  const realm = await createRealm(true);
+  await runScript(
+    realm,
+    "try {retained++;} catch(error){globalThis.caught=error;} let retained:any=42; globalThis.published=retained;",
+    true,
+    true,
+  );
+  expect((realm.exports.caughtKind as Function)()).toBe(1);
+  expect((realm.exports.writeCount as Function)()).toBe(0);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("converts a prior object to a wide BigInt once and returns the primitive postfix value", async () => {
+  const realm = await createRealm(true);
+  await runScript(
+    realm,
+    "globalThis.score=0; let retained:any={valueOf(){globalThis.score++; return 18446744073709551616n;}};",
+    true,
+    true,
+  );
+  await runScript(realm, "globalThis.saved=retained++;", true, true);
+  await runScript(
+    realm,
+    'globalThis.published=String(retained)==="18446744073709551617" && String(globalThis.saved)==="18446744073709551616"?42:0;',
+    true,
+    true,
+  );
+  expect((realm.exports.score as Function)()).toBe(1);
   expect((realm.exports.observed as Function)()).toBe(42);
 });
 

@@ -60,7 +60,7 @@ import { emitMappedArgParamSync } from "./logical-ops.js";
 import { resolveStructName } from "./misc.js";
 import { isSloppyImplicitGlobalBinding } from "./implicit-global-binding.js"; // (#3966) `p++` on a realm-global property
 import { emitConstIdentifierUpdateGuard } from "./identifier-assignment.js";
-import { compilePersistentScriptUpdate, usesPersistentScriptReference } from "./persistent-script-rmw.js";
+import { compilePersistentScriptUpdate, usesPersistentScriptUpdateReference } from "./persistent-script-rmw.js";
 import {
   compileHostBigIntIdentifierUpdate,
   emitHostBigIntBinaryOpFromStack,
@@ -1077,7 +1077,7 @@ function compilePrefixUpdate(
   // already exists on the realm global object and is handled by the dedicated
   // read-modify-write arm below.
   const updateOperand = unwrapParens(expr.operand);
-  if (ts.isIdentifier(updateOperand) && usesPersistentScriptReference(ctx, fctx, updateOperand)) {
+  if (ts.isIdentifier(updateOperand) && usesPersistentScriptUpdateReference(ctx, fctx, updateOperand)) {
     return compilePersistentScriptUpdate(ctx, fctx, updateOperand, expr.operator === ts.SyntaxKind.PlusPlusToken, true);
   }
   if (!(ts.isIdentifier(updateOperand) && isSloppyImplicitGlobalBinding(ctx, fctx, updateOperand.text))) {
@@ -1460,7 +1460,7 @@ function compilePostfixUnary(
 
   // Unwrap parenthesized expressions: (x)++ -> x++
   const postOperand = unwrapParens(expr.operand);
-  if (ts.isIdentifier(postOperand) && usesPersistentScriptReference(ctx, fctx, postOperand)) {
+  if (ts.isIdentifier(postOperand) && usesPersistentScriptUpdateReference(ctx, fctx, postOperand)) {
     return compilePersistentScriptUpdate(ctx, fctx, postOperand, isIncrement, false);
   }
 
