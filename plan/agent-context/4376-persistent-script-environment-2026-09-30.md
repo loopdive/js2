@@ -3,6 +3,47 @@
 Required for complete Deno integration, not an alternative acceptance bar.
 Sources known at packaging time must execute AOT without an interpreter.
 
+## Wrap-up handoff: 2026-10-04
+
+Published implementation: `921471e79e3e8d898650cf9aceacbb356bf5325a` on
+`codex/4376-deno-lexical-checkpoint-20261004`. Existing checkpoint PR:
+https://github.com/loopdive/js2/pull/6468, targeting
+`codex/4376-deno-callback-construction-20260930`, not main. It remains draft
+because the ordinary conversion control fails and native packaging is unwired.
+Do not open a duplicate PR or claim full Deno integration is complete.
+
+Last measured five-file regression: 147 tests, 141 ordinary successes, two
+expected failures and four ordinary failures. The focused persistent Script
+file has 70 tests: 67 ordinary successes, two expected failures and one ordinary
+failure. These are recorded results from the implementation checkpoint, not a
+fresh wrap-up rerun. TypeScript 7 and the recorded formatting, budget, coercion
+and oracle checks passed. No newer native deno_core artifact was built.
+
+Resume with the foreign object conversion failure: a prior independently
+compiled Script stores an object whose `valueOf` increments `globalThis.score`
+and returns `18446744073709551616n`; the next Script performs `retained++`.
+The method is not called. A native owner/Script probe gives
+`scoreControl: 41, objectControl: 1, score: 0, exact: 0` both on clean
+`fbe1958bd79` and implementation `921471e79e3`, so this predates the exact
+BigInt update helper. Keep the ordinary failing test visible.
+
+Inspect `objectLiteralHasCallableProperty` in `src/codegen/literals.ts` and
+the canonical AOT callable bridge in `src/codegen/runtime-eval-callable.ts`.
+Callable-bearing object promotion currently depends on
+`runtimeEvalCallableBoundaryEnabled`; foreign nominal object types are not
+known to the consumer's local conversion dispatch. This is a working causal
+hypothesis, not a proven fix. Audit all readers before changing that shared
+flag. Separate method visibility from wide function-return representation with
+numeric and wide-return probes, while retaining the original failing control.
+Preserve object/callable identity and receiver behavior; do not copy the
+object into a new carrier or substitute an interpreter for known AOT source.
+
+After conversion is fixed, wire the lexical provider into the native Context
+artifact builder and adapter imports, rebuild clean artifacts, and rerun
+unchanged Deno tests. General Script semantics and conformance remain open as
+detailed below. Preserve unrelated tracked edits and untracked files. This
+wrap-up adds documentation only, with no new compiler or adapter changes.
+
 ## Measured boundary
 
 At compiler `83442252a6d`, a provider exports its realm, allocation-owner
