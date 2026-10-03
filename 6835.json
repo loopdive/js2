@@ -1,11 +1,10 @@
 {
   "id": "6835",
-  "assignee": "ttraenkler/find_residual_diagnostics_sol",
-  "requested_by": "git@thomas.traenkler.com",
-  "status": "released",
+  "assignee": "ttraenkler/es2015_borrowed_find_miss_sol",
+  "requested_by": "ttraenkler/es2015_borrowed_find_miss_sol",
+  "status": "in-progress",
   "branch": "codex/6835-find-residual-plan",
-  "claimed_at": "2026-10-02T20:58:56Z",
-  "updated_at": "2026-10-02T21:19:48Z",
-  "write_id": "6560-2p33a0bn",
-  "released_at": "2026-10-02T21:19:48Z"
+  "claimed_at": "2026-10-03T12:30:55Z",
+  "updated_at": "2026-10-03T12:30:55Z",
+  "write_id": "39710-e1lcse5o"
 }
