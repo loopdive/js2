@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "nested-stackification-inventory-20261002",
   "assignee": "ttraenkler/codex-nested-stackification-inventory-20261002",
-  "requested_by": "ttraenkler/codex-nested-stackification-inventory-20261002",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3518-nested-stackification-owner-d1-20261002",
   "claimed_at": "2026-10-02T04:32:08Z",
-  "updated_at": "2026-10-02T04:32:08Z",
-  "write_id": "50909-6vdp6ju7"
+  "updated_at": "2026-10-03T21:24:47Z",
+  "write_id": "77573-i0c9boqb",
+  "released_at": "2026-10-03T21:24:47Z"
 }
