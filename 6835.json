@@ -2,9 +2,10 @@
   "id": "6835",
   "assignee": "ttraenkler/es2015_borrowed_find_miss_sol",
   "requested_by": "ttraenkler/es2015_borrowed_find_miss_sol",
-  "status": "in-progress",
+  "status": "released",
   "branch": "codex/6835-borrowed-find-miss",
   "claimed_at": "2026-10-03T18:15:12Z",
-  "updated_at": "2026-10-03T18:15:12Z",
-  "write_id": "57778-tf9kxcn3"
+  "updated_at": "2026-10-03T18:59:16Z",
+  "write_id": "71252-2o1xykmt",
+  "released_at": "2026-10-03T18:59:16Z"
 }
