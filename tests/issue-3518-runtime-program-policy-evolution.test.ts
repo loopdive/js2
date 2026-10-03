@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  captureNestedStackificationPredecessorPolicy,
+  captureNestedStackificationPredecessorPolicySource,
   captureCanonical489dPredecessorPolicy,
   beforeCanonical3c6InventoryPolicy,
   captureCanonical489dPredecessorPolicySource,
@@ -66,7 +68,9 @@ function actual(): Policy {
             beforeGeneratorInventoryPolicy(
               beforeCurrentMainInventoryPolicy(
                 beforeCanonical3c6InventoryPolicy(
-                  captureCanonical489dPredecessorPolicy(JSON.parse(read("scripts/compiler-boundaries.json"))),
+                  captureCanonical489dPredecessorPolicy(
+                    captureNestedStackificationPredecessorPolicy(JSON.parse(read("scripts/compiler-boundaries.json"))),
+                  ),
                 ),
               ),
             ),
@@ -130,7 +134,9 @@ describe("C1 exact policy inverse and reciprocal B proof", () => {
                 beforeGeneratorInventoryPolicySource(
                   beforeCurrentMainInventoryPolicySource(
                     beforeCanonical3c6InventoryPolicySource(
-                      captureCanonical489dPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                      captureCanonical489dPredecessorPolicySource(
+                        captureNestedStackificationPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                      ),
                     ),
                   ),
                 ),

@@ -134,7 +134,8 @@
         "src/ir/analysis/encoding.ts",
         "src/ir/analysis/escape.ts",
         "src/ir/analysis/dominance.ts",
-        "src/ir/analysis/alloc-verification.ts"
+        "src/ir/analysis/alloc-verification.ts",
+        "src/ir/analysis/nested-stackification.ts"
       ],
       "required": true,
       "entries": [
@@ -148,9 +149,10 @@
         "src/ir/analysis/encoding.ts",
         "src/ir/analysis/escape.ts",
         "src/ir/analysis/dominance.ts",
-        "src/ir/analysis/alloc-verification.ts"
+        "src/ir/analysis/alloc-verification.ts",
+        "src/ir/analysis/nested-stackification.ts"
       ],
-      "minModules": 11
+      "minModules": 12
     },
     {
       "id": "ir-passes",
@@ -668,6 +670,24 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "ir-analysis",
+      "entries": [
+        "src/ir/analysis/contracts/allocations.ts",
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/effects.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/analysis/async-plan.ts",
+        "src/ir/analysis/lattice.ts",
+        "src/ir/analysis/ownership.ts",
+        "src/ir/analysis/encoding.ts",
+        "src/ir/analysis/escape.ts",
+        "src/ir/analysis/dominance.ts",
+        "src/ir/analysis/alloc-verification.ts",
+        "src/ir/analysis/nested-stackification.ts"
+      ],
+      "minModules": 12
+    },
     {
       "layer": "backend-wasmgc",
       "entries": ["src/backend/wasmgc/resources/native-delay-combinator.ts"],
@@ -1824,6 +1844,10 @@
   ],
   "moves": [
     {
+      "from": "src/ir/nested-stackification.ts",
+      "to": "src/ir/analysis/nested-stackification.ts"
+    },
+    {
       "from": "src/codegen/prepared-async-frame-engine.ts",
       "to": "src/runtime/wasmgc/async/prepared-async-frame-engine.ts"
     },
@@ -2198,6 +2222,11 @@
     },
     {
       "path": "src/ir/analysis/effects.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/nested-stackification.ts",
       "state": "clean",
       "layer": "ir-analysis"
     },
@@ -11892,11 +11921,11 @@
     },
     {
       "path": "src/ir/nested-stackification.ts",
-      "state": "unmigrated",
+      "state": "compatibility-adapter",
       "layer": "mixed-needs-split",
-      "destination": "ir-core",
+      "destination": "ir-analysis",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "The unchanged stackification implementation and input type live in analysis/nested-stackification.ts. Retain this explicit same-identity compatibility export until existing consumers migrate and full IR parity is proved."
     },
     {
       "path": "src/ir/nodes.ts",

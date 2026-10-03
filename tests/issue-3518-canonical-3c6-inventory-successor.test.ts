@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  captureNestedStackificationPredecessorPolicySource,
   authenticateCanonical3c6InventoryEvolution,
   beforeCanonical3c6InventoryPolicy,
   captureCanonical489dPredecessorPolicySource,
@@ -1413,7 +1414,9 @@ const read = (path: string): string => readFileSync(new URL(`../${path}`, import
 const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const raw = (): string => {
-  const text = captureCanonical489dPredecessorPolicySource(read("scripts/compiler-boundaries.json"));
+  const text = captureCanonical489dPredecessorPolicySource(
+    captureNestedStackificationPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+  );
   expect(Buffer.byteLength(text)).toBe(577771);
   expect(sha(text)).toBe("2573c40f37d35a8996dab8cfb7ac5c94ef1b57be0f664845878b21e2b516777a");
   return text;

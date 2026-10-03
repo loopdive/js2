@@ -13,6 +13,7 @@ import {
   irValidationPolicyActivations,
 } from "./helpers/ir-validation-policy-evolution.js";
 import {
+  captureNestedStackificationPredecessorPolicy,
   captureCanonical489dPredecessorPolicy,
   beforeCanonical3c6InventoryPolicy,
   beforeGeneratorInventoryPolicy,
@@ -411,7 +412,9 @@ const policy = () => {
           beforeCurrentMainInventoryPolicy(
             beforeCanonical3c6InventoryPolicy(
               captureCanonical489dPredecessorPolicy(
-                JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8")),
+                captureNestedStackificationPredecessorPolicy(
+                  JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8")),
+                ),
               ),
             ),
           ),

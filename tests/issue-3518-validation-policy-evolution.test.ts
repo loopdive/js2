@@ -12,6 +12,7 @@ import {
   irValidationPolicyReceiptPath,
 } from "./helpers/ir-validation-policy-evolution.js";
 import {
+  captureNestedStackificationPredecessorPolicy,
   captureCanonical489dPredecessorPolicy,
   beforeCanonical3c6InventoryPolicy,
   beforeIrRuntimeProgramPolicy,
@@ -50,7 +51,11 @@ function actual(): MutablePolicy {
               beforeGeneratorInventoryPolicy(
                 beforeCurrentMainInventoryPolicy(
                   beforeCanonical3c6InventoryPolicy(
-                    captureCanonical489dPredecessorPolicy(JSON.parse(read("scripts/compiler-boundaries.json"))),
+                    captureCanonical489dPredecessorPolicy(
+                      captureNestedStackificationPredecessorPolicy(
+                        JSON.parse(read("scripts/compiler-boundaries.json")),
+                      ),
+                    ),
                   ),
                 ),
               ),

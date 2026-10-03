@@ -4984,3 +4984,520 @@ export function captureRuntimePreparationPredecessorPolicySource(raw: string): s
     preparationFail("raw and semantic reciprocal proof disagree");
   return predecessor;
 }
+
+// Fixed nested stackification relocation; historical APIs above remain unchanged.
+const nestedStackificationReceiptPath = "tests/helpers/ir-runtime-program-policy-nested-stackification.json";
+const nestedStackificationReceiptSha256 = "b88978d331ba72939f67a78f0091cf32b746c5ac276e29ecb24b3adbc98efdf3";
+const nestedStackificationExpected = {
+  schema: 1,
+  kind: "fixed-nested-stackification-policy-relocation",
+  provenance: {
+    canonicalMain: "f710603e1c11101d0135274c6218ca36cb64fa37",
+    preparedHead: "c59ceb6c0c579824d903ab8746c588658cba0a6b",
+    planSha256: "3e2098994389c33e4543c3dd482bf196f874fe8e1e1a9ce74dd13189e284f223",
+    legacyRetained: true,
+  },
+  before: {
+    source: {
+      bytes: 579411,
+      sha256: "82cc93fe5db9e58c118c46fc85db6b3cd4e09656c347358f8334945e70a99d40",
+      gitBlob: "9b8282d67bd0d06b1c27ad005ec27c220c1c0d18",
+    },
+    dataSha256: "f0d41bf5acb4d3378a4b2fa18dd06c5e0720b52deb781ae97ee53dcc0594944c",
+    fileCount: 1813,
+    filesSha256: "8e5de381a3bd0165b308077ce119567fa9f4804d5143c7fcecec34118224021b",
+    activationCount: 101,
+    activationHistorySha256: "9629c457a160096e70c35fc3a986abbd8eca145ac4eb688995194d6c29c83650",
+    layersSha256: "3f66bbff64c157092a04740c644ae17d476d7d168faa1bd23629f97492e0c4f7",
+    allowedEdgesSha256: "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7",
+  },
+  current: {
+    source: {
+      bytes: 580511,
+      sha256: "81a0d94238a16cb762befa909ff057fc55d2da720996cf04af196bdd50cff7b2",
+      gitBlob: "dfedad8b2e98a9479409b351db8399a342505e19",
+    },
+    dataSha256: "d0891226c6e20ecf3868f9979a39b68722fe240a6e3394ea953c86ab1d1754de",
+    fileCount: 1814,
+    filesSha256: "a7fa1f5391015e87db1b70f61b965b737c0e32f917be41630e40dcf75337cef6",
+    activationCount: 102,
+    activationHistorySha256: "9a7e77fdc8c67fc0683879feb8bac8a9ef7854e9b083ac0c7e9affa4ddb24020",
+    layersSha256: "e7246f81b16f524db95bddcb8bf0d01faf17834948744b2a3a4bdd79b912984e",
+    allowedEdgesSha256: "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7",
+  },
+  helperPrefix: {
+    path: "tests/helpers/ir-runtime-program-policy-evolution.ts",
+    bytes: 228005,
+    sha256: "2ccb2f22084b78c45a4550b8b4e3b7048748a1e719b357155883a35e5030bea3",
+    gitBlob: "c762f24f20ba032a081575ac10f04d06967cc538",
+  },
+  predecessorReceipt: {
+    path: "tests/helpers/ir-runtime-program-policy-canonical-489d.json",
+    bytes: 14714,
+    sha256: "52dc8a9359369565c5d1f39f01af8d9c8d853aa1e4b0a1f469622e350f3a7497",
+    gitBlob: "3334ebc183519f391958b5ae34e09a85c99dc5bf",
+  },
+  sourcePins: [
+    {
+      path: "src/ir/nested-stackification.ts",
+      bytes: 254,
+      sha256: "4c7169e9b6b523c79b3491258e7561b72e27ebea4a8e30156002f512bd87aaf4",
+      gitBlob: "def6a1d232547bbef072fd34391bf70c3f1ca57d",
+    },
+    {
+      path: "src/ir/analysis/nested-stackification.ts",
+      bytes: 3576,
+      sha256: "eef74f625cb5edec3b0ff554e6b2d7546af26adbf85df6cac962a6facbfc3327",
+      gitBlob: "3b6dc27662c9b8ee88975192181dd99211e7b0dc",
+    },
+  ],
+  originalImplementation: {
+    bytes: 3570,
+    sha256: "f66f42492cb6aaf0c55ad3681289802c1e598ea98119edc975bd37618c905a33",
+    gitBlob: "7da4f65d24f07fd2fdf08266680ceacbcb07ac87",
+  },
+  sourceInverse: {
+    before: 'from "./nodes.js";',
+    after: 'from "../core/nodes.js";',
+    beforeOffset: 212,
+    afterOffset: 212,
+    completeInverseReplay: true,
+  },
+  facadeSource:
+    '// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n\nexport { stackifyMovableNestedValues } from "./analysis/nested-stackification.js";\nexport type { NestedStackificationInput } from "./analysis/nested-stackification.js";\n',
+  topLevelKeys: [
+    "schema",
+    "description",
+    "sourceRoot",
+    "tsconfig",
+    "requireGitProvenance",
+    "externalAssets",
+    "frontendWrapper",
+    "moduleExtensions",
+    "layers",
+    "allowedEdges",
+    "externalPackages",
+    "activationHistory",
+    "nonModules",
+    "moves",
+    "evidence",
+    "files",
+  ],
+  delta: {
+    layerIndex: 6,
+    beforeLayer: {
+      id: "ir-analysis",
+      status: "active",
+      roots: [
+        "src/ir/analysis/contracts",
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/effects.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/analysis/async-plan.ts",
+        "src/ir/analysis/lattice.ts",
+        "src/ir/analysis/ownership.ts",
+        "src/ir/analysis/encoding.ts",
+        "src/ir/analysis/escape.ts",
+        "src/ir/analysis/dominance.ts",
+        "src/ir/analysis/alloc-verification.ts",
+      ],
+      required: true,
+      entries: [
+        "src/ir/analysis/contracts/allocations.ts",
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/effects.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/analysis/async-plan.ts",
+        "src/ir/analysis/lattice.ts",
+        "src/ir/analysis/ownership.ts",
+        "src/ir/analysis/encoding.ts",
+        "src/ir/analysis/escape.ts",
+        "src/ir/analysis/dominance.ts",
+        "src/ir/analysis/alloc-verification.ts",
+      ],
+      minModules: 11,
+    },
+    currentLayer: {
+      id: "ir-analysis",
+      status: "active",
+      roots: [
+        "src/ir/analysis/contracts",
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/effects.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/analysis/async-plan.ts",
+        "src/ir/analysis/lattice.ts",
+        "src/ir/analysis/ownership.ts",
+        "src/ir/analysis/encoding.ts",
+        "src/ir/analysis/escape.ts",
+        "src/ir/analysis/dominance.ts",
+        "src/ir/analysis/alloc-verification.ts",
+        "src/ir/analysis/nested-stackification.ts",
+      ],
+      required: true,
+      entries: [
+        "src/ir/analysis/contracts/allocations.ts",
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/effects.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/analysis/async-plan.ts",
+        "src/ir/analysis/lattice.ts",
+        "src/ir/analysis/ownership.ts",
+        "src/ir/analysis/encoding.ts",
+        "src/ir/analysis/escape.ts",
+        "src/ir/analysis/dominance.ts",
+        "src/ir/analysis/alloc-verification.ts",
+        "src/ir/analysis/nested-stackification.ts",
+      ],
+      minModules: 12,
+    },
+    activationIndex: 0,
+    activation: {
+      layer: "ir-analysis",
+      entries: [
+        "src/ir/analysis/contracts/allocations.ts",
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/effects.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/analysis/async-plan.ts",
+        "src/ir/analysis/lattice.ts",
+        "src/ir/analysis/ownership.ts",
+        "src/ir/analysis/encoding.ts",
+        "src/ir/analysis/escape.ts",
+        "src/ir/analysis/dominance.ts",
+        "src/ir/analysis/alloc-verification.ts",
+        "src/ir/analysis/nested-stackification.ts",
+      ],
+      minModules: 12,
+    },
+    moveIndex: 0,
+    move: {
+      from: "src/ir/nested-stackification.ts",
+      to: "src/ir/analysis/nested-stackification.ts",
+    },
+    newRowIndex: 59,
+    newRow: {
+      path: "src/ir/analysis/nested-stackification.ts",
+      state: "clean",
+      layer: "ir-analysis",
+    },
+    newRowPrevious: {
+      path: "src/ir/analysis/effects.ts",
+      state: "clean",
+      layer: "ir-analysis",
+    },
+    newRowNext: {
+      path: "src/ir/analysis/intrinsics.ts",
+      state: "clean",
+      layer: "ir-analysis",
+    },
+    oldFacadeBeforeIndex: 1301,
+    oldFacadeCurrentIndex: 1302,
+    beforeFacade: {
+      path: "src/ir/nested-stackification.ts",
+      state: "unmigrated",
+      layer: "mixed-needs-split",
+      destination: "ir-core",
+      owner: "3518-coordinator",
+      nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+    },
+    currentFacade: {
+      path: "src/ir/nested-stackification.ts",
+      state: "compatibility-adapter",
+      layer: "mixed-needs-split",
+      destination: "ir-analysis",
+      owner: "3518-coordinator",
+      nextBoundary:
+        "The unchanged stackification implementation and input type live in analysis/nested-stackification.ts. Retain this explicit same-identity compatibility export until existing consumers migrate and full IR parity is proved.",
+    },
+    facadePrevious: {
+      path: "src/ir/module-init.ts",
+      state: "unmigrated",
+      layer: "mixed-needs-split",
+      destination: "ir-core",
+      owner: "3518-coordinator",
+      nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+    },
+    facadeNext: {
+      path: "src/ir/nodes.ts",
+      state: "unmigrated",
+      layer: "mixed-needs-split",
+      destination: "ir-core",
+      owner: "3518-coordinator",
+      nextBoundary:
+        "The complete semantic instruction/function closure lives in src/ir/core/nodes.ts and its activated pure dependencies. Retain old prepared-function aliases while prepared runtime attachments and program preparation remain mixed debt. irValSigned and isDynamic remain here with unresolved production-caller obligations.",
+    },
+  },
+  rawSpans: [
+    {
+      beforeOffset: 4187,
+      afterOffset: 4187,
+      before:
+        '    {\n      "id": "ir-analysis",\n      "status": "active",\n      "roots": [\n        "src/ir/analysis/contracts",\n        "src/ir/analysis/alloc-registry.ts",\n        "src/ir/analysis/effects.ts",\n        "src/ir/analysis/intrinsics.ts",\n        "src/ir/analysis/async-plan.ts",\n        "src/ir/analysis/lattice.ts",\n        "src/ir/analysis/ownership.ts",\n        "src/ir/analysis/encoding.ts",\n        "src/ir/analysis/escape.ts",\n        "src/ir/analysis/dominance.ts",\n        "src/ir/analysis/alloc-verification.ts"\n      ],\n      "required": true,\n      "entries": [\n        "src/ir/analysis/contracts/allocations.ts",\n        "src/ir/analysis/alloc-registry.ts",\n        "src/ir/analysis/effects.ts",\n        "src/ir/analysis/intrinsics.ts",\n        "src/ir/analysis/async-plan.ts",\n        "src/ir/analysis/lattice.ts",\n        "src/ir/analysis/ownership.ts",\n        "src/ir/analysis/encoding.ts",\n        "src/ir/analysis/escape.ts",\n        "src/ir/analysis/dominance.ts",\n        "src/ir/analysis/alloc-verification.ts"\n      ],\n      "minModules": 11\n    },\n',
+      after:
+        '    {\n      "id": "ir-analysis",\n      "status": "active",\n      "roots": [\n        "src/ir/analysis/contracts",\n        "src/ir/analysis/alloc-registry.ts",\n        "src/ir/analysis/effects.ts",\n        "src/ir/analysis/intrinsics.ts",\n        "src/ir/analysis/async-plan.ts",\n        "src/ir/analysis/lattice.ts",\n        "src/ir/analysis/ownership.ts",\n        "src/ir/analysis/encoding.ts",\n        "src/ir/analysis/escape.ts",\n        "src/ir/analysis/dominance.ts",\n        "src/ir/analysis/alloc-verification.ts",\n        "src/ir/analysis/nested-stackification.ts"\n      ],\n      "required": true,\n      "entries": [\n        "src/ir/analysis/contracts/allocations.ts",\n        "src/ir/analysis/alloc-registry.ts",\n        "src/ir/analysis/effects.ts",\n        "src/ir/analysis/intrinsics.ts",\n        "src/ir/analysis/async-plan.ts",\n        "src/ir/analysis/lattice.ts",\n        "src/ir/analysis/ownership.ts",\n        "src/ir/analysis/encoding.ts",\n        "src/ir/analysis/escape.ts",\n        "src/ir/analysis/dominance.ts",\n        "src/ir/analysis/alloc-verification.ts",\n        "src/ir/analysis/nested-stackification.ts"\n      ],\n      "minModules": 12\n    },\n',
+      beforeSha256: "23f8d181cf2d503365411f5991bec56419c10c25f990bd3133f75e93d4b778e2",
+      afterSha256: "d7cba84f80ffcc2f8ef775e838a9c0b117e306a80dd01f708c8cb9c982c31eba",
+    },
+    {
+      beforeOffset: 25457,
+      afterOffset: 25561,
+      before:
+        '    {\n      "layer": "backend-wasmgc",\n      "entries": ["src/backend/wasmgc/resources/native-delay-combinator.ts"],\n      "minModules": 15\n    },\n',
+      after:
+        '    {\n      "layer": "ir-analysis",\n      "entries": [\n        "src/ir/analysis/contracts/allocations.ts",\n        "src/ir/analysis/alloc-registry.ts",\n        "src/ir/analysis/effects.ts",\n        "src/ir/analysis/intrinsics.ts",\n        "src/ir/analysis/async-plan.ts",\n        "src/ir/analysis/lattice.ts",\n        "src/ir/analysis/ownership.ts",\n        "src/ir/analysis/encoding.ts",\n        "src/ir/analysis/escape.ts",\n        "src/ir/analysis/dominance.ts",\n        "src/ir/analysis/alloc-verification.ts",\n        "src/ir/analysis/nested-stackification.ts"\n      ],\n      "minModules": 12\n    },\n    {\n      "layer": "backend-wasmgc",\n      "entries": ["src/backend/wasmgc/resources/native-delay-combinator.ts"],\n      "minModules": 15\n    },\n',
+      beforeSha256: "cb056d8676f66da8e0921f20fd39ccd62e25c9475872817cef92d33f108b257a",
+      afterSha256: "8fd7b8d2a608dd93a627e28652bc8fea8e4d69aaf7c8adc9219d1ba88f593e25",
+    },
+    {
+      beforeOffset: 66604,
+      afterOffset: 67313,
+      before:
+        '    {\n      "from": "src/codegen/prepared-async-frame-engine.ts",\n      "to": "src/runtime/wasmgc/async/prepared-async-frame-engine.ts"\n    },\n',
+      after:
+        '    {\n      "from": "src/ir/nested-stackification.ts",\n      "to": "src/ir/analysis/nested-stackification.ts"\n    },\n    {\n      "from": "src/codegen/prepared-async-frame-engine.ts",\n      "to": "src/runtime/wasmgc/async/prepared-async-frame-engine.ts"\n    },\n',
+      beforeSha256: "daa29a12281d9a4dd2971886df7fc30a06b8b8d4c1019dfcdfb6973d6d11c6fe",
+      afterSha256: "02f457ad8200b11e4c258bcbb6a2b637d01e68fbfe32b693a94a15b890fb6c03",
+    },
+    {
+      beforeOffset: 77080,
+      afterOffset: 77906,
+      before:
+        '    {\n      "path": "src/ir/analysis/intrinsics.ts",\n      "state": "clean",\n      "layer": "ir-analysis"\n    },\n',
+      after:
+        '    {\n      "path": "src/ir/analysis/nested-stackification.ts",\n      "state": "clean",\n      "layer": "ir-analysis"\n    },\n    {\n      "path": "src/ir/analysis/intrinsics.ts",\n      "state": "clean",\n      "layer": "ir-analysis"\n    },\n',
+      beforeSha256: "aa5882a40e3bc07f264d6c5648a018f2ff07e12f8ebd2a82d4dd7732cf9b8bb9",
+      afterSha256: "ea597838ef4583b0f673b4a4ee8f21a9400ffcdab956c4d4fd85386a98da0100",
+    },
+    {
+      beforeOffset: 458975,
+      afterOffset: 459925,
+      before:
+        '    {\n      "path": "src/ir/nested-stackification.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "ir-core",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."\n    },\n',
+      after:
+        '    {\n      "path": "src/ir/nested-stackification.ts",\n      "state": "compatibility-adapter",\n      "layer": "mixed-needs-split",\n      "destination": "ir-analysis",\n      "owner": "3518-coordinator",\n      "nextBoundary": "The unchanged stackification implementation and input type live in analysis/nested-stackification.ts. Retain this explicit same-identity compatibility export until existing consumers migrate and full IR parity is proved."\n    },\n',
+      beforeSha256: "1526eb4052d5643c0637a9928a84662be4f5e9c9a2a7685b35f318df7e8f66e5",
+      afterSha256: "c56e1ef62cf0ba598eab976b7e10d39118f45a64c877065e8852c2399b3b34d1",
+    },
+  ],
+} as const;
+export type NestedStackificationPolicyReceipt = typeof nestedStackificationExpected;
+function nestedStackificationFail(detail: string): never {
+  throw new Error("nested stackification policy evolution: " + detail);
+}
+function nestedStackificationPin(
+  bytes: Buffer,
+  pin: { readonly bytes: number; readonly sha256: string; readonly gitBlob: string },
+  label: string,
+): void {
+  if (
+    bytes.length !== pin.bytes ||
+    createHash("sha256").update(bytes).digest("hex") !== pin.sha256 ||
+    createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex") !== pin.gitBlob
+  )
+    nestedStackificationFail(label);
+}
+/** Every public action reads current physical authority anew; no accepted capture crosses operations. */
+export function authenticateNestedStackificationPolicyEvolution(): NestedStackificationPolicyReceipt {
+  const text = readFileSync(new URL(`../../${nestedStackificationReceiptPath}`, import.meta.url), "utf8");
+  if (Buffer.byteLength(text) !== 15523 || sha(text) !== nestedStackificationReceiptSha256)
+    nestedStackificationFail("receipt digest mismatch");
+  const receipt = JSON.parse(text) as NestedStackificationPolicyReceipt;
+  if (!same(receipt, nestedStackificationExpected))
+    nestedStackificationFail("fixed receipt schema/population mismatch");
+  const helper = readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url));
+  nestedStackificationPin(
+    helper.subarray(0, 228005),
+    receipt.helperPrefix,
+    "complete predecessor helper prefix changed",
+  );
+  nestedStackificationPin(
+    readFileSync(new URL(`../../${receipt.predecessorReceipt.path}`, import.meta.url)),
+    receipt.predecessorReceipt,
+    "predecessor receipt changed",
+  );
+  const sources = receipt.sourcePins.map((pin) => {
+    const bytes = readFileSync(new URL(`../../${pin.path}`, import.meta.url));
+    nestedStackificationPin(bytes, pin, "current source changed: " + pin.path);
+    return bytes;
+  });
+  if (sources[0]!.toString("utf8") !== receipt.facadeSource)
+    nestedStackificationFail("exact compatibility facade changed");
+  const owner = sources[1]!;
+  const from = Buffer.from(receipt.sourceInverse.after, "utf8");
+  const to = Buffer.from(receipt.sourceInverse.before, "utf8");
+  const at = receipt.sourceInverse.afterOffset;
+  if (owner.indexOf(from) !== at || owner.lastIndexOf(from) !== at || receipt.sourceInverse.beforeOffset !== at)
+    nestedStackificationFail("unique owner import inverse mismatch");
+  const original = Buffer.concat([owner.subarray(0, at), to, owner.subarray(at + from.length)]);
+  nestedStackificationPin(original, receipt.originalImplementation, "canonical original implementation mismatch");
+  if (
+    original.indexOf(to) !== at ||
+    original.lastIndexOf(to) !== at ||
+    !Buffer.concat([original.subarray(0, at), from, original.subarray(at + to.length)]).equals(owner)
+  )
+    nestedStackificationFail("owner reciprocal import replay mismatch");
+  let delta = 0;
+  let consumedBefore = 0;
+  let consumedAfter = 0;
+  for (const span of receipt.rawSpans) {
+    const before = Buffer.from(span.before, "utf8"),
+      after = Buffer.from(span.after, "utf8");
+    if (
+      sha(span.before) !== span.beforeSha256 ||
+      sha(span.after) !== span.afterSha256 ||
+      span.beforeOffset < consumedBefore ||
+      span.afterOffset < consumedAfter ||
+      span.afterOffset !== span.beforeOffset + delta
+    )
+      nestedStackificationFail("fixed raw fragment/order/coordinate mismatch");
+    consumedBefore = span.beforeOffset + before.length;
+    consumedAfter = span.afterOffset + after.length;
+    delta += after.length - before.length;
+  }
+  if (
+    receipt.rawSpans.length !== 5 ||
+    delta !== 1100 ||
+    receipt.before.source.bytes + delta !== receipt.current.source.bytes
+  )
+    nestedStackificationFail("fixed raw population mismatch");
+  const previous = authenticateCanonical489dInventoryEvolution();
+  if (!same(previous.current, receipt.before)) nestedStackificationFail("prior canonical 489d profile mismatch");
+  return freeze(receipt);
+}
+function nestedStackificationProfile(
+  policy: MutableIrRuntimeProgramPolicy,
+  profile: NestedStackificationPolicyReceipt["before"] | NestedStackificationPolicyReceipt["current"],
+): void {
+  if (
+    digest(policy) !== profile.dataSha256 ||
+    policy.files.length !== profile.fileCount ||
+    policy.activationHistory.length !== profile.activationCount ||
+    digest(policy.files) !== profile.filesSha256 ||
+    digest(policy.activationHistory) !== profile.activationHistorySha256 ||
+    digest(policy.layers) !== profile.layersSha256 ||
+    digest(policy.allowedEdges) !== profile.allowedEdgesSha256
+  )
+    nestedStackificationFail("complete policy profile mismatch");
+}
+function nestedStackificationRows(
+  policy: MutableIrRuntimeProgramPolicy,
+  receipt: NestedStackificationPolicyReceipt,
+  current: boolean,
+): void {
+  const d = receipt.delta,
+    rowIndex = d.newRowIndex;
+  const facadeIndex = current ? d.oldFacadeCurrentIndex : d.oldFacadeBeforeIndex;
+  const facade = current ? d.currentFacade : d.beforeFacade;
+  if (
+    !same(Object.keys(policy), receipt.topLevelKeys) ||
+    !same(policy.layers[d.layerIndex], current ? d.currentLayer : d.beforeLayer) ||
+    !same(policy.files[rowIndex - 1], d.newRowPrevious) ||
+    !same(policy.files[rowIndex + (current ? 1 : 0)], d.newRowNext) ||
+    policy.files.filter((row) => row.path === d.newRow.path).length !== (current ? 1 : 0) ||
+    (current &&
+      (!same(policy.files[rowIndex], d.newRow) ||
+        !same(Object.keys(policy.files[rowIndex]!), Object.keys(d.newRow)))) ||
+    !same(policy.files[facadeIndex - 1], d.facadePrevious) ||
+    !same(policy.files[facadeIndex + 1], d.facadeNext) ||
+    !same(policy.files[facadeIndex], facade) ||
+    !same(Object.keys(policy.files[facadeIndex]!), Object.keys(facade)) ||
+    policy.files.filter((row) => row.path === facade.path).length !== 1
+  )
+    nestedStackificationFail("fixed layer/row schema/membership/neighbors mismatch");
+  const moves = policy.moves as unknown[];
+  if (
+    !Array.isArray(moves) ||
+    moves.length !== (current ? 7 : 6) ||
+    (current && (!same(policy.activationHistory[0], d.activation) || !same(moves[0], d.move)))
+  )
+    nestedStackificationFail("fixed activation/move mismatch");
+}
+/** Pure, detached local inverse; the caller's next489d API retains the unchanged historical proof. */
+function captureNestedStackificationPolicyOperand(
+  current: MutableIrRuntimeProgramPolicy,
+  receipt: NestedStackificationPolicyReceipt,
+): MutableIrRuntimeProgramPolicy {
+  nestedStackificationProfile(current, receipt.current);
+  nestedStackificationRows(current, receipt, true);
+  const d = receipt.delta;
+  const predecessor = capture(current) as MutableIrRuntimeProgramPolicy;
+  predecessor.files[d.oldFacadeCurrentIndex] = capture(d.beforeFacade) as Record<string, string>;
+  predecessor.files.splice(d.newRowIndex, 1);
+  predecessor.activationHistory.splice(d.activationIndex, 1);
+  (predecessor.moves as unknown[]).splice(d.moveIndex, 1);
+  predecessor.layers[d.layerIndex] = capture(d.beforeLayer) as MutableIrRuntimeProgramPolicy["layers"][number];
+  nestedStackificationProfile(predecessor, receipt.before);
+  nestedStackificationRows(predecessor, receipt, false);
+  const replay = capture(predecessor) as MutableIrRuntimeProgramPolicy;
+  replay.layers[d.layerIndex] = capture(d.currentLayer) as MutableIrRuntimeProgramPolicy["layers"][number];
+  (replay.moves as unknown[]).splice(d.moveIndex, 0, capture(d.move));
+  replay.activationHistory.splice(
+    d.activationIndex,
+    0,
+    capture(d.activation) as MutableIrRuntimeProgramPolicy["activationHistory"][number],
+  );
+  replay.files.splice(d.newRowIndex, 0, capture(d.newRow) as Record<string, string>);
+  replay.files[d.oldFacadeCurrentIndex] = capture(d.currentFacade) as Record<string, string>;
+  nestedStackificationProfile(replay, receipt.current);
+  nestedStackificationRows(replay, receipt, true);
+  if (!same(replay, current)) nestedStackificationFail("complete reciprocal semantic replay mismatch");
+  return predecessor;
+}
+export function captureNestedStackificationPredecessorPolicy(value: unknown): MutableIrRuntimeProgramPolicy {
+  const current = capture(value) as MutableIrRuntimeProgramPolicy;
+  if (current === null || typeof current !== "object" || Array.isArray(current))
+    nestedStackificationFail("policy input must be a plain object");
+  return captureNestedStackificationPolicyOperand(current, authenticateNestedStackificationPolicyEvolution());
+}
+function applyNestedStackificationRaw(
+  raw: string,
+  receipt: NestedStackificationPolicyReceipt,
+  forward: boolean,
+): string {
+  const bytes = Buffer.from(raw, "utf8");
+  nestedStackificationPin(
+    bytes,
+    forward ? receipt.before.source : receipt.current.source,
+    "complete raw source profile mismatch",
+  );
+  const pieces: Buffer[] = [];
+  let consumed = 0;
+  for (const span of receipt.rawSpans) {
+    const at = forward ? span.beforeOffset : span.afterOffset;
+    const from = Buffer.from(forward ? span.before : span.after, "utf8");
+    const to = Buffer.from(forward ? span.after : span.before, "utf8");
+    if (
+      at < consumed ||
+      at + from.length > bytes.length ||
+      bytes.indexOf(from) !== at ||
+      bytes.lastIndexOf(from) !== at ||
+      !bytes.subarray(at, at + from.length).equals(from)
+    )
+      nestedStackificationFail("fixed raw fragment/membership/coordinate mismatch");
+    pieces.push(bytes.subarray(consumed, at), to);
+    consumed = at + from.length;
+  }
+  pieces.push(bytes.subarray(consumed));
+  const result = Buffer.concat(pieces);
+  nestedStackificationPin(
+    result,
+    forward ? receipt.current.source : receipt.before.source,
+    "reciprocal raw source profile mismatch",
+  );
+  return result.toString("utf8");
+}
+export function captureNestedStackificationPredecessorPolicySource(raw: string): string {
+  if (typeof raw !== "string") nestedStackificationFail("raw input must be a primitive string");
+  const receipt = authenticateNestedStackificationPolicyEvolution();
+  const predecessor = applyNestedStackificationRaw(raw, receipt, false);
+  const semantic = captureNestedStackificationPolicyOperand(
+    capture(JSON.parse(raw)) as MutableIrRuntimeProgramPolicy,
+    receipt,
+  );
+  const parsed = JSON.parse(predecessor) as MutableIrRuntimeProgramPolicy;
+  nestedStackificationProfile(parsed, receipt.before);
+  if (!same(parsed, semantic) || applyNestedStackificationRaw(predecessor, receipt, true) !== raw)
+    nestedStackificationFail("raw/semantic reciprocal proof disagree");
+  return predecessor;
+}

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import {
+  captureNestedStackificationPredecessorPolicySource,
   captureGeneratorPredecessorPolicySource,
   beforeGeneratorInventoryPolicySource,
   captureHostCarrierPredecessorPolicySource,
@@ -2649,7 +2650,9 @@ const fixtureCapturePin = (text: string) => {
 };
 const fixtureCaptureRead = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 function fixtureCaptureInput(epoch: (typeof fixtureCaptureEpochs)[number]): string {
-  const outer = captureCanonical489dPredecessorPolicySource(fixtureCaptureRead("scripts/compiler-boundaries.json"));
+  const outer = captureCanonical489dPredecessorPolicySource(
+    captureNestedStackificationPredecessorPolicySource(fixtureCaptureRead("scripts/compiler-boundaries.json")),
+  );
   const raw = epoch.name === "canonical3c6" ? outer : captureCanonical3c6PredecessorPolicySource(outer);
   expect(fixtureCapturePin(raw)).toEqual(epoch.current.source);
   return raw;
@@ -3353,7 +3356,9 @@ function fourStageCaptureWithFault(path: string, kind: "mutation" | "missing", a
 function fourStageCaptureInput(epoch: (typeof fourStageCaptureEpochs)[number]): string {
   let source = captureCurrentMainInventoryPredecessorPolicySource(
     captureCanonical3c6PredecessorPolicySource(
-      captureCanonical489dPredecessorPolicySource(fixtureCaptureRead("scripts/compiler-boundaries.json")),
+      captureCanonical489dPredecessorPolicySource(
+        captureNestedStackificationPredecessorPolicySource(fixtureCaptureRead("scripts/compiler-boundaries.json")),
+      ),
     ),
   );
   if (epoch.name !== "generator") source = captureGeneratorPredecessorPolicySource(source);

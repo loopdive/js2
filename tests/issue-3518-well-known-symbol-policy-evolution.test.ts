@@ -4,15 +4,16 @@ import { readFileSync } from "node:fs";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  captureNestedStackificationPredecessorPolicySource,
   captureCanonical489dPredecessorPolicySource,
-  beforeCanonical3c6InventoryPolicySource,
+  captureCanonical3c6PredecessorPolicySource,
   authenticateWellKnownSymbolPolicyEvolution,
   authenticateWellKnownSymbolPolicy,
   beforeWellKnownSymbolPolicy,
-  beforeGeneratorInventoryPolicySource,
-  beforeHostCarrierInventoryPolicySource,
-  beforeDynamicCodeInventoryPolicySource,
-  beforeRuntimePreparationPolicySource,
+  captureGeneratorPredecessorPolicySource,
+  captureHostCarrierPredecessorPolicySource,
+  captureDynamicCodePredecessorPolicySource,
+  captureRuntimePreparationPredecessorPolicySource,
   beforeNumberPrerequisitePolicySource,
   beforeWellKnownSymbolPolicySource,
   wellKnownSymbolPolicyReceiptPath,
@@ -21,7 +22,7 @@ import {
   beforeIrRuntimeProgramPolicy,
   irRuntimeProgramPolicyReceiptPath,
   type MutableIrRuntimeProgramPolicy as Policy,
-  beforeCurrentMainInventoryPolicySource,
+  captureCurrentMainInventoryPredecessorPolicySource,
 } from "./helpers/ir-runtime-program-policy-evolution.js";
 import { authenticateIrValidationPolicy } from "./helpers/ir-validation-policy-evolution.js";
 afterEach(async () => {
@@ -48,13 +49,15 @@ const digest = (value: unknown): string => sha(JSON.stringify(value));
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const raw = (): string =>
   beforeNumberPrerequisitePolicySource(
-    beforeRuntimePreparationPolicySource(
-      beforeDynamicCodeInventoryPolicySource(
-        beforeHostCarrierInventoryPolicySource(
-          beforeGeneratorInventoryPolicySource(
-            beforeCurrentMainInventoryPolicySource(
-              beforeCanonical3c6InventoryPolicySource(
-                captureCanonical489dPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+    captureRuntimePreparationPredecessorPolicySource(
+      captureDynamicCodePredecessorPolicySource(
+        captureHostCarrierPredecessorPolicySource(
+          captureGeneratorPredecessorPolicySource(
+            captureCurrentMainInventoryPredecessorPolicySource(
+              captureCanonical3c6PredecessorPolicySource(
+                captureCanonical489dPredecessorPolicySource(
+                  captureNestedStackificationPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                ),
               ),
             ),
           ),

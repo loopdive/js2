@@ -3222,6 +3222,40 @@ the symbol-cleanup246/247 failure and full-hook247/247 digest refusals remain
 preserved. Full normal hooks and delivery are still pending; no legacy retirement.
 
 
+
+### D1 bounded nested-stackification dispatch (2026-10-02)
+
+The full D1 plan remains open. Defer legality and linear-layout moves: the held symbolic-support-ref R map explicitly covers both old files (formatter-d1-high-contract:68,80,82). Recorded parent composition/PR5797 proves custody of the frozen R checkpoint, not a current rescope of that held claim. Obtain owner acknowledgement or an explicit authoritative new-scope handoff before those edits; see scratch `d1-custody-review.md` for exact records. No claim is released or transferred here.
+
+Root may separately dispatch Sol6.1Medium on only `src/ir/nested-stackification.ts`, new `src/ir/analysis/nested-stackification.ts`, and NEW `tests/issue-3518-nested-stackification-owner.test.ts`. Move all96 lines/interfaces unchanged except imports: effects from `./effects.js`, nodes from `../core/nodes.js`; old path explicitly forwards the same function and public input type. Preserve every region/use/effect/anchor/string-slot refusal and both-set deletion semantics; no new capability or lowering behavior.
+
+Static6fce source is3570B/SHA256 `f66f42492cb6aaf0c55ad3681289802c1e598ea98119edc975bd37618c905a33`; canonical effects is25469B/`b9ea0dfc036a4da09742974011dd98a51aa471a7a2650ebed303f3937e04412d`. Root reports e473d924 changes no D1 source. That revision is not yet resolvable in this spec checkout; root must verify exact pins on the fetched writer base before edits. Retain same-function identity, real movable and conflicting-effect controls; run the existing nine nested/string-slot scenarios under root execution. No budget grant is indicated. Metadata/history and all other D1 files stay outside this writer. Legacy/full-IR obligations remain unchanged.
+
+
+
+### Root follow-up: reconcile the live lowering-cycle graph (2026-10-02)
+
+`tests/issue-3518-lowering-cycle.test.ts` reads current repository sources through its unchanged `valueClosure` (~43). Its exact expected arrays (~197–246) are live graph assertions, not an immutable historical source fixture. Root executed nested ownership21/21 plus original nested9/9; lowering-cycle is24/25, with the graph row failing. This is not a nested semantic failure and not grounds to drop graph obligations.
+
+Root's `.tmp/nested-owner/closure-census.json` (SHA256 `b2a022c50f1e29d52b88d5ca307c74a8e767ac3fcc28325cdaf57b85ff0c9407`) uses the actual unchanged detector and its explicit predecessor override. Old expectations have21 modules/24 edge occurrences; current predecessor has27/31; nested candidate28/32. Existing main drift is EIGHT added modules and TWO removed, net+6: added core binding-key-primitives, date-callables, string-callables, string-runtime and tag-domain, runtime/js-tag-domain, runtime/contracts/js-value-tags and shared/contracts/ir-preparation-errors; removed old ir/js-tag.ts and ir/tag-domain.ts. Root must reconcile each to actual canonical source forwards before freezing literals, not merely accept a new observed count.
+
+The independently isolated nested delta adds only analysis/nested-stackification.ts, replaces old nested→ir/effects with nested→analysis/nested and analysis/nested→analysis/effects, and changes no other predecessor module/edge. Under separately verified custody, root or one specifically assigned test writer updates only the exact current module/edge arrays and their outdated base comment. Preserve detector code, sorting/traversal order, duplicate core/string-runtime→core/string-callables edge occurrences, generic direct-edge count12, all reverse-barrel/unknown/unresolved refusals and all behavioral assertions. No floor, membership-only subset or runtime-derived expected list.
+
+This is a root-owned fourth-path follow-up, not an implicit expansion of the nested writer's three files. Preserve the initial24/25 failure, freeze the complete reviewed predecessor and candidate censuses, then require ordinary25/25 plus unchanged30/30 nested tests on the integrated candidate. No historical receipt change or retirement credit follows.
+
+### Verified independent nested candidate (2026-10-02)
+
+Sol6.1Medium produced and independently reviewed the three-path nested-stackification extraction in its claimed e473-based isolated worktree. Root verified complete production-body preservation and ran21new controls plus9original scenarios:30/30. After a test-only lint repair, the final21/21 controls pass, three-file lint passes, and actual TS7 typecheck exits0 with no diagnostics. The actual lowering-cycle suite reports24/25; its unchanged detector gives27 predecessor modules against old21expected, and28 candidate modules. Candidate adds only the analysis owner and replaces one old dependency edge with two canonical edges. The complete boundary gate exits1 with explicit unclassified-module/unclassified-target refusals for the new owner. These failures are preserved; no all-gates-pass, commit, publication or main-delivery credit. Inventory/current-graph reconciliation remains required.
+
+Evidence is frozen under the nested worktree's .tmp/nested-owner: original and formatted candidate manifests, targeted/final JSON, independent review, actual predecessor/candidate closure census, lint/typecheck output and complete boundary refusal. The existing delivery normal hook terminated1 after631/631 historical and456/456 Number controls, then102failed/3passed program-data rows. All other hook files remain unexecuted. Astra's explicit historical-authority/current-evidence repair and current graph plan are now recorded below; existing receipts/assertions/fixtures and main fixes remain required. Root API/custody review is part of authorized integration; no new user approval is implied. Full IR objective stays active and legacy remains.
+
+### Claimed parent integration of nested analysis (2026-10-02)
+
+The previous goal turn made progress: it produced reviewed unchanged source bodies, completed30/30 targeted tests, and preserved actual graph/inventory failures. The recorded parent-owned integration/control scope (lowering-cycle implementation checkpoint) now supplies bounded continuation authority. Root verified new graph-integration and inventory slice claims on canonical issue-assignments without releasing prior implementation claims. Sol6.1Medium updates only exact current closure literals/comment; root adds the actual analysis owner to roots/entries/classification, raises the actual11-module minimum to12, appends the unchanged12-entry activation obligation and explicit move, and marks the retained facade as a compatibility adapter. Existing allowed edges, evidence and all old activation rows/other classifications remain identical. Full detector remains unchanged and retirement remains unproved.
+
+### Nested analysis integration validation — 2026-10-02
+
+The exact combined candidate passes55/55 (21new ownership,9original nested,25lowering), four-file lint and TS7 typecheck. Inventory validation exits0 with zero policy errors; complete architecture mode retains its explicit incomplete verdict. Independent Sol6.1Medium review found no actionable change. Fresh23-PR scope/patch census identifies PR5753 competing future graph additions and shared inventory rows; neither branch is overwritten, and combined-source reconciliation is required at integration. Full IR objective and legacy remain. Detailed handoff: plan/agent-context/3518-nested-stackification-owner-2026-10-02.md.
 ## 2026-10-01 — implementation plan: genuine public Number provider graph
 
 Architect: Codex GPT-6 Astra High. Root retains source integration, claims, execution and protected delivery. Sol 6.1 Medium is the default implementer; the occurrence/source-completion join identified below warrants High if dispatched as one mechanism. This plan appends to the existing issue and does not reopen the frozen eight Number prerequisite files or replan the catalog algorithms.
@@ -5262,3 +5296,339 @@ verified as `250e069e3e53d291a3d747d6b4068b9171ee5d67`, already integrated in e0
 Independent Sol6.1 Medium review accepted all 881 actual terminal rows and input
 restoration, with no defect. Normal signed commit/push hooks and new-head CI still
 remain separate required evidence; the existing ready PR stays held.
+
+
+## Protected delivery of intrinsic preparation; resume existing D1 PR — 2026-10-03
+
+PR #6405 “refactor(ir): move intrinsic preparation into runtime” merged through
+the protected queue as `d3715cf80d8ff0c4005771b5e68372fadbe709b0` at
+2026-10-03T08:48:20Z. Exact published head `7c24c1686c975f77f67f75d4ff2f5e8dcec42f70`
+and the actual tested merge group are ancestors of directly verified canonical
+main `f710603e1c11101d0135274c6218ca36cb64fa37`. All 34 frozen proof/source inputs
+retain their exact bytes, modes and file identities after fast-forwarding the
+managed integration worktree. Main adds only artifact/baseline updates; the dirty
+primary worktree was preserved. Delivery evidence is under
+`.tmp/c1-main-epoch/goal-resume-20261003-group-terminal/` in the integration worktree.
+
+Published-head CI completed 15/15 selected files, 2770 assertions and the fatal
+aggregate successfully. Actual merge-group CI independently completed 14/15 files,
+2139 assertions, quality/native gates and equivalence; its historical631 job was
+cancelled at08:48:44Z after the merge, with no terminal passing count. The fatal
+aggregate then exited1 because the matrix result was cancelled; overall group CI
+is cancelled. Preserve these outcomes; no manual cancellation/restart occurred,
+and chronology alone does not prove the cancellation cause. Do not claim all
+merge-group CI passed or transfer the earlier PR631 execution as group credit.
+The six required protected contexts succeeded; issue-tests aggregate is outside
+that current required-context list. This is a recorded validation/control gap,
+not evidence of a production test failure or authorization to change protections.
+
+Actual Test262 completed all102 shards (20host,82standalone) plus merged-report
+and regression jobs. Each lane measured48735 unique rows (48232official+503proposal).
+Host39594pass/8700fail/317compile-error/10compile-timeout/114skip;
+standalone42048pass/4539fail/2016compile-error/18compile-timeout/114skip.
+These are complete measurements with retained failures, not all-pass conformance.
+Actual regression gate reports no pass-to-other regressions; independent baseline
+row replay remains limited by unavailable historical ledger/digest. Differential
+artifacts preserve116matches,2mismatches,2runtime-errors per120-program lane;
+all current/optimized non-timing row fields agree, and baseline outcomes/identities
+match with no new regression. The baseline does not carry old error text.
+
+Correct historical runtime expectations without rewriting their entries: the
+source-suite CI workers actually used Ubuntu Node25.9.0, the short aggregate used
+preinstalled Node22.23.3, landing support Node25.7.0, differential Node24.21.0 and
+local validation Node24.4.1. Earlier expected UbuntuNode22 suite timing is not
+measured suite evidence. Preserve the 40-minute worker job budget and every
+original callback, assertion, failure, authority/receipt and fixture.
+
+Existing PR #6426 “refactor(ir): move nested stackification into analysis” is now
+eligible for resumption after this verified delivery. It remains OPEN/ready/held
+at `c59ceb6c0c579824d903ab8746c588658cba0a6b`; its three canonical nested-stackification
+slice claims remain held for the existing branch. Reconcile its actual conflicts
+with freshly read main, preserving both sets of source, graph and inventory
+obligations. Astra High specifies any hard proof/graph refresh in this issue;
+Sol6.1 Medium implements disjoint scoped repairs. Root owns Git, claims, authority
+integration, tests and publication. Do not create a duplicate PR, weaken gates,
+retire compatibility implementations, or count preparation as main delivery.
+Full IR coverage/equality and retirement remain open.
+
+
+## Implementation Plan — D1 nested stackification against delivered parent f710 (Astra High, 2026-10-03)
+
+This is the bounded proof-preservation follow-up for existing PR6426, not another source extraction or retirement milestone. Root owns integration/claims/Git/execution; Sol6.1 Medium implements the finite proof/caller slices after review. The existing D1 source/graph plan remains authoritative. Do not touch the separately held linear-memory/legality cuts, downstream work, or legacy retirement.
+
+### Exact input and demonstrated break
+
+The inspected integration is prepared HEAD `c59ceb6c0c579824d903ab8746c588658cba0a6b` with actual incoming main `f710603e1c11101d0135274c6218ca36cb64fa37`. This is the binding for this plan, not permission to accept a later moving main. Root must preserve the losslessly resolved issue and every incoming file.
+
+The parent policy is 579411 bytes / SHA256 `82cc93fe5db9e58c118c46fc85db6b3cd4e09656c347358f8334945e70a99d40`; D1 is 580511 bytes / `81a0d94238a16cb762befa909ff057fc55d2da720996cf04af196bdd50cff7b2`. Files increase 1813→1814, activation records 101→102, moves 6→7; layers remain 20. Only four top-level fields differ: `layers`, `activationHistory`, `moves`, `files`. Allowed edges, unrelated rows, other metadata and debt remain exact.
+
+This is an actual static incompatibility: `captureCanonical489dPredecessorPolicySource` (policy helper ~4687) authenticates its unchanged receipt then requires the old 579411-byte complete raw profile. The semantic equivalent (~4684) requires the old complete data profile. D1 violates these explicit conditions. The canonical489d test's `raw()` (~355) also directly asserts the same parent length/digest. These are preserved historical domains; replacing their expected values would erase the old controls. No fresh failing runtime count has been measured in this lane.
+
+The parent helper is 228005 bytes / `2ccb2f22084b78c45a4550b8b4e3b7048748a1e719b357155883a35e5030bea3`; authority is 208048 / `5df2558391d90b0222d3c7a889a0fec6d4dbc2b487523039778ed56d0acfd4b1`; reporter147 is 175030 / `9b4e120a5ea9e46ea0182d61266cd8bf7a251d9b543eec37b5ab8b4a8c2179b1`. They match the delivered parent. Neither nested module, lowering-cycle test, nor compiler-boundaries is a path entry in the actual C1 artifact/immutable/instrument/population/closure domains. Thus no current-source contract epoch, instructions/package/lock inverse, historical artifact replacement or resolver reseed is indicated. Policy readers nevertheless require the bounded new inverse below.
+
+Measured facts and five complete raw fragments are saved in `d1-delivered-parent-proof-facts.json` (8390 bytes, SHA256 `9e3d270c9041e651170d0246768807057e5143fc984281df76d67111fa7941b7`) beside this plan. Both whole-policy byte inverses/replays were independently verified by static byte operations, without executing a helper or test.
+
+### 1. Root freezes one exact D1 authority
+
+Root owns new `tests/helpers/ir-runtime-program-policy-nested-stackification.json`; no old receipt changes. Use a new fixed schema/kind for this one relocation. Include exact base f710 provenance, complete before/current raw byte/SHA256/Git-blob and semantic profiles, unchanged allowedEdges digest, exact layer/history/move/file delta records, helper prefix 228005/2ccb, prior canonical489d receipt path/pin, and exactly two new physical source pins. These source pins are warranted by the new clean analysis owner and compatibility identity claim, unlike the earlier unrelated unmigrated-row additions.
+
+Current source pins:
+- `src/ir/analysis/nested-stackification.ts`: 3576 bytes / `eef74f625cb5edec3b0ff554e6b2d7546af26adbf85df6cac962a6facbfc3327`.
+- `src/ir/nested-stackification.ts`: 254 bytes / `4c7169e9b6b523c79b3491258e7561b72e27ebea4a8e30156002f512bd87aaf4`.
+
+The owner reconstructs the exact f710 original 3570-byte implementation / `f66f42492cb6aaf0c55ad3681289802c1e598ea98119edc975bd37618c905a33` by one unique inverse: `from "../core/nodes.js";`→`from "./nodes.js";`. Forward replay restores the current complete owner. The runtime effects import text and entire algorithm are identical; its relocated relative import resolves to the existing canonical analysis effects owner. The old path is the explicit value/type forwarder, not a second function body. Source reviewer/tests still must establish same runtime function identity and actual resolved import/closure legality; a text inverse alone does not claim them.
+
+Use these five raw replacement groups, with offsets in UTF8 BYTES, not character/code-unit indices. The facts sidecar has the exact strings and fragment digests:
+
+| Group | Before offset/length | Current offset/length |
+|---|---:|---:|
+| complete ir-analysis layer object | 4187 / 1070 | 4187 / 1174 |
+| prepended activation plus retained first activation | 25457 / 147 | 25561 / 752 |
+| prepended move plus retained first move | 66604 / 143 | 67313 / 260 |
+| new owner row plus retained following intrinsics row | 77080 / 113 | 77906 / 237 |
+| complete old compatibility row replacement | 458975 / 304 | 459925 / 454 |
+
+Transform by slicing the untouched original buffer with ascending offsets; never apply original offsets incrementally to a mutated string. Verify each fixed fragment/digest/unique occurrence, full input/output pins and full reciprocal equality. Freeze after required formatting; independent literal test pins must bind those final bytes. This authority must not pin the final whole helper that contains its digest: bind only the immutable old prefix, avoiding a self-hash cycle.
+
+### 2. One append-only helper slice; no recursive proof multiplier
+
+Writer owns only an append to `tests/helpers/ir-runtime-program-policy-evolution.ts` plus the new independent D1 policy test described below. Preserve the entire 228005-byte prefix, including every full old API, four measured Number capture APIs, primitive/descriptor guards and read behavior. Reuse existing private capture/profile/hash utilities; no new generic epoch registry, mutable authority token, reader interception or cache.
+
+Add exactly:
+- `authenticateNestedStackificationPolicyEvolution(): NestedStackificationPolicyReceipt`.
+- `captureNestedStackificationPredecessorPolicy(value: unknown): MutableIrRuntimeProgramPolicy`.
+- `captureNestedStackificationPredecessorPolicySource(raw: string): string`.
+
+The authenticator freshly reads and validates the one fixed receipt/digest/literal membership, old helper prefix, unchanged prior receipt, and both actual source pins per call. It verifies the unique source inverse/replay and exact facade literal, then calls existing `authenticateCanonical489dInventoryEvolution()` once and requires its `current` profile equals the new receipt's `before`. Preserve all its transitive old reads/guards. Do not invoke a full recursive policy proof inside this initial capture; the existing caller's next489d operation retains that proof. No read suppression inside any old API is authorized.
+
+Semantic capture must descriptor-capture the caller before any authority I/O, reject null/array/nonplain inputs, then authenticate. Require complete current profile and exact top-level keys. Verify layer6 is the unchanged active/required ir-analysis layer with original11 roots/entries plus exactly the nested path and minimum12. Verify history[0] equals the exact12-entry activation record with all old101 records unchanged; moves[0] is the one exact old→new pair with all old6 moves unchanged. Verify new owner row59 and neighbors/schema/one occurrence; current old facade row1302 must equal the exact six-field compatibility descriptor.
+
+Inverse in a detached copy: restore facade descriptor at1302, remove new row59 (old facade becomes1301), remove only history0 and move0, restore complete layer6 to its fixed predecessor11-root/entry profile/minimum11. Require full predecessor profile including moves (through full data hash). Independently replay from that predecessor in reverse logical order, recheck both old/new neighbors and full current equality. Retain all unaffected ordering and metadata, not just counts.
+
+Raw API rejects nonprimitive string before authority I/O, authenticates once, performs fixed five-span inverse, compares parsed output with the same pure local semantic inverse, and proves exact raw forward replay. Semantic internals may receive the receipt privately from this same operation; no public accepted prior-capture argument. Return the genuine parent1813 policy. Neither API accepts stale parent data as a current input.
+
+### 3. Initial-reader-only cut: ten existing files, sixteen sites
+
+Separate caller writer owns these ten files after helper API freeze. Wrap only the actual current operand immediately inside the existing489d API, preserving old full APIs, old assertions and all subsequent mutation/control calls. Use semantic wrapper for JSON values and raw wrapper for strings. Do not replace a global `read`, wrap mutants, project old raw fallback arguments, or alter physical-fault closures.
+
+| Existing test | Initial sites | Form |
+|---|---:|---|
+| runtime-program-policy-evolution | 2 (~69,133) | 1 semantic,1 raw |
+| well-known-symbol-policy-evolution | 1 (~57) | raw |
+| number-prerequisite-policy-evolution | 5 (~100,920,1316,1836,2185) | raw |
+| validation-policy-evolution | 1 (~53) | semantic |
+| program-data-contract-boundary | 1 (~147) | semantic |
+| semantic-provider-boundary | 1 (~414) | semantic |
+| current-main-inventory-successor | 1 (~38) | raw |
+| canonical-3c6-inventory-successor | 1 (~1416) | raw |
+| canonical-489d-inventory-successor | 1 (`raw`,~355) | raw before unchanged579411/82cc assertions |
+| runtime-data-contract-seam | 2 (`fixtureCaptureInput`,~2652; `fourStageCaptureInput`,~3356) | raw |
+
+All paths above are `tests/issue-3518-<name>.test.ts`. Add only needed imports and these16 operand wrappers. Whole-file reverse/replay must recover each exact f710 source; compare original registration names/order/duplicate occurrences and all assertions. Reporter147 and Number456 remain intact, including the two prior faster capture layers. Source tests/new owner/lowering graph belong to the separate existing source reviewers; proof writer does not expand those scopes.
+
+### 4. Independent new controls and root reseal
+
+New file `tests/issue-3518-nested-stackification-policy-evolution.test.ts`, owned only by the helper/proof writer. Freeze **53** planned controls:2 raw/semantic positive independent reconstructions versus fixed parent profiles;2 stale input refusals;8 primitive/descriptor-before-missing-authority cases (boxed raw, null,array,accessor,symbol,cycle,foreign prototype,throwing proxy);8 semantic mutations (roots,entries,minimum,activation,move,new owner row,old adapter row,unrelated retained field);5 raw groups×3 omission/duplication/valid reorder mutations=15;4 physical targets(receipt,helper,facade,owner)×2 missing/corrupt×2 APIs=16 warm freshness controls;2 repeated mutable-caller/refused-then-fresh-success controls. Total53, collect to verify; no empty loops or derived expected values from actual API outputs.
+
+Use independently literal final receipt/source/profile/span expectations. Positives separately prove semantic inverse/replay, UTF8 raw inverse/replay, owner-source inverse and actual unchanged489d full API acceptance of the returned parent. Missing-authority priority cases pair an invalid input refusal with a healthy-input actual ENOENT witness under the same fault. Physical tests must use the existing reviewed exclusive checkout lock/unique backup/byte-mode-inode checks/finally restoration and retain recovery on unsafe restoration. New target allowlist exactly the four paths; no concurrent proof readers during physical faults. Do not change old147 or historical physical controls.
+
+Root alone owns manifest/anchor/current-source independent literal. Exactly **five** current instruments and complete original→current recipes change: policy helper, runtime-program-policy test, WKS test, Number test, program-data-contract-boundary test. The other five modified caller files are outside currentInstruments. Preserve other7 instrument pins, other5 recipes, all10 original beforepins,11 immutable authorities,7 historical artifacts, population38/closure12/config/resolver/declaration fields and currentBase3c6. Extend the five complete original recipes, never pin intermediate fragments as original history. Independently invert/replay all10 records using UTF8 byte offsets against actual final files. Current-source278 changes only its unique external literal; it is outside the instrument domain, so no circular assembly. New receipt/test remain separate from old fixed authority membership.
+
+### Execution and publication acceptance
+
+First retain root's narrowly scoped55 source/graph diagnostic as a separate result; this lane has run none. Run actual boundary inventory and ensure1814 classifications/ir-analysis12 activation, unchanged allowed edges and no new activated-closure violation. Whole graph unknown/dynamic/debt remains honestly reported; no all-IR-clean claim.
+
+After final root receipt/helper/caller/authority freeze, collect all ten changed existing test files and the one new file on final bytes, with exact ordered old names compared to f710; collect source/graph suites separately. This is **11 affected policy/caller files**, not only Number/reporter. Known retained denominators147 reporter,456 Number,278 independent current-source are fixed; they are **881 existing controls**, not the entire affected cohort. Add new53 for934 in that four-file subtotal. The other eight changed existing caller files must also run fully with their actual final collected denominators; do not infer their counts or claim the subtotal as all affected tests. Preserve65canonical489d,235canonical3c6,142current-main,105boundary,63validation where existing collection confirms; collect the remaining runtime-policy/WKS/semantic suites explicitly. New53 exclusive physical phase and reporter147 exclusive phase must finish/restore before other readers. Run complete current-source278 and unfiltered Number456; use at most existing approved execution concurrency elsewhere. Retain original failures and parent evidence separately.
+
+Native full typecheck, scoped uncapped lint/format, required normal hooks and actual selector/CI checks stay unchanged. Compare the actual changed-file selector population/cap before publication: no workflow exception/cap increase and no silently lost reporter coverage. A new filename may affect capped ordering; report exact selected/omitted files and retain complete local affected evidence. Parent PR6405 delivery is not acceptance of D1's changed policy. Require exact PR6426 head/composed merge-group mandatory checks and actual known reporter/Number command outcomes, then protected queue/main ancestry plus owned byte/mode verification. Local timing is neither CI success nor a new local2400-second prerequisite. Public Number coverage/full IR obligations and legacy retention remain unchanged.
+
+Custody/count clarification before dispatch: the ten existing caller files contain FOUR sealed caller instruments and SIX unsealed caller files (not five); with the policy helper this remains exactly five instrument pins/five recipes. Root has now reported actual unchanged merged55/55 ordinary exit0 (21 owner+9 original nested+25 lowering), inventory/typecheck/lint exit0, and preserved the direct current raw capture failure at `.tmp/nested-owner/resume-main-f710-20261003/original-capture-failure.log`: `current main inventory evolution: canonical complete raw source profile mismatch`, applyCanonical489dRaw ~4610. That direct capture is the appropriate non-mutating initial diagnostic; no physical-negative test execution is needed to reproduce this break. These are root execution results, not executions by this reviewer. No additional diagnostic is requested before implementation.
+
+Root records this exact Astra plan before implementation, SHA2563e2098994389c33e4543c3dd482bf196f874fe8e1e1a9ce74dd13189e284f223. Canonical3518:nested-stackification-policy-proof-d1-20261003 is verified held by ttraenkler/codex-nested-stackification-policy-proof-d1-20261003 on the existing D1 branch. Sol6.1Medium helper/proof writer and caller writer own disjoint candidate files; root alone integrates/finalizes authority/Git/execution.
+
+## D1 delivered-parent proof integration and ordinary validation — 2026-10-03
+
+The existing held PR6426, refactor(ir): move nested stackification into analysis, now contains a locally prepared uncommitted merge of directly verified canonical f710 into c59. The sole issue append conflict was resolved by retaining both complete sides. Original D1 analysis owner/facade and combined28-module/32-edge graph remain unchanged. No separately claimed lowering/legality/layout scope was taken.
+
+Root recorded AstraHigh plan3e209899 before Sol6.1Medium implementation and claimed canonical3518:nested-stackification-policy-proof-d1-20261003. Root independently froze the new fixed D1 receipt15523/b88978d3 from f710 and current policy, with complete five-span UTF8 inverse/replay and exact owner source inverse. SolH1 appended exactly26013bytes to the unchanged228005/2ccb helper prefix and supplied53 fixed controls. SolH2 changed only16 initial operands(4semantic,12raw) plus imports in10 existing caller files. After formatting, all10 whole-file inverses recover complete f710 sources exactly; every old assertion/control/registration remains retained.
+
+Root's independently reviewed final authority236461/6cdcc25f changes exactly5 instrument pins and5 full original-to-final recipes. All10 original beforepins and whole byte inverse/replays,7 other instrument pins,5 other recipes,11 immutable authorities,7 artifacts and all other authority fields remain unchanged. Anchor194/3f79ab1a and sole external literal in278-control current-source test75022/a1885f8f were updated; the entire remaining test source is exact. No historical repin or current-source/config epoch was introduced.
+
+Actual same-runner collection confirms15 subjects/2309 cases: every2201 old case name/order/duplicate occurrence in11 affected files is unchanged, plus53 new policy and55 source controls. The original shared-primary Vitest3.2.4 dependency link did not match current main's lock3.2.7; root replaced only the owned child link with the existing owned parent install after verifying package/lock equality. No install/shared dependency writes occurred; Node24.4.1, TypeScript5.9.3 andTS7 7.0.2 are measured. Initial55/55 on3.2.4 remains separate diagnostic evidence.
+
+Actual strict ordinary3.2.7 runs completed: new policy53/53 (6.44s), reporter147/147 (69.11s), current-source278/278 (37.72s), each childexit0 with exact runtime names and all41 input byte/mode/inode/device comparisons restored. Number456 and remaining subjects are executing sequentially under existing35s test timeout and4096 fork configuration, with no selector/error-ignore/timeout/cache changes. These478 cases are partial execution evidence, not2309 passing credit or CI acceptance. Independent raw error-channel audit and final vector custody remain required. Original raw-capture failure and parent results are preserved.
+
+The normal signed mergecommit/fullhooks, fresh canonical-main and exact fork-head checks, existing PR6426 publication/heldCI/protected queue and actual main ancestry/content verification remain outstanding. Full IR equality and legacy retirement remain open.
+
+
+### D1 final local acceptance after delivered parent — 2026-10-03
+
+The existing ready, held PR #6426, “refactor(ir): move nested stackification into analysis,” now integrates directly verified canonical main `f710603e1c11101d0135274c6218ca36cb64fa37`. The fresh prepublication server head remains the owned `c59ceb6c0c579824d903ab8746c588658cba0a6b`; the old cached REST base is not used as authority. The canonical policy-proof claim remains held by this lane.
+
+All 15 complete ordinary Vitest suites terminated with child exit 0: **2,309/2,309 passed**, comprising 2,201 preserved cases, 53 new policy controls and 55 source/graph cases. Exact ordered names and duplicate occurrences match the collected population. Independent Sol 6.1 Medium raw audits verify every assertion/status/failure channel, with no RPC/unhandled/timeout error markers. Node 24.4.1 and pinned Vitest 3.2.7 were used; the initial diagnostic 55 on Vitest 3.2.4 is separate. WKS154 took 1,751.173 seconds locally; no CI timing or speedup is inferred.
+
+Root and the independent reviewer measured every one of the 41 frozen inputs after execution: complete bytes/SHA256, mode, inode and device match. The two additional Number-fault producer files (`generator-eager-refusal.ts`, `host-carrier-to-primitive.ts`) remain byte-identical to f710. Original source failures, historical authorities, receipts, old helper prefix and all controls remain preserved. No selectors, timeout changes, ignored errors or hook bypasses were used.
+
+Final full TS7, uncapped lint (6,795 files), whole TypeScript format check, issue integrity, issue-ID/main collision checks, inventory and all five source ratchets passed. The unchanged coercion and whole issue-ID checkers required an owned space-free checkout alias with `--preserve-symlinks-main`; the original issue-ID ENOENT is retained. LOC/function/oracle/coercion used the exact f710 base. Preliminary ratchets run during physical faults are not final evidence. Oracle/coercion correctly cover zero changed codegen files for this analysis-owner move.
+
+Inventory is valid but graph closure remains incomplete. Dead-export checking passes its preservation contract; strict closure and retirement/deletion remain NOT CERTIFIED. Normal signed commit/push hooks, exact published-head CI, actual protected merge-group evidence and verified main ancestry/content remain delivery steps. This records local acceptance only, not a main merge or complete IR migration. The legacy compiler remains available until full IR coverage is tested and equal.
+
+Evidence: `.tmp/nested-owner/resume-main-f710-20261003/` contains final execution custody, all raw logs/JSON, final native gate receipts, independent audits and publication handoff. Root owns integration and publication; Astra High wrote the implementation plan before Sol 6.1 Medium produced the bounded proof/caller repair.
+
+
+### D1 delivery refresh against verified main912f — 2026-10-03
+
+On the human continuation, root freshly read existing held PR #6426, “refactor(ir): move nested stackification into analysis,” and verified canonical main directly as912f672f318a49ee54eb968fcbdc5a1f0f38a28d. Main advanced fromf710 only by six npm-compat benchmark JSON artifacts and their website mirrors. AstraHigh independently compared the full Git trees: no source, test, policy, receipt, configuration or workflow delta. Therefore no successor receipt, historical repin, recipe edit or source-specific rerun is justified by this artifact-only merge. The clean normal merge preserves all six incoming artifacts exactly and all41 previously validated input bytes; root retains custody evidence in .tmp/nested-owner/resume-main-912f-20261003/merged-custody.json. Normal hooks and exact-new-head CI/protected delivery remain required.
+
+The former published headd2d4 has actual independently audited CI2146/2300 selected assertions: prior824 plus current-main142, boundary105, validation63, Number456, runtime204 and semantic352. Each additional completed log has actual TEST_OUTCOME success and no observed RPC/unhandled errors. At the fresh snapshot, WKS154 and quality remained in progress; this is neither full CI acceptance nor evidence for the forthcoming new head. The actual prior tested preview remainsef103b (parentsf710,d2d4), distinct from main912f. Claims remain held by the existing D1 integration/proof owners. Root remains the sole integration owner; AstraHigh reviews/specifies, Sol6.1Medium audits. Legacy stays; full IR equality and retirement are incomplete.
+
+
+### D1 exact-head CI cancellation blocker — 2026-10-03
+
+Human resumed delivery. Fresh existing PR6426 head remains e7b8ee0d1a0e7eb14be316adc68bdbac3b5f9528; direct canonical main remains912f672f318a49ee54eb968fcbdc5a1f0f38a28d. Actual CI run37122137660 is terminal: quality and13 changed suites report success, WKS job111200483138 is cancelled, fatal issue-tests aggregate111206759992 exits1 because14 selected jobs require success. WKS job spans2415s, its test step2381s; log contains Vitest RUN then cancellation and no completed assertion count. Therefore no WKS154 passing credit. Timing is consistent with the unchanged40-minute workflow deadline, but the available job/raw records do not explicitly establish the cancellation initiator or CPU/OOM/deadlock cause. Preserve that uncertainty and original logs.
+
+AstraHigh owns a scoped implementation plan before source changes; Sol6.1Medium is measuring WKS initial-fixture construction and auditing actual terminal logs. The initial six full recursive fixture projections are a concrete code lead, not a measured full-suite root-cause conclusion. Existing delivered fresh capture projections may eliminate incidental repeated predecessor proofs only during initial fixture construction; full APIs, all old assertions/control closures, fresh physical authority reads, source ownership and timeouts/workflow remain unchanged. Root owns integration, authority reseal and exclusive ordinary execution. Protected queue stays held until exact repaired-head acceptance; no manual CI cancellation/restart or new downstream scope.
+
+
+## Implementation plan: D1 WKS fixture capture repair — 2026-10-03
+
+Exact AstraHigh plan recorded before implementation; SHA2561cd1bb5891ae78bade2b08eed3d4b5a35147b6c24e8494b9cf5f80752362c5c8.
+
+
+## Implementation Plan — PR6426 WKS154 CI cancellation: reuse delivered initial captures
+
+Astra High specifies/reviews; Sol6.1 Medium implements only after root records this plan and accepts the bounded diagnostic. Root owns integration, authority assembly, execution and publication. This is delivery repair for issue3518; full IR remains incomplete and legacy remains.
+
+### Actual failure and immutable input
+
+CI37122137660 on published e7b8ee0d1a0e7eb14be316adc68bdbac3b5f9528 ran WKS job111200483138 on merge preview bb5f2a7… into912f672f. Saved metadata reports completed/cancelled,12:14:47–12:55:02. Raw log31982B/SHA25651bc23572ae1aad3ee952cc181c300acfc02c4799dd2f65ad322824d3ef374fe contains Vitest3.2.7/Node25.9.0 start12:15:20 and generic operation-cancelled12:55:00, with no terminal assertion totals. The unchanged40-minute budget is consistent with termination; the log does not explicitly name a timeout cause. No154 acceptance is inferred.
+
+Actual WKS source27315B/90535f3b1761a6fa70612b90dbe935c0d9ac6b4ec21562b321ca1ac16ae52cc4; helper254018B/5130184ffe112a67a58081ed9074e5f2097ad9400279390ab8f9a825b4952bbe. Current manifest236461B/6cdcc25f233cf5a3adc4e50d309d711fad4a22ab56b03c57a0deedd761c769d4. Bind diagnostics/candidate to these actual bytes and the complete current root authority vector; moving source requires a new explicit freeze.
+
+### Concrete mechanism and scope
+
+In tests/issue-3518-well-known-symbol-policy-evolution.test.ts, raw() at51–65 repeatedly reconstructs the historical WKS operand. Six setup calls still invoke full recursive predecessor proof APIs. The helper already exports separately reviewed initial-capture APIs at4754–4988, used by Number setup and covered by the delivered reporter controls. Each authenticates its stage freshly, proves exact current and predecessor semantic/raw profiles, schema/neighbors, inverse/replay, and agreement. Full APIs additionally traverse predecessor policy proofs which subsequent setup stages perform again. D1 capture itself is a fresh local inverse and needs no change.
+
+Replace exactly these six identifier bindings in the named import and their sole calls inside raw():
+
+| Existing full setup API | Existing initial-capture API |
+| --- | --- |
+| beforeCanonical3c6InventoryPolicySource | captureCanonical3c6PredecessorPolicySource |
+| beforeCurrentMainInventoryPolicySource | captureCurrentMainInventoryPredecessorPolicySource |
+| beforeGeneratorInventoryPolicySource | captureGeneratorPredecessorPolicySource |
+| beforeHostCarrierInventoryPolicySource | captureHostCarrierPredecessorPolicySource |
+| beforeDynamicCodeInventoryPolicySource | captureDynamicCodePredecessorPolicySource |
+| beforeRuntimePreparationPolicySource | captureRuntimePreparationPredecessorPolicySource |
+
+Retain raw() nesting/order, the initial physical policy read, D1 and489d captures, and the final full beforeNumberPrerequisitePolicySource. The resulting operand must remain565875B/SHA451258b5feed7669d08553de966cb654a88f134a1d197fb9768fa97607843e59, Gitblob74dc1b073145713d122e28a0b45f34c0cc41a066 and dataSHA462b8a9a6047378eed5913e51441761734663ff8c53cbb804106368ff1a33be7 (1771files/98activations/20layers).
+
+Only this one existing test file is the implementer source scope. No helper/receipt/source/policy/config/workflow edits or new APIs/tests. Preserve every154 registration occurrence, callback, assertion, negative mutant, historical physical reader, afterEach yield, timeout and error policy. In particular rawRefused(), refused(), accepted(), receipt() and all direct full WKS/C1/B API calls remain byte-identical. Full inverse of the twelve identifier substitutions, plus any formatting-only import layout, must recover the entire frozen27315-byte source.
+
+Freshness contract disclosure: this change deliberately lowers incidental repeated setup authentication traversals. It does not promise identical aggregate setup read counts. Each selected exported capture still performs all of its existing fresh physical receipt/source/helper/H1 authority reads in original order on every invocation; no read is cached or suppressed inside an API. Every original full API retains its entire implementation/read topology and all direct controls. No cached receipt, reused accepted capture, generic projector, global reader interception or prior-operation authority is permitted. Root explicitly confirmed this initial-only interpretation: prohibited changes are suppressed reads inside APIs, cached approval or a reduced physical authority domain; fewer incidental recursive setup traversals are permitted only with measured complete output parity and source-exact retained full controls.
+
+### Bounded complete-operation diagnostic before selection
+
+H2 owns isolated scratch diagnostic only; no root changes or reseal before evidence review. Freeze actual helper/WKS/config/authority/source input pins and modes, scratch scripts, exact copied raw()/rawRefused()/receipt() and representative callback. Use original root exports for both sides: baseline has original six full APIs; candidate changes exactly the six identifiers above. Fresh policy read and fresh original exported authenticators on every action; do not supply receipts or pre-read expected authority.
+
+The root-authorized H2 screen already uses a bounded concrete method: exact copied `rejects raw span 1 duplicate` callback plus raw()/rawRefused() and actual root exported functions; one warm pair then three balanced old/new pairs. Each callback performs three fresh policy reads and27 named stage invocations. A test-local scratch assertion adapter implements only the actual used scalar matchers (Object.is equality/inequality) and toThrow with an explicit caught boolean, recording error name/message/type. This is a complete copied-callback diagnostic, not a Vitest execution or154 acceptance. Independent review must verify those copied source slices and matcher equivalence for this exact callback; undefined thrown values cannot count as success. The final ordinary suite remains mandatory.
+
+Record each complete callback duration and all stage durations separately, all27 stage output byte lengths/SHA256s per callback, actual single full-WKS refusal and healthy final full-WKS follow-up. Pairwise output-pin equality authenticates the same intermediate profiles because both sides invoke unchanged fixed-profile root exports; do not claim literal full-buffer comparisons unless separately recorded. No prior pair output may replace a fresh read. Launcher checks all41 current input files' whole bytes/mode/inode/device before/after; stage count27 and refusal count1 per callback are mandatory. Root runs without competing physical-fault suites/heavyworkers.
+
+This actual screen uses a180s external owned-process-group bound, not a changed test/CI deadline. Preserve terminal/group cleanup and pre/post input evidence. Do not introduce a second diagnostic solely to replace this already-authorized shape with more pairs. Existing APIs' independent primitive/descriptor/stale/raw/physical refusal controls already remain source-exact; the scratch screen's one real duplicate refusal is additional complete-operation parity evidence, not coverage of all those controls.
+
+Select only after actual stage-output/refusal parity, all input pins hold, every copied callback completes, all three measured complete-callback savings are positive, and median complete-callback improvement is material (target at least20%, not a tiny isolated-kernel gain). Report setup-stage and whole-callback savings separately; no CI or full-suite speed extrapolation. If the screen fails or is noisy, retain it and stop; no speculative helper redesign or exhaustive rerun.
+
+### Root-owned one-instrument authority reseal
+
+Only WKS is one of the twelve current instruments. After candidate review, root updates that instrument's full pin and its complete original→final reciprocal recipe. Preserve original WKS beforePin25860B/a93174185368356b0be2527e3f253fc49cc31e01cd8bbd4ba6cb2431bb66e831. Build the new recipe from the immutable full original, not a delta applied to a prior afterPin; UTF8 byte offsets, exact inverse and forward replay. Independently prove all ten complete recipes; retain nine other recipes and eleven other instrument pins byte-for-byte. Every immutable authority, seven historical artifacts, source/config/resolver/declaration/currentBase and historicalBase remains unchanged.
+
+Root alone owns tests/helpers/ir-c1-authority.json, tests/helpers/ir-c1-authority-root.ts and the unique independentFreeze literal in tests/issue-3518-c1-current-source.test.ts. Format manifest before final digest, bind anchor and independent literal, and recover all278 source outside the literal exactly. No helper historical-prefix or receipt update and no source epoch. Four final changed proof files: WKS test plus this root-owned trio (tracking docs separate).
+
+### Meaningful final acceptance
+
+Collect exact unchanged154 ordered registrations including duplicates and execute ordinary unfiltered154. Root explicitly requires the final five-file1088 acceptance set: WKS154 + current-source278 + reporter147 + Number456 + new D1 policy53. Keep physical-fault suites exclusive and verify complete frozen input restoration. Current-source native type probe/literal/anchor/historical reconstruction/current-instrument checks must genuinely execute; Number456 is unfiltered. These are root-required final acceptance populations, not an extrapolation from the scratch callback or a claim that a reseal necessarily changes all bodies. Preserve all old evidence and failures separately.
+
+No new physical fault harness is needed: original154 physical reader/control assertions and delivered capture APIs remain unchanged; full278 covers authority integrity. Final root native typecheck, uncapped lint/format, normal hooks and applicable unchanged selected-file CI remain required. On publication, require actual154 completion/error-clean outcome at the new composed head within the unchanged40-minute CI job, plus the rest of mandatory CI/aggregate/protected queue/main content checks. Current cancelled run remains evidence; no automatic restart/cancellation, cap/concurrency/heap/deadline increase or advisory-policy change.
+
+Diagnostic evidence is pending at plan authorship. Source candidate implementation is conditional, not runtime approval.
+
+
+
+### Measured plan finalization before candidate implementation
+
+Initial exact plan1cd1bb58 was recorded before Sol dispatch. The measured three-pair diagnostic completed before that dispatch. Astra then finalized the measured-plan text as9f1789610996dfad1f89b463efd4b236c9ba1b4aaf8b339585b968f968af6eef. Sol custody guard stopped on that plan-pin change before producing a candidate; root now records the final exact plan before permitting candidate implementation. Both versions and original diagnostic are retained; no history rewrite. Final plan follows in full.
+
+
+## Implementation Plan — PR6426 WKS154 CI cancellation: reuse delivered initial captures
+
+Astra High specifies/reviews; Sol6.1 Medium implements only after root records this plan and accepts the bounded diagnostic. Root owns integration, authority assembly, execution and publication. This is delivery repair for issue3518; full IR remains incomplete and legacy remains.
+
+### Actual failure and immutable input
+
+CI37122137660 on published e7b8ee0d1a0e7eb14be316adc68bdbac3b5f9528 ran WKS job111200483138 on merge preview bb5f2a7… into912f672f. Saved metadata reports completed/cancelled,12:14:47–12:55:02. Raw log31982B/SHA25651bc23572ae1aad3ee952cc181c300acfc02c4799dd2f65ad322824d3ef374fe contains Vitest3.2.7/Node25.9.0 start12:15:20 and generic operation-cancelled12:55:00, with no terminal assertion totals. The unchanged40-minute budget is consistent with termination; the log does not explicitly name a timeout cause. No154 acceptance is inferred.
+
+Actual WKS source27315B/90535f3b1761a6fa70612b90dbe935c0d9ac6b4ec21562b321ca1ac16ae52cc4; helper254018B/5130184ffe112a67a58081ed9074e5f2097ad9400279390ab8f9a825b4952bbe. Current manifest236461B/6cdcc25f233cf5a3adc4e50d309d711fad4a22ab56b03c57a0deedd761c769d4. Bind diagnostics/candidate to these actual bytes and the complete current root authority vector; moving source requires a new explicit freeze.
+
+### Concrete mechanism and scope
+
+In tests/issue-3518-well-known-symbol-policy-evolution.test.ts, raw() at51–65 repeatedly reconstructs the historical WKS operand. Six setup calls still invoke full recursive predecessor proof APIs. The helper already exports separately reviewed initial-capture APIs at4754–4988, used by Number setup and covered by the delivered reporter controls. Each authenticates its stage freshly, proves exact current and predecessor semantic/raw profiles, schema/neighbors, inverse/replay, and agreement. Full APIs additionally traverse predecessor policy proofs which subsequent setup stages perform again. D1 capture itself is a fresh local inverse and needs no change.
+
+Replace exactly these six identifier bindings in the named import and their sole calls inside raw():
+
+| Existing full setup API | Existing initial-capture API |
+| --- | --- |
+| beforeCanonical3c6InventoryPolicySource | captureCanonical3c6PredecessorPolicySource |
+| beforeCurrentMainInventoryPolicySource | captureCurrentMainInventoryPredecessorPolicySource |
+| beforeGeneratorInventoryPolicySource | captureGeneratorPredecessorPolicySource |
+| beforeHostCarrierInventoryPolicySource | captureHostCarrierPredecessorPolicySource |
+| beforeDynamicCodeInventoryPolicySource | captureDynamicCodePredecessorPolicySource |
+| beforeRuntimePreparationPolicySource | captureRuntimePreparationPredecessorPolicySource |
+
+Retain raw() nesting/order, the initial physical policy read, D1 and489d captures, and the final full beforeNumberPrerequisitePolicySource. The resulting operand must remain565875B/SHA451258b5feed7669d08553de966cb654a88f134a1d197fb9768fa97607843e59, Gitblob74dc1b073145713d122e28a0b45f34c0cc41a066 and dataSHA462b8a9a6047378eed5913e51441761734663ff8c53cbb804106368ff1a33be7 (1771files/98activations/20layers).
+
+Only this one existing test file is the implementer source scope. No helper/receipt/source/policy/config/workflow edits or new APIs/tests. Preserve every154 registration occurrence, callback, assertion, negative mutant, historical physical reader, afterEach yield, timeout and error policy. In particular rawRefused(), refused(), accepted(), receipt() and all direct full WKS/C1/B API calls remain byte-identical. Full inverse of the twelve identifier substitutions, plus any formatting-only import layout, must recover the entire frozen27315-byte source.
+
+Freshness contract disclosure: this change deliberately lowers incidental repeated setup authentication traversals. It does not promise identical aggregate setup read counts. Each selected exported capture still performs all of its existing fresh physical receipt/source/helper/H1 authority reads in original order on every invocation; no read is cached or suppressed inside an API. Every original full API retains its entire implementation/read topology and all direct controls. No cached receipt, reused accepted capture, generic projector, global reader interception or prior-operation authority is permitted. Root explicitly confirmed this initial-only interpretation: prohibited changes are suppressed reads inside APIs, cached approval or a reduced physical authority domain; fewer incidental recursive setup traversals are permitted only with measured complete output parity and source-exact retained full controls.
+
+### Bounded complete-operation diagnostic before selection
+
+H2 owns isolated scratch diagnostic only; no root changes or reseal before evidence review. Freeze actual helper/WKS/config/authority/source input pins and modes, scratch scripts, exact copied raw()/rawRefused()/receipt() and representative callback. Use original root exports for both sides: baseline has original six full APIs; candidate changes exactly the six identifiers above. Fresh policy read and fresh original exported authenticators on every action; do not supply receipts or pre-read expected authority.
+
+The root-authorized H2 screen already uses a bounded concrete method: exact copied `rejects raw span 1 duplicate` callback plus raw()/rawRefused() and actual root exported functions; one warm pair then three balanced old/new pairs. Each callback performs three fresh policy reads and27 named stage invocations. A test-local scratch assertion adapter implements only the actual used scalar matchers (Object.is equality/inequality) and toThrow with an explicit caught boolean, recording error name/message/type. This is a complete copied-callback diagnostic, not a Vitest execution or154 acceptance. Independent review must verify those copied source slices and matcher equivalence for this exact callback; undefined thrown values cannot count as success. The final ordinary suite remains mandatory.
+
+Record each complete callback duration and all stage durations separately, all27 stage output byte lengths/SHA256s per callback, actual single full-WKS refusal and healthy final full-WKS follow-up. Pairwise output-pin equality authenticates the same intermediate profiles because both sides invoke unchanged fixed-profile root exports; do not claim literal full-buffer comparisons unless separately recorded. No prior pair output may replace a fresh read. Launcher checks all41 current input files' whole bytes/mode/inode/device before/after; stage count27 and refusal count1 per callback are mandatory. Root runs without competing physical-fault suites/heavyworkers.
+
+This actual screen uses a180s external owned-process-group bound, not a changed test/CI deadline. Preserve terminal/group cleanup and pre/post input evidence. Do not introduce a second diagnostic solely to replace this already-authorized shape with more pairs. Existing APIs' independent primitive/descriptor/stale/raw/physical refusal controls already remain source-exact; the scratch screen's one real duplicate refusal is additional complete-operation parity evidence, not coverage of all those controls.
+
+Select only after actual stage-output/refusal parity, all input pins hold, every copied callback completes, all three measured complete-callback savings are positive, and median complete-callback improvement is material (target at least20%, not a tiny isolated-kernel gain). Report setup-stage and whole-callback savings separately; no CI or full-suite speed extrapolation. If the screen fails or is noisy, retain it and stop; no speculative helper redesign or exhaustive rerun.
+
+### Root-owned one-instrument authority reseal
+
+Only WKS is one of the twelve current instruments. After candidate review, root updates that instrument's full pin and its complete original→final reciprocal recipe. Preserve original WKS beforePin25860B/a93174185368356b0be2527e3f253fc49cc31e01cd8bbd4ba6cb2431bb66e831. Build the new recipe from the immutable full original, not a delta applied to a prior afterPin; UTF8 byte offsets, exact inverse and forward replay. Independently prove all ten complete recipes; retain nine other recipes and eleven other instrument pins byte-for-byte. Every immutable authority, seven historical artifacts, source/config/resolver/declaration/currentBase and historicalBase remains unchanged.
+
+Root alone owns tests/helpers/ir-c1-authority.json, tests/helpers/ir-c1-authority-root.ts and the unique independentFreeze literal in tests/issue-3518-c1-current-source.test.ts. Format manifest before final digest, bind anchor and independent literal, and recover all278 source outside the literal exactly. No helper historical-prefix or receipt update and no source epoch. Four final changed proof files: WKS test plus this root-owned trio (tracking docs separate).
+
+### Meaningful final acceptance
+
+Collect exact unchanged154 ordered registrations including duplicates and execute ordinary unfiltered154. Root explicitly requires the final five-file1088 acceptance set: WKS154 + current-source278 + reporter147 + Number456 + new D1 policy53. Keep physical-fault suites exclusive and verify complete frozen input restoration. Current-source native type probe/literal/anchor/historical reconstruction/current-instrument checks must genuinely execute; Number456 is unfiltered. These are root-required final acceptance populations, not an extrapolation from the scratch callback or a claim that a reseal necessarily changes all bodies. Preserve all old evidence and failures separately.
+
+No new physical fault harness is needed: original154 physical reader/control assertions and delivered capture APIs remain unchanged; full278 covers authority integrity. Final root native typecheck, uncapped lint/format, normal hooks and applicable unchanged selected-file CI remain required. On publication, require actual154 completion/error-clean outcome at the new composed head within the unchanged40-minute CI job, plus the rest of mandatory CI/aggregate/protected queue/main content checks. Current cancelled run remains evidence; no automatic restart/cancellation, cap/concurrency/heap/deadline increase or advisory-policy change.
+
+### Actual bounded screen selection (before source implementation)
+
+H2 terminal0,77.107701s host process; eight copied complete callbacks (warm pair+three balanced pairs) and216 stage calls completed. All41 byte/mode/inode/device input observations match before/after. All27 stage output length/SHA pairs match in each pair and all eight actual duplicate mutants refuse with the same full-WKS complete-raw-profile error. Exact original raw(), rawRefused() and callback segments are present unchanged in source/driver. Three baseline/candidate callback pairs (ms):16931.837→2066.940,17235.352→2069.145,17295.079→2058.413. Independently recomputed paired median saving87.994765%,3/3positive. This meets the material-selection criterion.
+
+Evidence: own diagnostic review d1-wks154-diagnostic-review.json; H2 results.json SHA3f2c6a79c544cb884fa381002704c1c6b033940652e194af77fda27c01c5c48f; terminal.json SHA7d9d10acfb82a67f33af3cddde3924d6abc1dda5bab2beaeb00fb7d520fadfd1. Node24.4.1 host-only scratch diagnostic; no ordinary Vitest or154/CI acceptance and no full-buffer equality claim beyond authenticated stage output pins. The minimal source retarget is justified for implementation; final1088 and unchanged40-minute actual CI requirements remain.
+
+
+
+
+### D1 WKS repair final ordinary acceptance — 2026-10-03
+
+Later terminal check-run annotations explicitly resolve the previously recorded cancellation uncertainty: WKS exceeded the actual40m0s job deadline. Original raw audit remains retained; independent deadline addendum7049e025 records the stronger evidence. No completed WKS count is inferred from the cancelled run and no CPU/OOM/deadlock attribution is invented.
+
+Sol6.1Medium implemented exactly6 setup import/call retargets. Candidate27387/a4abb5a3 passed Astra868235 review; every154 callback/assertion/registration and all bytes after raw() remain exact, full helper254018/513018 unchanged. Root resealed exactlyone current instrument and its complete original25860→27387/33-span recipe; all10 whole UTF8 inverses/replays passed root and independent579b review. Other11 pins/other9 recipes/all10 historical beforepins/immutable11/artifacts7/allremainingmanifestfields exact. Manifest239953/0e964ff7, anchor194/952423c2, external current-source75022/8225a06e. No configuration/workflow/deadline/selector/error-policy change, historical repin, cache, suppressed read inside a full API or legacy retirement. Incidental repeated recursive setup proofs are removed as expressly planned; aggregate setup read multiplicity is not claimed identical.
+
+Root actual ordinary final1088/1088, five child exits0 and unified executor85546 actual terminal0: WKS154/214.241s, D1policy53/7.188s, current-source278/37.119s, reporter147/72.224s, Number456/560.188s. Every runtime name/order/duplicate occurrence matches prior full collection; zero skipped/failed/pending/todo. Each child restored all41 byte/mode/inode/device inputs; root final independently rehashed the complete vector. SolH1 audited485 raw cases abd5fb1f, SolH2 audited603 c45ee826; ordinary RPC/unhandled/timeout/error channels clean. Node24.4.1/Vitest3.2.7, unchanged fork/heap/test timeout. Current1088 evidence is distinct from previous2309 on the preceding policy epoch and from the bounded scratch diagnostic; no full-suite or CI timing extrapolation.
+
+Native TS7, pinned format, uncapped lint and all5 exact912f ratchets plus issue checks passed. No newly added path/test changes the existing14-file CI population. Precommit freshly reverified canonical912f, fork e7b8, existing ready held PR6426 and own canonical proof claim. Normal signed commit/push hooks, exact successor-head CI, protected queue and main ancestry/content delivery remain outstanding at this record. Full IR equality and retirement remain open.
