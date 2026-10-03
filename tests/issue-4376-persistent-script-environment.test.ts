@@ -32,11 +32,18 @@ async function createRealm(lexicals = false) {
       lexicals
         ? `
     let lastLexicalOperation=0;
+    let lexicalWrites=0;
     export function tracedLexical(name:any,operation:number,value:any):any {
       lastLexicalOperation=operation;
+      if(operation===6) lexicalWrites++;
       return scriptLexicalOperation(name,operation,value);
     }
     export function lexicalTrace():number {return lastLexicalOperation;}
+    export function writeCount():number {return lexicalWrites;}
+    export function caughtKind():number {
+      const error:any=(globalThis as any).caught;
+      return error===undefined?0:error.name==="TypeError"?2:error.name==="ReferenceError"?1:3;
+    }
     export function retainedNumber():number {return Number(scriptLexicalOperation("retained",5,undefined));}
     export function hasRetained():boolean {return Boolean(scriptLexicalOperation("retained",9,undefined));}
     export function hasFirst():boolean {return Boolean(scriptLexicalOperation("first",9,undefined));}
@@ -129,6 +136,64 @@ it("keeps lexical cells isolated between Contexts", async () => {
   await runScript(second, "globalThis.published=retained;", true, true);
   expect((first.exports.observedNumber as Function)()).toBe(42);
   expect((second.exports.observedNumber as Function)()).toBe(41);
+});
+
+it("writes an existing lexical from a later Script without creating a global property", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=41;", true, true);
+  await runScript(realm, "retained=42; globalThis.published=retained;", true, true);
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  expect((realm.exports.observed as Function)()).toBe(42);
+  await runScript(
+    realm,
+    'globalThis.published=Object.prototype.hasOwnProperty.call(globalThis,"retained")?0:42;',
+    true,
+    true,
+  );
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("writes an existing lexical from strict Script code and evaluates the RHS once", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=41;", true, true);
+  await runScript(
+    realm,
+    '"use strict"; globalThis.score=0; retained=(++globalThis.score,42); globalThis.published=retained;',
+    true,
+    true,
+  );
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  expect((realm.exports.score as Function)()).toBe(1);
+  expect((realm.exports.writeCount as Function)()).toBe(1);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("checks const mutability in a later Script after evaluating the RHS", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "const retained:any=41;", true, true);
+  await runScript(
+    realm,
+    '"use strict"; globalThis.score=0; try {retained=(++globalThis.score,42);} catch(error){globalThis.caught=error;}',
+    true,
+    true,
+  );
+  expect((realm.exports.retainedNumber as Function)()).toBe(41);
+  expect((realm.exports.score as Function)()).toBe(1);
+  expect((realm.exports.caughtKind as Function)()).toBe(2);
+});
+
+it("preserves strict global misses and sloppy global writes when no lexical exists", async () => {
+  const realm = await createRealm(true);
+  await runScript(
+    realm,
+    '"use strict"; globalThis.score=0; try {missing=(++globalThis.score,42);} catch(error){globalThis.caught=error;}',
+    true,
+    true,
+  );
+  expect((realm.exports.score as Function)()).toBe(1);
+  expect((realm.exports.caughtKind as Function)()).toBe(1);
+  await runScript(realm, "missing=42; globalThis.published=missing;", true, true);
+  expect((realm.exports.observed as Function)()).toBe(42);
 });
 
 it("preserves a const cell after an attempted write", async () => {

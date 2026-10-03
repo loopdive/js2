@@ -17,6 +17,9 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-10-04: later Script assignment resolves the Context lexical record
+  # before RHS evaluation, preserving strict/sloppy global behavior on misses.
+  - src/codegen/expressions/unresolvable-assign.ts
   # 2026-10-04: opt-in native lexical cells preserve declaration initialization
   # through IR rather than treating it as an ordinary binding assignment.
   - src/ir/core/nodes.ts
@@ -2906,6 +2909,20 @@ credit a new native Deno artifact or full deno_core conformance. Persistent
 lexical cells, declaration preflight and completion values remain required.
 
 ## 2026-10-04 opt-in native lexical checkpoint
+
+Follow-up work: merge the newer integration branch/main history and implement
+later-Script lexical assignment. Before implementation, both new strict and
+sloppy write controls fail with the cell retaining 41 instead of 42, while the
+previous 20 tests retain their outcomes. The native assignment route must resolve
+the reference before the RHS, evaluate that RHS once and preserve global-record
+miss behavior. Provider packaging and full native Deno verification remain open.
+
+Implemented simple `=` writes, plus the unresolved-read and top-level collection
+seams required to observe them correctly. Focused controls report 22 ordinary
+passes and two expected failures; the five-file regression run reports 103/106
+successes, with the same three pre-existing failures documented in the handoff.
+The merged main history is retained. Compound/increment/destructuring writes,
+eval activation precedence and native Deno packaging remain follow-up work.
 
 An experimental `standaloneScriptLexicalImport` now links Scripts to native
 Context-owned lexical cells, independently of globalThis properties. Whole

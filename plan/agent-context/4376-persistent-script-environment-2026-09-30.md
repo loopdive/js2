@@ -179,6 +179,37 @@ changes; do not stage `lower-contracts.ts`, Acorn binaries or user scratch files
 
 ## Representation and ownership
 
+### 2026-10-04 continuation: merged main and cross-Script assignment
+
+Merge `ae009e6597a` incorporates the target integration branch at `60f99e83450`
+without conflicts or changes to unrelated user dirt. TypeScript 7 passes after
+the merge. Later-Script simple assignment now captures the lexical hit before
+the RHS and writes the existing native cell after evaluating the RHS once.
+The global miss captures its object-record Reference before the RHS and keeps
+strict ReferenceError versus sloppy property-write behavior.
+
+Two other seams had to change together: opt-in unresolved reads must not take
+the earlier sloppy-implicit-global shortcut, and top-level strict identifier
+assignments must be collected even without private module storage. Before
+these changes the new controls either retained 41 or wrote 42 and then threw
+on a wrongly object-routed read. Both now produce 42 without leaking a property.
+The focused file reports 24/24, comprising 22 ordinary successes and the two
+existing expected failures. Additional controls verify const TypeError after
+RHS effects and strict/sloppy global misses, using native error-name inspection.
+
+The five-file follow-up reports 103/106 successes, including the two expected
+failures, with the same three baseline failures documented above. Main-relative
+LOC/function budgets (base `60f99e83450`), coercion and oracle checks pass; the
+dead-export command still does not certify retirement. No native Deno artifact
+is credited by this compiler-only run.
+
+The new helper is `src/codegen/expressions/persistent-script-lexical-assign.ts`.
+Compound/increment/destructuring writes and eval activation precedence still
+need explicit controls and implementation. Do not infer them from simple `=`.
+Next packaging seam: the adapter's sidecar source and classic-Script dispatch
+remain the source allowlist described above; the graph compiler is a Module
+driver and must not be substituted for independent Script evaluation.
+
 Each Context needs one GlobalEnvironmentRecord with an object record and a
 persistent declarative record. Keep Module environment records separate and
 do not expose lexical declarations as globalThis properties.

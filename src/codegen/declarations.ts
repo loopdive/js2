@@ -2503,6 +2503,9 @@ function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, st
 }
 
 function shouldCollectTopLevelAssignment(ctx: CodegenContext, target: ts.Expression, operator: ts.SyntaxKind): boolean {
+  // Another Script may have installed a declarative binding. Neither the
+  // private module registry nor the sloppy-global scan proves this write dead.
+  if (ctx.standaloneScriptLexicalImport && !ctx.sourceIsModule && ts.isIdentifier(target)) return true;
   const targetName = getAssignmentRootIdentifier(target);
   // (#4491 T3) `ctx.moduleGlobals` is filled by the SAME single pass that asks
   // this question, so a write that precedes its own `var` declaration

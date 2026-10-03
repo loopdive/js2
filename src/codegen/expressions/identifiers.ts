@@ -1675,7 +1675,16 @@ function compileIdentifierCore(
   // function, and round-tripping it through the host global object loses the
   // WasmGC closure representation the call path needs. Host lane only, so the
   // standalone lowering stays byte-identical.
-  if (ctx.sloppyImplicitGlobals?.has(name) && !(!ctx.standalone && !ctx.wasi && isShadowStaticArmFor(name))) {
+  if (
+    ctx.sloppyImplicitGlobals?.has(name) &&
+    !(!ctx.standalone && !ctx.wasi && isShadowStaticArmFor(name)) &&
+    !(
+      ctx.standaloneScriptLexicalImport &&
+      !ctx.sourceIsModule &&
+      !skipRuntimeEvalState &&
+      !identifierValueSymbol(ctx, id)
+    )
+  ) {
     return emitImplicitGlobalRead(ctx, fctx, name);
   }
   // Standalone built-in namespace values (Array/Object) materialize as lazy
