@@ -1,0 +1,11 @@
+{
+  "selected_passed": 1,
+  "selected_total": 1,
+  "not_selected": 630,
+  "before_ms": 23419,
+  "after_ms": 859,
+  "harness": "Node25.9.0,Vitest single fork4096MB,no ignore-unhandled flag,unchanged35000ms timeout",
+  "source_base": "0e4638afc9b475cc90a3aa36c74307b7a6a9a26b",
+  "repair_provenance": "Codex GPT-6.1 Sol Medium",
+  "full_631": "pending full normal commit hooks"
+}

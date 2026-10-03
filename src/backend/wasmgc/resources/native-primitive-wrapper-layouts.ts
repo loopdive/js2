@@ -28,12 +28,18 @@ import {
   freezeNativeResourceRecipe,
   requireNativeDeclaredReservation,
 } from "./native-resource-declarations.js";
+import { createRealmPrimitiveWrapperDeclaration } from "../../../runtime/wasmgc/values/realm-object-layouts.js";
+import {
+  requireNativeRealmObjectLayouts,
+  type NativeRealmObjectLayoutReservations,
+} from "./native-realm-object-layouts.js";
 
 export interface NativePrimitiveWrapperLayoutDependencies {
   readonly objects: NativeObjectLayoutReservations;
   readonly objectPlan: NativeObjectLayoutDeclarationPlan;
   readonly strings: NativeStringLiteralReservations;
   readonly symbols: NativeSymbolCarrierReservations;
+  readonly realmState?: NativeRealmObjectLayoutReservations;
 }
 export interface NativePrimitiveWrapperLayoutReservations {
   readonly types: Readonly<Record<PrimitiveWrapperKind, TypeReservation>>;
@@ -47,15 +53,20 @@ function fail(detail: string): never {
 export function declareNativePrimitiveWrapperLayouts(
   key: string,
   types: PrimitiveWrapperTypeKeys,
+  stateKey?: string,
 ): NativeResourceRecipe {
   if (typeof key !== "string" || !key) fail("invalid declaration key");
   for (const role of ["object", "propMap", "anyString", "symbol"] as const)
     if (typeof types[role] !== "string" || !types[role]) fail("invalid prerequisite key");
+  if (stateKey !== undefined && (typeof stateKey !== "string" || !stateKey)) fail("invalid realm state key");
   const declarations = PRIMITIVE_WRAPPER_KINDS.map((kind) => ({
     key: key + ":" + kind,
     role: ["primitive-wrapper", kind],
     space: "type" as const,
-    shape: createPrimitiveWrapperDeclaration(kind, types),
+    shape:
+      stateKey === undefined
+        ? createPrimitiveWrapperDeclaration(kind, types)
+        : createRealmPrimitiveWrapperDeclaration(kind, types, stateKey),
   }));
   return freezeNativeResourceRecipe({
     declarations,
@@ -89,7 +100,21 @@ function dependencies(tx: PhysicalModuleReservations, d: NativePrimitiveWrapperL
     symbol: d.symbols.types.symbol.key,
   };
   const tokens = [d.objects.object, d.objects.propMap, anyString, d.symbols.types.symbol];
-  return { keys, tokens: new Map(tokens.map((token) => [token.key, token])) };
+  if (d.realmState) {
+    requireNativeRealmObjectLayouts(tx, d.realmState, { objects: d.objects, objectPlan: d.objectPlan });
+    tokens.push(d.realmState.types.state);
+  }
+  return { keys, stateKey: d.realmState?.types.state.key, tokens: new Map(tokens.map((token) => [token.key, token])) };
+}
+function stateRole(input: NativePrimitiveWrapperLayoutDependencies): NativeRealmObjectLayoutReservations | undefined {
+  const field = Object.getOwnPropertyDescriptor(input, "realmState");
+  if (!field) {
+    if ("realmState" in input) fail("inherited realm state dependency");
+    return undefined;
+  }
+  if (!Object.hasOwn(field, "value") || !field.enumerable || !field.value || typeof field.value !== "object")
+    fail("realm state requires an issued own data value");
+  return field.value;
 }
 interface Owner {
   readonly tx: PhysicalModuleReservations;
@@ -113,11 +138,13 @@ export function reserveNativePrimitiveWrapperLayouts(
   const fields = Object.getOwnPropertyDescriptors(sourceDependencies);
   for (const role of dependencyKeys)
     if (!fields[role] || !Object.hasOwn(fields[role], "value")) fail("dependencies require own data fields");
-  const captured = Object.freeze(
-    Object.fromEntries(dependencyKeys.map((role) => [role, fields[role]!.value])),
-  ) as unknown as NativePrimitiveWrapperLayoutDependencies;
+  const realmState = stateRole(sourceDependencies);
+  const captured = Object.freeze({
+    ...Object.fromEntries(dependencyKeys.map((role) => [role, fields[role]!.value])),
+    ...(realmState === undefined ? {} : { realmState }),
+  }) as unknown as NativePrimitiveWrapperLayoutDependencies;
   const prerequisite = dependencies(tx, captured);
-  const plan = declareNativePrimitiveWrapperLayouts(key, prerequisite.keys);
+  const plan = declareNativePrimitiveWrapperLayouts(key, prerequisite.keys, prerequisite.stateKey);
   if (preparedIrDataMismatch(plan, expectedPlan)) fail("substituted declaration plan");
   tx.assertReservationKeysAvailable(plan.declarations.map((row) => row.key));
   const records = executeNativeResourceRecipe(tx, plan, prerequisite.tokens);
@@ -157,8 +184,14 @@ export function requireNativePrimitiveWrapperLayouts(
   for (const role of dependencyKeys)
     if (!fields[role] || !Object.hasOwn(fields[role], "value") || fields[role]!.value !== owner.dependencies[role])
       fail("changed dependency identity");
+  if (stateRole(expectedDependencies) !== owner.dependencies.realmState) fail("changed realm state identity");
   const prerequisite = dependencies(tx, owner.dependencies);
-  if (preparedIrDataMismatch(declareNativePrimitiveWrapperLayouts(owner.key, prerequisite.keys), owner.plan))
+  if (
+    preparedIrDataMismatch(
+      declareNativePrimitiveWrapperLayouts(owner.key, prerequisite.keys, prerequisite.stateKey),
+      owner.plan,
+    )
+  )
     fail("stale prerequisite plan");
   const types = new Map([...prerequisite.tokens, ...owner.tokens.map((token) => [token.key, token] as const)]);
   PRIMITIVE_WRAPPER_KINDS.forEach((kind, index) => {

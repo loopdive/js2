@@ -1929,6 +1929,46 @@ This prerequisite does not complete Promise iterator acquisition, custom array
 prototype storage, IR equivalence, or legacy retirement. No frozen Promise
 source, test expectation, CI workflow, or acceptance denominator is changed.
 
+## 2026-09-28 census follow-up: escaped resolve-element prototype
+
+Frozen standalone census index 55 at `f924650c6c26237f62b08a362d7003d4d2b1e12d`
+records `test/built-ins/Promise/all/resolve-element-function-prototype.js`
+failing with `Object.getPrototypeOf(fulfill)` equal to null rather than
+`Function.prototype`. The original captures the resolve-element callback
+passed to a thenable by `Promise.all.call(NotPromise, [thenable])`.
+The 92-path shard completed with zero exclusions; receipts and hashes are in
+issue 4444's census index-55 handoff. This is frozen-source evidence, not a
+fresh execution on the candidate described below.
+
+Read-only audit of `e5e69140ea74f9f143639ddfa41b94312895f3b0` finds that
+`promise-custom-combinator.ts` already creates the callback with builtin
+function metadata (`promise:customelem`) and the closure header. Do not add
+a second Promise-specific callable representation. The dynamic captured
+variable should reach `tryEmitDynamicCallableGetPrototypeOf` through the
+builtin fallback; generic object-runtime finalization also supplies builtin
+metadata semantics. Source inspection alone does not establish which path
+is missing from the emitted module.
+
+Implementation plan, pending fresh ownership/overlap confirmation:
+
+1. Capture the exact original's emitted callable and prototype lookup path
+   under the maintained standalone runner; retain a passing callable control.
+2. If metadata finalization is absent, repair the existing
+   `prependBuiltinFnObjectSemantics` integration. If callable classification
+   or routing is absent, repair only that dynamic getPrototypeOf route.
+   Do not change the combinator's callback representation without new evidence.
+3. Test callback prototype, typeof, extensibility, name and length, the existing
+   settle-callable prototype controls, and dynamic non-callable prototype
+   lookup. Compare the exact original on matched baseline/candidate builds.
+
+No source patch or diagnostic execution was made by this audit. A fresh claim
+query failed DNS, so ownership is not asserted from stale local records.
+
+Root subsequently completed a fresh read-only upstream claim check (session
+18566, exit 0): issue 5197 is reserved, with **no live claim**. This removes
+the stale-claim uncertainty, not the need to inspect overlapping open PRs or
+prove the emitted mechanism. The agent may prepare an isolated diagnostic
+checkout and fixture; production changes remain gated on those checks.
 ## Implementation Plan — r3 (2026-09-30, Fable lane; Opus-high implements)
 
 Scope: the 19 ES2015 standalone non-pass rows under `built-ins/Promise/**`

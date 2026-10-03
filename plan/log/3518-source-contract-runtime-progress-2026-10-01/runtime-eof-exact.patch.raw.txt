@@ -1,0 +1,14 @@
+--- a/tests/issue-3518-runtime-contract-evolution.test.ts
++++ b/tests/issue-3518-runtime-contract-evolution.test.ts
+@@ -642,8 +642,9 @@
+   });
+   it.each(spans)("rejects shifted raw span $span.ordinal in $path", ({ path, span }) => {
+     const raw = readRuntimeContractActual(path),
+-      text = raw.slice(span.current.start, span.current.end);
+-    refused(path, raw.slice(0, span.current.start) + raw.slice(span.current.end) + text);
++      text = raw.slice(span.current.start, span.current.end),
++      remainder = raw.slice(0, span.current.start) + raw.slice(span.current.end);
++    refused(path, span.current.end === raw.length ? text + remainder : remainder + text);
+   });
+   it.each(orderedPairs)("rejects reordered reviewed spans in $path", (record) => {
+     refused(record.path, swapped(record.path, record.spans[0]!.current, record.spans[1]!.current));

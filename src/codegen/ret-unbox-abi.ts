@@ -60,13 +60,14 @@
 import type { ValType } from "../ir/types.js";
 import { tunedFlagEnabled } from "../perf-flags.js";
 import type { CodegenContext } from "./context/types.js";
+import { readEnv } from "../env.js";
 
 /**
  * Is the refined boolean return ABI enabled? Unset ⇒ **true** (Phase 4; it was
  * `optInFlagEnabled` for Phases 0–3 — the module header records why it moved).
  */
 export function retUnboxAbiEnabled(): boolean {
-  return tunedFlagEnabled(process.env.JS2WASM_RET_UNBOX_ABI);
+  return tunedFlagEnabled(readEnv("JS2WASM_RET_UNBOX_ABI"));
 }
 
 /**
@@ -121,7 +122,7 @@ export function retUnboxMergeSinkEnabled(): boolean {
  * that never ran. Poison alone (main flag off) is inert.
  */
 export function retUnboxAbiPoisoned(): boolean {
-  return retUnboxAbiEnabled() && process.env.JS2WASM_RET_UNBOX_ABI_POISON === "1";
+  return retUnboxAbiEnabled() && readEnv("JS2WASM_RET_UNBOX_ABI_POISON") === "1";
 }
 
 /** Is `type` the boolean-branded i32 this ABI carries? */
@@ -151,7 +152,7 @@ function describeResults(results: readonly ValType[]): string {
  * decision anywhere can depend on whether the census is enabled.
  */
 export function noteRetUnboxStats(ctx: CodegenContext): void {
-  if (process.env.JS2WASM_RET_UNBOX_STATS !== "1") return;
+  if (readEnv("JS2WASM_RET_UNBOX_STATS") !== "1") return;
   const booleans = ctx.booleanFunctionNames ?? new Set<string>();
   const numerics = ctx.numericFunctionNames ?? new Set<string>();
   const overlap = [...booleans].filter((n) => numerics.has(n));

@@ -2075,6 +2075,7 @@ export function compileTypeofExpression(
     // constructor's write, so the fold ignores every OTHER write reaching the
     // field. Killed on a PROVEN write-kind contradiction only.
     if (staticResult !== null && !typeofFoldContradictedByFieldVerdict(ctx, operand, staticResult)) {
+      tf.emitTypeofTdzGuard(ctx, fctx, operand); // (#6798) the fold must still throw in the TDZ
       // (#5312) An uninitialised declared field holds `undefined` until
       // something writes it, so the fold is only half the answer.
       const uninitialised = emitUninitialisedFieldTypeofString(ctx, fctx, operand, staticResult);
@@ -2445,6 +2446,7 @@ export function compileTypeofComparison(
     staticTypeof = null;
   }
   if (staticTypeof !== null) {
+    tf.emitTypeofTdzGuard(ctx, fctx, operand); // (#6798) the fold must still throw in the TDZ
     // (#5312) Same runtime null test as the plain `typeof` arm, reduced to the
     // boolean the comparison wants.
     const uninitialised = emitUninitialisedFieldTypeofComparison(ctx, fctx, operand, staticTypeof, stringLiteral, isEq);

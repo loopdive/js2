@@ -1,0 +1,43 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-source-contracts-main-20261001
+
+ ❯ .tmp/issue-3518-public-number-object-712.test.ts (9 tests | 4 failed) 894ms
+   ✓ unchanged712 legacy and public native Number parity > preserves the original source and observes the native712 oracle 20ms
+   ✓ unchanged712 legacy and public native Number parity > preserves explicit legacy execution, target=host, utf8=false 263ms
+   ✓ unchanged712 legacy and public native Number parity > preserves explicit legacy execution, target=host, utf8=true 130ms
+   ✓ unchanged712 legacy and public native Number parity > preserves explicit legacy execution, target=standalone, utf8=false 201ms
+   ✓ unchanged712 legacy and public native Number parity > preserves explicit legacy execution, target=standalone, utf8=true 132ms
+   × unchanged712 legacy and public native Number parity > executes through actual public acceptance/emission, decoded=false, utf8=false 58ms
+     → invariant: runtime feature js.number.from-value has no provider
+   × unchanged712 legacy and public native Number parity > executes through actual public acceptance/emission, decoded=false, utf8=true 30ms
+     → invariant: runtime feature js.number.from-value has no provider
+   × unchanged712 legacy and public native Number parity > executes through actual public acceptance/emission, decoded=true, utf8=false 31ms
+     → invariant: runtime feature js.number.from-value has no provider
+   × unchanged712 legacy and public native Number parity > executes through actual public acceptance/emission, decoded=true, utf8=true 30ms
+     → invariant: runtime feature js.number.from-value has no provider
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  .tmp/issue-3518-public-number-object-712.test.ts > unchanged712 legacy and public native Number parity > executes through actual public acceptance/emission, decoded=false, utf8=false
+ FAIL  .tmp/issue-3518-public-number-object-712.test.ts > unchanged712 legacy and public native Number parity > executes through actual public acceptance/emission, decoded=false, utf8=true
+ FAIL  .tmp/issue-3518-public-number-object-712.test.ts > unchanged712 legacy and public native Number parity > executes through actual public acceptance/emission, decoded=true, utf8=false
+ FAIL  .tmp/issue-3518-public-number-object-712.test.ts > unchanged712 legacy and public native Number parity > executes through actual public acceptance/emission, decoded=true, utf8=true
+Error: invariant: runtime feature js.number.from-value has no provider
+ ❯ requireProgram tests/helpers/typed-program-fixtures.ts:49:41
+     47| 
+     48| export function requireProgram(result: IrProgramPreparationResult): Pr…
+     49|   if (result.kind !== "prepared") throw new Error(`${result.kind}: ${r…
+       |                                         ^
+     50|   return result.program;
+     51| }
+ ❯ .tmp/issue-3518-public-number-object-712.test.ts:66:26
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 5 passed (9)
+   Start at  06:03:49
+   Duration  8.48s (transform 5.53s, setup 0ms, collect 7.42s, tests 894ms, environment 0ms, prepare 36ms)
+
+JSON report written to /private/tmp/js2-ir-source-contracts-main-20261001/.tmp/source-contracts-main/resume-core/public-number-current.json

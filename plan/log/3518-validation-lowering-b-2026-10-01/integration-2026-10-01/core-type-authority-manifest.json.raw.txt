@@ -1,0 +1,172 @@
+{
+  "artifacts": [
+    {
+      "rev": "3a119a88b28bb347f4faaaa2146bd991acf61228",
+      "path": "tests/issue-3518-program-data-contract-boundary.test.ts",
+      "exists": true,
+      "saved": "/private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/graph-history-authority/3a119a88b28bb347f4faaaa2146bd991acf61228/tests/issue-3518-program-data-contract-boundary.test.ts.raw.txt",
+      "bytes": 17007,
+      "sha256": "177f797d4dcb953c55ddb859a1d507c98e7d8cfc9e9500dc49da73659b9e0f3d",
+      "blob": "c5e8c965a91c7d4315dfe2862d3fce23091fe940",
+      "equalsCurrent": false
+    },
+    {
+      "rev": "3a119a88b28bb347f4faaaa2146bd991acf61228",
+      "path": "src/ir/core/nodes.ts",
+      "exists": true,
+      "saved": "/private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/graph-history-authority/3a119a88b28bb347f4faaaa2146bd991acf61228/src/ir/core/nodes.ts.raw.txt",
+      "bytes": 95841,
+      "sha256": "bcd2ca8cc5c4d7824a6e934e28992f469abd7ad50213436f737d101471f184b4",
+      "blob": "0f40eff59945d084a496190dd75320caef3f235a",
+      "equalsCurrent": false
+    },
+    {
+      "rev": "3a119a88b28bb347f4faaaa2146bd991acf61228",
+      "path": "src/ir/core/types.ts",
+      "exists": true,
+      "saved": "/private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/graph-history-authority/3a119a88b28bb347f4faaaa2146bd991acf61228/src/ir/core/types.ts.raw.txt",
+      "bytes": 31278,
+      "sha256": "49f0b751abc784cff47501d3309a1e2d20307ce5c3a460bab1a60ef3bb19dac5",
+      "blob": "ba531205b0429574c6e675dd456dd8487b22923f",
+      "equalsCurrent": false
+    },
+    {
+      "rev": "3a119a88b28bb347f4faaaa2146bd991acf61228",
+      "path": "src/ir/program/abi.ts",
+      "exists": true,
+      "saved": "/private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/graph-history-authority/3a119a88b28bb347f4faaaa2146bd991acf61228/src/ir/program/abi.ts.raw.txt",
+      "bytes": 32535,
+      "sha256": "29591c6feab869c6780144aabcc413afafa38e4adbc8c3f8d5b7bcdc7e9c833d",
+      "blob": "c9240ad8bc83c36774a7def20db27425252f459a",
+      "equalsCurrent": true
+    },
+    {
+      "rev": "3a119a88b28bb347f4faaaa2146bd991acf61228",
+      "path": "src/ir/runtime/index.ts",
+      "exists": true,
+      "saved": "/private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/graph-history-authority/3a119a88b28bb347f4faaaa2146bd991acf61228/src/ir/runtime/index.ts.raw.txt",
+      "bytes": 3406,
+      "sha256": "4720ad7c931251d577cc7311bf78279d94f34e12908cdc38c78b9e7dff5647a0",
+      "blob": "7df2aad598de95f0a6ca66eb11023a6a89b77c1a",
+      "equalsCurrent": true
+    },
+    {
+      "rev": "3a119a88b28bb347f4faaaa2146bd991acf61228",
+      "path": "src/runtime/contracts/async-provider-schema.ts",
+      "exists": true,
+      "saved": "/private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/graph-history-authority/3a119a88b28bb347f4faaaa2146bd991acf61228/src/runtime/contracts/async-provider-schema.ts.raw.txt",
+      "bytes": 3057,
+      "sha256": "5c40a91d9c21a96292a58cfe7d61d87e83ec0b6db916b2c9f714d60c5c93499a",
+      "blob": "28ac7d2773d3b556c935ae3bf4e431d24657a7fd",
+      "equalsCurrent": true
+    },
+    {
+      "rev": "3a119a88b28bb347f4faaaa2146bd991acf61228",
+      "path": "src/runtime/contracts/index.ts",
+      "exists": true,
+      "saved": "/private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/graph-history-authority/3a119a88b28bb347f4faaaa2146bd991acf61228/src/runtime/contracts/index.ts.raw.txt",
+      "bytes": 3022,
+      "sha256": "28d8a1e62765894817bc131ab1cfdd61f73f44eaa952024b1ba98d0e988a4f73",
+      "blob": "e45f39f0db369e34a9ab774d23492c2964d774a0",
+      "equalsCurrent": true
+    },
+    {
+      "rev": "3a119a88b28bb347f4faaaa2146bd991acf61228",
+      "path": "scripts/check-compiler-boundaries.mjs",
+      "exists": true,
+      "saved": "/private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/graph-history-authority/3a119a88b28bb347f4faaaa2146bd991acf61228/scripts/check-compiler-boundaries.mjs.raw.txt",
+      "bytes": 30727,
+      "sha256": "c8d9c13d0bf244af2400bcefda79a311987851e43afbcea02fbce5e9a65c431d",
+      "blob": "1e2a2daf167865bd9750134dd6e4c926d2e83d19",
+      "equalsCurrent": false
+    },
+    {
+      "rev": "3a119a88b28bb347f4faaaa2146bd991acf61228^",
+      "path": "tests/issue-3518-program-data-contract-boundary.test.ts",
+      "exists": false,
+      "exit": 128,
+      "stderr": "fatal: path 'tests/issue-3518-program-data-contract-boundary.test.ts' exists on disk, but not in '3a119a88b28bb347f4faaaa2146bd991acf61228^'\n"
+    },
+    {
+      "rev": "3a119a88b28bb347f4faaaa2146bd991acf61228^",
+      "path": "src/ir/core/nodes.ts",
+      "exists": true,
+      "saved": "/private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/graph-history-authority/3a119a88b28bb347f4faaaa2146bd991acf61228-parent/src/ir/core/nodes.ts.raw.txt",
+      "bytes": 95841,
+      "sha256": "bcd2ca8cc5c4d7824a6e934e28992f469abd7ad50213436f737d101471f184b4",
+      "blob": "0f40eff59945d084a496190dd75320caef3f235a",
+      "equalsCurrent": false
+    },
+    {
+      "rev": "3a119a88b28bb347f4faaaa2146bd991acf61228^",
+      "path": "src/ir/core/types.ts",
+      "exists": true,
+      "saved": "/private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/graph-history-authority/3a119a88b28bb347f4faaaa2146bd991acf61228-parent/src/ir/core/types.ts.raw.txt",
+      "bytes": 31278,
+      "sha256": "49f0b751abc784cff47501d3309a1e2d20307ce5c3a460bab1a60ef3bb19dac5",
+      "blob": "ba531205b0429574c6e675dd456dd8487b22923f",
+      "equalsCurrent": false
+    },
+    {
+      "rev": "3a119a88b28bb347f4faaaa2146bd991acf61228^",
+      "path": "src/ir/program/abi.ts",
+      "exists": true,
+      "saved": "/private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/graph-history-authority/3a119a88b28bb347f4faaaa2146bd991acf61228-parent/src/ir/program/abi.ts.raw.txt",
+      "bytes": 32535,
+      "sha256": "29591c6feab869c6780144aabcc413afafa38e4adbc8c3f8d5b7bcdc7e9c833d",
+      "blob": "c9240ad8bc83c36774a7def20db27425252f459a",
+      "equalsCurrent": true
+    },
+    {
+      "rev": "3a119a88b28bb347f4faaaa2146bd991acf61228^",
+      "path": "src/ir/runtime/index.ts",
+      "exists": false,
+      "exit": 128,
+      "stderr": "fatal: path 'src/ir/runtime/index.ts' exists on disk, but not in '3a119a88b28bb347f4faaaa2146bd991acf61228^'\n"
+    },
+    {
+      "rev": "3a119a88b28bb347f4faaaa2146bd991acf61228^",
+      "path": "src/runtime/contracts/async-provider-schema.ts",
+      "exists": false,
+      "exit": 128,
+      "stderr": "fatal: path 'src/runtime/contracts/async-provider-schema.ts' exists on disk, but not in '3a119a88b28bb347f4faaaa2146bd991acf61228^'\n"
+    },
+    {
+      "rev": "3a119a88b28bb347f4faaaa2146bd991acf61228^",
+      "path": "src/runtime/contracts/index.ts",
+      "exists": false,
+      "exit": 128,
+      "stderr": "fatal: path 'src/runtime/contracts/index.ts' exists on disk, but not in '3a119a88b28bb347f4faaaa2146bd991acf61228^'\n"
+    },
+    {
+      "rev": "3a119a88b28bb347f4faaaa2146bd991acf61228^",
+      "path": "scripts/check-compiler-boundaries.mjs",
+      "exists": true,
+      "saved": "/private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/graph-history-authority/3a119a88b28bb347f4faaaa2146bd991acf61228-parent/scripts/check-compiler-boundaries.mjs.raw.txt",
+      "bytes": 30727,
+      "sha256": "c8d9c13d0bf244af2400bcefda79a311987851e43afbcea02fbce5e9a65c431d",
+      "blob": "1e2a2daf167865bd9750134dd6e4c926d2e83d19",
+      "equalsCurrent": false
+    },
+    {
+      "rev": "c3afa4389469e55d434c0715698dc59c6caa9120",
+      "path": "src/ir/program/abi.ts",
+      "exists": true,
+      "saved": "/private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/graph-history-authority/c3afa4389469e55d434c0715698dc59c6caa9120/src/ir/program/abi.ts.raw.txt",
+      "bytes": 32535,
+      "sha256": "29591c6feab869c6780144aabcc413afafa38e4adbc8c3f8d5b7bcdc7e9c833d",
+      "blob": "c9240ad8bc83c36774a7def20db27425252f459a",
+      "equalsCurrent": true
+    },
+    {
+      "rev": "bd99f7f7e1a1c5da9894baf4e1e88b1553b9673d",
+      "path": "src/ir/program/abi.ts",
+      "exists": true,
+      "saved": "/private/tmp/js2-ir-validation-lowering-b-resume-20261001/.tmp/validation-lowering-b-resume/graph-history-authority/bd99f7f7e1a1c5da9894baf4e1e88b1553b9673d/src/ir/program/abi.ts.raw.txt",
+      "bytes": 30590,
+      "sha256": "9ca1d23d6eb480de0b94686fa4c88016e896b2c23c70b5bc0fd0cc74d20f97df",
+      "blob": "915b8095dba44879b3ecb0a31bb0dcda49327818",
+      "equalsCurrent": false
+    }
+  ]
+}

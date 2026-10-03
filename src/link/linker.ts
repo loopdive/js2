@@ -23,6 +23,7 @@ import {
   type RelocEntry,
 } from "./reader.js";
 import { resolveSymbols, type Resolution } from "./resolver.js";
+import { readEnv } from "../env.js";
 
 // ── Public types ──────────────────────────────────────────────────
 
@@ -348,7 +349,7 @@ function emitLinked(
     if (entryModuleName && obj.name !== entryModuleName) {
       // Debug-only (env-gated): pass through per-module statement-trace
       // globals so a harness can read where a non-entry module trapped.
-      if (process.env.JS2WASM_TRACE_LAST_STMT) {
+      if (readEnv("JS2WASM_TRACE_LAST_STMT")) {
         for (const exp of obj.exports) {
           if (exp.kind === 3 && exp.name.startsWith("__trace_last_stmt_")) {
             exportEntries.push({ name: `${exp.name}@${obj.name}`, kind: 3, index: exp.index + off.globalOffset });

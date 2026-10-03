@@ -16,9 +16,21 @@ Across 69 development sprints and **2,700+ merged pull requests**, js2wasm has g
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 39,229 / 48,232 (81.3 %)
+**test262 conformance**: 39,239 / 48,232 (81.4 %)
 
 <!-- AUTO:conformance-end -->
+
+<!-- AUTO:conformance-standalone-start -->
+
+**standalone (host-free) test262 conformance**: 41,411 / 48,232 (85.9 %)
+
+<!-- AUTO:conformance-standalone-end -->
+
+<!-- AUTO:conformance-scope-start -->
+
+Both figures are scored against the same **48,232** official tests (47,146 ECMAScript standard + 1,086 Annex B). The 503 TC39 proposal-stage tests are excluded.
+
+<!-- AUTO:conformance-scope-end -->
 
 - Automated conformance tracking with historical trend data and a public [conformance report](https://js2wasm.loopdive.com/benchmarks/report.html)
 - 200+ project-level equivalence tests validating JS↔Wasm output parity
@@ -41,10 +53,10 @@ Across 69 development sprints and **2,700+ merged pull requests**, js2wasm has g
 | Mode | Description |
 |------|-------------|
 | **JS host** | Uses host imports for RegExp, JSON, Promises — maximum compatibility |
-| **Standalone (WASI)** | Pure Wasm output, no JS runtime required — `--target wasi` |
-| **Native strings** | WasmGC i16 arrays instead of `wasm:js-string` — `--nativeStrings` |
+| **Standalone (WASI)** | Pure Wasm output, no JS runtime required — `--target standalone` (no WASI runtime) or `--target wasi` (WASI Preview 1) |
+| **Native strings** | WasmGC i16 arrays instead of `wasm:js-string` — implied by `--target standalone` / `--target wasi` (API option `nativeStrings`) |
 | **Component Model** | WIT interface generation for interop — `--wit` |
-| **Optimized** | Binaryen wasm-opt integration — `--optimize` |
+| **Optimized** | Binaryen wasm-opt integration — `--optimize` / `-O` |
 
 ### Tooling
 
@@ -61,9 +73,9 @@ current baselines are in the [conformance section above](#conformance)._
 
 ### Near-Term — Target: ≥80% JS-host conformance + close the standalone gap
 
-The original 60% JS-host milestone has been surpassed (currently ~75%). The
-near-term focus is pushing JS-host past 80% via the areas below, and closing
-the standalone (host-free) gap, which trails the JS-host path.
+The original 60% JS-host milestone has been surpassed; the current figures are
+in the [conformance section above](#conformance). The near-term focus is the
+areas below, and raising the standalone (host-free) path.
 
 | Area | Expected Impact | Description |
 |------|----------------|-------------|
@@ -72,14 +84,14 @@ the standalone (host-free) gap, which trails the JS-host path.
 | **Prototype chain** | ~2,500 test fixes | Correct prototype lookup, `Object.create`, `Object.getPrototypeOf`, inherited property access |
 | **Iterator protocol** | ~1,500 test fixes | Wasm-native iterators replacing current host-delegated implementation |
 | **Type coercion edge cases** | ~1,000 test fixes | Spec-compliant `ToPrimitive`, `ToString`, `ToNumber` for all input types |
-| **CI/CD conformance gating** | ✅ shipped | Sharded test262 on every PR with regression detection + merge-queue re-validation |
+| **CI/CD conformance gating** | ✅ shipped | Sharded test262 in the merge queue (not at PR time) with regression detection + merge-queue re-validation |
 
 ### Medium-Term — Target: 85% Conformance
 
 - **Full ES2024 compliance** for common application patterns
 - **Wasm-native RegExp** engine (removing the largest JS host dependency)
 - **Performance benchmarks** — systematic comparison against V8, QuickJS, and other Wasm compilers
-- **NPM package** — `npm install js2wasm` for easy integration into build pipelines
+- **NPM package** — ✅ shipped: `npm install @loopdive/js2` (binaries `js2` and `js2wasm`)
 - **Documentation and tutorials** — getting started guides, API reference, architecture docs
 - **Multi-module compilation** — compile interconnected TypeScript projects to linked Wasm modules
 
@@ -147,4 +159,4 @@ Compute-intensive workloads (fibonacci, loops, array operations) already match o
 
 ---
 
-*Last updated: July 2026*
+_Dated history is in `git log` for this file; the figures above are generated, so there is no hand-maintained "last updated" date to go stale._

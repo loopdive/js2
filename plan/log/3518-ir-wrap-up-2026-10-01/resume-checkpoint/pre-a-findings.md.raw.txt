@@ -1,0 +1,37 @@
+# Frozen read-only findings: program-data pre-A preservation inverses
+
+This is a handoff spec, not an implemented helper or a passing test result. Work was stopped at the user’s wrap-up request. No tracked files were changed; no compiler, test, heavy process, Git mutation or network operation ran. Read-only local Git used GIT_NO_LAZY_FETCH=1. The JSON companion contains complete live/original/dependency SHA256 and Git-blob pins, byte ranges, exact small hunks and reciprocal proof results. Byte ranges are half-open UTF-8 offsets. Declaration ordinals exclude import/export statements and start at zero.
+
+## Provenance and proof reached
+
+The original suite receipts come from f95d8a0bf318e857d981863b1018a9d776483a46 (the program-data extraction specification). Commit 3a119a88b28bb347f4faaaa2146bd991acf61228 performed the connected canonical extraction. The four inverses specified here were applied to actual live source strings only in memory; each produced the complete exact corresponding 3a119 file, and forward replay recovered the complete original current bytes. Full source pins and exact f95 source pins are in inverse-spec.json. This is stronger than a count match but is not a test-suite execution.
+
+## 1. identity.ts: current 60 to retained 62
+
+Only cb64af7b0315d59d08809e404c1216c846270654 changed this donor after 3a119. It relocated IrLiftedFunctionArtifactIdentity and IrLiftedSourceUnitProvenance to shared/contracts/ir-identity.ts; the missing rows are not identity factory bodies.
+
+Authenticate the entire current identity.ts plus the complete canonical ir-identity.ts. Restore the exact first import block (IrFunctionIdentity returns; the two moved interfaces leave that import), and remove only those two names from the exact type-export block. Read the two actual interface spans from the authenticated current canonical donor; their complete text is byte-identical and appears once in f95. Insert the first immediately before IrLiftedFunctionArtifactOwner; insert the second, including its documentation, immediately before IrDerivedUnitProvenance. Their historical retained ordinals are 0 and 3; f95 original ordinals are 1 and 4 because IrSourceKind was subsequently extracted.
+
+The complete three-step identity implementation chain remains real: identity.ts imports/reexports ./identity-values.js, which forwards to shared/contracts/identity-values.ts. Both value modules are byte-identical to f95; their pins are included. Do not copy or reverse any factory implementation or synthesize a nominal brand. The lifted-interface canonical donor contains later fields on IrFunctionIdentity; do not change that live type or use the historical text as a compiler replacement.
+
+## 2. prepared-component-dependencies.ts
+
+Commit efe352fee8afc3feb6a28c34d00fc658dc1fb205 adds exactly three spans after 3a119: four imports (280 bytes), the complete documented assertPreparedIrRuntimeSupportDependencies definition (4094 bytes), and a support-ref arm in recordImplicitTypeRequirement (239 bytes). The last arm is load-bearing: deleting only the new function leaves a nonhistorical existing body. Remove all three authenticated spans only in the receipt view and replay all three exactly.
+
+The original f95 file has 43 declarations. The original extraction moved PreparedComponentAbiEntry and PreparedComponentAbiLookup to program/abi-lookup.ts, leaving 41; recordImplicitTypeRequirement moves from ordinal 23 to 21. The later support function makes the live count 42. Retain the genuine ABI lookup types and original extraction logic. Pin formatter-support.ts, runtime-support.ts, program/errors.ts, core/types.ts and the contract dependencies, as recorded; do not introduce a substitute provider or weaken current support validation.
+
+## 3. input-contracts.ts and prepared-contracts.ts
+
+The same efe352 commit adds only the IrRuntimeSupport type import and readonly runtimeSupport?: IrRuntimeSupport member to each canonical file. Remove exactly those two spans in each historical view. Complete output matches 3a119 and reciprocal replay matches current bytes. The member-only declaration inverse also recovers the existing original TypedIrProgramInput and PreparedIrProgram declaration hashes. No comments or other members need normalization.
+
+Keep the actual compiler fixture on raw current types: omission is permitted statically, supplied support retains the genuine IrRuntimeSupport structure, the fields remain readonly, and production ownTypedIrProgramInput still rejects an own runtimeSupport: undefined property. Do not replace compiler-host files with these historical views or remove current semantic checks.
+
+## Composition and controls
+
+Root’s existing extracted ownership inverse stays unchanged. The Phase A helper belongs outside earlier reconstruction, so the order is live Phase A -> exact a8cd donor view -> these pre-A inverses/unchanged ownership inverses -> original receipt parsing. These four files themselves were not edited by the frozen Phase A production set. Normalize initial historical reads once; keep raw-current runtime/import/compiler assertions separate. Do not normalize arbitrary mutation overrides or silently accept already historical input.
+
+Each whole current source and genuine dependency must match its full pin before span use. Check unique anchors, full span SHA/length and original insertion order, then the whole reconstructed SHA/blob and reciprocal replay. Preserve every existing declaration/body/doc/population receipt and negative control. Add paired current/donor mutations: remove, duplicate, rename, alter a field or body, reorder, redirect an import, change a doc, or add an unrelated byte. Mutating the new support-ref branch must reject as independently as mutating the added function. Mutating either canonical lifted interface or its forwarding link must reject even when the other remains correct. Original 62/34 and 41/28 floors stay unchanged.
+
+## Remaining unknowns and limits
+
+No inverse helper has been implemented and no original suite, TypeScript checker or compiler fixture has been rerun. Static full-file reciprocal equality is complete for these four proposed inverses; integration into initial-reader plumbing and all adversarial tests remain unvalidated. The broader core/runtime historical evolution diagnosis is separate and not repaired here. The root-config TS5 child’s explicit 2048 MiB heap and ownership suite’s ENOSPC collection failure remain infrastructure observations, not proof of semantic failure or success. No production behavior, private issuer, public readiness or full-IR completion changes are authorized by this spec.

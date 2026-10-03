@@ -41,6 +41,12 @@ benchmarks/results/*.txt
 benchmarks/results/test262-current.jsonl
 benchmarks/results/test262-results.jsonl
 benchmarks/results/test262-run.log
+# #6796 — build output. scripts/generate-size-benchmarks.ts (run by
+# `build:pages`) copies node_modules/binaryen/index.js here and to
+# benchmarks/results/loadtime/binaryen.js; the latter is the committed copy
+# (benchmark-refresh.yml stages it, benchmark-lifecycle.mjs requires it) and
+# build-pages.js publishes it in preference to this one.
+website/public/benchmarks/results/loadtime/binaryen.js
 .pnpm-store/
 .claude/settings.local.json
 .claude/max-load

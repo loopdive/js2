@@ -43,6 +43,7 @@ import {
   preflightNativeResourceRecipe,
   requireNativeDeclaredReservation,
 } from "./native-resource-declarations.js";
+import { requireCompletedNativeRealmObjectLayouts } from "./native-realm-object-layouts.js";
 
 export interface NativeStringCreateDependencies {
   readonly layouts: NativePrimitiveWrapperLayoutReservations;
@@ -230,10 +231,37 @@ export function requireNativeStringCreateReservations(
   return pack;
 }
 function completed(tx: PhysicalModuleReservations, d: NativeStringCreateDependencies): void {
+  if (d.layoutDependencies.realmState) requireCompletedNativeRealmObjectLayouts(tx, d.layoutDependencies.realmState);
   requireCompletedNativeStringLiterals(tx, d.layoutDependencies.strings);
   requireCompletedNativeObjectStorage(tx, d.storage, d.storageDependencies);
   requireCompletedNativeValues(tx, d.values, d.valuePlan, d.valueDependencies);
   requireCompletedNativeStringOwnDescriptors(tx, d.ownDescriptors, d.ownDescriptorDependencies);
+}
+function definition(tx: PhysicalModuleReservations, owner: Owner) {
+  const d = owner.dependencies;
+  const p = prerequisites(tx, d);
+  const state = d.layoutDependencies.realmState;
+  return buildStringCreateDefinition({
+    objectTypeIdx: p.object.typeIndex,
+    stringObjectTypeIdx: p.string.typeIndex,
+    propMapTypeIdx: p.propMap.typeIndex,
+    anyStringTypeIdx: p.anyString.typeIndex,
+    insertIdx: d.storage.insert.handle,
+    boxNumberIdx: d.values.functions.boxNumber.handle,
+    initialCapacity: owner.plan.initialCapacity,
+    ...(state
+      ? {
+          realmState: {
+            stateTypeIdx: tx.physicalIndex(state.types.state),
+            realmGlobalIdx: tx.physicalIndex(state.anchors.realm),
+          },
+        }
+      : {}),
+    lengthKey:
+      p.lengthKey.kind === "global"
+        ? { kind: "global", index: tx.physicalIndex(p.lengthKey.global) }
+        : { kind: "function", index: p.lengthKey.function.handle },
+  });
 }
 export function fillNativeStringCreateResources(
   tx: PhysicalModuleReservations,
@@ -243,23 +271,7 @@ export function fillNativeStringCreateResources(
     d = owner.dependencies;
   if (tx.state !== "filling" || owner.filled) fail("invalid phase or duplicate fill");
   completed(tx, d);
-  const p = prerequisites(tx, d);
-  tx.fillFunction(
-    pack.create,
-    buildStringCreateDefinition({
-      objectTypeIdx: p.object.typeIndex,
-      stringObjectTypeIdx: p.string.typeIndex,
-      propMapTypeIdx: p.propMap.typeIndex,
-      anyStringTypeIdx: p.anyString.typeIndex,
-      insertIdx: d.storage.insert.handle,
-      boxNumberIdx: d.values.functions.boxNumber.handle,
-      initialCapacity: owner.plan.initialCapacity,
-      lengthKey:
-        p.lengthKey.kind === "global"
-          ? { kind: "global", index: tx.physicalIndex(p.lengthKey.global) }
-          : { kind: "function", index: p.lengthKey.function.handle },
-    }),
-  );
+  tx.fillFunction(pack.create, definition(tx, owner));
   owner.filled = true;
 }
 export function requireCompletedNativeStringCreate(
@@ -272,5 +284,10 @@ export function requireCompletedNativeStringCreate(
   if (!owner.filled) fail("missing canonical fill");
   completed(tx, owner.dependencies);
   tx.assertCompletedReservation(pack.create);
+  if (
+    owner.dependencies.layoutDependencies.realmState &&
+    preparedIrDataMismatch({ locals: pack.create.object.locals, body: pack.create.object.body }, definition(tx, owner))
+  )
+    fail("noncanonical stateful StringCreate body");
   return pack;
 }

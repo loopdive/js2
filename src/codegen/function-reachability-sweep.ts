@@ -65,6 +65,7 @@ import type { Instr, WasmFunction, WasmModule } from "../ir/types.js";
 import { STABLE_FUNC_BASE } from "../wasm/physical/function-handles.js";
 import type { CodegenContext } from "./context/types.js";
 import { profileCount } from "../compile-profile.js";
+import { readEnv } from "../env.js";
 
 /**
  * Helpers a finalize pass that runs AFTER the sweep may reference by name when
@@ -78,7 +79,7 @@ const LATE_PASS_HELPER_ROOTS: readonly string[] = ["__box_number", "__unbox_numb
 const stubbedByModule = new WeakMap<WasmModule, Set<WasmFunction>>();
 
 function envFlag(name: string): string | undefined {
-  return typeof process !== "undefined" ? process.env?.[name] : undefined;
+  return readEnv(name);
 }
 
 /**

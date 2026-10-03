@@ -95,6 +95,9 @@ function nodeLoc(node: ts.Node): { line: number; column: number } {
   return { line: 0, column: 0 };
 }
 
+/** Direct-lowering hooks for ToString of a string-concat operand (#6778). */
+const TO_STRING_COMPILER = { compileExpression, compileExprToF64, isStringExpr, nodeLoc };
+
 /**
  * Options for the linear-memory backend (#1856).
  */
@@ -2365,16 +2368,14 @@ function compileBinaryExpression(ctx: LinearContext, fctx: LinearFuncContext, ex
     }
   }
 
-  // #1976: string `+=` is concatenation, not numeric add. `s += t` for string
-  // `s` must call __str_concat (both operands are i32 pointers) and store the
-  // i32 result — the generic compound path below emits f64.add, which produces
-  // an invalid module (i32/f64 mismatch). Handle local and global string LHS.
+  // #1976/#6778: string `s += v` is concatenation, not numeric add: ToString(v),
+  // __str_concat, store the i32 result. Handle local and global string LHS.
   if (op === ts.SyntaxKind.PlusEqualsToken && ts.isIdentifier(expr.left) && isStringExpr(ctx, fctx, expr.left)) {
     const strConcatIdx = ctx.funcMap.get("__str_concat");
     const localIdx = fctx.localMap.get(expr.left.text);
     if (strConcatIdx !== undefined && localIdx !== undefined) {
       fctx.body.push({ op: "local.get", index: localIdx });
-      compileExpression(ctx, fctx, expr.right);
+      linearCoercion.emitOperandToString(ctx, fctx, expr.right, TO_STRING_COMPILER);
       fctx.body.push({ op: "call", funcIdx: strConcatIdx });
       fctx.body.push({ op: "local.tee", index: localIdx });
       return;
@@ -2382,7 +2383,7 @@ function compileBinaryExpression(ctx: LinearContext, fctx: LinearFuncContext, ex
     const gIdx = ctx.moduleGlobals.get(expr.left.text);
     if (strConcatIdx !== undefined && gIdx !== undefined) {
       fctx.body.push({ op: "global.get", index: gIdx });
-      compileExpression(ctx, fctx, expr.right);
+      linearCoercion.emitOperandToString(ctx, fctx, expr.right, TO_STRING_COMPILER);
       fctx.body.push({ op: "call", funcIdx: strConcatIdx });
       fctx.body.push({ op: "global.set", index: gIdx });
       fctx.body.push({ op: "global.get", index: gIdx });
@@ -2507,7 +2508,13 @@ function compileBinaryExpression(ctx: LinearContext, fctx: LinearFuncContext, ex
     return;
   }
 
-  // Check if both sides are string expressions — use string ops
+  // #6778: `+` concatenates when EITHER side is a string (§13.15.3 step 3) —
+  // ToString the other side; a mixed `+` must never reach numeric f64.add.
+  if (op === ts.SyntaxKind.PlusToken && (isStringExpr(ctx, fctx, expr.left) || isStringExpr(ctx, fctx, expr.right))) {
+    linearCoercion.emitStringConcat(ctx, fctx, expr.left, expr.right, TO_STRING_COMPILER);
+    return;
+  }
+  // Both sides strings — content comparisons
   if (isStringExpr(ctx, fctx, expr.left) && isStringExpr(ctx, fctx, expr.right)) {
     if (op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsToken) {
       compileExpression(ctx, fctx, expr.left);
@@ -2516,13 +2523,6 @@ function compileBinaryExpression(ctx: LinearContext, fctx: LinearFuncContext, ex
       fctx.body.push({ op: "call", funcIdx: strEqIdx });
       // __str_eq returns i32 (0 or 1), convert to f64
       fctx.body.push({ op: "f64.convert_i32_s" });
-      return;
-    }
-    if (op === ts.SyntaxKind.PlusToken) {
-      compileExpression(ctx, fctx, expr.left);
-      compileExpression(ctx, fctx, expr.right);
-      const strConcatIdx = ctx.funcMap.get("__str_concat")!;
-      fctx.body.push({ op: "call", funcIdx: strConcatIdx });
       return;
     }
     // #1976: string relationals (`<`/`<=`/`>`/`>=`) must compare by content, not

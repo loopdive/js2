@@ -92,11 +92,12 @@ import { extractExternGetCacheArm, type ExternGetCacheArm } from "./extern-get-c
 import { addFuncType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { localTypeOf } from "./member-get-inline-ic.js";
+import { readEnv } from "../env.js";
 
 type Mode = "off" | "inline" | "census";
 
 function mode(): Mode {
-  const raw = process.env.JS2WASM_EXTERN_GET_IC;
+  const raw = readEnv("JS2WASM_EXTERN_GET_IC");
   if (!tunedFlagEnabled(raw)) return "off";
   if (raw !== undefined && raw.trim().toLowerCase() === "census") return "census";
   return "inline";
@@ -274,7 +275,7 @@ function rewriteInstrs(
     out.push({
       op: "block",
       blockType: { kind: "val", type: { kind: "externref" } },
-      body: [...copyArm(target.arm, ls, keyGlobal, process.env.JS2WASM_EXTERN_GET_IC_POISON === "1", 0), ...miss],
+      body: [...copyArm(target.arm, ls, keyGlobal, readEnv("JS2WASM_EXTERN_GET_IC_POISON") === "1", 0), ...miss],
     });
     stats.patched++;
   }
@@ -316,7 +317,7 @@ function mintCensusShim(ctx: CodegenContext, getIdx: number): number {
 export function inlineExternGetCallSites(ctx: CodegenContext): void {
   const m = mode();
   if (m === "off") return; // explicitly OFF — byte-identical to the pre-#4157 base.
-  const debug = process.env.JS2WASM_EXTERN_GET_IC_DEBUG === "1";
+  const debug = readEnv("JS2WASM_EXTERN_GET_IC_DEBUG") === "1";
   const getIdx = ctx.funcMap.get("__extern_get");
   if (getIdx === undefined || getIdx < ctx.numImportFuncs) {
     if (debug) process.stderr.write(`[extern-get-ic] no defined __extern_get (host-import mode) — declined\n`);
@@ -347,7 +348,7 @@ export function inlineExternGetCallSites(ctx: CodegenContext): void {
       // unconditional line here would print on every module of that (common)
       // class, so it moves to the debug channel and stays loud only for an
       // operator who asked for the flag by name.
-      if (debug || tunedFlagExplicit(process.env.JS2WASM_EXTERN_GET_IC)) {
+      if (debug || tunedFlagExplicit(readEnv("JS2WASM_EXTERN_GET_IC"))) {
         process.stderr.write(`[extern-get-ic] REFUSED: __extern_get body is not the cache-arm shape (${got.reason})\n`);
       }
       return;
@@ -388,11 +389,11 @@ export function inlineExternGetCallSites(ctx: CodegenContext): void {
 
   // Printed only when the flag was asked for: the pass runs on every default
   // build now, and this line is a flag-experiment diagnostic, not a message.
-  if (debug || tunedFlagExplicit(process.env.JS2WASM_EXTERN_GET_IC)) {
+  if (debug || tunedFlagExplicit(readEnv("JS2WASM_EXTERN_GET_IC"))) {
     process.stderr.write(
       `[extern-get-ic] mode=${m} static-key-sites=${stats.staticKeySites} other-key-sites=${stats.otherKeySites} ` +
         `patched-sites=${stats.patched} functions=${fnsTouched} declined-producer-shape=${stats.declinedProducer}` +
-        `${process.env.JS2WASM_EXTERN_GET_IC_POISON === "1" ? " POISON=ON" : ""}\n`,
+        `${readEnv("JS2WASM_EXTERN_GET_IC_POISON") === "1" ? " POISON=ON" : ""}\n`,
     );
   }
   if (debug && arm) {

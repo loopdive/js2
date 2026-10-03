@@ -1,0 +1,589 @@
+{
+  "state": "documentation-only; implementation draft unvalidated",
+  "baselineCommit": "a8cd258d553278d8e5f908878f56a81377ba8e40",
+  "handoffBase": "ff564bccab11c53ae1aeaf1d510385e16b54a832",
+  "baselineCommand": "NODE_OPTIONS=--max-old-space-size=4096 VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 VITEST_MAX_FORKS=1 node node_modules/vitest/dist/cli.js run tests/issue-3518-program-data-contract-seam.test.ts tests/issue-3518-core-vocabulary-seam.test.ts tests/issue-3518-program-ownership-runtime-seam.test.ts tests/issue-3518-runtime-data-contract-seam.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=default --reporter=json --outputFile=.tmp/source-contracts/baseline-historical.json",
+  "baselineExitCode": 1,
+  "baselineCounts": {
+    "numTotalTests": 142,
+    "numPassedTests": 107,
+    "numFailedTests": 35,
+    "numPendingTests": 0,
+    "numTodoTests": 0,
+    "success": false
+  },
+  "baselineFileRows": [
+    {
+      "file": "issue-3518-core-vocabulary-seam.test.ts",
+      "status": "failed",
+      "passed": 13,
+      "failed": 7,
+      "collectionMessage": ""
+    },
+    {
+      "file": "issue-3518-program-data-contract-seam.test.ts",
+      "status": "failed",
+      "passed": 25,
+      "failed": 22,
+      "collectionMessage": ""
+    },
+    {
+      "file": "issue-3518-program-ownership-runtime-seam.test.ts",
+      "status": "failed",
+      "passed": 0,
+      "failed": 0,
+      "collectionMessage": "ENOSPC: no space left on device, write"
+    },
+    {
+      "file": "issue-3518-runtime-data-contract-seam.test.ts",
+      "status": "failed",
+      "passed": 69,
+      "failed": 6,
+      "collectionMessage": ""
+    }
+  ],
+  "environmentFailures": [
+    "program ownership file collection: ENOSPC: no space left on device, write",
+    "program-data TypeScript fixture: SIGABRT after approximately 2 GiB heap exhaustion"
+  ],
+  "attribution": "No draft production edits were present in this integration worktree during baseline. These are baseline failures, not a candidate regression measurement. No failures were removed or gates changed.",
+  "claimBeforeStandDown": {
+    "id": "3518",
+    "slice": "source-validation-contracts-20261001",
+    "assignee": "ttraenkler/codex-source-validation-contracts-20261001",
+    "requested_by": "ttraenkler/codex-source-validation-contracts-20261001",
+    "status": "in-progress",
+    "branch": "codex/3518-source-validation-contracts-20261001",
+    "claimed_at": "2026-10-01T02:41:32Z",
+    "updated_at": "2026-10-01T02:41:32Z",
+    "write_id": "57014-l55l6ao7"
+  },
+  "existingImplementationPr": {
+    "autoMergeRequest": {
+      "authorEmail": null,
+      "commitBody": null,
+      "commitHeadline": null,
+      "mergeMethod": "MERGE",
+      "enabledAt": "2026-10-01T00:56:50Z",
+      "enabledBy": {
+        "id": "MDQ6VXNlcjM0NzcyMg==",
+        "is_bot": false,
+        "login": "ttraenkler",
+        "name": "Thomas Tränkler"
+      }
+    },
+    "baseRefName": "main",
+    "headRefOid": "21c7922d5f8601aab52542690815d5b951796a14",
+    "mergeCommit": null,
+    "number": 6371,
+    "state": "OPEN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:37Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806562901/job/110192096409",
+        "name": "retarget",
+        "startedAt": "2026-10-01T02:35:38Z",
+        "status": "COMPLETED",
+        "workflowName": "Retarget stacked PR children after parent merge"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:36:38Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566326/job/110192104716",
+        "name": "changes",
+        "startedAt": "2026-10-01T02:35:41Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:59Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806562845/job/110192095004",
+        "name": "cla-check",
+        "startedAt": "2026-10-01T02:35:41Z",
+        "status": "COMPLETED",
+        "workflowName": "CLA Check"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:37:19Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806669366/job/110192428562",
+        "name": "cla-check",
+        "startedAt": "2026-10-01T02:37:01Z",
+        "status": "COMPLETED",
+        "workflowName": "CLA Check"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:39:33Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806839613/job/110192963078",
+        "name": "cla-check",
+        "startedAt": "2026-10-01T02:39:16Z",
+        "status": "COMPLETED",
+        "workflowName": "CLA Check"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:36:30Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566313/job/110192104829",
+        "name": "cross-backend-parity",
+        "startedAt": "2026-10-01T02:35:41Z",
+        "status": "COMPLETED",
+        "workflowName": "Cross-backend parity (advisory)"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:41:55Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566345/job/110192104665",
+        "name": "correctness-support-sanitizers",
+        "startedAt": "2026-10-01T02:35:42Z",
+        "status": "COMPLETED",
+        "workflowName": "Landing four-lane backend evidence"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:36:41Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566285/job/110192104633",
+        "name": "porffor-source-native-canary",
+        "startedAt": "2026-10-01T02:35:42Z",
+        "status": "COMPLETED",
+        "workflowName": "Optional Porffor source canary"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:37:29Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806567433/job/110192107890",
+        "name": "semantic-sanitizers",
+        "startedAt": "2026-10-01T02:35:42Z",
+        "status": "COMPLETED",
+        "workflowName": "Optional direct Porffor / JS2 A/B"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:54Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566286/job/110192104684",
+        "name": "test262 PR stub — detect relevance",
+        "startedAt": "2026-10-01T02:35:41Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 PR stub"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:45Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566272/job/110192105192",
+        "name": "admit-measurement-baseline",
+        "startedAt": "2026-10-01T02:35:42Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 Sharded"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566326/job/110192104618",
+        "name": "quality",
+        "startedAt": "2026-10-01T02:35:42Z",
+        "status": "IN_PROGRESS",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:41:56Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566345/job/110193614749",
+        "name": "canonical-ubuntu-evidence",
+        "startedAt": "2026-10-01T02:41:56Z",
+        "status": "COMPLETED",
+        "workflowName": "Landing four-lane backend evidence"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:37:30Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806567433/job/110192554309",
+        "name": "canonical-performance",
+        "startedAt": "2026-10-01T02:37:30Z",
+        "status": "COMPLETED",
+        "workflowName": "Optional direct Porffor / JS2 A/B"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:54Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566286/job/110192162293",
+        "name": "cheap gate (main-ancestor + lint)",
+        "startedAt": "2026-10-01T02:35:54Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 PR stub"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:48Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806562901/job/110192095520",
+        "name": "release-pending",
+        "startedAt": "2026-10-01T02:35:39Z",
+        "status": "COMPLETED",
+        "workflowName": "Retarget stacked PR children after parent merge"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:36:53Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566272/job/110192105408",
+        "name": "cheap gate (main-ancestor + lint)",
+        "startedAt": "2026-10-01T02:35:42Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 Sharded"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566326/job/110192340875",
+        "name": "issue-tests",
+        "startedAt": "2026-10-01T02:36:40Z",
+        "status": "IN_PROGRESS",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:54Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566286/job/110192162252",
+        "name": "merge shard reports",
+        "startedAt": "2026-10-01T02:35:54Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 PR stub"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:46Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566272/job/110192105439",
+        "name": "detect test262-relevant changes",
+        "startedAt": "2026-10-01T02:35:43Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 Sharded"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:54Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566286/job/110192161604",
+        "name": "check for test262 regressions",
+        "startedAt": "2026-10-01T02:35:54Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 PR stub"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:39Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566272/job/110192106201",
+        "name": "probe merge_group baseline artifact",
+        "startedAt": "2026-10-01T02:35:40Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 Sharded"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:38:07Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566326/job/110192340856",
+        "name": "linear-tests",
+        "startedAt": "2026-10-01T02:36:40Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:39Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566272/job/110192106259",
+        "name": "build standalone harness providers (#6723)",
+        "startedAt": "2026-10-01T02:35:40Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 Sharded"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:38:01Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566326/job/110192340948",
+        "name": "equivalence-shard (1)",
+        "startedAt": "2026-10-01T02:36:41Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:59Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566286/job/110192161171",
+        "name": "test262 PR stub — verdict published",
+        "startedAt": "2026-10-01T02:35:55Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 PR stub"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:37:55Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566326/job/110192340927",
+        "name": "equivalence-shard (2)",
+        "startedAt": "2026-10-01T02:36:40Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:38:14Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566326/job/110192340929",
+        "name": "equivalence-shard (3)",
+        "startedAt": "2026-10-01T02:36:40Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:38:10Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566326/job/110192340926",
+        "name": "equivalence-shard (4)",
+        "startedAt": "2026-10-01T02:36:42Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:38:07Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566326/job/110192340938",
+        "name": "equivalence-shard (5)",
+        "startedAt": "2026-10-01T02:36:41Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:38:07Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566326/job/110192340922",
+        "name": "equivalence-shard (6)",
+        "startedAt": "2026-10-01T02:36:40Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:37:53Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566326/job/110192340911",
+        "name": "equivalence-shard (7)",
+        "startedAt": "2026-10-01T02:36:46Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:37:56Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566326/job/110192340924",
+        "name": "equivalence-shard (8)",
+        "startedAt": "2026-10-01T02:36:40Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:39Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566272/job/110192106206",
+        "name": "promote root baseline + cache per-SHA for queue merge (#3467/#3468)",
+        "startedAt": "2026-10-01T02:35:40Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 Sharded"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:46Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566272/job/110192133326",
+        "name": "build standalone runtime-eval provider (${{ (inputs.eval_engine || 'quickjs') }})",
+        "startedAt": "2026-10-01T02:35:46Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 Sharded"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:38:20Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566326/job/110192728304",
+        "name": "equivalence-gate",
+        "startedAt": "2026-10-01T02:38:16Z",
+        "status": "COMPLETED",
+        "workflowName": "CI"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:46Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566272/job/110192132703",
+        "name": "build compiled Temporal provider (#5353)",
+        "startedAt": "2026-10-01T02:35:46Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 Sharded"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:46Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566272/job/110192133144",
+        "name": "test262 native-first shard ${{ matrix.chunk }}",
+        "startedAt": "2026-10-01T02:35:46Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 Sharded"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:46Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566272/job/110192133421",
+        "name": "test262 honest-audit shard ${{ matrix.chunk }}",
+        "startedAt": "2026-10-01T02:35:46Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 Sharded"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:46Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566272/job/110192133519",
+        "name": "test262 standalone-linked shard ${{ matrix.chunk }}",
+        "startedAt": "2026-10-01T02:35:47Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 Sharded"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:46Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566272/job/110192133275",
+        "name": "test262 ${{ matrix.target.name }} shard ${{ matrix.chunk }}",
+        "startedAt": "2026-10-01T02:35:46Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 Sharded"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:46Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566272/job/110192133434",
+        "name": "test262 ${{ matrix.target_name }} shard ${{ matrix.chunk_label }}/${{ matrix.chunk_total }}",
+        "startedAt": "2026-10-01T02:35:46Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 Sharded"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:46Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566272/job/110192133374",
+        "name": "merge native-first evidence",
+        "startedAt": "2026-10-01T02:35:46Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 Sharded"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:46Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566272/job/110192133778",
+        "name": "merge honest-audit evidence",
+        "startedAt": "2026-10-01T02:35:47Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 Sharded"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:46Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566272/job/110192134176",
+        "name": "merge standalone-linked evidence",
+        "startedAt": "2026-10-01T02:35:47Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 Sharded"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:51Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566272/job/110192132589",
+        "name": "merge shard reports",
+        "startedAt": "2026-10-01T02:35:48Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 Sharded"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:51Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566272/job/110192132591",
+        "name": "check for test262 regressions",
+        "startedAt": "2026-10-01T02:35:48Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 Sharded"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-01T02:35:51Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/loopdive/js2/actions/runs/36806566272/job/110192153456",
+        "name": "promote merged report to main baseline",
+        "startedAt": "2026-10-01T02:35:52Z",
+        "status": "COMPLETED",
+        "workflowName": "Test262 Sharded"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "cla-check",
+        "startedAt": "2026-10-01T02:39:30Z",
+        "state": "SUCCESS",
+        "targetUrl": ""
+      }
+    ],
+    "url": "https://github.com/loopdive/js2/pull/6371"
+  },
+  "artifacts": {
+    "baseline-historical.raw.txt": {
+      "sha256": "46b72bc99098ebfcdffe8c5eb691bc61a52c08c6025d0df51221015368677e67",
+      "bytes": 114623
+    },
+    "baseline-historical.log.txt": {
+      "sha256": "9be2c6ae677eb662b8d74aeeb89e628da8a21126c067bb4376f921d69379a564",
+      "bytes": 62674
+    },
+    "validation-lowering-extraction-spec.md": {
+      "sha256": "09fccf780e5a242bc01788f2f5c8cd78ba2d158a5e211720e0dbce064f166add",
+      "bytes": 54726
+    },
+    "phase-a-frozen-manifest.raw.txt": {
+      "sha256": "2f840fd8215eab1533be111dafe6a913fcce806ba6d60789226f7013d34df7d4",
+      "bytes": 8452
+    }
+  }
+}

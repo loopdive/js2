@@ -180,6 +180,7 @@ import type {
   LinearRefCellLowering,
   LinearVecLowering,
 } from "./handles.js";
+import { readEnv } from "../../env.js";
 
 /** One function routed to the direct path, and its stable bucketed reason. */
 export interface LinearIrRejection {
@@ -409,7 +410,7 @@ export interface LinearIrHelper {
 
 /** L4 gate: default-on, with an explicit `=0` direct-backend escape hatch. */
 export function linearIrEnabled(): boolean {
-  return typeof process === "undefined" || process.env?.JS2WASM_LINEAR_IR !== "0";
+  return readEnv("JS2WASM_LINEAR_IR") !== "0";
 }
 
 /**
@@ -1281,8 +1282,8 @@ export function compileLinearIrFunctions(
         );
         // Build through the SAME shared from-ast as WasmGC. The narrowed
         // linear resolver exposes the landed L2 vec/aggregate and L3 string
-        // shapes; every other representation-dependent family still throws
-        // and demotes.
+        // shapes; every other representation-dependent family still throws a
+        // typed IrUnsupportedError and demotes.
         const { main, lifted, countedStringAppendPlans } = lowerFunctionAstToIr(decl, {
           checker: evidenceChecker,
           oracle: prepared.oracle,
@@ -1343,18 +1344,17 @@ export function compileLinearIrFunctions(
         progressed = true;
       } catch (e) {
         rethrowLinearOwnerInvariant(e);
-        // Fail-safe demote: the linear DIRECT path compiles this function
-        // exactly as it does today (the overlay only ever ADDS capability).
+        // (#6793) Only a typed Unsupported demotes to the linear DIRECT path.
+        // An IrInvariantError or untyped throw (a bare TypeError) is a compiler
+        // bug: classified as the WasmGC lane does, it fails the compile.
+        const outcome = classifyIrFailure(e, "build");
+        if (outcome.kind === "invariant") {
+          const detail = `linear-ir: IR build of ${name} hit invariant ${outcome.code}: ${outcome.detail}`;
+          throw new IrInvariantError(outcome.code, outcome.stage, detail, e);
+        }
         // A "call to unknown function" may resolve in a later round once
         // the callee's signature lands in `signaturesByUnitId` — keep it pending.
-        const outcome =
-          e instanceof IrUnsupportedError || e instanceof IrInvariantError ? classifyIrFailure(e, "build") : undefined;
-        lastFailure.set(ownerUnitId, {
-          func: name,
-          reason: "build",
-          detail: e instanceof Error ? e.message : String(e),
-          ...(outcome ? { outcome } : {}),
-        });
+        lastFailure.set(ownerUnitId, { func: name, reason: "build", detail: outcome.detail, outcome });
         next.push(owner);
       }
     }
@@ -1645,7 +1645,7 @@ export function compileLinearIrFunctions(
   }
   preparedCountedStringAppendReceipts = preparedCountedStringAppendReceiptCandidates;
 
-  if (typeof process !== "undefined" && process.env?.JS2WASM_LINEAR_IR_DEBUG === "1") {
+  if (readEnv("JS2WASM_LINEAR_IR_DEBUG") === "1") {
     console.error("[linear-ir] compiled:", JSON.stringify(compiled));
     console.error("[linear-ir] rejected:", JSON.stringify(result.rejected, null, 1));
   }
@@ -1759,7 +1759,7 @@ function authenticatePreparedLinearStringRepeatProvider(ctx: LinearContext, prep
     if (!prepared.reservationReceipt) {
       throw new Error("linear-ir: counted string.repeat has no exact early reservation receipt");
     }
-    if (typeof process !== "undefined" && process.env?.JS2WASM_TEST_TAMPER_LINEAR_COUNTED_REPEAT_RESERVATION === "1") {
+    if (readEnv("JS2WASM_TEST_TAMPER_LINEAR_COUNTED_REPEAT_RESERVATION") === "1") {
       const provider = prepared.reservationReceipt.reservation.provider;
       const originalName = provider.name;
       provider.name = `${originalName}$tampered`;

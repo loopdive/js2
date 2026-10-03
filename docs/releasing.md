@@ -35,6 +35,16 @@ tags only `sprint/N` (+ `sprint-N/begin`); see `CLAUDE.md` and
 
 ## How to cut a release
 
+0. **Write the CHANGELOG entry first and commit it.** `CHANGELOG.md` ships in the
+   npm package, and it once sat at 0.52 while the package read 0.71 (#6795).
+   `scripts/release.mjs` therefore refuses to run unless `CHANGELOG.md` has a
+   level-2 heading for the target version — `## vX.Y.Z - YYYY-MM-DD` — and, since
+   the release commit must contain only the version bump, that entry has to be
+   committed before you run it. The entries for v0.56.0–v0.71.0 were generated
+   from `git tag` and each range's merged-PR titles; hand-write or trim the next
+   one the same way, and put its in-flight notes under `## Unreleased` until
+   then.
+
 1. **Bump both packages, commit, and tag — in one step, on a clean tree:**
 
    ```bash
@@ -55,7 +65,8 @@ tags only `sprint/N` (+ `sprint-N/begin`); see `CLAUDE.md` and
    commit + tag.
 
    The script refuses to run on a dirty tree (so the release commit contains only
-   the version bump) and refuses if the tag already exists. It does **not**
+   the version bump), refuses if the tag already exists, and refuses if
+   `CHANGELOG.md` has no entry for the version (step 0). It does **not**
    push — see the warning below.
 
 2. **Review the commit and tag:**

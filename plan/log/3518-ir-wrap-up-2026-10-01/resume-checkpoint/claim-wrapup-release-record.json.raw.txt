@@ -1,0 +1,12 @@
+{
+  "id": "3518",
+  "slice": "source-validation-contracts-20261001",
+  "assignee": "ttraenkler/codex-source-validation-contracts-20261001",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
+  "branch": "codex/3518-source-contracts-integration-20261001",
+  "claimed_at": "2026-10-01T02:55:39Z",
+  "updated_at": "2026-10-01T03:13:54Z",
+  "write_id": "68420-4cmsrof8",
+  "released_at": "2026-10-01T03:13:54Z"
+}

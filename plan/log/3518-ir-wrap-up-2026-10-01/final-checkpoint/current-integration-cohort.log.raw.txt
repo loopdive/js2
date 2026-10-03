@@ -1,0 +1,97 @@
+
+ RUN  v3.2.4 /private/tmp/js2-ir-source-contracts-main-20261001
+
+ ❯ tests/issue-3518-core-vocabulary-seam.test.ts (20 tests | 3 failed) 742ms
+   × #3518 canonical core vocabulary seam > moves exactly 12 declarations from 'src/ir/intrinsics.ts' and preserves everything retained 9ms
+     → expected '3b7c75894d4e7e2273d358670f52bcb77630a…' to be '12c95d79325da6795c51cba7511d4e80b33c6…' // Object.is equality
+   × #3518 canonical core vocabulary seam > moves exactly 3 declarations from 'src/ir/async-runtime-providers.ts' and preserves everything retained 2ms
+     → expected [ …(5) ] to have a length of 3 but got 5
+   × #3518 canonical core vocabulary seam > moves exactly 2 declarations from 'src/ir/string-runtime.ts' and preserves everything retained 49ms
+     → expected [ [ …(2) ], …(27) ] to have a length of 31 but got 28
+   ✓ #3518 canonical core vocabulary seam > moves exactly 4 declarations from 'src/ir/counted-string-append-provenan…' and preserves everything retained 54ms
+   ✓ #3518 canonical core vocabulary seam > re-exports the single canonical PURE_MATH_INTRINSIC_IDS runtime value 0ms
+   ✓ #3518 canonical core vocabulary seam > re-exports the single canonical NUMERIC_COERCION_INTRINSIC_IDS runtime value 0ms
+   ✓ #3518 canonical core vocabulary seam > re-exports the single canonical NUMBER_BOUNDARY_INTRINSIC_IDS runtime value 0ms
+   ✓ #3518 canonical core vocabulary seam > re-exports the single canonical BOOLEAN_BOUNDARY_INTRINSIC_IDS runtime value 0ms
+   ✓ #3518 canonical core vocabulary seam > re-exports the single canonical EXTERN_BOUNDARY_INTRINSIC_IDS runtime value 0ms
+   ✓ #3518 canonical core vocabulary seam > re-exports the single canonical INTRINSIC_IDS runtime value 0ms
+   ✓ #3518 canonical core vocabulary seam > re-exports the single canonical INTRINSIC_SIGNATURE_VERSION runtime value 0ms
+   ✓ #3518 canonical core vocabulary seam > preserves closed intrinsic tuple order, existing guard and definition consumers 1ms
+   ✓ #3518 canonical core vocabulary seam > retains the verbatim Math certification quote and canonical math.pow tuple evidence 0ms
+   ✓ #3518 canonical core vocabulary seam > keeps ASYNC_RUNTIME_FEATURES frozen, shared and consumed by the existing feature guard 0ms
+   ✓ #3518 canonical core vocabulary seam > keeps ASYNC_OPTIONAL_RUNTIME_FEATURES frozen, shared and consumed by the existing feature guard 0ms
+   ✓ #3518 canonical core vocabulary seam > does not confuse semantic async features with provider IDs or capability IDs 0ms
+   ✓ #3518 canonical core vocabulary seam > has no upward module edges: three import-free leaves and only canonical F0 identity/source-origin 1ms
+   ✓ #3518 canonical core vocabulary seam > loads all four canonical leaves with old facades and providers barred in a fresh process  326ms
+   ✓ #3518 canonical core vocabulary seam > round-trips canonical source/owner/span fields through the unmoved provenance authority 1ms
+   ✓ #3518 canonical core vocabulary seam > preserves one nominal brand, exact type joins, readonly fields and closed literal unions 297ms
+ ✓ tests/issue-3518-program-ownership-runtime-seam.test.ts (22 tests) 181ms
+ ✓ tests/issue-3954-phase3-nonjs-domain.test.ts (26 tests) 8ms
+ ✓ tests/issue-3518-source-validation-contracts.test.ts (53 tests) 5ms
+ ✓ tests/ir/fnctor-abi.test.ts (7 tests) 2ms
+ ✓ tests/issue-4605-declared-type-table.test.ts (19 tests) 1ms
+ ✓ tests/issue-3954-tag-domain.test.ts (16 tests) 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-core-vocabulary-seam.test.ts > #3518 canonical core vocabulary seam > moves exactly 12 declarations from 'src/ir/intrinsics.ts' and preserves everything retained
+AssertionError: expected '3b7c75894d4e7e2273d358670f52bcb77630a…' to be '12c95d79325da6795c51cba7511d4e80b33c6…' // Object.is equality
+
+Expected: "12c95d79325da6795c51cba7511d4e80b33c6138365b7ee104f9e31d82dab8b4"
+Received: "3b7c75894d4e7e2273d358670f52bcb77630af3108b8d921c0a037bf30214457"
+
+ ❯ tests/issue-3518-core-vocabulary-seam.test.ts:140:31
+    138|     expect(canonical).toHaveLength(move.moved);
+    139|     expect(new Set(canonical.map(([name]) => name)).size).toBe(move.mo…
+    140|     expect(digest(canonical)).toBe(move.movedHash);
+       |                               ^
+    141|     expect(retained).toHaveLength(move.retained);
+    142|     expect(digest(retained)).toBe(move.retainedHash);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/issue-3518-core-vocabulary-seam.test.ts > #3518 canonical core vocabulary seam > moves exactly 3 declarations from 'src/ir/async-runtime-providers.ts' and preserves everything retained
+AssertionError: expected [ …(5) ] to have a length of 3 but got 5
+
+- Expected
++ Received
+
+- 3
++ 5
+
+ ❯ tests/issue-3518-core-vocabulary-seam.test.ts:138:23
+    136|     const canonical = declarations(parse(move.canonical));
+    137|     const retained = declarations(parse(move.old));
+    138|     expect(canonical).toHaveLength(move.moved);
+       |                       ^
+    139|     expect(new Set(canonical.map(([name]) => name)).size).toBe(move.mo…
+    140|     expect(digest(canonical)).toBe(move.movedHash);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/issue-3518-core-vocabulary-seam.test.ts > #3518 canonical core vocabulary seam > moves exactly 2 declarations from 'src/ir/string-runtime.ts' and preserves everything retained
+AssertionError: expected [ [ …(2) ], …(27) ] to have a length of 31 but got 28
+
+- Expected
++ Received
+
+- 31
++ 28
+
+ ❯ tests/issue-3518-core-vocabulary-seam.test.ts:141:22
+    139|     expect(new Set(canonical.map(([name]) => name)).size).toBe(move.mo…
+    140|     expect(digest(canonical)).toBe(move.movedHash);
+    141|     expect(retained).toHaveLength(move.retained);
+       |                      ^
+    142|     expect(digest(retained)).toBe(move.retainedHash);
+    143|     expect(retained.filter(([name]) => canonical.some(([movedName]) =>…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed | 6 passed (7)
+      Tests  3 failed | 160 passed (163)
+   Start at  05:24:11
+   Duration  8.00s (transform 4.79s, setup 0ms, collect 6.81s, tests 940ms, environment 0ms, prepare 30ms)
+
+JSON report written to /private/tmp/js2-ir-source-contracts-main-20261001/.tmp/source-contracts-main/current-integration-cohort.json

@@ -55,6 +55,7 @@
 import ts from "typescript";
 
 import { optInFlagEnabled } from "../perf-flags.js";
+import { readEnv } from "../env.js";
 
 /**
  * (#4405) `JS2WASM_RECEIVER_SPEC` — receiver-type specialisation for NON-`this`
@@ -66,7 +67,7 @@ import { optInFlagEnabled } from "../perf-flags.js";
  * between compiles in one process.
  */
 export function receiverSpecEnabled(): boolean {
-  return optInFlagEnabled(process.env.JS2WASM_RECEIVER_SPEC);
+  return optInFlagEnabled(readEnv("JS2WASM_RECEIVER_SPEC"));
 }
 
 /** A per-binding or per-parameter verdict: the single class it always holds. */

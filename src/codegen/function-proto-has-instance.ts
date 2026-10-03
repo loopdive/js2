@@ -19,6 +19,10 @@ import { emitFnctorProtoGet, resolveUserFnctorName } from "./expressions/fnctor-
 import { emitThrowTypeError } from "./js-errors.js";
 import { ensureNativeDynamicInstanceOf } from "./native-dynamic-instanceof.js";
 import { ts } from "../ts-api.js";
+import type { TypeFact } from "../checker/oracle.js";
+import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
+import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { addStringConstantGlobal } from "./registry/imports.js";
 
 export const FUNCTION_PROTO_HAS_INSTANCE_MEMBER = "@@hasInstance";
 
@@ -50,6 +54,7 @@ export function emitFunctionProtoHasInstanceBody(ctx: CodegenContext, fctx: Func
   const helperIdx = ensureNativeDynamicInstanceOf(ctx);
   if (helperIdx === undefined) return null;
 
+  fctx.body.push(...ownPrototypePropertyArm(ctx, fctx));
   // Native-method closure ABI: local 1 is `this`, local 2 is the first user
   // argument. `__instanceof_dynamic` takes (value, target), in that order.
   fctx.body.push({ op: "local.get", index: 2 });
@@ -113,4 +118,104 @@ export function emitFunctionProtoHasInstanceBody(ctx: CodegenContext, fctx: Func
   });
   fctx.body.push({ op: "local.get", index: codeLocal });
   return BOOLEAN_RESULT;
+}
+
+/**
+ * (#6775 S16) OrdinaryHasInstance steps 3-6 for a `this` whose `prototype` is
+ * an OWN property in its carrier bag — `Object.defineProperty(f, "prototype",
+ * {get})` on a function value that had none
+ * (`Symbol.hasInstance/this-val-poisoned-prototype.js`). The dynamic helper
+ * reads the compiled-in prototype edge and never sees the bag, so the getter
+ * did not run. Here: a non-Object `O` answers false; else `P = ? Get(C,
+ * "prototype")` (the getter runs and its throw propagates); a non-Object `P`
+ * is a TypeError; else `P.isPrototypeOf(O)`. Emits nothing when the carrier
+ * bag substrate is absent (no function value can carry such a property).
+ */
+function ownPrototypePropertyArm(ctx: CodegenContext, fctx: FunctionContext): Instr[] {
+  const bagHasIdx = ctx.funcMap.get("__carrier_bag_has");
+  const externGetIdx = ctx.funcMap.get("__extern_get");
+  const isProtoOfIdx = ctx.funcMap.get("__isPrototypeOf");
+  const typeofObjectIdx = ctx.funcMap.get("__typeof_object");
+  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+  if (
+    bagHasIdx === undefined ||
+    externGetIdx === undefined ||
+    isProtoOfIdx === undefined ||
+    typeofObjectIdx === undefined ||
+    typeofFunctionIdx === undefined
+  ) {
+    return [];
+  }
+  addStringConstantGlobal(ctx, "prototype");
+  const key = stringConstantExternrefInstrs(ctx, "prototype");
+  const protoLocal = allocLocal(fctx, `__has_instance_proto_${fctx.locals.length}`, { kind: "externref" });
+  const isObject = (local: number): Instr[] => [
+    { op: "local.get", index: local },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    { op: "local.get", index: local },
+    { op: "call", funcIdx: typeofObjectIdx },
+    { op: "local.get", index: local },
+    { op: "call", funcIdx: typeofFunctionIdx },
+    { op: "i32.or" },
+    { op: "i32.and" },
+  ];
+  const savedBody = pushBody(fctx);
+  emitThrowTypeError(ctx, fctx, "Function has non-object prototype in instanceof check");
+  const throwBody = fctx.body;
+  popBody(fctx, savedBody);
+  return [
+    { op: "local.get", index: 1 },
+    ...key,
+    { op: "call", funcIdx: bagHasIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...isObject(2),
+        { op: "i32.eqz" },
+        { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+        { op: "local.get", index: 1 },
+        ...stringConstantExternrefInstrs(ctx, "prototype"),
+        { op: "call", funcIdx: externGetIdx },
+        { op: "local.set", index: protoLocal },
+        ...isObject(protoLocal),
+        { op: "i32.eqz" },
+        { op: "if", blockType: { kind: "empty" }, then: throwBody },
+        { op: "local.get", index: protoLocal },
+        { op: "local.get", index: 2 },
+        { op: "call", funcIdx: isProtoOfIdx },
+        { op: "return" },
+      ],
+    },
+  ];
+}
+
+/**
+ * (#6775 S16) `f[Symbol.hasInstance](v)` where `f` is typed `F | undefined`
+ * (`Object.getOwnPropertyDescriptor(o, k).get`). The direct native lowering
+ * admits it like a plain function value; a nullish receiver still throws the
+ * member read's TypeError first.
+ */
+export function isNullableFunctionFact(fact: TypeFact): boolean {
+  return fact.kind === "union" && fact.parts.length === 1 && fact.parts[0]!.kind === "function";
+}
+
+/** Throw TypeError when the externref `local` is null or `undefined`. */
+export function emitNullishHasInstanceReceiverThrow(ctx: CodegenContext, fctx: FunctionContext, local: number): void {
+  const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (isUndefIdx === undefined) return;
+  const savedBody = pushBody(fctx);
+  emitThrowTypeError(ctx, fctx, "Cannot read properties of null or undefined (reading 'Symbol(Symbol.hasInstance)')");
+  const throwBody = fctx.body;
+  popBody(fctx, savedBody);
+  fctx.body.push(
+    { op: "local.get", index: local },
+    { op: "ref.is_null" },
+    { op: "local.get", index: local },
+    { op: "call", funcIdx: ctx.funcMap.get("__extern_is_undefined") ?? isUndefIdx },
+    { op: "i32.or" },
+    { op: "if", blockType: { kind: "empty" }, then: throwBody },
+  );
 }

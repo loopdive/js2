@@ -11,6 +11,7 @@ import type { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import type { IrDirectFunctionBodyReceiptAudit } from "./legacy-body-audit.js";
 import type { PreparedComponentPendingScope } from "./multi-source-ir-integration.js";
+import { readEnv } from "../env.js";
 
 type SourceFile = ts.SourceFile;
 
@@ -72,7 +73,7 @@ type PublicationMutation =
   | "stale-second-scope";
 
 function publicationMutation(): PublicationMutation | undefined {
-  const value = process.env.JS2WASM_TEST_MUTATE_MULTI_PREPARED_CALLABLE_PUBLICATION;
+  const value = readEnv("JS2WASM_TEST_MUTATE_MULTI_PREPARED_CALLABLE_PUBLICATION");
   if (value === undefined) return undefined;
   if (
     value === "body-plan" ||

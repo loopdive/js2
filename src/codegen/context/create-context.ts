@@ -26,6 +26,7 @@ import { ProgramAbiSourceCallableRegistry } from "../program-abi-source-callable
 import { ProgramAbiTypeRegistry } from "../program-abi-type-planning.js";
 import { ProgramAbiFnctorRegistry } from "../program-abi-fnctor-planning.js";
 import type { CodegenContext, CodegenOptions } from "./types.js";
+import { readEnv } from "../../env.js";
 
 function selectNativeRegExpEngine(targetProfile: CompileTargetProfile) {
   return targetProfile.target === "standalone" ||
@@ -107,7 +108,7 @@ export function createCodegenContext(
     // `checker` parameter (a raw-checker capture that lives entirely in the
     // checker layer), so this instantiation adds no oracle-ratchet debt.
     usageInference: new UsageInference(checker),
-    useUsageInfer: options?.useUsageInfer ?? process.env.JS2WASM_USAGE_INFER !== "0",
+    useUsageInfer: options?.useUsageInfer ?? readEnv("JS2WASM_USAGE_INFER") !== "0",
     funcMap: new Map(),
     moduleInitChunkHelperNames: new Set(),
     ambientBuiltinFuncMap: new Map(),
@@ -286,7 +287,7 @@ export function createCodegenContext(
     // lane stays default-OFF until S5 (hard-gated on #2141). Explicit option
     // wins; set JS2WASM_UNION_ANYREP=0 to force the legacy externref union
     // regime for A/B control (mirrors JS2WASM_UNDEF_SINGLETON, #2106).
-    unionAnyRep: options?.unionAnyRep ?? (nativeStrings && process.env.JS2WASM_UNION_ANYREP !== "0"),
+    unionAnyRep: options?.unionAnyRep ?? (nativeStrings && readEnv("JS2WASM_UNION_ANYREP") !== "0"),
     // #1719 S1 — ITER_OVERRIDDEN brand; set later by the
     // sourceOverridesArrayIterator pre-scan in index.ts. Default OFF.
     arrayIteratorMaybeOverridden: false,
@@ -438,12 +439,12 @@ export function createCodegenContext(
     // every-97th cross-tree control (see #2040). The emit site remains
     // standalone/wasi-gated (any-helpers.ts) — host lane byte-identical.
     // Set JS2WASM_TAG5_CLASSIFIER=0 to force the legacy always-false arm.
-    tag5ValueEqClassifier: options?.tag5ValueEqClassifier ?? process.env.JS2WASM_TAG5_CLASSIFIER !== "0",
+    tag5ValueEqClassifier: options?.tag5ValueEqClassifier ?? readEnv("JS2WASM_TAG5_CLASSIFIER") !== "0",
     // (#4173) Fast tag-pair dispatch in `__extern_strict_eq` + single-convert
     // `__is_truthy` ladder — default ON (A/B-validated on the standalone acorn
     // lane, see the issue's Results). Set JS2WASM_FAST_STRICT_EQ=0 to force
     // the legacy always-slow-path bodies for A/B control.
-    fastStrictEq: options?.fastStrictEq ?? process.env.JS2WASM_FAST_STRICT_EQ !== "0",
+    fastStrictEq: options?.fastStrictEq ?? readEnv("JS2WASM_FAST_STRICT_EQ") !== "0",
     // (#2106 S1 default-flip) standalone $undefined tag-1 singleton regime —
     // default ON. The complete lockstep producer+consumer sweep landed behind
     // this flag in PR #2633; this flip makes the singleton the default
@@ -452,7 +453,7 @@ export function createCodegenContext(
     // Host mode is unaffected (`undefinedSingletonActive` also gates on
     // standalone||nativeStrings). Set JS2WASM_UNDEF_SINGLETON=0 to force the
     // legacy (undefined ≡ null ≡ ref.null.extern) regime for A/B control.
-    undefinedSingleton: options?.undefinedSingleton ?? process.env.JS2WASM_UNDEF_SINGLETON !== "0",
+    undefinedSingleton: options?.undefinedSingleton ?? readEnv("JS2WASM_UNDEF_SINGLETON") !== "0",
     // (#2796) Diff-test-harness fidelity — export __module_init + skip the wasm
     // start section so the host runs top-level code after setExports.
     deferTopLevelInit: options?.deferTopLevelInit ?? false,
@@ -467,7 +468,7 @@ export function createCodegenContext(
     // declaration with an explicit `Promise<T>` annotation, and its body
     // passes the normal Phase-1 shape checks. Set JS2WASM_IR_ASYNC=0 to
     // disable (rollback lever).
-    supportsAsyncIr: process.env.JS2WASM_IR_ASYNC !== "0",
+    supportsAsyncIr: readEnv("JS2WASM_IR_ASYNC") !== "0",
     wasiFdWriteIdx: -1,
     wasiProcExitIdx: -1,
     wasiPathOpenIdx: -1,

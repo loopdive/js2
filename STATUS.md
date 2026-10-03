@@ -7,12 +7,61 @@ standard-library coverage, known bugs, and breaking changes between versions.
 It is not production-ready and should be treated as something to evaluate and
 experiment with, not to deploy.
 
-This file is the single place that points at the **live** conformance and
-benchmark numbers. The numbers themselves change on every push to `main`, so
-they are not frozen into prose anywhere in the repo — follow the links below
-for current figures.
+The Test262 figures in the next section are **generated** from
+`benchmarks/results/test262-current.json` and
+`benchmarks/results/test262-standalone-highwater.json` by
+`scripts/sync-conformance-numbers.mjs`, and CI fails when they drift
+(`pnpm run sync:conformance:check`). No other conformance figure is typed into
+prose anywhere in the repo.
 
-## Where the live numbers live
+## Test262 conformance
+
+<!-- AUTO:conformance-start -->
+
+**test262 conformance**: 39,239 / 48,232 (81.4 %)
+
+<!-- AUTO:conformance-end -->
+
+<!-- AUTO:conformance-standalone-start -->
+
+**standalone (host-free) test262 conformance**: 41,411 / 48,232 (85.9 %)
+
+<!-- AUTO:conformance-standalone-end -->
+
+<!-- AUTO:conformance-scope-start -->
+
+Both figures are scored against the same **48,232** official tests (47,146 ECMAScript standard + 1,086 Annex B). The 503 TC39 proposal-stage tests are excluded.
+
+<!-- AUTO:conformance-scope-end -->
+
+<!-- AUTO:conformance-areas-start -->
+
+Per-area pass rates, JS-host (`gc`) lane. The area rows cover all 48,735 test files the runner scores — 503 more than the headline total, because they include proposal-stage files that the headline figures exclude.
+
+| Area          |   Pass |  Total |   Rate |
+| ------------- | -----: | -----: | -----: |
+| `language/`   | 19,804 | 23,724 | 83.5 % |
+| `built-ins/`  | 18,801 | 23,809 | 79.0 % |
+| `annexB/`     |    855 |  1,086 | 78.7 % |
+| `harness/`    |    103 |    116 | 88.8 % |
+| **All areas** | 39,563 | 48,735 | 81.2 % |
+
+Selected built-ins:
+
+| Feature              | Test262 path                            |  Pass | Total |   Rate |
+| -------------------- | --------------------------------------- | ----: | ----: | -----: |
+| eval                 | `built-ins/eval` + `language/eval-code` |   316 |   357 | 88.5 % |
+| Proxy                | `built-ins/Proxy`                       |   241 |   311 | 77.5 % |
+| Reflect              | `built-ins/Reflect`                     |   129 |   153 | 84.3 % |
+| Temporal             | `built-ins/Temporal`                    | 3,397 | 4,603 | 73.8 % |
+| SharedArrayBuffer    | `built-ins/SharedArrayBuffer`           |    80 |   104 | 76.9 % |
+| Atomics              | `built-ins/Atomics`                     |   215 |   389 | 55.3 % |
+| WeakRef              | `built-ins/WeakRef`                     |    16 |    29 | 55.2 % |
+| FinalizationRegistry | `built-ins/FinalizationRegistry`        |    13 |    47 | 27.7 % |
+
+<!-- AUTO:conformance-areas-end -->
+
+## Where the other live numbers live
 
 | What | Live source |
 |------|-------------|
@@ -20,8 +69,8 @@ for current figures.
 | Module size & cold-start characteristics | The benchmark charts on the [landing page](https://js2wasm.loopdive.com/) (size and cold-start panels), regenerated from `benchmarks/results/` on every merge. |
 | Per-feature support detail | The feature tables and [Test262 report](https://js2wasm.loopdive.com/benchmarks/report.html), which break results down by language feature and edition. |
 
-If a number you see quoted elsewhere disagrees with these sources, the live
-sources win.
+If a number you see quoted elsewhere disagrees with the generated section above
+or these sources, they win.
 
 ## What Test262 does and does not measure
 
@@ -46,8 +95,8 @@ drop-in-compatibility guarantee.
 
 ## What works today (high-level shape)
 
-This is the qualitative shape only; the per-feature detail and current pass
-rates live in the sources linked above.
+This is the qualitative shape only; the per-area pass rates are the generated
+table above, and the per-feature detail is in the sources linked above.
 
 **Broadly works:**
 
@@ -63,17 +112,21 @@ rates live in the sources linked above.
 
 - standard-library built-ins — many implemented, but not the full surface
 - `Map`, `Set`, `RegExp`, `JSON` — present but not fully spec-complete
-- standalone (no-JS-host) mode — actively in progress; conformance there is
-  lower than the JS-host path and it is not yet the primary target
+- standalone (no-JS-host) mode — scored separately (see the generated figures
+  above)
 - getters/setters and other highly dynamic patterns — limited
 
-**Not supported today (intentionally out of scope or not yet implemented):**
+**Gaps (implemented to a degree, not spec-complete — measured per area in the
+generated table above):**
 
-- `eval`, `with`, and dynamic `Function` construction (a small interpreter
-  fallback for these is an open research direction, not a shipped feature)
-- `Proxy` / `Reflect`-driven metaprogramming
-- `SharedArrayBuffer` / threads, `WeakRef` / `FinalizationRegistry`, `Temporal`
-- dropping in an arbitrary npm package unchanged
+- runtime `eval` and dynamic `Function` construction — constant strings are
+  compiled away; runtime strings go through a `dynamicCode` policy (an isolated
+  evaluator in a JS host; an interpreter-based runtime-eval provider
+  standalone). See [docs/js-host-eval-isolation.md](./docs/js-host-eval-isolation.md)
+  and [docs/architecture/runtime-eval-interpreter.md](./docs/architecture/runtime-eval-interpreter.md)
+- `Proxy` / `Reflect`, `Temporal`, `SharedArrayBuffer` / `Atomics`, `WeakRef` /
+  `FinalizationRegistry` — present, with the gaps shown in that table
+- dropping in an arbitrary npm package unchanged — not guaranteed
 
 ## Output characteristics
 
@@ -89,6 +142,6 @@ above.
 
 ---
 
-_This document is intentionally qualitative. For any specific number, follow the
-links to the live sources — they are authoritative and current; this page is
-not._
+_Apart from the generated Test262 section, this document is intentionally
+qualitative. For any other number, follow the links to the live sources — they
+are authoritative and current; this page is not._

@@ -38,6 +38,14 @@ type Request =
   | { id: number; op: "construct"; handle: number; args: WireValue[] }
   | { id: number; op: "has"; handle: number; key: WireValue }
   | { id: number; op: "delete"; handle: number; key: WireValue };
+/**
+ * (#6790) Host → Worker, fire-and-forget: the host no longer reaches any proxy
+ * for these handles. Deliberately NOT a {@link Request}: it carries no id and
+ * gets no reply, because the host posts it from a finalizer with no request
+ * loop waiting — a reply would land in the NEXT request's loop as a
+ * desynchronized packet.
+ */
+type ReleaseMessage = { op: "release"; handles: number[] };
 type Response =
   | { channel: "worker"; id: number; ok: true; value: WireValue }
   | { channel: "worker"; id: number; ok: false; error: SerializedError };
@@ -191,8 +199,30 @@ export async function connectNodeEvalWorker(
 
   let nextId = 1;
   let closedError: Error | undefined;
-  const proxyByHandle = new Map<number, object>();
+  // (#6790) WEAK on the host side, and released on the Worker side once the
+  // host drops a proxy. Both maps used to be strong and append-only, so every
+  // object or function a compiled program ever `eval`ed stayed alive in BOTH
+  // threads until `terminate()` (10,000 `eval("({})")` → 10,000 live objects
+  // in each realm, measured).
+  const proxyByHandle = new Map<number, WeakRef<object>>();
   const handleByProxy = new WeakMap<object, WireHandle>();
+  let pendingReleases: number[] = [];
+  const flushReleases = (): void => {
+    if (pendingReleases.length === 0) return;
+    const handles = pendingReleases;
+    pendingReleases = [];
+    if (!closedError) port1.postMessage({ op: "release", handles } satisfies ReleaseMessage);
+  };
+  const releaseRegistry = new FinalizationRegistry<number>((id) => {
+    // A reply may have re-minted a proxy for this id after the old one died
+    // but before this callback ran; that live proxy still owns the handle.
+    if (proxyByHandle.get(id)?.deref() !== undefined) return;
+    proxyByHandle.delete(id);
+    // Batched, and ordered ahead of any later request (`request` flushes
+    // first), so the Worker always forgets an id before it could re-encode
+    // the same object: a released object is re-minted under a FRESH id.
+    if (!closedError && pendingReleases.push(id) === 1) queueMicrotask(flushReleases);
+  });
   const bindingById = new Map<number, DynamicCodeBinding>();
   const idByBinding = new WeakMap<DynamicCodeBinding, number>();
   let nextBindingId = 1;
@@ -223,7 +253,7 @@ export async function connectNodeEvalWorker(
   const decode = (value: WireValue): unknown => {
     if (isWireSymbol(value)) return decodeSymbol(value);
     if (!isWireHandle(value)) return value;
-    const existing = proxyByHandle.get(value.id);
+    const existing = proxyByHandle.get(value.id)?.deref();
     if (existing) return existing;
     const target = value.callable ? function remoteEvalFunction(): void {} : Object.create(null);
     const proxy = new Proxy(target, {
@@ -273,13 +303,15 @@ export async function connectNodeEvalWorker(
         } as Omit<Request, "id">) as object;
       },
     });
-    proxyByHandle.set(value.id, proxy);
+    proxyByHandle.set(value.id, new WeakRef(proxy));
     handleByProxy.set(proxy, value);
+    releaseRegistry.register(proxy, value.id);
     return proxy;
   };
 
   function request(body: Omit<Request, "id">): unknown {
     if (closedError) throw closedError;
+    flushReleases();
     const id = nextId++;
     const message = { ...body, id } as Request;
     port1.postMessage(message);
@@ -470,7 +502,18 @@ export function serveNodeEvalWorker(parent: Worker | MessagePort): void {
       `with (${SCOPE_PARAM}) { return eval(${SOURCE_PARAM}); }`,
     ) as (scope: Record<PropertyKey, unknown>, source: string) => unknown;
 
-    port.on("message", (request: Request) => {
+    port.on("message", (request: Request | ReleaseMessage) => {
+      if (request.op === "release") {
+        // (#6790) No reply: see ReleaseMessage. Dropping `ids` too means the
+        // same object re-encoded later gets a fresh handle the host has not
+        // released.
+        for (const id of request.handles) {
+          const value = handles.get(id);
+          if (value !== undefined) ids.delete(value as object);
+          handles.delete(id);
+        }
+        return;
+      }
       let response: Response;
       try {
         let value: unknown;

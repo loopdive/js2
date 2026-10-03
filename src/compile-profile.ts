@@ -20,6 +20,8 @@
 // reads as a tree. Self time is wall time minus the time attributed to direct
 // children, which is what makes the table usable for attribution.
 
+import { readEnv } from "./env.js";
+
 /** One completed (or still-open) phase measurement. */
 export interface CompilePhaseRecord {
   /** Slash-joined path from the root phase, e.g. `codegen/bodies`. */
@@ -51,12 +53,6 @@ let installed = false;
 const records = new Map<string, CompilePhaseRecord>();
 const stack: OpenPhase[] = [];
 
-function readEnv(): string | undefined {
-  // `process` is absent in the browser playground bundle, which imports this
-  // module transitively through the compiler core.
-  return typeof process !== "undefined" ? process.env?.[ENV_VAR] : undefined;
-}
-
 function heapUsed(): number {
   return typeof process !== "undefined" && typeof process.memoryUsage === "function"
     ? process.memoryUsage().heapUsed
@@ -64,7 +60,7 @@ function heapUsed(): number {
 }
 
 function configure(): void {
-  const raw = readEnv();
+  const raw = readEnv(ENV_VAR);
   enabled = raw !== undefined && raw !== "" && raw !== "0" && raw !== "false";
   streaming = enabled && (raw === "stream" || raw === "2");
   if (enabled && !installed && typeof process !== "undefined" && typeof process.on === "function") {

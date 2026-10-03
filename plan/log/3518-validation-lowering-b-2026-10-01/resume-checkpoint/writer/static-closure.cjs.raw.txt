@@ -1,0 +1,16 @@
+const fs=require('node:fs'),path=require('node:path'),ts=require('typescript');
+const roots=['src/ir/analysis/lattice.ts','src/ir/analysis/ownership.ts','src/ir/analysis/encoding.ts','src/ir/analysis/escape.ts','src/ir/analysis/dominance.ts','src/ir/analysis/alloc-verification.ts','src/ir/runtime/verify.ts','src/ir/program/allocations.ts','src/ir/program/class-layouts.ts'];
+const config=JSON.parse(fs.readFileSync('scripts/compiler-boundaries.json','utf8'));
+const owners=new Map(config.files.map(x=>[x.path,x]));
+const projected=new Map(roots.map(p=>[p,{path:p,state:'clean',layer:p.includes('/analysis/')?'ir-analysis':p.includes('/runtime/')?'ir-runtime':'ir-program'}]));
+const graph=new Map(),parseErrors=[],unresolved=[];
+function inspect(p){if(graph.has(p))return;const source=fs.readFileSync(p,'utf8'),sf=ts.createSourceFile(p,source,ts.ScriptTarget.Latest,true);parseErrors.push(...sf.parseDiagnostics.map(d=>({path:p,start:d.start,message:ts.flattenDiagnosticMessageText(d.messageText,'\n')})));const edges=[];graph.set(p,edges);function visit(n){let spec;
+if((ts.isImportDeclaration(n)||ts.isExportDeclaration(n))&&n.moduleSpecifier&&ts.isStringLiteral(n.moduleSpecifier))spec=n.moduleSpecifier.text;
+if(ts.isImportTypeNode(n)&&ts.isLiteralTypeNode(n.argument)&&ts.isStringLiteral(n.argument.literal))spec=n.argument.literal.text;
+if(ts.isCallExpression(n)&&n.expression.kind===ts.SyntaxKind.ImportKeyword&&n.arguments.length&&ts.isStringLiteral(n.arguments[0]))spec=n.arguments[0].text;
+if(spec){if(spec.startsWith('.')){let target=path.posix.normalize(path.posix.join(path.posix.dirname(p),spec));const options=[target.replace(/\.js$/,'.ts'),target.replace(/\.js$/,'.tsx'),target];target=options.find(x=>fs.existsSync(x));if(!target)unresolved.push({from:p,spec});else{edges.push(target);inspect(target);}}else edges.push(spec);}
+ts.forEachChild(n,visit);}visit(sf);}
+for(const p of roots)inspect(p);
+const blockers=[];for(const [p,edges] of graph){const owner=projected.get(p)??owners.get(p);if(!owner||owner.state!=='clean')blockers.push({path:p,owner:owner??null});if(owner)for(const q of edges){if(!q.startsWith('src/'))continue;const to=projected.get(q)??owners.get(q);if(to&&!config.allowedEdges[owner.layer]?.includes(to.layer))blockers.push({from:p,to:q,fromLayer:owner.layer,toLayer:to.layer});}}
+const perRoot=roots.map(root=>{const seen=new Set();function add(p){if(seen.has(p))return;seen.add(p);for(const q of graph.get(p)??[])if(q.startsWith('src/'))add(q);}add(root);return{root,modules:seen.size,paths:[...seen].sort()};});
+const out={mode:'syntax-and-import-text-only; no Program/checker/compiler/gate run',projectedNewOwnerClassifications:[...projected.values()],modules:graph.size,edges:[...graph.values()].reduce((n,x)=>n+x.length,0),parseErrors,unresolved,blockers,perRoot,graph:[...graph].map(([from,to])=>({from,to}))};fs.writeFileSync('.tmp/validation-lowering-b/writer-m07mbdb7/static-closure.json',JSON.stringify(out,null,2)+'\n');console.log(JSON.stringify({modules:out.modules,edges:out.edges,parseErrors,unresolved,blockers},null,2));

@@ -7,6 +7,7 @@ import dts from "vite-plugin-dts";
 // this targets modern Node so top-level await, dynamic imports, and
 // bare `node:*` / `fs` / `path` imports are preserved as externals.
 const nodeBuiltins = [...builtinModules, ...builtinModules.map((m) => `node:${m}`)];
+const PROCESS_ENV_BINDING = "__js2wasmProcessEnv";
 
 export default defineConfig(({ mode }) => {
   const jsrBuild = mode === "jsr";
@@ -26,6 +27,14 @@ export default defineConfig(({ mode }) => {
       }),
     ],
     publicDir: false,
+    // #6782 — the library must load and compile without a global `process`
+    // (browser bundles, `delete globalThis.process`). `src/` reads its switches
+    // through `readEnv()`, but a few files cannot be edited without breaking
+    // the #3518 source receipts that pin their exact text, so the build also
+    // routes every remaining `process.env` through one binding that is `{}`
+    // when the host has no `process`. In Node it is the live `process.env`
+    // object, so reads and writes behave exactly as before.
+    define: { "process.env": PROCESS_ENV_BINDING },
     // JSR's 20 MiB package cap requires a minified dist build. Preserve
     // observable Function/Class names while shrinking the generated runtime.
     esbuild: jsrBuild ? { keepNames: true, legalComments: "none" } : undefined,
@@ -63,6 +72,7 @@ export default defineConfig(({ mode }) => {
           ...nodeBuiltins,
         ],
         output: {
+          intro: `const ${PROCESS_ENV_BINDING} = globalThis.process?.env ?? {};`,
           preserveModules: false,
           inlineDynamicImports: false,
         },

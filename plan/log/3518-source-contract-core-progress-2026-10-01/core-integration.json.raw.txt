@@ -1,0 +1,23 @@
+{
+  "freeze_sha256": "994f00785c72338a22b2e3080ce4b71a4c0ba793f9b236f8e2deba7cf19c557d",
+  "files": {
+    "tests/helpers/ir-core-vocabulary-evolution.ts": {
+      "sha256": "1ab93a024b314803e542f69f871011a8d7127f3b8b5337e6f3eaeb14e8fc203d",
+      "bytes": 18208,
+      "lines": 455
+    },
+    "tests/helpers/ir-core-vocabulary-evolution.json": {
+      "sha256": "61f152a65510005ad6110dc180662ad1d450c3cc2c710d1c8e89ed9fc70f5a9a",
+      "bytes": 589415,
+      "lines": 16939
+    },
+    "tests/issue-3518-core-vocabulary-evolution.test.ts": {
+      "sha256": "1b4942b32f428689b85836379b81fce8c63fabb25e7cccceafe28b6684c5d6dd",
+      "bytes": 20293,
+      "lines": 488
+    }
+  },
+  "existing_test_change": "only three initial historical receipt reads; default current parser raw",
+  "source_base": "1265c47d6fc41300a380ef7e4abc45fdfcfd2c61",
+  "claim_write_id": "87615-9npim132"
+}

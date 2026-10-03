@@ -16,6 +16,18 @@
  * error — this script refuses to guess where the block belongs, so it
  * cannot blow away unrelated text.
  *
+ * Three further blocks are OPT-IN per file (a file without the anchor pair is
+ * skipped, never errored), so a document carries exactly the figures it needs
+ * and prose can never hand-write a number that a block already generates
+ * (#6795):
+ *
+ *   conformance-standalone  the host-free line, from
+ *                           benchmarks/results/test262-standalone-highwater.json
+ *   conformance-scope       the denominator both figures are scored against,
+ *                           and what it includes/excludes
+ *   conformance-areas       a per-area pass-rate table from the `categories`
+ *                           array of test262-current.json
+ *
  * Modes:
  *   (default)  Rewrite anchor blocks in place. Exits 0 on success, 1 on
  *              malformed inputs (missing anchors, bad JSON, etc).
@@ -56,9 +68,13 @@ const END = "<!-- AUTO:conformance-end -->";
 // errored — only the README surfaces the two-path axis today.
 const SA_START = "<!-- AUTO:conformance-standalone-start -->";
 const SA_END = "<!-- AUTO:conformance-standalone-end -->";
+const SC_START = "<!-- AUTO:conformance-scope-start -->";
+const SC_END = "<!-- AUTO:conformance-scope-end -->";
+const AR_START = "<!-- AUTO:conformance-areas-start -->";
+const AR_END = "<!-- AUTO:conformance-areas-end -->";
 
 /** Files we manage. Path is relative to repo root. */
-const TARGETS = ["ROADMAP.md", "plan/goals/goal-graph.md", "README.md", "CLAUDE.md"];
+const TARGETS = ["ROADMAP.md", "plan/goals/goal-graph.md", "README.md", "CLAUDE.md", "STATUS.md"];
 
 function fmtNumber(n) {
   return Number(n).toLocaleString("en-US");
@@ -91,6 +107,10 @@ function loadReport() {
   return {
     pass: summary.pass,
     total: summary.total,
+    // Optional detail used only by the opt-in scope/areas blocks. Absent in
+    // minimal reports; a block that needs it errors only if a file asks for it.
+    scopes: summary.by_category && typeof summary.by_category === "object" ? summary.by_category : null,
+    categories: Array.isArray(json.categories) ? json.categories : null,
   };
 }
 
@@ -163,6 +183,148 @@ function renderStandaloneBlock(report) {
   const totalStr = fmtNumber(report.total);
   const pct = fmtPercent(report.pass, report.total);
   return `**standalone (host-free) test262 conformance**: ${passStr} / ${totalStr} (${pct} %)`;
+}
+
+/**
+ * Scope block: the denominator the two headline figures are scored against.
+ * Generated so the README can never again print one total in the headline and
+ * a different one in the testing section (#6795: 48,232 vs "43,106").
+ *
+ * When the standalone high-water total equals the JS-host total — the normal
+ * case — one sentence covers both. If they ever diverge the block says so
+ * instead of asserting a sameness that no longer holds.
+ */
+function renderScopeBlock(report, standalone) {
+  const scopes = report.scopes;
+  if (!scopes || !scopes.standard || !scopes.annex_b) {
+    throw new Error("report has no summary.by_category.{standard,annex_b} — cannot render the scope block");
+  }
+  const parts =
+    scopes.standard.total + scopes.annex_b.total === report.total
+      ? ` (${fmtNumber(scopes.standard.total)} ECMAScript standard + ${fmtNumber(scopes.annex_b.total)} Annex B)`
+      : "";
+  const proposals =
+    scopes.proposal && typeof scopes.proposal.total === "number"
+      ? ` The ${fmtNumber(scopes.proposal.total)} TC39 proposal-stage tests are excluded.`
+      : "";
+  const lead =
+    !standalone || standalone.total === report.total
+      ? `Both figures are scored against the same **${fmtNumber(report.total)}** official tests${parts}.`
+      : `The JS-host figure is scored against **${fmtNumber(report.total)}** official tests${parts}; ` +
+        `the standalone figure against **${fmtNumber(standalone.total)}**.`;
+  return `${lead}${proposals}`;
+}
+
+/**
+ * Render a GitHub-flavoured markdown table padded exactly the way prettier's
+ * markdown formatter pads it, so the generated block is prettier-stable (the
+ * #3947 contract, asserted in tests). `align[i]` is "l" or "r".
+ */
+function renderTable(header, rows, align) {
+  const widths = header.map((h, i) => Math.max(h.length, 3, ...rows.map((r) => r[i].length)));
+  const cell = (s, i) => (align[i] === "r" ? s.padStart(widths[i]) : s.padEnd(widths[i]));
+  const line = (cells) => `| ${cells.map(cell).join(" | ")} |`;
+  const sep = `| ${widths.map((w, i) => (align[i] === "r" ? `${"-".repeat(w - 1)}:` : "-".repeat(w))).join(" | ")} |`;
+  return [line(header), sep, ...rows.map(line)].join("\n");
+}
+
+/** Top-level test262 directories, in the order the areas table lists them. */
+const AREA_ORDER = ["language", "built-ins", "annexB", "harness"];
+
+/**
+ * Feature rows for the areas that earlier hand-written docs listed as
+ * "not supported" (eval, Proxy, Temporal, ...). Each maps a label to the
+ * test262 category paths that measure it. A path absent from the report is
+ * skipped with a warning rather than failing the sync: a category rename in
+ * the runner must not turn every PR's `sync:conformance:check` red.
+ */
+const AREA_FEATURES = [
+  { label: "eval", paths: ["built-ins/eval", "language/eval-code"] },
+  { label: "Proxy", paths: ["built-ins/Proxy"] },
+  { label: "Reflect", paths: ["built-ins/Reflect"] },
+  { label: "Temporal", paths: ["built-ins/Temporal"] },
+  { label: "SharedArrayBuffer", paths: ["built-ins/SharedArrayBuffer"] },
+  { label: "Atomics", paths: ["built-ins/Atomics"] },
+  { label: "WeakRef", paths: ["built-ins/WeakRef"] },
+  { label: "FinalizationRegistry", paths: ["built-ins/FinalizationRegistry"] },
+];
+
+function rateCell(pass, total) {
+  return `${fmtPercent(pass, total)} %`;
+}
+
+/**
+ * Per-area table, derived from the `categories` array of the JS-host report.
+ * Two tables: the top-level areas, then the named built-ins. The caption states
+ * how the rows' total relates to the headline total, computed — never typed.
+ */
+function renderAreasBlock(report) {
+  if (!report.categories) {
+    throw new Error("report has no `categories` array — cannot render the per-area table");
+  }
+  const byName = new Map(report.categories.map((c) => [c.name, c]));
+  const areas = new Map();
+  let sumPass = 0;
+  let sumTotal = 0;
+  for (const c of report.categories) {
+    const top = String(c.name).split("/")[0];
+    const a = areas.get(top) ?? { pass: 0, total: 0 };
+    a.pass += c.pass;
+    a.total += c.total;
+    areas.set(top, a);
+    sumPass += c.pass;
+    sumTotal += c.total;
+  }
+  const known = AREA_ORDER.filter((k) => areas.has(k));
+  const rest = [...areas.keys()].filter((k) => !AREA_ORDER.includes(k)).sort();
+  const areaRows = [...known, ...rest].map((k) => {
+    const a = areas.get(k);
+    return [`\`${k}/\``, fmtNumber(a.pass), fmtNumber(a.total), rateCell(a.pass, a.total)];
+  });
+  areaRows.push(["**All areas**", fmtNumber(sumPass), fmtNumber(sumTotal), rateCell(sumPass, sumTotal)]);
+
+  const featureRows = [];
+  for (const f of AREA_FEATURES) {
+    const found = f.paths.map((n) => byName.get(n)).filter(Boolean);
+    if (found.length !== f.paths.length) {
+      console.warn(
+        `[sync-conformance] areas table: category path(s) for "${f.label}" missing from the report — row skipped.`,
+      );
+    }
+    if (found.length === 0) continue;
+    const pass = found.reduce((n, c) => n + c.pass, 0);
+    const total = found.reduce((n, c) => n + c.total, 0);
+    featureRows.push([
+      f.label,
+      f.paths.map((n) => `\`${n}\``).join(" + "),
+      fmtNumber(pass),
+      fmtNumber(total),
+      rateCell(pass, total),
+    ]);
+  }
+
+  const delta = sumTotal - report.total;
+  const caption =
+    delta === 0
+      ? `The area rows sum to the headline total.`
+      : delta > 0
+        ? `The area rows cover all ${fmtNumber(sumTotal)} test files the runner scores — ${fmtNumber(delta)} more than the headline total, because they include proposal-stage files that the headline figures exclude.`
+        : `The area rows sum to ${fmtNumber(sumTotal)}, which is below the headline total of ${fmtNumber(report.total)}.`;
+
+  const out = [
+    `Per-area pass rates, JS-host (\`gc\`) lane. ${caption}`,
+    "",
+    renderTable(["Area", "Pass", "Total", "Rate"], areaRows, ["l", "r", "r", "r"]),
+  ];
+  if (featureRows.length > 0) {
+    out.push(
+      "",
+      "Selected built-ins:",
+      "",
+      renderTable(["Feature", "Test262 path", "Pass", "Total", "Rate"], featureRows, ["l", "l", "r", "r", "r"]),
+    );
+  }
+  return out.join("\n");
 }
 
 /**
@@ -299,28 +461,29 @@ function processFile(relPath, report, { check }) {
 }
 
 /**
- * Optional standalone block. Files that lack the standalone anchor pair are
- * skipped (returns { skipped: true }) rather than erroring — only files that
- * opt in by carrying the anchor get the second line.
+ * Optional block. Files that lack the block's anchor pair are skipped (returns
+ * { skipped: true }) rather than erroring — only files that opt in by carrying
+ * the anchors get the block. `render` runs only for a file that opted in, so a
+ * report lacking the detail a block needs fails only the files that ask for it.
  */
-function processStandaloneFile(relPath, report, { check }) {
+function processOptionalBlock(relPath, { start, end, render }, { check }) {
   const abs = resolve(ROOT, relPath);
   if (!existsSync(abs)) {
     throw new Error(`Target file missing: ${relPath}`);
   }
   const orig = readFileSync(abs, "utf8");
-  if (!orig.includes(SA_START) && !orig.includes(SA_END)) {
+  if (!orig.includes(start) && !orig.includes(end)) {
     return { path: relPath, skipped: true, changed: false };
   }
-  const body = renderStandaloneBlock(report);
-  const next = replaceAnchorBlock(orig, body, relPath, SA_START, SA_END);
+  const body = render();
+  const next = replaceAnchorBlock(orig, body, relPath, start, end);
   if (next === orig) {
     return { path: relPath, changed: false };
   }
   if (!check) {
     writeFileSync(abs, next, "utf8");
   }
-  return { path: relPath, changed: true, detail: classifyChange(orig, next, body, SA_START, SA_END) };
+  return { path: relPath, changed: true, detail: classifyChange(orig, next, body, start, end) };
 }
 
 function main() {
@@ -336,18 +499,34 @@ function main() {
 
   const errors = [];
   const results = [];
+  // Opt-in blocks, in document order. Each entry renders only for a file that
+  // carries its anchor pair.
+  const optionalBlocks = [];
+  if (standalone) {
+    optionalBlocks.push({
+      label: "standalone",
+      start: SA_START,
+      end: SA_END,
+      render: () => renderStandaloneBlock(standalone),
+    });
+  }
+  optionalBlocks.push(
+    { label: "scope", start: SC_START, end: SC_END, render: () => renderScopeBlock(report, standalone) },
+    { label: "areas", start: AR_START, end: AR_END, render: () => renderAreasBlock(report) },
+  );
+
   for (const t of TARGETS) {
     try {
       results.push(processFile(t, report, { check }));
     } catch (err) {
       errors.push({ path: t, message: err.message });
     }
-    if (standalone) {
+    for (const block of optionalBlocks) {
       try {
-        const r = processStandaloneFile(t, standalone, { check });
-        if (!r.skipped) results.push({ ...r, path: `${r.path} (standalone)` });
+        const r = processOptionalBlock(t, block, { check });
+        if (!r.skipped) results.push({ ...r, path: `${r.path} (${block.label})` });
       } catch (err) {
-        errors.push({ path: `${t} (standalone)`, message: err.message });
+        errors.push({ path: `${t} (${block.label})`, message: err.message });
       }
     }
   }

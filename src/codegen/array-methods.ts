@@ -142,6 +142,7 @@ import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // 
 import { buildSpreadArgList, hasSpreadArgument } from "./spread-arg-list.js"; // (#5361)
 import { canBuildSpreadArgList, isTupleStructType } from "./spread-arg-list.js"; // (#5361)
 import { compileArrayPushSpread } from "./array-push-spread.js"; // (#5361)
+import { callArgsNeedEarlyEvaluation, planCallArgs } from "./array-method-arg-order.js"; // (#6787)
 import { taDynDetachedGuardPrologue } from "./ta-dyn-method-call.js"; // (#6651 E6) join/toLocaleString
 import { reserveNumberToLocaleString } from "./to-locale-string-element.js"; // (#6651 TA1) numeric element Invoke
 
@@ -4289,10 +4290,15 @@ function compileArrayPush(
     typeIdx: arrTypeIdx,
   });
 
+  // (#6787) Arguments run before `length` is read; a counted push's value is proven pure.
+  const early = !presizedCountedPush && callArgsNeedEarlyEvaluation(callExpr.arguments);
+
   // Compile receiver -> vec ref
   compileExpression(ctx, fctx, propAccess.expression);
-  fctx.body.push({ op: "local.tee", index: vecTmp });
+  fctx.body.push({ op: early ? "local.set" : "local.tee", index: vecTmp });
   if (!presizedCountedPush) emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
+  const args = planCallArgs(ctx, fctx, callExpr.arguments, early, () => elemType, elemType);
+  if (early) fctx.body.push({ op: "local.get", index: vecTmp });
 
   // Get length
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
@@ -4369,7 +4375,7 @@ function compileArrayPush(
       fctx.body.push({ op: "i32.const", value: i });
       fctx.body.push({ op: "i32.add" });
     }
-    compileExpression(ctx, fctx, callExpr.arguments[i]!, elemType);
+    args.value(i);
     fctx.body.push({ op: "array.set", typeIdx: arrTypeIdx });
   }
 
@@ -4916,10 +4922,13 @@ function compileArrayUnshift(
     typeIdx: arrTypeIdx,
   });
 
-  // Compile receiver -> vec ref
+  // Compile receiver -> vec ref; (#6787) then the arguments, before `length`.
+  const early = callArgsNeedEarlyEvaluation(callExpr.arguments);
   compileExpression(ctx, fctx, propAccess.expression);
-  fctx.body.push({ op: "local.tee", index: vecTmp });
+  fctx.body.push({ op: early ? "local.set" : "local.tee", index: vecTmp });
   emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
+  const args = planCallArgs(ctx, fctx, callExpr.arguments, early, () => elemType, elemType);
+  if (early) fctx.body.push({ op: "local.get", index: vecTmp });
 
   // Get length
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
@@ -4998,7 +5007,7 @@ function compileArrayUnshift(
   for (let i = 0; i < argCount; i++) {
     fctx.body.push({ op: "local.get", index: dataTmp });
     fctx.body.push({ op: "i32.const", value: i });
-    compileExpression(ctx, fctx, callExpr.arguments[i]!, elemType);
+    args.value(i);
     fctx.body.push({ op: "array.set", typeIdx: arrTypeIdx });
   }
 
@@ -6339,11 +6348,23 @@ function compileArraySplice(
       ? allocLocal(fctx, `__arr_spl_ndata_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx })
       : -1;
   const writeTmp = insertCount > 0 ? allocLocal(fctx, `__arr_spl_w_${fctx.locals.length}`, { kind: "i32" }) : -1;
+  // (#5361) Spread items go through the shared builder; the rest through the plan.
+  const spreadItems = insertCount > 0 && insertHasSpread && canBuildSpreadArgList(ctx, fctx, _elemType);
+  const planned = spreadItems ? callExpr.arguments.slice(0, 2) : callExpr.arguments;
 
-  // Compile receiver -> vec ref
+  // Compile receiver -> vec ref; (#6787) then every argument, before `length`.
+  const early = callArgsNeedEarlyEvaluation(callExpr.arguments);
   compileExpression(ctx, fctx, propAccess.expression);
-  fctx.body.push({ op: "local.tee", index: vecTmp });
+  fctx.body.push({ op: early ? "local.set" : "local.tee", index: vecTmp });
   emitReceiverNullGuard(ctx, fctx, vecTmp);
+  const args = planCallArgs(ctx, fctx, planned, early, (i) => (i >= 2 ? _elemType : undefined), { kind: "f64" });
+  // (#5361) Evaluate the inserted items ONCE, in source order, before the
+  // receiver is touched — the rebuild below needs their runtime count before
+  // it can size the new backing array.
+  const insertArgs = spreadItems
+    ? buildSpreadArgList(ctx, fctx, callExpr.arguments, 2, _elemType, "arr_spl_ins")
+    : undefined;
+  if (early) fctx.body.push({ op: "local.get", index: vecTmp });
 
   // Get length from vec
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
@@ -6355,14 +6376,14 @@ function compileArraySplice(
   fctx.body.push({ op: "local.set", index: dataTmp });
 
   // start arg -- clamp negative indices
-  compileExpression(ctx, fctx, callExpr.arguments[0]!, { kind: "f64" });
+  args.index(0);
   fctx.body.push({ op: "i32.trunc_sat_f64_s" });
   fctx.body.push({ op: "local.set", index: startTmp });
   emitClampIndex(fctx, startTmp, lenTmp);
 
   // deleteCount (default: len - start) -- clamp >= 0 and to remaining len
   if (callExpr.arguments.length >= 2) {
-    compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "f64" });
+    args.index(1);
     fctx.body.push({ op: "i32.trunc_sat_f64_s" });
   } else {
     fctx.body.push({ op: "local.get", index: lenTmp });
@@ -6388,15 +6409,6 @@ function compileArraySplice(
     ],
   });
   emitClampNonNeg(fctx, delCountTmp);
-
-  // (#5361) Evaluate the inserted items ONCE, in source order, before the
-  // receiver is touched — the rebuild below needs their runtime count before
-  // it can size the new backing array. Declining (undefined) keeps the static
-  // unrolled path, which is exact whenever no spread is present.
-  const insertArgs =
-    insertCount > 0 && insertHasSpread
-      ? buildSpreadArgList(ctx, fctx, callExpr.arguments, 2, _elemType, "arr_spl_ins")
-      : undefined;
 
   // (#5145) §23.1.3.29 step 11 — `A = ArraySpeciesCreate(O, actualDeleteCount)`,
   // before any element is moved.
@@ -6480,7 +6492,7 @@ function compileArraySplice(
       for (let i = 0; i < insertCount; i++) {
         fctx.body.push({ op: "local.get", index: newData });
         fctx.body.push({ op: "local.get", index: writeTmp });
-        compileExpression(ctx, fctx, callExpr.arguments[2 + i]!, _elemType);
+        args.value(2 + i);
         fctx.body.push({ op: "array.set", typeIdx: arrTypeIdx });
         if (i < insertCount - 1) {
           fctx.body.push({ op: "local.get", index: writeTmp });
@@ -9498,10 +9510,14 @@ function compileArrayFill(
   const endTmp = allocLocal(fctx, `__arr_fill_e_${fctx.locals.length}`, { kind: "i32" });
   const iTmp = allocLocal(fctx, `__arr_fill_i_${fctx.locals.length}`, { kind: "i32" });
 
-  // Compile receiver -> vec ref
+  // Compile receiver -> vec ref; (#6787) then every argument, before `length`.
+  const early = callArgsNeedEarlyEvaluation(callExpr.arguments);
   compileExpression(ctx, fctx, propAccess.expression);
-  fctx.body.push({ op: "local.tee", index: vecTmp });
+  fctx.body.push({ op: early ? "local.set" : "local.tee", index: vecTmp });
   emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
+  const indexType: ValType = ctx.fast ? { kind: "i32" } : { kind: "f64" };
+  const args = planCallArgs(ctx, fctx, callExpr.arguments, early, (i) => (i === 0 ? valType : undefined), indexType);
+  if (early) fctx.body.push({ op: "local.get", index: vecTmp });
 
   // Extract length
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
@@ -9513,17 +9529,13 @@ function compileArrayFill(
   fctx.body.push({ op: "local.set", index: dataTmp });
 
   // Compile value argument (unpacked hint — never pass the packed i8/i16).
-  compileExpression(ctx, fctx, callExpr.arguments[0]!, valType);
+  args.value(0);
   fctx.body.push({ op: "local.set", index: valTmp });
 
   // start (default: 0) -- clamp negative
   if (callExpr.arguments.length >= 2) {
-    if (ctx.fast) {
-      compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "i32" });
-    } else {
-      compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "f64" });
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-    }
+    args.index(1);
+    if (!ctx.fast) fctx.body.push({ op: "i32.trunc_sat_f64_s" });
   } else {
     fctx.body.push({ op: "i32.const", value: 0 });
   }
@@ -9539,12 +9551,8 @@ function compileArrayFill(
     fillEndArg !== undefined &&
     ((ts.isIdentifier(fillEndArg) && fillEndArg.text === "undefined") || ts.isVoidExpression(fillEndArg));
   if (fillEndArg !== undefined && !fillEndIsUndef) {
-    if (ctx.fast) {
-      compileExpression(ctx, fctx, fillEndArg, { kind: "i32" });
-    } else {
-      compileExpression(ctx, fctx, fillEndArg, { kind: "f64" });
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-    }
+    args.index(2);
+    if (!ctx.fast) fctx.body.push({ op: "i32.trunc_sat_f64_s" });
   } else {
     fctx.body.push({ op: "local.get", index: lenTmp });
   }
@@ -10089,10 +10097,14 @@ function compileArrayCopyWithin(
   const endTmp = allocLocal(fctx, `__arr_cw_e_${fctx.locals.length}`, { kind: "i32" });
   const countTmp = allocLocal(fctx, `__arr_cw_cnt_${fctx.locals.length}`, { kind: "i32" });
 
-  // Compile receiver -> vec ref
+  // Compile receiver -> vec ref; (#6787) then every argument, before `length`.
+  const early = callArgsNeedEarlyEvaluation(callExpr.arguments);
   compileExpression(ctx, fctx, propAccess.expression);
-  fctx.body.push({ op: "local.tee", index: vecTmp });
+  fctx.body.push({ op: early ? "local.set" : "local.tee", index: vecTmp });
   emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
+  const indexType: ValType = ctx.fast ? { kind: "i32" } : { kind: "f64" };
+  const args = planCallArgs(ctx, fctx, callExpr.arguments, early, () => undefined, indexType);
+  if (early) fctx.body.push({ op: "local.get", index: vecTmp });
 
   // Extract length
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
@@ -10104,22 +10116,14 @@ function compileArrayCopyWithin(
   fctx.body.push({ op: "local.set", index: dataTmp });
 
   // target arg -- clamp negative
-  if (ctx.fast) {
-    compileExpression(ctx, fctx, callExpr.arguments[0]!, { kind: "i32" });
-  } else {
-    compileExpression(ctx, fctx, callExpr.arguments[0]!, { kind: "f64" });
-    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-  }
+  args.index(0);
+  if (!ctx.fast) fctx.body.push({ op: "i32.trunc_sat_f64_s" });
   fctx.body.push({ op: "local.set", index: targetTmp });
   emitClampIndex(fctx, targetTmp, lenTmp);
 
   // start arg -- clamp negative
-  if (ctx.fast) {
-    compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "i32" });
-  } else {
-    compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "f64" });
-    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-  }
+  args.index(1);
+  if (!ctx.fast) fctx.body.push({ op: "i32.trunc_sat_f64_s" });
   fctx.body.push({ op: "local.set", index: startTmp });
   emitClampIndex(fctx, startTmp, lenTmp);
 
@@ -10132,12 +10136,8 @@ function compileArrayCopyWithin(
     cwEndArg !== undefined &&
     ((ts.isIdentifier(cwEndArg) && cwEndArg.text === "undefined") || ts.isVoidExpression(cwEndArg));
   if (cwEndArg !== undefined && !cwEndIsUndef) {
-    if (ctx.fast) {
-      compileExpression(ctx, fctx, cwEndArg, { kind: "i32" });
-    } else {
-      compileExpression(ctx, fctx, cwEndArg, { kind: "f64" });
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-    }
+    args.index(2);
+    if (!ctx.fast) fctx.body.push({ op: "i32.trunc_sat_f64_s" });
   } else {
     fctx.body.push({ op: "local.get", index: lenTmp });
   }

@@ -1,0 +1,155 @@
+{
+  "recorded_at": "2026-10-01T03:14:18.508453+00:00",
+  "state": "wrapup-source-preserved-historical-validation-incomplete",
+  "integration_files": 35,
+  "raw_artifacts": {
+    "ownership.log.raw.txt": {
+      "sha256": "15d8190addbfb70fd243c058ed8c3381a40446f8650ed01941dc38c5df8648e9",
+      "bytes": 459
+    },
+    "relocation-handoff.raw.txt": {
+      "sha256": "f488ec8efa9624a5ccaa2aaa38e245f2ec87d2fcee0ba6856137ecae04cbd01b",
+      "bytes": 2170
+    },
+    "boundaries.json.raw.txt": {
+      "sha256": "f6fea977a8528a95ea1f73e3723ebeb71d1c463f4205f0a416dfdcbadab9e15f",
+      "bytes": 44313
+    },
+    "integration-unstaged.patch.raw.txt": {
+      "sha256": "540b4d3f5e18a6b40058924723e263e7b96321a6ac510b6f7e74333877fef8da",
+      "bytes": 40711
+    },
+    "func-exact-base.log.raw.txt": {
+      "sha256": "644c23e8580c5e8d223977c30536a510145a625046518d17bb890c453de1597b",
+      "bytes": 103
+    },
+    "program-data-current.json.raw.txt": {
+      "sha256": "a405697bea9774074fdc5b70803204dec88afd44c3b6742b63ab050296d9485a",
+      "bytes": 32651
+    },
+    "claim-wrapup-release-record.json.raw.txt": {
+      "sha256": "50029dfe0f58fe328b98a81249052a2ed6ebcd38d2967410f9ad345ab58dacc0",
+      "bytes": 428
+    },
+    "integration-index.patch.raw.txt": {
+      "sha256": "333f1feb1a2b4f0d88ec85a4c140fb49bb5b4e8a4b26767722d7640128178d74",
+      "bytes": 205317
+    },
+    "issue-3518-source-contract-relocation.test.ts.raw.txt": {
+      "sha256": "366f3546392d82b6f0690f29c6401f8bd2f6435b756e1df7c1b15d2d2fb25943",
+      "bytes": 11687
+    },
+    "original-freeze.json.raw.txt": {
+      "sha256": "2f840fd8215eab1533be111dafe6a913fcce806ba6d60789226f7013d34df7d4",
+      "bytes": 8452
+    },
+    "jstag.log.raw.txt": {
+      "sha256": "97eb0592b875804d473754f9b7b0bcc412b517bd64df2ee9d6389c34d2d9dc96",
+      "bytes": 120
+    },
+    "relocation-freeze.raw.txt": {
+      "sha256": "4dc180501a2cd1b184aacc329591aa9add6fab255588d275e38ef6fbede616e4",
+      "bytes": 2955
+    },
+    "claim-wrapup-release.log.raw.txt": {
+      "sha256": "eb0f8c22e14a0fcfd2efa7267ddc3d226081eb2d64a35383f841b562651fc53f",
+      "bytes": 358
+    },
+    "integration-status.raw.txt": {
+      "sha256": "32a905b176d031a5c74b346e929b25fe577e7cd863ede0bfc2b35ac9467f434a",
+      "bytes": 1304
+    },
+    "program-data-current.log.raw.txt": {
+      "sha256": "d94f668e1e7ba118dd2d82e575e493da94448499d98d49381f66620999f5811b",
+      "bytes": 14534
+    },
+    "ownership.json.raw.txt": {
+      "sha256": "44bd785879f045a7bedab23000b1e8e4ef71f7fc7b71059fcdbae60d5036a848",
+      "bytes": 9218
+    },
+    "inventory.stderr.raw.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "full-boundaries.json.raw.txt": {
+      "sha256": "98432c07ed336f89e8d5d852904080ec3eb42fb214918892fe6000a64bd7d15b",
+      "bytes": 186967
+    },
+    "integration-files.raw.txt": {
+      "sha256": "1330b4ce6834d87c714988cd3eabd4458f95f0c6b62bcf3c8a015739af4c1ee3",
+      "bytes": 2149399
+    },
+    "typecheck.log.raw.txt": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "ir-source-contract-relocation.json.raw.txt": {
+      "sha256": "0b8fefeeae71e66e2b95726320609d60427cbc7ef4f7ce53a8c094d8a971940b",
+      "bytes": 494067
+    },
+    "pr6371-wrapup-current.json.raw.txt": {
+      "sha256": "99fa9b849b6c0ad5f11401343cbedfb2414d7d5b81c11c29857d123c0f01abd9",
+      "bytes": 15443
+    },
+    "pre-a-inverse-spec.json.raw.txt": {
+      "sha256": "67f6932589898da25be13cd64c07f0408fd8dd1a488037826169999f4f7ea6ce",
+      "bytes": 14244
+    },
+    "pre-a-findings.md.raw.txt": {
+      "sha256": "1357894a89f87cb18b47d8f29ab9d7a7d8ba96bb2087ca882b1ece3ecc97e069",
+      "bytes": 6645
+    },
+    "focused.log.raw.txt": {
+      "sha256": "2a8cc3a8290821ee660482fa0b48d0880f1c0d2c9e121c4f75b6b03df0d8d245",
+      "bytes": 686
+    },
+    "core-current.json.raw.txt": {
+      "sha256": "0086776bf2fc622467af88d0f529f26c55deb90721687ed67676ca2b9799f717",
+      "bytes": 14233
+    },
+    "focused.json.raw.txt": {
+      "sha256": "e40fa2806aee2b13500d15e815fe83f7a6416796845792aa3a6f3fc62d9886dc",
+      "bytes": 44180
+    },
+    "pr6374-wrapup-current.json.raw.txt": {
+      "sha256": "f11380cc32d5e49b070cf17bce8de685630c6c226424e41fc14056b22671ca81",
+      "bytes": 6803
+    },
+    "full-boundaries.log.raw.txt": {
+      "sha256": "5ad984bfcde0a8a7266dc3ea782834f8d325358d571f48a0280d5d5f0f879da4",
+      "bytes": 57067
+    },
+    "ir-source-contract-relocation.ts.raw.txt": {
+      "sha256": "b8437b4b95231f06d4ad73c5130b76bf573d8b3a976b99c8b061979adafa90b6",
+      "bytes": 11262
+    },
+    "role-correction-receipt.json.raw.txt": {
+      "sha256": "1ecc545433e350c2c320eb9797954be36ab3d555860d6fc9b1d5ef1aead4397d",
+      "bytes": 621
+    },
+    "loc-exact-base.log.raw.txt": {
+      "sha256": "aa85a9093c4e14fd0c672fb7194b845081549869265b97990b1272a97942ff5c",
+      "bytes": 112
+    },
+    "core-current.log.raw.txt": {
+      "sha256": "d66b37253fbed52cfc3810a6d9962cbd1e220fa8be916ff0266cbae6f6f918d4",
+      "bytes": 7046
+    },
+    "boundaries.log.raw.txt": {
+      "sha256": "62795cafec2d397907bd51698239d097f92166bb45e3ed702b30324279002dcc",
+      "bytes": 16875
+    }
+  },
+  "inventory_full_local": {
+    "path": "/private/tmp/js2-ir-source-contracts-integration-20261001/.tmp/contracts-integration/inventory.json",
+    "sha256": "b4c6e5e6379c862aa7cf29001d231456ff4b1f148bc9c3e41ddabc4bb3be6a40",
+    "bytes": 10097824
+  },
+  "model_attribution": {
+    "phase_a_source_and_relocation_draft": "Codex GPT-6 Astra Max",
+    "integration_metadata_and_existing_test_changes": "Codex GPT-6 Default"
+  },
+  "test_timeout_changes": false,
+  "legacy_retirement_certified": false,
+  "claim_status": "released"
+}

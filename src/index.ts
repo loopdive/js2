@@ -447,8 +447,9 @@ export interface CompileError {
   column: number;
   /** Whether the diagnostic is fatal (`"error"`) or advisory (`"warning"`). */
   severity: "error" | "warning";
-  /** TS diagnostic code (if from TypeScript diagnostics) */
-  code?: number;
+  /** TS diagnostic code (number), or a compiler-owned string code: `"invalid-module"` /
+   *  `"validation-skipped"` (see {@link CompileOptions.validate}). */
+  code?: number | string;
   /**
    * Source file the diagnostic originated in (#1929). Populated from
    * `diag.file.fileName` for TypeScript diagnostics; absent for diagnostics
@@ -484,24 +485,21 @@ export interface CompileOptions {
   /** Emit WAT debug output (default: true) */
   emitWat?: boolean;
   /**
-   * (#4420) Gate the result on the host WebAssembly engine.
+   * (#4420, #6776) Gate the result on the host WebAssembly engine. Default:
+   * `true` — every compile validates its output.
    *
-   * `success` alone means "codegen ran to completion", NOT "the bytes are a
-   * module". Self-compiling `src/emit/binary.ts` returned `success: true` with
-   * 268 KB of Wasm the engine then rejected — so any scoreboard built on the
-   * flag (self-hosting progress, npm-compat matrix, conformance counts) could
-   * report progress that does not exist.
+   * If `WebAssembly.validate` rejects the emitted binary, `success` is `false`
+   * and `errors` gains `{ severity: "error", code: "invalid-module", message }`
+   * carrying the engine's own complaint (from `new WebAssembly.Module`). The
+   * binary is still returned so the caller can dump or diff it. Without this,
+   * a type-confused lowering compiled "successfully" and only the engine
+   * noticed, at instantiate time. A host with no `WebAssembly` global cannot
+   * check; the compile then succeeds with a `"validation-skipped"` warning.
    *
-   * With `validate: true` the emitted binary is run through
-   * `validateEmittedBinary`; if the engine rejects it, `success` flips to
-   * `false` and an error-severity {@link CompileError} carrying the engine's
-   * detail string is pushed onto `errors`. The binary is still returned so the
-   * caller can dump/diff it.
-   *
-   * Opt-in: validation costs a full engine decode of the module, and existing
-   * callers that deliberately inspect invalid output (WAT dumps, minimizers)
-   * must keep getting it. The CLI runs its own post-optimize check (#3338) and
-   * therefore does NOT set this — it would double-report.
+   * Pass `validate: false` to opt out — validation costs a full engine decode
+   * of the module. Opt out when you measure compile time (benchmarks), when you
+   * validate the bytes yourself with richer reporting (the test262 workers),
+   * or when you deliberately inspect invalid output (WAT dumps, minimizers).
    */
   validate?: boolean;
   /**

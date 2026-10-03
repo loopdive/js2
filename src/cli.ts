@@ -545,9 +545,13 @@ if (suppressedAllowlist > 0) {
 // output file is written — so a malformed artifact never escapes with a
 // success exit code. Optimizer-availability warnings stay nonfatal because the
 // preserved binary they fall back to still reaches this check and validates.
-// (#4420) Shared with the compiler's opt-in `validate` gate and the optimizer's
+// (#4420) Shared with the compiler's `validate` gate and the optimizer's
 // own output check — `validateEmittedBinary` owns the validate-then-recover-the-
 // engine-detail idiom (including the BufferSource cast TS 5.7+ requires).
+// (#6776) The compile gate is now on by default, so a codegen-invalid module
+// already failed above with its `invalid-module` error. This check stays for
+// the FINAL artifact: a `--package-linking merge` bundle is assembled after
+// the compile pipeline and is not covered by that gate.
 const cliValidation = validateEmittedBinary(result.binary);
 if (!cliValidation.valid) {
   console.error(

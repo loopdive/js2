@@ -450,6 +450,7 @@ function tryCompileStandaloneArrayIteratorRead(
 }
 
 import { tryBuiltinPrototypeGetterBrandThrow } from "./builtin-prototype-brand.js";
+import { tryCompileClassBuiltinSpeciesRead } from "./class-builtin-species-read.js"; // (#6775 S14)
 import { tryCompileFunctionPoisonRead } from "./function-poison-pill-access.js";
 import { isFnctorLayoutStructName } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
 import { tryEmitPrimitiveAbsentPropertyRead } from "./primitive-absent-property.js"; // (#4483) absent prop of a number/boolean primitive → undefined
@@ -477,6 +478,7 @@ import {
   tryStringLengthIteratorAndExternClassReads,
   trySuperAndImportMetaRead,
 } from "./property-access-dispatch.js"; // (#3276) Wave B — extracted guard bands
+import { readEnv } from "../env.js";
 
 /**
  * (#3037 CS1b) True when `expr` is a direct operand of a standalone
@@ -3617,7 +3619,7 @@ function tryKnownFnctorDynamicObjectCarrierGet(
   propName: string,
 ): ValType | undefined {
   // Narrow rollback switch used by the Acorn exact A/B benchmark.
-  if (process.env.JS2WASM_TYPED_OPEN_CARRIER_READS === "0") return undefined;
+  if (readEnv("JS2WASM_TYPED_OPEN_CARRIER_READS") === "0") return undefined;
   if (!ctx.standalone) return undefined;
   if (!ts.isPropertyAccessExpression(expr.expression)) return undefined;
   const carrierRead = expr.expression;
@@ -5141,7 +5143,8 @@ export function compileElementAccess(
   const jsonParseElementType = tryEmitJsonParseElementAccess(ctx, fctx, expr);
   if (jsonParseElementType !== undefined) return jsonParseElementType;
 
-  const functionHasInstanceRead = tryCompileStandaloneFunctionHasInstanceRead(ctx, fctx, expr);
+  const functionHasInstanceRead =
+    tryCompileStandaloneFunctionHasInstanceRead(ctx, fctx, expr) ?? tryCompileClassBuiltinSpeciesRead(ctx, fctx, expr); // (#6775 S14)
   if (functionHasInstanceRead !== undefined) return functionHasInstanceRead;
 
   // (#4731) Resolve the static Set/Map prototype iterator alias before the

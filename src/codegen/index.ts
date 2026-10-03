@@ -739,6 +739,7 @@ import {
 import { buildLibDeclIndex } from "./lib-decl-index.js"; // (#4218) syntactic lib walk
 import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#2071)
 import { typeTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) the consumer-side twin of the literal gate
+import { readEnv } from "../env.js";
 
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
@@ -1220,6 +1221,12 @@ function nestedVecElementValType(elemIr: IrType, ctx: CodegenContext): ValType |
   return { kind: "ref_null", typeIdx: getOrRegisterVecType(ctx, inner.kind, inner) };
 }
 
+// (#6798) Every throw in `resolvePositionType` is a DESIGNED demote (the #1921
+// contract): typed, so the resolve-stage catch can tell it from a real bug.
+function unresolvablePosition(detail: string): never {
+  throw new IrUnsupportedError("type-resolution-unsupported", "resolve", detail);
+}
+
 function resolvePositionType(
   node: ts.TypeNode | undefined,
   mapped: LatticeType | undefined,
@@ -1275,7 +1282,7 @@ function resolvePositionType(
             : // (#5166) `number[][]` — carry the inner array as a concrete ref.
               nestedVecElementValType(elemIr, ctx);
       if (!elemVal) {
-        throw new Error(
+        unresolvablePosition(
           `array element TypeNode ${ts.SyntaxKind[node.elementType.kind]} could not be lowered to a primitive ValType`,
         );
       }
@@ -1331,7 +1338,7 @@ function resolvePositionType(
                 : // (#5166) `Array<Array<number>>` — same concrete-ref carrier.
                   nestedVecElementValType(elemIr, ctx);
           if (!elemVal) {
-            throw new Error(
+            unresolvablePosition(
               `Array<T> element TypeNode ${ts.SyntaxKind[typeArgs[0]!.kind]} could not be lowered to a primitive ValType`,
             );
           }
@@ -1396,7 +1403,7 @@ function resolvePositionType(
       }
       const ir = objectIrTypeFromTsType(ctx, tsType);
       if (ir) return ir;
-      throw new Error(`object TypeNode ${ts.SyntaxKind[node.kind]} could not be lowered to IrType.object`);
+      unresolvablePosition(`object TypeNode ${ts.SyntaxKind[node.kind]} could not be lowered to IrType.object`);
     }
     // #2859 / #3214 B0+B3 — function-typed source boundary
     // (`fn: () => number` or `(): () => number`). Mirrors the selector's
@@ -1410,9 +1417,9 @@ function resolvePositionType(
     if (ts.isFunctionTypeNode(node)) {
       const signature = irClosureSignatureFromFunctionTypeNode(node);
       if (signature) return { kind: "callable", signature };
-      throw new Error(`function TypeNode not expressible as an IR callable signature`);
+      unresolvablePosition(`function TypeNode not expressible as an IR callable signature`);
     }
-    throw new Error(`unsupported TypeNode kind ${ts.SyntaxKind[node.kind]}`);
+    unresolvablePosition(`unsupported TypeNode kind ${ts.SyntaxKind[node.kind]}`);
   }
   if (isConcreteLattice(mapped)) return latticeToIr(mapped);
   if (mapped?.kind === "object") {
@@ -1423,7 +1430,7 @@ function resolvePositionType(
     // unannotated functions like `function createPoint(x, y) { return {x, y}; }`.
     const ir = objectIrTypeFromLattice(mapped);
     if (ir) return ir;
-    throw new Error(`object position type — lattice shape not lowerable to IrType.object`);
+    unresolvablePosition(`object position type — lattice shape not lowerable to IrType.object`);
   }
   // #2949 slice 2 — UNANNOTATED position whose lattice converged to `unknown`
   // (no evidence) or `dynamic` (top): the position is honestly dynamic. MUST
@@ -1441,7 +1448,7 @@ function resolvePositionType(
   if (mapped && (mapped.kind === "unknown" || mapped.kind === "dynamic")) {
     return irDynamic();
   }
-  throw new Error(`no concrete type (mapped=${mapped?.kind ?? "missing"})`);
+  unresolvablePosition(`no concrete type (mapped=${mapped?.kind ?? "missing"})`);
 }
 
 /**
@@ -2914,7 +2921,7 @@ function planIrOverlay(
   const resolveFnctorPropagationAdmission = makeIrFnctorPropagationAdmissionResolver(ctx, ast.checker, identityContext);
   let identityMaps: irOverlayIdentity.IrOverlayIdentityMaps;
   try {
-    if (process.env.JS2WASM_TEST_INJECT_IR_TYPEMAP_THROW === "1") {
+    if (readEnv("JS2WASM_TEST_INJECT_IR_TYPEMAP_THROW") === "1") {
       throw new Error("injected TypeMap failure");
     }
     identityMaps = irOverlayIdentity.buildIrOverlayIdentityMaps(
@@ -2954,7 +2961,7 @@ function planIrOverlay(
   // affected node kinds. Telemetry mode (`JS2WASM_LOG_IR_FALLBACKS=1`)
   // continues to enable the histogram log; the strict set additionally
   // forces collection.
-  const logFallbacks = process.env.JS2WASM_LOG_IR_FALLBACKS === "1" || STRICT_IR_REASONS.size > 0;
+  const logFallbacks = readEnv("JS2WASM_LOG_IR_FALLBACKS") === "1" || STRICT_IR_REASONS.size > 0;
   const collectFallbacks = ctx.irOutcomes !== undefined || logFallbacks;
   const preparationFailuresByUnitId = new Map<IrUnitId, IrPreparationFailure>();
   // (#2856) Host-extern claiming: mode gate + checker-backed ambient-global
@@ -3379,20 +3386,18 @@ function planIrOverlay(
       // (#2138) NOTE: a resolve-time drop is exactly why `safeSelection`
       // — not the raw `selection` — feeds `computeIrFirstSkipSet`: this
       // function keeps its legacy body under IR-first.
-      const resolveMsg = e instanceof Error ? e.message : String(e);
-      recordPreparationFailure(name, {
-        kind: "unsupported",
-        code: "type-resolution-unsupported",
-        stage: "resolve",
-        detail: resolveMsg,
-        cause: e,
-      });
-      (ctx.irPostClaimErrors ??= []).push({
-        kind: "resolve",
-        func: name,
-        message: resolveMsg,
-      });
-      reportErrorNoNode(ctx, `IR path: could not resolve types for ${name}: ${resolveMsg}`, "warning");
+      //
+      // (#6798) Only a TYPED `IrUnsupportedError` is that designed demote. Any
+      // other throw (a `TypeError` from a real bug) classifies as the
+      // `unexpected-internal-throw` invariant and hard-errors, as the
+      // build/verify/lower stages already do.
+      const failure = classifyIrFailure(e, "resolve");
+      const resolveMsg = failure.detail;
+      recordPreparationFailure(name, failure);
+      (ctx.irPostClaimErrors ??= []).push({ kind: "resolve", func: name, message: resolveMsg });
+      const hard = failure.kind === "invariant";
+      const resolveDiag = `IR path: could not resolve types for ${name}: ${resolveMsg}`;
+      reportErrorNoNode(ctx, hard ? `Codegen error: ${resolveDiag}` : resolveDiag, hard ? "error" : "warning");
     }
   }
   // Only request IR compilation for functions we successfully built
@@ -3644,7 +3649,7 @@ function consumeIrOverlayReport(
     // `body-shape-rejected` units cannot be grouped into coherent fixes. The
     // `detail` field is populated by select.ts only under
     // JS2WASM_IR_SHAPE_DIAG=1, so this line is silent on the normal path.
-    if (process.env.JS2WASM_IR_SHAPE_DIAG === "1") {
+    if (readEnv("JS2WASM_IR_SHAPE_DIAG") === "1") {
       for (const fb of selection.fallbacks) {
         process.stderr.write(
           `[ir-fallback-unit] file=${sourceFile.fileName || "<source>"} name=${fb.name} reason=${fb.reason} arm=${fb.detail ?? "<none>"}\n`,
@@ -4028,7 +4033,7 @@ function compileMultiIrOverlaySource(
     planMultiIrOverlaySource(ctx, multiAst, sourceFile, identityContext, identityResolver, hostImportedFunctions, {
       experimentalIR: true,
       postLegacyPhysicalReservation: true,
-      irFirstEnvironment: process.env.JS2WASM_IR_FIRST,
+      irFirstEnvironment: readEnv("JS2WASM_IR_FIRST"),
     });
   let safeSelection = makeMultiIrSafeSelection(ctx, plan, sourceFile, safety);
   safeSelection = removeMultiIrAttemptedCallableUnits(ctx, plan, safeSelection);
@@ -5504,7 +5509,7 @@ export function generateModule(
       });
       // JS2WASM_LIB_SCAN=checker forces the legacy checker-driven walk — the
       // A/B escape hatch for parity triage (#4218).
-      const libIndex = process.env.JS2WASM_LIB_SCAN === "checker" ? undefined : buildLibDeclIndex(libSfs);
+      const libIndex = readEnv("JS2WASM_LIB_SCAN") === "checker" ? undefined : buildLibDeclIndex(libSfs);
       for (const sf of libSfs) {
         collectExternDeclarations(ctx, sf, libRefs, libIndex);
         collectDeclaredGlobals(ctx, sf, ast.sourceFile, libIndex);
@@ -5855,7 +5860,7 @@ export function generateModule(
     // error is not swallowed by the shim's fallback catch into a silent
     // `undefined`. The ordinary IR overlay (`experimentalIR`) still runs.
     const irFirst =
-      !!options?.experimentalIR && !options?.disableIrFirst && !explicitlyDisabledEnv(process.env.JS2WASM_IR_FIRST);
+      !!options?.experimentalIR && !options?.disableIrFirst && !explicitlyDisabledEnv(readEnv("JS2WASM_IR_FIRST"));
     // (#3521 R2-T1) The R2 selector only runs on the IR-first route, so with it
     // off no per-unit withdrawal can exist. Record the source-level reason here,
     // where the decision is actually made — `irPlan` is still null at this point.
@@ -6015,7 +6020,7 @@ export function generateModule(
           fnctorArgumentProjectionRoute: {
             experimentalIR: true,
             postLegacyPhysicalReservation: true,
-            irFirstEnvironment: process.env.JS2WASM_IR_FIRST,
+            irFirstEnvironment: readEnv("JS2WASM_IR_FIRST"),
           },
         });
       const { classShapes, overrideMap } = plan;
@@ -7167,7 +7172,7 @@ function assertNoLeakedHostImports(ctx: CodegenContext, mod: WasmModule): void {
   const severity: "error" | "warning" | null = ctx.strictNoHostImports
     ? "error"
     : // (#6686) audits the standalone deliverable, not the regime in a JS env
-      ctx.targetProfile.target === "standalone" && process.env.JS2WASM_STANDALONE_LEAK_SCAN !== "0"
+      ctx.targetProfile.target === "standalone" && readEnv("JS2WASM_STANDALONE_LEAK_SCAN") !== "0"
       ? "warning"
       : null;
   if (severity === null) return;
@@ -7279,7 +7284,7 @@ function finalizeStandaloneTimerCallbackExports(ctx: CodegenContext): void {
  */
 function drainStackBalanceTelemetry(ctx: CodegenContext, fileLabel: string): void {
   const events = getFixupEvents();
-  if (process.env.JS2WASM_LOG_STACK_BALANCE === "1") {
+  if (readEnv("JS2WASM_LOG_STACK_BALANCE") === "1") {
     const counts = summarizeFixups(events);
     const hist = Object.entries(counts)
       .filter(([, n]) => n > 0)
@@ -7406,7 +7411,7 @@ function applyModuleInitGuard(ctx: CodegenContext): void {
   const reservation = ctx.preparedWasiModuleInitGuard;
   const planted = reservation?.planted;
   if (planted) {
-    if (process.env.JS2WASM_TEST_STRIP_PREPARED_WASI_MODULE_INIT_GUARD === "1") {
+    if (readEnv("JS2WASM_TEST_STRIP_PREPARED_WASI_MODULE_INIT_GUARD") === "1") {
       // Anti-vacuity seam: hand the authentication below a genuinely unguarded
       // prepared body, so "fails closed" is a measured property.
       initFn.body = initFn.body.filter((instr) => instr !== planted.guard);
@@ -8260,9 +8265,9 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
       appendResultBoxing(testAndCall, entry.resultType);
       // externref: no conversion needed
 
-      const tagCond = classMember
-        ? classArmTagCondition(ctx, entry.structName, entry.typeIdx, receiverAnyLocal)
-        : undefined;
+      // (#6773 S1) Iterator dispatchers take the nominal guard too: same-layout classes are one
+      // runtime type, so `__call_next` on one ran the other's `next` (then failed its brand check).
+      const tagCond = classArmTagCondition(ctx, entry.structName, entry.typeIdx, receiverAnyLocal);
       current = [
         { op: "local.get", index: receiverAnyLocal },
         { op: "ref.test", typeIdx: entry.typeIdx },
@@ -8323,6 +8328,7 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
     emitMethodDispatch("@@iterator", "__call_@@iterator");
     emitMethodDispatch("next", "__call_next");
     emitMethodDispatch("return", "__call_return"); // (#3100 S5) IteratorClose §7.4.9 USER-arm dispatcher
+    if (ctx.standalone || ctx.wasi) emitMethodDispatch("get_return", "__call_get_return"); // (#6773 S3) GetMethod getter
   }
 
   // (#3123) Host-side class-member resolution surface for fnctor-subclass
@@ -10732,7 +10738,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
           const baseName = libSf.fileName.split("/").pop() ?? libSf.fileName;
           return baseName.startsWith("lib.") && baseName.endsWith(".d.ts");
         });
-        const libIndex = process.env.JS2WASM_LIB_SCAN === "checker" ? undefined : buildLibDeclIndex(libSfs);
+        const libIndex = readEnv("JS2WASM_LIB_SCAN") === "checker" ? undefined : buildLibDeclIndex(libSfs);
         for (const libSf of libSfs) {
           collectExternDeclarations(ctx, libSf, libRefs, libIndex);
           for (const sf of multiAst.sourceFiles) {
@@ -10825,7 +10831,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // field-shape promotion remains owned by the existing single-source path.
     let linkedNumericHost: NumericPropertyAnalysisHost | undefined;
     let linkedPriorNumericFunctions: ReadonlySet<string> | undefined;
-    if (ctx.standalone && process.env.JS2WASM_NUMERIC_LOCALS !== "0") {
+    if (ctx.standalone && readEnv("JS2WASM_NUMERIC_LOCALS") !== "0") {
       // (#4406 Phase 4) Both exclusions here too — assigning in only one of the
       // two lanes makes them disagree about which names are numeric.
       linkedNumericHost = {
@@ -11846,7 +11852,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
   // already inconsistent when codegen finished; one that is clean here but
   // rejected at emit was corrupted by a later pass. Inert unless set.
   profilePhase("report-out-of-frame-locals", () => {
-    if (typeof process !== "undefined" && process.env?.JS2WASM_CHECK_FRAMES) {
+    if (typeof process !== "undefined" && readEnv("JS2WASM_CHECK_FRAMES")) {
       reportOutOfFrameLocals(ctx, mod);
     }
   });
@@ -11909,7 +11915,7 @@ let frameStagePrev = 0;
 
 /** (#4134) Report the first pass boundary at which the breach count grows. */
 function frameStage(ctx: CodegenContext, label: string): void {
-  if (!process.env?.JS2WASM_FRAME_STAGES) return;
+  if (!readEnv("JS2WASM_FRAME_STAGES")) return;
   const n = countOutOfFrameLocals(ctx.mod);
   if (n !== frameStagePrev) {
     process.stderr.write(`[js2:frame-stage] after ${label}: ${frameStagePrev} -> ${n}\n`);

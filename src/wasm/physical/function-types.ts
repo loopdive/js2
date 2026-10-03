@@ -19,6 +19,7 @@ export function funcTypeKey(params: ValType[], results: ValType[]): string {
     else if (v.kind === "i32") {
       if ((v as { boolean?: true }).boolean) s += ":bool";
       else if ((v as { symbol?: true }).symbol) s += ":sym";
+      else if ((v as { int32?: true }).int32) s += ":int32"; // (#6798) ToInt32 destination
     }
     // (#2846) Same brand-propagation hazard as i32 (#2795), one slot down: a
     // bigint-branded `i64` (`{ kind:"i64"; bigint:true }`) backs a BigInt and
@@ -79,7 +80,12 @@ export function sameValTypes(left: readonly ValType[], right: readonly ValType[]
         case "ref_null":
           return (other.kind === "ref" || other.kind === "ref_null") && value.typeIdx === other.typeIdx;
         case "i32":
-          return other.kind === "i32" && value.boolean === other.boolean && value.symbol === other.symbol;
+          return (
+            other.kind === "i32" &&
+            value.boolean === other.boolean &&
+            value.symbol === other.symbol &&
+            value.int32 === other.int32
+          );
         case "i64":
           return other.kind === "i64" && value.bigint === other.bigint;
         case "f64":

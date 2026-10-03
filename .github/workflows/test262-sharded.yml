@@ -285,8 +285,17 @@ jobs:
           # before the explicit rc checks below. Two consequences, both real:
           # every cheap-gate failure was diagnostic-free (the log ended at a bare
           # "Process completed with exit code 1"), and a lint-only failure
-          # HARD-FAILED this required check, contradicting the "not blocking"
-          # warning at the end of this very script.
+          # hard-failed this required check while the script claimed lint was
+          # "not blocking".
+          #
+          # (#6784) Lint now blocks here ON PURPOSE. #3677 made it advisory
+          # because the failure was diagnostic-free and duplicated `quality`;
+          # the dumps below fixed the first, and a required check named
+          # "... + lint" must not pass on lint errors (docs/ci-policy.md §7
+          # describes it as a lint + typecheck reject). The same #6784 found
+          # `pnpm run lint` itself had been vacuous (Biome's 20-diagnostic cap,
+          # spent on `noExplicitAny` warnings, hid every error) — the script now
+          # passes --max-diagnostics=none, so lint_rc is real.
           #
           # `cmd || rc=$?` makes the wait a TESTED command, so `-e` does not fire
           # while the real exit status is still captured. Deliberately NOT
@@ -298,7 +307,7 @@ jobs:
           echo "--- typecheck (last 50 lines) ---"; tail -50 "$tmp_tc"
           echo "--- lint (last 50 lines) ---"; tail -50 "$tmp_lint"
           if [ "$tc_rc" -ne 0 ]; then echo "::error::typecheck failed (rc=$tc_rc)"; exit "$tc_rc"; fi
-          if [ "$lint_rc" -ne 0 ]; then echo "::warning::lint failed (rc=$lint_rc) — not blocking"; fi
+          if [ "$lint_rc" -ne 0 ]; then echo "::error::lint failed (rc=$lint_rc)"; exit "$lint_rc"; fi
 
   changes:
     # merge_group has no native `paths:` filter (unlike pull_request/push
@@ -2779,8 +2788,10 @@ jobs:
       # COVERED, and the step reported OK having checked nothing: ES5 lost 7
       # rows between 2026-09-23 and 09-28 under that green step. The script now
       # refuses to run without the checkout; this fetches the pinned commit only.
+      # (#6786) The js-host completed-edition gate further down classifies rows
+      # the same way, so a host-only merge_group needs the checkout too.
       - name: Check out test262 for the edition classifier
-        if: env.STANDALONE_RAN == 'true'
+        if: env.STANDALONE_RAN == 'true' || env.HOST_RAN == 'true'
         run: git submodule update --init --depth 1 test262
 
       # Besides the per-edition floors, an edition marked `completed` in the
@@ -2912,6 +2923,44 @@ jobs:
             exit 1
           fi
           echo "Fine-grained gate failure below the catastrophic threshold — left to the regression-gate job (pre-#3303 behaviour preserved)."
+
+      # (#6786) PER-ROW gate for COMPLETED editions on the JS-HOST lane. The
+      # host lane's other guards are net/ratio/bucket gates: the #1668 guard
+      # above, and `check for test262 regressions`, which hard-fails only on
+      # net < 0. So a merge_group that flipped 4 ES5 rows pass→fail while
+      # fixing 5 others passed both. ES5 is `completed` in
+      # scripts/test262-edition-ratchet-baseline.json, and a completed edition
+      # allows no regression on EITHER lane (the standalone half is the
+      # per-edition ratchet step above).
+      #
+      # The host lane is not at 100 % in ES5, so the rule here is per row:
+      # every completed-edition row that passed in the host baseline must
+      # still pass. Not gated (listed in the log): rows in
+      # scripts/test262-host-noise-quarantine.json (#3426) and pass →
+      # compile_timeout (#1192 runner-load flake; #1942 owns slowdowns).
+      #
+      # Compare baseline: the latest-main host JSONL the #1668 guard cloned.
+      # A missing baseline is REFUSED (exit 2), not skipped — this gate must
+      # never pass having compared nothing. Its failure is DEFERRED like the
+      # #6461/#6760 ones, so the #1942/#1897 diagnostics below still run; the
+      # re-raise is the "Fail on host completed-edition breach" step below.
+      - name: Host completed-edition per-row gate (#6786)
+        id: host_completed_rows
+        if: env.HOST_RAN == 'true'
+        continue-on-error: true
+        run: |
+          BASE=/tmp/cat-baselines/test262-current.jsonl
+          if [ ! -s "$BASE" ] && [ "${{ github.event_name == 'workflow_dispatch' && inputs.skip_promote }}" != "true" ]; then
+            # The #1668 clone failed or was skipped: one fresh sparse clone.
+            rm -rf /tmp/host-rows-baselines
+            { git clone --depth=1 --filter=blob:none --no-checkout https://github.com/loopdive/js2wasm-baselines.git /tmp/host-rows-baselines \
+              && git -C /tmp/host-rows-baselines sparse-checkout set --no-cone /test262-current.jsonl \
+              && git -C /tmp/host-rows-baselines checkout main; } 2>/dev/null || true
+            BASE=/tmp/host-rows-baselines/test262-current.jsonl
+          fi
+          npx tsx scripts/test262-edition-ratchet.ts --host-lane \
+            --results merged-reports/test262-results-merged.jsonl \
+            --compare "$BASE"
 
       # #1897 — HARD standalone-regression guard. Mirrors the host
       # catastrophic guard above, but for the STANDALONE lane and at a much
@@ -3214,6 +3263,18 @@ jobs:
         if: always() && env.STANDALONE_RAN == 'true' && steps.edition_ratchet.outcome == 'failure'
         run: |
           echo "::error::Per-edition conformance ratchet failed — a ratcheted edition lost ground or a COMPLETED edition has a non-passing row. See the 'Per-edition conformance ratchet' step for the edition and rows, and the '#1897' standalone regression guard for every moved row. Failing the required check here so those diagnostics run (#6760)."
+          exit 1
+
+      # (#6786) Re-raise the js-host completed-edition gate, deferred for the
+      # same reason as the two re-raises above. Exit 1 (a completed-edition
+      # row went pass→fail) and exit 2 (refused: no baseline, no rows, or no
+      # test262 checkout) both land here; neither may report green. The name is
+      # QUOTED: bare, YAML reads ` #6786)` as a comment and GitHub would show
+      # "(deferred,".
+      - name: "Fail on host completed-edition breach (deferred, #6786)"
+        if: always() && env.HOST_RAN == 'true' && steps.host_completed_rows.outcome == 'failure'
+        run: |
+          echo "::error::js-host completed-edition gate failed — a row of a COMPLETED edition (ES5) that passed in the host baseline no longer passes, or the gate refused to run on missing input. A completed edition allows no regression on either lane, whatever the net. See the 'Host completed-edition per-row gate (#6786)' step for the rows. Failing the required check here so the later diagnostics run."
           exit 1
 
       - name: Upload merged reports
@@ -4829,7 +4890,7 @@ jobs:
             git add -f website/index.html 2>/dev/null || true
             # Conformance numbers in prose docs (synced just above). Staged so
             # the number and its derived docs land in ONE atomic commit.
-            git add -f README.md ROADMAP.md CLAUDE.md plan/goals/goal-graph.md \
+            git add -f README.md ROADMAP.md STATUS.md CLAUDE.md plan/goals/goal-graph.md \
               2>/dev/null || true
           }
           stage_files
@@ -4987,6 +5048,15 @@ jobs:
               echo "WARN: func-budget baseline recompute on re-anchored tip failed (non-fatal)"
             git add -f scripts/loc-budget-baseline.json 2>/dev/null || true
             git add -f scripts/func-budget-baseline.json 2>/dev/null || true
+            # #6797 — bank import-cycle / flat-dir decreases. Run ONLY here, on
+            # the re-anchored tip, never in the pre-loop snapshot: the PR gates
+            # read these baselines, so a value computed on an older checkout
+            # could undercut main's tree and turn the gate red on main.
+            node scripts/check-import-cycles.mjs --update-on-decrease || \
+              echo "WARN: import-cycles baseline bank on re-anchored tip failed (non-fatal)"
+            node scripts/check-flat-dir-budget.mjs --update-on-decrease || \
+              echo "WARN: flat-dir budget bank on re-anchored tip failed (non-fatal)"
+            git add -f scripts/import-cycles-baseline.json scripts/flat-dir-budget-baseline.json 2>/dev/null || true
             if git diff --cached --quiet; then
               echo "Baseline already current on main (no delta after re-anchor) — nothing to push."
               PUSHED=1

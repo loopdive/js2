@@ -1,0 +1,304 @@
+{
+  "schema": 1,
+  "kind": "number-prerequisites-exact-runtime-program-policy-successor",
+  "provenance": {
+    "reviewedBase": "345616935e6ad070f1c39f9eb360131241acbbae",
+    "planSha256": "ba0fa7a97e9bdb4971bda4b7fffe50fc83976bc2b49b5b77127c0931b1865c3b",
+    "wksHelperPrefix": {
+      "bytes": 23854,
+      "sha256": "fe575facb2aedc750760ba302ded54ab37ac223ff70e0d07f25faa804de84474"
+    },
+    "immutableInputs": [
+      {
+        "path": "tests/helpers/ir-runtime-program-policy-well-known-symbols.json",
+        "bytes": 9470,
+        "sha256": "5b28556311bb1548e3fb399fc8dee458fcec60f0d5366714e6298af123b73a61"
+      },
+      {
+        "path": "tests/helpers/ir-runtime-program-policy-evolution.json",
+        "bytes": 6804,
+        "sha256": "8e2589e90fbc697dceba56e1bbe53447250a94f3bcb03d99317ad4878bc1f58c"
+      },
+      {
+        "path": "src/ir/program.ts",
+        "bytes": 20480,
+        "sha256": "bbc4c4e092fc98053434dea89451e54b0db80d994c479aa2f4e519285a71ea50"
+      },
+      {
+        "path": "src/ir/program-abi-contracts.ts",
+        "bytes": 10561,
+        "sha256": "ec7abc6488f3a77c24b65348713efec386c02f8ad065836d5e14814cec6656b9"
+      },
+      {
+        "path": "src/ir/prepared-component-dependencies.ts",
+        "bytes": 70294,
+        "sha256": "7954d8385517afb23689382abb066a8cec016a50b277ae37fd81e895c6fcf10f"
+      },
+      {
+        "path": "src/ir/generator-support.ts",
+        "bytes": 329,
+        "sha256": "b15757be319275f1872dab77541600551d32795624d530d4b71f9eaf474862f5"
+      },
+      {
+        "path": "src/ir/program/owner.ts",
+        "bytes": 1323,
+        "sha256": "3b25543059427df6f91cce6892a7bfb9b0104ec2f078bc41517a1d6c42fb6b19"
+      },
+      {
+        "path": "src/ir/program/draft-abi-lookup.ts",
+        "bytes": 714,
+        "sha256": "b360370fdcac3c633a0f09f23e11ae71833ceecbed61cdf153da29d91c33aa24"
+      },
+      {
+        "path": "src/ir/program/runtime-support-dependencies.ts",
+        "bytes": 4661,
+        "sha256": "269d0476bd2f81f57057a8a8507896931e3c13d6176b5585ce08dcb1ee1b54b9"
+      },
+      {
+        "path": "src/ir/runtime/generator-support.ts",
+        "bytes": 8956,
+        "sha256": "afc937aaacb916d39447df1254ac0da67877778b9c7df09e7891e3fc7c861c39"
+      },
+      {
+        "path": "tests/issue-3518-runtime-program-c1-relocation.test.ts",
+        "bytes": 24062,
+        "sha256": "68a40cd9a5e67fc702e202a4f6307d4021dfed73fdaf0e2dbccd97a4ec6f7aed"
+      },
+      {
+        "path": "tests/helpers/ir-runtime-program-relocation.ts",
+        "bytes": 19615,
+        "sha256": "6be4b992fb5a3aafab89112e7f3a4dfcacb67ad7f53edb1c99a17fe55c7c5141"
+      },
+      {
+        "path": "tests/helpers/ir-runtime-program-relocation.json",
+        "bytes": 680099,
+        "sha256": "aeeae92fa9c31d8d7ae6aa8805c91862cb1fa2b79486fa4d69cce29d7d065763"
+      },
+      {
+        "path": "tests/issue-3518-runtime-program-relocation.test.ts",
+        "bytes": 21449,
+        "sha256": "324fa026106c484167f6631158043bf16298d07d6f82f1136808fa07054dcc6b"
+      },
+      {
+        "path": "tests/issue-3518-program-data-contract-seam.test.ts",
+        "bytes": 35973,
+        "sha256": "84f249d70f2546cb9ac025f72c7817d5d58e4950c00691fd585caba7bd0cffda"
+      },
+      {
+        "path": "tests/issue-3518-program-ownership-runtime-seam.test.ts",
+        "bytes": 36546,
+        "sha256": "66dfa1235ce24d821a9530a5c3531b56eef2817033d89f0d3e8109f9ead13220"
+      },
+      {
+        "path": "tests/issue-3518-program-pre-a-evolution.test.ts",
+        "bytes": 17640,
+        "sha256": "0ee5b4d09d0efd9bd5f084fde4fb87bf316ad4aae85867c30d9903cce9353068"
+      },
+      {
+        "path": "tests/issue-3518-program-initial-graph-evolution.test.ts",
+        "bytes": 24556,
+        "sha256": "44f5ac79766e9046aa4ed3ccc32c5e609209d0000ffe4d7b06d9afcc8049c2e6"
+      },
+      {
+        "path": "tests/helpers/ir-validation-policy-evolution.ts",
+        "bytes": 11095,
+        "sha256": "a962c04960b945705e9ac5a354da3e96c8e0cf5543382847231dd3df9204fb40"
+      },
+      {
+        "path": "tests/helpers/ir-validation-policy-evolution.json",
+        "bytes": 51450,
+        "sha256": "39dacc9d17fb52b6a369ed81d7498afc30b00bc06d89362bba039305aa96fa0e"
+      }
+    ],
+    "sourceInputs": [
+      {
+        "path": "src/runtime/wasmgc/values/bigint-to-number-body.ts",
+        "bytes": 9195,
+        "sha256": "a698e80ad9054d7dd66ed33e17798b339b3ae2c16c7b9efdd004394d52e91d80"
+      },
+      {
+        "path": "src/runtime/wasmgc/values/number-from-value-body.ts",
+        "bytes": 9609,
+        "sha256": "00376356e12a0d70976addeff7911b1ec5401375b1f4eb0d7c81450568c20b59"
+      },
+      {
+        "path": "src/backend/wasmgc/resources/native-bigint-number.ts",
+        "bytes": 15683,
+        "sha256": "ccc1c66d4fc734339cc9a192dc29f24d08483fb7a559b777a903a622b64c3cc6"
+      },
+      {
+        "path": "src/backend/wasmgc/resources/native-number-primitive-classifier.ts",
+        "bytes": 21040,
+        "sha256": "210c30e3f2928952ebfceeafb8f6545930054b0c5ed9c1ec66ca2afcc41e7161"
+      },
+      {
+        "path": "tests/issue-3518-bigint-to-number-body.test.ts",
+        "bytes": 11598,
+        "sha256": "f80b9fe1701a8f289a458a5032d3d4bd0af4910d723eabe343476b4814c3f130"
+      },
+      {
+        "path": "tests/issue-3518-native-bigint-number-owner.test.ts",
+        "bytes": 29455,
+        "sha256": "b266965df90630f184a136f07c6867f99b59507f1ee11f0ca141c047e6b8f621"
+      },
+      {
+        "path": "tests/issue-3518-native-number-primitive-classifier.test.ts",
+        "bytes": 43687,
+        "sha256": "45ad86969dd28b1597eef4e8e0a53531ea4f3dc54e90e2784ca6cb01baec626d"
+      },
+      {
+        "path": "tests/issue-3518-number-from-value-body.test.ts",
+        "bytes": 36900,
+        "sha256": "2abc9c96ebd7fcda5547c8f093530d08d56796b4ab4b636b64a4d3b0ff5ae969"
+      }
+    ]
+  },
+  "before": {
+    "source": {
+      "bytes": 565875,
+      "sha256": "451258b5feed7669d08553de966cb654a88f134a1d197fb9768fa97607843e59",
+      "gitBlob": "74dc1b073145713d122e28a0b45f34c0cc41a066"
+    },
+    "dataSha256": "462b8a9a6047378eed5913e51441761734663ff8c53cbb804106368ff1a33be7",
+    "fileCount": 1771,
+    "filesSha256": "fb09eb31db052006e682dbad6dd421488a7ccc1093169ca18779e33a80ec929d",
+    "activationCount": 98,
+    "activationHistorySha256": "66367385757ebdd22d24656c46f0317f97aaf4b104a431e94c4b566753b53eac",
+    "layersSha256": "091f25a5fee65a0185b62916ecbdd60afabd96409fa914cf02cb17616a1f0d7c"
+  },
+  "current": {
+    "source": {
+      "bytes": 567166,
+      "sha256": "8213f6d2d3bf112544ca2aa50b68e585f4ba2c1f9795acc240c9e8495712e7df",
+      "gitBlob": "0d90f336925232fd22c98c438121b93e7e5bcf52"
+    },
+    "dataSha256": "5dea4a676b8ddbc6fc50c7c77446e799ee4db12f4113c1fdf4edff33de848b21",
+    "fileCount": 1775,
+    "filesSha256": "82448a8b5bf6373b7ef203924f3ac4f0d33e69ca1df77b322812b63613fe8bec",
+    "activationCount": 100,
+    "activationHistorySha256": "f6716a46656b3e4e7292e6d6c2cfdb5681becc9fb0e688ebad01a49c48d044ab",
+    "layersSha256": "ab456c917964e4e4d51c7110ce854e8c8648827a72eb4e6e61e2d74dc7f08a05"
+  },
+  "allowedEdgesSha256": "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7",
+  "layerDeltas": [
+    {
+      "index": 11,
+      "id": "backend-wasmgc",
+      "beforeEntries": 50,
+      "currentEntries": 52,
+      "beforeMinModules": 50,
+      "currentMinModules": 52,
+      "roots": ["src/backend/wasmgc"],
+      "additions": [
+        "src/backend/wasmgc/resources/native-bigint-number.ts",
+        "src/backend/wasmgc/resources/native-number-primitive-classifier.ts"
+      ]
+    },
+    {
+      "index": 12,
+      "id": "native-runtime",
+      "beforeEntries": 98,
+      "currentEntries": 100,
+      "beforeMinModules": 97,
+      "currentMinModules": 99,
+      "roots": ["src/runtime/wasmgc"],
+      "additions": [
+        "src/runtime/wasmgc/values/bigint-to-number-body.ts",
+        "src/runtime/wasmgc/values/number-from-value-body.ts"
+      ]
+    }
+  ],
+  "addedFiles": [
+    {
+      "path": "src/runtime/wasmgc/values/bigint-to-number-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/number-from-value-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-bigint-number.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-number-primitive-classifier.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    }
+  ],
+  "activationAdditions": [
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/values/bigint-to-number-body.ts",
+        "src/runtime/wasmgc/values/number-from-value-body.ts"
+      ],
+      "minModules": 2
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": [
+        "src/backend/wasmgc/resources/native-bigint-number.ts",
+        "src/backend/wasmgc/resources/native-number-primitive-classifier.ts"
+      ],
+      "minModules": 2
+    }
+  ],
+  "census": {
+    "layers": 20,
+    "files": 1775,
+    "histories": 100,
+    "requiredContracts": 10,
+    "contractsFloor": 10,
+    "classifiedContracts": 10,
+    "requiredBackend": 52,
+    "backendFloor": 52,
+    "classifiedBackend": 57,
+    "requiredProgram": 43,
+    "classifiedProgram": 44,
+    "requiredRuntime": 19,
+    "classifiedRuntime": 19,
+    "requiredNative": 100,
+    "nativeFloor": 99,
+    "classifiedNative": 105,
+    "requiredAnalysis": 11,
+    "requiredCore": 29
+  },
+  "raw": {
+    "offsetUnit": "utf16-code-unit",
+    "spans": [
+      {
+        "role": "backend-wasmgc-layer-tail",
+        "beforeOffset": 12886,
+        "afterOffset": 12886,
+        "before": "\"src/backend/wasmgc/resources/native-well-known-symbols.ts\"\n      ],\n      \"minModules\": 50",
+        "after": "\"src/backend/wasmgc/resources/native-well-known-symbols.ts\",\n        \"src/backend/wasmgc/resources/native-bigint-number.ts\",\n        \"src/backend/wasmgc/resources/native-number-primitive-classifier.ts\"\n      ],\n      \"minModules\": 52"
+      },
+      {
+        "role": "native-runtime-layer-tail",
+        "beforeOffset": 19261,
+        "afterOffset": 19403,
+        "before": "\"src/runtime/wasmgc/values/mixed-object-access-bodies.ts\"\n      ],\n      \"minModules\": 97",
+        "after": "\"src/runtime/wasmgc/values/mixed-object-access-bodies.ts\",\n        \"src/runtime/wasmgc/values/bigint-to-number-body.ts\",\n        \"src/runtime/wasmgc/values/number-from-value-body.ts\"\n      ],\n      \"minModules\": 99"
+      },
+      {
+        "role": "activation-history-tail",
+        "beforeOffset": 65258,
+        "afterOffset": 65525,
+        "before": "    {\n      \"layer\": \"backend-wasmgc\",\n      \"entries\": [\"src/backend/wasmgc/resources/native-well-known-symbols.ts\"],\n      \"minModules\": 1\n    }\n  ],\n  \"nonModules\"",
+        "after": "    {\n      \"layer\": \"backend-wasmgc\",\n      \"entries\": [\"src/backend/wasmgc/resources/native-well-known-symbols.ts\"],\n      \"minModules\": 1\n    },\n    {\n      \"layer\": \"native-runtime\",\n      \"entries\": [\n        \"src/runtime/wasmgc/values/bigint-to-number-body.ts\",\n        \"src/runtime/wasmgc/values/number-from-value-body.ts\"\n      ],\n      \"minModules\": 2\n    },\n    {\n      \"layer\": \"backend-wasmgc\",\n      \"entries\": [\n        \"src/backend/wasmgc/resources/native-bigint-number.ts\",\n        \"src/backend/wasmgc/resources/native-number-primitive-classifier.ts\"\n      ],\n      \"minModules\": 2\n    }\n  ],\n  \"nonModules\""
+      },
+      {
+        "role": "files-tail",
+        "beforeOffset": 565726,
+        "afterOffset": 566450,
+        "before": "    {\n      \"path\": \"src/backend/wasmgc/resources/native-well-known-symbols.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"backend-wasmgc\"\n    }\n  ]\n}\n",
+        "after": "    {\n      \"path\": \"src/backend/wasmgc/resources/native-well-known-symbols.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"backend-wasmgc\"\n    },\n    {\n      \"path\": \"src/runtime/wasmgc/values/bigint-to-number-body.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"native-runtime\"\n    },\n    {\n      \"path\": \"src/runtime/wasmgc/values/number-from-value-body.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"native-runtime\"\n    },\n    {\n      \"path\": \"src/backend/wasmgc/resources/native-bigint-number.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"backend-wasmgc\"\n    },\n    {\n      \"path\": \"src/backend/wasmgc/resources/native-number-primitive-classifier.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"backend-wasmgc\"\n    }\n  ]\n}\n"
+      }
+    ]
+  }
+}

@@ -86,7 +86,7 @@ const ENV_POISON = "JS2WASM_FLAT_STR_IC_POISON";
 
 function setEnv(key: string, value: string | undefined): void {
   // `= undefined` coerces to the STRING "undefined", which reads as "set".
-  // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
+  // Only `delete` truly unsets an env var
   if (value === undefined) delete process.env[key];
   else process.env[key] = value;
 }

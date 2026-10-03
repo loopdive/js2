@@ -148,7 +148,7 @@ async function build(hoist: boolean, census: boolean): Promise<Uint8Array> {
   };
   const set = (key: string, value: string | undefined): void => {
     // `= undefined` coerces to the STRING "undefined", which reads as "set".
-    // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
+    // Only `delete` truly unsets an env var
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   };

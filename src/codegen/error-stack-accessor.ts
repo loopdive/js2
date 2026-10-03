@@ -40,6 +40,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
+import { undefinedExternInstrs } from "./any-helpers.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
@@ -269,8 +270,9 @@ export function emitErrorStackGetterBody(ctx: CodegenContext, fctx: FunctionCont
       // Implementation-defined. `""` is a string, which is all the proposal
       // and the tests require of it.
       then: [...stringConstantExternrefInstrs(ctx, "")],
-      // No [[ErrorData]] — including every Proxy, whatever it wraps.
-      else: [{ op: "ref.null.extern" }],
+      // No [[ErrorData]] — including every Proxy, whatever it wraps. The
+      // canonical `undefined`, not `ref.null.extern` (which reads as null).
+      else: undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
     },
   );
   return { kind: "externref" };
@@ -368,6 +370,8 @@ export function emitErrorStackSetterBody(ctx: CodegenContext, fctx: FunctionCont
           { op: "if", blockType: { kind: "empty" }, then: proxyArm, else: ordinary },
         ];
   const create = splitOnReceiver(proxyArms?.create ?? [], ordinaryCreate);
+  // Read AFTER every arm is built — a late import renumbers function indices.
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
   const assign = splitOnReceiver(proxyArms?.assign ?? [], ordinaryAssign);
 
   fctx.body.push(
@@ -376,6 +380,16 @@ export function emitErrorStackSetterBody(ctx: CodegenContext, fctx: FunctionCont
     { op: "call", funcIdx: gopdIdx },
     { op: "local.tee", index: descLocal },
     { op: "ref.is_null" },
+    // (#6775 S2) A Proxy `getOwnPropertyDescriptor` trap answering `undefined`
+    // hands back the `$undefined` singleton, not null — both mean "no own
+    // property", so both take the CreateDataPropertyOrThrow arm.
+    ...(isUndefinedIdx === undefined
+      ? []
+      : ([
+          { op: "local.get", index: descLocal },
+          { op: "call", funcIdx: isUndefinedIdx },
+          { op: "i32.or" },
+        ] as Instr[])),
     { op: "if", blockType: { kind: "empty" }, then: create, else: assign },
     // A setter's completion value is undefined.
     { op: "ref.null.extern" },

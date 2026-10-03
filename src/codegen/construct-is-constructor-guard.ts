@@ -92,6 +92,9 @@ import type { Instr } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { buildThrowJsErrorInstrs, usesNativeJsErrors } from "./js-errors.js";
 import { ensureReflectIsConstructor } from "./reflect-construct-native.js";
+import { FLAG_INTERNAL, WRAPPER_PRIMITIVE_KEY } from "./object-runtime.js";
+import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { addStringConstantGlobal } from "./registry/imports.js";
 
 /** §13.3.5.1 step 5's message, matching the wording the host lane throws. */
 const NOT_A_CONSTRUCTOR_MESSAGE = "value is not a constructor";
@@ -119,6 +122,8 @@ export function armConstructIsConstructorGuard(ctx: CodegenContext, fctx: Functi
   // Reserve-then-fill: the predicate is filled over the complete constructible
   // closure table at finalize, so only its stable funcIdx is baked here.
   ensureReflectIsConstructor(ctx);
+  // (#6775 S5) Interned now — the wrapper arm below is built at fill time.
+  addStringConstantGlobal(ctx, WRAPPER_PRIMITIVE_KEY);
   armedThrow.set(ctx, buildThrowJsErrorInstrs(ctx, "TypeError", NOT_A_CONSTRUCTOR_MESSAGE, { flush: fctx }));
   return true;
 }
@@ -164,8 +169,88 @@ export function constructIsConstructorGuard(
     { op: "call", funcIdx: isConstructorIdx },
     { op: "i32.eqz" },
     { op: "i32.and" },
+    // (#6773 S5) …OR proven not an object at all: nullish (`ref.is_null` —
+    // the JS `null` under the undefined-singleton regime — or the classified
+    // `undefined`, e.g. a MISSING member read `new o.nope()`) or a proven
+    // primitive, by the same positive classifiers `native-dynamic-instanceof`
+    // uses. Narrowing 1 stays for everything else: an unclassifiable carrier
+    // keeps its previous result. The union natives are registered as one batch
+    // with `__typeof_function` (required above), so each is a funcMap READ.
+    { op: "local.get", index: calleeLocalIdx },
+    { op: "ref.is_null" },
+    { op: "i32.or" },
   ];
+  for (const name of [
+    "__typeof_undefined",
+    "__typeof_number",
+    "__typeof_string",
+    "__typeof_boolean",
+    "__typeof_bigint",
+  ]) {
+    const idx = ctx.funcMap.get(name);
+    if (idx === undefined) continue;
+    condition.push({ op: "local.get", index: calleeLocalIdx }, { op: "call", funcIdx: idx }, { op: "i32.or" });
+  }
   if (notTheMarker.length > 0) condition.push(...notTheMarker, { op: "i32.and" });
 
-  return [...condition, { op: "if", blockType: { kind: "empty" }, then: [...throwInstrs] }];
+  return [
+    ...condition,
+    { op: "if", blockType: { kind: "empty" }, then: [...throwInstrs] },
+    ...primitiveWrapperConstructThrow(ctx, calleeLocalIdx, "externref", throwInstrs),
+  ];
+}
+
+/**
+ * (#6775 S5) A primitive WRAPPER (`Object(Symbol())`, `Object(1)`) — a `$Object`
+ * carrying the internal `[[PrimitiveValue]]` entry — is an ordinary object
+ * with no [[Call]] and no [[Construct]], whatever `__typeof_function` says, so
+ * `new symObj()` is §13.3.5.1 step 5's TypeError. Narrow by construction: only
+ * a receiver that provably holds that internal entry takes it.
+ */
+export function primitiveWrapperConstructThrow(
+  ctx: CodegenContext,
+  calleeLocalIdx: number,
+  localKind: "externref" | "anyref",
+  throwInstrs: Instr[],
+): Instr[] {
+  const types = ctx.objectRuntimeTypes;
+  const objFindIdx = ctx.funcMap.get("__obj_find");
+  const keyInstrs = stringConstantExternrefInstrs(ctx, WRAPPER_PRIMITIVE_KEY);
+  if (!types || objFindIdx === undefined || keyInstrs.length === 0) return [];
+  const { objectTypeIdx, propEntryTypeIdx } = types;
+  const asAny: Instr[] = localKind === "externref" ? [{ op: "any.convert_extern" }] : [];
+  const find: Instr[] = [
+    { op: "local.get", index: calleeLocalIdx },
+    ...asAny,
+    { op: "ref.cast", typeIdx: objectTypeIdx },
+    ...keyInstrs,
+    { op: "call", funcIdx: objFindIdx },
+  ];
+  return [
+    { op: "local.get", index: calleeLocalIdx },
+    ...asAny,
+    { op: "ref.test", typeIdx: objectTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...find,
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...find,
+            { op: "ref.as_non_null" },
+            { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 }, // flags
+            { op: "i32.const", value: FLAG_INTERNAL },
+            { op: "i32.and" },
+            // A private copy: a shared Instr object would be index-shifted twice.
+            { op: "if", blockType: { kind: "empty" }, then: structuredClone(throwInstrs) },
+          ],
+        },
+      ],
+    },
+  ];
 }

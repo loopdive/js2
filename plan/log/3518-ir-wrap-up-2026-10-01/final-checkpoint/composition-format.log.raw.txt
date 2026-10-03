@@ -1,0 +1,2 @@
+scripts/compiler-boundaries.json 81ms
+tests/issue-3518-semantic-provider-boundary.test.ts 78ms (unchanged)

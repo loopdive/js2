@@ -1,0 +1,193 @@
+diff --git a/src/ir/runtime/callable-declarations.ts b/src/ir/runtime/callable-declarations.ts
+index b1bf9fc555..81553cf192 100644
+--- a/src/ir/runtime/callable-declarations.ts
++++ b/src/ir/runtime/callable-declarations.ts
+@@ -8,12 +8,34 @@ import {
+   RUNTIME_HOST_CAPABILITY_RECORDS,
+   type RuntimeHostCapabilityValueType,
+ } from "./host-capabilities.js";
+-import type { RuntimeFeature, RuntimeProviderDefinition } from "./contracts/manifest.js";
++import {
++  NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES,
++  type RuntimeFeature,
++  type RuntimeProviderDefinition,
++} from "./contracts/manifest.js";
+ import type { IntrinsicSignature } from "../core/intrinsic-contracts.js";
+-import { irNativeAsyncCallableDeclaration } from "./native-async-callables.js";
+-import { irVectorCallableDeclaration } from "./vector-callables.js";
++import { irClosureInvocationCallableDeclaration } from "./closure-invocation-callables.js";
++import {
++  NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
++  nativeAsyncProviderMismatch,
++  nativeAsyncCallablePolicyMismatch,
++  irNativeAsyncCallableDeclaration,
++} from "./native-async-callables.js";
++import {
++  VECTOR_CALLABLE_RUNTIME_PROVIDERS,
++  vectorProviderMismatch,
++  vectorCallablePolicyMismatch,
++  irVectorCallableDeclaration,
++} from "./vector-callables.js";
+ import { irNumberConversionCallableDeclaration } from "./number-conversion-callable.js";
+-import { irOrdinaryObjectCallableDeclaration } from "./ordinary-object-callables.js";
++import {
++  ORDINARY_OBJECT_RUNTIME_PROVIDERS,
++  ordinaryObjectProviderMismatch,
++  ordinaryObjectCallablePolicyMismatch,
++  irOrdinaryObjectCallableDeclaration,
++} from "./ordinary-object-callables.js";
++
++import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-policy.js";
+ 
+ /** Policy-independent callable contracts; physical providers are selected by the manifest. */
+ export interface IrRuntimeCallableDeclaration {
+@@ -80,5 +102,30 @@ export function irRuntimeCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableD
+     : (irNativeAsyncCallableDeclaration(ref) ??
+         irVectorCallableDeclaration(ref) ??
+         irOrdinaryObjectCallableDeclaration(ref) ??
+-        irNumberConversionCallableDeclaration(ref));
++        irNumberConversionCallableDeclaration(ref) ??
++        irClosureInvocationCallableDeclaration(ref));
++}
++
++/** Canonical symbolic callable families; physical materialization remains a separate obligation. */
++export const SEMANTIC_CALLABLE_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
++  ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
++  ...VECTOR_CALLABLE_RUNTIME_PROVIDERS,
++  ...ORDINARY_OBJECT_RUNTIME_PROVIDERS,
++]);
++
++export function semanticCallableProviderMismatch(provider: RuntimeProviderDefinition): string | undefined {
++  return (
++    nativeAsyncProviderMismatch(provider) ??
++    vectorProviderMismatch(provider) ??
++    ordinaryObjectProviderMismatch(provider)
++  );
++}
++
++export function semanticCallablePolicyMismatch(
++  feature: RuntimeFeature,
++  policy: RuntimeManifestPolicy,
++): string | undefined {
++  return NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES.some((entry) => entry === feature)
++    ? nativeAsyncCallablePolicyMismatch(feature, policy)
++    : (vectorCallablePolicyMismatch(feature, policy) ?? ordinaryObjectCallablePolicyMismatch(feature, policy));
+ }
+diff --git a/src/ir/runtime/manifest.ts b/src/ir/runtime/manifest.ts
+index 61773d5436..d9c04bdfb3 100644
+--- a/src/ir/runtime/manifest.ts
++++ b/src/ir/runtime/manifest.ts
+@@ -109,6 +109,7 @@ import {
+   VECTOR_CALLABLE_RUNTIME_FEATURES,
+   ORDINARY_OBJECT_RUNTIME_FEATURES,
+   VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS,
++  ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS,
+   NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES,
+   NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS,
+   type RuntimeFeature,
+@@ -220,18 +221,14 @@ export type {
+ } from "./contracts/manifest.js";
+ 
+ import { irTypeEquals } from "../core/types.js";
+-import { REFERENCE_ERROR_SIGNATURE, REFERENCE_ERROR_RUNTIME_PROVIDERS } from "./callable-declarations.js";
+ import {
+-  VECTOR_CALLABLE_RUNTIME_PROVIDERS,
+-  vectorProviderMismatch,
+-  vectorCallablePolicyMismatch,
+-} from "./vector-callables.js";
++  REFERENCE_ERROR_SIGNATURE,
++  REFERENCE_ERROR_RUNTIME_PROVIDERS,
++  SEMANTIC_CALLABLE_RUNTIME_PROVIDERS,
++  semanticCallableProviderMismatch,
++  semanticCallablePolicyMismatch,
++} from "./callable-declarations.js";
+ export { REFERENCE_ERROR_RUNTIME_PROVIDERS } from "./callable-declarations.js";
+-import {
+-  NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
+-  nativeAsyncProviderMismatch,
+-  nativeAsyncCallablePolicyMismatch,
+-} from "./native-async-callables.js";
+ import {
+   ASYNC_OPTIONAL_RUNTIME_FEATURES,
+   ASYNC_RUNTIME_FEATURES,
+@@ -488,11 +485,9 @@ function numberBoundaryProvider(
+ }
+ 
+ /**
+- * (#3526 F1-S1) The synchronous number boundary. `js.number.box` is HOST-ONLY
+- * by policy in this slice: standalone does define a native `__box_number`
+- * through the union-native family, but the current front-end arm is gated on
+- * `!nativeStrings`, and support may not be inferred from helper presence. The
+- * `$AnyValue` standalone boxing family is explicitly not this intrinsic.
++ * Explicit synchronous number-boundary selection. Native boxing additionally
++ * requires the physical consumer's actual issued value owner; helper presence
++ * or the target alone cannot select it. The disabled default is unchanged.
+  */
+ export const NUMBER_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+   numberBoundaryProvider(
+@@ -502,6 +497,17 @@ export const NUMBER_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefiniti
+     { kind: "host-callable", capability: "number.box" },
+     ["number.box"],
+   ),
++  Object.freeze({
++    ...numberBoundaryProvider(
++      "native.js.number.box",
++      "js.number.box",
++      F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
++      { kind: "runtime-callable", symbol: "__box_number" },
++      [],
++    ),
++    supportedTargets: Object.freeze(["standalone"] as const),
++    supportedBackends: Object.freeze(["wasmgc"] as const),
++  }),
+   numberBoundaryProvider(
+     "host.js.number.unbox",
+     "js.number.unbox",
+@@ -1030,7 +1036,8 @@ function numberBoundaryProviderId(
+   feature: NumberBoundaryRuntimeFeature,
+   policy: NumberBoundaryPolicy,
+ ): NumberBoundaryRuntimeProviderId | null {
+-  if (feature === "js.number.box") return policy.box === "host" ? "host.js.number.box" : null;
++  if (feature === "js.number.box")
++    return policy.box === "host" ? "host.js.number.box" : policy.box === "native" ? "native.js.number.box" : null;
+   if (policy.unbox === "host") return "host.js.number.unbox";
+   return policy.unbox === "native" ? "native.js.number.unbox" : null;
+ }
+@@ -1344,8 +1351,7 @@ export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.fr
+     ...HOST_CALLBACK_WRAP_RUNTIME_PROVIDERS,
+     ...FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDERS,
+     ...REFERENCE_ERROR_RUNTIME_PROVIDERS,
+-    ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
+-    ...VECTOR_CALLABLE_RUNTIME_PROVIDERS,
++    ...SEMANTIC_CALLABLE_RUNTIME_PROVIDERS,
+     ...ASYNC_RUNTIME_PROVIDERS,
+   ].sort((left, right) => left.id.localeCompare(right.id)),
+ );
+@@ -1393,6 +1399,7 @@ const PROVIDER_ID_SET: ReadonlySet<string> = new Set([
+   ...PURE_MATH_RUNTIME_PROVIDER_IDS,
+   ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS,
+   ...VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS,
++  ...ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS,
+   ...ASYNC_RUNTIME_PROVIDER_IDS,
+ ]);
+ const HOST_CAPABILITY_ID_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_IDS);
+@@ -1865,7 +1872,7 @@ export class RuntimeManifestBuilder {
+     const ids = new Set<RuntimeProviderId>();
+     const byFeature = new Map<RuntimeFeature, RuntimeProviderDefinition[]>();
+     for (const provider of this.#providers) {
+-      const nativeMismatch = nativeAsyncProviderMismatch(provider) ?? vectorProviderMismatch(provider);
++      const nativeMismatch = semanticCallableProviderMismatch(provider);
+       if (nativeMismatch)
+         throw new RuntimeManifestInvariantError(
+           "provider-signature-mismatch",
+@@ -2090,9 +2097,7 @@ export class RuntimeManifestBuilder {
+     providers: ReadonlyMap<RuntimeFeature, readonly RuntimeProviderDefinition[]>,
+   ): RuntimeProviderDefinition {
+     const candidates = providers.get(feature) ?? [];
+-    const nativePolicyMismatch = NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES.some((entry) => entry === feature)
+-      ? nativeAsyncCallablePolicyMismatch(feature, this.#policy)
+-      : vectorCallablePolicyMismatch(feature, this.#policy);
++    const nativePolicyMismatch = semanticCallablePolicyMismatch(feature, this.#policy);
+     if (nativePolicyMismatch)
+       throw new RuntimeManifestInvariantError("provider-target-unavailable", nativePolicyMismatch);
+     if (candidates.length === 0) {

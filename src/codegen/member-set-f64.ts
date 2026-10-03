@@ -51,10 +51,11 @@ import { allocLocal } from "./context/locals.js";
 import { coercionInstrs } from "./type-coercion.js";
 import { inheritedSetAffectsKey } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import { buildShapeGuardedArm } from "./shape-guarded-arm.js"; // (#4645) single-`next` dispatch arm
+import { readEnv } from "../env.js";
 
 /** Flag gate. Default ON; `=0` ⇒ nothing below runs ⇒ byte-identical output. */
 export function setMemberF64Enabled(): boolean {
-  return tunedFlagEnabled(process.env.JS2WASM_SET_MEMBER_F64);
+  return tunedFlagEnabled(readEnv("JS2WASM_SET_MEMBER_F64"));
 }
 
 /** Patch-site counter — proof the mechanism fired, printed at finalize. */
@@ -126,7 +127,7 @@ export function tryEmitTypedF64MemberSet(
   strict: boolean,
 ): ValType | undefined {
   if (!setMemberF64Enabled()) return undefined;
-  if (process.env.JS2WASM_SET_MEMBER_F64_DEBUG === "1") {
+  if (readEnv("JS2WASM_SET_MEMBER_F64_DEBUG") === "1") {
     const k = `${propName}:${valResult ? valResult.kind : "null"}`;
     declines.set(k, (declines.get(k) ?? 0) + 1);
   }
@@ -271,7 +272,7 @@ export function fillTypedMemberSetF64Dispatch(ctx: CodegenContext): void {
   }
   // Evidence the twin fired, for someone experimenting with the flag; silent on
   // a default build, where it would print on every compile.
-  if (!tunedFlagExplicit(process.env.JS2WASM_SET_MEMBER_F64) && process.env.JS2WASM_SET_MEMBER_F64_DEBUG !== "1") {
+  if (!tunedFlagExplicit(readEnv("JS2WASM_SET_MEMBER_F64")) && readEnv("JS2WASM_SET_MEMBER_F64_DEBUG") !== "1") {
     return;
   }
   process.stderr.write(`[set-member-f64] sites=${emittedSites} dispatchers=${filled} directArms=${directArms}\n`);
