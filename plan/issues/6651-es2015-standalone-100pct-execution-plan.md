@@ -3187,3 +3187,305 @@ ArrayBuffer / `subclass/builtins.js` behind #6769, `strict-mode/arguments-callee
 `methods-restricted-properties.js` (S13, not attempted), and
 `fn-name-accessor-{get,set}.js` (#6767 R3: a class with a symbol-keyed static
 accessor hides its literal static accessors from gOPD).
+
+### 2026-10-02 — fresh full-goal verification at upstream 7cd84317
+
+Root assigned the isolated `6834-module-residual-attribution` checkout on
+`codex/6834-module-residual-attribution`, production HEAD frozen at
+`7cd84317ac9f5ad1b48a138e33113b98c8392b8e` after landed TypedArray
+find/findIndex internal-length fix PR #6457. This is a new source measurement,
+not an attributed implementation gain. Preserve the older b8c9a12a attribution artifacts under `.tmp/6834-residual`
+as older evidence; do not reinterpret them as current results.
+
+Preflight/launch artifacts belong under `.tmp/6651-current-main-verification`.
+Retain the exact frozen 11,778-original manifest and SHA256
+`632db3bbecb0d6ea42b0915b13740912bf3fd8e32e2a15a8b28c1f63b6434360`;
+verify every original body blob against Test262
+`b363f29d3c43c626dc852744ad64a0b48a003693` before building. Rebuild owned
+compiler/runtime bundles and current-source QuickJS adapter; verify the supplied
+immutable artifact and actual executable canaries. Then require three passing
+original positive controls (Math.sign.length and the DisplayNames/Segmenter
+constructor-prototype-poison cases), complete exact receipts, and no exclusions.
+Control membership is separately recorded; never add controls to the goal.
+
+Only after preflight/control success, launch one maintained
+`scripts/run-test262-vitest.sh` census: standalone/auto/QuickJS/honest oracle 14,
+one compiler worker, one 4 GiB Vitest fork, all 16 maintained weighted shards,
+exact manifest only. This documentation edit deliberately makes the wrapper
+select this owned working tree. No source, runner, test, HEAD, registry, queued
+PR, or shared configuration mutation while measurement is live. No installs,
+exclusions, cap, weakening, or historical-index publication. Require independent
+validation of all 16 v2 receipts and exactly 11,778 settled unique original
+identities before comparing with completed cd123eca run `20261002-184918`.
+Wrapper exit zero means completion only; the 100% goal remains unachieved unless
+the actual final original verdicts establish it.
+
+Preflight session `18925` is terminal exit zero: **11,778/11,778** selected
+Git blobs match the pinned donor, zero mismatches. Actual frozen production,
+test, and runner fingerprint is
+`71c4188238ec2ce00609d410628c6c2471895c271cd5f36033c8e466b1cd1cef`.
+All three controls are confirmed members of this exact goal manifest; they
+remain a separate instrument-validation run, not extra population or gains.
+
+Control run `20261002-234314`, wrapper PID `19397`, session `26794`, is
+terminal exit zero: **3 pass / 3 originals**, oracle 14/honest/auto. Independent
+maintained validator confirms exact identities, three registered/recorded/
+started/settled callbacks, no exclusions/skips. All 7,562 captured tracked
+source/test/runner file hashes remained unchanged. Control JSONL SHA256:
+`465581bf98efe9889e07f18990975172149ef10a5a1aa0e4532a4ce7b02fedb9`.
+
+The wrapper rebuilt owned compiler/runtime bundles from 7cd84317. SHA256s:
+compiler `1d2c0b376fc912a7f1187ca9a69b60e3d2ab1ec3a3f111c6cfc870500b878781`;
+runtime `221f4acea7e995d4f0240fbd6a81cc380020d7cdf7da8e8d74c06251953581c0`.
+Immutable QuickJS artifact SHA256:
+`073742801ba76347371be277f6d275488badce1df6bfb480741548ec2a279d45`.
+Fresh adapter key `37d2326e33b94d57` (compiler-input hash `c67df3bb89bcbd6f`)
+was built and executable-canary-verified, 587,319 bytes, SHA256
+`fa105724f9d2379e2ffe420e3bf3df925f3108a422039a94a67db2a407ee4c54`.
+The control log and full per-original preflight/hash receipts are in
+`.tmp/6651-current-main-verification`. The following full run reuses this
+verified pair; a later cache HIT is linked-pair verification, not a fresh
+canary claim. Source and HEAD stay fixed through actual terminal completion.
+
+The one full census is live: run **`20261002-234453`**, execution session
+**`26208`**, wrapper PID **`19748`**. Actual wrapper checkout is this owned
+7cd84317 worktree, with the exact unchanged manifest snapshot and **16**
+maintained shard entries. Same verified adapter/library pair is reused with
+linked-pair validation. Durable log:
+`.tmp/6651-current-main-verification/full-run.log`; canonical JSONL:
+`benchmarks/results/test262-standalone-results-20261002-234453.jsonl`.
+Completion still requires all sixteen matching v2 `.complete.json` receipts
+and an independent exact-identity audit. Do not infer a total from partial rows
+or restart after an observation timeout. No implementation changes authorized.
+
+Completed parallel task (2026-10-03): root assigned the Sol shepherd a read-only
+matched-row transition review of the already settled groups **2, 3, 8, 10**
+against the completed cd123eca JSONL. Notes belong only in that teammate's
+ignored 6836-review artifacts; no source, test, issue-document, or measurement
+mutation and no heavy build/test are authorized there. Any observed transition
+compares different source/compiler/runtime/adapter bytes: it is neither a
+causal implementation gain/regression nor a whole-goal result. Only this
+read-only review task is complete; the same full census remains live.
+
+The independently hash-checked review joins **2,944/2,944** exact originals,
+with zero missing/duplicate rows and zero old-PASS losses. Six differing-source
+nonPASS-to-PASS transitions are observed (five FAIL, one compile error), with
+zero other status/error-text changes. This uses a 3,092-row live JSONL snapshot,
+not a terminal whole-run total. Review artifact:
+`/Users/thomas/Code/js2/.codex-worktrees/6836-parser-plan-review-sol/.tmp/6651-completed-group-review/report.json`,
+SHA256 `e06b5d594cba83f25d3079e4c5e1b900e83f89a947bed467194e8a172112a348`;
+companion `notes.md` SHA256
+`e165a42a6f68d93cd33fb2bc518848dad9569aaeb3ab41a3e3d5ff64466d3a2e`.
+
+Root independently checked these **4/16 partial** receipts against their exact
+registered originals: shard 2, 736 rows = 719 pass / 16 fail / 1 compile error;
+shard 3, 737 rows = 716 / 20 / 1; shard 8, 735 rows = 719 / 14 / 2; shard 10,
+736 rows = 712 / 22 / 2. Each has equal registered/canonical/unique/started/
+settled counts, all callbacks settled, no exclusions, oracle 14/honest/auto.
+Weighted groups need not have equal sizes. These are partial cross-checks only.
+Root also recomputed all 7,562 source hashes mid-run with zero changed/missing
+files and independently verified the run snapshot's 11,778 unique identities,
+exact frozen-set equality, and unchanged manifest SHA256. Selection and
+mid-run integrity checks do not replace terminal execution/identity validation.
+
+Subsequent independent parent review, separate from the frozen four-group
+report: shard **15/16** settled 736 registered/recorded/canonical/unique/started/
+settled originals, all callbacks settled, zero exclusions, oracle 14/honest/auto;
+**715 pass / 18 fail / 3 compile errors**. A hash-verified 736-row historical join
+found zero PASS losses and six nonPASS-to-PASS observations (including one
+compile-error-to-PASS). This is differing-source partial evidence, not causal
+attribution, and does not amend that earlier report. Five of sixteen groups are
+now settled; the full terminal audit is still required.
+
+Next separate parent cross-check: shard **14/16**, 736 exact unique originals,
+equal registered/recorded/canonical/started/settled counts, all callbacks
+settled, zero exclusions, oracle 14/honest/auto; **720 pass / 16 fail / 0 compile
+errors**. The hash-verified historical join found zero PASS losses and one
+FAIL-to-PASS observation,
+`test/language/expressions/super/prop-expr-cls-ref-this.js`. This read-only
+comparison is complete, but remains differing-source **6/16 partial** evidence,
+separate from the frozen four-group report and without causal attribution.
+
+Separate parent shard **13/16** cross-check: 736 exact unique registered/
+recorded/canonical/started/settled originals, all settled, zero exclusions,
+oracle 14/honest/auto; **713 pass / 21 fail / 2 compile errors**. Its hash-verified
+historical join finds zero PASS losses and two FAIL-to-PASS observations:
+`test/language/statements/class/cpn-class-decl-accessors-computed-property-name-from-assignment-expression-assignment.js`
+and `test/language/statements/class/arguments/default-constructor.js`.
+This completed read-only review is **7/16 partial** differing-source evidence,
+not causal attribution or a whole-suite total.
+
+Completed bounded read-only task: assess whether normal documentation
+publication hooks in the isolated 6836 review checkout could interfere with
+this census. Hook/package/Vitest bytes match; normal pre-push includes parallel
+TS7 typecheck/lint and 18 numeric-local direct/IR tests in one fork, so it is
+not test-free. At assessment time the 16 GiB host reported 42% free/reclaimable
+memory and this census's process family used about 0.84 GiB RSS; recorded
+compile/execute maxima were 4,245/731 ms, partial observations only. No hook
+path targets this census's owned compiler/runtime/QuickJS artifacts; the
+remaining risk is transient CPU contention against wall-clock budgets. The
+assessment supports one bounded serialized exception, but does not itself
+grant it or guarantee zero contention. No hook/build/test was run by this
+assessment, and no census source/configuration/HEAD/process was changed.
+
+Root explicitly granted one serialized exception for the isolated issue 6836
+Markdown publication's normal pre-commit/pre-push hooks, including the mandatory
+18 numeric-local direct/IR cases. The publisher has reported starting this
+exception; actual UTC hook intervals/terminal gates are still awaited and must
+be retained as overlap provenance. No extra build/test/prewarm/install or
+census/source/provider/configuration mutation is authorized. This run retains
+priority, and all source-sensitive implementation ownership holds remain open.
+
+The publisher reports actual exception intervals, both normal/unskipped and
+terminal success: pre-commit session `92823`, **2026-10-02 23:10:07–23:10:11 UTC**;
+pre-push session `79518`, **23:10:52–23:12:42 UTC**. Typecheck/lint, changed-file
+format, oracle/coercion ratchets, all **18** numeric-local cases, and issue
+integrity passed. Numeric Vitest began 23:11:23 UTC and took 22.64 s (actual
+test time 4.604 s). Only the frozen issue 6836 Markdown was published; no extra
+local heavy work followed. This records a real concurrent-load interval, not
+unchanged-resource equivalence or a causal inference. Terminal census validation
+must still check timeout/worker-failure/retry markers and all final receipts.
+
+Further parent v2/JSONL cross-checks retain oracle 14/honest/auto, equal exact
+registered/recorded/canonical/unique/started/settled counts, all settled and zero
+exclusions: shard 5, 736 rows = **721 pass / 13 fail / 2 compile errors** (its
+historical join has zero PASS losses and zero newly passing rows); shard 12,
+737 = **718 / 18 / 1**; shard 16, 736 = **715 / 20 / 1**; shard 7, 737 =
+**716 / 21 / 0**. These establish **11/16 partial** completion, not a final
+score or causal gain. The scheduled verifier audit confirms all eleven receipts.
+
+Completed source-only Astra dispatch screen, separately from this measurement:
+`/Users/thomas/Code/js2/.codex-worktrees/6836-valid-for-heads-plan-astra/.tmp/6836/settled-census-dispatch-screen.md`,
+SHA256 `be531f1a59118d266bc2a63d7fa0f46cb806b5a0a4a61c4b638b375691d7036d`.
+No safe implementation candidate was established. The Map/WeakMap quartet
+belongs to actively claimed #6775 (`ttraenkler/opus-6775`, S13/#5267G9); the
+Proxy-prototype candidate crosses the held type-coercion producer. Other
+screened plans are not proven claimed/free/ready. The local IR handoff also
+reserves generator `new-super.ts`, iterator `iterator-native.ts` strict-next
+capture and Promise checkpoint work; it does not establish another machine's
+current edit set or release neighboring ownership boundaries. No implementation
+permission, new duplicate issue, exclusion or conformance gain is inferred.
+
+Publication overlap receipt was independently read and hash-checked:
+`/Users/thomas/Code/js2/.codex-worktrees/6836-parser-plan-review-sol/.tmp/6836-publication-receipt.json`,
+SHA256 `85430116ca81e3be40742e2d3b82c80ea32b2a7a9b9d7e1f1f81bf0109aae6a5`.
+At the post-overlap log scan there were zero observed pool timeout/fatal/retry/
+heap/IPC failure markers and zero skipped/timed-out recorded verdicts. This is
+observed instrumentation evidence, not a claim of zero performance effects;
+repeat the check after terminal completion.
+
+Root's independent aggregate review of the eleven settled groups joins exactly
+**8,098** unique originals to the hash-verified completed cd123eca JSONL, with
+zero missing/duplicate/cross-shard identities and zero old-PASS losses. It
+observes **22** nonPASS-to-PASS transitions (20 FAIL, 2 compile errors), solely
+partial differing-source/provider evidence. Two FAIL-to-FAIL error-text changes
+remain material: `class/definition/fn-name-accessor-get.js` has a TypeError
+location change from 855:10 to 879:10; `Proxy/deleteProperty/trap-is-undefined-strict.js`
+changes the failing assertion from expected `[object Object]` versus undefined
+to true versus false. Do not flatten these into "no regressions" or full success,
+and do not amend the frozen earlier four-group report. Full sixteen-group
+comparison and original-identity validation are still required.
+
+Parent's next independent receipt cross-check: shard **1/16**, 736 exact unique
+registered/recorded/canonical/started/settled originals, all settled, zero
+exclusions, oracle 14/honest/auto; **715 pass / 20 fail / 1 compile error**.
+The scheduled own audit confirms twelve settled receipts. Post-documentation-
+hook parent integrity rehash also finds zero changed/missing files among all
+11,778 original bodies, 7,562 captured source files and three QuickJS artifact
+files. These remain **12/16 partial** and live integrity evidence; repeat after
+actual terminal exit, without inferring a full rate or claiming gain.
+
+Parent and scheduled own audit next confirm shard **11/16**: 736 exact unique
+registered/recorded/canonical/started/settled originals, all settled, zero
+exclusions, oracle 14/honest/auto; **714 pass / 21 fail / 1 compile error**.
+This is **13/16 partial** receipt completion only; the same session continues.
+
+Next parent and scheduled own cross-check: shard **6/16**, 736 exact unique
+registered/recorded/canonical/started/settled originals, all settled, zero
+exclusions, oracle 14/honest/auto; **715 pass / 19 fail / 2 compile errors**.
+Fourteen receipts are settled; groups 4 and 9 remain. The separate Sol publisher
+may prepare a new isolated latest-upstream Markdown handoff worktree, preserving
+upstream documentation, but no commit/hooks/build/test/push there is authorized
+until actual terminal receipts, root's independent audit and explicit readiness.
+Transfer only this owned handoff delta, never the stale whole document or source.
+
+Next independently parent-checked and own-audited receipt is shard **4/16**:
+736 exact unique registered/recorded/canonical/started/settled originals, all
+settled, zero exclusions, oracle 14/honest/auto; **722 pass / 14 fail / 0 compile
+errors**. Fifteen of sixteen are settled; only shard 9 remains. The parent also
+rehashes all five recorded control/compiler/runtime/adapter receipt entries
+after the documentation overlap with zero changed files. These are stronger
+live integrity checks, not substitutes for the final after-exit rehash/audit.
+
+### 2026-10-03 — terminal whole-population receipt at frozen 7cd84317
+
+The original execution session **26208** is actually terminal, wrapper exit
+**0**, without restart; terminal state was observed by 00:06:30 UTC. This means
+the measurement completed, not that conformance succeeded. Final shard 9/16 is
+736 registered/started/settled originals, **724 pass / 10 fail / 2 compile errors**.
+All sixteen matching v2 receipts are now present and all callbacks settled.
+
+Own independent maintained CLI is terminal exit zero, using `--expected-shards
+16`, the frozen exact `--expected-paths-file`, the canonical `--input` and all
+sixteen explicit `--manifest` entries. Own full audit session `23388` is also
+terminal exit zero. Both it and root's separate maintained-validator audit
+establish **11,778 registered / canonical / physical / unique / started / settled
+originals**, zero missing/unexpected/duplicate/excluded/skipped/timed-out rows,
+and oracle **14 / honest / auto** throughout. All three positive originals also
+remain PASS with `reached_test=true` in this complete run.
+
+Actual result: **11,474 pass / 283 fail / 21 compile errors / 11,778 originals
+(97.41891662421463%)**. There are **304 nonpassing originals**; the 100% goal
+is **not achieved**. Canonical JSONL SHA256:
+`040290bc0f701aa247b4016a13ec20259ea89e5e05880ee2ca5e90816eba5e6b`.
+Own receipt `.tmp/6651-current-main-verification/terminal-audit.json` SHA256:
+`cf4a893cd9df8e15bea68254940b7cde83cd03a1e74c016e48ac9bcc4d2e1369`.
+Independent CLI and audit logs are in that same owned ignored directory.
+
+After actual exit, own and root checks confirm HEAD still
+`7cd84317ac9f5ad1b48a138e33113b98c8392b8e`, all **11,778** original body hashes,
+all **7,562** tracked production/test/runner hashes, frozen manifest/snapshot,
+the three immutable QuickJS files and owned artifact copy, plus all five
+compiler/runtime/adapter/control hashes unchanged. Source fingerprint remains
+`71c4188238ec2ce00609d410628c6c2471895c271cd5f36033c8e466b1cd1cef`.
+Normal Git status shows only this authorized issue document modified. No
+source/runner/test/HEAD/configuration or historical-index publication changed.
+The terminal durable-log scan finds **zero observed** pool timeout/fatal/retry/
+heap/IPC failure markers. The authorized documentation-hook overlap above is
+retained as an actual concurrent-load difference, not proof of performance
+equivalence; no causal timeout/resource effect is inferred from absent markers.
+
+Full exact-row comparison to completed cd123eca run `20261002-184918` (old
+JSONL SHA256 `79c584590f4f70d586065c730b3bde383089d2522a6871c718975889cbdb6029`)
+joins **11,778/11,778** originals with zero missing/duplicate identities:
+11,443 PASS-to-PASS; 283 FAIL-to-FAIL; 28 FAIL-to-PASS; 21 compile-error-to-
+compile-error; three compile-error-to-PASS. Thus zero previously passing rows
+become nonpassing and **31** nonPASS-to-PASS observations occur. These compare
+different source/compiler/runtime/adapter bytes, not a removal-controlled
+implementation A/B: the frozen corpus, Node 24, standalone/auto/QuickJS/honest
+14, one compiler worker and bounded 4 GiB Vitest fork match; compiler/runtime
+bundles and adapter change (old key `79ee37c474567749`, new `37d2326e33b94d57`),
+and the **QuickJS library artifact also differs**. The authoritative old launch
+log reports SHA256 prefix **`e9f8d30bc347dbc5`** (worker prefix `e9f8d30bc347`),
+whereas the new launch log reports **`073742801ba76347`** (worker prefix
+`073742801ba7`), matching the full new artifact hash recorded above. Sources:
+`/Users/thomas/.codex/worktrees/6651-current-main-full-verification/js2/.tmp/es2015-current-main-full-run.log`
+and `.tmp/6651-current-main-verification/full-run.log`, provider records at
+lines 16–17 and subsequent worker announcements. The shared cache key
+`2e2d7736713beeda` does not establish identical library bytes. Thus compiler,
+runtime, adapter **and library** differ between the complete runs. Do not
+attribute the 31 observations to one fix or claim absence of silent wrong answers.
+
+Four FAIL-to-FAIL error changes are preserved: class
+`definition/fn-name-accessor-get.js` TypeError location **855:10 → 879:10**;
+`definition/fn-name-accessor-set.js` **856:10 → 880:10**; both Proxy/deleteProperty
+`trap-is-undefined-strict.js` and `trap-is-undefined-not-strict.js` change the
+failing SameValue assertion from **[object Object] versus undefined** to
+**true versus false**. The complete own receipt retains exact paths, errors,
+categories, signatures and reached-test changes. Root independently agrees
+with all totals/transitions. Earlier partial reports remain immutable evidence.
+
+This verification task is complete and its heavy measurement lease can be
+released to root. The separate publisher still requires root's explicit audited
+readiness before normal hooks/publication. All implementation ownership holds
+and the prohibition on corpus/oracle/guard weakening remain in force.
