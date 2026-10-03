@@ -3,9 +3,10 @@
   "slice": "program-validator-reconciliation-plan-20261003",
   "assignee": "ttraenkler/codex-validator-reconciliation-plan-20261003",
   "requested_by": "ttraenkler/codex-validator-reconciliation-plan-20261003",
-  "status": "in-progress",
+  "status": "released",
   "branch": "codex/3518-validator-owner-plan-20261003",
   "claimed_at": "2026-10-03T21:37:38Z",
-  "updated_at": "2026-10-03T21:37:38Z",
-  "write_id": "92885-lybt71yb"
+  "updated_at": "2026-10-03T22:34:04Z",
+  "write_id": "29567-dh467vqe",
+  "released_at": "2026-10-03T22:34:04Z"
 }
