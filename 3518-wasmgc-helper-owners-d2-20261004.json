@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "wasmgc-helper-owners-d2-20261004",
   "assignee": "ttraenkler/codex-wasmgc-helper-owners-20261004",
-  "requested_by": "ttraenkler/codex-wasmgc-helper-owners-20261004",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3518-wasmgc-helper-owners-delivery-20261004",
   "claimed_at": "2026-10-04T13:32:14Z",
-  "updated_at": "2026-10-04T13:32:14Z",
-  "write_id": "49753-z3fc7vjx"
+  "updated_at": "2026-10-04T17:16:02Z",
+  "write_id": "92211-zd55p9fv",
+  "released_at": "2026-10-04T17:16:02Z"
 }
