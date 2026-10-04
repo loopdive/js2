@@ -325,7 +325,7 @@ function moduleSourceFile(symbol: ts.Symbol): ts.SourceFile | undefined {
 function namespaceFunctionExports(
   ctx: CodegenContext,
   declaration: ts.NamespaceImport,
-): readonly NamespaceExport[] | undefined {
+): { readonly moduleSymbol: ts.Symbol; readonly exports: readonly NamespaceExport[] } | undefined {
   // (#5330) `import * as path from 'path'` — a namespace import OF a Node
   // builtin is served by the host module thunk (`__node_<mod>`), never by a
   // synthesized object. This optimizer asks the CHECKER for the module's
@@ -355,7 +355,8 @@ function namespaceFunctionExports(
       return undefined;
     }
   }
-  return moduleSymbolNamespaceExports(ctx, moduleSymbol, new Set());
+  const exports = moduleSymbolNamespaceExports(ctx, moduleSymbol, new Set());
+  return exports === undefined ? undefined : { moduleSymbol, exports };
 }
 
 /**
@@ -1338,9 +1339,27 @@ export function tryEmitCompiledModuleNamespaceObject(
   identifier: ts.Identifier,
 ): ValType | undefined {
   const declaration = ctx.oracle.valueDeclarationOf(identifier);
+  if (declaration !== undefined && ts.isImportSpecifier(declaration)) {
+    if (declaration.isTypeOnly || declaration.parent.parent.isTypeOnly) return undefined;
+    // A named import of `export * as nested` still denotes the original
+    // source module's namespace, not a global cell in the barrel module.
+    const alias = ctx.checker.getSymbolAtLocation(declaration.name);
+    if (alias === undefined || (alias.flags & ts.SymbolFlags.Alias) === 0) return undefined;
+    let moduleSymbol: ts.Symbol;
+    try {
+      moduleSymbol = ctx.checker.getAliasedSymbol(alias);
+    } catch {
+      return undefined;
+    }
+    if (moduleSourceFile(moduleSymbol) === undefined) return undefined;
+    const exports = moduleSymbolNamespaceExports(ctx, moduleSymbol, new Set());
+    return exports ? emitNamespaceObject(ctx, fctx, moduleSymbol, exports, true) : undefined;
+  }
   if (declaration === undefined || !ts.isNamespaceImport(declaration)) return undefined;
-  const exports = namespaceFunctionExports(ctx, declaration);
-  return exports ? emitNamespaceObject(ctx, fctx, declaration, exports, true) : undefined;
+  const surface = namespaceFunctionExports(ctx, declaration);
+  // All import declarations and nested re-exports of one module must share
+  // the same lazy namespace getter. Declaration identity creates duplicates.
+  return surface ? emitNamespaceObject(ctx, fctx, surface.moduleSymbol, surface.exports, true) : undefined;
 }
 
 /**

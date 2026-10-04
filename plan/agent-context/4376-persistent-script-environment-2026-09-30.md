@@ -1510,3 +1510,22 @@ Do not confuse temporary local artifacts with checked-in distributable output.
 Preserve unrelated compiler changes and adapter .tmp/ files. Site rendering
 remains unverified because Typst is unavailable; direct libtest results are
 not cargo-nextest baseline results.
+
+## Within-graph namespace correction (2026-10-04)
+
+Generic shared-dependency control in adapter 128b9c2 measured two executions,
+reset mutable count and distinct namespaces; an additional first-entry check
+found namespace identity already differs inside one graph. The compiler now
+caches namespace getters by aliased module symbol, not import declaration,
+and handles named namespace re-exports via the same getter. Focused source
+namespace controls pass 6/6, including gc and standalone identity/liveness
+controls and distinct-module rejection. The new standalone probe returned
+sentinel 1 before this change and 42 afterward.
+
+Initial broader six-file run is 25 passed /1 failed /26. The missing Hole-global
+failure in the standalone TypeScript namespace projection reproduces unchanged
+on clean ba14fcaedb (7 passed /1 failed /8), using the same Vitest configuration
+and test bytes. Do not report the broad run all green. Native rebuilt packages
+are needed to verify the first-entry correction. Cross-graph duplicate
+initialization, reset exports and namespace replacement still need the coupled
+module linking implementation. Keep both draft PRs incomplete.

@@ -88,6 +88,9 @@ loc-budget-allow:
   - total
   # Destructured module exports use existing snapshot/live-binding routes.
   - src/codegen/module-namespace-value.ts
+  # 2026-10-04: canonical module-symbol caching also admits named imports of
+  # namespace re-exports, rather than treating them as unrelated global cells.
+  - src/codegen/module-namespace-value.ts::tryEmitCompiledModuleNamespaceObject
   - src/codegen/expressions/call-namespace-static.ts
   - src/checker/usage-inference.ts
   - src/codegen/map-runtime.ts
@@ -257,6 +260,9 @@ func-budget-allow:
   - src/codegen/object-runtime-enumeration.ts::buildObjectEnumerationHelpers
   - src/codegen/object-runtime.ts::fillClosedStructExternGetArms
 oracle-ratchet-allow:
+  # 2026-10-04: named namespace re-export identity uses the same alias queries
+  # as namespace imports. Move both paths to shared oracle facts before ready.
+  - src/codegen/module-namespace-value.ts
   # 2026-10-04: checkpoint-only declaration/escaped-name queries authenticate
   # closed well-known Symbol fields and select the literal's physical slot.
   # Migrate these two raw checker sites into registry-free oracle facts before
@@ -3423,6 +3429,20 @@ the namespace conflict is insufficient; captured Module identity, once-only
 initialization and canonical live imports must be implemented together. Native
 later live-read assertions remain unreached, not passing. Full Deno integration
 remains in-progress. Adapter handoff contains exact reproduction and hashes.
+
+Within-graph namespace identity continuation: the native first-entry namespace
+also differs from its dependency's native publication. A compiler regression
+initially returns sentinel 1 for distinct repeated namespace imports. Caching
+by aliased module symbol instead of import declaration fixes that comparison;
+named imports of namespace re-exports additionally need the same namespace
+getter rather than a barrel global cell. The new regression now passes in gc
+and standalone lanes, including re-export/publication identity, live mutation
+and a same-shaped distinct-module negative. Source namespace suite passes 6/6.
+The initial six-file run is 25 passed /1 failed /26: a standalone TypeScript
+namespace projection fails the missing Hole-global invariant. An unchanged
+test replay on clean baseline ba14fcaedb reproduces exactly that failure (7/8),
+so it is not credited as fixed or hidden. Native rebuilt replay is next;
+cross-graph canonical reuse and duplicate initialization are still unfixed.
 
 Historical wrap-up, 2026-10-04: compiler dbe49bf307d6 and adapter 33af9d76e815
 are published in the existing drafts. Explicit receiver controls pass 21/21;

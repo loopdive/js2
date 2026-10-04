@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { compileMultiSource } from "../src/compiler.js";
+import { buildCompiledImports } from "../src/runtime.js";
 import {
   compilerPath,
   GRAPH_CAN_ACCESS_EXPORT,
@@ -13,6 +14,59 @@ import {
   GRAPH_NAMESPACE_REGISTRY,
   prepareNamespaceGraph,
 } from "../examples/v8x-js2wasm-spike/compile-graph.js";
+
+it.each(["gc", "standalone"] as const)(
+  "shares one namespace across imports, re-exports and publication (%s)",
+  async (target) => {
+    const graph = prepareNamespaceGraph(
+      new Map([
+        [
+          "ext:identity/main.js",
+          `
+import * as left from './dep.js';
+import * as right from './dep.js';
+import { nested } from './barrel.js';
+import * as other from './other.js';
+export function identityProbe():number {
+  if(left!==right) return 1;
+  if(left!==nested) return 2;
+  if(left!==globalThis.${GRAPH_NAMESPACE_REGISTRY}['ext:identity/dep.js']) return 3;
+  if(left===other) return 4;
+  left.bump();
+  if(right.value!==42 || nested.value!==42) return 5;
+  return 42;
+}`,
+        ],
+        ["ext:identity/dep.js", "export let value=41; export function bump(){value++;}"],
+        ["ext:identity/barrel.js", "export * as nested from './dep.js';"],
+        ["ext:identity/other.js", "export let value=41; export function bump(){value++;}"],
+      ]),
+      "ext:identity/main.js",
+    );
+    const result = await compileMultiSource(
+      graph.files,
+      graph.entry,
+      {
+        target,
+        ...(target === "standalone" ? { platform: "deno" as const } : {}),
+        allowJs: true,
+        hostBridge: "always",
+        skipSemanticDiagnostics: true,
+        deferTopLevelInit: true,
+      },
+      undefined,
+      graph.projectResolutions,
+    );
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const runtime = target === "gc" ? buildCompiledImports(result) : undefined;
+    const imports = runtime ?? result.importObject ?? {};
+    const instance = new WebAssembly.Instance(new WebAssembly.Module(result.binary), imports);
+    (imports as { __setInstance?: (instance: WebAssembly.Instance) => void }).__setInstance?.(instance);
+    runtime?.setInstance?.(instance);
+    (instance.exports.__module_init as () => void)();
+    expect((instance.exports.identityProbe as () => number)()).toBe(42);
+  },
+);
 
 it("reads proven graph-owned payloads after abrupt initialization", async () => {
   const graph = prepareNamespaceGraph(
