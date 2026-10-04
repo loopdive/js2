@@ -3260,6 +3260,16 @@ binary controls match clean dbe49bf307d6 exactly. Source-preservation remains
 38 pass /53 fail out of 91 with no per-test status changes. Native adapter pin,
 package routing and unchanged Deno replay have not advanced yet.
 
+Import-meta lifecycle foundation, 2026-10-04: adapter registration now retains
+Deno's callback. A lazy per-native-Module object cache publishes before callback
+invocation, preserves reentrant identity and rejects wrong-context/foreign-isolate
+access. Focused controls pass 2/2; scoped native units 14/14 (16 filtered /30),
+ordinary compiler-free integration controls 34 passed /0 failed /13 ignored /47.
+Compiled access is not yet connected: the next requirement is an instance-bound
+host capability, not URL lookup, then full-object compiler lowering and unchanged
+Deno main/side replay. Unfiltered library tests aborted on unsupported sandbox ABI;
+no full-library or new Deno pass is claimed. Adapter handoff records entry points.
+
 Module evaluation evidence, 2026-10-04: adapter 9a4e13a returns cached rejected
 evaluation Promises and captures reaction throws under a local TryCatch. Ordinary
 compiler-free controls pass 34/34 (13 ignored /47); an explicitly executed native
