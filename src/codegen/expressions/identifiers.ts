@@ -2420,6 +2420,31 @@ function compileIdentifierCore(
     if (taCtorVt) return taCtorVt;
   }
 
+  // Ambient types describe a host value; they do not materialize one. A linked
+  // Script must resolve it in the owning Context, not manufacture null/zero.
+  // Native intrinsic constructors handled above retain their existing paths.
+  if (
+    ctx.standaloneScriptLexicalImport &&
+    !ctx.sourceIsModule &&
+    sym?.declarations?.length &&
+    sym.declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile)
+  ) {
+    if (!skipRuntimeEvalState) return compilePersistentScriptLexicalRead(ctx, fctx, id);
+    const getIdx = ensureLateImport(
+      ctx,
+      "__extern_get",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    const globalType = emitNativeGlobalThisObject(ctx, fctx);
+    if (getIdx === undefined || globalType === null) throw new Error("Linked ambient global lacks native realm read");
+    addStringConstantGlobal(ctx, name);
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
+    return { kind: "externref" };
+  }
+
   // Graceful fallback for known but unimplemented globals (Symbol, Object,
   // Reflect, etc.) — emit a type-appropriate default so compilation continues.
   reportSilentFallback(ctx, "const-fallback", "identifiers:unimplemented-global-default", id, id.text);

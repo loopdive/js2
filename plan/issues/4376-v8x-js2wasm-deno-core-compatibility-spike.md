@@ -17,6 +17,10 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-10-04: ambient host names resolve through the native Context rather
+  # than the compiler's null/zero default; intrinsic paths remain unchanged.
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
   # 2026-10-04: completion Scripts need a canonical initializer even when
   # function-only; preserve the completion import through optimized abrupt code.
   - src/codegen/declarations.ts::compileDeclarations

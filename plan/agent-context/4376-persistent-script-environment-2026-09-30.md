@@ -1,5 +1,23 @@
 # Persistent AOT Script environment
 
+## Ambient host-global failure isolated, 2026-10-04
+
+A Context-owned Deno object is read as null by independently compiled Script
+identifier Deno. The checker injects an ambient Deno namespace, so the existing
+symbol-less linked lookup is bypassed and the unimplemented-global fallback
+manufactures null. A narrow default-off fallback now resolves ambient names
+through the Context lexical/object environment after native intrinsics decline.
+Three controls now read Deno, Deno.core and Deno.core.loadExtScript correctly.
+Calling that foreign method still throws "called value is not a function";
+this fourth control is explicitly expected-failure, NOT a completed capability.
+The adapter packaging options now provide the already-existing Context call
+terminal, but this alone does not fix foreign callable classification.
+Fresh unchanged native lazy-loader replay for this new fix is not yet measured.
+Full focused suite passes 37/37 under Vitest, comprising 36 positive controls
+and one expected failure. TypeScript 7 passes; scoped lint has two pre-existing
+noExplicitAny warnings and no errors. The preceding 86-test persistent suite
+has not been rerun after this ambient-read change.
+
 ## Broader Script packaging continuation, 2026-10-04
 
 Compiler now creates a canonical initializer for function-only/empty completion

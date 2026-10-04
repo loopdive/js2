@@ -1,10 +1,15 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { readFile } from "node:fs/promises";
 
-async function context() {
+async function context(lexicals = false) {
+  const provider = lexicals
+    ? await readFile(new URL("../examples/v8x-js2wasm-spike/script-lexical-provider.ts", import.meta.url), "utf8")
+    : "";
   const result = await compile(
-    `
+    provider +
+      `
 let result:any;
 export function capture(value:any):void {result=value;}
 export function captured():any {return result;}
@@ -49,6 +54,12 @@ export function descriptorBits(value:any):number {return (value.writable?1:0)+(v
 export function fooKey():any {return "foo";}
 export function hiddenKey():any {return "hidden";}
 export function getterKey():any {return "getter";}
+export function installNestedLoader():void {
+ (globalThis as any).Deno={core:{loadExtScript(specifier:any){return specifier==="x"?42:-1;}}};
+}
+export function isNull(value:any):boolean {return value===null;}
+export function errorLength(value:any):number {return String(value.message).length;}
+export function errorChar(value:any,index:number):number {return String(value.message).charCodeAt(index);}
 `,
     { target: "standalone", standaloneAllocationOwnerExport: "owns", standaloneSymbolState: "export" },
   );
@@ -78,6 +89,43 @@ const reflectionOptions = {
   standaloneScriptOwnNamesExport: "scriptOwnNames",
   standaloneScriptReflectionExports: { ownSymbols: "scriptOwnSymbols", descriptor: "scriptDescriptor" },
 };
+
+async function probeNestedCapability(source: string, expected: number) {
+  const owner = await context(true);
+  (owner.exports.installNestedLoader as Function)();
+  const result = await compile(source, {
+    ...options,
+    standaloneGlobalThisImport: { ...options.standaloneGlobalThisImport, call: "call" },
+    standaloneScriptLexicalImport: { module: "context", name: "scriptLexicalOperation" },
+    link: [...options.link],
+  });
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  const instance = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports });
+  try {
+    (instance.exports.__module_init as Function)();
+  } catch (error) {
+    const payload = (error as WebAssembly.Exception).getArg(owner.exports.__exn_tag as WebAssembly.Tag, 0);
+    let message = "";
+    const length = (owner.exports.errorLength as Function)(payload);
+    for (let i = 0; i < length; i++) message += String.fromCharCode((owner.exports.errorChar as Function)(payload, i));
+    throw new Error(message);
+  }
+  const value = (owner.exports.captured as Function)();
+  expect((owner.exports.isNull as Function)(value)).toBe(0);
+  expect((owner.exports[expected === 42 ? "number" : "kind"] as Function)(value)).toBe(expected);
+}
+
+it.each([
+  ["Deno;", 2],
+  ["Deno.core;", 2],
+  ["Deno.core.loadExtScript;", 1],
+] as const)("reads a nested Context-owned capability: %s", probeNestedCapability);
+
+// Known remaining failure: foreign callable classification rejects this method.
+// Remove fails when the owner-aware [[Call]] path is implemented and verified.
+it.fails("calls a nested Context-owned capability (unsupported foreign call)", async () => {
+  await probeNestedCapability('Deno.core.loadExtScript("x");', 42);
+});
 
 it("initializes a function-only Script and publishes undefined completion", async () => {
   const owner = await context();
