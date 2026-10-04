@@ -172,6 +172,7 @@ import {
   shouldKeepBuiltinReceiverWrite,
 } from "./builtin-write-keeps.js"; // (#4176/#4199/#5197) builtin-receiver write keeps
 import { compileExpression, compileStatement, skipTransparentExpressions } from "./shared.js";
+import { beginScriptCompletion, publishScriptCompletion } from "./shared-script-completion.js";
 import { functionReturnsPreInitVarValue } from "./function-declaration-observation.js";
 import { inferNativeTaViewConstructType } from "./dataview-native.js";
 import { expandLinearU8ParamTypes } from "./linear-uint8-signatures.js";
@@ -6118,6 +6119,7 @@ export function compileDeclarations(
     const previousFunc = ctx.currentFunc;
     ctx.currentFunc = initFctx;
     mintUntypedRegExpReceiverMembers(ctx, initFctx, sourceFile); // (#6651 B10) untyped-RegExp proto reads
+    beginScriptCompletion(ctx, initFctx);
 
     // (#5271 step 8) §16.1.7 GlobalDeclarationInstantiation step 5.d — a
     // top-level lexical declaration whose name is a RESTRICTED GLOBAL
@@ -6218,7 +6220,8 @@ export function compileDeclarations(
     }
 
     const orderedInitEntries = orderedModuleInitEntries();
-    const chunks = chunkModuleInitEntries ? planModuleInitChunks(orderedInitEntries) : [];
+    const chunks =
+      chunkModuleInitEntries && !ctx.standaloneScriptCompletionImport ? planModuleInitChunks(orderedInitEntries) : [];
     if (chunks.length > 1) {
       // While a chunk is the current compilation frame, the outer prelude and
       // dispatcher are detached from `ctx.currentFunc`. Keep them live so late
@@ -6258,6 +6261,7 @@ export function compileDeclarations(
       for (const initEntry of orderedInitEntries) compileOrderedModuleInitEntry(initFctx, initEntry);
     }
 
+    publishScriptCompletion(ctx, initFctx);
     ctx.currentFunc = previousFunc;
     return initFctx;
   }

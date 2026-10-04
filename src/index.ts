@@ -571,6 +571,9 @@ export interface CompileOptions {
    * value: externref) -> externref; see shared-script-lexical-access.ts.
    * This provider must use the shared realm exception tag. */
   standaloneScriptLexicalImport?: { module: string; name: string };
+  /** Context-owned Script completion sink, (externref) -> void. Requires
+   * shared Script mode and the same realm provider. The initializer stays void. */
+  standaloneScriptCompletionImport?: { module: string; name: string };
   /** Opt-in allocation provenance predicate (externref) -> i32. Adds one hidden
    * owner-token field to GC structs; all linked graph artifacts must opt in. */
   standaloneAllocationOwnerExport?: string;

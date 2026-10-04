@@ -867,6 +867,20 @@ function buildCodegenOptions(
       );
     }
   }
+  if (options.standaloneScriptCompletionImport !== undefined) {
+    const { module, name } = options.standaloneScriptCompletionImport;
+    if (
+      !options.standaloneScriptVarBindings ||
+      !module ||
+      !name ||
+      module !== options.standaloneGlobalThisImport?.module ||
+      !options.link?.includes(module)
+    ) {
+      throw new Error(
+        "standaloneScriptCompletionImport requires shared Script mode and a named sink in the same realm provider",
+      );
+    }
+  }
   return {
     irCutoverRoute: readIrCompileRoute(options, "compileSourceSync"),
     sourceMap: emitSourceMap,
@@ -906,6 +920,7 @@ function buildCodegenOptions(
     deferTopLevelInit: options.deferTopLevelInit,
     standaloneScriptVarBindings: options.standaloneScriptVarBindings,
     standaloneScriptLexicalImport: options.standaloneScriptLexicalImport,
+    standaloneScriptCompletionImport: options.standaloneScriptCompletionImport,
     strictNoHostImports: targetProfile.strictEnvImportGate,
     // (#2119) thread module-strictness inference uniformly across all drivers.
     inferModuleStrictArguments: options.inferModuleStrictArguments,

@@ -3840,6 +3840,10 @@ export function compileIrPathFunctions(
         fnctorNativeStringBoundaries: sourceLoweringPlans?.fnctorNativeStringBoundaries,
         returnTypeOverride: null,
         moduleInitUnit: true,
+        scriptCompletionSink:
+          ctx.standaloneScriptCompletionImport && !ctx.sourceIsModule
+            ? irImportFuncRef(ctx.standaloneScriptCompletionImport.module, ctx.standaloneScriptCompletionImport.name)
+            : undefined,
         moduleBindings,
         calleeTypes,
         importedCalls: sourceLoweringPlans?.importedCalls,

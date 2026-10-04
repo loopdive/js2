@@ -421,6 +421,7 @@ export function createCodegenContext(
     ...(options?.standaloneGlobalThisImport ? { standaloneGlobalThisImport: options.standaloneGlobalThisImport } : {}),
     standaloneScriptVarBindings: options?.standaloneScriptVarBindings,
     standaloneScriptLexicalImport: options?.standaloneScriptLexicalImport,
+    standaloneScriptCompletionImport: options?.standaloneScriptCompletionImport,
     ...(options?.standaloneMicrotaskNotifyImport
       ? { standaloneMicrotaskNotifyImport: options.standaloneMicrotaskNotifyImport }
       : {}),

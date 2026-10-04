@@ -20,6 +20,7 @@ import { emitExternrefDestructureGuard } from "../destructuring-params.js";
 import { collectBindingNames } from "../../ir/analysis/loop-shape.js";
 import { adjustRethrowDepth, restoreBlockScopedShadows, saveBlockScopedShadows } from "./shared.js";
 import { beginFinallyCompletionSnapshot, endFinallyCompletionSnapshot } from "./eval-completion-value.js";
+import { emitUndefined } from "../expressions/late-imports.js";
 import { buildStandardTryTable } from "../../ir/try-table.js";
 
 type BoxedCapture = { refCellTypeIdx: number; valType: ValType };
@@ -609,6 +610,10 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
       }
 
       // Save/restore block-scoped shadows for let/const in the catch block (#817).
+      if (ctx.standaloneScriptCompletionImport && fctx.evalCompletionLocal !== undefined) {
+        emitUndefined(ctx, fctx);
+        fctx.body.push({ op: "local.set", index: fctx.evalCompletionLocal });
+      }
       const savedCatchScope = saveBlockScopedShadows(fctx, stmt.catchClause.block);
       // (#5271 step 2.3) block-entry lexical slots — see statements.ts.
       preallocateBlockScopedSlots(ctx, fctx, stmt.catchClause.block.statements);

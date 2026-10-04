@@ -190,6 +190,7 @@ import { fillLinkBoundaryToStringTagTerminal } from "./link-boundary-tostring.js
 import { eliminateDeadLayoutAndPlanProgramAbi } from "./program-abi-finalization.js";
 import { prepareSharedScriptVarAccess, finalizeSharedScriptVarAccess } from "./shared-script-var-access.js";
 import { prepareSharedScriptLexicalAccess, finalizeSharedScriptLexicalAccess } from "./shared-script-lexical-access.js";
+import { prepareScriptCompletionSink } from "./shared-script-completion.js";
 import { sweepAfterInline, verifyFunctionSweep } from "./function-reachability-sweep.js"; // (#6768)
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
@@ -5261,6 +5262,7 @@ export function generateModule(
   }
   const sourceFileInternal = ast.sourceFile as ts.SourceFile & { externalModuleIndicator?: ts.Node };
   ctx.sourceIsModule = sourceFileInternal.externalModuleIndicator !== undefined;
+  prepareScriptCompletionSink(ctx);
   recordSourceGlobalEnvironment(ctx, ast.sourceFile);
   // (#5383 S23 / #6610) Demand for the number-PRIMITIVE method-call arm.
   noteNumberPrimitiveMethodDemand(ctx, ast.sourceFile);

@@ -533,6 +533,58 @@ preserve arbitrary JS values, callable identity and foreign realm values.
 
 ## Completion and exceptions
 
+### Incomplete completion checkpoint (2026-10-04)
+
+The branch now contains an opt-in `standaloneScriptCompletionImport` with
+ABI `(externref) -> void`. The initializer remains `() -> void`; its normal
+completion is published to a Context-owned sink. Source stays unwrapped,
+reference identity stays native, and no interpreter or JSON transport is added.
+Direct lowering reuses the existing completion register. Prepared IR tracks
+an externref slot, resets statement completion and restores normal finally
+completion. Chunked initialization is disabled for this option until completion
+can be threaded between helpers. This is unfinished code, not a working public
+Script result API. The option is off by default.
+
+Fresh checkpoint verification: `tests/issue-4376-native-script-completion.test.ts`
+has **5 ordinary passes and 15 ordinary failures out of 20**. Do not skip or
+convert these failures to expected failures. Six bare-literal cases lose their
+result because top-level pure expression collection still discards them. Nine
+cases fail compilation because compatibility IR integration cannot materialize
+the `js.closure.undefined` callable used to initialize/reset completion.
+TypeScript 7 passed during implementation. No new native adapter or full Deno
+artifact is credited by this checkpoint. Earlier native fixture results refer
+to compiler `ce9b93df356` and adapter `0d8546557c9`, not this completion code.
+
+Resume in this order:
+
+1. Retain pure top-level ExpressionStatements only when Script completion is
+   observable. Preserve existing default behavior and Module semantics.
+2. Provide canonical native undefined to the compatibility IR completion path.
+   Reuse an existing correct provider/representation if available; do not
+   substitute null or a numeric sentinel for an externref undefined value.
+3. Rerun the 20 ordinary controls with Wasm exception support, then cover
+   repeated execution, nested functions, break/continue and abrupt finally.
+4. Wire or explicitly reject completion in the pure source Program producer
+   (`src/ir/program-source.ts`), which is not yet configured for this option.
+5. Add the Context completion sink to native v8x imports and root returned
+   values using its existing realm-value bridge. Public Script dispatch still
+   needs exact-source-bound independent AOT artifacts; do not add example
+   matching, source wrappers or JSON copying.
+6. Repackage and run compiler-free controls, then rebuild the full Context and
+   rerun unchanged WebIDL and deno_core tests before claiming integration.
+
+Reproduce the checkpoint test:
+
+```sh
+pnpm exec vitest run tests/issue-4376-native-script-completion.test.ts \
+  --poolOptions.forks.execArgv=--experimental-wasm-exnref \
+  --poolOptions.forks.execArgv=--max-old-space-size=4096
+```
+
+Existing draft PR: https://github.com/loopdive/js2/pull/6468, targeting
+`codex/4376-deno-callback-construction-20260930`, not main. Companion adapter
+draft: https://github.com/loopdive/v8x/pull/2. Both remain unready to merge.
+
 Keep source unwrapped. Function wrappers change declarations, top-level this,
 return grammar and scope. Indirect eval's lexical lifetime is not persistent
 Script scope. Neither scriptGoal nor entryScriptGoal provides this feature.

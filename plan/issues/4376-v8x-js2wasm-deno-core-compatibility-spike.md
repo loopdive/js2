@@ -17,6 +17,10 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-10-04: unfinished opt-in Script completion tracks a native reference
+  # slot through expression statements, catch entry and normal finally exit.
+  - src/ir/from-ast.ts
+  - src/codegen/statements/exceptions.ts
   # 2026-10-04: shared Script global-object function writes use the existing
   # canonical native AOT carrier, matching object-literal callable transport.
   - src/codegen/expressions/assignment.ts
@@ -139,6 +143,9 @@ loc-budget-allow:
   - src/codegen/expressions/late-imports.ts
   - src/codegen/async-scheduler.ts
 func-budget-allow:
+  # 2026-10-04: four-line opt-in reset at catch entry preserves Script
+  # completion independently of the failed try body's prior expression.
+  - src/codegen/statements/exceptions.ts::compileTryStatement
   # 2026-10-04: exact opt-in calls into the persistent-reference leaf and
   # dynamic equality for a persistent update whose checker assumes Number.
   - src/codegen/expressions/operator-assignment.ts::compileCompoundAssignment
@@ -2926,6 +2933,15 @@ lexical cells, declaration preflight and completion values remain required.
 
 ## 2026-10-04 opt-in native lexical checkpoint
 
+Next Script integration step is an opt-in Context completion sink. The canonical
+initializer remains void, while its body tracks the executed statement-list
+completion in a private local and publishes the final externref to the owning
+Context. Direct and prepared IR paths must preserve expression values, reset
+statement-specific empty completions, and discard normal finally values. The
+sink is not JSON serialization, a source wrapper, or an interpreter fallback.
+Public Script lookup/run and full conformance remain required after compiler
+transport is verified.
+
 Typed-binding work distinguishes immutable scalar top-level `const` values
 from mutable cross-Script bindings. Number/boolean constants retain their typed
 slots while transport boxes/unboxes at the lexical provider boundary. An array
@@ -3057,3 +3073,13 @@ classes/destructuring, typed lexical storage, ambient shadows, function
 descriptor rules, re-execution and completion values remain required.
 See the updated persistent Script environment handoff for the operation ABI,
 verification limitations and resume order. The full integration stays open.
+
+Completion checkpoint (2026-10-04): the new opt-in Context sink preserves the
+initializer's void ABI and attempts to transport native Script completion.
+Fresh focused verification reports 5 ordinary passes and 15 ordinary failures
+out of 20. Six literal-only cases still discard the result; nine cases cannot
+materialize `js.closure.undefined` through compatibility IR. These remain
+ordinary failing tests. Native v8x completion wiring, pure source Program
+configuration and public Script dispatch are not implemented by this checkpoint.
+The persistent Script handoff records the exact resume order. Draft PR #6468
+is not ready to merge; no new full Deno conformance or performance is claimed.
