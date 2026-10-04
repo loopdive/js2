@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "program-validator-preservation-20261004",
   "assignee": "ttraenkler/codex-program-validator-preservation-20261004",
-  "requested_by": "ttraenkler/codex-program-validator-preservation-20261004",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3518-program-validator-owner-c2c3-20261004",
   "claimed_at": "2026-10-04T06:13:17Z",
-  "updated_at": "2026-10-04T06:13:17Z",
-  "write_id": "54916-dahn0twn"
+  "updated_at": "2026-10-04T09:09:40Z",
+  "write_id": "16792-bv1uimni",
+  "released_at": "2026-10-04T09:09:40Z"
 }
