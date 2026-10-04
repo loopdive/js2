@@ -3253,7 +3253,17 @@ binary controls match clean dbe49bf307d6 exactly. Source-preservation remains
 38 pass /53 fail out of 91 with no per-test status changes. Native adapter pin,
 package routing and unchanged Deno replay have not advanced yet.
 
-Final wrap-up, 2026-10-04: compiler dbe49bf307d6 and adapter 33af9d76e815
+Latest checkpoint, 2026-10-04: foreign Context-owned method dispatch now passes
+the previously expected-failing nested capability call. Eight selected compiler
+controls pass 8/8, including exact receiver, single getter evaluation, thrown
+payload identity and two non-callable TypeErrors. Native replay is not rerun for
+this dispatch change. Latest native WebIDL evidence is 17/17, derived conversions
+2/2, lazy-loader 0/1; full 431-test replay aborted at unsupported SnapshotCreator.
+Handoff records remaining callback/order checks, clean artifact rebuild, module
+graphs, host operations, snapshots and comparative benchmarks. Existing drafts
+6468 and v8x 2 are reused and remain incomplete, not merge-ready.
+
+Historical wrap-up, 2026-10-04: compiler dbe49bf307d6 and adapter 33af9d76e815
 are published in the existing drafts. Explicit receiver controls pass 21/21;
 four execution suites pass 111/111 including two existing expected failures.
 Source-preservation controls remain 38 pass /53 fail on both baseline and

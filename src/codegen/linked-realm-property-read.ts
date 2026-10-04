@@ -4,6 +4,7 @@ import { ensureLateImport } from "./shared.js";
 import { publishScriptGetter } from "./shared-script-completion.js";
 import { fillArrayIteratorPropertyRead } from "./array-iterator-property-read.js";
 import { fillClosedScriptSymbolReflection } from "./closed-script-symbol-reflection.js";
+import { fillLinkedRealmMethodCall } from "./linked-realm-method-call.js";
 
 /** Explicit ownership, not a structural type match, selects the foreign realm. */
 export function reserveLinkedRealmPropertyRead(ctx: CodegenContext): void {
@@ -21,10 +22,19 @@ export function reserveLinkedRealmPropertyRead(ctx: CodegenContext): void {
     [{ kind: "externref" }],
     linked.module,
   );
+  if (linked.call)
+    ensureLateImport(
+      ctx,
+      linked.call,
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+      linked.module,
+    );
 }
 
 /** Install after every getter fill so graph-local bags and caches cannot win. */
 export function fillLinkedRealmPropertyRead(ctx: CodegenContext): void {
+  fillLinkedRealmMethodCall(ctx);
   fillArrayIteratorPropertyRead(ctx);
   fillClosedScriptSymbolReflection(ctx);
   publishScriptGetter(ctx);

@@ -55,8 +55,21 @@ export function fooKey():any {return "foo";}
 export function hiddenKey():any {return "hidden";}
 export function getterKey():any {return "getter";}
 export function installNestedLoader():void {
- (globalThis as any).Deno={core:{loadExtScript(specifier:any){return specifier==="x"?42:-1;}}};
+ (globalThis as any).Deno={core:{loadExtScript(specifier:any){return specifier==="x"&&this===(globalThis as any).Deno.core?42:-1;}}};
 }
+let nestedReads=0;
+let nestedReason:any;
+export function installNestedGetter(mode:number):any {
+ nestedReads=0;
+ nestedReason={marker:42};
+ const core:any={};
+ const fn:any=function(specifier:any){if(mode===1)throw nestedReason;return this===core&&specifier==="x"?42:-1;};
+ Object.defineProperty(core,"loadExtScript",{get(){nestedReads++;return mode===2?{}:mode===3?undefined:fn;},configurable:true});
+ (globalThis as any).Deno={core};
+ return nestedReason;
+}
+export function nestedReadCount():number {return nestedReads;}
+export function errorKind(value:any):number {return value.name==="TypeError"?1:0;}
 export function isNull(value:any):boolean {return value===null;}
 export function errorLength(value:any):number {return String(value.message).length;}
 export function errorChar(value:any,index:number):number {return String(value.message).charCodeAt(index);}
@@ -121,11 +134,37 @@ it.each([
   ["Deno.core.loadExtScript;", 1],
 ] as const)("reads a nested Context-owned capability: %s", probeNestedCapability);
 
-// Known remaining failure: foreign callable classification rejects this method.
-// Remove fails when the owner-aware [[Call]] path is implemented and verified.
-it.fails("calls a nested Context-owned capability (unsupported foreign call)", async () => {
+it("calls a nested Context-owned capability", async () => {
   await probeNestedCapability('Deno.core.loadExtScript("x");', 42);
 });
+
+it.each([0, 1, 2, 3])(
+  "resolves a foreign method getter once and preserves abrupt completion, mode %s",
+  async (mode) => {
+    const owner = await context(true);
+    const reason = (owner.exports.installNestedGetter as Function)(mode);
+    const result = await compile('Deno.core.loadExtScript("x");', {
+      ...options,
+      standaloneGlobalThisImport: { ...options.standaloneGlobalThisImport, call: "call" },
+      standaloneScriptLexicalImport: { module: "context", name: "scriptLexicalOperation" },
+      link: [...options.link],
+    });
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const instance = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports });
+    let thrown: unknown;
+    try {
+      (instance.exports.__module_init as Function)();
+    } catch (error) {
+      thrown = (error as WebAssembly.Exception).getArg(owner.exports.__exn_tag as WebAssembly.Tag, 0);
+    }
+    expect((owner.exports.nestedReadCount as Function)()).toBe(1);
+    if (mode === 0) {
+      expect(thrown).toBeUndefined();
+      expect((owner.exports.number as Function)((owner.exports.captured as Function)())).toBe(42);
+    } else if (mode === 1) expect(thrown).toBe(reason);
+    else expect((owner.exports.errorKind as Function)(thrown)).toBe(1);
+  },
+);
 
 it("initializes a function-only Script and publishes undefined completion", async () => {
   const owner = await context();

@@ -1,5 +1,34 @@
 # Persistent AOT Script environment
 
+## Handoff: Context-owned method dispatch, 2026-10-04
+
+The formerly expected-failing `Deno.core.loadExtScript("x")` compiler control
+now executes successfully. Opted-in Script method dispatch resolves a foreign
+receiver's method once through its Context, then delegates Context-owned callees
+to the existing Context call terminal. Caller-owned callees retain local dispatch.
+No interpreter or Deno source rewrite was added.
+
+The eight selected controls pass 8/8: three nested reads, a method call with
+receiver identity, and four getter modes covering normal return, thrown payload
+identity, object non-callable and undefined non-callable TypeErrors. This is
+same-store compiler evidence, not a fresh native Deno lazy-loader replay.
+The complete focused suite passes 41/41 with no expected-failure marker on the
+foreign method call. TypeScript 7 and scoped Biome lint pass. Broader persistent
+Script and source-preservation populations were not rerun for this checkpoint.
+
+Next steps: verify caller-owned callbacks stored on foreign receivers and getter
+versus argument evaluation order; rebuild clean pinned optimized native artifacts
+and replay the unchanged lazy-loader test. The last native evidence remains
+WebIDL 17/17 and derived conversions 2/2; lazy-loader 0/1. Full 431-test replay
+aborted at missing SnapshotCreator support, without a complete summary. Module
+graphs, macro-generated inputs, native host operations, snapshots and matched
+V8/QuickJS/Porffor benchmarks remain outstanding. Neither draft is merge-ready.
+
+Compiler draft: https://github.com/loopdive/js2/pull/6468 (stacked base).
+Adapter draft: https://github.com/loopdive/v8x/pull/2. Preserve unrelated
+lower-contracts.ts documentation, acorn.wasm and untracked user files. Earlier
+sections are chronological evidence at their stated revisions, not current claims.
+
 ## Ambient host-global failure isolated, 2026-10-04
 
 A Context-owned Deno object is read as null by independently compiled Script
