@@ -421,6 +421,9 @@ export function createCodegenContext(
     nodeFsWriteSyncIdx: -1,
     standalone: targetProfile.nativeRegime, // (#5385) the native semantic regime, not the environment
     ...(options?.standaloneGlobalThisImport ? { standaloneGlobalThisImport: options.standaloneGlobalThisImport } : {}),
+    ...(options?.standaloneModuleNamespaceImports
+      ? { standaloneModuleNamespaceImports: options.standaloneModuleNamespaceImports }
+      : {}),
     standaloneScriptVarBindings: options?.standaloneScriptVarBindings,
     standaloneScriptLexicalImport: options?.standaloneScriptLexicalImport,
     standaloneScriptCompletionImport: options?.standaloneScriptCompletionImport,

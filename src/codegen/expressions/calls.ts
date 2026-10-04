@@ -9,6 +9,7 @@ import { tryCompileStandaloneEvalSpread } from "./eval-spread-args.js"; // (#677
 import { emitThrowReferenceError } from "../js-errors.js"; // (#6774 S8)
 import { tryCompileWithRoutedCall } from "./with-call-binding.js"; // (#6774 S15)
 import { ts, forEachChild } from "../../ts-api.js";
+import { linkedModuleCall } from "../linked-module-namespace.js";
 import {
   emitOverriddenProtoMemberCall,
   protoMemberReadIsOverridden,
@@ -7601,6 +7602,10 @@ function compileCallExpression(
   // route to the short-circuiting path.
   if (ts.isOptionalChain(expr) && ts.isPropertyAccessExpression(expr.expression)) {
     return compileOptionalCallExpression(ctx, fctx, expr);
+  }
+  if (linkedModuleCall(ctx, expr.expression)) {
+    const linked = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+    if (linked !== null) return linked;
   }
 
   // (#4484 B) §7.3.2 RequireObjectCoercible — `undefined.toString()` /

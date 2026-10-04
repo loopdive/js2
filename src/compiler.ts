@@ -942,6 +942,7 @@ function buildCodegenOptions(
     linkedPackageBindings: options.linkedPackageBindings,
     standalone: targetProfile.target === "standalone",
     standaloneGlobalThisImport: options.standaloneGlobalThisImport,
+    standaloneModuleNamespaceImports: options.standaloneModuleNamespaceImports,
     standaloneMicrotaskNotifyImport: options.standaloneMicrotaskNotifyImport,
     directEval: options.directEval,
     runtimeEvalProvider: options.runtimeEvalProvider,

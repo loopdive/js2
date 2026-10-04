@@ -569,6 +569,10 @@ export interface CompileOptions {
    * Typed private slots are refused
    * until cross-Script mutation is incorporated into their planning. */
   standaloneScriptVarBindings?: boolean;
+  /** Native Module-identity capabilities keyed by exact compiler source path.
+   * Each () -> externref returns an evaluated namespace or null. Requires a
+   * shared standalone realm; it does not authorize URL-global lookup. */
+  standaloneModuleNamespaceImports?: { module: string; sources: Readonly<Record<string, string>> };
   /** Experimental native Context declarative-record operation. Requires the
    * shared Script-var mode. ABI: (name: externref, operation: f64,
    * value: externref) -> externref; see shared-script-lexical-access.ts.

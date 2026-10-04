@@ -183,6 +183,7 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
     arrayPrototype?: string;
   };
   standaloneMicrotaskNotifyImport?: { module: string; name: string };
+  standaloneModuleNamespaceImports?: { module: string; sources: Readonly<Record<string, string>> };
   standaloneScriptVarBindings?: boolean;
   standaloneScriptLexicalImport?: { module: string; name: string };
   standaloneScriptCompletionImport?: { module: string; name: string };
@@ -4275,6 +4276,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
     arrayPrototype?: string;
   };
   standaloneMicrotaskNotifyImport?: { module: string; name: string };
+  standaloneModuleNamespaceImports?: { module: string; sources: Readonly<Record<string, string>> };
   standaloneScriptVarBindings?: boolean;
   standaloneScriptLexicalImport?: { module: string; name: string };
   standaloneScriptCompletionImport?: { module: string; name: string };

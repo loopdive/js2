@@ -8,6 +8,7 @@ import { emitLazyClassObjectGet } from "./expressions/extern.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { linkedModuleNamespaceName, reserveLinkedModuleNamespace } from "./linked-module-namespace.js";
 import { isNodeBuiltin, normalizeNodeBuiltin } from "../import-resolver.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -936,6 +937,10 @@ function ensureNamespaceObjectGetter(
   const classGetters = ensureClassObjectGetters(ctx, exports);
   if (classGetters === undefined) return undefined;
 
+  const source = moduleNamespaceTag ? moduleSourceFile(cacheKey as ts.Symbol) : undefined;
+  const externalNamespace = source === undefined ? undefined : linkedModuleNamespaceName(ctx, source);
+  if (externalNamespace !== undefined) reserveLinkedModuleNamespace(ctx, externalNamespace);
+
   const helpers = reserveNamespaceObjectHelpers(ctx, fctx, exports, moduleNamespaceTag);
   if (helpers === undefined) return undefined;
   const {
@@ -965,6 +970,7 @@ function ensureNamespaceObjectGetter(
     classGetters,
     helpers,
     cacheGlobal,
+    externalNamespace,
   });
 }
 
@@ -1086,6 +1092,7 @@ interface NamespaceObjectGetterPlan {
   readonly classGetters: ReadonlyMap<string, string>;
   readonly helpers: NamespaceObjectHelpers;
   readonly cacheGlobal: GlobalDef;
+  readonly externalNamespace?: string;
 }
 
 /**
@@ -1289,6 +1296,22 @@ function buildNamespaceObjectGetterBody(ctx: CodegenContext, plan: NamespaceObje
   getterFctx.body.push({ op: "global.set", index: finalCacheGlobalIdx });
   const initBody = getterFctx.body;
   popBody(getterFctx, savedBody);
+
+  if (plan.externalNamespace !== undefined) {
+    const external = ctx.funcMap.get(plan.externalNamespace);
+    if (external === undefined) return undefined;
+    getterFctx.body.push(
+      { op: "call", funcIdx: external },
+      { op: "local.tee", index: objectLocal },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [],
+        else: [{ op: "local.get", index: objectLocal }, { op: "return" }],
+      },
+    );
+  }
 
   getterFctx.body.push({ op: "global.get", index: finalCacheGlobalIdx });
   getterFctx.body.push({ op: "ref.is_null" });

@@ -89,6 +89,7 @@ import { filterResultNeedsDynamicCarrier } from "./array-filter-spec-access.js";
 import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
 import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
+import { withLinkedModuleInitializer } from "./linked-module-namespace.js";
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
 import {
@@ -6051,6 +6052,12 @@ export function compileDeclarations(
 
   /** Compile one complete top-level entry without changing its source order. */
   function compileOrderedModuleInitEntry(fctx: FunctionContext, initEntry: OrderedModuleInitEntry): void {
+    withLinkedModuleInitializer(ctx, fctx, initEntry.node.getSourceFile(), () =>
+      compileLinkedModuleInitEntry(fctx, initEntry),
+    );
+  }
+
+  function compileLinkedModuleInitEntry(fctx: FunctionContext, initEntry: OrderedModuleInitEntry): void {
     if (initEntry.kind === "static") {
       emitModuleStaticInitialization(ctx, fctx, initEntry.entry);
       return;

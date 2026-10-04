@@ -17,6 +17,9 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-10-04: unfinished, default-off native Module namespace imports guard
+  # per-source initialization and read live exports from the original owner.
+  - src/codegen/linked-module-namespace.ts
   # 2026-10-04: ambient host names resolve through the native Context rather
   # than the compiler's null/zero default; intrinsic paths remain unchanged.
   - src/codegen/expressions/identifiers.ts
@@ -169,6 +172,9 @@ loc-budget-allow:
   - src/codegen/expressions/late-imports.ts
   - src/codegen/async-scheduler.ts
 func-budget-allow:
+  # 2026-10-04: existing identifier body renamed behind a default-off live
+  # import wrapper; this is not a new 1408-line implementation.
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCoreUnlinked
   # 2026-10-04: restate existing branch growth against freshly merged main.
   # Completion/provider ABI (+8/+4) and native callable storage (+4/+2) were
   # already implemented in this integration branch, not new ordering logic.
@@ -260,6 +266,9 @@ func-budget-allow:
   - src/codegen/object-runtime-enumeration.ts::buildObjectEnumerationHelpers
   - src/codegen/object-runtime.ts::fillClosedStructExternGetArms
 oracle-ratchet-allow:
+  # 2026-10-04: checkpoint-only import alias and export-symbol authentication.
+  # Move these queries into oracle facts before promoting the draft.
+  - src/codegen/linked-module-namespace.ts
   # 2026-10-04: named namespace re-export identity uses the same alias queries
   # as namespace imports. Move both paths to shared oracle facts before ready.
   - src/codegen/module-namespace-value.ts
@@ -305,6 +314,19 @@ files:
   - plan/agent-context/v8x-js2wasm-deno-handover-2026-08-12.md
 ---
 # #4376 — v8x + js2wasm as an engine-free Deno substrate
+
+## Latest module-linking handoff (2026-10-04)
+
+Default-off native Module namespace capabilities now preserve cross-graph
+identity, once-only legacy initialization and live named/namespace reads in the
+native control. The expanded control remains **0/1**: calling the dependency
+through the second graph returns 1 instead of 4. Later receiver and same-URL
+distinct Module assertions are not reached. Node V8 fixture control passes 1/1.
+Do not mark this task complete or either draft PR ready. Prepared IR initializer
+guarding, callable owner routing and unchanged Deno replay remain outstanding.
+
+Detailed implementation, local artifact boundaries, repro and resume order:
+[module-linking checkpoint](../agent-context/4376-module-linking-checkpoint-2026-10-04.md).
 
 ## Objective
 

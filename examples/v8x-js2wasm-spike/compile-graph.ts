@@ -1550,6 +1550,15 @@ async function main(): Promise<void> {
             exceptionTag: "__exn_tag",
           },
           link: ["v8x:context", "v8x:deno"],
+          standaloneModuleNamespaceImports: {
+            module: "v8x:deno",
+            sources: Object.fromEntries(
+              [...modules.keys()].map((specifier) => [
+                compilerPath(specifier),
+                `__v8x_module_namespace_${Buffer.from(specifier, "utf8").toString("hex") || "00"}`,
+              ]),
+            ),
+          },
           standaloneMicrotaskNotifyImport: { module: "v8x:deno", name: "__v8x_microtask_notify" },
         }
       : {}),

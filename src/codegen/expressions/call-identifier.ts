@@ -10,6 +10,7 @@
 // Moved verbatim: the emitted Wasm is byte-identical.
 import { guardedExternRefResultBridge } from "./dispatch-extern-result-bridge.js";
 import { ts } from "../../ts-api.js";
+import { linkedModuleCall } from "../linked-module-namespace.js";
 import { widenJsDefaultGuessSlot } from "../js-default-param-type-guess.js";
 import {
   captureSourceSlot,
@@ -689,6 +690,10 @@ export function compileIdentifierCall(
   expr: ts.CallExpression,
   expectedType?: ValType,
 ): InnerResult | undefined {
+  if (linkedModuleCall(ctx, expr.expression)) {
+    const call = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+    if (call !== null) return call;
+  }
   // (#1058) Resolve a same-named top-level function by declaration, not by the
   // graph-wide bare-name binding (see declaration-bound-callee.ts).
   return withDeclarationBoundCallee(ctx, expr, () => compileBoundIdentifierCall(ctx, fctx, expr, expectedType));

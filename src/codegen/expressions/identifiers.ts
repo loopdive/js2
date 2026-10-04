@@ -50,6 +50,7 @@ import {
 import { addHostStringConstantGlobal, deferrableStringConstantGlobalGet } from "../registry/imports.js";
 import { emitCapturedBoxGlobalRead, emitNullGuardedStructGet, getCapturedBoxGlobal } from "../property-access.js";
 import { coerceType, compileExpression, isAnyValue } from "../shared.js";
+import { linkedModuleImportedBinding, emitLinkedModuleImportRead } from "../linked-module-namespace.js";
 import {
   fnShadowSlot,
   isShadowedTopLevelFn,
@@ -1058,6 +1059,20 @@ function compileExactAmbientShadowedModuleBinding(
  *  ReferenceError). Split out so the Tier-2 dynamic `with` path can invoke it as
  *  the HasBinding-miss fallback (#2663 Slice 1). */
 function compileIdentifierCore(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+  skipRuntimeEvalState = false,
+): ValType | null {
+  const binding = linkedModuleImportedBinding(ctx, id);
+  if (binding)
+    return emitLinkedModuleImportRead(ctx, fctx, binding, () =>
+      compileIdentifierCoreUnlinked(ctx, fctx, id, skipRuntimeEvalState),
+    );
+  return compileIdentifierCoreUnlinked(ctx, fctx, id, skipRuntimeEvalState);
+}
+
+function compileIdentifierCoreUnlinked(
   ctx: CodegenContext,
   fctx: FunctionContext,
   id: ts.Identifier,
