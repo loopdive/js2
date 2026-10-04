@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { captureProgramValidatorPredecessorPolicySource } from "./helpers/ir-runtime-program-policy-evolution.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { setImmediate } from "node:timers/promises";
@@ -99,7 +100,9 @@ const raw = (): string =>
           captureCurrentMainInventoryPredecessorPolicySource(
             captureCanonical3c6PredecessorPolicySource(
               captureCanonical489dPredecessorPolicySource(
-                captureNestedStackificationPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                captureNestedStackificationPredecessorPolicySource(
+                  captureProgramValidatorPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                ),
               ),
             ),
           ),
@@ -921,7 +924,9 @@ describe("C2a exact runtime preparation policy successor", () => {
           captureCurrentMainInventoryPredecessorPolicySource(
             captureCanonical3c6PredecessorPolicySource(
               captureCanonical489dPredecessorPolicySource(
-                captureNestedStackificationPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                captureNestedStackificationPredecessorPolicySource(
+                  captureProgramValidatorPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                ),
               ),
             ),
           ),
@@ -1319,7 +1324,9 @@ describe("dynamic-code inventory successor preserves the C2a policy proof", () =
         captureCurrentMainInventoryPredecessorPolicySource(
           captureCanonical3c6PredecessorPolicySource(
             captureCanonical489dPredecessorPolicySource(
-              captureNestedStackificationPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+              captureNestedStackificationPredecessorPolicySource(
+                captureProgramValidatorPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+              ),
             ),
           ),
         ),
@@ -1841,7 +1848,9 @@ describe("host-carrier current-main inventory successor", () => {
       captureCurrentMainInventoryPredecessorPolicySource(
         captureCanonical3c6PredecessorPolicySource(
           captureCanonical489dPredecessorPolicySource(
-            captureNestedStackificationPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+            captureNestedStackificationPredecessorPolicySource(
+              captureProgramValidatorPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+            ),
           ),
         ),
       ),
@@ -2192,7 +2201,9 @@ describe("generator eager-refusal current-main inventory successor", () => {
     captureCurrentMainInventoryPredecessorPolicySource(
       captureCanonical3c6PredecessorPolicySource(
         captureCanonical489dPredecessorPolicySource(
-          captureNestedStackificationPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+          captureNestedStackificationPredecessorPolicySource(
+            captureProgramValidatorPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+          ),
         ),
       ),
     );

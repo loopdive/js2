@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { beforeProgramValidatorRelocation } from "./helpers/ir-program-validator-relocation.js";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import ts from "typescript";
@@ -26,7 +27,8 @@ import { beforeRuntimePreparationRelocation } from "./helpers/ir-runtime-prepara
 
 type SourceReader = (path: string) => string;
 // These tests' "current" is the immutable pre-C2a evolution input.
-const prePreparationRead = (): SourceReader => beforeRuntimePreparationRelocation(originalReadRuntimeContractActual);
+const prePreparationRead = (): SourceReader =>
+  beforeRuntimePreparationRelocation(beforeProgramValidatorRelocation(originalReadRuntimeContractActual));
 const readRuntimeContractActual: SourceReader = (path) => prePreparationRead()(path);
 function reconstructRuntimeContractReceiptSources(reader?: SourceReader, receiptText?: string) {
   return originalReconstructRuntimeContractReceiptSources(reader ?? prePreparationRead(), receiptText);

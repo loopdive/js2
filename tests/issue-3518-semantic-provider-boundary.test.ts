@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { captureProgramValidatorPredecessorPolicy } from "./helpers/ir-runtime-program-policy-evolution.js";
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -413,7 +414,9 @@ const policy = () => {
             beforeCanonical3c6InventoryPolicy(
               captureCanonical489dPredecessorPolicy(
                 captureNestedStackificationPredecessorPolicy(
-                  JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8")),
+                  captureProgramValidatorPredecessorPolicy(
+                    JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8")),
+                  ),
                 ),
               ),
             ),

@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { captureProgramValidatorPredecessorPolicySource } from "./helpers/ir-runtime-program-policy-evolution.js";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -1415,7 +1416,9 @@ const sha = (text: string): string => createHash("sha256").update(text).digest("
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const raw = (): string => {
   const text = captureCanonical489dPredecessorPolicySource(
-    captureNestedStackificationPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+    captureNestedStackificationPredecessorPolicySource(
+      captureProgramValidatorPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+    ),
   );
   expect(Buffer.byteLength(text)).toBe(577771);
   expect(sha(text)).toBe("2573c40f37d35a8996dab8cfb7ac5c94ef1b57be0f664845878b21e2b516777a");

@@ -1,4 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import {
+  captureProgramValidatorPredecessorPolicy,
+  captureProgramValidatorPredecessorPolicySource,
+} from "./helpers/ir-runtime-program-policy-evolution.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { setImmediate } from "node:timers/promises";
@@ -69,7 +73,9 @@ function actual(): Policy {
               beforeCurrentMainInventoryPolicy(
                 beforeCanonical3c6InventoryPolicy(
                   captureCanonical489dPredecessorPolicy(
-                    captureNestedStackificationPredecessorPolicy(JSON.parse(read("scripts/compiler-boundaries.json"))),
+                    captureNestedStackificationPredecessorPolicy(
+                      captureProgramValidatorPredecessorPolicy(JSON.parse(read("scripts/compiler-boundaries.json"))),
+                    ),
                   ),
                 ),
               ),
@@ -135,7 +141,9 @@ describe("C1 exact policy inverse and reciprocal B proof", () => {
                   beforeCurrentMainInventoryPolicySource(
                     beforeCanonical3c6InventoryPolicySource(
                       captureCanonical489dPredecessorPolicySource(
-                        captureNestedStackificationPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                        captureNestedStackificationPredecessorPolicySource(
+                          captureProgramValidatorPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                        ),
                       ),
                     ),
                   ),

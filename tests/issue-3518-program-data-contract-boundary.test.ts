@@ -1,4 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { captureProgramValidatorPredecessorPolicy } from "./helpers/ir-runtime-program-policy-evolution.js";
+import { beforeProgramValidatorRelocation } from "./helpers/ir-program-validator-relocation.js";
 
 import { beforeRuntimePreparationRelocation } from "./helpers/ir-runtime-preparation-relocation.js";
 import { spawnSync } from "node:child_process";
@@ -146,7 +148,9 @@ const policy = () => {
             beforeCanonical3c6InventoryPolicy(
               captureCanonical489dPredecessorPolicy(
                 captureNestedStackificationPredecessorPolicy(
-                  JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8")),
+                  captureProgramValidatorPredecessorPolicy(
+                    JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8")),
+                  ),
                 ),
               ),
             ),
@@ -201,7 +205,9 @@ function fixture(includeOwnership = false) {
     const source = rawRead(path);
     return path === "src/wasm/model/instructions.ts" ? beforeCanonicalInstructionsSource(source) : source;
   };
-  const initialRuntimeSources = reconstructRuntimeContractReceiptSources(beforeRuntimePreparationRelocation(rawRead));
+  const initialRuntimeSources = reconstructRuntimeContractReceiptSources(
+    beforeRuntimePreparationRelocation(beforeProgramValidatorRelocation(rawRead)),
+  );
   const historicalRuntimeRead = (path: string): string => {
     if (!runtimeContractCurrentPaths.includes(path)) return rawRead(path);
     const source = initialRuntimeSources.get(path);

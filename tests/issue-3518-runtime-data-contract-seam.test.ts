@@ -1,4 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { captureProgramValidatorPredecessorPolicySource } from "./helpers/ir-runtime-program-policy-evolution.js";
+import { beforeProgramValidatorRelocation } from "./helpers/ir-program-validator-relocation.js";
 
 import {
   captureNestedStackificationPredecessorPolicySource,
@@ -86,7 +88,7 @@ afterEach(async () => {
 const root = resolve(import.meta.dirname, "..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8");
 const historicalRead = (path: string) =>
-  readRuntimeContractReceiptSource(path, beforeRuntimePreparationRelocation(read));
+  readRuntimeContractReceiptSource(path, beforeRuntimePreparationRelocation(beforeProgramValidatorRelocation(read)));
 const hash = (rows: unknown) => createHash("sha256").update(JSON.stringify(rows)).digest("hex");
 
 // Measured from f95d8a0bf318e857d981863b1018a9d776483a46, source-qualified:
@@ -2651,7 +2653,9 @@ const fixtureCapturePin = (text: string) => {
 const fixtureCaptureRead = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 function fixtureCaptureInput(epoch: (typeof fixtureCaptureEpochs)[number]): string {
   const outer = captureCanonical489dPredecessorPolicySource(
-    captureNestedStackificationPredecessorPolicySource(fixtureCaptureRead("scripts/compiler-boundaries.json")),
+    captureNestedStackificationPredecessorPolicySource(
+      captureProgramValidatorPredecessorPolicySource(fixtureCaptureRead("scripts/compiler-boundaries.json")),
+    ),
   );
   const raw = epoch.name === "canonical3c6" ? outer : captureCanonical3c6PredecessorPolicySource(outer);
   expect(fixtureCapturePin(raw)).toEqual(epoch.current.source);
@@ -3357,7 +3361,9 @@ function fourStageCaptureInput(epoch: (typeof fourStageCaptureEpochs)[number]): 
   let source = captureCurrentMainInventoryPredecessorPolicySource(
     captureCanonical3c6PredecessorPolicySource(
       captureCanonical489dPredecessorPolicySource(
-        captureNestedStackificationPredecessorPolicySource(fixtureCaptureRead("scripts/compiler-boundaries.json")),
+        captureNestedStackificationPredecessorPolicySource(
+          captureProgramValidatorPredecessorPolicySource(fixtureCaptureRead("scripts/compiler-boundaries.json")),
+        ),
       ),
     ),
   );

@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { captureProgramValidatorPredecessorPolicySource } from "./helpers/ir-runtime-program-policy-evolution.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { setImmediate } from "node:timers/promises";
@@ -56,7 +57,9 @@ const raw = (): string =>
             captureCurrentMainInventoryPredecessorPolicySource(
               captureCanonical3c6PredecessorPolicySource(
                 captureCanonical489dPredecessorPolicySource(
-                  captureNestedStackificationPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                  captureNestedStackificationPredecessorPolicySource(
+                    captureProgramValidatorPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                  ),
                 ),
               ),
             ),

@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { captureProgramValidatorPredecessorPolicySource } from "./helpers/ir-runtime-program-policy-evolution.js";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -37,7 +38,9 @@ const receiptPath = "tests/helpers/ir-runtime-program-policy-main-inventory-2026
 const raw = (): string =>
   beforeCanonical3c6InventoryPolicySource(
     captureCanonical489dPredecessorPolicySource(
-      captureNestedStackificationPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+      captureNestedStackificationPredecessorPolicySource(
+        captureProgramValidatorPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+      ),
     ),
   );
 const policy = (): Policy => JSON.parse(raw());

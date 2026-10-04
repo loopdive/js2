@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { beforeProgramValidatorRelocation } from "./helpers/ir-program-validator-relocation.js";
 
 import { resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
@@ -26,10 +27,10 @@ import { beforeRuntimePreparationRelocation } from "./helpers/ir-runtime-prepara
 
 const rawRead = liveSourceReader(resolve(import.meta.dirname, ".."));
 const read: SourceReader = (path) =>
-  readRuntimeContractReceiptSource(path, beforeRuntimePreparationRelocation(rawRead));
+  readRuntimeContractReceiptSource(path, beforeRuntimePreparationRelocation(beforeProgramValidatorRelocation(rawRead)));
 function currentHistoricalRead(): SourceReader {
   // One fresh authenticated capture per top-level proof, before any historical mutant.
-  const beforePreparation = beforeRuntimePreparationRelocation(rawRead);
+  const beforePreparation = beforeRuntimePreparationRelocation(beforeProgramValidatorRelocation(rawRead));
   const sources = reconstructRuntimeContractReceiptSources(beforePreparation);
   if (sources.size !== runtimeContractCurrentPaths.length) throw Error("missing runtime historical population");
   for (const path of runtimeContractCurrentPaths)

@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { beforeProgramValidatorRelocation } from "./helpers/ir-program-validator-relocation.js";
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -51,7 +52,7 @@ const root = resolve(import.meta.dirname, "..");
 const rawRead = (path: string): string => readFileSync(resolve(root, path), "utf8");
 function currentHistoricalRead(): (path: string) => string {
   // Authenticate both current inverses once before any historical override.
-  const beforePreparation = beforeRuntimePreparationRelocation(rawRead);
+  const beforePreparation = beforeRuntimePreparationRelocation(beforeProgramValidatorRelocation(rawRead));
   const sources = reconstructRuntimeContractReceiptSources(beforePreparation);
   if (sources.size !== runtimeContractCurrentPaths.length) throw Error("missing runtime historical population");
   for (const path of runtimeContractCurrentPaths)

@@ -1,4 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import {
+  captureProgramValidatorRelocation,
+  type ProgramValidatorRelocationCapture,
+  type ProgramValidatorDonorPath,
+} from "./ir-program-validator-relocation.js";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -738,9 +743,24 @@ export function captureC1CurrentPopulation(
   // Retain the old receipt/source diagnostics before any narrower contract work.
   // No historical replacement is supplied to the old reconstruction until the live seam passes.
   const receipt = authenticateRuntimeProgramRelocationReceipt(receiptText);
-  for (const record of [...receipt.current, ...receipt.dependencies])
-    if (record.path !== linearPath)
-      assertRuntimeProgramRelocationSource(current.get(record.path)!, record, record.path);
+  let validatorRelocation: ProgramValidatorRelocationCapture | undefined;
+  const relocatedDependencies = ["src/ir/program-runtime-abi.ts", "src/ir/program-validation.ts"] as const;
+  for (const record of [...receipt.current, ...receipt.dependencies]) {
+    if (record.path === linearPath) continue;
+    const rawSource = current.get(record.path)!;
+    if (relocatedDependencies.includes(record.path as (typeof relocatedDependencies)[number])) {
+      validatorRelocation ??= captureProgramValidatorRelocation(readAuthority);
+      // Authenticate the already-read population operand against the independent physical authority channel.
+      // A supplied mutant is refused, never replaced by the healthy authority copy.
+      if (rawSource !== validatorRelocation.readCurrent(record.path as ProgramValidatorDonorPath))
+        fail("population source differs from current validator facade: " + record.path);
+      assertRuntimeProgramRelocationSource(
+        validatorRelocation.readBefore(record.path as ProgramValidatorDonorPath),
+        record,
+        record.path,
+      );
+    } else assertRuntimeProgramRelocationSource(rawSource, record, record.path);
+  }
   // Three closure inputs reuse the already captured population; nine are genuinely extra reads.
   const closure = new Map(current);
   let predecessorPackage: string | undefined;
@@ -788,6 +808,8 @@ export function captureC1CurrentPopulation(
   checkBindings(oldFile, declaration(oldFile, contract), contract);
   const historicalPopulation = new Map(current);
   historicalPopulation.set(linearPath, historical);
+  if (validatorRelocation === undefined) fail("missing validator relocation capture");
+  for (const path of relocatedDependencies) historicalPopulation.set(path, validatorRelocation.readBefore(path));
   const originals = reconstructRuntimeProgramRelocationPopulation(historicalPopulation, receiptText);
   return Object.freeze({
     receiptText,

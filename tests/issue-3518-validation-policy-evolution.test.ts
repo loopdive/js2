@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { captureProgramValidatorPredecessorPolicy } from "./helpers/ir-runtime-program-policy-evolution.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { setImmediate } from "node:timers/promises";
@@ -53,7 +54,7 @@ function actual(): MutablePolicy {
                   beforeCanonical3c6InventoryPolicy(
                     captureCanonical489dPredecessorPolicy(
                       captureNestedStackificationPredecessorPolicy(
-                        JSON.parse(read("scripts/compiler-boundaries.json")),
+                        captureProgramValidatorPredecessorPolicy(JSON.parse(read("scripts/compiler-boundaries.json"))),
                       ),
                     ),
                   ),

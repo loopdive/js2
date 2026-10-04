@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { beforeProgramValidatorRelocation } from "./helpers/ir-program-validator-relocation.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -35,7 +36,7 @@ afterEach(async () => {
 });
 
 function positive(): Reader {
-  const historicalReader = beforeRuntimePreparationRelocation(rawRead);
+  const historicalReader = beforeRuntimePreparationRelocation(beforeProgramValidatorRelocation(rawRead));
   expect(Buffer.byteLength(rawRead(support))).toBe(850);
   expect(hash(rawRead(support))).toBe("584322a7384556a6f3b82dc85cc30c2213510fe70f2cd437ccbef97826156351");
   expect(Buffer.byteLength(rawRead(implementation))).toBe(49541);

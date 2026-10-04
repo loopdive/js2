@@ -5501,3 +5501,874 @@ export function captureNestedStackificationPredecessorPolicySource(raw: string):
     nestedStackificationFail("raw/semantic reciprocal proof disagree");
   return predecessor;
 }
+
+// Fixed five-owner program validator successor. All predecessor APIs above remain byte-exact.
+import {
+  captureProgramValidatorRelocation,
+  type ProgramValidatorCurrentPath,
+} from "./ir-program-validator-relocation.js";
+const programValidatorPolicyReceiptPath = "tests/helpers/ir-runtime-program-policy-program-validator.json";
+const programValidatorPolicyExpected = {
+  schema: 1,
+  kind: "fixed-program-validator-policy-relocation",
+  provenance: {
+    canonicalMain: "39fd7b7d44c9bc6f9be47ddd1f7fd75196a7d5f1",
+    planSha256: "06584cb400881d178483f569e9e0ff26d61276012f9def060c8b70e533d3f02f",
+    legacyRetained: true,
+  },
+  before: {
+    source: {
+      bytes: 580511,
+      sha256: "81a0d94238a16cb762befa909ff057fc55d2da720996cf04af196bdd50cff7b2",
+      gitBlob: "dfedad8b2e98a9479409b351db8399a342505e19",
+    },
+    dataSha256: "d0891226c6e20ecf3868f9979a39b68722fe240a6e3394ea953c86ab1d1754de",
+    fileCount: 1814,
+    filesSha256: "a7fa1f5391015e87db1b70f61b965b737c0e32f917be41630e40dcf75337cef6",
+    activationCount: 102,
+    activationHistorySha256: "9a7e77fdc8c67fc0683879feb8bac8a9ef7854e9b083ac0c7e9affa4ddb24020",
+    layersSha256: "e7246f81b16f524db95bddcb8bf0d01faf17834948744b2a3a4bdd79b912984e",
+    allowedEdgesSha256: "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7",
+  },
+  current: {
+    source: {
+      bytes: 581616,
+      sha256: "8f686f0798e4d07255346360daaba21bd24f72d868bb7850f34bf0aa8c5d66a9",
+      gitBlob: "d6c1b9f0fcc9775f791a4c30b2e1056b69e34761",
+    },
+    dataSha256: "81a8fd3af0cbb9e82b89e1f05b3d731585d69472d4e1edd9dad80e0b9a21c50b",
+    fileCount: 1819,
+    filesSha256: "00c376929d4a8cd2a36c890f29fae0bb4f877dfe57034cfbd2fc6f872d630ec6",
+    activationCount: 102,
+    activationHistorySha256: "9a7e77fdc8c67fc0683879feb8bac8a9ef7854e9b083ac0c7e9affa4ddb24020",
+    layersSha256: "08c5f625965b12541ccea85120abd644891a589be067c53f3dadcf7233f0e4ab",
+    allowedEdgesSha256: "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7",
+  },
+  helperPrefix: {
+    path: "tests/helpers/ir-runtime-program-policy-evolution.ts",
+    bytes: 254018,
+    sha256: "5130184ffe112a67a58081ed9074e5f2097ad9400279390ab8f9a825b4952bbe",
+    gitBlob: "a2ea1676f20284a27c3a24d9d720d3ed53b5ebe0",
+  },
+  predecessorReceipt: {
+    path: "tests/helpers/ir-runtime-program-policy-nested-stackification.json",
+    bytes: 15523,
+    sha256: "b88978d331ba72939f67a78f0091cf32b746c5ac276e29ecb24b3adbc98efdf3",
+    gitBlob: "ad6d069f625c09dd58dfbd73f9cefeaebab4e22b",
+  },
+  sourceReceipt: {
+    path: "tests/helpers/ir-program-validator-relocation.json",
+    bytes: 27069,
+    sha256: "816848c32744e8ec3e2c414a27420b4a0339e35d815b5002db4754f11104ff92",
+    gitBlob: "77cba8ae7e0892930fc6fe30cd6f851b0104a4e3",
+  },
+  sourcePins: [
+    {
+      path: "src/ir/program-runtime-demands.ts",
+      bytes: 474,
+      sha256: "6af11b258faefd71a5602a021cdb8524f6d7bd804764e6ec7914440575f4fc39",
+      gitBlob: "fce0ec1086445fba84a0e720c51b7e06405f2ed6",
+    },
+    {
+      path: "src/ir/program-runtime-abi.ts",
+      bytes: 363,
+      sha256: "cec827cc20299610d6351e050cce5e9d3bd5198c9b334eb95253b96372ed7247",
+      gitBlob: "307f5fd4b31c10c0bea32892e5d1c0c80e938188",
+    },
+    {
+      path: "src/ir/runtime-program-manifest.ts",
+      bytes: 450,
+      sha256: "9d6a11bb96ce4dde466d92baf2945ca2c9a877ee5124a93ebaccac5118e44c56",
+      gitBlob: "57fa674a5e7368c19cbc10e0ca608711b3889a55",
+    },
+    {
+      path: "src/ir/program-runtime-validation.ts",
+      bytes: 302,
+      sha256: "8dbc664c29166cade8867d58f5bddb3af3e12d9e98c25aea2a9f8ce9c7ac7e9b",
+      gitBlob: "604c5aa1638a98e23a745c957d13dab304a88ee7",
+    },
+    {
+      path: "src/ir/program-validation.ts",
+      bytes: 236,
+      sha256: "b64454a7c97179e8efdab677049fb0f231ba3b6ce731bff602b231406d2dd098",
+      gitBlob: "fbcd84648424059795285aa45f85020e564ed2ba",
+    },
+    {
+      path: "src/ir/program/runtime-demands.ts",
+      bytes: 13467,
+      sha256: "74bfbc2fa49f6ce33fc5b4970a7dd0a5def4a6a17b009032321fce13cdfabf85",
+      gitBlob: "cd7cfebb496ebf51d3bcc8bb5fbcd665607c5e4d",
+    },
+    {
+      path: "src/ir/program/runtime-abi.ts",
+      bytes: 4522,
+      sha256: "65fcb7d226b260f30f517ae0f0a55117f5f5f99dcaef2c83219a466ee79cad4e",
+      gitBlob: "670b421735b57cda583340acab33067a43e97811",
+    },
+    {
+      path: "src/ir/program/runtime-manifest.ts",
+      bytes: 12179,
+      sha256: "069795708c8134e2bf69f17ed9f546a2f63c9f3494889213e6c26b211388f470",
+      gitBlob: "11202df8cb0c5c1f5cb4bf34e27927365591242b",
+    },
+    {
+      path: "src/ir/program/runtime-validation.ts",
+      bytes: 8248,
+      sha256: "1aa7bc3520b1c88483821d96fa41c633bb02e9082c6e6993605847ef296cd13f",
+      gitBlob: "51ee28bc9e2e12bb392c6c680ce526256fdb4d65",
+    },
+    {
+      path: "src/ir/program/validation.ts",
+      bytes: 19448,
+      sha256: "572aab2d72f9eabf322347e90c3d13e25f690a44fa3cede1ac5666dcd1674354",
+      gitBlob: "18e65c59b175e01412683b4c0b977513bde868fe",
+    },
+  ],
+  topLevelKeys: [
+    "schema",
+    "description",
+    "sourceRoot",
+    "tsconfig",
+    "requireGitProvenance",
+    "externalAssets",
+    "frontendWrapper",
+    "moduleExtensions",
+    "layers",
+    "allowedEdges",
+    "externalPackages",
+    "activationHistory",
+    "nonModules",
+    "moves",
+    "evidence",
+    "files",
+  ],
+  delta: {
+    layerIndex: 9,
+    beforeLayer: {
+      id: "ir-program",
+      status: "active",
+      roots: ["src/ir/program"],
+      required: true,
+      entries: [
+        "src/ir/program/abi-inventory.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/startup.ts",
+        "src/ir/program/abi-lookup.ts",
+        "src/ir/program/callable-bindings.ts",
+        "src/ir/program/controls.ts",
+        "src/ir/program/index.ts",
+        "src/ir/program/input-contracts.ts",
+        "src/ir/program/prepared-contracts.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/data.ts",
+        "src/ir/program/input.ts",
+        "src/ir/program/native-vector-resources.ts",
+        "src/ir/program/native-promise-resources.ts",
+        "src/ir/program/native-value-resources.ts",
+        "src/ir/program/native-string-value-demands.ts",
+        "src/ir/program/runtime-support.ts",
+        "src/ir/program/formatter-support.ts",
+        "src/ir/program/native-number-format-requirements.ts",
+        "src/ir/program/async-frame-setup.ts",
+        "src/ir/program/prepared-async-frame-plan.ts",
+        "src/ir/program/abi-signatures.ts",
+        "src/ir/program/host-async-dynamic.ts",
+        "src/ir/program/host-import-plan.ts",
+        "src/ir/program/host-number-boundary-setup.ts",
+        "src/ir/program/runtime-abi-identity.ts",
+        "src/ir/program/native-string-output-requirements.ts",
+        "src/ir/program/callable-results.ts",
+        "src/ir/program/native-source-closure-requirements.ts",
+        "src/ir/program/population.ts",
+        "src/ir/program/native-ref-cell-requirements.ts",
+        "src/ir/program/native-invocation-requirements.ts",
+        "src/ir/program/native-object-access-requirements.ts",
+        "src/ir/program/native-getter-invocation-requirements.ts",
+        "src/ir/program/native-object-result-requirements.ts",
+        "src/ir/program/native-object-result-values.ts",
+        "src/ir/program/native-prototype-requirements.ts",
+        "src/ir/program/native-realm-requirements.ts",
+        "src/ir/program/allocations.ts",
+        "src/ir/program/class-layouts.ts",
+        "src/ir/program/owner.ts",
+        "src/ir/program/draft-abi-lookup.ts",
+        "src/ir/program/runtime-support-dependencies.ts",
+      ],
+      minModules: 43,
+    },
+    currentLayer: {
+      id: "ir-program",
+      status: "active",
+      roots: ["src/ir/program"],
+      required: true,
+      entries: [
+        "src/ir/program/abi-inventory.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/startup.ts",
+        "src/ir/program/abi-lookup.ts",
+        "src/ir/program/callable-bindings.ts",
+        "src/ir/program/controls.ts",
+        "src/ir/program/index.ts",
+        "src/ir/program/input-contracts.ts",
+        "src/ir/program/prepared-contracts.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/data.ts",
+        "src/ir/program/input.ts",
+        "src/ir/program/native-vector-resources.ts",
+        "src/ir/program/native-promise-resources.ts",
+        "src/ir/program/native-value-resources.ts",
+        "src/ir/program/native-string-value-demands.ts",
+        "src/ir/program/runtime-support.ts",
+        "src/ir/program/formatter-support.ts",
+        "src/ir/program/native-number-format-requirements.ts",
+        "src/ir/program/async-frame-setup.ts",
+        "src/ir/program/prepared-async-frame-plan.ts",
+        "src/ir/program/abi-signatures.ts",
+        "src/ir/program/host-async-dynamic.ts",
+        "src/ir/program/host-import-plan.ts",
+        "src/ir/program/host-number-boundary-setup.ts",
+        "src/ir/program/runtime-abi-identity.ts",
+        "src/ir/program/native-string-output-requirements.ts",
+        "src/ir/program/callable-results.ts",
+        "src/ir/program/native-source-closure-requirements.ts",
+        "src/ir/program/population.ts",
+        "src/ir/program/native-ref-cell-requirements.ts",
+        "src/ir/program/native-invocation-requirements.ts",
+        "src/ir/program/native-object-access-requirements.ts",
+        "src/ir/program/native-getter-invocation-requirements.ts",
+        "src/ir/program/native-object-result-requirements.ts",
+        "src/ir/program/native-object-result-values.ts",
+        "src/ir/program/native-prototype-requirements.ts",
+        "src/ir/program/native-realm-requirements.ts",
+        "src/ir/program/allocations.ts",
+        "src/ir/program/class-layouts.ts",
+        "src/ir/program/owner.ts",
+        "src/ir/program/draft-abi-lookup.ts",
+        "src/ir/program/runtime-support-dependencies.ts",
+        "src/ir/program/runtime-demands.ts",
+        "src/ir/program/runtime-abi.ts",
+        "src/ir/program/runtime-manifest.ts",
+        "src/ir/program/runtime-validation.ts",
+        "src/ir/program/validation.ts",
+      ],
+      minModules: 48,
+    },
+    facades: [
+      {
+        index: 1353,
+        before: {
+          path: "src/ir/program-runtime-abi.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+        },
+        current: {
+          path: "src/ir/program-runtime-abi.ts",
+          state: "compatibility-adapter",
+          layer: "mixed-needs-split",
+          destination: "ir-program",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Explicit identity-preserving compatibility exports for the canonical prepared-program owner; retain existing callers until the complete IR path is tested and equivalent.",
+        },
+        beforePrevious: {
+          path: "src/ir/program-prepare-ir.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-program",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Separate the complete type closure of typed preparation, program ABI/population, validation and authenticated runtime projections before placement in ir-program; preserve explicit controls and transaction-owned allocations.",
+        },
+        beforeNext: {
+          path: "src/ir/program-runtime-demands.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+        },
+        currentPrevious: {
+          path: "src/ir/program-prepare-ir.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-program",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Separate the complete type closure of typed preparation, program ABI/population, validation and authenticated runtime projections before placement in ir-program; preserve explicit controls and transaction-owned allocations.",
+        },
+        currentNext: {
+          path: "src/ir/program-runtime-demands.ts",
+          state: "compatibility-adapter",
+          layer: "mixed-needs-split",
+          destination: "ir-program",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Explicit identity-preserving compatibility exports for the canonical prepared-program owner; retain existing callers until the complete IR path is tested and equivalent.",
+        },
+      },
+      {
+        index: 1354,
+        before: {
+          path: "src/ir/program-runtime-demands.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+        },
+        current: {
+          path: "src/ir/program-runtime-demands.ts",
+          state: "compatibility-adapter",
+          layer: "mixed-needs-split",
+          destination: "ir-program",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Explicit identity-preserving compatibility exports for the canonical prepared-program owner; retain existing callers until the complete IR path is tested and equivalent.",
+        },
+        beforePrevious: {
+          path: "src/ir/program-runtime-abi.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+        },
+        beforeNext: {
+          path: "src/ir/program-runtime-validation.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+        },
+        currentPrevious: {
+          path: "src/ir/program-runtime-abi.ts",
+          state: "compatibility-adapter",
+          layer: "mixed-needs-split",
+          destination: "ir-program",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Explicit identity-preserving compatibility exports for the canonical prepared-program owner; retain existing callers until the complete IR path is tested and equivalent.",
+        },
+        currentNext: {
+          path: "src/ir/program-runtime-validation.ts",
+          state: "compatibility-adapter",
+          layer: "mixed-needs-split",
+          destination: "ir-program",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Explicit identity-preserving compatibility exports for the canonical prepared-program owner; retain existing callers until the complete IR path is tested and equivalent.",
+        },
+      },
+      {
+        index: 1355,
+        before: {
+          path: "src/ir/program-runtime-validation.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+        },
+        current: {
+          path: "src/ir/program-runtime-validation.ts",
+          state: "compatibility-adapter",
+          layer: "mixed-needs-split",
+          destination: "ir-program",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Explicit identity-preserving compatibility exports for the canonical prepared-program owner; retain existing callers until the complete IR path is tested and equivalent.",
+        },
+        beforePrevious: {
+          path: "src/ir/program-runtime-demands.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+        },
+        beforeNext: {
+          path: "src/ir/program-source.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "frontend-ts",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Place source preparation under frontend/ts with explicit typed IR output contracts; separate AST/checker inventory and source carriers from pure prepared-program data. Preserve pending P edits; no whole-file move is authorized by this inventory entry.",
+        },
+        currentPrevious: {
+          path: "src/ir/program-runtime-demands.ts",
+          state: "compatibility-adapter",
+          layer: "mixed-needs-split",
+          destination: "ir-program",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Explicit identity-preserving compatibility exports for the canonical prepared-program owner; retain existing callers until the complete IR path is tested and equivalent.",
+        },
+        currentNext: {
+          path: "src/ir/program-source.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "frontend-ts",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Place source preparation under frontend/ts with explicit typed IR output contracts; separate AST/checker inventory and source carriers from pure prepared-program data. Preserve pending P edits; no whole-file move is authorized by this inventory entry.",
+        },
+      },
+      {
+        index: 1358,
+        before: {
+          path: "src/ir/program-validation.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-program",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Place prepared-data validation in ir/program after splitting mixed inventory and program contracts; retain complete ABI, population and runtime checks without importing frontend or physical/backend authority.",
+        },
+        current: {
+          path: "src/ir/program-validation.ts",
+          state: "compatibility-adapter",
+          layer: "mixed-needs-split",
+          destination: "ir-program",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Explicit identity-preserving compatibility exports for the canonical prepared-program owner; retain existing callers until the complete IR path is tested and equivalent.",
+        },
+        beforePrevious: {
+          path: "src/ir/program-startup-proof.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+        },
+        beforeNext: {
+          path: "src/ir/program.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-program",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Complete src/ir/program/index.ts with pure prepared data/ABI only after splitting frontend inventory/module-init/outcome edges, backend acceptance and emission contracts, and deferred LinearOptions. Preserve runtime validation/transaction behavior through explicit boundaries; no whole-file relocation or clean declaration.",
+        },
+        currentPrevious: {
+          path: "src/ir/program-startup-proof.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+        },
+        currentNext: {
+          path: "src/ir/program.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-program",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Complete src/ir/program/index.ts with pure prepared data/ABI only after splitting frontend inventory/module-init/outcome edges, backend acceptance and emission contracts, and deferred LinearOptions. Preserve runtime validation/transaction behavior through explicit boundaries; no whole-file relocation or clean declaration.",
+        },
+      },
+      {
+        index: 1372,
+        before: {
+          path: "src/ir/runtime-program-manifest.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-program",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Move complete whole-program runtime ownership and manifest preparation into ir/program after separating its implementation dependencies.",
+        },
+        current: {
+          path: "src/ir/runtime-program-manifest.ts",
+          state: "compatibility-adapter",
+          layer: "mixed-needs-split",
+          destination: "ir-program",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Explicit identity-preserving compatibility exports for the canonical prepared-program owner; retain existing callers until the complete IR path is tested and equivalent.",
+        },
+        beforePrevious: {
+          path: "src/ir/runtime-manifest.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+        },
+        beforeNext: {
+          path: "src/ir/runtime-program-producers.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-program",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Move complete whole-program runtime producer ownership into ir/program; ir/runtime must not depend on program population contracts.",
+        },
+        currentPrevious: {
+          path: "src/ir/runtime-manifest.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+        },
+        currentNext: {
+          path: "src/ir/runtime-program-producers.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-program",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Move complete whole-program runtime producer ownership into ir/program; ir/runtime must not depend on program population contracts.",
+        },
+      },
+    ],
+    addedRowIndex: 1814,
+    addedRows: [
+      {
+        path: "src/ir/program/runtime-abi.ts",
+        state: "clean",
+        layer: "ir-program",
+      },
+      {
+        path: "src/ir/program/runtime-demands.ts",
+        state: "clean",
+        layer: "ir-program",
+      },
+      {
+        path: "src/ir/program/runtime-manifest.ts",
+        state: "clean",
+        layer: "ir-program",
+      },
+      {
+        path: "src/ir/program/runtime-validation.ts",
+        state: "clean",
+        layer: "ir-program",
+      },
+      {
+        path: "src/ir/program/validation.ts",
+        state: "clean",
+        layer: "ir-program",
+      },
+    ],
+    addedRowPrevious: {
+      path: "src/ir/runtime/intrinsic-preparation.ts",
+      state: "clean",
+      layer: "ir-runtime",
+    },
+    activationHistoryUnchanged: true,
+    movesUnchanged: true,
+  },
+  rawSpans: [
+    {
+      beforeOffset: 8868,
+      afterOffset: 8868,
+      before: '        "src/ir/program/runtime-support-dependencies.ts"\n',
+      after:
+        '        "src/ir/program/runtime-support-dependencies.ts",\n        "src/ir/program/runtime-demands.ts",\n        "src/ir/program/runtime-abi.ts",\n        "src/ir/program/runtime-manifest.ts",\n        "src/ir/program/runtime-validation.ts",\n        "src/ir/program/validation.ts"\n',
+    },
+    {
+      beforeOffset: 8934,
+      afterOffset: 9154,
+      before: '      "minModules": 43\n',
+      after: '      "minModules": 48\n',
+    },
+    {
+      beforeOffset: 477455,
+      afterOffset: 477675,
+      before: '      "state": "unmigrated",\n',
+      after: '      "state": "compatibility-adapter",\n',
+    },
+    {
+      beforeOffset: 477520,
+      afterOffset: 477751,
+      before: '      "destination": "ir-core",\n',
+      after: '      "destination": "ir-program",\n',
+    },
+    {
+      beforeOffset: 477587,
+      afterOffset: 477821,
+      before:
+        '      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."\n',
+      after:
+        '      "nextBoundary": "Explicit identity-preserving compatibility exports for the canonical prepared-program owner; retain existing callers until the complete IR path is tested and equivalent."\n',
+    },
+    {
+      beforeOffset: 477761,
+      afterOffset: 478079,
+      before: '      "state": "unmigrated",\n',
+      after: '      "state": "compatibility-adapter",\n',
+    },
+    {
+      beforeOffset: 477826,
+      afterOffset: 478155,
+      before: '      "destination": "ir-core",\n',
+      after: '      "destination": "ir-program",\n',
+    },
+    {
+      beforeOffset: 477893,
+      afterOffset: 478225,
+      before:
+        '      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."\n',
+      after:
+        '      "nextBoundary": "Explicit identity-preserving compatibility exports for the canonical prepared-program owner; retain existing callers until the complete IR path is tested and equivalent."\n',
+    },
+    {
+      beforeOffset: 478070,
+      afterOffset: 478486,
+      before: '      "state": "unmigrated",\n',
+      after: '      "state": "compatibility-adapter",\n',
+    },
+    {
+      beforeOffset: 478135,
+      afterOffset: 478562,
+      before: '      "destination": "ir-core",\n',
+      after: '      "destination": "ir-program",\n',
+    },
+    {
+      beforeOffset: 478202,
+      afterOffset: 478632,
+      before:
+        '      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."\n',
+      after:
+        '      "nextBoundary": "Explicit identity-preserving compatibility exports for the canonical prepared-program owner; retain existing callers until the complete IR path is tested and equivalent."\n',
+    },
+    {
+      beforeOffset: 479142,
+      afterOffset: 479656,
+      before: '      "state": "unmigrated",\n',
+      after: '      "state": "compatibility-adapter",\n',
+    },
+    {
+      beforeOffset: 479277,
+      afterOffset: 479802,
+      before:
+        '      "nextBoundary": "Place prepared-data validation in ir/program after splitting mixed inventory and program contracts; retain complete ABI, population and runtime checks without importing frontend or physical/backend authority."\n',
+      after:
+        '      "nextBoundary": "Explicit identity-preserving compatibility exports for the canonical prepared-program owner; retain existing callers until the complete IR path is tested and equivalent."\n',
+    },
+    {
+      beforeOffset: 483997,
+      afterOffset: 484483,
+      before: '      "state": "unmigrated",\n',
+      after: '      "state": "compatibility-adapter",\n',
+    },
+    {
+      beforeOffset: 484132,
+      afterOffset: 484629,
+      before:
+        '      "nextBoundary": "Move complete whole-program runtime ownership and manifest preparation into ir/program after separating its implementation dependencies."\n',
+      after:
+        '      "nextBoundary": "Explicit identity-preserving compatibility exports for the canonical prepared-program owner; retain existing callers until the complete IR path is tested and equivalent."\n',
+    },
+    {
+      beforeOffset: 580499,
+      afterOffset: 581029,
+      before: "",
+      after:
+        '    },\n    {\n      "path": "src/ir/program/runtime-abi.ts",\n      "state": "clean",\n      "layer": "ir-program"\n    },\n    {\n      "path": "src/ir/program/runtime-demands.ts",\n      "state": "clean",\n      "layer": "ir-program"\n    },\n    {\n      "path": "src/ir/program/runtime-manifest.ts",\n      "state": "clean",\n      "layer": "ir-program"\n    },\n    {\n      "path": "src/ir/program/runtime-validation.ts",\n      "state": "clean",\n      "layer": "ir-program"\n    },\n    {\n      "path": "src/ir/program/validation.ts",\n      "state": "clean",\n      "layer": "ir-program"\n',
+    },
+  ],
+} as const;
+type ProgramValidatorPolicyReceipt = typeof programValidatorPolicyExpected;
+function programValidatorPolicyFail(detail: string): never {
+  throw new Error("program validator policy evolution: " + detail);
+}
+function programValidatorPolicyPin(
+  bytes: Buffer,
+  expected: { readonly bytes: number; readonly sha256: string; readonly gitBlob: string },
+  label: string,
+): void {
+  if (
+    bytes.length !== expected.bytes ||
+    createHash("sha256").update(bytes).digest("hex") !== expected.sha256 ||
+    createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex") !== expected.gitBlob
+  )
+    programValidatorPolicyFail(label);
+}
+/** Fresh physical authority for this fixed local stage; the next caller retains the complete older chain. */
+function authenticateProgramValidatorPolicy(): ProgramValidatorPolicyReceipt {
+  const raw = readFileSync(new URL(`../../${programValidatorPolicyReceiptPath}`, import.meta.url), "utf8");
+  if (
+    Buffer.byteLength(raw) !== 29027 ||
+    sha(raw) !== "e16eae0411ed069a37bb8e8073004e5ac2a31cecd9d3d983fe9080a313958014"
+  )
+    programValidatorPolicyFail("receipt digest mismatch");
+  const receipt = JSON.parse(raw) as ProgramValidatorPolicyReceipt;
+  if (!same(receipt, programValidatorPolicyExpected))
+    programValidatorPolicyFail("fixed receipt schema/population mismatch");
+  const helper = readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url));
+  programValidatorPolicyPin(
+    helper.subarray(0, 254018),
+    receipt.helperPrefix,
+    "complete predecessor helper prefix changed",
+  );
+  const previousBytes = readFileSync(new URL(`../../${receipt.predecessorReceipt.path}`, import.meta.url));
+  programValidatorPolicyPin(previousBytes, receipt.predecessorReceipt, "predecessor receipt changed");
+  const previous = JSON.parse(previousBytes.toString("utf8")) as NestedStackificationPolicyReceipt;
+  if (!same(previous.current, receipt.before)) programValidatorPolicyFail("D1 predecessor profile mismatch");
+  programValidatorPolicyPin(
+    readFileSync(new URL(`../../${receipt.sourceReceipt.path}`, import.meta.url)),
+    receipt.sourceReceipt,
+    "source receipt changed",
+  );
+  captureC1HistoricalAuthority();
+  const sources = captureProgramValidatorRelocation((path) =>
+    readFileSync(new URL(`../../${path}`, import.meta.url), "utf8"),
+  );
+  for (const pin of receipt.sourcePins)
+    programValidatorPolicyPin(
+      Buffer.from(sources.readCurrent(pin.path as ProgramValidatorCurrentPath)),
+      pin,
+      "current source changed: " + pin.path,
+    );
+  let beforeEnd = 0,
+    afterEnd = 0,
+    delta = 0;
+  for (const span of receipt.rawSpans) {
+    if (
+      ![span.beforeOffset, span.afterOffset].every(Number.isSafeInteger) ||
+      span.beforeOffset < beforeEnd ||
+      span.afterOffset < afterEnd ||
+      span.afterOffset !== span.beforeOffset + delta
+    )
+      programValidatorPolicyFail("fixed raw spans/order/coordinate mismatch");
+    beforeEnd = span.beforeOffset + Buffer.byteLength(span.before);
+    afterEnd = span.afterOffset + Buffer.byteLength(span.after);
+    delta += Buffer.byteLength(span.after) - Buffer.byteLength(span.before);
+  }
+  if (receipt.rawSpans.length !== 16 || receipt.before.source.bytes + delta !== receipt.current.source.bytes)
+    programValidatorPolicyFail("fixed raw population mismatch");
+  return freeze(receipt);
+}
+function programValidatorPolicyProfile(
+  policy: MutableIrRuntimeProgramPolicy,
+  expected: ProgramValidatorPolicyReceipt["before"] | ProgramValidatorPolicyReceipt["current"],
+): void {
+  if (
+    digest(policy) !== expected.dataSha256 ||
+    policy.files.length !== expected.fileCount ||
+    digest(policy.files) !== expected.filesSha256 ||
+    policy.activationHistory.length !== expected.activationCount ||
+    digest(policy.activationHistory) !== expected.activationHistorySha256 ||
+    digest(policy.layers) !== expected.layersSha256 ||
+    digest(policy.allowedEdges) !== expected.allowedEdgesSha256 ||
+    !Array.isArray(policy.moves) ||
+    policy.moves.length !== 7
+  )
+    programValidatorPolicyFail("complete policy profile mismatch");
+}
+function programValidatorPolicyRows(
+  policy: MutableIrRuntimeProgramPolicy,
+  receipt: ProgramValidatorPolicyReceipt,
+  current: boolean,
+): void {
+  const d = receipt.delta;
+  if (
+    !same(Object.keys(policy), receipt.topLevelKeys) ||
+    !same(policy.layers[d.layerIndex], current ? d.currentLayer : d.beforeLayer) ||
+    !same(policy.files[d.addedRowIndex - 1], d.addedRowPrevious) ||
+    policy.files.length !== d.addedRowIndex + (current ? d.addedRows.length : 0)
+  )
+    programValidatorPolicyFail("fixed layer/population/schema mismatch");
+  for (const row of d.facades) {
+    const expected = current ? row.current : row.before;
+    if (
+      !same(policy.files[row.index], expected) ||
+      !same(Object.keys(policy.files[row.index]!), Object.keys(expected)) ||
+      !same(policy.files[row.index - 1], current ? row.currentPrevious : row.beforePrevious) ||
+      !same(policy.files[row.index + 1], current ? row.currentNext : row.beforeNext) ||
+      policy.files.filter((file) => file.path === expected.path).length !== 1
+    )
+      programValidatorPolicyFail("fixed facade schema/membership/neighbors mismatch");
+  }
+  for (const [index, row] of d.addedRows.entries()) {
+    if (
+      policy.files.filter((file) => file.path === row.path).length !== (current ? 1 : 0) ||
+      (current &&
+        (!same(policy.files[d.addedRowIndex + index], row) ||
+          !same(Object.keys(policy.files[d.addedRowIndex + index]!), Object.keys(row))))
+    )
+      programValidatorPolicyFail("fixed added owner schema/order/membership mismatch");
+  }
+}
+function captureProgramValidatorPolicyOperand(
+  current: MutableIrRuntimeProgramPolicy,
+  receipt: ProgramValidatorPolicyReceipt,
+): MutableIrRuntimeProgramPolicy {
+  programValidatorPolicyProfile(current, receipt.current);
+  programValidatorPolicyRows(current, receipt, true);
+  const d = receipt.delta;
+  const predecessor = capture(current) as MutableIrRuntimeProgramPolicy;
+  predecessor.layers[d.layerIndex] = capture(d.beforeLayer) as MutableIrRuntimeProgramPolicy["layers"][number];
+  for (const row of d.facades) predecessor.files[row.index] = capture(row.before) as Record<string, string>;
+  predecessor.files.splice(d.addedRowIndex, d.addedRows.length);
+  programValidatorPolicyProfile(predecessor, receipt.before);
+  programValidatorPolicyRows(predecessor, receipt, false);
+  const replay = capture(predecessor) as MutableIrRuntimeProgramPolicy;
+  replay.layers[d.layerIndex] = capture(d.currentLayer) as MutableIrRuntimeProgramPolicy["layers"][number];
+  for (const row of d.facades) replay.files[row.index] = capture(row.current) as Record<string, string>;
+  replay.files.splice(d.addedRowIndex, 0, ...d.addedRows.map((row) => capture(row) as Record<string, string>));
+  programValidatorPolicyProfile(replay, receipt.current);
+  programValidatorPolicyRows(replay, receipt, true);
+  if (
+    !same(replay, current) ||
+    !same(predecessor.activationHistory, current.activationHistory) ||
+    !same(predecessor.moves, current.moves)
+  )
+    programValidatorPolicyFail("complete semantic inverse/replay/history mismatch");
+  return predecessor;
+}
+export function captureProgramValidatorPredecessorPolicy(value: unknown): MutableIrRuntimeProgramPolicy {
+  const current = capture(value) as MutableIrRuntimeProgramPolicy;
+  if (current === null || typeof current !== "object" || Array.isArray(current))
+    programValidatorPolicyFail("policy input must be a plain object");
+  return captureProgramValidatorPolicyOperand(current, authenticateProgramValidatorPolicy());
+}
+function programValidatorPolicyRaw(raw: string, receipt: ProgramValidatorPolicyReceipt, forward: boolean): string {
+  const bytes = Buffer.from(raw, "utf8");
+  programValidatorPolicyPin(
+    bytes,
+    forward ? receipt.before.source : receipt.current.source,
+    "complete raw source profile mismatch",
+  );
+  const pieces: Buffer[] = [];
+  let consumed = 0;
+  for (const span of receipt.rawSpans) {
+    const at = forward ? span.beforeOffset : span.afterOffset;
+    const from = Buffer.from(forward ? span.before : span.after),
+      to = Buffer.from(forward ? span.after : span.before);
+    if (at < consumed || at + from.length > bytes.length || !bytes.subarray(at, at + from.length).equals(from))
+      programValidatorPolicyFail("fixed raw span/membership/coordinate mismatch");
+    pieces.push(bytes.subarray(consumed, at), to);
+    consumed = at + from.length;
+  }
+  pieces.push(bytes.subarray(consumed));
+  const result = Buffer.concat(pieces);
+  programValidatorPolicyPin(
+    result,
+    forward ? receipt.current.source : receipt.before.source,
+    "reciprocal raw source profile mismatch",
+  );
+  return result.toString("utf8");
+}
+export function captureProgramValidatorPredecessorPolicySource(raw: string): string {
+  if (typeof raw !== "string") programValidatorPolicyFail("raw input must be a primitive string");
+  const receipt = authenticateProgramValidatorPolicy();
+  const predecessor = programValidatorPolicyRaw(raw, receipt, false);
+  const semantic = captureProgramValidatorPolicyOperand(
+    capture(JSON.parse(raw)) as MutableIrRuntimeProgramPolicy,
+    receipt,
+  );
+  const parsed = JSON.parse(predecessor) as MutableIrRuntimeProgramPolicy;
+  programValidatorPolicyProfile(parsed, receipt.before);
+  if (!same(parsed, semantic) || programValidatorPolicyRaw(predecessor, receipt, true) !== raw)
+    programValidatorPolicyFail("raw/semantic reciprocal proof disagree");
+  return predecessor;
+}

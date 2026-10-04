@@ -1,4 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import {
+  captureProgramValidatorRelocation,
+  programValidatorRelocationCurrentPaths,
+  programValidatorRelocationReceiptPath,
+  type ProgramValidatorDonorPath,
+} from "./helpers/ir-program-validator-relocation.js";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -39,7 +45,7 @@ afterEach(async () => {
 // Root replaces this ONE external assertion root after final instrument formatting/manifest assembly.
 // A missing freeze is a hard failure, never an alternate accepted manifest.
 const independentFreeze: string =
-  '{"manifestSha256":"0e964ff796ffc63986758aeceded49b0466b26de08274c4a67ef7f659acbd64d","anchorSource":"// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\\n\\nexport const c1AuthorityManifestSha256 = \\"0e964ff796ffc63986758aeceded49b0466b26de08274c4a67ef7f659acbd64d\\";\\n","anchorPin":{"bytes":194,"sha256":"952423c237a6f2a42b5cc3a9a11708b30fb6d02864e70c1a9db7a91875f3280c","gitBlob":"4eb621557a0cf7c55a0ada61d7b81a730906071a"},"declarationPin":{"bytes":1633,"sha256":"5294c0fce2be6c6974b61a3686c05e60aa66d5bb4599fc97cb315ee53cab71be","gitBlob":"8c594e598e0d946ed92fd658cbe2efe3063ca2c4"}}';
+  '{"manifestSha256":"d9608431567aaf08fdba2aadbc96c8d4d59762a7f5412c61798fd6fe49994dba","anchorSource":"// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\\n\\nexport const c1AuthorityManifestSha256 = \\"d9608431567aaf08fdba2aadbc96c8d4d59762a7f5412c61798fd6fe49994dba\\";\\n","anchorPin":{"bytes":194,"sha256":"ef9bc18dc7efd797a73a4fccce3097aaed3e7b83198a46e24376bcf5e14252dc","gitBlob":"9c212f99a80fc5b90c02b6064e75b3ef54f78473"},"declarationPin":{"bytes":1633,"sha256":"5294c0fce2be6c6974b61a3686c05e60aa66d5bb4599fc97cb315ee53cab71be","gitBlob":"8c594e598e0d946ed92fd658cbe2efe3063ca2c4"}}';
 const root = resolve(import.meta.dirname, "..");
 const manifestPath = "tests/helpers/ir-c1-authority.json";
 const anchorPath = "tests/helpers/ir-c1-authority-root.ts";
@@ -475,6 +481,9 @@ describe("C1 fresh live source contract bridge", () => {
       ["typescript-package/package.json", 2],
     ] as const)
       expect(authority.filter((item) => item === path)).toHaveLength(count);
+    // New authority reads are independently counted; the original receipt+46 population channel stays unchanged.
+    for (const path of [programValidatorRelocationReceiptPath, ...programValidatorRelocationCurrentPaths])
+      expect(authority.filter((item) => item === path)).toHaveLength(2);
     const originalReceipt = JSON.parse(first.receiptText);
     expect(originalReceipt.transfers).toHaveLength(91);
     expect(originalReceipt.transfers.filter((item: { moved: boolean }) => item.moved)).toHaveLength(12);
@@ -482,7 +491,26 @@ describe("C1 fresh live source contract bridge", () => {
   });
   it("substitutes only the historical linear dependency and keeps detached mutation on the old guard", () => {
     const capture = captureC1CurrentPopulation(read, read);
-    for (const [path, source] of capture.historicalPopulation) if (path !== linearPath) expect(source).toBe(read(path));
+    // The original linear substitution is retained. Exactly two fixed dependency operands now have an outer reciprocal relocation proof.
+    const validator = captureProgramValidatorRelocation(read);
+    const relocated = ["src/ir/program-runtime-abi.ts", "src/ir/program-validation.ts"] as const;
+    for (const [path, source] of capture.historicalPopulation)
+      if (path !== linearPath)
+        expect(source).toBe(
+          relocated.includes(path as (typeof relocated)[number])
+            ? validator.readBefore(path as ProgramValidatorDonorPath)
+            : read(path),
+        );
+    for (const path of relocated) {
+      expect(validator.readCurrent(path)).toBe(read(path));
+      const observed = capture.observedCurrentPins.find((record) => record.path === path)!;
+      const expectedPin =
+        path === "src/ir/program-runtime-abi.ts"
+          ? { bytes: 363, sha256: "cec827cc20299610d6351e050cce5e9d3bd5198c9b334eb95253b96372ed7247" }
+          : { bytes: 236, sha256: "b64454a7c97179e8efdab677049fb0f231ba3b6ce731bff602b231406d2dd098" };
+      expect(observed.pin.bytes).toBe(expectedPin.bytes);
+      expect(observed.pin.sha256).toBe(expectedPin.sha256);
+    }
     expect(digest(capture.historicalPopulation.get(linearPath)!)).toBe(
       "c4648365cfa0fa4526ea64e76cd72b932998a09a4056a8321384b7ef62abbbae",
     );

@@ -239,9 +239,14 @@
         "src/ir/program/class-layouts.ts",
         "src/ir/program/owner.ts",
         "src/ir/program/draft-abi-lookup.ts",
-        "src/ir/program/runtime-support-dependencies.ts"
+        "src/ir/program/runtime-support-dependencies.ts",
+        "src/ir/program/runtime-demands.ts",
+        "src/ir/program/runtime-abi.ts",
+        "src/ir/program/runtime-manifest.ts",
+        "src/ir/program/runtime-validation.ts",
+        "src/ir/program/validation.ts"
       ],
-      "minModules": 43
+      "minModules": 48
     },
     {
       "id": "runtime-contracts",
@@ -12329,27 +12334,27 @@
     },
     {
       "path": "src/ir/program-runtime-abi.ts",
-      "state": "unmigrated",
+      "state": "compatibility-adapter",
       "layer": "mixed-needs-split",
-      "destination": "ir-core",
+      "destination": "ir-program",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "Explicit identity-preserving compatibility exports for the canonical prepared-program owner; retain existing callers until the complete IR path is tested and equivalent."
     },
     {
       "path": "src/ir/program-runtime-demands.ts",
-      "state": "unmigrated",
+      "state": "compatibility-adapter",
       "layer": "mixed-needs-split",
-      "destination": "ir-core",
+      "destination": "ir-program",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "Explicit identity-preserving compatibility exports for the canonical prepared-program owner; retain existing callers until the complete IR path is tested and equivalent."
     },
     {
       "path": "src/ir/program-runtime-validation.ts",
-      "state": "unmigrated",
+      "state": "compatibility-adapter",
       "layer": "mixed-needs-split",
-      "destination": "ir-core",
+      "destination": "ir-program",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "Explicit identity-preserving compatibility exports for the canonical prepared-program owner; retain existing callers until the complete IR path is tested and equivalent."
     },
     {
       "path": "src/ir/program-source.ts",
@@ -12369,11 +12374,11 @@
     },
     {
       "path": "src/ir/program-validation.ts",
-      "state": "unmigrated",
+      "state": "compatibility-adapter",
       "layer": "mixed-needs-split",
       "destination": "ir-program",
       "owner": "3518-coordinator",
-      "nextBoundary": "Place prepared-data validation in ir/program after splitting mixed inventory and program contracts; retain complete ABI, population and runtime checks without importing frontend or physical/backend authority."
+      "nextBoundary": "Explicit identity-preserving compatibility exports for the canonical prepared-program owner; retain existing callers until the complete IR path is tested and equivalent."
     },
     {
       "path": "src/ir/program.ts",
@@ -12481,11 +12486,11 @@
     },
     {
       "path": "src/ir/runtime-program-manifest.ts",
-      "state": "unmigrated",
+      "state": "compatibility-adapter",
       "layer": "mixed-needs-split",
       "destination": "ir-program",
       "owner": "3518-coordinator",
-      "nextBoundary": "Move complete whole-program runtime ownership and manifest preparation into ir/program after separating its implementation dependencies."
+      "nextBoundary": "Explicit identity-preserving compatibility exports for the canonical prepared-program owner; retain existing callers until the complete IR path is tested and equivalent."
     },
     {
       "path": "src/ir/runtime-program-producers.ts",
@@ -15281,6 +15286,31 @@
       "path": "src/ir/runtime/intrinsic-preparation.ts",
       "state": "clean",
       "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/program/runtime-abi.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/runtime-demands.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/runtime-manifest.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/runtime-validation.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/validation.ts",
+      "state": "clean",
+      "layer": "ir-program"
     }
   ]
 }
