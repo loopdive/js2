@@ -41,6 +41,7 @@ import { addFuncType } from "./registry/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { ensureArgcGlobal } from "./statements/nested-declarations.js";
 import { buildAccessorCallBody, type AccessorDispatchBinding } from "../runtime/wasmgc/values/accessor-call-bodies.js";
+import { buildRuntimeEvalCarrierMethodDispatch } from "./runtime-eval-callable.js";
 
 /** Reserved name for the accessor-get driver (arity-0 getter wrapper). */
 export const CALL_ACCESSOR_GET = "__call_accessor_get";
@@ -105,12 +106,32 @@ function buildAccessorCall(
     dispatches.set(declared, bindAtArity(declared));
   }
   const withoutArity = closureArityIdx === undefined ? bindAtArity(actualArity) : undefined;
-  return buildAccessorCallBody(actualArity, receiverLocal, callableLocal, argumentLocals, {
+  const call = buildAccessorCallBody(actualArity, receiverLocal, callableLocal, argumentLocals, {
     closureArity: closureArityIdx,
     argcGlobal: argcGlobalIdx,
     dispatches,
     withoutArity,
   });
+  // Independent Scripts can consume a foreign callable without defining any
+  // local closure. Their local arity dispatcher is legitimately absent, but
+  // the canonical carrier still owns an AOT call trampoline. Dispatch it before
+  // the legacy missing-local-closure fallback, preserving the original receiver.
+  // Setter drivers have a void result and need their own discard-result tail;
+  // this value-returning front guard belongs only to the getter/conversion path.
+  if (ctx.standaloneScriptVarBindings && actualArity === 0) {
+    const anyLocal = actualArity + 2 + call.locals.length;
+    const carrierCall = buildRuntimeEvalCarrierMethodDispatch(ctx, actualArity, anyLocal, receiverLocal);
+    if (carrierCall) {
+      call.locals.push({ name: "foreignCallable", type: { kind: "anyref" } });
+      call.body.unshift(
+        { op: "local.get", index: callableLocal },
+        { op: "any.convert_extern" },
+        { op: "local.set", index: anyLocal },
+        ...carrierCall,
+      );
+    }
+  }
+  return call;
 }
 
 /**

@@ -6139,7 +6139,7 @@ export function generateModule(
     // and IR bodies have settled their type slots. Prepending it during the
     // syntax scan shifts the legacy type indices underneath IR-first's parity
     // check for otherwise ordinary numeric AOT functions.
-    if (ctx.runtimeEvalCallableBoundaryEnabled) {
+    if (ctx.runtimeEvalCallableBoundaryEnabled || ctx.standaloneScriptVarBindings) {
       ensureRuntimeEvalAotCallableCarrierTypes(ctx);
     }
 

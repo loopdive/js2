@@ -449,6 +449,67 @@ it("converts a prior object to a wide BigInt once and returns the primitive post
   expect((realm.exports.observed as Function)()).toBe(42);
 });
 
+it.each([
+  "{valueOf(){globalThis.score++; return 41;}}",
+  "{valueOf:function(){globalThis.score++; return 41;}}",
+  "{valueOf:()=>{globalThis.score++; return 41;}}",
+])("calls a foreign conversion closure once without any local closure: %s", async (object) => {
+  const realm = await createRealm(true);
+  await runScript(realm, `globalThis.score=0; let retained:any=${object};`, true, true);
+  await runScript(realm, "globalThis.saved=retained++; globalThis.published=retained;", true, true);
+  expect((realm.exports.score as Function)()).toBe(1);
+  expect((realm.exports.observed as Function)()).toBe(42);
+  await runScript(realm, "globalThis.published=globalThis.saved===41?42:0;", true, true);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it.each([
+  ["{valueOf:function(){return 18446744073709551616n;}}", "18446744073709551616", "18446744073709551617"],
+  ["{valueOf:()=>18446744073709551616n}", "18446744073709551616", "18446744073709551617"],
+  ["{valueOf(){return -18446744073709551616n;}}", "-18446744073709551616", "-18446744073709551615"],
+  ["{valueOf:()=>41n}", "41", "42"],
+])("preserves the exact native BigInt returned by a foreign closure: %s", async (object, oldValue, newValue) => {
+  const realm = await createRealm(true);
+  await runScript(realm, `let retained:any=${object};`, true, true);
+  await runScript(realm, "globalThis.saved=retained++;", true, true);
+  await runScript(
+    realm,
+    `globalThis.published=String(globalThis.saved)==="${oldValue}" && String(retained)==="${newValue}"?42:0;`,
+    true,
+    true,
+  );
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("preserves the original receiver identity in a foreign valueOf call", async () => {
+  const realm = await createRealm(true);
+  await runScript(
+    realm,
+    "globalThis.score=0; let retained:any={valueOf(){globalThis.score++; return this===globalThis.original?41:0;}}; globalThis.original=retained;",
+    true,
+    true,
+  );
+  await runScript(realm, "globalThis.published=++retained;", true, true);
+  expect((realm.exports.score as Function)()).toBe(1);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("preserves a foreign conversion exception identity and does not write the lexical", async () => {
+  const realm = await createRealm(true);
+  await runScript(
+    realm,
+    "globalThis.score=0; globalThis.saved={marker:42}; let retained:any={valueOf(){globalThis.score++; throw globalThis.saved;}}; globalThis.original=retained;",
+    true,
+    true,
+  );
+  await runScript(realm, "try {retained++;} catch(error){globalThis.caught=error;}", true, true);
+  expect((realm.exports.score as Function)()).toBe(1);
+  expect((realm.exports.caught as Function)()).toBe((realm.exports.saved as Function)());
+  expect((realm.exports.writeCount as Function)()).toBe(0);
+  await runScript(realm, "globalThis.published=retained===globalThis.original?42:0;", true, true);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
 it("reads and writes an existing object-record accessor once for compound assignment", async () => {
   const realm = await createRealm(true);
   (realm.exports.installAccessor as Function)();

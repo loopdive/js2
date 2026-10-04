@@ -17,6 +17,9 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-10-04: shared Script open-object properties use native callable
+  # carriers without enabling unrelated runtime-eval proof/ABI changes.
+  - src/codegen/literals.ts
   # 2026-10-04: narrow opt-in routing to the captured-reference RMW leaf;
   # direct BigInt update equality must not fold from an inferred Number type.
   - src/codegen/expressions/operator-assignment.ts
@@ -2919,6 +2922,27 @@ credit a new native Deno artifact or full deno_core conformance. Persistent
 lexical cells, declaration preflight and completion values remain required.
 
 ## 2026-10-04 opt-in native lexical checkpoint
+
+Latest continuation fixes the ordinary foreign object/valueOf conversion
+failure. Shared-Script open-object properties carry canonical native AOT
+callables; a closure-free consumer's getter/conversion driver invokes their
+origin-owned trampoline instead of returning undefined. Shared-Script BigInt
+closure return planning preserves a native reference result, and wide call
+results retain that reference through the envelope rather than an i64 payload.
+The broader runtime-eval flag remains unchanged; no interpreter or Deno source
+edit is introduced. Setter transport is not claimed by the value-returning
+getter/conversion fix.
+
+Exact native owner/independent-Script A/B against clean `fbe1958bd79` changes
+`score: 0, exact: 0` to `score: 1, exact: 1`, retaining positive controls
+`scoreControl: 41, objectControl: 1`. Focused regression is 79/79, including two
+existing expected failures. Five-file run is 153/156, comprising 151 ordinary
+successes, two expected failures and the same three previously recorded TDZ
+failures. Native Context packaging and full unchanged Deno conformance remain
+required; no new deno_core artifact is credited. The handoff records causal
+probes, remaining scope and resume order.
+
+Previous exact-update checkpoint:
 
 Exact native BigInt +/-1 is implemented, replacing wide/overflow refusals.
 Copied limbs preserve old values; signed-i64 promotion/demotion and 192-bit

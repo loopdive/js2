@@ -618,7 +618,12 @@ export function compileObjectLiteralAsExternref(
       }
       const valLocal = allocLocal(fctx, `__objlit_v_${fctx.locals.length}`, { kind: "externref" });
       fctx.body.push({ op: "local.set", index: valLocal });
-      if (ctx.standalone && ctx.runtimeEvalCallableBoundaryEnabled === true) {
+      // Open objects published by independent Scripts retain origin-owned
+      // callable trampolines, even when no runtime-eval provider is present.
+      if (
+        ctx.standalone &&
+        (ctx.runtimeEvalCallableBoundaryEnabled === true || ctx.standaloneScriptVarBindings === true)
+      ) {
         const wrapCallableIdx = ensureRuntimeEvalCallableWrapHelper(ctx);
         fctx.body.push(
           { op: "local.get", index: valLocal },
@@ -669,7 +674,11 @@ export function compileObjectLiteralAsExternref(
       // rejects — see issue note 2), store `undefined` to keep the stack balanced,
       // matching the sibling arm's `ref.null.extern` fallback.
       if (!ok) fctx.body.push({ op: "ref.null.extern" });
-      if (ok && ctx.standalone && ctx.runtimeEvalCallableBoundaryEnabled === true) {
+      if (
+        ok &&
+        ctx.standalone &&
+        (ctx.runtimeEvalCallableBoundaryEnabled === true || ctx.standaloneScriptVarBindings === true)
+      ) {
         const wrapCallableIdx = ensureRuntimeEvalCallableWrapHelper(ctx);
         fctx.body.push({ op: "call", funcIdx: wrapCallableIdx });
       }

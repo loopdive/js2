@@ -356,6 +356,29 @@ export function buildRuntimeEvalValueWrap(
   const fallbackReference = makeValue(RUNTIME_EVAL_VALUE_KIND_REFERENCE, undefined, undefined, undefined, [
     { op: "local.get", index: valueLocal },
   ]);
+  const narrowBigInt = makeValue(
+    RUNTIME_EVAL_VALUE_KIND_BIGINT,
+    undefined,
+    undefined,
+    helperPayload("__to_bigint", { kind: "i64" }),
+  );
+  // Shared Scripts already agree on the native wide carrier's structural ABI.
+  // The scalar envelope slot holds only i64: keep a wide primitive in its
+  // reference payload instead of reducing it to the low 64 bits on return.
+  const bigintValue: Instr[] =
+    ctx.standaloneScriptVarBindings && ctx.nativeBigIntWideTypeIdx !== undefined
+      ? [
+          { op: "local.get", index: valueLocal },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: ctx.nativeBigIntWideTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: externref },
+            then: structuredClone(fallbackReference),
+            else: narrowBigInt,
+          },
+        ]
+      : narrowBigInt;
   const classifiedValue = helperTest("__typeof_undefined", makeValue(RUNTIME_EVAL_VALUE_KIND_UNDEFINED), [
     { op: "local.get", index: valueLocal },
     { op: "ref.is_null" },
@@ -374,16 +397,7 @@ export function buildRuntimeEvalValueWrap(
             makeValue(RUNTIME_EVAL_VALUE_KIND_STRING, undefined, undefined, undefined, [
               { op: "local.get", index: valueLocal },
             ]),
-            helperTest(
-              "__typeof_bigint",
-              makeValue(
-                RUNTIME_EVAL_VALUE_KIND_BIGINT,
-                undefined,
-                undefined,
-                helperPayload("__to_bigint", { kind: "i64" }),
-              ),
-              fallbackReference,
-            ),
+            helperTest("__typeof_bigint", bigintValue, fallbackReference),
           ),
         ),
       ),

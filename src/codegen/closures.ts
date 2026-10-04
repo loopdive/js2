@@ -2270,6 +2270,13 @@ export function computeClosureWrapperSig(
       }
     }
   }
+  // A shared Script's callable may return to an independently compiled
+  // consumer. TypeScript's bigint type proves a primitive brand, not an i64
+  // range. Preserve its native narrow/wide carrier through both wrapper
+  // planning and lifted-body emission rather than truncating before transport.
+  if (ctx.standaloneScriptVarBindings && closureReturnType?.kind === "i64" && closureReturnType.bigint === true) {
+    closureReturnType = { kind: "externref" };
+  }
   return {
     params: arrowParams,
     // (#5371) A never-suspending async closure that returns a thenable keeps its
@@ -3402,7 +3409,12 @@ export function compileLiftedClosureBody(
       compileStatement(ctx, liftedFctx, stmt);
     }
   } else {
-    const exprType = compileExpression(ctx, liftedFctx, body);
+    const exprType = compileExpression(
+      ctx,
+      liftedFctx,
+      body,
+      ctx.standaloneScriptVarBindings ? (closureReturnType ?? undefined) : undefined,
+    );
     if (exprType !== null && closureReturnType) {
       // Expression result is the return value - already on stack
       conciseBodyHasValue = true;

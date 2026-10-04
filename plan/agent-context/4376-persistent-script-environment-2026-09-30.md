@@ -3,7 +3,54 @@
 Required for complete Deno integration, not an alternative acceptance bar.
 Sources known at packaging time must execute AOT without an interpreter.
 
-## Wrap-up handoff: 2026-10-04
+## Latest continuation: native foreign conversion, 2026-10-04
+
+Follow-up to published handoff `25f8fb58922` on the same branch and draft PR
+https://github.com/loopdive/js2/pull/6468. The prior ordinary object/valueOf
+failure is now fixed; the wrap-up section below describes its historical state.
+
+Three independent causes were measured and repaired:
+
+1. Open-object callable properties in shared Script mode were not wrapped in
+   the existing canonical native AOT carrier. Wrapping is now enabled narrowly
+   at object construction, without enabling the broad runtime-eval flag.
+2. A closure-free consuming Script emitted `__call_accessor_get` as a constant
+   undefined fallback because no local closure arity dispatcher existed. Its
+   getter/conversion path now dispatches the foreign carrier directly, with the
+   original receiver. Setter drivers remain on their existing void-result path;
+   general foreign setter transport still needs separate verification.
+3. A BigInt closure return was narrowed to i64, and the call-result envelope
+   also decoded it through an i64 payload. Shared-Script closure signature/body
+   planning now preserves the native reference carrier; wide values use the
+   envelope's reference slot. Narrow values retain the scalar envelope path.
+
+Intermediate native controls separated the failures: foreign property lookup
+reported a callable and an explicit method call incremented score once, while
+conversion did not. Adding the carrier dispatch made score equal one but the
+exact-value assertion still failed. After the return/envelope fixes, the exact
+original probe reports `scoreControl: 41, objectControl: 1, score: 1, exact: 1`.
+Clean `fbe1958bd79`, with the same native owner/independent-Script harness and
+source, reports `41, 1, 0, 0`. No JS semantic mock or object copy is involved.
+
+The five-file regression reports 156 tests: 151 ordinary successes, two existing
+expected failures and the same three ordinary TDZ baseline failures. The focused
+file reports 79/79, including the two expected failures. New ordinary controls
+exercise numeric function/method/arrow conversion, wide positive/negative and
+narrow BigInt returns, receiver identity, and thrown-value identity with zero
+lexical writes. TypeScript 7 and main-relative LOC/function budgets pass.
+Final focused rerun after restricting the value-returning guard to getter
+drivers again reports 79/79. Oracle and coercion checks pass. Dead-export exits
+zero but its graph remains OPEN and runtime retirement/deletion is NOT CERTIFIED
+because the two previously recorded nonliteral dynamic imports remain unknown.
+
+Next: native Context provider packaging and adapter imports, then a clean
+artifact rebuild and unchanged Deno conformance. General Script semantics,
+foreign accessors/callable aliases and arbitrary arithmetic still require work.
+The shared callable helper is reused within a module, not yet factored into an
+external shared library. No new native deno_core artifact or full integration
+completion is credited by this compiler-only change. Preserve all user dirt.
+
+## Earlier wrap-up handoff: 2026-10-04
 
 Published implementation: `921471e79e3e8d898650cf9aceacbb356bf5325a` on
 `codex/4376-deno-lexical-checkpoint-20261004`. Existing checkpoint PR:
