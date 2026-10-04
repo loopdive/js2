@@ -109,6 +109,34 @@ export function readEnv(name: string): string | undefined {
 }
 
 /**
+ * Default on-disk cache directory for compiler artifacts (#6794), following the
+ * find-cache-dir convention: `node_modules/.cache/js2wasm/<subdir>` in the
+ * nearest ancestor of `startDir` that has a `node_modules`, else the OS per-user
+ * cache directory (`%LOCALAPPDATA%` on Windows, `~/Library/Caches` on macOS,
+ * otherwise `$XDG_CACHE_HOME` or `~/.cache`; the temp directory without a home).
+ * Never `startDir` itself — for `compileProject` that is the user's source tree.
+ */
+export function defaultCacheDir(startDir: string, subdir: string): string {
+  const { fs, path } = getDefaultEnvironment();
+  const join = (...parts: string[]): string => (path ? path.join(...parts) : parts.join("/"));
+  if (fs && path) {
+    for (let dir = startDir; ; dir = path.dirname(dir)) {
+      const nodeModules = path.join(dir, "node_modules");
+      if (fs.existsSync(nodeModules)) return path.join(nodeModules, ".cache", "js2wasm", subdir);
+      if (path.dirname(dir) === dir) break;
+    }
+  }
+  const platform = (globalThis as { process?: { platform?: string } }).process?.platform;
+  const home = readEnv("HOME") ?? readEnv("USERPROFILE");
+  const temp = readEnv("TMPDIR") ?? readEnv("TEMP") ?? "/tmp";
+  let base: string;
+  if (platform === "win32") base = readEnv("LOCALAPPDATA") ?? temp;
+  else if (platform === "darwin") base = home ? join(home, "Library", "Caches") : temp;
+  else base = readEnv("XDG_CACHE_HOME") ?? (home ? join(home, ".cache") : temp);
+  return join(base, "js2wasm", subdir);
+}
+
+/**
  * Override the default environment. Useful for:
  * - Embedding contexts where the runtime can't be probed (e.g. Wasm host).
  * - Test harnesses that want to inject mocked filesystem behavior.

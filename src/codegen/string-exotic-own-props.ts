@@ -47,6 +47,7 @@ import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
+import { STRING_EXOTIC_PUSH_KEYS_FN } from "./object-model/native-names.js"; // (#6770) leaf-shared name
 
 /** MUST equal `WRAPPER_PRIMITIVE_KEY` in object-runtime.ts (ESM-cycle-free). */
 const WRAPPER_PRIMITIVE_KEY = "[[PrimitiveValue]]";
@@ -323,7 +324,7 @@ export function registerStringExoticHasOwn(
   return funcIdx;
 }
 
-export const STRING_EXOTIC_PUSH_KEYS_FN = "__strexo_push_keys";
+export { STRING_EXOTIC_PUSH_KEYS_FN }; // (#6770) defined in object-model/native-names.ts
 
 /**
  * (#4491) Register `__strexo_push_keys(obj externref, vec externref) -> i32` —

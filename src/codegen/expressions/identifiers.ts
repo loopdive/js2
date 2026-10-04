@@ -7,6 +7,7 @@ import {
   expressionHasWidenedPropertyType,
 } from "../strict-eq-stale-type.js";
 import { paramReadIsJsDefaultGuess } from "../js-default-param-type-guess.js";
+import { emitScriptLexicalOperation, SCRIPT_LEXICAL_OP } from "../shared-script-lexical-access.js";
 import { ts, forEachChild } from "../../ts-api.js";
 import {
   emitStandaloneUnavailableGlobalThrow,
@@ -49,6 +50,7 @@ import {
 import { addHostStringConstantGlobal, deferrableStringConstantGlobalGet } from "../registry/imports.js";
 import { emitCapturedBoxGlobalRead, emitNullGuardedStructGet, getCapturedBoxGlobal } from "../property-access.js";
 import { coerceType, compileExpression, isAnyValue } from "../shared.js";
+import { linkedModuleImportedBinding, emitLinkedModuleImportRead } from "../linked-module-namespace.js";
 import {
   fnShadowSlot,
   isShadowedTopLevelFn,
@@ -915,6 +917,36 @@ function compileRuntimeEvalGlobalLexicalRead(
   return emitRuntimeEvalGlobalLexicalReadOrFallback(ctx, fctx, name, fallbackBody, { kind: "externref" });
 }
 
+function compilePersistentScriptLexicalRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+): ValType | null {
+  // Reserve the predicate and key before compiling a fallback that may add
+  // imports. Keep the condition on the stack while its branches are built.
+  const truthy = ensureLateImport(ctx, "__is_truthy", [{ kind: "externref" }], [{ kind: "i32" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (truthy === undefined) throw new Error("Persistent lexical lookup requires native truthiness");
+  emitScriptLexicalOperation(ctx, fctx, id.text, SCRIPT_LEXICAL_OP.has);
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__is_truthy") ?? truthy });
+  const savedRead = pushBody(fctx);
+  emitScriptLexicalOperation(ctx, fctx, id.text, SCRIPT_LEXICAL_OP.read);
+  const read = fctx.body;
+  popBody(fctx, savedRead);
+  // The read body is live during fallback compilation and must follow late
+  // import/global shifts, just like any other saved instruction buffer.
+  fctx.savedBodies.push(read);
+  const savedFallback = pushBody(fctx);
+  const type = compileIdentifierCore(ctx, fctx, id, true);
+  if (type && type.kind !== "externref") coerceType(ctx, fctx, type, { kind: "externref" });
+  const fallback = fctx.body;
+  popBody(fctx, savedFallback);
+  fctx.savedBodies.splice(fctx.savedBodies.lastIndexOf(read), 1);
+  if (!type) return null;
+  fctx.body.push({ op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: read, else: fallback });
+  return { kind: "externref" };
+}
+
 function shouldUseRuntimeEvalGlobalLexicalRead(
   ctx: CodegenContext,
   skipRuntimeEvalState: boolean,
@@ -1027,6 +1059,20 @@ function compileExactAmbientShadowedModuleBinding(
  *  ReferenceError). Split out so the Tier-2 dynamic `with` path can invoke it as
  *  the HasBinding-miss fallback (#2663 Slice 1). */
 function compileIdentifierCore(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+  skipRuntimeEvalState = false,
+): ValType | null {
+  const binding = linkedModuleImportedBinding(ctx, id);
+  if (binding)
+    return emitLinkedModuleImportRead(ctx, fctx, binding, () =>
+      compileIdentifierCoreUnlinked(ctx, fctx, id, skipRuntimeEvalState),
+    );
+  return compileIdentifierCoreUnlinked(ctx, fctx, id, skipRuntimeEvalState);
+}
+
+function compileIdentifierCoreUnlinked(
   ctx: CodegenContext,
   fctx: FunctionContext,
   id: ts.Identifier,
@@ -1644,7 +1690,16 @@ function compileIdentifierCore(
   // function, and round-tripping it through the host global object loses the
   // WasmGC closure representation the call path needs. Host lane only, so the
   // standalone lowering stays byte-identical.
-  if (ctx.sloppyImplicitGlobals?.has(name) && !(!ctx.standalone && !ctx.wasi && isShadowStaticArmFor(name))) {
+  if (
+    ctx.sloppyImplicitGlobals?.has(name) &&
+    !(!ctx.standalone && !ctx.wasi && isShadowStaticArmFor(name)) &&
+    !(
+      ctx.standaloneScriptLexicalImport &&
+      !ctx.sourceIsModule &&
+      !skipRuntimeEvalState &&
+      !identifierValueSymbol(ctx, id)
+    )
+  ) {
     return emitImplicitGlobalRead(ctx, fctx, name);
   }
   // Standalone built-in namespace values (Array/Object) materialize as lazy
@@ -2285,6 +2340,9 @@ function compileIdentifierCore(
   // the other file's symbol — it must throw, not read a fallback default.
   const sym = identifierValueSymbol(ctx, id);
   if (!sym || unresolvedInModuleGoal) {
+    if (!sym && !ctx.sourceIsModule && !skipRuntimeEvalState && ctx.standaloneScriptLexicalImport) {
+      return compilePersistentScriptLexicalRead(ctx, fctx, id);
+    }
     // (#3505) `unresolvedInModuleGoal` means the name statically IS another
     // module's top-level binding, not a candidate runtime global — the
     // runtime-eval binding pool is graph-wide and would hand that foreign
@@ -2375,6 +2433,31 @@ function compileIdentifierCore(
   ) {
     const taCtorVt = emitTaCtorValue(ctx, fctx, name);
     if (taCtorVt) return taCtorVt;
+  }
+
+  // Ambient types describe a host value; they do not materialize one. A linked
+  // Script must resolve it in the owning Context, not manufacture null/zero.
+  // Native intrinsic constructors handled above retain their existing paths.
+  if (
+    ctx.standaloneScriptLexicalImport &&
+    !ctx.sourceIsModule &&
+    sym?.declarations?.length &&
+    sym.declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile)
+  ) {
+    if (!skipRuntimeEvalState) return compilePersistentScriptLexicalRead(ctx, fctx, id);
+    const getIdx = ensureLateImport(
+      ctx,
+      "__extern_get",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    const globalType = emitNativeGlobalThisObject(ctx, fctx);
+    if (getIdx === undefined || globalType === null) throw new Error("Linked ambient global lacks native realm read");
+    addStringConstantGlobal(ctx, name);
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
+    return { kind: "externref" };
   }
 
   // Graceful fallback for known but unimplemented globals (Symbol, Object,

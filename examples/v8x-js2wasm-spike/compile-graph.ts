@@ -17,6 +17,7 @@ interface Options {
   output: string;
   optimize?: 1 | 2 | 3 | 4;
   realm: "shared" | "isolated";
+  lifecycle: boolean;
 }
 
 function parseArgs(argv: string[]): Options {
@@ -44,7 +45,17 @@ function parseArgs(argv: string[]): Options {
   if (optimize !== undefined && ![1, 2, 3, 4].includes(optimize)) {
     throw new Error("--optimize must be 1, 2, 3, or 4");
   }
-  return { manifest, entry, output, realm, optimize: optimize as 1 | 2 | 3 | 4 | undefined };
+  const lifecycle = values.get("module-lifecycle") ?? "false";
+  if (lifecycle !== "true" && lifecycle !== "false") throw new Error("--module-lifecycle must be true or false");
+  if (lifecycle === "true" && realm !== "shared") throw new Error("Module lifecycle requires a shared realm");
+  return {
+    manifest,
+    entry,
+    output,
+    realm,
+    lifecycle: lifecycle === "true",
+    optimize: optimize as 1 | 2 | 3 | 4 | undefined,
+  };
 }
 
 const SCRIPT_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"] as const;
@@ -104,23 +115,6 @@ export function resolveManifestSpecifier(
 
   const opaque = resolveOpaqueRelative(specifier, referrer);
   return opaque !== undefined && knownSpecifiers.has(opaque) ? opaque : undefined;
-}
-
-function importMetaStaticResolve(specifier: string, referrer: string): string | undefined {
-  // Bare specifiers are loader policy, not URL resolution. They must remain a
-  // runtime operation so a custom ModuleLoader can decide their meaning.
-  if (!specifier.startsWith("./") && !specifier.startsWith("../") && !specifier.startsWith("/")) {
-    try {
-      return new URL(specifier).href;
-    } catch {
-      return undefined;
-    }
-  }
-  try {
-    return new URL(specifier, referrer).href;
-  } catch {
-    return resolveOpaqueRelative(specifier, referrer);
-  }
 }
 
 function isImportMeta(node: ts.Node): node is ts.MetaProperty {
@@ -902,12 +896,15 @@ export function lowerManifestModule(
   const staticallyReadNamespaces = new Map<string, ReadonlyMap<string, ts.Identifier>>();
   let dynamicImports = 0;
   let runtimeDynamicImports = 0;
+  let usesImportMeta = false;
   const defaultExportBinding = `__v8x_default_${Buffer.from(specifier, "utf8").toString("hex")}`;
   // Use an injective suffix so the generated module-local bridge cannot
   // collide with another source module's helpers when compileMulti flattens
   // the graph. The prefix is deliberately not a createUniqueName: the same
   // spelling is also interpolated into the generated helper source below.
   const runtimeDynamicImportSuffix = Buffer.from(specifier, "utf8").toString("hex") || "00";
+  const importMetaBinding = `__v8x_import_meta_${runtimeDynamicImportSuffix}`;
+  const importMetaGetter = `__v8x_get_import_meta_${runtimeDynamicImportSuffix}`;
   const runtimeDynamicImportBindingName = `__v8x_runtime_dynamic_import_${runtimeDynamicImportSuffix}`;
   const localDynamicImportBindingName = `__v8x_local_dynamic_import_${runtimeDynamicImportSuffix}`;
   const localDynamicImportPrefix = `__v8x_local_dynamic_${runtimeDynamicImportSuffix}`;
@@ -1187,22 +1184,9 @@ export function lowerManifestModule(
           if (binding !== undefined) return binding;
         }
 
-        if (
-          ts.isCallExpression(node) &&
-          ts.isPropertyAccessExpression(node.expression) &&
-          isImportMeta(node.expression.expression) &&
-          node.expression.name.text === "resolve" &&
-          node.arguments.length === 1 &&
-          ts.isStringLiteralLike(node.arguments[0]!)
-        ) {
-          const resolved = importMetaStaticResolve(node.arguments[0]!.text, specifier);
-          if (resolved !== undefined) return factory.createStringLiteral(resolved);
-        }
-
-        if (ts.isPropertyAccessExpression(node) && isImportMeta(node.expression)) {
-          if (node.name.text === "url") return factory.createStringLiteral(specifier);
-          if (node.name.text === "main")
-            return specifier === entrySpecifier ? factory.createTrue() : factory.createFalse();
+        if (isImportMeta(node)) {
+          usesImportMeta = true;
+          return factory.createCallExpression(factory.createIdentifier(importMetaGetter), undefined, []);
         }
 
         return ts.visitEachChild(node, visitor, context);
@@ -1301,6 +1285,16 @@ export function lowerManifestModule(
     let printed = ts
       .createPrinter({ newLine: ts.NewLineKind.LineFeed })
       .printFile(transformed.transformed[0] as ts.SourceFile);
+    if (usesImportMeta) {
+      printed = `declare function ${importMetaBinding}(): number;
+declare function __v8x_import_meta_unwrap(handle: number): any;
+function ${importMetaGetter}(): any {
+  const packet = ${importMetaBinding}();
+  if (packet < 0) throw __v8x_import_meta_unwrap(-packet - 1);
+  return __v8x_import_meta_unwrap(packet);
+}
+${printed}`;
+    }
     if (runtimeDynamicImports !== 0) {
       // This state must be initialized before user top-level code. In
       // particular, a rejected TLA must not leave the decoder/call bridge in
@@ -1364,6 +1358,7 @@ export const GRAPH_SET_PROTOTYPE_EXPORT = "__v8x_graph_set_prototype_export";
 export function prepareNamespaceGraph(
   modules: ReadonlyMap<string, string>,
   entrySpecifier: string,
+  lifecycle = false,
 ): PreparedManifestGraph {
   const graph = prepareManifestGraph(modules, entrySpecifier);
   const known = new Set(modules.keys());
@@ -1401,9 +1396,20 @@ export function prepareNamespaceGraph(
       callableChecks.push(`if (callable === ${prefix}${index}[${JSON.stringify(name)}]) return 1;`);
       objectChecks.push(`if (value === ${prefix}${index}[${JSON.stringify(name)}]) return 1;`);
     }
+    if (lifecycle) {
+      const path = compilerPath(specifier);
+      let local = `__v8x_completed_namespace_${index}`;
+      while (graph.files[path]!.includes(local)) local += "_";
+      const selfRequest = `v8x:completed-namespace:${index}`;
+      graph.projectResolutions[path] = { ...graph.projectResolutions[path], [selfRequest]: path };
+      graph.files[path] = `import * as ${local} from ${JSON.stringify(selfRequest)};\n${graph.files[path]}
+if (globalThis.${GRAPH_NAMESPACE_REGISTRY} === undefined) globalThis.${GRAPH_NAMESPACE_REGISTRY} = Object.create(null);
+globalThis.${GRAPH_NAMESPACE_REGISTRY}[${JSON.stringify(specifier)}] = ${local};
+`;
+    }
   }
   graph.files[entryPath] =
-    `${imports.join("\n")}\nlet ${prefix}_ready = false;\nconst ${prefix}_observed = [];\n${graph.files[entryPath]}
+    `${imports.join("\n")}\nvar ${prefix}_ready = false;\nvar ${prefix}_observed_ready = false;\nvar ${prefix}_observed = [];\n${graph.files[entryPath]}
 const ${prefix}_host = globalThis;
 if (${prefix}_host.${GRAPH_NAMESPACE_REGISTRY} === undefined) ${prefix}_host.${GRAPH_NAMESPACE_REGISTRY} = Object.create(null);
 const ${prefix}_registry = ${prefix}_host.${GRAPH_NAMESPACE_REGISTRY};
@@ -1411,6 +1417,7 @@ ${publications.join("\n")}
 ${prefix}_ready = true;
 function ${prefix}_remember(value) {
   if (value !== null && (typeof value === "object" || typeof value === "function")) {
+    if (!${prefix}_observed_ready) { ${prefix}_observed = []; ${prefix}_observed_ready = true; }
     for (let i = 0; i < ${prefix}_observed.length; i++) if (${prefix}_observed[i] === value) return value;
     ${prefix}_observed.push(value);
   }
@@ -1425,6 +1432,20 @@ export function ${GRAPH_CAN_ACCESS_EXPORT}(value) {
 export function ${GRAPH_GET_EXPORT}(value, key) {
   if (${GRAPH_CAN_ACCESS_EXPORT}(value) !== 1) throw new TypeError("object is not owned by this graph");
   return ${prefix}_remember(value[key]);
+}
+// Native hosts may retain an object that escaped before initialization threw.
+// The host must verify __v8x_graph_owns before using this getter. Namespace
+// readiness and export reachability are not allocation provenance.
+export function __v8x_graph_get_owned_export(value, key) {
+  return value[key];
+}
+export function __v8x_graph_get_owned_export_receiver(value, key, receiver) {
+  return Reflect.get(value, key, receiver);
+}
+// Allocation ownership must be checked by the native host before this call.
+// A nested closure need not be a direct namespace export to be callable.
+export function __v8x_graph_call_owned_export(callable, receiver, args) {
+  return ${prefix}_remember(callable.apply(receiver, args));
 }
 export function ${GRAPH_SET_EXPORT}(value, key, assigned): any {
   if (${GRAPH_CAN_ACCESS_EXPORT}(value) !== 1) throw new TypeError("object is not owned by this graph");
@@ -1540,7 +1561,7 @@ async function main(): Promise<void> {
     modules.set(specifier, readFileSync(sourcePath, "utf8"));
   }
 
-  const graph = prepareNamespaceGraph(modules, options.entry);
+  const graph = prepareNamespaceGraph(modules, options.entry, options.lifecycle);
   const compileOptions: CompileOptions = {
     target: "standalone",
     platform: "deno",
@@ -1561,6 +1582,16 @@ async function main(): Promise<void> {
             exceptionTag: "__exn_tag",
           },
           link: ["v8x:context", "v8x:deno"],
+          standaloneModuleNamespaceImports: {
+            module: "v8x:deno",
+            evaluationHooks: options.lifecycle,
+            sources: Object.fromEntries(
+              [...modules.keys()].map((specifier) => [
+                compilerPath(specifier),
+                `__v8x_module_namespace_${Buffer.from(specifier, "utf8").toString("hex") || "00"}`,
+              ]),
+            ),
+          },
           standaloneMicrotaskNotifyImport: { module: "v8x:deno", name: "__v8x_microtask_notify" },
         }
       : {}),

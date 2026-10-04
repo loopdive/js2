@@ -33,6 +33,7 @@ import { compileExpression } from "../expressions.js";
 import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
 import { skipTransparentExpressions } from "../shared.js";
 import { currentSourceModuleGlobalIndex, identifierHasOnlyAmbientDeclarations } from "./identifier-module-storage.js";
+import { compilePersistentScriptLexicalAssign } from "./persistent-script-lexical-assign.js";
 
 /**
  * Returned when the assignment is NOT an unresolvable-identifier assignment, so
@@ -157,6 +158,10 @@ export function tryCompileUnresolvableIdentifierAssign(
   if (!isUnresolvableIdent(ctx, fctx, left)) return NOT_UNRESOLVABLE;
   const name = left.text;
   const strict = isStrictContext(left, ctx.inferModuleStrictArguments);
+
+  if (ctx.standaloneScriptLexicalImport && !ctx.sourceIsModule && !identifierHasOnlyAmbientDeclarations(ctx, left)) {
+    return compilePersistentScriptLexicalAssign(ctx, fctx, name, right, strict);
+  }
 
   // An ambient declaration is a statically resolved GlobalEnvironmentRecord
   // binding, not an unresolvable Reference. The flat module-global registry

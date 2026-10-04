@@ -43,7 +43,13 @@ export type ClosureReadBinding =
     };
 
 export interface VecOrClosureReadBinding {
-  readonly vector: { readonly isCarrier: FuncHandle; readonly get: FuncHandle } | undefined;
+  readonly vector:
+    | {
+        readonly isCarrier: FuncHandle;
+        readonly get: FuncHandle;
+        readonly accessorReceiver?: number;
+      }
+    | undefined;
   readonly closure: ClosureReadBinding;
 }
 
@@ -186,6 +192,9 @@ export function buildVecOrClosureRead(binding: VecOrClosureReadBinding): Instr[]
       then: [
         { op: "local.get", index: 0 },
         { op: "local.get", index: 1 },
+        ...(binding.vector.accessorReceiver === undefined
+          ? []
+          : [{ op: "local.get", index: binding.vector.accessorReceiver } as Instr]),
         { op: "call", funcIdx: binding.vector.get },
         { op: "return" },
       ],

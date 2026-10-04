@@ -13,11 +13,19 @@ import {
   irValidationPolicyActivations,
 } from "./helpers/ir-validation-policy-evolution.js";
 import {
+  captureNestedStackificationPredecessorPolicy,
+  captureCanonical489dPredecessorPolicy,
+  beforeCanonical3c6InventoryPolicy,
+  beforeGeneratorInventoryPolicy,
+  beforeHostCarrierInventoryPolicy,
+  beforeDynamicCodeInventoryPolicy,
+  beforeRuntimePreparationPolicy,
   authenticateNumberPrerequisitePolicy,
   beforeNumberPrerequisitePolicy,
   beforeWellKnownSymbolPolicy,
   beforeIrRuntimeProgramPolicy,
   type MutableIrRuntimeProgramPolicy,
+  beforeCurrentMainInventoryPolicy,
 } from "./helpers/ir-runtime-program-policy-evolution.js";
 
 const repository = resolve(import.meta.dirname, "..");
@@ -397,7 +405,23 @@ const additions = [
   "src/ir/runtime/intrinsic-verification.ts",
 ];
 const policy = () => {
-  const actual = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
+  const actual = beforeRuntimePreparationPolicy(
+    beforeDynamicCodeInventoryPolicy(
+      beforeHostCarrierInventoryPolicy(
+        beforeGeneratorInventoryPolicy(
+          beforeCurrentMainInventoryPolicy(
+            beforeCanonical3c6InventoryPolicy(
+              captureCanonical489dPredecessorPolicy(
+                captureNestedStackificationPredecessorPolicy(
+                  JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8")),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
   authenticateNumberPrerequisitePolicy(actual);
   return actual;
 };

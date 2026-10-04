@@ -154,7 +154,7 @@ export interface BackendEmitter<S = Instr[]> extends StringBackendEmitter<S> {
   emitLocalSet(index: number, out: S): void;
   emitLocalTee(index: number, out: S): void;
   emitGlobalGet(index: number, out: S): void;
-  emitGlobalSet(index: number, out: S): void;
+  emitGlobalSet(index: number, out: S, initializesBinding?: boolean): void;
   emitDrop(out: S): void;
   emitSelect(out: S): void;
   emitReturn(out: S): void;

@@ -20,6 +20,7 @@ import { getOrRegisterVecType } from "./registry/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { undefinedSingletonActive } from "./any-helpers.js";
 import { emitBrandCheckTypeError } from "./native-proto.js";
+import { emitIteratorPrototypeSingleton } from "./array-object-proto.js";
 
 const EXT: ValType = { kind: "externref" };
 const F64: ValType = { kind: "f64" };
@@ -45,6 +46,11 @@ export function emitArrayProtoIteratorMemberBody(
   const iterRecTypeIdx = getOrRegisterIterRecType(ctx);
   const canonVecTypeIdx = getOrRegisterVecType(ctx, "externref", EXT);
   if (iterRecTypeIdx < 0 || canonVecTypeIdx < 0) return undefined;
+
+  // A reflective factory exposes an iterator to arbitrary Get/Call clients.
+  // Its next method must exist even when the source never names it itself.
+  if (emitIteratorPrototypeSingleton(ctx, fctx, "Array") === null) return undefined;
+  fctx.body.push({ op: "drop" });
 
   // ToObject rejects null/undefined before any length read. Undefined may be
   // a non-null sentinel, not a null externref.

@@ -560,12 +560,52 @@ export interface CompileOptions {
     owns?: string;
     /** Owner's Get(object, key, receiver) -> externref, preserving reference identity. */
     get?: string;
+    /** Canonical shared Array.prototype getter, () -> externref. Used only
+     * after an array's own property checks miss, with the original receiver. */
+    arrayPrototype?: string;
   };
   /** Experimental Context-owned Script var storage. Requires standalone,
    * scriptGoal and an ownership-aware shared realm provider/exception tag.
    * Typed private slots are refused
    * until cross-Script mutation is incorporated into their planning. */
   standaloneScriptVarBindings?: boolean;
+  /** Native Module-identity capabilities keyed by exact compiler source path.
+   * Each () -> externref returns an evaluated namespace or null. Requires a
+   * shared standalone realm; it does not authorize URL-global lookup. */
+  standaloneModuleNamespaceImports?: {
+    module: string;
+    sources: Readonly<Record<string, string>>;
+    /** Native lifecycle notifications: name_enter and name_complete, () -> void.
+     * Completion is emitted only on normal initializer exit. Default off. */
+    evaluationHooks?: boolean;
+  };
+  /** Experimental native Context declarative-record operation. Requires the
+   * shared Script-var mode. ABI: (name: externref, operation: f64,
+   * value: externref) -> externref; see shared-script-lexical-access.ts.
+   * This provider must use the shared realm exception tag. */
+  standaloneScriptLexicalImport?: { module: string; name: string };
+  /** Context-owned Script completion sink, (externref) -> void. Requires
+   * shared Script mode and the same realm provider. The initializer stays void. */
+  standaloneScriptCompletionImport?: { module: string; name: string };
+  /** Opt-in native Script Get(object, key) -> externref export. Requires shared
+   * Script completion mode and allocation ownership. Hosts must route only
+   * proven owned receivers here; no source wrapper or Module export is added. */
+  standaloneScriptGetExport?: string;
+  /** Native owning-Script Call(callable, receiver, arguments) -> externref.
+   * Requires the getter/ownership surface above. Arguments remain native GC. */
+  standaloneScriptCallExport?: string;
+  /** Owning-Script own string names (including non-enumerable properties).
+   * ABI: (object: externref) -> externref native array. Requires the native
+   * Script getter/ownership surface. This is not Reflect.ownKeys: symbols and
+   * host property filters require separate descriptor-aware handling. */
+  standaloneScriptOwnNamesExport?: string;
+  /** Additional native reflection for owning-Script hosts. Requires own-names
+   * export. ownSymbols: (object) -> native array; descriptor: (object,key)
+   * -> native descriptor or undefined. All channels use externref values. */
+  standaloneScriptReflectionExports?: { ownSymbols: string; descriptor: string };
+  /** Share native Symbol identity, descriptions and registry across one realm.
+   * Provider exports six typed mutable globals; peers import that state. */
+  standaloneSymbolState?: "export" | { module: string; reexport?: boolean };
   /** Opt-in allocation provenance predicate (externref) -> i32. Adds one hidden
    * owner-token field to GC structs; all linked graph artifacts must opt in. */
   standaloneAllocationOwnerExport?: string;
@@ -1029,7 +1069,7 @@ export interface CompileOptions {
    * `true` for project compiles.
    */
   packageLinking?: boolean | "separate" | "merge";
-  /** Optional directory for content-addressed npm provider binaries. */
+  /** Directory for content-addressed npm provider binaries; default: `node_modules/.cache/js2wasm` (#6794). */
   packageCacheDir?: string;
   /** Internal package-link import map populated by compileProject's planner. */
   linkedPackageBindings?: ReadonlyMap<string, { module: string; field: string }>;

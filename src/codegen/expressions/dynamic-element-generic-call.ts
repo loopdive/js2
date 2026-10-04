@@ -33,6 +33,7 @@ import { emitHostMethodCallArgs } from "../host-method-args.js";
 import { noJsHost } from "../js-errors.js";
 import { allocLocal } from "../context/locals.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { prepareLinkedMethodReference } from "./linked-method-reference.js";
 
 /**
  * Standalone/wasi twin of `tryEmitDynamicElementHostMethodCall`: dispatch a
@@ -73,10 +74,17 @@ export function tryEmitGenericComputedMethodCall(
   const keyLocal = allocLocal(fctx, `__gcm_key_${fctx.locals.length}`, externref);
   fctx.body.push({ op: "local.set", index: keyLocal });
 
+  const linkedCall = prepareLinkedMethodReference(ctx, fctx, recvLocal, () => [{ op: "local.get", index: keyLocal }]);
+
   fctx.body.push({ op: "call", funcIdx: arrNewIdx });
   const argsLocal = allocLocal(fctx, `__gcm_args_${fctx.locals.length}`, externref);
   fctx.body.push({ op: "local.set", index: argsLocal });
   emitHostMethodCallArgs(ctx, fctx, expr, argsLocal, "__objvec_push", arrPushIdx);
+
+  if (linkedCall) {
+    linkedCall(argsLocal);
+    return externref;
+  }
 
   fctx.body.push({ op: "local.get", index: recvLocal });
   fctx.body.push({ op: "local.get", index: keyLocal });

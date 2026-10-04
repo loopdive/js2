@@ -28,6 +28,7 @@ import { addFuncType, getOrRegisterArrayType } from "./registry/types.js";
 import { compileNativeStringLiteral } from "./string-ops.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js"; // (#4632) $Symbol arm in __any_to_string
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
+import { symbolStateGlobal } from "./standalone-symbol-state.js";
 
 /** Initial capacity of the description table (covers small symbol counts without
  *  a grow; ids start at 100 so the very first user symbol already forces one
@@ -92,13 +93,12 @@ export function ensureSymbolCarrier(ctx: CodegenContext): number {
       kind: "ref_null",
       typeIdx: symIdx,
     });
-    const internGlobalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
-    ctx.mod.globals.push({
-      name: "__symbol_intern_table",
-      type: { kind: "ref_null", typeIdx: internArrTypeIdx },
-      mutable: true,
-      init: [{ op: "ref.null", typeIdx: internArrTypeIdx }],
-    });
+    const internGlobalIdx = symbolStateGlobal(
+      ctx,
+      "__symbol_intern_table",
+      { kind: "ref_null", typeIdx: internArrTypeIdx },
+      [{ op: "ref.null", typeIdx: internArrTypeIdx }],
+    );
     const symNull: ValType = { kind: "ref_null", typeIdx: symIdx };
     const arrNull: ValType = { kind: "ref_null", typeIdx: internArrTypeIdx };
     const typeIdx = addFuncType(ctx, [{ kind: "i32" }], [{ kind: "externref" }]);
@@ -275,13 +275,9 @@ export function ensureSymbolDescTable(ctx: CodegenContext): void {
   });
   ctx.symbolDescArrTypeIdx = arrTypeIdx;
 
-  const globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
-  ctx.mod.globals.push({
-    name: "__symbol_desc_table",
-    type: { kind: "ref_null", typeIdx: arrTypeIdx },
-    mutable: true,
-    init: [{ op: "ref.null", typeIdx: arrTypeIdx }],
-  });
+  const globalIdx = symbolStateGlobal(ctx, "__symbol_desc_table", { kind: "ref_null", typeIdx: arrTypeIdx }, [
+    { op: "ref.null", typeIdx: arrTypeIdx },
+  ]);
   ctx.symbolDescGlobalIdx = globalIdx;
 }
 
@@ -548,27 +544,15 @@ export function ensureSymbolRegistry(ctx: CodegenContext): {
     const keysArrNull: ValType = { kind: "ref_null", typeIdx: keysArrTypeIdx };
     const idsArrNull: ValType = { kind: "ref_null", typeIdx: idsArrTypeIdx };
 
-    ctx.symbolRegKeysGlobalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
-    ctx.mod.globals.push({
-      name: "__symbol_reg_keys",
-      type: keysArrNull,
-      mutable: true,
-      init: [{ op: "ref.null", typeIdx: keysArrTypeIdx }],
-    });
-    ctx.symbolRegIdsGlobalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
-    ctx.mod.globals.push({
-      name: "__symbol_reg_ids",
-      type: idsArrNull,
-      mutable: true,
-      init: [{ op: "ref.null", typeIdx: idsArrTypeIdx }],
-    });
-    ctx.symbolRegCountGlobalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
-    ctx.mod.globals.push({
-      name: "__symbol_reg_count",
-      type: { kind: "i32" },
-      mutable: true,
-      init: [{ op: "i32.const", value: 0 }],
-    });
+    ctx.symbolRegKeysGlobalIdx = symbolStateGlobal(ctx, "__symbol_reg_keys", keysArrNull, [
+      { op: "ref.null", typeIdx: keysArrTypeIdx },
+    ]);
+    ctx.symbolRegIdsGlobalIdx = symbolStateGlobal(ctx, "__symbol_reg_ids", idsArrNull, [
+      { op: "ref.null", typeIdx: idsArrTypeIdx },
+    ]);
+    ctx.symbolRegCountGlobalIdx = symbolStateGlobal(ctx, "__symbol_reg_count", { kind: "i32" }, [
+      { op: "i32.const", value: 0 },
+    ]);
   }
 
   const idsArrTypeIdx = ctx.symbolRegIdsArrTypeIdx;

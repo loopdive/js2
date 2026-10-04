@@ -77,6 +77,7 @@ import {
 import { compileInstanceOf, compileTypeofComparison } from "./typeof-delete.js";
 import { compileTypedBinaryDispatch } from "./binary-ops-typed-dispatch.js";
 import { foldTypeDisjointThenPromote } from "./strict-eq-type-disjoint.js";
+import { persistentScriptUpdateMayBeBigInt } from "./expressions/persistent-script-rmw.js";
 import {
   bothOperandsAreBigIntCarriers,
   emitTypeDisjointStrictEq,
@@ -229,6 +230,17 @@ const BOOLEAN_PRODUCING_BINARY_OPS: ReadonlySet<ts.SyntaxKind> = new Set([
  * matches every `.kind === "i32"` check). Called at the TAIL of expressions.ts's
  * binary dispatch; its 3 `instanceof` arms return earlier, so they brand themselves.
  */
+const PRIMITIVE_TS_FLAGS =
+  ts.TypeFlags.StringLike |
+  ts.TypeFlags.NumberLike |
+  ts.TypeFlags.BooleanLike |
+  ts.TypeFlags.BigIntLike |
+  ts.TypeFlags.ESSymbolLike |
+  ts.TypeFlags.Null |
+  ts.TypeFlags.Undefined |
+  ts.TypeFlags.Void |
+  ts.TypeFlags.Union;
+
 export function brandBooleanBinaryResult(op: ts.SyntaxKind, result: InnerResult): InnerResult {
   if (
     result !== null &&
@@ -1709,7 +1721,10 @@ export function compileBinaryExpression(
       (rightTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 &&
       ctx.nativeStrings &&
       ctx.anyStrTypeIdx >= 0) ||
-    rightIsObjectOperand;
+    rightIsObjectOperand ||
+    // (#6774 S19) any other non-primitive checker type (`var y = {}`) may
+    // carry @@toPrimitive / valueOf: §7.2.14 step 11 ToPrimitive, not ToString.
+    (ctx.standalone && !rightIsStrLike && ctx.anyStrTypeIdx >= 0 && (rightTsType.flags & PRIMITIVE_TS_FLAGS) === 0);
   // (#4564) §13.15.3 step 5 reduces BOTH operands BEFORE step 7 asks whether
   // either is a string: `o + ""` must take `valueOf`, but the string routes just
   // below call ToString on the object, which takes `toString`. Standalone only —
@@ -1815,7 +1830,9 @@ export function compileBinaryExpression(
       // undefined off that lane) so JS-host mode is untouched.
       if (isStrictEq || isStrictNeq) {
         const nonBigIntTsType0 = leftIsBigInt ? rightTsType : leftTsType;
-        const nonBigIntIsAnyish0 = (nonBigIntTsType0.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+        const nonBigIntIsAnyish0 =
+          (nonBigIntTsType0.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+          persistentScriptUpdateMayBeBigInt(ctx, fctx, leftIsBigInt ? expr.right : expr.left);
         // `ensureExternStrictEqHelper` needs `ctx.nativeBoxNumberTypeIdx` /
         // `ctx.nativeBoxBooleanTypeIdx`, which are only set once
         // `addUnionImports` has registered the native-first boxing helpers —

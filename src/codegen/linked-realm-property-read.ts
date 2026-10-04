@@ -1,11 +1,19 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { CodegenContext } from "./context/types.js";
 import { ensureLateImport } from "./shared.js";
+import { publishScriptGetter } from "./shared-script-completion.js";
+import { fillArrayIteratorPropertyRead } from "./array-iterator-property-read.js";
+import { fillClosedScriptSymbolReflection } from "./closed-script-symbol-reflection.js";
+import { fillLinkedRealmMethodCall } from "./linked-realm-method-call.js";
 
 /** Explicit ownership, not a structural type match, selects the foreign realm. */
 export function reserveLinkedRealmPropertyRead(ctx: CodegenContext): void {
   const linked = ctx.standaloneGlobalThisImport;
   if (!linked?.owns || !linked.get) return;
+  if (linked.arrayPrototype) {
+    ensureLateImport(ctx, linked.arrayPrototype, [], [{ kind: "externref" }], linked.module);
+    ensureLateImport(ctx, "__extern_is_array", [{ kind: "externref" }], [{ kind: "i32" }]);
+  }
   ensureLateImport(ctx, linked.owns, [{ kind: "externref" }], [{ kind: "i32" }], linked.module);
   ensureLateImport(
     ctx,
@@ -14,10 +22,22 @@ export function reserveLinkedRealmPropertyRead(ctx: CodegenContext): void {
     [{ kind: "externref" }],
     linked.module,
   );
+  if (linked.call)
+    ensureLateImport(
+      ctx,
+      linked.call,
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+      linked.module,
+    );
 }
 
 /** Install after every getter fill so graph-local bags and caches cannot win. */
 export function fillLinkedRealmPropertyRead(ctx: CodegenContext): void {
+  fillLinkedRealmMethodCall(ctx);
+  fillArrayIteratorPropertyRead(ctx);
+  fillClosedScriptSymbolReflection(ctx);
+  publishScriptGetter(ctx);
   const linked = ctx.standaloneGlobalThisImport;
   if (!linked?.owns || !linked.get) return;
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");

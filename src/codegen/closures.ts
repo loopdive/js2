@@ -1,4 +1,5 @@
 import { initializeNativeGeneratorFunctionValue } from "./generators-factory-prototype.js";
+import { snapshotArrowNewTarget } from "./expressions/new-target-value.js";
 import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
@@ -22,6 +23,8 @@ import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/ty
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2867 Gap 1) native-$Promise carrier gate
 import { emitEagerAsyncPromiseWrap, parkedAsyncClosureWrapsPromise } from "./async-eager-promise.js"; // (#4630)
 import { widenAsyncThenableResult } from "./async-thenable-return.js"; // (#5371)
+import { restPatternParamSlot } from "./resolved-rest-param.js"; // (#6774 S7)
+import { hoistParameterEvalVars } from "./expressions/eval-param-scope-hoist.js"; // (#6774 S7)
 import { applyNullableElemParamOverride } from "./array-hof-nullable-elem-param.js"; // (#6602) nullable vec element at the HOF callback boundary
 import { definedFuncAt, funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { pushProgramAbiNestedCallable, pushProgramAbiTypedThisTwin } from "./program-abi-source-callable-planning.js";
@@ -31,6 +34,7 @@ import { stringConstantExternrefInstrs } from "./native-strings.js"; // (#2025)
 import { emitWasiErrorConstructor } from "./registry/error-types.js"; // (#2025)
 import { widenClosureReturnForPreInitVar } from "./declarations/hoisted-var-preinit-read.js"; // (#4206)
 import { widenClosureReturnForDynamicModuleBinding } from "./declarations/heterogeneous-scalar-var-widening.js";
+import { widenProxyTrapMixedReturn } from "./closures/proxy-trap-closure-return.js"; // (#6771 S1)
 import { popBody, pushBody } from "./context/bodies.js";
 import { recordClosureBody } from "./context/body-route-audit.js";
 import { reportError } from "./context/errors.js";
@@ -2138,6 +2142,8 @@ export function computeClosureWrapperSig(
     if (hasBindingPattern && wasmType.kind !== "externref") {
       wasmType = { kind: "externref" };
     }
+    // (#6774 S7) `(...[a]) => …` packs its extras like `(...a)`: the rest vec.
+    wasmType = restPatternParamSlot(ctx, p, wasmType);
     if (ctx.forceExternrefCallbackParams && isVecOrArrayRefType(ctx, wasmType)) {
       wasmType = { kind: "externref" };
     }
@@ -2216,10 +2222,15 @@ export function computeClosureWrapperSig(
       // externref — the runtime value is a HOST plain object; a struct-typed
       // return null-drops it on the failed ref.test (see
       // resolveWasmTypeForClosureReturn).
-      const resolvedReturn = widenClosureReturnForDynamicModuleBinding(
+      const resolvedReturn = widenProxyTrapMixedReturn(
         ctx,
         arrow,
-        widenClosureReturnForPreInitVar(ctx, arrow, resolveWasmTypeForClosureReturn(ctx, retType)),
+        retType,
+        widenClosureReturnForDynamicModuleBinding(
+          ctx,
+          arrow,
+          widenClosureReturnForPreInitVar(ctx, arrow, resolveWasmTypeForClosureReturn(ctx, retType)),
+        ),
       );
       // (#4707) Proxy/host-object bindings retain their externref carrier when
       // returned from a closure, despite TypeScript's structural return type.
@@ -2269,6 +2280,13 @@ export function computeClosureWrapperSig(
         }
       }
     }
+  }
+  // A shared Script's callable may return to an independently compiled
+  // consumer. TypeScript's bigint type proves a primitive brand, not an i64
+  // range. Preserve its native narrow/wide carrier through both wrapper
+  // planning and lifted-body emission rather than truncating before transport.
+  if (ctx.standaloneScriptVarBindings && closureReturnType?.kind === "i64" && closureReturnType.bigint === true) {
+    closureReturnType = { kind: "externref" };
   }
   return {
     params: arrowParams,
@@ -2471,6 +2489,17 @@ export function methodBodyRefsShadowedOuterLocal(method: ts.FunctionLikeDeclarat
  */
 export function genBodyReferencesSuper(node: ts.Node): boolean {
   if (node.kind === ts.SyntaxKind.SuperKeyword) return true;
+  // (#6774 S5) A direct `eval("…super…")` is spliced into this frame and reads its [[HomeObject]].
+  if (
+    ts.isCallExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "eval" &&
+    node.arguments[0] !== undefined &&
+    ts.isStringLiteralLike(node.arguments[0]) &&
+    /\bsuper\b/.test(node.arguments[0].text)
+  ) {
+    return true;
+  }
   if (
     ts.isFunctionExpression(node) ||
     ts.isFunctionDeclaration(node) ||
@@ -3091,6 +3120,7 @@ export function compileLiftedClosureBody(
     emitLiftedClosureArgumentsObject(ctx, liftedFctx, arrow, body, arrowParams, reachesDirectEval);
   }
 
+  hoistParameterEvalVars(ctx, liftedFctx, arrow); // (#6774 S7)
   // Emit default-value initialization for simple params with defaults
   emitArrowParamDefaults(ctx, liftedFctx, arrow, 1 /* skip __self */);
 
@@ -3402,7 +3432,12 @@ export function compileLiftedClosureBody(
       compileStatement(ctx, liftedFctx, stmt);
     }
   } else {
-    const exprType = compileExpression(ctx, liftedFctx, body);
+    const exprType = compileExpression(
+      ctx,
+      liftedFctx,
+      body,
+      ctx.standaloneScriptVarBindings ? (closureReturnType ?? undefined) : undefined,
+    );
     if (exprType !== null && closureReturnType) {
       // Expression result is the return value - already on stack
       conciseBodyHasValue = true;
@@ -3718,10 +3753,11 @@ export function compileArrowAsClosure(
   ) {
     const thisLocal = fctx.lexicalThisCaptureLocal ?? allocLocal(fctx, "__arrow_lexical_this", { kind: "externref" });
     fctx.lexicalThisCaptureLocal = thisLocal;
-    const thisNode = findOwnThisReference(body) ?? ts.factory.createThis();
+    const thisNode = findOwnThisReference(body) ?? syntheticThisIn(arrow);
     compileExpression(ctx, fctx, thisNode, { kind: "externref" });
     fctx.body.push({ op: "local.set", index: thisLocal });
   }
+  snapshotArrowNewTarget(ctx, fctx, arrow); // (#6774 S4) lexical `new.target`
   const { captures, selfBindingName } = planClosureCaptures(ctx, fctx, arrow, body, additionalCaptureNames);
   // Object-literal method closures need a stable [[HomeObject]] for `super`.
   // Capture the freshly allocated object itself, rather than using
@@ -4901,3 +4937,14 @@ function closureBodyUsesArguments(node: ts.Node): boolean {
 // Register compileArrowAsClosure in the shared module so other modules
 // can call it without a direct import cycle.
 registerCompileArrowAsClosure(compileArrowAsClosure);
+
+/**
+ * (#6774 S16) A synthetic `this` parented to `arrow`, so the unbound-`this`
+ * strictness test (`isStrictContext`) sees the arrow's real context instead of
+ * a parentless node (which it reads as sloppy → the global object).
+ */
+function syntheticThisIn(arrow: ts.Node): ts.Expression {
+  const node = ts.factory.createThis();
+  (node as unknown as { parent: ts.Node }).parent = arrow;
+  return node;
+}

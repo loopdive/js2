@@ -8,7 +8,7 @@
 import { isTopLevelClassPrototypeWrite } from "./class-proto-toplevel-write.js";
 import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 import { collectScopeLocalDeclNames } from "./scope-local-decl-names.js";
-import { registerResolvedRestParam } from "./resolved-rest-param.js"; // (#1058)
+import { registerResolvedRestParam, restPatternParamVecType } from "./resolved-rest-param.js"; // (#1058)
 import { widenUndefinedDefaultParamSlot } from "./destructuring-params.js";
 import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
 import { functionReturnsWidenedProperty } from "./declarations/widened-property-return.js";
@@ -72,6 +72,9 @@ import {
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
 import { shouldCollectTopLevelClassForRuntimeHeritage } from "./class-expression-identity.js";
 import { classHasUnresolvedComputedMemberName, classHierarchyHasDynamicMember } from "./class-dynamic-keys.js"; // (#5195 Step 1 / R2-3)
+import { classHasComputedKeyAssignment } from "./class-member-keys.js"; // (#6772 S5)
+import { standaloneCommaHeritage } from "./classes/class-heritage-comma.js"; // (#6772 S6)
+import { heritagePrototypeGetTarget } from "./classes/class-heritage-runtime-get.js"; // (#6772 S11)
 import { routeTopLevelClassBodies } from "./prepared-class-body-cutover.js";
 import {
   collectBindingPatternNames,
@@ -86,6 +89,12 @@ import { filterResultNeedsDynamicCarrier } from "./array-filter-spec-access.js";
 import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
 import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
+import {
+  linkedModuleNamespaceName,
+  reserveLinkedModuleNamespace,
+  withLinkedModuleInitializer,
+} from "./linked-module-namespace.js";
+import { flushLateImportShifts } from "./expressions/late-imports.js";
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
 import {
@@ -172,6 +181,7 @@ import {
   shouldKeepBuiltinReceiverWrite,
 } from "./builtin-write-keeps.js"; // (#4176/#4199/#5197) builtin-receiver write keeps
 import { compileExpression, compileStatement, skipTransparentExpressions } from "./shared.js";
+import { beginScriptCompletion, publishScriptCompletion } from "./shared-script-completion.js";
 import { functionReturnsPreInitVarValue } from "./function-declaration-observation.js";
 import { inferNativeTaViewConstructType } from "./dataview-native.js";
 import { expandLinearU8ParamTypes } from "./linear-uint8-signatures.js";
@@ -1817,7 +1827,10 @@ function registerBodylessFunctionDeclaration(
     params = [];
     for (let i = 0; i < stmt.parameters.length; i++) {
       const param = stmt.parameters[i]!;
-      params.push(lowerParamType(ctx, param, name, i, stmt, sourceFile));
+      params.push(
+        restPatternParamVecType(ctx, param, (t) => getOrRegisterVecType(ctx, "externref", t)) ??
+          lowerParamType(ctx, param, name, i, stmt, sourceFile),
+      );
     }
     if (noJsHost(ctx)) registerResolvedRestParam(ctx, name, stmt, params); // (#6651 A10) rest packs like a plain function
     const nativeGenerator = registerNativeGenerator(ctx, stmt, name, params);
@@ -2482,7 +2495,11 @@ function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, st
   // it: that predicate is `!ctx.standalone && …`, so it never fires here.)
   if (
     ts.isClassDeclaration(statement) &&
-    (classHasUnresolvedComputedMemberName(ctx, statement) || topLevelClassInheritsRuntimeKeys(ctx, statement))
+    (classHasUnresolvedComputedMemberName(ctx, statement) ||
+      classHasComputedKeyAssignment(statement) || // (#6772 S5) a folded key's write runs at definition
+      standaloneCommaHeritage(ctx, statement) !== undefined || // (#6772 S6) so does a comma heritage's prefix
+      heritagePrototypeGetTarget(ctx, statement) !== undefined || // (#6772 S11) and Get(superclass, "prototype")
+      topLevelClassInheritsRuntimeKeys(ctx, statement))
   ) {
     ctx.moduleInitStatements.push(statement);
     return true;
@@ -2503,6 +2520,9 @@ function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, st
 }
 
 function shouldCollectTopLevelAssignment(ctx: CodegenContext, target: ts.Expression, operator: ts.SyntaxKind): boolean {
+  // Another Script may have installed a declarative binding. Neither the
+  // private module registry nor the sloppy-global scan proves this write dead.
+  if (ctx.standaloneScriptLexicalImport && !ctx.sourceIsModule && ts.isIdentifier(target)) return true;
   const targetName = getAssignmentRootIdentifier(target);
   // (#4491 T3) `ctx.moduleGlobals` is filled by the SAME single pass that asks
   // this question, so a write that precedes its own `var` declaration
@@ -2665,7 +2685,12 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // Also map the LHS identifier to the synthetic name so `new C()` resolves
         if (nameHint) {
           const syntheticName = ctx.anonClassExprNames.get(rhs);
-          if (syntheticName) {
+          // (#6772 S7) a second, DIFFERENT class bound to the name makes it dynamic
+          const prior = ctx.classExprNameMap.get(nameHint);
+          if (syntheticName && prior !== undefined && prior !== syntheticName) {
+            ctx.classExprNameMap.delete(nameHint);
+            ctx.classExprAmbiguousNames.add(nameHint);
+          } else if (syntheticName && !ctx.classExprAmbiguousNames.has(nameHint)) {
             ctx.classExprNameMap.set(nameHint, syntheticName);
           }
         }
@@ -2810,7 +2835,11 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         for (const decl of stmt.declarationList.declarations) {
           if (ts.isIdentifier(decl.name) && decl.initializer && ts.isClassExpression(decl.initializer)) {
             const syntheticName = ctx.anonClassExprNames.get(decl.initializer);
-            if (syntheticName && !ctx.classExprNameMap.has(decl.name.text)) {
+            if (
+              syntheticName &&
+              !ctx.classExprNameMap.has(decl.name.text) &&
+              !ctx.classExprAmbiguousNames.has(decl.name.text)
+            ) {
               ctx.classExprNameMap.set(decl.name.text, syntheticName);
             }
           }
@@ -2941,7 +2970,10 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         params = [];
         for (let i = 0; i < stmt.parameters.length; i++) {
           const param = stmt.parameters[i]!;
-          params.push(lowerParamType(ctx, param, name, i, stmt, sourceFile));
+          params.push(
+            restPatternParamVecType(ctx, param, (t) => getOrRegisterVecType(ctx, "externref", t)) ??
+              lowerParamType(ctx, param, name, i, stmt, sourceFile),
+          );
         }
         if (noJsHost(ctx)) registerResolvedRestParam(ctx, name, stmt, params); // (#6651 A10) rest packs like a plain function
         const nativeGenerator = registerNativeGenerator(ctx, stmt, name, params);
@@ -4126,7 +4158,9 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       const hasRuntimeKeyedClassExpression = stmt.declarationList.declarations.some((declaration) => {
         const init = declaration.initializer;
         if (init === undefined || !ts.isClassExpression(init)) return false;
-        if (classHasUnresolvedComputedMemberName(ctx, init)) return true;
+        if (classHasUnresolvedComputedMemberName(ctx, init) || classHasComputedKeyAssignment(init)) return true; // (#6772 S5)
+        if (standaloneCommaHeritage(ctx, init) !== undefined) return true; // (#6772 S6)
+        if (heritagePrototypeGetTarget(ctx, init) !== undefined) return true; // (#6772 S11)
         const className = ctx.anonClassExprNames.get(init);
         return className !== undefined && classHierarchyHasDynamicMember(ctx, className);
       });
@@ -4185,6 +4219,10 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // Module-level expression statements with side effects:
     // new expressions, call expressions, ++/--, assignments to module globals
     if (ts.isExpressionStatement(stmt)) {
+      if (ctx.standaloneScriptCompletionImport && !ctx.sourceIsModule) {
+        ctx.moduleInitStatements.push(stmt);
+        continue;
+      }
       // #1596 — the test262 IIFE-with-trailing-call pattern
       // `(function(){...}.apply(null, [...]))` parses with a
       // ParenthesizedExpression at the top of the ExpressionStatement. Unwrap
@@ -5247,6 +5285,11 @@ export function preallocateModuleInitCallable(
   sourceFile: ts.SourceFile,
   options?: { readonly publishDeferredExport?: boolean },
 ): void {
+  const namespace = linkedModuleNamespaceName(ctx, sourceFile);
+  if (namespace !== undefined) {
+    reserveLinkedModuleNamespace(ctx, namespace);
+    flushLateImportShifts(ctx, null);
+  }
   let initFunc = ctx.programAbiModuleInitCallables?.functionForSource(sourceFile);
   let initFuncIdx = ctx.programAbiModuleInitCallables?.handleForSource(sourceFile);
   if (!initFunc || initFuncIdx === undefined) {
@@ -5860,7 +5903,10 @@ export function compileDeclarations(
   // closure in __module_init even when the program has no other init statements,
   // so a read before the reassignment still yields the function.
   const hasLiveFuncSeeds = (ctx.liveFuncBindingGlobals?.size ?? 0) > 0;
-  const hasModuleInits = ctx.moduleInitStatements.length > 0 || hasLiveFuncSeeds;
+  const hasModuleInits =
+    ctx.moduleInitStatements.length > 0 ||
+    hasLiveFuncSeeds ||
+    (!ctx.sourceIsModule && !!ctx.standaloneScriptCompletionImport);
   const hasStaticInits = ctx.staticInitExprs.length > 0;
   const hasAsyncGraphInit =
     ctx.standalone === true &&
@@ -6015,7 +6061,21 @@ export function compileDeclarations(
   }
 
   /** Compile one complete top-level entry without changing its source order. */
-  function compileOrderedModuleInitEntry(fctx: FunctionContext, initEntry: OrderedModuleInitEntry): void {
+  function compileOrderedModuleInitEntry(
+    fctx: FunctionContext,
+    initEntry: OrderedModuleInitEntry,
+    completesSource = false,
+  ): void {
+    withLinkedModuleInitializer(
+      ctx,
+      fctx,
+      initEntry.node.getSourceFile(),
+      () => compileLinkedModuleInitEntry(fctx, initEntry),
+      completesSource,
+    );
+  }
+
+  function compileLinkedModuleInitEntry(fctx: FunctionContext, initEntry: OrderedModuleInitEntry): void {
     if (initEntry.kind === "static") {
       emitModuleStaticInitialization(ctx, fctx, initEntry.entry);
       return;
@@ -6115,6 +6175,7 @@ export function compileDeclarations(
     const previousFunc = ctx.currentFunc;
     ctx.currentFunc = initFctx;
     mintUntypedRegExpReceiverMembers(ctx, initFctx, sourceFile); // (#6651 B10) untyped-RegExp proto reads
+    beginScriptCompletion(ctx, initFctx);
 
     // (#5271 step 8) §16.1.7 GlobalDeclarationInstantiation step 5.d — a
     // top-level lexical declaration whose name is a RESTRICTED GLOBAL
@@ -6215,7 +6276,12 @@ export function compileDeclarations(
     }
 
     const orderedInitEntries = orderedModuleInitEntries();
-    const chunks = chunkModuleInitEntries ? planModuleInitChunks(orderedInitEntries) : [];
+    const chunks =
+      chunkModuleInitEntries &&
+      !ctx.standaloneScriptCompletionImport &&
+      !ctx.standaloneModuleNamespaceImports?.evaluationHooks
+        ? planModuleInitChunks(orderedInitEntries)
+        : [];
     if (chunks.length > 1) {
       // While a chunk is the current compilation frame, the outer prelude and
       // dispatcher are detached from `ctx.currentFunc`. Keep them live so late
@@ -6252,9 +6318,18 @@ export function compileDeclarations(
         if (!outerBodyWasLive) ctx.liveBodies.delete(initFctx.body);
       }
     } else {
-      for (const initEntry of orderedInitEntries) compileOrderedModuleInitEntry(initFctx, initEntry);
+      const lastEntryBySource = new Map<ts.SourceFile, number>();
+      if (ctx.standaloneModuleNamespaceImports?.evaluationHooks)
+        for (const [index, entry] of orderedInitEntries.entries())
+          lastEntryBySource.set(entry.node.getSourceFile(), index);
+      for (const [index, initEntry] of orderedInitEntries.entries()) {
+        const source = initEntry.node.getSourceFile();
+        const completesSource = lastEntryBySource.get(source) === index;
+        compileOrderedModuleInitEntry(initFctx, initEntry, completesSource);
+      }
     }
 
+    publishScriptCompletion(ctx, initFctx);
     ctx.currentFunc = previousFunc;
     return initFctx;
   }

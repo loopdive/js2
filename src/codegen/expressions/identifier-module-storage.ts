@@ -306,3 +306,12 @@ export function currentSourceModuleGlobalIndex(
 }
 
 /** Exact same-source runtime top-level lexical identity. */
+export function identifierHasCurrentSourceTopLevelLexicalDeclaration(ctx: CodegenContext, id: ts.Identifier): boolean {
+  const declaration = resolvedDeclaration(ctx, id, true);
+  return (
+    declaration !== undefined &&
+    declaration.getSourceFile() === id.getSourceFile() &&
+    ts.isVariableDeclaration(declaration) &&
+    isTopLevelLexicalOwner(ctx, id, declaration)
+  );
+}

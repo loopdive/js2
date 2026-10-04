@@ -804,6 +804,12 @@ function buildCodegenOptions(
   }
   if (options.standaloneGlobalThisImport !== undefined) {
     const { owns, get } = options.standaloneGlobalThisImport;
+    const arrayPrototype = options.standaloneGlobalThisImport.arrayPrototype;
+    if (arrayPrototype !== undefined && (!arrayPrototype || !owns || !get)) {
+      throw new Error(
+        "standaloneGlobalThisImport.arrayPrototype requires a non-empty name and ownership-aware getter.",
+      );
+    }
     if ((owns !== undefined || get !== undefined) && (!owns || !get)) {
       throw new Error("standaloneGlobalThisImport.owns and get must be provided together and non-empty.");
     }
@@ -853,6 +859,71 @@ function buildCodegenOptions(
       );
     }
   }
+  if (options.standaloneScriptLexicalImport !== undefined) {
+    const { module, name } = options.standaloneScriptLexicalImport;
+    if (
+      !options.standaloneScriptVarBindings ||
+      !name ||
+      !module ||
+      module !== options.standaloneGlobalThisImport?.module ||
+      !options.link?.includes(module)
+    ) {
+      throw new Error(
+        "standaloneScriptLexicalImport requires shared Script var mode and a named operation in the same realm provider",
+      );
+    }
+  }
+  if (options.standaloneScriptCompletionImport !== undefined) {
+    const { module, name } = options.standaloneScriptCompletionImport;
+    if (
+      !options.standaloneScriptVarBindings ||
+      !module ||
+      !name ||
+      module !== options.standaloneGlobalThisImport?.module ||
+      !options.link?.includes(module)
+    ) {
+      throw new Error(
+        "standaloneScriptCompletionImport requires shared Script mode and a named sink in the same realm provider",
+      );
+    }
+  }
+  if (
+    options.standaloneScriptGetExport !== undefined &&
+    (!options.standaloneScriptGetExport ||
+      !options.standaloneScriptCompletionImport ||
+      !options.standaloneAllocationOwnerExport)
+  ) {
+    throw new Error(
+      "standaloneScriptGetExport requires a named export, shared Script completion and allocation ownership",
+    );
+  }
+  if (
+    options.standaloneScriptCallExport !== undefined &&
+    (!options.standaloneScriptCallExport || !options.standaloneScriptGetExport)
+  ) {
+    throw new Error("standaloneScriptCallExport requires a named export and native Script getter/ownership");
+  }
+  if (
+    options.standaloneScriptOwnNamesExport !== undefined &&
+    (!options.standaloneScriptOwnNamesExport || !options.standaloneScriptGetExport)
+  ) {
+    throw new Error("standaloneScriptOwnNamesExport requires a named export and native Script getter/ownership");
+  }
+  if (options.standaloneScriptReflectionExports !== undefined) {
+    const { ownSymbols, descriptor } = options.standaloneScriptReflectionExports;
+    if (!ownSymbols || !descriptor || !options.standaloneScriptOwnNamesExport) {
+      throw new Error("standaloneScriptReflectionExports requires named exports and native Script own-names/ownership");
+    }
+  }
+  if (options.standaloneSymbolState !== undefined) {
+    const state = options.standaloneSymbolState;
+    if (
+      targetProfile.target !== "standalone" ||
+      (state !== "export" && (!state.module || !options.link?.includes(state.module)))
+    ) {
+      throw new Error("standaloneSymbolState requires standalone and an explicitly linked provider");
+    }
+  }
   return {
     irCutoverRoute: readIrCompileRoute(options, "compileSourceSync"),
     sourceMap: emitSourceMap,
@@ -871,6 +942,7 @@ function buildCodegenOptions(
     linkedPackageBindings: options.linkedPackageBindings,
     standalone: targetProfile.target === "standalone",
     standaloneGlobalThisImport: options.standaloneGlobalThisImport,
+    standaloneModuleNamespaceImports: options.standaloneModuleNamespaceImports,
     standaloneMicrotaskNotifyImport: options.standaloneMicrotaskNotifyImport,
     directEval: options.directEval,
     runtimeEvalProvider: options.runtimeEvalProvider,
@@ -891,6 +963,13 @@ function buildCodegenOptions(
     // the host runs it after setExports (symmetric with standalone `_start`).
     deferTopLevelInit: options.deferTopLevelInit,
     standaloneScriptVarBindings: options.standaloneScriptVarBindings,
+    standaloneScriptLexicalImport: options.standaloneScriptLexicalImport,
+    standaloneScriptCompletionImport: options.standaloneScriptCompletionImport,
+    standaloneScriptGetExport: options.standaloneScriptGetExport,
+    standaloneScriptCallExport: options.standaloneScriptCallExport,
+    standaloneScriptOwnNamesExport: options.standaloneScriptOwnNamesExport,
+    standaloneScriptReflectionExports: options.standaloneScriptReflectionExports,
+    standaloneSymbolState: options.standaloneSymbolState,
     strictNoHostImports: targetProfile.strictEnvImportGate,
     // (#2119) thread module-strictness inference uniformly across all drivers.
     inferModuleStrictArguments: options.inferModuleStrictArguments,
@@ -1846,57 +1925,7 @@ export async function compileMultiSource(
   profileCount("source-files", multiAst.sourceFiles.length);
   profileCount("program-files", multiAst.program.getSourceFiles().length);
 
-  // When allowJs is set (e.g. compiling npm packages like lodash-es), only report
-  // diagnostics from the entry file — dependency files may have TS errors we can't
-  // control (missing globals, JSDoc param issues, etc.). strictJsSyntax is the
-  // explicit exception for syntax-test graphs whose complete literal JavaScript
-  // input is owned by the caller (#3506).
-  const isEntryDiag = (diag: { file?: { fileName: string } }) =>
-    !options.allowJs || options.strictJsSyntax === true || !diag.file || diag.file === multiAst.entryFile;
-
-  for (const diag of multiAst.diagnostics) {
-    if (diag.category === 1 && isEntryDiag(diag)) {
-      const pos = diag.file ? diag.file.getLineAndCharacterOfPosition(diag.start ?? 0) : { line: 0, character: 0 };
-      const severity = diagnosticSeverity(diag, multiAst.checker);
-      errors.push({
-        // #1929 — flatten the full DiagnosticMessageChain (keeps the "because…"
-        // elaboration) and attribute the source file for multi-file compiles.
-        message: ts.flattenDiagnosticMessageText(diag.messageText, "\n"),
-        line: pos.line + 1,
-        column: pos.character + 1,
-        severity,
-        code: diag.code,
-        ...(diag.file ? { file: diag.file.fileName } : {}),
-      });
-    }
-  }
-
-  // When allowJs is set, don't bail on TS diagnostics — JS packages with JSDoc
-  // annotations produce many false-positive errors (TS1016 optional params,
-  // TS2322 type mismatches, TS8017 signature-in-JS, etc.). Codegen handles it
-  // fine. strictJsSyntax restores only the syntactic rejection gate; semantic
-  // JavaScript diagnostics retain the existing allowJs policy.
-  const hasSyntaxErrors =
-    (!options.allowJs || options.strictJsSyntax === true) &&
-    multiAst.syntacticDiagnostics.some(
-      (d) =>
-        d.category === 1 &&
-        isEntryDiag(d) &&
-        multiAst.sourceFiles.some((sf) => d.file === sf) &&
-        // (#3451) Apply the SAME tolerance list the single-file gate applies.
-        // Without it `strictJsSyntax` is not "the single-file gate for a
-        // graph" but a stricter one, and every entry in that list names source
-        // that is valid JavaScript — so the linked test262 lane rejected rows
-        // the authoritative single-module lane compiles and runs.
-        !TOLERATED_SYNTAX_CODES.has(d.code),
-    );
-  const hasHardTypeErrors =
-    !options.allowJs &&
-    multiAst.diagnostics.some((d) => isHardTypeScriptDiagnostic(d, multiAst.checker) && isEntryDiag(d));
-
-  if ((hasSyntaxErrors || hasHardTypeErrors) && errors.length > 0) {
-    return failResult(errors);
-  }
+  if (collectMultiDiagnostics(multiAst, options, errors)) return failResult(errors);
 
   // #1927 — early-errors / safe / hardened validation + codegen + emit are the
   // shared pipeline core (runPipeline). The multi path runs hardened mode now
@@ -1970,6 +1999,64 @@ export async function compileMultiSource(
 }
 
 /**
+ * #1927/#6794 — the TS-diagnostic gate shared by both multi-file adapters
+ * (`compileMultiSource` and `compileFilesSource`). Pushes the reportable
+ * diagnostics into `errors`; returns true when a syntax or hard type error
+ * must abort the compile.
+ */
+function collectMultiDiagnostics(multiAst: MultiTypedAST, options: CompileOptions, errors: CompileError[]): boolean {
+  // When allowJs is set (e.g. compiling npm packages like lodash-es), only report
+  // diagnostics from the entry file — dependency files may have TS errors we can't
+  // control (missing globals, JSDoc param issues, etc.). strictJsSyntax is the
+  // explicit exception for syntax-test graphs whose complete literal JavaScript
+  // input is owned by the caller (#3506).
+  const isEntryDiag = (diag: { file?: { fileName: string } }) =>
+    !options.allowJs || options.strictJsSyntax === true || !diag.file || diag.file === multiAst.entryFile;
+
+  for (const diag of multiAst.diagnostics) {
+    if (diag.category === 1 && isEntryDiag(diag)) {
+      const pos = diag.file ? diag.file.getLineAndCharacterOfPosition(diag.start ?? 0) : { line: 0, character: 0 };
+      const severity = diagnosticSeverity(diag, multiAst.checker);
+      errors.push({
+        // #1929 — flatten the full DiagnosticMessageChain (keeps the "because…"
+        // elaboration) and attribute the source file for multi-file compiles.
+        message: ts.flattenDiagnosticMessageText(diag.messageText, "\n"),
+        line: pos.line + 1,
+        column: pos.character + 1,
+        severity,
+        code: diag.code,
+        ...(diag.file ? { file: diag.file.fileName } : {}),
+      });
+    }
+  }
+
+  // When allowJs is set, don't bail on TS diagnostics — JS packages with JSDoc
+  // annotations produce many false-positive errors (TS1016 optional params,
+  // TS2322 type mismatches, TS8017 signature-in-JS, etc.). Codegen handles it
+  // fine. strictJsSyntax restores only the syntactic rejection gate; semantic
+  // JavaScript diagnostics retain the existing allowJs policy.
+  const hasSyntaxErrors =
+    (!options.allowJs || options.strictJsSyntax === true) &&
+    multiAst.syntacticDiagnostics.some(
+      (d) =>
+        d.category === 1 &&
+        isEntryDiag(d) &&
+        multiAst.sourceFiles.some((sf) => d.file === sf) &&
+        // (#3451) Apply the SAME tolerance list the single-file gate applies.
+        // Without it `strictJsSyntax` is not "the single-file gate for a
+        // graph" but a stricter one, and every entry in that list names source
+        // that is valid JavaScript — so the linked test262 lane rejected rows
+        // the authoritative single-module lane compiles and runs.
+        !TOLERATED_SYNTAX_CODES.has(d.code),
+    );
+  const hasHardTypeErrors =
+    !options.allowJs &&
+    multiAst.diagnostics.some((d) => isHardTypeScriptDiagnostic(d, multiAst.checker) && isEntryDiag(d));
+
+  return (hasSyntaxErrors || hasHardTypeErrors) && errors.length > 0;
+}
+
+/**
  * Compile a TypeScript project from an entry file on disk.
  * Uses ts.createProgram with real filesystem access -- TypeScript resolves
  * all imports automatically via standard module resolution.
@@ -1992,31 +2079,10 @@ export async function compileFilesSource(entryPath: string, options: CompileOpti
     ...(options.tsconfig !== undefined ? { tsconfig: options.tsconfig } : {}),
   });
 
-  for (const diag of multiAst.diagnostics) {
-    if (diag.category === 1) {
-      const pos = diag.file ? diag.file.getLineAndCharacterOfPosition(diag.start ?? 0) : { line: 0, character: 0 };
-      const severity = diagnosticSeverity(diag, multiAst.checker);
-      errors.push({
-        // #1929 — flatten the full DiagnosticMessageChain (keeps the "because…"
-        // elaboration) and attribute the source file for multi-file compiles.
-        message: ts.flattenDiagnosticMessageText(diag.messageText, "\n"),
-        line: pos.line + 1,
-        column: pos.character + 1,
-        severity,
-        code: diag.code,
-        ...(diag.file ? { file: diag.file.fileName } : {}),
-      });
-    }
-  }
-
-  const hasSyntaxErrors = multiAst.syntacticDiagnostics.some(
-    (d) => d.category === 1 && multiAst.sourceFiles.some((sf) => d.file === sf),
-  );
-  const hasHardTypeErrors = multiAst.diagnostics.some((d) => isHardTypeScriptDiagnostic(d, multiAst.checker));
-
-  if ((hasSyntaxErrors || hasHardTypeErrors) && errors.length > 0) {
-    return failResult(errors);
-  }
+  // #6794 — the SAME gate as compileMulti: tolerated syntax codes, and the
+  // allowJs entry-only / no-semantic-bail policy. This path used to fail a JS
+  // project on sloppy octals or decorators that compileProject accepts.
+  if (collectMultiDiagnostics(multiAst, options, errors)) return failResult(errors);
 
   // #1927 — early-errors / safe / hardened validation + codegen + emit are the
   // shared pipeline core (runPipeline). This path gains hardened-mode parity

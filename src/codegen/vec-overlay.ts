@@ -77,6 +77,7 @@
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { consumeReflectGetReceiver } from "./reflect-get-receiver-read.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
 import { ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
@@ -99,6 +100,7 @@ import {
 } from "./proto-index-store.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { nonExtensibleFreshIndexGuard, nonWritableLengthIndexGuard } from "./vec-define-rejections.js";
+import { fillArraySetLengthRefusal } from "./array/array-set-length-coercion.js"; // (#6771 S10a)
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { canonicalNumericKeyGuard } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
 import { SPARSE_INDEX_CEILING } from "./vec-sparse-index.js";
@@ -696,6 +698,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
   const core = ensureOverlayCore(ctx, objectTypeIdx, newPlainObjectIdx);
   // (#4658) Fill the reserved brand stubs — needs the overlay core.
   fillArgumentsLengthBrand(ctx, objectTypeIdx, core.ensureIdx, core.lookupIdx);
+  fillArraySetLengthRefusal(ctx, core.lookupIdx); // (#6771 S10a) needs the overlay core
   // #4504 only needs this extra logical-own screen in modules that can observe
   // an inherited descriptor. Keep the historical gOPD/hasOwn tree untouched
   // otherwise; the existing `$Hole` carrier is still used by the write path
@@ -1083,7 +1086,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
       const s3ToPrimIdx = ctx.funcMap.get("__to_primitive");
       const s3TypeofStringIdx = ctx.funcMap.get("__typeof_string");
       const s3StrToNumIdx = ctx.funcMap.get("__str_to_number");
-      const lengthToNumber: Instr[] =
+      const lengthToNumber = (): Instr[] =>
         s3 === null
           ? []
           : s3ToPrimIdx !== undefined && s3TypeofStringIdx !== undefined && s3StrToNumIdx !== undefined
@@ -1142,15 +1145,18 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                 op: "if",
                 blockType: { kind: "empty" },
                 then: [
-                  // n = ToNumber(value) ; u = ToUint32(n) as f64 ; mismatch → RangeError (step 5)
-                  ...lengthToNumber,
-                  { op: "local.tee", index: 14 },
+                  // (#6771 S10b) §10.4.2.4 steps 3-5 are TWO conversions of the
+                  // value — u = ToUint32(value), then n = ToNumber(value) — each
+                  // observable through valueOf/@@toPrimitive; mismatch → RangeError.
+                  ...lengthToNumber(),
                   { op: "i64.trunc_sat_f64_s" },
                   { op: "i64.const", value: 0xffffffffn },
                   { op: "i64.and" },
                   { op: "f64.convert_i64_u" },
-                  { op: "local.tee", index: 15 },
-                  { op: "local.get", index: 14 },
+                  { op: "local.set", index: 15 },
+                  ...lengthToNumber(),
+                  { op: "local.tee", index: 14 },
+                  { op: "local.get", index: 15 },
                   { op: "f64.ne" },
                   { op: "if", blockType: { kind: "empty" }, then: s3.throwRange() },
                   // (#4491 bucket D) u ≥ 2^31 → SPARSE-LENGTH arm, not the old
@@ -2756,7 +2762,9 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                               blockType: { kind: "empty" },
                               then: [...missExtern(), { op: "return" }],
                             },
-                            { op: "local.get", index: 0 },
+                            ...(ctx.standaloneGlobalThisImport?.arrayPrototype
+                              ? consumeReflectGetReceiver(ctx)
+                              : [{ op: "local.get", index: 0 } as Instr]),
                             { op: "local.get", index: pGetter },
                             { op: "call", funcIdx: callAccessorGetIdx },
                             { op: "return" },
@@ -2854,10 +2862,10 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
   // NOT wired at `__vec_prop_get`'s build site: `__vec_overlay_lookup` does not
   // exist yet there (measured — `overlayLookup=undefined`), which is precisely
   // why the overlay read prologues are FINALIZE-time splices in the first place.
-  for (const overlayGetLane of ["__extern_get", "__vec_prop_get"]) {
+  for (const overlayGetLane of ["__extern_get", "__vec_prop_get", "__vec_prop_get_receiver"]) {
     const fn = findFn(overlayGetLane);
     if (fn) {
-      const base = 2 + fn.locals.length;
+      const base = (overlayGetLane === "__vec_prop_get_receiver" ? 3 : 2) + fn.locals.length;
       const gAny = base;
       const gComp = base + 1;
       const gE = base + 2;
@@ -2957,7 +2965,11 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                               blockType: { kind: "empty" },
                               then: [...missExtern(), { op: "return" }],
                             },
-                            { op: "local.get", index: 0 },
+                            ...(overlayGetLane === "__vec_prop_get_receiver"
+                              ? [{ op: "local.get", index: 2 } as Instr]
+                              : ctx.standaloneGlobalThisImport?.arrayPrototype
+                                ? consumeReflectGetReceiver(ctx)
+                                : [{ op: "local.get", index: 0 } as Instr]),
                             { op: "local.get", index: gGetter },
                             { op: "call", funcIdx: callAccessorGetIdx },
                             { op: "return" },

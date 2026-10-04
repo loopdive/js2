@@ -79,7 +79,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { allocLocal } from "./context/locals.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
-import { classMemberFuncKey } from "./class-member-keys.js";
+import { classMemberFuncKey, staticAccessorFuncKey, staticReceiverAccessorKey } from "./class-member-keys.js";
 import { classAccessorInstallFlags, emitClassMemberKeyOperand } from "./class-proto-accessors.js";
 import { emitFuncRefAsClosure } from "./closures/funcref-as-closure.js";
 import { compiledBodyReadsThis, emitCachedMethodClosureAccess } from "./closures/method-trampolines.js";
@@ -272,7 +272,7 @@ function collectStaticSidecarEntries(
     }
     if (!ts.isGetAccessorDeclaration(member) && !ts.isSetAccessorDeclaration(member)) continue;
     const isGetter = ts.isGetAccessorDeclaration(member);
-    const half = ctx.funcMap.get(classMemberFuncKey(ctx, `${className}_${isGetter ? "get" : "set"}_${memberName}`));
+    const half = ctx.funcMap.get(staticAccessorFuncKey(ctx, className, isGetter ? "get" : "set", memberName)); // (#6772 S12)
     if (half === undefined) continue;
     // (#6767) The reflective view never becomes a receiver: its halves are
     // handed out as VALUES (`gOPD(C, k).get`) or run with the CLASS OBJECT as
@@ -418,11 +418,17 @@ export function emitClassStaticMemberObject(
         !emitStaticAccessorHalf(
           ctx,
           fctx,
-          `${className}_get_${entry.memberName}`,
+          staticReceiverAccessorKey(ctx, className, "get", entry.memberName, `${className}_get_${entry.memberName}`),
           entry.getterFuncIdx,
           structTypeIdx!,
         ) ||
-        !emitStaticAccessorHalf(ctx, fctx, `${className}_set_${entry.memberName}`, entry.setterFuncIdx, structTypeIdx!)
+        !emitStaticAccessorHalf(
+          ctx,
+          fctx,
+          staticReceiverAccessorKey(ctx, className, "set", entry.memberName, `${className}_set_${entry.memberName}`),
+          entry.setterFuncIdx,
+          structTypeIdx!,
+        )
       ) {
         ok = false;
         break;

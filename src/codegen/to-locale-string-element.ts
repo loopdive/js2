@@ -97,16 +97,16 @@
  * was is not what the companion probe observes.
  */
 import { ts } from "../ts-api.js";
-import type { Instr, ValType, WasmFunction } from "../ir/types.js";
+import type { Instr, ValType } from "../ir/types.js";
 import { sourceOverridesBuiltinPrototypeMember } from "./builtin-proto-member-override.js";
 import { builtinBrandOffsetOf } from "./builtin-brands.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
-import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { makeHelperFctx, reservePlaceholder, reservedFunc, TO_STRING } from "./helpers/reserved-helper-funcs.js"; // (#6771) moved, unchanged
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { protoIndexBrandCompanionHasInstrs, protoIndexRecvGetMissInstrs } from "./proto-index-store.js";
-import { addFuncType, getOrRegisterTaDynViewType } from "./registry/types.js";
+import { getOrRegisterTaDynViewType } from "./registry/types.js";
 import { taDynDetachedGuardPrologue } from "./ta-dyn-method-call.js";
 
 export const NUM_TO_LOCALE_STRING = "__num_to_locale_string";
@@ -114,9 +114,6 @@ export const TA_TO_LOCALE_STRING = "__ta_to_locale_string";
 
 /** The member §23.1.3.32 step 6.c.i invokes on every non-nullish element. */
 const ELEMENT_METHOD = "toLocaleString";
-
-/** §7.1.17 ToString, the native every arm of every element tail ends in. */
-const TO_STRING = "__extern_toString";
 
 /**
  * The gates shared by both reserves.
@@ -213,43 +210,6 @@ export function reserveTaToLocaleString(
   const funcIdx = reservePlaceholder(ctx, TA_TO_LOCALE_STRING, [{ kind: "externref" }], "$ta_to_locale_string_type");
   ctx.taToLocaleStringReserved = true;
   return funcIdx;
-}
-
-/**
- * Mint a `(param) -> externref` placeholder whose body is a bare `unreachable`.
- * Both fills ALWAYS write a valid body, so this is a construction placeholder
- * and never a reachable trap.
- */
-function reservePlaceholder(ctx: CodegenContext, name: string, params: ValType[], typeName: string): number {
-  const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }], typeName);
-  const funcIdx = mintDefinedFunc(ctx);
-  const placeholder: WasmFunction = {
-    name,
-    typeIdx,
-    locals: [],
-    body: [{ op: "unreachable" }],
-    exported: false,
-  };
-  pushDefinedFunc(ctx, funcIdx, placeholder);
-  ctx.funcMap.set(name, funcIdx);
-  return funcIdx;
-}
-
-/** A minimal FunctionContext: these bodies are BUILT, never compiled. */
-function makeHelperFctx(name: string, paramName: string, paramType: ValType): FunctionContext {
-  return {
-    name,
-    params: [{ name: paramName, type: paramType }],
-    locals: [],
-    localMap: new Map(),
-    returnType: { kind: "externref" },
-    body: [],
-    blockDepth: 0,
-    breakStack: [],
-    continueStack: [],
-    labelMap: new Map(),
-    savedBodies: [],
-  };
 }
 
 /**
@@ -463,13 +423,6 @@ export function fillTaToLocaleString(ctx: CodegenContext): void {
     ...nativeTail,
   ];
   fn.locals = fctx.locals;
-}
-
-/** The reserved function record, or `undefined` when it is not there to fill. */
-function reservedFunc(ctx: CodegenContext, name: string): WasmFunction | undefined {
-  const funcIdx = ctx.funcMap.get(name);
-  if (funcIdx === undefined) return undefined;
-  return definedFuncAt(ctx, funcIdx) ?? undefined;
 }
 
 /** The three reusable instruction runs of the `Number.prototype` consult. */

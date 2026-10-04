@@ -71,7 +71,12 @@ import { receiverIsUndefinedIdentifier } from "./nullish-receiver-coercible.js";
 import { tracesToTypedArrayIntrinsicProto } from "./expressions/calls.js"; // (#6769 S7a) `%TypedArray%.prototype` receiver
 import { resolvesToAmbientGlobal } from "./expressions/non-constructable.js";
 import { popBody, pushBody } from "./context/bodies.js";
-import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js";
+import {
+  classMemberFuncKey,
+  isInstanceAccessorKey,
+  resolveMethodOwnerClass,
+  staticReceiverAccessorKey,
+} from "./class-member-keys.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { definedFuncAt } from "./func-space.js";
 import {
@@ -230,6 +235,7 @@ import { linkBrandRoleOf } from "./shape-brand.js";
 import { emitDynamicTemplateRawRead, isDynamicTemplateRawRead } from "./template-raw-dynamic.js";
 import { emitLinkedStaticMemberRead, linkedStaticParentHeritage } from "./standalone-linked-static-inheritance.js"; // (#6644) §15.7.14 step 6 across the link
 import { tryEmitPromiseSubclassCellRead } from "./promise-subclass-cell-read.js";
+import { tryEmitGuardedArrayConstructorRead } from "./array/array-ctor-this.js"; // (#6771 S7)
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -663,6 +669,8 @@ export function tryConstructorPrototypeIdentity(
       !moduleTouchesConstructorProp(expr.getSourceFile()) &&
       !receiverIsPrimitiveWrapper(ctx, expr.expression)
     ) {
+      const guarded = tryEmitGuardedArrayConstructorRead(ctx, fctx, nsName, expr.expression); // (#6771 S7)
+      if (guarded !== undefined) return guarded;
       // Evaluate the receiver for its side effects (spec: MemberExpression is
       // evaluated), then discard it — the constructor identity is static.
       const objResult = compileExpression(ctx, fctx, expr.expression);
@@ -1704,7 +1712,7 @@ export function tryPrivateIdentifierRead(
           const canonicalClass = ctx.classExprNameMap.get(cls.className) ?? cls.className;
           const ownerName = resolveMethodOwnerClass(ctx, canonicalClass, cls.fieldName);
           const methodFullName = `${ownerName}_${cls.fieldName}`;
-          const methodFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, methodFullName));
+          const methodFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, methodFullName, "instance"));
           const ownerStructTypeIdx = ctx.structMap.get(ownerName) ?? structTypeIdx!;
           let emitted = false;
           if (methodFuncIdx !== undefined) {
@@ -2193,7 +2201,7 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
       const accessorKey = `${enclosingClass}_${propName}`;
       if (ctx.staticAccessorSet.has(accessorKey)) {
         const getterName = `${enclosingClass}_get_${propName}`;
-        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, getterName));
+        const funcIdx = ctx.funcMap.get(staticReceiverAccessorKey(ctx, enclosingClass, "get", propName)); // (#6772 S12)
         if (funcIdx !== undefined) {
           const retType = emitGetterCallWithDummy(ctx, fctx, enclosingClass, getterName, funcIdx);
           if (retType) return retType;
@@ -2374,7 +2382,8 @@ function emitClassStaticMemberRead(
   // Wasm (`call[N] expected externref, found ref.func of (ref M)`). Skip
   // the raw path when a static method owns the name, letting the
   // static-method closure arm below handle it correctly.
-  if (propName === "constructor" && !ctx.staticMethodSet.has(fullName)) {
+  // (#6772 S9) a `static get/set constructor` accessor owns the read too.
+  if (propName === "constructor" && !ctx.staticMethodSet.has(fullName) && !ctx.staticAccessorSet.has(fullName)) {
     const ctorName = `${resolvedClass}_constructor`;
     const funcIdx = ctx.funcMap.get(ctorName);
     if (funcIdx !== undefined) {
@@ -2425,7 +2434,7 @@ function emitClassStaticMemberRead(
   const accessorKey = `${resolvedClass}_${propName}`;
   if (ctx.classAccessorSet.has(accessorKey)) {
     const getterName = `${resolvedClass}_get_${propName}`;
-    const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, getterName));
+    const funcIdx = ctx.funcMap.get(staticReceiverAccessorKey(ctx, resolvedClass, "get", propName)); // (#6772 S12)
     if (funcIdx !== undefined) {
       const retType = emitGetterCallWithDummy(ctx, fctx, resolvedClass, getterName, funcIdx);
       return retType ?? { kind: "externref" };
@@ -2595,7 +2604,7 @@ export function tryPrototypeMethodAndArityReads(
       // both `this` and `super` uses. Receiver-sensitive getters deliberately
       // decline this arm and continue through the ordinary path, so this
       // optimization never fabricates a receiver-visible value.
-      if (ctx.classAccessorSet.has(fullName) && !ctx.staticAccessorSet.has(fullName)) {
+      if (isInstanceAccessorKey(ctx, fullName)) {
         const getterName = `${className}_get_${propName}`;
         const getterFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, getterName));
         const getterDecl = ctx.fnMetaMemberDecls?.get(getterName);
@@ -2611,7 +2620,7 @@ export function tryPrototypeMethodAndArityReads(
       // (they live on the constructor, not the prototype) and
       // receiver-sensitive accessors (handled by the ordinary path below).
       if (ctx.classMethodSet.has(fullName) && !ctx.staticMethodSet.has(fullName)) {
-        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
+        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance"));
         const structTypeIdx = ctx.structMap.get(className);
         if (funcIdx !== undefined && structTypeIdx !== undefined) {
           if (emitCachedMethodClosureAccess(ctx, fctx, fullName, funcIdx, structTypeIdx)) {
@@ -4324,7 +4333,10 @@ export function finalizeStructAndDynamicMemberGet(
       fctx.body.push({ op: "call", funcIdx: driverIdx });
       return { kind: "externref" };
     }
-    if (ctx.classAccessorSet.has(accessorKey)) {
+    // (#6772 S9) an accessor named `constructor` can only be STATIC (an
+    // instance one is an early error) — never call it on an instance.
+    const staticCtorAccessor = propName === "constructor" && ctx.staticAccessorSet.has(accessorKey);
+    if (ctx.classAccessorSet.has(accessorKey) && !staticCtorAccessor) {
       const getterName = `${typeName}_get_${propName}`;
       const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, getterName));
       if (funcIdx !== undefined) {
@@ -4372,7 +4384,7 @@ export function finalizeStructAndDynamicMemberGet(
       const owner = resolveMethodOwnerClass(ctx, typeName, propName);
       const methodFullName = `${owner}_${propName}`;
       if (ctx.classMethodSet.has(methodFullName) || ctx.staticMethodSet.has(methodFullName)) {
-        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, methodFullName));
+        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, methodFullName, "instance"));
         if (funcIdx !== undefined) {
           // #1118: Object literal — read the struct field which holds the closure.
           // Detected by: typeName is a registered struct AND the struct has a

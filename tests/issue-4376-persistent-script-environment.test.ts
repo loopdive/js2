@@ -1,11 +1,16 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
 import { compile } from "../src/index.js";
 import { compileMultiSource } from "../src/compiler.js";
 
-async function createRealm() {
+async function createRealm(lexicals = false) {
+  const provider = lexicals
+    ? await readFile(new URL("../examples/v8x-js2wasm-spike/script-lexical-provider.ts", import.meta.url), "utf8")
+    : "";
   const result = await compile(
-    `
+    provider +
+      `
     export function realm():any {return globalThis;}
     export function get(object:any,key:any,receiver:any):any {return Reflect.get(object,key,receiver);}
     export function observed():number {return (globalThis as any).published===42 ? 42 : -1;}
@@ -23,6 +28,30 @@ async function createRealm() {
       return reason;
     }
     export function caught():any {return (globalThis as any).caught;}
+    ${
+      lexicals
+        ? `
+    let lastLexicalOperation=0;
+    let lexicalWrites=0;
+    export function tracedLexical(name:any,operation:number,value:any):any {
+      lastLexicalOperation=operation;
+      if(operation===6) lexicalWrites++;
+      return scriptLexicalOperation(name,operation,value);
+    }
+    export function lexicalTrace():number {return lastLexicalOperation;}
+    export function writeCount():number {return lexicalWrites;}
+    export function caughtKind():number {
+      const error:any=(globalThis as any).caught;
+      return error===undefined?0:error.name==="TypeError"?2:error.name==="ReferenceError"?1:3;
+    }
+    export function retainedNumber():number {return Number(scriptLexicalOperation("retained",5,undefined));}
+    export function retainedIsBigInt():boolean {return typeof scriptLexicalOperation("retained",5,undefined)==="bigint";}
+    export function retainedIsWideLiteral():boolean {return String(scriptLexicalOperation("retained",5,undefined))==="18446744073709551616";}
+    export function hasRetained():boolean {return Boolean(scriptLexicalOperation("retained",9,undefined));}
+    export function hasFirst():boolean {return Boolean(scriptLexicalOperation("first",9,undefined));}
+    `
+        : ""
+    }
   `,
     { target: "standalone", standaloneAllocationOwnerExport: "owns" },
   );
@@ -30,7 +59,7 @@ async function createRealm() {
   return new WebAssembly.Instance(new WebAssembly.Module(result.binary), result.importObject);
 }
 
-async function runScript(owner: WebAssembly.Instance, source: string, sharedBindings = false) {
+async function runScript(owner: WebAssembly.Instance, source: string, sharedBindings = false, lexicals = false) {
   const result = await compile(source, {
     target: "standalone",
     scriptGoal: true,
@@ -38,6 +67,7 @@ async function runScript(owner: WebAssembly.Instance, source: string, sharedBind
     fileName: "script.ts",
     hostBridge: "always",
     standaloneScriptVarBindings: sharedBindings,
+    ...(lexicals ? { standaloneScriptLexicalImport: { module: "context", name: "tracedLexical" } } : {}),
     standaloneAllocationOwnerExport: "localOwns",
     standaloneGlobalThisImport: {
       module: "context",
@@ -58,6 +88,563 @@ it("executes explicit property writes in the shared realm without wrapping Scrip
   expect((realm.exports.observed as Function)()).toBe(-1);
   await runScript(realm, "globalThis.published=42;");
   expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("keeps a dynamic lexical value in the owning Context without exposing a property", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=41; retained+=1; globalThis.published=retained;", true, true);
+  expect((realm.exports.observed as Function)()).toBe(42);
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  await runScript(realm, "globalThis.published=retained;", true, true);
+  expect((realm.exports.observed as Function)()).toBe(42);
+  await runScript(
+    realm,
+    'if(Object.prototype.hasOwnProperty.call(globalThis,"retained")) throw new Error("leaked lexical");',
+    true,
+    true,
+  );
+});
+
+it("retains an inferred numeric const through the Context lexical provider", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "const retained=41; globalThis.published=retained+1;", true, true);
+  expect((realm.exports.observed as Function)()).toBe(42);
+  await runScript(realm, "globalThis.published=retained+1;", true, true);
+  expect((realm.exports.observed as Function)()).toBe(42);
+  await runScript(realm, "try { retained=0; } catch(error) {globalThis.caught=error;}", true, true);
+  expect((realm.exports.caughtKind as Function)()).toBe(2);
+  expect((realm.exports.retainedNumber as Function)()).toBe(41);
+});
+
+it("does not mistake an immutable array binding for immutable elements", async () => {
+  const result = await compile(
+    'const retained=[1,2,3]; globalThis.read=()=>{globalThis.published=typeof retained[0]==="string"?42:0;};',
+    {
+      target: "standalone",
+      scriptGoal: true,
+      allowJs: true,
+      fileName: "script.ts",
+      hostBridge: "always",
+      standaloneScriptVarBindings: true,
+      standaloneScriptLexicalImport: { module: "context", name: "tracedLexical" },
+      standaloneGlobalThisImport: {
+        module: "context",
+        name: "realm",
+        owns: "owns",
+        get: "get",
+        exceptionTag: "__exn_tag",
+      },
+      link: ["context"],
+    },
+  );
+  expect(result.success).toBe(false);
+  expect(result.errors.map((error) => error.message).join("\n")).toContain("private typed-slot proofs");
+});
+
+it("checks TDZ before unboxing an inferred numeric const", async () => {
+  const realm = await createRealm(true);
+  await runScript(
+    realm,
+    "try {globalThis.published=retained;} catch(error){globalThis.caught=error;} const retained=42;",
+    true,
+    true,
+  );
+  expect((realm.exports.caughtKind as Function)()).toBe(1);
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+});
+
+it("retains an inferred boolean const in a retained compiled function", async () => {
+  const realm = await createRealm(true);
+  const earlier = await runScript(
+    realm,
+    "const retained=true; function inspect(){globalThis.published=retained?42:0;} globalThis.saved=inspect;",
+    true,
+    true,
+  );
+  await runScript(realm, "globalThis.published=0;", true, true);
+  const callback = (realm.exports.saved as Function)();
+  (earlier.exports.__call_fn_method_0 as Function)(undefined, callback);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("calls a foreign function-property reader retaining an inferred boolean const", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "const retained=true; globalThis.read=()=>{globalThis.published=retained?42:0;};", true, true);
+  await runScript(realm, "globalThis.read();", true, true);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("calls an AOT function installed through Script top-level this", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "const retained=41; this.reader=()=>{globalThis.published=retained+1;};", true, true);
+  await runScript(realm, "globalThis.reader();", true, true);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("preserves a shared global callable alias and its thrown-value identity", async () => {
+  const realm = await createRealm(true);
+  await runScript(
+    realm,
+    "const retained=41; globalThis.read=()=>{globalThis.score=retained; throw globalThis.saved;};",
+    true,
+    true,
+  );
+  await runScript(
+    realm,
+    "globalThis.saved={marker:42}; globalThis.alias=globalThis.read; try {globalThis.alias();} catch(error){globalThis.caught=error;}",
+    true,
+    true,
+  );
+  expect((realm.exports.score as Function)()).toBe(41);
+  expect((realm.exports.caught as Function)()).toBe((realm.exports.saved as Function)());
+});
+
+it("rejects a lexical redeclaration before user code and before creating earlier cells", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=42;", true, true);
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  await expect(
+    runScript(realm, "let first:any=1; let retained:any=0; globalThis.published=0;", true, true),
+  ).rejects.toBeInstanceOf(WebAssembly.Exception);
+  expect((realm.exports.hasFirst as Function)()).toBe(0);
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  expect((realm.exports.observed as Function)()).toBe(-1);
+});
+
+it("retains an uninitialized lexical after an abrupt initializer", async () => {
+  const realm = await createRealm(true);
+  await expect(
+    runScript(realm, 'let retained:any=(()=>{throw new Error("abort");})();', true, true),
+  ).rejects.toBeInstanceOf(WebAssembly.Exception);
+  expect((realm.exports.hasRetained as Function)()).toBe(1);
+  expect(() => (realm.exports.retainedNumber as Function)()).toThrow(WebAssembly.Exception);
+  await expect(runScript(realm, "globalThis.published=retained;", true, true)).rejects.toBeInstanceOf(
+    WebAssembly.Exception,
+  );
+});
+
+it("keeps lexical cells isolated between Contexts", async () => {
+  const first = await createRealm(true);
+  const second = await createRealm(true);
+  await runScript(first, "let retained:any=42;", true, true);
+  await runScript(second, "let retained:any=41;", true, true);
+  await runScript(first, "globalThis.published=retained;", true, true);
+  await runScript(second, "globalThis.published=retained;", true, true);
+  expect((first.exports.observedNumber as Function)()).toBe(42);
+  expect((second.exports.observedNumber as Function)()).toBe(41);
+});
+
+it("writes an existing lexical from a later Script without creating a global property", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=41;", true, true);
+  await runScript(realm, "retained=42; globalThis.published=retained;", true, true);
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  expect((realm.exports.observed as Function)()).toBe(42);
+  await runScript(
+    realm,
+    'globalThis.published=Object.prototype.hasOwnProperty.call(globalThis,"retained")?0:42;',
+    true,
+    true,
+  );
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("writes an existing lexical from strict Script code and evaluates the RHS once", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=41;", true, true);
+  await runScript(
+    realm,
+    '"use strict"; globalThis.score=0; retained=(++globalThis.score,42); globalThis.published=retained;',
+    true,
+    true,
+  );
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  expect((realm.exports.score as Function)()).toBe(1);
+  expect((realm.exports.writeCount as Function)()).toBe(1);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("checks const mutability in a later Script after evaluating the RHS", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "const retained:any=41;", true, true);
+  await runScript(
+    realm,
+    '"use strict"; globalThis.score=0; try {retained=(++globalThis.score,42);} catch(error){globalThis.caught=error;}',
+    true,
+    true,
+  );
+  expect((realm.exports.retainedNumber as Function)()).toBe(41);
+  expect((realm.exports.score as Function)()).toBe(1);
+  expect((realm.exports.caughtKind as Function)()).toBe(2);
+});
+
+it("updates a prior lexical with compound arithmetic without leaking a property", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=40;", true, true);
+  await runScript(realm, '"use strict"; retained+=2; globalThis.published=retained;', true, true);
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("preserves prefix and postfix results for a prior lexical", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=40;", true, true);
+  await runScript(realm, '"use strict"; globalThis.score=retained++; globalThis.published=++retained;', true, true);
+  expect((realm.exports.score as Function)()).toBe(40);
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("reads the old lexical before compound RHS mutations and stores the computed value", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=40;", true, true);
+  await runScript(
+    realm,
+    '"use strict"; globalThis.score=0; retained+=(++globalThis.score,retained=100,2); globalThis.published=retained;',
+    true,
+    true,
+  );
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  expect((realm.exports.observed as Function)()).toBe(42);
+  expect((realm.exports.score as Function)()).toBe(1);
+});
+
+it("keeps dynamic string addition and numeric prefix/postfix coercion distinct", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, 'let retained:any="4";', true, true);
+  await runScript(realm, 'retained+="2"; globalThis.published=retained==="42"?42:0;', true, true);
+  expect((realm.exports.observed as Function)()).toBe(42);
+  await runScript(realm, "globalThis.score=retained--; globalThis.published=++retained;", true, true);
+  expect((realm.exports.score as Function)()).toBe(42);
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("throws for a missing compound target before RHS effects", async () => {
+  const realm = await createRealm(true);
+  await runScript(
+    realm,
+    "globalThis.score=0; try {missing+=(++globalThis.score,2);} catch(error){globalThis.caught=error;}",
+    true,
+    true,
+  );
+  expect((realm.exports.score as Function)()).toBe(0);
+  expect((realm.exports.caughtKind as Function)()).toBe(1);
+});
+
+it("keeps a prior const unchanged after compound and increment errors", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "const retained:any=40;", true, true);
+  await runScript(
+    realm,
+    "globalThis.score=0; try {retained+=(++globalThis.score,2);} catch(error){globalThis.caught=error;}",
+    true,
+    true,
+  );
+  expect((realm.exports.score as Function)()).toBe(1);
+  expect((realm.exports.caughtKind as Function)()).toBe(2);
+  expect((realm.exports.retainedNumber as Function)()).toBe(40);
+  await runScript(realm, "try {retained++;} catch(error){globalThis.caught=error;}", true, true);
+  expect((realm.exports.caughtKind as Function)()).toBe(2);
+  expect((realm.exports.retainedNumber as Function)()).toBe(40);
+});
+
+it("short-circuits logical writes to prior lexical cells", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=0;", true, true);
+  await runScript(
+    realm,
+    "globalThis.score=0; retained&&=(++globalThis.score,10); retained||=(++globalThis.score,42); retained??=(++globalThis.score,20); globalThis.published=retained;",
+    true,
+    true,
+  );
+  expect((realm.exports.score as Function)()).toBe(1);
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("preserves BigInt values across prior-lexical compound and update operations", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=39n;", true, true);
+  expect((realm.exports.retainedIsBigInt as Function)()).toBe(1);
+  await runScript(realm, "retained+=2n; globalThis.published=retained===41n?42:0;", true, true);
+  expect((realm.exports.retainedIsBigInt as Function)()).toBe(1);
+  expect((realm.exports.observed as Function)()).toBe(42);
+  await runScript(
+    realm,
+    "globalThis.score=retained++===41n?41:0; globalThis.published=retained===42n?42:0;",
+    true,
+    true,
+  );
+  expect((realm.exports.score as Function)()).toBe(41);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("fills a nullish lexical and skips a const logical write when no write is needed", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=undefined; const fixed:any=42;", true, true);
+  await runScript(
+    realm,
+    "globalThis.score=0; retained??=(++globalThis.score,42); fixed||=(++globalThis.score,0); globalThis.published=retained;",
+    true,
+    true,
+  );
+  expect((realm.exports.score as Function)()).toBe(1);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it.each([
+  ["18446744073709551616n", "18446744073709551616"],
+  ["-18446744073709551616n", "-18446744073709551616"],
+  ["9223372036854775808n", "9223372036854775808"],
+  ["-9223372036854775809n", "-9223372036854775809"],
+  ["(2n**64n)+1n", "18446744073709551617"],
+])("preserves an initial wide lexical %s before any boxing helper is requested", async (expression, expected) => {
+  const realm = await createRealm(true);
+  await runScript(realm, `let retained:any=${expression};`, true, true);
+  await runScript(realm, `globalThis.published=String(retained)===${JSON.stringify(expected)}?42:0;`, true, true);
+  expect((realm.exports.retainedIsBigInt as Function)()).toBe(1);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("increments a wide BigInt without truncating it or mutating the old postfix value", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=18446744073709551616n;", true, true);
+  expect((realm.exports.retainedIsWideLiteral as Function)()).toBe(1);
+  await runScript(
+    realm,
+    'globalThis.saved=retained++; globalThis.published=String(retained)==="18446744073709551617" && String(globalThis.saved)==="18446744073709551616"?42:0;',
+    true,
+    true,
+  );
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("promotes a narrow BigInt increment instead of wrapping at the signed boundary", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=9223372036854775807n;", true, true);
+  await runScript(
+    realm,
+    'globalThis.saved=++retained; globalThis.published=String(retained)==="9223372036854775808" && String(globalThis.saved)==="9223372036854775808"?42:0;',
+    true,
+    true,
+  );
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+const bigUpdateCases = [
+  [0n, 1n],
+  [0n, -1n],
+  [-1n, 1n],
+  [1n, -1n],
+  [-9223372036854775808n, -1n],
+  [-9223372036854775809n, 1n],
+  [9223372036854775808n, -1n],
+  [9223372036854775807n, 1n],
+  [(1n << 192n) - 1n, 1n],
+  [1n << 192n, -1n],
+  [-(1n << 192n), 1n],
+  [-((1n << 192n) - 1n), -1n],
+] as const;
+
+it.each(
+  bigUpdateCases.flatMap(([initial, delta]) => [[initial, delta, false] as const, [initial, delta, true] as const]),
+)("updates BigInt %s by %s with prefix=%s exactly", async (initial, delta, prefix) => {
+  const realm = await createRealm(true);
+  const updated = initial + delta;
+  const result = prefix ? updated : initial;
+  const operator = delta === 1n ? "++" : "--";
+  await runScript(realm, `let retained:any=${initial}n;`, true, true);
+  const expression = prefix ? `${operator}retained` : `retained${operator}`;
+  await runScript(realm, `globalThis.saved=${expression};`, true, true);
+  await runScript(
+    realm,
+    `globalThis.published=String(retained)===${JSON.stringify(String(updated))} && String(globalThis.saved)===${JSON.stringify(String(result))}?42:0;`,
+    true,
+    true,
+  );
+  expect((realm.exports.observed as Function)()).toBe(42);
+  expect((realm.exports.retainedIsBigInt as Function)()).toBe(1);
+  // Exact equality also verifies canonical narrow/wide normalization and that
+  // retaining the old postfix result didn't mutate its limb array.
+  await runScript(
+    realm,
+    `globalThis.published=retained===${updated}n && globalThis.saved===${result}n?42:0;`,
+    true,
+    true,
+  );
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("keeps a wide const and its old value intact when an exact update cannot be stored", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "const fixed:any=18446744073709551616n;", true, true);
+  await runScript(
+    realm,
+    'try {fixed++;} catch(error){globalThis.caught=error;} globalThis.published=String(fixed)==="18446744073709551616"?42:0;',
+    true,
+    true,
+  );
+  expect((realm.exports.caughtKind as Function)()).toBe(2);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("updates a wide lexical exactly in the Script that declares it", async () => {
+  const realm = await createRealm(true);
+  await runScript(
+    realm,
+    'let retained:any=18446744073709551616n; globalThis.saved=retained++; globalThis.published=String(retained)==="18446744073709551617" && String(globalThis.saved)==="18446744073709551616"?42:0;',
+    true,
+    true,
+  );
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("does not route a same-name block or function local into the Context lexical", async () => {
+  const realm = await createRealm(true);
+  await runScript(
+    realm,
+    'let retained:any=18446744073709551616n; {let retained:any=10; retained++; globalThis.score=retained;} function local(){let retained:any=20; return ++retained;} globalThis.published=String(retained)==="18446744073709551616" && globalThis.score===11 && local()===21?42:0;',
+    true,
+    true,
+  );
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("checks TDZ for an own lexical update before writing or initializing the cell", async () => {
+  const realm = await createRealm(true);
+  await runScript(
+    realm,
+    "try {retained++;} catch(error){globalThis.caught=error;} let retained:any=42; globalThis.published=retained;",
+    true,
+    true,
+  );
+  expect((realm.exports.caughtKind as Function)()).toBe(1);
+  expect((realm.exports.writeCount as Function)()).toBe(0);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("converts a prior object to a wide BigInt once and returns the primitive postfix value", async () => {
+  const realm = await createRealm(true);
+  await runScript(
+    realm,
+    "globalThis.score=0; let retained:any={valueOf(){globalThis.score++; return 18446744073709551616n;}};",
+    true,
+    true,
+  );
+  await runScript(realm, "globalThis.saved=retained++;", true, true);
+  await runScript(
+    realm,
+    'globalThis.published=String(retained)==="18446744073709551617" && String(globalThis.saved)==="18446744073709551616"?42:0;',
+    true,
+    true,
+  );
+  expect((realm.exports.score as Function)()).toBe(1);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it.each([
+  "{valueOf(){globalThis.score++; return 41;}}",
+  "{valueOf:function(){globalThis.score++; return 41;}}",
+  "{valueOf:()=>{globalThis.score++; return 41;}}",
+])("calls a foreign conversion closure once without any local closure: %s", async (object) => {
+  const realm = await createRealm(true);
+  await runScript(realm, `globalThis.score=0; let retained:any=${object};`, true, true);
+  await runScript(realm, "globalThis.saved=retained++; globalThis.published=retained;", true, true);
+  expect((realm.exports.score as Function)()).toBe(1);
+  expect((realm.exports.observed as Function)()).toBe(42);
+  await runScript(realm, "globalThis.published=globalThis.saved===41?42:0;", true, true);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it.each([
+  ["{valueOf:function(){return 18446744073709551616n;}}", "18446744073709551616", "18446744073709551617"],
+  ["{valueOf:()=>18446744073709551616n}", "18446744073709551616", "18446744073709551617"],
+  ["{valueOf(){return -18446744073709551616n;}}", "-18446744073709551616", "-18446744073709551615"],
+  ["{valueOf:()=>41n}", "41", "42"],
+])("preserves the exact native BigInt returned by a foreign closure: %s", async (object, oldValue, newValue) => {
+  const realm = await createRealm(true);
+  await runScript(realm, `let retained:any=${object};`, true, true);
+  await runScript(realm, "globalThis.saved=retained++;", true, true);
+  await runScript(
+    realm,
+    `globalThis.published=String(globalThis.saved)==="${oldValue}" && String(retained)==="${newValue}"?42:0;`,
+    true,
+    true,
+  );
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("preserves the original receiver identity in a foreign valueOf call", async () => {
+  const realm = await createRealm(true);
+  await runScript(
+    realm,
+    "globalThis.score=0; let retained:any={valueOf(){globalThis.score++; return this===globalThis.original?41:0;}}; globalThis.original=retained;",
+    true,
+    true,
+  );
+  await runScript(realm, "globalThis.published=++retained;", true, true);
+  expect((realm.exports.score as Function)()).toBe(1);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("preserves a foreign conversion exception identity and does not write the lexical", async () => {
+  const realm = await createRealm(true);
+  await runScript(
+    realm,
+    "globalThis.score=0; globalThis.saved={marker:42}; let retained:any={valueOf(){globalThis.score++; throw globalThis.saved;}}; globalThis.original=retained;",
+    true,
+    true,
+  );
+  await runScript(realm, "try {retained++;} catch(error){globalThis.caught=error;}", true, true);
+  expect((realm.exports.score as Function)()).toBe(1);
+  expect((realm.exports.caught as Function)()).toBe((realm.exports.saved as Function)());
+  expect((realm.exports.writeCount as Function)()).toBe(0);
+  await runScript(realm, "globalThis.published=retained===globalThis.original?42:0;", true, true);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("reads and writes an existing object-record accessor once for compound assignment", async () => {
+  const realm = await createRealm(true);
+  (realm.exports.installAccessor as Function)();
+  await runScript(realm, '"use strict"; globalThis.score=(published+=41);', true, true);
+  expect((realm.exports.score as Function)()).toBe(42);
+});
+
+it("preserves strict global misses and sloppy global writes when no lexical exists", async () => {
+  const realm = await createRealm(true);
+  await runScript(
+    realm,
+    '"use strict"; globalThis.score=0; try {missing=(++globalThis.score,42);} catch(error){globalThis.caught=error;}',
+    true,
+    true,
+  );
+  expect((realm.exports.score as Function)()).toBe(1);
+  expect((realm.exports.caughtKind as Function)()).toBe(1);
+  await runScript(realm, "missing=42; globalThis.published=missing;", true, true);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("preserves a const cell after an attempted write", async () => {
+  const realm = await createRealm(true);
+  await runScript(
+    realm,
+    "const retained:any=42; try {retained=0;} catch(error) {globalThis.caught=error;}",
+    true,
+    true,
+  );
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  expect((realm.exports.caught as Function)()).toBeDefined();
+});
+
+it("rejects a var declaration conflicting with a prior lexical before effects", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "let retained:any=42;", true, true);
+  await expect(runScript(realm, "var retained:any; globalThis.published=0;", true, true)).rejects.toBeInstanceOf(
+    WebAssembly.Exception,
+  );
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+  expect((realm.exports.observed as Function)()).toBe(-1);
 });
 
 it("shares dynamic Script var values and preserves initializer-free redeclarations", async () => {

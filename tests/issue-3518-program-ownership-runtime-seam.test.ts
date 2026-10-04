@@ -22,15 +22,13 @@ import { captureTypedIrProgramInput } from "../src/ir/program-source.js";
 import { sourcePacket, startupFiles, typedOptions } from "./helpers/typed-program-fixtures.js";
 import { createTestIrClassId } from "./helpers/ir-identities.js";
 
-import {
-  reconstructRuntimeProgramRelocationSources,
-  runtimeProgramRelocationPairs,
-} from "./helpers/ir-runtime-program-relocation.js";
+import { runtimeProgramRelocationPairs } from "./helpers/ir-runtime-program-relocation.js";
+import { reconstructC1CurrentSources } from "./helpers/ir-c1-current-source.js";
 
 const root = resolve(import.meta.dirname, "..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8");
 function beforeC1(readLive: (path: string) => string = read): (path: string) => string {
-  const sources = reconstructRuntimeProgramRelocationSources(readLive);
+  const sources = reconstructC1CurrentSources(readLive);
   return (path) => {
     if (runtimeProgramRelocationPairs.some(([donor]) => donor === path)) {
       const source = sources.get(path as Parameters<typeof sources.get>[0]);

@@ -91,7 +91,7 @@ type InstrBase =
   // globals share the `index` field name with locals but live in the module
   // index space, so they carry a GlobalHandle (binary.ts discriminates on `op`).
   | { op: "global.get"; index: GlobalHandle }
-  | { op: "global.set"; index: GlobalHandle }
+  | { op: "global.set"; index: GlobalHandle; initializesBinding?: boolean }
   | { op: "i32.const"; value: number }
   | { op: "i64.const"; value: bigint }
   | { op: "i64.add" }

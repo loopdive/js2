@@ -59,6 +59,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { protoIndexRecvGetMissInstrs } from "./proto-index-store.js"; // (#4176) inherited proto-named consult
 import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
+import { sharedArrayPrototypeRead } from "./shared-array-prototype-read.js";
 
 /** Reserved helper names. */
 const IS_VEC_PROP_CARRIER = "__is_vec_prop_carrier";
@@ -80,6 +81,7 @@ const VEC_BAG_ENSURE = "__vec_bag_ensure";
  * property. `array-nonindex-key.ts` owns that distinction.
  */
 export const VEC_PROP_GET = "__vec_prop_get";
+const VEC_PROP_GET_RECEIVER = "__vec_prop_get_receiver";
 export const VEC_PROP_SET = "__vec_prop_set";
 
 /** $VecPropEntry field indices. */
@@ -99,10 +101,18 @@ export function captureVecOrClosureReadBinding(
 ): VecOrClosureReadBinding {
   const closure = captureClosureReadBinding(ctx, getMiss, explicitReceiverLocal);
   const isVecIdx = ctx.funcMap.get(IS_VEC_PROP_CARRIER);
-  const vecGetIdx = ctx.funcMap.get(VEC_PROP_GET);
+  const receiverGetIdx = ctx.funcMap.get(VEC_PROP_GET_RECEIVER);
+  const vecGetIdx = receiverGetIdx ?? ctx.funcMap.get(VEC_PROP_GET);
   return {
     closure,
-    vector: isVecIdx === undefined || vecGetIdx === undefined ? undefined : { isCarrier: isVecIdx, get: vecGetIdx },
+    vector:
+      isVecIdx === undefined || vecGetIdx === undefined
+        ? undefined
+        : {
+            isCarrier: isVecIdx,
+            get: vecGetIdx,
+            ...(receiverGetIdx === undefined ? {} : { accessorReceiver: explicitReceiverLocal ?? 0 }),
+          },
   };
 }
 
@@ -258,6 +268,9 @@ export function reserveVecPropHelpers(ctx: CodegenContext): void {
   reserve(VEC_BAG_LOOKUP, [externref], [externref]);
   reserve(VEC_BAG_ENSURE, [externref], [externref]);
   reserve(VEC_PROP_GET, [externref, externref], [externref]);
+  if (ctx.standaloneGlobalThisImport?.arrayPrototype) {
+    reserve(VEC_PROP_GET_RECEIVER, [externref, externref, externref], [externref]);
+  }
   reserve(VEC_PROP_SET, [externref, externref, externref], []);
 
   ctx.vecPropHelpersReserved = true;
@@ -399,73 +412,79 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
   // `undefined` unless the store was reserved, so a flag-clear module keeps
   // this body byte-identical.
   if (isVecIdx !== undefined && bagLookupIdx !== undefined && externGetIdx !== undefined) {
-    // A vec's bag represents only the receiver's OWN named properties.  The
-    // presence of an unrelated entry must not terminate the inherited lookup:
-    // runtime eval builds `[1]` through a dynamic index write, which gives the
-    // vec a bag; an unconditional bag read then made `[1].every` undefined
-    // while `[].every` still worked.  This is the vec twin of #4563's callable
-    // carrier fix.  Test own presence rather than the loaded value so an own
-    // property whose value is `undefined` still shadows Array.prototype.
-    const bagRead: Instr[] =
-      reflectGetReceiverIdx !== undefined
-        ? [
-            { op: "local.get", index: 2 }, // bag (target)
-            { op: "local.get", index: 1 }, // key
-            { op: "local.get", index: 0 }, // receiver = the vec itself
-            { op: "call", funcIdx: reflectGetReceiverIdx },
-          ]
-        : [
-            { op: "local.get", index: 2 }, // bag
-            { op: "local.get", index: 1 }, // key
-            { op: "call", funcIdx: externGetIdx },
-          ];
-    const bagOwnGuardedRead: Instr[] =
-      hasOwnIdx === undefined
-        ? [...bagRead, { op: "return" }]
-        : [
-            { op: "local.get", index: 2 }, // bag
-            { op: "local.get", index: 1 }, // key
-            { op: "call", funcIdx: hasOwnIdx },
-            { op: "if", blockType: { kind: "empty" }, then: [...bagRead, { op: "return" }] },
-          ];
-    setBody(
-      VEC_PROP_GET,
-      [{ name: "__bag", type: { kind: "externref" } }],
-      [
-        // The guarded bag path probes and then reads the same key. Normalize
-        // it once here so an object key's observable ToPropertyKey hook runs
-        // once; both downstream `$Object` helpers then take their idempotent
-        // already-string/Symbol fast path.
-        ...(toPropertyKeyIdx === undefined
-          ? []
+    const readers: [string, number, number][] = [[VEC_PROP_GET, 0, 2]];
+    if (ctx.funcMap.has(VEC_PROP_GET_RECEIVER)) readers.push([VEC_PROP_GET_RECEIVER, 2, 3]);
+    for (const [reader, receiverLocal, bagLocal] of readers) {
+      // A vec's bag represents only the receiver's OWN named properties.  The
+      // presence of an unrelated entry must not terminate the inherited lookup:
+      // runtime eval builds `[1]` through a dynamic index write, which gives the
+      // vec a bag; an unconditional bag read then made `[1].every` undefined
+      // while `[].every` still worked.  This is the vec twin of #4563's callable
+      // carrier fix.  Test own presence rather than the loaded value so an own
+      // property whose value is `undefined` still shadows Array.prototype.
+      const bagRead: Instr[] =
+        reflectGetReceiverIdx !== undefined
+          ? [
+              { op: "local.get", index: bagLocal }, // bag (target)
+              { op: "local.get", index: 1 }, // key
+              { op: "local.get", index: receiverLocal },
+              { op: "call", funcIdx: reflectGetReceiverIdx },
+            ]
           : [
-              { op: "local.get", index: 1 } as Instr,
-              { op: "call", funcIdx: toPropertyKeyIdx } as Instr,
-              { op: "local.set", index: 1 } as Instr,
-            ]),
-        { op: "local.get", index: 0 },
-        { op: "call", funcIdx: isVecIdx },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "local.get", index: 0 },
-            { op: "call", funcIdx: bagLookupIdx },
-            { op: "local.tee", index: 2 }, // bag
-            { op: "ref.is_null" },
-            { op: "i32.eqz" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: bagOwnGuardedRead,
-            },
-          ],
-        },
-        ...(protoIndexRecvGetMissInstrs(ctx, 0, 1) ?? getMiss()),
-      ],
-    );
+              { op: "local.get", index: bagLocal }, // bag
+              { op: "local.get", index: 1 }, // key
+              { op: "call", funcIdx: externGetIdx },
+            ];
+      const bagOwnGuardedRead: Instr[] =
+        hasOwnIdx === undefined
+          ? [...bagRead, { op: "return" }]
+          : [
+              { op: "local.get", index: bagLocal }, // bag
+              { op: "local.get", index: 1 }, // key
+              { op: "call", funcIdx: hasOwnIdx },
+              { op: "if", blockType: { kind: "empty" }, then: [...bagRead, { op: "return" }] },
+            ];
+      setBody(
+        reader,
+        [{ name: "__bag", type: { kind: "externref" } }],
+        [
+          // The guarded bag path probes and then reads the same key. Normalize
+          // it once here so an object key's observable ToPropertyKey hook runs
+          // once; both downstream `$Object` helpers then take their idempotent
+          // already-string/Symbol fast path.
+          ...(toPropertyKeyIdx === undefined
+            ? []
+            : [
+                { op: "local.get", index: 1 } as Instr,
+                { op: "call", funcIdx: toPropertyKeyIdx } as Instr,
+                { op: "local.set", index: 1 } as Instr,
+              ]),
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: isVecIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "call", funcIdx: bagLookupIdx },
+              { op: "local.tee", index: bagLocal }, // bag
+              { op: "ref.is_null" },
+              { op: "i32.eqz" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: bagOwnGuardedRead,
+              },
+            ],
+          },
+          ...sharedArrayPrototypeRead(ctx, receiverLocal),
+          ...(protoIndexRecvGetMissInstrs(ctx, 0, 1, receiverLocal) ?? getMiss()),
+        ],
+      );
+    }
   } else {
     setBody(VEC_PROP_GET, [], [...getMiss()]);
+    if (ctx.funcMap.has(VEC_PROP_GET_RECEIVER)) setBody(VEC_PROP_GET_RECEIVER, [], [...getMiss()]);
   }
 
   // ── __vec_prop_set(externref obj, externref key, externref value) -> () ──

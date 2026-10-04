@@ -57,7 +57,7 @@ describe("v8x closed-manifest graph compiler", () => {
     );
   });
 
-  it("statically supplies import.meta url, main, and URL-resolvable resolve calls", async () => {
+  it("routes the full import.meta object through per-module host capabilities", async () => {
     const graph = prepareManifestGraph(
       new Map([
         [
@@ -66,6 +66,8 @@ describe("v8x closed-manifest graph compiler", () => {
             export const url = import.meta.url;
             export const main = import.meta.main;
             export const child = import.meta.resolve("./child.js");
+            export const object = import.meta;
+            export const bracket = import.meta["main"];
           `,
         ],
         ["file:///dep.js", `export const main = import.meta.main;`],
@@ -73,20 +75,42 @@ describe("v8x closed-manifest graph compiler", () => {
       "file:///main.js",
     );
 
-    expect(graph.files[compilerPath("file:///main.js")]).toContain('const url = "file:///main.js"');
-    expect(graph.files[compilerPath("file:///main.js")]).toContain("const main = true");
-    expect(graph.files[compilerPath("file:///main.js")]).toContain('const child = "file:///child.js"');
-    expect(graph.files[compilerPath("file:///dep.js")]).toContain("const main = false");
+    const mainCapability = `__v8x_import_meta_${Buffer.from("file:///main.js").toString("hex")}`;
+    const depCapability = `__v8x_import_meta_${Buffer.from("file:///dep.js").toString("hex")}`;
+    const mainSource = graph.files[compilerPath("file:///main.js")]!;
+    const depSource = graph.files[compilerPath("file:///dep.js")]!;
+    expect(mainSource).toContain(`declare function ${mainCapability}(): number`);
+    expect(depSource).toContain(`declare function ${depCapability}(): number`);
+    expect(mainSource).not.toContain("import.meta");
+    expect(mainSource).not.toContain("const main = true");
+    expect(depSource).not.toContain("const main = false");
+    expect(mainSource).toContain('.resolve("./child.js")');
+    expect(mainSource).toContain('["main"]');
+    // Loading the same graph as a side module must not change its artifact.
+    const sideGraph = prepareManifestGraph(
+      new Map([["file:///main.js", "export const main=import.meta.main;"]]),
+      "file:///main.js",
+    );
+    expect(sideGraph.files[sideGraph.entry]).toContain(`${mainCapability}()`);
 
     const result = await compileMultiSource(
       graph.files,
       graph.entry,
-      { target: "standalone", platform: "deno", allowJs: true, skipSemanticDiagnostics: true },
+      {
+        target: "standalone",
+        platform: "deno",
+        allowJs: true,
+        externImportModule: "v8x:deno",
+        skipSemanticDiagnostics: true,
+      },
       undefined,
       graph.projectResolutions,
     );
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(result.imports.some((entry) => entry.name === "__get_import_meta_url")).toBe(false);
+    const imports = WebAssembly.Module.imports(new WebAssembly.Module(result.binary));
+    expect(imports.some((entry) => entry.module === "v8x:deno" && entry.name === mainCapability)).toBe(true);
+    expect(imports.some((entry) => entry.name === "__v8x_import_meta_unwrap")).toBe(true);
   });
 
   it("lowers a known awaited dynamic import to one stable native namespace", async () => {

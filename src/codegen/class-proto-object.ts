@@ -139,7 +139,7 @@ export function installableInstanceMethodNames(ctx: CodegenContext, className: s
     // this membership test is what separates the two.
     if (!ctx.classMethodSet.has(fullName)) continue;
     if (ctx.staticMethodSet.has(fullName)) continue;
-    if (ctx.funcMap.get(classMemberFuncKey(ctx, fullName)) === undefined) continue;
+    if (ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")) === undefined) continue;
     out.push(name);
   }
   return out;
@@ -332,7 +332,7 @@ export function emitStandaloneClassProtoObject(
 
     for (const name of ok ? methodNames : []) {
       const fullName = `${className}_${name}`;
-      const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName))!;
+      const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance"))!;
       fctx.body.push({ op: "local.get", index: objLocal });
       // (#5195 Step 1) A member whose computed key is only known at runtime
       // reads its key out of the `__cmkey_` global instead of an interned

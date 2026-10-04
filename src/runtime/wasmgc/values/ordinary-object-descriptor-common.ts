@@ -35,6 +35,13 @@ export interface OrdinaryDescriptorErrors {
   readonly tagIdx: number;
   /** Pre-acquired string literal operands, in the donor's evaluation order. */
   readonly messages: readonly (readonly Instr[])[];
+  /**
+   * (#6770 S4) The define-REJECTION channel: when present, every
+   * ValidateAndApplyPropertyDescriptor rejection parks its TypeError in this
+   * externref global before throwing it, so `Reflect.defineProperty` can turn
+   * exactly that throw into `false` (define-rejection-channel.ts).
+   */
+  readonly rejectionGlobal?: number;
 }
 export interface OrdinaryDescriptorResources {
   readonly objectTypeIdx: TypeHandle;
@@ -66,5 +73,17 @@ export function descriptorFlagBit(local: number, bit: number): Instr[] {
 export function descriptorTypeError(d: OrdinaryDescriptorErrors, ordinal: number): Instr[] {
   const literal = d.messages[ordinal];
   if (!literal) throw new Error("ordinary descriptor: missing error literal " + ordinal);
-  return [...structuredClone(literal), { op: "call", funcIdx: d.constructorIdx }, { op: "throw", tagIdx: d.tagIdx }];
+  const park: Instr[] =
+    d.rejectionGlobal === undefined
+      ? []
+      : [
+          { op: "global.set", index: d.rejectionGlobal },
+          { op: "global.get", index: d.rejectionGlobal },
+        ];
+  return [
+    ...structuredClone(literal),
+    { op: "call", funcIdx: d.constructorIdx },
+    ...park,
+    { op: "throw", tagIdx: d.tagIdx },
+  ];
 }

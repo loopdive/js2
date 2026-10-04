@@ -82,8 +82,13 @@
 //
 // Exit code 0 = PROCEED with the push. Exit code 10 = DEFER (a normal,
 // expected outcome — callers should treat it as "skip the push and exit 0",
-// never as a failure). Any other non-zero exit is a real error; callers should
-// treat it as PROCEED (fail-open) after logging.
+// never as a failure). Any other non-zero exit is a real error — an uncaught
+// crash, or the script missing from the checkout; the gate itself never exits
+// non-zero for an UNKNOWN reading or a usage error, it proceeds with a warning
+// instead. Callers FAIL CLOSED on it (#6799): fail the
+// step with an `::error::` and do not push. The fail-open asymmetry argued
+// above is about what the gate cannot SEE; it never licensed pushing past a
+// gate that did not run.
 //
 // THE EXIT CODE IS THE ONLY CONTRACT. This script deliberately does NOT write
 // $GITHUB_OUTPUT: the caller maps the exit code to an output, so exactly one

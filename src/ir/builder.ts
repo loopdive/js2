@@ -258,8 +258,15 @@ export class IrFunctionBuilder {
     return result;
   }
 
-  emitGlobalSet(target: IrGlobalRef, value: IrValueId): void {
-    this.pushInstr({ kind: "global.set", target, value, result: null, resultType: null });
+  emitGlobalSet(target: IrGlobalRef, value: IrValueId, initializesBinding = false): void {
+    this.pushInstr({
+      kind: "global.set",
+      target,
+      value,
+      result: null,
+      resultType: null,
+      ...(initializesBinding ? { initializesBinding: true } : {}),
+    });
   }
 
   emitBinary(op: IrBinop, lhs: IrValueId, rhs: IrValueId, resultType: IrType): IrValueId {

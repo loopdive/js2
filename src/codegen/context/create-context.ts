@@ -210,6 +210,7 @@ export function createCodegenContext(
     classAccessorSet: new Set(),
     structAccessorClosure: new Map(), // (#1888 S5c) struct accessors compiled as host-free closures
     staticAccessorSet: new Set(),
+    classInstanceAccessorKeys: new Set(),
     staticMethodSet: new Set(),
     staticProps: new Map(),
     protoOverrides: new Map(), // #1719 CPR — captured prototype-member overrides
@@ -275,6 +276,7 @@ export function createCodegenContext(
     classTagCounter: 0,
     classTagMap: new Map(),
     classExprNameMap: new Map(),
+    classExprAmbiguousNames: new Set(),
     anonClassExprNames: new Map(),
     functionNameMap: new Map(),
     sourceMap: options?.sourceMap ?? false,
@@ -419,7 +421,17 @@ export function createCodegenContext(
     nodeFsWriteSyncIdx: -1,
     standalone: targetProfile.nativeRegime, // (#5385) the native semantic regime, not the environment
     ...(options?.standaloneGlobalThisImport ? { standaloneGlobalThisImport: options.standaloneGlobalThisImport } : {}),
+    ...(options?.standaloneModuleNamespaceImports
+      ? { standaloneModuleNamespaceImports: options.standaloneModuleNamespaceImports }
+      : {}),
     standaloneScriptVarBindings: options?.standaloneScriptVarBindings,
+    standaloneScriptLexicalImport: options?.standaloneScriptLexicalImport,
+    standaloneScriptCompletionImport: options?.standaloneScriptCompletionImport,
+    standaloneScriptGetExport: options?.standaloneScriptGetExport,
+    standaloneScriptCallExport: options?.standaloneScriptCallExport,
+    standaloneScriptOwnNamesExport: options?.standaloneScriptOwnNamesExport,
+    standaloneScriptReflectionExports: options?.standaloneScriptReflectionExports,
+    standaloneSymbolState: options?.standaloneSymbolState,
     ...(options?.standaloneMicrotaskNotifyImport
       ? { standaloneMicrotaskNotifyImport: options.standaloneMicrotaskNotifyImport }
       : {}),

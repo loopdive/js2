@@ -8,6 +8,8 @@
  * widened and closed-struct object carriers.
  */
 
+import { restPatternParamSlot } from "./resolved-rest-param.js"; // (#6774 S7)
+import { hoistParameterEvalVars } from "./expressions/eval-param-scope-hoist.js"; // (#6774 S7)
 import ts from "typescript";
 import { hoistFunctionDeclarations } from "./statements/nested-declarations.js";
 import { isStringType, isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
@@ -30,7 +32,9 @@ import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { staticHostPropertyKeyInstrs } from "./host-property-key.js";
 import { emitHoleSentinel } from "./array-holes.js"; // (#2001 S1)
+import { holeFilledArrayNewInstrs } from "./array/array-length-holes.js"; // (#6771 S3)
 import { objectLiteralTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) shared with the type-level twin in index.ts
+import { symbolStateGlobal } from "./standalone-symbol-state.js";
 import { bareAnyArrayLiteralNeedsExternref } from "./array-literal-any-carrier.js";
 import { hasIncompatibleElementCarrier, hasNonStructElementForStructCarrier } from "./struct-carrier-inhabits.js"; // (#5327 / #6613) array-literal element-carrier compatibility proofs
 import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
@@ -618,7 +622,12 @@ export function compileObjectLiteralAsExternref(
       }
       const valLocal = allocLocal(fctx, `__objlit_v_${fctx.locals.length}`, { kind: "externref" });
       fctx.body.push({ op: "local.set", index: valLocal });
-      if (ctx.standalone && ctx.runtimeEvalCallableBoundaryEnabled === true) {
+      // Open objects published by independent Scripts retain origin-owned
+      // callable trampolines, even when no runtime-eval provider is present.
+      if (
+        ctx.standalone &&
+        (ctx.runtimeEvalCallableBoundaryEnabled === true || ctx.standaloneScriptVarBindings === true)
+      ) {
         const wrapCallableIdx = ensureRuntimeEvalCallableWrapHelper(ctx);
         fctx.body.push(
           { op: "local.get", index: valLocal },
@@ -669,7 +678,11 @@ export function compileObjectLiteralAsExternref(
       // rejects — see issue note 2), store `undefined` to keep the stack balanced,
       // matching the sibling arm's `ref.null.extern` fallback.
       if (!ok) fctx.body.push({ op: "ref.null.extern" });
-      if (ok && ctx.standalone && ctx.runtimeEvalCallableBoundaryEnabled === true) {
+      if (
+        ok &&
+        ctx.standalone &&
+        (ctx.runtimeEvalCallableBoundaryEnabled === true || ctx.standaloneScriptVarBindings === true)
+      ) {
         const wrapCallableIdx = ensureRuntimeEvalCallableWrapHelper(ctx);
         fctx.body.push({ op: "call", funcIdx: wrapCallableIdx });
       }
@@ -1484,11 +1497,17 @@ function compileObjectLiteralWithAccessors(
           currentAccIdx,
           (expression) => compileRuntimeComputedPropertyKey(ctx, fctx, expression),
           (half, isGetter) =>
-            emitObjectLiteralAccessorFn(ctx, fctx, half as unknown as ts.FunctionExpression, {
-              forceMutableCaptures: accessorForceMutable,
-              sharedRefCells: accessorSharedRefCells,
-              ...(isGetter ? {} : { forceExternrefParams: true }),
-            }),
+            emitObjectLiteralAccessorFn(
+              ctx,
+              fctx,
+              half as unknown as ts.FunctionExpression,
+              {
+                forceMutableCaptures: accessorForceMutable,
+                sharedRefCells: accessorSharedRefCells,
+                ...(isGetter ? {} : { forceExternrefParams: true }),
+              },
+              objLocal,
+            ), // (#6774 S1) [[HomeObject]] for a runtime key too
         );
         continue;
       }
@@ -1502,8 +1521,26 @@ function compileObjectLiteralWithAccessors(
       fctx.body.push({ op: "local.get", index: objLocal });
       // Host imports require real String keys even with native string storage.
       // Native targets retain their existing native key representation.
-      for (const instr of staticHostPropertyKeyInstrs(ctx, propName)) {
-        fctx.body.push(instr);
+      // (#6774 S15) A well-known-symbol key (`get [Symbol.unscopables]()`) is
+      // the interned symbol carrier, not the "@@name" spelling.
+      // Only @@unscopables: the iterator-protocol readers still look the other
+      // well-known accessors up under their "@@name" key.
+      const wkSymId =
+        ctx.standalone && propName === "@@unscopables" ? getWellKnownSymbolId(propName.slice(2)) : undefined;
+      const boxSymIdx =
+        wkSymId !== undefined
+          ? ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }])
+          : undefined;
+      if (wkSymId !== undefined && boxSymIdx !== undefined) {
+        flushLateImportShifts(ctx, fctx);
+        fctx.body.push(
+          { op: "i32.const", value: wkSymId },
+          { op: "call", funcIdx: ctx.funcMap.get("__box_symbol") ?? boxSymIdx },
+        );
+      } else {
+        for (const instr of staticHostPropertyKeyInstrs(ctx, propName)) {
+          fctx.body.push(instr);
+        }
       }
 
       // Getter (or ref.null.extern when only setter is defined).
@@ -2823,13 +2860,7 @@ export function wellKnownSymbolName(id: number): string | undefined {
  */
 export function ensureSymbolCounter(ctx: CodegenContext): number {
   if (ctx.symbolCounterGlobalIdx >= 0) return ctx.symbolCounterGlobalIdx;
-  const idx = nextModuleGlobalIdx(ctx);
-  ctx.mod.globals.push({
-    name: "__symbol_counter",
-    type: { kind: "i32" },
-    mutable: true,
-    init: [{ op: "i32.const", value: 100 }],
-  });
+  const idx = symbolStateGlobal(ctx, "__symbol_counter", { kind: "i32" }, [{ op: "i32.const", value: 100 }]);
   ctx.symbolCounterGlobalIdx = idx;
   return idx;
 }
@@ -3729,7 +3760,7 @@ export function compileObjectLiteralForStruct(
       if (hasBindingPattern && !param.type && !param.dotDotDotToken && wasmType.kind !== "externref") {
         wasmType = { kind: "externref" };
       }
-      newParams.push(wasmType);
+      newParams.push(restPatternParamSlot(ctx, param, wasmType)); // (#6774 S7)
     }
 
     // Compare against the existing function's signature. A mismatched param
@@ -3864,7 +3895,8 @@ export function compileObjectLiteralForStruct(
           !!p.name &&
           ((ts.isIdentifier(p.name) && p.name.text === field.name) ||
             (ts.isStringLiteral(p.name) && p.name.text === field.name) ||
-            (ts.isNumericLiteral(p.name) && p.name.text === field.name))
+            (ts.isNumericLiteral(p.name) && p.name.text === field.name) ||
+            (ts.isComputedPropertyName(p.name) && ctx.checker.getSymbolAtLocation(p.name)?.name === field.name))
         );
       }
       return resolvePropertyNameText(ctx, p) === field.name;
@@ -3943,17 +3975,20 @@ export function compileObjectLiteralForStruct(
     const shorthandProp = lastMatch && ts.isShorthandPropertyAssignment(lastMatch) ? lastMatch : undefined;
     const methodProp = lastMatch && ts.isMethodDeclaration(lastMatch) ? lastMatch : undefined;
     if (methodProp) {
-      const methodFullName = `${typeName}_${field.name}`;
+      // Computed well-known keys have checker-escaped physical field names,
+      // but their compiled method bodies use the semantic key (e.g. @@iterator).
+      const methodName = resolveAccessorPropName(ctx, methodProp.name) ?? field.name;
+      const methodFullName = `${typeName}_${methodName}`;
       // (#1557) Prefer the per-literal funcIdx if we detected a sig mismatch
       // above. The trampoline must reference the funcIdx whose body will
       // actually be compiled for THIS literal, not a sibling literal's body.
-      const methodFuncIdx = literalMethodFuncIdx.get(field.name) ?? ctx.funcMap.get(methodFullName);
+      const methodFuncIdx = literalMethodFuncIdx.get(methodName) ?? ctx.funcMap.get(methodFullName);
       if (methodFuncIdx === undefined) {
         // (#1058) Not registered yet — install the callable after the method
         // bodies below instead of leaving the field permanently undefined.
         deferredMethodFields.push({
           fieldIdx: fieldOrdinal,
-          fieldName: field.name,
+          fieldName: methodName,
           fieldType: field.type,
           methodProp,
         });
@@ -4395,7 +4430,7 @@ export function compileObjectLiteralForStruct(
         if (hasBindingPattern && !param.type && !param.dotDotDotToken && wasmType.kind !== "externref") {
           wasmType = { kind: "externref" };
         }
-        methodParams.push(wasmType);
+        methodParams.push(restPatternParamSlot(ctx, param, wasmType)); // (#6774 S7)
       }
 
       const sig = ctx.checker.getSignatureFromDeclaration(prop);
@@ -4558,7 +4593,7 @@ export function compileObjectLiteralForStruct(
         if (hasBindingPattern && !param.type && !param.dotDotDotToken && wasmType.kind !== "externref") {
           wasmType = { kind: "externref" };
         }
-        methodFctxParams.push({ name: paramName, type: wasmType });
+        methodFctxParams.push({ name: paramName, type: restPatternParamSlot(ctx, param, wasmType) }); // (#6774 S7)
       }
 
       const methodFctx: FunctionContext = {
@@ -4587,6 +4622,7 @@ export function compileObjectLiteralForStruct(
 
       const argumentsFirst = argumentsBeforeDefaults(ctx, methodFctx, prop, methodFctxParams); // (#6651 A11)
       // Emit default-value initialization for parameters with initializers
+      hoistParameterEvalVars(ctx, methodFctx, prop); // (#6774 S7)
       emitMethodParamDefaults(ctx, methodFctx, prop.parameters, 1); // 1 to skip 'this'
 
       // Destructure parameters with binding patterns (e.g. method([...x]) or method({a, b}))
@@ -6861,7 +6897,7 @@ export function compileArrayConstructorCall(
     const sizeLocal = allocLocal(fctx, `__arr_size_${fctx.locals.length}`, { kind: "i32" });
     fctx.body.push({ op: "local.tee", index: sizeLocal });
     fctx.body.push({ op: "local.get", index: sizeLocal });
-    fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
+    fctx.body.push(...holeFilledArrayNewInstrs(ctx, fctx, arrTypeIdx)); // (#6771 S3)
     fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
     return { kind: "ref_null", typeIdx: vecTypeIdx };
   }

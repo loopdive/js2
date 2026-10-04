@@ -272,6 +272,8 @@ export interface IrInstrGlobalSet extends IrInstrBase {
   readonly kind: "global.set";
   readonly target: IrGlobalRef;
   readonly value: IrValueId;
+  /** Declaration initialization, distinct from subsequent PutValue. */
+  readonly initializesBinding?: boolean;
 }
 
 /**

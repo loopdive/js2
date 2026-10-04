@@ -91,10 +91,16 @@ assignee: "ttraenkler/senior-dev-1"
     - `backlog`
     - `ready`
     - `in-progress`
-    - `review`
+    - `in-review` — PR open and the author is not the merger (handoff /
+      external); the self-merge path goes straight to `done` (CLAUDE.md)
     - `blocked`
+    - `suspended` — work paused mid-flight; the file carries
+      `## Suspended Work` with the worktree and resume steps
     - `done`
     - `wont-fix`
+  - Enforced: `pnpm run check:issues` rejects any other value, spelling
+    included (`in_progress`, `review`, `complete`, …) — #6799. This list is
+    the vocabulary; `scripts/lib/issue-status-schema.mjs` reads it from here.
 - `sprint`
   - Use a plain number for numbered sprints, for example `42`.
   - Use `0` for all pre-sprint historical work that predates Sprint 1.

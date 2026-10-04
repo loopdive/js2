@@ -3,7 +3,7 @@ id: 4376
 title: "Spike v8x as a rusty_v8-compatible js2wasm backend for a compiler-free Deno runtime"
 status: in-progress
 created: 2026-08-12
-updated: 2026-10-01
+updated: 2026-10-04
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -17,6 +17,59 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-10-04: reserve namespace guards before Prepared initializer lowering
+  # and construct the guarded IR body before its evidence is sealed.
+  - src/codegen/declarations.ts::preallocateModuleInitCallable
+  # 2026-10-04: imported optional calls retain the original allocation owner
+  # and short-circuit the entire remaining reference/argument evaluation.
+  - src/codegen/expressions/linked-module-reference.ts
+  # 2026-10-04: preserve original callable ownership for spread imported calls
+  # using strict native iteration and local argument-list storage.
+  - src/codegen/expressions/linked-module-spread.ts
+  # 2026-10-04: owner-aware imported calls capture callee and receiver before
+  # arguments, rather than invoking a compatible closure in the wrong realm.
+  - src/codegen/expressions/linked-module-call.ts
+  # 2026-10-04: unfinished, default-off native Module namespace imports guard
+  # per-source initialization and read live exports from the original owner.
+  - src/codegen/linked-module-namespace.ts
+  # 2026-10-04: ambient host names resolve through the native Context rather
+  # than the compiler's null/zero default; intrinsic paths remain unchanged.
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
+  # 2026-10-04: completion Scripts need a canonical initializer even when
+  # function-only; preserve the completion import through optimized abrupt code.
+  - src/codegen/declarations.ts::compileDeclarations
+  # 2026-10-04: opt-in native Script reflection and early shared Symbol globals.
+  - src/codegen/index.ts
+  - src/codegen/linked-realm-property-read.ts
+  # 2026-10-04: default-off owning-Script string-name export retains native
+  # reflection helpers and preserves insertion order independently of IR slots.
+  - src/codegen/shared-script-completion.ts
+  - src/ir/core/types.ts
+  # 2026-10-04: unfinished opt-in Script completion tracks a native reference
+  # slot through expression statements, catch entry and normal finally exit.
+  - src/ir/from-ast.ts
+  - src/codegen/statements/exceptions.ts
+  # 2026-10-04: shared Script global-object function writes use the existing
+  # canonical native AOT carrier, matching object-literal callable transport.
+  - src/codegen/expressions/assignment.ts
+  # 2026-10-04: shared Script open-object properties use native callable
+  # carriers without enabling unrelated runtime-eval proof/ABI changes.
+  - src/codegen/literals.ts
+  # 2026-10-04: narrow opt-in routing to the captured-reference RMW leaf;
+  # direct BigInt update equality must not fold from an inferred Number type.
+  - src/codegen/expressions/operator-assignment.ts
+  - src/codegen/expressions/unary-updates.ts
+  - src/codegen/binary-ops.ts
+  # 2026-10-04: later Script assignment resolves the Context lexical record
+  # before RHS evaluation, preserving strict/sloppy global behavior on misses.
+  - src/codegen/expressions/unresolvable-assign.ts
+  # 2026-10-04: opt-in native lexical cells preserve declaration initialization
+  # through IR rather than treating it as an ordinary binding assignment.
+  - src/ir/core/nodes.ts
+  - src/ir/builder.ts
+  - src/ir/backend/wasmgc-emitter.ts
+  - src/wasm/model/instructions.ts
   # 2026-10-01: experimental shared Script var transport adds one config field
   # and preserves Context bindings rather than resetting private-slot seeds.
   - src/codegen/context/create-context.ts
@@ -50,6 +103,9 @@ loc-budget-allow:
   - total
   # Destructured module exports use existing snapshot/live-binding routes.
   - src/codegen/module-namespace-value.ts
+  # 2026-10-04: canonical module-symbol caching also admits named imports of
+  # namespace re-exports, rather than treating them as unrelated global cells.
+  - src/codegen/module-namespace-value.ts::tryEmitCompiledModuleNamespaceObject
   - src/codegen/expressions/call-namespace-static.ts
   - src/checker/usage-inference.ts
   - src/codegen/map-runtime.ts
@@ -57,6 +113,15 @@ loc-budget-allow:
   - src/codegen/ordinary-new-target.ts
   - src/codegen/rest-only-apply.ts
   - src/codegen/object-runtime-prototype.ts
+  # Linked arrays reuse native identity-keyed prototype edges and their
+  # non-extensible/cycle checks; mutated arrays must not use static GPO folds.
+  - src/codegen/closed-object-prototype-edges.ts
+  - src/codegen/expressions/object-get-prototype-of.ts
+  # Linked Array Reflect.get transports its explicit receiver through vec
+  # property and descriptor-overlay reads, including nested accessor calls.
+  - src/codegen/vec-props.ts
+  - src/codegen/vec-overlay.ts
+  - src/runtime/wasmgc/values/object-get-arms.ts
   - src/codegen/closures/arrow-phases.ts
   - src/codegen/native-construct.ts
   - src/codegen/function-body.ts
@@ -119,6 +184,24 @@ loc-budget-allow:
   - src/codegen/expressions/late-imports.ts
   - src/codegen/async-scheduler.ts
 func-budget-allow:
+  # 2026-10-04: existing identifier body renamed behind a default-off live
+  # import wrapper; this is not a new 1408-line implementation.
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCoreUnlinked
+  # 2026-10-04: restate existing branch growth against freshly merged main.
+  # Completion/provider ABI (+8/+4) and native callable storage (+4/+2) were
+  # already implemented in this integration branch, not new ordering logic.
+  - src/ir/from-ast.ts::lowerFunctionAstToIr
+  - src/ir/integration.ts::compileIrPathFunctions
+  - src/codegen/literals.ts::compileObjectLiteralForStruct
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  # 2026-10-04: four-line opt-in reset at catch entry preserves Script
+  # completion independently of the failed try body's prior expression.
+  - src/codegen/statements/exceptions.ts::compileTryStatement
+  # 2026-10-04: exact opt-in calls into the persistent-reference leaf and
+  # dynamic equality for a persistent update whose checker assumes Number.
+  - src/codegen/expressions/operator-assignment.ts::compileCompoundAssignment
+  - src/codegen/expressions/unary-updates.ts::compilePrefixUpdate
+  - src/codegen/binary-ops.ts::compileBinaryExpression
   - src/ir/integration.ts::makeResolver
   # 2026-10-01: restate the pre-existing receiver-backed live next/latch arm
   # against merged main. keys/entries value construction is a separate helper;
@@ -195,6 +278,18 @@ func-budget-allow:
   - src/codegen/object-runtime-enumeration.ts::buildObjectEnumerationHelpers
   - src/codegen/object-runtime.ts::fillClosedStructExternGetArms
 oracle-ratchet-allow:
+  # 2026-10-04: checkpoint-only import alias and export-symbol authentication.
+  # Move these queries into oracle facts before promoting the draft.
+  - src/codegen/linked-module-namespace.ts
+  # 2026-10-04: named namespace re-export identity uses the same alias queries
+  # as namespace imports. Move both paths to shared oracle facts before ready.
+  - src/codegen/module-namespace-value.ts
+  # 2026-10-04: checkpoint-only declaration/escaped-name queries authenticate
+  # closed well-known Symbol fields and select the literal's physical slot.
+  # Migrate these two raw checker sites into registry-free oracle facts before
+  # promoting this unfinished integration; no baseline is changed here.
+  - src/codegen/closed-symbol-fields.ts
+  - src/codegen/literals.ts
   # 2026-08-28: PR #5148 checkpoint — new raw-checker queries in DataView
   # lowering and source-scan predicates; migrate to ctx.oracle in follow-up.
   - src/codegen/dataview-native.ts
@@ -231,6 +326,334 @@ files:
   - plan/agent-context/v8x-js2wasm-deno-handover-2026-08-12.md
 ---
 # #4376 — v8x + js2wasm as an engine-free Deno substrate
+
+## Latest module-linking handoff (2026-10-04)
+
+### Original lazy-module evaluation (continuation)
+
+### Mixed successful native/source module graph (continuation)
+
+Wrap-up checkpoint: native slot-backed transport is implemented in the adapter,
+but its final Proxy namespace carrier is not verified. The expanded compiled
+control fails own-key ordering (numeric order instead of lexicographic order).
+The prior accessor-carrier native test passed 1/1, but that result does not cover
+the replacement ABI. Mixed graph collection still explicitly refuses synthetic
+modules. Keep both existing PRs draft; resume commands, artifact caveats and
+next steps are in plan/agent-context/4376-module-linking-checkpoint-2026-10-04.md.
+
+Native slot-backed carrier implementation in progress: getter callbacks retain
+exact synthetic Module/export-key identity in isolate-owned data and consult
+the raw export slots on every read. Publish one Context-owned carrier only
+after complete construction; reject unevaluated and cross-Context bindings.
+Validate the transport explicitly before activating it in graph capabilities.
+The carrier still needs module-exotic reflection and graph metadata; do not
+enable a partial accessor object as complete namespace integration.
+
+Transport implementation started with a Context live-getter primitive and
+RealmAccess dispatch. Validate deferred callback reads, original/replacement
+object identity, no setter, nonconfigurable descriptors, invalid flags/callables,
+and blocked writes in actual compiled Wasm. This primitive is not yet a complete
+native namespace: module namespace data-descriptor semantics and the remaining
+graph/capability/authentication work still require implementation.
+
+Primitive verified: compiled-Wasm ten assertion groups pass, including live
+getter deferred reads and replacement identity. Embedded Wasmtime Rust dispatch
+passes 1/1 raw and 1/1 wasm-opt O3 (each 81 filtered /82 development-runner
+tests), with GC retention and blocked writes. Compiler-free runner builds;
+ordinary controls 35 passed /21 ignored /1 filtered out of 57; library17/17;
+Node fixture/V8 controls10/10. Artifact hashes/replay commands in both handoffs.
+Mixed graph remains unsupported. Ordinary accessor descriptors do not equal
+module namespace data descriptors; dedicated reflection/carrier work remains.
+
+Investigate the successful synthetic dependency path, not just failures.
+Current collect_graph rejects every synthetic Module, even after its native
+evaluation callback succeeded. A native reproduction must verify callback
+execution count, imported object identity, live SetSyntheticModuleExport updates,
+cached evaluation and execution order before accepting a fix. Simply serializing
+exports or baking current values into source violates these requirements.
+
+Implementation constraints: retain exact native Module identity in graph
+capabilities; authenticate build-side export declarations separately from real
+source bytes; never execute generated placeholder initializers. Evaluate native
+callbacks at their dependency position through active Caller access. Namespace
+reads must preserve object/function identity and namespace write restrictions.
+SetSyntheticModuleExport must update the authoritative live export even after
+the namespace is adopted into the compiled realm. Existing host-object transfer
+copies properties, so copying the namespace alone is insufficient. Keep the
+current loud refusal until the complete transport is verified.
+
+Baseline reproduction confirmed: aot_source_imports_live_synthetic_exports
+fails 0/1 (56 filtered /57), after the synthetic dependency succeeds once, at
+collect_graph's explicit refusal and before artifact lookup. Identical source
+fixture passes identity/live-update/readonly namespace checks on V8 1/1.
+Unchanged Deno test_custom_module_type_callback_synthetic passes 1/1
+(430 filtered /431); that native-only path does not prove mixed imports.
+The new native regression remains explicitly ignored as a known failing target,
+not included in passing coverage. Detailed transport plan is in both handoffs.
+
+Native nested-failure control: a source graph calls a native callback which evaluates
+a separately instantiated throwing graph on the same Context. Check that the
+nested rejected Promise is cached, both Modules retain the original thrown
+object, outer source stops before its next write, and compiler/eval counters
+remain zero. Final control passes 1/1 (55 filtered /56); missing outer package
+fails 0/1 at the actual-execution floor. Existing cached-source failure control
+also passes 1/1 with the rebuilt five-graph package set. Caller-owned failures
+already record their payload, so Runtime-only recapture is now skipped without
+inventing a JS value for a non-JS trap. This supersedes the independent nested
+throwing-object coverage gap recorded in the preceding checkpoint; primitive
+payloads, deeper nesting and cycles still need broader coverage.
+
+Package unchanged test_lazy_loaded_esm_aliased_via_import and
+test_lazy_load_esm_evaluates_pre_instantiated_sibling, preserving original
+included fixture bytes and registering separate nested-evaluation packages.
+The sibling test exercises an A module which calls a native lazy-loader op
+to evaluate B while their shared graph is still executing. Prove original
+fixture extraction and artifact counts, run actual unchanged tests, then fix
+any observed nested-evaluation defect instead of rewriting their JS.
+
+Checkpoint result: aliased lazy import passes 1/1; pre-instantiated sibling
+improves from 0/1 on adapter 30ffb90 to 1/1. Nested graph initialization and
+namespace publication now use the exact owner's active Caller store access,
+retaining the graph in the existing store registry without a runtime compiler
+or interpreter. Final selected unchanged Deno replay passes 9/9, each 430
+filtered /431, across the three recorded package directories. Native ordinary
+controls pass 35/35 (19 ignored, 1 filtered /55); filtered library 17/17;
+three explicit AOT controls 3/3; extractor/binding/V8 controls 9/9.
+Independent nested throwing-module identity remains unverified. Full Deno
+integration, full conformance and new performance measurements are not done.
+Exact package provenance and continuation commands are in both handoffs.
+
+### Broader unchanged module execution (continuation)
+
+Expand pinned-original module packaging to include main_and_side_module and
+test_mods without rewriting upstream test/source bytes. Main/side currently
+passes with lifecycle evaluation packages; test_mods exercises requested-module
+metadata, imported callable execution, instantiation without execution and Rust
+op dispatch. Add strict literal extraction and selected-test packaging so
+missing or changed source layouts fail loudly. Build exact source-bound graphs
+and Scripts before attributing execution failures to the backend.
+
+New selected packages contain three graphs and one Script at
+`/private/tmp/deno-mods-expanded.5MyCYn` (clean compiler 4a98f06ae2, adapter
+ea09181, unchanged Context). Both tests pass 2/2, each 430 filtered /431;
+test_mods asserts exact Rust op dispatch once and zero during instantiation.
+Missing setup or graphs fail 0/1, unknown selection refuses before output
+creation, and extractor/binding/V8 controls pass 9/9. Default original-source
+inventory is now eight graphs/five Scripts across seven tests. No backend
+production change or full integration/benchmark result is claimed.
+
+The previous five selected module tests were replayed 5/5 again, making this
+turn's combined selected result 7/7 across the expanded and lifecycle rollout
+package directories, each individual run with 430 filtered /431.
+
+### Fresh source prefix before cached failure (continuation)
+
+Extend the source-bound native failure control with a new same-URL prefix
+Module followed by the already-errored source dependency. The prefix must run
+once and remain usable, the cached source must not run again, later work must
+remain untouched, and the consumer must reject with the exact original JS
+object. Namespace capability delivery currently turns an errored dependency
+into a generic Rust error. Reproduce before fixing, then deliver the original
+payload through the Context's shared Wasm exception tag using Caller-owned
+realm access, not a runtime reborrow or an interpreter.
+
+Expanded native control reproduces baseline 0/1 at original-payload identity,
+then passes 1/1 (54 filtered /55) after capability delivery uses the Context's
+shared exception tag. Fresh same-URL prefix execution, separate namespace
+values 7 versus original 9, original cached object, repeated Promise identity,
+untouched later source and zero runtime compiler/interpreter activity are
+verified. Clean compiler 4a98f06ae2 packages contain three graphs at
+`/private/tmp/deno-cached-prefix.mRGaa6`. Node/V8 evaluation-order control
+passes with both consumers linked before first evaluation because Node's
+Module API separately forbids linking to already-errored Modules. Native
+control verifies later linking too. Library 17/17, ordinary native 35 passed
+/19 ignored /1 filtered out of 55, shared/typed AOT each 1/1, and fixture
+controls 8/8 pass. Broader integration requirements remain open.
+
+Final rebuilt unchanged Deno runner retains selected module results 5/5,
+each 430 filtered /431, with lifecycle rollout packages and unchanged Context.
+
+### Lifecycle package rollout (continuation)
+
+The paired adapter builders now explicitly request source lifecycle events for
+ordinary shared modules, typed live-import modules, module-evaluation probes,
+and the selected unchanged Deno module graphs. Generic packaging remains
+default-off. Rebuild these packages from clean compiler 4a98f06ae2 and replay
+the existing compiler-free native runner before claiming broader lifecycle
+coverage. Script sources and upstream Deno tests remain unchanged. This rollout
+does not establish cycles, snapshots, full-suite conformance, or new performance
+measurements.
+
+Fresh packages `/private/tmp/deno-lifecycle-rollout.ykaQLB` meet explicit floors
+(shared 2, typed 2, evaluation 4, Deno graphs 5, Scripts 4). All optimized
+graphs retain lifecycle imports. Native replay passes 4/4, each 54 filtered
+/55, and selected unchanged Deno replay passes 5/5, each 430 filtered /431.
+Fixture/binding/extractor controls pass 7/7. Existing Context and adapter
+f2a743a are unchanged; compiler pin is clean 4a98f06ae2. Site rendering remains
+unavailable because Typst is absent. Continue with mixed fresh-prefix/cached
+failure payload delivery and the broader unresolved integration requirements.
+
+### Prepared initializer guards (continuation)
+
+Native source lifecycle binding continuation: the adapter now validates exact
+Module/Context enter/complete imports, publishes completed namespaces with
+Caller-owned realm access, and propagates a source exception only through
+executing modules and their consumers. Opt-in sidecar per-source publication
+retains completed prefixes on graph failure. A generated readiness lexical
+was throwing TDZ before the entry ran; use a hoisted readiness variable instead.
+The basic native failure/reimport control now passes with development artifacts.
+The strengthened mutable-prefix control exposes silent no-op callable delivery
+before graph readiness; original allocation-owner dispatch and lazy observed
+value storage are now verified by the strengthened control: prefix 7 -> 8,
+snapshot object 8, second graph same namespace/init 8, later live 9 with init
+retained at 8, exactly one prefix execution. Transitive failure propagates the
+exact original object to the intermediate Module while later work is untouched.
+Native control passes 1/1 (54 filtered /55) with development packages, zero
+compiler/interpreter activity. Compiler controls pass 18/18 across four files.
+Final clean compiler 4a98f06ae2 packages repeat native 1/1; missing graph input
+fails 0/1, exit 101. Adapter unit controls 17/17 (16 filtered /33), ordinary
+native 35 passed /19 ignored /1 filtered out of 55, typed/shared-owner replays
+each 1/1, final rebuilt unchanged Deno selections 5/5 (each 430 filtered /431).
+Full lifecycle, native prepared-IR admission,
+and complete Deno integration remain unfinished.
+
+Source failure lifecycle continuation: add a source-bound native graph with
+an executing successful prefix, an object-throwing dependency, and an untouched
+later dependency. Require prefix Evaluated, failing dependency Errored with
+the original payload, later dependency Instantiated, and a cached rejected
+entry Promise. Build artifacts from clean compiler c5b251bc5f before attributing
+the failure. Module-identity enter/complete events must be constructed before
+prepared evidence sealing and must not use property-read capabilities as
+execution events. Default-off compiler lifecycle plumbing is being developed;
+general cyclic evaluation and complete Deno integration remain unfinished.
+Final compiler plumbing controls pass 11/11 across three files, including
+prepared emission with hook reservation, legacy completion after every source
+statement, abrupt entry, and typed live imports. Native baseline fails 0/1
+(54 filtered /55): completed prefix remains Instantiated. Packages were built
+from clean c5b251bc5f; exact V8 fixture control passes 1/1. Hooks are NOT enabled
+in native packages yet. Partial source namespace publication and exact native
+failure propagation still require implementation.
+
+First synthetic failure continuation: an expanded native public-API regression
+shows 0/1 when a fresh dependency callback has not yet executed. Source graph
+collection rejects the synthetic module instead of running its callback. The
+paired adapter now evaluates leading instantiated synthetic dependencies in
+dependency order before packaging, then propagates the original callback
+failure. Source-prefix work still prevents the shortcut. Expanded regression
+passes 1/1 (53 filtered /54), filtered adapter library 16/16 (16 filtered /32),
+ordinary native controls 35 passed /18 ignored /1 filtered out of 54, and typed
+owner replay 1/1 (53 filtered /54). Successful synthetic/source graph composition and first source-body
+failure state propagation are not claimed.
+
+Cached failure checkpoint: the paired adapter recognizes the next cached
+dependency failure before packaging, preserves its exact original object in
+rejected Promises and Module::GetException, and propagates transitive errored
+state. Native public-API control improves from 0/1 to 1/1 (53 filtered /54),
+including cached Promise identity, preservation of unrelated caught exceptions,
+no synchronous delivery, one callback, and zero runtime compiler/interpreter
+activity. Earlier pending dependencies prevent the shortcut so their side
+effects are not skipped. First-failure propagation in flattened execution,
+mixed pending-prefix failures and general cycles/TDZ remain unfinished.
+
+Typed live-read continuation: the lower-level NaN probe was not reproduced by
+the real native adapter. A Node/V8 raw foreign-string key caused that control's
+failure; explicit key transport isolates compiler semantics and passes with
+IR on/off, later owner mutation and local fallback. Focused controls pass 17/17.
+New raw .ts native fixtures built from clean compiler c5b251bc5f pass 1/1
+(52 filtered /53): native mutation before and after second-graph evaluation
+produces 81 then 82, with the initialized value retained at 81 and runtime
+compiler/interpreter counts zero. Missing packages fail 0/1 at exact binding.
+This is test/evidence progress, not a compiler or adapter production fix.
+Prepared-IR native participation and complete Deno integration remain open.
+
+New positive-floor controls reach both singleton and batch prepared IR owners
+with legacy initializer emission poisoned. Both initially lacked any namespace
+capability import. Reserve capabilities during initializer preallocation and
+construct the body guard during IR lowering, before body identity and resource
+evidence are sealed. The guard uses exact unit-to-SourceFile identity and
+skips only the evaluated source owner; it does not modify sealed bodies or
+disable IR. Combined initializer/linked/bootstrap/namespace controls pass 29/29
+across six files with exact thrown-error identity. Typechecking, scoped lint
+and source ratchets pass; dead-export retirement is not certified. Native
+prepared-emission replay and typed IR live import reads/calls remain unverified.
+The final handoff is in the module-linking checkpoint. Existing drafts 6468
+and v8x 2 are reused; full Deno integration remains in-progress.
+
+### Clean selected Deno replay (continuation)
+
+All five selected unchanged Deno module tests pass **5/5** using freshly rebuilt
+graph/Script packages from clean compiler 285ac9e6f2, each **1/1** with 430
+filtered /431. Explicit `--import tsx` makes the complete package builder
+succeed: five graphs and four Scripts, Binaryen 125 O3 /Wasmtime 47.0.3.
+The original full Context artifact remains unchanged from its earlier pin.
+Removing the builtin graph package fails **0/1** at exact-binding loading.
+Only Deno Cargo manifest/lockfile differ; no test/source rewrites. Details and
+exact replay are in the handoff. Full population, snapshots, module lifecycle
+and prepared IR initialization are still unfinished; no new benchmark.
+
+### Optional imported calls (continuation)
+
+The expanded compiler control reproduced wrong-owner optional calls: four
+invocations advanced the original count twice, to 57 instead of 59. Linked
+references now resolve each member exactly once and place the entire remaining
+chain inside its nullish guard, including computed keys and arguments. Calls
+preserve their receiver through parentheses and nested chains. Non-optional
+property lookup reuses the existing base-coercibility guard so an ended
+optional chain throws before evaluating call arguments. Named/namespace,
+computed, nested, skipped, parenthesized and non-callable controls are included.
+Expanded compiler controls pass **11/11**; fresh native shared-module replay
+passes **1/1**, 51 filtered /52, built from clean compiler 285ac9e6f2 with
+Binaryen 125 O3 /Wasmtime 47.0.3. Final runtime compiler/interpreter counters
+are zero. Node V8 fixture control passes **1/1**. Full Deno coverage remains
+unfinished; this receipt does not replace unchanged Deno verification.
+
+### Imported spread calls (continuation)
+
+A new control reproduced a spread call bypassing the original dependency:
+owner count stayed at 5 instead of 10. The linked-call path now expands spreads
+using strict native iteration and a local argument vector, then dispatches to
+the original allocation owner. Inline literals retain native vector carriers.
+The expanded compiler suite passes **11/11** across three files, including
+named/namespace calls, empty and mixed spreads, runtime parameters, nested
+imported arguments and null-iterator rejection. Fresh native shared-module
+fixtures also pass **1/1**, 51 filtered /52, built with clean compiler
+c6dbe27488, Binaryen 125 O3 and Wasmtime 47.0.3, including final zero runtime
+compiler/interpreter counters. Node V8 fixture control passes **1/1**. This is
+not a new unchanged Deno receipt or benchmark; optional calls and module
+lifecycle/IR gaps remain.
+
+### Owner-aware calls verified (continuation)
+
+The expanded shared-dependency native control now passes **1/1**, 51 filtered
+/52, including both mutations, exact namespace/bare receiver semantics,
+same-URL distinct native Modules and zero runtime compiler/interpreter counts.
+Namespace function-value specialization must not create a later private closure;
+owner-aware native calls must recognize Module graphs, not only Scripts.
+
+All five selected unchanged Deno module tests now pass **5/5**, each selecting
+1 with 430 filtered /431. Builtin core import is the newly passing test.
+Removing its graph package fails **0/1**, proving actual evaluation is required.
+The default Deno macOS linker flags failed earlier; rebuilding with recorded
+`RUSTFLAGS='--cfg tokio_unstable'` succeeds without Deno source/test edits.
+An exploratory `import_meta_` prefix run passed two tests, then aborted at
+unsupported SnapshotCreator. It is not a full-population result.
+
+These are development-artifact receipts, not a clean published build. Prepared
+IR initialization, cycles/TDZ, optional/spread call coverage, negative capability
+controls, snapshots, remaining host integration and matched benchmarks remain.
+The earlier failing checkpoint below is historical. Detailed continuation is in
+the linked handoff.
+
+Default-off native Module namespace capabilities now preserve cross-graph
+identity, once-only legacy initialization and live named/namespace reads in the
+native control. The expanded control remains **0/1**: calling the dependency
+through the second graph returns 1 instead of 4. Later receiver and same-URL
+distinct Module assertions are not reached. Node V8 fixture control passes 1/1.
+Do not mark this task complete or either draft PR ready. Prepared IR initializer
+guarding, callable owner routing and unchanged Deno replay remain outstanding.
+
+Detailed implementation, local artifact boundaries, repro and resume order:
+[module-linking checkpoint](../agent-context/4376-module-linking-checkpoint-2026-10-04.md).
 
 ## Objective
 
@@ -2898,3 +3321,487 @@ identity. The eight-file regression run reports 73/73: 71 ordinary successes
 and two retained expected failures for general Script bindings. This does not
 credit a new native Deno artifact or full deno_core conformance. Persistent
 lexical cells, declaration preflight and completion values remain required.
+
+## 2026-10-04 opt-in native lexical checkpoint
+
+Next Script integration step is an opt-in Context completion sink. The canonical
+initializer remains void, while its body tracks the executed statement-list
+completion in a private local and publishes the final externref to the owning
+Context. Direct and prepared IR paths must preserve expression values, reset
+statement-specific empty completions, and discard normal finally values. The
+sink is not JSON serialization, a source wrapper, or an interpreter fallback.
+Public Script lookup/run and full conformance remain required after compiler
+transport is verified.
+
+Typed-binding work distinguishes immutable scalar top-level `const` values
+from mutable cross-Script bindings. Number/boolean constants retain their typed
+slots while transport boxes/unboxes at the lexical provider boundary. An array
+const does not prove immutable elements: the broad experiment passed identity
+but silently missed a foreign element-type mutation. Reference-typed consts
+remain refused until representation/proof planning handles that mutation.
+Global-object callable writes also require canonical AOT carriers in shared
+Script mode; otherwise a foreign call returns without running the function.
+Both globalThis and Script top-level this now select that existing carrier,
+without enabling the broad runtime-eval flag or linking an interpreter.
+General mutable/reference-typed planning and public Script completion remain
+required. Focused verification reports 86/86 (84 ordinary successes and two
+existing expected failures); the wider five-file result is 163 tests with
+158 ordinary successes, two expected failures and the same three recorded
+TDZ failures. The expanded nine-artifact native fixture passes compiler-free
+Wasmtime replay 1/1 (36 filtered), with zero compilations and zero runtime-eval
+provider instantiations. No full Deno conformance gain is claimed.
+
+Native wiring now adds the Context lexical operation to v8x's import allowlist
+and Context artifact builders. Seven independently compiled artifacts pass
+native packaging. The compiler-free Wasmtime fixture passes 1/1 (36 filtered),
+verifying lexical state, exact foreign-object BigInt conversion, redeclaration
+preflight, const writes and two-Context isolation. It asserts zero runtime
+compilations and zero runtime-eval provider instantiations. Tool tests pass 9/9.
+The fixture uses explicit `any` annotations, so this does not substitute for
+general Script completion, typed binding planning or unchanged deno_core
+conformance. No new full Deno artifact or performance result is credited.
+See the latest wrap-up in the persistent Script environment handoff and
+adapter `tools/js2wasm/SCRIPT-ENVIRONMENT-HANDOFF.md`; both PRs remain draft.
+
+Latest continuation fixes the ordinary foreign object/valueOf conversion
+failure. Shared-Script open-object properties carry canonical native AOT
+callables; a closure-free consumer's getter/conversion driver invokes their
+origin-owned trampoline instead of returning undefined. Shared-Script BigInt
+closure return planning preserves a native reference result, and wide call
+results retain that reference through the envelope rather than an i64 payload.
+The broader runtime-eval flag remains unchanged; no interpreter or Deno source
+edit is introduced. Setter transport is not claimed by the value-returning
+getter/conversion fix.
+
+Exact native owner/independent-Script A/B against clean `fbe1958bd79` changes
+`score: 0, exact: 0` to `score: 1, exact: 1`, retaining positive controls
+`scoreControl: 41, objectControl: 1`. Focused regression is 79/79, including two
+existing expected failures. Five-file run is 153/156, comprising 151 ordinary
+successes, two expected failures and the same three previously recorded TDZ
+failures. Native Context packaging and full unchanged Deno conformance remain
+required; no new deno_core artifact is credited. The handoff records causal
+probes, remaining scope and resume order.
+
+Previous exact-update checkpoint:
+
+Exact native BigInt +/-1 is implemented, replacing wide/overflow refusals.
+Copied limbs preserve old values; signed-i64 promotion/demotion and 192-bit
+carry/borrow pass 24 runtime cases. Own-Script lexical updates use exact source
+declaration identity; shadows, TDZ and const controls pass. Final focused file
+reports 69/70 (67 ordinary, two existing expected failures), with one new ordinary
+foreign object/valueOf conversion failure. The five-file regression run reports
+143/147, including those expected failures and the three known TDZ baseline
+failures. An A/B native probe on clean `fbe1958bd79` and candidate gives identical
+positive controls (`scoreControl: 41, objectControl: 1`) and failing conversion
+(`score: 0, exact: 0`). Keep the control visible and investigate foreign method
+and callable transport. No new Deno artifact is credited; full integration remains
+open. Detailed provenance and resume constraints are in the persistent Script handoff.
+
+Current continuation replaces the wide/overflow update refusals with exact
+native carrier increment/decrement. Runtime limb arithmetic must copy rather
+than mutate the old BigInt, propagate carry/borrow across arbitrary widths and
+normalize results back into the narrow carrier where possible. Verify actual
+prefix/postfix values through later independently compiled Scripts, including
+negative wide values and signed-i64 crossings. This does not discharge full
+Deno packaging, other arithmetic operators or general Script semantics.
+
+Follow-up fixes the first wide reference initializer by registering the native
+union carriers before constant materialization. The native owner/Script probe
+changes from baseline `b17fdc53504` (`exact: 0, zero: 1`) to candidate
+(`exact: 1, zero: 0`). Focused tests now report 39 ordinary passes and the two
+existing expected failures (41/41 reported). Positive, negative, signed-boundary
+and folded initializers retain exact values across independently compiled Scripts.
+The broader BigInt run has a separate `narrowedString` failure reproduced with
+the exact fixture and positive controls on baseline and candidate. Wide updates
+still deliberately throw; exact arithmetic is unfinished. See the handoff for
+the full provenance, limitations and native Deno resume order.
+
+Read-modify-write checkpoint now captures the Context Reference for compound,
+logical and prefix/postfix updates. Focused tests report 35/36: 33 ordinary
+passes, two existing expected failures and one ordinary wide-BigInt initializer
+failure. The five-file run is 114/118, including the same two expected failures
+and three previously recorded baseline failures. A native owner/Script probe
+on published `b17fdc53504` and the candidate returns `exact: 0, zero: 1` on both
+for the wide literal before updates. Keep this failure visible. Narrow BigInt
+updates pass; wide carriers and overflow currently throw instead of silently
+wrapping. Exact wide arithmetic remains required, not excluded from scope.
+TypeScript 7 and budget/coercion/oracle checks pass; dead-export does not certify
+runtime retirement. Draft PR #6468 and the persistent Script handoff capture
+this compiler checkpoint. Native Deno packaging and full conformance remain open.
+
+Current continuation adds compound/update controls and plans one captured
+Context Reference for read-modify-write operations. Reads must precede RHS
+effects, TDZ/missing-name reads must throw before them, and prefix/postfix
+results and const writes must match JavaScript semantics. General native Deno
+packaging is still part of this issue, not replaced by these compiler controls.
+
+Follow-up work: merge the newer integration branch/main history and implement
+later-Script lexical assignment. Before implementation, both new strict and
+sloppy write controls fail with the cell retaining 41 instead of 42, while the
+previous 20 tests retain their outcomes. The native assignment route must resolve
+the reference before the RHS, evaluate that RHS once and preserve global-record
+miss behavior. Provider packaging and full native Deno verification remain open.
+
+Implemented simple `=` writes, plus the unresolved-read and top-level collection
+seams required to observe them correctly. Focused controls report 22 ordinary
+passes and two expected failures; the five-file regression run reports 103/106
+successes, with the same three pre-existing failures documented in the handoff.
+The merged main history is retained. Compound/increment/destructuring writes,
+eval activation precedence and native Deno packaging remain follow-up work.
+
+An experimental `standaloneScriptLexicalImport` now links Scripts to native
+Context-owned lexical cells, independently of globalThis properties. Whole
+declaration manifests are checked before cells are created or user code runs.
+Own lexical reads/writes/initialization use exact declaration storage;
+initialization metadata survives IR lowering. Later independently compiled
+Scripts can read symbol-less identifiers from the same Context record.
+
+The focused file reports 20/20 tests: 18 ordinary successes plus two retained
+expected failures for the default API. TypeScript 7 passes. This is a bounded
+compiler checkpoint, not fresh native Deno conformance evidence. The provider
+is not yet wired into the adapter/artifact builder. Later-Script writes,
+classes/destructuring, typed lexical storage, ambient shadows, function
+descriptor rules, re-execution and completion values remain required.
+See the updated persistent Script environment handoff for the operation ABI,
+verification limitations and resume order. The full integration stays open.
+
+Completion checkpoint (2026-10-04): the new opt-in Context sink preserves the
+initializer's void ABI and attempts to transport native Script completion.
+Fresh focused verification reports 5 ordinary passes and 15 ordinary failures
+out of 20. Six literal-only cases still discard the result; nine cases cannot
+materialize `js.closure.undefined` through compatibility IR. These remain
+ordinary failing tests. Native v8x completion wiring, pure source Program
+configuration and public Script dispatch are not implemented by this checkpoint.
+The persistent Script handoff records the exact resume order. Draft PR #6468
+is not ready to merge; no new full Deno conformance or performance is claimed.
+
+Completion follow-up: retain pure Script expressions, materialize canonical
+native undefined before IR preparation, box scalar results through semantic
+boundaries and stop restoring completion after direct abrupt finally exits.
+The original 20 controls pass. Expanded controls report **33 ordinary passes
+and one ordinary failure out of 34**. The failure is an unannotated function
+with no return yielding a Number instead of undefined; keep it visible and
+investigate callable signature/implicit-return semantics. The persistent Script
+suite remains 86/86, including two existing expected failures. TypeScript 7
+passes. The native adapter and full unchanged Deno tests have not been rebuilt
+for this completion follow-up. Integration remains in progress.
+
+Latest completion follow-up: 36/36 ordinary controls now pass. The apparent
+implicit-return failure was stale completion after a void call, not a numeric
+function return. Direct observable expression statements request externref
+values so void calls overwrite completion with undefined; typeof retains its
+actual value instead of the side-effect-only operand shortcut. TypeScript 7
+passes. Persistent Script and existing Script-result regressions report 89/89,
+including two existing expected failures. The adapter's native Context sink,
+reset/root getter and compiler-free independent-Script fixture are in progress.
+Public source-bound Script dispatch and unchanged full Deno conformance remain
+required before completion.
+
+Wrap-up (2026-10-04): native completion replay passes 1/1 (36 filtered) with
+one Context and eleven separately precompiled Scripts, zero runtime compilations
+and zero runtime-eval provider instances. Adapter ordinary checks pass 30/37
+with seven explicit ignored tests; runtime options pass 10/10. The subsequent
+adapter package-lookup checkpoint builds and preserves the same replay result,
+but public Script dispatch, trusted Script packaging/ABI validation and tests
+of original thrown-value transport remain unfinished. Full unchanged Deno
+conformance and fresh performance measurements are not credited. Both existing
+PRs remain draft; the persistent Script and adapter handoffs record the precise
+resume order. This issue remains in progress.
+
+Public AOT Script continuation (2026-10-04): the adapter now dispatches exact
+source/resource-name packages through public `Script::Run`, validates native
+initializer/completion signatures before instantiation, and adopts normal and
+thrown realm values without JSON or an interpreter fallback. Eight native Script
+packages and the existing Context pass the public control 1/1 (37 filtered),
+covering repeated execution, completion, object/exception identity, thrown
+number/undefined, Context isolation and pre-effect refusal of resource/source/
+native-byte mismatches. Zero runtime compilations/eval provider instances are
+asserted. Build-side controls pass 13/13 and native digest/ABI controls 2/2;
+ordinary adapter checks pass 30/38 with eight explicitly ignored and zero failures.
+Direct additional host capabilities, BigInt/UTF-16 adoption, general runtime AOT
+Script compilation and pure Program completion remain open. Full Context rebuild,
+unchanged Deno conformance and fresh performance are not credited. The adapter
+handoff supersedes the earlier unwired checkpoint; integration remains in progress.
+
+Fresh full-core continuation: clean compiler `3d4c1df` and adapter `064423a`
+produce a 2,709,108-byte AOT Context with no interpreter imports. The unchanged
+Deno binary rebuilds against the adapter. With an AOT Script directory set,
+unchanged `webidl::tests::any` fails 0/1 before loading that Context: the new
+generic path requires an existing owner and intercepts the initial pinned
+`ext:core/00_primordials.js` bootstrap, whose purpose is to create that owner.
+Restore the audited prelinked core-bootstrap transaction before generic Script
+lookup, keeping normal application Scripts ahead of legacy usage matchers.
+This observed lifecycle defect is distinct from a compiler/Script ABI failure.
+
+After restoring bootstrap order, the same unchanged control passes 1/1. The
+fresh full Context passes raw packaging and optimized native precompilation
+1/1 (208.38 seconds). WebIDL remains 13/17 both without and with five separately
+packaged original Script inputs: the four formerly unknown-source failures now
+reach real conversion/assertion failures. They all involve iterable lookup,
+including the dictionary's array field. Trace cross-module Symbol/iterator
+transport before attributing the common signature to a particular root cause;
+do not count source acceptance as a passing test or advance the baseline.
+
+Owning-Script probe: an immediate computed `Symbol.iterator` method is callable
+inside its original Script (completion 1), while the same Script-created object
+is owned by `localOwns` but the Context getter reports undefined for iterator.
+A Script-created array remains iterable in that Node same-store probe, so the
+dictionary failure is not yet explained by this object case. Add an explicit
+default-off native getter export using the finalized Script property helper;
+keep original source/goal, shared exceptions and ownership checks intact.
+
+Owning-Script continuation: optional native Get/Call exports and allocation-owner
+dispatch now preserve computed well-known Symbol method closures. The unchanged
+WebIDL subset passes 15/17 (two failing, zero ignored, 414 filtered /431), up from
+13/17. The newly passing tests check next-method callability and single getter
+access. Dictionary array conversion and preservation of TypeError("boom") remain
+failing. Focused compiler controls pass 128/128, including two existing expected
+failures; compiler-free adapter controls pass 31/39 with eight explicitly ignored.
+Native ABI controls pass 2/2 and build-side controls 15/15. The Context artifact is
+still the earlier clean build; only Scripts/runtime use this checkpoint. Full
+population compatibility and performance are not credited. See the latest handoff
+section for reproduction, failed runtime-profile checks and remaining work.
+
+Native Error continuation: a same-store probe proves the next getter throws a
+native Error whose message is a four-unit string. The adapter previously adopted
+it as an ordinary Object, then Message::Get produced a generic message. Native
+Error carrier classification and field snapshots now retain the Error wrapper
+branding and initial name/message while preserving the original realm binding.
+The unchanged WebIDL replay improves to 16/17 (one dictionary failure, zero
+ignored, 414 filtered /431). This is a measured subset result, not full Deno
+compatibility. Script-owned array iterator lookup remains undefined in the
+direct probe; do not add an undefined-result fallback that ignores own shadowing.
+
+Shared Array prototype work is now in progress. Add an explicit linked native
+prototype provider and consult it only after the owning Script's own-property
+probe misses. Preserve the original receiver and canonical Context method
+identity; negative own-undefined and non-array controls are required. This is
+not a source-specific dictionary workaround. Shared descriptor tables and full
+cross-module native metadata remain broader integration requirements.
+
+Linked Array safety continuation: initial negative controls measured two failures
+out of nine (null/custom prototype). Native prototype edges now admit linked
+Array owners and Array-valued prototypes, consult the vec bag for integrity
+flags and preserve mutation identity through runtime getPrototypeOf rather than
+the static fold. The expanded getter suite passes 14/14, including own undefined,
+accessor shadowing, non-array rejection, null/custom prototypes, identity,
+non-extensible refusal and cycle refusal. Explicit Reflect receivers, adapter
+provider wiring and matched unchanged Deno replay remain unverified. No new full
+population or performance credit is claimed.
+
+Explicit receiver continuation: the initial three-control matrix measured one
+pass and two failures. Array own and nested-own accessors used the target as
+`this`; custom prototype accessor forwarding already passed. A default-off
+three-argument vec reader now preserves the captured receiver without changing
+the existing two-argument ABI. Descriptor-overlay early getter arms consume the
+same one-shot Reflect receiver state before invoking accessors. Native iterator
+prototype reads use that receiver state too. Focused controls and native replay
+must be remeasured before crediting these changes.
+
+Owning-Script enumeration continuation: the native property-name API currently
+reads only the Rust wrapper's property vector, not the retained Wasm object.
+An opt-in compiler own-string-name export now exposes the existing finalized
+native helper without wrapping or rewriting Script source. A control initially
+returned bar,foo for source foo,bar: IR physical slot sorting lost insertion
+order. IR shapes now retain source own-name metadata; the opted-in registry
+keeps order-distinct logical shapes and uses existing shape stamps to distinguish
+their equal physical GC layouts. Canonical array indices precede other strings.
+The export also arms array enumeration when no reflection call occurs in the
+source. Native adapter routing, symbols and descriptor-aware host property
+filters remain required before claiming a fix for the unchanged dictionary.
+Compiler controls pass 27/27; four execution suites pass 115/115 including two
+existing expected failures. TypeScript 7 and scoped lint pass. Three default-off
+binary controls match clean dbe49bf307d6 exactly. Source-preservation remains
+38 pass /53 fail out of 91 with no per-test status changes. Native adapter pin,
+package routing and unchanged Deno replay have not advanced yet.
+
+Host-owned import-meta continuation, 2026-10-04: full-object compiler lowering
+and instance-bound native capabilities now invoke Deno's callback. Unchanged
+main_and_side_module passes 1/1, and the missing-package negative fails 0/1,
+each 430 filtered /431. Native AOT same-URL identity/resolve/null-prototype control
+passes 1/1, 47 filtered /48, with zero runtime compilation/interpreter instances.
+Native ordinary controls 34 pass /14 ignored /48; scoped units 15/15, 16 filtered
+/31. Lazy/missing-script 2/2 and WebIDL 17/17 remain passing. Compiler graph and
+namespace controls 10 pass /1 fail /11; synthetic JSON/text/bytes failure reproduces
+with pre-change sidecar 015ab63ba3 and the same compiler/harness. Native Promise
+transport, original AOT exception rooting, full population, snapshots and remaining
+host/benchmark work are still required. Handoffs contain exact source/hash repros.
+
+Native Promise and module payload continuation, 2026-10-04: a fresh clean pinned
+full Context now includes native Promise mirror helpers. Unchanged main/side
+passes 1/1, 430 filtered /431; the missing-package negative fails 0/1 with the
+actual loading error, no longer an unsupported Promise conversion. Lazy loading
+passes 1/1 and WebIDL 17/17 at the fresh Context. Native mirror controls cover
+fulfillment/rejection before and after adoption, exact payload identity, single
+rejection delivery and repeated unsupported settled-payload refusal.
+
+AOT graph initialization now roots the original Wasm exception payload in its
+Context keeper before returning an error. Native rejected Promise and Module
+exception identity match the object published before the throw. Initial property
+read failed (NaN instead of 42): namespace readiness denied owning-graph access
+after abrupt initialization. A separate generated getter now admits only native
+allocation-proven receivers, with Rust dispatch checking __v8x_graph_owns first.
+Compiler controls pass 4/4, including same-layout foreign-instance refusal;
+native positive/throwing module controls pass 2/2, 48 filtered /50, with zero
+runtime compilation/interpreter instances. Old graph packages lacking the getter
+fail explicitly on otherwise proven owned receivers rather than silently reading
+through the foreign Context. Full population, arbitrary cross-boundary values,
+snapshots, host services, shared libraries and matched benchmarks remain open.
+
+Module population continuation, 2026-10-04: a build-side fixture extractor now
+reads exact original Rust literals from pinned Deno, refusing missing/ambiguous
+tests and changed layouts. Five graph packages and four assertion Scripts are
+optimized and precompiled with clean compiler ba14fcaedb. Unchanged metadata
+resolution, filename/dirname and repeated async/sync evaluation pass 4/4 selected
+tests, each 430 filtered /431. Removing assertion Scripts makes the repeated
+evaluation test fail 0/1 at check1, demonstrating that its assertions execute.
+No runtime compiler or interpreter is linked into the Deno runner.
+
+The fifth selected test, builtin_core_module, fails with "source module namespace
+was already bound to another value" after its package is provided. The already
+published core namespace is being replaced by the new graph's namespace. This
+is a real shared-module linking defect, not an absent artifact. Honest selected
+result is 4 passed /1 failed out of 5. Do not suppress the binding conflict to
+claim support. Next implement canonical native Module namespace reuse in linked
+graphs, preserving import-star identity and live exports, and prevent reevaluating
+already evaluated dependency bodies. Host identities must be bound by native
+Module instance, not URL alone. Include two graph entries sharing one dependency,
+same-URL distinct Modules, early/cyclic namespace access and failed evaluation
+controls. Module namespace construction is in src/codegen/module-namespace-value.ts;
+initializer planning is in module-init-collection.ts and multi-prepared-module-init*.
+Adapter entry points are collect_graph/publish_source_namespaces and
+realm_objects::bind_source_namespace/bind_prelinked_core_namespace.
+
+Import-meta lifecycle foundation, 2026-10-04: adapter registration now retains
+Deno's callback. A lazy per-native-Module object cache publishes before callback
+invocation, preserves reentrant identity and rejects wrong-context/foreign-isolate
+access. Focused controls pass 2/2; scoped native units 14/14 (16 filtered /30),
+ordinary compiler-free integration controls 34 passed /0 failed /13 ignored /47.
+Compiled access is not yet connected: the next requirement is an instance-bound
+host capability, not URL lookup, then full-object compiler lowering and unchanged
+Deno main/side replay. Unfiltered library tests aborted on unsupported sandbox ABI;
+no full-library or new Deno pass is claimed. Adapter handoff records entry points.
+
+Module evaluation evidence, 2026-10-04: adapter 9a4e13a returns cached rejected
+evaluation Promises and captures reaction throws under a local TryCatch. Ordinary
+compiler-free controls pass 34/34 (13 ignored /47); an explicitly executed native
+AOT graph proves global mutation and namespace publication, 1/1 with 46 filtered.
+Unchanged lazy loading remains 1/1 and WebIDL 17/17. Real main_and_side_module now
+fails instead of silently passing without artifacts. With exact packages, the
+main module executes but the side module throws: compile-graph.ts statically sets
+import.meta.main from the entry instead of Deno's loader role. Native Promise
+transport into the compiled realm also obscures the original failure with an
+unsupported conversion error. AOT thrown payload capture still renders a string;
+synthetic native exception identity is verified, not full compiled exception
+identity. These are next implementation requirements, not completed coverage.
+
+Module evaluation continuation: audit failure propagation through Deno's returned
+evaluation Promise. Missing graph artifacts currently return null and discarded
+Deno evaluation futures can hide the failure. Preserve rejected Promise identity,
+Module::GetException and JavaScript thrown payloads; verify positive execution and
+negative artifact cases without changing Deno tests.
+
+Receiver continuation: extend the existing opt-in Script getter with a separate
+three-reference receiver-aware export, preserving the old two-reference API.
+The adapter uses the new export when present and retains the explicit refusal
+for alternate receivers in old packages. Verify direct and cross-Script receiver
+identity and abrupt completion before crediting support.
+
+Native Function continuation, 2026-10-04: adapter implementation
+5cae5514f0598aeffe2ce36869669a01d0c7ff87 implements trusted AOT CompileFunction,
+callback-safe instantiation and owner-routed cross-Script reads/calls. Guard
+0bd28340669fc2936c6de70e81e5aad343b8b8ab scopes routing to the Script ABI,
+preserving existing non-Script Module linking. Unchanged
+actual lazy loading now passes 1/1 with cached identity and a dependency;
+missing-script 1/1, WebIDL 17/17 and derived conversions 2/2 remain passing.
+Compiler-free native controls pass four separately executed artifact-backed tests
+plus 31 ordinary controls /43 (12 ignored in the ordinary run). No runtime
+compilation or interpreter instance is observed. Build controls 18/18 and Rust
+factory-binding unit 1/1 pass. Explicit alternate foreign Reflect receivers and
+context extensions are refused; full graphs/population, snapshots, transport,
+host capabilities, shared libraries and matched benchmarks remain incomplete.
+The persistent Script handoff records artifact provenance and reproduction.
+Site rebuild is unverified because Typst is not installed.
+
+Earlier resume plan after checkpoint, 2026-10-04: implement same-store AOT Script
+instantiation through RealmAccess for active CallerRealm callbacks as well as
+ordinary DenoRuntime access. Preserve graph retention and native exception
+rooting. This removes the recursive RefCell borrow barrier before implementing
+generic CompileFunction packaging. Add an actual native host-callback control;
+do not credit inspection or compilation as successful callback execution.
+
+Wrap-up at user request, 2026-10-04: existing draft compiler PR 6468 and adapter
+PR 2 are reused. The persistent Script environment handoff now records the
+callback-safe instantiation entry points, function-body packaging requirements
+and native regression sequence. CompileFunction implementation has not started;
+no new measurement or full-integration completion is claimed.
+
+Fresh native continuation, 2026-10-04: clean compiler 9bfee5a9c6 and adapter
+builder f236d22698 with Binaryen 125 /Wasmtime 47.0.3. Unchanged native
+lazy-script-not-found passes 1/1, WebIDL 17/17, derived conversions 2/2.
+Actual lazy-script loading aborts at unsupported ScriptCompiler::CompileFunction.
+The next requirement is trusted AOT function-body packaging with parameter
+bindings, native closure/caching semantics and callback-safe reentrant
+instantiation. No Deno source changes or interpreter substitution. Handoff
+contains exact hashes, pins and reproduction. Full population and performance
+remain incomplete. Three default-off binary controls match pre-fix merge exactly.
+
+Continuation, 2026-10-04: merged origin/main 39fd7b7d44 in 2617ddf4d2,
+preserving both callback and standalone new.target paths. Post-merge compiler
+controls pass 41/41 and constructor/expression controls 30/30. New method-order
+controls exposed two failures: arguments ran before foreign getters. Frame-local
+callee capture fixes the tested dot/computed closed-dispatch routes; 13/13 new
+controls pass, including getter throws, non-callables, mutation and local callbacks.
+Full focused/persistent tests pass 140/140, including two existing expected
+failures in the persistent suite. TypeScript passes; lint has no errors and five
+pre-existing warnings. Clean pinned native replay, spread/IR ordering controls
+and full integration remain outstanding.
+
+Earlier checkpoint, 2026-10-04: foreign Context-owned method dispatch now passes
+the previously expected-failing nested capability call. Eight selected compiler
+controls pass 8/8, including exact receiver, single getter evaluation, thrown
+payload identity and two non-callable TypeErrors. Native replay is not rerun for
+this dispatch change. Latest native WebIDL evidence is 17/17, derived conversions
+2/2, lazy-loader 0/1; full 431-test replay aborted at unsupported SnapshotCreator.
+Handoff records remaining callback/order checks, clean artifact rebuild, module
+graphs, host operations, snapshots and comparative benchmarks. Existing drafts
+6468 and v8x 2 are reused and remain incomplete, not merge-ready.
+
+Shared dependency investigation, 2026-10-04: a source-bound two-entry native
+control fails 0/1 (51 filtered /52). The same native dependency executes twice,
+its mutable export resets from 2 to 1, JavaScript namespaces differ and the
+second evaluation rejects. The exact three fixture sources pass 1/1 in Node's
+V8 module evaluator, including later named/namespace live reads after mutation.
+No runtime compilation or interpreter instances occur. Existing AOT positive
+and throwing controls remain 2/2. This test-only checkpoint proves that ignoring
+the namespace conflict is insufficient; captured Module identity, once-only
+initialization and canonical live imports must be implemented together. Native
+later live-read assertions remain unreached, not passing. Full Deno integration
+remains in-progress. Adapter handoff contains exact reproduction and hashes.
+
+Within-graph namespace identity continuation: the native first-entry namespace
+also differs from its dependency's native publication. A compiler regression
+initially returns sentinel 1 for distinct repeated namespace imports. Caching
+by aliased module symbol instead of import declaration fixes that comparison;
+named imports of namespace re-exports additionally need the same namespace
+getter rather than a barrel global cell. The new regression now passes in gc
+and standalone lanes, including re-export/publication identity, live mutation
+and a same-shaped distinct-module negative. Source namespace suite passes 6/6.
+The initial six-file run is 25 passed /1 failed /26: a standalone TypeScript
+namespace projection fails the missing Hole-global invariant. An unchanged
+test replay on clean baseline ba14fcaedb reproduces exactly that failure (7/8),
+so it is not credited as fixed or hidden. Native rebuilt replay is next;
+cross-graph canonical reuse and duplicate initialization are still unfixed.
+
+Historical wrap-up, 2026-10-04: compiler dbe49bf307d6 and adapter 33af9d76e815
+are published in the existing drafts. Explicit receiver controls pass 21/21;
+four execution suites pass 111/111 including two existing expected failures.
+Source-preservation controls remain 38 pass /53 fail on both baseline and
+candidate, with identical per-test statuses. A fresh clean pinned, Binaryen
+optimized Context was precompiled successfully with Wasmtime 47.0.3.
+Unchanged native WebIDL replay remains 16 pass /1 fail /0 ignored /414 filtered
+out of 431. The array field now converts correctly; dictionary record field
+f is empty instead of {"foo": 1}. Full population and fresh comparative
+performance remain unmeasured. See the final checkpoint at the top of
+plan/agent-context/4376-persistent-script-environment-2026-09-30.md for exact
+pins, provenance, reproduction and remaining full-integration requirements.

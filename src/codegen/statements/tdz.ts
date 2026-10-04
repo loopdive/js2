@@ -3,6 +3,7 @@
  * Temporal Dead Zone (TDZ) helpers for module-level let/const variables.
  */
 import { ts } from "../../ts-api.js";
+import { markSharedScriptLexicalInitialization } from "../shared-script-lexical-access.js";
 import type { Instr } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { emitThrowReferenceError, noJsHost } from "../expressions/helpers.js";
@@ -20,6 +21,7 @@ export { collectPatternBindingNames } from "../../ir/analysis/ast-scope.js";
  * let/const variable. No-op if the variable doesn't have a TDZ flag.
  */
 export function emitTdzInit(ctx: CodegenContext, fctx: FunctionContext, name: string): void {
+  markSharedScriptLexicalInitialization(ctx, fctx, name);
   const flagIdx = ctx.tdzGlobals.get(name);
   if (flagIdx === undefined) return;
   fctx.body.push({ op: "i32.const", value: 1 });

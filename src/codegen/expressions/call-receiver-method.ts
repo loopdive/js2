@@ -25,6 +25,7 @@ import {
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, resolveArrayInfo, tryCompileDynViewSpeciesMethodCall } from "../array-methods.js";
 import { compileArrayConcatNativeSpec } from "../array-concat-spec.js";
+import { reserveBoolMethodString } from "./bool-to-locale-string.js"; // (#6771 S6)
 import { inheritedBuiltinReceiverType } from "../builtin-subclass-receiver.js"; // (#6651 C5)
 import { isWiredTypedArrayViewName } from "../array-object-proto.js";
 import { ensureWrapperProtoDynamicMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
@@ -51,6 +52,7 @@ import { tryEmitDirectTwinCall } from "../typed-this.js"; // (#3683 S3) direct-c
 import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "../any-helpers.js"; // (#2864) semantic undefined producer
 import { pushBody } from "../context/bodies.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
+import { prepareLinkedMethodReference, prepareLinkedClosedMethodReference } from "./linked-method-reference.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js";
 import { tryEmitFixedHostMethodCall } from "../fixed-host-method-call.js";
@@ -267,6 +269,8 @@ import { ensureTaToStringHelper, taToStringApplies } from "../ta-to-string.js"; 
 import { reserveTaToLocaleString, taToLocaleStringApplies } from "../to-locale-string-element.js"; // (#6651 TA1)
 import { isHostResolvedBuiltinReceiver } from "../standalone-unavailable-globals.js"; // (#1472)
 import { guardedCastBackup, publishNonInstanceSuperReceiver } from "./super-receiver-publish.js"; // (#5350 r2)
+import { tryEmitPrimitiveToLocaleStringInvoke } from "../object-model/object-proto-to-locale-string.js"; // (#6770 S5)
+import { tryEmitTaggedToStringInvoke } from "../object-proto-symbol-tag.js"; // (#6770 S6)
 import {
   BUILTIN_CLASS_NAMES,
   coerceNumberMethodArgToF64,
@@ -876,6 +880,9 @@ export function compileReceiverMethodCall(
     );
     if (__r !== undefined) return __r;
   }
+  // (#6770 S5) §20.1.3.5 Invoke(<primitive>, "toString") after a wrapper `toString` override.
+  const primitiveToLocaleString = tryEmitPrimitiveToLocaleStringInvoke(ctx, fctx, expr, propAccess);
+  if (primitiveToLocaleString !== undefined) return primitiveToLocaleString;
 
   if (ctx.standalone && propAccess.name.text === "concat" && ts.isIdentifier(propAccess.expression)) {
     const text = propAccess.getSourceFile().text;
@@ -2276,7 +2283,9 @@ export function compileReceiverMethodCall(
         // Set __argc before the call so the callee knows the actual arg count
         maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, ngParamCount);
         const finalMethodIdx =
-          ownShadowFuncIdx(ctx, ownShadowName0) ?? ctx.funcMap.get(classMemberFuncKey(ctx, fullName)) ?? funcIdx; // (#1983)
+          ownShadowFuncIdx(ctx, ownShadowName0) ??
+          ctx.funcMap.get(classMemberFuncKey(ctx, fullName, receiverMemberKind)) ??
+          funcIdx; // (#1983, #6772 S4)
         fctx.body.push({ op: "call", funcIdx: finalMethodIdx });
         const elseInstrs = fctx.body;
         fctx.body = savedBody;
@@ -2366,7 +2375,9 @@ export function compileReceiverMethodCall(
       if (!handledArgvSpreadNn) maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, methodParamCount);
       // Re-lookup funcIdx: argument compilation may trigger addUnionImports
       const finalMethodIdx =
-        ownShadowFuncIdx(ctx, ownShadowName0) ?? ctx.funcMap.get(classMemberFuncKey(ctx, fullName)) ?? funcIdx; // (#1983)
+        ownShadowFuncIdx(ctx, ownShadowName0) ??
+        ctx.funcMap.get(classMemberFuncKey(ctx, fullName, receiverMemberKind)) ??
+        funcIdx; // (#1983, #6772 S4)
       fctx.body.push({ op: "call", funcIdx: finalMethodIdx });
 
       // Determine return type
@@ -3760,6 +3771,14 @@ export function compileReceiverMethodCall(
   // Boolean method calls: bool.toString(), bool.valueOf()
   if (isBooleanType(receiverType)) {
     const method = propAccess.name.text;
+    // (#6771 S6) An overridden `Boolean.prototype.toString`/`.toLocaleString`
+    // is Invoked on the primitive (bool-to-locale-string.ts); else the fold.
+    if (expr.arguments.length === 0 && reserveBoolMethodString(ctx, fctx, expr, method) !== undefined) {
+      const recvType = compileExpression(ctx, fctx, propAccess.expression, { kind: "i32" });
+      if (recvType && recvType.kind !== "i32") coerceType(ctx, fctx, recvType, { kind: "i32" });
+      fctx.body.push({ op: "call", funcIdx: reserveBoolMethodString(ctx, fctx, expr, method)! });
+      return { kind: "externref" };
+    }
     if (method === "toString") {
       compileExpression(ctx, fctx, propAccess.expression);
       return emitBoolToString(ctx, fctx);
@@ -3908,6 +3927,8 @@ export function compileReceiverMethodCall(
 
     // For externref values (e.g. RegExp.exec result, host objects), delegate to JS toString
     if (wasm.kind === "externref") {
+      const tagged = tryEmitTaggedToStringInvoke(ctx, fctx, propAccess.expression, expr); // (#6770 S6)
+      if (tagged !== undefined) return tagged;
       const toStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
       flushLateImportShifts(ctx, fctx);
       if (toStrIdx !== undefined) {
@@ -4424,6 +4445,13 @@ export function compileReceiverMethodCall(
         }
         // Each argument compiled and boxed to externref (the dispatcher unboxes
         // to the method's declared param type per candidate struct).
+        const linkedClosedCall = prepareLinkedClosedMethodReference(
+          ctx,
+          fctx,
+          () => staticHostPropertyKeyInstrs(ctx, methodName),
+          arity,
+          `__call_m_${methodName}_${arity}`,
+        );
         for (const arg of dispatchArgs) {
           // (#3098) An inline arrow/function-expression callback to a native-
           // HOF-served method compiles as a raw GC CLOSURE struct (crossing as
@@ -4450,7 +4478,8 @@ export function compileReceiverMethodCall(
           if (at && at.kind !== "externref") coerceType(ctx, fctx, at, { kind: "externref" });
           else if (at === null) fctx.body.push({ op: "ref.null.extern" });
         }
-        fctx.body.push({ op: "call", funcIdx: dispatchIdx });
+        if (linkedClosedCall) linkedClosedCall();
+        else fctx.body.push({ op: "call", funcIdx: dispatchIdx });
         return { kind: "externref" };
       }
 
@@ -4805,11 +4834,20 @@ export function compileReceiverMethodCall(
           // `__extern_method_call` arm; the receiver already has a local here.
           fctx.body.push(...buildCallSiteNullishReceiverGuard(ctx, recvLocal, methodName));
 
+          const linkedCall = prepareLinkedMethodReference(ctx, fctx, recvLocal, () =>
+            staticHostPropertyKeyInstrs(ctx, methodName),
+          );
+
           // Build args array
           fctx.body.push({ op: "call", funcIdx: arrNewIdx });
           const argsLocal = allocLocal(fctx, `__emc_args_${fctx.locals.length}`, { kind: "externref" });
           fctx.body.push({ op: "local.set", index: argsLocal });
           emitHostMethodCallArgs(ctx, fctx, expr, argsLocal, arrPushName, arrPushIdx);
+
+          if (linkedCall) {
+            linkedCall(argsLocal);
+            return { kind: "externref" };
+          }
 
           // Push receiver, method name, args array → call __extern_method_call
           fctx.body.push({ op: "local.get", index: recvLocal });

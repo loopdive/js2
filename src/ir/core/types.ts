@@ -154,6 +154,9 @@ export interface IrVecLayoutRef {
  */
 export interface IrObjectShape {
   readonly fields: readonly { readonly name: string; readonly type: IrType }[];
+  /** Source own-string order, independent of canonical physical field slots.
+   * Used by owning-Script reflection; not part of structural field typing. */
+  readonly ownNames?: readonly string[];
 }
 
 /**

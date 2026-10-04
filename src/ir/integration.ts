@@ -34,6 +34,7 @@ import {
   irStringConcatManyDemand,
 } from "./program-runtime-demands.js";
 import { ts } from "../ts-api.js";
+import { scriptOwnNameOrder } from "./script-own-name-order.js";
 import type { IrIntegrationOptions } from "./integration-options.js";
 export type { IrIntegrationOptions } from "./integration-options.js";
 import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
@@ -493,6 +494,7 @@ import {
   IR_STRING_REPEAT_FN,
 } from "./string-runtime.js";
 import { readEnv } from "../env.js";
+import { preparedLinkedModuleInitializerBody } from "../codegen/linked-module-namespace.js";
 export {
   buildIrIntegrationReport,
   caughtIntegrationFailure,
@@ -3840,6 +3842,10 @@ export function compileIrPathFunctions(
         fnctorNativeStringBoundaries: sourceLoweringPlans?.fnctorNativeStringBoundaries,
         returnTypeOverride: null,
         moduleInitUnit: true,
+        scriptCompletionSink:
+          ctx.standaloneScriptCompletionImport && !ctx.sourceIsModule
+            ? irImportFuncRef(ctx.standaloneScriptCompletionImport.module, ctx.standaloneScriptCompletionImport.name)
+            : undefined,
         moduleBindings,
         calleeTypes,
         importedCalls: sourceLoweringPlans?.importedCalls,
@@ -5602,6 +5608,18 @@ export function compileIrPathFunctions(
           };
           finalBody = [doneGet, eqz, guardIf];
           wasiGuard.planted = { doneGet, eqz, guard: guardIf };
+        }
+        if (ctx.standaloneModuleNamespaceImports) {
+          const source = [...moduleBindingIdentityContext.moduleInitUnitIdBySourceFile].find(
+            ([, unitId]) => unitId === entry.artifactUnitId,
+          )?.[0];
+          if (!source)
+            throw new IrInvariantError(
+              "selection-preparation-mismatch",
+              "lower",
+              "Linked module initializer lost its exact source identity",
+            );
+          finalBody = preparedLinkedModuleInitializerBody(ctx, source, finalBody);
         }
       } else {
         finalBody = applyIrTailCalls(ctx, wasmFunc.body, wasmFunc.typeIdx);
@@ -9692,7 +9710,13 @@ class ObjectStructRegistry {
   ) {}
 
   resolve(shape: IrObjectShape): IrObjectStructLowering | null {
-    const key = this.hashKey(shape);
+    // Physical slots stay canonical, but reflective Script allocations with
+    // different insertion orders need separate logical shapes. The existing
+    // shape-stamp finalizer disambiguates their structurally equal GC types.
+    const ownNames =
+      this.ctx.standaloneScriptOwnNamesExport && shape.ownNames ? scriptOwnNameOrder(shape.ownNames) : undefined;
+    const orderKey = ownNames ? `|own-names:${JSON.stringify(ownNames)}` : "";
+    const key = this.hashKey(shape) + orderKey;
     const cached = this.cache.get(key);
     if (cached) return cached;
 
@@ -9717,7 +9741,7 @@ class ObjectStructRegistry {
 
     // Reuse an existing anonymous struct with the same legacy hash key
     // if one was already registered (legacy↔IR convergence).
-    const legacyKey = legacyFieldsHashKey(fields);
+    const legacyKey = legacyFieldsHashKey(fields) + orderKey;
     let structName = this.ctx.anonStructHash.get(legacyKey);
     let typeIdx: number;
     if (structName !== undefined) {
@@ -9738,6 +9762,7 @@ class ObjectStructRegistry {
       this.ctx.anonStructHash.set(legacyKey, structName);
     }
 
+    if (ownNames) this.ctx.structInsertionOrder.set(structName, [...ownNames]);
     const fieldIdxByName = new Map<string, number>();
     fields.forEach((f, i) => fieldIdxByName.set(f.name, i));
     const lowering: IrObjectStructLowering = {
@@ -10287,7 +10312,7 @@ class ClassRegistry {
         if (preparedTarget) return preparedTarget;
         const suffix = memberKind === "getter" ? `get_${name}` : memberKind === "setter" ? `set_${name}` : name;
         const legacyName = `${shape.className}_${suffix}`;
-        const physicalName = classMemberFuncKey(ctx, legacyName);
+        const physicalName = classMemberFuncKey(ctx, legacyName, "instance"); // (#6772 S4) never the allocator
         const exact =
           this.memberRef(classId, memberKind, legacyName, physicalName) ??
           this.inheritedMemberRef(shape, classId, memberKind, name, physicalName);

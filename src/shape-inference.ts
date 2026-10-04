@@ -27,6 +27,23 @@ export interface InferredShape {
 }
 
 /**
+ * (#6771 S2e) Initializers whose value is an object that can never be held by a
+ * vec struct: a RegExp literal (`var re = /abc/; re[0] = 1; re.length = 3` is a
+ * RegExp with expandos, not an array — retyping the binding made
+ * `Array.isArray(re)` true and dropped the RegExp) and function / class
+ * expressions. Same exclusion as a `new X()` initializer.
+ */
+function isNeverArrayInitializer(init: ts.Expression): boolean {
+  while (ts.isParenthesizedExpression(init)) init = init.expression;
+  return (
+    init.kind === ts.SyntaxKind.RegularExpressionLiteral ||
+    ts.isFunctionExpression(init) ||
+    ts.isArrowFunction(init) ||
+    ts.isClassExpression(init)
+  );
+}
+
+/**
  * Collect shape information for module-level variables by walking the AST.
  * Returns a map from variable name to inferred shape.
  */
@@ -41,7 +58,7 @@ export function collectShapes(checker: ts.TypeChecker, sourceFile: ts.SourceFile
     if (!ts.isVariableStatement(stmt)) continue;
     for (const decl of stmt.declarationList.declarations) {
       if (!ts.isIdentifier(decl.name)) continue;
-      if (decl.initializer && ts.isNewExpression(decl.initializer)) {
+      if (decl.initializer && (ts.isNewExpression(decl.initializer) || isNeverArrayInitializer(decl.initializer))) {
         constructorInitialized.add(decl.name.text);
       }
     }

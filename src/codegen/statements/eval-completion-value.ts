@@ -134,7 +134,7 @@ export function resetCompletionValueForStatement(ctx: CodegenContext, fctx: Func
 }
 
 /** The §13 forms whose completion value starts life as `undefined`. */
-function statementResetsCompletionValue(stmt: ts.Statement): boolean {
+export function statementResetsCompletionValue(stmt: ts.Statement): boolean {
   return (
     ts.isIfStatement(stmt) ||
     ts.isTryStatement(stmt) ||

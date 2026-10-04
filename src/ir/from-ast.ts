@@ -270,6 +270,7 @@ import {
 } from "./nodes.js";
 import type { ValType } from "./types.js";
 import { coerceIrValueToExternref } from "./value-coercion.js";
+import { statementResetsCompletionValue } from "../codegen/statements/eval-completion-value.js";
 import {
   IR_HOLEY_ARRAY_ELEM_SET,
   IR_HOLEY_ARRAY_NEW,
@@ -981,6 +982,8 @@ export interface AstToIrOptions {
    * `moduleBindings` map for the top-level declared names.
    */
   readonly moduleInitUnit?: boolean;
+  /** Optional Context sink for the executed Script statement-list value. */
+  readonly scriptCompletionSink?: IrFuncRef;
   /**
    * (#3142 Slice 2) Module-scope bindings → the Wasm global the legacy
    * backend allocated for each (`__mod_<name>`, plus the `__tdz_<name>`
@@ -1408,6 +1411,10 @@ export function lowerFunctionAstToIr(
     numericLocalScalarForDecl: options.numericLocalScalarForDecl,
     allocRegistry: options.allocRegistry,
     moduleBindings: options.moduleInitUnit ? options.moduleBindings : undefined,
+    scriptCompletionSlot:
+      options.moduleInitUnit && options.scriptCompletionSink
+        ? builder.declareSlot("__script_completion", { kind: "externref" })
+        : undefined,
     hostDynamicClassMethodNames: options.hostDynamicClassMethodNames,
   };
   // #1372 — emit destructuring preamble for binding-pattern params. Each
@@ -1436,10 +1443,14 @@ export function lowerFunctionAstToIr(
         `ir/from-ast: module-init unit contains a nested var declaration (${name})`,
       );
     }
+    if (cx.scriptCompletionSlot !== undefined) resetScriptCompletion(cx);
     for (const s of stmts) {
       lowerStmt(s, cx);
       // A top-level break/continue can't appear (no enclosing loop — the
       // selector rejects it), so no dead-code guard is needed.
+    }
+    if (options.scriptCompletionSink && cx.scriptCompletionSlot !== undefined) {
+      builder.emitCall(options.scriptCompletionSink, [builder.emitSlotRead(cx.scriptCompletionSlot)], null);
     }
     builder.terminate({ kind: "return", values: [] });
     checkLogicalVectorConsumption(cx);
@@ -2391,6 +2402,7 @@ interface NestedCapture {
 }
 
 interface LowerCtx {
+  readonly scriptCompletionSlot?: number;
   readonly builder: IrFunctionBuilder;
   /** Builder identity prevents a main-body proof leaking into lifted/nested bodies. */
   readonly booleanReturnBuilder?: IrFunctionBuilder;
@@ -3749,7 +3761,7 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
             `${describeIrType(moduleBinding.type)} in ${cx.funcName}`,
         );
       }
-      cx.builder.emitGlobalSet(moduleBinding.globalRef, value);
+      cx.builder.emitGlobalSet(moduleBinding.globalRef, value, true);
       if (moduleBinding.tdzGlobalRef) {
         const one = cx.builder.emitConst({ kind: "i32", value: 1 }, irVal({ kind: "i32" }));
         cx.builder.emitGlobalSet(moduleBinding.tdzGlobalRef, one);
@@ -5945,9 +5957,11 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
       `ir/from-ast: object literal element ${ts.SyntaxKind[prop.kind]} not in slice 2 (${cx.funcName})`,
     );
   }
+  const ownNames = built.map((field) => field.name);
   built.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   const shape: IrObjectShape = {
     fields: built.map((b) => ({ name: b.name, type: b.type })),
+    ownNames,
   };
   return cx.builder.emitObjectNew(
     shape,
@@ -11618,7 +11632,46 @@ function inferVecDataValTypeFromContext(valTy: ValType, _cx: LowerCtx): ValType 
  * those are statement-list / tail-context features that don't make
  * sense inside a non-terminating loop body.
  */
+function resetScriptCompletion(cx: LowerCtx): void {
+  if (cx.scriptCompletionSlot === undefined) return;
+  const undefinedValue = cx.builder.emitCall(
+    irIntrinsicFuncRef(IR_CLOSURE_UNDEFINED),
+    [],
+    irVal({ kind: "externref" }),
+  );
+  if (undefinedValue === null) throw new Error("Script completion undefined intrinsic returned no value");
+  cx.builder.emitSlotWrite(cx.scriptCompletionSlot, undefinedValue);
+}
+
 function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
+  if (cx.scriptCompletionSlot !== undefined && statementResetsCompletionValue(stmt)) resetScriptCompletion(cx);
+  if (cx.scriptCompletionSlot !== undefined && ts.isExpressionStatement(stmt)) {
+    const expression = stmt.expression;
+    let value: IrValueId | null;
+    if (ts.isVoidExpression(expression)) {
+      lowerDiscardedExpression(expression.expression, cx);
+      resetScriptCompletion(cx);
+      return;
+    }
+    if (ts.isCallExpression(expression)) {
+      value =
+        ts.isPropertyAccessExpression(expression.expression) && !expression.questionDotToken
+          ? lowerMethodCallWithSourcePlan(expression, cx, true)
+          : lowerCall(expression, cx, true);
+    } else value = lowerExpr(expression, cx, irVal({ kind: "externref" }));
+    if (value === null) resetScriptCompletion(cx);
+    else {
+      const type = asVal(cx.builder.typeOf(value));
+      const external =
+        type?.kind === "f64"
+          ? cx.builder.emitIntrinsic("js.number.box", [value])
+          : type?.kind === "i32" && type.boolean === true
+            ? cx.builder.emitIntrinsic("js.boolean.box", [value])
+            : coerceIrValueToExternref(cx.builder, value);
+      cx.builder.emitSlotWrite(cx.scriptCompletionSlot, external);
+    }
+    return;
+  }
   if (ts.isBlock(stmt)) {
     const childCx: LowerCtx = { ...cx, scope: new Map(cx.scope) };
     for (const s of stmt.statements) {
@@ -15942,6 +15995,7 @@ function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
     }
     const catchCx: LowerCtx = { ...cx, scope: catchScope, noEarlyReturn: regionBarsEarlyReturn };
     const catchBody = cx.builder.collectBodyInstrs(() => {
+      resetScriptCompletion(catchCx);
       for (const s of stmt.catchClause!.block.statements) {
         lowerStmt(s, catchCx);
       }
@@ -15966,9 +16020,18 @@ function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
     const finallyScope = new Map(joinedTryScope);
     const finallyCx: LowerCtx = { ...cx, scope: finallyScope, noEarlyReturn: true };
     finallyBody = cx.builder.collectBodyInstrs(() => {
+      const completionSnapshot =
+        cx.scriptCompletionSlot === undefined
+          ? undefined
+          : cx.builder.declareSlot("__script_finally_completion", { kind: "externref" });
+      if (completionSnapshot !== undefined)
+        cx.builder.emitSlotWrite(completionSnapshot, cx.builder.emitSlotRead(cx.scriptCompletionSlot!));
       for (const s of stmt.finallyBlock!.statements) {
         lowerStmt(s, finallyCx);
+        if (ts.isBreakStatement(s) || ts.isContinueStatement(s)) return;
       }
+      if (completionSnapshot !== undefined)
+        cx.builder.emitSlotWrite(cx.scriptCompletionSlot!, cx.builder.emitSlotRead(completionSnapshot));
     });
     continuationScope = finallyScope;
   }
