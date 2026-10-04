@@ -1,5 +1,34 @@
 # Deno module linking checkpoint, 2026-10-04
 
+## Clean checkpoint native replay and typed-read gap
+
+Clean build-only checkout `/private/tmp/deno-promise-full.X2WdwN/js2` is now
+detached at c5b251bc5f with no tracked changes. Fresh shared-module packages
+are in `/private/tmp/deno-module-prepared-checkpoint.UMyMtG`, built with the
+existing build-side package builder (Binaryen 125 O3, Wasmtime 47.0.3).
+The existing native shared-module test passes **1/1**, 51 filtered /52:
+dependency execution count 1, observed count 2, same namespace true, second
+evaluation fulfilled. Use the replay command below with that new graph path.
+This builder does not expose a prepared-emission floor, so this is a regression
+replay, not native proof of the new prepared-initializer slice.
+
+A lower-level typed live-read probe exposes an additional failure. Analyze
+`./dep.ts` containing `let left:number=0; left=left+2; export {left};`
+and `./entry.ts` containing
+`import {left} from "./dep"; let right:number=0; right=left+3; export {right};`.
+Use generateMultiModule with the same options as the prepared-capability test,
+without legacy poison, deferred startup and the cutover enabled. Return
+`{left:77}` from the dependency capability and null from the entry capability;
+expose the generated private numeric globals on an owned normalized module
+copy. After __module_init, right is **NaN**, expected **80**. Checker diagnostics
+are empty and the import alias resolves to dep.ts. Only dependency/entry
+capability imports remain; no property-read import is emitted. Audit outcomes
+show dep.ts late-preparation-unsupported and entry.ts body-shape-rejected,
+both legacyBodyEmitted=true and irBodyEmitted=false. This is not a proven
+prepared-IR wrong-value defect: trace the legacy/optimization read path first,
+add a public compiler regression with a real foreign owner, then admit typed
+imports into prepared IR with explicit participation evidence.
+
 ## Final checkpoint: prepared initializer ownership
 
 The compiler now skips an already-evaluated dependency in the prepared IR
