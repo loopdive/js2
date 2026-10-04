@@ -79,6 +79,27 @@ const reflectionOptions = {
   standaloneScriptReflectionExports: { ownSymbols: "scriptOwnSymbols", descriptor: "scriptDescriptor" },
 };
 
+it("initializes a function-only Script and publishes undefined completion", async () => {
+  const owner = await context();
+  const result = await compile('function assert(cond:any){if(!cond)throw Error("assert");}', {
+    ...options,
+    link: [...options.link],
+  });
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  const instance = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports });
+  expect(instance.exports.__module_init).toBeTypeOf("function");
+  (instance.exports.__module_init as Function)();
+  expect((owner.exports.kind as Function)((owner.exports.captured as Function)())).toBe(0);
+});
+
+it("retains the completion sink ABI when every execution path throws", async () => {
+  const result = await compile("throw 42;", { ...options, link: [...options.link] });
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  const module = new WebAssembly.Module(result.binary);
+  expect(WebAssembly.Module.exports(module)).toContainEqual({ name: "__script_completion_sink", kind: "function" });
+  expect(WebAssembly.Module.imports(module).filter((entry) => entry.name === "capture")).toHaveLength(1);
+});
+
 it("shares Symbol allocation and registry state without merging distinct user symbols", async () => {
   const owner = await context();
   const e = owner.exports as Record<string, Function>;

@@ -97,6 +97,14 @@ export function publishScriptGetter(ctx: CodegenContext): void {
   const index = ctx.funcMap.get("__extern_get");
   if (index === undefined) throw new Error("Native Script getter was not reserved");
   ctx.mod.exports.push({ name, desc: { kind: "func", index } });
+  // An unconditionally abrupt Script still implements the completion ABI.
+  // Retain its sink through downstream DCE even if no normal path calls it.
+  const sink = ctx.standaloneScriptCompletionImport;
+  const sinkIndex = sink && ctx.funcMap.get(sink.name);
+  if (sinkIndex === undefined) throw new Error("Native Script getter lacks completion sink");
+  if (ctx.mod.exports.some((entry) => entry.name === "__script_completion_sink"))
+    throw new Error("Native Script completion sink export is occupied");
+  ctx.mod.exports.push({ name: "__script_completion_sink", desc: { kind: "func", index: sinkIndex } });
   const ownNames = ctx.standaloneScriptOwnNamesExport;
   if (ownNames) {
     if (ctx.mod.exports.some((entry) => entry.name === ownNames))

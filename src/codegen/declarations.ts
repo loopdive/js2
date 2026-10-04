@@ -5868,7 +5868,10 @@ export function compileDeclarations(
   // closure in __module_init even when the program has no other init statements,
   // so a read before the reassignment still yields the function.
   const hasLiveFuncSeeds = (ctx.liveFuncBindingGlobals?.size ?? 0) > 0;
-  const hasModuleInits = ctx.moduleInitStatements.length > 0 || hasLiveFuncSeeds;
+  const hasModuleInits =
+    ctx.moduleInitStatements.length > 0 ||
+    hasLiveFuncSeeds ||
+    (!ctx.sourceIsModule && !!ctx.standaloneScriptCompletionImport);
   const hasStaticInits = ctx.staticInitExprs.length > 0;
   const hasAsyncGraphInit =
     ctx.standalone === true &&

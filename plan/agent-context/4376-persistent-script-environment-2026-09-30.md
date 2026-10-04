@@ -1,5 +1,26 @@
 # Persistent AOT Script environment
 
+## Broader Script packaging continuation, 2026-10-04
+
+Compiler now creates a canonical initializer for function-only/empty completion
+Scripts and exports the completion sink to retain its ABI through downstream DCE
+even when every execution path is abrupt. Default-off behavior is unchanged by
+these guards. Focused reflection/completion controls pass 33/33; persistent Script
+controls pass 86/86; TypeScript 7 and scoped lint pass. Default-off byte parity and
+the existing 91-test preservation population have not been rerun.
+
+Adapter build-side tooling inventories unresolved Rust calls rather than silently
+omitting them; strict literal-only callers still reject unsupported inputs.
+First unchanged population: 22 call sites, 14 packaged /6 packaging failures /2
+unresolved macro call sites. With the compiler changes, all 16 module-test literal
+Scripts package after Binaryen optimization. This candidate run uses uncommitted
+compiler edits, not a fresh clean-pin replay. Four conversion literals are also
+packaged; unchanged derive_from_struct and derive_from_tuple_struct pass 2/2.
+The unchanged lazy-script-not-found test executes but fails 0/1 with TypeError
+instead of the required lazy-loading error. Do not infer module conformance from
+packaging. Full module graph inputs, macro-generated source/resource bindings,
+native lazy-loader operations and snapshot support remain incomplete.
+
 ## Fresh unchanged WebIDL result, 2026-10-04
 
 Native compiler-free WebIDL replay now passes **17/17**, 0 ignored and 414
