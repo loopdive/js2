@@ -1,5 +1,29 @@
 # Deno module linking checkpoint, 2026-10-04
 
+## Fresh-prefix/cached-source failure payload delivery fixed
+
+Paired adapter control improves 0/1 to 1/1 (54 filtered /55), using clean
+compiler 4a98f06ae2 packages `/private/tmp/deno-cached-prefix.mRGaa6` (three
+graphs). Native namespace capability now distinguishes pending, namespace,
+and cached exception. Caller-owned transfer plus the Context's shared Wasm
+exception tag preserve the exact original JS object rather than substituting
+a host trap. A fresh same-URL prefix runs once before cached failure, retains
+a separate namespace with 7 while the original remains 9, later sources stay
+untouched, and repeated rejection identity is stable. No deployed compiler or
+interpreter. Node/V8 evaluation control passes 1/1; both graphs must be linked
+before the first failure because Node rejects later linking to errored Modules.
+Native control additionally verifies later linking.
+
+Adapter filtered library passes 17/17 (16 filtered /33), ordinary native
+35 passed /19 ignored /1 filtered out of 55, shared/typed AOT each 1/1, and
+fixture/binding/extractor controls 8/8.
+Rebuilt selected unchanged Deno controls also pass 5/5, each 430 filtered /431,
+with lifecycle rollout packages and unchanged Context. Exact hashes, commands,
+baseline trap and remaining integration work are recorded in the adapter
+handoff. Next: native prepared-IR participation, cycles/TDZ, mixed successful
+synthetic/source composition, snapshots, broader Deno population, complete host
+integration and matched benchmarks. No full-integration claim.
+
 ## Ordinary package builders now enable lifecycle events
 
 Paired adapter builders explicitly enable lifecycle for shared modules, typed

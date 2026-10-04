@@ -329,6 +329,33 @@ files:
 
 ## Latest module-linking handoff (2026-10-04)
 
+### Fresh source prefix before cached failure (continuation)
+
+Extend the source-bound native failure control with a new same-URL prefix
+Module followed by the already-errored source dependency. The prefix must run
+once and remain usable, the cached source must not run again, later work must
+remain untouched, and the consumer must reject with the exact original JS
+object. Namespace capability delivery currently turns an errored dependency
+into a generic Rust error. Reproduce before fixing, then deliver the original
+payload through the Context's shared Wasm exception tag using Caller-owned
+realm access, not a runtime reborrow or an interpreter.
+
+Expanded native control reproduces baseline 0/1 at original-payload identity,
+then passes 1/1 (54 filtered /55) after capability delivery uses the Context's
+shared exception tag. Fresh same-URL prefix execution, separate namespace
+values 7 versus original 9, original cached object, repeated Promise identity,
+untouched later source and zero runtime compiler/interpreter activity are
+verified. Clean compiler 4a98f06ae2 packages contain three graphs at
+`/private/tmp/deno-cached-prefix.mRGaa6`. Node/V8 evaluation-order control
+passes with both consumers linked before first evaluation because Node's
+Module API separately forbids linking to already-errored Modules. Native
+control verifies later linking too. Library 17/17, ordinary native 35 passed
+/19 ignored /1 filtered out of 55, shared/typed AOT each 1/1, and fixture
+controls 8/8 pass. Broader integration requirements remain open.
+
+Final rebuilt unchanged Deno runner retains selected module results 5/5,
+each 430 filtered /431, with lifecycle rollout packages and unchanged Context.
+
 ### Lifecycle package rollout (continuation)
 
 The paired adapter builders now explicitly request source lifecycle events for
