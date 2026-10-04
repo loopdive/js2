@@ -1,5 +1,32 @@
 # Persistent AOT Script environment
 
+## Wrap-up and resume entry point, 2026-10-04
+
+Work is published in existing draft PRs: compiler
+https://github.com/loopdive/js2/pull/6468 and adapter
+https://github.com/loopdive/v8x/pull/2. They remain incomplete, not merge-ready.
+Compiler checkpoint before this note: 88f7e82c5ed10c9f046bc2c00aa412e5e5b4089e;
+adapter checkpoint: 3fa461fce229f92094c4bd16d7bc0669f972b217.
+Server main is 39fd7b7d44c9bc6f9be47ddd1f7fd75196a7d5f1 and is already an
+ancestor through merge 2617ddf4d2. No additional merge is required.
+
+The next implementation has not started. Wire the currently no-op
+`v8__Isolate__SetHostInitializeImportMetaObjectCallback` in
+`src/js2wasm/mod.rs` to Deno's installed callback, keeping metadata identity
+per native Module and Context. Replace the compiler sidecar's entry-based
+`import.meta.main` constant with host-owned metadata. Deno's callback is in
+`libs/core/runtime/bindings.rs`; do not edit Deno or its tests. Publish cached
+metadata before invoking callbacks and avoid mutable borrows across reentry.
+Repackage exact graphs and rerun unchanged `main_and_side_module`, including
+positive execution and missing-artifact negative controls.
+
+Then implement native Promise transport in `realm_objects.rs` with real
+identity and settlement, and preserve rooted Wasm exception payloads in
+`run_deferred_module_init` rather than reducing them to diagnostic strings.
+The evidence below predates this wrap-up; no new execution or benchmark was
+performed during it. Preserve unrelated tracked edits and untracked artifacts
+in the compiler workspace, and the adapter's existing `.tmp/` directory.
+
 ## Module evaluation and rejection checkpoint, 2026-10-04
 
 Adapter source 9a4e13a1cdfcd0b22f52caa24a2ba421b50970e1 now returns a cached
