@@ -1,5 +1,71 @@
 # Deno module linking checkpoint, 2026-10-04
 
+## Latest checkpoint: nested lazy-module evaluation
+
+The unchanged Deno pre-instantiated-sibling test improves from 0/1 on adapter
+30ffb90 to 1/1. Its A module invokes a native lazy loader for B while the outer
+graph is executing. Nested initialization and namespace publication now use
+the exact owner's active Caller store access, avoiding a second Runtime borrow.
+The nested graph stays in the existing store's aot_call_graphs registry.
+No new runtime fields, compiler, interpreter or eval provider are installed.
+
+The initial initialization-only fix still aborted during exception conversion
+because namespace publication attempted the same Runtime reborrow. Making
+publication Caller-aware fixed the original test. That intermediate abort is
+not a passing result. Independent nested throwing-module/original-error identity
+coverage is still needed before treating that path as complete.
+
+Final selected unchanged Deno replay: 9/9, each 1/1 with 430 filtered /431.
+This combines lazy packages below, the prior main/side and test_mods packages
+at /private/tmp/deno-mods-expanded.5MyCYn, and the previous five tests at
+/private/tmp/deno-lifecycle-rollout.ykaQLB/deno. Original Deno source/test files
+remain unchanged; only Cargo.toml and Cargo.lock select the adapter.
+Native ordinary controls: 35 passed, 19 ignored, 1 filtered /55.
+Filtered library: 17/17 (16 filtered /33). Explicit cached-failure, shared-owner
+and typed-import AOT controls: 3/3 (each 54 filtered /55).
+Node extractor/binding/V8 controls: 9/9. Formatting/diff checks pass.
+No full 431-test run, retirement certification or new benchmark claim.
+
+Fresh lazy packages: /private/tmp/deno-lazy-module.BcyvKP/graphs (three graphs,
+no Scripts). Compiler clean 4a98f06ae239f6e32b65e52a4b4de3bab8eb88e1,
+Binaryen 125 O3, Wasmtime 47.0.3, unchanged full Context:
+ /private/tmp/deno-promise-full.X2WdwN/deno-core.cwasm
+SHA256 78aa8a50726f61577cdc54267d912af63acc7b85d24a931fa53e71a63ab2b237.
+Deno pin: 1d4e6c1cb855b62a7fb572c6c138e4e8b4e7fa44.
+
+Package inventory (binding; native SHA256; optimized Wasm SHA256):
+- importer:
+  18c024b9ea111a7fe4c8c216a490084864bf0c2e395c14c12fe9051367eec544;
+  8f366e0dc7065892899e1e65d38f2ea2c4703a7ea5c9746d51fcc3ccd4460864;
+  897d34faa3ef796a79ca7ec5afaf77095343eef8daa07a47fc6f4b2ef583f41c
+- nested custom:lazy_b:
+  aa772ff178e1226f6683e5a3cf5cd80d930524b33a0f0d0ad8eab6d6d00fdf1c;
+  dfc8a806c948ecba6c66e8842773f5b971f1e4eef4aa65aefaefc8c60c1ba4a3;
+  95e91156fd42cf3e7b005a447d2a012dc3ca502011bb43c6231fb91f3c4e0cd2
+- main:
+  e52845862bbb938eb2451ae6ae8d86f08563ab8939edc539064e6e437d51d4ec;
+  a0de8ac40aa29ad8fbf4ff2a5076c1b0761089307254efbf7f50dabd054dde4e;
+  ceb41fd879091139a6fbc6f1dbbcf5338e1ee6f424c236ee68564cacc3a3ad4f
+
+Replay from /private/tmp/deno-upstream-conformance.H6HA4g/deno:
+
+```sh
+V8X_JS2WASM_DENO_CORE_AOT_MODULE=/private/tmp/deno-promise-full.X2WdwN/deno-core.cwasm V8X_JS2WASM_AOT_GRAPH_DIR=/private/tmp/deno-lazy-module.BcyvKP/graphs target/debug/deps/deno_core-87206ac56a2fccad --exact modules::tests::test_lazy_load_esm_evaluates_pre_instantiated_sibling --nocapture --test-threads=1
+```
+
+Repeat with modules::tests::test_lazy_loaded_esm_aliased_via_import.
+Default extractor inventory is now 11 graphs and five Scripts across nine tests.
+Builder reads original included testdata fixtures with git show at the pin.
+
+Next: independently test nested throwing-module object and Promise identity,
+then cycles/TDZ, native prepared-IR participation, successful synthetic/source
+composition, snapshots, broader conformance, full host integration and matched
+benchmarks. Site rendering is unverified because Typst is unavailable.
+Reuse draft PRs https://github.com/loopdive/v8x/pull/2 and
+https://github.com/loopdive/js2/pull/6468. Compiler PR is stacked on
+codex/4376-deno-callback-construction-20260930, not main. Neither is merge-ready.
+Preserve unrelated compiler dirt, adapter .tmp and old running test processes.
+
 ## Broader pinned-original module execution
 
 Adapter package extraction now includes unchanged Deno main_and_side_module

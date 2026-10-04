@@ -329,6 +329,28 @@ files:
 
 ## Latest module-linking handoff (2026-10-04)
 
+### Original lazy-module evaluation (continuation)
+
+Package unchanged test_lazy_loaded_esm_aliased_via_import and
+test_lazy_load_esm_evaluates_pre_instantiated_sibling, preserving original
+included fixture bytes and registering separate nested-evaluation packages.
+The sibling test exercises an A module which calls a native lazy-loader op
+to evaluate B while their shared graph is still executing. Prove original
+fixture extraction and artifact counts, run actual unchanged tests, then fix
+any observed nested-evaluation defect instead of rewriting their JS.
+
+Checkpoint result: aliased lazy import passes 1/1; pre-instantiated sibling
+improves from 0/1 on adapter 30ffb90 to 1/1. Nested graph initialization and
+namespace publication now use the exact owner's active Caller store access,
+retaining the graph in the existing store registry without a runtime compiler
+or interpreter. Final selected unchanged Deno replay passes 9/9, each 430
+filtered /431, across the three recorded package directories. Native ordinary
+controls pass 35/35 (19 ignored, 1 filtered /55); filtered library 17/17;
+three explicit AOT controls 3/3; extractor/binding/V8 controls 9/9.
+Independent nested throwing-module identity remains unverified. Full Deno
+integration, full conformance and new performance measurements are not done.
+Exact package provenance and continuation commands are in both handoffs.
+
 ### Broader unchanged module execution (continuation)
 
 Expand pinned-original module packaging to include main_and_side_module and
