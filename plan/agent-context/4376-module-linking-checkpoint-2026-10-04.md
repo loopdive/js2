@@ -1,5 +1,35 @@
 # Deno module linking checkpoint, 2026-10-04
 
+## Final checkpoint: prepared initializer ownership
+
+The compiler now skips an already-evaluated dependency in the prepared IR
+initializer path, not just legacy emission. Capability imports are reserved
+during preallocation; the guard is constructed before body identity and
+resource evidence are sealed. Exact SourceFile identity selects each owner.
+No sealed-body patch, adapter production change, interpreter or Deno rewrite.
+
+New controls cover singleton/batch owners, immediate/deferred startup,
+unevaluated entry execution, exact thrown-error identity and empty-map byte
+parity. They assert nonzero prepared emission and poison legacy emission.
+The initial baseline lacked capability imports in both tested shapes (0/2).
+The final combined initializer/linked/bootstrap/namespace run passed 29/29
+across six files, including the strengthened thrown-identity assertion. Typechecking
+and scoped lint passed; source ratchets exit zero, but the dead-export report
+does not certify runtime retirement.
+
+This slice has compiler execution evidence only. Existing clean native and
+selected unchanged Deno receipts below use compiler 285ac9e6f2 and must not be
+credited as native verification of this new prepared-IR change.
+
+Resume with a clean committed package rebuild and a native prepared-emission
+floor. Then verify typed IR live imported reads/calls, cycles/temporal dead
+zones/cached failures, getter/iterator ordering and foreign arrays. Snapshots,
+the full 431-test Deno population and matched benchmarks remain unfinished.
+Existing compiler PR 6468 is stacked on
+`codex/4376-deno-callback-construction-20260930`; paired adapter PR is v8x 2.
+Both remain drafts, not a claim of complete or merge-ready Deno integration.
+Historical failure sections below are superseded only by their newer receipts.
+
 ## Clean selected Deno replay
 
 The five unchanged Deno module tests now pass **5/5** using graph and Script

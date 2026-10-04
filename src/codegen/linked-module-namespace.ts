@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "../ts-api.js";
-import type { ValType } from "../ir/types.js";
+import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { pushBody, popBody } from "./context/bodies.js";
@@ -122,6 +122,24 @@ export function linkedModuleNamespaceName(ctx: CodegenContext, source: ts.Source
 
 export function reserveLinkedModuleNamespace(ctx: CodegenContext, name: string): void {
   ensureLateImport(ctx, name, [], [{ kind: "externref" }], ctx.standaloneModuleNamespaceImports!.module);
+}
+
+/** Construct the guard before Prepared body identity and resource evidence
+ * are sealed. Reservation belongs to preallocation, not this lowering step. */
+export function preparedLinkedModuleInitializerBody(
+  ctx: CodegenContext,
+  source: ts.SourceFile,
+  body: Instr[],
+): Instr[] {
+  const name = linkedModuleNamespaceName(ctx, source);
+  if (name === undefined) return body;
+  const index = ctx.funcMap.get(name);
+  if (index === undefined) throw new Error("Prepared module namespace capability was not reserved");
+  return [
+    { op: "call", funcIdx: index },
+    { op: "ref.is_null" },
+    { op: "if", blockType: { kind: "empty" }, then: body, else: [] },
+  ];
 }
 
 /** Preserve statement scope and ordering while skipping evaluated owners. */

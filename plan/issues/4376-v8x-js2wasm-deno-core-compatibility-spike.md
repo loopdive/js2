@@ -17,6 +17,9 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-10-04: reserve namespace guards before Prepared initializer lowering
+  # and construct the guarded IR body before its evidence is sealed.
+  - src/codegen/declarations.ts::preallocateModuleInitCallable
   # 2026-10-04: imported optional calls retain the original allocation owner
   # and short-circuit the entire remaining reference/argument evaluation.
   - src/codegen/expressions/linked-module-reference.ts
@@ -325,6 +328,21 @@ files:
 # #4376 — v8x + js2wasm as an engine-free Deno substrate
 
 ## Latest module-linking handoff (2026-10-04)
+
+### Prepared initializer guards (continuation)
+
+New positive-floor controls reach both singleton and batch prepared IR owners
+with legacy initializer emission poisoned. Both initially lacked any namespace
+capability import. Reserve capabilities during initializer preallocation and
+construct the body guard during IR lowering, before body identity and resource
+evidence are sealed. The guard uses exact unit-to-SourceFile identity and
+skips only the evaluated source owner; it does not modify sealed bodies or
+disable IR. Combined initializer/linked/bootstrap/namespace controls pass 29/29
+across six files with exact thrown-error identity. Typechecking, scoped lint
+and source ratchets pass; dead-export retirement is not certified. Native
+prepared-emission replay and typed IR live import reads/calls remain unverified.
+The final handoff is in the module-linking checkpoint. Existing drafts 6468
+and v8x 2 are reused; full Deno integration remains in-progress.
 
 ### Clean selected Deno replay (continuation)
 

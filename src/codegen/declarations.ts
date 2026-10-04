@@ -89,7 +89,12 @@ import { filterResultNeedsDynamicCarrier } from "./array-filter-spec-access.js";
 import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
 import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
-import { withLinkedModuleInitializer } from "./linked-module-namespace.js";
+import {
+  linkedModuleNamespaceName,
+  reserveLinkedModuleNamespace,
+  withLinkedModuleInitializer,
+} from "./linked-module-namespace.js";
+import { flushLateImportShifts } from "./expressions/late-imports.js";
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
 import {
@@ -5280,6 +5285,11 @@ export function preallocateModuleInitCallable(
   sourceFile: ts.SourceFile,
   options?: { readonly publishDeferredExport?: boolean },
 ): void {
+  const namespace = linkedModuleNamespaceName(ctx, sourceFile);
+  if (namespace !== undefined) {
+    reserveLinkedModuleNamespace(ctx, namespace);
+    flushLateImportShifts(ctx, null);
+  }
   let initFunc = ctx.programAbiModuleInitCallables?.functionForSource(sourceFile);
   let initFuncIdx = ctx.programAbiModuleInitCallables?.handleForSource(sourceFile);
   if (!initFunc || initFuncIdx === undefined) {

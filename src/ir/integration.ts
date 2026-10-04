@@ -494,6 +494,7 @@ import {
   IR_STRING_REPEAT_FN,
 } from "./string-runtime.js";
 import { readEnv } from "../env.js";
+import { preparedLinkedModuleInitializerBody } from "../codegen/linked-module-namespace.js";
 export {
   buildIrIntegrationReport,
   caughtIntegrationFailure,
@@ -5607,6 +5608,18 @@ export function compileIrPathFunctions(
           };
           finalBody = [doneGet, eqz, guardIf];
           wasiGuard.planted = { doneGet, eqz, guard: guardIf };
+        }
+        if (ctx.standaloneModuleNamespaceImports) {
+          const source = [...moduleBindingIdentityContext.moduleInitUnitIdBySourceFile].find(
+            ([, unitId]) => unitId === entry.artifactUnitId,
+          )?.[0];
+          if (!source)
+            throw new IrInvariantError(
+              "selection-preparation-mismatch",
+              "lower",
+              "Linked module initializer lost its exact source identity",
+            );
+          finalBody = preparedLinkedModuleInitializerBody(ctx, source, finalBody);
         }
       } else {
         finalBody = applyIrTailCalls(ctx, wasmFunc.body, wasmFunc.typeIdx);
