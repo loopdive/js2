@@ -1421,3 +1421,23 @@ depth-one local clone succeeded. The build staging directory is
 `js2-clean`. Advance its clean detached pin only after committing the receiver
 fix. Binaryen 125 is `node_modules/binaryen/bin/wasm-opt` (Node executable),
 not a command currently available on PATH. Native replay remains outstanding.
+
+## Wrap-up: native Promise transport checkpoint (2026-10-04)
+
+Compiler 74ed7007fb and adapter 37923f2 already publish host-owned import-meta.
+Unchanged Deno main/side passes 1/1, lazy/missing-script 2/2 and WebIDL 17/17,
+all subsets of 431 tests. This does not establish full Deno integration.
+
+The next adapter checkpoint adds a real compiled Promise mirror for native
+Rust-created Promises, preserving native identity and synchronized settlement.
+Compiler-free check and formatting pass, options controls pass 11/11,
+staged-core helper controls pass, and the ordinary adapter suite passes 34/34
+executed tests (14 ignored /48). Native mirror integration is not yet tested.
+Old Context artifacts lack the new helper ABI and must be rebuilt. Failure
+rollback, rejection event identity/order and native replay are first next steps.
+No compiler implementation changed during wrap-up and no benchmark was run.
+
+Detailed continuation is adapter `tools/js2wasm/NATIVE-PROMISE-HANDOFF.md`.
+Existing draft PRs are https://github.com/loopdive/js2/pull/6468 and
+https://github.com/loopdive/v8x/pull/2; update these rather than opening duplicates.
+Neither is merge-ready. Preserve unrelated user changes in both worktrees.
