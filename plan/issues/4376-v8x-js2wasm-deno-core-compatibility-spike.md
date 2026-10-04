@@ -3176,3 +3176,13 @@ Native ABI controls pass 2/2 and build-side controls 15/15. The Context artifact
 still the earlier clean build; only Scripts/runtime use this checkpoint. Full
 population compatibility and performance are not credited. See the latest handoff
 section for reproduction, failed runtime-profile checks and remaining work.
+
+Native Error continuation: a same-store probe proves the next getter throws a
+native Error whose message is a four-unit string. The adapter previously adopted
+it as an ordinary Object, then Message::Get produced a generic message. Native
+Error carrier classification and field snapshots now retain the Error wrapper
+branding and initial name/message while preserving the original realm binding.
+The unchanged WebIDL replay improves to 16/17 (one dictionary failure, zero
+ignored, 414 filtered /431). This is a measured subset result, not full Deno
+compatibility. Script-owned array iterator lookup remains undefined in the
+direct probe; do not add an undefined-result fallback that ignores own shadowing.
