@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { captureWasmGcHelperPredecessorPolicySource } from "./helpers/ir-runtime-program-policy-evolution.js";
 import { captureProgramValidatorPredecessorPolicySource } from "./helpers/ir-runtime-program-policy-evolution.js";
 import { beforeProgramValidatorRelocation } from "./helpers/ir-program-validator-relocation.js";
 
@@ -2654,7 +2655,9 @@ const fixtureCaptureRead = (path: string): string => readFileSync(new URL(`../${
 function fixtureCaptureInput(epoch: (typeof fixtureCaptureEpochs)[number]): string {
   const outer = captureCanonical489dPredecessorPolicySource(
     captureNestedStackificationPredecessorPolicySource(
-      captureProgramValidatorPredecessorPolicySource(fixtureCaptureRead("scripts/compiler-boundaries.json")),
+      captureProgramValidatorPredecessorPolicySource(
+        captureWasmGcHelperPredecessorPolicySource(fixtureCaptureRead("scripts/compiler-boundaries.json")),
+      ),
     ),
   );
   const raw = epoch.name === "canonical3c6" ? outer : captureCanonical3c6PredecessorPolicySource(outer);
@@ -3362,7 +3365,9 @@ function fourStageCaptureInput(epoch: (typeof fourStageCaptureEpochs)[number]): 
     captureCanonical3c6PredecessorPolicySource(
       captureCanonical489dPredecessorPolicySource(
         captureNestedStackificationPredecessorPolicySource(
-          captureProgramValidatorPredecessorPolicySource(fixtureCaptureRead("scripts/compiler-boundaries.json")),
+          captureProgramValidatorPredecessorPolicySource(
+            captureWasmGcHelperPredecessorPolicySource(fixtureCaptureRead("scripts/compiler-boundaries.json")),
+          ),
         ),
       ),
     ),

@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { captureWasmGcHelperPredecessorPolicySource } from "./helpers/ir-runtime-program-policy-evolution.js";
 import { captureProgramValidatorPredecessorPolicySource } from "./helpers/ir-runtime-program-policy-evolution.js";
 import { createHash } from "node:crypto";
 import {
@@ -1417,7 +1418,9 @@ const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const raw = (): string => {
   const text = captureCanonical489dPredecessorPolicySource(
     captureNestedStackificationPredecessorPolicySource(
-      captureProgramValidatorPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+      captureProgramValidatorPredecessorPolicySource(
+        captureWasmGcHelperPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+      ),
     ),
   );
   expect(Buffer.byteLength(text)).toBe(577771);

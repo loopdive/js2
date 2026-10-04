@@ -6372,3 +6372,869 @@ export function captureProgramValidatorPredecessorPolicySource(raw: string): str
     programValidatorPolicyFail("raw/semantic reciprocal proof disagree");
   return predecessor;
 }
+
+// Fixed D2 outer stage: fresh authorities and exact local inverse only.
+import { lstatSync as wasmGcHelperLstat } from "node:fs";
+const wasmGcHelperExpected = {
+  schema: 1,
+  kind: "fixed-wasmgc-helper-owners-policy-relocation",
+  provenance: {
+    canonicalMain: "445233d34c32c22b1bdb3b4ca28faa61635c102b",
+    planSha256: "41948d8bff679aad62ed649020eae0b55211095f21e293aa592edb0833cc5d49",
+    sourceFreezeSha256: "5e5e193cf0662662335a0df563da8960dccfd3c10de9f70c1394a44012c92369",
+    legacyRetained: true,
+  },
+  before: {
+    source: {
+      bytes: 581616,
+      sha256: "8f686f0798e4d07255346360daaba21bd24f72d868bb7850f34bf0aa8c5d66a9",
+      gitBlob: "d6c1b9f0fcc9775f791a4c30b2e1056b69e34761",
+    },
+    dataSha256: "81a8fd3af0cbb9e82b89e1f05b3d731585d69472d4e1edd9dad80e0b9a21c50b",
+    fileCount: 1819,
+    filesSha256: "00c376929d4a8cd2a36c890f29fae0bb4f877dfe57034cfbd2fc6f872d630ec6",
+    activationCount: 102,
+    activationHistorySha256: "9a7e77fdc8c67fc0683879feb8bac8a9ef7854e9b083ac0c7e9affa4ddb24020",
+    layersSha256: "08c5f625965b12541ccea85120abd644891a589be067c53f3dadcf7233f0e4ab",
+    allowedEdgesSha256: "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7",
+    moveCount: 7,
+    movesSha256: "5f954546a4c59d7ff270ce190dd78541c16be488d1dbb9e76ef1171900fa4dbb",
+  },
+  current: {
+    source: {
+      bytes: 583163,
+      sha256: "0ec45a8b2c003e0b4baf84556f8612e20fca88a3d48f81a13f8cf43ac113fdd0",
+      gitBlob: "391b2701b382df0af5a42536fd61a830fd596eb4",
+    },
+    dataSha256: "f7ed5862d447d03557ed0e2a61060d143fcc9f2036e02120ac56839829082a83",
+    fileCount: 1822,
+    filesSha256: "1c23754ff749eb559320fa01408ba5891f9f7f264f2fb890284ed252459e4053",
+    activationCount: 103,
+    activationHistorySha256: "17888cd13913d430ce7b5338ee4b686e2c4f8f9a8ffb08934a5ba80b187c661a",
+    layersSha256: "1987cb65521762925d57f822787a854b154297f98b3e736f1487154ebcf084d2",
+    allowedEdgesSha256: "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7",
+    moveCount: 10,
+    movesSha256: "8d85e70962ba34d74c9cabd9731601995ecc14434608a5d5deff99b186187224",
+  },
+  helperPrefix: {
+    path: "tests/helpers/ir-runtime-program-policy-evolution.ts",
+    bytes: 292423,
+    sha256: "22e2dc2bd4ca495a661708f7ef4591aa77567ac55889bd19fb845788e32d21f4",
+    gitBlob: "eb100dc9b4152f493d0d6584aeeb983cb724bc4d",
+  },
+  predecessorReceipt: {
+    path: "tests/helpers/ir-runtime-program-policy-program-validator.json",
+    bytes: 29027,
+    sha256: "e16eae0411ed069a37bb8e8073004e5ac2a31cecd9d3d983fe9080a313958014",
+    gitBlob: "1876d590ab03f55a912241230213c1c67984e4ab",
+  },
+  sourceInputs: [
+    {
+      path: "src/ir/lowering-dynamic-scratch.ts",
+      bytes: 213,
+      sha256: "a087a447591e5758eef6c3129d9711c58daec904e688b84a92dfec7cd47f6c5d",
+      gitBlob: "fbe45239aa609ec2934abbd28bc34c50f46b57d9",
+      mode: 420,
+    },
+    {
+      path: "src/backend/wasmgc/lowering/dynamic-scratch.ts",
+      bytes: 1386,
+      sha256: "bbc60c9112858b01761a78fc2433af1cb1652cc047eebefc7d1e3f2fac5f75b4",
+      gitBlob: "1dcf2d7394c1068972500e507e51b88f1dc9c1ac",
+      mode: 420,
+    },
+    {
+      path: "src/ir/backend/wasm-int32-coercion.ts",
+      bytes: 256,
+      sha256: "c3d4b0ea7b116f3dba3a12e7af6b07d6997f26fb6ac56410f0d8cca27202df5b",
+      gitBlob: "e9d345d7053355444512bba265f7f15357277bc4",
+      mode: 420,
+    },
+    {
+      path: "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
+      bytes: 3802,
+      sha256: "bbd5114361f4efafbfd44945de8c4978c212605a7414c5392986fc282fe25325",
+      gitBlob: "7b4a05e4327d70e41347178499f9297dca15019b",
+      mode: 420,
+    },
+    {
+      path: "src/ir/backend/wasm-math-minmax.ts",
+      bytes: 238,
+      sha256: "dfe54c9960961ed930c22410cfc94b1f2f7e609e03e356e5538bc2c4a48fb9ad",
+      gitBlob: "c0c8f788489da89e09c37108c72661d450edd4a3",
+      mode: 420,
+    },
+    {
+      path: "src/backend/wasmgc/lowering/wasm-math-minmax.ts",
+      bytes: 1688,
+      sha256: "1a510ac3a491a4a4bca6676bd0a89454538d076c4d5d5e047c14505380a68d44",
+      gitBlob: "158e0eaff28d5d3d6756ec588a706e3d4b1a38f0",
+      mode: 420,
+    },
+  ],
+  sourcePairs: [
+    {
+      donor: "src/ir/lowering-dynamic-scratch.ts",
+      owner: "src/backend/wasmgc/lowering/dynamic-scratch.ts",
+      before: {
+        bytes: 1346,
+        sha256: "e70eaec584d4fca7d2d17f9ce496536626e7fb287cd018c91705ca12f6b5d609",
+        gitBlob: "633d0ee61485acbce8737d02aff50c0e17a7f6fc",
+      },
+      facade:
+        '// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n\nexport {\n  createIrDynamicScratchLocals,\n  type IrDynamicScratchLocals,\n} from "../backend/wasmgc/lowering/dynamic-scratch.js";\n',
+      importRoutes: [
+        {
+          before: "./nodes.js",
+          current: "../../../ir/core/types.js",
+        },
+        {
+          before: "./types.js",
+          current: "../../../wasm/model/instructions.js",
+        },
+      ],
+      valueExports: ["createIrDynamicScratchLocals"],
+      typeExports: ["IrDynamicScratchLocals"],
+    },
+    {
+      donor: "src/ir/backend/wasm-int32-coercion.ts",
+      owner: "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
+      before: {
+        bytes: 3778,
+        sha256: "23cf996416285cf8495c2c6977396c9c81eaf2af79d8c15f1c8d6ef6f05da2a0",
+        gitBlob: "da813f57a66c14ef2dab8adf3fedaeb5318cd8df",
+      },
+      facade:
+        '// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n\nexport {\n  emitWasmInt32Coercion,\n  emitWasmMathClz32,\n  emitWasmMathImul,\n  type WasmInt32CoercionScratch,\n} from "../../backend/wasmgc/lowering/wasm-int32-coercion.js";\n',
+      importRoutes: [
+        {
+          before: "../types.js",
+          current: "../../../wasm/model/instructions.js",
+        },
+      ],
+      valueExports: ["emitWasmInt32Coercion", "emitWasmMathClz32", "emitWasmMathImul"],
+      typeExports: ["WasmInt32CoercionScratch"],
+    },
+    {
+      donor: "src/ir/backend/wasm-math-minmax.ts",
+      owner: "src/backend/wasmgc/lowering/wasm-math-minmax.ts",
+      before: {
+        bytes: 1664,
+        sha256: "76a3e201e5ed64e768963facfd87fdaedba31b0bcbd3b73300eb647237c4f822",
+        gitBlob: "914463166562ceeb8d345b2b835013f8f0f0b7cc",
+      },
+      facade:
+        '// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n\nexport {\n  emitWasmMathMinMax,\n  type WasmMathMinMaxScratch,\n  type WasmMathMinMaxOperation,\n} from "../../backend/wasmgc/lowering/wasm-math-minmax.js";\n',
+      importRoutes: [
+        {
+          before: "../types.js",
+          current: "../../../wasm/model/instructions.js",
+        },
+      ],
+      valueExports: ["emitWasmMathMinMax"],
+      typeExports: ["WasmMathMinMaxScratch", "WasmMathMinMaxOperation"],
+    },
+  ],
+  topLevelKeys: [
+    "schema",
+    "description",
+    "sourceRoot",
+    "tsconfig",
+    "requireGitProvenance",
+    "externalAssets",
+    "frontendWrapper",
+    "moduleExtensions",
+    "layers",
+    "allowedEdges",
+    "externalPackages",
+    "activationHistory",
+    "nonModules",
+    "moves",
+    "evidence",
+    "files",
+  ],
+  delta: {
+    layerIndex: 11,
+    beforeLayer: {
+      id: "backend-wasmgc",
+      status: "active",
+      roots: ["src/backend/wasmgc"],
+      required: true,
+      entries: [
+        "src/backend/wasmgc/resources/native-vectors.ts",
+        "src/backend/wasmgc/resources/native-promises.ts",
+        "src/backend/wasmgc/resources/native-string-literals.ts",
+        "src/backend/wasmgc/resources/native-errors.ts",
+        "src/backend/wasmgc/resources/native-values.ts",
+        "src/backend/wasmgc/resources/native-string-number.ts",
+        "src/backend/wasmgc/resources/native-string-flatten.ts",
+        "src/backend/wasmgc/resources/native-argument-vectors.ts",
+        "src/backend/wasmgc/resources/native-closures.ts",
+        "src/backend/wasmgc/resources/native-resource-declarations.ts",
+        "src/backend/wasmgc/program/native-string-values.ts",
+        "src/backend/wasmgc/program/native-number-format.ts",
+        "src/backend/wasmgc/resources/native-number-ryu.ts",
+        "src/backend/wasmgc/resources/native-number-format.ts",
+        "src/backend/wasmgc/resources/native-delay-combinator.ts",
+        "src/backend/wasmgc/async/prepared-async-frame-adapter.ts",
+        "src/backend/wasmgc/resources/prepared-async-frame.ts",
+        "src/backend/wasmgc/program/native-string-output-abi.ts",
+        "src/backend/wasmgc/program/native-string-output.ts",
+        "src/backend/wasmgc/resources/native-string-output.ts",
+        "src/backend/wasmgc/resources/native-object-layouts.ts",
+        "src/backend/wasmgc/resources/native-string-equality.ts",
+        "src/backend/wasmgc/resources/native-symbol-carrier.ts",
+        "src/backend/wasmgc/resources/native-booleans.ts",
+        "src/backend/wasmgc/resources/native-source-closures.ts",
+        "src/backend/wasmgc/resources/native-ref-cells.ts",
+        "src/backend/wasmgc/program/native-invocation-abi.ts",
+        "src/backend/wasmgc/resources/native-invocation.ts",
+        "src/backend/wasmgc/resources/native-source-closure-callables.ts",
+        "src/backend/wasmgc/resources/native-object-access-declarations.ts",
+        "src/backend/wasmgc/resources/native-object-access.ts",
+        "src/backend/wasmgc/resources/native-object-storage.ts",
+        "src/backend/wasmgc/resources/native-bigint.ts",
+        "src/backend/wasmgc/resources/native-object-same-value.ts",
+        "src/backend/wasmgc/resources/native-object-descriptors.ts",
+        "src/backend/wasmgc/resources/native-prototype-layouts.ts",
+        "src/backend/wasmgc/resources/native-prototype-seeder-bindings.ts",
+        "src/backend/wasmgc/resources/native-object-get.ts",
+        "src/backend/wasmgc/program/native-primitive-boundary-abi.ts",
+        "src/backend/wasmgc/resources/native-primitive-wrapper-layouts.ts",
+        "src/backend/wasmgc/resources/native-primitive-wrapper-storage.ts",
+        "src/backend/wasmgc/resources/native-builtin-function-requests.ts",
+        "src/backend/wasmgc/resources/native-builtin-functions.ts",
+        "src/backend/wasmgc/resources/native-invocation-substrate.ts",
+        "src/backend/wasmgc/program/native-realm-literals.ts",
+        "src/backend/wasmgc/program/native-realm.ts",
+        "src/backend/wasmgc/resources/native-realm-object-layouts.ts",
+        "src/backend/wasmgc/resources/native-object-realm.ts",
+        "src/backend/wasmgc/resources/native-mixed-object-access.ts",
+        "src/backend/wasmgc/resources/native-well-known-symbols.ts",
+        "src/backend/wasmgc/resources/native-bigint-number.ts",
+        "src/backend/wasmgc/resources/native-number-primitive-classifier.ts",
+      ],
+      minModules: 52,
+    },
+    currentLayer: {
+      id: "backend-wasmgc",
+      status: "active",
+      roots: ["src/backend/wasmgc"],
+      required: true,
+      entries: [
+        "src/backend/wasmgc/resources/native-vectors.ts",
+        "src/backend/wasmgc/resources/native-promises.ts",
+        "src/backend/wasmgc/resources/native-string-literals.ts",
+        "src/backend/wasmgc/resources/native-errors.ts",
+        "src/backend/wasmgc/resources/native-values.ts",
+        "src/backend/wasmgc/resources/native-string-number.ts",
+        "src/backend/wasmgc/resources/native-string-flatten.ts",
+        "src/backend/wasmgc/resources/native-argument-vectors.ts",
+        "src/backend/wasmgc/resources/native-closures.ts",
+        "src/backend/wasmgc/resources/native-resource-declarations.ts",
+        "src/backend/wasmgc/program/native-string-values.ts",
+        "src/backend/wasmgc/program/native-number-format.ts",
+        "src/backend/wasmgc/resources/native-number-ryu.ts",
+        "src/backend/wasmgc/resources/native-number-format.ts",
+        "src/backend/wasmgc/resources/native-delay-combinator.ts",
+        "src/backend/wasmgc/async/prepared-async-frame-adapter.ts",
+        "src/backend/wasmgc/resources/prepared-async-frame.ts",
+        "src/backend/wasmgc/program/native-string-output-abi.ts",
+        "src/backend/wasmgc/program/native-string-output.ts",
+        "src/backend/wasmgc/resources/native-string-output.ts",
+        "src/backend/wasmgc/resources/native-object-layouts.ts",
+        "src/backend/wasmgc/resources/native-string-equality.ts",
+        "src/backend/wasmgc/resources/native-symbol-carrier.ts",
+        "src/backend/wasmgc/resources/native-booleans.ts",
+        "src/backend/wasmgc/resources/native-source-closures.ts",
+        "src/backend/wasmgc/resources/native-ref-cells.ts",
+        "src/backend/wasmgc/program/native-invocation-abi.ts",
+        "src/backend/wasmgc/resources/native-invocation.ts",
+        "src/backend/wasmgc/resources/native-source-closure-callables.ts",
+        "src/backend/wasmgc/resources/native-object-access-declarations.ts",
+        "src/backend/wasmgc/resources/native-object-access.ts",
+        "src/backend/wasmgc/resources/native-object-storage.ts",
+        "src/backend/wasmgc/resources/native-bigint.ts",
+        "src/backend/wasmgc/resources/native-object-same-value.ts",
+        "src/backend/wasmgc/resources/native-object-descriptors.ts",
+        "src/backend/wasmgc/resources/native-prototype-layouts.ts",
+        "src/backend/wasmgc/resources/native-prototype-seeder-bindings.ts",
+        "src/backend/wasmgc/resources/native-object-get.ts",
+        "src/backend/wasmgc/program/native-primitive-boundary-abi.ts",
+        "src/backend/wasmgc/resources/native-primitive-wrapper-layouts.ts",
+        "src/backend/wasmgc/resources/native-primitive-wrapper-storage.ts",
+        "src/backend/wasmgc/resources/native-builtin-function-requests.ts",
+        "src/backend/wasmgc/resources/native-builtin-functions.ts",
+        "src/backend/wasmgc/resources/native-invocation-substrate.ts",
+        "src/backend/wasmgc/program/native-realm-literals.ts",
+        "src/backend/wasmgc/program/native-realm.ts",
+        "src/backend/wasmgc/resources/native-realm-object-layouts.ts",
+        "src/backend/wasmgc/resources/native-object-realm.ts",
+        "src/backend/wasmgc/resources/native-mixed-object-access.ts",
+        "src/backend/wasmgc/resources/native-well-known-symbols.ts",
+        "src/backend/wasmgc/resources/native-bigint-number.ts",
+        "src/backend/wasmgc/resources/native-number-primitive-classifier.ts",
+        "src/backend/wasmgc/lowering/dynamic-scratch.ts",
+        "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
+        "src/backend/wasmgc/lowering/wasm-math-minmax.ts",
+      ],
+      minModules: 55,
+    },
+    facades: [
+      {
+        index: 1296,
+        before: {
+          path: "src/ir/lowering-dynamic-scratch.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+        },
+        current: {
+          path: "src/ir/lowering-dynamic-scratch.ts",
+          state: "compatibility-adapter",
+          layer: "mixed-needs-split",
+          destination: "backend-wasmgc",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Explicit identity-preserving compatibility exports for the canonical WasmGC lowering owner; retain existing callers until the complete IR path is tested and equivalent.",
+        },
+        beforePrevious: {
+          path: "src/ir/lower.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "backend-wasmgc",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Explicit old-path compatibility facade re-exports canonical generic lowering, Wasm assembly, constants and types; no implementations or factories remain here. Retain legacy consumers until their independent migration.",
+        },
+        beforeNext: {
+          path: "src/ir/math-runtime-providers.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+        },
+        currentPrevious: {
+          path: "src/ir/lower.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "backend-wasmgc",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Explicit old-path compatibility facade re-exports canonical generic lowering, Wasm assembly, constants and types; no implementations or factories remain here. Retain legacy consumers until their independent migration.",
+        },
+        currentNext: {
+          path: "src/ir/math-runtime-providers.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+        },
+      },
+      {
+        index: 1218,
+        before: {
+          path: "src/ir/backend/wasm-int32-coercion.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+        },
+        current: {
+          path: "src/ir/backend/wasm-int32-coercion.ts",
+          state: "compatibility-adapter",
+          layer: "mixed-needs-split",
+          destination: "backend-wasmgc",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Explicit identity-preserving compatibility exports for the canonical WasmGC lowering owner; retain existing callers until the complete IR path is tested and equivalent.",
+        },
+        beforePrevious: {
+          path: "src/ir/backend/string-contract.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+        },
+        beforeNext: {
+          path: "src/ir/backend/wasm-math-minmax.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+        },
+        currentPrevious: {
+          path: "src/ir/backend/string-contract.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+        },
+        currentNext: {
+          path: "src/ir/backend/wasm-math-minmax.ts",
+          state: "compatibility-adapter",
+          layer: "mixed-needs-split",
+          destination: "backend-wasmgc",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Explicit identity-preserving compatibility exports for the canonical WasmGC lowering owner; retain existing callers until the complete IR path is tested and equivalent.",
+        },
+      },
+      {
+        index: 1219,
+        before: {
+          path: "src/ir/backend/wasm-math-minmax.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+        },
+        current: {
+          path: "src/ir/backend/wasm-math-minmax.ts",
+          state: "compatibility-adapter",
+          layer: "mixed-needs-split",
+          destination: "backend-wasmgc",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Explicit identity-preserving compatibility exports for the canonical WasmGC lowering owner; retain existing callers until the complete IR path is tested and equivalent.",
+        },
+        beforePrevious: {
+          path: "src/ir/backend/wasm-int32-coercion.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+        },
+        beforeNext: {
+          path: "src/ir/backend/lower-contracts.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Canonical lowering resolver/result types without implementation imports; existing IR-node and physical layout type dependencies still prevent a pure-contract certification.",
+        },
+        currentPrevious: {
+          path: "src/ir/backend/wasm-int32-coercion.ts",
+          state: "compatibility-adapter",
+          layer: "mixed-needs-split",
+          destination: "backend-wasmgc",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Explicit identity-preserving compatibility exports for the canonical WasmGC lowering owner; retain existing callers until the complete IR path is tested and equivalent.",
+        },
+        currentNext: {
+          path: "src/ir/backend/lower-contracts.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "ir-core",
+          owner: "3518-coordinator",
+          nextBoundary:
+            "Canonical lowering resolver/result types without implementation imports; existing IR-node and physical layout type dependencies still prevent a pure-contract certification.",
+        },
+      },
+    ],
+    fileBeforeTail: {
+      path: "src/ir/program/validation.ts",
+      state: "clean",
+      layer: "ir-program",
+    },
+    fileAppends: [
+      {
+        path: "src/backend/wasmgc/lowering/dynamic-scratch.ts",
+        state: "clean",
+        layer: "backend-wasmgc",
+      },
+      {
+        path: "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
+        state: "clean",
+        layer: "backend-wasmgc",
+      },
+      {
+        path: "src/backend/wasmgc/lowering/wasm-math-minmax.ts",
+        state: "clean",
+        layer: "backend-wasmgc",
+      },
+    ],
+    beforeMoveCount: 7,
+    moveBeforeTail: {
+      from: "src/ir/program-abi-contracts.ts",
+      to: "src/ir/program/abi-signatures.ts",
+    },
+    moveAppends: [
+      {
+        from: "src/ir/lowering-dynamic-scratch.ts",
+        to: "src/backend/wasmgc/lowering/dynamic-scratch.ts",
+      },
+      {
+        from: "src/ir/backend/wasm-int32-coercion.ts",
+        to: "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
+      },
+      {
+        from: "src/ir/backend/wasm-math-minmax.ts",
+        to: "src/backend/wasmgc/lowering/wasm-math-minmax.ts",
+      },
+    ],
+    beforeActivationCount: 102,
+    activationBeforeTail: {
+      layer: "ir-runtime",
+      entries: ["src/ir/runtime/intrinsic-preparation.ts"],
+      minModules: 1,
+    },
+    activationAppend: {
+      layer: "backend-wasmgc",
+      entries: [
+        "src/backend/wasmgc/lowering/dynamic-scratch.ts",
+        "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
+        "src/backend/wasmgc/lowering/wasm-math-minmax.ts",
+      ],
+      minModules: 55,
+    },
+  },
+  raw: {
+    offsetUnit: "utf8-byte",
+    spans: [
+      {
+        role: "fixed-delta-0",
+        beforeOffset: 13386,
+        afterOffset: 13386,
+        before: '        "src/backend/wasmgc/resources/native-number-primitive-classifier.ts"\n',
+        after:
+          '        "src/backend/wasmgc/resources/native-number-primitive-classifier.ts",\n        "src/backend/wasmgc/lowering/dynamic-scratch.ts",\n        "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",\n        "src/backend/wasmgc/lowering/wasm-math-minmax.ts"\n',
+      },
+      {
+        role: "fixed-delta-1",
+        beforeOffset: 13472,
+        afterOffset: 13651,
+        before: '      "minModules": 52\n',
+        after: '      "minModules": 55\n',
+      },
+      {
+        role: "fixed-delta-2",
+        beforeOffset: 67229,
+        afterOffset: 67408,
+        before: "",
+        after:
+          '    },\n    {\n      "layer": "backend-wasmgc",\n      "entries": [\n        "src/backend/wasmgc/lowering/dynamic-scratch.ts",\n        "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",\n        "src/backend/wasmgc/lowering/wasm-math-minmax.ts"\n      ],\n      "minModules": 55\n',
+      },
+      {
+        role: "fixed-delta-3",
+        beforeOffset: 68368,
+        afterOffset: 68822,
+        before: "",
+        after:
+          '    },\n    {\n      "from": "src/ir/lowering-dynamic-scratch.ts",\n      "to": "src/backend/wasmgc/lowering/dynamic-scratch.ts"\n    },\n    {\n      "from": "src/ir/backend/wasm-int32-coercion.ts",\n      "to": "src/backend/wasmgc/lowering/wasm-int32-coercion.ts"\n    },\n    {\n      "from": "src/ir/backend/wasm-math-minmax.ts",\n      "to": "src/backend/wasmgc/lowering/wasm-math-minmax.ts"\n',
+      },
+      {
+        role: "fixed-delta-4",
+        beforeOffset: 433760,
+        afterOffset: 434600,
+        before: '      "state": "unmigrated",\n',
+        after: '      "state": "compatibility-adapter",\n',
+      },
+      {
+        role: "fixed-delta-5",
+        beforeOffset: 433825,
+        afterOffset: 434676,
+        before: '      "destination": "ir-core",\n',
+        after: '      "destination": "backend-wasmgc",\n',
+      },
+      {
+        role: "fixed-delta-6",
+        beforeOffset: 433892,
+        afterOffset: 434750,
+        before:
+          '      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."\n',
+        after:
+          '      "nextBoundary": "Explicit identity-preserving compatibility exports for the canonical WasmGC lowering owner; retain existing callers until the complete IR path is tested and equivalent."\n',
+      },
+      {
+        role: "fixed-delta-7",
+        beforeOffset: 434067,
+        afterOffset: 435008,
+        before: '      "state": "unmigrated",\n',
+        after: '      "state": "compatibility-adapter",\n',
+      },
+      {
+        role: "fixed-delta-8",
+        beforeOffset: 434132,
+        afterOffset: 435084,
+        before: '      "destination": "ir-core",\n',
+        after: '      "destination": "backend-wasmgc",\n',
+      },
+      {
+        role: "fixed-delta-9",
+        beforeOffset: 434199,
+        afterOffset: 435158,
+        before:
+          '      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."\n',
+        after:
+          '      "nextBoundary": "Explicit identity-preserving compatibility exports for the canonical WasmGC lowering owner; retain existing callers until the complete IR path is tested and equivalent."\n',
+      },
+      {
+        role: "fixed-delta-10",
+        beforeOffset: 458259,
+        afterOffset: 459301,
+        before: '      "state": "unmigrated",\n',
+        after: '      "state": "compatibility-adapter",\n',
+      },
+      {
+        role: "fixed-delta-11",
+        beforeOffset: 458324,
+        afterOffset: 459377,
+        before: '      "destination": "ir-core",\n',
+        after: '      "destination": "backend-wasmgc",\n',
+      },
+      {
+        role: "fixed-delta-12",
+        beforeOffset: 458391,
+        afterOffset: 459451,
+        before:
+          '      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."\n',
+        after:
+          '      "nextBoundary": "Explicit identity-preserving compatibility exports for the canonical WasmGC lowering owner; retain existing callers until the complete IR path is tested and equivalent."\n',
+      },
+      {
+        role: "fixed-delta-13",
+        beforeOffset: 581604,
+        afterOffset: 582747,
+        before: "",
+        after:
+          '    },\n    {\n      "path": "src/backend/wasmgc/lowering/dynamic-scratch.ts",\n      "state": "clean",\n      "layer": "backend-wasmgc"\n    },\n    {\n      "path": "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",\n      "state": "clean",\n      "layer": "backend-wasmgc"\n    },\n    {\n      "path": "src/backend/wasmgc/lowering/wasm-math-minmax.ts",\n      "state": "clean",\n      "layer": "backend-wasmgc"\n',
+      },
+    ],
+  },
+} as const;
+type WasmGcHelperReceipt = typeof wasmGcHelperExpected;
+type WasmGcHelperPolicy = MutableIrRuntimeProgramPolicy & { moves: { from: string; to: string }[] };
+const wasmGcHelperReceiptPath = "tests/helpers/ir-runtime-program-policy-wasmgc-helper-owners.json";
+function wasmGcHelperFail(detail: string): never {
+  throw new Error("WasmGC helper policy evolution: " + detail);
+}
+function wasmGcHelperPin(
+  bytes: Buffer,
+  pin: { readonly bytes: number; readonly sha256: string; readonly gitBlob: string },
+  label: string,
+): void {
+  if (
+    bytes.length !== pin.bytes ||
+    createHash("sha256").update(bytes).digest("hex") !== pin.sha256 ||
+    createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex") !== pin.gitBlob
+  )
+    wasmGcHelperFail(label);
+}
+function authenticateWasmGcHelperPolicy(): WasmGcHelperReceipt {
+  captureC1HistoricalAuthority();
+  const bytes = readFileSync(new URL(`../../${wasmGcHelperReceiptPath}`, import.meta.url));
+  wasmGcHelperPin(
+    bytes,
+    {
+      bytes: 28909,
+      sha256: "8e241366cd828fa0511dd399fbe127213808c8872dbd97ee536d89544de30b8b",
+      gitBlob: "69869dc01a37cb7bad968657e06e47d8581513b4",
+    },
+    "receipt digest mismatch",
+  );
+  const receipt = JSON.parse(bytes.toString("utf8")) as WasmGcHelperReceipt;
+  if (!same(receipt, wasmGcHelperExpected)) wasmGcHelperFail("fixed receipt schema/population mismatch");
+  const oldBytes = readFileSync(new URL(`../../${receipt.predecessorReceipt.path}`, import.meta.url));
+  wasmGcHelperPin(oldBytes, receipt.predecessorReceipt, "predecessor receipt changed");
+  const old = JSON.parse(oldBytes.toString("utf8")) as { current: Record<string, unknown> };
+  for (const key of Object.keys(old.current))
+    if (!same(old.current[key], receipt.before[key as keyof typeof receipt.before]))
+      wasmGcHelperFail("program-validator predecessor profile mismatch");
+  const prefix = readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)).subarray(
+    0,
+    receipt.helperPrefix.bytes,
+  );
+  wasmGcHelperPin(prefix, receipt.helperPrefix, "complete predecessor helper prefix changed");
+  const sources = new Map<string, Buffer>();
+  for (const pin of receipt.sourceInputs) {
+    const url = new URL(`../../${pin.path}`, import.meta.url);
+    const source = readFileSync(url);
+    const stat = wasmGcHelperLstat(url);
+    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o7777) !== pin.mode)
+      wasmGcHelperFail("source mode/identity changed: " + pin.path);
+    wasmGcHelperPin(source, pin, "current source changed: " + pin.path);
+    sources.set(pin.path, source);
+  }
+  for (const pair of receipt.sourcePairs) {
+    if (sources.get(pair.donor)!.toString("utf8") !== pair.facade)
+      wasmGcHelperFail("fixed facade identity changed: " + pair.donor);
+    const current = sources.get(pair.owner)!.toString("utf8");
+    let original = current;
+    for (const route of pair.importRoutes) {
+      const from = JSON.stringify(route.current),
+        to = JSON.stringify(route.before);
+      if (original.split(from).length !== 2) wasmGcHelperFail("source import occurrence mismatch");
+      original = original.replace(from, to);
+    }
+    wasmGcHelperPin(Buffer.from(original), pair.before, "complete donor inverse mismatch: " + pair.donor);
+    let replay = original;
+    for (const route of pair.importRoutes) {
+      const from = JSON.stringify(route.before),
+        to = JSON.stringify(route.current);
+      if (replay.split(from).length !== 2) wasmGcHelperFail("source replay import occurrence mismatch");
+      replay = replay.replace(from, to);
+    }
+    if (replay !== current) wasmGcHelperFail("complete canonical source replay mismatch");
+  }
+  let beforeEnd = 0,
+    afterEnd = 0,
+    delta = 0;
+  for (const span of receipt.raw.spans) {
+    if (
+      ![span.beforeOffset, span.afterOffset].every(Number.isSafeInteger) ||
+      span.beforeOffset < beforeEnd ||
+      span.afterOffset < afterEnd ||
+      span.afterOffset !== span.beforeOffset + delta
+    )
+      wasmGcHelperFail("fixed raw spans/order/coordinate mismatch");
+    beforeEnd = span.beforeOffset + Buffer.byteLength(span.before);
+    afterEnd = span.afterOffset + Buffer.byteLength(span.after);
+    delta += Buffer.byteLength(span.after) - Buffer.byteLength(span.before);
+  }
+  if (
+    receipt.raw.offsetUnit !== "utf8-byte" ||
+    receipt.raw.spans.length !== 14 ||
+    receipt.before.source.bytes + delta !== receipt.current.source.bytes
+  )
+    wasmGcHelperFail("fixed raw span population mismatch");
+  return freeze(receipt);
+}
+function wasmGcHelperProfile(
+  policy: WasmGcHelperPolicy,
+  pin: WasmGcHelperReceipt["before"] | WasmGcHelperReceipt["current"],
+): void {
+  if (
+    digest(policy) !== pin.dataSha256 ||
+    policy.files.length !== pin.fileCount ||
+    digest(policy.files) !== pin.filesSha256 ||
+    policy.activationHistory.length !== pin.activationCount ||
+    digest(policy.activationHistory) !== pin.activationHistorySha256 ||
+    digest(policy.layers) !== pin.layersSha256 ||
+    digest(policy.allowedEdges) !== pin.allowedEdgesSha256 ||
+    !Array.isArray(policy.moves) ||
+    policy.moves.length !== pin.moveCount ||
+    digest(policy.moves) !== pin.movesSha256
+  )
+    wasmGcHelperFail("complete policy profile mismatch");
+}
+function wasmGcHelperRows(policy: WasmGcHelperPolicy, receipt: WasmGcHelperReceipt, current: boolean): void {
+  const d = receipt.delta;
+  if (
+    !same(Object.keys(policy), receipt.topLevelKeys) ||
+    !same(policy.layers[d.layerIndex], current ? d.currentLayer : d.beforeLayer) ||
+    !same(policy.files[receipt.before.fileCount - 1], d.fileBeforeTail)
+  )
+    wasmGcHelperFail("fixed layer/population/schema mismatch");
+  for (const row of d.facades) {
+    const expected = current ? row.current : row.before;
+    if (
+      !same(policy.files[row.index], expected) ||
+      !same(Object.keys(policy.files[row.index]!), Object.keys(expected)) ||
+      !same(policy.files[row.index - 1], current ? row.currentPrevious : row.beforePrevious) ||
+      !same(policy.files[row.index + 1], current ? row.currentNext : row.beforeNext) ||
+      policy.files.filter((file) => file.path === expected.path).length !== 1
+    )
+      wasmGcHelperFail("fixed facade schema/membership/neighbors mismatch");
+  }
+  for (const [index, row] of d.fileAppends.entries())
+    if (
+      policy.files.filter((file) => file.path === row.path).length !== (current ? 1 : 0) ||
+      (current &&
+        (!same(policy.files[receipt.before.fileCount + index], row) ||
+          !same(Object.keys(policy.files[receipt.before.fileCount + index]!), Object.keys(row))))
+    )
+      wasmGcHelperFail("fixed owner schema/order/membership mismatch");
+  if (
+    !same(policy.moves[d.beforeMoveCount - 1], d.moveBeforeTail) ||
+    !same(policy.activationHistory[d.beforeActivationCount - 1], d.activationBeforeTail) ||
+    !same(policy.moves.slice(d.beforeMoveCount), current ? d.moveAppends : []) ||
+    !same(policy.activationHistory.slice(d.beforeActivationCount), current ? [d.activationAppend] : [])
+  )
+    wasmGcHelperFail("fixed move/history tails mismatch");
+}
+function captureWasmGcHelperOperand(current: WasmGcHelperPolicy, receipt: WasmGcHelperReceipt): WasmGcHelperPolicy {
+  wasmGcHelperProfile(current, receipt.current);
+  wasmGcHelperRows(current, receipt, true);
+  const d = receipt.delta;
+  const before = capture(current) as WasmGcHelperPolicy;
+  before.layers[d.layerIndex] = capture(d.beforeLayer) as WasmGcHelperPolicy["layers"][number];
+  for (const row of d.facades) before.files[row.index] = capture(row.before) as Record<string, string>;
+  before.files.splice(receipt.before.fileCount, d.fileAppends.length);
+  before.moves.splice(d.beforeMoveCount, d.moveAppends.length);
+  before.activationHistory.splice(d.beforeActivationCount, 1);
+  wasmGcHelperProfile(before, receipt.before);
+  wasmGcHelperRows(before, receipt, false);
+  const replay = capture(before) as WasmGcHelperPolicy;
+  replay.layers[d.layerIndex] = capture(d.currentLayer) as WasmGcHelperPolicy["layers"][number];
+  for (const row of d.facades) replay.files[row.index] = capture(row.current) as Record<string, string>;
+  replay.files.push(...d.fileAppends.map((row) => capture(row) as Record<string, string>));
+  replay.moves.push(...d.moveAppends.map((row) => capture(row) as WasmGcHelperPolicy["moves"][number]));
+  replay.activationHistory.push(capture(d.activationAppend) as WasmGcHelperPolicy["activationHistory"][number]);
+  wasmGcHelperProfile(replay, receipt.current);
+  wasmGcHelperRows(replay, receipt, true);
+  if (
+    !same(replay, current) ||
+    !same(before.allowedEdges, current.allowedEdges) ||
+    !same(before.moves, current.moves.slice(0, d.beforeMoveCount)) ||
+    !same(before.activationHistory, current.activationHistory.slice(0, d.beforeActivationCount))
+  )
+    wasmGcHelperFail("complete semantic inverse/replay/prefix mismatch");
+  return before;
+}
+export function captureWasmGcHelperPredecessorPolicy(value: unknown): MutableIrRuntimeProgramPolicy {
+  const current = capture(value) as WasmGcHelperPolicy;
+  if (current === null || typeof current !== "object" || Array.isArray(current))
+    wasmGcHelperFail("policy input must be a plain object");
+  return captureWasmGcHelperOperand(current, authenticateWasmGcHelperPolicy());
+}
+function wasmGcHelperRaw(raw: string, receipt: WasmGcHelperReceipt, forward: boolean): string {
+  const bytes = Buffer.from(raw);
+  wasmGcHelperPin(
+    bytes,
+    forward ? receipt.before.source : receipt.current.source,
+    "complete raw source profile mismatch",
+  );
+  const pieces: Buffer[] = [];
+  let consumed = 0;
+  for (const span of receipt.raw.spans) {
+    const at = forward ? span.beforeOffset : span.afterOffset;
+    const from = Buffer.from(forward ? span.before : span.after),
+      to = Buffer.from(forward ? span.after : span.before);
+    if (at < consumed || at + from.length > bytes.length || !bytes.subarray(at, at + from.length).equals(from))
+      wasmGcHelperFail("fixed raw span/membership/coordinate mismatch");
+    pieces.push(bytes.subarray(consumed, at), to);
+    consumed = at + from.length;
+  }
+  pieces.push(bytes.subarray(consumed));
+  const result = Buffer.concat(pieces);
+  wasmGcHelperPin(
+    result,
+    forward ? receipt.current.source : receipt.before.source,
+    "reciprocal raw source profile mismatch",
+  );
+  return result.toString("utf8");
+}
+export function captureWasmGcHelperPredecessorPolicySource(raw: string): string {
+  if (typeof raw !== "string") wasmGcHelperFail("raw input must be a primitive string");
+  const receipt = authenticateWasmGcHelperPolicy();
+  const before = wasmGcHelperRaw(raw, receipt, false);
+  const semantic = captureWasmGcHelperOperand(capture(JSON.parse(raw)) as WasmGcHelperPolicy, receipt);
+  const parsed = JSON.parse(before) as WasmGcHelperPolicy;
+  wasmGcHelperProfile(parsed, receipt.before);
+  if (!same(parsed, semantic) || wasmGcHelperRaw(before, receipt, true) !== raw)
+    wasmGcHelperFail("raw/semantic reciprocal proof disagree");
+  return before;
+}

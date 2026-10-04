@@ -10,7 +10,7 @@
     "deadcode-elide.ts->compiler": 1,
     "frontend->ir": 17,
     "frontend->ts-api.ts": 2,
-    "ir->backend": 22,
+    "ir->backend": 25,
     "ir->checker": 8,
     "ir->codegen": 74,
     "ir->codegen-linear": 4,

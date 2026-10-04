@@ -324,9 +324,12 @@
         "src/backend/wasmgc/resources/native-mixed-object-access.ts",
         "src/backend/wasmgc/resources/native-well-known-symbols.ts",
         "src/backend/wasmgc/resources/native-bigint-number.ts",
-        "src/backend/wasmgc/resources/native-number-primitive-classifier.ts"
+        "src/backend/wasmgc/resources/native-number-primitive-classifier.ts",
+        "src/backend/wasmgc/lowering/dynamic-scratch.ts",
+        "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
+        "src/backend/wasmgc/lowering/wasm-math-minmax.ts"
       ],
-      "minModules": 52
+      "minModules": 55
     },
     {
       "id": "native-runtime",
@@ -1835,6 +1838,15 @@
       "layer": "ir-runtime",
       "entries": ["src/ir/runtime/intrinsic-preparation.ts"],
       "minModules": 1
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": [
+        "src/backend/wasmgc/lowering/dynamic-scratch.ts",
+        "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
+        "src/backend/wasmgc/lowering/wasm-math-minmax.ts"
+      ],
+      "minModules": 55
     }
   ],
   "nonModules": [
@@ -1875,6 +1887,18 @@
     {
       "from": "src/ir/program-abi-contracts.ts",
       "to": "src/ir/program/abi-signatures.ts"
+    },
+    {
+      "from": "src/ir/lowering-dynamic-scratch.ts",
+      "to": "src/backend/wasmgc/lowering/dynamic-scratch.ts"
+    },
+    {
+      "from": "src/ir/backend/wasm-int32-coercion.ts",
+      "to": "src/backend/wasmgc/lowering/wasm-int32-coercion.ts"
+    },
+    {
+      "from": "src/ir/backend/wasm-math-minmax.ts",
+      "to": "src/backend/wasmgc/lowering/wasm-math-minmax.ts"
     }
   ],
   "evidence": [
@@ -11254,19 +11278,19 @@
     },
     {
       "path": "src/ir/backend/wasm-int32-coercion.ts",
-      "state": "unmigrated",
+      "state": "compatibility-adapter",
       "layer": "mixed-needs-split",
-      "destination": "ir-core",
+      "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "Explicit identity-preserving compatibility exports for the canonical WasmGC lowering owner; retain existing callers until the complete IR path is tested and equivalent."
     },
     {
       "path": "src/ir/backend/wasm-math-minmax.ts",
-      "state": "unmigrated",
+      "state": "compatibility-adapter",
       "layer": "mixed-needs-split",
-      "destination": "ir-core",
+      "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "Explicit identity-preserving compatibility exports for the canonical WasmGC lowering owner; retain existing callers until the complete IR path is tested and equivalent."
     },
     {
       "path": "src/ir/backend/lower-contracts.ts",
@@ -11878,11 +11902,11 @@
     },
     {
       "path": "src/ir/lowering-dynamic-scratch.ts",
-      "state": "unmigrated",
+      "state": "compatibility-adapter",
       "layer": "mixed-needs-split",
-      "destination": "ir-core",
+      "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "Explicit identity-preserving compatibility exports for the canonical WasmGC lowering owner; retain existing callers until the complete IR path is tested and equivalent."
     },
     {
       "path": "src/ir/math-runtime-providers.ts",
@@ -15311,6 +15335,21 @@
       "path": "src/ir/program/validation.ts",
       "state": "clean",
       "layer": "ir-program"
+    },
+    {
+      "path": "src/backend/wasmgc/lowering/dynamic-scratch.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/lowering/wasm-math-minmax.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
     }
   ]
 }

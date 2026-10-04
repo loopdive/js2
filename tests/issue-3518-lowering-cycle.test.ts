@@ -197,6 +197,9 @@ describe("lowering cycle separation", () => {
     // Exact live graph at e473d924 plus the nested analysis owner.
     // Compatibility forwards preserve identities; pin every edge occurrence.
     expect(graph.modules).toEqual([
+      "src/backend/wasmgc/lowering/dynamic-scratch.ts",
+      "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
+      "src/backend/wasmgc/lowering/wasm-math-minmax.ts",
       "src/ir/analysis/effects.ts",
       "src/ir/analysis/nested-stackification.ts",
       "src/ir/backend/legality.ts",
@@ -235,7 +238,9 @@ describe("lowering cycle separation", () => {
       "src/ir/nodes.ts -> src/ir/core/nodes.ts",
       "src/ir/core/nodes.ts -> src/ir/core/types.ts",
       "src/ir/lower-generic.ts -> src/ir/backend/wasm-int32-coercion.ts",
+      "src/ir/backend/wasm-int32-coercion.ts -> src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
       "src/ir/lower-generic.ts -> src/ir/backend/wasm-math-minmax.ts",
+      "src/ir/backend/wasm-math-minmax.ts -> src/backend/wasmgc/lowering/wasm-math-minmax.ts",
       "src/ir/lower-generic.ts -> src/ir/nodes.ts",
       "src/ir/lower-generic.ts -> src/ir/effects.ts",
       "src/ir/effects.ts -> src/ir/analysis/effects.ts",
@@ -255,6 +260,7 @@ describe("lowering cycle separation", () => {
       "src/ir/nested-stackification.ts -> src/ir/analysis/nested-stackification.ts",
       "src/ir/analysis/nested-stackification.ts -> src/ir/analysis/effects.ts",
       "src/ir/lower-generic.ts -> src/ir/lowering-dynamic-scratch.ts",
+      "src/ir/lowering-dynamic-scratch.ts -> src/backend/wasmgc/lowering/dynamic-scratch.ts",
       "src/ir/lower-generic.ts -> src/ir/string-runtime.ts",
       "src/ir/string-runtime.ts -> src/ir/core/string-runtime.ts",
       "src/ir/core/string-runtime.ts -> src/ir/core/string-callables.ts",

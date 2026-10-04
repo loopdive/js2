@@ -3066,6 +3066,39 @@ function emitArgumentsLengthRead(
   return { kind: "externref" };
 }
 
+/** Module aliases and escaped default definitions must read the current value's metadata. */
+function nameReadHasModuleOrigin(ctx: CodegenContext, expression: ts.Expression, objType: ts.Type): boolean {
+  let receiver = skipTransparentExpressions(expression);
+  const seen = new Set<ts.Declaration>();
+  for (;;) {
+    while (ts.isPropertyAccessExpression(receiver) || ts.isElementAccessExpression(receiver)) {
+      receiver = skipTransparentExpressions(receiver.expression);
+    }
+    if (!ts.isIdentifier(receiver)) break;
+    const binding = ctx.oracle.valueDeclarationOf(receiver);
+    if (!binding || seen.has(binding)) break;
+    if (ts.isImportClause(binding) || ts.isImportSpecifier(binding) || ts.isNamespaceImport(binding)) return true;
+    seen.add(binding);
+    if (!ts.isVariableDeclaration(binding) || !binding.initializer) break;
+    receiver = skipTransparentExpressions(binding.initializer);
+  }
+  // A call/parameter can carry the exported function's type after its import
+  // binding has escaped. Declaration identity still proves the default origin;
+  // its checker spelling does not prove the object's current own name.
+  for (const declaration of objType.getSymbol()?.declarations ?? []) {
+    if (
+      ts.isFunctionDeclaration(declaration) &&
+      declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DefaultKeyword)
+    )
+      return true;
+    if (!ts.isFunctionExpression(declaration) && !ts.isArrowFunction(declaration)) continue;
+    let node: ts.Node = declaration;
+    while (node.parent && ts.isParenthesizedExpression(node.parent)) node = node.parent;
+    if (node.parent && ts.isExportAssignment(node.parent) && !node.parent.isExportEquals) return true;
+  }
+  return false;
+}
+
 export function tryLengthAndNameReads(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3239,6 +3272,15 @@ export function tryLengthAndNameReads(
 
   // Handle Function.name — return the function name as a string
   if (propName === "name" && !returnsAnonymousClassFieldInitializer(ctx, expr.expression)) {
+    // An import's immutable binding does not freeze its function object's name.
+    // Its checker symbol/alias spelling cannot replace the ordinary value read.
+    if (
+      ctx.standalone &&
+      (objType.getCallSignatures?.().length ?? 0) > 0 &&
+      nameReadHasModuleOrigin(ctx, expr.expression, objType)
+    ) {
+      return PA_FALLTHROUGH;
+    }
     // (#1632a) `.name` on the result of `.bind(...)` must NOT be statically
     // resolved to the target's symbol name — per spec it's `"bound " +
     // target.name`. Fall through to the runtime __extern_get path so the

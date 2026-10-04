@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11474,
-    "fail": 216,
+    "pass": 11476,
+    "fail": 214,
     "ce": 14,
     "skip": 0,
     "total": 11704,
@@ -66,8 +66,8 @@
       },
       {
         "name": "generators",
-        "pass": 2474,
-        "fail": 11,
+        "pass": 2476,
+        "fail": 9,
         "ce": 1,
         "skip": 0,
         "total": 2486,
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4600,
+    "pass": 4599,
     "fail": 188,
-    "ce": 133,
+    "ce": 134,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4497,
+        "pass": 4496,
         "fail": 107,
-        "ce": 7,
+        "ce": 8,
         "skip": 0,
         "total": 4611,
         "pct": 98
@@ -4304,9 +4304,9 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4646,
-    "fail": 730,
-    "ce": 69,
+    "pass": 4648,
+    "fail": 729,
+    "ce": 68,
     "skip": 0,
     "total": 5445,
     "pct": 85

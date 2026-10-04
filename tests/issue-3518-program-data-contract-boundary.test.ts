@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { captureWasmGcHelperPredecessorPolicy } from "./helpers/ir-runtime-program-policy-evolution.js";
 import { captureProgramValidatorPredecessorPolicy } from "./helpers/ir-runtime-program-policy-evolution.js";
 import { beforeProgramValidatorRelocation } from "./helpers/ir-program-validator-relocation.js";
 
@@ -149,7 +150,9 @@ const policy = () => {
               captureCanonical489dPredecessorPolicy(
                 captureNestedStackificationPredecessorPolicy(
                   captureProgramValidatorPredecessorPolicy(
-                    JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8")),
+                    captureWasmGcHelperPredecessorPolicy(
+                      JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8")),
+                    ),
                   ),
                 ),
               ),
