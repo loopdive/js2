@@ -331,6 +331,34 @@ files:
 
 ### Original lazy-module evaluation (continuation)
 
+### Mixed successful native/source module graph (continuation)
+
+Investigate the successful synthetic dependency path, not just failures.
+Current collect_graph rejects every synthetic Module, even after its native
+evaluation callback succeeded. A native reproduction must verify callback
+execution count, imported object identity, live SetSyntheticModuleExport updates,
+cached evaluation and execution order before accepting a fix. Simply serializing
+exports or baking current values into source violates these requirements.
+
+Implementation constraints: retain exact native Module identity in graph
+capabilities; authenticate build-side export declarations separately from real
+source bytes; never execute generated placeholder initializers. Evaluate native
+callbacks at their dependency position through active Caller access. Namespace
+reads must preserve object/function identity and namespace write restrictions.
+SetSyntheticModuleExport must update the authoritative live export even after
+the namespace is adopted into the compiled realm. Existing host-object transfer
+copies properties, so copying the namespace alone is insufficient. Keep the
+current loud refusal until the complete transport is verified.
+
+Baseline reproduction confirmed: aot_source_imports_live_synthetic_exports
+fails 0/1 (56 filtered /57), after the synthetic dependency succeeds once, at
+collect_graph's explicit refusal and before artifact lookup. Identical source
+fixture passes identity/live-update/readonly namespace checks on V8 1/1.
+Unchanged Deno test_custom_module_type_callback_synthetic passes 1/1
+(430 filtered /431); that native-only path does not prove mixed imports.
+The new native regression remains explicitly ignored as a known failing target,
+not included in passing coverage. Detailed transport plan is in both handoffs.
+
 Native nested-failure control: a source graph calls a native callback which evaluates
 a separately instantiated throwing graph on the same Context. Check that the
 nested rejected Promise is cached, both Modules retain the original thrown

@@ -1,5 +1,58 @@
 # Deno module linking checkpoint, 2026-10-04
 
+## Mixed native/source graph gap reproduced
+
+Adapter f070f8b plus the new explicit regression:
+shared_modules::aot_source_imports_live_synthetic_exports fails 0/1
+(56 filtered /57). The native dependency callback succeeds exactly once and
+its Module becomes Evaluated; collect_graph then rejects with
+"v8x/js2wasm: source graph contains a synthetic module". This is before any
+artifact lookup, not evidence of a compiler/package failure. The test is
+explicitly ignored in ordinary runs until transport and packaging exist;
+it is a known failing integration target, not a passing baseline.
+
+The fixture imports a native object both by name and namespace. Its remaining
+assertions require original identity, live SetSyntheticModuleExport replacement,
+the unchanged earlier snapshot, namespace identity, rejected namespace writes,
+cached source evaluation, one native callback and zero runtime compilation/eval.
+The identical fixture's identity/live/namespace behavior passes on V8:
+node --experimental-vm-modules --test tools/js2wasm/test-synthetic-source-fixture.mjs
+(1/1). Node's Module wrapper Promise identity is not compared to rusty_v8.
+
+Unchanged Deno modules::tests::test_custom_module_type_callback_synthetic
+passes 1/1 (430 filtered /431) with full Context
+/private/tmp/deno-promise-full.X2WdwN/deno-core.cwasm on the prior adapter build.
+It uses basic native synthetic values without a compiled source importer.
+Do not combine these distinct controls into a mixed-graph success claim.
+Current ordinary adapter controls: 35 passed, 21 ignored, 1 filtered /57.
+
+Replay known failing target from the adapter:
+
+```sh
+V8X_JS2WASM_SCRIPT_ENVIRONMENT_DIR=/private/tmp/deno-native-promise.6898GB target/debug/deps/js2wasm_spike-8b524eb9ef0b52c1 --exact shared_modules::aot_source_imports_live_synthetic_exports --ignored --nocapture --test-threads=1
+```
+
+Next implementation:
+1. Represent synthetic export declarations explicitly in authenticated graph
+   metadata. Keep native Module identity and export names separate from real
+   source bytes; do not serialize live export values into generated JS.
+2. Expose the native namespace through the existing module capability. Execute
+   its callback at the actual dependency position under active Caller access.
+   Do not eagerly evaluate a later synthetic sibling before an earlier source.
+3. Add live namespace accessors backed by the authoritative native export slots.
+   Existing host-object transfer snapshots properties and adopts realm ownership,
+   so copying a namespace would lose future exports and write restrictions.
+   SetSyntheticModuleExport must update live backing slots after adoption.
+4. Compile declaration-only native facades with guarded bodies that cannot run;
+   skip source-registry publication for native modules. Authenticate facades
+   before trusting their export shape and fail on absent capabilities.
+5. Build matched packages, run the entire reproduction including live updates,
+   and add mixed ordering/failure/identity/readonly cases plus unchanged Deno
+   computed-and-synthetic/importing paths. Keep the current loud refusal until
+   those invariants work; do not ship a success-shaped snapshot substitute.
+
+Full integration stays open. No backend behavior changed in this checkpoint.
+
 ## Nested throwing-module control verified
 
 Supersedes the nested thrown-object gap in the prior checkpoint. Native
