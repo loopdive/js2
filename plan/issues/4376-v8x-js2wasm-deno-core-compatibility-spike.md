@@ -331,6 +331,16 @@ files:
 
 ### Prepared initializer guards (continuation)
 
+Cached failure checkpoint: the paired adapter recognizes the next cached
+dependency failure before packaging, preserves its exact original object in
+rejected Promises and Module::GetException, and propagates transitive errored
+state. Native public-API control improves from 0/1 to 1/1 (53 filtered /54),
+including cached Promise identity, preservation of unrelated caught exceptions,
+no synchronous delivery, one callback, and zero runtime compiler/interpreter
+activity. Earlier pending dependencies prevent the shortcut so their side
+effects are not skipped. First-failure propagation in flattened execution,
+mixed pending-prefix failures and general cycles/TDZ remain unfinished.
+
 Typed live-read continuation: the lower-level NaN probe was not reproduced by
 the real native adapter. A Node/V8 raw foreign-string key caused that control's
 failure; explicit key transport isolates compiler semantics and passes with

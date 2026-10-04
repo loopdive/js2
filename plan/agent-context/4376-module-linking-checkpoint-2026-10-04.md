@@ -1,5 +1,35 @@
 # Deno module linking checkpoint, 2026-10-04
 
+## Wrap-up: cached native dependency failures
+
+The paired adapter now returns the original cached dependency exception rather
+than replacing it with an unsupported-graph error. Direct and transitive
+consumers receive rejected Promises, intermediate modules become errored,
+repeated evaluation returns the same Promise, and an unrelated caught exception
+is preserved. The native control improves from 0/1 to 1/1 (53 filtered /54),
+with one dependency callback and zero runtime compiler/interpreter activity.
+No compiler production change is included in this slice.
+
+Final rebuilt adapter verification: filtered library 16/16 (16 filtered /32),
+ordinary native controls 35 passed /18 ignored /1 filtered out of 54, and typed
+and shared-owner AOT replays each 1/1 (53 filtered /54). Rebuilt selected
+unchanged Deno tests pass 5/5, each 430 filtered /431, with existing packages
+and unchanged Context. Formatting/diff checks pass. Site rendering is blocked
+by missing Typst, not certified.
+
+The shortcut only applies when the failure is next in dependency execution
+order. Earlier pending work must run normally. Resume with first-failure state
+propagation in flattened graphs and mixed pending-prefix/cached-failure cases,
+then general cycles/TDZ and native prepared-IR participation. Snapshots, the
+full 431-test Deno suite, complete host integration and fresh matched benchmarks
+remain unfinished. The unfiltered adapter library aborts on the unsupported
+v8__V8__IsSandboxEnabled diagnostic ABI, so only filtered controls are claimed.
+
+Adapter implementation, exact replay commands and artifact paths are recorded
+in tools/js2wasm/NATIVE-PROMISE-HANDOFF.md on the paired v8x branch. Existing
+PRs: https://github.com/loopdive/js2/pull/6468 and
+https://github.com/loopdive/v8x/pull/2. Both remain drafts, not merge-ready.
+
 ## Typed live reads verified; previous probe attribution corrected
 
 The earlier lower-level NaN probe below is not evidence of a native typed-import
