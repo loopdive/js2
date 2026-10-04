@@ -1,5 +1,19 @@
 # Persistent AOT Script environment
 
+## Fresh unchanged WebIDL result, 2026-10-04
+
+Native compiler-free WebIDL replay now passes **17/17**, 0 ignored and 414
+filtered of 431, in 21.79 seconds. Dictionary record conversion is verified fixed.
+Compiler c98082082b163165ed6c5ba7f726c24d01ee1ba7; adapter 5c56521;
+unchanged Deno 1d4e6c1cb855b62a7fb572c6c138e4e8b4e7fa44.
+Artifacts /private/tmp/deno-reflection-native.Zfl1zI contain a fresh optimized
+Context and all five original optimized Script packages. Six Symbol globals were
+verified in the actual Context. Full 431-test run terminated with exit 134 at
+dynamic_imports_snapshot, unresolved v8__SnapshotCreator__CONSTRUCT. Earlier
+tests lack non-WebIDL packages; no full-population summary exists. Adapter handoff records
+hashes and the necessary optimized import-subset validation fix. This does not
+complete full Deno integration or comparative benchmarking.
+
 ## Reflection and shared Symbol checkpoint, 2026-10-04
 
 Compiler: native owning-Script symbol enumeration and descriptors accompany the
