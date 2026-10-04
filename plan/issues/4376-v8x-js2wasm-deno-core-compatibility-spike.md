@@ -333,6 +333,22 @@ files:
 
 ### Mixed successful native/source module graph (continuation)
 
+Wrap-up checkpoint: native slot-backed transport is implemented in the adapter,
+but its final Proxy namespace carrier is not verified. The expanded compiled
+control fails own-key ordering (numeric order instead of lexicographic order).
+The prior accessor-carrier native test passed 1/1, but that result does not cover
+the replacement ABI. Mixed graph collection still explicitly refuses synthetic
+modules. Keep both existing PRs draft; resume commands, artifact caveats and
+next steps are in plan/agent-context/4376-module-linking-checkpoint-2026-10-04.md.
+
+Native slot-backed carrier implementation in progress: getter callbacks retain
+exact synthetic Module/export-key identity in isolate-owned data and consult
+the raw export slots on every read. Publish one Context-owned carrier only
+after complete construction; reject unevaluated and cross-Context bindings.
+Validate the transport explicitly before activating it in graph capabilities.
+The carrier still needs module-exotic reflection and graph metadata; do not
+enable a partial accessor object as complete namespace integration.
+
 Transport implementation started with a Context live-getter primitive and
 RealmAccess dispatch. Validate deferred callback reads, original/replacement
 object identity, no setter, nonconfigurable descriptors, invalid flags/callables,

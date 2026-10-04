@@ -1,5 +1,66 @@
 # Deno module linking checkpoint, 2026-10-04
 
+## Final handoff: native namespace carrier is unfinished
+
+Wrap-up requested by the user. Existing draft PRs are compiler
+https://github.com/loopdive/js2/pull/6468 (stacked on
+codex/4376-deno-callback-construction-20260930) and adapter
+https://github.com/loopdive/v8x/pull/2 (base main). Neither is merge-ready.
+Do not create duplicate PRs or describe full Deno integration as complete.
+
+The adapter now retains exact synthetic Module/export-key identity in private
+native callback data and reads the authoritative export slot on every call.
+The first accessor-carrier native control passed 1/1 (57 filtered /58), including
+object replacements, callable/Symbol/undefined exports, stable namespace and
+evaluation Promise identity, one callback and zero runtime compiler/interpreter
+instances. That carrier has since been replaced by a Proxy carrier ABI and the
+earlier pass does NOT verify the final implementation.
+
+Current compiled-Wasm control fails: namespace own keys must be
+["10", "2", "__proto__", "value"], but return
+["2", "10", "__proto__", "value"]. Assertions for live reads, null prototype
+and live data descriptors pass before this failure. Assertions after key order
+are not reached. Preserve the failing assertion. This was reproduced with
+clean historical compiler 4a98f06ae239f6e32b65e52a4b4de3bab8eb88e1;
+check the current compiler before attributing a current compiler regression.
+
+Resume entry points: adapter src/js2wasm/realm_synthetic_namespace.rs,
+src/js2wasm/realm_objects.rs, src/js2wasm_realm_values.rs,
+tools/js2wasm/context-value-bridge.mjs and test-context-value-bridge.mjs.
+The optional __v8x_value_module_namespace export is required before adoption.
+There are no new shared structure fields. Existing collect_graph still loudly
+rejects mixed synthetic/source graphs. No generated placeholder is enabled.
+
+Resume from the clean compiler directory:
+
+```sh
+node --experimental-wasm-exnref --import tsx /private/tmp/v8x-deno-resume-20260930.o0sxeO/repo/tools/js2wasm/test-context-value-bridge.mjs /private/tmp/deno-promise-full.X2WdwN/js2 /private/tmp/deno-live-getter.TkzjTi/namespace-context.wasm
+```
+
+The builder writes output only after all assertions pass. The existing
+namespace-context.wasm predates the expanded failing control and is not a
+verified final artifact. Do not reuse context.cwasm for the Proxy carrier: it
+only contains the previously verified live-getter ABI. Its SHA256 is
+cf39cff68342c28fa380fe9f00b1603694f06e4f80383c401b2b43a57d69dd65
+(19,572,240 bytes), built this continuation from the optimized getter artifact.
+
+Next: diagnose sort versus Proxy ownKeys normalization; pass the full compiled
+control; wasm-opt O3 and precompile a fresh Context; replay
+shared_modules::native_synthetic_namespace_reads_authoritative_export_slots
+using the fresh ABI. Add cross-Context, missing-ABI and reflection negatives.
+Then authenticate native export declarations in mixed graph metadata and run
+native callbacks in dependency order through the active Caller. Finally replay
+the known failing aot_source_imports_live_synthetic_exports test and unchanged
+Deno population. No new unchanged Deno coverage or benchmark was produced.
+
+Historical sections below retain earlier evidence, not final-carrier claims.
+
+Final checkpoint controls: compiler-free runner builds; ordinary adapter
+35 passed /0 failed /22 ignored /1 filtered out of 58; filtered library
+17/17 (16 filtered /33); fixture/binding/V8 Node controls 10/10. Rust formatting,
+Node syntax and diff whitespace checks pass. Site rendering fails because
+/opt/homebrew/bin/typst is absent. These controls do not verify the new ABI.
+
 ## Live getter transport primitive implemented and verified
 
 The Context bridge now exports __v8x_value_define_getter and RealmAccess
