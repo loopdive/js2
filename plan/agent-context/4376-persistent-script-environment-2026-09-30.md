@@ -3,6 +3,45 @@
 Required for complete Deno integration, not an alternative acceptance bar.
 Sources known at packaging time must execute AOT without an interpreter.
 
+## Continuation: typed primitive constants and global callables, 2026-10-04
+
+Top-level inferred number/boolean `const` bindings now retain typed scalar
+slots and box/unbox only at the Context lexical operation. Provider reads still
+check TDZ first. Mutable typed bindings remain refused. Reference-typed consts
+also remain refused: a broad experiment passed array identity but returned the
+wrong answer after a later Script changed an element from number to string.
+Const protects the binding, not element/field type proofs. Do not re-admit these
+without sound shared representation and mutation handling.
+
+Shared Script function writes through globalThis or top-level this now select
+the existing native AOT callable carrier. This fixes a foreign function-property
+call that previously returned without running its body. Selection is based on
+direct callable producer syntax/name in shared mode, not just an inferred
+signature; existing carrier aliases pass through. No broad runtime-eval flag,
+interpreter or source rewrite is introduced.
+
+Focused result: 86/86 reported, comprising 84 ordinary successes and the two
+existing expected failures. Seven new ordinary controls cover numeric and
+boolean constants, TDZ, unsafe array refusal, retained/foreign callable reads,
+top-level-this installation, aliases and thrown identity. The five-file total
+is 163: 158 ordinary successes, two expected failures and the same three
+recorded ordinary TDZ failures (55 versus 63 and two call-count mismatches).
+TypeScript 7, lint, formatting, coercion and oracle checks pass; budgets passed
+before the small global-callable selection addition and will run at commit.
+
+The native fixture now consists of one Context and eight independent Scripts.
+Final raw controls and all nine packaging invocations pass. Compiler-free replay
+passes 1/1 (36 filtered, 0.07 seconds), including inferred numeric const rejection
+and a boolean-constant reader called through a foreign global alias. Runtime
+compilation and runtime-eval provider instantiation counts remain zero. Local
+fixtures: `/private/tmp/deno-script-scalars.6Tj5CN`. These are local trusted test
+artifacts, not a rebuilt full Deno Context or unchanged Deno conformance proof.
+
+Next: mutable and reference-typed binding planning, public Script completion
+and artifact lookup, then a full Context rebuild and unchanged Deno tests.
+Full integration, shared-library factoring and fresh comparative performance
+measurements remain open. Both PRs stay draft; preserve user dirt.
+
 ## Wrap-up: native Context wiring, 2026-10-04
 
 Compiler implementation remains at `cafc1769ccb45074064c5ca88f0262aae1388aa4`.

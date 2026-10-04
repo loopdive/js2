@@ -4740,7 +4740,8 @@ function compilePropertyAssignment(
   if (ts.isIdentifier(target.expression) && target.expression.text === "globalThis") {
     const propName = ts.isPrivateIdentifier(target.name) ? `__priv_${target.name.text.slice(1)}` : target.name.text;
     const wrapRuntimeEvalCallable =
-      ctx.runtimeEvalCallableBoundaryEnabled === true && isStaticallyCallableExpression(ctx, value);
+      (ctx.runtimeEvalCallableBoundaryEnabled === true || ctx.standaloneScriptVarBindings === true) &&
+      isStaticallyCallableExpression(ctx, value);
     const externSetTy = compilePropertyAssignmentExternSet(
       ctx,
       fctx,
@@ -4793,7 +4794,8 @@ function compilePropertyAssignment(
   if (receiverIsRealmGlobalObject(ctx, fctx, target.expression)) {
     const propName = ts.isPrivateIdentifier(target.name) ? `__priv_${target.name.text.slice(1)}` : target.name.text;
     const wrapRuntimeEvalCallable =
-      ctx.runtimeEvalCallableBoundaryEnabled === true && isStaticallyCallableExpression(ctx, value);
+      (ctx.runtimeEvalCallableBoundaryEnabled === true || ctx.standaloneScriptVarBindings === true) &&
+      isStaticallyCallableExpression(ctx, value);
     return compilePropertyAssignmentExternSet(ctx, fctx, target, value, propName, false, wrapRuntimeEvalCallable);
   }
 
@@ -5253,6 +5255,9 @@ function isStaticallyCallableExpression(ctx: CodegenContext, value: ts.Expressio
   ) {
     return true;
   }
+  // Shared Script wrapping requires a directly owned callable producer, not
+  // just a checker signature. Aliases already carry their producer's wrapper.
+  if (ctx.standaloneScriptVarBindings === true && ctx.runtimeEvalCallableBoundaryEnabled !== true) return false;
   return ctx.oracle.signatureOf(expr) !== undefined;
 }
 

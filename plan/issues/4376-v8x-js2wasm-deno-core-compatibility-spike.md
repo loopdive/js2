@@ -17,6 +17,9 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-10-04: shared Script global-object function writes use the existing
+  # canonical native AOT carrier, matching object-literal callable transport.
+  - src/codegen/expressions/assignment.ts
   # 2026-10-04: shared Script open-object properties use native callable
   # carriers without enabling unrelated runtime-eval proof/ABI changes.
   - src/codegen/literals.ts
@@ -2922,6 +2925,24 @@ credit a new native Deno artifact or full deno_core conformance. Persistent
 lexical cells, declaration preflight and completion values remain required.
 
 ## 2026-10-04 opt-in native lexical checkpoint
+
+Typed-binding work distinguishes immutable scalar top-level `const` values
+from mutable cross-Script bindings. Number/boolean constants retain their typed
+slots while transport boxes/unboxes at the lexical provider boundary. An array
+const does not prove immutable elements: the broad experiment passed identity
+but silently missed a foreign element-type mutation. Reference-typed consts
+remain refused until representation/proof planning handles that mutation.
+Global-object callable writes also require canonical AOT carriers in shared
+Script mode; otherwise a foreign call returns without running the function.
+Both globalThis and Script top-level this now select that existing carrier,
+without enabling the broad runtime-eval flag or linking an interpreter.
+General mutable/reference-typed planning and public Script completion remain
+required. Focused verification reports 86/86 (84 ordinary successes and two
+existing expected failures); the wider five-file result is 163 tests with
+158 ordinary successes, two expected failures and the same three recorded
+TDZ failures. The expanded nine-artifact native fixture passes compiler-free
+Wasmtime replay 1/1 (36 filtered), with zero compilations and zero runtime-eval
+provider instantiations. No full Deno conformance gain is claimed.
 
 Native wiring now adds the Context lexical operation to v8x's import allowlist
 and Context artifact builders. Seven independently compiled artifacts pass

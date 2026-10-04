@@ -105,6 +105,100 @@ it("keeps a dynamic lexical value in the owning Context without exposing a prope
   );
 });
 
+it("retains an inferred numeric const through the Context lexical provider", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "const retained=41; globalThis.published=retained+1;", true, true);
+  expect((realm.exports.observed as Function)()).toBe(42);
+  await runScript(realm, "globalThis.published=retained+1;", true, true);
+  expect((realm.exports.observed as Function)()).toBe(42);
+  await runScript(realm, "try { retained=0; } catch(error) {globalThis.caught=error;}", true, true);
+  expect((realm.exports.caughtKind as Function)()).toBe(2);
+  expect((realm.exports.retainedNumber as Function)()).toBe(41);
+});
+
+it("does not mistake an immutable array binding for immutable elements", async () => {
+  const result = await compile(
+    'const retained=[1,2,3]; globalThis.read=()=>{globalThis.published=typeof retained[0]==="string"?42:0;};',
+    {
+      target: "standalone",
+      scriptGoal: true,
+      allowJs: true,
+      fileName: "script.ts",
+      hostBridge: "always",
+      standaloneScriptVarBindings: true,
+      standaloneScriptLexicalImport: { module: "context", name: "tracedLexical" },
+      standaloneGlobalThisImport: {
+        module: "context",
+        name: "realm",
+        owns: "owns",
+        get: "get",
+        exceptionTag: "__exn_tag",
+      },
+      link: ["context"],
+    },
+  );
+  expect(result.success).toBe(false);
+  expect(result.errors.map((error) => error.message).join("\n")).toContain("private typed-slot proofs");
+});
+
+it("checks TDZ before unboxing an inferred numeric const", async () => {
+  const realm = await createRealm(true);
+  await runScript(
+    realm,
+    "try {globalThis.published=retained;} catch(error){globalThis.caught=error;} const retained=42;",
+    true,
+    true,
+  );
+  expect((realm.exports.caughtKind as Function)()).toBe(1);
+  expect((realm.exports.retainedNumber as Function)()).toBe(42);
+});
+
+it("retains an inferred boolean const in a retained compiled function", async () => {
+  const realm = await createRealm(true);
+  const earlier = await runScript(
+    realm,
+    "const retained=true; function inspect(){globalThis.published=retained?42:0;} globalThis.saved=inspect;",
+    true,
+    true,
+  );
+  await runScript(realm, "globalThis.published=0;", true, true);
+  const callback = (realm.exports.saved as Function)();
+  (earlier.exports.__call_fn_method_0 as Function)(undefined, callback);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("calls a foreign function-property reader retaining an inferred boolean const", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "const retained=true; globalThis.read=()=>{globalThis.published=retained?42:0;};", true, true);
+  await runScript(realm, "globalThis.read();", true, true);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("calls an AOT function installed through Script top-level this", async () => {
+  const realm = await createRealm(true);
+  await runScript(realm, "const retained=41; this.reader=()=>{globalThis.published=retained+1;};", true, true);
+  await runScript(realm, "globalThis.reader();", true, true);
+  expect((realm.exports.observed as Function)()).toBe(42);
+});
+
+it("preserves a shared global callable alias and its thrown-value identity", async () => {
+  const realm = await createRealm(true);
+  await runScript(
+    realm,
+    "const retained=41; globalThis.read=()=>{globalThis.score=retained; throw globalThis.saved;};",
+    true,
+    true,
+  );
+  await runScript(
+    realm,
+    "globalThis.saved={marker:42}; globalThis.alias=globalThis.read; try {globalThis.alias();} catch(error){globalThis.caught=error;}",
+    true,
+    true,
+  );
+  expect((realm.exports.score as Function)()).toBe(41);
+  expect((realm.exports.caught as Function)()).toBe((realm.exports.saved as Function)());
+});
+
 it("rejects a lexical redeclaration before user code and before creating earlier cells", async () => {
   const realm = await createRealm(true);
   await runScript(realm, "let retained:any=42;", true, true);

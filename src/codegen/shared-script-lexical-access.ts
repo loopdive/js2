@@ -3,8 +3,9 @@ import { ts } from "../ts-api.js";
 import type { GlobalDef, Instr, ValType } from "../ir/types.js";
 import { walkInstructionDag } from "../wasm/model/instruction-walk.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { allocLocal } from "./context/locals.js";
 import { emitGlobalEnvironmentKey } from "./global-environment.js";
-import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { coerceType, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
@@ -141,19 +142,40 @@ export function prepareSharedScriptLexicalAccess(ctx: CodegenContext, source: ts
   for (const name of ctx.globalLexicalBindings ?? []) {
     const index = ctx.moduleGlobals.get(name);
     const global = index === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, index)];
-    if (!global || global.type.kind !== "externref")
+    const immutable = source.statements.some(
+      (statement) =>
+        ts.isVariableStatement(statement) &&
+        (statement.declarationList.flags & ts.NodeFlags.Const) !== 0 &&
+        statement.declarationList.declarations.some(
+          (declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === name,
+        ),
+    );
+    // Const protects the binding, not an array's elements or an object's
+    // fields. Only scalar primitive slots retain a cross-Script type proof.
+    const scalarConst = immutable && (global?.type.kind === "f64" || global?.type.kind === "i32");
+    if (!global || (global.type.kind !== "externref" && !scalarConst))
       throw new Error(
         `Persistent Script lexical '${name}' requires dynamic externref storage; private typed-slot proofs are not yet valid`,
       );
     const entry: Access = { global, read: -1, write: -1 };
     for (const operation of [SCRIPT_LEXICAL_OP.read, SCRIPT_LEXICAL_OP.write, SCRIPT_LEXICAL_OP.initialize]) {
       const read = operation === SCRIPT_LEXICAL_OP.read;
-      const fctx = frame(`__script_lexical_${operation}_${name}`, read ? [] : [EXT], read ? EXT : null);
+      const type = global.type;
+      const fctx = frame(`__script_lexical_${operation}_${name}`, read ? [] : [type], read ? type : null);
       const previous = ctx.currentFunc;
       ctx.currentFunc = fctx;
       try {
-        emitScriptLexicalOperation(ctx, fctx, name, operation, read ? undefined : 0);
-        if (!read) fctx.body.push({ op: "drop" });
+        let valueLocal = read ? undefined : 0;
+        if (!read && type.kind !== "externref") {
+          fctx.body.push({ op: "local.get", index: 0 });
+          coerceType(ctx, fctx, type, EXT);
+          valueLocal = allocLocal(fctx, "__lexical_transport", EXT);
+          fctx.body.push({ op: "local.set", index: valueLocal });
+        }
+        emitScriptLexicalOperation(ctx, fctx, name, operation, valueLocal);
+        if (read) {
+          if (type.kind !== "externref") coerceType(ctx, fctx, EXT, type);
+        } else fctx.body.push({ op: "drop" });
       } finally {
         ctx.currentFunc = previous;
       }
@@ -163,7 +185,7 @@ export function prepareSharedScriptLexicalAccess(ctx: CodegenContext, source: ts
         typeIdx: addFuncType(
           ctx,
           fctx.params.map((p) => p.type),
-          read ? [EXT] : [],
+          read ? [type] : [],
         ),
         locals: fctx.locals,
         body: fctx.body,
