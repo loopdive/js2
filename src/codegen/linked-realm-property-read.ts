@@ -2,11 +2,16 @@
 import type { CodegenContext } from "./context/types.js";
 import { ensureLateImport } from "./shared.js";
 import { publishScriptGetter } from "./shared-script-completion.js";
+import { fillArrayIteratorPropertyRead } from "./array-iterator-property-read.js";
 
 /** Explicit ownership, not a structural type match, selects the foreign realm. */
 export function reserveLinkedRealmPropertyRead(ctx: CodegenContext): void {
   const linked = ctx.standaloneGlobalThisImport;
   if (!linked?.owns || !linked.get) return;
+  if (linked.arrayPrototype) {
+    ensureLateImport(ctx, linked.arrayPrototype, [], [{ kind: "externref" }], linked.module);
+    ensureLateImport(ctx, "__extern_is_array", [{ kind: "externref" }], [{ kind: "i32" }]);
+  }
   ensureLateImport(ctx, linked.owns, [{ kind: "externref" }], [{ kind: "i32" }], linked.module);
   ensureLateImport(
     ctx,
@@ -19,6 +24,7 @@ export function reserveLinkedRealmPropertyRead(ctx: CodegenContext): void {
 
 /** Install after every getter fill so graph-local bags and caches cannot win. */
 export function fillLinkedRealmPropertyRead(ctx: CodegenContext): void {
+  fillArrayIteratorPropertyRead(ctx);
   publishScriptGetter(ctx);
   const linked = ctx.standaloneGlobalThisImport;
   if (!linked?.owns || !linked.get) return;

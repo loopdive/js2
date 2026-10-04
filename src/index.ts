@@ -560,6 +560,9 @@ export interface CompileOptions {
     owns?: string;
     /** Owner's Get(object, key, receiver) -> externref, preserving reference identity. */
     get?: string;
+    /** Canonical shared Array.prototype getter, () -> externref. Used only
+     * after an array's own property checks miss, with the original receiver. */
+    arrayPrototype?: string;
   };
   /** Experimental Context-owned Script var storage. Requires standalone,
    * scriptGoal and an ownership-aware shared realm provider/exception tag.

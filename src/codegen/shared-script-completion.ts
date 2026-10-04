@@ -7,12 +7,14 @@ import { IR_CLOSURE_UNDEFINED } from "../ir/core/closure-invocation-callables.js
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 import { reserveApplyClosure } from "./object-runtime.js";
+import { ensureSymbolCarrier } from "./symbol-native.js";
 
 export function prepareScriptCompletionSink(ctx: CodegenContext): void {
   const sink = ctx.standaloneScriptCompletionImport;
   if (!sink || ctx.sourceIsModule) return;
   ensureLateImport(ctx, sink.name, [{ kind: "externref" }], [], sink.module);
   if (ctx.standaloneScriptGetExport) {
+    ensureSymbolCarrier(ctx);
     ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
   }
   flushLateImportShifts(ctx, null);

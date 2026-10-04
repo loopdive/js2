@@ -776,3 +776,51 @@ Then rebuild a matched Context and run the full unchanged deno_core population.
 BigInt/UTF-16, native capabilities, pure Program completion, runtime AOT routing,
 shared-library factoring and fresh performance measurements remain open.
 The existing compiler PR is stacked, not main-based; both PRs remain drafts.
+
+## Wrap-up: shared Array prototype checkpoint (2026-10-04)
+
+Native Error adoption is published in adapter `60dfe37`; unchanged WebIDL now
+reports **16 passed, 1 failed, 0 ignored, 414 filtered /431**. The remaining
+failure is dictionary conversion of a Script-created array. This result uses
+the earlier Context artifact and is not a fresh matched build or full population
+result. Public Error controls pass 1/1 (38 filtered), including native branding,
+message, identity and ordinary-object rejection with zero runtime compilation.
+
+This compiler checkpoint adds an optional `standaloneGlobalThisImport.arrayPrototype`
+provider, reserved native Symbol handling for Script Get, native Array iterator
+prototype initialization and reflective iterator-property lookup. A same-store
+Node control reads the shared iterator, calls its next method and obtains 70000
+from an independently compiled Script array. The getter suite passes **4/4**.
+The previous 128/128 compiler result predates these Array changes.
+
+**Not merge-ready:** custom/null array prototypes and alternate Reflect receivers
+are not proven safe in the new shared-prototype path. Own-undefined/accessor
+shadowing and non-array negative controls must be added. Shared descriptor and
+overlay metadata still require investigation. Do not infer full Array semantics
+from the four focused controls, or credit a dictionary fix before a native replay.
+
+Resume in this order:
+
+1. Guard or correctly handle explicit custom/null prototypes and alternate
+   receivers; add negative controls and broad iterator regressions.
+2. Wire a native Context Array.prototype provider in adapter packaging and ABI
+   validation. Existing Context artifacts do not export the new provider.
+3. Rebuild a clean, pinned, matched Context plus exact original Script packages,
+   then replay unchanged WebIDL and the full deno_core population. Repository
+   harness requires cargo-nextest, which is absent; direct built libtest replay
+   remains possible and must be labeled separately.
+4. Continue full Deno host capabilities, BigInt/UTF-16, pure Program completion,
+   runtime AOT routing, shared-library factoring and fresh benchmarks.
+
+Focused command (Node exception-reference flag is an array in the config):
+
+```sh
+node node_modules/vitest/vitest.mjs run tests/issue-4376-native-script-getter.test.ts --config .tmp/deno-4376-vitest-exnref.config.ts --no-file-parallelism
+```
+
+Compiler PR https://github.com/loopdive/js2/pull/6468 is stacked on
+`codex/4376-deno-callback-construction-20260930`. Adapter PR
+https://github.com/loopdive/v8x/pull/2 targets main. Both are open drafts;
+integration is incomplete. Preserve unrelated lower-contracts documentation,
+acorn binary and untracked user files. The old misconfigured Vitest session
+78409 was not killed because approval was not received.

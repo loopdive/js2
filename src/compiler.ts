@@ -804,6 +804,12 @@ function buildCodegenOptions(
   }
   if (options.standaloneGlobalThisImport !== undefined) {
     const { owns, get } = options.standaloneGlobalThisImport;
+    const arrayPrototype = options.standaloneGlobalThisImport.arrayPrototype;
+    if (arrayPrototype !== undefined && (!arrayPrototype || !owns || !get)) {
+      throw new Error(
+        "standaloneGlobalThisImport.arrayPrototype requires a non-empty name and ownership-aware getter.",
+      );
+    }
     if ((owns !== undefined || get !== undefined) && (!owns || !get)) {
       throw new Error("standaloneGlobalThisImport.owns and get must be provided together and non-empty.");
     }

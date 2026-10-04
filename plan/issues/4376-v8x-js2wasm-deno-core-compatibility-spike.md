@@ -3186,3 +3186,10 @@ The unchanged WebIDL replay improves to 16/17 (one dictionary failure, zero
 ignored, 414 filtered /431). This is a measured subset result, not full Deno
 compatibility. Script-owned array iterator lookup remains undefined in the
 direct probe; do not add an undefined-result fallback that ignores own shadowing.
+
+Shared Array prototype work is now in progress. Add an explicit linked native
+prototype provider and consult it only after the owning Script's own-property
+probe misses. Preserve the original receiver and canonical Context method
+identity; negative own-undefined and non-array controls are required. This is
+not a source-specific dictionary workaround. Shared descriptor tables and full
+cross-module native metadata remain broader integration requirements.

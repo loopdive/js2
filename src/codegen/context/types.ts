@@ -180,6 +180,7 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
     exceptionTag?: string;
     owns?: string;
     get?: string;
+    arrayPrototype?: string;
   };
   standaloneMicrotaskNotifyImport?: { module: string; name: string };
   standaloneScriptVarBindings?: boolean;
@@ -4260,6 +4261,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
     exceptionTag?: string;
     owns?: string;
     get?: string;
+    arrayPrototype?: string;
   };
   standaloneMicrotaskNotifyImport?: { module: string; name: string };
   standaloneScriptVarBindings?: boolean;

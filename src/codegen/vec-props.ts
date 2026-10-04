@@ -59,6 +59,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { protoIndexRecvGetMissInstrs } from "./proto-index-store.js"; // (#4176) inherited proto-named consult
 import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
+import { sharedArrayPrototypeRead } from "./shared-array-prototype-read.js";
 
 /** Reserved helper names. */
 const IS_VEC_PROP_CARRIER = "__is_vec_prop_carrier";
@@ -461,6 +462,7 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
             },
           ],
         },
+        ...sharedArrayPrototypeRead(ctx),
         ...(protoIndexRecvGetMissInstrs(ctx, 0, 1) ?? getMiss()),
       ],
     );
