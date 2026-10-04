@@ -1,5 +1,38 @@
 # Deno module linking checkpoint, 2026-10-04
 
+## Typed live reads verified; previous probe attribution corrected
+
+The earlier lower-level NaN probe below is not evidence of a native typed-import
+defect. A public compiler control with an actual Wasm owner initially failed
+when raw graph string keys were passed to that owner under Node/V8. Decoding
+the key in its allocating graph showed exactly "left"; the owner interpreted
+the raw reference as an object. Explicit key transport makes the control pass
+with IR enabled and disabled, including later mutation (80 then 94), retained
+initialization (80), exactly three owner reads, and unevaluated local fallback
+(5). No compiler production fix is needed or included. The final compiler
+focused population passes **17/17** across five files; typechecking/lint pass.
+The transport is a compiler test harness control, not a claim that the native
+adapter translates keys. Its actual getter forwards raw references.
+
+New adapter test `aot_typed_dependency_reads_original_numeric_export` verifies
+the real native path: unchanged raw .ts fixture input, first original-owner
+count 77, native bump to 78 before second graph evaluation, initialized and
+live results 81, then bump to 79 and live result 82 while initialized result
+remains 81. This passes **1/1**, 52 filtered /53, with zero runtime compilation
+and interpreter instantiations. Original shared-module control also passes
+**1/1**, 52 filtered /53; ordinary controls are 34 passed /18 ignored /1 filtered
+out of 53. Missing typed packages fail **0/1**, exit 101, on rejected first
+evaluation and missing exact binding. Native Wasmtime does not reproduce the
+Node/V8 raw-key failure for these fixtures. No adapter production fix is included.
+
+Packages `/private/tmp/deno-typed-live-module.Ijsoss` use clean compiler
+c5b251bc5f, Binaryen 125 O3 and Wasmtime 47.0.3. Adapter package builder and
+fixture sources are tracked in the paired PR. Context remains the earlier small
+artifact, not rebuilt. These receipts supersede the previously assumed typed
+wrong-value gap, but not prepared-IR admission: no native prepared-emission
+floor is asserted. Typed exact callable preflight, full typed IR live imports,
+cycles/TDZ/cached failures, snapshots and the full Deno population remain open.
+
 ## Clean checkpoint native replay and typed-read gap
 
 Clean build-only checkout `/private/tmp/deno-promise-full.X2WdwN/js2` is now

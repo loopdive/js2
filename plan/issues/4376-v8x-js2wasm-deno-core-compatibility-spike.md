@@ -331,6 +331,17 @@ files:
 
 ### Prepared initializer guards (continuation)
 
+Typed live-read continuation: the lower-level NaN probe was not reproduced by
+the real native adapter. A Node/V8 raw foreign-string key caused that control's
+failure; explicit key transport isolates compiler semantics and passes with
+IR on/off, later owner mutation and local fallback. Focused controls pass 17/17.
+New raw .ts native fixtures built from clean compiler c5b251bc5f pass 1/1
+(52 filtered /53): native mutation before and after second-graph evaluation
+produces 81 then 82, with the initialized value retained at 81 and runtime
+compiler/interpreter counts zero. Missing packages fail 0/1 at exact binding.
+This is test/evidence progress, not a compiler or adapter production fix.
+Prepared-IR native participation and complete Deno integration remain open.
+
 New positive-floor controls reach both singleton and batch prepared IR owners
 with legacy initializer emission poisoned. Both initially lacked any namespace
 capability import. Reserve capabilities during initializer preallocation and
