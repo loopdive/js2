@@ -3873,7 +3873,8 @@ export function compileObjectLiteralForStruct(
           !!p.name &&
           ((ts.isIdentifier(p.name) && p.name.text === field.name) ||
             (ts.isStringLiteral(p.name) && p.name.text === field.name) ||
-            (ts.isNumericLiteral(p.name) && p.name.text === field.name))
+            (ts.isNumericLiteral(p.name) && p.name.text === field.name) ||
+            (ts.isComputedPropertyName(p.name) && ctx.checker.getSymbolAtLocation(p.name)?.name === field.name))
         );
       }
       return resolvePropertyNameText(ctx, p) === field.name;
@@ -3952,17 +3953,20 @@ export function compileObjectLiteralForStruct(
     const shorthandProp = lastMatch && ts.isShorthandPropertyAssignment(lastMatch) ? lastMatch : undefined;
     const methodProp = lastMatch && ts.isMethodDeclaration(lastMatch) ? lastMatch : undefined;
     if (methodProp) {
-      const methodFullName = `${typeName}_${field.name}`;
+      // Computed well-known keys have checker-escaped physical field names,
+      // but their compiled method bodies use the semantic key (e.g. @@iterator).
+      const methodName = resolveAccessorPropName(ctx, methodProp.name) ?? field.name;
+      const methodFullName = `${typeName}_${methodName}`;
       // (#1557) Prefer the per-literal funcIdx if we detected a sig mismatch
       // above. The trampoline must reference the funcIdx whose body will
       // actually be compiled for THIS literal, not a sibling literal's body.
-      const methodFuncIdx = literalMethodFuncIdx.get(field.name) ?? ctx.funcMap.get(methodFullName);
+      const methodFuncIdx = literalMethodFuncIdx.get(methodName) ?? ctx.funcMap.get(methodFullName);
       if (methodFuncIdx === undefined) {
         // (#1058) Not registered yet — install the callable after the method
         // bodies below instead of leaving the field permanently undefined.
         deferredMethodFields.push({
           fieldIdx: fieldOrdinal,
-          fieldName: field.name,
+          fieldName: methodName,
           fieldType: field.type,
           methodProp,
         });

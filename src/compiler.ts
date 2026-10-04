@@ -881,6 +881,22 @@ function buildCodegenOptions(
       );
     }
   }
+  if (
+    options.standaloneScriptGetExport !== undefined &&
+    (!options.standaloneScriptGetExport ||
+      !options.standaloneScriptCompletionImport ||
+      !options.standaloneAllocationOwnerExport)
+  ) {
+    throw new Error(
+      "standaloneScriptGetExport requires a named export, shared Script completion and allocation ownership",
+    );
+  }
+  if (
+    options.standaloneScriptCallExport !== undefined &&
+    (!options.standaloneScriptCallExport || !options.standaloneScriptGetExport)
+  ) {
+    throw new Error("standaloneScriptCallExport requires a named export and native Script getter/ownership");
+  }
   return {
     irCutoverRoute: readIrCompileRoute(options, "compileSourceSync"),
     sourceMap: emitSourceMap,
@@ -921,6 +937,8 @@ function buildCodegenOptions(
     standaloneScriptVarBindings: options.standaloneScriptVarBindings,
     standaloneScriptLexicalImport: options.standaloneScriptLexicalImport,
     standaloneScriptCompletionImport: options.standaloneScriptCompletionImport,
+    standaloneScriptGetExport: options.standaloneScriptGetExport,
+    standaloneScriptCallExport: options.standaloneScriptCallExport,
     strictNoHostImports: targetProfile.strictEnvImportGate,
     // (#2119) thread module-strictness inference uniformly across all drivers.
     inferModuleStrictArguments: options.inferModuleStrictArguments,

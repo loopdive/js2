@@ -6,6 +6,7 @@ import {
   buildOrdinaryObjectGrowBody,
 } from "../runtime/wasmgc/values/ordinary-object-storage-bodies.js";
 import { buildObjectGetBody } from "../runtime/wasmgc/values/object-get-bodies.js";
+import { closedWellKnownSymbolFields } from "./closed-symbol-fields.js";
 /**
  * #1472 Phase B / #4397 — Wasm-native open-object semantic provider.
  *
@@ -8946,6 +8947,8 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
     shapeRange?: { shapeFieldIdx: number; stampLo: number; stampCount: number };
   };
   const byField = new Map<string, Entry[]>();
+  const bySymbol = new Map<number, Entry[]>();
+  const symbolFields = closedWellKnownSymbolFields(ctx);
   // Descriptor defines on user shapes live in the identity-keyed carrier bag,
   // not in their physical Wasm slots. Record the exact admitted receiver types
   // independently of exposed fields: `{ raw: {} }` has no physical `length`,
@@ -8975,7 +8978,8 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
       const exposedFieldName =
         exposedClosedStructFieldName(field?.name) ??
         (field?.name !== undefined && !isInternalStructFieldName(ctx, structName, field.name) ? field.name : undefined);
-      if (!field || !exposedFieldName) continue;
+      const symbolId = field && symbolFields.get(structName)?.get(field.name ?? "");
+      if (!field || (!exposedFieldName && symbolId === undefined)) continue;
       const boxable =
         field.type.kind === "externref" ||
         field.type.kind === "ref_extern" ||
@@ -8993,10 +8997,11 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
               : boxNumberIdx !== undefined));
       if (!boxable) continue;
       const presenceSlot = presenceSlotOf(fields, field.name);
-      let entries = byField.get(exposedFieldName);
+      let entries = symbolId === undefined ? byField.get(exposedFieldName!) : bySymbol.get(symbolId);
       if (!entries) {
         entries = [];
-        byField.set(exposedFieldName, entries);
+        if (symbolId === undefined) byField.set(exposedFieldName!, entries);
+        else bySymbol.set(symbolId, entries);
       }
       entries.push({
         typeIdx,
@@ -9115,7 +9120,7 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
       );
     }
   }
-  if (byField.size === 0) {
+  if (byField.size === 0 && bySymbol.size === 0) {
     if (bagOverrideArms.length > 0) fn.body.unshift(...bagOverrideArms);
     return;
   }
@@ -9417,6 +9422,29 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
       ...(undefinedExternInstrs(ctx)?.map((i) => ({ ...i })) ?? [{ op: "ref.null.extern" as const }]),
       { op: "return" as const },
     ]),
+    ...(bySymbol.size && ctx.symbolTypeIdx >= 0
+      ? ([
+          { op: "local.get", index: 1 },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: ctx.symbolTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [...bySymbol].flatMap(
+              ([id, entries]) =>
+                [
+                  { op: "local.get", index: 1 },
+                  { op: "any.convert_extern" },
+                  { op: "ref.cast", typeIdx: ctx.symbolTypeIdx },
+                  { op: "struct.get", typeIdx: ctx.symbolTypeIdx, fieldIdx: 0 },
+                  { op: "i32.const", value: id },
+                  { op: "i32.eq" },
+                  { op: "if", blockType: { kind: "empty" }, then: buildReceiverArms(entries) },
+                ] satisfies Instr[],
+            ),
+          },
+        ] satisfies Instr[])
+      : []),
     ...(numericKeyArms.length > 0
       ? ([
           { op: "local.get", index: 1 },

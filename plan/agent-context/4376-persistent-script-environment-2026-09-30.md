@@ -728,3 +728,51 @@ IDs are stable; preserve Script semantics rather than injecting Module exports.
 Full unchanged deno_core, native capabilities, BigInt/UTF-16, runtime AOT source
 compilation, pure Program completion and fresh benchmarks remain open.
 Both existing PRs remain draft; compiler PR 6468 is stacked, not based on main.
+## Owning-Script dispatch checkpoint (2026-10-04)
+
+Scripts now optionally export native Get and Call helpers, dispatched only after
+their allocation owner admits the value. Computed well-known Symbol methods are
+materialized in closed object fields using declaration-proven keys and semantic
+method names, rather than TypeScript's escaped physical field names. The adapter
+validates helper signatures before execution and implements Uint32Value/Int32Value
+with JavaScript truncation/wrapping and exception propagation.
+
+Measured unchanged WebIDL result: **15 passed, 2 failed, 0 ignored, 414 filtered
+out of 431**, up from 13/17 in the same subset. Newly passing tests are
+`sequence_check_next_method_once` and `sequence_next_method_must_be_callable`.
+Remaining failures are `dictionary` (array-valued field b) and
+`sequence_propagates_next_getter_exception` (expected TypeError("boom")).
+No Deno/vendor test sources or passing baselines were changed.
+
+The Context artifact remains the earlier clean compiler `3d4c1df` / adapter
+`064423a` build documented above. Five Script packages use this checkpoint's
+compiler changes, and the runtime binary uses its adapter changes. This is not
+a newly matched full Context rebuild. Current packages:
+`/private/tmp/deno-current-aot-build.q7MC1w/webidl-owned-method-scripts`.
+Replay from `/private/tmp/deno-upstream-conformance.H6HA4g/deno`:
+
+```sh
+V8X_JS2WASM_DENO_CORE_AOT_MODULE=/private/tmp/deno-current-aot-build.q7MC1w/deno-core.cwasm V8X_JS2WASM_AOT_SCRIPT_DIR=/private/tmp/deno-current-aot-build.q7MC1w/webidl-owned-method-scripts target/debug/deps/deno_core-87206ac56a2fccad webidl::tests:: --nocapture --test-threads=1
+```
+
+Checks: compiler completion/getter/persistent/result controls **128/128**,
+including two existing expected failures; compiler typecheck and scoped lint pass.
+Adapter compiler-free ordinary controls **31 passed, 8 ignored, 0 failed /39**,
+native Script ABI controls **2/2**, and build-side controls **15/15**.
+A separate runtime-compilation profile run reported 33 passes, four failures and
+27 ignored /64: two Context/provider contract failures and two missing configured
+precompiler inputs. That run is not a passing compiler-free result.
+
+Node Wasm exception-reference support must be supplied as a fork execArgv array.
+A misconfigured Vitest launch supplied the flag as characters and left a worker
+waiting (session 78409, parent PID 65733, child 65736). Approval to stop it was
+requested but not received; it was not killed. Corrected focused checks finished
+separately using compiler `.tmp/deno-4376-vitest-exnref.config.ts`.
+
+Resume with native Script-created array iterator support and exact thrown-error
+branding/message transport. Do not mask an owning getter's undefined result by
+falling back to another module, because that may overwrite intentional shadowing.
+Then rebuild a matched Context and run the full unchanged deno_core population.
+BigInt/UTF-16, native capabilities, pure Program completion, runtime AOT routing,
+shared-library factoring and fresh performance measurements remain open.
+The existing compiler PR is stacked, not main-based; both PRs remain drafts.

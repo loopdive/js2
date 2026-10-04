@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { CodegenContext } from "./context/types.js";
 import { ensureLateImport } from "./shared.js";
+import { publishScriptGetter } from "./shared-script-completion.js";
 
 /** Explicit ownership, not a structural type match, selects the foreign realm. */
 export function reserveLinkedRealmPropertyRead(ctx: CodegenContext): void {
@@ -18,6 +19,7 @@ export function reserveLinkedRealmPropertyRead(ctx: CodegenContext): void {
 
 /** Install after every getter fill so graph-local bags and caches cannot win. */
 export function fillLinkedRealmPropertyRead(ctx: CodegenContext): void {
+  publishScriptGetter(ctx);
   const linked = ctx.standaloneGlobalThisImport;
   if (!linked?.owns || !linked.get) return;
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");

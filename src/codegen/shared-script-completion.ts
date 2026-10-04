@@ -6,12 +6,17 @@ import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { IR_CLOSURE_UNDEFINED } from "../ir/core/closure-invocation-callables.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
+import { reserveApplyClosure } from "./object-runtime.js";
 
 export function prepareScriptCompletionSink(ctx: CodegenContext): void {
   const sink = ctx.standaloneScriptCompletionImport;
   if (!sink || ctx.sourceIsModule) return;
   ensureLateImport(ctx, sink.name, [{ kind: "externref" }], [], sink.module);
+  if (ctx.standaloneScriptGetExport) {
+    ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+  }
   flushLateImportShifts(ctx, null);
+  if (ctx.standaloneScriptCallExport) reserveApplyClosure(ctx);
   if (ctx.funcMap.has(IR_CLOSURE_UNDEFINED)) throw new Error("Script completion undefined provider name is occupied");
   const frame: FunctionContext = {
     name: IR_CLOSURE_UNDEFINED,
@@ -62,4 +67,22 @@ export function publishScriptCompletion(ctx: CodegenContext, fctx: FunctionConte
     { op: "local.get", index: fctx.evalCompletionLocal },
     { op: "call", funcIdx: ctx.funcMap.get(sink.name) ?? index },
   );
+}
+
+/** Publish before dead elimination; reuse the getter after all shape fills. */
+export function publishScriptGetter(ctx: CodegenContext): void {
+  const name = ctx.standaloneScriptGetExport;
+  if (!name) return;
+  if (ctx.sourceIsModule) throw new Error("Native Script getter requires Script goal");
+  if (ctx.mod.exports.some((entry) => entry.name === name)) throw new Error("Native Script getter export is occupied");
+  const index = ctx.funcMap.get("__extern_get");
+  if (index === undefined) throw new Error("Native Script getter was not reserved");
+  ctx.mod.exports.push({ name, desc: { kind: "func", index } });
+  const call = ctx.standaloneScriptCallExport;
+  if (call) {
+    if (ctx.mod.exports.some((entry) => entry.name === call)) throw new Error("Native Script call export is occupied");
+    const index = ctx.funcMap.get("__apply_closure");
+    if (index === undefined) throw new Error("Native Script call was not reserved");
+    ctx.mod.exports.push({ name: call, desc: { kind: "func", index } });
+  }
 }

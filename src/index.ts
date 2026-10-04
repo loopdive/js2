@@ -574,6 +574,13 @@ export interface CompileOptions {
   /** Context-owned Script completion sink, (externref) -> void. Requires
    * shared Script mode and the same realm provider. The initializer stays void. */
   standaloneScriptCompletionImport?: { module: string; name: string };
+  /** Opt-in native Script Get(object, key) -> externref export. Requires shared
+   * Script completion mode and allocation ownership. Hosts must route only
+   * proven owned receivers here; no source wrapper or Module export is added. */
+  standaloneScriptGetExport?: string;
+  /** Native owning-Script Call(callable, receiver, arguments) -> externref.
+   * Requires the getter/ownership surface above. Arguments remain native GC. */
+  standaloneScriptCallExport?: string;
   /** Opt-in allocation provenance predicate (externref) -> i32. Adds one hidden
    * owner-token field to GC structs; all linked graph artifacts must opt in. */
   standaloneAllocationOwnerExport?: string;

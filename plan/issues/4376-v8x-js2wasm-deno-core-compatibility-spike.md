@@ -227,6 +227,12 @@ func-budget-allow:
   - src/codegen/object-runtime-enumeration.ts::buildObjectEnumerationHelpers
   - src/codegen/object-runtime.ts::fillClosedStructExternGetArms
 oracle-ratchet-allow:
+  # 2026-10-04: checkpoint-only declaration/escaped-name queries authenticate
+  # closed well-known Symbol fields and select the literal's physical slot.
+  # Migrate these two raw checker sites into registry-free oracle facts before
+  # promoting this unfinished integration; no baseline is changed here.
+  - src/codegen/closed-symbol-fields.ts
+  - src/codegen/literals.ts
   # 2026-08-28: PR #5148 checkpoint — new raw-checker queries in DataView
   # lowering and source-scan predicates; migrate to ctx.oracle in follow-up.
   - src/codegen/dataview-native.ts
@@ -3150,3 +3156,23 @@ reach real conversion/assertion failures. They all involve iterable lookup,
 including the dictionary's array field. Trace cross-module Symbol/iterator
 transport before attributing the common signature to a particular root cause;
 do not count source acceptance as a passing test or advance the baseline.
+
+Owning-Script probe: an immediate computed `Symbol.iterator` method is callable
+inside its original Script (completion 1), while the same Script-created object
+is owned by `localOwns` but the Context getter reports undefined for iterator.
+A Script-created array remains iterable in that Node same-store probe, so the
+dictionary failure is not yet explained by this object case. Add an explicit
+default-off native getter export using the finalized Script property helper;
+keep original source/goal, shared exceptions and ownership checks intact.
+
+Owning-Script continuation: optional native Get/Call exports and allocation-owner
+dispatch now preserve computed well-known Symbol method closures. The unchanged
+WebIDL subset passes 15/17 (two failing, zero ignored, 414 filtered /431), up from
+13/17. The newly passing tests check next-method callability and single getter
+access. Dictionary array conversion and preservation of TypeError("boom") remain
+failing. Focused compiler controls pass 128/128, including two existing expected
+failures; compiler-free adapter controls pass 31/39 with eight explicitly ignored.
+Native ABI controls pass 2/2 and build-side controls 15/15. The Context artifact is
+still the earlier clean build; only Scripts/runtime use this checkpoint. Full
+population compatibility and performance are not credited. See the latest handoff
+section for reproduction, failed runtime-profile checks and remaining work.
