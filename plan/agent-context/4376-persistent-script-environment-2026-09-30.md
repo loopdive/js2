@@ -824,3 +824,32 @@ https://github.com/loopdive/v8x/pull/2 targets main. Both are open drafts;
 integration is incomplete. Preserve unrelated lower-contracts documentation,
 acorn binary and untracked user files. The old misconfigured Vitest session
 78409 was not killed because approval was not received.
+
+## Continuation: linked Array mutation controls (2026-10-04)
+
+The initial negative matrix measured 7/9 passing: own undefined, own accessor
+and non-array rejection passed, but null/custom prototypes failed. Native
+prototype edges now admit linked Array owners and Array-valued prototypes;
+integrity checks consult the Array's vec bag, and mutated Array getPrototypeOf
+reads no longer use a compile-time intrinsic shortcut. No new interpreter or
+source-specific dictionary implementation was added.
+
+The expanded getter suite passes **14/14**, including prototype/null identity,
+own shadowing after mutation, non-extensible refusal and cycle refusal.
+The four-file regression run passes **104/104** (getter 14, persistent Script
+86 including two existing expected failures, Array-subclass identity 1 and
+bootstrap null-chain 3). TypeScript 7 passes. These are Node same-store compiler
+controls, not native Deno or population coverage.
+
+Adapter source now exports `__v8x_context_array_prototype` from the runtime
+Context builder and both small Context builders. Script options import that
+provider; the runtime Context import allowlist admits it and the builder's owner
+ABI check requires the export. Build-side controls pass **15/15**. Existing
+Context artifacts lack the export and must be rebuilt before replay. Do not
+reuse an old native hash or package manifest to claim the new ABI is verified.
+
+Next: explicit Reflect receiver controls and any necessary propagation fix,
+fresh clean pinned native Context/Script packaging, unchanged WebIDL replay,
+then the full unchanged deno_core population. Canonical prototype identity and
+cross-module descriptor/overlay metadata still require broader verification.
+The last native unchanged WebIDL evidence remains **16/17**, not 17/17.

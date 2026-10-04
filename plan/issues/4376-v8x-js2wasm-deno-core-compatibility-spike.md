@@ -81,6 +81,10 @@ loc-budget-allow:
   - src/codegen/ordinary-new-target.ts
   - src/codegen/rest-only-apply.ts
   - src/codegen/object-runtime-prototype.ts
+  # Linked arrays reuse native identity-keyed prototype edges and their
+  # non-extensible/cycle checks; mutated arrays must not use static GPO folds.
+  - src/codegen/closed-object-prototype-edges.ts
+  - src/codegen/expressions/object-get-prototype-of.ts
   - src/codegen/closures/arrow-phases.ts
   - src/codegen/native-construct.ts
   - src/codegen/function-body.ts
@@ -3193,3 +3197,13 @@ probe misses. Preserve the original receiver and canonical Context method
 identity; negative own-undefined and non-array controls are required. This is
 not a source-specific dictionary workaround. Shared descriptor tables and full
 cross-module native metadata remain broader integration requirements.
+
+Linked Array safety continuation: initial negative controls measured two failures
+out of nine (null/custom prototype). Native prototype edges now admit linked
+Array owners and Array-valued prototypes, consult the vec bag for integrity
+flags and preserve mutation identity through runtime getPrototypeOf rather than
+the static fold. The expanded getter suite passes 14/14, including own undefined,
+accessor shadowing, non-array rejection, null/custom prototypes, identity,
+non-extensible refusal and cycle refusal. Explicit Reflect receivers, adapter
+provider wiring and matched unchanged Deno replay remain unverified. No new full
+population or performance credit is claimed.

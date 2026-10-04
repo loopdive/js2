@@ -318,6 +318,10 @@ export function tryCompileEs5GetPrototypeOfEarly(
   }
 
   // Closed standalone plain objects keep their ordinary prototype implicit.
+  if (ctx.standaloneGlobalThisImport?.arrayPrototype && ctx.usesDynamicProto) {
+    const dynamic = tryEmitDynamicProtoRuntimeRead(ctx, fctx, arg0);
+    if (dynamic) return dynamic;
+  }
   // An integrity call marks the identifier, so preserve the argument read and
   // answer this exact query with the compiler-owned singleton.
   if (
@@ -842,7 +846,12 @@ function tryEmitDynamicProtoRuntimeRead(
   // as `%Object.prototype%`); a name match alone would also claim arrays, class
   // instances and builtin carriers, whose folds are the only correct answer.
   const initializer = ctx.oracle.variableInitializerOf(arg0);
-  if (!initializer || !ts.isObjectLiteralExpression(initializer)) return null;
+  if (
+    !initializer ||
+    (!ts.isObjectLiteralExpression(initializer) &&
+      !(ctx.standaloneGlobalThisImport?.arrayPrototype && ts.isArrayLiteralExpression(initializer)))
+  )
+    return null;
   if (!dynamicProtoReceiverNames(arg0.getSourceFile()).has(arg0.text)) return null;
   const gptIdx = ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);

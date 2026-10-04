@@ -88,7 +88,52 @@ it("does not publish the native getter without the explicit option", async () =>
   );
 });
 
+it.each([
+  ["own undefined", "let a:any=[70000];a[Symbol.iterator]=undefined;a;"],
+  ["own accessor", "let a:any=[70000];Object.defineProperty(a,Symbol.iterator,{get(){return undefined;}});a;"],
+  ["ordinary object", "({})"],
+  ["null prototype", "let a:any=[70000];Object.setPrototypeOf(a,null);a;"],
+  ["custom prototype", "let a:any=[70000];Object.setPrototypeOf(a,{[Symbol.iterator]:undefined});a;"],
+])("does not replace %s with the shared Array iterator", async (_label, source) => {
+  const owner = await context();
+  const result = await compile(source, {
+    ...options,
+    standaloneGlobalThisImport: { ...options.standaloneGlobalThisImport, arrayPrototype: "arrayPrototype" },
+    link: [...options.link],
+  });
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  const s = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports })
+    .exports as Record<string, Function>;
+  const e = owner.exports as Record<string, Function>;
+  s.__module_init();
+  expect(e.kind(s.scriptGet(e.captured(), e.key()))).toBe(0);
+});
+
 it("refuses a getter without allocation ownership", async () => {
   const { standaloneAllocationOwnerExport: _unused, ...base } = options;
   await expect(compile("42;", { ...base, link: [...base.link] })).rejects.toThrow(/allocation ownership/);
+});
+
+it.each([
+  ["prototype identity", "let a:any=[1];let p:any={};Object.setPrototypeOf(a,p);Object.getPrototypeOf(a)===p?1:0;"],
+  ["null identity", "let a:any=[1];Object.setPrototypeOf(a,null);Object.getPrototypeOf(a)===null?1:0;"],
+  [
+    "own property after mutation",
+    "let a:any=[1];a[Symbol.iterator]=42;Object.setPrototypeOf(a,null);a[Symbol.iterator]===42?1:0;",
+  ],
+  ["non-extensible refusal", "let a:any=[1];Object.preventExtensions(a);Reflect.setPrototypeOf(a,null)===false?1:0;"],
+  ["cycle refusal", "let a:any=[1];let p:any={};Object.setPrototypeOf(p,a);Reflect.setPrototypeOf(a,p)===false?1:0;"],
+])("preserves linked array %s", async (_label, source) => {
+  const owner = await context();
+  const result = await compile(source, {
+    ...options,
+    standaloneGlobalThisImport: { ...options.standaloneGlobalThisImport, arrayPrototype: "arrayPrototype" },
+    link: [...options.link],
+  });
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  const s = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports })
+    .exports as Record<string, Function>;
+  const e = owner.exports as Record<string, Function>;
+  s.__module_init();
+  expect(e.number(e.captured())).toBe(1);
 });

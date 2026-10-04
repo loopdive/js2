@@ -52,6 +52,10 @@ export function fillClosedObjectPrototypeEdges(ctx: CodegenContext): void {
   const c = (name: string): Instr => ({ op: "call", funcIdx: idx(name) });
   const n = (value: number): Instr => ({ op: "i32.const", value });
   const ret = (): Instr => ({ op: "return" });
+  // Linked Script arrays need the same identity-keyed edges as closed objects.
+  // Keep other lanes unchanged; use the native Array predicate, not vec shape.
+  const linkedArrays = !!ctx.standaloneGlobalThisImport?.arrayPrototype;
+  const arrayOwner = (): Instr[] => (linkedArrays ? [l(0), c("__extern_is_array"), { op: "i32.or" }] : []);
   const branch = (condition: Instr[], then: Instr[]): Instr[] => [
     ...condition,
     { op: "if", blockType: { kind: "empty" }, then },
@@ -166,14 +170,17 @@ export function fillClosedObjectPrototypeEdges(ctx: CodegenContext): void {
       l(0),
       c("__is_instance_expando_carrier"),
       { op: "i32.or" },
+      ...arrayOwner(),
       l(1),
       c("__is_instance_expando_carrier"),
+      ...(linkedArrays ? [l(1), c("__extern_is_array"), { op: "i32.or" } as Instr] : []),
       l(0),
       c("__closed_proto_has"),
       { op: "i32.or" },
       l(0),
       c("__is_instance_expando_carrier"),
       { op: "i32.or" },
+      ...arrayOwner(),
       { op: "i32.and" },
     ],
   );
@@ -218,7 +225,7 @@ export function fillClosedObjectPrototypeEdges(ctx: CodegenContext): void {
       l(0),
       { op: "any.convert_extern" },
       { op: "ref.test", typeIdx: object },
-      { op: "if", blockType: { kind: "val", type: ext }, then: [l(0)], else: [l(0), c("__closure_bag_lookup")] },
+      ...prototypeIntegrityBagRead(linkedArrays, idx),
       { op: "local.tee", index: 2 },
       { op: "any.convert_extern" },
       { op: "ref.test", typeIdx: object },
@@ -293,6 +300,32 @@ export function fillClosedObjectPrototypeEdges(ctx: CodegenContext): void {
   );
   fillEdgeReads(ctx, fn, idx, object);
   fillEdgeTerminal(ctx, add, fn, idx, object);
+}
+
+/** The preceding predicate leaves whether receiver 0 is an ordinary Object. */
+function prototypeIntegrityBagRead(linkedArrays: boolean, idx: (name: string) => number): Instr[] {
+  const l = (): Instr => ({ op: "local.get", index: 0 });
+  const c = (name: string): Instr => ({ op: "call", funcIdx: idx(name) });
+  const ext: ValType = { kind: "externref" };
+  return [
+    {
+      op: "if",
+      blockType: { kind: "val", type: ext },
+      then: [l()],
+      else: linkedArrays
+        ? [
+            l(),
+            c("__extern_is_array"),
+            {
+              op: "if",
+              blockType: { kind: "val", type: ext },
+              then: [l(), c("__vec_bag_lookup")],
+              else: [l(), c("__closure_bag_lookup")],
+            },
+          ]
+        : [l(), c("__closure_bag_lookup")],
+    },
+  ];
 }
 
 function fillEdgeTerminal(
