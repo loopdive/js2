@@ -1,5 +1,50 @@
 # Persistent AOT Script environment
 
+## Module evaluation and rejection checkpoint, 2026-10-04
+
+Adapter source 9a4e13a1cdfcd0b22f52caa24a2ba421b50970e1 now returns a cached
+rejected evaluation Promise on execution/package failures. Repeated Evaluate
+retains Promise identity. Synthetic callback exceptions preserve native payload
+identity without leaking a synchronous exception. Uninstantiated API misuse
+still throws synchronously; its Rust unit passes 1/1 (27 filtered /28).
+Promise reactions now capture throws with a local TryCatch; otherwise Deno's
+outer catcher intercepted the throw and the derived Promise falsely fulfilled.
+
+Compiler-free ordinary controls pass 34, fail zero, ignore 13 /47.
+The added AOT execution control passes 1/1 with 46 filtered: before evaluation the
+global marker is undefined, after evaluation it is 42, namespace answer is 42,
+and repeated evaluation has the same fulfilled Promise. Runtime compilation and
+interpreter counts are zero. Three graph packager tests pass 3/3; retained build
+controls pass 15/15. Unchanged Deno lazy loading passes 1/1 in 1.62s; WebIDL
+17/17 in 24.98s, denominators 431 with 430/414 filtered, not full coverage.
+
+New trusted graph packager invokes the existing compile-graph sidecar build-side,
+Binaryen 125 no-inline O3, and Wasmtime 47.0.3 precompilation. It binds exact
+entry, ordered source graph and native SHA before loading. Artifacts live at
+/private/tmp/deno-module-evaluation.Ma8rec. Positive execution graph digest
+e5ea1b29832d0bf7e3ebcc71a36e469d2cd56f3d3ada3811b0fabb843ebda00f,
+native SHA 366ffaca93aa539830bebbf09389742f986d22f33fa520a78f1eb32c7d2f4d29,
+optimized SHA 87cb6a674fa2d7fdc5cb5be3e203bc334abcbfb509f5ce9778843f417aff20fb.
+Compiler implementation remains a675081032, workspace docs head 4e6b00f6c8;
+existing full/small Context artifacts are unchanged.
+
+Actual main_and_side_module now fails 0/1 instead of falsely passing with no
+trusted graph. With two source-exact optimized packages the main body succeeds
+but the side body throws: compile-graph.ts lowers import.meta.main to true for
+every graph entry, independent of Deno's loader role. The native
+SetHostInitializeImportMetaObjectCallback is a no-op. Its actual thrown error is
+then obscured by unsupported native Promise transport into the compiled realm.
+These failures are evidence of incomplete semantics, not lost valid coverage.
+Deno and vendor tests remain unchanged.
+
+Resume with host-owned import-meta initialization/loader roles, native Promise
+transport, and native AOT module exception rooting. run_deferred_module_init still
+consumes and renders Wasm payloads as diagnostics; synthetic exception identity
+does not prove compiled thrown-object identity. Add positive and negative
+controls that observe execution and original rejection reasons. Full graphs,
+snapshots, typed persistent references, host services and matched benchmarks
+remain required. No new throughput/footprint claim.
+
 ## Explicit foreign getter receivers, 2026-10-04
 
 Compiler implementation a675081032 and adapter implementation

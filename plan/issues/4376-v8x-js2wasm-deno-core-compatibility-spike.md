@@ -3260,6 +3260,25 @@ binary controls match clean dbe49bf307d6 exactly. Source-preservation remains
 38 pass /53 fail out of 91 with no per-test status changes. Native adapter pin,
 package routing and unchanged Deno replay have not advanced yet.
 
+Module evaluation evidence, 2026-10-04: adapter 9a4e13a returns cached rejected
+evaluation Promises and captures reaction throws under a local TryCatch. Ordinary
+compiler-free controls pass 34/34 (13 ignored /47); an explicitly executed native
+AOT graph proves global mutation and namespace publication, 1/1 with 46 filtered.
+Unchanged lazy loading remains 1/1 and WebIDL 17/17. Real main_and_side_module now
+fails instead of silently passing without artifacts. With exact packages, the
+main module executes but the side module throws: compile-graph.ts statically sets
+import.meta.main from the entry instead of Deno's loader role. Native Promise
+transport into the compiled realm also obscures the original failure with an
+unsupported conversion error. AOT thrown payload capture still renders a string;
+synthetic native exception identity is verified, not full compiled exception
+identity. These are next implementation requirements, not completed coverage.
+
+Module evaluation continuation: audit failure propagation through Deno's returned
+evaluation Promise. Missing graph artifacts currently return null and discarded
+Deno evaluation futures can hide the failure. Preserve rejected Promise identity,
+Module::GetException and JavaScript thrown payloads; verify positive execution and
+negative artifact cases without changing Deno tests.
+
 Receiver continuation: extend the existing opt-in Script getter with a separate
 three-reference receiver-aware export, preserving the old two-reference API.
 The adapter uses the new export when present and retains the explicit refusal
