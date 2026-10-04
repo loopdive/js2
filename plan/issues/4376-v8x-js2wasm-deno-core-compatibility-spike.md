@@ -3083,3 +3083,14 @@ ordinary failing tests. Native v8x completion wiring, pure source Program
 configuration and public Script dispatch are not implemented by this checkpoint.
 The persistent Script handoff records the exact resume order. Draft PR #6468
 is not ready to merge; no new full Deno conformance or performance is claimed.
+
+Completion follow-up: retain pure Script expressions, materialize canonical
+native undefined before IR preparation, box scalar results through semantic
+boundaries and stop restoring completion after direct abrupt finally exits.
+The original 20 controls pass. Expanded controls report **33 ordinary passes
+and one ordinary failure out of 34**. The failure is an unannotated function
+with no return yielding a Number instead of undefined; keep it visible and
+investigate callable signature/implicit-return semantics. The persistent Script
+suite remains 86/86, including two existing expected failures. TypeScript 7
+passes. The native adapter and full unchanged Deno tests have not been rebuilt
+for this completion follow-up. Integration remains in progress.

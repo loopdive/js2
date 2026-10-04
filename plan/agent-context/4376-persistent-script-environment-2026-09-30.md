@@ -535,6 +535,28 @@ preserve arbitrary JS values, callable identity and foreign realm values.
 
 ### Incomplete completion checkpoint (2026-10-04)
 
+Follow-up after `7e0bf9e4965`: completion-observable Scripts now retain pure
+top-level expression statements. A compiler-owned native undefined provider
+uses the existing `emitUndefined` representation and is registered before IR
+preparation. Scalar completion values use semantic number/boolean boxing, not
+`extern.convert_any` on numeric operands. Direct break/continue in finally
+stops lowering before the normal-completion restore.
+
+The original 20 controls now pass. The expanded matrix has 34 tests; the
+unannotated `function nested(){99;} nested();` control remains an ordinary
+failure because it yields a Number rather than JavaScript undefined. Investigate
+the actual source callable signature/implicit return, not a source matcher or
+a special-case replacement in the completion sink. The last completed 31-test
+run was 30 passes/1 failure; the final expanded result is recorded in the issue.
+The separate persistent Script suite remains 86/86, including its two existing
+expected failures. TypeScript 7 passes. Native adapter wiring and unchanged
+full Deno conformance are still not credited by this compiler-only follow-up.
+
+The historical failure counts and resume list below describe the first
+checkpoint; steps 1 and 2 are now implemented and original controls pass.
+General implicit-return semantics, remaining abrupt shapes, pure Program
+configuration and native Context/public Script wiring still need work.
+
 The branch now contains an opt-in `standaloneScriptCompletionImport` with
 ABI `(externref) -> void`. The initializer remains `() -> void`; its normal
 completion is published to a Context-owned sink. Source stays unwrapped,

@@ -11658,7 +11658,16 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
           : lowerCall(expression, cx, true);
     } else value = lowerExpr(expression, cx, irVal({ kind: "externref" }));
     if (value === null) resetScriptCompletion(cx);
-    else cx.builder.emitSlotWrite(cx.scriptCompletionSlot, coerceIrValueToExternref(cx.builder, value));
+    else {
+      const type = asVal(cx.builder.typeOf(value));
+      const external =
+        type?.kind === "f64"
+          ? cx.builder.emitIntrinsic("js.number.box", [value])
+          : type?.kind === "i32" && type.boolean === true
+            ? cx.builder.emitIntrinsic("js.boolean.box", [value])
+            : coerceIrValueToExternref(cx.builder, value);
+      cx.builder.emitSlotWrite(cx.scriptCompletionSlot, external);
+    }
     return;
   }
   if (ts.isBlock(stmt)) {
@@ -16017,6 +16026,7 @@ function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
         cx.builder.emitSlotWrite(completionSnapshot, cx.builder.emitSlotRead(cx.scriptCompletionSlot!));
       for (const s of stmt.finallyBlock!.statements) {
         lowerStmt(s, finallyCx);
+        if (ts.isBreakStatement(s) || ts.isContinueStatement(s)) return;
       }
       if (completionSnapshot !== undefined)
         cx.builder.emitSlotWrite(cx.scriptCompletionSlot!, cx.builder.emitSlotRead(completionSnapshot));

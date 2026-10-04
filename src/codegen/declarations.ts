@@ -4189,6 +4189,10 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // Module-level expression statements with side effects:
     // new expressions, call expressions, ++/--, assignments to module globals
     if (ts.isExpressionStatement(stmt)) {
+      if (ctx.standaloneScriptCompletionImport && !ctx.sourceIsModule) {
+        ctx.moduleInitStatements.push(stmt);
+        continue;
+      }
       // #1596 — the test262 IIFE-with-trailing-call pattern
       // `(function(){...}.apply(null, [...]))` parses with a
       // ParenthesizedExpression at the top of the ExpressionStatement. Unwrap

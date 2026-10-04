@@ -78,6 +78,18 @@ it.each([
   "true;",
   '"text";',
   "null;",
+  "undefined;",
+  "1|2;",
+  "1===1;",
+  "-42;",
+  "42; function nested(){99;} nested();",
+  "42; function nested(){99;}",
+  "while(true){42;break;}",
+  "for(let index=0;index<3;index++){index+40;continue;}",
+  "outer: while(true){try {42;break outer;} finally {0;}}",
+  "outer: while(true){try {42;} finally {0;break outer;}}",
+  "switch(1){case 1:42;break;default:0;}",
+  "41; switch(0){case 1:42;}",
 ])("publishes actual Script completion for %s", async (source) => {
   const expected = new Script(source).runInNewContext();
   const owner = await createContext();
@@ -106,5 +118,24 @@ it("keeps object completion identity instead of serializing a copy", async () =>
 it("does not publish a successful completion after an uncaught throw", async () => {
   const owner = await createContext();
   await expect(run(owner, "41; throw 42;")).rejects.toBeInstanceOf(WebAssembly.Exception);
+  expect((owner.exports.kind as Function)()).toBe(0);
+});
+
+it("resets completion between independently executed Scripts", async () => {
+  const owner = await createContext();
+  await run(owner, "42;");
+  expect((owner.exports.number as Function)()).toBe(42);
+  await run(owner, "void 0;");
+  expect((owner.exports.kind as Function)()).toBe(0);
+});
+
+it("does not add a completion import when the option is absent", async () => {
+  const owner = await createContext();
+  const compiled = await run(owner, "globalThis.saved=42;", false);
+  expect(
+    WebAssembly.Module.imports(new WebAssembly.Module(compiled.binary)).some(
+      ({ module, name }) => module === "context" && name === "capture",
+    ),
+  ).toBe(false);
   expect((owner.exports.kind as Function)()).toBe(0);
 });
