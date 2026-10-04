@@ -77,6 +77,7 @@
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { consumeReflectGetReceiver } from "./reflect-get-receiver-read.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
 import { ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
@@ -2756,7 +2757,9 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                               blockType: { kind: "empty" },
                               then: [...missExtern(), { op: "return" }],
                             },
-                            { op: "local.get", index: 0 },
+                            ...(ctx.standaloneGlobalThisImport?.arrayPrototype
+                              ? consumeReflectGetReceiver(ctx)
+                              : [{ op: "local.get", index: 0 } as Instr]),
                             { op: "local.get", index: pGetter },
                             { op: "call", funcIdx: callAccessorGetIdx },
                             { op: "return" },
@@ -2854,10 +2857,10 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
   // NOT wired at `__vec_prop_get`'s build site: `__vec_overlay_lookup` does not
   // exist yet there (measured — `overlayLookup=undefined`), which is precisely
   // why the overlay read prologues are FINALIZE-time splices in the first place.
-  for (const overlayGetLane of ["__extern_get", "__vec_prop_get"]) {
+  for (const overlayGetLane of ["__extern_get", "__vec_prop_get", "__vec_prop_get_receiver"]) {
     const fn = findFn(overlayGetLane);
     if (fn) {
-      const base = 2 + fn.locals.length;
+      const base = (overlayGetLane === "__vec_prop_get_receiver" ? 3 : 2) + fn.locals.length;
       const gAny = base;
       const gComp = base + 1;
       const gE = base + 2;
@@ -2957,7 +2960,11 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                               blockType: { kind: "empty" },
                               then: [...missExtern(), { op: "return" }],
                             },
-                            { op: "local.get", index: 0 },
+                            ...(overlayGetLane === "__vec_prop_get_receiver"
+                              ? [{ op: "local.get", index: 2 } as Instr]
+                              : ctx.standaloneGlobalThisImport?.arrayPrototype
+                                ? consumeReflectGetReceiver(ctx)
+                                : [{ op: "local.get", index: 0 } as Instr]),
                             { op: "local.get", index: gGetter },
                             { op: "call", funcIdx: callAccessorGetIdx },
                             { op: "return" },

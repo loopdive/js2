@@ -85,6 +85,11 @@ loc-budget-allow:
   # non-extensible/cycle checks; mutated arrays must not use static GPO folds.
   - src/codegen/closed-object-prototype-edges.ts
   - src/codegen/expressions/object-get-prototype-of.ts
+  # Linked Array Reflect.get transports its explicit receiver through vec
+  # property and descriptor-overlay reads, including nested accessor calls.
+  - src/codegen/vec-props.ts
+  - src/codegen/vec-overlay.ts
+  - src/runtime/wasmgc/values/object-get-arms.ts
   - src/codegen/closures/arrow-phases.ts
   - src/codegen/native-construct.ts
   - src/codegen/function-body.ts
@@ -3207,3 +3212,12 @@ accessor shadowing, non-array rejection, null/custom prototypes, identity,
 non-extensible refusal and cycle refusal. Explicit Reflect receivers, adapter
 provider wiring and matched unchanged Deno replay remain unverified. No new full
 population or performance credit is claimed.
+
+Explicit receiver continuation: the initial three-control matrix measured one
+pass and two failures. Array own and nested-own accessors used the target as
+`this`; custom prototype accessor forwarding already passed. A default-off
+three-argument vec reader now preserves the captured receiver without changing
+the existing two-argument ABI. Descriptor-overlay early getter arms consume the
+same one-shot Reflect receiver state before invoking accessors. Native iterator
+prototype reads use that receiver state too. Focused controls and native replay
+must be remeasured before crediting these changes.

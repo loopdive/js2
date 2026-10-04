@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { CodegenContext } from "./context/types.js";
 import { ITER_FAMILY_ARRAY } from "./iterator-native.js";
+import { consumeReflectGetReceiver } from "./reflect-get-receiver-read.js";
 
 const filled = new WeakSet<CodegenContext>();
 
@@ -38,7 +39,7 @@ export function fillArrayIteratorPropertyRead(ctx: CodegenContext): void {
           then: [
             { op: "global.get", index: prototype },
             { op: "local.get", index: 1 },
-            { op: "local.get", index: 0 },
+            ...consumeReflectGetReceiver(ctx),
             { op: "call", funcIdx: get },
             { op: "return" },
           ],

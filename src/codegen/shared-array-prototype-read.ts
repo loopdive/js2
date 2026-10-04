@@ -4,7 +4,7 @@ import type { CodegenContext } from "./context/types.js";
 
 /** Vec-property miss only: an own undefined value has already returned.
  * The shared Context owns the prototype and its native method identities. */
-export function sharedArrayPrototypeRead(ctx: CodegenContext): Instr[] {
+export function sharedArrayPrototypeRead(ctx: CodegenContext, receiverLocal = 0): Instr[] {
   const linked = ctx.standaloneGlobalThisImport;
   if (!linked?.arrayPrototype || !linked.get) return [];
   const prototype = ctx.funcMap.get(linked.arrayPrototype);
@@ -22,7 +22,7 @@ export function sharedArrayPrototypeRead(ctx: CodegenContext): Instr[] {
       then: [
         { op: "call", funcIdx: prototype },
         { op: "local.get", index: 1 },
-        { op: "local.get", index: 0 },
+        { op: "local.get", index: receiverLocal },
         { op: "call", funcIdx: get },
         { op: "return" },
       ],

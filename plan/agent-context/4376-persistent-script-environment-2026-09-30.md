@@ -853,3 +853,33 @@ fresh clean pinned native Context/Script packaging, unchanged WebIDL replay,
 then the full unchanged deno_core population. Canonical prototype identity and
 cross-module descriptor/overlay metadata still require broader verification.
 The last native unchanged WebIDL evidence remains **16/17**, not 17/17.
+
+## Explicit Reflect receivers (2026-10-04)
+
+The three-case initial receiver matrix passed only custom-prototype access;
+own and nested-own accessors used the Array target as `this`. The vec property
+reader now has a separate, default-off three-argument helper used by linked
+getter bindings. Its existing two-argument ABI is unchanged. Overlay accessor
+prologues consume the one-shot Reflect receiver before calling a getter, and
+the receiver-aware helper receives the same overlay prologue with correctly
+offset locals. The native Array iterator early Get arm consumes that state too.
+
+Focused getter controls pass **21/21**, including numeric/string indexed
+accessors, nested ordinary reads, Context Array prototype and native iterator
+prototype receiver identity. The five-file run reports **149 passed, 53 failed
+/202**, with two existing expected failures included among passes. The four
+execution suites alone pass **111/111**. The source-preservation suite reports
+38 passed /53 failed /91 both before and after this change: clean compiler
+`73c8c2369784363154cdf3db118edf0dea9392cf` and the dirty candidate have exactly
+the same per-test statuses. Baseline JSON is
+`/private/tmp/deno-array-native-build.lcT9ej/preservation-baseline.json`;
+candidate JSON is compiler `.tmp/4376-receiver-preservation-candidate.json`.
+Do not describe the combined run as all green or repair its receipts silently.
+
+TypeScript 7, scoped Biome lint, LOC and function budgets pass. A broad shared
+local clone failed on a missing historical promisor object; a single-branch
+depth-one local clone succeeded. The build staging directory is
+`/private/tmp/deno-array-native-build.lcT9ej` with a clean baseline compiler at
+`js2-clean`. Advance its clean detached pin only after committing the receiver
+fix. Binaryen 125 is `node_modules/binaryen/bin/wasm-opt` (Node executable),
+not a command currently available on PATH. Native replay remains outstanding.

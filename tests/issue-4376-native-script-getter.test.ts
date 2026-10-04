@@ -18,6 +18,16 @@ export function arrayPrototype():any {return Array.prototype;}
 export function call(fn:any,receiver:any,args:any):any {return fn.apply(receiver,args);}
 export function f64Array():any {return [1.1,2.2];}
 export function valueKey():any {return "value";}
+export function probeKey():any {return "receiverProbe";}
+export function same(a:any,b:any):boolean {return a===b;}
+export function expectedReceiver():any {return globalThis.expectedReceiver;}
+export function installArrayProbe():void {
+ Object.defineProperty(Array.prototype,"receiverProbe",{get(){return this;},configurable:true});
+}
+export function installIteratorProbe():void {
+ const p:any=Object.getPrototypeOf(Array.prototype[Symbol.iterator]());
+ Object.defineProperty(p,"receiverProbe",{get(){return this;},configurable:true});
+}
 export function number(value:any):number {return Number(value);}
 export function kind(value:any):number {return typeof value === "function"?1:value===undefined?0:2;}
 `,
@@ -136,4 +146,69 @@ it.each([
   const e = owner.exports as Record<string, Function>;
   s.__module_init();
   expect(e.number(e.captured())).toBe(1);
+});
+
+it.each([
+  [
+    "own accessor",
+    'let a:any=[1];Object.defineProperty(a,"probe",{get(){return this.value;}});Reflect.get(a,"probe",{value:42});',
+  ],
+  [
+    "custom prototype accessor",
+    'let a:any=[1];Object.setPrototypeOf(a,{get probe(){return this.value;}});Reflect.get(a,"probe",{value:42});',
+  ],
+  [
+    "nested own accessor",
+    'let a:any=[1];a.value=7;Object.defineProperty(a,"probe",{get(){return this.value+a.value;}});Reflect.get(a,"probe",{value:35});',
+  ],
+  [
+    "indexed accessor with numeric key",
+    'let a:any=[1];Object.defineProperty(a,"0",{get(){return this.value;}});Reflect.get(a,0,{value:42});',
+  ],
+  [
+    "indexed accessor with string key",
+    'let a:any=[1];Object.defineProperty(a,"0",{get(){return this.value;}});Reflect.get(a,"0",{value:42});',
+  ],
+])("uses the explicit Reflect receiver for a linked array %s", async (_label, source) => {
+  const owner = await context();
+  const result = await compile(source, {
+    ...options,
+    standaloneGlobalThisImport: { ...options.standaloneGlobalThisImport, arrayPrototype: "arrayPrototype" },
+    link: [...options.link],
+  });
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  const s = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports })
+    .exports as Record<string, Function>;
+  const e = owner.exports as Record<string, Function>;
+  s.__module_init();
+  expect(e.number(e.captured())).toBe(42);
+});
+
+it("preserves an explicit receiver through the shared Context Array prototype", async () => {
+  const owner = await context();
+  const e = owner.exports as Record<string, Function>;
+  e.installArrayProbe();
+  const result = await compile(
+    'let a:any=[1];let r:any={value:42};globalThis.expectedReceiver=r;Reflect.get(a,"receiverProbe",r);',
+    {
+      ...options,
+      standaloneGlobalThisImport: { ...options.standaloneGlobalThisImport, arrayPrototype: "arrayPrototype" },
+      link: [...options.link],
+    },
+  );
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  const s = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports })
+    .exports as Record<string, Function>;
+  s.__module_init();
+  expect(e.same(e.captured(), e.expectedReceiver())).toBe(1);
+});
+
+it("preserves an explicit receiver through the native Array iterator prototype", async () => {
+  const owner = await context();
+  const e = owner.exports as Record<string, Function>;
+  e.installIteratorProbe();
+  const array = e.f64Array();
+  const iterator = e.call(e.get(e.arrayPrototype(), e.key(), array), array, e.args());
+  const receiver = e.realm();
+  expect(e.same(e.get(iterator, e.probeKey(), receiver), receiver)).toBe(1);
 });
