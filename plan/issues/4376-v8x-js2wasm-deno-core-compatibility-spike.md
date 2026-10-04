@@ -3116,3 +3116,18 @@ of original thrown-value transport remain unfinished. Full unchanged Deno
 conformance and fresh performance measurements are not credited. Both existing
 PRs remain draft; the persistent Script and adapter handoffs record the precise
 resume order. This issue remains in progress.
+
+Public AOT Script continuation (2026-10-04): the adapter now dispatches exact
+source/resource-name packages through public `Script::Run`, validates native
+initializer/completion signatures before instantiation, and adopts normal and
+thrown realm values without JSON or an interpreter fallback. Eight native Script
+packages and the existing Context pass the public control 1/1 (37 filtered),
+covering repeated execution, completion, object/exception identity, thrown
+number/undefined, Context isolation and pre-effect refusal of resource/source/
+native-byte mismatches. Zero runtime compilations/eval provider instances are
+asserted. Build-side controls pass 13/13 and native digest/ABI controls 2/2;
+ordinary adapter checks pass 30/38 with eight explicitly ignored and zero failures.
+Direct additional host capabilities, BigInt/UTF-16 adoption, general runtime AOT
+Script compilation and pure Program completion remain open. Full Context rebuild,
+unchanged Deno conformance and fresh performance are not credited. The adapter
+handoff supersedes the earlier unwired checkpoint; integration remains in progress.

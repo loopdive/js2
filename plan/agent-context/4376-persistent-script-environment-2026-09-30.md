@@ -689,3 +689,17 @@ Existing draft PRs remain https://github.com/loopdive/js2/pull/6468 and
 https://github.com/loopdive/v8x/pull/2. The compiler PR targets
 `codex/4376-deno-callback-construction-20260930`, not main. Preserve unrelated
 compiler worktree edits and adapter `.tmp/` content.
+
+Latest adapter continuation: the previously unwired public path now executes
+source/resource-bound AOT Script packages through public `Script::Run` and
+adopts results/thrown values through the Context's existing realm bridge.
+The public API fixture passes 1/1 (37 filtered) with repeated execution,
+object identity, thrown object/number/undefined, two-Context isolation and
+pre-effect mismatch rejection. Eight native packages were built separately;
+runtime compilations and interpreter-provider instances remain zero. Native
+digest/ABI checks pass 2/2 and build-side checks 13/13. Ordinary adapter checks
+have 30 passes, eight ignored and zero failures out of 38. These supersede the
+earlier public-wiring status, not the unchanged Deno conformance result.
+The adapter handoff contains packaging and public-test reproduction commands.
+Additional host capabilities, BigInt/UTF-16 adoption, runtime AOT compilation,
+pure Program completion and a full Context/conformance rebuild remain open.
