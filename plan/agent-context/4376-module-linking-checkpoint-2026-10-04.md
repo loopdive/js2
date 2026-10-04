@@ -2,6 +2,18 @@
 
 ## Native source failure lifecycle now passes in opt-in packages
 
+Final clean replay supersedes development artifact caveat below: clean
+compiler 4a98f06ae2, packages `/private/tmp/deno-lifecycle-clean.EsCrQw`, expanded
+native control 1/1 (54 filtered /55). Final fixture includes transitive failure,
+native object-returning snapshot, and retained initialized export 8 after live
+value reaches 9. Missing package path fails 0/1, exit 101, at binding/state floor.
+Filtered adapter library is now 17/17 (16 filtered /33) with an explicit
+completed/unentered/unrelated same-URL preservation unit. Ordinary native
+35 passed /19 ignored /1 filtered out of 55, typed/shared-owner AOT each 1/1,
+and final rebuilt selected unchanged Deno 5/5 (each 430 filtered /431) pass.
+Package hashes and exact clean build commands are in the adapter handoff.
+Context is unchanged; normal sidecar lifecycle mode still defaults off.
+
 The sidecar accepts `--module-lifecycle true` for shared graphs. It enables
 evaluationHooks and publishes each source's live namespace after normal source
 completion, before the entry's final registry publication. Native event imports

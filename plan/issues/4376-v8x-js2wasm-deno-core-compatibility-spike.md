@@ -346,6 +346,10 @@ retained at 8, exactly one prefix execution. Transitive failure propagates the
 exact original object to the intermediate Module while later work is untouched.
 Native control passes 1/1 (54 filtered /55) with development packages, zero
 compiler/interpreter activity. Compiler controls pass 18/18 across four files.
+Final clean compiler 4a98f06ae2 packages repeat native 1/1; missing graph input
+fails 0/1, exit 101. Adapter unit controls 17/17 (16 filtered /33), ordinary
+native 35 passed /19 ignored /1 filtered out of 55, typed/shared-owner replays
+each 1/1, final rebuilt unchanged Deno selections 5/5 (each 430 filtered /431).
 Full lifecycle, native prepared-IR admission,
 and complete Deno integration remain unfinished.
 
