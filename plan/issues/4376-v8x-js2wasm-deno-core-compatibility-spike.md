@@ -2923,6 +2923,18 @@ lexical cells, declaration preflight and completion values remain required.
 
 ## 2026-10-04 opt-in native lexical checkpoint
 
+Native wiring now adds the Context lexical operation to v8x's import allowlist
+and Context artifact builders. Seven independently compiled artifacts pass
+native packaging. The compiler-free Wasmtime fixture passes 1/1 (36 filtered),
+verifying lexical state, exact foreign-object BigInt conversion, redeclaration
+preflight, const writes and two-Context isolation. It asserts zero runtime
+compilations and zero runtime-eval provider instantiations. Tool tests pass 9/9.
+The fixture uses explicit `any` annotations, so this does not substitute for
+general Script completion, typed binding planning or unchanged deno_core
+conformance. No new full Deno artifact or performance result is credited.
+See the latest wrap-up in the persistent Script environment handoff and
+adapter `tools/js2wasm/SCRIPT-ENVIRONMENT-HANDOFF.md`; both PRs remain draft.
+
 Latest continuation fixes the ordinary foreign object/valueOf conversion
 failure. Shared-Script open-object properties carry canonical native AOT
 callables; a closure-free consumer's getter/conversion driver invokes their

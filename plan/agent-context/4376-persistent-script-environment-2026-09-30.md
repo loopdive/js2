@@ -3,6 +3,44 @@
 Required for complete Deno integration, not an alternative acceptance bar.
 Sources known at packaging time must execute AOT without an interpreter.
 
+## Wrap-up: native Context wiring, 2026-10-04
+
+Compiler implementation remains at `cafc1769ccb45074064c5ca88f0262aae1388aa4`.
+Draft compiler PR: https://github.com/loopdive/js2/pull/6468, targeting the
+existing callback-construction branch, not main. Adapter changes are published
+on `codex/4376-deno-realm-bootstrap` in draft PR
+https://github.com/loopdive/v8x/pull/2. Do not open duplicate PRs.
+
+The native linker now accepts `__v8x_context_lexical`. Runtime and namespace
+Context builders export the existing compiler lexical provider, and the
+production source graph records that provider in provenance. The runtime
+compiler pin advances to `cafc1769ccb4`; the historical POC pin is unchanged.
+
+One Context and six independent Script artifacts pass raw Node controls and
+all seven Wasmtime packaging invocations. A separately built compiler-free
+native test passes 1/1 (36 other tests filtered out, 0.07 seconds). It verifies
+persistent lexical reads/writes, cross-Script object conversion, exact wide
+BigInt postfix values, declaration preflight before effects, const-write
+rejection, and isolation between two Contexts. The native test asserts zero
+runtime compilations and zero runtime-eval provider instantiations. The fixture
+contains `any` annotations and does not prove unchanged Deno Script semantics.
+Adapter tool tests pass 9/9; both packaging and deployment Cargo profiles build.
+Documentation rendering is unverified: Typst is absent at the configured path.
+
+Adapter handoff and reproduction commands:
+`tools/js2wasm/SCRIPT-ENVIRONMENT-HANDOFF.md`. Local native fixtures:
+`/private/tmp/deno-script-native.X4IpnK`, with sources/hashes in `test-inputs.json`.
+Adapter checkout: `/private/tmp/v8x-deno-resume-20260930.o0sxeO/repo`.
+The packaging test is not ignored; `--ignored` accidentally selects zero tests.
+Only the fixture-dependent deployment test needs `--ignored`.
+
+Resume with independent artifacts on the public Script path and actual
+completion values, then typed lexical bindings and foreign accessors/callable
+transport. Rebuild the full Deno Context on the new compiler pin and rerun
+unchanged Deno tests. No new full-core artifact, conformance gain, shared-library
+factoring, or fresh performance measurement is credited by this checkpoint.
+Integration remains incomplete and both PRs remain draft. Preserve all user dirt.
+
 ## Latest continuation: native foreign conversion, 2026-10-04
 
 Follow-up to published handoff `25f8fb58922` on the same branch and draft PR
