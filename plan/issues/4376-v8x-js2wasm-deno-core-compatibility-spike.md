@@ -3221,3 +3221,16 @@ the existing two-argument ABI. Descriptor-overlay early getter arms consume the
 same one-shot Reflect receiver state before invoking accessors. Native iterator
 prototype reads use that receiver state too. Focused controls and native replay
 must be remeasured before crediting these changes.
+
+Final wrap-up, 2026-10-04: compiler dbe49bf307d6 and adapter 33af9d76e815
+are published in the existing drafts. Explicit receiver controls pass 21/21;
+four execution suites pass 111/111 including two existing expected failures.
+Source-preservation controls remain 38 pass /53 fail on both baseline and
+candidate, with identical per-test statuses. A fresh clean pinned, Binaryen
+optimized Context was precompiled successfully with Wasmtime 47.0.3.
+Unchanged native WebIDL replay remains 16 pass /1 fail /0 ignored /414 filtered
+out of 431. The array field now converts correctly; dictionary record field
+f is empty instead of {"foo": 1}. Full population and fresh comparative
+performance remain unmeasured. See the final checkpoint at the top of
+plan/agent-context/4376-persistent-script-environment-2026-09-30.md for exact
+pins, provenance, reproduction and remaining full-integration requirements.

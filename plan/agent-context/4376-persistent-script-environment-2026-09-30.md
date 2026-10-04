@@ -1,5 +1,59 @@
 # Persistent AOT Script environment
 
+## Final checkpoint and resume handoff, 2026-10-04
+
+Published implementation: compiler `dbe49bf307d635bd5c838ac6b36051597c5aa253`;
+adapter `33af9d76e8154954b50944f55408a30685c8cfe9`.
+Existing drafts: https://github.com/loopdive/js2/pull/6468 and
+https://github.com/loopdive/v8x/pull/2. The compiler PR is stacked on
+`codex/4376-deno-callback-construction-20260930`, not main.
+Neither draft represents complete Deno integration or is merge-ready.
+
+Explicit Reflect receivers now reach linked Array own/index/custom-prototype
+accessors and native iterator prototype accessors. The old two-argument vec
+reader ABI remains unchanged; the three-argument reader is default-off.
+Focused getter controls pass 21/21. Four execution suites pass 111/111,
+including two existing expected failures. Source-preservation controls are NOT
+green: 38 pass and 53 fail out of 91 on both baseline `73c8c2369` and candidate,
+with identical per-test statuses. Do not rebaseline those failures silently.
+Build-side adapter controls pass 15/15; compiler typecheck and commit gates pass.
+
+A fresh clean pinned full Context uses the implementation commits above and
+Deno `1d4e6c1cb855b62a7fb572c6c138e4e8b4e7fa44`.
+Raw Wasm: 2,710,850 bytes, SHA-256
+`e0cd4196f7e5f49e0edc01503d738c08ada13da337bd897f670a3a6a28862e1f`.
+Binaryen 125 optimized Context: 2,009,537 bytes, SHA-256
+`b1ccafb7b2cc226f1b7134bf7cd7845e10cf3e25acc62bf1b43f104ef245f969`.
+Wasmtime 47.0.3 precompilation passes 1/1 in 207.48 seconds; native SHA-256
+`ee1de8727239277aa14d0aa45858c35610333a43166951364af3a11aef68e418`.
+These are artifact/build measurements, not runtime RSS or throughput.
+The five original WebIDL Script packages are precompiled but not Binaryen
+optimized; do not describe all artifacts as wasm-opt optimized.
+
+Fresh unchanged native WebIDL replay: **16 pass, 1 fail, 0 ignored, 414 filtered
+out of 431**, 21.13 seconds. Dictionary array conversion now returns the correct
+`b: [65535]`. The remaining failure is object-record conversion:
+`f: {}` instead of `f: {"foo": 1}`. Trace native property enumeration/ownership
+and record conversion next; this is a failure location, not a proven root cause.
+Do not change Deno tests or substitute a source-specific workaround.
+
+Local artifacts and provenance:
+`/private/tmp/deno-array-native-build.lcT9ej`.
+Compiler-free unchanged Deno test checkout:
+`/private/tmp/deno-upstream-conformance.H6HA4g/deno`.
+Replay from that checkout:
+
+```sh
+V8X_JS2WASM_DENO_CORE_AOT_MODULE=/private/tmp/deno-array-native-build.lcT9ej/deno-core.cwasm V8X_JS2WASM_AOT_SCRIPT_DIR=/private/tmp/deno-array-native-build.lcT9ej/webidl-scripts target/debug/deps/deno_core-87206ac56a2fccad webidl::tests:: --nocapture --test-threads=1
+```
+
+Next: repair record conversion; run the full unchanged 431-test population;
+complete native host capabilities, BigInt/UTF-16 transport, public Program
+completion and AOT routing; factor shared code; then measure matched footprint
+and performance against V8, QuickJS and Porffor. Full-population timeouts have
+not been approved; never kill a test without approval. Preserve unrelated
+workspace dirt. Typst rendering and fresh comparative benchmarks are unverified.
+
 Required for complete Deno integration, not an alternative acceptance bar.
 Sources known at packaging time must execute AOT without an interpreter.
 
