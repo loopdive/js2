@@ -326,6 +326,18 @@ files:
 
 ## Latest module-linking handoff (2026-10-04)
 
+### Clean selected Deno replay (continuation)
+
+All five selected unchanged Deno module tests pass **5/5** using freshly rebuilt
+graph/Script packages from clean compiler 285ac9e6f2, each **1/1** with 430
+filtered /431. Explicit `--import tsx` makes the complete package builder
+succeed: five graphs and four Scripts, Binaryen 125 O3 /Wasmtime 47.0.3.
+The original full Context artifact remains unchanged from its earlier pin.
+Removing the builtin graph package fails **0/1** at exact-binding loading.
+Only Deno Cargo manifest/lockfile differ; no test/source rewrites. Details and
+exact replay are in the handoff. Full population, snapshots, module lifecycle
+and prepared IR initialization are still unfinished; no new benchmark.
+
 ### Optional imported calls (continuation)
 
 The expanded compiler control reproduced wrong-owner optional calls: four
@@ -336,7 +348,11 @@ preserve their receiver through parentheses and nested chains. Non-optional
 property lookup reuses the existing base-coercibility guard so an ended
 optional chain throws before evaluating call arguments. Named/namespace,
 computed, nested, skipped, parenthesized and non-callable controls are included.
-Fresh native artifact replay is required before claiming adapter verification.
+Expanded compiler controls pass **11/11**; fresh native shared-module replay
+passes **1/1**, 51 filtered /52, built from clean compiler 285ac9e6f2 with
+Binaryen 125 O3 /Wasmtime 47.0.3. Final runtime compiler/interpreter counters
+are zero. Node V8 fixture control passes **1/1**. Full Deno coverage remains
+unfinished; this receipt does not replace unchanged Deno verification.
 
 ### Imported spread calls (continuation)
 

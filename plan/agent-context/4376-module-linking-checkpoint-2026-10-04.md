@@ -1,5 +1,39 @@
 # Deno module linking checkpoint, 2026-10-04
 
+## Clean selected Deno replay
+
+The five unchanged Deno module tests now pass **5/5** using graph and Script
+packages rebuilt from clean compiler
+`285ac9e6f29c2a1ca82067c4e8e4f63c91571422`. The complete builder succeeds
+with explicit `--import tsx`, producing exactly five graphs and four Scripts
+in `/private/tmp/deno-module-conformance-clean.agpTzp`. Binaryen 125 O3 and
+Wasmtime 47.0.3 remain pinned. Original Deno checkout is still
+1d4e6c1cb855b62a7fb572c6c138e4e8b4e7fa44 with only Cargo.toml/Cargo.lock dirty;
+no source or test rewrite. The existing full Context artifact is unchanged,
+from its earlier compiler pin; this is not a claim that Context was rebuilt.
+
+Tests: builtin_core_module, import_meta_resolve, import_meta_filename_dirname,
+evaluate_already_evaluated_module and evaluate_already_evaluated_module_sync.
+Each exact execution passes **1/1**, 430 filtered /431. Replay from Deno:
+
+Negative control with graph directory `missing-graphs` under that same package
+root fails **0/1**, exit 101, at exact source-bound graph loading. The builtin
+core test therefore requires real evaluated code, not empty-success behavior.
+
+```sh
+V8X_JS2WASM_DENO_CORE_AOT_MODULE=/private/tmp/deno-promise-full.X2WdwN/deno-core.cwasm V8X_JS2WASM_AOT_SCRIPT_DIR=/private/tmp/deno-module-conformance-clean.agpTzp/scripts V8X_JS2WASM_AOT_GRAPH_DIR=/private/tmp/deno-module-conformance-clean.agpTzp/graphs target/debug/deps/deno_core-87206ac56a2fccad --exact modules::tests::builtin_core_module --nocapture --test-threads=1
+```
+
+Build from the clean compiler checkout:
+
+```sh
+node --experimental-wasm-exnref --import tsx /private/tmp/v8x-deno-resume-20260930.o0sxeO/repo/tools/js2wasm/build-deno-module-test-packages.mjs /private/tmp/deno-promise-full.X2WdwN/js2 /private/tmp/v8x-deno-resume-20260930.o0sxeO/repo/target/debug/deps/js2wasm_spike-13b131f10cc30c9d /private/tmp/deno-upstream-conformance.H6HA4g/deno /private/tmp/deno-module-conformance-clean.agpTzp
+```
+
+No interpreter/runtime compiler was added. No full population or new benchmark
+was run. Snapshot creation and the remaining acceptance items are unfinished.
+Earlier development-package caveats below are historical for this selected set.
+
 ## Continuation: optional imported references
 
 `expressions/linked-module-reference.ts` now resolves linked member references
@@ -10,8 +44,26 @@ undefined receivers and parenthesized member receivers. Export the existing
 `emitBaseCoercibilityGuard` for non-optional property references, which must
 throw on a nullish base before call arguments execute. The compiler control
 initially measured 57 instead of 59 after four optional imported calls; that
-owner discrepancy is fixed. An expanded native fixture is being rebuilt;
-do not reuse the previous spread-only package hashes for it.
+owner discrepancy is fixed. Compiler controls pass **11/11** across three
+files. Expanded native shared-module control passes **1/1**, 51 filtered /52,
+including nested/parenthesized receivers, skipped chains and non-callable
+argument order; final runtime compiler/interpreter counters are zero. Node V8
+fixture passes **1/1**. Ordinary native controls remain 34 passed, 17 ignored,
+1 filtered /52. Compiler typechecking and scoped lint pass; the dead-export
+command still exits zero without certifying runtime retirement.
+
+Clean compiler pin `285ac9e6f29c2a1ca82067c4e8e4f63c91571422`, packages
+`/private/tmp/deno-module-optional.lJ8lb6`, Binaryen 125 O3 /Wasmtime 47.0.3.
+Do not reuse previous spread-only packages for the expanded fixture. Replay
+from the adapter workspace:
+
+```sh
+V8X_JS2WASM_SCRIPT_ENVIRONMENT_DIR=/private/tmp/deno-native-promise.6898GB V8X_JS2WASM_AOT_GRAPH_DIR=/private/tmp/deno-module-optional.lJ8lb6 target/debug/deps/js2wasm_spike-8b524eb9ef0b52c1 --exact shared_modules::aot_shared_dependency_keeps_namespace_live_exports_and_single_execution --ignored --nocapture --test-threads=1
+```
+
+Next: prepared IR initializer guards, iterator/getter-order and foreign-array
+controls, cycles/TDZ and cached failures, then broader unchanged Deno tests.
+The full integration and snapshots remain incomplete. No fresh benchmark.
 
 ## Continuation: imported spread calls
 
