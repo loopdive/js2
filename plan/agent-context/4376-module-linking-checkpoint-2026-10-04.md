@@ -1,5 +1,63 @@
 # Deno module linking checkpoint, 2026-10-04
 
+## Live getter transport primitive implemented and verified
+
+The Context bridge now exports __v8x_value_define_getter and RealmAccess
+dispatches it for both Runtime and Caller implementations without new fields.
+A getter is callable, has no setter, and accepts only descriptor flags 0/2/4/6.
+Invalid flags and noncallables throw rather than creating a partial property.
+This adds a transport primitive, not mixed-module support.
+
+Actual compiled-Wasm control passes all ten emitted assertion groups, including
+the new live getter group: no read during definition, original/replacement object
+identity, exact getter descriptor, enumerable/nonconfigurable flags, blocked
+writes/redefinition, invalid inputs and three observed callback reads.
+The source fixture uses a native host-function callback, not a folded constant.
+Existing host-callback/reentry/error controls still pass.
+
+Embedded Wasmtime transfers_context_values_through_embedded_wasmtime passes
+on raw and wasm-opt O3 artifacts, 1/1 each (81 filtered /82 development-runner
+tests). Both print the native live getter dispatch/replacement/GC receipt.
+The Rust helper exercises RealmAccess rather than only calling Wasm exports.
+Historical artifacts may lack this optional new ABI; these two current artifacts
+contain it and actually execute the guarded helper branch. Build-side runtime
+compilation is enabled for this verification helper only, not deployment.
+A live process stack sample attributed the long wait to Module::new/Cranelift
+compilation, not deadlock. Both handles completed successfully.
+
+Clean compiler 4a98f06ae239f6e32b65e52a4b4de3bab8eb88e1 remains tracked-clean.
+Artifacts /private/tmp/deno-live-getter.TkzjTi:
+- context.wasm: 1,197,575 bytes,
+  SHA256 cea04e93cae24fed430a6c25aa01739fa61d3cd899dfa07ecf859bf3d52fb8e3
+- context.opt.wasm: 843,825 bytes, Binaryen 125 O3 / no-inline,
+  SHA256 bf7827cba4c4c08eca599737ec56507112fa2608f068c4f2c5be81a64080ea1d
+
+Build from clean compiler:
+
+```sh
+node --experimental-wasm-exnref --import tsx /private/tmp/v8x-deno-resume-20260930.o0sxeO/repo/tools/js2wasm/test-context-value-bridge.mjs /private/tmp/deno-promise-full.X2WdwN/js2 /private/tmp/deno-live-getter.TkzjTi/context.wasm
+node node_modules/binaryen/bin/wasm-opt /private/tmp/deno-live-getter.TkzjTi/context.wasm --no-inline -O3 '--pass-arg=no-inline@__new_*' --all-features --disable-custom-descriptors -g -o /private/tmp/deno-live-getter.TkzjTi/context.opt.wasm
+```
+
+Replay from adapter, then repeat with context.wasm:
+
+```sh
+V8X_JS2WASM_CONTEXT_VALUES_WASM=/private/tmp/deno-live-getter.TkzjTi/context.opt.wasm target/debug/deps/js2wasm_spike-c547d0bca343bbc4 --exact transfers_context_values_through_embedded_wasmtime --ignored --nocapture --test-threads=1
+```
+
+Compiler-free adapter runner still builds; ordinary controls 35 passed,
+21 ignored, 1 filtered /57. Filtered library 17/17 (16 filtered /33).
+Node fixture/binding/V8 controls 10/10. Formatting/diff checks pass.
+Site source updated; rendering fails because Typst is absent.
+
+Next: connect authoritative native export slots to the primitive, retaining exact
+native object/function identity and callback ordering; authenticate export
+declarations in mixed graph metadata and prevent facade initialization.
+Do not claim ordinary accessor descriptors implement module namespace data
+descriptors. Namespace reflection/own-keys/prototype/extensibility semantics
+still need a dedicated carrier or reflection route. The mixed-graph regression
+remains known failing and explicitly ignored; full integration remains open.
+
 ## Mixed native/source graph gap reproduced
 
 Adapter f070f8b plus the new explicit regression:

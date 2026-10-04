@@ -333,6 +333,22 @@ files:
 
 ### Mixed successful native/source module graph (continuation)
 
+Transport implementation started with a Context live-getter primitive and
+RealmAccess dispatch. Validate deferred callback reads, original/replacement
+object identity, no setter, nonconfigurable descriptors, invalid flags/callables,
+and blocked writes in actual compiled Wasm. This primitive is not yet a complete
+native namespace: module namespace data-descriptor semantics and the remaining
+graph/capability/authentication work still require implementation.
+
+Primitive verified: compiled-Wasm ten assertion groups pass, including live
+getter deferred reads and replacement identity. Embedded Wasmtime Rust dispatch
+passes 1/1 raw and 1/1 wasm-opt O3 (each 81 filtered /82 development-runner
+tests), with GC retention and blocked writes. Compiler-free runner builds;
+ordinary controls 35 passed /21 ignored /1 filtered out of 57; library17/17;
+Node fixture/V8 controls10/10. Artifact hashes/replay commands in both handoffs.
+Mixed graph remains unsupported. Ordinary accessor descriptors do not equal
+module namespace data descriptors; dedicated reflection/carrier work remains.
+
 Investigate the successful synthetic dependency path, not just failures.
 Current collect_graph rejects every synthetic Module, even after its native
 evaluation callback succeeded. A native reproduction must verify callback
