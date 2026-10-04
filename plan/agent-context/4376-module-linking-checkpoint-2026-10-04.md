@@ -10,11 +10,25 @@ native iterator materializer, then invokes the original callable through the
 same owner-aware bridge as ordinary calls. Inline array literals use the
 existing force-vector argument lowering, not opaque tuple carriers.
 
-Expanded controls cover namespace and named calls, empty/mixed spreads, nested
+Expanded compiler controls pass **11/11** across three files and cover namespace and named calls, empty/mixed spreads, nested
 imported argument calls, runtime array parameters, and rejecting null as a
 non-iterable without executing the callee. Default-off byte parity remains
-covered. These are compiler Wasm controls, not a new native Deno replay or
-benchmark. Native fixtures/packages must be expanded and freshly rebuilt next.
+covered. The expanded native shared-module control also passes **1/1**, 51
+filtered /52, using clean committed compiler
+`c6dbe274881465e039490d94ec35bbc76ded7437`, freshly rebuilt fixtures and
+Binaryen 125 O3 /Wasmtime 47.0.3. Its final compiler/interpreter counters are
+zero; the same fixtures pass Node V8 **1/1**. Native ordinary controls remain
+34 passed, 17 ignored, 1 filtered /52. No unchanged Deno test or benchmark was
+rerun in this continuation.
+
+New package directory `/private/tmp/deno-module-spread.JjnDxv`; the old
+owner-only package directory below cannot satisfy the expanded fixture hashes.
+From the adapter workspace:
+
+```sh
+V8X_JS2WASM_SCRIPT_ENVIRONMENT_DIR=/private/tmp/deno-native-promise.6898GB V8X_JS2WASM_AOT_GRAPH_DIR=/private/tmp/deno-module-spread.JjnDxv target/debug/deps/js2wasm_spike-8b524eb9ef0b52c1 --exact shared_modules::aot_shared_dependency_keeps_namespace_live_exports_and_single_execution --ignored --nocapture --test-threads=1
+```
+
 Optional imported calls still decline this path. Prepared IR initializer
 guards, cycles/TDZ, cached errors and full Deno coverage remain unfinished.
 

@@ -331,8 +331,12 @@ using strict native iteration and a local argument vector, then dispatches to
 the original allocation owner. Inline literals retain native vector carriers.
 The expanded compiler suite passes **11/11** across three files, including
 named/namespace calls, empty and mixed spreads, runtime parameters, nested
-imported arguments and null-iterator rejection. This is not a new native Deno
-receipt; freshly rebuilt native fixture packages are still required.
+imported arguments and null-iterator rejection. Fresh native shared-module
+fixtures also pass **1/1**, 51 filtered /52, built with clean compiler
+c6dbe27488, Binaryen 125 O3 and Wasmtime 47.0.3, including final zero runtime
+compiler/interpreter counters. Node V8 fixture control passes **1/1**. This is
+not a new unchanged Deno receipt or benchmark; optional calls and module
+lifecycle/IR gaps remain.
 
 ### Owner-aware calls verified (continuation)
 
