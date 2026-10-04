@@ -331,6 +331,24 @@ files:
 
 ### Prepared initializer guards (continuation)
 
+Native source lifecycle binding continuation: the adapter now validates exact
+Module/Context enter/complete imports, publishes completed namespaces with
+Caller-owned realm access, and propagates a source exception only through
+executing modules and their consumers. Opt-in sidecar per-source publication
+retains completed prefixes on graph failure. A generated readiness lexical
+was throwing TDZ before the entry ran; use a hoisted readiness variable instead.
+The basic native failure/reimport control now passes with development artifacts.
+The strengthened mutable-prefix control exposes silent no-op callable delivery
+before graph readiness; original allocation-owner dispatch and lazy observed
+value storage are now verified by the strengthened control: prefix 7 -> 8,
+snapshot object 8, second graph same namespace/init 8, later live 9 with init
+retained at 8, exactly one prefix execution. Transitive failure propagates the
+exact original object to the intermediate Module while later work is untouched.
+Native control passes 1/1 (54 filtered /55) with development packages, zero
+compiler/interpreter activity. Compiler controls pass 18/18 across four files.
+Full lifecycle, native prepared-IR admission,
+and complete Deno integration remain unfinished.
+
 Source failure lifecycle continuation: add a source-bound native graph with
 an executing successful prefix, an object-throwing dependency, and an untouched
 later dependency. Require prefix Evaluated, failing dependency Errored with

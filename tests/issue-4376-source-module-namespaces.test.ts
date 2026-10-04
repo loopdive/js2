@@ -68,61 +68,71 @@ export function identityProbe():number {
   },
 );
 
-it("reads proven graph-owned payloads after abrupt initialization", async () => {
-  const graph = prepareNamespaceGraph(
-    new Map([["ext:throw/main.js", "const token={marker:42}; throw token;"]]),
-    "ext:throw/main.js",
-  );
-  graph.files[graph.entry] += `
+it.each([false, true])(
+  "reads proven graph-owned payloads after abrupt initialization (dependency=%s)",
+  async (dependency) => {
+    const graph = prepareNamespaceGraph(
+      new Map(
+        dependency
+          ? [
+              ["ext:throw/main.js", "import './dep.js'; export const value=1;"],
+              ["ext:throw/dep.js", "const token={marker:42}; throw token;"],
+            ]
+          : [["ext:throw/main.js", "const token={marker:42}; throw token;"]],
+      ),
+      "ext:throw/main.js",
+    );
+    graph.files[graph.entry] += `
 export function readThrown(payload:any):number {
   return __v8x_graph_get_owned_export(payload,"marker");
 }`;
-  const result = await compileMultiSource(
-    graph.files,
-    graph.entry,
-    {
-      target: "standalone",
-      platform: "deno",
-      allowJs: true,
-      hostBridge: "always",
-      skipSemanticDiagnostics: true,
-      deferTopLevelInit: true,
-      standaloneAllocationOwnerExport: "__v8x_graph_owns",
-    },
-    undefined,
-    graph.projectResolutions,
-  );
-  expect(result.success, JSON.stringify(result.errors)).toBe(true);
-  const instance = new WebAssembly.Instance(new WebAssembly.Module(result.binary), result.importObject ?? {});
-  (result.importObject as { __setInstance?: (instance: WebAssembly.Instance) => void })?.__setInstance?.(instance);
-  let thrown: unknown;
-  try {
-    (instance.exports.__module_init as () => void)();
-  } catch (error) {
-    thrown = (error as { getArg(tag: WebAssembly.ExportValue, index: number): unknown }).getArg(
-      instance.exports.__exn_tag,
-      0,
+    const result = await compileMultiSource(
+      graph.files,
+      graph.entry,
+      {
+        target: "standalone",
+        platform: "deno",
+        allowJs: true,
+        hostBridge: "always",
+        skipSemanticDiagnostics: true,
+        deferTopLevelInit: true,
+        standaloneAllocationOwnerExport: "__v8x_graph_owns",
+      },
+      undefined,
+      graph.projectResolutions,
     );
-  }
-  expect(thrown).toBeDefined();
-  expect((instance.exports.__v8x_graph_owns as (value: unknown) => number)(thrown)).toBe(1);
-  expect((instance.exports[GRAPH_CAN_ACCESS_EXPORT] as (value: unknown) => number)(thrown)).toBe(0);
-  expect((instance.exports.readThrown as (value: unknown) => number)(thrown)).toBe(42);
-  const other = new WebAssembly.Instance(new WebAssembly.Module(result.binary), result.importObject ?? {});
-  (result.importObject as { __setInstance?: (instance: WebAssembly.Instance) => void })?.__setInstance?.(other);
-  let foreign: unknown;
-  try {
-    (other.exports.__module_init as () => void)();
-  } catch (error) {
-    foreign = (error as { getArg(tag: WebAssembly.ExportValue, index: number): unknown }).getArg(
-      other.exports.__exn_tag,
-      0,
-    );
-  }
-  expect(foreign).toBeDefined();
-  expect((instance.exports.__v8x_graph_owns as (value: unknown) => number)(foreign)).toBe(0);
-  expect((other.exports.__v8x_graph_owns as (value: unknown) => number)(foreign)).toBe(1);
-});
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const instance = new WebAssembly.Instance(new WebAssembly.Module(result.binary), result.importObject ?? {});
+    (result.importObject as { __setInstance?: (instance: WebAssembly.Instance) => void })?.__setInstance?.(instance);
+    let thrown: unknown;
+    try {
+      (instance.exports.__module_init as () => void)();
+    } catch (error) {
+      thrown = (error as { getArg(tag: WebAssembly.ExportValue, index: number): unknown }).getArg(
+        instance.exports.__exn_tag,
+        0,
+      );
+    }
+    expect(thrown).toBeDefined();
+    expect((instance.exports.__v8x_graph_owns as (value: unknown) => number)(thrown)).toBe(1);
+    expect((instance.exports[GRAPH_CAN_ACCESS_EXPORT] as (value: unknown) => number)(thrown)).toBe(0);
+    expect((instance.exports.readThrown as (value: unknown) => number)(thrown)).toBe(42);
+    const other = new WebAssembly.Instance(new WebAssembly.Module(result.binary), result.importObject ?? {});
+    (result.importObject as { __setInstance?: (instance: WebAssembly.Instance) => void })?.__setInstance?.(other);
+    let foreign: unknown;
+    try {
+      (other.exports.__module_init as () => void)();
+    } catch (error) {
+      foreign = (error as { getArg(tag: WebAssembly.ExportValue, index: number): unknown }).getArg(
+        other.exports.__exn_tag,
+        0,
+      );
+    }
+    expect(foreign).toBeDefined();
+    expect((instance.exports.__v8x_graph_owns as (value: unknown) => number)(foreign)).toBe(0);
+    expect((other.exports.__v8x_graph_owns as (value: unknown) => number)(foreign)).toBe(1);
+  },
+);
 
 it.each(["closed", "open"])(
   "publishes native source namespaces with %s prototype objects",

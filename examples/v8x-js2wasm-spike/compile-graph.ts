@@ -17,6 +17,7 @@ interface Options {
   output: string;
   optimize?: 1 | 2 | 3 | 4;
   realm: "shared" | "isolated";
+  lifecycle: boolean;
 }
 
 function parseArgs(argv: string[]): Options {
@@ -44,7 +45,17 @@ function parseArgs(argv: string[]): Options {
   if (optimize !== undefined && ![1, 2, 3, 4].includes(optimize)) {
     throw new Error("--optimize must be 1, 2, 3, or 4");
   }
-  return { manifest, entry, output, realm, optimize: optimize as 1 | 2 | 3 | 4 | undefined };
+  const lifecycle = values.get("module-lifecycle") ?? "false";
+  if (lifecycle !== "true" && lifecycle !== "false") throw new Error("--module-lifecycle must be true or false");
+  if (lifecycle === "true" && realm !== "shared") throw new Error("Module lifecycle requires a shared realm");
+  return {
+    manifest,
+    entry,
+    output,
+    realm,
+    lifecycle: lifecycle === "true",
+    optimize: optimize as 1 | 2 | 3 | 4 | undefined,
+  };
 }
 
 const SCRIPT_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"] as const;
@@ -1347,6 +1358,7 @@ export const GRAPH_SET_PROTOTYPE_EXPORT = "__v8x_graph_set_prototype_export";
 export function prepareNamespaceGraph(
   modules: ReadonlyMap<string, string>,
   entrySpecifier: string,
+  lifecycle = false,
 ): PreparedManifestGraph {
   const graph = prepareManifestGraph(modules, entrySpecifier);
   const known = new Set(modules.keys());
@@ -1384,9 +1396,20 @@ export function prepareNamespaceGraph(
       callableChecks.push(`if (callable === ${prefix}${index}[${JSON.stringify(name)}]) return 1;`);
       objectChecks.push(`if (value === ${prefix}${index}[${JSON.stringify(name)}]) return 1;`);
     }
+    if (lifecycle) {
+      const path = compilerPath(specifier);
+      let local = `__v8x_completed_namespace_${index}`;
+      while (graph.files[path]!.includes(local)) local += "_";
+      const selfRequest = `v8x:completed-namespace:${index}`;
+      graph.projectResolutions[path] = { ...graph.projectResolutions[path], [selfRequest]: path };
+      graph.files[path] = `import * as ${local} from ${JSON.stringify(selfRequest)};\n${graph.files[path]}
+if (globalThis.${GRAPH_NAMESPACE_REGISTRY} === undefined) globalThis.${GRAPH_NAMESPACE_REGISTRY} = Object.create(null);
+globalThis.${GRAPH_NAMESPACE_REGISTRY}[${JSON.stringify(specifier)}] = ${local};
+`;
+    }
   }
   graph.files[entryPath] =
-    `${imports.join("\n")}\nlet ${prefix}_ready = false;\nconst ${prefix}_observed = [];\n${graph.files[entryPath]}
+    `${imports.join("\n")}\nvar ${prefix}_ready = false;\nvar ${prefix}_observed_ready = false;\nvar ${prefix}_observed = [];\n${graph.files[entryPath]}
 const ${prefix}_host = globalThis;
 if (${prefix}_host.${GRAPH_NAMESPACE_REGISTRY} === undefined) ${prefix}_host.${GRAPH_NAMESPACE_REGISTRY} = Object.create(null);
 const ${prefix}_registry = ${prefix}_host.${GRAPH_NAMESPACE_REGISTRY};
@@ -1394,6 +1417,7 @@ ${publications.join("\n")}
 ${prefix}_ready = true;
 function ${prefix}_remember(value) {
   if (value !== null && (typeof value === "object" || typeof value === "function")) {
+    if (!${prefix}_observed_ready) { ${prefix}_observed = []; ${prefix}_observed_ready = true; }
     for (let i = 0; i < ${prefix}_observed.length; i++) if (${prefix}_observed[i] === value) return value;
     ${prefix}_observed.push(value);
   }
@@ -1537,7 +1561,7 @@ async function main(): Promise<void> {
     modules.set(specifier, readFileSync(sourcePath, "utf8"));
   }
 
-  const graph = prepareNamespaceGraph(modules, options.entry);
+  const graph = prepareNamespaceGraph(modules, options.entry, options.lifecycle);
   const compileOptions: CompileOptions = {
     target: "standalone",
     platform: "deno",
@@ -1560,6 +1584,7 @@ async function main(): Promise<void> {
           link: ["v8x:context", "v8x:deno"],
           standaloneModuleNamespaceImports: {
             module: "v8x:deno",
+            evaluationHooks: options.lifecycle,
             sources: Object.fromEntries(
               [...modules.keys()].map((specifier) => [
                 compilerPath(specifier),

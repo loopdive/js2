@@ -1,5 +1,46 @@
 # Deno module linking checkpoint, 2026-10-04
 
+## Native source failure lifecycle now passes in opt-in packages
+
+The sidecar accepts `--module-lifecycle true` for shared graphs. It enables
+evaluationHooks and publishes each source's live namespace after normal source
+completion, before the entry's final registry publication. Native event imports
+validate exact Module/Context identity, use Caller-owned realm access to bind
+completed namespaces without borrowing the executing Runtime again, and retain
+original native wrappers. Postorder failure handling leaves completed/untouched
+siblings alone and propagates the original exception through executing sources
+and their not-yet-entered consumers.
+
+Two additional defects were exposed: a generated readiness `let` threw TDZ
+when a dependency failed before entry execution, and native call routing could
+silently return without executing an original-owner callable before graph
+readiness. Hoisted readiness, lazy observed-value storage, and a verified
+allocation-owner call route address those cases. The owner check is mandatory;
+export reachability or compatible function types are not ownership proof.
+
+Expanded native control passes 1/1 (54 filtered /55) using development packages
+`/private/tmp/deno-lifecycle-events.i8eaxO`. A successful prefix runs once;
+transitive failing dependency and intermediate Module retain the exact thrown
+object; later source stays Instantiated with no side effects. Completed prefix
+namespace and cached fulfilled evaluation survive, original prefix bump changes
+7 to 8, snapshot returns an object with 8, second graph imports the same namespace
+and initializes at 8, another bump yields live 9 while initialized export stays
+8. Compiler/interpreter counters remain zero. Exact V8 fixture control passes
+1/1. No complete lifecycle or native prepared-IR participation is claimed.
+
+Compiler focused controls pass 18/18 across four files, including the new
+dependency-before-entry readiness case, legacy/prepared hook controls and typed
+live imports. Typechecking, formatting, scoped lint and source ratchets pass;
+one pre-existing explicit-any lint warning remains, and dead-export reporting
+still does not certify retirement. Ordinary native controls remain 35 passed
+/19 ignored /1 filtered out of 55; filtered library 16/16 (16 filtered /32).
+Typed/shared-owner AOT controls each pass 1/1 (54 filtered /55). Selected
+unchanged Deno controls pass 5/5 (each 430 filtered /431) with existing older
+packages and unchanged Context. Fresh clean replay provenance will be recorded
+after committing the sidecar. Continue with native prepared-IR participation,
+general cyclic/TDZ lifecycle, mixed synthetic/source graphs, snapshots, broader
+Deno population, host integration and matched benchmarks.
+
 ## Source-body failure lifecycle: compiler plumbing, native gap still open
 
 New default-off `standaloneModuleNamespaceImports.evaluationHooks` reserves
