@@ -329,6 +329,29 @@ files:
 
 ## Latest module-linking handoff (2026-10-04)
 
+### Broader unchanged module execution (continuation)
+
+Expand pinned-original module packaging to include main_and_side_module and
+test_mods without rewriting upstream test/source bytes. Main/side currently
+passes with lifecycle evaluation packages; test_mods exercises requested-module
+metadata, imported callable execution, instantiation without execution and Rust
+op dispatch. Add strict literal extraction and selected-test packaging so
+missing or changed source layouts fail loudly. Build exact source-bound graphs
+and Scripts before attributing execution failures to the backend.
+
+New selected packages contain three graphs and one Script at
+`/private/tmp/deno-mods-expanded.5MyCYn` (clean compiler 4a98f06ae2, adapter
+ea09181, unchanged Context). Both tests pass 2/2, each 430 filtered /431;
+test_mods asserts exact Rust op dispatch once and zero during instantiation.
+Missing setup or graphs fail 0/1, unknown selection refuses before output
+creation, and extractor/binding/V8 controls pass 9/9. Default original-source
+inventory is now eight graphs/five Scripts across seven tests. No backend
+production change or full integration/benchmark result is claimed.
+
+The previous five selected module tests were replayed 5/5 again, making this
+turn's combined selected result 7/7 across the expanded and lifecycle rollout
+package directories, each individual run with 430 filtered /431.
+
 ### Fresh source prefix before cached failure (continuation)
 
 Extend the source-bound native failure control with a new same-URL prefix

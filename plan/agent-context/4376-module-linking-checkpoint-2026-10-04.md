@@ -1,5 +1,29 @@
 # Deno module linking checkpoint, 2026-10-04
 
+## Broader pinned-original module execution
+
+Adapter package extraction now includes unchanged Deno main_and_side_module
+and test_mods. Default inventory is eight graphs and five Scripts across seven
+tests; optional named selection refuses unknown names before artifact creation.
+Fresh selected packages `/private/tmp/deno-mods-expanded.5MyCYn` contain three
+graphs and one setup Script, clean compiler 4a98f06ae2 / adapter ea09181 /
+Binaryen 125 O3 / Wasmtime 47.0.3 / unchanged Context. Both tests pass 2/2,
+each 430 filtered /431. test_mods verifies requested-module metadata, no op
+dispatch during instantiation, imported callable execution and exactly one
+Rust-op dispatch on evaluation. No backend source change was needed.
+Extractor/binding/V8 controls pass 9/9. Missing setup and missing graph inputs
+each fail 0/1; unknown selection refuses without creating artifacts. All three
+optimized graphs retain lifecycle hooks. Source-bound hashes and exact commands
+are in the adapter handoff. No full-suite or benchmark claim.
+
+Previous five selected unchanged module tests were replayed 5/5 with the
+lifecycle rollout packages, so selected coverage this turn is 7/7 across the
+two recorded directories. Each individual run has 430 filtered /431.
+
+Continue with original lazy loading/cycles, native prepared-IR participation,
+successful synthetic/source graphs, snapshots, broader conformance, complete
+host integration and matched benchmarks. Both PRs remain drafts.
+
 ## Fresh-prefix/cached-source failure payload delivery fixed
 
 Paired adapter control improves 0/1 to 1/1 (54 filtered /55), using clean
