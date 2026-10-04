@@ -22,16 +22,20 @@ import {
   runtimeContractCurrentPaths,
 } from "./helpers/ir-runtime-contract-evolution.js";
 
+import { beforeRuntimePreparationRelocation } from "./helpers/ir-runtime-preparation-relocation.js";
+
 const rawRead = liveSourceReader(resolve(import.meta.dirname, ".."));
-const read: SourceReader = (path) => readRuntimeContractReceiptSource(path, rawRead);
+const read: SourceReader = (path) =>
+  readRuntimeContractReceiptSource(path, beforeRuntimePreparationRelocation(rawRead));
 function currentHistoricalRead(): SourceReader {
   // One fresh authenticated capture per top-level proof, before any historical mutant.
-  const sources = reconstructRuntimeContractReceiptSources(rawRead);
+  const beforePreparation = beforeRuntimePreparationRelocation(rawRead);
+  const sources = reconstructRuntimeContractReceiptSources(beforePreparation);
   if (sources.size !== runtimeContractCurrentPaths.length) throw Error("missing runtime historical population");
   for (const path of runtimeContractCurrentPaths)
     if (!sources.has(path)) throw Error("missing required runtime historical source " + path);
   return (path) => {
-    if (!runtimeContractCurrentPaths.includes(path)) return rawRead(path);
+    if (!runtimeContractCurrentPaths.includes(path)) return beforePreparation(path);
     const source = sources.get(path);
     if (source === undefined) throw Error("missing required runtime historical source " + path);
     return source;

@@ -1,4 +1,4 @@
-[Resource from github at repo://loopdive/js2/sha/1255c536b4c275a2dbe4c4605bf5cb5775584efa/contents/CLAUDE.md] # js2wasm
+# js2wasm
 
 TypeScript-to-WebAssembly compiler using WasmGC.
 
@@ -854,7 +854,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 39,239 / 48,232 (81.4 %)
+**test262 conformance**: 39,270 / 48,232 (81.4 %)
 
 <!-- AUTO:conformance-end -->
 

@@ -62,6 +62,7 @@ import { compileDescriptorMapAsDynamicObject, staticDescriptorMapKey } from "./d
 import { isDescriptorTranscribableStruct } from "./property-descriptor-shape.js"; // (#4180) #2372 transcription gate
 import { isDirectProxyBinding } from "./proxy-value-provenance.js"; // (#5268 step 2 / review F1+F2)
 import { superWriteMayAddKey } from "./super-write-grown-keys.js"; // (#5350 r2)
+import { inOwnKeyOrder } from "./object-model/object-own-key-order.js"; // (#6770 S3)
 import {
   descriptorFieldName,
   inheritedTrueDescriptorFlags,
@@ -4659,7 +4660,8 @@ export function compileObjectKeysOrValues(
     return { kind: "externref" };
   }
 
-  const enumUserFields = userFields.filter((e) => {
+  // (#6770 S3) §10.1.11.1 order: integer-index field names first, ascending.
+  const enumUserFields = inOwnKeyOrder(userFields, (e) => e.field.name).filter((e) => {
     if (argVarName) {
       const key = `${argVarKey}:${e.field.name}`; // (#3403) per-declaration key
       const flags = ctx.definedPropertyFlags.get(key);
@@ -4814,6 +4816,8 @@ export function compileObjectKeysOrValues(
         if (fieldKind === "f64") {
           const boxIdx = ctx.funcMap.get("__box_number");
           if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
+        } else if (entry.field.type.kind === "i32" && entry.field.type.symbol === true) {
+          coerceType(ctx, fctx, entry.field.type, { kind: "externref" }); // (#6770 S2) keep the symbol's identity
         } else if (fieldKind === "i32") {
           fctx.body.push({ op: "f64.convert_i32_s" });
           const boxIdx = ctx.funcMap.get("__box_number");

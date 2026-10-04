@@ -5,10 +5,10 @@ import ts from "typescript";
 import {
   assertRuntimeContractSource,
   authenticateRuntimeContractEvolution,
-  beforeRuntimeContractReceiptSource,
-  readRuntimeContractActual,
-  readRuntimeContractReceiptSource,
-  reconstructRuntimeContractReceiptSources,
+  beforeRuntimeContractReceiptSource as originalBeforeRuntimeContractReceiptSource,
+  readRuntimeContractActual as originalReadRuntimeContractActual,
+  readRuntimeContractReceiptSource as originalReadRuntimeContractReceiptSource,
+  reconstructRuntimeContractReceiptSources as originalReconstructRuntimeContractReceiptSources,
   runtimeContractCurrentPaths,
   runtimeContractGitBlob,
   runtimeContractReceiptPath,
@@ -21,6 +21,22 @@ import {
   historicalIntrinsicSource,
   receiptRows,
 } from "./helpers/ir-historical-runtime-reconstruction.js";
+
+import { beforeRuntimePreparationRelocation } from "./helpers/ir-runtime-preparation-relocation.js";
+
+type SourceReader = (path: string) => string;
+// These tests' "current" is the immutable pre-C2a evolution input.
+const prePreparationRead = (): SourceReader => beforeRuntimePreparationRelocation(originalReadRuntimeContractActual);
+const readRuntimeContractActual: SourceReader = (path) => prePreparationRead()(path);
+function reconstructRuntimeContractReceiptSources(reader?: SourceReader, receiptText?: string) {
+  return originalReconstructRuntimeContractReceiptSources(reader ?? prePreparationRead(), receiptText);
+}
+function beforeRuntimeContractReceiptSource(path: string, source: string, reader?: SourceReader): string {
+  return originalBeforeRuntimeContractReceiptSource(path, source, reader ?? prePreparationRead());
+}
+function readRuntimeContractReceiptSource(path: string, reader?: SourceReader): string {
+  return originalReadRuntimeContractReceiptSource(path, reader ?? prePreparationRead());
+}
 
 const receiptText = readRuntimeContractActual(runtimeContractReceiptPath);
 const receipt = authenticateRuntimeContractEvolution(receiptText);

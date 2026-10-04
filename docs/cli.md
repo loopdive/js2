@@ -12,8 +12,8 @@ For a guided walkthrough, see [`docs/getting-started.md`](getting-started.md).
 
 ## Output files
 
-Every successful compile writes the following alongside the input (or in
-`--out <dir>`):
+Every successful compile writes the following into the current working
+directory (or into `--out <dir>`) — not next to the input file:
 
 | File | Default | Disable with |
 |------|---------|--------------|
@@ -27,7 +27,8 @@ Every successful compile writes the following alongside the input (or in
 
 ### `-o, --out <dir>`
 
-Output directory. Defaults to the current working directory (#2816). Writing
+Output directory; `--out=<dir>` also works. Defaults to the current working
+directory (#2816). Writing
 beside the input was a footgun for inputs that live inside the installed package
 (e.g. an example under `node_modules/@loopdive/js2/examples/...`), which would
 dump artifacts into `node_modules`.
@@ -61,6 +62,15 @@ describes the module's exports for use with the WebAssembly Component Model.
 
 ```bash
 js2wasm api.ts --wit
+```
+
+### `--wit-package <p>`
+
+Package name for the `--wit` output, as `ns:name[@version]`. Implies `--wit`.
+Defaults to `js2wasm:<input-basename>`. `--wit-package=<p>` also works.
+
+```bash
+js2wasm api.ts --wit-package acme:math@1.0.0
 ```
 
 ## Optimization flags
@@ -106,13 +116,19 @@ js2wasm add.ts -O2
 
 ### `--target <t>`
 
-Compilation target. One of:
+The single host/output axis (#2736); `--target=<t>` also works. Host values
+pick the ambient global surface the program type-checks against; backend
+values pick the lowering.
 
-| Value | Description |
-|-------|-------------|
-| `gc` (default) | Emit a WasmGC module with JS host imports for builtins. |
-| `linear` | Emit a linear-memory module (no WasmGC; broader host compatibility). |
-| `wasi` | Emit a WASI module that imports `fd_write` / `proc_exit` instead of JS host functions. |
+| Value | Kind | Description |
+|-------|------|-------------|
+| `web` (default) | host | WasmGC / JS-host module; DOM ambient globals in scope. |
+| `node` | host | WasmGC / JS-host module for a real Node host (Node ambient surface, no DOM). |
+| `deno` | host | WasmGC / JS-host module for a real Deno host (Deno ambient surface, no DOM). |
+| `wasi` | host + backend | Standalone WASI Preview 1 module: imports `fd_write` / `proc_exit` instead of JS host functions. |
+| `gc` | backend | WasmGC with JS host imports for builtins — the default backend for `web` / `node` / `deno`. |
+| `linear` | backend | Linear-memory module (no WasmGC). |
+| `standalone` | backend | Pure WasmGC, no JS host and no WASI imports. Same as `--standalone`. |
 
 ```bash
 js2wasm hello.ts --target wasi
@@ -124,6 +140,66 @@ The WASI target auto-enables native (WasmGC i16) string arrays in place of
 To **run** the resulting `.wasm` — the exact Wasmtime `-W` proposal flags (and
 the `all-proposals` caveat), plus `bun -b` and Deno — see the runtime matrix in
 [Standalone I/O → Running the output across runtimes](./standalone-io.md#running-the-output-across-runtimes).
+
+### `--standalone`
+
+Shorthand for `--target standalone`: pure WasmGC, no JS host, no WASI. Forces
+native (WasmGC i16) strings and refuses to emit `wasm:js-string` or `env`
+JS-host imports. Cannot be combined with `--allow-fs`.
+
+### `--allocator <bump|arena-reset>`
+
+Linear-backend allocator (#1856); requires `--target linear`. `bump` (default)
+is an allocate-and-exit arena with the smallest binary. `arena-reset` reclaims
+between primitive-only exported calls; aggregate or global escapes fall back,
+and explicit `__arena_reset` / `__arena_used` exports are kept.
+
+### `--utf8-storage`
+
+Dual i8/i16 string storage (#1588): strings proven UTF-8 (literals, JSON,
+decoder results, …) are stored i8-backed for a cheaper Component Model
+boundary. Implies native strings on the WasmGC backend. Off by default; output
+is byte-identical when off.
+
+### `--semantic-providers <auto|native-first>`
+
+Semantic implementation policy (#4397). `auto` (default) preserves
+compatibility; `native-first` selects the migrated Wasm-native provider
+families even under a JS host. It does not disable JS boundary wrappers or
+platform APIs.
+
+### `--link <ns>`
+
+Leave the external namespace `<ns>` as link-time imports instead of
+inline-lowering it (repeatable; `--link=<ns>` also works). The imports are
+satisfied at instantiation by a preloaded provider module (e.g.
+`wasmtime --preload <ns>=provider.wasm`). On WASI, `--link node:fs` also
+selects the import-and-link std-IO path: stream IO goes through
+`node:fs` `readSync` / `writeSync` and its memory instead of
+`wasi_snapshot_preview1`. Off by default — every namespace is inline-lowered
+into a self-contained module.
+
+### `--package-linking <separate|merge|off>`
+
+How npm package imports are compiled for a project (`--package-linking=<mode>`
+also works). `separate` compiles each package to its own cached provider
+module and instantiates it alongside the consumer, keeping the consumer's
+compiler errors authoritative (no bundled retry). `merge` statically combines
+the providers into one binary with Binaryen `wasm-merge`. `off` compiles the
+whole project as one source bundle. Without the flag, the CLI uses the
+single-file path unless the entry has a relative import; the project API
+(`compileProject()`) defaults to automatic linking with a compatibility
+fallback.
+
+### `--cache-dir <dir>`
+
+Where `--package-linking` caches the compiled provider module of each npm
+package (content-addressed, safe to delete). `--cache-dir=<dir>` also works.
+By default the cache goes to the nearest ancestor's
+`node_modules/.cache/js2wasm/npm-modules`, or — when no `node_modules` exists —
+to the OS user cache directory (`$XDG_CACHE_HOME` or `~/.cache` on Linux,
+`~/Library/Caches` on macOS, `%LOCALAPPDATA%` on Windows) under
+`js2wasm/npm-modules`. It is never written next to your source files.
 
 ### `--host-bridge <auto|always|off>`
 
@@ -161,6 +237,29 @@ pass `--host-bridge always` (or `hostBridge: "always"` to `compile()`). Every
 consumer guards each access with a `typeof exports.__x === "function"` check, so
 a missing bridge degrades rather than throws — which means the symptom is
 silently wrong output, not a crash. Ask for it explicitly.
+
+## Host-surface flags
+
+`--host-bridge` is documented under [Target flags](#--host-bridge-autoalwaysoff).
+
+### `--emulate <node|none>`
+
+Emulate a host runtime's globals so they type-check without `@types/node`.
+`node` adds an ambient `process` and friends; `none` turns emulation off.
+Emulation is type-level only and never changes the emitted Wasm. It is
+auto-enabled when the source imports a `node:` builtin (pass `--emulate none`
+to stop that); otherwise it is off, and using `process` warns you to add the
+flag (#2603).
+
+### `--no-host-imports`
+
+Strict dual-mode: reject any JS-host `env` import that is not on the allowlist
+(#1524). Implied by `--target wasi`.
+
+### `--allow-host-imports`
+
+Debug-only escape hatch that turns strict dual-mode off for a WASI build, for
+temporarily mixing host and WASI imports while migrating a program.
 
 ## Permission flags
 
@@ -234,9 +333,11 @@ errors are usually real.
 
 ### `--ts7`
 
-Use `@typescript/native-preview` (TypeScript 7 Go-port) as the parser/checker
-frontend. Preview; full migration tracked in issue #1029. Equivalent to setting
-`JS2WASM_TS7=1` in the environment.
+Use TypeScript 7 (the Go port) as the parser/checker frontend. Experimental;
+full migration tracked in issue #1029. Equivalent to setting `JS2WASM_TS7=1` in
+the environment. The compiler loads it from the `typescript7` npm alias, so
+install it as `pnpm add -D typescript7@npm:typescript@^7` (or the npm/yarn
+equivalent).
 
 ```bash
 js2wasm src/main.ts --ts7
@@ -244,9 +345,29 @@ js2wasm src/main.ts --ts7
 
 ## Informational flags
 
-### `-v, --version`
+### `--explain`, `js2wasm explain <input.ts>`
 
-Print the package version and exit.
+Print the compiler-owned provider/capability report for the input and write no
+artifacts. The `explain` subcommand is the same thing.
+
+### `--explain-json`
+
+Print that report as stable, schema-versioned JSON. `js2wasm explain <input.ts>
+--json` is equivalent.
+
+### `-v, --verbose`
+
+List every dropped host-import warning individually instead of collapsing
+them into a one-line summary (WASI/strict mode, #2520).
+
+### `-q, --quiet`
+
+Suppress the post-compile "how to run" hint.
+
+### `-V, --version`
+
+Print the package version and exit. The short form is a capital `V`; lower-case
+`-v` is `--verbose`.
 
 ### `-h, --help`
 
@@ -256,10 +377,17 @@ Show the usage help and exit.
 
 | Code | Meaning |
 |------|---------|
-| `0` | Compile succeeded (warnings may still print to stderr). |
-| `1` | Compile failed, or invalid CLI options. |
+| `0` | Compile succeeded. Warnings, and any error-severity diagnostics the compiler tolerated, may still print to stderr. |
+| `1` | Compile failed, the emitted module failed validation, the input file could not be read, or invalid CLI options. |
 
 Compile errors print as `path:line:column - error: message`, one per line.
+
+**Tolerated errors.** Some TypeScript type errors do not affect code
+generation — e.g. TS2678 on a `switch` case that can never match. The compiler
+still produces a valid module, so the CLI writes its outputs and exits `0`, but
+it prints every such diagnostic in the same `path:line:column - error:` form,
+followed by a one-line `note:` with their count. Treat them as you would a
+`tsc` error: the program compiled, but probably not the way you meant.
 
 ## Examples
 

@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts, forEachChild } from "../ts-api.js";
+import { restPatternParamSlot } from "./resolved-rest-param.js"; // (#6774 S7)
 import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
-import { propertyValueIsAccessorObjectLiteral } from "./accessor-value-field.js";
+import { isAccessorObjectLiteralType, propertyValueIsAccessorObjectLiteral } from "./accessor-value-field.js";
 import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { emitToBoolean } from "./coercion-engine.js";
@@ -447,6 +448,8 @@ import { fillHoleyArrayHasIdxArm } from "./holey-array-presence.js"; // (#4222) 
 import { fillSparseHoleHasIdxArms } from "./vec-externref-hole-presence.js"; // (#4491/#2001) sparse absence markers
 import { finalizeFunctionPoisonPillCalls } from "./function-poison-pill.js";
 import { fillDataViewConstructProtoArm, fillTaDynViewMopArms } from "./ta-dyn-mop.js"; // (#3177/#3371) native view prototype arms
+import { fillArrayLikeExoticArms } from "./array/array-like-exotic-arms.js"; // (#6771 S2)
+import { fillVecElemGetIdxArms } from "./array/vec-elem-fidelity.js"; // (#6771 S8/S9)
 import { fillTaStaticViewMopArms } from "./ta-static-view-mop.js"; // (#6651 E7) static view in a generic slot
 import { fillTaDynViewOwnKeyArms } from "./ta-dyn-own-keys.js"; // (#6651 E2) §10.4.5.6 own-key surface
 import { fillObjVecReflectionHelpers } from "./objvec-array-proto.js"; // (#3666) RegExp indices Array reflection
@@ -457,6 +460,7 @@ import {
 } from "./reflect-construct-native.js";
 import { fillArrayToPrimitive } from "./array-to-primitive.js";
 import { fillNumberToLocaleString, fillTaToLocaleString } from "./to-locale-string-element.js"; // (#6651 TA1)
+import { fillBoolToLocaleString } from "./expressions/bool-to-locale-string.js"; // (#6771 S6)
 import { fillVecOwnToPrimitive } from "./vec-own-to-primitive.js"; // (#6651 E3)
 import { brandedI32ResultBoxIdx, fillClassToPrimitive } from "./class-to-primitive.js";
 import {
@@ -742,6 +746,41 @@ import { buildLibDeclIndex } from "./lib-decl-index.js"; // (#4218) syntactic li
 import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#2071)
 import { typeTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) the consumer-side twin of the literal gate
 import { readEnv } from "../env.js";
+// (#6770/#6797) The object-model leaves reach these core helpers through
+// object-model/ports.ts, installed here at the composition root, so the leaves
+// never value-import the core and stay out of its import cycle.
+import * as omTryTable from "../ir/try-table.js";
+import * as omAnyHelpers from "./any-helpers.js";
+import * as omArraySubclass from "./array-subclass-receiver.js";
+import * as omProtoOverride from "./builtin-proto-member-override.js";
+import * as omBuiltinValueRead from "./builtin-value-read.js";
+import * as omCalls from "./expressions/calls.js";
+import * as omLiterals from "./literals.js";
+import * as omNativeProto from "./native-proto.js";
+import * as omNativeStrings from "./native-strings.js";
+import * as omObjectRuntime from "./object-runtime.js";
+import * as omRegistryImports from "./registry/imports.js";
+import { installObjectModelPorts } from "./object-model/ports.js";
+
+installObjectModelPorts(() => ({
+  addStringConstantGlobal: omRegistryImports.addStringConstantGlobal,
+  nextModuleGlobalIdx: omRegistryImports.nextModuleGlobalIdx,
+  stringConstantExternrefInstrs: omNativeStrings.stringConstantExternrefInstrs,
+  undefinedExternInstrs: omAnyHelpers.undefinedExternInstrs,
+  ensureExternStrictEqHelper: omAnyHelpers.ensureExternStrictEqHelper,
+  ensureObjVecBuilders: omObjectRuntime.ensureObjVecBuilders,
+  ensureObjectRuntime: omObjectRuntime.ensureObjectRuntime,
+  reserveApplyClosure: omObjectRuntime.reserveApplyClosure,
+  withArraySubclassReceiverAsVec: omArraySubclass.withArraySubclassReceiverAsVec,
+  sourceOverridesBuiltinPrototypeMember: omProtoOverride.sourceOverridesBuiltinPrototypeMember,
+  tryEnsureNativeProtoBrand: omBuiltinValueRead.tryEnsureNativeProtoBrand,
+  emitFnctorSubclassDynamicMethodCall: omCalls.emitFnctorSubclassDynamicMethodCall,
+  emitLazyNativeProtoGet: omNativeProto.emitLazyNativeProtoGet,
+  compileObjectLiteral: omLiterals.compileObjectLiteral,
+  compileObjectLiteralAsExternref: omLiterals.compileObjectLiteralAsExternref,
+  objectLiteralForcesHostPath: omLiterals.objectLiteralForcesHostPath,
+  buildStandardTryTable: omTryTable.buildStandardTryTable,
+}));
 
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
@@ -803,7 +842,7 @@ function projectClassCallableTarget(
     classId,
     declaration,
     expectedKind,
-    classMemberFuncKey(ctx, legacyName),
+    classMemberFuncKey(ctx, legacyName, expectedKind.endsWith("-method") ? "instance" : undefined), // (#6772 S4)
   );
 }
 
@@ -6679,6 +6718,7 @@ export function generateModule(
     // `.length` fix, so `(arr as any)[i]` through the externref boundary reads
     // the element instead of null/0. Standalone only (no-op otherwise).
     fillExternGetIdxVecArms(ctx);
+    fillVecElemGetIdxArms(ctx); // (#6771 S8/S9) stored-`undefined` f64 and boolean vec elements
 
     // (#3190) Write-side sibling of the fill above: splice `$__vec_base` STORE
     // arms into `__extern_set` so `(arr as any)[i] = v` on an any-typed array
@@ -6725,6 +6765,7 @@ export function generateModule(
     // `fillTaDynViewMopArms` below so the TypedArray dyn-view arm keeps the
     // front slot (TA receivers must exit before the overlay consult). Standalone only.
     fillObjVecReflectionHelpers(ctx);
+    fillArrayLikeExoticArms(ctx); // (#6771 S2) closure / String-wrapper array-like arms
 
     // (#3177) `$__ta_dyn_view` §10.4.5 MOP arms — AFTER every vec fill above
     // (each fill prepends at body[0]; last fill wins the front slot, and the
@@ -6894,6 +6935,7 @@ export function generateModule(
     // hit is only known to be a USER value once the native-proto seeder registry
     // is final — see num-to-locale-string.ts.
     fillNumberToLocaleString(ctx);
+    fillBoolToLocaleString(ctx); // (#6771 S6)
     fillTaToLocaleString(ctx);
 
     // #1504: emit __is_closure(externref) -> i32 so the JS-side wrapExports
@@ -11376,6 +11418,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // fill, the backing vec contains the right values but every indexed read
     // silently returns the undefined sentinel.
     profilePhase("fill-extern-get-idx-vec-arms", () => fillExternGetIdxVecArms(ctx));
+    profilePhase("fill-vec-elem-get-idx-arms", () => fillVecElemGetIdxArms(ctx)); // (#6771 S8/S9)
 
     // (#3190/#3169) Complete the write-side vec arm and the closed-struct
     // array-like reader trio over the graph-wide carrier/type tables.
@@ -11400,6 +11443,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // classifier and native-view prototype overrides in project compilation as
     // in the single-source pipeline. Keep native views after generic vec fills
     // so they retain front precedence.
+    profilePhase("fill-array-like-exotic-arms", () => fillArrayLikeExoticArms(ctx)); // (#6771 S2)
     profilePhase("fill-ta-dyn-view-mop-arms", () => fillTaDynViewMopArms(ctx));
     // (#6651 E2) Multi-source parity with the single-source call above.
     profilePhase("fill-ta-dyn-view-own-key-arms", () => fillTaDynViewOwnKeyArms(ctx));
@@ -11661,6 +11705,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-class-to-primitive", () => fillClassToPrimitive(ctx));
     // (#6651 TA1) Same reserve/fill reason as the three above.
     profilePhase("fill-num-to-locale-string", () => fillNumberToLocaleString(ctx));
+    profilePhase("fill-bool-to-locale-string", () => fillBoolToLocaleString(ctx)); // (#6771 S6)
     profilePhase("fill-ta-to-locale-string", () => fillTaToLocaleString(ctx));
 
     // (#3981) Same class of multi-file gap as the two fills immediately above.
@@ -12617,6 +12662,9 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
   }
   const jsBodyArrayReturnOverride = ctx.jsBodyArrayReturnOverrides?.get(tsType);
   if (jsBodyArrayReturnOverride) return jsBodyArrayReturnOverride;
+  // (#6774 S21) An accessor object literal is ALWAYS an open `$Object` at run
+  // time; a struct-ref view of its type casts it away at every boundary.
+  if (ctx.standalone && isAccessorObjectLiteralType(tsType)) return { kind: "externref" };
 
   // Fast mode: string → ref $AnyString (not externref).
   // The String WRAPPER object (`new String(x)`) is excluded here — `isStringType`
@@ -13685,7 +13733,7 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
         if (hasBindingPattern && !paramDecl.type && !paramDecl.dotDotDotToken && wasmType.kind !== "externref") {
           wasmType = { kind: "externref" };
         }
-        methodParams.push(wasmType);
+        methodParams.push(restPatternParamSlot(ctx, paramDecl, wasmType)); // (#6774 S7)
       } else if (paramDecl) {
         const pt = ctx.checker.getTypeAtLocation(paramDecl);
         methodParams.push(resolveWasmType(ctx, pt));

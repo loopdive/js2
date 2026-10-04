@@ -39,6 +39,8 @@
 // (#3878/#3904), and stranding a PR behind a test that was already red is a
 // worse failure than the one this job exists to catch.
 //
+// Add --json for a JSON array from the same selection; --strict makes a failed
+// changed-file diff fatal for CI discovery. Default CLI behavior is unchanged.
 // Prints one path per line on stdout (empty output = nothing to run).
 // Diagnostics go to stderr so stdout stays pipe-safe.
 
@@ -114,6 +116,25 @@ function resolveBase() {
   }
 }
 
+const strict = process.argv.includes("--strict");
+const explicitMax = arg("--max");
+if (
+  strict &&
+  process.argv.includes("--max") &&
+  (explicitMax === undefined ||
+    explicitMax.trim() === "" ||
+    !Number.isInteger(Number(explicitMax)) ||
+    Number(explicitMax) < 0)
+) {
+  process.stderr.write("select-changed-issue-tests: --max must be a nonnegative integer\n");
+  process.exit(2);
+}
+
+function printFiles(files) {
+  if (process.argv.includes("--json")) process.stdout.write(`${JSON.stringify(files)}\n`);
+  else if (files.length > 0) process.stdout.write(`${files.join("\n")}\n`);
+}
+
 const wantPinned = process.argv.includes("--pinned");
 const wantChanged = process.argv.includes("--changed");
 if (wantPinned === wantChanged) {
@@ -124,7 +145,7 @@ if (wantPinned === wantChanged) {
 if (wantPinned) {
   const files = PINNED.filter((file) => existsSync(file));
   process.stderr.write(`select-changed-issue-tests: pinned=${files.length}\n`);
-  if (files.length > 0) process.stdout.write(`${files.join("\n")}\n`);
+  printFiles(files);
   process.exit(0);
 }
 
@@ -139,7 +160,10 @@ try {
 } catch (error) {
   // No usable base (shallow clone, unrelated histories) — fall back to the
   // pinned set rather than failing the job on a git detail.
-  process.stderr.write(`select-changed-issue-tests: diff against ${base} failed (${error.message}); nothing changed\n`);
+  process.stderr.write(
+    `select-changed-issue-tests: diff against ${base} failed (${error.message})${strict ? "" : "; nothing changed"}\n`,
+  );
+  if (strict) process.exit(1);
 }
 
 const max = Number(arg("--max") ?? 15);
@@ -152,4 +176,4 @@ process.stderr.write(
     (selected.length > capped.length ? ` (capped from ${selected.length}, --max ${max})` : "") +
     "\n",
 );
-if (capped.length > 0) process.stdout.write(`${capped.join("\n")}\n`);
+printFiles(capped);

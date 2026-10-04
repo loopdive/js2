@@ -61,8 +61,9 @@ function forwardLocalClassRef(
 function classCallable(
   ctx: CodegenContext,
   fullName: string,
+  kind?: "instance", // (#6772 S4) a MEMBER slot, never the allocator / `_init`
 ): { readonly func: WasmFunction; readonly signature: FuncTypeDef } | undefined {
-  const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
+  const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, kind));
   const func = funcIdx === undefined ? undefined : definedFuncAt(ctx, funcIdx);
   const signature = func === undefined ? undefined : ctx.mod.types[func.typeIdx];
   return func && signature?.kind === "func" ? { func, signature } : undefined;
@@ -147,7 +148,7 @@ export function finalizeForwardClassCallableAbis(ctx: CodegenContext, sourceFile
         hasFixedForwardClassAbiParameters(member.parameters)
       ) {
         const fullName = `${className}_${member.name.text}`;
-        const callable = classCallable(ctx, fullName);
+        const callable = classCallable(ctx, fullName, "instance");
         if (!callable) continue;
         const replacement = replaceForwardParameters(
           ctx,

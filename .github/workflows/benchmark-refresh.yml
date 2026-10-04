@@ -32,9 +32,11 @@ env:
   JAVY_VERSION: "8.1.1"
   JAVY_SHA256: "4bec224e1d51827808fd063541a2b4d94cf474744636b692be63e7a29bec83a6"
 
+# Push/dispatch only, so never cancel: the run is longer than the interval
+# between merges, and cancelling in-progress runs livelocks promotion (#3988).
 concurrency:
-  group: benchmark-refresh-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: benchmark-refresh-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   measure-and-gate:
@@ -51,7 +53,6 @@ jobs:
         run: |
           set -euo pipefail
           echo "candidate_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
-          echo "baseline_sha=${{ github.event.pull_request.base.sha || '' }}" >> "$GITHUB_OUTPUT"
           echo "BENCHMARK_GENERATED_AT=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" >> "$GITHUB_ENV"
 
       - name: Checkout candidate
@@ -62,37 +63,6 @@ jobs:
           fetch-depth: 0
           submodules: false
           persist-credentials: false
-
-      - name: Checkout PR base
-        if: github.event_name == 'pull_request'
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ steps.refs.outputs.baseline_sha }}
-          path: baseline
-          fetch-depth: 1
-          submodules: false
-          persist-credentials: false
-
-      - name: Detect benchmark timing methodology migration
-        if: github.event_name == 'pull_request'
-        id: timing_methodology
-        shell: bash
-        run: |
-          set -euo pipefail
-          changed="false"
-          for path in \
-            benchmarks/harness.ts \
-            benchmarks/timing.ts \
-            scripts/generate-size-benchmarks.ts
-          do
-            if ! cmp -s "baseline/$path" "candidate/$path"; then
-              changed="true"
-            fi
-          done
-          echo "changed=$changed" >> "$GITHUB_OUTPUT"
-          if [ "$changed" = "true" ]; then
-            echo "::notice title=Benchmark timing migration::Both revisions will be measured and packaged, but their runtime values use different timing methodology. This workflow-changing PR requires review; same-method runtime gating resumes after merge."
-          fi
 
       - name: Detect auxiliary benchmark changes
         id: auxiliary
@@ -112,8 +82,7 @@ jobs:
           # own inputs changed. Every other event carries forward the last
           # accepted Javy/StarlingMonkey values and their source provenance.
           auxiliary_mode="inherit"
-          if [ "${{ github.event_name }}" != "pull_request" ] &&
-             [ "${{ github.ref }}" = "refs/heads/main" ] &&
+          if [ "${{ github.ref }}" = "refs/heads/main" ] &&
              [ -n "$comparison_sha" ] &&
              [ "$comparison_sha" != "0000000000000000000000000000000000000000" ] &&
              git -C candidate cat-file -e "${comparison_sha}^{commit}"
@@ -142,16 +111,6 @@ jobs:
           echo "BENCHMARK_AUXILIARY_MODE=$auxiliary_mode" >> "$GITHUB_ENV"
           echo "BENCHMARK_AUXILIARY_SOURCE_SHA=$comparison_sha" >> "$GITHUB_ENV"
           echo "Auxiliary benchmark mode: $auxiliary_mode"
-
-          legacy_manifest_javy="false"
-          if [ "${{ github.event_name }}" = "pull_request" ] &&
-             [ -f baseline/scripts/benchmark-lifecycle.mjs ] &&
-             ! grep -Fq 'not-used (auxiliary measurements inherited)' baseline/scripts/benchmark-lifecycle.mjs
-          then
-            legacy_manifest_javy="true"
-            echo "Trusted PR base requires a Javy version while packaging inherited auxiliary data."
-          fi
-          echo "legacy_manifest_javy=$legacy_manifest_javy" >> "$GITHUB_OUTPUT"
 
       - name: Setup pinned Node
         uses: actions/setup-node@v6
@@ -189,7 +148,7 @@ jobs:
           echo "$tools/wasmtime-v${WASMTIME_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
 
       - name: Install and verify pinned Javy
-        if: steps.auxiliary.outputs.mode == 'measure' || steps.auxiliary.outputs.legacy_manifest_javy == 'true'
+        if: steps.auxiliary.outputs.mode == 'measure'
         shell: bash
         run: |
           set -euo pipefail
@@ -219,20 +178,12 @@ jobs:
       - name: Install candidate dependencies
         run: pnpm --dir candidate install --frozen-lockfile
 
-      - name: Install baseline dependencies
-        if: github.event_name == 'pull_request'
-        run: pnpm --dir baseline install --frozen-lockfile
-
       - name: Remove checkout-stale benchmark outputs
         shell: bash
         run: |
           set -euo pipefail
           if [ "$BENCHMARK_AUXILIARY_MODE" = "inherit" ]; then
-            if [ "${{ github.event_name }}" = "pull_request" ]; then
-              auxiliary_source="$GITHUB_WORKSPACE/baseline"
-            else
-              auxiliary_source="$GITHUB_WORKSPACE/candidate"
-            fi
+            auxiliary_source="$GITHUB_WORKSPACE/candidate"
             auxiliary_baseline="$RUNNER_TEMP/benchmark-auxiliary-baseline"
             mkdir -p "$auxiliary_baseline"
             cp \
@@ -265,36 +216,13 @@ jobs:
             rm -rf "$results/loadtime"
           }
           clear_current_outputs candidate
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            clear_current_outputs baseline
-          fi
           echo "Preserved history.json; every current-run output must now be recreated before packaging."
 
-      # Both sides run sequentially in this one job, on the same physical
-      # runner and pinned toolchain. This removes committed-baseline machine
-      # drift from the PR verdict.
-      - name: Measure PR base on the same runner
-        id: base_measurement
-        if: github.event_name == 'pull_request'
-        env:
-          BENCHMARK_SOURCE_SHA: ${{ steps.refs.outputs.baseline_sha }}
-        run: |
-          set -euo pipefail
-          if [ ! -f baseline/scripts/benchmark-lifecycle.mjs ]; then
-            echo "bootstrap=true" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Benchmark lifecycle bootstrap::The base branch has no lifecycle script. This introduction run keeps the existing trusted sidebar gate; the full trusted-base gate activates after merge."
-          else
-            echo "bootstrap=false" >> "$GITHUB_OUTPUT"
-          fi
-          pnpm --dir baseline run refresh:benchmarks
-          if [ -f baseline/scripts/benchmark-lifecycle.mjs ]; then
-            pnpm --dir baseline run refresh:benchmarks:wasmtime
-            node baseline/scripts/benchmark-lifecycle.mjs package \
-              --root "$GITHUB_WORKSPACE/baseline" \
-              --output "$GITHUB_WORKSPACE/baseline-snapshot" \
-              --source-sha "$BENCHMARK_SOURCE_SHA"
-          fi
-
+      # (#6799) The PR-only steps that used to sit here (base checkout and
+      # measurement, same-runner comparison, timing-migration notice,
+      # bootstrap sidebar gate) were removed: this workflow has had no
+      # `pull_request` trigger since benchmarks stopped gating PRs, so none of
+      # them could run.
       - name: Measure candidate
         env:
           BENCHMARK_SOURCE_SHA: ${{ steps.refs.outputs.candidate_sha }}
@@ -302,11 +230,7 @@ jobs:
           set -euo pipefail
           pnpm --dir candidate run refresh:benchmarks
           pnpm --dir candidate run refresh:benchmarks:wasmtime
-          if [ "${{ github.event_name }}" = "pull_request" ] && [ -f baseline/scripts/benchmark-lifecycle.mjs ]; then
-            lifecycle="$GITHUB_WORKSPACE/baseline/scripts/benchmark-lifecycle.mjs"
-          else
-            lifecycle="$GITHUB_WORKSPACE/candidate/scripts/benchmark-lifecycle.mjs"
-          fi
+          lifecycle="$GITHUB_WORKSPACE/candidate/scripts/benchmark-lifecycle.mjs"
           node "$lifecycle" package \
             --root "$GITHUB_WORKSPACE/candidate" \
             --output "$GITHUB_WORKSPACE/candidate-snapshot" \
@@ -315,45 +239,7 @@ jobs:
             --snapshot "$GITHUB_WORKSPACE/candidate-snapshot" \
             --source-sha "$BENCHMARK_SOURCE_SHA"
 
-      - name: Compare same-run PR base and candidate
-        # Performance data is advisory. Keep the comparison, artifact, and
-        # step-level failure visible without blocking the PR or merge queue.
-        continue-on-error: true
-        if: |
-          github.event_name == 'pull_request' &&
-          steps.base_measurement.outputs.bootstrap != 'true' &&
-          steps.timing_methodology.outputs.changed != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p benchmark-reports
-          node baseline/scripts/benchmark-lifecycle.mjs compare \
-            --baseline "$GITHUB_WORKSPACE/baseline-snapshot" \
-            --candidate "$GITHUB_WORKSPACE/candidate-snapshot" \
-            | tee benchmark-reports/performance-regressions.txt
-
-      - name: Record timing methodology migration
-        if: github.event_name == 'pull_request' && steps.timing_methodology.outputs.changed == 'true'
-        run: |
-          mkdir -p benchmark-reports
-          echo "Runtime comparison is informational for this timing-methodology migration; both snapshots validated successfully." \
-            > benchmark-reports/performance-regressions.txt
-
-      - name: Run trusted bootstrap sidebar gate
-        if: github.event_name == 'pull_request' && steps.base_measurement.outputs.bootstrap == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p benchmark-reports
-          node baseline/scripts/diff-playground-benchmarks.mjs \
-            --baseline "$GITHUB_WORKSPACE/baseline/benchmarks/results/playground-benchmark-sidebar.json" \
-            --candidate "$GITHUB_WORKSPACE/candidate/benchmarks/results/playground-benchmark-sidebar.json" \
-            --max-relative-regression 0.50 \
-            --max-wasm-slowdown 0.40 \
-            | tee benchmark-reports/performance-regressions.txt
-
       - name: Record main refresh report
-        if: github.event_name != 'pull_request'
         run: |
           mkdir -p benchmark-reports
           echo "Candidate ${SOURCE_SHA} generated successfully; main promotion is handled by the trusted follow-on job." \
@@ -375,7 +261,6 @@ jobs:
   promote-benchmarks:
     if: |
       needs.measure-and-gate.result == 'success' &&
-      github.event_name != 'pull_request' &&
       github.repository == 'loopdive/js2' &&
       github.actor != 'github-actions[bot]'
     needs: measure-and-gate
@@ -455,20 +340,30 @@ jobs:
             --last-refresh "$LAST_REFRESH" \
             --stale-after-hours 6 \
             --reason "landing benchmark artifacts" || RC=$?
-          if [ "$RC" -eq 10 ]; then
-            echo "decision=defer" >> "$GITHUB_OUTPUT"
-          else
-            # 0 = proceed. Anything else is a gate malfunction, and a broken
-            # gate must never freeze the artifact — fail OPEN, loudly.
-            [ "$RC" -eq 0 ] || echo "::warning title=main-push-queue-gate::gate exited ${RC}; failing open"
-            echo "decision=proceed" >> "$GITHUB_OUTPUT"
-          fi
+          # (#6799) FAIL CLOSED on a gate malfunction. 0 = proceed, 10 = defer;
+          # any other exit means the gate itself broke (an uncaught crash, or the
+          # script missing from the checkout),
+          # and a push nobody vetted is exactly what this step exists to stop.
+          # The gate already resolves an UNREADABLE queue or age to "proceed"
+          # internally (exit 0, with a warning), so this branch cannot freeze
+          # the artifact on a flaky API — it only refuses to push past a red
+          # gate, and the red step makes that visible instead of a warning.
+          case "$RC" in
+            0) echo "decision=proceed" >> "$GITHUB_OUTPUT" ;;
+            10) echo "decision=defer" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "decision=error" >> "$GITHUB_OUTPUT"
+              echo "::error title=main-push-queue-gate::gate exited ${RC}; refusing to push main (fail closed, #6799)"
+              exit 1
+              ;;
+          esac
 
       - name: Atomically promote the complete benchmark set
         # A deferred refresh is not a failure: the very next push to main
         # re-measures and promotes, and the 6h staleness floor in the gate
         # bounds how long a permanently busy queue can hold the artifact back.
-        if: steps.queue_gate.outputs.decision != 'defer'
+        # Only an explicit `proceed` pushes — never a missing or error value.
+        if: steps.queue_gate.outputs.decision == 'proceed'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MAIN_DEPLOY_KEY: ${{ secrets.MAIN_DEPLOY_KEY }}

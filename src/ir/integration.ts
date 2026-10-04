@@ -10299,7 +10299,7 @@ class ClassRegistry {
         if (preparedTarget) return preparedTarget;
         const suffix = memberKind === "getter" ? `get_${name}` : memberKind === "setter" ? `set_${name}` : name;
         const legacyName = `${shape.className}_${suffix}`;
-        const physicalName = classMemberFuncKey(ctx, legacyName);
+        const physicalName = classMemberFuncKey(ctx, legacyName, "instance"); // (#6772 S4) never the allocator
         const exact =
           this.memberRef(classId, memberKind, legacyName, physicalName) ??
           this.inheritedMemberRef(shape, classId, memberKind, name, physicalName);

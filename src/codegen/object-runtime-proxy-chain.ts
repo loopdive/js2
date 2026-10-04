@@ -45,6 +45,7 @@ import type { ObjectRuntimeTypes } from "./object-runtime.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { SET_DECISION_HANDLED, SET_DECISION_REFUSED } from "./proto-index-store.js";
 import { addFuncType } from "./registry/types.js";
+import { proxyTrapAbsentTail } from "./object-model/proxy-trap-read.js"; // (#6770 S8)
 
 /** `$Object` field index of the appended `protoLink` anyref (object-runtime.ts `objectFields`). */
 export const PROTO_LINK_FIELD = 6;
@@ -355,11 +356,10 @@ export function protoLinkReceiverSetForward(ctx: CodegenContext, P: number, d: P
     { op: "local.get", index: P },
     { op: "struct.get", typeIdx: d.proxyTypeIdx, fieldIdx: d.trapsField },
   ];
+  // (#6770 S8) the handler's trap NOW (a `$Proxy` handler counts as present).
   const trapPresent = (field: number): Instr[] => [
-    ...traps(),
-    { op: "ref.as_non_null" },
-    { op: "struct.get", typeIdx: d.proxyTrapsTypeIdx, fieldIdx: field },
-    { op: "ref.is_null" },
+    { op: "local.get", index: P },
+    ...proxyTrapAbsentTail(ctx, field),
     { op: "i32.eqz" },
   ];
   return [

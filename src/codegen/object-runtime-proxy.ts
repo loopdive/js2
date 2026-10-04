@@ -24,6 +24,17 @@ import { ensureExternStrictEqHelper } from "./any-helpers.js";
 import { registerProxyInvariantValidators } from "./object-runtime-proxy-invariants.js"; // (#5316) §10.5 descriptor-model half
 import { reserveStandaloneLinkReversePeer, reverseProxyGetArmInstrs } from "./standalone-link-reverse-peer.js"; // (#6637 S63)
 import { protoLinkReceiverSetForward } from "./object-runtime-proxy-chain.js"; // (#6766)
+import {
+  ensureGopdResultReify,
+  ensureProxyListFromArrayLike,
+  proxyTrapAbsentTail,
+  proxyTrapReadTail,
+} from "./object-model/proxy-trap-read.js"; // (#6770 S8)
+import {
+  ensureEnumerableOwnKeysNative,
+  ensureOwnKeysAllNative,
+  installProxyKeyBagGuards,
+} from "./object-model/proxy-own-keys-surfaces.js"; // (#6770 S7)
 
 /** (#1100/#1355) Reserved trap-invoke driver names — filled by `fillProxyDispatch`. */
 const PROXY_CALL_GET = "__proxy_call_get";
@@ -39,6 +50,23 @@ const PROXY_CALL_OWNKEYS = "__proxy_call_ownkeys"; // (#1355 Slice E) ownKeys
 const PROXY_CALL_DEFINE = "__proxy_call_define"; // (#1355 Slice F) defineProperty
 const PROXY_CALL_APPLY = "__proxy_call_apply"; // (#3031 apply slice) apply — §10.5.12 [[Call]]
 const PROXY_CALL_CONSTRUCT = "__proxy_call_construct"; // (#4397) construct — §10.5.13 [[Construct]]
+
+/**
+ * (#6770 S6) The [[ProxyTarget]] a post-trap invariant validator checks.
+ * §10.5.x step 3 reads the target ONCE, before the trap runs; a trap that
+ * revokes its own proxy nulls the field, and re-reading it after the call threw
+ * "Cannot convert undefined or null to object" instead of answering the trap
+ * (`Object/prototype/toString/proxy-revoked-during-get-call.js`). A dispatch
+ * that banked the pre-trap read passes its local; the rest re-read as before.
+ */
+function proxyTargetRead(proxyTypeIdx: number, targetField: number, pLocal: number, targetLocal?: number): Instr[] {
+  if (targetLocal !== undefined) return [{ op: "local.get", index: targetLocal }];
+  return [
+    { op: "local.get", index: pLocal },
+    { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: targetField },
+    { op: "extern.convert_any" },
+  ];
+}
 
 /**
  * (#1100) Standalone Proxy meta-object dispatch runtime — Phase 1.
@@ -337,6 +365,7 @@ export function ensureProxyRuntime(
     // get:  driver(handler, trap, target, key, receiver=param2)
     // has:  driver(handler, trap, target, key)
     // set:  driver(handler, trap, target, key, value=param2, receiver=proxy)
+    const TGT = P + 3; // (#6770 S6) [[ProxyTarget]] as read BEFORE the trap — see proxyTargetRead
     const trapArm: Instr[] = [
       // handler
       { op: "local.get", index: P },
@@ -348,6 +377,7 @@ export function ensureProxyRuntime(
       { op: "local.get", index: P },
       { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
       { op: "extern.convert_any" },
+      { op: "local.tee", index: TGT },
       // key
       { op: "local.get", index: 1 },
     ];
@@ -387,7 +417,7 @@ export function ensureProxyRuntime(
             : trapFieldIdx === TRAP_GOPD
               ? descriptorInvariants.gopd
               : descriptorInvariants.get;
-      trapArm.push(...validateTrapResult(validator, P, RES, 1, isSet ? [2] : []));
+      trapArm.push(...validateTrapResult(validator, P, RES, 1, isSet ? [2] : [], TGT));
     }
 
     const body: Instr[] = [
@@ -408,12 +438,7 @@ export function ensureProxyRuntime(
         op: "if",
         blockType: { kind: "val", type: externref },
         then: [{ op: "ref.null.extern" }],
-        else: [
-          { op: "local.get", index: P },
-          { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: trapFieldIdx },
-        ],
+        else: [{ op: "local.get", index: P }, ...proxyTrapReadTail(ctx, trapFieldIdx)],
       },
       { op: "local.set", index: TRAPL },
       // if trap == null: forward to ordinary op on target
@@ -569,11 +594,10 @@ export function ensureProxyRuntime(
     resLocal: number,
     keyLocal: number | undefined,
     extras: number[],
+    targetLocal?: number,
   ): Instr[] => [
     { op: "local.set", index: resLocal },
-    { op: "local.get", index: pLocal },
-    { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
-    { op: "extern.convert_any" },
+    ...proxyTargetRead(proxyTypeIdx, F_PTARGET, pLocal, targetLocal),
     ...(keyLocal === undefined ? [] : ([{ op: "local.get", index: keyLocal }] satisfies Instr[])),
     ...extras.map((index): Instr => ({ op: "local.get", index })),
     { op: "local.get", index: resLocal },
@@ -716,12 +740,7 @@ export function ensureProxyRuntime(
         op: "if",
         blockType: { kind: "val", type: externref },
         then: [{ op: "ref.null.extern" }],
-        else: [
-          { op: "local.get", index: 2 },
-          { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: trapFieldIdx },
-        ],
+        else: [{ op: "local.get", index: 2 }, ...proxyTrapReadTail(ctx, trapFieldIdx)],
       },
       { op: "local.set", index: 3 },
       // if trap == null: forward to ordinary op on target ; else invoke trap.
@@ -830,12 +849,7 @@ export function ensureProxyRuntime(
         op: "if",
         blockType: { kind: "val", type: externref },
         then: [{ op: "ref.null.extern" }],
-        else: [
-          { op: "local.get", index: 2 },
-          { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: trapFieldIdx },
-        ],
+        else: [{ op: "local.get", index: 2 }, ...proxyTrapReadTail(ctx, trapFieldIdx)],
       },
       { op: "local.set", index: 3 },
       { op: "local.get", index: 3 },
@@ -877,8 +891,14 @@ export function ensureProxyRuntime(
   const ownKeysTypeofUndefinedIdx = ctx.funcMap.get("__typeof_undefined")!;
   const ownKeysTypeofBigIntIdx = ctx.funcMap.get("__typeof_bigint")!;
   const ownKeysSymbolTypeIdx = ctx.symbolTypeIdx;
-  const buildOwnKeysDispatch = (forwardName: string): Instr[] => {
-    const forwardIdx = ctx.funcMap.get(forwardName)!;
+  // (#6770 S7) Both dispatches forward to the target's FULL key list and the
+  // `Object.keys` one then keeps §20.1.2.17's enumerable string keys, asking
+  // the PROXY's [[GetOwnProperty]] per key (the gopd trap when present).
+  const ownKeysAllIdx = ensureOwnKeysAllNative(ctx);
+  const buildOwnKeysDispatch = (forwardName: string, enumerableOnly = false): Instr[] => {
+    const forwardIdx = ownKeysAllIdx ?? ctx.funcMap.get(forwardName)!;
+    const enumerableIdx = enumerableOnly ? ensureEnumerableOwnKeysNative(ctx) : undefined;
+    const listFromArrayLikeIdx = ensureProxyListFromArrayLike(ctx, notListObjectMsg); // (#6770 S8)
     const isObjectNumIdx = ctx.funcMap.get("__typeof_number")!;
     const isObjectBoolIdx = ctx.funcMap.get("__typeof_boolean")!;
     const isObjectStrIdx = ctx.funcMap.get("__typeof_string")!;
@@ -926,6 +946,17 @@ export function ensureProxyRuntime(
           ] satisfies Instr[])
         : []),
       { op: "if", blockType: { kind: "empty" }, then: throwNotListObject() },
+      // (#6770 S8) §7.3.20 CreateListFromArrayLike: ONE `length` read and ONE
+      // Get per index, in order, into a fresh list — the walk below, the
+      // invariant check and every consumer read that list, never the trap's
+      // (possibly getter-backed) array-like again.
+      ...(listFromArrayLikeIdx === undefined
+        ? []
+        : ([
+            { op: "local.get", index: 3 },
+            { op: "call", funcIdx: listFromArrayLikeIdx },
+            { op: "local.set", index: 3 },
+          ] satisfies Instr[])),
       // len = ToLength(result.length), represented as a saturated i32 for the
       // bounded Wasm walk below. The existing helper performs the full
       // array-like length conversion before this narrowing.
@@ -1045,12 +1076,7 @@ export function ensureProxyRuntime(
         op: "if",
         blockType: { kind: "val", type: externref },
         then: [{ op: "ref.null.extern" }],
-        else: [
-          { op: "local.get", index: 2 },
-          { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: TRAP_OWNKEYS },
-        ],
+        else: [{ op: "local.get", index: 2 }, ...proxyTrapReadTail(ctx, TRAP_OWNKEYS)],
       },
       { op: "local.set", index: 3 },
       { op: "local.get", index: 3 },
@@ -1061,6 +1087,14 @@ export function ensureProxyRuntime(
         then: forwardArm,
         else: [...trapCallableGuard(3), ...trapArm],
       },
+      ...(enumerableIdx === undefined
+        ? []
+        : ([
+            { op: "local.set", index: 3 },
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 3 },
+            { op: "call", funcIdx: enumerableIdx },
+          ] satisfies Instr[])),
     ];
   };
 
@@ -1135,12 +1169,7 @@ export function ensureProxyRuntime(
         op: "if",
         blockType: { kind: "val", type: externref },
         then: [{ op: "ref.null.extern" }],
-        else: [
-          { op: "local.get", index: 3 },
-          { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: TRAP_DEFINE },
-        ],
+        else: [{ op: "local.get", index: 3 }, ...proxyTrapReadTail(ctx, TRAP_DEFINE)],
       },
       { op: "local.set", index: 4 },
       // if trap == null: forward; else invoke trap
@@ -1168,6 +1197,8 @@ export function ensureProxyRuntime(
     // (#5140) scratch for the §10.5 post-trap invariant validators. Index is
     // 2 + arity: 4 on the 2-param proto/ext helpers, 5 on the 3-param ones.
     { name: "res", type: { kind: "externref" } as ValType },
+    // (#6770 S6) the [[ProxyTarget]] read BEFORE the trap call (3 + arity).
+    { name: "tgt", type: { kind: "externref" } as ValType },
   ];
   const ownKeysDispatchLocals = (): { name: string; type: ValType }[] => [
     { name: "p", type: { kind: "ref", typeIdx: proxyTypeIdx } as ValType },
@@ -1302,7 +1333,7 @@ export function ensureProxyRuntime(
     [externref, externref],
     [externref],
     ownKeysDispatchLocals(),
-    buildOwnKeysDispatch("__object_keys"),
+    buildOwnKeysDispatch("__object_keys", true),
   );
   registerNative(
     "__proxy_ownkeys_names_dispatch",
@@ -1379,12 +1410,7 @@ export function ensureProxyRuntime(
       op: "if",
       blockType: { kind: "val", type: externref },
       then: [{ op: "ref.null.extern" }],
-      else: [
-        { op: "local.get", index: 3 },
-        { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
-        { op: "ref.as_non_null" },
-        { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: TRAP_APPLY },
-      ],
+      else: [{ op: "local.get", index: 3 }, ...proxyTrapReadTail(ctx, TRAP_APPLY)],
     },
     { op: "local.set", index: 4 },
     // if trap == null: forward Call(target, thisArg, args); else invoke trap
@@ -1500,12 +1526,7 @@ export function ensureProxyRuntime(
           op: "if",
           blockType: { kind: "val", type: externref },
           then: [{ op: "ref.null.extern" }],
-          else: [
-            { op: "local.get", index: 3 },
-            { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
-            { op: "ref.as_non_null" },
-            { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: TRAP_CONSTRUCT },
-          ],
+          else: [{ op: "local.get", index: 3 }, ...proxyTrapReadTail(ctx, TRAP_CONSTRUCT)],
         },
         { op: "local.tee", index: 4 },
         { op: "ref.is_null" },
@@ -1545,20 +1566,17 @@ export function ensureProxyRuntime(
 
   // ── __proxy_create(target, handler) -> externref ──────────────────────────
   //
-  // §28.2.1.1 ProxyCreate. Reads get/set/has/apply off `handler` via
-  // `__extern_get`. CONTRACT: the call site (new-super.ts) builds the handler as
-  // an OPEN `$Object` (`compileObjectLiteralAsExternref`) so these reads resolve
-  // — a closed typed struct would hide its fields from the open-object prop-map
-  // walk and every trap would read null. Each read yields the trap **closure
-  // externref** (or undefined → stored null → dispatch forwards to the target).
-  //  1. target/handler null/undefined → TypeError (§28.2.1.1 step 1/2; full
-  //     object-ness is Phase 2 / #1355).
-  //  2. build `$ProxyTraps` from the 4 reads; build `$Proxy` (phandler kept for
-  //     the trap `this`).
+  // §28.2.1.1 ProxyCreate. CONTRACT: the call site (new-super.ts) builds the
+  // handler as an OPEN `$Object` (`compileObjectLiteralAsExternref`) so the
+  // per-operation trap reads (`__extern_get(handler, name)`, proxy-trap-read.ts)
+  // resolve — a closed typed struct would hide its fields from the open-object
+  // prop-map walk and every trap would read null.
+  //  1. target/handler null/undefined/primitive → TypeError (§28.2.1.1 step 1/2).
+  //  2. build `$Proxy` (phandler kept for the trap `this`) with an EMPTY
+  //     `$ProxyTraps` (#6770 S8).
   //
-  // params: 0=target 1=handler ; locals: 2=getT 3=setT 4=hasT 5=applyT (externref)
+  // params: 0=target 1=handler
   {
-    const externGetIdx = ctx.funcMap.get("__extern_get")!;
     const typeofFunctionIdx = ctx.funcMap.get("__typeof_function")!;
     const isConstructorIdx = ensureReflectIsConstructor(ctx);
     const notObjectMsg = "Cannot create proxy with a non-object as target or handler";
@@ -1572,33 +1590,11 @@ export function ensureProxyRuntime(
       { op: "call", funcIdx: typeErrorCtorIdx },
       { op: "throw", tagIdx: exnTagIdx },
     ];
-    // readTrap(name) → __extern_get(handler, "name") (undefined → dispatch nulls).
-    // (#5140) Local 15 is set below to 1 when the HANDLER is itself a REVOKED
-    // proxy. §28.2.1.1 ProxyCreate reads no trap at all — the reads are
-    // per-operation GetMethods — so `new Proxy(t, revokedProxy)` must SUCCEED
-    // and only throw when an operation is later performed. This runtime still
-    // materializes the traps eagerly; suppressing the reads for a revoked
-    // handler is the bounded fix that keeps construction working.
-    const HANDLER_REVOKED = 15;
-    const readTrapRaw = (name: string): Instr[] => [
-      { op: "local.get", index: 1 },
-      ...stringConstantExternrefInstrs(ctx, name),
-      { op: "call", funcIdx: externGetIdx },
-      // (#2106 S1) a missing trap resolves to the undefined singleton —
-      // normalize to null so the trap-dispatch null checks keep working.
-      ...(ctx.funcMap.has("__nullish_to_null")
-        ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
-        : []),
-    ];
-    const readTrap = (name: string): Instr[] => [
-      { op: "local.get", index: HANDLER_REVOKED },
-      {
-        op: "if",
-        blockType: { kind: "val", type: externref },
-        then: [{ op: "ref.null.extern" }],
-        else: readTrapRaw(name),
-      },
-    ];
+    // (#6770 S8) §28.2.1.1 ProxyCreate reads NO trap: each §10.5 internal
+    // method performs its own `GetMethod(handler, name)` (proxy-trap-read.ts).
+    // The `$ProxyTraps` record is allocated EMPTY; its non-null-ness is what
+    // every dispatch's `ptraps == null` (= revoked) test reads. A revoked proxy
+    // as the HANDLER is therefore accepted here and throws on first use.
     const primitiveTypeofIndices = ["__typeof_number", "__typeof_boolean", "__typeof_string", "__typeof_bigint"]
       .map((name) => ctx.funcMap.get(name))
       .filter((idx): idx is number => idx !== undefined);
@@ -1674,70 +1670,14 @@ export function ensureProxyRuntime(
       // their identity or representation.
       ...requireObject(0),
       ...requireObject(1),
-      // (#5140) handlerRevoked = handler is a $Proxy whose revoked bit is set.
-      { op: "local.get", index: 1 },
-      { op: "any.convert_extern" },
-      { op: "ref.test", typeIdx: proxyTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [
-          { op: "local.get", index: 1 },
-          { op: "any.convert_extern" },
-          { op: "ref.cast", typeIdx: proxyTypeIdx },
-          { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_REVOKED },
-        ],
-        else: [{ op: "i32.const", value: 0 }],
-      },
-      { op: "local.set", index: HANDLER_REVOKED },
-      // read the traps off the (open) handler. (#1355) deleteProperty appended.
-      ...readTrap("get"),
-      { op: "local.set", index: 2 },
-      ...readTrap("set"),
-      { op: "local.set", index: 3 },
-      ...readTrap("has"),
-      { op: "local.set", index: 4 },
-      ...readTrap("apply"),
-      { op: "local.set", index: 5 },
-      ...readTrap("deleteProperty"),
-      { op: "local.set", index: 6 },
-      ...readTrap("getOwnPropertyDescriptor"),
-      { op: "local.set", index: 7 },
-      ...readTrap("getPrototypeOf"),
-      { op: "local.set", index: 8 },
-      ...readTrap("setPrototypeOf"),
-      { op: "local.set", index: 9 },
-      ...readTrap("isExtensible"),
-      { op: "local.set", index: 10 },
-      ...readTrap("preventExtensions"),
-      { op: "local.set", index: 11 },
-      ...readTrap("ownKeys"),
-      { op: "local.set", index: 12 },
-      ...readTrap("defineProperty"),
-      { op: "local.set", index: 13 },
-      ...readTrap("construct"),
-      { op: "local.set", index: 14 },
       // proxy fields (standalone $Proxy struct):
       { op: "i32.const", value: 1 }, // ptag = PROXY_TAG (1; bare ref.test $Proxy is the real discriminator)
       { op: "local.get", index: 0 }, // ptarget (externref → anyref)
       { op: "any.convert_extern" },
       { op: "local.get", index: 1 }, // phandler (externref → anyref; trap `this`)
       { op: "any.convert_extern" },
-      // ptraps = struct.new $ProxyTraps
-      //   (getT,setT,hasT,applyT,delT,gopdT,gpoT,spoT,isextT,prevextT,ownKeysT)
-      { op: "local.get", index: 2 },
-      { op: "local.get", index: 3 },
-      { op: "local.get", index: 4 },
-      { op: "local.get", index: 5 },
-      { op: "local.get", index: 6 },
-      { op: "local.get", index: 7 },
-      { op: "local.get", index: 8 },
-      { op: "local.get", index: 9 },
-      { op: "local.get", index: 10 },
-      { op: "local.get", index: 11 },
-      { op: "local.get", index: 12 },
-      { op: "local.get", index: 13 },
-      { op: "local.get", index: 14 },
+      // ptraps = an EMPTY $ProxyTraps (#6770 S8: traps are looked up per operation)
+      ...Array.from({ length: 13 }, (): Instr => ({ op: "ref.null.extern" })),
       { op: "struct.new", typeIdx: proxyTrapsTypeIdx },
       { op: "i32.const", value: 0 }, // revoked = 0
       // [[Call]]/[[Construct]] slots are fixed by the target at ProxyCreate
@@ -1751,28 +1691,7 @@ export function ensureProxyRuntime(
       { op: "struct.new", typeIdx: proxyTypeIdx },
       { op: "extern.convert_any" },
     ];
-    registerNative(
-      "__proxy_create",
-      [externref, externref],
-      [externref],
-      [
-        { name: "getT", type: externref },
-        { name: "setT", type: externref },
-        { name: "hasT", type: externref },
-        { name: "applyT", type: externref },
-        { name: "delT", type: externref }, // (#1355 Slice A)
-        { name: "gopdT", type: externref }, // (#1355 Slice B)
-        { name: "gpoT", type: externref }, // (#1355 Slice C) getPrototypeOf
-        { name: "spoT", type: externref }, // (#1355 Slice C) setPrototypeOf
-        { name: "isextT", type: externref }, // (#1355 Slice D) isExtensible
-        { name: "prevextT", type: externref }, // (#1355 Slice D) preventExtensions
-        { name: "ownKeysT", type: externref }, // (#1355 Slice E) ownKeys
-        { name: "defineT", type: externref }, // (#1355 Slice F) defineProperty
-        { name: "constructT", type: externref }, // (#4397) construct
-        { name: "handlerRevoked", type: { kind: "i32" } }, // (#5140) local 15
-      ],
-      proxyCreateBody,
-    );
+    registerNative("__proxy_create", [externref, externref], [externref], [], proxyCreateBody);
   }
 
   // ── __proxy_revoke(proxyExtern) -> () : set revoked=1, null target/handler/traps ──
@@ -1986,10 +1905,7 @@ export function ensureProxyRuntime(
           { op: "local.get", index: 0 },
           { op: "any.convert_extern" },
           { op: "ref.cast", typeIdx: proxyTypeIdx },
-          { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: TRAP_SET },
-          { op: "ref.is_null" },
+          ...proxyTrapAbsentTail(ctx, TRAP_SET),
         ],
       },
     ];
@@ -2117,10 +2033,7 @@ export function ensureProxyRuntime(
           { op: "local.get", index: 0 },
           { op: "any.convert_extern" },
           { op: "ref.cast", typeIdx: proxyTypeIdx },
-          { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: TRAP_SET },
-          { op: "ref.is_null" },
+          ...proxyTrapAbsentTail(ctx, TRAP_SET),
           { op: "i32.eqz" },
         ],
       },
@@ -2662,6 +2575,7 @@ export function ensureProxyRuntime(
     ];
     objDefineBody.unshift(...guard);
   }
+  installProxyKeyBagGuards(ctx, proxyTypeIdx, findBody); // (#6770 S7) gOPDs / defineProperties bags
 
   void objectTypeIdx;
 }
@@ -2741,6 +2655,8 @@ export function fillProxyDispatch(ctx: CodegenContext): void {
       const body: Instr[] = [];
       for (let a = 0; a < argCount + 2; a++) body.push({ op: "local.get", index: a });
       body.push({ op: "call", funcIdx: directIdx });
+      const reifyIdx = name === PROXY_CALL_GOPD ? ensureGopdResultReify(ctx) : undefined; // (#6770 S8)
+      if (reifyIdx !== undefined) body.push({ op: "call", funcIdx: reifyIdx });
       driverFn.body = body;
       return;
     }

@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { setImmediate } from "node:timers/promises";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   authenticateIrValidationPolicy,
   authenticateIrValidationPolicyEvolution,
@@ -11,10 +12,23 @@ import {
   irValidationPolicyReceiptPath,
 } from "./helpers/ir-validation-policy-evolution.js";
 import {
+  captureNestedStackificationPredecessorPolicy,
+  captureCanonical489dPredecessorPolicy,
+  beforeCanonical3c6InventoryPolicy,
   beforeIrRuntimeProgramPolicy,
   beforeWellKnownSymbolPolicy,
+  beforeGeneratorInventoryPolicy,
+  beforeHostCarrierInventoryPolicy,
+  beforeDynamicCodeInventoryPolicy,
+  beforeRuntimePreparationPolicy,
   beforeNumberPrerequisitePolicy,
+  beforeCurrentMainInventoryPolicy,
 } from "./helpers/ir-runtime-program-policy-evolution.js";
+
+afterEach(async () => {
+  // Yield between synchronous source proofs so Vitest can process task-update RPCs.
+  await setImmediate();
+});
 
 interface MutablePolicy {
   layers: { id: string; entries: string[]; roots: string[]; minModules: number; status: string; required: boolean }[];
@@ -29,7 +43,27 @@ const receiptText = read(irValidationPolicyReceiptPath);
 const receipt = authenticateIrValidationPolicyEvolution(receiptText);
 function actual(): MutablePolicy {
   const policy = beforeIrRuntimeProgramPolicy(
-    beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(JSON.parse(read("scripts/compiler-boundaries.json")))),
+    beforeWellKnownSymbolPolicy(
+      beforeNumberPrerequisitePolicy(
+        beforeRuntimePreparationPolicy(
+          beforeDynamicCodeInventoryPolicy(
+            beforeHostCarrierInventoryPolicy(
+              beforeGeneratorInventoryPolicy(
+                beforeCurrentMainInventoryPolicy(
+                  beforeCanonical3c6InventoryPolicy(
+                    captureCanonical489dPredecessorPolicy(
+                      captureNestedStackificationPredecessorPolicy(
+                        JSON.parse(read("scripts/compiler-boundaries.json")),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
   ) as MutablePolicy;
   // Every negative begins with a genuinely passing current-policy control.
   authenticateIrValidationPolicy(policy);

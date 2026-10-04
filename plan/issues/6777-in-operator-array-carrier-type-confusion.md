@@ -1,10 +1,10 @@
 ---
 id: 6777
 title: "codegen: `in` on array carriers — type-confused lowering (invalid module on `any[]`), wrong answers on holes/`delete`, non-boolean result"
-status: ready
+status: blocked
 sprint: Backlog
 created: 2026-09-30
-updated: 2026-09-30
+updated: 2026-10-02
 priority: critical
 horizon: m
 feasibility: medium
@@ -14,6 +14,9 @@ area: codegen
 language_feature: in-operator
 goal: core-semantics
 related: [6776, 2130, 2741, 3280, 1991]
+assignee: "ttraenkler/claude-dev-6777"
+branch: "claude/issue-6777-in-array-carrier"
+blocked_by: human — compiler-boundaries inventory entry
 requested_by: ttraenkler/claude-review
 origin: "2026-09-30 codebase review (plan/agent-context/claude-codebase-review-2026-09-30.md) — C1/H5"
 ---
@@ -65,3 +68,23 @@ Probe results (JS-host lane, `compile()` + `buildImports`, diffed against Node):
   real boolean (`=== true`).
 - With #6776 landed, the first row is a compile error until fixed; after this
   issue it is `[true]`.
+
+## Blocked (2026-10-02, lead handoff)
+
+Implemented in [PR 6383](https://github.com/loopdive/js2/pull/6383) (head
+`ee3eaeb503`, compiled-type carrier, hole-aware presence, boolean result;
+tests and probes in the PR body). Every required check is green except
+`quality`, which fails only in `compiler-boundaries --mode inventory`:
+
+```
+unclassified-module: src/codegen/in-array-carrier.ts
+unclassified-target: src/codegen/in-array-carrier.ts
+```
+
+The new module needs an entry in `scripts/compiler-boundaries.json` (see the
+header of `scripts/check-compiler-boundaries.mjs` for how a module is
+classified). The permission classifier denied that edit to the implementing
+agent and to the lead, so a human adds the entry on the PR branch (or grants
+the edit) — nothing else is outstanding. Dev worktree:
+`/home/user/js2/.claude/worktrees/agent-a777243fdb2d83453` (verify the branch
+with `git -C <path> branch --show-current` before reuse).

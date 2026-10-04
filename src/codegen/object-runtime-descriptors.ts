@@ -53,6 +53,9 @@ import {
 import { reserveVecPropsKeySource, vecPropertiesKeySourceArm } from "./vec-props-key-source.js";
 import { protoIndexOwnViewSubstituteInstrs } from "./proto-index-store.js"; // (#2175 P2) own-view companion substitution
 import { CLOSURE_PROTO_OF } from "./closure-prototype-edge.js";
+import { stringExoticLengthBeforeNamedKeyInstrs } from "./object-model/object-own-key-order.js"; // (#6770 S3)
+import { ensureDefineRejectionGlobal } from "./object-model/define-rejection-channel.js"; // (#6770 S4)
+import { installClosedStructPropertiesGuard } from "./object-model/proxy-own-keys-surfaces.js"; // (#6770 S7)
 
 function closurePrototypeDescriptorArm(
   ctx: CodegenContext,
@@ -339,6 +342,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       errors: {
         constructorIdx: s4TypeErrorCtorIdx,
         tagIdx: s4ExnTagIdx,
+        rejectionGlobal: ensureDefineRejectionGlobal(ctx), // (#6770 S4)
         messages: [
           s4Literal("TypeError: Cannot define property, object is not extensible"),
           s4Literal("TypeError: Cannot redefine property: configurable attribute of a non-configurable property"),
@@ -518,6 +522,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       errors: {
         constructorIdx: accTypeErrorCtorIdx,
         tagIdx: accExnTagIdx,
+        rejectionGlobal: ensureDefineRejectionGlobal(ctx), // (#6770 S4)
         messages:
           accOwnKeyIdx === undefined
             ? [accLiteral("TypeError: Cannot define property, object is not extensible")]
@@ -598,6 +603,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         errors: {
           constructorIdx: accTypeErrorCtorIdx,
           tagIdx: accExnTagIdx,
+          rejectionGlobal: ensureDefineRejectionGlobal(ctx), // (#6770 S4)
           messages: [
             accLiteral("TypeError: Cannot redefine property: configurable attribute of a non-configurable property"),
             accLiteral("TypeError: Cannot redefine property: enumerable attribute of a non-configurable property"),
@@ -1469,6 +1475,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       ],
       body,
     );
+    installClosedStructPropertiesGuard(ctx); // (#6770 S7) a closed-struct `Properties` map
     void L_OBJ;
     void L_RAW_OBJ;
   }
@@ -2647,6 +2654,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
                 op: "if",
                 blockType: { kind: "empty" },
                 then: [
+                  ...stringExoticLengthBeforeNamedKeyInstrs(ctx, strExoticLocal, 6, 7), // (#6770 S3)
                   { op: "local.get", index: 7 },
                   { op: "local.get", index: 6 },
                   { op: "ref.as_non_null" },

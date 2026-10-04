@@ -256,6 +256,14 @@ jobs:
         # plan/log/3090-phase0-legacy-delete-list.md.
         run: pnpm run check:dead-exports
 
+      - name: Orphaned-script ratchet (#6799)
+        if: steps.npm_compat.outputs.only != 'true'
+        # Fails when a top-level scripts/ file is referenced by nothing that
+        # runs or documents it (package.json, root configs, .github/, .husky/,
+        # .claude/, docs/, plan/method/, other scripts/) and is not already in
+        # scripts/orphaned-scripts-baseline.json. Wire it up, delete it, or
+        # document it; bank a deletion with `-- --update-on-decrease`.
+        run: pnpm run check:orphaned-scripts
       - name: No tracked file matches .gitignore (#6796)
         if: steps.npm_compat.outputs.only != 'true'
         # `git ls-files | git check-ignore --stdin --no-index` must be empty
@@ -799,14 +807,14 @@ jobs:
   # Measured 2026-08-15 on the 4-core dev box: ~45 s of vitest for the first
   # pinned file; #3521's six tests/ir pins add 44.8 s (measured 2026-09-02,
   # same flags). Full native resource suites now also exercise source preparation,
-  # so the job budget includes setup, pinned tests, and every selected file.
-  issue-tests:
+  # so each changed-file job budget includes setup and that file.
+  # Each changed file gets its own checkout and 40-minute job budget. Source
+  # proof tests can mutate files temporarily, so separate runners are required.
+  issue-tests-pinned:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    # Run 36424443886 exhausted 20 minutes after boundary349 passed;
-    # Get66 also passed the separate required changed-root check. Keep callback
-    # limits unchanged and allow the complete serial cohort to finish.
+    # Keep the pinned population, heap, worker flags and fatal policy unchanged.
     timeout-minutes: 40
     env:
       # The pinned suite's single fork peaks above vitest.config.ts's 512 MB
@@ -838,30 +846,139 @@ jobs:
           # Single-fork keeps peak RAM ~1 GB, matching the equivalence shards.
           pnpm exec vitest run "${FILES[@]}" \
             --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
-      - name: Run issue tests this PR touched (advisory)
-        continue-on-error: true
+
+  issue-tests-select:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    outputs:
+      files: ${{ steps.select.outputs.files }}
+      count: ${{ steps.select.outputs.count }}
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Verify issue-test scheduling controls
+        run: node --test scripts/select-changed-issue-tests.test.mjs
+      - name: Select changed issue test files
+        id: select
         env:
-          # Match changed-root-tests.sh for real runtime-provider graphs (#3518).
-          VITEST_FORK_MAX_OLD_SPACE_SIZE: "4096"
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
-          set -uo pipefail
-          node scripts/select-changed-issue-tests.mjs --changed > /tmp/issue-tests-changed.txt || {
-            echo "::warning::could not select changed issue tests"
-            exit 0
+          set -euo pipefail
+          node scripts/select-changed-issue-tests.mjs --changed --strict --json > /tmp/issue-tests-changed.json
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync, statSync } from "node:fs";
+          const files = JSON.parse(readFileSync("/tmp/issue-tests-changed.json", "utf8"));
+          if (!Array.isArray(files) || files.length > 15 || new Set(files).size !== files.length ||
+              files.some((file) => typeof file !== "string" || /[\r\n\0]/.test(file) ||
+                !/^tests\/(issue-[^/]*|ir\/[^/]*)\.test\.ts$/.test(file) || !statSync(file).isFile()) ||
+              JSON.stringify(files) !== JSON.stringify([...files].sort())) {
+            throw new Error("Invalid changed issue-test selection");
           }
-          if [ ! -s /tmp/issue-tests-changed.txt ]; then
-            echo "This PR touches no tests/issue-*.test.ts file."
-            exit 0
-          fi
-          cat /tmp/issue-tests-changed.txt
-          mapfile -t FILES < /tmp/issue-tests-changed.txt
-          # Reclaim each file's compiler graph before starting the next one.
-          # One worker at a time; preserve the exact selected file population.
-          pnpm exec vitest run "${FILES[@]}" \
+          console.log(`Selected ${files.length} changed issue test file(s):`, files);
+          const matrix = { include: files.map((file, ordinal) => ({ ordinal, file })) };
+          appendFileSync(process.env.GITHUB_OUTPUT, `files=${JSON.stringify(files)}\ncount=${files.length}\nmatrix=${JSON.stringify(matrix)}\n`);
+          NODE
+
+  issue-tests-changed:
+    needs: [changes, issue-tests-select]
+    if: needs.changes.outputs.code == 'true' && needs.issue-tests-select.result == 'success' && needs.issue-tests-select.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 15
+      matrix: ${{ fromJSON(needs.issue-tests-select.outputs.matrix) }}
+    env:
+      VITEST_FORK_MAX_OLD_SPACE_SIZE: "4096"
+    steps:
+      - uses: actions/checkout@v5
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Validate selected file manifest
+        env:
+          SELECTED_FILES: ${{ needs.issue-tests-select.outputs.files }}
+          ISSUE_TEST_FILE: ${{ matrix.file }}
+          ISSUE_TEST_ORDINAL: ${{ matrix.ordinal }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { statSync } from "node:fs";
+          const { SELECTED_FILES, ISSUE_TEST_FILE, ISSUE_TEST_ORDINAL } = process.env;
+          const files = JSON.parse(SELECTED_FILES);
+          if (!Array.isArray(files) || files.length === 0 || files.length > 15 ||
+              !/^(0|[1-9][0-9]*)$/.test(ISSUE_TEST_ORDINAL) ||
+              files[Number(ISSUE_TEST_ORDINAL)] !== ISSUE_TEST_FILE ||
+              !statSync(ISSUE_TEST_FILE).isFile()) {
+            throw new Error("Changed issue-test runner is outside the selected manifest");
+          }
+          console.log(`Running selected file ${ISSUE_TEST_ORDINAL}: ${ISSUE_TEST_FILE}`);
+          NODE
+      - name: Run changed issue test file (advisory)
+        id: tests
+        continue-on-error: true
+        env:
+          ISSUE_TEST_FILE: ${{ matrix.file }}
+        run: |
+          # One selected file per isolated runner; preserve the worker flags.
+          pnpm exec vitest run "$ISSUE_TEST_FILE" \
             --pool=forks --poolOptions.forks.singleFork=false \
             --poolOptions.forks.maxForks=1 --no-file-parallelism
+
+      - name: Report changed issue-test outcome
+        if: always() && !cancelled()
+        env:
+          TEST_OUTCOME: ${{ steps.tests.outcome }}
+          ISSUE_TEST_FILE: ${{ matrix.file }}
+        run: |
+          echo "Changed issue-test outcome: $TEST_OUTCOME ($ISSUE_TEST_FILE)"
+          case "$TEST_OUTCOME" in
+            success) ;;
+            failure) echo "::warning::Changed issue test failed (advisory): $ISSUE_TEST_FILE" ;;
+            *) echo "::error::Changed issue test did not execute"; exit 1 ;;
+          esac
+
+  # Keep the existing check name. An empty successful discovery may skip the
+  # matrix; selector/setup failures and cancellations must remain visible.
+  issue-tests:
+    needs: [changes, issue-tests-pinned, issue-tests-select, issue-tests-changed]
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.code != 'false')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Verify issue-test jobs completed
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          CHANGES_CODE: ${{ needs.changes.outputs.code }}
+          PINNED_RESULT: ${{ needs.issue-tests-pinned.result }}
+          DISCOVERY_RESULT: ${{ needs.issue-tests-select.result }}
+          CHANGED_RESULT: ${{ needs.issue-tests-changed.result }}
+          SELECTED_FILES: ${{ needs.issue-tests-select.outputs.files }}
+          SELECTED_COUNT: ${{ needs.issue-tests-select.outputs.count }}
+        run: |
+          node --input-type=module <<'NODE'
+          const { CHANGES_RESULT, CHANGES_CODE, PINNED_RESULT, DISCOVERY_RESULT, CHANGED_RESULT, SELECTED_FILES, SELECTED_COUNT } = process.env;
+          if (CHANGES_RESULT !== "success" || CHANGES_CODE !== "true" || PINNED_RESULT !== "success" || DISCOVERY_RESULT !== "success") {
+            throw new Error(`Issue-test infrastructure failed: changes=${CHANGES_RESULT}, pinned=${PINNED_RESULT}, discovery=${DISCOVERY_RESULT}`);
+          }
+          const files = JSON.parse(SELECTED_FILES);
+          if (!Array.isArray(files) || !/^(0|[1-9][0-9]*)$/.test(SELECTED_COUNT) ||
+              files.length !== Number(SELECTED_COUNT) || files.length > 15 ||
+              new Set(files).size !== files.length || files.some((file) => typeof file !== "string" ||
+                /[\r\n\0]/.test(file) || !/^tests\/(issue-[^/]*|ir\/[^/]*)\.test\.ts$/.test(file)) ||
+              JSON.stringify(files) !== JSON.stringify([...files].sort())) {
+            throw new Error("Missing or invalid changed issue-test discovery outputs");
+          }
+          const expected = files.length === 0 ? "skipped" : "success";
+          if (CHANGED_RESULT !== expected) {
+            throw new Error(`Changed issue-test jobs: expected ${expected} for ${files.length} selected file(s), received ${CHANGED_RESULT}`);
+          }
+          console.log(`Pinned issue tests completed; ${files.length} changed file job(s) completed with advisory assertion policy.`);
+          NODE
 
   # #2139 — Execute the linear-backend (linear-memory lowering), C-ABI, and
   # SIMD test suites in CI. These 20 files (tests/linear-*.test.ts,

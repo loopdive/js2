@@ -13,6 +13,7 @@ import { ITERATOR_BINDING_PREAMBLE, needsIteratorBinding } from "./test262-itera
 export {
   discoverFixtureGraph,
   dynamicFixtureSpecifiers,
+  hasPinnedEntryValueSelfImport,
   hasPinnedNamespaceSelfModuleImport,
   hasSelfModuleImport,
   staticFixtureSpecifiers,
@@ -42,7 +43,8 @@ function attachFixtureGraphs(tests) {
     if (
       Object.keys(graph.fixtureFiles).length > 0 ||
       Object.keys(graph.dynamicFixtureFiles).length > 0 ||
-      selfModuleGraph
+      selfModuleGraph ||
+      graph.requiresEntrySelfImportGraph === true
     ) {
       Object.assign(test, graph, selfModuleGraph ? { selfModuleGraph: true } : {});
     }

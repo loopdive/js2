@@ -415,3 +415,14 @@ advanced; its new commits touch none of this lane's files); `check-compiler-boun
 --mode inventory` exit 0 (the new leaf classified next to its siblings in
 `scripts/compiler-boundaries.json`); `check:host-import-policy` exit 0;
 `npm run typecheck` exit 0.
+
+### 2026-10-02 — residuals R1 / R4 moved to #6772 (pointer)
+
+R4 (`Object.getPrototypeOf(D)` for a derived class) is fixed by #6772 S6 and
+R1 (a static accessor sharing an instance accessor's function slot) by #6772
+S12; both RESIDUAL pins in `tests/issue-6767-class-definition-reflective.test.ts`
+now assert node's answer (p12 511, `C.eval` 3). R2 (%ThrowTypeError%
+`caller`/`arguments` on method values) is #6772's optional S13, not
+attempted. R3 (the runtime-keyed static view) is still open: it is the first
+failing assertion of `fn-name-accessor-{get,set}.js` — `gOPD(A, 'id').get`
+is undefined because A also declares symbol-keyed static accessors.

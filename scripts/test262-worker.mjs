@@ -28,7 +28,7 @@ import * as runtimeBundle from "./runtime-bundle.mjs";
 import { buildImports, _resetIteratorRuntimeIntrinsicsForRealmIsolation } from "./runtime-bundle.mjs";
 import { poisonRecycleReason } from "./test262-poison-error.mjs";
 import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "./negative-verdict.mjs";
-import { hasPinnedNamespaceSelfModuleImport } from "./test262-fixture-graph.mjs";
+import { hasPinnedEntryValueSelfImport, hasPinnedNamespaceSelfModuleImport } from "./test262-fixture-graph.mjs";
 // (#3613) ONE renderer, shared with tests/test262-runner.ts. The worker's
 // behaviour is unchanged — these bodies moved here verbatim; it is the LOCAL
 // runner that was missing the tryNativeExnRender step.
@@ -1249,6 +1249,16 @@ function hasValidatedSelfNamespaceGraph({ selfModuleGraph, originalHarness, entr
   );
 }
 
+function hasValidatedEntrySelfImportGraph({ requiresEntrySelfImportGraph, originalHarness, entryFile, fixtureFiles, source }) {
+  return (
+    requiresEntrySelfImportGraph === true &&
+    originalHarness === true &&
+    isFixtureFileRecord(fixtureFiles) &&
+    Object.keys(fixtureFiles).length === 0 &&
+    hasPinnedEntryValueSelfImport(entryFile, source)
+  );
+}
+
 // #3506 — the 5 resolution-phase paths in this slice import Test262's
 // `ensure-linking-error_FIXTURE.js`, whose deliberate self-import of an
 // unexported binding is reported by TypeScript as TS2459. Requiring that
@@ -1554,9 +1564,8 @@ async function doCompile(
     }
 
     // Preserve the literal FYI entry as its own Module and link the pinned
-    // fixture sources beside it. Like the project runner's #2932 path, the
-    // graph deliberately omits deferTopLevelInit: compileMulti synthesizes
-    // one init schedule for the entire graph, including circular exports.
+    // fixture sources beside it. The existing deferOpt wires runtime exports
+    // before the graph's single initializer, including circular/self imports.
     return compileMultipleSources({ ...fixtureFiles, [entryFile]: source }, entryFile, {
       // #3506 — every virtual root is a real pinned `.js` file. With
       // `allowJs:false`, TypeScript excludes the graph before syntax checking
@@ -2079,7 +2088,16 @@ process.on("message", async (msg) => {
     fixtureFiles: msg.fixtureFiles,
     source,
   });
-  const fixtureGraph = staticFixtureGraph || selfNamespaceGraph;
+  // The new protocol field requests an empty entry graph; the source and
+  // canonical key, rather than a caller-supplied boolean, prove admission.
+  const entrySelfImportGraph = hasValidatedEntrySelfImportGraph({
+    requiresEntrySelfImportGraph: msg.requiresEntrySelfImportGraph,
+    originalHarness,
+    entryFile: msg.entryFile,
+    fixtureFiles: msg.fixtureFiles,
+    source,
+  });
+  const fixtureGraph = staticFixtureGraph || selfNamespaceGraph || entrySelfImportGraph;
   const compileStart = performance.now();
 
   // #3492/#3509/#3494 — Dynamic fixture discovery is transport metadata, not

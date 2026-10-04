@@ -101,6 +101,7 @@ import { fillForOfIteratorStep } from "./forof-iterator-step.js"; // (#6651 G4)
 import { buildLiveArrayIteratorValue } from "./live-array-iterator-value.js";
 import { buildRuntimeEvalValueUnwrap } from "./runtime-eval-boundary.js"; // (#6651 A9)
 import { RUNTIME_EVAL_IMPORT_MODULE } from "./expressions/runtime-eval-provider.js"; // (#6651 A9)
+import { registerExpressionHelpers } from "./registry/expression-helper-delegates.js";
 
 /** Slice-1 IterRec kind tag for a canonical externref `$Vec`. (#6651 IT3 exports it: `ta-dyn-proto-methods.ts` `struct.new`s a record, and a bare `3` there would desync on a renumber.) */
 export const ITER_KIND_VEC = 3;
@@ -6402,3 +6403,5 @@ function buildIteratorRestVecTail(iterRecTypeIdx: number, vecTypeIdx: number, ar
     { op: "extern.convert_any" },
   ];
 }
+
+registerExpressionHelpers({ ensureNativeArrayFromIterN }); // (#6797) late-bound for the expressions/ leaves

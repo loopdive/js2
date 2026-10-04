@@ -1,7 +1,7 @@
 ---
 id: 1240
 title: "perf: per-iteration eval compile budget for `comments/S7.4_A6.js` (still ~25s with #1229 cache)"
-status: in_progress
+status: in-progress
 created: 2026-05-02
 updated: 2026-08-25
 priority: low

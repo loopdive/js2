@@ -57,7 +57,12 @@ places: the root manifest, the proxy manifest, the proxy's
 field and is what JSR publishes). Then it makes one commit
 `release: vX.Y.Z` and one annotated tag `vX.Y.Z` on your branch. It also drafts
 `docs/release-notes/vX.Y.Z.md` from the commit subjects since the last release
-tag, amends it into the commit, and re-points the tag.
+tag, amends it into the commit, and re-points the tag. Finally it runs
+`pnpm run refresh:benchmarks` and, if tracked files under `benchmarks/results/`
+changed, commits them as `chore(benchmarks): refresh for vX.Y.Z` on top of the
+tagged commit, so the numbers are reviewed in the release PR (`--skip-benchmarks`
+opts out; a failed refresh only warns). This used to be a side effect of
+pushing the tag, inside `.husky/pre-push` (#6799).
 
 It refuses a dirty tree (so the release commit is only the bump) and refuses if
 the tag already exists. **It does not push** — deliberately.
@@ -134,14 +139,15 @@ landed (`git tag -f -a vX.Y.Z <merge-sha> -m vX.Y.Z`) and re-run the check.
 ## Step 5 — push the tag (this publishes)
 
 ```bash
-git push --no-verify origin refs/tags/vX.Y.Z:refs/tags/vX.Y.Z
+git push origin refs/tags/vX.Y.Z:refs/tags/vX.Y.Z
 git ls-remote --tags origin refs/tags/vX.Y.Z    # verify it LANDED
 ```
 
 The explicit `refs/tags/…:refs/tags/…` refspec matters: a bare
 `git push origin vX.Y.Z` can resolve as a branch refspec and report
-`Everything up-to-date` while pushing nothing. `--no-verify` skips the local
-pre-push gate, which CI re-runs anyway.
+`Everything up-to-date` while pushing nothing. Let the pre-push hook run: it no
+longer commits anything on a tag push (#6799), and bypassing hooks is forbidden
+(CLAUDE.md, 2026-08-22).
 
 **Check the effect, not the exit code.** Git can report failure on a push that
 landed, and the reverse. `ls-remote` is the answer.
