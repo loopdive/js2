@@ -7,12 +7,14 @@ import { linkedModuleCall } from "../linked-module-namespace.js";
 import { LINKED_RESOLVED_CALL, reserveLinkedResolvedCall } from "../linked-realm-method-call.js";
 import { reserveLinkedRealmPropertyRead } from "../linked-realm-property-read.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
-import { stringConstantExternrefInstrs } from "../native-strings.js";
-import { coerceType, compileExpression } from "../shared.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
-import { compileComputedMemberKeyAfterBaseGuard } from "./computed-member-reference.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { emitLinkedModuleSpreadArgs } from "./linked-module-spread.js";
+import {
+  emitLinkedModuleReference,
+  unwrapLinkedCallReference,
+  withLinkedOptionalReference,
+} from "./linked-module-reference.js";
 
 /** Resolve once before args; dispatch in the callable's allocation owner.
  * Structural closure compatibility does not share the owner's `this` global. */
@@ -22,7 +24,6 @@ export function tryCompileLinkedModuleCall(
   expr: ts.CallExpression,
 ): ValType | undefined {
   if (!linkedModuleCall(ctx, expr.expression)) return undefined;
-  if (ts.isOptionalChain(expr)) return undefined;
   const provider = ctx.standaloneGlobalThisImport;
   if (!provider?.owns || !provider.get || !provider.call)
     throw new Error("Linked module calls require owner-aware get/call providers");
@@ -35,31 +36,23 @@ export function tryCompileLinkedModuleCall(
   const receiver = allocLocal(fctx, "linkedImportReceiver", { kind: "externref" });
   const callee = allocLocal(fctx, "linkedImportCallee", { kind: "externref" });
   const args = allocLocal(fctx, "linkedImportArgs", { kind: "externref" });
-  const emitValue = (value: ts.Expression): void => {
-    const type = compileExpression(ctx, fctx, value, { kind: "externref" });
-    if (type === null) throw new Error("Linked module call value could not be compiled");
-    if (type.kind !== "externref") coerceType(ctx, fctx, type, { kind: "externref" });
-  };
-  const member = expr.expression;
-  if (ts.isPropertyAccessExpression(member) || ts.isElementAccessExpression(member)) {
-    emitValue(member.expression);
-    fctx.body.push({ op: "local.set", index: receiver });
-    const key = ts.isElementAccessExpression(member)
-      ? compileComputedMemberKeyAfterBaseGuard(ctx, fctx, receiver, member.argumentExpression, "linkedImportKey")
-      : undefined;
-    if (key === null) throw new Error("Linked module call key could not be compiled");
-    const literal = ts.isPropertyAccessExpression(member) ? stringConstantExternrefInstrs(ctx, member.name.text) : [];
-    flushLateImportShifts(ctx, fctx);
-    const get = ctx.funcMap.get("__extern_get")!;
-    fctx.body.push(
-      { op: "local.get", index: receiver },
-      ...(key === undefined ? literal : [{ op: "local.get" as const, index: key }]),
-      { op: "call", funcIdx: get },
-    );
-  } else {
-    emitValue(member);
-  }
-  fctx.body.push({ op: "local.set", index: callee });
+  emitLinkedModuleReference(ctx, fctx, unwrapLinkedCallReference(expr.expression), receiver, (value) => {
+    fctx.body.push({ op: "local.get", index: value }, { op: "local.set", index: callee });
+    const invoke = (): void => emitLinkedModuleInvocation(ctx, fctx, expr, callee, receiver, args);
+    if (expr.questionDotToken) withLinkedOptionalReference(ctx, fctx, callee, invoke);
+    else invoke();
+  });
+  return { kind: "externref" };
+}
+
+function emitLinkedModuleInvocation(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  callee: number,
+  receiver: number,
+  args: number,
+): void {
   if (expr.arguments.some(ts.isSpreadElement)) {
     emitLinkedModuleSpreadArgs(ctx, fctx, expr.arguments, args);
     flushLateImportShifts(ctx, fctx);
@@ -69,7 +62,7 @@ export function tryCompileLinkedModuleCall(
       { op: "local.get", index: args },
       { op: "call", funcIdx: ctx.funcMap.get(LINKED_RESOLVED_CALL)! },
     );
-    return { kind: "externref" };
+    return;
   }
   const values: number[] = [];
   for (const argument of expr.arguments) {
@@ -91,5 +84,4 @@ export function tryCompileLinkedModuleCall(
     { op: "local.get", index: args },
     { op: "call", funcIdx: call },
   );
-  return { kind: "externref" };
 }

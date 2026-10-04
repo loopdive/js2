@@ -31,8 +31,11 @@ it("calls original namespace functions with their own receiver state", async () 
      ns.bump=function(){return ++count;};
      ns.receiver=function(){return this;};
      ns.sum=function(a:number,b:number){count+=a+b;return count;};
+     ns.nil=null; ns.nonCallable=1;
+     ns.nested=Object.create(null); ns.nested.receiver=ns.receiver;
      export function namespace():any {return ns;}
      export function current():number {return count;}
+     export function nested():any {return ns.nested;}
      export function isUndefined(value:any):number {return value===undefined?1:0;}
      export function originalBump():any {return ns.bump;}
      export function realm():any {return globalThis;}
@@ -74,7 +77,21 @@ it("calls original namespace functions with their own receiver state", async () 
       export function namedSpreadCaller():any {return namedSpread([4]);}
       export function emptySpread():any {return sum(...[],2,...[3]);}
       export function nestedSpread():any {return sum(...[bump(),bump()]);}
-      export function invalidSpread():number {try {sum(...null);}catch(e){return 1;}return 0;}`,
+      export function invalidSpread():number {try {sum(...null);}catch(e){return 1;}return 0;}
+      export function optionalNamed():any {return bump?.();}
+      export function optionalMethod():any {return ns.bump?.();}
+      export function optionalComputed():any {return ns['bump']?.();}
+      export function optionalNamespace():any {return ns?.bump();}
+      export function optionalReceiver():any {return ns.receiver?.();}
+      export function absentCall():any {return ns.absent?.(bump());}
+      export function absentReceiver():any {return ns.nothing?.[bump()]();}
+      export function chainSkip():any {return ns.nothing?.foo.bar(bump());}
+      export function computedSkip():any {return ns.nothing?.[bump()].foo(bump());}
+      export function nullSkip():any {return ns.nil?.[bump()].foo(bump());}
+      export function parenthesizedReceiver():any {return (ns.receiver)?.();}
+      export function nestedReceiver():any {return ns.nested?.receiver?.();}
+      export function parenBreak():number {try {(ns.nothing?.foo).bar(bump());}catch(e){return 1;}return 0;}
+      export function nonCallable():number {try {ns.nonCallable?.(bump());}catch(e){return 1;}return 0;}`,
       "dep.js": `throw new Error('evaluated dependency was rerun');
       export function bump(){return 1;}
       export function receiver(){return this;}
@@ -113,4 +130,21 @@ it("calls original namespace functions with their own receiver state", async () 
   expect((owner.exports.current as () => number)()).toBe(50);
   expect(() => (instance.exports.namedSpreadCaller as () => unknown)(), "runtime spread parameter").not.toThrow();
   expect((owner.exports.current as () => number)()).toBe(55);
+  for (const name of ["optionalNamed", "optionalMethod", "optionalComputed", "optionalNamespace"]) {
+    expect(() => (instance.exports[name] as () => unknown)(), name).not.toThrow();
+  }
+  expect((owner.exports.current as () => number)()).toBe(59);
+  expect((instance.exports.optionalReceiver as () => unknown)()).toBe(namespace);
+  for (const name of ["absentCall", "absentReceiver", "chainSkip", "computedSkip", "nullSkip"]) {
+    expect((owner.exports.isUndefined as (value: unknown) => number)((instance.exports[name] as () => unknown)())).toBe(
+      1,
+    );
+  }
+  expect((owner.exports.current as () => number)()).toBe(59);
+  expect((instance.exports.parenthesizedReceiver as () => unknown)()).toBe(namespace);
+  expect((instance.exports.nestedReceiver as () => unknown)()).toBe((owner.exports.nested as () => unknown)());
+  expect((instance.exports.parenBreak as () => number)()).toBe(1);
+  expect((owner.exports.current as () => number)()).toBe(59);
+  expect((instance.exports.nonCallable as () => number)()).toBe(1);
+  expect((owner.exports.current as () => number)()).toBe(60);
 });

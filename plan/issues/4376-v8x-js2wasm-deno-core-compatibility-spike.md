@@ -17,6 +17,9 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-10-04: imported optional calls retain the original allocation owner
+  # and short-circuit the entire remaining reference/argument evaluation.
+  - src/codegen/expressions/linked-module-reference.ts
   # 2026-10-04: preserve original callable ownership for spread imported calls
   # using strict native iteration and local argument-list storage.
   - src/codegen/expressions/linked-module-spread.ts
@@ -322,6 +325,18 @@ files:
 # #4376 — v8x + js2wasm as an engine-free Deno substrate
 
 ## Latest module-linking handoff (2026-10-04)
+
+### Optional imported calls (continuation)
+
+The expanded compiler control reproduced wrong-owner optional calls: four
+invocations advanced the original count twice, to 57 instead of 59. Linked
+references now resolve each member exactly once and place the entire remaining
+chain inside its nullish guard, including computed keys and arguments. Calls
+preserve their receiver through parentheses and nested chains. Non-optional
+property lookup reuses the existing base-coercibility guard so an ended
+optional chain throws before evaluating call arguments. Named/namespace,
+computed, nested, skipped, parenthesized and non-callable controls are included.
+Fresh native artifact replay is required before claiming adapter verification.
 
 ### Imported spread calls (continuation)
 

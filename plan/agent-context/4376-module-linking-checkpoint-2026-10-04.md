@@ -1,5 +1,18 @@
 # Deno module linking checkpoint, 2026-10-04
 
+## Continuation: optional imported references
+
+`expressions/linked-module-reference.ts` now resolves linked member references
+in source order and puts the remaining chain inside each optional nullish
+guard. This prevents optional calls from reaching a private copied dependency
+and preserves computed-key/argument skipping, nested chains, named-call
+undefined receivers and parenthesized member receivers. Export the existing
+`emitBaseCoercibilityGuard` for non-optional property references, which must
+throw on a nullish base before call arguments execute. The compiler control
+initially measured 57 instead of 59 after four optional imported calls; that
+owner discrepancy is fixed. An expanded native fixture is being rebuilt;
+do not reuse the previous spread-only package hashes for it.
+
 ## Continuation: imported spread calls
 
 An explicit compiler control reproduced a wrong-owner spread call: after

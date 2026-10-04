@@ -37,7 +37,15 @@ export function linkedModuleImportedBinding(
 
 export function linkedModuleCall(ctx: CodegenContext, callee: ts.Expression): boolean {
   if (!ctx.standaloneModuleNamespaceImports) return false;
-  while (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) callee = callee.expression;
+  while (
+    ts.isPropertyAccessExpression(callee) ||
+    ts.isElementAccessExpression(callee) ||
+    ts.isParenthesizedExpression(callee) ||
+    ts.isAsExpression(callee) ||
+    ts.isTypeAssertionExpression(callee) ||
+    ts.isNonNullExpression(callee)
+  )
+    callee = callee.expression;
   if (!ts.isIdentifier(callee)) return false;
   if (linkedModuleImportedBinding(ctx, callee)) return true;
   return linkedModuleNamespaceBinding(ctx, callee, "") !== undefined;

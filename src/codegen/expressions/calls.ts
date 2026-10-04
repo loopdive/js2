@@ -7600,11 +7600,11 @@ function compileCallExpression(
   // which evaluates arguments unconditionally and derefs the receiver (trapping
   // on a null class instance). Gate on the optional chain itself so both forms
   // route to the short-circuiting path.
+  const linked = tryCompileLinkedModuleCall(ctx, fctx, expr);
+  if (linked !== undefined) return linked;
   if (ts.isOptionalChain(expr) && ts.isPropertyAccessExpression(expr.expression)) {
     return compileOptionalCallExpression(ctx, fctx, expr);
   }
-  const linked = tryCompileLinkedModuleCall(ctx, fctx, expr);
-  if (linked !== undefined) return linked;
 
   // (#4484 B) §7.3.2 RequireObjectCoercible — `undefined.toString()` /
   // `null["toString"]()`. Runs BEFORE every builtin-method interception below:

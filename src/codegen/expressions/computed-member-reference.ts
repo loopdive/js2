@@ -35,7 +35,7 @@ export function emitToPropertyKeyOnce(ctx: CodegenContext, fctx: FunctionContext
  * the member Reference rejects a nullish base before ToPropertyKey observes
  * the key value.
  */
-function emitBaseCoercibilityGuard(ctx: CodegenContext, fctx: FunctionContext, baseLocal: number): void {
+export function emitBaseCoercibilityGuard(ctx: CodegenContext, fctx: FunctionContext, baseLocal: number): void {
   const emitTypeErrorBranch = (): Instr[] => {
     const start = fctx.body.length;
     emitThrowTypeError(ctx, fctx, "Cannot read properties of null or undefined (computed assignment target)");
