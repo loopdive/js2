@@ -232,6 +232,10 @@ function bareBinaryStatementReachesToPrimitive(ctx: CodegenContext, expr: ts.Exp
 }
 
 function compileExpressionStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ExpressionStatement): void {
+  if (ctx.standaloneScriptCompletionImport && fctx.evalCompletionLocal !== undefined) {
+    sinkExpressionStatementValue(ctx, fctx, compileExpression(ctx, fctx, stmt.expression, { kind: "externref" }));
+    return;
+  }
   const typeofOperand = bareTypeofStatementOperand(stmt.expression);
   const evaluated = typeofOperand ?? stmt.expression;
   const expected =

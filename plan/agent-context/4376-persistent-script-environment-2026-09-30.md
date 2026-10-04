@@ -535,6 +535,28 @@ preserve arbitrary JS values, callable identity and foreign realm values.
 
 ### Incomplete completion checkpoint (2026-10-04)
 
+Latest follow-up: **36/36 ordinary completion controls pass**. The apparent
+implicit-return defect was a sink bug, not a function signature bug: direct
+lowering erased void call values, leaving the preceding completion in place.
+Completion-observable expression statements now request externref results,
+so a void call supplies canonical undefined. They also retain the actual typeof
+expression instead of using the side-effect-only operand shortcut. Added controls
+cover both implicit and explicit void returns and exact typeof text.
+TypeScript 7 passes; persistent Script plus existing Script result regressions
+report 89/89, including two existing expected failures.
+
+The adapter continuation adds a retained Context completion sink, reset and
+rooted-handle getter, plus a private native Script instantiation method.
+One Context and eleven independently compiled Scripts pass the Node/Wasm
+fixture before native packaging. Completion uses the actual production value
+bridge, not a substitute JSON representation. Foreign Script undefined
+singletons are normalized to root handle zero. Native replay and public
+source-bound Script dispatch must still be verified; no full Deno rebuild is
+credited yet. See the adapter handoff for the final native replay evidence.
+
+The previous 33/34 result and implicit-return hypothesis below are historical;
+the focused failure is now fixed without changing callable signatures.
+
 Follow-up after `7e0bf9e4965`: completion-observable Scripts now retain pure
 top-level expression statements. A compiler-owned native undefined provider
 uses the existing `emitUndefined` representation and is registered before IR

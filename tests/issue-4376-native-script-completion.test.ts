@@ -22,6 +22,7 @@ export function kind():number {
 }
 export function number():number {return Number(captured);}
 export function text():boolean {return captured==="text";}
+export function numberText():boolean {return captured==="number";}
 export function identity():boolean {return captured===globalThis.saved;}
 `,
     { target: "standalone", standaloneAllocationOwnerExport: "owns" },
@@ -82,6 +83,8 @@ it.each([
   "1|2;",
   "1===1;",
   "-42;",
+  "typeof 42;",
+  "42; function nested(){return;} nested();",
   "42; function nested(){99;} nested();",
   "42; function nested(){99;}",
   "while(true){42;break;}",
@@ -106,7 +109,7 @@ it.each([
             : 4;
   expect((owner.exports.kind as Function)()).toBe(kind);
   if (kind === 1 || kind === 2) expect((owner.exports.number as Function)()).toBe(Number(expected));
-  if (kind === 3) expect((owner.exports.text as Function)()).toBe(1);
+  if (kind === 3) expect((owner.exports[expected === "number" ? "numberText" : "text"] as Function)()).toBe(1);
 });
 
 it("keeps object completion identity instead of serializing a copy", async () => {

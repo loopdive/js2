@@ -3094,3 +3094,14 @@ investigate callable signature/implicit-return semantics. The persistent Script
 suite remains 86/86, including two existing expected failures. TypeScript 7
 passes. The native adapter and full unchanged Deno tests have not been rebuilt
 for this completion follow-up. Integration remains in progress.
+
+Latest completion follow-up: 36/36 ordinary controls now pass. The apparent
+implicit-return failure was stale completion after a void call, not a numeric
+function return. Direct observable expression statements request externref
+values so void calls overwrite completion with undefined; typeof retains its
+actual value instead of the side-effect-only operand shortcut. TypeScript 7
+passes. Persistent Script and existing Script-result regressions report 89/89,
+including two existing expected failures. The adapter's native Context sink,
+reset/root getter and compiler-free independent-Script fixture are in progress.
+Public source-bound Script dispatch and unchanged full Deno conformance remain
+required before completion.
