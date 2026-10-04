@@ -1,5 +1,59 @@
 # Deno module linking checkpoint, 2026-10-04
 
+## Continuation: callable ownership fixed
+
+The previously failing expanded shared dependency test now passes **1/1**,
+51 filtered /52, including namespace and named mutations to 4/5, namespace
+receiver identity, bare-call undefined, same-URL distinct Modules and zero
+runtime compiler/interpreter counts. Node V8 control remains 1/1.
+
+Fixes: namespace function-value specialization conditionally reads the original
+capability; `expressions/linked-module-call.ts` captures receiver/callee before
+arguments and uses the existing linked resolved-call bridge. Remove the duplicate
+early dynamic call in call-identifier. An empty source map remains byte-identical.
+Native `js2wasm_foreign_get.rs` previously excluded all Module graphs. It now
+recognizes `__v8x_graph_owns`, routes get/call to the actual allocation owner and
+retains explicit receiver semantics. New graph exports provide owning
+three-reference getters and allocation-proven calls to nested closures.
+Native direct export dispatch also rejects graphs merely re-exporting a foreign
+function. Caller reachability is not callee ownership.
+
+Five exact unchanged Deno module tests now pass **5/5**, each 430 filtered /431:
+builtin_core_module, import_meta_resolve, import_meta_filename_dirname,
+evaluate_already_evaluated_module and evaluate_already_evaluated_module_sync.
+Missing builtin graph package fails **0/1** with loading refusal. An exploratory
+import_meta_ prefix run executed two passing tests, then aborted at
+`v8__SnapshotCreator__CONSTRUCT`; do not score it as full-suite completion.
+
+Rebuild unchanged Deno runner from its checkout with
+`RUSTFLAGS='--cfg tokio_unstable' cargo test --offline -p deno_core --lib --no-run`.
+This fixes the linker configuration failure without editing Deno. Exact replay:
+
+```sh
+V8X_JS2WASM_DENO_CORE_AOT_MODULE=/private/tmp/deno-promise-full.X2WdwN/deno-core.cwasm V8X_JS2WASM_AOT_SCRIPT_DIR=/private/tmp/deno-module-linking.pmIWQ4/deno/scripts V8X_JS2WASM_AOT_GRAPH_DIR=/private/tmp/deno-module-linking.pmIWQ4/deno/graphs target/debug/deps/deno_core-87206ac56a2fccad --exact modules::tests::builtin_core_module --nocapture --test-threads=1
+```
+
+All five graph packages were built successfully. The combined builder then
+failed loading compiler `.js` imports during Script packaging without tsx.
+The four exact assertion Scripts were subsequently built with Node's explicit
+`--import tsx` loader; keep that loader when rebuilding from compiler source.
+No Deno source/test rewrite or interpreter was added. Existing full/small
+Context artifacts are unchanged. New packages still use the dirty development
+compiler candidate, not a clean published compiler pin.
+
+Compiler controls verify owner receiver behavior and original function identity,
+native capability import presence and unmapped byte parity. The first parity
+probe used a typed exact static inter-file call, which fails the callable
+preflight on both this candidate and clean 1c2f7c35fd. It is a pre-existing
+`non-exact graph edge` failure, not evidence that typed integration is complete.
+The checked-in parity probe tests namespace function values instead.
+
+Resume with prepared IR initializer guards and explicit parity tests, cycles,
+TDZ/cached failures, optional and spread imported calls, negative capability
+controls and full unchanged population. Rebuild clean artifacts before claiming
+published reproducibility. Both PRs remain drafts; no fresh benchmark.
+The failed call checkpoint below is historical, not current behavior.
+
 Incomplete implementation checkpoint. Continue in the existing draft PRs:
 [compiler](https://github.com/loopdive/js2/pull/6468) and
 [adapter](https://github.com/loopdive/v8x/pull/2). Neither is merge-ready.

@@ -11,6 +11,7 @@ import { ts } from "../ts-api.js";
 import { builtinSubclassReceiverType } from "./builtin-subclass-receiver.js"; // (#6651 C5) inherited builtin members
 import { carrierNameForAccess } from "./carrier-name-fallback.js"; // (#5187)
 import { isAccessorReceiver } from "./accessor-object-literal.js";
+import { emitLinkedModuleImportRead, linkedModuleNamespaceBinding } from "./linked-module-namespace.js";
 import {
   isExternalDeclaredClass,
   isIteratorResultType,
@@ -3920,11 +3921,14 @@ function tryEmitRuntimeNamespaceFunctionValue(
   const constructible =
     declaration.asteriskToken === undefined &&
     !(declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false);
-  return (
+  const emitLocal = (): ValType | null =>
     withRuntimeModuleCallableBindings(ctx, [{ declaration, handle: funcIdx }], () =>
       emitCachedFuncClosureAccess(ctx, fctx, declaration.name!.text, funcIdx, constructible),
-    ) ?? undefined
-  );
+    ) ?? null;
+  const binding = receiver.sourceModule
+    ? linkedModuleNamespaceBinding(ctx, expr.expression, expr.name.text)
+    : undefined;
+  return (binding === undefined ? emitLocal() : emitLinkedModuleImportRead(ctx, fctx, binding, emitLocal)) ?? undefined;
 }
 
 /**

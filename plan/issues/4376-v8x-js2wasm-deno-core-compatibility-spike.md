@@ -17,6 +17,9 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-10-04: owner-aware imported calls capture callee and receiver before
+  # arguments, rather than invoking a compatible closure in the wrong realm.
+  - src/codegen/expressions/linked-module-call.ts
   # 2026-10-04: unfinished, default-off native Module namespace imports guard
   # per-source initialization and read live exports from the original owner.
   - src/codegen/linked-module-namespace.ts
@@ -316,6 +319,28 @@ files:
 # #4376 — v8x + js2wasm as an engine-free Deno substrate
 
 ## Latest module-linking handoff (2026-10-04)
+
+### Owner-aware calls verified (continuation)
+
+The expanded shared-dependency native control now passes **1/1**, 51 filtered
+/52, including both mutations, exact namespace/bare receiver semantics,
+same-URL distinct native Modules and zero runtime compiler/interpreter counts.
+Namespace function-value specialization must not create a later private closure;
+owner-aware native calls must recognize Module graphs, not only Scripts.
+
+All five selected unchanged Deno module tests now pass **5/5**, each selecting
+1 with 430 filtered /431. Builtin core import is the newly passing test.
+Removing its graph package fails **0/1**, proving actual evaluation is required.
+The default Deno macOS linker flags failed earlier; rebuilding with recorded
+`RUSTFLAGS='--cfg tokio_unstable'` succeeds without Deno source/test edits.
+An exploratory `import_meta_` prefix run passed two tests, then aborted at
+unsupported SnapshotCreator. It is not a full-population result.
+
+These are development-artifact receipts, not a clean published build. Prepared
+IR initialization, cycles/TDZ, optional/spread call coverage, negative capability
+controls, snapshots, remaining host integration and matched benchmarks remain.
+The earlier failing checkpoint below is historical. Detailed continuation is in
+the linked handoff.
 
 Default-off native Module namespace capabilities now preserve cross-graph
 identity, once-only legacy initialization and live named/namespace reads in the

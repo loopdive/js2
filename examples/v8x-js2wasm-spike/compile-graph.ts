@@ -1415,6 +1415,14 @@ export function ${GRAPH_GET_EXPORT}(value, key) {
 export function __v8x_graph_get_owned_export(value, key) {
   return value[key];
 }
+export function __v8x_graph_get_owned_export_receiver(value, key, receiver) {
+  return Reflect.get(value, key, receiver);
+}
+// Allocation ownership must be checked by the native host before this call.
+// A nested closure need not be a direct namespace export to be callable.
+export function __v8x_graph_call_owned_export(callable, receiver, args) {
+  return ${prefix}_remember(callable.apply(receiver, args));
+}
 export function ${GRAPH_SET_EXPORT}(value, key, assigned): any {
   if (${GRAPH_CAN_ACCESS_EXPORT}(value) !== 1) throw new TypeError("object is not owned by this graph");
   // Module namespace [[Set]] rejects writes, including writes of the same value.

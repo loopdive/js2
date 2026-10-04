@@ -40,11 +40,22 @@ export function linkedModuleCall(ctx: CodegenContext, callee: ts.Expression): bo
   while (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) callee = callee.expression;
   if (!ts.isIdentifier(callee)) return false;
   if (linkedModuleImportedBinding(ctx, callee)) return true;
-  const alias = ctx.checker.getSymbolAtLocation(callee);
-  if (!alias || (alias.flags & ts.SymbolFlags.Alias) === 0) return false;
+  return linkedModuleNamespaceBinding(ctx, callee, "") !== undefined;
+}
+
+/** Resolve the namespace's native owner, rather than a re-export's source. */
+export function linkedModuleNamespaceBinding(
+  ctx: CodegenContext,
+  identifier: ts.Identifier,
+  key: string,
+): { name: string; key: string } | undefined {
+  if (!ctx.standaloneModuleNamespaceImports) return undefined;
+  const alias = ctx.checker.getSymbolAtLocation(identifier);
+  if (!alias || (alias.flags & ts.SymbolFlags.Alias) === 0) return undefined;
   const target = ctx.checker.getAliasedSymbol(alias);
   const source = target.declarations?.find(ts.isSourceFile);
-  return source !== undefined && linkedModuleNamespaceName(ctx, source) !== undefined;
+  const name = source === undefined ? undefined : linkedModuleNamespaceName(ctx, source);
+  return name === undefined ? undefined : { name, key };
 }
 
 export function emitLinkedModuleImportRead(
@@ -93,10 +104,12 @@ export function emitLinkedModuleImportRead(
 export function linkedModuleNamespaceName(ctx: CodegenContext, source: ts.SourceFile): string | undefined {
   const provider = ctx.standaloneModuleNamespaceImports;
   if (!provider) return undefined;
+  const name = provider.sources[source.fileName];
+  if (name === undefined) return undefined;
   if (!ctx.standalone || !ctx.standaloneGlobalThisImport) {
     throw new Error("Module namespace capabilities require a shared standalone realm");
   }
-  return provider.sources[source.fileName];
+  return name;
 }
 
 export function reserveLinkedModuleNamespace(ctx: CodegenContext, name: string): void {
