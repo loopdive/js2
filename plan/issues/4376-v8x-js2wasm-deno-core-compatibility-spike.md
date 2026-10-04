@@ -3293,6 +3293,30 @@ fail explicitly on otherwise proven owned receivers rather than silently reading
 through the foreign Context. Full population, arbitrary cross-boundary values,
 snapshots, host services, shared libraries and matched benchmarks remain open.
 
+Module population continuation, 2026-10-04: a build-side fixture extractor now
+reads exact original Rust literals from pinned Deno, refusing missing/ambiguous
+tests and changed layouts. Five graph packages and four assertion Scripts are
+optimized and precompiled with clean compiler ba14fcaedb. Unchanged metadata
+resolution, filename/dirname and repeated async/sync evaluation pass 4/4 selected
+tests, each 430 filtered /431. Removing assertion Scripts makes the repeated
+evaluation test fail 0/1 at check1, demonstrating that its assertions execute.
+No runtime compiler or interpreter is linked into the Deno runner.
+
+The fifth selected test, builtin_core_module, fails with "source module namespace
+was already bound to another value" after its package is provided. The already
+published core namespace is being replaced by the new graph's namespace. This
+is a real shared-module linking defect, not an absent artifact. Honest selected
+result is 4 passed /1 failed out of 5. Do not suppress the binding conflict to
+claim support. Next implement canonical native Module namespace reuse in linked
+graphs, preserving import-star identity and live exports, and prevent reevaluating
+already evaluated dependency bodies. Host identities must be bound by native
+Module instance, not URL alone. Include two graph entries sharing one dependency,
+same-URL distinct Modules, early/cyclic namespace access and failed evaluation
+controls. Module namespace construction is in src/codegen/module-namespace-value.ts;
+initializer planning is in module-init-collection.ts and multi-prepared-module-init*.
+Adapter entry points are collect_graph/publish_source_namespaces and
+realm_objects::bind_source_namespace/bind_prelinked_core_namespace.
+
 Import-meta lifecycle foundation, 2026-10-04: adapter registration now retains
 Deno's callback. A lazy per-native-Module object cache publishes before callback
 invocation, preserves reentrant identity and rejects wrong-context/foreign-isolate
