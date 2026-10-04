@@ -60,9 +60,11 @@ export function installNestedLoader():void {
 let nestedReads=0;
 let nestedReason:any;
 let callSequence=0;
+let methodKeyReads=0;
 export function installNestedGetter(mode:number):any {
  nestedReads=0;
  callSequence=0;
+ methodKeyReads=0;
  nestedReason={marker:42};
  const core:any={};
  const fn:any=function(specifier:any){callSequence=callSequence*10+3;if(mode===1)throw nestedReason;return this===core&&specifier==="x"?42:-1;};
@@ -73,6 +75,8 @@ export function installNestedGetter(mode:number):any {
 export function nestedReadCount():number {return nestedReads;}
 export function markedArgument():any {callSequence=callSequence*10+2;return "x";}
 export function sequence():number {return callSequence;}
+export function methodKey():any {methodKeyReads++;return "loadExtScript";}
+export function keyReadCount():number {return methodKeyReads;}
 export function replaceLoader(callback:any):void {Object.defineProperty((globalThis as any).Deno.core,"loadExtScript",{value:callback,writable:true,configurable:true});}
 export function errorKind(value:any):number {return value.name==="TypeError"?1:0;}
 export function isNull(value:any):boolean {return value===null;}
@@ -177,7 +181,7 @@ it.each([0, 1, 2, 3, 4].flatMap((mode) => [false, true].map((computed) => [mode,
     const owner = await context(true);
     const reason = (owner.exports.installNestedGetter as Function)(mode);
     const result = await compile(
-      `declare function markedArgument():any; Deno.core${computed ? '["loadExtScript"]' : ".loadExtScript"}(markedArgument());`,
+      `declare function markedArgument():any; declare function methodKey():any; Deno.core${computed ? "[methodKey()]" : ".loadExtScript"}(markedArgument());`,
       {
         ...options,
         externImportModule: "context",
@@ -195,6 +199,7 @@ it.each([0, 1, 2, 3, 4].flatMap((mode) => [false, true].map((computed) => [mode,
       thrown = (error as WebAssembly.Exception).getArg(owner.exports.__exn_tag as WebAssembly.Tag, 0);
     }
     expect((owner.exports.sequence as Function)()).toBe(mode === 4 ? 1 : mode === 2 || mode === 3 ? 12 : 123);
+    expect((owner.exports.keyReadCount as Function)()).toBe(computed ? 1 : 0);
     if (mode === 2 || mode === 3) expect((owner.exports.errorKind as Function)(thrown)).toBe(1);
     else expect(thrown).toBe(mode === 1 || mode === 4 ? reason : undefined);
   },
@@ -207,7 +212,8 @@ it.each([false, true])("retains a foreign callee across argument mutation, compu
     `
     declare function markedArgument():any;
     declare function replaceLoader(callback:any):void;
-    Deno.core${computed ? '["loadExtScript"]' : ".loadExtScript"}((replaceLoader(function(){return -1;}),markedArgument()));
+    declare function methodKey():any;
+    Deno.core${computed ? "[methodKey()]" : ".loadExtScript"}((replaceLoader(function(){return -1;}),markedArgument()));
   `,
     {
       ...options,
@@ -221,6 +227,7 @@ it.each([false, true])("retains a foreign callee across argument mutation, compu
   const instance = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports });
   (instance.exports.__module_init as Function)();
   expect((owner.exports.sequence as Function)()).toBe(123);
+  expect((owner.exports.keyReadCount as Function)()).toBe(computed ? 1 : 0);
   expect((owner.exports.number as Function)((owner.exports.captured as Function)())).toBe(42);
 });
 

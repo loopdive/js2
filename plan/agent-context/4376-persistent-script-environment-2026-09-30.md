@@ -48,6 +48,11 @@ method) match clean pre-fix merge 2617ddf4d2 exactly against 9bfee5a9c6. Full
 431-test population, snapshots, full module graphs, macro-generated inputs,
 transport gaps, remaining call-route coverage and comparative benchmarks stay open.
 
+Computed-call controls were strengthened after this native replay: the key now
+comes from a linked runtime function instead of a string literal, and its exact
+single evaluation is checked. The 13 selected call controls pass 13/13 again;
+compiler implementation and native artifact pin remain unchanged.
+
 ## Continuation: main sync and call-reference ordering, 2026-10-04
 
 Merged origin/main 39fd7b7d44c9bc6f9be47ddd1f7fd75196a7d5f1 in 2617ddf4d2.
