@@ -3,9 +3,10 @@
   "slice": "pr-6449-shepherd",
   "assignee": "ttraenkler/pr_shepherd_sol",
   "requested_by": "ttraenkler/pr_shepherd_sol",
-  "status": "in-progress",
+  "status": "released",
   "branch": "codex/pr-6449-shepherd-20261004",
   "claimed_at": "2026-10-04T17:53:16Z",
-  "updated_at": "2026-10-04T17:53:16Z",
-  "write_id": "77488-4ltvy5nm"
+  "updated_at": "2026-10-04T18:13:54Z",
+  "write_id": "92974-dzwztzvo",
+  "released_at": "2026-10-04T18:13:54Z"
 }
