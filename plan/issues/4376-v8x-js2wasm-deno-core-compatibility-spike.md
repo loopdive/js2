@@ -331,6 +331,17 @@ files:
 
 ### Prepared initializer guards (continuation)
 
+First synthetic failure continuation: an expanded native public-API regression
+shows 0/1 when a fresh dependency callback has not yet executed. Source graph
+collection rejects the synthetic module instead of running its callback. The
+paired adapter now evaluates leading instantiated synthetic dependencies in
+dependency order before packaging, then propagates the original callback
+failure. Source-prefix work still prevents the shortcut. Expanded regression
+passes 1/1 (53 filtered /54), filtered adapter library 16/16 (16 filtered /32),
+ordinary native controls 35 passed /18 ignored /1 filtered out of 54, and typed
+owner replay 1/1 (53 filtered /54). Successful synthetic/source graph composition and first source-body
+failure state propagation are not claimed.
+
 Cached failure checkpoint: the paired adapter recognizes the next cached
 dependency failure before packaging, preserves its exact original object in
 rejected Promises and Module::GetException, and propagates transitive errored

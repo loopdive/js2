@@ -2,6 +2,15 @@
 
 ## Wrap-up: cached native dependency failures
 
+Next continuation also covers a fresh leading synthetic dependency: its native
+callback now executes before source packaging and its first failure propagates
+the original object. Expanded regression improves 0/1 to 1/1 (53 filtered /54).
+ModuleState is reacquired after callbacks and the consumer enters Evaluating
+before callback dispatch. Final filtered library 16/16, ordinary native 35
+passed /18 ignored /1 filtered out of 54, typed AOT replay 1/1 and rebuilt
+selected unchanged Deno 5/5 (each 430 filtered /431) pass. Successful mixed
+synthetic/source graphs and first source-body failure propagation remain open.
+
 The paired adapter now returns the original cached dependency exception rather
 than replacing it with an unsupported-graph error. Direct and transitive
 consumers receive rejected Promises, intermediate modules become errored,
