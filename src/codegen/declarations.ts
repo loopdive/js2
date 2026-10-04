@@ -6061,9 +6061,17 @@ export function compileDeclarations(
   }
 
   /** Compile one complete top-level entry without changing its source order. */
-  function compileOrderedModuleInitEntry(fctx: FunctionContext, initEntry: OrderedModuleInitEntry): void {
-    withLinkedModuleInitializer(ctx, fctx, initEntry.node.getSourceFile(), () =>
-      compileLinkedModuleInitEntry(fctx, initEntry),
+  function compileOrderedModuleInitEntry(
+    fctx: FunctionContext,
+    initEntry: OrderedModuleInitEntry,
+    completesSource = false,
+  ): void {
+    withLinkedModuleInitializer(
+      ctx,
+      fctx,
+      initEntry.node.getSourceFile(),
+      () => compileLinkedModuleInitEntry(fctx, initEntry),
+      completesSource,
     );
   }
 
@@ -6269,7 +6277,11 @@ export function compileDeclarations(
 
     const orderedInitEntries = orderedModuleInitEntries();
     const chunks =
-      chunkModuleInitEntries && !ctx.standaloneScriptCompletionImport ? planModuleInitChunks(orderedInitEntries) : [];
+      chunkModuleInitEntries &&
+      !ctx.standaloneScriptCompletionImport &&
+      !ctx.standaloneModuleNamespaceImports?.evaluationHooks
+        ? planModuleInitChunks(orderedInitEntries)
+        : [];
     if (chunks.length > 1) {
       // While a chunk is the current compilation frame, the outer prelude and
       // dispatcher are detached from `ctx.currentFunc`. Keep them live so late
@@ -6306,7 +6318,15 @@ export function compileDeclarations(
         if (!outerBodyWasLive) ctx.liveBodies.delete(initFctx.body);
       }
     } else {
-      for (const initEntry of orderedInitEntries) compileOrderedModuleInitEntry(initFctx, initEntry);
+      const lastEntryBySource = new Map<ts.SourceFile, number>();
+      if (ctx.standaloneModuleNamespaceImports?.evaluationHooks)
+        for (const [index, entry] of orderedInitEntries.entries())
+          lastEntryBySource.set(entry.node.getSourceFile(), index);
+      for (const [index, initEntry] of orderedInitEntries.entries()) {
+        const source = initEntry.node.getSourceFile();
+        const completesSource = lastEntryBySource.get(source) === index;
+        compileOrderedModuleInitEntry(initFctx, initEntry, completesSource);
+      }
     }
 
     publishScriptCompletion(ctx, initFctx);

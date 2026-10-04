@@ -122,6 +122,17 @@ export function linkedModuleNamespaceName(ctx: CodegenContext, source: ts.Source
 
 export function reserveLinkedModuleNamespace(ctx: CodegenContext, name: string): void {
   ensureLateImport(ctx, name, [], [{ kind: "externref" }], ctx.standaloneModuleNamespaceImports!.module);
+  if (ctx.standaloneModuleNamespaceImports!.evaluationHooks) {
+    for (const phase of ["enter", "complete"])
+      ensureLateImport(ctx, `${name}_${phase}`, [], [], ctx.standaloneModuleNamespaceImports!.module);
+  }
+}
+
+function evaluationEvent(ctx: CodegenContext, name: string, phase: "enter" | "complete"): Instr[] {
+  if (!ctx.standaloneModuleNamespaceImports?.evaluationHooks) return [];
+  const funcIdx = ctx.funcMap.get(`${name}_${phase}`);
+  if (funcIdx === undefined) throw new Error("Module evaluation event was not reserved");
+  return [{ op: "call", funcIdx }];
 }
 
 /** Construct the guard before Prepared body identity and resource evidence
@@ -138,7 +149,12 @@ export function preparedLinkedModuleInitializerBody(
   return [
     { op: "call", funcIdx: index },
     { op: "ref.is_null" },
-    { op: "if", blockType: { kind: "empty" }, then: body, else: [] },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [...evaluationEvent(ctx, name, "enter"), ...body, ...evaluationEvent(ctx, name, "complete")],
+      else: [],
+    },
   ];
 }
 
@@ -148,6 +164,7 @@ export function withLinkedModuleInitializer(
   fctx: FunctionContext,
   source: ts.SourceFile,
   emit: () => void,
+  completesSource = false,
 ): void {
   const name = linkedModuleNamespaceName(ctx, source);
   if (name === undefined) {
@@ -173,7 +190,11 @@ export function withLinkedModuleInitializer(
     {
       op: "if",
       blockType: { kind: "empty" },
-      then: body,
+      then: [
+        ...evaluationEvent(ctx, name, "enter"),
+        ...body,
+        ...(completesSource ? evaluationEvent(ctx, name, "complete") : []),
+      ],
       else: [],
     },
   );

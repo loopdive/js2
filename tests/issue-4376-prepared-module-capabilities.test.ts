@@ -9,11 +9,15 @@ import "../src/codegen/expressions.js";
 afterEach(() => vi.unstubAllEnvs());
 
 it.each([
-  [false, false],
-  [false, true],
-  [true, false],
-  [true, true],
-])("guards each prepared initializer (batch=%s, deferred=%s)", (batch, deferred) => {
+  [false, false, false],
+  [false, true, false],
+  [true, false, false],
+  [true, true, false],
+  [false, false, true],
+  [false, true, true],
+  [true, false, true],
+  [true, true, true],
+])("guards each prepared initializer (batch=%s, deferred=%s, hooks=%s)", (batch, deferred, hooks) => {
   vi.stubEnv("JS2WASM_MULTI_PREPARED_MODULE_INIT_CUTOVER", "1");
   vi.stubEnv("JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY", "1");
   const ast = analyzeMultiSource(
@@ -35,7 +39,7 @@ it.each([
     trackIrOutcomes: true,
     deferTopLevelInit: deferred,
     standaloneGlobalThisImport: { module: "context", name: "realm" },
-    standaloneModuleNamespaceImports: { module: "modules", sources },
+    standaloneModuleNamespaceImports: { module: "modules", sources, evaluationHooks: hooks },
     link: ["context", "modules"],
   };
   const generated = generateMultiModule(ast, options);
@@ -57,11 +61,17 @@ it.each([
   });
   expect(counters).toHaveLength(batch ? 2 : 1);
   const wasm = new WebAssembly.Module(emitBinary(module));
-  expect(WebAssembly.Module.imports(wasm).filter((entry) => entry.module === "modules")).toHaveLength(batch ? 2 : 1);
+  expect(WebAssembly.Module.imports(wasm).filter((entry) => entry.module === "modules")).toHaveLength(
+    (batch ? 2 : 1) * (hooks ? 3 : 1),
+  );
   for (const evaluated of [false, true]) {
     const observed: string[] = [];
     const instance = new WebAssembly.Instance(wasm, {
       modules: {
+        dependency_enter: () => observed.push("dependency_enter"),
+        dependency_complete: () => observed.push("dependency_complete"),
+        entry_enter: () => observed.push("entry_enter"),
+        entry_complete: () => observed.push("entry_complete"),
         dependency: () => {
           observed.push("dependency");
           return evaluated ? {} : null;
@@ -78,13 +88,23 @@ it.each([
       expect(values()).toEqual(batch ? [0, 0] : [0]);
       (instance.exports.__module_init as () => void)();
     }
-    expect(observed).toEqual(batch ? ["dependency", "entry"] : ["dependency"]);
+    const dependencyEvents = hooks && !evaluated ? ["dependency_enter", "dependency_complete"] : [];
+    const entryEvents = batch ? ["entry", ...(hooks ? ["entry_enter", "entry_complete"] : [])] : [];
+    expect(observed).toEqual(["dependency", ...dependencyEvents, ...entryEvents]);
     expect(values()).toEqual(batch ? [evaluated ? 0 : 2, 3] : [evaluated ? 0 : 2]);
   }
   if (deferred) {
     const failure = new Error("native dependency evaluation failed");
     const instance = new WebAssembly.Instance(wasm, {
       modules: {
+        dependency_enter: () => {
+          throw new Error("enter must not run after failed namespace guard");
+        },
+        dependency_complete: () => {
+          throw new Error("complete must not run after failed namespace guard");
+        },
+        entry_enter: () => {},
+        entry_complete: () => {},
         dependency: () => {
           throw failure;
         },

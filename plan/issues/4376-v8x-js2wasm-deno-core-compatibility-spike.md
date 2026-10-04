@@ -331,6 +331,23 @@ files:
 
 ### Prepared initializer guards (continuation)
 
+Source failure lifecycle continuation: add a source-bound native graph with
+an executing successful prefix, an object-throwing dependency, and an untouched
+later dependency. Require prefix Evaluated, failing dependency Errored with
+the original payload, later dependency Instantiated, and a cached rejected
+entry Promise. Build artifacts from clean compiler c5b251bc5f before attributing
+the failure. Module-identity enter/complete events must be constructed before
+prepared evidence sealing and must not use property-read capabilities as
+execution events. Default-off compiler lifecycle plumbing is being developed;
+general cyclic evaluation and complete Deno integration remain unfinished.
+Final compiler plumbing controls pass 11/11 across three files, including
+prepared emission with hook reservation, legacy completion after every source
+statement, abrupt entry, and typed live imports. Native baseline fails 0/1
+(54 filtered /55): completed prefix remains Instantiated. Packages were built
+from clean c5b251bc5f; exact V8 fixture control passes 1/1. Hooks are NOT enabled
+in native packages yet. Partial source namespace publication and exact native
+failure propagation still require implementation.
+
 First synthetic failure continuation: an expanded native public-API regression
 shows 0/1 when a fresh dependency callback has not yet executed. Source graph
 collection rejects the synthetic module instead of running its callback. The

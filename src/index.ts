@@ -572,7 +572,13 @@ export interface CompileOptions {
   /** Native Module-identity capabilities keyed by exact compiler source path.
    * Each () -> externref returns an evaluated namespace or null. Requires a
    * shared standalone realm; it does not authorize URL-global lookup. */
-  standaloneModuleNamespaceImports?: { module: string; sources: Readonly<Record<string, string>> };
+  standaloneModuleNamespaceImports?: {
+    module: string;
+    sources: Readonly<Record<string, string>>;
+    /** Native lifecycle notifications: name_enter and name_complete, () -> void.
+     * Completion is emitted only on normal initializer exit. Default off. */
+    evaluationHooks?: boolean;
+  };
   /** Experimental native Context declarative-record operation. Requires the
    * shared Script-var mode. ABI: (name: externref, operation: f64,
    * value: externref) -> externref; see shared-script-lexical-access.ts.

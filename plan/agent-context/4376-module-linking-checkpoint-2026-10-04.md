@@ -1,5 +1,51 @@
 # Deno module linking checkpoint, 2026-10-04
 
+## Source-body failure lifecycle: compiler plumbing, native gap still open
+
+New default-off `standaloneModuleNamespaceImports.evaluationHooks` reserves
+`<name>_enter` and `<name>_complete`, both () -> void. Prepared bodies construct
+the notifications inside the namespace guard before evidence sealing. Legacy
+emission enters each executing source entry and completes only after that
+source's last ordered entry. Enter must be idempotent. Chunking is disabled
+for this opt-in mode so a split chunk cannot complete a source prematurely.
+No new CodegenContext field; the existing option is carried through its existing
+compiler/create-context pipeline. The v8x sidecar does not enable hooks yet.
+
+Final focused compiler controls pass 11/11 across three files: eight prepared
+singleton/batch/immediate/deferred/hook controls, one real legacy completion
+order/abrupt-entry control, and two typed live-import controls. Typechecking,
+scoped lint, formatting and source ratchets pass. The dead-export gate still
+does not certify runtime retirement. Vitest needs an ARRAY-valued fork execArgv
+to enable Wasm EH; its string CLI form launches Node with individual character
+arguments and waits for stdin. Successful runner:
+
+```sh
+node --experimental-wasm-exnref --input-type=module -e 'import {startVitest} from "vitest/node"; const ctx = await startVitest("test", ["tests/issue-4376-module-evaluation-hooks.test.ts", "tests/issue-4376-prepared-module-capabilities.test.ts", "tests/issue-4376-linked-typed-imports.test.ts"], {run:true,poolOptions:{forks:{execArgv:["--experimental-wasm-exnref","--expose-gc"]}}}); await ctx.close();'
+```
+
+Native source-body fixture `aot_first_dependency_failure_preserves_execution_states`
+is an explicitly ignored, currently FAILING control. Clean compiler c5b251bc5f
+packages `/private/tmp/deno-first-failure.8HQICU` reproduce 0/1 (54 filtered /55):
+the graph throws, but completed prefix status remains Instantiated, expected
+Evaluated. Earlier un-reordered assertions also found that reading the thrown
+token from the Context global returned None. Exact original-source Node V8
+control passes 1/1: prefix runs once, later module does not run, cached rejection
+retains the same object. Ordinary native controls remain 35 passed /19 ignored
+/1 filtered out of 55. Do not count the new ignored control as passing.
+
+Next: bind lifecycle imports to exact native Modules/Context; publish a completed
+dependency's canonical live namespace even when a later dependency throws;
+capture the active source's exact error and propagate it through its consumers
+without marking untouched siblings errored. Namespace getter calls must NOT be
+treated as source-entry notifications. The current namespace registry is
+published at the end of entry initialization, so partial graph failure needs
+an earlier per-source publication mechanism. Then rebuild source-bound packages
+and make the full new native control pass before claiming a lifecycle fix.
+
+Malformed runner from this turn remains live (session 11708, PIDs 12513/12514/
+12527/12559); permission to stop only this runner was requested asynchronously.
+No older test processes were interrupted.
+
 ## Wrap-up: cached native dependency failures
 
 Next continuation also covers a fresh leading synthetic dependency: its native
