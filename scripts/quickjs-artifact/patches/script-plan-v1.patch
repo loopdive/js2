@@ -1,0 +1,290 @@
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -22209,6 +22209,7 @@
+     uint8_t force_init : 1; /* force initialization to undefined */
+     uint8_t is_lexical : 1; /* global let/const definition */
+     uint8_t is_const   : 1; /* const definition */
++    uint8_t script_plan_annex_b : 1; /* explicit extra-var producer origin */
+     int scope_level;    /* scope of definition */
+     JSAtom var_name;  /* variable name */
+ } JSGlobalVar;
+@@ -24545,6 +24546,7 @@
+     hf->force_init = false;
+     hf->is_lexical = false;
+     hf->is_const = false;
++    hf->script_plan_annex_b = false;
+     hf->scope_level = s->scope_level;
+     hf->var_name = JS_DupAtom(ctx, name);
+     return hf;
+@@ -37902,6 +37904,7 @@
+                        checks) */
+                     hf->scope_level = 0;
+                     hf->force_init = s->cur_func->is_strict_mode;
++                    hf->script_plan_annex_b = true;
+                     /* store directly into global var, bypass lexical scope */
+                     emit_op(s, OP_dup);
+                     emit_op(s, OP_scope_put_var);
+@@ -38146,9 +38149,123 @@
+ 
+ /* 'input' must be zero terminated i.e. input[input_len] = '\0'. */
+ /* `export_name` and `input` may be pure ASCII or UTF-8 encoded */
+-static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
++typedef struct JSGlobalScriptPlanRecord {
++    JSAtom name;
++    int function_pool_index; /* opaque native provenance, never a reader ABI */
++    uint8_t kind;
++    uint8_t origin;
++} JSGlobalScriptPlanRecord;
++
++struct JSGlobalScriptPlan {
++    JSContext *ctx;
++    JSRuntime *rt;
++    JSValue compiled;
++    JSAtom filename;
++    size_t source_length;
++    int count;
++    bool strict;
++    bool consumed;
++    JSGlobalScriptPlanRecord *records;
++};
++
++#ifdef JS2WASM_SCRIPT_PLAN_TEST
++static int script_plan_test_failure;
++static int script_plan_test_live_plans;
++static int script_plan_test_live_atoms;
++static int script_plan_test_live_arrays;
++static int script_plan_test_live_compiled;
++void JS_ScriptPlanTestSetFailure(int site) { script_plan_test_failure = site; }
++int JS_ScriptPlanTestShouldFail(int site)
++{
++    if (script_plan_test_failure != site)
++        return 0;
++    script_plan_test_failure = 0;
++    return 1;
++}
++int JS_ScriptPlanTestLivePlans(void) { return script_plan_test_live_plans; }
++int JS_ScriptPlanTestLiveAtoms(void) { return script_plan_test_live_atoms; }
++int JS_ScriptPlanTestLiveArrays(void) { return script_plan_test_live_arrays; }
++int JS_ScriptPlanTestLiveCompiled(void) { return script_plan_test_live_compiled; }
++#define SCRIPT_PLAN_FAIL(site) JS_ScriptPlanTestShouldFail(site)
++#else
++#define SCRIPT_PLAN_FAIL(site) 0
++#endif
++
++void JS_FreeGlobalScriptPlan(JSContext *ctx, JSGlobalScriptPlan *plan)
++{
++    int i;
++    if (!plan)
++        return;
++    assert(plan->ctx == ctx);
++    for (i = 0; i < plan->count; i++) {
++        JS_FreeAtom(ctx, plan->records[i].name);
++#ifdef JS2WASM_SCRIPT_PLAN_TEST
++        script_plan_test_live_atoms--;
++#endif
++    }
++    JS_FreeAtom(ctx, plan->filename);
++#ifdef JS2WASM_SCRIPT_PLAN_TEST
++    if (plan->filename != JS_ATOM_NULL)
++        script_plan_test_live_atoms--;
++#endif
++    JS_FreeValue(ctx, plan->compiled);
++    js_free(ctx, plan->records);
++#ifdef JS2WASM_SCRIPT_PLAN_TEST
++    if (plan->records)
++        script_plan_test_live_arrays--;
++    if (!JS_IsUndefined(plan->compiled))
++        script_plan_test_live_compiled--;
++#endif
++    js_free(ctx, plan);
++#ifdef JS2WASM_SCRIPT_PLAN_TEST
++    script_plan_test_live_plans--;
++#endif
++}
++
++static int js_capture_global_script_plan(JSContext *ctx,
++    JSGlobalScriptPlan *plan, JSFunctionDef *fd)
++{
++    int i;
++    assert(fd->parent == NULL && fd->eval_type == JS_EVAL_TYPE_GLOBAL);
++    plan->strict = fd->is_strict_mode;
++    plan->filename = JS_DupAtom(ctx, fd->filename);
++#ifdef JS2WASM_SCRIPT_PLAN_TEST
++    if (plan->filename != JS_ATOM_NULL)
++        script_plan_test_live_atoms++;
++#endif
++    if (fd->global_var_count) {
++        if (SCRIPT_PLAN_FAIL(2)) {
++            JS_ThrowOutOfMemory(ctx);
++            return -1;
++        }
++        plan->records = js_mallocz(ctx,
++            sizeof(*plan->records) * (size_t)fd->global_var_count);
++        if (!plan->records)
++            return -1;
++#ifdef JS2WASM_SCRIPT_PLAN_TEST
++        script_plan_test_live_arrays++;
++#endif
++    }
++    for (i = 0; i < fd->global_var_count; i++) {
++        const JSGlobalVar *source = &fd->global_vars[i];
++        JSGlobalScriptPlanRecord *record = &plan->records[i];
++        record->name = JS_DupAtom(ctx, source->var_name);
++        record->function_pool_index = source->cpool_idx;
++        record->kind = source->is_lexical ? (source->is_const ? 3 : 2)
++            : (source->cpool_idx >= 0 ? 1 : 0);
++        record->origin = source->script_plan_annex_b ? 1 : 0;
++        plan->count++;
++#ifdef JS2WASM_SCRIPT_PLAN_TEST
++        script_plan_test_live_atoms++;
++#endif
++    }
++    return 0;
++}
++
++static JSValue js_eval_internal_with_script_plan(JSContext *ctx, JSValueConst this_obj,
+                                  const char *input, size_t input_len,
+-                                 const char *filename, int line, int flags, int scope_idx)
++                                 const char *filename, int line, int flags, int scope_idx,
++                                 JSGlobalScriptPlan *script_plan)
+ {
+     JSParseState s1, *s = &s1;
+     int err, eval_type;
+@@ -38236,6 +38353,17 @@
+     if (m != NULL)
+         m->has_tla = fd->has_await;
+ 
++    if (script_plan) {
++        if (js_capture_global_script_plan(ctx, script_plan, fd) < 0)
++            goto fail;
++        /* The test-only seventh failure unwinds a populated capture while
++           compilation owns the parsed function definition, before publication. */
++        if (SCRIPT_PLAN_FAIL(7)) {
++            JS_ThrowOutOfMemory(ctx);
++            goto fail;
++        }
++    }
++
+     /* create the function object and all the enclosed functions */
+     fun_obj = js_create_function(ctx, fd);
+     if (JS_IsException(fun_obj))
+@@ -38258,8 +38386,86 @@
+     if (m)
+         js_free_module_def(ctx, m);
+     return JS_EXCEPTION;
++}
++
++/* Ordinary evaluation keeps its original entry and passes no capture request. */
++static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
++    const char *input, size_t input_len, const char *filename, int line,
++    int flags, int scope_idx)
++{
++    return js_eval_internal_with_script_plan(ctx, this_obj, input, input_len,
++        filename, line, flags, scope_idx, NULL);
++}
++
++JSGlobalScriptPlan *JS_CompileGlobalScriptPlan(JSContext *ctx,
++    const char *input, size_t input_len, const char *filename)
++{
++    JSGlobalScriptPlan *plan;
++    JSValue compiled;
++    if (unlikely(!ctx->eval_internal)) {
++        JS_ThrowTypeError(ctx, "eval is not supported");
++        return NULL;
++    }
++    if (SCRIPT_PLAN_FAIL(1)) {
++        JS_ThrowOutOfMemory(ctx);
++        return NULL;
++    }
++    plan = js_mallocz(ctx, sizeof(*plan));
++    if (!plan)
++        return NULL;
++#ifdef JS2WASM_SCRIPT_PLAN_TEST
++    script_plan_test_live_plans++;
++#endif
++    plan->ctx = ctx;
++    plan->rt = ctx->rt;
++    plan->source_length = input_len;
++    plan->compiled = JS_UNDEFINED;
++    compiled = js_eval_internal_with_script_plan(ctx, ctx->global_obj,
++        input, input_len, filename, 1,
++        JS_EVAL_TYPE_GLOBAL | JS_EVAL_FLAG_COMPILE_ONLY, -1, plan);
++    if (JS_IsException(compiled)) {
++        JS_FreeGlobalScriptPlan(ctx, plan);
++        return NULL;
++    }
++    plan->compiled = compiled;
++#ifdef JS2WASM_SCRIPT_PLAN_TEST
++    script_plan_test_live_compiled++;
++#endif
++    return plan;
+ }
+ 
++int JS_GlobalScriptPlanCount(const JSGlobalScriptPlan *plan) { return plan->count; }
++int JS_GlobalScriptPlanStrict(const JSGlobalScriptPlan *plan) { return plan->strict; }
++int JS_GlobalScriptPlanKind(const JSGlobalScriptPlan *plan, int index)
++{
++    return index >= 0 && index < plan->count ? plan->records[index].kind : -1;
++}
++int JS_GlobalScriptPlanOrigin(const JSGlobalScriptPlan *plan, int index)
++{
++    return index >= 0 && index < plan->count ? plan->records[index].origin : -1;
++}
++JSValue JS_GlobalScriptPlanName(JSContext *ctx, const JSGlobalScriptPlan *plan, int index)
++{
++    if (plan->ctx != ctx)
++        return JS_ThrowTypeError(ctx, "foreign Script plan");
++    if (index < 0 || index >= plan->count)
++        return JS_ThrowRangeError(ctx, "Script plan index out of range");
++    return JS_AtomToString(ctx, plan->records[index].name);
++}
++JSValue JS_EvalGlobalScriptPlan(JSContext *ctx, JSGlobalScriptPlan *plan)
++{
++    JSValue compiled;
++    if (plan->ctx != ctx || plan->consumed)
++        return JS_ThrowTypeError(ctx, "foreign or consumed Script plan");
++    compiled = plan->compiled;
++    plan->compiled = JS_UNDEFINED;
++    plan->consumed = true;
++#ifdef JS2WASM_SCRIPT_PLAN_TEST
++    script_plan_test_live_compiled--;
++#endif
++    return JS_EvalFunction(ctx, compiled);
++}
++
+ #endif // QJS_DISABLE_PARSER
+ 
+ /* the indirection is needed to make 'eval' optional */
+--- a/quickjs.h
++++ b/quickjs.h
+@@ -1277,6 +1277,30 @@
+ /* instantiate and evaluate a bytecode function. Only used when
+    reading a script or module with JS_ReadObject() */
+ JS_EXTERN JSValue JS_EvalFunction(JSContext *ctx, JSValue fun_obj);
++
++/* Private inactive Script-plan v1. A plan owns its exact compiled Script and
++   decoded declaration atoms. No source substitution or module/direct mode. */
++typedef struct JSGlobalScriptPlan JSGlobalScriptPlan;
++JS_EXTERN JSGlobalScriptPlan *JS_CompileGlobalScriptPlan(JSContext *ctx,
++    const char *input, size_t input_len, const char *filename);
++JS_EXTERN int JS_GlobalScriptPlanCount(const JSGlobalScriptPlan *plan);
++JS_EXTERN int JS_GlobalScriptPlanStrict(const JSGlobalScriptPlan *plan);
++JS_EXTERN int JS_GlobalScriptPlanKind(const JSGlobalScriptPlan *plan, int index);
++JS_EXTERN int JS_GlobalScriptPlanOrigin(const JSGlobalScriptPlan *plan, int index);
++/* Returned name/completion/exception values are owned; eval consumes once. */
++JS_EXTERN JSValue JS_GlobalScriptPlanName(JSContext *ctx,
++    const JSGlobalScriptPlan *plan, int index);
++JS_EXTERN JSValue JS_EvalGlobalScriptPlan(JSContext *ctx, JSGlobalScriptPlan *plan);
++JS_EXTERN void JS_FreeGlobalScriptPlan(JSContext *ctx, JSGlobalScriptPlan *plan);
++#ifdef JS2WASM_SCRIPT_PLAN_TEST
++/* Test build only: producer-local deterministic allocation failure controls. */
++JS_EXTERN void JS_ScriptPlanTestSetFailure(int site);
++JS_EXTERN int JS_ScriptPlanTestShouldFail(int site);
++JS_EXTERN int JS_ScriptPlanTestLivePlans(void);
++JS_EXTERN int JS_ScriptPlanTestLiveAtoms(void);
++JS_EXTERN int JS_ScriptPlanTestLiveArrays(void);
++JS_EXTERN int JS_ScriptPlanTestLiveCompiled(void);
++#endif
+ /* load the dependencies of the module 'obj'. Useful when JS_ReadObject()
+    returns a module. */
+ JS_EXTERN int JS_ResolveModule(JSContext *ctx, JSValueConst obj);

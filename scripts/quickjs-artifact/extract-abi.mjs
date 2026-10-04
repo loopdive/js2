@@ -14,6 +14,7 @@
  */
 import { readFileSync } from "node:fs";
 import { instantiateArtifact } from "./wasi-stub.mjs";
+import { inspectQuickjsScriptPlanCapability } from "../quickjs-eval-provider.mjs";
 
 const path = process.argv[2];
 if (!path) {
@@ -67,5 +68,12 @@ const abi = {
   },
   imports: WebAssembly.Module.imports(new WebAssembly.Module(bytes)).map((i) => `${i.module}.${i.name}`),
 };
+const scriptPlan = inspectQuickjsScriptPlanCapability(
+  bytes,
+  0,
+  instance,
+  process.env.JS2WASM_SCRIPT_PLAN_TEST_BUILD === "1",
+);
+abi.capabilities = { scriptPlan };
 
 console.log(JSON.stringify(abi, null, 2));
