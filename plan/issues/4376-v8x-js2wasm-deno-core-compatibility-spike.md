@@ -17,6 +17,9 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-10-04: preserve original callable ownership for spread imported calls
+  # using strict native iteration and local argument-list storage.
+  - src/codegen/expressions/linked-module-spread.ts
   # 2026-10-04: owner-aware imported calls capture callee and receiver before
   # arguments, rather than invoking a compatible closure in the wrong realm.
   - src/codegen/expressions/linked-module-call.ts
@@ -319,6 +322,17 @@ files:
 # #4376 — v8x + js2wasm as an engine-free Deno substrate
 
 ## Latest module-linking handoff (2026-10-04)
+
+### Imported spread calls (continuation)
+
+A new control reproduced a spread call bypassing the original dependency:
+owner count stayed at 5 instead of 10. The linked-call path now expands spreads
+using strict native iteration and a local argument vector, then dispatches to
+the original allocation owner. Inline literals retain native vector carriers.
+The expanded compiler suite passes **11/11** across three files, including
+named/namespace calls, empty and mixed spreads, runtime parameters, nested
+imported arguments and null-iterator rejection. This is not a new native Deno
+receipt; freshly rebuilt native fixture packages are still required.
 
 ### Owner-aware calls verified (continuation)
 

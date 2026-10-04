@@ -12,6 +12,7 @@ import { coerceType, compileExpression } from "../shared.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { compileComputedMemberKeyAfterBaseGuard } from "./computed-member-reference.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { emitLinkedModuleSpreadArgs } from "./linked-module-spread.js";
 
 /** Resolve once before args; dispatch in the callable's allocation owner.
  * Structural closure compatibility does not share the owner's `this` global. */
@@ -21,7 +22,7 @@ export function tryCompileLinkedModuleCall(
   expr: ts.CallExpression,
 ): ValType | undefined {
   if (!linkedModuleCall(ctx, expr.expression)) return undefined;
-  if (ts.isOptionalChain(expr) || expr.arguments.some(ts.isSpreadElement)) return undefined;
+  if (ts.isOptionalChain(expr)) return undefined;
   const provider = ctx.standaloneGlobalThisImport;
   if (!provider?.owns || !provider.get || !provider.call)
     throw new Error("Linked module calls require owner-aware get/call providers");
@@ -59,6 +60,17 @@ export function tryCompileLinkedModuleCall(
     emitValue(member);
   }
   fctx.body.push({ op: "local.set", index: callee });
+  if (expr.arguments.some(ts.isSpreadElement)) {
+    emitLinkedModuleSpreadArgs(ctx, fctx, expr.arguments, args);
+    flushLateImportShifts(ctx, fctx);
+    fctx.body.push(
+      { op: "local.get", index: callee },
+      { op: "local.get", index: receiver },
+      { op: "local.get", index: args },
+      { op: "call", funcIdx: ctx.funcMap.get(LINKED_RESOLVED_CALL)! },
+    );
+    return { kind: "externref" };
+  }
   const values: number[] = [];
   for (const argument of expr.arguments) {
     compileInternalCallArgument(ctx, fctx, argument, { kind: "externref" });

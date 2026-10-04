@@ -1,5 +1,23 @@
 # Deno module linking checkpoint, 2026-10-04
 
+## Continuation: imported spread calls
+
+An explicit compiler control reproduced a wrong-owner spread call: after
+`ns.sum(...args)` the original owner stayed at count 5 instead of 10. The
+linked-call path had declined all spreads, leaving a static private function
+fallback. It now builds a local argument vector using the existing strict
+native iterator materializer, then invokes the original callable through the
+same owner-aware bridge as ordinary calls. Inline array literals use the
+existing force-vector argument lowering, not opaque tuple carriers.
+
+Expanded controls cover namespace and named calls, empty/mixed spreads, nested
+imported argument calls, runtime array parameters, and rejecting null as a
+non-iterable without executing the callee. Default-off byte parity remains
+covered. These are compiler Wasm controls, not a new native Deno replay or
+benchmark. Native fixtures/packages must be expanded and freshly rebuilt next.
+Optional imported calls still decline this path. Prepared IR initializer
+guards, cycles/TDZ, cached errors and full Deno coverage remain unfinished.
+
 ## Wrap-up: authoritative resume state
 
 Work stopped at the user's checkpoint request. No new implementation was made

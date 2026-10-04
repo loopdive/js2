@@ -30,6 +30,7 @@ it("calls original namespace functions with their own receiver state", async () 
      const ns:any=Object.create(null);
      ns.bump=function(){return ++count;};
      ns.receiver=function(){return this;};
+     ns.sum=function(a:number,b:number){count+=a+b;return count;};
      export function namespace():any {return ns;}
      export function current():number {return count;}
      export function isUndefined(value:any):number {return value===undefined?1:0;}
@@ -62,15 +63,22 @@ it("calls original namespace functions with their own receiver state", async () 
   };
   const result = await compileMultiSource(
     {
-      "main.js": `import * as ns from './dep.js'; import { bump, receiver } from './dep.js';
+      "main.js": `import * as ns from './dep.js'; import { bump, receiver, sum } from './dep.js';
       export function mutate():any {return ns.bump();}
       export function named():any {return bump();}
       export function methodReceiver():any {return ns.receiver();}
       export function bareReceiver():any {return receiver();}
-      export function readFunction():any {return ns.bump;}`,
+      export function readFunction():any {return ns.bump;}
+      export function spread():any {const args=[2,3];return ns.sum(...args);}
+      export function namedSpread(args):any {return sum(1,...args);}
+      export function namedSpreadCaller():any {return namedSpread([4]);}
+      export function emptySpread():any {return sum(...[],2,...[3]);}
+      export function nestedSpread():any {return sum(...[bump(),bump()]);}
+      export function invalidSpread():number {try {sum(...null);}catch(e){return 1;}return 0;}`,
       "dep.js": `throw new Error('evaluated dependency was rerun');
       export function bump(){return 1;}
-      export function receiver(){return this;}`,
+      export function receiver(){return this;}
+      export function sum(a,b){return 999;}`,
     },
     "main.js",
     options,
@@ -95,4 +103,14 @@ it("calls original namespace functions with their own receiver state", async () 
     (owner.exports.isUndefined as (value: unknown) => number)((instance.exports.bareReceiver as () => unknown)()),
   ).toBe(1);
   expect((instance.exports.readFunction as () => unknown)()).toBe((owner.exports.originalBump as () => unknown)());
+  expect(() => (instance.exports.spread as () => unknown)(), "namespace spread").not.toThrow();
+  expect((owner.exports.current as () => number)()).toBe(10);
+  expect(() => (instance.exports.emptySpread as () => unknown)(), "empty and mixed spread").not.toThrow();
+  expect((owner.exports.current as () => number)()).toBe(15);
+  expect(() => (instance.exports.nestedSpread as () => unknown)(), "nested imported arguments").not.toThrow();
+  expect((owner.exports.current as () => number)()).toBe(50);
+  expect((instance.exports.invalidSpread as () => number)()).toBe(1);
+  expect((owner.exports.current as () => number)()).toBe(50);
+  expect(() => (instance.exports.namedSpreadCaller as () => unknown)(), "runtime spread parameter").not.toThrow();
+  expect((owner.exports.current as () => number)()).toBe(55);
 });
