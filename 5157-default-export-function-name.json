@@ -2,10 +2,11 @@
   "id": "5157",
   "slice": "default-export-function-name",
   "assignee": "ttraenkler/es2015_module_names_sol",
-  "requested_by": "ttraenkler/es2015_module_names_sol",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/5157-default-export-function-name",
   "claimed_at": "2026-10-04T14:41:50Z",
-  "updated_at": "2026-10-04T14:41:50Z",
-  "write_id": "30533-ooi66w2x"
+  "updated_at": "2026-10-04T16:59:45Z",
+  "write_id": "65260-vey2ikz5",
+  "released_at": "2026-10-04T16:59:45Z"
 }
