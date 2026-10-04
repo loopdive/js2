@@ -106,23 +106,6 @@ export function resolveManifestSpecifier(
   return opaque !== undefined && knownSpecifiers.has(opaque) ? opaque : undefined;
 }
 
-function importMetaStaticResolve(specifier: string, referrer: string): string | undefined {
-  // Bare specifiers are loader policy, not URL resolution. They must remain a
-  // runtime operation so a custom ModuleLoader can decide their meaning.
-  if (!specifier.startsWith("./") && !specifier.startsWith("../") && !specifier.startsWith("/")) {
-    try {
-      return new URL(specifier).href;
-    } catch {
-      return undefined;
-    }
-  }
-  try {
-    return new URL(specifier, referrer).href;
-  } catch {
-    return resolveOpaqueRelative(specifier, referrer);
-  }
-}
-
 function isImportMeta(node: ts.Node): node is ts.MetaProperty {
   return ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword && node.name.text === "meta";
 }
@@ -902,12 +885,15 @@ export function lowerManifestModule(
   const staticallyReadNamespaces = new Map<string, ReadonlyMap<string, ts.Identifier>>();
   let dynamicImports = 0;
   let runtimeDynamicImports = 0;
+  let usesImportMeta = false;
   const defaultExportBinding = `__v8x_default_${Buffer.from(specifier, "utf8").toString("hex")}`;
   // Use an injective suffix so the generated module-local bridge cannot
   // collide with another source module's helpers when compileMulti flattens
   // the graph. The prefix is deliberately not a createUniqueName: the same
   // spelling is also interpolated into the generated helper source below.
   const runtimeDynamicImportSuffix = Buffer.from(specifier, "utf8").toString("hex") || "00";
+  const importMetaBinding = `__v8x_import_meta_${runtimeDynamicImportSuffix}`;
+  const importMetaGetter = `__v8x_get_import_meta_${runtimeDynamicImportSuffix}`;
   const runtimeDynamicImportBindingName = `__v8x_runtime_dynamic_import_${runtimeDynamicImportSuffix}`;
   const localDynamicImportBindingName = `__v8x_local_dynamic_import_${runtimeDynamicImportSuffix}`;
   const localDynamicImportPrefix = `__v8x_local_dynamic_${runtimeDynamicImportSuffix}`;
@@ -1187,22 +1173,9 @@ export function lowerManifestModule(
           if (binding !== undefined) return binding;
         }
 
-        if (
-          ts.isCallExpression(node) &&
-          ts.isPropertyAccessExpression(node.expression) &&
-          isImportMeta(node.expression.expression) &&
-          node.expression.name.text === "resolve" &&
-          node.arguments.length === 1 &&
-          ts.isStringLiteralLike(node.arguments[0]!)
-        ) {
-          const resolved = importMetaStaticResolve(node.arguments[0]!.text, specifier);
-          if (resolved !== undefined) return factory.createStringLiteral(resolved);
-        }
-
-        if (ts.isPropertyAccessExpression(node) && isImportMeta(node.expression)) {
-          if (node.name.text === "url") return factory.createStringLiteral(specifier);
-          if (node.name.text === "main")
-            return specifier === entrySpecifier ? factory.createTrue() : factory.createFalse();
+        if (isImportMeta(node)) {
+          usesImportMeta = true;
+          return factory.createCallExpression(factory.createIdentifier(importMetaGetter), undefined, []);
         }
 
         return ts.visitEachChild(node, visitor, context);
@@ -1301,6 +1274,16 @@ export function lowerManifestModule(
     let printed = ts
       .createPrinter({ newLine: ts.NewLineKind.LineFeed })
       .printFile(transformed.transformed[0] as ts.SourceFile);
+    if (usesImportMeta) {
+      printed = `declare function ${importMetaBinding}(): number;
+declare function __v8x_import_meta_unwrap(handle: number): any;
+function ${importMetaGetter}(): any {
+  const packet = ${importMetaBinding}();
+  if (packet < 0) throw __v8x_import_meta_unwrap(-packet - 1);
+  return __v8x_import_meta_unwrap(packet);
+}
+${printed}`;
+    }
     if (runtimeDynamicImports !== 0) {
       // This state must be initialized before user top-level code. In
       // particular, a rejected TLA must not leave the decoder/call bridge in

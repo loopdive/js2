@@ -1,5 +1,53 @@
 # Persistent AOT Script environment
 
+## Host-owned compiled import-meta checkpoint, 2026-10-04
+
+Compiled module access now reaches Deno's installed metadata callback. The sidecar
+rewrites the full import.meta object, including bracket access and resolve calls,
+to private host capabilities instead of folding url/main/resolve. Each graph's
+linker captures its native Module and Context handles; later calls into older
+graphs retain the original identity. Ambiguous duplicate graph specifiers fail
+explicitly. Callback access uses CallerRealm and a local TryCatch; native
+plain-object CreateDataProperty now supports initial insertion and configurable
+redefinition, refusing fixed properties. Compiled/exotic CreateDataProperty still
+fails explicitly and needs a result-aware define-property bridge.
+
+Fresh unchanged Deno main_and_side_module passes 1/1, 430 filtered /431.
+Without graph packages it fails 0/1 with the missing-artifact diagnostic, so this
+is not the earlier false pass. Native AOT metadata control passes 1/1, 47 filtered
+/48, verifying custom loader properties, resolve callback execution, null
+prototype, distinct same-URL Module metadata, repeated evaluation and calls into
+the older graph after a newer one executes. Runtime compiler/interpreter counts
+are zero. Ordinary native controls pass 34, fail zero, ignore 14 /48; scoped
+native units pass 15/15 with 16 filtered /31. Graph packaging controls pass 3/3.
+Unchanged lazy loading/missing-script pass 2/2 (429 filtered /431), WebIDL 17/17
+(414 filtered /431). These remain subsets, not full conformance.
+
+Compiler focused host-capability test passes 1/1 (7 skipped /8). Combined graph
+and namespace controls report 10 pass /1 fail /11. The synthetic JSON/text/bytes
+failure also reproduces with the exact pre-change sidecar from compiler
+015ab63ba3 and the same compiler/harness: "TypeError: called value is not a
+function". No all-green claim. TypeScript 7, scoped lint, formatting and diff
+checks pass. Deno/vendor sources are unchanged.
+
+New source-bound optimized graph packages live in
+/private/tmp/deno-host-import-meta.hxupm6, built with Binaryen 125 and Wasmtime
+47.0.3. Main digest a574aa4047147f18d7e25c7c334dc08c9993afbe6c114e655ad18879fd53f868,
+native SHA b8eef5fc7a4efd1f50080d9f6fd4fe27e1a72940cd1ac1e330729b3b1d4270a7.
+Side digest 1967c47478be41864d75c1937a2e809ea7f94030c98db318fcf8418f8c9be777,
+native SHA a7b34a2bd51b6ab6b9851cdda8468209a6fce70efb7866d4246b65f37b0ca7e2.
+Identity probe digest 07a972d75a9f5429683a123ee9a813f10d3c25c3be1aeb58593135f8767bcd4d,
+native SHA 07c00c9ba935061cbe83dce6900355db0707023cb5cc88dbe70c8e6c57669ca4.
+Full/small Context artifacts are unchanged. Graph inventories retain exact source
+and optimized/native hashes. The packaging binary is build-side only; Deno and
+native execution binaries do not enable runtime_compile.
+
+Next: native Promise transport with identity/settlement/reactions, rooted original
+AOT exception payloads, full unchanged source graphs/population and snapshots.
+The missing-artifact Deno failure still gets obscured by unsupported Promise
+conversion. Retain typed lexical, host service, shared-library and matched
+benchmark requirements; integration and both draft PRs remain incomplete.
+
 ## Wrap-up and resume entry point, 2026-10-04
 
 Work is published in existing draft PRs: compiler

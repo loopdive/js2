@@ -3260,6 +3260,18 @@ binary controls match clean dbe49bf307d6 exactly. Source-preservation remains
 38 pass /53 fail out of 91 with no per-test status changes. Native adapter pin,
 package routing and unchanged Deno replay have not advanced yet.
 
+Host-owned import-meta continuation, 2026-10-04: full-object compiler lowering
+and instance-bound native capabilities now invoke Deno's callback. Unchanged
+main_and_side_module passes 1/1, and the missing-package negative fails 0/1,
+each 430 filtered /431. Native AOT same-URL identity/resolve/null-prototype control
+passes 1/1, 47 filtered /48, with zero runtime compilation/interpreter instances.
+Native ordinary controls 34 pass /14 ignored /48; scoped units 15/15, 16 filtered
+/31. Lazy/missing-script 2/2 and WebIDL 17/17 remain passing. Compiler graph and
+namespace controls 10 pass /1 fail /11; synthetic JSON/text/bytes failure reproduces
+with pre-change sidecar 015ab63ba3 and the same compiler/harness. Native Promise
+transport, original AOT exception rooting, full population, snapshots and remaining
+host/benchmark work are still required. Handoffs contain exact source/hash repros.
+
 Import-meta lifecycle foundation, 2026-10-04: adapter registration now retains
 Deno's callback. A lazy per-native-Module object cache publishes before callback
 invocation, preserves reentrant identity and rejects wrong-context/foreign-isolate
