@@ -1473,3 +1473,40 @@ Next inspect the full unchanged test population and package its exact source
 graphs, then continue snapshot and host/value work. Startup-module exceptions,
 arbitrary thrown callables, transport failures after adoption and full snapshot
 semantics still need coverage. No new throughput/footprint comparison.
+
+## Final handoff: unchanged module controls (2026-10-04)
+
+Compiler implementation checkpoint ba14fcaedb and adapter 5874bb6 are pushed
+in the existing open draft PRs linked above. Do not create duplicate PRs or
+declare either merge-ready. Adapter NATIVE-PROMISE-HANDOFF.md contains exact
+artifact hashes, reproduction commands and implementation entry points.
+
+Five additional unchanged Deno module tests were selected from pinned Deno
+1d4e6c1: **4 passed /1 failed out of 5**, each with 430 filtered /431.
+Metadata resolve, filename/dirname and repeated async/sync evaluation pass.
+Removing the assertion Script packages makes repeated evaluation fail at
+check1, confirming that the assertions actually execute. Exact-source
+extractor/graph/Script packaging controls pass **10/10**. No Deno source edits,
+runtime compiler or interpreter were introduced. No benchmark was rerun.
+
+The remaining selected failure is builtin_core_module:
+`source module namespace was already bound to another value`. A later graph
+tries to replace the core namespace already published during startup. Keep
+this refusal visible: skipping publication or rebinding only native wrappers
+would not preserve JavaScript namespace identity or once-only execution.
+
+Resume with canonical namespace reuse by native Module identity, live imports
+and exports, and once-only evaluation of shared dependencies. Test two graph
+entries sharing a dependency, same-URL distinct Modules, cycles and cached
+failed evaluation. Then expand the unchanged population; snapshots, dynamic
+imports/top-level await, remaining host/value transport and matched benchmarks
+remain unverified. Full Deno integration is not complete.
+
+Fresh packages: /private/tmp/deno-module-population.SdW8YU/{graphs,scripts}.
+Reuse full Context /private/tmp/deno-promise-full.X2WdwN/deno-core.cwasm with
+the unchanged Deno test binary
+/private/tmp/deno-upstream-conformance.H6HA4g/deno/target/debug/deps/deno_core-87206ac56a2fccad.
+Do not confuse temporary local artifacts with checked-in distributable output.
+Preserve unrelated compiler changes and adapter .tmp/ files. Site rendering
+remains unverified because Typst is unavailable; direct libtest results are
+not cargo-nextest baseline results.
