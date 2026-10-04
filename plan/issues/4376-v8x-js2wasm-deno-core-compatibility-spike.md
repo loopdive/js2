@@ -3260,6 +3260,16 @@ binary controls match clean dbe49bf307d6 exactly. Source-preservation remains
 38 pass /53 fail out of 91 with no per-test status changes. Native adapter pin,
 package routing and unchanged Deno replay have not advanced yet.
 
+Fresh native continuation, 2026-10-04: clean compiler 9bfee5a9c6 and adapter
+builder f236d22698 with Binaryen 125 /Wasmtime 47.0.3. Unchanged native
+lazy-script-not-found passes 1/1, WebIDL 17/17, derived conversions 2/2.
+Actual lazy-script loading aborts at unsupported ScriptCompiler::CompileFunction.
+The next requirement is trusted AOT function-body packaging with parameter
+bindings, native closure/caching semantics and callback-safe reentrant
+instantiation. No Deno source changes or interpreter substitution. Handoff
+contains exact hashes, pins and reproduction. Full population and performance
+remain incomplete. Three default-off binary controls match pre-fix merge exactly.
+
 Continuation, 2026-10-04: merged origin/main 39fd7b7d44 in 2617ddf4d2,
 preserving both callback and standalone new.target paths. Post-merge compiler
 controls pass 41/41 and constructor/expression controls 30/30. New method-order

@@ -1,5 +1,53 @@
 # Persistent AOT Script environment
 
+## Fresh native method-dispatch replay, 2026-10-04
+
+The unchanged `modules::tests::test_lazy_loaded_script_not_found` now passes
+1/1, 430 filtered /431, in 1.68s. It reaches the Rust host lazy-loader and
+returns the expected cannot-be-lazy-loaded error. Fresh unchanged WebIDL passes
+17/17, 414 filtered /431, in 23.95s; derived conversions pass 2/2, 429 filtered
+/431, in 2.96s. builtin_core_module also passes 1/1, but emits the ordinary
+module artifact-selection diagnostic; do not extrapolate module-graph coverage.
+
+The unchanged actual `test_lazy_loaded_script` now reaches the next missing
+adapter operation and aborts with exit 134 at
+`v8__ScriptCompiler__CompileFunction`. This is not a passing lazy-loader. Deno's
+modules/map.rs compiles a strict function body returning the original IIFE with
+one `__bootstrap` parameter and no context extensions, then calls that function.
+Next implement generic trusted-AOT Function-body packaging/lookup, parameter
+bindings and execution through the existing owning graph call terminal. Preserve
+closure/object/exception identity and caching. No runtime compiler or interpreter
+is needed when bodies are packaged, and Deno tests/source must remain unchanged.
+CompileFunction occurs during a Rust host callback entered from Wasm: reentrant
+instantiation must use active CallerRealm access, not reborrow DenoRuntime's
+RefCell (with_runtime_owner currently rejects overlapping mutable borrows).
+
+Clean build compiler 9bfee5a9c6893bc17313c226363648ebe1ccb6b3; builder adapter
+f236d22698bfe60bd82e4bbea9415c2e70176dd4; unchanged Deno
+1d4e6c1cb855b62a7fb572c6c138e4e8b4e7fa44. Native Rust replay reuses the existing
+deno_core-87206ac56a2fccad binary; no adapter Rust code changed in this checkpoint.
+Artifacts: /private/tmp/deno-call-order-native.dBQZ3T. Raw Context 2,724,683 bytes,
+SHA 5e1e00422b3979354bc8f64772423f8323a48870b3fd23143b5685914f2bb3a6;
+Binaryen 125 optimized 2,019,396 bytes,
+SHA 02cf9fc795a8e946ffee2c11783456508b2bdcb44606541400407a5056d8006c.
+Wasmtime 47.0.3 precompile passes 1/1 in 211.59s. Native image 44,121,952 bytes,
+SHA cbb13265e36297f5bedca29b7e31d4439568dc08bc3a239082faab8054037aad.
+
+All 16 module-test literal Scripts and all five WebIDL Scripts are optimized and
+packaged. Conversion inventory: 4 packaged /2 unresolved macro inputs /6 sites,
+exit 1 as required; not a green population. Unique core-inputs.*.json reports
+record exact unchanged Rust hashes and clean compiler pins. Script manifests bind
+exact source/specifier bytes and optimized hashes. Native replay command:
+
+```sh
+V8X_JS2WASM_DENO_CORE_AOT_MODULE=/private/tmp/deno-call-order-native.dBQZ3T/deno-core.cwasm V8X_JS2WASM_AOT_SCRIPT_DIR=/private/tmp/deno-call-order-native.dBQZ3T/scripts /private/tmp/deno-upstream-conformance.H6HA4g/deno/target/debug/deps/deno_core-87206ac56a2fccad --exact modules::tests::test_lazy_loaded_script_not_found --nocapture --test-threads=1
+```
+
+Three default-off standalone byte controls (arithmetic, array read, dynamic object
+method) match clean pre-fix merge 2617ddf4d2 exactly against 9bfee5a9c6. Full
+431-test population, snapshots, full module graphs, macro-generated inputs,
+transport gaps, remaining call-route coverage and comparative benchmarks stay open.
+
 ## Continuation: main sync and call-reference ordering, 2026-10-04
 
 Merged origin/main 39fd7b7d44c9bc6f9be47ddd1f7fd75196a7d5f1 in 2617ddf4d2.
