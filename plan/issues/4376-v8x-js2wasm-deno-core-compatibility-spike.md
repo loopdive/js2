@@ -3131,3 +3131,22 @@ Direct additional host capabilities, BigInt/UTF-16 adoption, general runtime AOT
 Script compilation and pure Program completion remain open. Full Context rebuild,
 unchanged Deno conformance and fresh performance are not credited. The adapter
 handoff supersedes the earlier unwired checkpoint; integration remains in progress.
+
+Fresh full-core continuation: clean compiler `3d4c1df` and adapter `064423a`
+produce a 2,709,108-byte AOT Context with no interpreter imports. The unchanged
+Deno binary rebuilds against the adapter. With an AOT Script directory set,
+unchanged `webidl::tests::any` fails 0/1 before loading that Context: the new
+generic path requires an existing owner and intercepts the initial pinned
+`ext:core/00_primordials.js` bootstrap, whose purpose is to create that owner.
+Restore the audited prelinked core-bootstrap transaction before generic Script
+lookup, keeping normal application Scripts ahead of legacy usage matchers.
+This observed lifecycle defect is distinct from a compiler/Script ABI failure.
+
+After restoring bootstrap order, the same unchanged control passes 1/1. The
+fresh full Context passes raw packaging and optimized native precompilation
+1/1 (208.38 seconds). WebIDL remains 13/17 both without and with five separately
+packaged original Script inputs: the four formerly unknown-source failures now
+reach real conversion/assertion failures. They all involve iterable lookup,
+including the dictionary's array field. Trace cross-module Symbol/iterator
+transport before attributing the common signature to a particular root cause;
+do not count source acceptance as a passing test or advance the baseline.

@@ -703,3 +703,28 @@ earlier public-wiring status, not the unchanged Deno conformance result.
 The adapter handoff contains packaging and public-test reproduction commands.
 Additional host capabilities, BigInt/UTF-16 adoption, runtime AOT compilation,
 pure Program completion and a full Context/conformance rebuild remain open.
+
+## Wrap-up handoff (2026-10-04)
+
+Fresh Context rebuild is now measured, not outstanding: clean compiler
+`3d4c1df`, adapter `064423a`, pinned Deno `1d4e6c1`. Raw Context is 2,709,108
+bytes, Binaryen 125 optimized Context 2,008,044 bytes, Wasmtime native artifact
+43,907,288 bytes. Native packaging passes 1/1 in 208.38 seconds. These numbers
+are artifact sizes and build cost, not RSS or runtime performance.
+
+Adapter fixes bootstrap ordering: the audited prelinked core transaction must
+create the owner before generic Script lookup. Same-artifact unchanged WebIDL
+`any` moves from 0/1 to 1/1. Five original WebIDL Script inputs are now packaged
+offline without changing Deno. Fresh unchanged WebIDL remains 13/17 passing
+with or without packages; four unknown-source failures become real iterable
+conversion/assertion failures, not new passes. Public AOT fixture remains 1/1;
+combined packaging/runtime-option/literal controls pass 15/15.
+
+Detailed pins, artifact hashes, binaries, reproduction and remaining work are
+in adapter `tools/js2wasm/SCRIPT-ENVIRONMENT-HANDOFF.md`. First lead is missing
+owning-Script property/call dispatch exports: Context getters currently handle
+foreign Script objects. This is not yet an attributed cause. Well-known Symbol
+IDs are stable; preserve Script semantics rather than injecting Module exports.
+Full unchanged deno_core, native capabilities, BigInt/UTF-16, runtime AOT source
+compilation, pure Program completion and fresh benchmarks remain open.
+Both existing PRs remain draft; compiler PR 6468 is stacked, not based on main.
