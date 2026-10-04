@@ -3260,6 +3260,12 @@ binary controls match clean dbe49bf307d6 exactly. Source-preservation remains
 38 pass /53 fail out of 91 with no per-test status changes. Native adapter pin,
 package routing and unchanged Deno replay have not advanced yet.
 
+Receiver continuation: extend the existing opt-in Script getter with a separate
+three-reference receiver-aware export, preserving the old two-reference API.
+The adapter uses the new export when present and retains the explicit refusal
+for alternate receivers in old packages. Verify direct and cross-Script receiver
+identity and abrupt completion before crediting support.
+
 Native Function continuation, 2026-10-04: adapter implementation
 5cae5514f0598aeffe2ce36869669a01d0c7ff87 implements trusted AOT CompileFunction,
 callback-safe instantiation and owner-routed cross-Script reads/calls. Guard

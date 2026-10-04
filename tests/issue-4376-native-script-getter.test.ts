@@ -52,6 +52,7 @@ export function first(value:any):any {return value[0];}
 export function registrySame(a:any,b:any):boolean {return a[1]===b[1]&&a[2]===b[2];}
 export function descriptorBits(value:any):number {return (value.writable?1:0)+(value.enumerable?2:0)+(value.configurable?4:0);}
 export function fooKey():any {return "foo";}
+export function barKey():any {return "bar";}
 export function hiddenKey():any {return "hidden";}
 export function getterKey():any {return "getter";}
 export function installNestedLoader():void {
@@ -492,6 +493,45 @@ it("reads shared Array iterator after own property miss", async () => {
   expect(e.number(e.get(step, e.valueKey(), step))).toBe(70000);
 });
 
+it("publishes a receiver-aware getter without changing the original getter", async () => {
+  const owner = await context();
+  const result = await compile("({get foo(){return this;}});", { ...options, link: [...options.link] });
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  const s = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports })
+    .exports as Record<string, Function>;
+  const e = owner.exports as Record<string, Function>;
+  s.__module_init();
+  const target = e.captured();
+  const receiver = e.realm();
+  expect(s.scriptGet(target, e.fooKey())).toBe(target);
+  expect(s.scriptGet_receiver(target, e.fooKey(), receiver)).toBe(receiver);
+  expect(s.scriptGet(target, e.fooKey())).toBe(target);
+});
+
+it("preserves receiver identity through a throwing receiver-aware getter", async () => {
+  const owner = await context();
+  const result = await compile("({get foo(){throw this;},get bar(){return this;}});", {
+    ...options,
+    link: [...options.link],
+  });
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  const s = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports })
+    .exports as Record<string, Function>;
+  const e = owner.exports as Record<string, Function>;
+  s.__module_init();
+  const target = e.captured();
+  const receiver = e.realm();
+  let payload: unknown;
+  try {
+    s.scriptGet_receiver(target, e.fooKey(), receiver);
+  } catch (error) {
+    payload = (error as WebAssembly.Exception).getArg(owner.exports.__exn_tag as WebAssembly.Tag, 0);
+  }
+  expect(payload).toBe(receiver);
+  expect(s.scriptGet(target, e.barKey())).toBe(target);
+  expect(s.scriptGet_receiver(target, e.barKey(), receiver)).toBe(receiver);
+});
+
 it("does not publish the native getter without the explicit option", async () => {
   const { standaloneScriptGetExport: _unused, standaloneScriptCallExport: _unusedCall, ...base } = options;
   const result = await compile("42;", { ...base, link: [...base.link] });
@@ -499,6 +539,9 @@ it("does not publish the native getter without the explicit option", async () =>
   expect(WebAssembly.Module.exports(new WebAssembly.Module(result.binary)).some((e) => e.name === "scriptGet")).toBe(
     false,
   );
+  expect(
+    WebAssembly.Module.exports(new WebAssembly.Module(result.binary)).some((e) => e.name === "scriptGet_receiver"),
+  ).toBe(false);
 });
 
 it.each([

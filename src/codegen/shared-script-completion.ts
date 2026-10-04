@@ -16,6 +16,12 @@ export function prepareScriptCompletionSink(ctx: CodegenContext): void {
   if (ctx.standaloneScriptGetExport) {
     ensureSymbolCarrier(ctx);
     ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+    ensureLateImport(
+      ctx,
+      "__reflect_get_receiver",
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
   }
   flushLateImportShifts(ctx, null);
   if (ctx.standaloneScriptCallExport) reserveApplyClosure(ctx);
@@ -97,6 +103,14 @@ export function publishScriptGetter(ctx: CodegenContext): void {
   const index = ctx.funcMap.get("__extern_get");
   if (index === undefined) throw new Error("Native Script getter was not reserved");
   ctx.mod.exports.push({ name, desc: { kind: "func", index } });
+  // Keep the existing two-argument API while exposing ordinary Reflect.get's
+  // explicit receiver to cross-Script native callers.
+  const receiverName = `${name}_receiver`;
+  if (ctx.mod.exports.some((entry) => entry.name === receiverName))
+    throw new Error("Native Script receiver getter export is occupied");
+  const receiverIndex = ctx.funcMap.get("__reflect_get_receiver");
+  if (receiverIndex === undefined) throw new Error("Native Script receiver getter was not reserved");
+  ctx.mod.exports.push({ name: receiverName, desc: { kind: "func", index: receiverIndex } });
   // An unconditionally abrupt Script still implements the completion ABI.
   // Retain its sink through downstream DCE even if no normal path calls it.
   const sink = ctx.standaloneScriptCompletionImport;
