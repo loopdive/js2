@@ -1,5 +1,26 @@
 # Persistent AOT Script environment
 
+## Continuation: main sync and call-reference ordering, 2026-10-04
+
+Merged origin/main 39fd7b7d44c9bc6f9be47ddd1f7fd75196a7d5f1 in 2617ddf4d2.
+The sole conflict retains ordinary callback new.target locals before main's
+standalone fallback. After merge: focused Script controls 41/41 and callback /
+expression controls 30/30 pass; TypeScript 7 passes. Unrelated local changes remain.
+
+New ordering controls initially measured 1 pass /2 failures: a caller-owned
+callback on a foreign receiver worked, but arguments ran before a foreign getter
+(213 instead of 123), including arguments whose getter should throw first.
+Call sites now capture a foreign method before arguments in call-frame locals;
+the owning Context invokes the captured callee afterwards. Dot and computed
+call controls pass 13/13, covering callable and getter throws, non-callable
+TypeErrors after argument side effects, argument mutation without callee reread,
+and caller-owned callbacks. The closed dispatch path was the actual tested
+route, not the IR dynamic helper; no untested IR change is included. Broader
+tests now pass 140/140 (54 focused +86 persistent Script, including two existing
+expected failures in the latter). TypeScript 7 passes; scoped lint has no errors
+and five pre-existing warnings. Fresh native replay remains unmeasured. Dynamic
+spread and independently selected IR method routes still need ordering controls.
+
 ## Handoff: Context-owned method dispatch, 2026-10-04
 
 The formerly expected-failing `Deno.core.loadExtScript("x")` compiler control

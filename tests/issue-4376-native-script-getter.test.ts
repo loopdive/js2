@@ -59,16 +59,21 @@ export function installNestedLoader():void {
 }
 let nestedReads=0;
 let nestedReason:any;
+let callSequence=0;
 export function installNestedGetter(mode:number):any {
  nestedReads=0;
+ callSequence=0;
  nestedReason={marker:42};
  const core:any={};
- const fn:any=function(specifier:any){if(mode===1)throw nestedReason;return this===core&&specifier==="x"?42:-1;};
- Object.defineProperty(core,"loadExtScript",{get(){nestedReads++;return mode===2?{}:mode===3?undefined:fn;},configurable:true});
+ const fn:any=function(specifier:any){callSequence=callSequence*10+3;if(mode===1)throw nestedReason;return this===core&&specifier==="x"?42:-1;};
+ Object.defineProperty(core,"loadExtScript",{get(){nestedReads++;callSequence=callSequence*10+1;if(mode===4)throw nestedReason;return mode===2?{}:mode===3?undefined:fn;},configurable:true});
  (globalThis as any).Deno={core};
  return nestedReason;
 }
 export function nestedReadCount():number {return nestedReads;}
+export function markedArgument():any {callSequence=callSequence*10+2;return "x";}
+export function sequence():number {return callSequence;}
+export function replaceLoader(callback:any):void {Object.defineProperty((globalThis as any).Deno.core,"loadExtScript",{value:callback,writable:true,configurable:true});}
 export function errorKind(value:any):number {return value.name==="TypeError"?1:0;}
 export function isNull(value:any):boolean {return value===null;}
 export function errorLength(value:any):number {return String(value.message).length;}
@@ -165,6 +170,83 @@ it.each([0, 1, 2, 3])(
     else expect((owner.exports.errorKind as Function)(thrown)).toBe(1);
   },
 );
+
+it.each([0, 1, 2, 3, 4].flatMap((mode) => [false, true].map((computed) => [mode, computed] as const)))(
+  "evaluates the foreign getter before arguments, mode %s computed %s",
+  async (mode, computed) => {
+    const owner = await context(true);
+    const reason = (owner.exports.installNestedGetter as Function)(mode);
+    const result = await compile(
+      `declare function markedArgument():any; Deno.core${computed ? '["loadExtScript"]' : ".loadExtScript"}(markedArgument());`,
+      {
+        ...options,
+        externImportModule: "context",
+        standaloneGlobalThisImport: { ...options.standaloneGlobalThisImport, call: "call" },
+        standaloneScriptLexicalImport: { module: "context", name: "scriptLexicalOperation" },
+        link: [...options.link],
+      },
+    );
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const instance = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports });
+    let thrown: unknown;
+    try {
+      (instance.exports.__module_init as Function)();
+    } catch (error) {
+      thrown = (error as WebAssembly.Exception).getArg(owner.exports.__exn_tag as WebAssembly.Tag, 0);
+    }
+    expect((owner.exports.sequence as Function)()).toBe(mode === 4 ? 1 : mode === 2 || mode === 3 ? 12 : 123);
+    if (mode === 2 || mode === 3) expect((owner.exports.errorKind as Function)(thrown)).toBe(1);
+    else expect(thrown).toBe(mode === 1 || mode === 4 ? reason : undefined);
+  },
+);
+
+it.each([false, true])("retains a foreign callee across argument mutation, computed %s", async (computed) => {
+  const owner = await context(true);
+  (owner.exports.installNestedGetter as Function)(0);
+  const result = await compile(
+    `
+    declare function markedArgument():any;
+    declare function replaceLoader(callback:any):void;
+    Deno.core${computed ? '["loadExtScript"]' : ".loadExtScript"}((replaceLoader(function(){return -1;}),markedArgument()));
+  `,
+    {
+      ...options,
+      externImportModule: "context",
+      standaloneGlobalThisImport: { ...options.standaloneGlobalThisImport, call: "call" },
+      standaloneScriptLexicalImport: { module: "context", name: "scriptLexicalOperation" },
+      link: [...options.link],
+    },
+  );
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  const instance = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports });
+  (instance.exports.__module_init as Function)();
+  expect((owner.exports.sequence as Function)()).toBe(123);
+  expect((owner.exports.number as Function)((owner.exports.captured as Function)())).toBe(42);
+});
+
+it("calls a caller-owned callback stored on a Context-owned receiver", async () => {
+  const owner = await context(true);
+  (owner.exports.installNestedLoader as Function)();
+  const result = await compile(
+    `
+    declare function replaceLoader(callback:any):void;
+    const callback:any=function(value:any){return this===Deno.core&&value==="x"?42:-1;};
+    replaceLoader(callback);
+    Deno.core.loadExtScript("x");
+  `,
+    {
+      ...options,
+      externImportModule: "context",
+      standaloneGlobalThisImport: { ...options.standaloneGlobalThisImport, call: "call" },
+      standaloneScriptLexicalImport: { module: "context", name: "scriptLexicalOperation" },
+      link: [...options.link],
+    },
+  );
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  const instance = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports });
+  (instance.exports.__module_init as Function)();
+  expect((owner.exports.number as Function)((owner.exports.captured as Function)())).toBe(42);
+});
 
 it("initializes a function-only Script and publishes undefined completion", async () => {
   const owner = await context();

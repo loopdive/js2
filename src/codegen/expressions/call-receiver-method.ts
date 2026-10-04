@@ -52,6 +52,7 @@ import { tryEmitDirectTwinCall } from "../typed-this.js"; // (#3683 S3) direct-c
 import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "../any-helpers.js"; // (#2864) semantic undefined producer
 import { pushBody } from "../context/bodies.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
+import { prepareLinkedMethodReference, prepareLinkedClosedMethodReference } from "./linked-method-reference.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js";
 import { tryEmitFixedHostMethodCall } from "../fixed-host-method-call.js";
@@ -4444,6 +4445,13 @@ export function compileReceiverMethodCall(
         }
         // Each argument compiled and boxed to externref (the dispatcher unboxes
         // to the method's declared param type per candidate struct).
+        const linkedClosedCall = prepareLinkedClosedMethodReference(
+          ctx,
+          fctx,
+          () => staticHostPropertyKeyInstrs(ctx, methodName),
+          arity,
+          `__call_m_${methodName}_${arity}`,
+        );
         for (const arg of dispatchArgs) {
           // (#3098) An inline arrow/function-expression callback to a native-
           // HOF-served method compiles as a raw GC CLOSURE struct (crossing as
@@ -4470,7 +4478,8 @@ export function compileReceiverMethodCall(
           if (at && at.kind !== "externref") coerceType(ctx, fctx, at, { kind: "externref" });
           else if (at === null) fctx.body.push({ op: "ref.null.extern" });
         }
-        fctx.body.push({ op: "call", funcIdx: dispatchIdx });
+        if (linkedClosedCall) linkedClosedCall();
+        else fctx.body.push({ op: "call", funcIdx: dispatchIdx });
         return { kind: "externref" };
       }
 
@@ -4825,11 +4834,20 @@ export function compileReceiverMethodCall(
           // `__extern_method_call` arm; the receiver already has a local here.
           fctx.body.push(...buildCallSiteNullishReceiverGuard(ctx, recvLocal, methodName));
 
+          const linkedCall = prepareLinkedMethodReference(ctx, fctx, recvLocal, () =>
+            staticHostPropertyKeyInstrs(ctx, methodName),
+          );
+
           // Build args array
           fctx.body.push({ op: "call", funcIdx: arrNewIdx });
           const argsLocal = allocLocal(fctx, `__emc_args_${fctx.locals.length}`, { kind: "externref" });
           fctx.body.push({ op: "local.set", index: argsLocal });
           emitHostMethodCallArgs(ctx, fctx, expr, argsLocal, arrPushName, arrPushIdx);
+
+          if (linkedCall) {
+            linkedCall(argsLocal);
+            return { kind: "externref" };
+          }
 
           // Push receiver, method name, args array → call __extern_method_call
           fctx.body.push({ op: "local.get", index: recvLocal });

@@ -166,6 +166,13 @@ loc-budget-allow:
   - src/codegen/expressions/late-imports.ts
   - src/codegen/async-scheduler.ts
 func-budget-allow:
+  # 2026-10-04: restate existing branch growth against freshly merged main.
+  # Completion/provider ABI (+8/+4) and native callable storage (+4/+2) were
+  # already implemented in this integration branch, not new ordering logic.
+  - src/ir/from-ast.ts::lowerFunctionAstToIr
+  - src/ir/integration.ts::compileIrPathFunctions
+  - src/codegen/literals.ts::compileObjectLiteralForStruct
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
   # 2026-10-04: four-line opt-in reset at catch entry preserves Script
   # completion independently of the failed try body's prior expression.
   - src/codegen/statements/exceptions.ts::compileTryStatement
@@ -3253,7 +3260,18 @@ binary controls match clean dbe49bf307d6 exactly. Source-preservation remains
 38 pass /53 fail out of 91 with no per-test status changes. Native adapter pin,
 package routing and unchanged Deno replay have not advanced yet.
 
-Latest checkpoint, 2026-10-04: foreign Context-owned method dispatch now passes
+Continuation, 2026-10-04: merged origin/main 39fd7b7d44 in 2617ddf4d2,
+preserving both callback and standalone new.target paths. Post-merge compiler
+controls pass 41/41 and constructor/expression controls 30/30. New method-order
+controls exposed two failures: arguments ran before foreign getters. Frame-local
+callee capture fixes the tested dot/computed closed-dispatch routes; 13/13 new
+controls pass, including getter throws, non-callables, mutation and local callbacks.
+Full focused/persistent tests pass 140/140, including two existing expected
+failures in the persistent suite. TypeScript passes; lint has no errors and five
+pre-existing warnings. Clean pinned native replay, spread/IR ordering controls
+and full integration remain outstanding.
+
+Earlier checkpoint, 2026-10-04: foreign Context-owned method dispatch now passes
 the previously expected-failing nested capability call. Eight selected compiler
 controls pass 8/8, including exact receiver, single getter evaluation, thrown
 payload identity and two non-callable TypeErrors. Native replay is not rerun for
