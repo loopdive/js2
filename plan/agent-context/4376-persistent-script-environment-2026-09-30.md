@@ -1,5 +1,44 @@
 # Persistent AOT Script environment
 
+## Stop checkpoint and implementation entry point, 2026-10-04
+
+Wrapped up at user request. Published implementation/test heads before this
+documentation checkpoint: compiler b87dfe8cc95a8c9ceaab63b02f19bc109cdcf027,
+adapter 4978e6bd83b411a7019a042d2380beaad0a597b6. Existing open drafts are
+https://github.com/loopdive/js2/pull/6468 and
+https://github.com/loopdive/v8x/pull/2. Do not create duplicates or mark them
+merge-ready. No CompileFunction implementation was started and no new benchmark
+was run during wrap-up. The measured artifact pins below remain authoritative.
+
+Resume by factoring Script instantiation into a same-store helper usable through
+both DenoRuntime and CallerRealm, exposed by RealmAccess. Retain newly instantiated
+graphs in StoreData.aot_call_graphs even when initialization throws, and preserve
+exception rooting and the outer Script completion during nested function-factory
+execution. Ordinary root instantiation must retain its existing graph bookkeeping.
+
+Implement the actual ScriptCompiler::CompileFunction signature from vendored
+rusty_v8. Package exact body, parameter names and origin using a generic function
+factory, then materialize the owning native callable through realm_objects.
+Validate callable classification for Script-owned closures. Unsupported context
+extensions or missing trusted packages must fail loudly, not be ignored.
+realm_callback_access::with_owner provides active callback access; do not route
+reentrant loading through with_runtime_owner's overlapping RefCell borrow.
+
+Entry files in the adapter are src/js2wasm/mod.rs (Script Run and Source ABI),
+src/js2wasm_spike.rs (instantiation and retention),
+src/js2wasm_realm_values.rs (RealmAccess and CallerRealm),
+src/js2wasm/realm_callback_access.rs, src/js2wasm/realm_objects.rs,
+src/js2wasm_script_packages.rs and tools/js2wasm/script-packages.mjs.
+Add native controls for parameter binding, deferred body execution, receiver,
+exception identity, trusted-package refusal and callback reentry before replaying
+unchanged modules::tests::test_lazy_loaded_script. Re-run WebIDL 17 tests,
+derived conversions two tests and lazy-script-not-found as regression controls.
+Do not substitute those subsets for the complete 431-test population.
+
+Preserve unrelated lower-contracts documentation, acorn binary and untracked
+user files. Adapter .tmp/ is also pre-existing. This checkpoint adds docs only;
+no new test result, performance claim or completion credit is implied.
+
 ## Fresh native method-dispatch replay, 2026-10-04
 
 The unchanged `modules::tests::test_lazy_loaded_script_not_found` now passes

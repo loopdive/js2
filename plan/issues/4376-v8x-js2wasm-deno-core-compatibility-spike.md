@@ -3260,6 +3260,12 @@ binary controls match clean dbe49bf307d6 exactly. Source-preservation remains
 38 pass /53 fail out of 91 with no per-test status changes. Native adapter pin,
 package routing and unchanged Deno replay have not advanced yet.
 
+Wrap-up at user request, 2026-10-04: existing draft compiler PR 6468 and adapter
+PR 2 are reused. The persistent Script environment handoff now records the
+callback-safe instantiation entry points, function-body packaging requirements
+and native regression sequence. CompileFunction implementation has not started;
+no new measurement or full-integration completion is claimed.
+
 Fresh native continuation, 2026-10-04: clean compiler 9bfee5a9c6 and adapter
 builder f236d22698 with Binaryen 125 /Wasmtime 47.0.3. Unchanged native
 lazy-script-not-found passes 1/1, WebIDL 17/17, derived conversions 2/2.
