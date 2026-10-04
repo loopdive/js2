@@ -1,5 +1,64 @@
 # Deno module linking checkpoint, 2026-10-04
 
+## Wrap-up: authoritative resume state
+
+Work stopped at the user's checkpoint request. No new implementation was made
+after the owner-aware call fix. Both existing PRs are open drafts, not merged:
+
+- Compiler [PR 6468](https://github.com/loopdive/js2/pull/6468), implementation
+  `e840ca2ce08b8bc970c60c907ddd23dd0abae9bf`, branch
+  `codex/4376-deno-lexical-checkpoint-20261004`. This PR is stacked on
+  `codex/4376-deno-callback-construction-20260930`, not main.
+- Adapter [PR 2](https://github.com/loopdive/v8x/pull/2), published head
+  `8c2a87b7191c505e0028236da7975993d60126fc`, implementation
+  `90323467c858f278db8294e8d068121f311146da`, branch
+  `codex/4376-deno-realm-bootstrap`, base main.
+
+Latest compiler controls passed **11/11** across three files; typechecking,
+scoped formatting and source gates passed. The dead-export tool exits zero but
+reports an uncertified runtime-retirement closure; do not claim retirement.
+The adapter ordinary controls passed **34/34**, with 17 ignored and one filtered
+environment-dependent test out of 52. The explicit shared-module control passed
+**1/1**, 51 filtered /52, using a clean committed compiler at e840ca2ce0.
+The five selected unchanged Deno tests passed **5/5**, each 430 filtered /431;
+their graph/Script packages are still development artifacts. These are previous
+execution receipts, not newly rerun tests at wrap-up. No new performance or
+footprint measurements were made.
+
+Clean shared-module replay, from the adapter workspace:
+
+```sh
+V8X_JS2WASM_SCRIPT_ENVIRONMENT_DIR=/private/tmp/deno-native-promise.6898GB V8X_JS2WASM_AOT_GRAPH_DIR=/private/tmp/deno-module-owners-clean.WynXRu target/debug/deps/js2wasm_spike-8b524eb9ef0b52c1 --exact shared_modules::aot_shared_dependency_keeps_namespace_live_exports_and_single_execution --ignored --nocapture --test-threads=1
+```
+
+Clean compiler checkout: `/private/tmp/deno-promise-full.X2WdwN/js2`, detached
+at e840ca2ce0. Packages use Binaryen 125 O3 and Wasmtime 47.0.3; final runtime
+compiler/interpreter counters are zero. Fixture changes require fresh packages
+and rebuilding the Rust test binary, which embeds those fixtures.
+
+Next work, in order:
+
+1. Add explicit imported optional/spread-call, getter/argument-order and nested
+   foreign-closure controls. The current linked-call helper declines optional
+   chains and spread; their fallback paths have not been proven owner-safe.
+2. Guard prepared IR per-source initializers, including
+   `src/codegen/multi-prepared-module-init-batch.ts`, and prove the IR path
+   actually participates. Reserve capability imports and flush late shifts
+   before capturing function indices. Do not disable IR to pass the test.
+3. Test cycles, temporal dead zones, cached evaluation failures and negative
+   capability/Context ownership cases. Migrate raw checker queries to oracle
+   facts. The typed static inter-file callable preflight remains a known gap.
+4. Rebuild the selected unchanged Deno packages from the clean compiler pin
+   using the explicit tsx loader, then expand beyond the five selected tests.
+   Snapshot creation currently aborts at `v8__SnapshotCreator__CONSTRUCT`;
+   the full 431-test population is not passing or fully verified.
+5. Complete remaining module/host behavior before matched footprint and speed
+   benchmarks. Do not treat these checkpoint PRs as finished Deno integration.
+
+The continuation section below supersedes the historical failing-control and
+old resume instructions farther down. Unrelated compiler dirt and adapter
+`.tmp/` were preserved; no cleanup, stash, main push or merge was performed.
+
 ## Continuation: callable ownership fixed
 
 The previously failing expanded shared dependency test now passes **1/1**,
