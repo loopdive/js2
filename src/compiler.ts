@@ -909,6 +909,21 @@ function buildCodegenOptions(
   ) {
     throw new Error("standaloneScriptOwnNamesExport requires a named export and native Script getter/ownership");
   }
+  if (options.standaloneScriptReflectionExports !== undefined) {
+    const { ownSymbols, descriptor } = options.standaloneScriptReflectionExports;
+    if (!ownSymbols || !descriptor || !options.standaloneScriptOwnNamesExport) {
+      throw new Error("standaloneScriptReflectionExports requires named exports and native Script own-names/ownership");
+    }
+  }
+  if (options.standaloneSymbolState !== undefined) {
+    const state = options.standaloneSymbolState;
+    if (
+      targetProfile.target !== "standalone" ||
+      (state !== "export" && (!state.module || !options.link?.includes(state.module)))
+    ) {
+      throw new Error("standaloneSymbolState requires standalone and an explicitly linked provider");
+    }
+  }
   return {
     irCutoverRoute: readIrCompileRoute(options, "compileSourceSync"),
     sourceMap: emitSourceMap,
@@ -952,6 +967,8 @@ function buildCodegenOptions(
     standaloneScriptGetExport: options.standaloneScriptGetExport,
     standaloneScriptCallExport: options.standaloneScriptCallExport,
     standaloneScriptOwnNamesExport: options.standaloneScriptOwnNamesExport,
+    standaloneScriptReflectionExports: options.standaloneScriptReflectionExports,
+    standaloneSymbolState: options.standaloneSymbolState,
     strictNoHostImports: targetProfile.strictEnvImportGate,
     // (#2119) thread module-strictness inference uniformly across all drivers.
     inferModuleStrictArguments: options.inferModuleStrictArguments,

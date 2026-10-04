@@ -1,5 +1,37 @@
 # Persistent AOT Script environment
 
+## Reflection and shared Symbol checkpoint, 2026-10-04
+
+Compiler: native owning-Script symbol enumeration and descriptors accompany the
+existing string-name export. Closed computed well-known Symbol fields participate
+in enumeration and hasOwn. Shared Symbol state is now implemented as six native
+mutable globals, reserved before defined globals; the adapter previously requested
+this option but the compiler silently ignored it. Controls cover fresh symbols,
+Symbol.for and Symbol.iterator identity across linked Scripts, descriptors and
+getter non-invocation. Focused suite: 31/31 passed; TypeScript 7 passed.
+
+Adapter: native property enumeration routes to the allocation's owning Script,
+retains native keys, consults descriptors for filters, and handles canonical array
+indices. Matching owners with missing reflection exports fail loudly. Context
+bridge exports the same reflection operations. Script packaging now invokes
+Binaryen before Wasmtime and records raw/optimized hashes and optimizer version.
+Compiler-free adapter cargo check passed. These changes have NOT been replayed
+against fresh native Deno artifacts, and packaging optimization is not yet verified
+end to end. The old native result remains 16 pass /1 fail /414 filtered of 431.
+
+Resume in this order: rebuild clean pinned Context and five original Scripts;
+verify all six Symbol globals really exist; validate optimized import checks;
+rebuild unchanged Deno tests and replay WebIDL before claiming the dictionary
+record failure fixed. Then run broader conformance and matched benchmarks.
+Native property-filter tests, Context exception identity, unpaired UTF-16 keys,
+closed-symbol deletion/redefinition and default-off binary parity need additional
+coverage. Full integration remains unfinished. The earlier 38/91 preservation
+result (53 failures) has not been rerun for this checkpoint. Preserve unrelated
+lower-contracts.ts and acorn.wasm edits, and all unrelated untracked files.
+
+Existing compiler and adapter draft PRs are reused, not duplicated. Neither is
+merge-ready. Historical measurements below apply only to their stated commits.
+
 ## Owning-Script string-name enumeration continuation, 2026-10-04
 
 The remaining native WebIDL record failure has a concrete adapter omission:

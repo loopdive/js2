@@ -17,6 +17,9 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-10-04: opt-in native Script reflection and early shared Symbol globals.
+  - src/codegen/index.ts
+  - src/codegen/linked-realm-property-read.ts
   # 2026-10-04: default-off owning-Script string-name export retains native
   # reflection helpers and preserves insertion order independently of IR slots.
   - src/codegen/shared-script-completion.ts

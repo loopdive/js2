@@ -191,6 +191,7 @@ import { eliminateDeadLayoutAndPlanProgramAbi } from "./program-abi-finalization
 import { prepareSharedScriptVarAccess, finalizeSharedScriptVarAccess } from "./shared-script-var-access.js";
 import { prepareSharedScriptLexicalAccess, finalizeSharedScriptLexicalAccess } from "./shared-script-lexical-access.js";
 import { prepareScriptCompletionSink } from "./shared-script-completion.js";
+import { prepareStandaloneSymbolState, publishStandaloneSymbolState } from "./standalone-symbol-state.js";
 import { sweepAfterInline, verifyFunctionSweep } from "./function-reachability-sweep.js"; // (#6768)
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
@@ -5254,6 +5255,7 @@ export function generateModule(
   const ctx = createCodegenContext(mod, ast.checker, options, programAbiSession, irPlanningIdentityContext);
   ctx.callableSourceFiles = [ast.sourceFile];
   importStandaloneLinkErrorCtorCells(ctx); // (#6723 D4) before any defined global
+  prepareStandaloneSymbolState(ctx);
   ctx.irBodyRouteAuditSession?.registerGenerator("single", "generateModule");
   const standaloneCalendar = planSingleSourceStandaloneCalendar(ctx, ast.checker, ast.sourceFile, inventoryOptions);
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan([ast.sourceFile], ctx.oracle);
@@ -7071,6 +7073,7 @@ export function generateModule(
     validateFinalStructHierarchies(ctx);
     finalizeSharedScriptVarAccess(ctx);
     finalizeSharedScriptLexicalAccess(ctx);
+    publishStandaloneSymbolState(ctx);
     profilePhase("finalize/dead-layout", () => eliminateDeadLayoutAndPlanProgramAbi(ctx)); // #1899 authoritative remap, then #3520 retained ABI
 
     // Repair struct.get/struct.set type mismatches (externref → struct ref conversion)
@@ -10585,6 +10588,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
   const ctx = createCodegenContext(mod, multiAst.checker, options, programAbiSession, irPlanningIdentityContext);
   ctx.callableSourceFiles = multiAst.sourceFiles;
   importStandaloneLinkErrorCtorCells(ctx); // (#6723 D4) before any defined global
+  prepareStandaloneSymbolState(ctx);
   const irAuthority = makeIrPlanningAuthority(multiAst.checker, irPlanningIdentityContext, options?.experimentalIR);
   const multiPreparedProgram = initializeMultiPreparedProgram(ctx, multiAst, options, explicitlyDisabledEnv);
   const standaloneCalendar = planMultiCalendar(ctx, multiAst.checker, multiAst.sourceFiles, multiAst.entryFile);
@@ -11771,6 +11775,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#4645) Module-scale marker, then main's phase names/signatures.
     reportModuleScale("before-finalize", mod);
     profilePhase("validate-final-struct-hierarchies", () => validateFinalStructHierarchies(ctx));
+    publishStandaloneSymbolState(ctx);
     profilePhase("eliminate-dead-layout", () => eliminateDeadLayoutAndPlanProgramAbi(ctx)); // #1899 authoritative remap, then #3520 retained ABI
 
     // Repair struct.get/struct.set type mismatches (externref → struct ref conversion)

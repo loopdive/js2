@@ -589,6 +589,13 @@ export interface CompileOptions {
    * Script getter/ownership surface. This is not Reflect.ownKeys: symbols and
    * host property filters require separate descriptor-aware handling. */
   standaloneScriptOwnNamesExport?: string;
+  /** Additional native reflection for owning-Script hosts. Requires own-names
+   * export. ownSymbols: (object) -> native array; descriptor: (object,key)
+   * -> native descriptor or undefined. All channels use externref values. */
+  standaloneScriptReflectionExports?: { ownSymbols: string; descriptor: string };
+  /** Share native Symbol identity, descriptions and registry across one realm.
+   * Provider exports six typed mutable globals; peers import that state. */
+  standaloneSymbolState?: "export" | { module: string; reexport?: boolean };
   /** Opt-in allocation provenance predicate (externref) -> i32. Adds one hidden
    * owner-token field to GC structs; all linked graph artifacts must opt in. */
   standaloneAllocationOwnerExport?: string;

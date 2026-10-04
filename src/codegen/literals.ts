@@ -31,6 +31,7 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { staticHostPropertyKeyInstrs } from "./host-property-key.js";
 import { emitHoleSentinel } from "./array-holes.js"; // (#2001 S1)
 import { objectLiteralTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) shared with the type-level twin in index.ts
+import { symbolStateGlobal } from "./standalone-symbol-state.js";
 import { bareAnyArrayLiteralNeedsExternref } from "./array-literal-any-carrier.js";
 import { hasIncompatibleElementCarrier, hasNonStructElementForStructCarrier } from "./struct-carrier-inhabits.js"; // (#5327 / #6613) array-literal element-carrier compatibility proofs
 import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
@@ -2832,13 +2833,7 @@ export function wellKnownSymbolName(id: number): string | undefined {
  */
 export function ensureSymbolCounter(ctx: CodegenContext): number {
   if (ctx.symbolCounterGlobalIdx >= 0) return ctx.symbolCounterGlobalIdx;
-  const idx = nextModuleGlobalIdx(ctx);
-  ctx.mod.globals.push({
-    name: "__symbol_counter",
-    type: { kind: "i32" },
-    mutable: true,
-    init: [{ op: "i32.const", value: 100 }],
-  });
+  const idx = symbolStateGlobal(ctx, "__symbol_counter", { kind: "i32" }, [{ op: "i32.const", value: 100 }]);
   ctx.symbolCounterGlobalIdx = idx;
   return idx;
 }

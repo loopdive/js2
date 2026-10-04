@@ -42,8 +42,15 @@ export function nameCode(value:any,index:number):number {
  const key:any=value[index];
  return key==="foo"?1:key==="bar"?2:key==="hidden"?3:key==="getter"?4:key==="2"?5:key==="10"?6:key==="01"?7:key==="4294967295"?8:key==="0"?9:key==="1"?10:key==="length"?11:0;
 }
+export function length(value:any):number {return value.length;}
+export function first(value:any):any {return value[0];}
+export function registrySame(a:any,b:any):boolean {return a[1]===b[1]&&a[2]===b[2];}
+export function descriptorBits(value:any):number {return (value.writable?1:0)+(value.enumerable?2:0)+(value.configurable?4:0);}
+export function fooKey():any {return "foo";}
+export function hiddenKey():any {return "hidden";}
+export function getterKey():any {return "getter";}
 `,
-    { target: "standalone", standaloneAllocationOwnerExport: "owns" },
+    { target: "standalone", standaloneAllocationOwnerExport: "owns", standaloneSymbolState: "export" },
   );
   expect(result.success, JSON.stringify(result.errors)).toBe(true);
   return new WebAssembly.Instance(new WebAssembly.Module(result.binary), result.importObject);
@@ -62,8 +69,97 @@ const options = {
   standaloneAllocationOwnerExport: "localOwns",
   standaloneScriptGetExport: "scriptGet",
   standaloneScriptCallExport: "scriptCall",
+  standaloneSymbolState: { module: "context" },
   link: ["context"],
 } as const;
+
+const reflectionOptions = {
+  ...options,
+  standaloneScriptOwnNamesExport: "scriptOwnNames",
+  standaloneScriptReflectionExports: { ownSymbols: "scriptOwnSymbols", descriptor: "scriptDescriptor" },
+};
+
+it("shares Symbol allocation and registry state without merging distinct user symbols", async () => {
+  const owner = await context();
+  const e = owner.exports as Record<string, Function>;
+  const values: unknown[] = [];
+  for (let index = 0; index < 2; index++) {
+    const result = await compile('[Symbol("same"),Symbol.for("shared"),Symbol.iterator]', {
+      ...options,
+      link: [...options.link],
+    });
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const instance = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports });
+    (instance.exports.__module_init as Function)();
+    values.push(e.captured());
+  }
+  expect(e.same(e.first(values[0]), e.first(values[1]))).toBe(0);
+  expect(e.registrySame(values[0], values[1])).toBe(1);
+});
+
+it("reflects ordinary data and accessor descriptors without invoking the getter", async () => {
+  const owner = await context();
+  const result = await compile(
+    `
+var object:any={foo:1};
+Object.defineProperty(object,"hidden",{value:2,enumerable:false,writable:false,configurable:true});
+Object.defineProperty(object,"getter",{get(){throw new Error("must not run");},enumerable:true,configurable:false});
+object;
+`,
+    { ...reflectionOptions, link: [...options.link] },
+  );
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  const script = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports });
+  const e = owner.exports as Record<string, Function>,
+    s = script.exports as Record<string, Function>;
+  s.__module_init();
+  const object = e.captured();
+  expect(e.descriptorBits(s.scriptDescriptor(object, e.fooKey()))).toBe(7);
+  expect(e.descriptorBits(s.scriptDescriptor(object, e.hiddenKey()))).toBe(4);
+  expect(e.descriptorBits(s.scriptDescriptor(object, e.getterKey()))).toBe(2);
+});
+
+it("preserves symbol key identity and descriptor flags on an open native Script object", async () => {
+  const owner = await context();
+  const result = await compile(
+    `
+var object:any={foo:1};
+Object.defineProperty(object,Symbol.iterator,{value:2,enumerable:false,writable:false,configurable:true});
+object;
+`,
+    { ...reflectionOptions, link: [...options.link] },
+  );
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  const script = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports });
+  const e = owner.exports as Record<string, Function>,
+    s = script.exports as Record<string, Function>;
+  s.__module_init();
+  const object = e.captured(),
+    symbols = s.scriptOwnSymbols(object);
+  expect(e.length(symbols)).toBe(1);
+  expect(e.same(e.first(symbols), e.key())).toBe(1);
+  expect(e.length(s.scriptOwnNames(object))).toBe(1);
+  expect(e.descriptorBits(s.scriptDescriptor(object, e.first(symbols)))).toBe(4);
+});
+
+it("enumerates a closed computed symbol method without leaking its internal string field", async () => {
+  const owner = await context();
+  const result = await compile("({foo:1,[Symbol.iterator](){return [];}})", {
+    ...reflectionOptions,
+    link: [...options.link],
+  });
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  const script = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports });
+  const e = owner.exports as Record<string, Function>,
+    s = script.exports as Record<string, Function>;
+  s.__module_init();
+  const object = e.captured(),
+    symbols = s.scriptOwnSymbols(object);
+  expect(e.length(symbols)).toBe(1);
+  expect(e.same(e.first(symbols), e.key())).toBe(1);
+  expect(e.length(s.scriptOwnNames(object))).toBe(1);
+  expect(e.descriptorBits(s.scriptDescriptor(object, e.first(symbols)))).toBe(7);
+});
 
 it("enumerates closed Script fields without copying values into the Context", async () => {
   const owner = await context();

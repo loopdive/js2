@@ -3,6 +3,7 @@ import type { CodegenContext } from "./context/types.js";
 import { ensureLateImport } from "./shared.js";
 import { publishScriptGetter } from "./shared-script-completion.js";
 import { fillArrayIteratorPropertyRead } from "./array-iterator-property-read.js";
+import { fillClosedScriptSymbolReflection } from "./closed-script-symbol-reflection.js";
 
 /** Explicit ownership, not a structural type match, selects the foreign realm. */
 export function reserveLinkedRealmPropertyRead(ctx: CodegenContext): void {
@@ -25,6 +26,7 @@ export function reserveLinkedRealmPropertyRead(ctx: CodegenContext): void {
 /** Install after every getter fill so graph-local bags and caches cannot win. */
 export function fillLinkedRealmPropertyRead(ctx: CodegenContext): void {
   fillArrayIteratorPropertyRead(ctx);
+  fillClosedScriptSymbolReflection(ctx);
   publishScriptGetter(ctx);
   const linked = ctx.standaloneGlobalThisImport;
   if (!linked?.owns || !linked.get) return;
