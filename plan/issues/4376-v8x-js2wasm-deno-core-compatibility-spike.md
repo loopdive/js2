@@ -329,6 +329,26 @@ files:
 
 ## Latest module-linking handoff (2026-10-04)
 
+### Lifecycle package rollout (continuation)
+
+The paired adapter builders now explicitly request source lifecycle events for
+ordinary shared modules, typed live-import modules, module-evaluation probes,
+and the selected unchanged Deno module graphs. Generic packaging remains
+default-off. Rebuild these packages from clean compiler 4a98f06ae2 and replay
+the existing compiler-free native runner before claiming broader lifecycle
+coverage. Script sources and upstream Deno tests remain unchanged. This rollout
+does not establish cycles, snapshots, full-suite conformance, or new performance
+measurements.
+
+Fresh packages `/private/tmp/deno-lifecycle-rollout.ykaQLB` meet explicit floors
+(shared 2, typed 2, evaluation 4, Deno graphs 5, Scripts 4). All optimized
+graphs retain lifecycle imports. Native replay passes 4/4, each 54 filtered
+/55, and selected unchanged Deno replay passes 5/5, each 430 filtered /431.
+Fixture/binding/extractor controls pass 7/7. Existing Context and adapter
+f2a743a are unchanged; compiler pin is clean 4a98f06ae2. Site rendering remains
+unavailable because Typst is absent. Continue with mixed fresh-prefix/cached
+failure payload delivery and the broader unresolved integration requirements.
+
 ### Prepared initializer guards (continuation)
 
 Native source lifecycle binding continuation: the adapter now validates exact

@@ -1,5 +1,24 @@
 # Deno module linking checkpoint, 2026-10-04
 
+## Ordinary package builders now enable lifecycle events
+
+Paired adapter builders explicitly enable lifecycle for shared modules, typed
+imports, module-evaluation probes, and the five selected unchanged Deno graphs.
+Generic packaging remains default-off. Fresh clean compiler 4a98f06ae2 packages
+are in `/private/tmp/deno-lifecycle-rollout.ykaQLB`: shared 2, typed 2,
+evaluation 4, Deno graphs 5 and Scripts 4. Every optimized graph retains at
+least one enter/complete pair, with two for shared/typed and the core-import
+graph. Native replay passes 4/4 (each 54 filtered /55); unchanged Deno replay
+passes 5/5 (each 430 filtered /431) against adapter f2a743a and unchanged Context.
+Fixture/extractor/binding controls pass 7/7. Syntax/diff checks pass; site build
+still fails because Typst is absent. No full-suite, native prepared-IR, or new
+benchmark claim. Exact commands and inventories are in the adapter handoff.
+
+Next work is mixed fresh-prefix/cached-failure original JS payload delivery,
+then native prepared-IR participation, general cycles/TDZ, synthetic/source
+composition, snapshots, broader conformance, complete host integration and
+matched benchmarks. Compiler PR 6468 is still stacked, not based on main.
+
 ## Native source failure lifecycle now passes in opt-in packages
 
 Final clean replay supersedes development artifact caveat below: clean
