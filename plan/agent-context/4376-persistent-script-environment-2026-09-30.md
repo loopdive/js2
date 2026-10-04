@@ -1441,3 +1441,35 @@ Detailed continuation is adapter `tools/js2wasm/NATIVE-PROMISE-HANDOFF.md`.
 Existing draft PRs are https://github.com/loopdive/js2/pull/6468 and
 https://github.com/loopdive/v8x/pull/2; update these rather than opening duplicates.
 Neither is merge-ready. Preserve unrelated user changes in both worktrees.
+
+## Full Context and original module exception continuation (2026-10-04)
+
+Fresh full Context is `/private/tmp/deno-promise-full.X2WdwN/deno-core.cwasm`,
+44,646,992 bytes, SHA256
+`78aa8a50726f61577cdc54267d912af63acc7b85d24a931fa53e71a63ab2b237`.
+Clean compiler b5f6cbae636d22d5c9e7901f779b4f1727003adc, builder
+7b31b4ef839bbd4646b85441725e65c7f6a95dc6, unchanged Deno
+1d4e6c1cb855b62a7fb572c6c138e4e8b4e7fa44. Binaryen 125 optimized,
+Wasmtime 47.0.3 precompile 1/1 in 224.14s. No interpreter provider emitted.
+
+Main/side passes 1/1 (430 filtered /431). Missing-package negative fails 0/1
+with the original loading error instead of the old Promise conversion failure.
+Lazy loading passes 1/1, WebIDL 17/17, all unchanged Deno subsets. Rust adapter
+build uses no runtime_compile feature. Do not credit the entire 431 population.
+
+Original AOT graph thrown payloads are rooted before unwinding to native APIs.
+The native test verified identity but initially failed marker read (NaN/42):
+the graph readiness matcher refused objects escaped before namespace publication.
+The sidecar adds __v8x_graph_get_owned_export; Rust dispatch proves allocation
+ownership before using it. Native positive/throwing module tests now pass 2/2,
+48 filtered /50, including exact Promise result/Module exception/global identity
+and marker 42. Compiler namespace controls pass 4/4, including foreign-instance
+allocation refusal. TS7 passes; scoped lint has one existing explicit-any warning.
+
+New graph packages are `/private/tmp/deno-promise-full.X2WdwN/graphs-owned-get`.
+They were built from this compiler candidate; the full Context uses the clean pin
+above. Detailed adapter receipts are in tools/js2wasm/NATIVE-PROMISE-HANDOFF.md.
+Next inspect the full unchanged test population and package its exact source
+graphs, then continue snapshot and host/value work. Startup-module exceptions,
+arbitrary thrown callables, transport failures after adoption and full snapshot
+semantics still need coverage. No new throughput/footprint comparison.

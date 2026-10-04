@@ -3272,6 +3272,27 @@ with pre-change sidecar 015ab63ba3 and the same compiler/harness. Native Promise
 transport, original AOT exception rooting, full population, snapshots and remaining
 host/benchmark work are still required. Handoffs contain exact source/hash repros.
 
+Native Promise and module payload continuation, 2026-10-04: a fresh clean pinned
+full Context now includes native Promise mirror helpers. Unchanged main/side
+passes 1/1, 430 filtered /431; the missing-package negative fails 0/1 with the
+actual loading error, no longer an unsupported Promise conversion. Lazy loading
+passes 1/1 and WebIDL 17/17 at the fresh Context. Native mirror controls cover
+fulfillment/rejection before and after adoption, exact payload identity, single
+rejection delivery and repeated unsupported settled-payload refusal.
+
+AOT graph initialization now roots the original Wasm exception payload in its
+Context keeper before returning an error. Native rejected Promise and Module
+exception identity match the object published before the throw. Initial property
+read failed (NaN instead of 42): namespace readiness denied owning-graph access
+after abrupt initialization. A separate generated getter now admits only native
+allocation-proven receivers, with Rust dispatch checking __v8x_graph_owns first.
+Compiler controls pass 4/4, including same-layout foreign-instance refusal;
+native positive/throwing module controls pass 2/2, 48 filtered /50, with zero
+runtime compilation/interpreter instances. Old graph packages lacking the getter
+fail explicitly on otherwise proven owned receivers rather than silently reading
+through the foreign Context. Full population, arbitrary cross-boundary values,
+snapshots, host services, shared libraries and matched benchmarks remain open.
+
 Import-meta lifecycle foundation, 2026-10-04: adapter registration now retains
 Deno's callback. A lazy per-native-Module object cache publishes before callback
 invocation, preserves reentrant identity and rejects wrong-context/foreign-isolate
