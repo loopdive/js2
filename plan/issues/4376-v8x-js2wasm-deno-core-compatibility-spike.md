@@ -3105,3 +3105,14 @@ including two existing expected failures. The adapter's native Context sink,
 reset/root getter and compiler-free independent-Script fixture are in progress.
 Public source-bound Script dispatch and unchanged full Deno conformance remain
 required before completion.
+
+Wrap-up (2026-10-04): native completion replay passes 1/1 (36 filtered) with
+one Context and eleven separately precompiled Scripts, zero runtime compilations
+and zero runtime-eval provider instances. Adapter ordinary checks pass 30/37
+with seven explicit ignored tests; runtime options pass 10/10. The subsequent
+adapter package-lookup checkpoint builds and preserves the same replay result,
+but public Script dispatch, trusted Script packaging/ABI validation and tests
+of original thrown-value transport remain unfinished. Full unchanged Deno
+conformance and fresh performance measurements are not credited. Both existing
+PRs remain draft; the persistent Script and adapter handoffs record the precise
+resume order. This issue remains in progress.

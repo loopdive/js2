@@ -655,3 +655,37 @@ goal and ABI/config identity. Deploy without compiler/interpreter features.
 Then rerun unchanged WebIDL (13/17 currently; four scripts rejected before
 assertions) and the full unchanged deno_core population. These boundary tests
 alone do not prove full integration.
+
+## Wrap-up: native completion and package lookup (2026-10-04)
+
+Compiler checkpoint `3d4c1dfdaf61f101cb07c7139b5a3ed65052d520` passes
+36/36 ordinary completion controls. Persistent Script and older result controls
+pass 89/89 including two existing expected failures. Earlier failing completion
+counts above are historical, not current. Pure source Program completion remains
+unconfigured, and these controls do not establish full Deno integration.
+
+The adapter continuation factors its verified native artifact loader, adds an
+exact-source/specifier Script digest and a proposed AOT package-directory lookup,
+and separates native JS-thrown handles from Wasmtime infrastructure traps.
+`run_aot_script` is not yet called by public `v8__Script__Run`; its dead-code
+warnings are expected at this unfinished checkpoint. There is no Script package
+writer or complete Script-goal/ABI validation, and thrown-value preservation
+has not yet been independently tested. Do not infer public integration from the
+private fixture.
+
+Fresh compiler-free adapter replay passes 1/1 (36 filtered, 0.11 seconds) using
+the twelve existing trusted artifacts at
+`/private/tmp/deno-script-completion.8HrA0L`. Its ordinary suite passes 30/37
+with seven explicitly ignored and zero failures; runtime options pass 10/10.
+The adapter feature profile builds after using Wasmtime's
+`scope.as_context_mut().take_pending_exception()` API. No full Context rebuild,
+unchanged Deno conformance gain or new performance measurement is credited.
+
+Resume from `tools/js2wasm/SCRIPT-ENVIRONMENT-HANDOFF.md` in adapter checkout
+`/private/tmp/v8x-deno-resume-20260930.o0sxeO/repo`. Complete trusted packaging
+and mismatch controls, public exact-source dispatch and realm-value adoption,
+then compiler pure Program completion and a full unchanged Deno test run.
+Existing draft PRs remain https://github.com/loopdive/js2/pull/6468 and
+https://github.com/loopdive/v8x/pull/2. The compiler PR targets
+`codex/4376-deno-callback-construction-20260930`, not main. Preserve unrelated
+compiler worktree edits and adapter `.tmp/` content.
