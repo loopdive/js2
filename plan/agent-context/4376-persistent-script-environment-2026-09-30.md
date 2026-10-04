@@ -1,5 +1,39 @@
 # Persistent AOT Script environment
 
+## Explicit foreign getter receivers, 2026-10-04
+
+Compiler implementation a675081032 and adapter implementation
+1214214dcc0627d9d0cb61c4042a7413173c1558 add the optional
+`__v8x_script_get_export_receiver` three-reference export. The old two-reference
+getter remains unchanged. New packages forward target, key and receiver to the
+existing native Reflect helper; old packages still explicitly refuse alternate
+receivers rather than silently substituting the target.
+
+Compiler getter suite passes 56/56, including direct explicit receiver identity,
+thrown receiver identity and subsequent ordinary reads. TypeScript 7 and scoped
+Biome lint pass. The compiler-free native foreign-read control passes 1/1
+(42 filtered /43) with both new receiver and thrown-receiver cases, plus the old
+package refusal control; it asserts zero runtime compilations and interpreter
+instances. Ordinary adapter run remains 31 passed, zero failed, 12 ignored /43.
+Unchanged actual Deno lazy loading still passes 1/1, 430 filtered /431, in 1.72s.
+
+Build-side `build-foreign-get-test-packages.mjs --calls-only` rebuilt optimized
+Binaryen/Wasmtime packages in /private/tmp/deno-reentrant-script.MZdH2Q.
+The new factories have marker 91/92 to distinguish them from the preserved old
+receiver-less factory. Existing Context artifacts are unchanged. Compiler tests
+require the fork itself to receive --experimental-wasm-exnref; the repository
+Vitest config overrides parent execArgv, so a temporary derived config supplied it.
+Unflagged runs failed validation, not JavaScript semantics. The default TS5
+typecheck is not the configured gate; `pnpm run typecheck` (TS7) passes.
+
+A candidate `const receiver={marker:91}` top-level Script still fails the existing
+persistent lexical guard requiring dynamic externref storage. This is a real
+remaining typed-reference planning gap, not resolved by getter routing. Native
+receiver tests use an existing Context-owned marker, not an inferred private slot.
+Full graphs/population, snapshots, Context-internal foreign reflection, non-Script
+owner routing, host services and matched benchmarks remain incomplete. This
+checkpoint changes neither Deno source nor tests and makes no speedup claim.
+
 ## AOT CompileFunction and real lazy loading, 2026-10-04
 
 Adapter implementation commit 5cae5514f0598aeffe2ce36869669a01d0c7ff87
