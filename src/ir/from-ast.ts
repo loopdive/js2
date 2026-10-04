@@ -5957,9 +5957,11 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
       `ir/from-ast: object literal element ${ts.SyntaxKind[prop.kind]} not in slice 2 (${cx.funcName})`,
     );
   }
+  const ownNames = built.map((field) => field.name);
   built.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   const shape: IrObjectShape = {
     fields: built.map((b) => ({ name: b.name, type: b.type })),
+    ownNames,
   };
   return cx.builder.emitObjectNew(
     shape,

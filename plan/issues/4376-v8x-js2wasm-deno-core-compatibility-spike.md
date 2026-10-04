@@ -17,6 +17,10 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-10-04: default-off owning-Script string-name export retains native
+  # reflection helpers and preserves insertion order independently of IR slots.
+  - src/codegen/shared-script-completion.ts
+  - src/ir/core/types.ts
   # 2026-10-04: unfinished opt-in Script completion tracks a native reference
   # slot through expression statements, catch entry and normal finally exit.
   - src/ir/from-ast.ts
@@ -3221,6 +3225,23 @@ the existing two-argument ABI. Descriptor-overlay early getter arms consume the
 same one-shot Reflect receiver state before invoking accessors. Native iterator
 prototype reads use that receiver state too. Focused controls and native replay
 must be remeasured before crediting these changes.
+
+Owning-Script enumeration continuation: the native property-name API currently
+reads only the Rust wrapper's property vector, not the retained Wasm object.
+An opt-in compiler own-string-name export now exposes the existing finalized
+native helper without wrapping or rewriting Script source. A control initially
+returned bar,foo for source foo,bar: IR physical slot sorting lost insertion
+order. IR shapes now retain source own-name metadata; the opted-in registry
+keeps order-distinct logical shapes and uses existing shape stamps to distinguish
+their equal physical GC layouts. Canonical array indices precede other strings.
+The export also arms array enumeration when no reflection call occurs in the
+source. Native adapter routing, symbols and descriptor-aware host property
+filters remain required before claiming a fix for the unchanged dictionary.
+Compiler controls pass 27/27; four execution suites pass 115/115 including two
+existing expected failures. TypeScript 7 and scoped lint pass. Three default-off
+binary controls match clean dbe49bf307d6 exactly. Source-preservation remains
+38 pass /53 fail out of 91 with no per-test status changes. Native adapter pin,
+package routing and unchanged Deno replay have not advanced yet.
 
 Final wrap-up, 2026-10-04: compiler dbe49bf307d6 and adapter 33af9d76e815
 are published in the existing drafts. Explicit receiver controls pass 21/21;

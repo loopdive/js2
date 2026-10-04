@@ -34,6 +34,7 @@ import {
   irStringConcatManyDemand,
 } from "./program-runtime-demands.js";
 import { ts } from "../ts-api.js";
+import { scriptOwnNameOrder } from "./script-own-name-order.js";
 import type { IrIntegrationOptions } from "./integration-options.js";
 export type { IrIntegrationOptions } from "./integration-options.js";
 import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
@@ -9696,7 +9697,13 @@ class ObjectStructRegistry {
   ) {}
 
   resolve(shape: IrObjectShape): IrObjectStructLowering | null {
-    const key = this.hashKey(shape);
+    // Physical slots stay canonical, but reflective Script allocations with
+    // different insertion orders need separate logical shapes. The existing
+    // shape-stamp finalizer disambiguates their structurally equal GC types.
+    const ownNames =
+      this.ctx.standaloneScriptOwnNamesExport && shape.ownNames ? scriptOwnNameOrder(shape.ownNames) : undefined;
+    const orderKey = ownNames ? `|own-names:${JSON.stringify(ownNames)}` : "";
+    const key = this.hashKey(shape) + orderKey;
     const cached = this.cache.get(key);
     if (cached) return cached;
 
@@ -9721,7 +9728,7 @@ class ObjectStructRegistry {
 
     // Reuse an existing anonymous struct with the same legacy hash key
     // if one was already registered (legacy↔IR convergence).
-    const legacyKey = legacyFieldsHashKey(fields);
+    const legacyKey = legacyFieldsHashKey(fields) + orderKey;
     let structName = this.ctx.anonStructHash.get(legacyKey);
     let typeIdx: number;
     if (structName !== undefined) {
@@ -9742,6 +9749,7 @@ class ObjectStructRegistry {
       this.ctx.anonStructHash.set(legacyKey, structName);
     }
 
+    if (ownNames) this.ctx.structInsertionOrder.set(structName, [...ownNames]);
     const fieldIdxByName = new Map<string, number>();
     fields.forEach((f, i) => fieldIdxByName.set(f.name, i));
     const lowering: IrObjectStructLowering = {

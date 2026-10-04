@@ -19,6 +19,13 @@ export function prepareScriptCompletionSink(ctx: CodegenContext): void {
   }
   flushLateImportShifts(ctx, null);
   if (ctx.standaloneScriptCallExport) reserveApplyClosure(ctx);
+  if (ctx.standaloneScriptOwnNamesExport) {
+    // The export is a reflection consumer even when the original Script has
+    // no getOwnPropertyNames syntax for the source scanner to discover.
+    ctx.vecOwnKeysDirty = true;
+    ensureLateImport(ctx, "__getOwnPropertyNames", [{ kind: "externref" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, null);
+  }
   if (ctx.funcMap.has(IR_CLOSURE_UNDEFINED)) throw new Error("Script completion undefined provider name is occupied");
   const frame: FunctionContext = {
     name: IR_CLOSURE_UNDEFINED,
@@ -80,6 +87,14 @@ export function publishScriptGetter(ctx: CodegenContext): void {
   const index = ctx.funcMap.get("__extern_get");
   if (index === undefined) throw new Error("Native Script getter was not reserved");
   ctx.mod.exports.push({ name, desc: { kind: "func", index } });
+  const ownNames = ctx.standaloneScriptOwnNamesExport;
+  if (ownNames) {
+    if (ctx.mod.exports.some((entry) => entry.name === ownNames))
+      throw new Error("Native Script own-names export is occupied");
+    const index = ctx.funcMap.get("__getOwnPropertyNames");
+    if (index === undefined) throw new Error("Native Script own-names helper was not reserved");
+    ctx.mod.exports.push({ name: ownNames, desc: { kind: "func", index } });
+  }
   const call = ctx.standaloneScriptCallExport;
   if (call) {
     if (ctx.mod.exports.some((entry) => entry.name === call)) throw new Error("Native Script call export is occupied");

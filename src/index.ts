@@ -584,6 +584,11 @@ export interface CompileOptions {
   /** Native owning-Script Call(callable, receiver, arguments) -> externref.
    * Requires the getter/ownership surface above. Arguments remain native GC. */
   standaloneScriptCallExport?: string;
+  /** Owning-Script own string names (including non-enumerable properties).
+   * ABI: (object: externref) -> externref native array. Requires the native
+   * Script getter/ownership surface. This is not Reflect.ownKeys: symbols and
+   * host property filters require separate descriptor-aware handling. */
+  standaloneScriptOwnNamesExport?: string;
   /** Opt-in allocation provenance predicate (externref) -> i32. Adds one hidden
    * owner-token field to GC structs; all linked graph artifacts must opt in. */
   standaloneAllocationOwnerExport?: string;

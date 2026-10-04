@@ -424,6 +424,7 @@ export function createCodegenContext(
     standaloneScriptCompletionImport: options?.standaloneScriptCompletionImport,
     standaloneScriptGetExport: options?.standaloneScriptGetExport,
     standaloneScriptCallExport: options?.standaloneScriptCallExport,
+    standaloneScriptOwnNamesExport: options?.standaloneScriptOwnNamesExport,
     ...(options?.standaloneMicrotaskNotifyImport
       ? { standaloneMicrotaskNotifyImport: options.standaloneMicrotaskNotifyImport }
       : {}),

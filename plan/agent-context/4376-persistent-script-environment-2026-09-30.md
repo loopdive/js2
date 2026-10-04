@@ -1,5 +1,44 @@
 # Persistent AOT Script environment
 
+## Owning-Script string-name enumeration continuation, 2026-10-04
+
+The remaining native WebIDL record failure has a concrete adapter omission:
+`v8__Object__GetOwnPropertyNames` enumerates the Rust wrapper's property vector
+without consulting its retained Wasm binding. That vector is empty for Script
+allocations, even though native owning-Script property reads work.
+
+The compiler now exposes opt-in `standaloneScriptOwnNamesExport`, ABI
+`(externref) -> externref` returning a native array of own string names.
+It reuses the finalized `__getOwnPropertyNames` implementation and requires
+the native Script getter/ownership/completion mode. No Script wrapper, source
+rewrite, JSON transport or interpreter is introduced. The export itself arms
+array reflection demand when the source has no reflective call.
+
+The new controls exposed IR alphabetical physical slots leaking into key order.
+`IrObjectShape.ownNames` now retains source order independently of slots. Only
+the opted-in object registry includes that order in its logical shape key and
+records it in the existing `structInsertionOrder` map. Existing shape stamps
+distinguish same-field objects with opposite insertion orders. Canonical array
+indices are sorted numerically before ordinary strings. Other IR consumers keep
+their existing physical layout/hash path when this option is absent.
+
+Verification: getter/enumeration suite 27/27; four execution suites 115/115
+including two existing expected failures; TypeScript 7 typecheck and scoped
+Biome lint pass. Three default-off samples produce byte-identical binaries
+against clean compiler dbe49bf307d6. Source-preservation remains 38 pass /53 fail
+out of 91 with identical per-test statuses to the earlier receiver checkpoint;
+it is NOT green. The attempted Biome `check` also checked import organization
+and its conflicting formatter, and failed; use project Prettier plus Biome lint.
+
+Next: validate and route the owning-Script export in the native adapter, keeping
+allocation ownership and same-store native roots. String names alone cannot
+implement V8's symbol-aware property API: add symbol and descriptor/filter
+handling rather than silently dropping symbols or returning an empty wrapper
+list. Broader literal/spread insertion-order fidelity still needs coverage.
+The adapter pin and native packages have NOT advanced to this continuation;
+unchanged WebIDL remains the last measured 16/17, not a newly fixed result.
+Full integration acceptance and comparative benchmarking remain open.
+
 ## Final checkpoint and resume handoff, 2026-10-04
 
 Published implementation: compiler `dbe49bf307d635bd5c838ac6b36051597c5aa253`;

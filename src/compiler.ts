@@ -903,6 +903,12 @@ function buildCodegenOptions(
   ) {
     throw new Error("standaloneScriptCallExport requires a named export and native Script getter/ownership");
   }
+  if (
+    options.standaloneScriptOwnNamesExport !== undefined &&
+    (!options.standaloneScriptOwnNamesExport || !options.standaloneScriptGetExport)
+  ) {
+    throw new Error("standaloneScriptOwnNamesExport requires a named export and native Script getter/ownership");
+  }
   return {
     irCutoverRoute: readIrCompileRoute(options, "compileSourceSync"),
     sourceMap: emitSourceMap,
@@ -945,6 +951,7 @@ function buildCodegenOptions(
     standaloneScriptCompletionImport: options.standaloneScriptCompletionImport,
     standaloneScriptGetExport: options.standaloneScriptGetExport,
     standaloneScriptCallExport: options.standaloneScriptCallExport,
+    standaloneScriptOwnNamesExport: options.standaloneScriptOwnNamesExport,
     strictNoHostImports: targetProfile.strictEnvImportGate,
     // (#2119) thread module-strictness inference uniformly across all drivers.
     inferModuleStrictArguments: options.inferModuleStrictArguments,

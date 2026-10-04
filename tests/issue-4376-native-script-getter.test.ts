@@ -13,6 +13,8 @@ export function get(object:any,key:any,receiver:any):any {return Reflect.get(obj
 export function key():any {return Symbol.iterator;}
 export function wrongKey():any {return Symbol.hasInstance;}
 export function nextKey():any {return "next";}
+export function zeroKey():any {return "0";}
+export function oneKey():any {return "1";}
 export function args():any {return [];}
 export function arrayPrototype():any {return Array.prototype;}
 export function call(fn:any,receiver:any,args:any):any {return fn.apply(receiver,args);}
@@ -30,6 +32,16 @@ export function installIteratorProbe():void {
 }
 export function number(value:any):number {return Number(value);}
 export function kind(value:any):number {return typeof value === "function"?1:value===undefined?0:2;}
+export function namesProbe(value:any):number {
+ if(value.length!==2)return -1;
+ if(value[0]==="foo"&&value[1]==="bar")return 1;
+ if(value[0]==="hidden"&&value[1]==="getter")return 2;
+ return 0;
+}
+export function nameCode(value:any,index:number):number {
+ const key:any=value[index];
+ return key==="foo"?1:key==="bar"?2:key==="hidden"?3:key==="getter"?4:key==="2"?5:key==="10"?6:key==="01"?7:key==="4294967295"?8:key==="0"?9:key==="1"?10:key==="length"?11:0;
+}
 `,
     { target: "standalone", standaloneAllocationOwnerExport: "owns" },
   );
@@ -52,6 +64,104 @@ const options = {
   standaloneScriptCallExport: "scriptCall",
   link: ["context"],
 } as const;
+
+it("enumerates closed Script fields without copying values into the Context", async () => {
+  const owner = await context();
+  const result = await compile("({foo:1, bar:{value:2}})", {
+    ...options,
+    standaloneScriptOwnNamesExport: "scriptOwnNames",
+    link: [...options.link],
+  });
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  const script = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports });
+  const e = owner.exports as Record<string, Function>;
+  const s = script.exports as Record<string, Function>;
+  s.__module_init();
+  const object = e.captured();
+  expect(s.localOwns(object)).toBe(1);
+  const names = s.scriptOwnNames(object);
+  expect([e.nameCode(names, 0), e.nameCode(names, 1)]).toEqual([1, 2]);
+});
+
+it("does not invoke accessors or include inherited fields while enumerating own names", async () => {
+  const owner = await context();
+  const result = await compile(
+    `
+const object:any=Object.create({inherited:1});
+Object.defineProperty(object,"hidden",{value:2,enumerable:false});
+Object.defineProperty(object,"getter",{get(){throw new Error("must not run");},enumerable:true});
+object;
+`,
+    { ...options, standaloneScriptOwnNamesExport: "scriptOwnNames", link: [...options.link] },
+  );
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  const script = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports });
+  const e = owner.exports as Record<string, Function>;
+  const s = script.exports as Record<string, Function>;
+  s.__module_init();
+  expect(e.namesProbe(s.scriptOwnNames(e.captured()))).toBe(2);
+});
+
+it("distinguishes equal physical fields with opposite source insertion orders", async () => {
+  const owner = await context();
+  const result = await compile("[({foo:1,bar:2}),({bar:3,foo:4})]", {
+    ...options,
+    standaloneScriptOwnNamesExport: "scriptOwnNames",
+    link: [...options.link],
+  });
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  const script = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports });
+  const e = owner.exports as Record<string, Function>;
+  const s = script.exports as Record<string, Function>;
+  s.__module_init();
+  const pair = e.captured();
+  // The Context reads the pair's shared native array representation, but each
+  // object must be enumerated by its allocation owner, with its own stamp.
+  const first = s.scriptGet(pair, e.zeroKey());
+  const second = s.scriptGet(pair, e.oneKey());
+  const a = s.scriptOwnNames(first);
+  const b = s.scriptOwnNames(second);
+  expect([e.nameCode(a, 0), e.nameCode(a, 1)]).toEqual([1, 2]);
+  expect([e.nameCode(b, 0), e.nameCode(b, 1)]).toEqual([2, 1]);
+});
+
+it("orders array-index names numerically without treating numeric-looking strings as indices", async () => {
+  const owner = await context();
+  const result = await compile('({"10":1,"01":2,"2":3,"4294967295":4})', {
+    ...options,
+    standaloneScriptOwnNamesExport: "scriptOwnNames",
+    link: [...options.link],
+  });
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  const script = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports });
+  const e = owner.exports as Record<string, Function>;
+  const s = script.exports as Record<string, Function>;
+  s.__module_init();
+  const names = s.scriptOwnNames(e.captured());
+  expect([0, 1, 2, 3].map((index) => e.nameCode(names, index))).toEqual([5, 6, 7, 8]);
+});
+
+it("includes dense array indices and non-enumerable length without a source reflection call", async () => {
+  const owner = await context();
+  const result = await compile("[10,20]", {
+    ...options,
+    standaloneScriptOwnNamesExport: "scriptOwnNames",
+    link: [...options.link],
+  });
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  const script = new WebAssembly.Instance(new WebAssembly.Module(result.binary), { context: owner.exports });
+  const e = owner.exports as Record<string, Function>;
+  const s = script.exports as Record<string, Function>;
+  s.__module_init();
+  const names = s.scriptOwnNames(e.captured());
+  expect([0, 1, 2].map((index) => e.nameCode(names, index))).toEqual([9, 10, 11]);
+});
+
+it("refuses own-name export without the native getter and ownership mode", async () => {
+  await expect(compile("1", { target: "standalone", standaloneScriptOwnNamesExport: "names" })).rejects.toThrow(
+    "native Script getter/ownership",
+  );
+});
 
 it("materializes a computed iterator method for owning-Script dynamic lookup", async () => {
   const owner = await context();
