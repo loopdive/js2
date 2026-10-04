@@ -3412,6 +3412,18 @@ Handoff records remaining callback/order checks, clean artifact rebuild, module
 graphs, host operations, snapshots and comparative benchmarks. Existing drafts
 6468 and v8x 2 are reused and remain incomplete, not merge-ready.
 
+Shared dependency investigation, 2026-10-04: a source-bound two-entry native
+control fails 0/1 (51 filtered /52). The same native dependency executes twice,
+its mutable export resets from 2 to 1, JavaScript namespaces differ and the
+second evaluation rejects. The exact three fixture sources pass 1/1 in Node's
+V8 module evaluator, including later named/namespace live reads after mutation.
+No runtime compilation or interpreter instances occur. Existing AOT positive
+and throwing controls remain 2/2. This test-only checkpoint proves that ignoring
+the namespace conflict is insufficient; captured Module identity, once-only
+initialization and canonical live imports must be implemented together. Native
+later live-read assertions remain unreached, not passing. Full Deno integration
+remains in-progress. Adapter handoff contains exact reproduction and hashes.
+
 Historical wrap-up, 2026-10-04: compiler dbe49bf307d6 and adapter 33af9d76e815
 are published in the existing drafts. Explicit receiver controls pass 21/21;
 four execution suites pass 111/111 including two existing expected failures.
