@@ -1,5 +1,53 @@
 # Deno module linking checkpoint, 2026-10-04
 
+## Nested throwing-module control verified
+
+Supersedes the nested thrown-object gap in the prior checkpoint. Native
+shared_modules::aot_nested_module_failure_preserves_original_exception passes
+1/1 (55 filtered /56). A separately instantiated source throws its own object
+during a native callback from the outer graph. The nested rejected Promise
+is cached, both Modules retain that exact object, the callback propagates it
+back to the outer source and its following global write stays absent.
+Callback count is one; compilation and runtime-eval instantiation counters are
+zero. Removing the outer package fails 0/1 at the actual-execution floor.
+
+Caller-owned initialization already records the native payload. The later
+Runtime-only recapture now skips active Caller ownership rather than attempting
+a forbidden borrow. Ordinary Runtime exception capture is unchanged; no payload
+is fabricated for a non-JS trap. Final native ordinary controls: 35 passed,
+20 ignored, 1 filtered /56. Filtered library: 17/17 (16 filtered /33).
+Existing cached-source failure replay passes 1/1 (55 filtered /56).
+Rebuilt unchanged Deno lazy alias and pre-instantiated sibling tests pass 2/2,
+each 430 filtered /431. Original checkout remains dirty only in Cargo patches.
+
+Clean compiler remains 4a98f06ae2; Binaryen 125 O3 and Wasmtime 47.0.3.
+Fresh packages /private/tmp/deno-nested-failure.YimBms contain five graphs:
+the three previous failure controls plus nested-entry and standalone shared.
+Small Context remains /private/tmp/deno-native-promise.6898GB/context.cwasm.
+New graph inventories (binding; native SHA256; optimized Wasm SHA256):
+- nested-entry:
+  8dd1e1c5f6c5c2104f36090adfc4fb85aee38a50dcac8b0845ba91e4c174631e;
+  f523c3c92ec26fb153533a6d072c7e570b3508c18a8b6c41d08f6d86d91db9bb;
+  dff84b2d8a235c6617db43dc6f1204fb88b004abd98f9270bab09ea21b0689c6
+- standalone shared:
+  55f75b48b0bdc00827099ee5a355ceaae34665c22e213fab16c536d194f00f28;
+  d7493d1e990d8c71e8ee6bd0a3eb1e18fd24caa23c2f20a7a69a2a6ef3864f87;
+  4135dca5dfd93b4c452b5246f71a77930b0727eea93c3def027bca167aaaf68a
+
+Build from the clean compiler checkout using
+tools/js2wasm/build-failed-module-test-packages.mjs with compiler path,
+build-side precompiler js2wasm_spike-13b131f10cc30c9d and output directory.
+Replay from the adapter:
+
+```sh
+V8X_JS2WASM_SCRIPT_ENVIRONMENT_DIR=/private/tmp/deno-native-promise.6898GB V8X_JS2WASM_AOT_GRAPH_DIR=/private/tmp/deno-nested-failure.YimBms target/debug/deps/js2wasm_spike-8b524eb9ef0b52c1 --exact shared_modules::aot_nested_module_failure_preserves_original_exception --ignored --nocapture --test-threads=1
+```
+
+This verifies one level of object-payload failure, not all nested evaluation.
+Next: primitive payloads/deeper nesting, cycles/TDZ, native prepared-IR,
+successful synthetic/source composition, snapshots, full host integration,
+broader unchanged Deno tests and matched benchmarks. No full integration claim.
+
 ## Latest checkpoint: nested lazy-module evaluation
 
 The unchanged Deno pre-instantiated-sibling test improves from 0/1 on adapter

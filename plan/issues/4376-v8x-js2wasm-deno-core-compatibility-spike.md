@@ -331,6 +331,18 @@ files:
 
 ### Original lazy-module evaluation (continuation)
 
+Native nested-failure control: a source graph calls a native callback which evaluates
+a separately instantiated throwing graph on the same Context. Check that the
+nested rejected Promise is cached, both Modules retain the original thrown
+object, outer source stops before its next write, and compiler/eval counters
+remain zero. Final control passes 1/1 (55 filtered /56); missing outer package
+fails 0/1 at the actual-execution floor. Existing cached-source failure control
+also passes 1/1 with the rebuilt five-graph package set. Caller-owned failures
+already record their payload, so Runtime-only recapture is now skipped without
+inventing a JS value for a non-JS trap. This supersedes the independent nested
+throwing-object coverage gap recorded in the preceding checkpoint; primitive
+payloads, deeper nesting and cycles still need broader coverage.
+
 Package unchanged test_lazy_loaded_esm_aliased_via_import and
 test_lazy_load_esm_evaluates_pre_instantiated_sibling, preserving original
 included fixture bytes and registering separate nested-evaluation packages.
