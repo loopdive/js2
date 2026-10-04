@@ -3260,6 +3260,29 @@ binary controls match clean dbe49bf307d6 exactly. Source-preservation remains
 38 pass /53 fail out of 91 with no per-test status changes. Native adapter pin,
 package routing and unchanged Deno replay have not advanced yet.
 
+Native Function continuation, 2026-10-04: adapter implementation
+5cae5514f0598aeffe2ce36869669a01d0c7ff87 implements trusted AOT CompileFunction,
+callback-safe instantiation and owner-routed cross-Script reads/calls. Guard
+0bd28340669fc2936c6de70e81e5aad343b8b8ab scopes routing to the Script ABI,
+preserving existing non-Script Module linking. Unchanged
+actual lazy loading now passes 1/1 with cached identity and a dependency;
+missing-script 1/1, WebIDL 17/17 and derived conversions 2/2 remain passing.
+Compiler-free native controls pass four separately executed artifact-backed tests
+plus 31 ordinary controls /43 (12 ignored in the ordinary run). No runtime
+compilation or interpreter instance is observed. Build controls 18/18 and Rust
+factory-binding unit 1/1 pass. Explicit alternate foreign Reflect receivers and
+context extensions are refused; full graphs/population, snapshots, transport,
+host capabilities, shared libraries and matched benchmarks remain incomplete.
+The persistent Script handoff records artifact provenance and reproduction.
+Site rebuild is unverified because Typst is not installed.
+
+Earlier resume plan after checkpoint, 2026-10-04: implement same-store AOT Script
+instantiation through RealmAccess for active CallerRealm callbacks as well as
+ordinary DenoRuntime access. Preserve graph retention and native exception
+rooting. This removes the recursive RefCell borrow barrier before implementing
+generic CompileFunction packaging. Add an actual native host-callback control;
+do not credit inspection or compilation as successful callback execution.
+
 Wrap-up at user request, 2026-10-04: existing draft compiler PR 6468 and adapter
 PR 2 are reused. The persistent Script environment handoff now records the
 callback-safe instantiation entry points, function-body packaging requirements
