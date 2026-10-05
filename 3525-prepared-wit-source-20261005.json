@@ -2,10 +2,11 @@
   "id": "3525",
   "slice": "prepared-wit-source-20261005",
   "assignee": "ttraenkler/codex-3525-prepared-wit-source-20261005",
-  "requested_by": "ttraenkler/codex-3525-prepared-wit-source-20261005",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3525-prepared-wit-capture-20261005",
   "claimed_at": "2026-10-05T20:57:31Z",
-  "updated_at": "2026-10-05T20:57:31Z",
-  "write_id": "83388-t04vmeys"
+  "updated_at": "2026-10-05T23:54:10Z",
+  "write_id": "77317-6lk307bj",
+  "released_at": "2026-10-05T23:54:10Z"
 }
