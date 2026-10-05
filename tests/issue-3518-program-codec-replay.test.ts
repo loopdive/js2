@@ -522,6 +522,7 @@ describe("#3518 C — backend consumer (accept / one-argument emit)", () => {
       "acceptPreparedIrProgram",
       "acceptedPhysicalSetupPlan",
       "emitAcceptedIrProgram",
+      "emittedPhysicalSetupPlan",
       "emittedProgramBindingIndex",
       "emittedStartupAdapterIndex",
       "emittedSupportFunctionReceipts",
