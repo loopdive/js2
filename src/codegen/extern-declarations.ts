@@ -281,8 +281,8 @@ export function registerBuiltinExternClasses(ctx: CodegenContext): void {
     });
   }
 
-  // Intl.ListFormat — extern class for internationalized list formatting
-  if (!ctx.externClasses.has("ListFormat")) {
+  // Intl.ListFormat — JS-host extern class (#6839: standalone/WASI use the Wasm-native prelude class)
+  if (!ctx.externClasses.has("ListFormat") && !["none", "wasi"].includes(ctx.targetProfile.environment)) {
     const methods = new Map<string, { params: ValType[]; results: ValType[]; requiredParams: number }>();
     methods.set("format", externMethod(1)); // format(list) → string (externref)
     methods.set("formatToParts", externMethod(1)); // formatToParts(list) → array (externref)
@@ -326,9 +326,9 @@ export function registerBuiltinExternClasses(ctx: CodegenContext): void {
   // out of scope with its bound (there is no ICU in pure Wasm, so a compiled
   // shim would have to reimplement calendar + time-zone data).
   //
-  // Unlike ListFormat/NumberFormat above this is gated on the JS-host lane. Those
-  // two predate the #2961 no-leak ratchet and still emit `Intl_*_new` into a
-  // `--target standalone` binary with a host-import-leak warning; a NEW host
+  // Like ListFormat (#6839) and unlike NumberFormat above this is gated on the
+  // JS-host lane. NumberFormat predates the #2961 no-leak ratchet and still emits
+  // `Intl_*_new` into a `--target standalone` binary with a host-import-leak warning; a NEW host
   // import must not add to that. Standalone/WASI instead get a catchable
   // `TypeError` from `tryCompileIntlHostOnlyNew` (new-intl-host-bridge.ts) —
   // never a trap, never an unsatisfiable import.

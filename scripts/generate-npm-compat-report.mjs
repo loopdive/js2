@@ -30,6 +30,7 @@ import { performance } from "node:perf_hooks";
 import { Session } from "node:inspector";
 
 import { compile, compileMulti, compileProject } from "../src/index.ts";
+import { optimizeBinaryAsync } from "../src/optimize.ts";
 import {
   buildCompiledImports,
   buildStringConstants,
@@ -101,10 +102,19 @@ import {
   npmPerfOptimizationOmittedPasses,
   npmPerfRows,
   packagePerfRecord,
+  resolveNativeFirstPerfLane,
   resolveStandalonePerfLanes,
   skippedPerfLane,
-  STANDALONE_PERF_LANES,
+  CHILD_PERF_LANES,
+  childLaneFailureDiagnostic,
 } from "./lib/npm-compat-perf.mjs";
+import {
+  laneBudgetOverrun,
+  optimizationReceiptHolds,
+  optimizeStandaloneLaneBinary,
+  takeLanePhase,
+  writeLanePhase,
+} from "./lib/npm-compat-opt-budget.mjs";
 import { summarizePlaygroundFiles } from "./lib/npm-compat-playground.mjs";
 import { renderHarnessThrownText } from "./lib/wasm-exn-render.mjs";
 
@@ -227,6 +237,20 @@ const inspectResultFloor = cliArgs.includes("--inspect-result-floor");
 const inspectIr = cliArgs.includes("--inspect-ir");
 const inspectRuntimeErrors = cliArgs.includes("--inspect-runtime-errors");
 const inspectBinaryPath = optionValue("--inspect-binary");
+// (#6742) Wall-clock budget of a bounded lane child (`standaloneLaneInChild`).
+// The standalone wasm-opt step gets whatever the budget leaves after codegen,
+// minus a reserve for instantiation, the checksum and the timed rounds.
+const laneBudgetMs = Number(optionValue("--lane-budget-ms") ?? NaN);
+const LANE_MEASUREMENT_RESERVE_FRACTION = 0.25;
+function standaloneOptimizationDeadline() {
+  if (!Number.isFinite(laneBudgetMs)) return undefined;
+  return laneBudgetMs * (1 - LANE_MEASUREMENT_RESERVE_FRACTION);
+}
+/** (#6742) Record the running phase for the parent of a bounded lane child. */
+function markLanePhase(phase) {
+  if (!Number.isFinite(laneBudgetMs) || !partialOutputPath) return;
+  writeLanePhase(resolve(ROOT, partialOutputPath), phase, performance.now());
+}
 
 /**
  * Keep an optimization-error module inspectable: that status usually means the
@@ -448,7 +472,9 @@ function requestedOptimizationMetadata(placement, extra = {}) {
     optimizationRequested: true,
     optimizationVerified: false,
     ...extra,
-    optimizationLevel: npmCompatOptimizationLevel(placement),
+    // (#6742) A standalone lane records the level that actually produced its
+    // artifact, which the size/time budget may have lowered.
+    optimizationLevel: extra.optimizationLevel ?? npmCompatOptimizationLevel(placement),
   };
 }
 
@@ -1663,6 +1689,9 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
   const driverPath = join(setup.root, `.js2-npm-compat-perf-${lane}.mjs`);
   const packageSpecifier = packageSpecifierFor(setup);
   writeFileSync(driverPath, buildNpmCompatPerfDriver(spec, packageSpecifier, lane));
+  // (#6851) Every bounded child marks codegen, the js-host-native one too, so
+  // its overrun says where the budget went (a no-op outside a lane child).
+  markLanePhase("codegen");
   const compileStarted = performance.now();
   let result;
   try {
@@ -1681,7 +1710,9 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
       // Standalone lanes instantiate with zero imports: no runtime-eval provider.
       ...(target === "standalone" ? { runtimeEvalProvider: false } : {}),
       semanticProviders: lane === "js-host-native" ? "native-first" : "auto",
-      optimize: npmCompatOptimizationLevel(target === "standalone" ? "standalone" : "js-host"),
+      // (#6742) Standalone lanes run wasm-opt themselves, under the size/time
+      // budget, so the level that produced the artifact is known and recorded.
+      optimize: target === "standalone" ? false : npmCompatOptimizationLevel("js-host"),
       preserveDebugNames,
     });
   } catch (error) {
@@ -1694,7 +1725,7 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
       ),
     };
   }
-  const compileDurationMs = performance.now() - compileStarted;
+  let compileDurationMs = performance.now() - compileStarted;
   if (!result.success || !result.binary?.length) {
     return {
       failure: failedOptimizedPerfLane(
@@ -1709,6 +1740,21 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
     };
   }
   const placement = target === "standalone" ? "standalone" : "js-host";
+  let laneOptimization;
+  if (target === "standalone") {
+    writeUnoptimizedInspectBinary(result);
+    const optimized = await optimizeStandaloneLaneBinary(result.binary, {
+      optimize: optimizeBinaryAsync,
+      requestedLevel: NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL,
+      deadline: standaloneOptimizationDeadline(),
+      preserveNames: preserveDebugNames,
+      onAttempt: ({ level, timeoutMs }) => markLanePhase(`wasm-opt -O${level} (limit ${timeoutMs} ms)`),
+    });
+    result.binary = optimized.binary;
+    laneOptimization = optimized.metadata;
+    compileDurationMs = performance.now() - compileStarted;
+    markLanePhase(`instantiate and measure (optimized at -O${laneOptimization.optimizationLevel})`);
+  }
   const optimizationFailure = npmPerfOptimizationFailure(result, npmCompatOptimizationLevel(placement));
   if (optimizationFailure) {
     writeUnoptimizedInspectBinary(result);
@@ -1721,6 +1767,11 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
     };
   }
   const optimizationOmittedPasses = npmPerfOptimizationOmittedPasses(result, npmCompatOptimizationLevel(placement));
+  const optimizationMetadata =
+    laneOptimization ??
+    verifiedOptimizationMetadata(placement, {
+      ...(optimizationOmittedPasses.length > 0 ? { optimizationOmittedPasses } : {}),
+    });
 
   let module;
   const moduleCompileStarted = performance.now();
@@ -1734,7 +1785,7 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
         error instanceof Error ? error.message : String(error),
         {
           ...(lane === "standalone-dynamic" ? { inputMode: "runtime-dynamic" } : {}),
-          optimizationVerified: true,
+          ...optimizationMetadata,
           compileDurationMs,
           binaryBytes: result.binary.length,
         },
@@ -1753,7 +1804,7 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
         `standalone binary retained ${moduleImports.length} host import(s)`,
         {
           inputMode: lane === "standalone-dynamic" ? "runtime-dynamic" : "compile-time-static",
-          optimizationVerified: true,
+          ...optimizationMetadata,
           compileDurationMs,
           moduleCompileDurationMs,
           binaryBytes: result.binary.length,
@@ -1785,7 +1836,7 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
                 ? "runtime-dynamic"
                 : "compile-time-static",
           phase: instance ? "module-init" : "instantiate",
-          optimizationVerified: true,
+          ...optimizationMetadata,
           compileDurationMs,
           moduleCompileDurationMs,
           binaryBytes: result.binary.length,
@@ -1808,9 +1859,7 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
     compileDurationMs,
     moduleCompileDurationMs,
     instantiateDurationMs: performance.now() - instantiateStarted,
-    optimizationMetadata: verifiedOptimizationMetadata(placement, {
-      ...(optimizationOmittedPasses.length > 0 ? { optimizationOmittedPasses } : {}),
-    }),
+    optimizationMetadata,
   };
 }
 
@@ -1836,19 +1885,20 @@ function renderModuleInitThrow(error, instance) {
 const NPM_COMPAT_REPORT_SCRIPT = join(ROOT, "scripts", "generate-npm-compat-report.mjs");
 
 /**
- * (#6661, #6660) Measure one package's standalone lane (`standalone-static` or
- * `standalone-dynamic`) in a child process with a wall-clock budget. Used when
- * the JS-host package-entry gate failed: the in-process lane has no budget,
- * and a graph that exhausted the host harness (TypeScript, webpack, ...) would
- * otherwise stall the whole refresh. Returns the child's lane record verbatim,
- * or a failed lane naming the budget overrun / child failure — never the host
- * lane's diagnostic.
+ * (#6661, #6660, #6851) Measure one package's lane (`standalone-static`,
+ * `standalone-dynamic` or `js-host-native`) in a child process with a
+ * wall-clock budget. Used when the JS-host package-entry gate failed: the
+ * in-process lane has no budget and shares the generator's heap, and a graph
+ * that exhausted the host harness (TypeScript, webpack, jsdom, ...) would
+ * otherwise stall — or, out of memory, kill — the whole refresh. Returns the
+ * child's lane record verbatim, or a failed lane naming the budget overrun /
+ * heap exhaustion / child failure — never the host lane's diagnostic.
  */
-function standaloneLaneInChild(name, lane, budgetMs) {
-  const { key, inputMode } = STANDALONE_PERF_LANES.find((entry) => entry.lane === lane);
+function perfLaneInChild(name, lane, budgetMs) {
+  const { key, inputMode, placement } = CHILD_PERF_LANES.find((entry) => entry.lane === lane);
   const partial = join(ROOT, ".tmp", "npm-compat-lane", `${name}-${lane}-${process.pid}.json`);
   const args = ["--import", "tsx", NPM_COMPAT_REPORT_SCRIPT, "--only", name, "--no-write", "--perf-only"];
-  args.push("--lane", lane, "--partial-output", partial);
+  args.push("--lane", lane, "--partial-output", partial, "--lane-budget-ms", String(budgetMs));
   if (preserveDebugNames) args.push("--preserve-debug-names");
   const started = performance.now();
   const child = spawnSync(process.execPath, args, {
@@ -1859,13 +1909,14 @@ function standaloneLaneInChild(name, lane, budgetMs) {
     killSignal: "SIGKILL",
   });
   const extra = { inputMode, compileDurationMs: performance.now() - started };
+  const marker = takeLanePhase(partial);
   if (child.error?.code === "ETIMEDOUT") {
-    return failedOptimizedPerfLane(
-      "standalone",
-      "compile-error",
-      `${lane} lane exceeded the ${budgetMs}ms harness budget (compile-budget)`,
-      extra,
-    );
+    rmSync(partial, { force: true });
+    const overrun = laneBudgetOverrun(lane, budgetMs, marker);
+    return failedOptimizedPerfLane(placement, "compile-error", overrun.diagnostic, {
+      ...extra,
+      phase: overrun.phase,
+    });
   }
   try {
     const record = JSON.parse(readFileSync(partial, "utf-8")).packages?.find((entry) => entry.name === name)?.perf
@@ -1876,13 +1927,12 @@ function standaloneLaneInChild(name, lane, budgetMs) {
   } finally {
     rmSync(partial, { force: true });
   }
-  const tail = `${child.stderr ?? ""}${child.stdout ?? ""}`.trim().split("\n").filter(Boolean).at(-1);
-  return failedOptimizedPerfLane(
-    "standalone",
-    "compile-error",
-    `${lane} lane child exited ${child.status ?? child.signal ?? "abnormally"}: ${tail ?? "no output"}`,
-    extra,
-  );
+  const diagnostic = childLaneFailureDiagnostic(lane, {
+    status: child.status,
+    signal: child.signal,
+    output: `${child.stderr ?? ""}${child.stdout ?? ""}`,
+  });
+  return failedOptimizedPerfLane(placement, "compile-error", diagnostic, extra);
 }
 
 async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions } = {}) {
@@ -1913,6 +1963,7 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
       {
         phase: "checksum",
         inputMode,
+        ...compiled.optimizationMetadata,
         compileDurationMs: compiled.compileDurationMs,
         binaryBytes: compiled.result.binary.length,
         ...moduleImportMetadata(compiled.moduleImports),
@@ -1997,7 +2048,7 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
     } catch (error) {
       return failedOptimizedPerfLane("standalone", "runtime-error", renderHarnessThrownText(error, compiled.instance), {
         phase: "checksum",
-        optimizationVerified: true,
+        ...compiled.optimizationMetadata,
         inputMode: "compile-time-static",
         compileDurationMs: compiled.compileDurationMs,
         binaryBytes: compiled.result.binary.length,
@@ -2009,7 +2060,7 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
         "standalone",
         "result-mismatch",
         `checksum mismatch: Wasm ${String(actualChecksum)}, Node ${String(expectedChecksum)}`,
-        { expectedChecksum, actualChecksum, optimizationVerified: true },
+        { expectedChecksum, actualChecksum, ...compiled.optimizationMetadata },
       );
     }
     let measured;
@@ -2028,7 +2079,7 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
     } catch (error) {
       return failedOptimizedPerfLane("standalone", "runtime-error", renderHarnessThrownText(error, compiled.instance), {
         phase: "measure",
-        optimizationVerified: true,
+        ...compiled.optimizationMetadata,
         inputMode: "compile-time-static",
         compileDurationMs: compiled.compileDurationMs,
         binaryBytes: compiled.result.binary.length,
@@ -2065,7 +2116,7 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
     } catch (error) {
       return failedOptimizedPerfLane("standalone", "runtime-error", renderHarnessThrownText(error, compiled.instance), {
         phase: "checksum",
-        optimizationVerified: true,
+        ...compiled.optimizationMetadata,
         inputMode: "runtime-dynamic",
         compileDurationMs: compiled.compileDurationMs,
         binaryBytes: compiled.result.binary.length,
@@ -2077,7 +2128,7 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
         "standalone",
         "result-mismatch",
         `checksum mismatch: Wasm ${String(actualChecksum)}, Node ${String(expectedChecksum)}`,
-        { expectedChecksum, actualChecksum, optimizationVerified: true },
+        { expectedChecksum, actualChecksum, ...compiled.optimizationMetadata },
       );
     }
     let measured;
@@ -2097,7 +2148,7 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
     } catch (error) {
       return failedOptimizedPerfLane("standalone", "runtime-error", renderHarnessThrownText(error, compiled.instance), {
         phase: "measure",
-        optimizationVerified: true,
+        ...compiled.optimizationMetadata,
         inputMode: "runtime-dynamic",
         compileDurationMs: compiled.compileDurationMs,
         binaryBytes: compiled.result.binary.length,
@@ -2135,7 +2186,18 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
       : runJsHostLane
         ? await collectJsHostPerfLane(() => runHost())
         : skippedPerfLane("js-host");
-    jsHostNative = await nativeFirstPerfLane(() => runHost("js-host-native"));
+    // (#6851) A host-blocked graph is compiled for the native-first lane in a
+    // bounded child, like the standalone lanes below: in process it has no
+    // budget and shares this generator's heap, and for webpack/jsdom it ran
+    // that heap out — killing the measure job, so no partial was written and
+    // the dashboard kept serving their stale pre-#6661 rows.
+    jsHostNative = await nativeFirstPerfLane(() =>
+      resolveNativeFirstPerfLane({
+        hostBlocked,
+        inProcess: () => runHost("js-host-native"),
+        inChild: (lane) => perfLaneInChild(name, lane, report.compile?.timeoutMs ?? 120_000),
+      }),
+    );
   }
   // (#6661, #6660) Both standalone lanes compile their own host-free graph, so
   // a JS-host compile/validation failure is not evidence about them. When the
@@ -2146,7 +2208,7 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
     hostBlocked,
     selected: { "standalone-static": runStandaloneLane, "standalone-dynamic": runStandaloneDynamicLane },
     inProcess: (lane) => (lane === "standalone-static" ? runStatic() : runDynamic()),
-    inChild: (lane) => standaloneLaneInChild(name, lane, report.compile?.timeoutMs ?? 120_000),
+    inChild: (lane) => perfLaneInChild(name, lane, report.compile?.timeoutMs ?? 120_000),
   });
   return packagePerfRecord(spec.sampleOp, jsHost, standalone, { jsHostNative, standaloneDynamic });
 }
@@ -3124,7 +3186,11 @@ for (const entry of NPM_COMPAT_CATALOG) {
       ? await workloadRunner({ quiet: true })
       : null;
   const hasApiWorkload = workloadRunner !== null;
+  // (#6851) Name each phase, so a measure job that dies (OOM, runner kill)
+  // leaves the phase it died in on the CI log instead of only the first line.
+  console.log(`[npm-compat] ${entry.name} — upstream suite...`);
   const catalogUpstreamReport = await runConfiguredUpstreamSuite(entry.name, { quiet: true });
+  console.log(`[npm-compat] ${entry.name} — perf lanes...`);
   const upstreamSuite = entry.upstreamSuite;
   const upstreamTests = upstreamSuite
     ? {
@@ -3267,7 +3333,9 @@ const summary = {
       standalone: NPM_COMPAT_STANDALONE_OPTIMIZE_LEVEL,
     },
     optimizationPassPolicy:
-      "Binaryen O4 is required. Standardized-EH modules may omit only the unsupported Flatten pass; the omission is recorded on each affected lane.",
+      "Binaryen O4 is requested. Standardized-EH modules may omit only the unsupported Flatten pass; the omission is recorded on each affected lane. " +
+      "Standalone lanes lower the level when the raw module is too large or the lane budget too small for it, or when a level fails; " +
+      "the level that produced the measured artifact is recorded as optimizationLevel, with optimizationLevelRequested, optimizationLevelReason and optimizationAttempts beside it (#6742).",
     inputModes: {
       "compile-time-static": "package, test driver, and fixed inputs are visible to the Wasm compiler",
       "runtime-dynamic":
@@ -3309,11 +3377,7 @@ function assertMeasuredOptimizationReceipts(packageRows) {
     for (const [laneName, lane] of Object.entries(packageRow.perf?.lanes ?? {})) {
       if (lane?.status !== "measured") continue;
       const expectedLevel = npmCompatOptimizationLevel(lane.placement);
-      if (
-        lane.optimizationRequested !== true ||
-        lane.optimizationVerified !== true ||
-        lane.optimizationLevel !== expectedLevel
-      ) {
+      if (!optimizationReceiptHolds(lane, expectedLevel)) {
         throw new Error(
           `${packageRow.name}.${laneName} lacks a verified O${expectedLevel} optimizer receipt ` +
             `(received ${String(lane.optimizationLevel)}/${String(lane.optimizationRequested)}/${String(lane.optimizationVerified)})`,

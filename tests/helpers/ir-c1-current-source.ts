@@ -332,6 +332,29 @@ const canonicalInputEpochs = [
       },
     ],
   },
+  {
+    path: "src/ir/types.ts",
+    beforePin: {
+      bytes: 7744,
+      sha256: "d82e92ee276dd9a57bd69d9dee16410d24225a028bd9dca53bc406f69b9623ac",
+      gitBlob: "f7717d7c70bb57bd73d799a1d26d1825aa0a41e8",
+    },
+    currentPin: {
+      bytes: 7756,
+      sha256: "0282ae61c6a43f837a9a3c7b12d879151e67ec155939c541cd9b5ea662979140",
+      gitBlob: "bdf9d6ace5f7f5530373cea6007a1ad7dfe905d0",
+    },
+    spans: [
+      {
+        beforeOffset: 6465,
+        afterOffset: 6465,
+        before:
+          'export type ExportBoundaryKind = TypedArrayKind | "string" | "symbol" | "promise" | "dynamic" | "aggregate";',
+        after:
+          'export type ExportBoundaryKind = TypedArrayKind | "boolean" | "string" | "symbol" | "promise" | "dynamic" | "aggregate";',
+      },
+    ],
+  },
 ] as const;
 function beforeCanonicalCurrentInput(path: string, source: string): string {
   const record = canonicalInputEpochs.find((entry) => entry.path === path);
@@ -764,11 +787,15 @@ export function captureC1CurrentPopulation(
   const receipt = authenticateRuntimeProgramRelocationReceipt(receiptText);
   let validatorRelocation: ProgramValidatorRelocationCapture | undefined;
   let loweringLegalityPredecessor: string | undefined;
+  let typesPredecessor: string | undefined;
   const relocatedDependencies = ["src/ir/program-runtime-abi.ts", "src/ir/program-validation.ts"] as const;
   for (const record of [...receipt.current, ...receipt.dependencies]) {
     if (record.path === linearPath) continue;
     const rawSource = current.get(record.path)!;
-    if (record.path === loweringLegalityPath) {
+    if (record.path === "src/ir/types.ts") {
+      typesPredecessor = beforeCanonicalCurrentInput(record.path, rawSource);
+      assertRuntimeProgramRelocationSource(typesPredecessor, record, record.path);
+    } else if (record.path === loweringLegalityPath) {
       // Fresh implementation authentication precedes the first imported source-pair operation.
       const implementation = readAuthority(loweringAnalysisImplementationPath);
       primitive(implementation, loweringAnalysisImplementationPath);
@@ -843,6 +870,8 @@ export function captureC1CurrentPopulation(
   checkBindings(oldFile, declaration(oldFile, contract), contract);
   const historicalPopulation = new Map(current);
   historicalPopulation.set(linearPath, historical);
+  if (typesPredecessor === undefined) fail("missing Boolean types predecessor");
+  historicalPopulation.set("src/ir/types.ts", typesPredecessor);
   if (loweringLegalityPredecessor === undefined) fail("missing lowering legality predecessor");
   historicalPopulation.set(loweringLegalityPath, loweringLegalityPredecessor);
   if (validatorRelocation === undefined) fail("missing validator relocation capture");
