@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import {
+  captureArrayBufferIsViewMainPredecessorPolicySource,
+  capturePresentationClassificationPredecessorPolicySource,
   captureLoweringAnalysisPredecessorPolicySource,
   captureWasmGcHelperPredecessorPolicySource,
 } from "./helpers/ir-runtime-program-policy-evolution.js";
@@ -704,7 +706,11 @@ const sha = (value: string | Buffer) => createHash("sha256").update(value).diges
 const raw = () =>
   captureWasmGcHelperPredecessorPolicySource(
     captureLoweringAnalysisPredecessorPolicySource(
-      readFileSync(new URL("../scripts/compiler-boundaries.json", import.meta.url), "utf8"),
+      capturePresentationClassificationPredecessorPolicySource(
+        captureArrayBufferIsViewMainPredecessorPolicySource(
+          readFileSync(new URL("../scripts/compiler-boundaries.json", import.meta.url), "utf8"),
+        ),
+      ),
     ),
   );
 const policy = () => JSON.parse(raw()) as Policy;

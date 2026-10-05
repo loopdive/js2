@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import {
+  captureArrayBufferIsViewMainPredecessorPolicySource,
+  capturePresentationClassificationPredecessorPolicySource,
   captureLoweringAnalysisPredecessorPolicySource,
   captureWasmGcHelperPredecessorPolicySource,
 } from "./helpers/ir-runtime-program-policy-evolution.js";
@@ -333,7 +335,11 @@ const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const raw = (): string => {
   const text = captureProgramValidatorPredecessorPolicySource(
     captureWasmGcHelperPredecessorPolicySource(
-      captureLoweringAnalysisPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+      captureLoweringAnalysisPredecessorPolicySource(
+        capturePresentationClassificationPredecessorPolicySource(
+          captureArrayBufferIsViewMainPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+        ),
+      ),
     ),
   );
   expect(Buffer.byteLength(text)).toBe(580511);

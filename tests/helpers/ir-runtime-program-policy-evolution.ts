@@ -7241,7 +7241,7 @@ export function captureWasmGcHelperPredecessorPolicySource(raw: string): string 
 
 import {
   captureLinearLayoutPredecessor as loweringAnalysisLayoutProof,
-  captureLoweringLegalityPredecessor as loweringAnalysisLegalityProof,
+  captureCurrentLoweringLegalityPredecessor as loweringAnalysisLegalityProof,
 } from "./ir-lowering-analysis-relocation.js";
 
 const loweringAnalysisExpected = {
@@ -7554,7 +7554,11 @@ function loweringAnalysisRead(path: string): string {
     const info = wasmGcHelperLstat(url);
     if (!info.isFile() || info.isSymbolicLink() || (info.mode & 0o7777) !== expected.mode)
       loweringAnalysisFail("source mode/identity changed: " + path);
-    loweringAnalysisPin(bytes, expected, path);
+    loweringAnalysisPin(
+      bytes,
+      path === "src/ir/analysis/backend-legality.ts" ? earlyReturnCurrentOwnerPin : expected,
+      path,
+    );
   } else if (path !== loweringAnalysisExpected.sourceReceipt.path)
     loweringAnalysisFail("source proof path outside fixed domain: " + path);
   return bytes.toString("utf8");
@@ -7592,7 +7596,12 @@ function authenticateLoweringAnalysisPolicy(): LoweringAnalysisReceipt {
     (implementationStat.mode & 0o7777) !== receipt.componentImplementation.mode
   )
     loweringAnalysisFail("component implementation mode/identity changed: " + receipt.componentImplementation.path);
-  loweringAnalysisPin(implementation, receipt.componentImplementation, receipt.componentImplementation.path);
+  loweringAnalysisPin(implementation, earlyReturnComponentPin, receipt.componentImplementation.path);
+  loweringAnalysisPin(
+    implementation.subarray(0, receipt.componentImplementation.bytes),
+    receipt.componentImplementation,
+    receipt.componentImplementation.path + " historical prefix",
+  );
   // Both operations freshly read the fixed source receipt. No historical source enters current resolution.
   const legality = loweringAnalysisLegalityProof(
     loweringAnalysisRead("src/ir/backend/legality.ts"),
@@ -7771,4 +7780,754 @@ export function captureLoweringAnalysisPredecessorPolicySource(raw: string): str
   if (!same(parsed, semantic) || loweringAnalysisRaw(before, receipt, true) !== raw)
     loweringAnalysisFail("raw/semantic reciprocal proof disagree");
   return before;
+}
+
+// Fixed outer policy step for the private prepared-presentation classification.
+const presentationClassificationExpected = {
+  schema: 1,
+  kind: "fixed-prepared-presentation-classification-policy-evolution",
+  provenance: {
+    preparationCommit: "5a633bf93ec0e7b9d2992334d00f1279c7bd2c25",
+    planSha256: "1d332bd357bb3867a187f8841308f82e3f0518e400eb684c2b7f71b5567d89b1",
+    legacyRetained: true,
+  },
+  helperPrefix: {
+    path: "tests/helpers/ir-runtime-program-policy-evolution.ts",
+    bytes: 356816,
+    sha256: "f195d0c432429bfb43c3f8a65617c886ef176e24fa81c2c6539845575fc01a54",
+    gitBlob: "ea6cef6bbd168ab0f68f412ae3bc270184fd8e9c",
+  },
+  predecessorReceipt: {
+    path: "tests/helpers/ir-runtime-program-policy-lowering-analysis.json",
+    bytes: 13393,
+    sha256: "72db51a0e892a4fa8a2d9762042eacc8d88609ccd0ae1ac80f9f548852e04f9b",
+    gitBlob: "3c7ce06a7075d66f786e01b79d44527e86ae0f3f",
+  },
+  topLevelKeys: [
+    "schema",
+    "description",
+    "sourceRoot",
+    "tsconfig",
+    "requireGitProvenance",
+    "externalAssets",
+    "frontendWrapper",
+    "moduleExtensions",
+    "layers",
+    "allowedEdges",
+    "externalPackages",
+    "activationHistory",
+    "nonModules",
+    "moves",
+    "evidence",
+    "files",
+  ],
+  before: {
+    source: {
+      bytes: 583986,
+      sha256: "0cbff25993c92150c6c7cd45934b25552b315266833adc84301f49287d3982ee",
+      gitBlob: "37d83315305278b25047fa4ed6b38af24b3cf9ce",
+    },
+    dataSha256: "2d3c02197bd25875755aa64a0d7f9f8cdaba6f08f2394448e2e70870e327e738",
+    fileCount: 1824,
+    filesSha256: "04e5d8f08098f2f3f0d30813353c3521762c2f2f266b777083796549c3654156",
+    activationCount: 104,
+    activationHistorySha256: "27cbdad6be8299ff447e8407b2d04adbb44a28e11999c3dd56d75948f47b44ab",
+    layersSha256: "45c79ff9c27d08c74dfab859be8cec1ef6a85acbc1cae121e096c0ca35026eeb",
+    allowedEdgesSha256: "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7",
+    moveCount: 12,
+    movesSha256: "050fb62b7369179b0b3bd81193ec9bc275a77db1ebb45ac5fdef1a136ab037f2",
+  },
+  current: {
+    source: {
+      bytes: 584358,
+      sha256: "b1693461855cc60546bb29bee370c02ad3cf21e17e539d521c8f2b6598b0e411",
+      gitBlob: "b77bcc4a76f1a959bc77db8c37cf8ef48ad2da0f",
+    },
+    dataSha256: "475ebcec73e71dddd9b3cca9ec1e8c36c9e345436b3e2a7173e13da29c09427a",
+    fileCount: 1825,
+    filesSha256: "2155c33a508f2f0177541878b0b50e4b11b5f7ccba4aceb762e90877023203a0",
+    activationCount: 104,
+    activationHistorySha256: "27cbdad6be8299ff447e8407b2d04adbb44a28e11999c3dd56d75948f47b44ab",
+    layersSha256: "45c79ff9c27d08c74dfab859be8cec1ef6a85acbc1cae121e096c0ca35026eeb",
+    allowedEdgesSha256: "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7",
+    moveCount: 12,
+    movesSha256: "050fb62b7369179b0b3bd81193ec9bc275a77db1ebb45ac5fdef1a136ab037f2",
+  },
+  delta: {
+    addedRowIndex: 1824,
+    addedRow: {
+      path: "src/compiler/ir-program-presentation.ts",
+      state: "unmigrated",
+      layer: "mixed-needs-split",
+      destination: "compiler",
+      owner: "3525-prepared-presentation",
+      nextBoundary:
+        "Separate AST declaration capture and finalizer presentation from prepared-program output association before compiler-layer activation.",
+    },
+    previousRow: {
+      path: "src/ir/analysis/backend-legality.ts",
+      state: "clean",
+      layer: "ir-analysis",
+    },
+    activationHistoryUnchanged: true,
+    movesUnchanged: true,
+  },
+  rawSpans: [
+    {
+      beforeOffset: 583862,
+      afterOffset: 583862,
+      before:
+        '    {\n      "path": "src/ir/analysis/backend-legality.ts",\n      "state": "clean",\n      "layer": "ir-analysis"\n    }\n',
+      after:
+        '    {\n      "path": "src/ir/analysis/backend-legality.ts",\n      "state": "clean",\n      "layer": "ir-analysis"\n    },\n    {\n      "path": "src/compiler/ir-program-presentation.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "compiler",\n      "owner": "3525-prepared-presentation",\n      "nextBoundary": "Separate AST declaration capture and finalizer presentation from prepared-program output association before compiler-layer activation."\n    }\n',
+    },
+  ],
+} as const;
+const presentationClassificationReceiptPin = {
+  bytes: 4227,
+  sha256: "dd0273b99eb2f96ed66e033bec6a4365b65137359d3a9b7fc2e3b0e7b4b80dee",
+  gitBlob: "c65ce4a7a6c60f6c28ac01977fca8f6262e9584b",
+} as const;
+type PresentationClassificationReceipt = typeof presentationClassificationExpected;
+const presentationClassificationReceiptPath =
+  "tests/helpers/ir-runtime-program-policy-presentation-classification.json";
+function presentationClassificationFail(detail: string): never {
+  throw new Error("presentation classification policy evolution: " + detail);
+}
+function presentationClassificationPin(
+  bytes: Buffer,
+  expected: { readonly bytes: number; readonly sha256: string; readonly gitBlob: string },
+  detail: string,
+): void {
+  if (
+    bytes.length !== expected.bytes ||
+    createHash("sha256").update(bytes).digest("hex") !== expected.sha256 ||
+    createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex") !== expected.gitBlob
+  )
+    presentationClassificationFail(detail);
+}
+function authenticatePresentationClassification(): PresentationClassificationReceipt {
+  const bytes = readFileSync(new URL(`../../${presentationClassificationReceiptPath}`, import.meta.url));
+  presentationClassificationPin(bytes, presentationClassificationReceiptPin, "receipt digest mismatch");
+  const receipt = JSON.parse(bytes.toString("utf8")) as PresentationClassificationReceipt;
+  if (!same(receipt, presentationClassificationExpected))
+    presentationClassificationFail("fixed receipt schema mismatch");
+  presentationClassificationPin(
+    earlyReturnClassificationHistoricalPrefix(
+      readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),
+    ),
+    receipt.helperPrefix,
+    "complete predecessor helper prefix changed",
+  );
+  const predecessorBytes = readFileSync(new URL(`../../${receipt.predecessorReceipt.path}`, import.meta.url));
+  presentationClassificationPin(predecessorBytes, receipt.predecessorReceipt, "predecessor receipt changed");
+  const predecessor = JSON.parse(predecessorBytes.toString("utf8")) as LoweringAnalysisReceipt;
+  if (!same(predecessor.current, receipt.before)) presentationClassificationFail("predecessor profile mismatch");
+  captureC1HistoricalAuthority();
+  let beforeEnd = 0,
+    afterEnd = 0,
+    delta = 0;
+  for (const span of receipt.rawSpans) {
+    if (
+      ![span.beforeOffset, span.afterOffset].every(Number.isSafeInteger) ||
+      span.beforeOffset < beforeEnd ||
+      span.afterOffset < afterEnd ||
+      span.afterOffset !== span.beforeOffset + delta
+    )
+      presentationClassificationFail("raw span order/coordinate mismatch");
+    beforeEnd = span.beforeOffset + Buffer.byteLength(span.before);
+    afterEnd = span.afterOffset + Buffer.byteLength(span.after);
+    delta += Buffer.byteLength(span.after) - Buffer.byteLength(span.before);
+    if (beforeEnd > receipt.before.source.bytes || afterEnd > receipt.current.source.bytes)
+      presentationClassificationFail("raw span range mismatch");
+  }
+  if (receipt.rawSpans.length !== 1 || receipt.before.source.bytes + delta !== receipt.current.source.bytes)
+    presentationClassificationFail("raw span population mismatch");
+  return freeze(receipt);
+}
+function presentationClassificationProfile(
+  policy: MutableIrRuntimeProgramPolicy,
+  expected: PresentationClassificationReceipt["before"] | PresentationClassificationReceipt["current"],
+): void {
+  if (
+    digest(policy) !== expected.dataSha256 ||
+    policy.files.length !== expected.fileCount ||
+    digest(policy.files) !== expected.filesSha256 ||
+    policy.activationHistory.length !== expected.activationCount ||
+    digest(policy.activationHistory) !== expected.activationHistorySha256 ||
+    digest(policy.layers) !== expected.layersSha256 ||
+    digest(policy.allowedEdges) !== expected.allowedEdgesSha256 ||
+    !Array.isArray(policy.moves) ||
+    policy.moves.length !== expected.moveCount ||
+    digest(policy.moves) !== expected.movesSha256
+  )
+    presentationClassificationFail("complete policy profile mismatch");
+}
+function presentationClassificationRows(
+  policy: MutableIrRuntimeProgramPolicy,
+  receipt: PresentationClassificationReceipt,
+  current: boolean,
+): void {
+  const d = receipt.delta;
+  if (
+    !same(Object.keys(policy), receipt.topLevelKeys) ||
+    !same(policy.files[d.addedRowIndex - 1], d.previousRow) ||
+    policy.files.length !== d.addedRowIndex + (current ? 1 : 0) ||
+    policy.files.filter((row) => row.path === d.addedRow.path).length !== (current ? 1 : 0) ||
+    (current &&
+      (!same(policy.files[d.addedRowIndex], d.addedRow) ||
+        !same(Object.keys(policy.files[d.addedRowIndex]!), Object.keys(d.addedRow))))
+  )
+    presentationClassificationFail("fixed row/schema/neighbors mismatch");
+}
+function capturePresentationClassificationOperand(
+  current: MutableIrRuntimeProgramPolicy,
+  receipt: PresentationClassificationReceipt,
+): MutableIrRuntimeProgramPolicy {
+  presentationClassificationProfile(current, receipt.current);
+  presentationClassificationRows(current, receipt, true);
+  const before = capture(current) as MutableIrRuntimeProgramPolicy;
+  before.files.splice(receipt.delta.addedRowIndex, 1);
+  presentationClassificationProfile(before, receipt.before);
+  presentationClassificationRows(before, receipt, false);
+  const replay = capture(before) as MutableIrRuntimeProgramPolicy;
+  replay.files.splice(receipt.delta.addedRowIndex, 0, capture(receipt.delta.addedRow) as Record<string, string>);
+  presentationClassificationProfile(replay, receipt.current);
+  presentationClassificationRows(replay, receipt, true);
+  if (
+    !same(replay, current) ||
+    !same(before.activationHistory, current.activationHistory) ||
+    !same(before.moves, current.moves) ||
+    !same(before.layers, current.layers) ||
+    !same(before.allowedEdges, current.allowedEdges)
+  )
+    presentationClassificationFail("semantic inverse/replay/retained fields mismatch");
+  return before;
+}
+export function capturePresentationClassificationPredecessorPolicy(value: unknown): MutableIrRuntimeProgramPolicy {
+  const current = capture(value) as MutableIrRuntimeProgramPolicy;
+  if (current === null || typeof current !== "object" || Array.isArray(current))
+    presentationClassificationFail("policy input must be a plain object");
+  return capturePresentationClassificationOperand(current, authenticatePresentationClassification());
+}
+function presentationClassificationRaw(
+  raw: string,
+  receipt: PresentationClassificationReceipt,
+  forward: boolean,
+): string {
+  const bytes = Buffer.from(raw, "utf8");
+  presentationClassificationPin(
+    bytes,
+    forward ? receipt.before.source : receipt.current.source,
+    "complete raw source profile mismatch",
+  );
+  const pieces: Buffer[] = [];
+  let consumed = 0;
+  for (const span of receipt.rawSpans) {
+    const at = forward ? span.beforeOffset : span.afterOffset,
+      from = Buffer.from(forward ? span.before : span.after),
+      to = Buffer.from(forward ? span.after : span.before);
+    if (at < consumed || at + from.length > bytes.length || !bytes.subarray(at, at + from.length).equals(from))
+      presentationClassificationFail("fixed raw span mismatch");
+    pieces.push(bytes.subarray(consumed, at), to);
+    consumed = at + from.length;
+  }
+  pieces.push(bytes.subarray(consumed));
+  const result = Buffer.concat(pieces);
+  presentationClassificationPin(
+    result,
+    forward ? receipt.current.source : receipt.before.source,
+    "reciprocal raw source profile mismatch",
+  );
+  return result.toString("utf8");
+}
+export function capturePresentationClassificationPredecessorPolicySource(raw: string): string {
+  if (typeof raw !== "string") presentationClassificationFail("raw input must be a primitive string");
+  const receipt = authenticatePresentationClassification();
+  const before = presentationClassificationRaw(raw, receipt, false);
+  const semantic = capturePresentationClassificationOperand(
+    capture(JSON.parse(raw)) as MutableIrRuntimeProgramPolicy,
+    receipt,
+  );
+  const parsed = JSON.parse(before) as MutableIrRuntimeProgramPolicy;
+  presentationClassificationProfile(parsed, receipt.before);
+  if (!same(parsed, semantic) || presentationClassificationRaw(before, receipt, true) !== raw)
+    presentationClassificationFail("raw/semantic reciprocal proof disagree");
+  return before;
+}
+
+// Fixed canonical main insertion after the preserved presentation classification.
+const arrayBufferIsViewMainExpected = {
+  schema: 1,
+  kind: "fixed-arraybuffer-isview-main-policy-evolution",
+  provenance: {
+    preparationCommit: "d304a35aa9a318906bb7c5459a1cf9359f50e227",
+    canonicalMainCommit: "844398d2c773e631b8ca8e54141a53e11dd685d4",
+    remoteRefreshCommit: "3b4bc52137bbf8f7b86f9e659453f34b7ce29ad0",
+    canonicalPolicy: {
+      bytes: 584340,
+      sha256: "172cbb5c10a980cf4d1ddd70a24195a5f4c5536e3888e50da96a05e16d272189",
+      gitBlob: "546d0403813cfb67389fac728dd3e4a40c090bb0",
+    },
+    planSha256: "4e57afdffaa60df87273226917e08ac4ca3a07e22657a682b665bc6e6d342378",
+    legacyRetained: true,
+  },
+  helperPrefix: {
+    path: "tests/helpers/ir-runtime-program-policy-evolution.ts",
+    bytes: 369345,
+    sha256: "3ccadadfcceb0134ba97816c4fa6dedada6248c183b37f9ad339e765c608730f",
+    gitBlob: "eeaaafffec963ce21dfbf27e76ae24beea86ae79",
+  },
+  predecessorReceipt: {
+    path: "tests/helpers/ir-runtime-program-policy-presentation-classification.json",
+    bytes: 4227,
+    sha256: "dd0273b99eb2f96ed66e033bec6a4365b65137359d3a9b7fc2e3b0e7b4b80dee",
+    gitBlob: "c65ce4a7a6c60f6c28ac01977fca8f6262e9584b",
+  },
+  topLevelKeys: [
+    "schema",
+    "description",
+    "sourceRoot",
+    "tsconfig",
+    "requireGitProvenance",
+    "externalAssets",
+    "frontendWrapper",
+    "moduleExtensions",
+    "layers",
+    "allowedEdges",
+    "externalPackages",
+    "activationHistory",
+    "nonModules",
+    "moves",
+    "evidence",
+    "files",
+  ],
+  before: {
+    source: {
+      bytes: 584358,
+      sha256: "b1693461855cc60546bb29bee370c02ad3cf21e17e539d521c8f2b6598b0e411",
+      gitBlob: "b77bcc4a76f1a959bc77db8c37cf8ef48ad2da0f",
+    },
+    dataSha256: "475ebcec73e71dddd9b3cca9ec1e8c36c9e345436b3e2a7173e13da29c09427a",
+    fileCount: 1825,
+    filesSha256: "2155c33a508f2f0177541878b0b50e4b11b5f7ccba4aceb762e90877023203a0",
+    activationCount: 104,
+    activationHistorySha256: "27cbdad6be8299ff447e8407b2d04adbb44a28e11999c3dd56d75948f47b44ab",
+    layersSha256: "45c79ff9c27d08c74dfab859be8cec1ef6a85acbc1cae121e096c0ca35026eeb",
+    allowedEdgesSha256: "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7",
+    moveCount: 12,
+    movesSha256: "050fb62b7369179b0b3bd81193ec9bc275a77db1ebb45ac5fdef1a136ab037f2",
+  },
+  current: {
+    source: {
+      bytes: 584712,
+      sha256: "c71c9f9a61cebf84bff0f75f26fcd271265e53c83a66f59ed416e1cbc1675209",
+      gitBlob: "2a85037d2b4ffa2dd93aff1fa4080581e48a8c88",
+    },
+    dataSha256: "7975101a306d4746f3431244115981fa1824bc558a4b563c2a55288ab457591c",
+    fileCount: 1826,
+    filesSha256: "5e1616a98a054c70dcde26118598dbbd66eed02747f48c76e024cf64f9279e6b",
+    activationCount: 104,
+    activationHistorySha256: "27cbdad6be8299ff447e8407b2d04adbb44a28e11999c3dd56d75948f47b44ab",
+    layersSha256: "45c79ff9c27d08c74dfab859be8cec1ef6a85acbc1cae121e096c0ca35026eeb",
+    allowedEdgesSha256: "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7",
+    moveCount: 12,
+    movesSha256: "050fb62b7369179b0b3bd81193ec9bc275a77db1ebb45ac5fdef1a136ab037f2",
+  },
+  delta: {
+    addedRowIndex: 445,
+    addedRow: {
+      path: "src/codegen/expressions/arraybuffer-isview-static-decision.ts",
+      state: "unmigrated",
+      layer: "mixed-needs-split",
+      destination: "backend-wasmgc",
+      owner: "3518-coordinator",
+      nextBoundary:
+        "Separate legacy class-metadata static decisions from frontend classification and backend lowering.",
+    },
+    previousRow: {
+      path: "src/codegen/expressions/array-constructor-carrier.ts",
+      state: "unmigrated",
+      layer: "mixed-needs-split",
+      destination: "backend-wasmgc",
+      owner: "3518-coordinator",
+      nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
+    },
+    nextRow: {
+      path: "src/codegen/expressions/assignment.ts",
+      state: "unmigrated",
+      layer: "mixed-needs-split",
+      destination: "backend-wasmgc",
+      owner: "3518-coordinator",
+      nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
+    },
+    presentationRow: {
+      path: "src/compiler/ir-program-presentation.ts",
+      state: "unmigrated",
+      layer: "mixed-needs-split",
+      destination: "compiler",
+      owner: "3525-prepared-presentation",
+      nextBoundary:
+        "Separate AST declaration capture and finalizer presentation from prepared-program output association before compiler-layer activation.",
+    },
+    presentationBeforeIndex: 1824,
+    presentationCurrentIndex: 1825,
+    activationHistoryUnchanged: true,
+    movesUnchanged: true,
+  },
+  rawSpans: [
+    {
+      beforeOffset: 190010,
+      afterOffset: 190010,
+      before: "",
+      after:
+        '    {\n      "path": "src/codegen/expressions/arraybuffer-isview-static-decision.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate legacy class-metadata static decisions from frontend classification and backend lowering."\n    },\n',
+    },
+  ],
+} as const;
+const arrayBufferIsViewMainReceiptPin = {
+  bytes: 5270,
+  sha256: "2d28278754fb99c4e6e7b51336ad9d37bd4a98fbbd952f9ddcb11208e9aba23c",
+  gitBlob: "959fd97021199795c8adedba6fc7e5e9543e7d65",
+} as const;
+type ArrayBufferIsViewMainReceipt = typeof arrayBufferIsViewMainExpected;
+const arrayBufferIsViewMainReceiptPath = "tests/helpers/ir-runtime-program-policy-arraybuffer-isview-main.json";
+function arrayBufferIsViewMainFail(detail: string): never {
+  throw new Error("ArrayBuffer isView main policy evolution: " + detail);
+}
+function arrayBufferIsViewMainPin(
+  bytes: Buffer,
+  expected: { readonly bytes: number; readonly sha256: string; readonly gitBlob: string },
+  detail: string,
+): void {
+  if (
+    bytes.length !== expected.bytes ||
+    createHash("sha256").update(bytes).digest("hex") !== expected.sha256 ||
+    createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex") !== expected.gitBlob
+  )
+    arrayBufferIsViewMainFail(detail);
+}
+function authenticateArrayBufferIsViewMain(): ArrayBufferIsViewMainReceipt {
+  const bytes = readFileSync(new URL(`../../${arrayBufferIsViewMainReceiptPath}`, import.meta.url));
+  arrayBufferIsViewMainPin(bytes, arrayBufferIsViewMainReceiptPin, "receipt digest mismatch");
+  const receipt = JSON.parse(bytes.toString("utf8")) as ArrayBufferIsViewMainReceipt;
+  if (!same(receipt, arrayBufferIsViewMainExpected)) arrayBufferIsViewMainFail("fixed receipt schema mismatch");
+  arrayBufferIsViewMainPin(
+    earlyReturnIsViewHistoricalPrefix(
+      readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),
+    ),
+    receipt.helperPrefix,
+    "complete predecessor helper prefix changed",
+  );
+  const predecessorBytes = readFileSync(new URL(`../../${receipt.predecessorReceipt.path}`, import.meta.url));
+  arrayBufferIsViewMainPin(predecessorBytes, receipt.predecessorReceipt, "predecessor receipt changed");
+  const predecessor = JSON.parse(predecessorBytes.toString("utf8")) as PresentationClassificationReceipt;
+  if (!same(predecessor.current, receipt.before)) arrayBufferIsViewMainFail("predecessor profile mismatch");
+  captureC1HistoricalAuthority();
+  let beforeEnd = 0,
+    afterEnd = 0,
+    delta = 0;
+  for (const span of receipt.rawSpans) {
+    if (
+      ![span.beforeOffset, span.afterOffset].every(Number.isSafeInteger) ||
+      span.beforeOffset < beforeEnd ||
+      span.afterOffset < afterEnd ||
+      span.afterOffset !== span.beforeOffset + delta
+    )
+      arrayBufferIsViewMainFail("raw span order/coordinate mismatch");
+    beforeEnd = span.beforeOffset + Buffer.byteLength(span.before);
+    afterEnd = span.afterOffset + Buffer.byteLength(span.after);
+    delta += Buffer.byteLength(span.after) - Buffer.byteLength(span.before);
+    if (beforeEnd > receipt.before.source.bytes || afterEnd > receipt.current.source.bytes)
+      arrayBufferIsViewMainFail("raw span range mismatch");
+  }
+  if (
+    receipt.rawSpans.length !== 1 ||
+    receipt.rawSpans[0].before !== "" ||
+    receipt.rawSpans[0].after.length === 0 ||
+    receipt.before.source.bytes + delta !== receipt.current.source.bytes
+  )
+    arrayBufferIsViewMainFail("raw span population mismatch");
+  return freeze(receipt);
+}
+function arrayBufferIsViewMainProfile(
+  policy: MutableIrRuntimeProgramPolicy,
+  expected: ArrayBufferIsViewMainReceipt["before"] | ArrayBufferIsViewMainReceipt["current"],
+): void {
+  if (
+    digest(policy) !== expected.dataSha256 ||
+    policy.files.length !== expected.fileCount ||
+    digest(policy.files) !== expected.filesSha256 ||
+    policy.activationHistory.length !== expected.activationCount ||
+    digest(policy.activationHistory) !== expected.activationHistorySha256 ||
+    digest(policy.layers) !== expected.layersSha256 ||
+    digest(policy.allowedEdges) !== expected.allowedEdgesSha256 ||
+    !Array.isArray(policy.moves) ||
+    policy.moves.length !== expected.moveCount ||
+    digest(policy.moves) !== expected.movesSha256
+  )
+    arrayBufferIsViewMainFail("complete policy profile mismatch");
+}
+function arrayBufferIsViewMainRows(
+  policy: MutableIrRuntimeProgramPolicy,
+  receipt: ArrayBufferIsViewMainReceipt,
+  current: boolean,
+): void {
+  const d = receipt.delta;
+  const presentationIndex = current ? d.presentationCurrentIndex : d.presentationBeforeIndex;
+  if (
+    !same(Object.keys(policy), receipt.topLevelKeys) ||
+    !same(policy.files[d.addedRowIndex - 1], d.previousRow) ||
+    !same(policy.files[d.addedRowIndex + (current ? 1 : 0)], d.nextRow) ||
+    policy.files.length !== (current ? receipt.current.fileCount : receipt.before.fileCount) ||
+    policy.files.filter((row) => row.path === d.addedRow.path).length !== (current ? 1 : 0) ||
+    policy.files.filter((row) => row.path === d.presentationRow.path).length !== 1 ||
+    !same(policy.files[presentationIndex], d.presentationRow) ||
+    !same(Object.keys(policy.files[presentationIndex]!), Object.keys(d.presentationRow)) ||
+    (current &&
+      (!same(policy.files[d.addedRowIndex], d.addedRow) ||
+        !same(Object.keys(policy.files[d.addedRowIndex]!), Object.keys(d.addedRow))))
+  )
+    arrayBufferIsViewMainFail("fixed row/schema/neighbors/presentation mismatch");
+}
+function captureArrayBufferIsViewMainOperand(
+  current: MutableIrRuntimeProgramPolicy,
+  receipt: ArrayBufferIsViewMainReceipt,
+): MutableIrRuntimeProgramPolicy {
+  arrayBufferIsViewMainProfile(current, receipt.current);
+  arrayBufferIsViewMainRows(current, receipt, true);
+  const before = capture(current) as MutableIrRuntimeProgramPolicy;
+  before.files.splice(receipt.delta.addedRowIndex, 1);
+  arrayBufferIsViewMainProfile(before, receipt.before);
+  arrayBufferIsViewMainRows(before, receipt, false);
+  const replay = capture(before) as MutableIrRuntimeProgramPolicy;
+  replay.files.splice(receipt.delta.addedRowIndex, 0, capture(receipt.delta.addedRow) as Record<string, string>);
+  arrayBufferIsViewMainProfile(replay, receipt.current);
+  arrayBufferIsViewMainRows(replay, receipt, true);
+  if (
+    !same(replay, current) ||
+    !same(before.activationHistory, current.activationHistory) ||
+    !same(before.moves, current.moves) ||
+    !same(before.layers, current.layers) ||
+    !same(before.allowedEdges, current.allowedEdges)
+  )
+    arrayBufferIsViewMainFail("semantic inverse/replay/retained fields mismatch");
+  return before;
+}
+export function captureArrayBufferIsViewMainPredecessorPolicy(value: unknown): MutableIrRuntimeProgramPolicy {
+  const current = capture(value) as MutableIrRuntimeProgramPolicy;
+  if (current === null || typeof current !== "object" || Array.isArray(current))
+    arrayBufferIsViewMainFail("policy input must be a plain object");
+  return captureArrayBufferIsViewMainOperand(current, authenticateArrayBufferIsViewMain());
+}
+function arrayBufferIsViewMainRaw(raw: string, receipt: ArrayBufferIsViewMainReceipt, forward: boolean): string {
+  const bytes = Buffer.from(raw, "utf8");
+  arrayBufferIsViewMainPin(
+    bytes,
+    forward ? receipt.before.source : receipt.current.source,
+    "complete raw source profile mismatch",
+  );
+  const pieces: Buffer[] = [];
+  let consumed = 0;
+  for (const span of receipt.rawSpans) {
+    const at = forward ? span.beforeOffset : span.afterOffset,
+      from = Buffer.from(forward ? span.before : span.after),
+      to = Buffer.from(forward ? span.after : span.before);
+    if (at < consumed || at + from.length > bytes.length || !bytes.subarray(at, at + from.length).equals(from))
+      arrayBufferIsViewMainFail("fixed raw span mismatch");
+    pieces.push(bytes.subarray(consumed, at), to);
+    consumed = at + from.length;
+  }
+  pieces.push(bytes.subarray(consumed));
+  const result = Buffer.concat(pieces);
+  arrayBufferIsViewMainPin(
+    result,
+    forward ? receipt.current.source : receipt.before.source,
+    "reciprocal raw source profile mismatch",
+  );
+  return result.toString("utf8");
+}
+export function captureArrayBufferIsViewMainPredecessorPolicySource(raw: string): string {
+  if (typeof raw !== "string") arrayBufferIsViewMainFail("raw input must be a primitive string");
+  const receipt = authenticateArrayBufferIsViewMain();
+  const before = arrayBufferIsViewMainRaw(raw, receipt, false);
+  const semantic = captureArrayBufferIsViewMainOperand(
+    capture(JSON.parse(raw)) as MutableIrRuntimeProgramPolicy,
+    receipt,
+  );
+  const parsed = JSON.parse(before) as MutableIrRuntimeProgramPolicy;
+  arrayBufferIsViewMainProfile(parsed, receipt.before);
+  if (!same(parsed, semantic) || arrayBufferIsViewMainRaw(before, receipt, true) !== raw)
+    arrayBufferIsViewMainFail("raw/semantic reciprocal proof disagree");
+  return before;
+}
+
+// Fixed current-owner evolution; these tables are outside both historical prefixes.
+const earlyReturnCurrentOwnerPin = {
+  bytes: 21387,
+  sha256: "cdd60287d9c98f700eca41f351f02ac609f3e9fdd43a25e28d7951f16f0c1a37",
+  gitBlob: "157777ff1c14c6cf5f0e4241c4e361843d694f5b",
+};
+const earlyReturnComponentPin = {
+  bytes: 18956,
+  sha256: "253eda01462fad0ab84a940965a083eaf80b0ca8a3e10a4ca012fbafaaf30e99",
+  gitBlob: "c732f2eb22a127714373bc8fa363514bcf7a818b",
+};
+type EarlyReturnPrefixPin = { readonly bytes: number; readonly sha256: string; readonly gitBlob: string };
+type EarlyReturnPrefixEdit = {
+  readonly beforeOffset: number;
+  readonly afterOffset: number;
+  readonly before: string;
+  readonly after: string;
+};
+type EarlyReturnPrefixProof = {
+  readonly before: EarlyReturnPrefixPin;
+  readonly current: EarlyReturnPrefixPin;
+  readonly edits: readonly EarlyReturnPrefixEdit[];
+};
+const earlyReturnClassificationPrefixProof = {
+  before: {
+    bytes: 356816,
+    sha256: "f195d0c432429bfb43c3f8a65617c886ef176e24fa81c2c6539845575fc01a54",
+    gitBlob: "ea6cef6bbd168ab0f68f412ae3bc270184fd8e9c",
+  },
+  current: {
+    bytes: 357119,
+    sha256: "91f4c65528072df09092f47ac11f2a6d9d944ae90bd58aa4c29258d2aec71dd2",
+    gitBlob: "996123d86af1f162e19f37fff2c19339ce203440",
+  },
+  edits: [
+    {
+      beforeOffset: 332028,
+      afterOffset: 332028,
+      before: "  captureLoweringLegalityPredecessor as loweringAnalysisLegalityProof,\n",
+      after: "  captureCurrentLoweringLegalityPredecessor as loweringAnalysisLegalityProof,\n",
+    },
+    {
+      beforeOffset: 346469,
+      afterOffset: 346476,
+      before: "    loweringAnalysisPin(bytes, expected, path);\n",
+      after:
+        '    loweringAnalysisPin(\n      bytes,\n      path === "src/ir/analysis/backend-legality.ts" ? earlyReturnCurrentOwnerPin : expected,\n      path,\n    );\n',
+    },
+    {
+      beforeOffset: 348569,
+      afterOffset: 348679,
+      before:
+        "  loweringAnalysisPin(implementation, receipt.componentImplementation, receipt.componentImplementation.path);\n",
+      after:
+        '  loweringAnalysisPin(implementation, earlyReturnComponentPin, receipt.componentImplementation.path);\n  loweringAnalysisPin(\n    implementation.subarray(0, receipt.componentImplementation.bytes),\n    receipt.componentImplementation,\n    receipt.componentImplementation.path + " historical prefix",\n  );\n',
+    },
+  ],
+};
+const earlyReturnIsViewPrefixProof = {
+  before: {
+    bytes: 369345,
+    sha256: "3ccadadfcceb0134ba97816c4fa6dedada6248c183b37f9ad339e765c608730f",
+    gitBlob: "eeaaafffec963ce21dfbf27e76ae24beea86ae79",
+  },
+  current: {
+    bytes: 369684,
+    sha256: "dc117e53e82264b09aac71009b46a5424925fe16cf16c2dc434744d5b73c867b",
+    gitBlob: "9a83c4f87cf586ee1776accdcd95e8227381cfd3",
+  },
+  edits: [
+    {
+      beforeOffset: 332028,
+      afterOffset: 332028,
+      before: "  captureLoweringLegalityPredecessor as loweringAnalysisLegalityProof,\n",
+      after: "  captureCurrentLoweringLegalityPredecessor as loweringAnalysisLegalityProof,\n",
+    },
+    {
+      beforeOffset: 346469,
+      afterOffset: 346476,
+      before: "    loweringAnalysisPin(bytes, expected, path);\n",
+      after:
+        '    loweringAnalysisPin(\n      bytes,\n      path === "src/ir/analysis/backend-legality.ts" ? earlyReturnCurrentOwnerPin : expected,\n      path,\n    );\n',
+    },
+    {
+      beforeOffset: 348569,
+      afterOffset: 348679,
+      before:
+        "  loweringAnalysisPin(implementation, receipt.componentImplementation, receipt.componentImplementation.path);\n",
+      after:
+        '  loweringAnalysisPin(implementation, earlyReturnComponentPin, receipt.componentImplementation.path);\n  loweringAnalysisPin(\n    implementation.subarray(0, receipt.componentImplementation.bytes),\n    receipt.componentImplementation,\n    receipt.componentImplementation.path + " historical prefix",\n  );\n',
+    },
+    {
+      beforeOffset: 362600,
+      afterOffset: 362903,
+      before:
+        '    readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)).subarray(0, 356816),\n',
+      after:
+        '    earlyReturnClassificationHistoricalPrefix(\n      readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n    ),\n',
+    },
+  ],
+};
+function earlyReturnHistoricalPrefix(
+  source: Buffer,
+  proof: EarlyReturnPrefixProof,
+  check: (bytes: Buffer, expected: EarlyReturnPrefixPin, detail: string) => void,
+  fail: (detail: string) => never,
+): Buffer {
+  const detail = "complete predecessor helper prefix changed";
+  const current = source.subarray(0, proof.current.bytes);
+  check(current, proof.current, detail);
+  const inverse: Buffer[] = [];
+  let beforeEnd = 0,
+    currentEnd = 0;
+  for (const edit of proof.edits) {
+    if (
+      !Number.isSafeInteger(edit.beforeOffset) ||
+      !Number.isSafeInteger(edit.afterOffset) ||
+      edit.beforeOffset < beforeEnd ||
+      edit.afterOffset < currentEnd ||
+      edit.beforeOffset - beforeEnd !== edit.afterOffset - currentEnd ||
+      typeof edit.before !== "string" ||
+      typeof edit.after !== "string"
+    )
+      fail(detail);
+    const oldPart = Buffer.from(edit.before, "utf8"),
+      newPart = Buffer.from(edit.after, "utf8");
+    if (
+      oldPart.toString("utf8") !== edit.before ||
+      newPart.toString("utf8") !== edit.after ||
+      edit.beforeOffset + oldPart.length > proof.before.bytes ||
+      edit.afterOffset + newPart.length > current.length ||
+      !current.subarray(edit.afterOffset, edit.afterOffset + newPart.length).equals(newPart)
+    )
+      fail(detail);
+    inverse.push(current.subarray(currentEnd, edit.afterOffset), oldPart);
+    beforeEnd = edit.beforeOffset + oldPart.length;
+    currentEnd = edit.afterOffset + newPart.length;
+  }
+  inverse.push(current.subarray(currentEnd));
+  const historical = Buffer.concat(inverse);
+  check(historical, proof.before, detail);
+  const forward: Buffer[] = [];
+  beforeEnd = 0;
+  for (const edit of proof.edits) {
+    const oldPart = Buffer.from(edit.before, "utf8");
+    if (!historical.subarray(edit.beforeOffset, edit.beforeOffset + oldPart.length).equals(oldPart)) fail(detail);
+    forward.push(historical.subarray(beforeEnd, edit.beforeOffset), Buffer.from(edit.after, "utf8"));
+    beforeEnd = edit.beforeOffset + oldPart.length;
+  }
+  forward.push(historical.subarray(beforeEnd));
+  if (!Buffer.concat(forward).equals(current)) fail(detail);
+  return historical;
+}
+function earlyReturnClassificationHistoricalPrefix(source: Buffer): Buffer {
+  return earlyReturnHistoricalPrefix(
+    source,
+    earlyReturnClassificationPrefixProof,
+    presentationClassificationPin,
+    presentationClassificationFail,
+  );
+}
+function earlyReturnIsViewHistoricalPrefix(source: Buffer): Buffer {
+  return earlyReturnHistoricalPrefix(
+    source,
+    earlyReturnIsViewPrefixProof,
+    arrayBufferIsViewMainPin,
+    arrayBufferIsViewMainFail,
+  );
 }

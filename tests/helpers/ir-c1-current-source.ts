@@ -30,7 +30,7 @@ import {
 
 import {
   captureLinearLayoutPredecessor,
-  captureLoweringLegalityPredecessor,
+  captureCurrentLoweringLegalityPredecessor,
 } from "./ir-lowering-analysis-relocation.js";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -40,9 +40,9 @@ const loweringPlannerPath = "src/ir/analysis/linear-memory-plan.ts";
 const loweringAnalysisImplementationPath = "tests/helpers/ir-lowering-analysis-relocation.ts";
 // Independently supplied by root from the formatted, reviewed component implementation.
 const loweringAnalysisImplementationPin: C1Pin = {
-  bytes: 17637,
-  sha256: "4378d72f5b51148fa345f2544f1c43df12d4a967b369ef0be95d99c6f16c7ba4",
-  gitBlob: "832a2b1b88bd3eddbd89d78a3f23e917d7bff9ae",
+  bytes: 18956,
+  sha256: "253eda01462fad0ab84a940965a083eaf80b0ca8a3e10a4ca012fbafaaf30e99",
+  gitBlob: "c732f2eb22a127714373bc8fa363514bcf7a818b",
 };
 const loweringPlannerBeforePin: C1Pin = {
   bytes: 52704,
@@ -773,7 +773,7 @@ export function captureC1CurrentPopulation(
       const implementation = readAuthority(loweringAnalysisImplementationPath);
       primitive(implementation, loweringAnalysisImplementationPath);
       assertPin(implementation, loweringAnalysisImplementationPin, loweringAnalysisImplementationPath);
-      loweringLegalityPredecessor = captureLoweringLegalityPredecessor(rawSource, readAuthority);
+      loweringLegalityPredecessor = captureCurrentLoweringLegalityPredecessor(rawSource, readAuthority);
       assertRuntimeProgramRelocationSource(loweringLegalityPredecessor, record, record.path);
     } else if (relocatedDependencies.includes(record.path as (typeof relocatedDependencies)[number])) {
       validatorRelocation ??= captureProgramValidatorRelocation(readAuthority);

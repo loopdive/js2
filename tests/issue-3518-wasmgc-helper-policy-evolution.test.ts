@@ -18,6 +18,8 @@ import { fileURLToPath } from "node:url";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  captureArrayBufferIsViewMainPredecessorPolicySource,
+  capturePresentationClassificationPredecessorPolicySource,
   captureLoweringAnalysisPredecessorPolicySource,
   captureWasmGcHelperPredecessorPolicy,
   captureWasmGcHelperPredecessorPolicySource,
@@ -1064,7 +1066,11 @@ const sha = (value: string | Buffer) => createHash("sha256").update(value).diges
 const blob = (value: Buffer) => createHash("sha1").update(`blob ${value.length}\0`).update(value).digest("hex");
 const raw = () =>
   captureLoweringAnalysisPredecessorPolicySource(
-    readFileSync(new URL("../scripts/compiler-boundaries.json", import.meta.url), "utf8"),
+    capturePresentationClassificationPredecessorPolicySource(
+      captureArrayBufferIsViewMainPredecessorPolicySource(
+        readFileSync(new URL("../scripts/compiler-boundaries.json", import.meta.url), "utf8"),
+      ),
+    ),
   );
 const policy = () => JSON.parse(raw()) as Policy;
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;

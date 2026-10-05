@@ -45,7 +45,7 @@ afterEach(async () => {
 // Root replaces this ONE external assertion root after final instrument formatting/manifest assembly.
 // A missing freeze is a hard failure, never an alternate accepted manifest.
 const independentFreeze: string =
-  '{"manifestSha256":"464789d00ab368042da0ed874b9e44d5311ef5dc054002d1ec02ac888397abcb","anchorSource":"// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\\n\\nexport const c1AuthorityManifestSha256 = \\"464789d00ab368042da0ed874b9e44d5311ef5dc054002d1ec02ac888397abcb\\";\\n","anchorPin":{"bytes":194,"sha256":"3f254d41699e168b718c1e3eb049e196de770e7f0c7eba2ee07a30d85ee5199b","gitBlob":"8cf6af5a6563f5cfcc6c49ff45057502d3a27308"},"declarationPin":{"bytes":1633,"sha256":"5294c0fce2be6c6974b61a3686c05e60aa66d5bb4599fc97cb315ee53cab71be","gitBlob":"8c594e598e0d946ed92fd658cbe2efe3063ca2c4"}}';
+  '{"manifestSha256":"695d419af972b2df9f2459c2b724fff46ba5d1c5fc314a9526f3d7855271d5fa","anchorSource":"// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\\n\\nexport const c1AuthorityManifestSha256 = \\"695d419af972b2df9f2459c2b724fff46ba5d1c5fc314a9526f3d7855271d5fa\\";\\n","anchorPin":{"bytes":194,"sha256":"292916258e6fc8eac2ef130bd1e6e48e8501de1520e9571573e8aba1cd313c93","gitBlob":"f83374ecf4659e033e9a7e42ea7903386ab9b492"},"declarationPin":{"bytes":1633,"sha256":"5294c0fce2be6c6974b61a3686c05e60aa66d5bb4599fc97cb315ee53cab71be","gitBlob":"8c594e598e0d946ed92fd658cbe2efe3063ca2c4"}}';
 const root = resolve(import.meta.dirname, "..");
 const manifestPath = "tests/helpers/ir-c1-authority.json";
 const anchorPath = "tests/helpers/ir-c1-authority-root.ts";
@@ -2044,6 +2044,80 @@ describe("C1 lowering-analysis guarded reader integration", () => {
         );
       else expect(operation).toThrow(/length\/SHA256/);
       expect(supplemental).toBe(0);
+      healthy();
+    },
+  );
+});
+
+// The owner is supplemental authority, never a fabricated member of population47.
+describe("C1 actual early-return owner authority", () => {
+  const owner = "src/ir/analysis/backend-legality.ts";
+  const adapter = "src/ir/backend/legality.ts";
+  const ownerPin = {
+    bytes: 21387,
+    sha256: "cdd60287d9c98f700eca41f351f02ac609f3e9fdd43a25e28d7951f16f0c1a37",
+    gitBlob: "157777ff1c14c6cf5f0e4241c4e361843d694f5b",
+  };
+  const previousPin = {
+    bytes: 21362,
+    sha256: "e6bdc35fbf47fc26581c24cbecb08f27a4d590a7006d005031b6a309db26b506",
+    gitBlob: "34a1399bdd963163f2155f0de0933d085dbc4f25",
+  };
+  function healthy() {
+    const authority: string[] = [],
+      actualOwner: string[] = [];
+    const got = captureC1CurrentPopulation(read, (path) => {
+      authority.push(path);
+      const value = read(path);
+      if (path === owner) actualOwner.push(value);
+      return value;
+    });
+    expect(authority).toEqual(loweringAnalysisAuthorityTrace);
+    expect(actualOwner).toHaveLength(1);
+    expect(pin(actualOwner[0]!)).toEqual(ownerPin);
+    expect(got.observedCurrentPins.some((row) => row.path === owner)).toBe(false);
+    expect(got.observedCurrentPins.some((row) => row.pin.sha256 === previousPin.sha256)).toBe(false);
+    expect(got.historicalPopulation.has(owner)).toBe(false);
+    expect(pin(got.historicalPopulation.get(adapter)!)).toEqual({
+      bytes: 26410,
+      sha256: "6a64764b2691d6b2994258a966afabdac0b981fc036f611be5d8969032a3db98",
+      gitBlob: "d4854103ad1fae2f12c105fc0e1a66e2d20a5c6e",
+    });
+    expect(pin(read("src/ir/analysis/linear-memory-plan.ts"))).toEqual({
+      bytes: 49040,
+      sha256: "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",
+      gitBlob: "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",
+    });
+    return actualOwner[0]!;
+  }
+  it("observes actual cdd owner once while returning only the original legality donor", () => {
+    healthy();
+    healthy();
+  });
+  it.each(["missing", "corrupt", "old e6 substitution", "same-size unrelated edit"] as const)(
+    "refuses %s actual owner authority and accepts healthy restoration",
+    (name) => {
+      const current = Buffer.from(healthy());
+      const insertion = Buffer.from('    case "early.return":\n');
+      expect(current.subarray(8250, 8275)).toEqual(insertion);
+      const original = Buffer.concat([current.subarray(0, 8250), current.subarray(8275)]);
+      expect(pin(original.toString("utf8"))).toEqual(previousPin);
+      const missing = Object.assign(new Error("missing current early-return owner"), { code: "ENOENT" });
+      let reads = 0;
+      const operation = () =>
+        captureC1CurrentPopulation(read, (path) => {
+          if (path !== owner) return read(path);
+          reads++;
+          if (name === "missing") throw missing;
+          if (name === "old e6 substitution") return original.toString("utf8");
+          if (name === "corrupt") return current.toString("utf8") + "\n// owner mutation\n";
+          const changed = Buffer.from(current);
+          changed[0] = changed[0]! ^ 1;
+          return changed.toString("utf8");
+        });
+      if (name === "missing") expect(operation).toThrow(missing);
+      else expect(operation).toThrow("full pin changed " + owner);
+      expect(reads).toBe(1);
       healthy();
     },
   );

@@ -430,3 +430,33 @@ export function captureLinearLayoutPredecessor(rawCurrent: string, readAuthority
     ]),
   );
 }
+
+/** Authenticate the finite early.return extension before the unchanged historical pair proof. */
+export function captureCurrentLoweringLegalityPredecessor(rawCurrent: string, readAuthority?: AuthorityReader): string {
+  primitive(rawCurrent);
+  const reader = readerFor(readAuthority);
+  return captureLoweringLegalityPredecessor(rawCurrent, (path) => {
+    if (path !== sources[3].path) return reader(path);
+    const current = read(path, reader);
+    pin(
+      current,
+      {
+        bytes: 21387,
+        sha256: "cdd60287d9c98f700eca41f351f02ac609f3e9fdd43a25e28d7951f16f0c1a37",
+        gitBlob: "157777ff1c14c6cf5f0e4241c4e361843d694f5b",
+      },
+      path,
+    );
+    const offset = 8250;
+    const insertion = Buffer.from('    case "early.return":\n', "utf8");
+    requireProof(
+      current.subarray(offset, offset + insertion.length).equals(insertion),
+      "exact early.return extension required",
+    );
+    const predecessor = Buffer.concat([current.subarray(0, offset), current.subarray(offset + insertion.length)]);
+    pin(predecessor, sources[3], path);
+    const replay = Buffer.concat([predecessor.subarray(0, offset), insertion, predecessor.subarray(offset)]);
+    requireProof(replay.equals(current), "exact early.return replay required");
+    return predecessor.toString("utf8");
+  });
+}

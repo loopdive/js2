@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import {
+  captureArrayBufferIsViewMainPredecessorPolicy,
+  capturePresentationClassificationPredecessorPolicy,
   captureLoweringAnalysisPredecessorPolicy,
   captureWasmGcHelperPredecessorPolicy,
 } from "./helpers/ir-runtime-program-policy-evolution.js";
@@ -155,7 +157,11 @@ const policy = () => {
                   captureProgramValidatorPredecessorPolicy(
                     captureWasmGcHelperPredecessorPolicy(
                       captureLoweringAnalysisPredecessorPolicy(
-                        JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8")),
+                        capturePresentationClassificationPredecessorPolicy(
+                          captureArrayBufferIsViewMainPredecessorPolicy(
+                            JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8")),
+                          ),
+                        ),
                       ),
                     ),
                   ),

@@ -15384,6 +15384,14 @@
       "path": "src/ir/analysis/backend-legality.ts",
       "state": "clean",
       "layer": "ir-analysis"
+    },
+    {
+      "path": "src/compiler/ir-program-presentation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3525-prepared-presentation",
+      "nextBoundary": "Separate AST declaration capture and finalizer presentation from prepared-program output association before compiler-layer activation."
     }
   ]
 }

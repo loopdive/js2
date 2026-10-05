@@ -22,12 +22,15 @@ import { describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
 import { captureC1CurrentPopulation } from "./helpers/ir-c1-current-source.js";
 import {
+  captureArrayBufferIsViewMainPredecessorPolicySource,
+  capturePresentationClassificationPredecessorPolicySource,
   captureLoweringAnalysisPredecessorPolicy,
   captureLoweringAnalysisPredecessorPolicySource,
 } from "./helpers/ir-runtime-program-policy-evolution.js";
 import {
   captureLinearLayoutPredecessor,
   captureLoweringLegalityPredecessor,
+  captureCurrentLoweringLegalityPredecessor,
 } from "./helpers/ir-lowering-analysis-relocation.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -39,11 +42,11 @@ const ownerPath = "src/ir/analysis/backend-legality.ts";
 const implementationPath = "tests/helpers/ir-lowering-analysis-relocation.ts";
 // Root supplied independent formatted implementation pin; freshly checked before every accepting call.
 const implementationPin = {
-  bytes: 17637,
-  sha256: "4378d72f5b51148fa345f2544f1c43df12d4a967b369ef0be95d99c6f16c7ba4",
-  gitBlob: "832a2b1b88bd3eddbd89d78a3f23e917d7bff9ae",
+  bytes: 18956,
+  sha256: "253eda01462fad0ab84a940965a083eaf80b0ca8a3e10a4ca012fbafaaf30e99",
+  gitBlob: "c732f2eb22a127714373bc8fa363514bcf7a818b",
 };
-const sourcePins = [
+const historicalSourcePins = [
   {
     path: plannerPath,
     bytes: 49040,
@@ -69,6 +72,34 @@ const sourcePins = [
     gitBlob: "34a1399bdd963163f2155f0de0933d085dbc4f25",
   },
 ] as const;
+const currentOwnerPin = {
+  path: ownerPath,
+  bytes: 21387,
+  sha256: "cdd60287d9c98f700eca41f351f02ac609f3e9fdd43a25e28d7951f16f0c1a37",
+  gitBlob: "157777ff1c14c6cf5f0e4241c4e361843d694f5b",
+};
+const sourcePins = historicalSourcePins.map((entry) => (entry.path === ownerPath ? currentOwnerPin : entry));
+const ownerInsertionOffset = 8250;
+const ownerInsertion = Buffer.from('    case "early.return":\n');
+// Independent fixture oracle: this does not invoke the source component under test.
+function historicalOwner(current: Buffer): Buffer {
+  pin(current, currentOwnerPin);
+  expect(ownerInsertion).toHaveLength(25);
+  expect(current.subarray(ownerInsertionOffset, ownerInsertionOffset + ownerInsertion.length)).toEqual(ownerInsertion);
+  const before = Buffer.concat([
+    current.subarray(0, ownerInsertionOffset),
+    current.subarray(ownerInsertionOffset + ownerInsertion.length),
+  ]);
+  pin(before, historicalSourcePins[3]);
+  const replay = Buffer.concat([
+    before.subarray(0, ownerInsertionOffset),
+    ownerInsertion,
+    before.subarray(ownerInsertionOffset),
+  ]);
+  pin(replay, currentOwnerPin);
+  expect(replay).toEqual(current);
+  return before;
+}
 const receiptPin = {
   bytes: 111423,
   sha256: "dc8241d36da5b2fe29abe12ed6ee348fc456ef22939c61aabe05d09daad92134",
@@ -124,7 +155,7 @@ const operations = [
     name: "backend-legality",
     input: adapterPath,
     witness: "legality",
-    call: captureLoweringLegalityPredecessor,
+    call: captureCurrentLoweringLegalityPredecessor,
     trace: [receiptPath, adapterPath, ownerPath],
   },
 ] as const;
@@ -265,7 +296,7 @@ function independentDonor(read: Reader, witness: "planner" | "legality"): Buffer
   for (const current of sourcePins) {
     const bytes = Buffer.from(read(current.path));
     pin(bytes, current);
-    sources.set(current.path, bytes);
+    sources.set(current.path, current.path === ownerPath ? historicalOwner(bytes) : bytes);
   }
   expect(receipt.pairs.map((pair) => pair.inverse.pieces.length)).toEqual([99, 30]);
   const pair = receipt.pairs[witness === "planner" ? 0 : 1]!;
@@ -374,10 +405,19 @@ describe("D1 independent lowering source preservation component", () => {
             cursor += part.length;
           }
           const replay = Buffer.concat(pieces);
-          const expectedPin = sourcePins.find((entry) => entry.path === forward.path);
+          const expectedPin = historicalSourcePins.find((entry) => entry.path === forward.path);
           expect(expectedPin).toBeDefined();
           pin(replay, expectedPin!);
-          expect(replay).toEqual(Buffer.from(read(forward.path)));
+          const currentReplay =
+            forward.path === ownerPath
+              ? Buffer.concat([
+                  replay.subarray(0, ownerInsertionOffset),
+                  ownerInsertion,
+                  replay.subarray(ownerInsertionOffset),
+                ])
+              : replay;
+          pin(currentReplay, sourcePins.find((entry) => entry.path === forward.path)!);
+          expect(currentReplay).toEqual(Buffer.from(read(forward.path)));
           streams++;
         }
       expect(streams).toBe(4);
@@ -691,7 +731,13 @@ const policyBeforePin = {
 const policyBeforeDataSha256 = "f7ed5862d447d03557ed0e2a61060d143fcc9f2036e02120ac56839829082a83";
 function applicationInput(entry: ApplicationEntry): string | undefined {
   if (entry === "h2") return undefined;
-  const bytes = readFileSync(join(root, "scripts/compiler-boundaries.json"));
+  const bytes = Buffer.from(
+    capturePresentationClassificationPredecessorPolicySource(
+      captureArrayBufferIsViewMainPredecessorPolicySource(
+        readFileSync(join(root, "scripts/compiler-boundaries.json"), "utf8"),
+      ),
+    ),
+  );
   pin(bytes, policyCurrentPin);
   return bytes.toString("utf8");
 }
@@ -804,11 +850,12 @@ describe("D1 real guarded application implementation authority", () => {
             ? `out=hashes(Buffer.from(m.captureLoweringAnalysisPredecessorPolicySource(raw)));`
             : `const b=m.captureLoweringAnalysisPredecessorPolicy(JSON.parse(raw));out={dataSha256:sha(Buffer.from(JSON.stringify(b))),files:b.files.length,activationHistory:b.activationHistory.length,moves:b.moves.length};`;
       // No helper-body precheck or local wrapper: import and invoke the NORMAL application module.
-      const script = `import{createHash}from'node:crypto';import{readFileSync}from'node:fs';const sha=b=>createHash('sha256').update(b).digest('hex');const hashes=b=>({bytes:b.length,sha256:sha(b),gitBlob:createHash('sha1').update(Buffer.from('blob '+b.length+'\\0')).update(b).digest('hex')});try{const m=await import(${JSON.stringify(moduleUrl)});const raw=${entry === "h2" ? "undefined" : `readFileSync(new URL(${JSON.stringify(new URL("../scripts/compiler-boundaries.json", import.meta.url).href)}),'utf8')`};let out;${body}console.log(JSON.stringify(out));}catch(error){console.error(error instanceof Error?error.message:String(error));process.exitCode=1;}`;
+      const script = `import{createHash}from'node:crypto';import{readFileSync}from'node:fs';const sha=b=>createHash('sha256').update(b).digest('hex');const hashes=b=>({bytes:b.length,sha256:sha(b),gitBlob:createHash('sha1').update(Buffer.from('blob '+b.length+'\\0')).update(b).digest('hex')});try{const m=await import(${JSON.stringify(moduleUrl)});const raw=${JSON.stringify(input)};let out;${body}console.log(JSON.stringify(out));}catch(error){console.error(error instanceof Error?error.message:String(error));process.exitCode=1;}`;
       const invoke = () =>
-        spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], {
+        spawnSync(process.execPath, ["--import", "tsx", "--input-type=module"], {
           cwd: root,
           encoding: "utf8",
+          input: script,
         });
       for (const phase of ["healthy before", "corrupt", "healthy after"] as const) {
         const check = () => {
@@ -874,5 +921,147 @@ describe("D1 real guarded application implementation authority", () => {
     });
     expect(calls).toBe(0);
     expect(normalApplication("policy-semantic", input, [])).toEqual(applicationExpected("policy-semantic"));
+  });
+});
+
+// Current-entry controls use current fixtures; historical data never replaces installed source.
+describe("D1 fixed early-return current-owner bridge", () => {
+  it("independently proves the current-owner inverse and original API historical contract", () => {
+    fixture((_dir, read) => {
+      authenticateImplementation();
+      const adapter = read(adapterPath);
+      const current = Buffer.from(read(ownerPath));
+      const original = historicalOwner(current).toString("utf8");
+      const historicalRead: Reader = (path) => (path === ownerPath ? original : read(path));
+      const expected = independentDonor(read, "legality").toString("utf8");
+      expect(captureLoweringLegalityPredecessor(adapter, historicalRead)).toBe(expected);
+      expect(() => captureLoweringLegalityPredecessor(adapter, read)).toThrow(`full pin changed ${ownerPath}`);
+      expect(captureCurrentLoweringLegalityPredecessor(adapter, read)).toBe(expected);
+      expect(captureCurrentLoweringLegalityPredecessor(adapter)).toBe(expected);
+    });
+  });
+  it.each([
+    "wrong insertion",
+    "missing insertion",
+    "extra insertion",
+    "same text wrong coordinate",
+    "old owner",
+    "unrelated same-size edit",
+  ] as const)("current owner full pin refuses %s and rereads healthy restoration without caching", (name) => {
+    fixture((_dir, read, trace) => {
+      authenticateImplementation();
+      const adapter = read(adapterPath),
+        current = Buffer.from(read(ownerPath));
+      const original = historicalOwner(current);
+      const expected = independentDonor(read, "legality").toString("utf8");
+      expect(captureCurrentLoweringLegalityPredecessor(adapter, read)).toBe(expected);
+      let changed: Buffer;
+      if (name === "missing insertion" || name === "old owner") changed = original;
+      else if (name === "extra insertion")
+        changed = Buffer.concat([
+          current.subarray(0, ownerInsertionOffset),
+          ownerInsertion,
+          current.subarray(ownerInsertionOffset),
+        ]);
+      else if (name === "same text wrong coordinate")
+        changed = Buffer.concat([
+          original.subarray(0, ownerInsertionOffset + 1),
+          ownerInsertion,
+          original.subarray(ownerInsertionOffset + 1),
+        ]);
+      else {
+        changed = Buffer.from(current);
+        const offset = name === "wrong insertion" ? ownerInsertionOffset + 10 : 0;
+        changed[offset] = changed[offset]! ^ 1;
+      }
+      expect(changed.equals(current)).toBe(false);
+      let reads = 0;
+      const mutant: Reader = (path) => {
+        if (path === ownerPath) {
+          reads++;
+          return changed.toString("utf8");
+        }
+        return read(path);
+      };
+      expect(() => captureCurrentLoweringLegalityPredecessor(adapter, mutant)).toThrow(`full pin changed ${ownerPath}`);
+      expect(reads).toBe(1);
+      trace.length = 0;
+      expect(captureCurrentLoweringLegalityPredecessor(adapter, read)).toBe(expected);
+      expect(trace).toEqual([receiptPath, adapterPath, ownerPath]);
+    });
+  });
+  it("refuses nonprimitive owner data after genuine receipt and adapter reads", () => {
+    fixture((_dir, read, trace) => {
+      const adapter = read(adapterPath);
+      authenticateImplementation();
+      trace.length = 0;
+      let coercions = 0;
+      const hostile = {
+        [Symbol.toPrimitive]() {
+          coercions++;
+          throw new Error("unexpected owner coercion");
+        },
+      };
+      expect(() =>
+        captureCurrentLoweringLegalityPredecessor(adapter, (path) => {
+          if (path === ownerPath) {
+            trace.push(path);
+            return hostile as unknown as string;
+          }
+          return read(path);
+        }),
+      ).toThrow(`primitive authority text required ${ownerPath}`);
+      expect(trace).toEqual([receiptPath, adapterPath, ownerPath]);
+      expect(coercions).toBe(0);
+      expect(captureCurrentLoweringLegalityPredecessor(adapter, read)).toBe(
+        independentDonor(read, "legality").toString("utf8"),
+      );
+    });
+  });
+  it("current-entry primitive guard refuses a getter before missing authority IO", () => {
+    authenticateImplementation();
+    let getterCalls = 0,
+      reads = 0;
+    const hostile = Object.defineProperty({}, Symbol.toPrimitive, {
+      get() {
+        getterCalls++;
+        throw new Error("unexpected coercion getter");
+      },
+    });
+    const missing = Object.assign(new Error("missing current-entry receipt witness"), { code: "ENOENT" });
+    const missingRead: Reader = () => {
+      reads++;
+      throw missing;
+    };
+    expect(() => captureCurrentLoweringLegalityPredecessor(hostile as unknown as string, missingRead)).toThrow(
+      "primitive source required",
+    );
+    expect(getterCalls).toBe(0);
+    expect(reads).toBe(0);
+    fixture((_dir, read) => {
+      const adapter = read(adapterPath);
+      expect(() => captureCurrentLoweringLegalityPredecessor(adapter, missingRead)).toThrow(missing);
+      expect(reads).toBe(1);
+      expect(captureCurrentLoweringLegalityPredecessor(adapter, read)).toBe(
+        independentDonor(read, "legality").toString("utf8"),
+      );
+    });
+    expect(getterCalls).toBe(0);
+  });
+  it("missing owner is a real authority error and healthy capture does not cache it", () => {
+    fixture((_dir, read) => {
+      const adapter = read(adapterPath),
+        expected = independentDonor(read, "legality").toString("utf8");
+      authenticateImplementation();
+      const missing = Object.assign(new Error("missing current canonical owner"), { code: "ENOENT" });
+      expect(captureCurrentLoweringLegalityPredecessor(adapter, read)).toBe(expected);
+      expect(() =>
+        captureCurrentLoweringLegalityPredecessor(adapter, (path) => {
+          if (path === ownerPath) throw missing;
+          return read(path);
+        }),
+      ).toThrow(missing);
+      expect(captureCurrentLoweringLegalityPredecessor(adapter, read)).toBe(expected);
+    });
   });
 });

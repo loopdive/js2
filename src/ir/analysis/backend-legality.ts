@@ -204,6 +204,7 @@ function linearInstrError(instr: IrInstr): string | null {
     // kinds above (#1852/#1527 axis rule).
     case "br.label":
     case "if.stmt":
+    case "early.return":
     // #2952 slice 4 — labeled.block is one core `block`; switch is the
     // block-per-case ladder (core blocks + i32/f64.eq + br/br_table). The
     // LinearEmitter's sink IS Instr[], so the switch arm's

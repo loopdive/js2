@@ -1,7 +1,7 @@
 {
-  "generated": "2026-10-04",
+  "generated": "2026-10-05",
   "threshold": 1500,
-  "totalCeiling": 996795,
+  "totalCeiling": 997620,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -86,7 +86,7 @@
     "src/codegen/vec-access-exports.ts": 1916,
     "src/codegen/vec-overlay.ts": 3061,
     "src/codegen/wasi.ts": 2268,
-    "src/compiler.ts": 1976,
+    "src/compiler.ts": 2097,
     "src/compiler/early-errors/node-checks.ts": 2351,
     "src/emit/binary.ts": 2245,
     "src/import-resolver.ts": 1550,
