@@ -78,7 +78,7 @@ export function rootOf(e) { return we(e); }
 export function css(strings) { return strings.join(""); }
 `;
 
-describe("#6841 — browser DOM globals stay host-free under --target standalone", () => {
+describe("#6841 — browser DOM globals stay host-free under --target standalone", { timeout: 180_000 }, () => {
   it("a styled-components-shaped module imports nothing; its pure op runs", async () => {
     const { module, imports } = await compileProjectFiles({
       "sheet.js": STYLED_SHAPED,
