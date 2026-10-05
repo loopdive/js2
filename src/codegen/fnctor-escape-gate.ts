@@ -52,6 +52,7 @@ import { applyColdTailSplit } from "./fnctor-cold-tail.js";
 import { fnctorBodyMayReturnForeignObject, foreignReturnFunctionNames } from "./fnctor-foreign-return.js"; // (#2071)
 import { applyFnctorLayoutSplit, fnctorLayoutEmitEnabled } from "./fnctor-layout-emit.js"; // (#3927) per-type layout EMISSION
 import { recordFnctorFieldProvenance } from "./fnctor-field-provenance.js";
+import { fnctorCtorCallsInheritedThisMethod } from "./fnctor-ctor-self-dynamic.js"; // (#6861)
 import { fnctorFieldNumericWriteViolation, inferFnctorFieldTypeFromCtorParam } from "./fnctor-ctor-param-types.js";
 import { fnctorDeclFromSymbol, lateAssignedFunctionExpression } from "./fnctor-ctor-decl.js"; // (#4653)
 import { resolveWasmType } from "./index.js";
@@ -1723,8 +1724,8 @@ export function analyzeFnctorEscapeGate(
     // `sites` keeps it off every downstream path.
     if (refusedNames.has(ctorSym.name)) continue;
     const { names: ownFields, borrowedStringMethods } = collectFnctorOwnFields(ctorSym);
-    let sawDynamic = false;
     let sawTyped = false;
+    let sawDynamic = standalone === true && fnctorCtorCallsInheritedThisMethod(ctorSym, ownFields); // (#6861)
 
     const bind = bindingOf(newExpr);
     if (bind) {

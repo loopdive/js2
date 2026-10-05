@@ -1,7 +1,8 @@
 ---
 id: 6736
 title: "standalone: `.length` of a function's `prototype` object reads a number, so lodash's `isArrayLike(LazyWrapper.prototype)` is true and module init throws"
-status: ready
+status: done
+completed: 2026-10-05
 sprint: current
 created: 2026-09-28
 priority: high
@@ -12,13 +13,7 @@ task_type: bug
 area: compiler
 goal: standalone
 requested_by: ttraenkler/sendev-standalone
-related: [6713, 6711, 2580, 6751]
-# (2026-09-29) The revert of #6299 restores emitStandaloneAnyLength inside
-# property-access-dispatch.ts (+158 lines back to its pre-#6299 size); main's
-# post-merge baseline refresh had already banked the shrink. A re-land moves it
-# out again.
-loc-budget-allow:
-  - src/codegen/property-access-dispatch.ts
+related: [6713, 6711, 2580, 6751, 6861]
 ---
 
 # #6736 — `F.prototype.length` answers a number in standalone
@@ -230,3 +225,67 @@ queued.
 
 The pin `tests/issue-6736-any-length-absent.test.ts` left with the code; it is
 in `51c62b057` for the re-land.
+
+## Re-land — 2026-10-05
+
+The `.length` change from `51c62b057` (`standalone-any-length.ts`) is
+re-applied unchanged. The revert's re-land condition is now met: the ES5 row
+`harness/compare-array-arguments.js` is fixed at its cause, not by the old
+coincidence.
+
+**Why `arguments[0]` read wrong.** A spread call into an `arguments`-reading
+callee builds `__extras_argv` in `emitSetExtrasArgv`. In an untyped program
+`[0, 'a', undefined]` is a vec of `$AnyValue` tagged unions, and each element
+went into the externref extras array through a bare `extern.convert_any`. So
+`arguments` held the union structs themselves:
+
+- `arguments[0] === 0` was false;
+- `typeof arguments[0]` was `"object"`;
+- `String(arguments[0])` was still `"0"`.
+
+That was true for every spread call, not just inside the harness. Probe
+`f(1, ...[0, 'a']); g(...[0, 'a'])` gave 248 on the parent; Node gives 447.
+
+The new module `spread-elem-extern.ts` (`spreadElemToExternInstrs`) projects an
+`$AnyValue` element through the coercion engine, which unboxes it. It is gated
+on standalone. `emitSetExtrasArgv` now carries the element `ValType` instead of
+its kind, so `nested-declarations.ts` shrinks by 13 lines.
+
+**Pin.** `tests/issue-6736-any-length-absent.test.ts` gains a fourth case for
+spread into `arguments`, including test262's `compareArray` both ways. Its
+direct calls serve as the anti-vacuity control. On the parent the four cases
+read 248, 2, 108 and 127; with this change they read 1983, 5, 127 and 511,
+which are Node's answers. `tests/issue-2576.test.ts` keeps its re-land edit,
+`(5).length` reading `NaN`.
+
+**ES5 row.** `harness/compare-array-arguments.js` passes in standalone with
+`--isolate`. Re-applying only the `.length` change reproduced the revert's
+failure (`Actual [0, a, undefined] and expected [0, a, undefined] should have
+the same contents`).
+
+**Scoped standalone test262**, 2503 rows, run in-process on the same base
+(`b6324ee6d1`), parent against this branch:
+
+| | pass | fail | CE |
+|---|---|---|---|
+| parent | 2146 | 292 | 65 |
+| this branch | 2146 | 292 | 65 |
+
+Zero rows flipped. The rows cover `language/statements/function`,
+`language/expressions/{new,call,instanceof,object/method-definition}`,
+`language/arguments-object`, `language/statements/for-in`, `harness`,
+`built-ins/Function/prototype`, `built-ins/Object/{create,keys,getPrototypeOf,prototype/isPrototypeOf}`,
+`built-ins/Array/from` and `built-ins/Array/prototype/{slice,indexOf}`.
+
+**lodash.** Today's module-init failure is no longer this issue. It is
+[#6861](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6861-standalone-fnctor-ctor-calls-own-prototype-method),
+which throws at `lodash.js:6830`, long before `isArrayLike` at 17127. With
+#6861 alone, init still throws `called value is not a function`. I did not
+trace that throw to a line; this issue's `isArrayLike` site is the expected
+one. With both, init
+completes, and the next link is the checksum
+([#6751](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6751-standalone-lodash-checksum-called-value-not-function)).
+
+**JS-host.** All three changes are gated on standalone. Binaries are
+byte-identical, before and after, on the 9-file probe set and on lodash's gc
+lane (sha256 `1d5ceb787c914081…`, 1,288,275 bytes).

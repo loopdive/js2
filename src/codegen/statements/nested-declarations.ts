@@ -92,6 +92,7 @@ import {
   refCellValueType,
 } from "../registry/types.js";
 import { getVecInfo } from "../type-coercion.js";
+import { spreadElemToExternInstrs } from "../spread-elem-extern.js"; // (#6736) $AnyValue spread elements
 import { widenMixedUndefinedReturn } from "../mixed-return-widening.js";
 import {
   coerceType,
@@ -3989,27 +3990,13 @@ export function emitSetExtrasArgv(
     flushLateImportShifts(ctx, fctx);
     if (lenFn !== undefined && getFn !== undefined && iterFn !== undefined) {
       const boxIdx = ctx.funcMap.get("__box_number");
-      // Box a vec element of the given kind to externref (extras are externref).
-      const boxVecElem = (elemKind: ValType["kind"]): Instr[] => {
-        if (elemKind === "f64") {
-          return boxIdx !== undefined ? [{ op: "call", funcIdx: boxIdx }] : [{ op: "drop" }, { op: "ref.null.extern" }];
-        }
-        if (elemKind === "i32" || elemKind === "i8" || elemKind === "i16") {
-          return boxIdx !== undefined
-            ? [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxIdx }]
-            : [{ op: "drop" }, { op: "ref.null.extern" }];
-        }
-        if (elemKind === "ref" || elemKind === "ref_null") {
-          return [{ op: "extern.convert_any" }];
-        }
-        // externref element — already correct.
-        return [];
-      };
+      // Box a vec element of the given type to externref (extras are externref).
+      const boxVecElem = (elemType: ValType): Instr[] => spreadElemToExternInstrs(ctx, fctx, elemType, boxIdx);
       // Per-extra descriptor.
       type Slot =
         | { kind: "single"; valLocal: number }
         // vec-ref spread: read length/data fields directly.
-        | { kind: "vec"; vecLocal: number; vecTi: number; arrTi: number; elemKind: ValType["kind"]; lenLocal: number }
+        | { kind: "vec"; vecLocal: number; vecTi: number; arrTi: number; elemType: ValType; lenLocal: number }
         // extern spread (host iterable): materialized array indexed by helpers.
         | { kind: "spread"; srcLocal: number; lenLocal: number };
       const slots: Slot[] = [];
@@ -4047,7 +4034,7 @@ export function emitSetExtrasArgv(
               if (st.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" });
               fctx.body.push({ op: "struct.get", typeIdx: stTypeIdx, fieldIdx: fi });
               const valLocal = allocLocal(fctx, `__xa_tv_${fctx.locals.length}`, { kind: "externref" });
-              fctx.body.push(...boxVecElem(tupleDef.fields[fi]!.type.kind));
+              fctx.body.push(...boxVecElem(tupleDef.fields[fi]!.type));
               fctx.body.push({ op: "local.set", index: valLocal });
               fctx.body.push({ op: "local.get", index: totalLenLocal });
               fctx.body.push({ op: "i32.const", value: 1 });
@@ -4084,7 +4071,7 @@ export function emitSetExtrasArgv(
               vecLocal,
               vecTi,
               arrTi: vecInfo.arrTypeIdx,
-              elemKind: vecInfo.elemType.kind,
+              elemType: vecInfo.elemType,
               lenLocal,
             });
             continue;
@@ -4178,10 +4165,10 @@ export function emitSetExtrasArgv(
                   { op: "ref.as_non_null" },
                   { op: "struct.get", typeIdx: slot.vecTi, fieldIdx: 1 },
                   { op: "local.get", index: sIdx },
-                  ...(slot.elemKind === "i8" || slot.elemKind === "i16"
+                  ...(slot.elemType.kind === "i8" || slot.elemType.kind === "i16"
                     ? ([{ op: "array.get_s", typeIdx: slot.arrTi }] satisfies Instr[])
                     : ([{ op: "array.get", typeIdx: slot.arrTi }] satisfies Instr[])),
-                  ...boxVecElem(slot.elemKind),
+                  ...boxVecElem(slot.elemType),
                   { op: "array.set", typeIdx: ati },
                   // wIdx++
                   { op: "local.get", index: wIdx },
