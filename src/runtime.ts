@@ -19748,10 +19748,21 @@ export function buildImports(
  */
 export interface WrapExportsSignature {
   /** Per-parameter boundary kind, positionally. */
-  params: ("uint8array" | "typed-array" | "string" | "symbol" | "promise" | "dynamic" | "aggregate" | "other")[];
+  params: WrapExportsBoundaryKind[];
   /** Boundary kind of the return value. */
-  result: "uint8array" | "typed-array" | "string" | "symbol" | "promise" | "dynamic" | "aggregate" | "other";
+  result: WrapExportsBoundaryKind;
 }
+
+type WrapExportsBoundaryKind =
+  | "boolean"
+  | "uint8array"
+  | "typed-array"
+  | "string"
+  | "symbol"
+  | "promise"
+  | "dynamic"
+  | "aggregate"
+  | "other";
 
 /**
  * (#1700) Copy each `Uint8Array` / TypedArray / plain-array argument into a
@@ -19955,20 +19966,24 @@ export function wrapExports(
       wrapped[key] = val;
       continue;
     }
-    // Pass internal helpers through unchanged so the runtime can still
-    // reach them by name (`__call_fn_0`, `__vec_get`, etc.).
-    if (key.startsWith("__")) {
+    const sig = signatures && _hasOwn(signatures, key) ? signatures[key] : undefined;
+    const hasBooleanBoundary = sig?.result === "boolean" || sig?.params.includes("boolean");
+    // Unmarked internal helpers retain their exact passthrough. Explicit
+    // Boolean user exports receive their adapter regardless of their name.
+    if (key.startsWith("__") && !hasBooleanBoundary) {
       wrapped[key] = val;
       continue;
     }
     // Wrap user exports: closures become callables; structs/vecs marshal to JS;
     // primitives, strings, and raw externrefs pass through.
-    const sig = signatures ? signatures[key] : undefined;
-    const exportBoundaryPolicy = boundaryPolicies?.[key];
+    const exportBoundaryPolicy = boundaryPolicies && _hasOwn(boundaryPolicies, key) ? boundaryPolicies[key] : undefined;
     const invoke = function (this: any, ...args: any[]): any {
       // A live boundary view is only a JS façade. Recover its canonical WasmGC
       // identity before calling a typed export; ordinary JS values are no-ops.
       let boundaryArgs = args.map((arg, index) => {
+        // ToBoolean never calls user coercion hooks, including under a live
+        // object policy or marshal:false.
+        if (sig?.params[index] === "boolean") return arg ? 1 : 0;
         const paramMode = hasMarshalOverride
           ? marshal
           : marshalModeForBoundaryPolicy(exportBoundaryPolicy?.params[index]?.policy);
@@ -19976,6 +19991,10 @@ export function wrapExports(
       });
       const stringFromHost = exportsForMarshal.__str_from_extern as ((value: string) => any) | undefined;
       if (sig) {
+        // Required Boolean slots also materialize omitted arguments as false.
+        for (let index = boundaryArgs.length; index < sig.params.length; index++) {
+          if (sig.params[index] === "boolean") boundaryArgs[index] = 0;
+        }
         boundaryArgs = boundaryArgs.map((arg, index) => {
           if (sig.params[index] === "string" && typeof arg === "string" && typeof stringFromHost === "function") {
             return stringFromHost(arg);
@@ -20010,6 +20029,12 @@ export function wrapExports(
         );
         const translated = _nativeErrorToHost(payload, exportsForMarshal);
         throw translated === _MISS ? payload : translated;
+      }
+      if (sig?.result === "boolean") {
+        if (typeof result !== "number" || (result !== 0 && result !== 1) || Object.is(result, -0)) {
+          throw new TypeError(`wrapExports: export "${key}" returned a noncanonical Boolean wire value`);
+        }
+        return result === 1;
       }
       if (sig?.result === "string" && result != null) {
         const stringToHost = exportsForMarshal.__str_to_extern as ((value: any) => string) | undefined;

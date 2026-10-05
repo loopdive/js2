@@ -241,7 +241,8 @@ export async function resolveStandalonePerfLanes({ hostBlocked, selected, inProc
   return lanes;
 }
 
-const O4_TRY_TABLE_FLATTEN_OMISSION =
+/** The one tolerated O4 deviation (#4586): Flatten cannot read `try_table`. */
+export const O4_TRY_TABLE_FLATTEN_OMISSION =
   "wasm-opt -O4 omitted Binaryen's unsupported flatten pass for standardized try_table output; all remaining O4 passes completed.";
 
 function wasmOptWarnings(result) {

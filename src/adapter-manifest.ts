@@ -94,7 +94,14 @@ function frozenClone<T>(value: T): T {
   }
   if (value !== null && typeof value === "object") {
     const clone: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(value)) clone[key] = frozenClone(entry);
+    for (const [key, entry] of Object.entries(value)) {
+      Object.defineProperty(clone, key, {
+        value: frozenClone(entry),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    }
     return Object.freeze(clone) as T;
   }
   return value;

@@ -188,6 +188,7 @@ export interface EmittedSupportFunctionReceipt {
   readonly index: number;
 }
 interface EmissionObservation {
+  readonly physical: PhysicalSetupPlan;
   readonly reservations: PhysicalModuleReservations;
   readonly functions: readonly FunctionReservation[];
   readonly support: readonly EmittedSupportFunctionReceipt[];
@@ -439,6 +440,14 @@ export function emittedSupportFunctionReceipts(
   if (record.functions.length !== emitted.module.functions.length)
     emissionFailed("completed emission function census changed");
   return record.support;
+}
+
+/** The exact accepted plan used by this authenticated completed emission. */
+export function emittedPhysicalSetupPlan(emitted: EmittedPreparedIrProgram): PhysicalSetupPlan {
+  const record = startupAdapters.get(emitted);
+  if (!record) programInvariant("invalid-transaction-capability", "emission was not produced by this consumer");
+  emittedSupportFunctionReceipts(emitted);
+  return record.physical;
 }
 
 /** Final binding index observed at emission; does not authenticate later module mutations. */
@@ -760,6 +769,7 @@ function reconcileNativeEmission(
 /** Snapshot the completed ABI using the existing successful-emission record. */
 function recordEmissionObservation(
   result: EmittedPreparedIrProgram,
+  plan: PhysicalSetupPlan,
   abi: ProgramAbiMap,
   reservations: PhysicalModuleReservations,
   startAdapter: FunctionReservation | undefined,
@@ -786,6 +796,7 @@ function recordEmissionObservation(
     Object.freeze({
       ...(startAdapter ? { startupAdapterIndex: reservations.physicalIndex(startAdapter) } : {}),
       bindings: Object.freeze(bindings),
+      physical: plan,
       reservations,
       functions: Object.freeze(functions),
       support: Object.freeze(support),
@@ -1479,6 +1490,7 @@ function materializePhysicalProgram(
   const result: EmittedPreparedIrProgram = Object.freeze({ module, emittedUnitIds: Object.freeze(emittedUnitIds) });
   recordEmissionObservation(
     result,
+    plan,
     abi,
     reservations,
     startAdapter,

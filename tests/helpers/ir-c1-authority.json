@@ -168,17 +168,17 @@
     {
       "path": "tests/helpers/ir-c1-historical-authority.ts",
       "pin": {
-        "bytes": 42899,
-        "sha256": "5b88203cd0c080798d112f7e260ef11ad739d65a6098b6ef5a72689eeb4d0758",
-        "gitBlob": "877b4e6948df53d890758d6da87d14d1ca7698e8"
+        "bytes": 43214,
+        "sha256": "2a6d7d09cd7a4a9d77c1980fee78b9dc4509a7c0bbc40f95f1f71eef5f706d84",
+        "gitBlob": "75505973c429bc50421f26f59fa906f2b8165f15"
       }
     },
     {
       "path": "tests/helpers/ir-c1-current-source.ts",
       "pin": {
-        "bytes": 39051,
-        "sha256": "7449f43f1888f1625fc8cdb57ebf8cf53962e65e1c43563ed852123839dbfb56",
-        "gitBlob": "5668b9577fe63d7b5639204436c9070b87eb9fa8"
+        "bytes": 40240,
+        "sha256": "73cca8b24883c0d6e9e0adf5b84f8bc0484e525b21c0110f42ba00bdebfae1d1",
+        "gitBlob": "733411c0722d45adaee2a50129b9e707f2f88507"
       }
     },
     {
@@ -1123,9 +1123,9 @@
       {
         "path": "src/ir/types.ts",
         "pin": {
-          "bytes": 7744,
-          "sha256": "d82e92ee276dd9a57bd69d9dee16410d24225a028bd9dca53bc406f69b9623ac",
-          "gitBlob": "f7717d7c70bb57bd73d799a1d26d1825aa0a41e8"
+          "bytes": 7756,
+          "sha256": "0282ae61c6a43f837a9a3c7b12d879151e67ec155939c541cd9b5ea662979140",
+          "gitBlob": "bdf9d6ace5f7f5530373cea6007a1ad7dfe905d0"
         }
       },
       {

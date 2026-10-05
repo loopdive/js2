@@ -1,0 +1,18 @@
+# Prepared Boolean boundary composed with delivered early returns
+
+The private host presentation path preserves logical Boolean branding with physical i32, explicit export metadata, ToBoolean arguments and canonical0/1 results. Own __proto__, constructor and marked user __* names survive manifest cloning, helper generation and runtime adaptation. Numeric/void and unmarked runtime behavior remain unchanged.
+
+Base: delivered canonical main c3e3fab33d9ef4747f2a502ab1a8c46d8b224ea1; PR6488 exact45929 through b632. Six implementation files and the new54-case suite reuse preserved71ecd exact bytes. H1/H2/current-source tests compose the Boolean type union with the delivered early.return predecessor proof. Manifest15df changes exactly9 scalar pins, retaining all10 historical inverse/replay recipes and immutable authorities.
+
+Current ordinary evidence at local hook release:311/311 current-source (original297 plus14);272/272 across Boolean54, numeric44, early-return16, lowering57, classification45, isView56. Actual strict raw channels are clear and complete custody vectors restored. Nine native gates0; supplemental coercion148files566sites0. Additional runtime298/2980 is measured; historical631/validator62 remain pending in their separate checkout. Normal hooks are required; publication is held for complete ordinary evidence and checks. See issue3525, “IR-only R5: whole-program single- and multi-source Prepared ownership,” for exact plans/claims, runtime+33 allowance and evidence receipts.
+
+Local Node24.4.1/Vitest3.2.4 evidence differs from hosted CI. Existing legacy388 non-Boolean argument/coercion/identity differences remain full-goal gaps, not normalized matches or new caller restrictions. No public route switch, complete IR equality, performance acceptance or legacy retirement. The mixed WasmGC observation-interface plan is recorded only; it adds no implementation in this checkpoint.
+
+
+### Completed final-epoch ordinary evidence — 2026-10-05
+
+The remaining original cohorts are now actually complete: runtime298/298 child42393exit0/83.709898seconds; historical631/631 child42811exit0/818.462477seconds; validator62/62 child45234exit0/3.005814seconds. All six collection/body children and outer16981 exit0, exact genuine original ordered names/duplicates and every individual passed row retained, no pending/todo/unhandled/RPC/timeout channel, complete full before/after/final custody equal. All12 coherent source/proof/test files restored byte/mode exact. Source receipt SHA2566f9a090eb66c9410a8af03a03ebebace44bfbfb87e40ba7f13293308b3712f31.
+
+Together with independent current-source311 and semantic272, this is1574 distinct ordinary registered passing tests on the final composed epoch, not1574 new behaviors or full IR parity. Source/authority pin15df remains unchanged. Normal signed source commit299f858587f35ebb1b3152ae48e22113ff16e009 has parentc3e3 and exact14 scoped paths; all12 source/proof pins match. Its normal hooks genuinely selected311+54=365 passes and exited0/82.4826seconds; counts overlap the strict evidence. Independent signed-commit/hook reviewa42a37d8a9f2a7fd7e0587fc7b82a74dc20a9329e0d63b4d99abf465b35b8030 and cryptographic public SSH signer verification0. Inherited normal hook ignored-unhandled behavior remains qualified; separate strict ordinary runs added no such option. Final evidence documentation runs normal hooks again without extra source changes.
+
+Fork publication/readyPR and exact-head protectedCI/main delivery remain separate requirements. Legacy388 erased-JavaScript identity/coercion gaps, mixed/nonhost/artifact/performance coverage and full IR acceptance remain open; public legacy compilation is retained.
