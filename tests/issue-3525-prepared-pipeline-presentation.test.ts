@@ -708,8 +708,12 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
     expect(result).not.toHaveProperty("artifacts");
   });
 
-  it("refuses async work instead of certifying an empty physical async set", () => {
-    const result = runPreparedIrPipelinePresentation(
+  it("executes genuine async work through the original helper without a legacy generator", () => {
+    const prepare = vi.spyOn(preparation, "prepareWholeIrProgram");
+    const accept = vi.spyOn(consumer, "acceptPreparedIrProgram");
+    const emit = vi.spyOn(consumer, "emitAcceptedIrProgram");
+    const poisons = poisonGenerators();
+    const result = artifacts(
       input(
         {
           "./entry.ts":
@@ -718,10 +722,37 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
         "wasmgc",
       ),
     );
-    expect(result.kind).toBe("presentation-unsupported");
-    if (result.kind !== "presentation-unsupported") throw new Error("expected actual async presentation gap");
-    expectGap(result, "declaration", "non-numeric-boundary");
-    expect(result).not.toHaveProperty("artifacts");
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(accept).toHaveBeenCalledOnce();
+    expect(emit).toHaveBeenCalledOnce();
+    for (const poison of poisons) expect(poison).not.toHaveBeenCalled();
+    expect(result).toHaveProperty("finalization.phase", "after-reference-widening");
+    expect(result).toHaveProperty("finalization.originalEmissionUnchanged", true);
+    expect(consumer.emittedPhysicalSetupPlan(result.emission).functions.length).toBeGreaterThan(0);
+    expect(result.emission.module.asyncFunctions).toEqual(new Set(["calculate"]));
+    const dir = mkdtempSync(join(tmpdir(), "ir-prepared-presentation-async-"));
+    try {
+      const runtime = pathToFileURL(join(import.meta.dirname, "../src/index.ts")).href;
+      const helper = result.artifacts.importsHelper.replace('from "js2wasm"', `from ${JSON.stringify(runtime)}`);
+      expect(helper).not.toBe(result.artifacts.importsHelper);
+      writeFileSync(join(dir, "module.imports.mjs"), helper);
+      writeFileSync(join(dir, "module.wasm"), result.artifacts.binary);
+      writeFileSync(
+        join(dir, "run.mjs"),
+        `import { readFileSync } from "node:fs";\nimport { types } from "node:util";\nimport { instantiateBytes } from "./module.imports.mjs";\nconst result = await instantiateBytes(readFileSync(new URL("./module.wasm", import.meta.url)));\nconst values = [];\nfor (const seed of [5, -3, 0.5]) { const promise = result.exports.calculate(seed); if (!types.isPromise(promise)) throw Error("expected real Promise"); values.push(await promise); }\nconsole.log(JSON.stringify(values));\n`,
+      );
+      const child = spawnSync(process.execPath, ["--import", "tsx", join(dir, "run.mjs")], {
+        cwd: join(import.meta.dirname, ".."),
+        encoding: "utf8",
+      });
+      expect(child.error).toBeUndefined();
+      expect(child.signal).toBeNull();
+      expect(child.status, `${child.stdout}\n${child.stderr}`).toBe(0);
+      expect(child.stderr).toBe("");
+      expect(JSON.parse(child.stdout.trim())).toEqual([17, -7, 3.5]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("preserves a real located acceptance refusal from the consumer", () => {

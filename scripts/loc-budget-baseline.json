@@ -1,7 +1,7 @@
 {
   "generated": "2026-10-05",
   "threshold": 1500,
-  "totalCeiling": 997619,
+  "totalCeiling": 999001,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -31,7 +31,7 @@
     "src/codegen/expressions/assignment.ts": 6641,
     "src/codegen/expressions/builtins.ts": 3884,
     "src/codegen/expressions/call-builtin-static.ts": 4755,
-    "src/codegen/expressions/call-identifier.ts": 4458,
+    "src/codegen/expressions/call-identifier.ts": 4465,
     "src/codegen/expressions/call-namespace-static.ts": 4540,
     "src/codegen/expressions/call-receiver-method.ts": 4921,
     "src/codegen/expressions/call-tail-dispatch.ts": 2350,
@@ -86,7 +86,7 @@
     "src/codegen/vec-access-exports.ts": 1916,
     "src/codegen/vec-overlay.ts": 3061,
     "src/codegen/wasi.ts": 2268,
-    "src/compiler.ts": 2097,
+    "src/compiler.ts": 2125,
     "src/compiler/early-errors/node-checks.ts": 2351,
     "src/emit/binary.ts": 2245,
     "src/import-resolver.ts": 1550,
@@ -103,13 +103,14 @@
     "src/ir/lower-generic.ts": 4200,
     "src/ir/module-bindings.ts": 2666,
     "src/ir/prepared-component-dependencies.ts": 1778,
+    "src/ir/program-consumer.ts": 1501,
     "src/ir/propagate.ts": 1667,
     "src/ir/runtime/manifest.ts": 2406,
     "src/ir/runtime/verify.ts": 2868,
     "src/ir/select-identity.ts": 1642,
     "src/ir/select.ts": 11270,
     "src/package-linker.ts": 2133,
-    "src/runtime.ts": 20194,
+    "src/runtime.ts": 20219,
     "src/runtime/iterator-polyfills.ts": 1516
   }
 }

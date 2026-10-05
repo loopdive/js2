@@ -531,7 +531,16 @@ const closureInputs = predecessorClosureInputs.map((entry) =>
             gitBlob: "d3c10d8a8e4c1ecd45d2a7c13e372daa8ae378d0",
           },
         }
-      : entry,
+      : entry.path === "src/ir/types.ts"
+        ? {
+            path: entry.path,
+            pin: {
+              bytes: 7756,
+              sha256: "0282ae61c6a43f837a9a3c7b12d879151e67ec155939c541cd9b5ea662979140",
+              gitBlob: "bdf9d6ace5f7f5530373cea6007a1ad7dfe905d0",
+            },
+          }
+        : entry,
 );
 const linearDeclarationPin = {
   bytes: 1633,
