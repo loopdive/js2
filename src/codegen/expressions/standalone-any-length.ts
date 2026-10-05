@@ -28,15 +28,12 @@
  * Arms 1–5 answer exactly what the numeric lowering did; only arm 6 changes,
  * and only for receivers whose `length` is not an own/inherited number.
  */
-import type { Instr, ValType } from "../ir/types.js";
-import { allocLocal } from "./context/locals.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { getFuncRefWrapperRootTypeIdx } from "./closures.js";
-import { stringConstantExternrefInstrs } from "./native-strings.js";
-import { addStringConstantGlobal } from "./registry/imports.js";
-import { getOrRegisterVecBaseType } from "./registry/types.js";
-import { ensureLateImport, flushLateImportShifts } from "./shared.js";
-import { coercionInstrs } from "./type-coercion.js";
+import type { Instr, ValType } from "../../ir/types.js";
+import { allocLocal } from "../context/locals.js";
+import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { getFuncRefWrapperRootTypeIdx } from "../closures/funcref-wrapper-types.js";
+import { getOrRegisterVecBaseType } from "../registry/types.js";
+import { ensureLateImport, flushLateImportShifts } from "../shared.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -45,8 +42,19 @@ function ifExtern(cond: Instr[], then: Instr[], otherwise: Instr[]): Instr[] {
   return [...cond, { op: "if", blockType: { kind: "val", type: EXTERNREF }, then, else: otherwise }];
 }
 
+/**
+ * Helpers that live inside the codegen import cycle. The caller passes them in,
+ * so this module stays outside the cycle (the `check:import-cycles` ratchet).
+ */
+export interface AnyLengthDeps {
+  coercionInstrs(ctx: CodegenContext, from: ValType, to: ValType, fctx?: FunctionContext): Instr[];
+  addStringConstantGlobal(ctx: CodegenContext, value: string): void;
+  stringConstantExternrefInstrs(ctx: CodegenContext, value: string): Instr[];
+}
+
 /** Stack `[externref recv] → [externref]`; see the file header. */
-export function emitStandaloneAnyLengthGet(ctx: CodegenContext, fctx: FunctionContext): ValType {
+export function emitStandaloneAnyLengthGet(ctx: CodegenContext, fctx: FunctionContext, deps: AnyLengthDeps): ValType {
+  const { coercionInstrs, addStringConstantGlobal, stringConstantExternrefInstrs } = deps;
   const closureRootIdx = getFuncRefWrapperRootTypeIdx(ctx);
   const vecBaseIdx = getOrRegisterVecBaseType(ctx);
   ensureLateImport(ctx, "__extern_length", [EXTERNREF], [{ kind: "f64" }]);

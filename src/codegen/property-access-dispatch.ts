@@ -101,7 +101,8 @@ import { moduleTouchesConstructorProp } from "./builtin-instance-constructor-pro
 import { tryEmitRegExpOwnConstructorRead } from "./regexp-split-protocol.js";
 import { tryEmitBuiltinInstanceConstructorPrototype } from "./builtin-instance-constructor-prototype.js";
 import { tryEmitDerivedLengthLocal } from "./derived-split-scalar.js";
-import { emitStandaloneAnyLengthGet } from "./standalone-any-length.js"; // (#6736) absent `length` reads undefined
+import { emitStandaloneAnyLengthGet } from "./expressions/standalone-any-length.js"; // (#6736) absent `length` reads undefined
+const ANY_LENGTH_DEPS = { coercionInstrs, addStringConstantGlobal, stringConstantExternrefInstrs }; // (#6736) cycle-free injection
 import {
   tryCompileStandaloneRegExpMatchResultRead,
   tryCompileStandaloneRegExpPropertyRead,
@@ -2708,7 +2709,7 @@ function emitStandaloneTupleLength(
 
   const exprResult = compileExpression(ctx, fctx, expr.expression);
   if (!exprResult) return null;
-  if (exprResult.kind === "externref") return emitStandaloneAnyLengthGet(ctx, fctx);
+  if (exprResult.kind === "externref") return emitStandaloneAnyLengthGet(ctx, fctx, ANY_LENGTH_DEPS);
 
   // The statically typed tuple value was only needed to prove the tuple shape;
   // discard it before producing the scalar length result.
@@ -3612,7 +3613,7 @@ export function tryLengthAndNameReads(
           if (exprResult.kind !== "externref") {
             coerceType(ctx, fctx, exprResult, { kind: "externref" });
           }
-          return emitStandaloneAnyLengthGet(ctx, fctx);
+          return emitStandaloneAnyLengthGet(ctx, fctx, ANY_LENGTH_DEPS);
         }
       }
     }

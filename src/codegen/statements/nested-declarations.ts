@@ -72,6 +72,7 @@ import {
   extractConstantDefault,
   hoistLetConstWithTdz,
   hoistVarDeclarations,
+  isAnyValue,
   nativeGeneratorBindingType,
   ensureStructForType,
   resolveInstallableClassMemberName,
@@ -91,8 +92,8 @@ import {
   getOrRegisterVecType,
   refCellValueType,
 } from "../registry/types.js";
-import { getVecInfo } from "../type-coercion.js";
-import { spreadElemToExternInstrs } from "../spread-elem-extern.js"; // (#6736) $AnyValue spread elements
+import { coercionInstrs, getVecInfo } from "../type-coercion.js";
+import { spreadElemToExternInstrs } from "../expressions/spread-elem-extern.js"; // (#6736) $AnyValue spread elements
 import { widenMixedUndefinedReturn } from "../mixed-return-widening.js";
 import {
   coerceType,
@@ -3991,7 +3992,9 @@ export function emitSetExtrasArgv(
     if (lenFn !== undefined && getFn !== undefined && iterFn !== undefined) {
       const boxIdx = ctx.funcMap.get("__box_number");
       // Box a vec element of the given type to externref (extras are externref).
-      const boxVecElem = (elemType: ValType): Instr[] => spreadElemToExternInstrs(ctx, fctx, elemType, boxIdx);
+      const anyToExtern = (t: ValType): Instr[] | undefined =>
+        ctx.standalone && isAnyValue(t, ctx) ? coercionInstrs(ctx, t, { kind: "externref" }, fctx) : undefined;
+      const boxVecElem = (elemType: ValType): Instr[] => spreadElemToExternInstrs(elemType, boxIdx, anyToExtern);
       // Per-extra descriptor.
       type Slot =
         | { kind: "single"; valLocal: number }

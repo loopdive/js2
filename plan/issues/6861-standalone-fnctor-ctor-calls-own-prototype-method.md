@@ -17,7 +17,7 @@ related: [6736, 6738, 2660, 4261, 6751]
 loc-budget-allow:
   # 2026-10-05 (#6861): +2 lines in analyzeFnctorEscapeGate — one import and the
   # seeded `sawDynamic`. The predicate itself lives in the new
-  # fnctor-ctor-self-dynamic.ts.
+  # analysis/fnctor-ctor-self-dynamic.ts.
   - src/codegen/fnctor-escape-gate.ts
 ---
 
@@ -83,7 +83,7 @@ read is already dynamic.
 
 ## Implementation Plan
 
-1. New module `src/codegen/fnctor-ctor-self-dynamic.ts`:
+1. New module `src/codegen/analysis/fnctor-ctor-self-dynamic.ts`:
    `fnctorCtorCallsInheritedThisMethod(ctorSym, ownFields)` walks the
    constructor body (the declaration forms `collectFnctorOwnFields` accepts).
    - It skips nested ordinary functions, classes, methods and accessors, which
@@ -110,7 +110,7 @@ read is already dynamic.
 ## Resolution
 
 Implemented as planned. The predicate is
-`fnctorCtorCallsInheritedThisMethod` in `src/codegen/fnctor-ctor-self-dynamic.ts`.
+`fnctorCtorCallsInheritedThisMethod` in `src/codegen/analysis/fnctor-ctor-self-dynamic.ts`.
 The gate change is two lines in `analyzeFnctorEscapeGate`.
 
 - **Pin.** `tests/issue-6861-fnctor-ctor-calls-proto-method.test.ts`. On the

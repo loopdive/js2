@@ -12,16 +12,17 @@
  * the union to the value it carries. Standalone-gated: the JS-host lane keeps
  * its existing lowering byte for byte.
  */
-import type { Instr, ValType } from "../ir/types.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { isAnyValue } from "./index.js";
-import { coercionInstrs } from "./type-coercion.js";
+import type { Instr, ValType } from "../../ir/types.js";
 
+/**
+ * `anyToExtern` answers the `$AnyValue` projection (or `undefined` for any other
+ * type). The caller supplies it because the coercion engine lives inside the
+ * codegen import cycle, and this module stays outside it.
+ */
 export function spreadElemToExternInstrs(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
   elemType: ValType,
   boxIdx: number | undefined,
+  anyToExtern: (elemType: ValType) => Instr[] | undefined,
 ): Instr[] {
   const kind = elemType.kind;
   if (kind === "f64") {
@@ -33,10 +34,7 @@ export function spreadElemToExternInstrs(
       : [{ op: "drop" }, { op: "ref.null.extern" }];
   }
   if (kind === "ref" || kind === "ref_null") {
-    if (ctx.standalone && isAnyValue(elemType, ctx)) {
-      return coercionInstrs(ctx, elemType, { kind: "externref" }, fctx);
-    }
-    return [{ op: "extern.convert_any" }];
+    return anyToExtern(elemType) ?? [{ op: "extern.convert_any" }];
   }
   // externref element — already correct.
   return [];

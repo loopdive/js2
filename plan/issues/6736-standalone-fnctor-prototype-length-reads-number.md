@@ -228,8 +228,12 @@ in `51c62b057` for the re-land.
 
 ## Re-land — 2026-10-05
 
-The `.length` change from `51c62b057` (`standalone-any-length.ts`) is
-re-applied unchanged. The revert's re-land condition is now met: the ES5 row
+The `.length` change from `51c62b057` is re-applied with the same behaviour.
+It now lives at `src/codegen/expressions/standalone-any-length.ts`, to respect
+the flat-directory budget. Its three helpers that sit inside the codegen import
+cycle (`coercionInstrs`, `addStringConstantGlobal` and
+`stringConstantExternrefInstrs`) are passed in by `property-access-dispatch.ts`,
+so the module stays outside the cycle (`check:import-cycles`). The revert's re-land condition is now met: the ES5 row
 `harness/compare-array-arguments.js` is fixed at its cause, not by the old
 coincidence.
 
@@ -246,7 +250,7 @@ went into the externref extras array through a bare `extern.convert_any`. So
 That was true for every spread call, not just inside the harness. Probe
 `f(1, ...[0, 'a']); g(...[0, 'a'])` gave 248 on the parent; Node gives 447.
 
-The new module `spread-elem-extern.ts` (`spreadElemToExternInstrs`) projects an
+The new module `expressions/spread-elem-extern.ts` (`spreadElemToExternInstrs`) projects an
 `$AnyValue` element through the coercion engine, which unboxes it. It is gated
 on standalone. `emitSetExtrasArgv` now carries the element `ValType` instead of
 its kind, so `nested-declarations.ts` shrinks by 13 lines.

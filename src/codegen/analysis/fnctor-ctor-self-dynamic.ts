@@ -28,7 +28,7 @@
  * dispatch. Nested ordinary functions and classes bind their own `this` and are
  * skipped; arrow functions share the constructor's `this` and are searched.
  */
-import { ts, forEachChild } from "../ts-api.js";
+import { ts, forEachChild } from "../../ts-api.js";
 
 function ctorBodies(ctorSym: ts.Symbol): ts.Block[] {
   const bodies: ts.Block[] = [];

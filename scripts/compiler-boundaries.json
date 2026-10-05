@@ -6100,7 +6100,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/fnctor-ctor-self-dynamic.ts",
+      "path": "src/codegen/analysis/fnctor-ctor-self-dynamic.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -9180,7 +9180,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/spread-elem-extern.ts",
+      "path": "src/codegen/expressions/spread-elem-extern.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -9196,7 +9196,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/standalone-any-length.ts",
+      "path": "src/codegen/expressions/standalone-any-length.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
