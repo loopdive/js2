@@ -45,7 +45,7 @@ afterEach(async () => {
 // Root replaces this ONE external assertion root after final instrument formatting/manifest assembly.
 // A missing freeze is a hard failure, never an alternate accepted manifest.
 const independentFreeze: string =
-  '{"manifestSha256":"ea9241122338af0792a76ee4363dd3c8d03ebe3e2e133d1ba3e4baa21cfedde2","anchorSource":"// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\\n\\nexport const c1AuthorityManifestSha256 = \\"ea9241122338af0792a76ee4363dd3c8d03ebe3e2e133d1ba3e4baa21cfedde2\\";\\n","anchorPin":{"bytes":194,"sha256":"20937b6b0ffb8147e59d1235109002be08b8f706bb7f03593d7b71598a1a8099","gitBlob":"a71f1b73b1c405f2c80c2a53a5e7f359743170ba"},"declarationPin":{"bytes":1633,"sha256":"5294c0fce2be6c6974b61a3686c05e60aa66d5bb4599fc97cb315ee53cab71be","gitBlob":"8c594e598e0d946ed92fd658cbe2efe3063ca2c4"}}';
+  '{"manifestSha256":"464789d00ab368042da0ed874b9e44d5311ef5dc054002d1ec02ac888397abcb","anchorSource":"// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\\n\\nexport const c1AuthorityManifestSha256 = \\"464789d00ab368042da0ed874b9e44d5311ef5dc054002d1ec02ac888397abcb\\";\\n","anchorPin":{"bytes":194,"sha256":"3f254d41699e168b718c1e3eb049e196de770e7f0c7eba2ee07a30d85ee5199b","gitBlob":"8cf6af5a6563f5cfcc6c49ff45057502d3a27308"},"declarationPin":{"bytes":1633,"sha256":"5294c0fce2be6c6974b61a3686c05e60aa66d5bb4599fc97cb315ee53cab71be","gitBlob":"8c594e598e0d946ed92fd658cbe2efe3063ca2c4"}}';
 const root = resolve(import.meta.dirname, "..");
 const manifestPath = "tests/helpers/ir-c1-authority.json";
 const anchorPath = "tests/helpers/ir-c1-authority-root.ts";
@@ -67,6 +67,75 @@ function actualIO(): C1ResolverObservationIO {
     realpath: (path) => realpathSync(path),
   };
 }
+
+// Complete authority read order measured on authentic549, with six reviewed
+// source-proof reads inserted. These63 reads are separate from the resolver's
+// thirteen requests/fifty-seven filesystem observations and population47.
+const loweringAnalysisAuthorityTrace = [
+  "tests/helpers/ir-c1-authority-root.ts",
+  "tests/helpers/ir-c1-authority.json",
+  "tests/helpers/ir-runtime-program-relocation.ts",
+  "tests/helpers/ir-runtime-program-relocation.json",
+  "tests/helpers/ir-validation-policy-evolution.ts",
+  "tests/helpers/ir-validation-policy-evolution.json",
+  "tests/helpers/ir-runtime-program-policy-evolution.json",
+  "tests/helpers/ir-runtime-program-policy-well-known-symbols.json",
+  "tests/helpers/ir-runtime-program-policy-number-prerequisites.json",
+  "tests/helpers/ir-runtime-program-policy-runtime-preparation.json",
+  "tests/helpers/ir-runtime-program-policy-dynamic-code.json",
+  "tests/helpers/ir-runtime-program-policy-host-carrier.json",
+  "tests/helpers/ir-runtime-program-policy-generator-eager-refusal.json",
+  "tests/helpers/ir-c1-historical-authority.ts",
+  "tests/helpers/ir-c1-current-source.ts",
+  "tests/helpers/ir-runtime-program-policy-evolution.ts",
+  "tests/issue-3518-program-data-contract-boundary.test.ts",
+  "tests/issue-3518-program-data-contract-seam.test.ts",
+  "tests/issue-3518-program-ownership-runtime-seam.test.ts",
+  "tests/issue-3518-program-pre-a-evolution.test.ts",
+  "tests/issue-3518-program-initial-graph-evolution.test.ts",
+  "tests/issue-3518-runtime-program-relocation.test.ts",
+  "tests/issue-3518-runtime-program-policy-evolution.test.ts",
+  "tests/issue-3518-well-known-symbol-policy-evolution.test.ts",
+  "tests/issue-3518-number-prerequisite-policy-evolution.test.ts",
+  "tests/fixtures/issue-3518-c1-historical-authority/linear-index.ts.txt",
+  "tests/fixtures/issue-3518-c1-historical-authority/runtime-program-relocation.test.ts.txt",
+  "tests/fixtures/issue-3518-c1-historical-authority/program-data-contract-seam.test.ts.txt",
+  "tests/fixtures/issue-3518-c1-historical-authority/program-ownership-runtime-seam.test.ts.txt",
+  "tests/fixtures/issue-3518-c1-historical-authority/program-pre-a-evolution.test.ts.txt",
+  "tests/fixtures/issue-3518-c1-historical-authority/program-initial-graph-evolution.test.ts.txt",
+  "tests/fixtures/issue-3518-c1-historical-authority/runtime-program-policy-evolution.ts.txt",
+  "tests/helpers/ir-lowering-analysis-relocation.ts",
+  "tests/helpers/ir-lowering-analysis-relocation.json",
+  "src/ir/backend/legality.ts",
+  "src/ir/analysis/backend-legality.ts",
+  "tests/helpers/ir-program-validator-relocation.json",
+  "src/ir/program-runtime-demands.ts",
+  "src/ir/program/runtime-demands.ts",
+  "src/ir/program-runtime-abi.ts",
+  "src/ir/program/runtime-abi.ts",
+  "src/ir/runtime-program-manifest.ts",
+  "src/ir/program/runtime-manifest.ts",
+  "src/ir/program-runtime-validation.ts",
+  "src/ir/program/runtime-validation.ts",
+  "src/ir/program-validation.ts",
+  "src/ir/program/validation.ts",
+  "src/ir/analysis/linear-memory-plan.ts",
+  "tests/helpers/ir-lowering-analysis-relocation.json",
+  "src/ir/analysis/contracts/linear-memory-layout.ts",
+  "src/checker/oracle-backend.ts",
+  "src/codegen-linear/c-abi.ts",
+  "src/codegen-linear/refcount/ownership.ts",
+  "src/wasm/model/instructions.ts",
+  "src/position-map.ts",
+  "src/shared/contracts/source-origin.ts",
+  "src/ts-api.ts",
+  "src/frontend/typescript.ts",
+  "tsconfig.json",
+  "package.json",
+  "pnpm-lock.yaml",
+  "package.json",
+  "typescript-package/package.json",
+] as const;
 
 const artifacts = [
   [linearPath, "linear-index.ts.txt", 224418, "c4648365cfa0fa4526ea64e76cd72b932998a09a4056a8321384b7ef62abbbae"],
@@ -470,6 +539,7 @@ describe("C1 fresh live source contract bridge", () => {
     ]);
     expect([...second.originals]).toEqual([...first.originals]);
     expect(second.historicalPopulation).not.toBe(first.historicalPopulation);
+    expect(authority).toEqual([...loweringAnalysisAuthorityTrace, ...loweringAnalysisAuthorityTrace]);
     expect(first.observedCurrentPins).toHaveLength(46);
     expect(extras).toHaveLength(9);
     for (const path of extras) expect(authority.filter((item) => item === path)).toHaveLength(2);
@@ -495,7 +565,19 @@ describe("C1 fresh live source contract bridge", () => {
     const validator = captureProgramValidatorRelocation(read);
     const relocated = ["src/ir/program-runtime-abi.ts", "src/ir/program-validation.ts"] as const;
     for (const [path, source] of capture.historicalPopulation)
-      if (path !== linearPath)
+      if (path === "src/ir/backend/legality.ts") {
+        expect(pin(source)).toEqual({
+          bytes: 26410,
+          sha256: "6a64764b2691d6b2994258a966afabdac0b981fc036f611be5d8969032a3db98",
+          gitBlob: "d4854103ad1fae2f12c105fc0e1a66e2d20a5c6e",
+        });
+        expect(source).not.toBe(read(path));
+        expect(capture.observedCurrentPins.find((record) => record.path === path)!.pin).toEqual({
+          bytes: 5833,
+          sha256: "5b67993fe312a0f5a52f9ef816c76a10cd32470f7e2a53819dec736764f45878",
+          gitBlob: "c38edb2f3d1350b0ea23f887c9349ac768d48afa",
+        });
+      } else if (path !== linearPath)
         expect(source).toBe(
           relocated.includes(path as (typeof relocated)[number])
             ? validator.readBefore(path as ProgramValidatorDonorPath)
@@ -1296,6 +1378,7 @@ describe("C1 current-main package script epoch", () => {
     expect(population).toHaveLength(47);
     expect(authority.filter((path) => path === "package.json")).toHaveLength(2);
     for (const path of extras) expect(authority.filter((item) => item === path)).toHaveLength(1);
+    expect(authority).toEqual(loweringAnalysisAuthorityTrace);
   });
   it.each([
     ["stale old package", (source: string) => predecessor(source)],
@@ -1755,4 +1838,213 @@ describe("C1 canonical instructions historical operand", () => {
     expect(() => beforeCanonicalInstructionsSource(mutant)).toThrow(/full pin mismatch/);
     expect(beforeCanonicalInstructionsSource(actualInstructions())).toBe(expected);
   });
+});
+
+// These controls exercise the normal C1 bridge and its two reader channels.
+// Physical helper faults are isolated in the portable preservation suite.
+describe("C1 lowering-analysis guarded reader integration", () => {
+  const helper = "tests/helpers/ir-lowering-analysis-relocation.ts";
+  const receipt = "tests/helpers/ir-lowering-analysis-relocation.json";
+  const legality = "src/ir/backend/legality.ts";
+  const planner = "src/ir/analysis/linear-memory-plan.ts";
+  function healthy() {
+    const authority: string[] = [];
+    const got = captureC1CurrentPopulation(read, (path) => {
+      authority.push(path);
+      return read(path);
+    });
+    expect(authority).toEqual(loweringAnalysisAuthorityTrace);
+    expect(got.historicalPopulation.size).toBe(46);
+    expect(got.originals.size).toBe(4);
+    expect(pin(got.historicalPopulation.get(legality)!)).toEqual({
+      bytes: 26410,
+      sha256: "6a64764b2691d6b2994258a966afabdac0b981fc036f611be5d8969032a3db98",
+      gitBlob: "d4854103ad1fae2f12c105fc0e1a66e2d20a5c6e",
+    });
+    expect(pin(read(planner))).toEqual({
+      bytes: 49040,
+      sha256: "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",
+      gitBlob: "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",
+    });
+    return got;
+  }
+  it("uses fresh complete authority reads and keeps current planner in actual resolution", () => {
+    const first = healthy(),
+      second = healthy();
+    expect(second.historicalPopulation).not.toBe(first.historicalPopulation);
+    expect([...second.originals]).toEqual([...first.originals]);
+    expect(first.observedCurrentPins.find((item) => item.path === legality)!.pin.sha256).toBe(
+      "5b67993fe312a0f5a52f9ef816c76a10cd32470f7e2a53819dec736764f45878",
+    );
+  });
+  it("refuses supplied population legality while the authority adapter remains healthy", () => {
+    healthy();
+    const mutant = read(legality) + "\n// supplied population mutation\n";
+    let supplied = 0;
+    expect(() =>
+      captureC1CurrentPopulation((path) => {
+        if (path === legality) {
+          supplied++;
+          return mutant;
+        }
+        return read(path);
+      }, read),
+    ).toThrow("lowering analysis relocation: supplied current source differs " + legality);
+    expect(supplied).toBe(1);
+    healthy();
+  });
+  it("refuses changed adapter authority with a healthy population", () => {
+    healthy();
+    let observed = 0;
+    expect(() =>
+      captureC1CurrentPopulation(read, (path) => {
+        if (path === legality) {
+          observed++;
+          return read(path) + "\n// authority mutation\n";
+        }
+        return read(path);
+      }),
+    ).toThrow("lowering analysis relocation: full pin changed " + legality);
+    expect(observed).toBe(1);
+    healthy();
+  });
+  it.each([
+    [
+      "layout readonly member",
+      "src/ir/analysis/contracts/linear-memory-layout.ts",
+      "readonly name: string;",
+      "name: string;",
+      "lowering analysis relocation: full pin changed ",
+    ],
+    [
+      "layout import route",
+      "src/ir/analysis/contracts/linear-memory-layout.ts",
+      '"../../core/nodes.js"',
+      '"../../nodes.js"',
+      "lowering analysis relocation: full pin changed ",
+    ],
+    [
+      "canonical verifier body",
+      "src/ir/analysis/backend-legality.ts",
+      "return errors;",
+      "return errors.slice();",
+      "lowering analysis relocation: full pin changed ",
+    ],
+    [
+      "canonical verifier import",
+      "src/ir/analysis/backend-legality.ts",
+      '"../core/types.js"',
+      '"../types.js"',
+      "lowering analysis relocation: full pin changed ",
+    ],
+    [
+      "retained target projection",
+      legality,
+      "const nativeRegimeInJs =",
+      "let nativeRegimeInJs =",
+      "lowering analysis relocation: full pin changed ",
+    ],
+    [
+      "retained planner algorithm",
+      planner,
+      "export const LINEAR_POINTER_BYTES = 4;",
+      "export const LINEAR_POINTER_BYTES = 8;",
+      "C1 current source: full pin mismatch: ",
+    ],
+  ] as const)("refuses source mutation at its actual first guard: %s", (_name, path, before, after, diagnostic) => {
+    healthy();
+    const seed = read(path),
+      mutant = replaceOnce(seed, before, after);
+    expect(mutant).not.toBe(seed);
+    let observed = 0;
+    expect(() =>
+      captureC1CurrentPopulation(read, (request) => {
+        if (request === path) {
+          observed++;
+          return mutant;
+        }
+        return read(request);
+      }),
+    ).toThrow(diagnostic + path);
+    expect(observed).toBe(1);
+    healthy();
+  });
+  it("refuses immutable source-receipt mutation before interior schema interpretation", () => {
+    healthy();
+    const seed = read(receipt),
+      mutant = replaceOnce(seed, '"sourceBase": "549b', '"sourceBase": "049b');
+    let observed = 0;
+    expect(() =>
+      captureC1CurrentPopulation(read, (path) => {
+        if (path === receipt) {
+          observed++;
+          return mutant;
+        }
+        return read(path);
+      }),
+    ).toThrow("lowering analysis relocation: full pin changed " + receipt);
+    expect(observed).toBe(1);
+    healthy();
+  });
+  it("retains a missing receipt error and accepts fresh restoration", () => {
+    healthy();
+    const missing = Object.assign(new Error("missing lowering analysis receipt"), { code: "ENOENT" });
+    expect(() =>
+      captureC1CurrentPopulation(read, (path) => {
+        if (path === receipt) throw missing;
+        return read(path);
+      }),
+    ).toThrow(missing);
+    healthy();
+  });
+  it("observes corrupted helper authority before reading the source receipt", () => {
+    healthy();
+    let helperReads = 0,
+      receiptReads = 0;
+    expect(() =>
+      captureC1CurrentPopulation(read, (path) => {
+        if (path === helper) {
+          helperReads++;
+          return read(path) + "\n// authority helper mutation\n";
+        }
+        if (path === receipt) receiptReads++;
+        return read(path);
+      }),
+    ).toThrow("C1 current source: full pin mismatch: " + helper);
+    expect(helperReads).toBe(1);
+    expect(receiptReads).toBe(0);
+    healthy();
+  });
+  it.each(["nonprimitive original receipt", "changed original owner"] as const)(
+    "keeps original operand rejection before supplemental IO: %s",
+    (name) => {
+      healthy();
+      let supplemental = 0;
+      const owner = "src/ir/program/owner.ts",
+        mutant = read(owner) + "\n// original current mutation\n";
+      const operation = () =>
+        captureC1CurrentPopulation(
+          (path) => {
+            if (name === "nonprimitive original receipt" && path === runtimeProgramRelocationReceiptPath)
+              return undefined as unknown as string;
+            if (name === "changed original owner" && path === owner) return mutant;
+            return read(path);
+          },
+          (path) => {
+            if (path === helper || path === receipt) {
+              supplemental++;
+              throw new Error("supplemental IO bomb");
+            }
+            return read(path);
+          },
+        );
+      if (name === "nonprimitive original receipt")
+        expect(operation).toThrow(
+          "C1 current source: primitive source required: " + runtimeProgramRelocationReceiptPath,
+        );
+      else expect(operation).toThrow(/length\/SHA256/);
+      expect(supplemental).toBe(0);
+      healthy();
+    },
+  );
 });

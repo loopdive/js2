@@ -28,8 +28,27 @@ import {
   type RuntimeProgramRelocationReader,
 } from "./ir-runtime-program-relocation.js";
 
+import {
+  captureLinearLayoutPredecessor,
+  captureLoweringLegalityPredecessor,
+} from "./ir-lowering-analysis-relocation.js";
+
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const linearPath = "src/codegen-linear/index.ts";
+const loweringLegalityPath = "src/ir/backend/legality.ts";
+const loweringPlannerPath = "src/ir/analysis/linear-memory-plan.ts";
+const loweringAnalysisImplementationPath = "tests/helpers/ir-lowering-analysis-relocation.ts";
+// Independently supplied by root from the formatted, reviewed component implementation.
+const loweringAnalysisImplementationPin: C1Pin = {
+  bytes: 17637,
+  sha256: "4378d72f5b51148fa345f2544f1c43df12d4a967b369ef0be95d99c6f16c7ba4",
+  gitBlob: "832a2b1b88bd3eddbd89d78a3f23e917d7bff9ae",
+};
+const loweringPlannerBeforePin: C1Pin = {
+  bytes: 52704,
+  sha256: "382cb4acee2de86904da1c0162ecc8b9de4250f9f9cb49dcba57b1a056c1cc3c",
+  gitBlob: "ae6f9ab03e01c80622e56a69c5b05c6826366d69",
+};
 const slash = (path: string): string => path.split(sep).join("/");
 const hash = (source: string): string => createHash("sha256").update(source).digest("hex");
 function fail(detail: string): never {
@@ -744,11 +763,19 @@ export function captureC1CurrentPopulation(
   // No historical replacement is supplied to the old reconstruction until the live seam passes.
   const receipt = authenticateRuntimeProgramRelocationReceipt(receiptText);
   let validatorRelocation: ProgramValidatorRelocationCapture | undefined;
+  let loweringLegalityPredecessor: string | undefined;
   const relocatedDependencies = ["src/ir/program-runtime-abi.ts", "src/ir/program-validation.ts"] as const;
   for (const record of [...receipt.current, ...receipt.dependencies]) {
     if (record.path === linearPath) continue;
     const rawSource = current.get(record.path)!;
-    if (relocatedDependencies.includes(record.path as (typeof relocatedDependencies)[number])) {
+    if (record.path === loweringLegalityPath) {
+      // Fresh implementation authentication precedes the first imported source-pair operation.
+      const implementation = readAuthority(loweringAnalysisImplementationPath);
+      primitive(implementation, loweringAnalysisImplementationPath);
+      assertPin(implementation, loweringAnalysisImplementationPin, loweringAnalysisImplementationPath);
+      loweringLegalityPredecessor = captureLoweringLegalityPredecessor(rawSource, readAuthority);
+      assertRuntimeProgramRelocationSource(loweringLegalityPredecessor, record, record.path);
+    } else if (relocatedDependencies.includes(record.path as (typeof relocatedDependencies)[number])) {
       validatorRelocation ??= captureProgramValidatorRelocation(readAuthority);
       // Authenticate the already-read population operand against the independent physical authority channel.
       // A supplied mutant is refused, never replaced by the healthy authority copy.
@@ -772,6 +799,14 @@ export function captureC1CurrentPopulation(
       closure.set(record.path, source);
     }
     assertPin(source, record.pin, record.path);
+    if (record.path === loweringPlannerPath) {
+      // The actual current string stays in closure and therefore in real type resolution.
+      assertPin(
+        captureLinearLayoutPredecessor(source, readAuthority),
+        loweringPlannerBeforePin,
+        record.path + " predecessor",
+      );
+    }
     if (
       record.path === "src/wasm/model/instructions.ts" ||
       record.path === "package.json" ||
@@ -808,6 +843,8 @@ export function captureC1CurrentPopulation(
   checkBindings(oldFile, declaration(oldFile, contract), contract);
   const historicalPopulation = new Map(current);
   historicalPopulation.set(linearPath, historical);
+  if (loweringLegalityPredecessor === undefined) fail("missing lowering legality predecessor");
+  historicalPopulation.set(loweringLegalityPath, loweringLegalityPredecessor);
   if (validatorRelocation === undefined) fail("missing validator relocation capture");
   for (const path of relocatedDependencies) historicalPopulation.set(path, validatorRelocation.readBefore(path));
   const originals = reconstructRuntimeProgramRelocationPopulation(historicalPopulation, receiptText);

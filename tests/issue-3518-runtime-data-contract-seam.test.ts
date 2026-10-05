@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { captureWasmGcHelperPredecessorPolicySource } from "./helpers/ir-runtime-program-policy-evolution.js";
+import {
+  captureLoweringAnalysisPredecessorPolicySource,
+  captureWasmGcHelperPredecessorPolicySource,
+} from "./helpers/ir-runtime-program-policy-evolution.js";
 import { captureProgramValidatorPredecessorPolicySource } from "./helpers/ir-runtime-program-policy-evolution.js";
 import { beforeProgramValidatorRelocation } from "./helpers/ir-program-validator-relocation.js";
 
@@ -2656,7 +2659,9 @@ function fixtureCaptureInput(epoch: (typeof fixtureCaptureEpochs)[number]): stri
   const outer = captureCanonical489dPredecessorPolicySource(
     captureNestedStackificationPredecessorPolicySource(
       captureProgramValidatorPredecessorPolicySource(
-        captureWasmGcHelperPredecessorPolicySource(fixtureCaptureRead("scripts/compiler-boundaries.json")),
+        captureWasmGcHelperPredecessorPolicySource(
+          captureLoweringAnalysisPredecessorPolicySource(fixtureCaptureRead("scripts/compiler-boundaries.json")),
+        ),
       ),
     ),
   );
@@ -3366,7 +3371,9 @@ function fourStageCaptureInput(epoch: (typeof fourStageCaptureEpochs)[number]): 
       captureCanonical489dPredecessorPolicySource(
         captureNestedStackificationPredecessorPolicySource(
           captureProgramValidatorPredecessorPolicySource(
-            captureWasmGcHelperPredecessorPolicySource(fixtureCaptureRead("scripts/compiler-boundaries.json")),
+            captureWasmGcHelperPredecessorPolicySource(
+              captureLoweringAnalysisPredecessorPolicySource(fixtureCaptureRead("scripts/compiler-boundaries.json")),
+            ),
           ),
         ),
       ),

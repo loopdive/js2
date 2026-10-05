@@ -135,7 +135,8 @@
         "src/ir/analysis/escape.ts",
         "src/ir/analysis/dominance.ts",
         "src/ir/analysis/alloc-verification.ts",
-        "src/ir/analysis/nested-stackification.ts"
+        "src/ir/analysis/nested-stackification.ts",
+        "src/ir/analysis/backend-legality.ts"
       ],
       "required": true,
       "entries": [
@@ -150,9 +151,11 @@
         "src/ir/analysis/escape.ts",
         "src/ir/analysis/dominance.ts",
         "src/ir/analysis/alloc-verification.ts",
-        "src/ir/analysis/nested-stackification.ts"
+        "src/ir/analysis/nested-stackification.ts",
+        "src/ir/analysis/contracts/linear-memory-layout.ts",
+        "src/ir/analysis/backend-legality.ts"
       ],
-      "minModules": 12
+      "minModules": 14
     },
     {
       "id": "ir-passes",
@@ -1847,6 +1850,11 @@
         "src/backend/wasmgc/lowering/wasm-math-minmax.ts"
       ],
       "minModules": 55
+    },
+    {
+      "layer": "ir-analysis",
+      "entries": ["src/ir/analysis/contracts/linear-memory-layout.ts", "src/ir/analysis/backend-legality.ts"],
+      "minModules": 14
     }
   ],
   "nonModules": [
@@ -1899,6 +1907,14 @@
     {
       "from": "src/ir/backend/wasm-math-minmax.ts",
       "to": "src/backend/wasmgc/lowering/wasm-math-minmax.ts"
+    },
+    {
+      "from": "src/ir/analysis/linear-memory-plan.ts",
+      "to": "src/ir/analysis/contracts/linear-memory-layout.ts"
+    },
+    {
+      "from": "src/ir/backend/legality.ts",
+      "to": "src/ir/analysis/backend-legality.ts"
     }
   ],
   "evidence": [
@@ -5122,6 +5138,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/expressions/arraybuffer-isview-static-decision.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate legacy class-metadata static decisions from frontend classification and backend lowering."
     },
     {
       "path": "src/codegen/expressions/assignment.ts",
@@ -15350,6 +15374,16 @@
       "path": "src/backend/wasmgc/lowering/wasm-math-minmax.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/backend-legality.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
     }
   ]
 }

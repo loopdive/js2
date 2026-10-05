@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-10-04T16:57:37.196Z",
-  "baseline_generated_at": "2026-10-04T16:57:37.196Z",
-  "baseline_sha": "8aa6b4928e1e55a392e41f01f824d27bd1547b5c",
+  "timestamp": "2026-10-05T00:12:52.819Z",
+  "baseline_generated_at": "2026-10-05T00:12:52.820Z",
+  "baseline_sha": "74ced4a992463649287c33fdc8e28f8c5d4ff77f",
   "oracle_version": 14,
   "mode": {
     "target": "standalone",
@@ -12,22 +12,22 @@
   "summary": {
     "total": 48232,
     "pass": 41815,
-    "fail": 4519,
-    "compile_error": 1861,
-    "compile_timeout": 19,
+    "fail": 4517,
+    "compile_error": 1862,
+    "compile_timeout": 20,
     "skip": 18,
-    "compilable": 46334,
+    "compilable": 46332,
     "host_free_pass": 41815,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
         "pass": 40774,
-        "fail": 4490,
-        "compile_error": 1845,
-        "compile_timeout": 19,
+        "fail": 4488,
+        "compile_error": 1846,
+        "compile_timeout": 20,
         "skip": 18,
-        "compilable": 45264,
+        "compilable": 45262,
         "host_free_pass": 40774,
         "stale": 0,
         "label": "ECMAScript current standard"
@@ -59,11 +59,11 @@
       "official": {
         "total": 48232,
         "pass": 41815,
-        "fail": 4519,
-        "compile_error": 1861,
-        "compile_timeout": 19,
+        "fail": 4517,
+        "compile_error": 1862,
+        "compile_timeout": 20,
         "skip": 18,
-        "compilable": 46334,
+        "compilable": 46332,
         "host_free_pass": 41815,
         "stale": 0,
         "label": "standard + annex_b (default)"
@@ -71,11 +71,11 @@
       "full": {
         "total": 48735,
         "pass": 42051,
-        "fail": 4535,
-        "compile_error": 2016,
-        "compile_timeout": 19,
+        "fail": 4533,
+        "compile_error": 2017,
+        "compile_timeout": 20,
         "skip": 114,
-        "compilable": 46586,
+        "compilable": 46584,
         "host_free_pass": 42051,
         "stale": 0,
         "label": "standard + annex_b + proposals"
@@ -85,33 +85,33 @@
   "official_summary": {
     "total": 48232,
     "pass": 41815,
-    "fail": 4519,
-    "compile_error": 1861,
-    "compile_timeout": 19,
+    "fail": 4517,
+    "compile_error": 1862,
+    "compile_timeout": 20,
     "skip": 18,
-    "compilable": 46334,
+    "compilable": 46332,
     "host_free_pass": 41815,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
     "pass": 42051,
-    "fail": 4535,
-    "compile_error": 2016,
-    "compile_timeout": 19,
+    "fail": 4533,
+    "compile_error": 2017,
+    "compile_timeout": 20,
     "skip": 114,
-    "compilable": 46586,
+    "compilable": 46584,
     "host_free_pass": 42051,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
     "pass": 39457,
-    "fail": 4421,
-    "compile_error": 1806,
-    "compile_timeout": 19,
+    "fail": 4419,
+    "compile_error": 1807,
+    "compile_timeout": 20,
     "skip": 18,
-    "compilable": 43878,
+    "compilable": 43876,
     "host_free_pass": 39457,
     "stale": 0
   },
@@ -141,11 +141,11 @@
     "standard": {
       "total": 47146,
       "pass": 40774,
-      "fail": 4490,
-      "compile_error": 1845,
-      "compile_timeout": 19,
+      "fail": 4488,
+      "compile_error": 1846,
+      "compile_timeout": 20,
       "skip": 18,
-      "compilable": 45264,
+      "compilable": 45262,
       "host_free_pass": 40774,
       "stale": 0
     }
@@ -199,9 +199,9 @@
       "name": "built-ins/Array",
       "path": "built-ins/Array",
       "pass": 2368,
-      "fail": 617,
+      "fail": 616,
       "compile_error": 87,
-      "compile_timeout": 10,
+      "compile_timeout": 11,
       "skip": 0,
       "total": 3082,
       "host_free_pass": 2368
@@ -209,13 +209,13 @@
     {
       "name": "built-ins/ArrayBuffer",
       "path": "built-ins/ArrayBuffer",
-      "pass": 170,
-      "fail": 39,
+      "pass": 171,
+      "fail": 38,
       "compile_error": 12,
       "compile_timeout": 0,
       "skip": 0,
       "total": 221,
-      "host_free_pass": 170
+      "host_free_pass": 171
     },
     {
       "name": "built-ins/ArrayIteratorPrototype",
@@ -781,13 +781,13 @@
     {
       "name": "built-ins/Temporal",
       "path": "built-ins/Temporal",
-      "pass": 4493,
+      "pass": 4492,
       "fail": 102,
       "compile_error": 0,
-      "compile_timeout": 8,
+      "compile_timeout": 9,
       "skip": 0,
       "total": 4603,
-      "host_free_pass": 4493
+      "host_free_pass": 4492
     },
     {
       "name": "built-ins/ThrowTypeError",
@@ -805,8 +805,8 @@
       "path": "built-ins/TypedArray",
       "pass": 1080,
       "fail": 355,
-      "compile_error": 10,
-      "compile_timeout": 1,
+      "compile_error": 11,
+      "compile_timeout": 0,
       "skip": 0,
       "total": 1446,
       "host_free_pass": 1080
@@ -1198,7 +1198,7 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 2609,
+    "assertion_fail": 2608,
     "host_import_leak": 1205,
     "illegal_cast": 228,
     "missing_builtin": 3,
@@ -1272,14 +1272,14 @@
           "#661"
         ],
         "label": "Temporal proposal/polyfill gap",
-        "count": 110,
+        "count": 111,
         "statuses": {
           "pass": 0,
           "fail": 102,
           "compile_error": 0,
-          "compile_timeout": 8,
+          "compile_timeout": 9,
           "skip": 0,
-          "total": 110,
+          "total": 111,
           "host_free_pass": 0
         },
         "error_categories": {
@@ -1290,7 +1290,7 @@
           "illegal_cast": 1
         },
         "by_edition": {
-          "ES2026": 110
+          "ES2026": 111
         },
         "sample_files": [
           "test/built-ins/Temporal/Duration/prototype/subtract/precision-no-floating-point-loss.js",
@@ -1965,19 +1965,19 @@
           "#1654"
         ],
         "label": "Array, TypedArray, DataView, and buffer semantics",
-        "count": 1383,
+        "count": 1382,
         "statuses": {
           "pass": 0,
-          "fail": 1187,
-          "compile_error": 185,
+          "fail": 1185,
+          "compile_error": 186,
           "compile_timeout": 11,
           "skip": 0,
-          "total": 1383,
+          "total": 1382,
           "host_free_pass": 0
         },
         "error_categories": {
           "illegal_cast": 174,
-          "assertion_fail": 840,
+          "assertion_fail": 839,
           "host_import_leak": 179,
           "type_error": 161,
           "oob": 5,
@@ -1988,7 +1988,7 @@
           "ES2022": 262,
           "ES2020": 235,
           "ES2017": 70,
-          "ES2015": 25,
+          "ES2015": 24,
           "ES2026": 115,
           "Unclassified (untagged)": 457,
           "ES2016": 16,

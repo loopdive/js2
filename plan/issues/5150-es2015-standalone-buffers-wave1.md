@@ -782,3 +782,784 @@ authoritative upstream issue 3371 is claimed by `ttraenkler/fable-es6`
 since 2026-09-04. The script exits 3 for the occupied claim and explicitly
 identifies a different origin record as stale/shadowed. No takeover or
 competing DataView implementation was attempted.
+
+## 2026-10-05 Astra plan: admit a DataView subclass to the existing isView test
+
+This is a source-only proposal for the single original
+`test/built-ins/ArrayBuffer/isView/arg-is-dataview-subclass-instance.js`,
+not a constructor, TypedArray, or shared-carrier repair. Root must read this
+appendix before a Sol 6.1 High implementer changes source. No compiler,
+runtime, provider, harness, claim, or fixture was changed by this planning pass.
+The old 784-line issue history is preserved, including its uncompleted work.
+
+### Pinned original and evidence
+
+The scout receipt in the read-only native-guard observation worktree is
+`.tmp/scout-v3/receipt.json`, SHA-256
+`a4001f4c9c74a140444064c96f9cb6f612372608c79354965bd9e265118c89f6`.
+It records source head `1787b1af4a2f010f51ca1f45fc68fa540bfa4673` and
+the retained full-census row: honest oracle 14, providers auto, strict both,
+reached_test true, `Test262Error: Expected true but got false`.
+That is historical evidence, not a current baseline or a measured gain.
+
+The unchanged 583-byte original has SHA-256
+`ae677fa63dfe206d04fb838b81ebaaefa165b4d769723c3081bbdfd54c897397`.
+Its executable body declares an empty `class DV extends DataView {}`,
+constructs `new DV(new ArrayBuffer(1), 0, 0)`, and asserts
+`ArrayBuffer.isView(sample)`. Its normative contract tests the internal
+ViewedArrayBuffer slot, not the class name or prototype resemblance.
+
+### First semantic loss and the already-landed producer
+
+In `src/codegen/expressions/call-namespace-static.ts`,
+`compileNamespaceStaticCall` starts at line 767; its argument-bearing
+ArrayBuffer.isView arm is lines 938–998 in the read source
+SHA-256 `919dc90b319bc53ad87d1cb9f4feac5da94a87f76799c96a7b6762cd981f6f9f`.
+The static symbol is DV, not DataView. Lines 956–970 classify this named
+class as `isResolvableNonView`, evaluate and drop the value, then emit false.
+Consequently the existing runtime carrier test never examines that value.
+
+This is not evidence that the constructor needs another implementation:
+`builtin-subclass-new-site.ts::newSiteBuiltinParent` lines 61–73 admits
+this memberless, direct, externref-backed DataView subclass. The landed
+`new-super.ts` lines 8033–8045 delegates its same argument nodes through
+`tryCompileIndexedBuiltinNew`; `compileNewSiteBuiltinSubclass` boxes the
+actual native result and performs the existing constructor-property install.
+These producer functions are read-only dependencies, not proposed edits.
+
+The consumer already compiles an admitted runtime argument once as externref,
+coerces an actual differing result type, converts to anyref, and stores it in
+one local before `isViewRefTestInstrs(ctx, anyTmp)`. That helper registers the
+DataView window type and tests actual carrier references. Its existing
+ArrayBuffer exclusion and TypedArray handling stay byte-for-byte unchanged.
+Its documented ordinary-array imprecision is not a grant to broaden this fix.
+
+### One production hunk; no new helper or dependency edge
+
+Only change the static-negative admission predicate inside the existing
+standalone ArrayBuffer.isView arm of `compileNamespaceStaticCall`.
+Use the already-resolved `argSym`, normalize through the existing
+`ctx.classExprNameMap` convention if needed, and consult existing class
+metadata: externref-backed membership, builtin parent DataView, and direct
+parent DataView. A positively identified direct DataView subclass is NOT
+eligible for the static-negative fold. Let it fall through into the existing
+runtime branch. Do not emit constant true from heritage.
+
+The context producers were inspected: `class-bodies.ts` lines 1181–1201
+sets builtin-parent and externref-backed records, including ancestor
+propagation. Requiring the direct-parent record keeps the new admission
+bounded to the direct subclass family; it does not adopt deeper-constructor
+work. No context map is written, widened, or reinterpreted. No new raw
+checker query, import, shared helper, runtime field, type-registry entry,
+feature flag, or late-import registration is needed.
+
+Keep `isView`'s existing builtin-typed positive fold, all other static-negative
+cases, unknown/union fallback, zero-argument arm, and JS-host route unchanged.
+Gate the new exception to the negative fold on the standalone mode where the
+read producer is established; do not silently extend WASI construction.
+The runtime value decides the result even when an admitted class-typed input
+does not carry a native DataView. A lookup miss remains the previous route.
+Evaluate the argument once, preserve its exception, and neither synthesize a
+view nor consult or invoke a user prototype getter to manufacture a brand.
+
+Only the one source file, one new issue-local test file, and this issue's own
+append are prospective implementation scope. If the original still fails
+after bypassing the false fold, preserve its evidence and stop: do not repair
+the constructor, shared isView carrier chain, generic coercion, or IR here.
+Do not opportunistically repair extra-argument, shadowed-namespace, arbitrary
+Reflect.construct, custom-constructor, or first-class method behavior.
+
+### Function-level ownership and integration gate
+
+The maintained scout read at assignment tip
+`2394b66331c392d3adeedf3ac0191f542fff35f7` reports
+`5150:isview-subclass-static-fold` UNASSIGNED from upstream; parent 5150 is
+reserved without a live claim. The implementer must freshly check and acquire
+that exact leaf on its own branch before code. The planner has not claimed it.
+3240's legacy reservation is not an implementation grant.
+
+The positive live 5317 hold remains held by `ttraenkler/fable-es6`. Its CURRENT
+constructor-lookup rescue scope, lines 44–65, owns ta-dyn-mop ordinary Get,
+native-proto companions, and proto-index-store reservation, not this static
+ArrayBuffer.isView predicate. Do not use historical umbrella tables or a done
+status as a release. The proposed predicate does not edit those protocols.
+6651's native producer, 3972's subclass machinery, 3240's constructor tracking,
+and 6769's TypedArray subclass work remain outside scope and unchanged.
+
+Positive published shared-file patches were read, not labeled whole-file
+clear: PR5883 at `6f73c8e` changes Promise imports and combinator emission;
+PR5753 at `11b3995` changes Symbol.for branding and JSON record-array lowering;
+the PR6468 file patch (blob `07ee0d5542e838b04b95f1aad1914bceec0d3cd8`)
+changes Reflect function admission and defineProperty rejection handling.
+None of these reviewed hunks changes the ArrayBuffer.isView negative fold.
+They still require ordinary merge preservation. Fresh pre-dispatch must
+recheck changed published heads and any new exact hunk reservation; this
+dated review is not a global source clearance or takeover.
+
+### Finite unchanged originals and focused controls
+
+Keep the original eight-row manifest immutable. Use the additive nine-row
+manifest `.tmp/scout-v3/5150-nine-originals.txt`, SHA-256
+`31270258baad9e7dc8fd34e717b126b387bad079edaa4db24ee3074be6cd81a7`,
+for one target plus eight historical PASS controls: direct DataView,
+ArrayBuffer, ordinary object/array, primitives, omitted argument, DataView
+constructor, DataView buffer, and the ordinary TypedArray constructor family.
+The added TypedArray original is a positive control, NOT the held subclass
+failure. The nine-row contract SHA-256 is
+`c1e60e459a85db706cf477dd21ba87a555e77dd4faba360f3da960b7f775619a`;
+its original and testTypedArray harness hashes are pinned. Historical 8P/1F
+does not substitute for current measurement. Corpus/oracle/expectations stay
+unchanged; no provider shortcut or customized original body is acceptable.
+
+The separate eight-case source-only proposal is pinned at
+`.tmp/scout-v3/5150-focused-proposal.mjs`, SHA-256
+`08bd3891eebe7d91efbe04cd153d8dfcf80dca00a36cc846fed532e0ae6c1a16`.
+It covers the empty subclass, direct DataView, direct TypedArray, ordinary
+class, plain array, ArrayBuffer, one evaluation with expected 11, and a
+runtime non-view value with expected false. Freeze these sources and normal
+standalone options before execution; the last union-return control guards
+against heritage-constant-true reasoning but does not alone prove admission
+of a non-view with the exact DV static type. Supplement the issue-local test
+with a DV-typed parameter supplied an ordinary object through a type-only
+cast: expected false, no cast to the DataView carrier before ref.test. This
+additional negative must be root-read and frozen before its first run.
+
+### Execution and acceptance, all still NOT_RUN
+
+After source approval, Sol prepares one isolated worktree at verified main,
+the exact leaf claim, the one-hunk patch, and frozen sources/options. Root
+reads the diff and manifests before granting a heavy lease. Use canonical
+Node 24 and the maintained original harness, honest oracle 14, auto providers,
+unaltered strictness and physical identity expansion. Rebuild normal bundles
+and validate current cache provenance after source changes; no stale key or
+provider override. Record actual imports and reject host fallback.
+
+Measure baseline then candidate for all nine originals and focused controls,
+retaining row identities, registered callback/physical floors, reached_test,
+terminal status, imports, actual source/binary/WAT hashes and provider
+fingerprints. Inspect the original's WAT/export for the removed false fold
+and reached native reference test, not merely the presence of helper names.
+Root must read actual rows before any attribution claim.
+
+For attribution, remove ONLY this admission hunk in a separate controlled
+version: the target must recover its baseline failure while all baseline PASS
+controls stay PASS; restore the exact patch and recover the candidate result.
+No unrelated source removal, weaker expectation, case deletion, oracle change,
+or carrier mutation is permitted. If target remains failing or any control
+regresses, stop at that finite result and hand off the first-loss evidence.
+
+Before publication run normal source/architecture ratchets and ordinary hooks;
+there is no new allowance, SCC node, flat codegen file, or IR edge intended.
+Only a matched unchanged-original improvement with preserved controls and
+successful removal/restoration supports one original gain. No present gain,
+completion of the 82-row buffers wave, or repair of the TypedArray subclass
+original is claimed by this plan.
+
+## 2026-10-05 Sol preparation: bounded DataView isView consumer admission
+
+Isolated worktree `/Users/thomas/Code/js2/.codex-worktrees/5150-dataview-subclass-isview-sol`,
+branch `codex/5150-dataview-subclass-isview`, exact freshly verified upstream
+main `fd60087e505e964b23c642bc20b3c2d7e3476c4f`. The source grant is only
+the standalone negative-fold predicate in `compileNamespaceStaticCall`, one
+new issue-local focused test, and this MD. No constructor, shared carrier,
+coercion, identity/prototype, TypedArray, frontend/IR, runner or oracle edit.
+Other agents are active; their changes and retained worktrees remain intact.
+
+The approved Astra appendix was read completely and transferred byte-for-byte
+through apply_patch: original784-line prefix SHA256
+`8ba447ac4877050692967006866e78d5b3e136d106a7ed4e06f8f239fc036a23`,
+append SHA256`635ecd083acd44ec3f6693984f418d221afd034121b39bc05a59a1d413bb298d`,
+whole transferred MD SHA256
+`27da1c4b19362fa7486e2170e047815ebe32a27df53a83c250e61666c5748280`.
+This preparation record is additive; all earlier wave/history remains.
+
+Fresh maintained ledger read actual handle3423/terminal434002 exit0 at
+`b0d6be7f215af281c4dc66055e112ac62f15615d`:2662 records/1044 held;
+exact`5150:isview-subclass-static-fold` UNASSIGNED. Complete upstream open-PR
+scan reads19 PRs/1432 changed paths, including full REST pagination when
+GraphQL's100-file page is incomplete. All actual matching source patches were
+read for PR5753@11b3995784,5784@5aa3d8f857,5883@6f73c8edd1,
+6468@b19e6d6b1d. They change Symbol/JSON/Reflect/Promise regions, not this
+isView predicate. This is hunk-level preservation, not whole-file clearance.
+Live5317/3972/6651/6769 held records stay held;5317's current narrow
+constructor-lookup rescue scope44–65 was read, not released from old status.
+Exact own leaf acquisition actual handle66228/terminald772d3 exit0 verifies
+`ttraenkler/script_plan_p1_sol`, own branch, upstream assignment ref only.
+Full raw calls, claims, paginated paths and matching patches are retained
+under own ignored`.tmp/5150-preparation`; no competing leaf was acquired.
+
+The one source hunk normalizes existing argSym via existing classExprNameMap,
+then reads standalone + externref-backed + builtin-parentDataView + direct
+parentDataView metadata. Such a value bypasses only the static-false fold and
+reaches the unchanged actual-carrier runtime test. No constanttrue from
+heritage; no map write/new raw checker query/import/helper or registry change.
+Current source SHA256
+`58cf524dc788bcb2915e33b7e2ab01efc2f752c0f1fc945744d0fab996e559d9`;
+baseline preimage retained SHA256
+`919dc90b319bc53ad87d1cb9f4feac5da94a87f76799c96a7b6762cd981f6f9f`.
+
+New`tests/issue-5150-dataview-subclass-isview.test.ts` SHA256
+`1ca7bf1086e35eab26a3269ae831791e8b6db86aa96c6c6c166ae22a086f9de7`
+preserves all8 proposed cooked source/expectation pairs and adds the9th
+DV-typed parameter supplied an ordinary object through type-only casts,
+expectedfalse. Exact focused compile options are fileNametest.js (9thtest.ts),
+allowJstrue, skipSemanticDiagnosticstrue, targetstandalone. The diagnostic
+suppression is focused-only, never an original-runner override. Each case
+requires compile success, empty host and physical import maps, ordinary
+buildImports/instance initialization and an actual callable run export.
+
+Approved read-only dependency links point to existing canonical primary
+node_modules and26 populated corpus entries, excluding.git while retaining
+own test262 directory. Actual corpus HEAD
+`b363f29d3c43c626dc852744ad64a0b48a003693`, all9 original body hashes and
+testTypedArray harness hash match the scout. No installs/provision/config/LFS
+repair. Initial ordinary status failed sandbox LFS temp write; retained, then
+read-only filter-disabled status succeeded without changing Acorn bytes.
+
+Source-only `.tmp/5150-preparation/frozen-contract.json` SHA256
+`e0fe5965c926933b11e29a13c066aaa3fdaebf7df690c0e5cc3d0e0efedd3d04`
+records1848 actual inputs/1824src files, all9 literal originals/harnesses,
+9 focused sources/options and accepted native input artifact byte pins.
+Compact full contract for root review is`contract-review.json` SHA256
+`ae6ee0eb8ed7e0d8b26a121203319e2a88d1833bf2015da8b47047cfe6fcfffa`.
+Manifest9 SHA256
+`31270258baad9e7dc8fd34e717b126b387bad079edaa4db24ee3074be6cd81a7`
+is unchanged; historical8PASS/1FAIL is context only. One original target,
+eight original positive controls, nine separate focused cases; no conflation.
+The initial freeze script hit a wrong guessed completeness-validator filename;
+no compiler ran. Corrected to actual validate-test262-completeness.mjs and
+the source-only freeze completed; no expectation or source contract changed.
+
+Proposed build/maintained exact-manifest/sharded-runner recipe is retained as
+`.tmp/5150-preparation/recipe.md`. ROOT must review the bounded executable
+recipe and WAT diagnostic collector and grant each runtime/build lease.
+Every baseline/candidate/removal/restored run, focused execution, diagnostic
+compile, native/adapter build and normal hook is currently **NOT_RUN**.
+No original gain, current full-census result,82-row completion, constructor
+repair or TypedArray-subclass credit is claimed.
+
+## 2026-10-05 Sol measurement: one original attributed by removal/restoration
+
+This supersedes the preparation-only NOT_RUN statements above for the finite
+measurements recorded here, not for the remaining buffers wave. Root independently
+read all four actual result maps and all 64 durable shard completions and accepted
+this narrow attribution. The whole historical MD prefix through the preparation
+record is preserved byte-for-byte; its pre-append SHA-256 is
+`b7f2e824f6ff0b06b1cc7153c5140ed111aed61d347e0e5f3c2f7e01e20cddb7`.
+The implementation remains the single consumer hunk and nine-case focused test;
+the constructor/helper/shared-carrier/TypedArray/IR/runner/oracle exclusions remain.
+
+### Matched instrument and artifact contract
+
+Additive frozen contract `.tmp/5150-preparation/frozen-contract-v2-final.json`,
+SHA-256 `72508e4117557493007889212bddf287ccd1c27dc0fef63cc1286de25d1fcf7f`,
+pins 2,293 actual inputs including all 1,824 src files, all 16 maintained shard
+entrypoints, assembly/factory/worker/provider/build inputs, nine original bodies,
+three harness files and nine focused sources/options. The canonical Node binary
+and 310 existing dependency files make 311 byte-pinned tool inputs. Earlier V1
+and provisional V2 receipts are retained rather than rewritten.
+
+Canonical Node 24.19.0 was used throughout; bundle/build/original/diagnostic parent
+and worker limits were 3,072 MiB, while the focused test parent/fork used 1,024 MiB.
+Inherited provider/compiler/IR/skip/Git overrides were scrubbed and original PATH
+was preserved. No install, provisioning, configuration, LFS repair or donor write
+occurred. No source or MD change occurred while a test/build was live.
+
+Read-only accepted native input came from the retained P1 shipped artifact, copied
+as exactly three pinned bytes into each new exclusive own build directory. Native
+binary SHA-256 `95333826e7c8c8ed7398203891db713dc44368c86a24dae6fe6da7d3004fa36c`,
+ABI SHA-256 `4247f2ff4f03420b939692533177ddd485fbcb058a9377ecc33344ce1697f21b`
+and build-info SHA-256 `c970d9db70077ade6277b6f6cb44fc110951b7ebc3c240d3abd5845c3db3876e`
+were verified in donor, own acquisition copy and ordinary keyed cache before/after.
+This root-approved source-consistent artifact acquisition was not a semantic
+provider override; original runs used the ordinary own cache with quickjs/auto.
+
+The reviewed build-only wrapper SHA-256 is
+`392c01e43eb430e0ea8cf612e4aecd4203c4c8123acd12ef12b6df8bc625a074`.
+Every successful arm ran the same four ordinary commands: compiler bundle, runtime
+bundle, maintained provider builder, then maintained builder --require-cache.
+All four true command exits were zero; normal canary/linked-pair gates passed.
+The candidate was a normal adapter MISS with canary verification; subsequent arms
+used normal HIT linked-pair verification. No raw canary values are invented from
+the successful maintained gate. Native key remained `04a9abfac8350642`.
+Baseline/removal compiler-input key was `ff97d4c71ce3b003`, adapter key
+`d37c636f62467b93`; candidate/restored keys were `98aa31dd0e712cf3` and
+`b46310166a106197`. Both adapters have the same actual SHA-256
+`fa105724f9d2379e2ffe420e3bf3df925f3108a422039a94a67db2a407ee4c54`,
+27 physical imports and 39 exports; native core has five WASI imports and 80
+exports. Full maps and provenance are retained in each postflight JSON.
+
+Build postflights, all under this worktree's ignored `.tmp/`, are:
+
+- Baseline `5150-baseline-build.xs98vZ/postflight.json`, actual handle 59423,
+  terminal c2aace exit 0, SHA-256
+  `836cc7ff603195f8257ac9ee45f16bc0441e37fdd4a2b0bf03b6ed94bba0618e`.
+- Candidate `5150-candidate-build.Ep3DdI/postflight.json`, handle 42364,
+  terminal 9caa1a exit 0, SHA-256
+  `5a40cde20a26e594dce00513f2b04f8f32f95bf3aa9c9c51d60daf9553181294`.
+- Removal `5150-removal-build.5mw1OY/postflight.json`, handle 59060,
+  terminal 659583 exit 0, SHA-256
+  `5781a73523ebde5281e3bfc7a42c43209d7b2c4bd1e6f8c3ce3c4e8b646755de`.
+- Restored `5150-restored-build.ZL7G2h/postflight.json`, handle 23676,
+  terminal 98e4d5 exit 0, SHA-256
+  `3439c87e76e79de4f6286a51f46f5d7487951ca206e6bc2cc1e9387e49ea7604`.
+
+Removal bundles/native/adapter bytes exactly match baseline; restored bytes
+exactly match candidate. All 2,293 phase-aware source pins, 311 tool bytes and
+three donor bytes remained unchanged within each arm.
+
+### Nine unchanged originals: exact physical identity floor
+
+The unchanged manifest SHA-256 remains
+`31270258baad9e7dc8fd34e717b126b387bad079edaa4db24ee3074be6cd81a7`.
+All nine physical originals are under `test/built-ins/ArrayBuffer/isView/`:
+`arg-is-dataview-subclass-instance.js`, `arg-is-dataview.js`,
+`arg-is-arraybuffer.js`, `arg-has-no-viewedarraybuffer.js`, `arg-is-not-object.js`,
+`no-arg.js`, `arg-is-dataview-constructor.js`, `arg-is-dataview-buffer.js` and
+`arg-is-typedarray.js`. Their bodies/harnesses and expectations were not edited.
+
+The reviewed original-only wrapper SHA-256 is
+`757396facd74c18dede87a1b2f2660d3a7cc73cffcb1010ac5b7596b60da3fd1`.
+It used all 16 maintained shards, one fork, no file parallelism, honest oracle 14,
+auto semantic providers and unchanged strict policy. Every arm has nine unique
+registered/reached_test physical rows, strict=both, zero exclusions/skips, nine
+started/settled callbacks and all 16 durable completion manifests. The bounded
+--passWithNoTests flag only accommodates the seven empty shards; the positive
+nine-row floor and maintained completeness validator still fail closed.
+
+- Baseline: actual handle 16492, true terminal 428fc4 exit 1; Vitest 1,
+  completeness 0; **8 PASS / 1 FAIL**. Receipt
+  `5150-baseline-originals.2TSS2L/receipt.json` SHA-256
+  `f721bbe6bc280c69a51350bffd86384142dfcf365804d718580f862d3a8c7c4a`.
+- Candidate: handle 9640, terminal 059c70 exit 0; Vitest/completeness 0;
+  **9 PASS / 0 FAIL**. Receipt `5150-candidate-originals.bQYkEU/receipt.json`
+  SHA-256 `111d722845692f4863c618c01d514d05ff5c2756b7b5aaf7065347c4bfd071fc`.
+- Removal: handle 5227, terminal 023ff9 exit 1; Vitest 1, completeness 0;
+  **8 PASS / 1 FAIL**, exact baseline identity/status/error map. Receipt
+  `5150-removal-originals.mw6fYP/receipt.json` SHA-256
+  `317ccd104921f51bef09ac1d80ce6fa205f8d04765358a7cbbc63bafb4103165`.
+- Restored: handle 50242, terminal 1a4050 exit 0; Vitest/completeness 0;
+  **9 PASS / 0 FAIL**, exact candidate identity/status/error map. Receipt
+  `5150-restored-originals.2WWzZc/receipt.json` SHA-256
+  `be03b1e163fac800c294f1e31b4c9ac0132c9dfb7fe4fc97a0b1a1c6b4b93cc2`.
+
+The only changed verdict is `arg-is-dataview-subclass-instance.js`: baseline and
+removal retain `Test262Error: Expected true but got false`; candidate and restored
+pass. All eight controls pass in all four arms. Read-only process checks confirm
+the completed own Vitest PIDs and own test262 workers absent before source-arm
+transitions. Final restored proof SHA-256 is
+`7c394bcc640a80f9e3b4e4895e13ea047ea14a1eeb4c618c81c9a3211c912a9d`.
+
+### Focused safety and generated-code observations
+
+The unchanged nine-case focused fixture ran once: handle 57078, actual Vitest
+exit 0 and all nine assertion rows passed, including one-evaluation result 11 and
+both non-view negatives. Whole source/tool/artifact bytes stayed fixed.
+The capture process exited 1 because its title matcher compared unquoted case IDs
+to Vitest's single-quoted it.each titles. Original false-floor receipt SHA-256
+`9b0620922112edde0a9915983d7e7d06c22ae4335e1fae5bd404b221e1a03cee` and
+actual JSON SHA-256 `fff19d6accae2e3740d32de89b99c88f056431a9c5faaabbe043d1792044ae74`
+remain immutable. Root reviewed the actual nine rows; receipt-only corrected audit
+`5150-candidate-focused.tAVIf6/corrected-audit.json`, SHA-256
+`3f1da7cc09b9f56d2fcbbcaae2f2cab36da2ef017a1cbb62bc7e6f43edbfe988`,
+requires exactly the nine frozen single-quoted titles, unique/equal sets, all passed,
+zero skips and original terminal 0. No test rerun or expectation/source change.
+
+Diagnostic-only collector SHA-256
+`ab62d56941ce2e981e24cb19875be6a648e68ae4eefecc1931e94f691f783c15`
+ran handle 94506, terminal d3aa5f exit 0. Actual maintained assembly gives **18**
+units, not 27: nine original primary assemblies (strict rerun classified
+strict-neutral by the unchanged harness) plus nine focused sources. Every unit
+compiled successfully, with binary/WAT bytes and both metadata and physical
+imports empty. Receipt `5150-candidate-collect.bxZpX8/receipt.json` SHA-256
+`a9b96a84856a4996445903b94664c7f7167d196f95ac289221a8460dbfb345f0`
+binds source/options/worker compiler hash, native input key and complete maps.
+These are diagnostic compilations, not 18 extra original verdicts or executions.
+
+Original target WAT's actual `__module_init` reads sample at lines 132433–132448,
+converts extern to any and reaches the ref.test chain including the native
+DataView window (type 303, declaration line 305), not a heritage constant true.
+The DV-typed-parameter negative has an externref parameter, actual any conversion
+and ref.test chain; its complete check body has no ref.cast, and run supplies an
+ordinary object. The focused execution observes false. No inliner override or
+constructor/helper change was needed.
+
+A separate removal pre-child failure is also retained: terminal 81e0e7 exit 1
+correctly rejected source SHA 501835... because removal had left the negative
+predicate's candidate multiline formatting rather than its literal baseline line.
+No build child/stage began. Root read the formatting-only diff; apply_patch restored
+the exact 919dc90b... preimage before the separately named successful removal
+build. The original failed log was not overwritten; no unknown live job was retried.
+
+### Publication boundary
+
+This establishes **one attributable unchanged-original gain** with eight controls
+preserved. It does not promote a full-census rate, close this 82-row wave or repair
+TypedArray subclasses, held constructor protocols, or any other residual family.
+At this checkpoint normal publication gates/hooks/commits/push/PR remain NOT_RUN.
+The later read-only upstream check resolves main to
+`27b18d375f0c446fcd5662056a35261db9881f7b`; own measured source was based on
+`fd60087e505e964b23c642bc20b3c2d7e3476c4f`. Root authorizes ordinary own-branch
+integration and normal gates only: preserve foreign IR changes, rebuild current
+artifacts, and rerun focused nine plus unchanged original nine on integrated
+source before publication. Prior four-arm receipts remain historical matched
+evidence, not a substitute for integrated-source measurement. No hook/skip/config
+bypass, installation, force push, shared cleanup or primary-checkout mutation.
+
+### Actual publication gate stop, 2026-10-05
+
+Scoped Prettier --check for the two owned TS files returned 0 (cb6484). The next
+required LOC ratchet returned **1** (6057ca):
+`src/codegen/expressions/call-namespace-static.ts: 4564 > 4550 (+14)`.
+The existing issue allowances do not cover this driver file. Publication stopped
+before staging, commit, merge, hooks or push. No allowance/baseline/gate/config
+change, helper/protocol expansion or bypass was applied. The heavy lease was
+yielded; resolution needs scoped root review. Function-growth and remaining
+normal gates are still NOT_RUN, not presumed passing from the focused results.
+
+The exact public main comparison is retained as ignored
+`.tmp/5150-preparation/integration-compare.json`, SHA-256
+`891890fffb6b12eecd60b9bfb2303995b705331a3bd9bef3259a37e5077a59f0`:
+seven commits ahead, zero behind, merge-base fd60087..., all 47 changed paths.
+Canonical IR-owner relocations, N0/Map documentation and benchmark data are
+foreign changes to preserve; none overlaps these three owned paths. This is
+read-only integration evidence, not a performed merge or current merged-source
+validation. Prepared publication steps and repository-formatted PR body are
+retained in own ignored files; no GitHub issue or PR was created at this stop.
+
+## Structural publication repair: pure isView classification, 2026-10-05
+
+Astra High plan only, requested after actual LOC gate failure6057ca.
+The measured one-function DataView-subclass repair is retained; this plan
+changes its organization, not its semantics or original-test contract.
+The implementer's read-only donor is
+`.codex-worktrees/5150-dataview-subclass-isview-sol`, branch
+`codex/5150-dataview-subclass-isview`.
+Actual candidate `src/codegen/expressions/call-namespace-static.ts` has
+4,564 lines against a 4,550-line base. There is no allowance for this file.
+No budget/configuration change or waiver is proposed.
+
+### Exact ownership and patch boundary
+
+A fresh maintained check returned CLAIMED by the existing Sol owner,
+`ttraenkler/script_plan_p1_sol`, for
+`5150:isview-subclass-static-fold`, since2026-10-04T22:17:11Z,
+read upstream/issue-assignments; exit3 is the expected positive ownership
+record, not permission for this planner to replace it.
+The same owner should implement the structural repair in the same isolated
+candidate worktree after root reads this plan and grants the exact diff.
+
+The current5317 document's authoritative scope, lines44–65, is constructor
+lookup in ta-dyn-mop/native-proto/proto-index-store. Its live fable claim is
+preserved. No constructor, class-metadata producer, TypedArray carrier, shared
+isView emitter, IR or runtime implementation is touched here.
+The proposed leaf only reads the already populated class maps and set.
+
+The bounded one-shot open-PR exact-path audit returned all16 inventories with
+the same complete file floors128/294/93/302/10/9/4/17/3/6/11/102/4/4/4/402.
+Actual positive call-namespace-static patches were read:
+5753 changes JSON-record-array and Symbol-result arms;
+5784 changes Symbol.keyFor and Reflect argument/prototype handling;
+5883 changes Promise-combinator imports and dispatch;
+6468 at pinned b19e6d6 changes Reflect function admission/define rejection.
+None changes the isView classification block or introduces the proposed leaf.
+These are disjoint hunk observations, not whole-file releases.
+Recheck if any head changes before implementation/publication; preserve every
+foreign arm and shared import. No fresh umbrella claim is authorized.
+
+### Selected extraction, with one small pure interface
+
+Add `src/codegen/expressions/arraybuffer-isview-static-decision.ts`.
+It has **zero runtime imports**. Use structural TypeScript interfaces declared
+inside that file; no import of index.ts, TypeScript, CodegenContext, emitter,
+registry, coercion or backend modules is needed.
+
+Export one function returning `boolean | undefined`: true/false mean a static
+constant, undefined means the existing runtime path. Inputs are the already
+computed `argSym`, `isAnyOrUnknown`, a structural
+`rawType: { isUnion(): boolean }`, the existing typed-array-name ReadonlySet,
+and structural read-only metadata:
+standalone; classExprNameMap; classExternrefBackedSet; classBuiltinParentMap;
+classParentMap. The maps are ReadonlyMap<string,string>, the class set is
+ReadonlySet<string>; the ordinary context is structurally assignable.
+Do not add context fields, new registrations, caches, adapters or map writes.
+
+The driver keeps these existing queries, unchanged and in order:
+getTypeAtLocation(arg0), getNonNullableType, getSymbol().name,
+getTypeAtLocation(arg0) again, and the existing Any/Unknown flag computation.
+Do not move checker work to the leaf or collapse the two queries.
+
+Inside the leaf, move the existing decision statements in their current order:
+
+1. Compute isView from argSym and the supplied typed-array set / DataView.
+2. Resolve className through the existing class-expression-name map.
+3. Compute the same direct-DataView-subclass runtime requirement:
+   standalone, a class name, externref-backed class, builtin parent DataView,
+   and immediate parent DataView. Do not broaden to indirect inheritance,
+   TypedArray subclasses, different targets or spelling-only heritage.
+4. Compute isResolvableNonView with the identical ordered short circuit:
+   not Any/Unknown, not isView, not subclass-runtime, not BigInt64Array,
+   not BigUint64Array, then not rawType.isUnion().
+   In particular, do not evaluate isUnion eagerly.
+5. Only then return true for isView or either BigInt array spelling;
+   return false for isResolvableNonView; otherwise return undefined.
+
+The static true precedence remains unchanged even for contrived combinations
+of Any/Unknown/union flags with a recognized view symbol. Preserve actual
+existing conditions, not a simplified interpretation of the comment.
+
+### Caller, LOC and graph contract
+
+Replace candidate lines956–987 (exactly32 lines) with the one pure call and
+one shared constant arm. For a defined boolean decision, the caller executes
+compileExpression(arg0) once, emits drop only if its result is non-null,
+emits i32.const(decision ? 1 : 0), and returns i32.
+The old true and false arms perform exactly those same operations.
+Use `decision !== undefined`, not truthiness, so false is a constant decision.
+
+Keep the outer namespace/name/argument-count guard, noJsHost branch and all
+checker lines intact. Keep the whole runtime fallback and host-import path
+byte-for-byte unchanged, including externref request/coercion, temporary,
+any.convert_extern, isViewRefTestInstrs, late-import shift flushing and fallback.
+The zero-argument and other argument-count behavior is not a new semantic task.
+
+A compact seven-line call/constant arm plus one import replaces32 lines:
+the source-level estimate is4,540 total lines, ten below the existing4,550
+budget. Formatting may change that number; require the actual formatted gate
+to pass before proceeding. Moving only the new14 lines is insufficient.
+No baseline, issue allowance, LOC padding/minification or unrelated cleanup.
+
+The leaf's sole incoming production edge is from the existing driver and it
+has no outgoing runtime edges, so it cannot join the driver's existing SCC.
+It is in the existing expressions subdirectory; the maintained flat-directory
+gate counts only direct src/codegen files. No new codegen-to-IR edge or raw
+checker query is introduced. Verify all three claims with the normal unchanged
+import-cycle, flat-directory and oracle ratchets, not with an exemption.
+
+### Finite verification and publication handoff
+
+Before runtime, root reviews the exact two-source-file diff plus owned tests/MD.
+Add finite pure-classifier tests covering recognized numeric views/DataView,
+both BigInt arrays, Any, Unknown, unions, undefined symbols, primitive/ordinary
+class/array/ArrayBuffer negatives, class-expression aliases, direct DataView
+subclass, non-direct parent, non-externref class and standalone=false.
+Include call-order spies for isUnion/maps: static-view/Any/subclass arms must
+not newly evaluate the union predicate. The classifier must not mutate inputs.
+
+Preserve all previously frozen original9 and focused9 sources/expectations.
+After structural correction, ordinary current bundles must be rebuilt and
+the same complete focused/original gates rerun under the root's heavy lease.
+Compare emitted runtime path/helper behavior to the measured semantic candidate.
+Retain the original four-arm baseline/candidate/removal/restored provenance;
+this extraction does not create another original gain or erase prior failures.
+
+Run normal type/format/LOC/import-cycle/flat-directory/oracle gates and normal
+publication hooks, all unskipped, without allowance changes. Stop on any
+semantic row loss, missing physical identity, helper/import change, shifted
+evaluation count or failed structural gate. The existing owner's publication
+workflow resumes only after actual terminal evidence and root acceptance.
+No source was changed, compiled or executed by this planner.
+
+## 2026-10-05 Sol structural implementation: source-only review checkpoint
+
+The exact approved 133-line Astra repair plan above was read fully, then copied
+with apply_patch. Approved append SHA-256 remains
+`45a6dde3184a1b48710c98d59da746d92bea084082dc2ee4d35b5cb6ff06422c`;
+all prior owned history through the actual LOC failure retains prefix SHA-256
+`9c0876fa3fc55c74d976d642072c7eadceb3309b5b719f3b0f500320fa959b5a`.
+The prior failure is not erased or turned into a gate pass by this preparation.
+
+New private `src/codegen/expressions/arraybuffer-isview-static-decision.ts`
+has 42 lines and zero imports, SHA-256
+`bc94fb90ebcab4ae0761c2b1406349890dffb2217d8221f15e53a6b421660470`.
+Its only exported function returns boolean or undefined from structural readonly
+metadata, existing symbol/Any-Unknown facts, a lazy structural isUnion method
+and the supplied existing typed-array-name set. It preserves the measured
+candidate's decision/read ordering and static-view priority, and never evaluates
+arguments or emits code. No context/schema/map/registry/constructor/carrier/IR
+change, runtime dependency, barrel reexport or budget allowance was introduced.
+
+The driver keeps its original checker queries and TypeFlags calculation exactly,
+then calls the leaf and shares the defined-boolean constant arm. It evaluates
+arg0 once, drops only non-null results, emits decision ? 1 : 0 and returns i32;
+false remains a defined decision. The measured source is now 4,540 newline-counted
+lines, ten below the 4,550-line original driver and 24 below the rejected semantic
+candidate. Its source SHA-256 is
+`7e7f205a01e8f0f34f6bafd41c2989a1251f30ae0e43aab72ec026da1a4bfa5a`.
+These are actual file counts, not a claimed normal ratchet result.
+
+Static capture reconstructed the prior semantic candidate and required exact
+58cf524d... SHA before comparison. Ignoring only the new import, the entire
+driver prefix through checker queries and suffix from the runtime fallback
+through host/other namespaces are byte-for-byte unchanged. This includes the
+no-arg guard and unchanged evaluator/coercion/temporary/reference-test path.
+All nine original bodies/harnesses and existing nine focused sources/expectations
+still match their old frozen bytes; focused file SHA-256 remains
+`1ca7bf1086e35eab26a3269ae831791e8b6db86aa96c6c6c166ae22a086f9de7`.
+
+New `tests/issue-5150-isview-static-decision.test.ts` has 31 finite pure controls,
+SHA-256 `2516fe751a24a5d0ef16399a674c236c90dedf6da35cc587b5aa63e74f791202`.
+They cover all nine numeric view names, DataView, both BigInt arrays, Any,
+Unknown, unions, undefined symbols, Number/ordinary class/array/ArrayBuffer
+negatives, direct subclass and class-expression alias, non-direct parent,
+non-externref class, different builtin parent and standalone=false. Contrived
+view-plus-Any/union combinations pin existing static-true precedence. Ordered
+map/set/isUnion spies assert exact lazy reads; mutation spies and before/after
+entries require no mutation. No new test is counted as a Test262 original.
+
+Scoped Prettier --check initially identified only layout in the new unit test;
+four whitespace-only apply_patch edits made all three structural files pass
+(actual 6fac1a exit 0). No existing focused source changed. Full source/test patch
+snapshot `.tmp/5150-preparation/structural-source.patch` SHA-256
+`d95ea5904464132b3b3ff5cc5ef7f48c6dc3d08b57fec107e235bc2f7eb1f13a`
+and static proof JSON are retained for root's full read. Current snapshot tests,
+type/lint/LOC/function/cycle/flat/oracle gates, rebuild/integration and publication
+are **NOT_RUN**. No staging, commit, hooks, push, PR or heavy process was started.
+The accepted prior four arms remain historical narrow attribution; this structural
+organization and latest-main integration require their own normal verification.
+
+### 2026-10-05 — structural verification and inventory stop
+
+New versioned V3 freeze retained historical V2 unchanged and includes the actual
+untracked pure leaf and classifier fixture: 2,299 input files, all 1,825 source
+files, all 16 shard entries, nine original bodies, three harnesses and 797 actual
+tool files. V3 SHA-256 is
+`86004947ac4a9cf393d532031bccdaa25380e3ec1025ff667bf2ecc91f50fa5d`.
+The ignored freeze collector's first attempt failed because the installed
+`typescript7` alias package identifies itself as `typescript`; explicit package
+JSON resolution corrected that instrument-only error. No dependency/configuration
+or source change was made to resolve it.
+
+Finite canonical Node24/1024 verification handle 95904 reached true terminal
+exit 1 (64be77), stopping at the first actual failed gate. The 31 pure classifier
+assertions and nine unchanged focused assertions all passed: 40 unique identities,
+zero skipped/pending, Vitest exit 0. Actual Vitest JSON SHA-256 is
+`dc0a426c7a1ba95a851b05410b373c1e54b1e34b750e3fd90cb337881df86d22`.
+Normal LOC, function, oracle, import-cycle and flat-directory gates each exited 0.
+All frozen source, corpus, native-artifact and tool bytes remained unchanged
+through each completed boundary. These fixture assertions are not additional
+Test262 originals or a full-census result.
+
+The maintained compiler-boundary inventory exited 1 with exactly
+`unclassified-module` and `unclassified-target` for the new private leaf.
+Its exhaustive per-file policy does not yet contain that path. Full actual gate
+log SHA-256 is
+`b766eee90bcb1aca3de0d177d5a44273bf69b3e44bd31918c70aa3904683ab09`;
+finite-chain receipt SHA-256 is
+`503078ecdd5fde4fca80b90ea5c357f8414d209843538709a2cc406a72527cbf`,
+under `.tmp/5150-structural-verification.KCxx3V/`.
+This is an actual inventory failure, not waived or converted to a pass by the
+leaf's zero imports. The policy is outside the five-path source grant; no policy
+entry, allowance, layer activation or foreign classification was edited.
+Lint/type/issues, staging, commit, integration, push and PR creation did not run
+after the failure. Publication remains stopped pending the narrow owned policy
+classification decision; prior four-arm attribution remains historical.
+
+### 2026-10-05 — exact new-leaf inventory bookkeeping
+
+Root approved the fully read 73-line Astra inventory appendix (planner MD lines
+1090–1162) and extended ownership to exactly one additional policy path. Added
+one files[] record for the private classifier: state unmigrated, existing layer
+mixed-needs-split, existing destination backend-wasmgc, architectural owner
+3518-coordinator, and nextBoundary "Separate legacy class-metadata static
+decisions from frontend classification and backend lowering." No layer activation,
+allowed edge, existing classification, threshold, allowance or checker changed.
+Purity is not claimed as completed architectural migration or conformance gain.
+
+Actual parsed comparison required every previous record and all other policy
+fields to equal HEAD exactly: 1,822 old records retained, one new record only.
+Ledger SHA-256 is
+`b417bbca9ba3ca633cf5d47e6638f2e83af6cdff92668799681b4d39eb693fab`;
+proof is `.tmp/5150-preparation/ledger-one-entry-proof.json` (21d762 exit 0).
+No assignment absence is inferred from the planner's fresh DNS-UNKNOWN reads;
+the existing architectural owner and execution leaf remain preserved. Historical
+V3 failure/source freeze is retained. Remaining normal gates, integration and
+publication will use a new versioned snapshot and actual outcomes.
+
+### 2026-10-05 — pre-integration normal gate completion
+
+V4 ledger snapshot SHA-256
+`b423576b0c7b62f3117c400e521fde3cf9ade2f7862c87f5299da0c6c0065a65`
+retains all 2,299 source/build inputs and 797 actual tool files. Canonical
+Node24/1024 remaining-gate handle 93018 reached true terminal exit 0 (e733e0):
+inventory, full normal lint, TypeScript7 typecheck and issue index/retirement
+gates each passed. Inventory honestly reports valid inventory but incomplete
+architecture; all old records remain architectural debt where previously so.
+Full actual logs and receipt are retained under
+`.tmp/5150-remaining-gates.6aYGfO/`, with inventory log SHA-256
+`17c49153195533b59e5d0a5d6e9506745af19867ff9191c1eb83c1f85a47fe27`.
+Every frozen input/tool/corpus/native byte remained unchanged through the chain.
+Together with the preceding five successful ratchets and 31+9 fixtures, the
+pre-integration structural snapshot passes the finite checks. The historical
+failed inventory and LOC receipts remain recorded; no waiver was used.
+
+Thomas author configuration was verified unchanged before publication steps.
+Only the six owned paths will be staged. Full normal commit/pre-push hooks and
+latest-main integration followed by new bundles/provider/canaries and original9,
+focused9/classifier31 remain pending; no publication success is asserted here.
+
+### 2026-10-05 — integrated source and final finite validation
+
+Candidate commit `cd5bd0f492a06a340da650efa1db0f257431426c` completed normal
+unskipped hooks (handle 25129, true terminal 36ccd2 exit 0). Author/committer are
+Thomas Tränkler; Codex coauthor and actual GPT-6.1 Sol High attribution are present.
+Lint-staged formatting/lint, LOC/function gates, both changed-root fixtures
+(nine plus 31 assertions) and oracle gate passed; all six staged images stayed
+byte-identical. Terminal log SHA-256 is
+`a0d87fe7ab4738ebbb088f4faba8ddebf7077594dd53706d36264eb440fd9e34`.
+
+Normal fetch followed by conflict-free normal merge preserved current upstream
+main `27b18d375f0c446fcd5662056a35261db9881f7b`, including IR analysis relocation
+and exact policy changes. Integrated HEAD is
+`8c69820fa251c64130913e859e087ffb2bb56763`. Actual parsed policy equals upstream
+except the one approved new debt record; the other five owned file images equal
+the candidate commit exactly. Branch diff against main contains only six owned
+paths. No primary checkout, foreign protocol, layer activation or IR source was
+edited by this implementation.
+
+New V5 freeze includes all 1,827 actual source files and 2,301 total inputs,
+797 tools, unchanged original9/harness3/focused9/classifier31 contracts. SHA-256
+`12d900baf399613c33edbf25050896002c7c9510dd2382a500974e5b7c661da7`
+is distinct from retained V2/V3/V4 historical freezes. Ordinary maintained bundle
+commands and provider/canary build plus require-cache verification completed all
+four commands at exit 0 (61008, true terminal 943952). The three pinned native
+artifact bytes were copied only into a fresh exclusive own staging directory;
+all donor bytes and all source/tool bytes stayed unchanged. Fresh compiler key
+`271f317460104faa`, native key `04a9abfac8350642`, adapter key `f36ed7826c560624`
+were verified by normal adapter MISS/build/canaries and subsequent required HIT.
+No key override, metadata edit, install, provider fallback or skipped gate occurred.
+Actual bundles are SHA-256
+`7d936f304fb7b530ebaeb20f7b1f52be4da2c36a7cb0fd67e1113db7f8c02ce3`
+and `cedd07a11f29e25314a0c33459d0c95794af614dc2b192f27b7b8a397b314e91`.
+Actual native/adapter bytes retain 95333826... / fa105724... hashes; actual
+imports/exports and full provenance/tool receipts are in
+`.tmp/5150-integrated-build.6BFkXb/postflight.json`, SHA-256
+`158262f9fbee3e300e9a9ff0937c7249702e6cb725427f4d16e141e46360a798`.
+
+Integrated authoritative nine-original run (91090, true terminal 836a31 exit 0)
+passed all nine physical identities: target and all eight positive controls.
+Every row has honest oracle14/auto, default both-strict policy and reached_test;
+all 16 durable shard completions account for nine registered/settled callbacks,
+zero exclusions/skips and completeness exit 0. The approved passWithNoTests flag
+only permits empty shards; positive nine-row and 16-completion floors still gate.
+All 2,301 inputs, tools, corpus and six artifact hashes remained unchanged.
+Full raw rows/maps are retained in `.tmp/5150-integrated-originals.iUuHXd/`,
+receipt SHA-256
+`1d5bccc3a68d97cfbe82947dea84c26af9bae5740c57d5ede1808a2ad1322bac`.
+
+Integrated classifier31/focused9 and all nine normal gates completed exit 0
+(36726, true terminal 50e06a): LOC, function, oracle, import cycles, flat directory,
+compiler inventory, full lint, TypeScript7 and issues/retirement. Forty unique
+assertions passed, zero pending/skipped. Every source/tool/artifact byte stayed
+pinned through every boundary. Actual Vitest JSON SHA-256 is
+`5d9dbb80dc446c23181c648eaeb43e76da613f5b3fa8716a30f4ffc1182c5d7f`;
+full finite-chain receipt under `.tmp/5150-integrated-verification.rx39WO/` is
+`85269e53d52b465768a14a8243f8874c6eea093e1df55c5a0168a3965ec9daa9`.
+
+The prior baseline/candidate/removal/restored attribution remains one original
+gain, not another gain for structural extraction or policy bookkeeping. No new
+full census, rate, buffers-wave completion or held constructor/TypedArray/helper
+protocol result is claimed. Historical LOC/inventory, quoted-title instrument
+failure and pre-child restoration-format failure remain intact. This checkpoint
+is documentation-only after final semantic validation. Normal final commit and
+pre-push/public PR outcomes remain pending until their actual terminal receipts.

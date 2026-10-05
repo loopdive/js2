@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11476,
-    "fail": 214,
+    "pass": 11477,
+    "fail": 213,
     "ce": 14,
     "skip": 0,
     "total": 11704,
@@ -138,8 +138,8 @@
       },
       {
         "name": "class",
-        "pass": 394,
-        "fail": 11,
+        "pass": 395,
+        "fail": 10,
         "ce": 5,
         "skip": 0,
         "total": 410,
@@ -300,12 +300,12 @@
       },
       {
         "name": "DataView",
-        "pass": 33,
-        "fail": 1,
+        "pass": 34,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 34,
-        "pct": 97
+        "pct": 100
       },
       {
         "name": "Symbol.search",
@@ -3571,21 +3571,21 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4599,
+    "pass": 4598,
     "fail": 188,
-    "ce": 134,
+    "ce": 135,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4496,
+        "pass": 4495,
         "fail": 107,
-        "ce": 8,
+        "ce": 9,
         "skip": 0,
         "total": 4611,
-        "pct": 98
+        "pct": 97
       },
       {
         "name": "Symbol",
@@ -4305,8 +4305,8 @@
   {
     "edition": "Unclassified (untagged)",
     "pass": 4648,
-    "fail": 729,
-    "ce": 68,
+    "fail": 728,
+    "ce": 69,
     "skip": 0,
     "total": 5445,
     "pct": 85

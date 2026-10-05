@@ -24079,6 +24079,176 @@
           "standalone": {}
         }
       }
+    },
+    {
+      "generatedAt": "2026-10-04T22:12:08.246Z",
+      "sourceRevision": "d74d5d4d6d09deb4cced24318cf209c53539d2e0",
+      "optimizationLevels": {
+        "js-host": 4,
+        "js-host-native": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "uuid": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.10231250071048249
+          },
+          "standalone": {
+            "static": 0.22733587339066105,
+            "dynamic": 0.24611085163788732
+          }
+        },
+        "acorn": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.0022219892345287868
+          },
+          "standalone": {
+            "static": 100568.08295498353,
+            "dynamic": 0.0973621367855081
+          }
+        },
+        "cookie": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.0026183410062174694
+          },
+          "standalone": {
+            "static": 519.3522226864101,
+            "dynamic": 0.1136563471590736
+          }
+        },
+        "react": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.039942653532611144
+          },
+          "standalone": {
+            "static": 0.3787621849843826,
+            "dynamic": 0.008062597862628728
+          }
+        },
+        "prettier": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.06233315593684145
+          },
+          "standalone": {}
+        },
+        "clsx": {
+          "jsHostNative": {
+            "dynamic": 0.028700521951314315
+          },
+          "jsHost": {
+            "dynamic": 0.09284544230607548
+          },
+          "standalone": {
+            "static": 11.88360986842857,
+            "dynamic": 0.14996254242457435
+          }
+        },
+        "marked": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.007374661348204158
+          },
+          "standalone": {
+            "static": 0.0069997854410287505,
+            "dynamic": 0.005271760972036833
+          }
+        },
+        "hono": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.0051556466741547865
+          },
+          "standalone": {
+            "static": 0.12961272043810615,
+            "dynamic": 0.14817857638897142
+          }
+        },
+        "lodash-es": {
+          "jsHostNative": {},
+          "jsHost": {},
+          "standalone": {
+            "static": 0.025222904601825875,
+            "dynamic": 0.026009109202413665
+          }
+        },
+        "redux": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.0022819404332897015
+          },
+          "standalone": {
+            "static": 0.05321326767508242,
+            "dynamic": 0.05970491315313802
+          }
+        },
+        "moment": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.0072358166930765805
+          },
+          "standalone": {
+            "static": 0.0007435894714581231,
+            "dynamic": 0.0006454594020251394
+          }
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-10-04T22:52:51.688Z",
+      "sourceRevision": "fd60087e505e964b23c642bc20b3c2d7e3476c4f",
+      "optimizationLevels": {
+        "js-host": 4,
+        "js-host-native": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "react-dom": {
+          "jsHostNative": {},
+          "jsHost": {},
+          "standalone": {
+            "static": 0.37876317664859976,
+            "dynamic": 0.007934015716382565
+          }
+        },
+        "lit": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.0090373469539073
+          },
+          "standalone": {}
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-10-04T23:24:42.393Z",
+      "sourceRevision": "719dfc865ad051facd01f2ebf41626598db9fabd",
+      "optimizationLevels": {
+        "js-host": 4,
+        "js-host-native": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "react-dom": {
+          "jsHostNative": {},
+          "jsHost": {},
+          "standalone": {
+            "static": 0.3778849811599895,
+            "dynamic": 0.008156477697047578
+          }
+        },
+        "lit": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.008101140518867869
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }

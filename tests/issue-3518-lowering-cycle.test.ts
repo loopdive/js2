@@ -194,12 +194,13 @@ describe("lowering cycle separation", () => {
 
   it("resolves the real transitive value graph without a wrapper/emitter/facade cycle", () => {
     const graph = valueClosure();
-    // Exact live graph at e473d924 plus the nested analysis owner.
+    // Exact 549b value graph plus the frozen D1 legality analysis owner.
     // Compatibility forwards preserve identities; pin every edge occurrence.
     expect(graph.modules).toEqual([
       "src/backend/wasmgc/lowering/dynamic-scratch.ts",
       "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
       "src/backend/wasmgc/lowering/wasm-math-minmax.ts",
+      "src/ir/analysis/backend-legality.ts",
       "src/ir/analysis/effects.ts",
       "src/ir/analysis/nested-stackification.ts",
       "src/ir/backend/legality.ts",
@@ -231,17 +232,18 @@ describe("lowering cycle separation", () => {
     ]);
     expect(graph.edges).toEqual([
       "src/ir/lower-generic.ts -> src/ir/backend/legality.ts",
-      "src/ir/backend/legality.ts -> src/ir/nodes.ts",
-      "src/ir/nodes.ts -> src/ir/core/types.ts",
+      "src/ir/backend/legality.ts -> src/ir/analysis/backend-legality.ts",
+      "src/ir/analysis/backend-legality.ts -> src/ir/core/types.ts",
       "src/ir/core/types.ts -> src/ir/core/tag-refinement.ts",
       "src/ir/core/types.ts -> src/ir/core/binding-key-primitives.ts",
-      "src/ir/nodes.ts -> src/ir/core/nodes.ts",
-      "src/ir/core/nodes.ts -> src/ir/core/types.ts",
       "src/ir/lower-generic.ts -> src/ir/backend/wasm-int32-coercion.ts",
       "src/ir/backend/wasm-int32-coercion.ts -> src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
       "src/ir/lower-generic.ts -> src/ir/backend/wasm-math-minmax.ts",
       "src/ir/backend/wasm-math-minmax.ts -> src/backend/wasmgc/lowering/wasm-math-minmax.ts",
       "src/ir/lower-generic.ts -> src/ir/nodes.ts",
+      "src/ir/nodes.ts -> src/ir/core/types.ts",
+      "src/ir/nodes.ts -> src/ir/core/nodes.ts",
+      "src/ir/core/nodes.ts -> src/ir/core/types.ts",
       "src/ir/lower-generic.ts -> src/ir/effects.ts",
       "src/ir/effects.ts -> src/ir/analysis/effects.ts",
       "src/ir/lower-generic.ts -> src/ir/js-tag-domain.ts",

@@ -38,6 +38,7 @@ import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.
 import { rollbackSpeculative, snapshotSpeculative } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { isViewRefTestInstrs } from "../dataview-native.js";
+import { arrayBufferIsViewStaticDecision } from "./arraybuffer-isview-static-decision.js";
 import { ensureReflectIsConstructor } from "../reflect-construct-native.js";
 import { GLOBAL_NON_CONSTRUCTOR_FUNCTION_NAMES, resolvesToAmbientGlobal } from "./non-constructable.js"; // (#5158)
 import { emitNativeReflectNonObjectGuard, emitNativeReflectTargetGuard } from "../reflect-target-guard.js";
@@ -953,22 +954,11 @@ export function compileNamespaceStaticCall(
       const argSym = argTs.getSymbol()?.name;
       const rawTs = ctx.checker.getTypeAtLocation(arg0);
       const isAnyOrUnknown = (rawTs.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-      const isView = argSym !== undefined && (TYPED_ARRAY_NAMES.has(argSym) || argSym === "DataView");
-      // A non-view whose static type is resolvable: ArrayBuffer itself, a
-      // primitive, null/undefined, a plain array, a class/object — all `false`.
-      const isResolvableNonView =
-        !isAnyOrUnknown && !isView && argSym !== "BigInt64Array" && argSym !== "BigUint64Array" && !rawTs.isUnion();
-      if (isView || argSym === "BigInt64Array" || argSym === "BigUint64Array") {
-        // Static `true`. Still evaluate the (possibly side-effecting) arg, drop it.
+      const decision = arrayBufferIsViewStaticDecision(ctx, argSym, isAnyOrUnknown, rawTs, TYPED_ARRAY_NAMES);
+      if (decision !== undefined) {
         const at = compileExpression(ctx, fctx, arg0);
         if (at !== null) fctx.body.push({ op: "drop" });
-        fctx.body.push({ op: "i32.const", value: 1 });
-        return { kind: "i32" };
-      }
-      if (isResolvableNonView) {
-        const at = compileExpression(ctx, fctx, arg0);
-        if (at !== null) fctx.body.push({ op: "drop" });
-        fctx.body.push({ op: "i32.const", value: 0 });
+        fctx.body.push({ op: "i32.const", value: decision ? 1 : 0 });
         return { kind: "i32" };
       }
       // Runtime fallback for `any`/union/unresolved receivers: ref.test the

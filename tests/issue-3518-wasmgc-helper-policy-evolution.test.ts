@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  captureLoweringAnalysisPredecessorPolicySource,
   captureWasmGcHelperPredecessorPolicy,
   captureWasmGcHelperPredecessorPolicySource,
   captureProgramValidatorPredecessorPolicy,
@@ -1061,7 +1062,10 @@ const helperPath = "tests/helpers/ir-runtime-program-policy-evolution.ts";
 const receiptSha256 = "8e241366cd828fa0511dd399fbe127213808c8872dbd97ee536d89544de30b8b";
 const sha = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 const blob = (value: Buffer) => createHash("sha1").update(`blob ${value.length}\0`).update(value).digest("hex");
-const raw = () => readFileSync(new URL("../scripts/compiler-boundaries.json", import.meta.url), "utf8");
+const raw = () =>
+  captureLoweringAnalysisPredecessorPolicySource(
+    readFileSync(new URL("../scripts/compiler-boundaries.json", import.meta.url), "utf8"),
+  );
 const policy = () => JSON.parse(raw()) as Policy;
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const physical = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
@@ -1590,9 +1594,10 @@ describe("fixed three WasmGC helper owners policy predecessor capture", () => {
     "semantic rejects %s before missing receipt with valid ENOENT witness",
     (_name, make, diagnostic) => {
       const good = raw();
+      const bad = make();
       withAuthorityFault(receiptPath, "missing", () => {
         expectMissingAuthority(() => captureWasmGcHelperPredecessorPolicy(JSON.parse(good)), receiptPath);
-        expect(() => captureWasmGcHelperPredecessorPolicy(make())).toThrow(diagnostic);
+        expect(() => captureWasmGcHelperPredecessorPolicy(bad)).toThrow(diagnostic);
       });
       expect(() => captureWasmGcHelperPredecessorPolicy(policy())).not.toThrow();
     },

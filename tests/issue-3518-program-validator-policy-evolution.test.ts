@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { captureWasmGcHelperPredecessorPolicySource } from "./helpers/ir-runtime-program-policy-evolution.js";
+import {
+  captureLoweringAnalysisPredecessorPolicySource,
+  captureWasmGcHelperPredecessorPolicySource,
+} from "./helpers/ir-runtime-program-policy-evolution.js";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -700,7 +703,9 @@ const receiptSha256 = "e16eae0411ed069a37bb8e8073004e5ac2a31cecd9d3d983fe9080a31
 const sha = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 const raw = () =>
   captureWasmGcHelperPredecessorPolicySource(
-    readFileSync(new URL("../scripts/compiler-boundaries.json", import.meta.url), "utf8"),
+    captureLoweringAnalysisPredecessorPolicySource(
+      readFileSync(new URL("../scripts/compiler-boundaries.json", import.meta.url), "utf8"),
+    ),
   );
 const policy = () => JSON.parse(raw()) as Policy;
 afterEach(async () => {

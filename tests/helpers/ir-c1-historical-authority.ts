@@ -511,18 +511,27 @@ const predecessorClosureInputs = [
     },
   },
 ] as const;
-// Fixed current epoch differs only at the audited instructions input.
+// Fixed current epoch binds the audited instructions input and exact layout-declaration successor.
 const closureInputs = predecessorClosureInputs.map((entry) =>
-  entry.path === "src/wasm/model/instructions.ts"
+  entry.path === "src/ir/analysis/linear-memory-plan.ts"
     ? {
         path: entry.path,
         pin: {
-          bytes: 15135,
-          sha256: "8c4c9a27c00e57caafe29e64f465b49b6ab13d77744d9d071b80609bb65d4360",
-          gitBlob: "d3c10d8a8e4c1ecd45d2a7c13e372daa8ae378d0",
+          bytes: 49040,
+          sha256: "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",
+          gitBlob: "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",
         },
       }
-    : entry,
+    : entry.path === "src/wasm/model/instructions.ts"
+      ? {
+          path: entry.path,
+          pin: {
+            bytes: 15135,
+            sha256: "8c4c9a27c00e57caafe29e64f465b49b6ab13d77744d9d071b80609bb65d4360",
+            gitBlob: "d3c10d8a8e4c1ecd45d2a7c13e372daa8ae378d0",
+          },
+        }
+      : entry,
 );
 const linearDeclarationPin = {
   bytes: 1633,

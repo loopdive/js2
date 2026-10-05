@@ -1061,7 +1061,7 @@
         "language/expressions/new",
         "language/expressions/new.target"
       ],
-      "passCount": 440,
+      "passCount": 441,
       "totalCount": 461
     },
     {
@@ -1092,7 +1092,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 1088,
+      "passCount": 1089,
       "totalCount": 1106
     },
     {
@@ -1564,12 +1564,12 @@
     {
       "name": "Temporal",
       "testCategories": ["built-ins/Temporal"],
-      "passCount": 4493,
+      "passCount": 4492,
       "totalCount": 4603,
       "editionSpread": [
         {
           "edition": "ES2026",
-          "pass": 4493,
+          "pass": 4492,
           "total": 4603
         }
       ]

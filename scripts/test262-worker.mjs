@@ -33,6 +33,7 @@ import { hasPinnedEntryValueSelfImport, hasPinnedNamespaceSelfModuleImport } fro
 // behaviour is unchanged — these bodies moved here verbatim; it is the LOCAL
 // runner that was missing the tryNativeExnRender step.
 import { safeStringifyThrown, tryNativeExnRender } from "./lib/wasm-exn-render.mjs";
+import { startNativeEvalBoundaryObservation, NATIVE_EVAL_OBSERVATION_FIELD } from "./lib/native-eval-boundary-observation.mjs";
 import { SANDBOX_GLOBAL_NAMES, applySandboxGlobalFunctionAttributes } from "./test262-sandbox-globals.mjs";
 import {
   restoreOwnKeyOrder,
@@ -1758,17 +1759,36 @@ async function doCompile(
  * import the one implementation in scripts/lib/wasm-exn-render.mjs.
  */
 
-function extractWasmExceptionMessage(err, instance) {
+let currentNativeEvalBoundaryObservation = null;
+
+function extractWasmExceptionMessage(err, instance, observation = currentNativeEvalBoundaryObservation?.reader("negative-match")) {
+  observation?.("consumer-instance", Boolean(instance));
   if (err instanceof WebAssembly.Exception) {
+    observation?.("exception-kind", "wasm");
     let payload = null;
     if (instance) {
+      let extractionStage = "tag-read";
       try {
-        const tag = instance.exports.__exn_tag ?? instance.exports.__tag;
-        if (tag) payload = err.getArg(tag, 0);
-      } catch {}
+        const exnTag = instance.exports.__exn_tag;
+        const tag = exnTag ?? instance.exports.__tag;
+        observation?.("consumer-tag", tag ? (exnTag != null ? "__exn_tag" : "__tag") : "no-tag");
+        if (tag) {
+          extractionStage = "getArg";
+          payload = err.getArg(tag, 0);
+          observation?.("extraction", "success");
+          observation?.("payload-category", payload === null ? "null" : typeof payload);
+        }
+      } catch {
+        observation?.("extraction", extractionStage === "getArg" ? "failed" : "tag-read-failed");
+      }
+    } else {
+      observation?.("consumer-tag", "no-instance");
     }
     if (payload instanceof Error) {
-      return payload.message ?? safeStringifyThrown(payload);
+      const text = payload.message ?? safeStringifyThrown(payload);
+      observation?.("text-route", "payload-Error");
+      observation?.("reader-text", text);
+      return text;
     }
     if (payload != null) {
       // (#2962) A host-opaque GC payload renders through the module's own
@@ -1777,27 +1797,50 @@ function extractWasmExceptionMessage(err, instance) {
       const t = typeof payload;
       if (t === "object" || t === "function") {
         const native = tryNativeExnRender(instance, payload);
+        observation?.("consumer-native", native);
         // (#6723 D4) The consumer renders a PROVIDER-minted `Test262Error`
         // (a provider fnctor instance) as the generic "[object Object]": its
         // `toString` lives on the provider's prototype. Treat that answer as
         // "not mine" when a linked peer can do better.
-        if (native != null && (native !== "[object Object]" || currentLinkedPeers.length === 0)) return native;
+        if (native != null && (native !== "[object Object]" || currentLinkedPeers.length === 0)) {
+          observation?.("text-route", "consumer-native");
+          observation?.("reader-text", native);
+          return native;
+        }
         // (#6723) A STANDALONE linked row: the payload may be minted by the
         // harness provider (a `Test262Error` thrown by `assert.*`), whose GC
         // layout only the provider's own `__exn_render_*` exports can read.
         let generic = native;
+        let peerOrdinal = 0;
         for (const peer of currentLinkedPeers) {
           const viaPeer = tryNativeExnRender({ exports: peer }, payload);
-          if (viaPeer != null && viaPeer !== "[object Object]") return viaPeer;
+          observation?.("linked-peer-ordinal", ++peerOrdinal);
+          observation?.("linked-peer-native", viaPeer);
+          if (viaPeer != null && viaPeer !== "[object Object]") {
+            observation?.("text-route", "linked-peer-native");
+            observation?.("reader-text", viaPeer);
+            return viaPeer;
+          }
           generic ??= viaPeer;
         }
-        if (generic != null) return generic;
+        if (generic != null) {
+          observation?.("text-route", "generic-native");
+          observation?.("reader-text", generic);
+          return generic;
+        }
       }
-      return safeStringifyThrown(payload);
+      const text = safeStringifyThrown(payload);
+      observation?.("text-route", "payload-safe-stringification");
+      observation?.("reader-text", text);
+      return text;
     }
-    return instance ? "TypeError (null/undefined access)" : "wasm exception during module init";
+    const text = instance ? "TypeError (null/undefined access)" : "wasm exception during module init";
+    observation?.("text-route", "wasm-nullish-label");
+    observation?.("reader-text", text);
+    return text;
   }
   if (err instanceof Error) {
+    observation?.("exception-kind", "host-Error");
     let info = err.message ?? String(err);
     const stack = err.stack ?? "";
     if (/illegal cast|null|unreachable|out of bounds/.test(info)) {
@@ -1820,9 +1863,15 @@ function extractWasmExceptionMessage(err, instance) {
         info += "]";
       }
     }
+    observation?.("text-route", "host-Error");
+    observation?.("reader-text", info);
     return info;
   }
-  return safeStringifyThrown(err);
+  observation?.("exception-kind", "non-wasm");
+  const text = safeStringifyThrown(err);
+  observation?.("text-route", "non-wasm-fallback");
+  observation?.("reader-text", text);
+  return text;
 }
 
 /**
@@ -2066,6 +2115,7 @@ async function buildInvalidBinaryError(source, sourceMapUrl, result, target) {
 }
 
 process.on("message", async (msg) => {
+  currentNativeEvalBoundaryObservation = startNativeEvalBoundaryObservation(msg.source);
   runtimeIntrinsicCanarySnapshot = null;
   currentLinkedFallback = false;
   currentLinkedFallbackReason = undefined;
@@ -2503,7 +2553,7 @@ process.on("message", async (msg) => {
       sendResult({
         id,
         status: "fail",
-        error: extractWasmExceptionMessage(err, null),
+        error: extractWasmExceptionMessage(err, null, currentNativeEvalBoundaryObservation?.reader("instantiate")),
         isException: true,
         instantiateError: true,
         compileMs,
@@ -2545,7 +2595,7 @@ process.on("message", async (msg) => {
         sendResult({
           id,
           status: "fail",
-          error: extractWasmExceptionMessage(initErr, instance),
+          error: extractWasmExceptionMessage(initErr, instance, currentNativeEvalBoundaryObservation?.reader("deferred-module-init")),
           isException: true,
           compileMs,
           execMs,
@@ -2613,7 +2663,7 @@ process.on("message", async (msg) => {
           // "not observed", so it re-buckets as an honest failure.
           const noMarkerError =
             standaloneDrainError != null
-              ? `async continuation threw before completion: ${extractWasmExceptionMessage(standaloneDrainError, instance)}`
+              ? `async continuation threw before completion: ${extractWasmExceptionMessage(standaloneDrainError, instance, currentNativeEvalBoundaryObservation?.reader("async-drain"))}`
               : "async completion marker not observed";
           sendResult({
             id,
@@ -2756,7 +2806,7 @@ process.on("message", async (msg) => {
         return;
       }
 
-      let errInfo = extractWasmExceptionMessage(execErr, instance);
+      let errInfo = extractWasmExceptionMessage(execErr, instance, currentNativeEvalBoundaryObservation?.reader("exported-test"));
 
       // Annotate with source location via source map
       const byteOffset = extractWasmByteOffset(execErr);
@@ -2791,7 +2841,7 @@ process.on("message", async (msg) => {
       sendResult({
         id,
         status: "fail",
-        error: extractWasmExceptionMessage(outerErr, instance ?? null),
+        error: extractWasmExceptionMessage(outerErr, instance ?? null, currentNativeEvalBoundaryObservation?.reader("outer-wasm")),
         isException: true,
         compileMs,
         execMs: performance.now() - execStart,
@@ -3286,6 +3336,9 @@ function noteLinkedFallback(reason) {
 }
 
 function sendResult(payload, forceRecycleReason) {
+  const observation = currentNativeEvalBoundaryObservation?.snapshot();
+  currentNativeEvalBoundaryObservation = null;
+  if (observation) payload = { ...payload, [NATIVE_EVAL_OBSERVATION_FIELD]: observation };
   if (currentLinkedFallback && payload && typeof payload === "object")
     payload = { ...payload, linkedFallback: true, linkedFallbackReason: currentLinkedFallbackReason };
   const cleanup = postCompileCleanup();

@@ -1,0 +1,2842 @@
+{
+  "schema": "ir-lowering-analysis-relocation-v1",
+  "sourceBase": "549b476e6a3ce6bfdb1a27a55bac6511a902a783",
+  "sourceFreezeSha256": "144faf79398186b8392607a97d90ff351d6e5b3fe803396d2ad50682d30b5afe",
+  "sourceInputs": [
+    {
+      "path": "src/ir/analysis/linear-memory-plan.ts",
+      "bytes": 49040,
+      "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",
+      "gitBlob": "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",
+      "mode": 420
+    },
+    {
+      "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+      "bytes": 4670,
+      "sha256": "dba3ca2121063a52b0ae1130f48c0acc70e0f819a9e665a2a2744572eddfae72",
+      "gitBlob": "cac9d1e33659380a6ee8d8e03014af53e1123533",
+      "mode": 420
+    },
+    {
+      "path": "src/ir/backend/legality.ts",
+      "bytes": 5833,
+      "sha256": "5b67993fe312a0f5a52f9ef816c76a10cd32470f7e2a53819dec736764f45878",
+      "gitBlob": "c38edb2f3d1350b0ea23f887c9349ac768d48afa",
+      "mode": 420
+    },
+    {
+      "path": "src/ir/analysis/backend-legality.ts",
+      "bytes": 21362,
+      "sha256": "e6bdc35fbf47fc26581c24cbecb08f27a4d590a7006d005031b6a309db26b506",
+      "gitBlob": "34a1399bdd963163f2155f0de0933d085dbc4f25",
+      "mode": 420
+    }
+  ],
+  "pairs": [
+    {
+      "name": "linear-layout",
+      "donorPath": "src/ir/analysis/linear-memory-plan.ts",
+      "beforePin": {
+        "path": "src/ir/analysis/linear-memory-plan.ts",
+        "bytes": 52704,
+        "sha256": "382cb4acee2de86904da1c0162ecc8b9de4250f9f9cb49dcba57b1a056c1cc3c",
+        "gitBlob": "ae6f9ab03e01c80622e56a69c5b05c6826366d69"
+      },
+      "currentPaths": ["src/ir/analysis/linear-memory-plan.ts", "src/ir/analysis/contracts/linear-memory-layout.ts"],
+      "inverse": {
+        "label": "planner",
+        "beforePin": {
+          "bytes": 52704,
+          "sha256": "382cb4acee2de86904da1c0162ecc8b9de4250f9f9cb49dcba57b1a056c1cc3c"
+        },
+        "beforeDerivedFromActualCurrent": true,
+        "completeCoverage": true,
+        "pieces": [
+          {
+            "kind": "literal-import",
+            "beforeOffset": 0,
+            "text": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n//\n// Target-neutral linear-memory planning (#3298).\n//\n// This module is the middle-end authority for allocation class, record/vector/\n// string layout, pointer maps, lifetime, roots, safepoints, barriers, and\n// relocatable static-storage requirements. It deliberately contains no Wasm\n// instructions or module indices, Porffor representation values, renderer\n// records, concrete runtime symbol names, or artifact fragments.\n\nimport {\n  ALLOC_NAMESPACES,\n  type AllocRegistrySnapshot,\n  type AllocSite,\n  type AllocSiteRegistry,\n} from \"../alloc-registry.js\";"
+          },
+          {
+            "kind": "literal-import",
+            "beforeOffset": 647,
+            "text": "\nimport {\n  forEachInstrDeep,\n  type AllocKind,\n  type AllocSiteId,\n  type IrClassShape,\n  type IrFunction,\n  type IrInstr,\n  type IrModule,\n  type IrObjectShape,\n  type IrSiteId,\n  type IrType,\n  type IrValueId,\n} from \"../nodes.js\";"
+          },
+          {
+            "kind": "literal-import",
+            "beforeOffset": 881,
+            "text": "\nimport { analyzeEncoding, type Encoding } from \"./encoding.js\";"
+          },
+          {
+            "kind": "literal-import",
+            "beforeOffset": 945,
+            "text": "\nimport { analyzeEscape, type EscapeClass, type EscapeInfo } from \"./escape.js\";"
+          },
+          {
+            "kind": "literal-import",
+            "beforeOffset": 1025,
+            "text": "\nimport type { Ownership } from \"./lattice.js\";"
+          },
+          {
+            "kind": "literal-import",
+            "beforeOffset": 1072,
+            "text": "\nimport { analyzeOwnership } from \"./ownership.js\";"
+          },
+          {
+            "kind": "literal-import",
+            "beforeOffset": 1123,
+            "text": "\nimport { findStackAllocCandidates } from \"./stack-alloc.js\";"
+          },
+          {
+            "kind": "literal-import",
+            "beforeOffset": 1184,
+            "text": "\nimport { irFnctorShapeKey } from \"../type-key.js\";"
+          },
+          {
+            "kind": "retained",
+            "name": "LINEAR_POINTER_BYTES",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 1929,
+            "length": 118,
+            "sourceSha256": "622039808e61d653ba1e3fc1abf57fc47dcd72499b4fa9643787b67f61ae1edb",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 1235
+          },
+          {
+            "kind": "retained",
+            "name": "LINEAR_STACK_ARENA_BYTES",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2048,
+            "length": 50,
+            "sourceSha256": "74897c6f6dd9e75a552c17abb5b1e7b636fd8dece1f260a7e0ee3c2b2db9e8f6",
+            "leading": "\n",
+            "reverseModifier": null,
+            "beforeOffset": 1355
+          },
+          {
+            "kind": "retained",
+            "name": "LINEAR_RECORD_ALIGNMENT",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2099,
+            "length": 41,
+            "sourceSha256": "9f123b55def62919bc9d841a86d49b8d6487f9f916b3a2d9a266603614782ab0",
+            "leading": "\n",
+            "reverseModifier": null,
+            "beforeOffset": 1406
+          },
+          {
+            "kind": "retained",
+            "name": "LINEAR_RECORD_HEADER_BYTES",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2141,
+            "length": 44,
+            "sourceSha256": "dbb321a9e47fffe7593a6b6a5f78d9ef7ba38b740fe19961aa68d791b0dab615",
+            "leading": "\n",
+            "reverseModifier": null,
+            "beforeOffset": 1448
+          },
+          {
+            "kind": "retained",
+            "name": "LINEAR_RECORD_FIELD_SLOT_BYTES",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2186,
+            "length": 48,
+            "sourceSha256": "4dab5656771a891ae1c55daac47bf3e21397483c60c386fb181f3b5c2861e661",
+            "leading": "\n",
+            "reverseModifier": null,
+            "beforeOffset": 1493
+          },
+          {
+            "kind": "retained",
+            "name": "LINEAR_RECORD_TAG_OFFSET",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2235,
+            "length": 42,
+            "sourceSha256": "9fc1996c544b52644704cfa6c880b2e9ecf2c51cc49acf330093760b84af739e",
+            "leading": "\n",
+            "reverseModifier": null,
+            "beforeOffset": 1542
+          },
+          {
+            "kind": "retained",
+            "name": "LINEAR_RECORD_PAYLOAD_SIZE_OFFSET",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2278,
+            "length": 51,
+            "sourceSha256": "ff8ce5bc4b6f80471d84f2a926ec28111d03ca2a190736832dfba2f3a228531e",
+            "leading": "\n",
+            "reverseModifier": null,
+            "beforeOffset": 1585
+          },
+          {
+            "kind": "retained",
+            "name": "LINEAR_ARRAY_FORWARDING",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2330,
+            "length": 554,
+            "sourceSha256": "6eaa9791863f5ca89aab6485fe703ec59f08909d74185fd995984196d60b149b",
+            "leading": "\n",
+            "reverseModifier": null,
+            "beforeOffset": 1637
+          },
+          {
+            "kind": "retained",
+            "name": "LINEAR_VECTOR_LENGTH_OFFSET",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2885,
+            "length": 45,
+            "sourceSha256": "eeeec9aa55c9b9789cc5248b258ad38a647d1e8a01fd7991202f8cb371f1f053",
+            "leading": "\n",
+            "reverseModifier": null,
+            "beforeOffset": 2192
+          },
+          {
+            "kind": "retained",
+            "name": "LINEAR_VECTOR_CAPACITY_OFFSET",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2931,
+            "length": 48,
+            "sourceSha256": "6f3f301294069c80256cca3310ecf3c76098976f1b352e455179330e9e028e77",
+            "leading": "\n",
+            "reverseModifier": null,
+            "beforeOffset": 2238
+          },
+          {
+            "kind": "retained",
+            "name": "LINEAR_VECTOR_ELEMENTS_OFFSET",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 2980,
+            "length": 48,
+            "sourceSha256": "f32992e4c2e03f772e820d371923dfd884422f7787d8fd397f724527d727f114",
+            "leading": "\n",
+            "reverseModifier": null,
+            "beforeOffset": 2287
+          },
+          {
+            "kind": "retained",
+            "name": "LINEAR_VECTOR_MINIMUM_CAPACITY",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3029,
+            "length": 49,
+            "sourceSha256": "abdf7e0f67c14e43db7be7034f91954069f2f916163efd0399496a2b7a13d6fb",
+            "leading": "\n",
+            "reverseModifier": null,
+            "beforeOffset": 2336
+          },
+          {
+            "kind": "retained",
+            "name": "LINEAR_STRING_LENGTH_OFFSET",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3079,
+            "length": 45,
+            "sourceSha256": "d0b4afd21e86883b73636e11bcc196e2364767766d546dd25104209463fbd959",
+            "leading": "\n",
+            "reverseModifier": null,
+            "beforeOffset": 2386
+          },
+          {
+            "kind": "retained",
+            "name": "LINEAR_STRING_ELEMENTS_OFFSET",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3125,
+            "length": 48,
+            "sourceSha256": "851b89b272b32e9a2ab3d31579d82a3d31c640fe266cc2d79bfb7a6dffbf4b8b",
+            "leading": "\n",
+            "reverseModifier": null,
+            "beforeOffset": 2432
+          },
+          {
+            "kind": "retained",
+            "name": "LINEAR_STRING_PAYLOAD_SIZE_OFFSET",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3174,
+            "length": 83,
+            "sourceSha256": "4903d2ce9c0f2f2e6ab0dc0aa0eb712c2bc9ad60e96750c6646ef00d4d99ad1b",
+            "leading": "\n",
+            "reverseModifier": null,
+            "beforeOffset": 2481
+          },
+          {
+            "kind": "retained",
+            "name": "LINEAR_STRING_PAYLOAD_PREFIX_BYTES",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3258,
+            "length": 197,
+            "sourceSha256": "6798c9ac30f586331f81e32ee46a634c0ce9dcc475437de6662f1cf22c9d0dc1",
+            "leading": "\n",
+            "reverseModifier": null,
+            "beforeOffset": 2565
+          },
+          {
+            "kind": "moved",
+            "name": "LinearStorageKind",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 308,
+            "length": 169,
+            "sourceSha256": "6c20d67ba72ba34f6caff27f384578abe4a626de0ff9a9e3233dd7df3cc59fec",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 2763
+          },
+          {
+            "kind": "moved",
+            "name": "LinearAllocationClass",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 479,
+            "length": 77,
+            "sourceSha256": "aa221e490e6cc96cea4a538cd7f24662cfe8b8f7c4bbcc3fb9f3e79ec4ae6a8c",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 2934
+          },
+          {
+            "kind": "retained",
+            "name": "LinearAllocatorPolicyId",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3456,
+            "length": 77,
+            "sourceSha256": "cb49d3c095f458fe3d6f609e0f2d8361c3d0e6db97fb6d7e3abefedefa38a96e",
+            "leading": "\n",
+            "reverseModifier": null,
+            "beforeOffset": 3013
+          },
+          {
+            "kind": "moved",
+            "name": "LinearSizePlan",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 558,
+            "length": 306,
+            "sourceSha256": "4c2e8b579836654af4b00525b19161bfeba79c1f4506a32d692cbc1b1444cc77",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 3091
+          },
+          {
+            "kind": "moved",
+            "name": "LinearFieldPlan",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 866,
+            "length": 306,
+            "sourceSha256": "bfd7131ad5e0c5143219b57dc5f2ee6cbabe48e5b437cfe8a133a6669d34eeb8",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 3399
+          },
+          {
+            "kind": "moved",
+            "name": "LinearPointerMap",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 1174,
+            "length": 348,
+            "sourceSha256": "79c46689f58d0250cfa9e93eda2634a86b4bc6905defa2d2b5157d32b3844ac5",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 3707
+          },
+          {
+            "kind": "moved",
+            "name": "LinearLayoutBase",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 1524,
+            "length": 232,
+            "sourceSha256": "ec24cc6795483c186960aa4961b20258003b17307c44c0ffad9c51c9f19b4e26",
+            "leading": "\n\n",
+            "reverseModifier": ["export interface LinearLayoutBase", "interface LinearLayoutBase"],
+            "beforeOffset": 4057
+          },
+          {
+            "kind": "moved",
+            "name": "LinearRecordLayoutPlan",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 1758,
+            "length": 246,
+            "sourceSha256": "2ce625dcb8c69624599aae4cf9a2c97da556b1a91d97d6c5121a1f36df530ec6",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 4284
+          },
+          {
+            "kind": "moved",
+            "name": "LinearVectorLayoutPlan",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 2006,
+            "length": 314,
+            "sourceSha256": "ec5d19565ca340020de45d51937517ae4b37153381e1eaca45f4c6064d916873",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 4532
+          },
+          {
+            "kind": "retained",
+            "name": "LinearStringLayoutPlan",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3535,
+            "length": 314,
+            "sourceSha256": "005193bfdb8497fa583f335aa8ea19e97f56ed6ca9fae2cc81816f524d7c05a7",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 4848
+          },
+          {
+            "kind": "retained",
+            "name": "LinearOpaqueLayoutPlan",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3851,
+            "length": 133,
+            "sourceSha256": "2e894e4ff9058f3f98672cb0bfab33cff6b18a21c7f74b6f455f6a589f9b96ed",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 5164
+          },
+          {
+            "kind": "retained",
+            "name": "LinearLayoutPlan",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 3986,
+            "length": 139,
+            "sourceSha256": "30b7604e077b28c1392c69d895b199fe7e9bebdbdd1fcd760ed19fb92574ba3a",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 5299
+          },
+          {
+            "kind": "moved",
+            "name": "LinearRuntimeOperation",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 2322,
+            "length": 906,
+            "sourceSha256": "45f5bc2a72f302d6ecae27bb6e20d4c195f7ba11235523577165c685e852f0ad",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 5440
+          },
+          {
+            "kind": "moved",
+            "name": "LinearRootPlan",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 3230,
+            "length": 235,
+            "sourceSha256": "bfa0c008e96d64d0237630c47d8f9659872b51366418b8640264c21912fc408c",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 6348
+          },
+          {
+            "kind": "moved",
+            "name": "LinearSafepointPlan",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 3467,
+            "length": 103,
+            "sourceSha256": "fb60f5eb09b49bad4c3235108291084358a01c697529b83c1eeab81e33a86ca3",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 6585
+          },
+          {
+            "kind": "moved",
+            "name": "LinearBarrierPlan",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 3572,
+            "length": 146,
+            "sourceSha256": "ff59de00448c626079f37bd6c697955bd295d8743a133f7b5331ccbf83062729",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 6690
+          },
+          {
+            "kind": "moved",
+            "name": "LinearLifetime",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 3720,
+            "length": 84,
+            "sourceSha256": "360c71363aa342d28eb4381e9fc7dbe8be900b676b0245597868974b631fd5af",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 6838
+          },
+          {
+            "kind": "retained",
+            "name": "LinearAllocationFacts",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 4127,
+            "length": 280,
+            "sourceSha256": "1a8fc3511eb08bbf935b1cb1e5e8a21e496c7a30882161bc6023c0883ad5120c",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 6924
+          },
+          {
+            "kind": "retained",
+            "name": "LinearPreparedAllocationFact",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 4409,
+            "length": 851,
+            "sourceSha256": "9a0799c1f0363e83f4745c14b1371aada3b9f8c1f852963783911c3a7179cae2",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 7206
+          },
+          {
+            "kind": "retained",
+            "name": "LinearPreparedAllocationFacts",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 5262,
+            "length": 159,
+            "sourceSha256": "55508b53324f3dc1b8bdfaf75844a65d14db0c27a15553d60d028bbfea2bbc92",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 8059
+          },
+          {
+            "kind": "moved",
+            "name": "LinearAllocationDecision",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 3806,
+            "length": 307,
+            "sourceSha256": "cd8cd6be810408753d60878027b5073b9313789ec49968177cf320ebdd0cc4a2",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 8220
+          },
+          {
+            "kind": "retained",
+            "name": "LinearAllocatorPolicy",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 5423,
+            "length": 213,
+            "sourceSha256": "b2cfcc220f9b17328dfb79f7385dfb79c250dd5bc40cc75a0cbde8411369cedc",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 8529
+          },
+          {
+            "kind": "moved",
+            "name": "LinearAllocationSitePlan",
+            "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+            "offset": 4115,
+            "length": 554,
+            "sourceSha256": "a1da6701253a35516f19837b105d3cf3382f2d5f97fdfb60a00a1e11c210081d",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 8744
+          },
+          {
+            "kind": "retained",
+            "name": "LinearDataSegmentPlan",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 5638,
+            "length": 212,
+            "sourceSha256": "9be3e4ccbd8770d79149d74245c8cbb240fcbcfcb32f25da603bc6a122f80516",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 9300
+          },
+          {
+            "kind": "retained",
+            "name": "LinearGlobalStoragePlan",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 5852,
+            "length": 381,
+            "sourceSha256": "7460f7b7a711393ab5f83de49dc1d245b5d375159a5ffb5c7929821ed18c4e85",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 9514
+          },
+          {
+            "kind": "retained",
+            "name": "LinearMemoryPlanSnapshot",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 6235,
+            "length": 297,
+            "sourceSha256": "04244f4a376d5a7ac6d4cd996145860f8ef81e98756b5ae7f7bf2775ae5b5f90",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 9897
+          },
+          {
+            "kind": "retained",
+            "name": "LinearMemoryPlan",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 6534,
+            "length": 3997,
+            "sourceSha256": "d9afd2c556ad7dd8f25bdce18c9e5cb3d65ba3e3947db6e266d2248aeb058c90",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 10196
+          },
+          {
+            "kind": "retained",
+            "name": "freezePlanValue",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 10533,
+            "length": 465,
+            "sourceSha256": "47063fe16f51e3df99727ee50c8198fb8d13f1253522831e30f4506b60f5a1c7",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 14195
+          },
+          {
+            "kind": "retained",
+            "name": "indexUnique",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 11000,
+            "length": 363,
+            "sourceSha256": "73aa73d7fdec656f2879b0a2b66cc5ba00f6d47e5df6b6315d6e047199ef8240",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 14662
+          },
+          {
+            "kind": "retained",
+            "name": "OwnershipMetadata",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 11365,
+            "length": 134,
+            "sourceSha256": "67c7124e52b5441f78cec67f49563161524790d28ead73a0c38328007ddedbd8",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 15027
+          },
+          {
+            "kind": "retained",
+            "name": "DEFAULT_ARENA_POLICY",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 11501,
+            "length": 1427,
+            "sourceSha256": "97c74f8101bd6922e2907b259999461dfbfda593d93583f13469687f59d87bfa",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 15163
+          },
+          {
+            "kind": "retained",
+            "name": "ANALYSIS_STACK_ARENA_POLICY",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 12930,
+            "length": 1138,
+            "sourceSha256": "176757b371194484705847ec5525cf364e3f4ddb727a47753360562faad49e36",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 16592
+          },
+          {
+            "kind": "retained",
+            "name": "linearAllocatorPolicy",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 14070,
+            "length": 294,
+            "sourceSha256": "de1c3657a8d80420963173db903946c80d7d82df156e9e2c060b72acf9eb020e",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 17732
+          },
+          {
+            "kind": "retained",
+            "name": "prepareLinearAllocationFacts",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 14366,
+            "length": 2969,
+            "sourceSha256": "130adfec8e9e00ef8368b14c96840321db36fc60f3d96d017b669d8b584e543c",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 18028
+          },
+          {
+            "kind": "retained",
+            "name": "canonicalSiteFromSnapshot",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 17337,
+            "length": 190,
+            "sourceSha256": "b865a162f3264a5c687dc27d6a26d4b7f5863ce955c01d39831566c6933edc14",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 20999
+          },
+          {
+            "kind": "retained",
+            "name": "canonicalIndexFromSnapshot",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 17529,
+            "length": 786,
+            "sourceSha256": "e068b6c44b7e836be8de17cf02bf295cd737d58788ad4668bb82148652ba685d",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 21191
+          },
+          {
+            "kind": "retained",
+            "name": "snapshotSiteAtCanonicalIndex",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 18317,
+            "length": 307,
+            "sourceSha256": "c6eff4e6cadb4ea19cbce276512c3e086d2f9aef16b4cee61045fcf37c56870d",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 21979
+          },
+          {
+            "kind": "retained",
+            "name": "metadataValue",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 18626,
+            "length": 454,
+            "sourceSha256": "4194094df5c7d6c80983c81b19281b58de053c95d8bd2bfede8f454f4e47fc29",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 22288
+          },
+          {
+            "kind": "retained",
+            "name": "sameStringArray",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 19082,
+            "length": 183,
+            "sourceSha256": "94abf7aa99b296a7c9ea3a3cb1690ec3851928b4a4b63e0eea2d8ecd18f510f4",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 22744
+          },
+          {
+            "kind": "retained",
+            "name": "sameDetachedValue",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 19267,
+            "length": 2737,
+            "sourceSha256": "890d6c03e0191d605d0e50990f1f87483955cbf832cc6fcbe7e531227991570a",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 22929
+          },
+          {
+            "kind": "retained",
+            "name": "verifyRegistrySnapshot",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 22006,
+            "length": 1378,
+            "sourceSha256": "680a14fc146b80c08bf4bfee57617bcce15dc4214e8103026829999803386d58",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 25668
+          },
+          {
+            "kind": "retained",
+            "name": "verifyLinearPreparedAllocationFacts",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 23386,
+            "length": 4592,
+            "sourceSha256": "679fec1867a000e64d470e9d1a16b03c4c2598a1ec51c02435041f924be170aa",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 27048
+          },
+          {
+            "kind": "retained",
+            "name": "planLinearMemoryFromFrozenFacts",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 27980,
+            "length": 3663,
+            "sourceSha256": "a637af350e4a533aef6d487868c52701f25b3f6a4daced7d76a66ce5126a5056",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 31642
+          },
+          {
+            "kind": "retained",
+            "name": "planLinearMemory",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 31645,
+            "length": 346,
+            "sourceSha256": "e4702a421a3d1286dc34c4cdc97823750ac20f823b4234a46ed29a232123dbfa",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 35307
+          },
+          {
+            "kind": "retained",
+            "name": "planLinearRecordLayout",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 31993,
+            "length": 1283,
+            "sourceSha256": "e01b6f088298a95a7c834d5197276ca0b332c3191f1e6d8d8fae5c7eea824f2d",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 35655
+          },
+          {
+            "kind": "retained",
+            "name": "planLinearVectorLayout",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 33278,
+            "length": 966,
+            "sourceSha256": "c66d757f7419ff213d642bcd712356709f3212f7ddf68c8e1aa8e8b944e644f3",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 36940
+          },
+          {
+            "kind": "retained",
+            "name": "planLinearStringLayout",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 34246,
+            "length": 584,
+            "sourceSha256": "6c9c5e111cfd6d514166f99724882c02814ddb8ec50ac1183098a044640b8850",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 37908
+          },
+          {
+            "kind": "retained",
+            "name": "linearObjectLayoutId",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 34832,
+            "length": 201,
+            "sourceSha256": "c8c3fcfcdd22bb114c57146d4f165b44f37b7fe0d2c553652f1d383a62fa8d11",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 38494
+          },
+          {
+            "kind": "retained",
+            "name": "linearClassLayoutId",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 35035,
+            "length": 126,
+            "sourceSha256": "26b1133b7158ea5eb0d5d2696c3f865f6009457f5d846f4731bbc6375ed0c862",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 38697
+          },
+          {
+            "kind": "retained",
+            "name": "linearRefCellLayoutId",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 35163,
+            "length": 117,
+            "sourceSha256": "cc72924d56c97fcc45c3cf74354429a874ddebcd623dd4597e2d76255bcfd243",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 38825
+          },
+          {
+            "kind": "retained",
+            "name": "linearVectorLayoutId",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 35282,
+            "length": 112,
+            "sourceSha256": "f45f94c7e2e723d4ccc904a8a6228890a224e0ead8bbf9d07323ee818957e10e",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 38944
+          },
+          {
+            "kind": "retained",
+            "name": "linearStringLayoutId",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 35396,
+            "length": 83,
+            "sourceSha256": "87535163045be0c441ab90f3470e3e747a248781833675982af943b6b5de747a",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 39058
+          },
+          {
+            "kind": "retained",
+            "name": "linearStringDataSegmentId",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 35481,
+            "length": 117,
+            "sourceSha256": "49526f9e2b7ab01ea1b5b98b415ceeb931c2176a6290e4c787c7c881c18368a6",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 39143
+          },
+          {
+            "kind": "retained",
+            "name": "linearStorageForIrType",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 35600,
+            "length": 443,
+            "sourceSha256": "abca91649a12cbfbfd329085a3fe609fcbb87e2e3f0bac9cd5a612185880c145",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 39262
+          },
+          {
+            "kind": "retained",
+            "name": "storageBytes",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 36045,
+            "length": 309,
+            "sourceSha256": "028bb116292d8921bc444ba64a23e7c05c70324794e4ef359163a90e9a05323f",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 39707
+          },
+          {
+            "kind": "retained",
+            "name": "storageAlignment",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 36356,
+            "length": 104,
+            "sourceSha256": "f225a01603d557332a54e3abe836cd92e42c38892e201d6a462f91de862a4e70",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 40018
+          },
+          {
+            "kind": "retained",
+            "name": "linearRuntimeOperationKey",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 36462,
+            "length": 124,
+            "sourceSha256": "1b25d4f7f6459b9f19ac338dcf00f05d8bd21b293b56d7f5193e87837a4e22c2",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 40124
+          },
+          {
+            "kind": "retained",
+            "name": "defaultOperationsForLayout",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 36588,
+            "length": 219,
+            "sourceSha256": "166f1d3cf8a58a936da47deaccfdb2cfa542a58eec22c6be80e0da5f9f7a2276",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 40250
+          },
+          {
+            "kind": "retained",
+            "name": "operationsForLayout",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 36809,
+            "length": 1155,
+            "sourceSha256": "f1642d7c4b1732fe41fb1d772d276e9397ad05f338ba166c82cfd7b812373ddc",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 40471
+          },
+          {
+            "kind": "retained",
+            "name": "allocationSize",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 37966,
+            "length": 555,
+            "sourceSha256": "b166779d612b706efe3f50aa02eb097b308bb4f988ad5323b710f77ba8b59a10",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 41628
+          },
+          {
+            "kind": "retained",
+            "name": "layoutForAllocation",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 38523,
+            "length": 1615,
+            "sourceSha256": "9d4771151338899182a86b396e9606a52ec1ae3f8fa2cb1fd56964804da89001",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 42185
+          },
+          {
+            "kind": "retained",
+            "name": "recordLayoutForObject",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 40140,
+            "length": 253,
+            "sourceSha256": "035b6978a65d8841162632b63b58829dc7f1d550f3774a98a9426e4f70d74c4f",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 43802
+          },
+          {
+            "kind": "retained",
+            "name": "recordLayoutForClass",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 40395,
+            "length": 250,
+            "sourceSha256": "2c0dc973b5e1e53db925ab097f7abc94d76a390eee0f16984a1c00f42abba8d5",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 44057
+          },
+          {
+            "kind": "retained",
+            "name": "opaqueLayout",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 40647,
+            "length": 313,
+            "sourceSha256": "a7ecc53b6f0338c24f092073a09173656a50aa3ddc7ca12df6b127019deb71fc",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 44309
+          },
+          {
+            "kind": "retained",
+            "name": "internLayout",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 40962,
+            "length": 236,
+            "sourceSha256": "6887be20c9e222818ed32be408cd05bba0473359a044abe1fc9ee51406155b82",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 44624
+          },
+          {
+            "kind": "retained",
+            "name": "collectModuleFacts",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 41200,
+            "length": 1342,
+            "sourceSha256": "55607fbc9c1901ace51378635daa9abb34d7dae7a8fa76b4e619c1ff311878f7",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 44862
+          },
+          {
+            "kind": "retained",
+            "name": "collectModuleAllocationInstructions",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 42544,
+            "length": 1215,
+            "sourceSha256": "a30f2f5d79d9d8778a00e7090c6291251c1e060efbf5fc679c7e46b74675eb48",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 46206
+          },
+          {
+            "kind": "retained",
+            "name": "collectLayoutsFromType",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 43761,
+            "length": 1683,
+            "sourceSha256": "f8228b0e6284eed459d9871d61c4cfc3284d1e0e9a44b5e396790c5b9cd3bf3c",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 47423
+          },
+          {
+            "kind": "retained",
+            "name": "collectValueTypes",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 45446,
+            "length": 671,
+            "sourceSha256": "439d5f7e58d71731cc0fed4fb9db743868b7a70d5fce8ceaaecbaf0a81061248",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 49108
+          },
+          {
+            "kind": "retained",
+            "name": "collectGlobalStorage",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 46119,
+            "length": 1034,
+            "sourceSha256": "aee5895430a9d1f9f2fb41dfdb87bc355ed8037b8a0ff18f6e59545cba71f10b",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 49781
+          },
+          {
+            "kind": "retained",
+            "name": "linearIrTypeKey",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 47155,
+            "length": 1280,
+            "sourceSha256": "4711de733d19b63957e9b25e24bfddae27995963c487b6866b0beb2566f4c6eb",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 50817
+          },
+          {
+            "kind": "retained",
+            "name": "shapeKey",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 48437,
+            "length": 163,
+            "sourceSha256": "eaab0118fbc1b09998f1da55ceba13a4b768232e0146c703d90f362dfaeeac30",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 52099
+          },
+          {
+            "kind": "retained",
+            "name": "lifetimeFromEscape",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 48602,
+            "length": 323,
+            "sourceSha256": "af64598afc0eae259711be3a82d33a924e352238f0a6968c9e645608c2564eb3",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 52264
+          },
+          {
+            "kind": "retained",
+            "name": "compareText",
+            "path": "src/ir/analysis/linear-memory-plan.ts",
+            "offset": 48927,
+            "length": 112,
+            "sourceSha256": "91dd6cc9e3f5f6c505354ec91ff27ae107e930144cabf622e0612c8801ecbbef",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 52589
+          },
+          {
+            "kind": "literal-trailer",
+            "beforeOffset": 52703,
+            "text": "\n"
+          }
+        ]
+      },
+      "forward": [
+        {
+          "path": "src/ir/analysis/linear-memory-plan.ts",
+          "currentPin": {
+            "bytes": 49040,
+            "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52"
+          },
+          "completeCoverage": true,
+          "forwardFromAuthenticOriginal": true,
+          "pieces": [
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 0,
+              "text": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n//\n// Target-neutral linear-memory planning (#3298).\n//\n// This module is the middle-end authority for allocation class, record/vector/\n// string layout, pointer maps, lifetime, roots, safepoints, barriers, and\n// relocatable static-storage requirements. It deliberately contains no Wasm\n// instructions or module indices, Porffor representation values, renderer\n// records, concrete runtime symbol names, or artifact fragments.\n\nimport {\n  ALLOC_NAMESPACES,\n  type AllocRegistrySnapshot,\n  type AllocSite,\n  type AllocSiteRegistry,\n} from \"../alloc-registry.js\";"
+            },
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 647,
+              "text": "\nimport {\n  forEachInstrDeep,\n  type AllocKind,\n  type AllocSiteId,\n  type IrClassShape,\n  type IrFunction,\n  type IrInstr,\n  type IrModule,\n  type IrObjectShape,\n  type IrSiteId,\n  type IrType,\n  type IrValueId,\n} from \"../nodes.js\";"
+            },
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 881,
+              "text": "\nimport { analyzeEncoding, type Encoding } from \"./encoding.js\";"
+            },
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 945,
+              "text": "\nimport { analyzeEscape, type EscapeClass, type EscapeInfo } from \"./escape.js\";"
+            },
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 1025,
+              "text": "\nimport type { Ownership } from \"./lattice.js\";"
+            },
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 1072,
+              "text": "\nimport { analyzeOwnership } from \"./ownership.js\";"
+            },
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 1123,
+              "text": "\nimport { findStackAllocCandidates } from \"./stack-alloc.js\";"
+            },
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 1184,
+              "text": "\nimport { irFnctorShapeKey } from \"../type-key.js\";"
+            },
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 1235,
+              "text": "\nimport type {\n  LinearStorageKind,\n  LinearAllocationClass,\n  LinearSizePlan,\n  LinearFieldPlan,\n  LinearLayoutBase,\n  LinearRecordLayoutPlan,\n  LinearVectorLayoutPlan,\n  LinearRuntimeOperation,\n  LinearLifetime,\n  LinearAllocationDecision,\n  LinearAllocationSitePlan,\n} from \"./contracts/linear-memory-layout.js\";"
+            },
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 1550,
+              "text": "\nexport type {\n  LinearStorageKind,\n  LinearAllocationClass,\n  LinearSizePlan,\n  LinearFieldPlan,\n  LinearPointerMap,\n  LinearRecordLayoutPlan,\n  LinearVectorLayoutPlan,\n  LinearRuntimeOperation,\n  LinearRootPlan,\n  LinearSafepointPlan,\n  LinearBarrierPlan,\n  LinearLifetime,\n  LinearAllocationDecision,\n  LinearAllocationSitePlan,\n} from \"./contracts/linear-memory-layout.js\";"
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LINEAR_POINTER_BYTES",
+              "original": "planner",
+              "offset": 1237,
+              "length": 118,
+              "sourceSha256": "622039808e61d653ba1e3fc1abf57fc47dcd72499b4fa9643787b67f61ae1edb",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 1927
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LINEAR_STACK_ARENA_BYTES",
+              "original": "planner",
+              "offset": 1356,
+              "length": 50,
+              "sourceSha256": "74897c6f6dd9e75a552c17abb5b1e7b636fd8dece1f260a7e0ee3c2b2db9e8f6",
+              "leading": "\n",
+              "forwardModifier": null,
+              "afterOffset": 2047
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LINEAR_RECORD_ALIGNMENT",
+              "original": "planner",
+              "offset": 1407,
+              "length": 41,
+              "sourceSha256": "9f123b55def62919bc9d841a86d49b8d6487f9f916b3a2d9a266603614782ab0",
+              "leading": "\n",
+              "forwardModifier": null,
+              "afterOffset": 2098
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LINEAR_RECORD_HEADER_BYTES",
+              "original": "planner",
+              "offset": 1449,
+              "length": 44,
+              "sourceSha256": "dbb321a9e47fffe7593a6b6a5f78d9ef7ba38b740fe19961aa68d791b0dab615",
+              "leading": "\n",
+              "forwardModifier": null,
+              "afterOffset": 2140
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LINEAR_RECORD_FIELD_SLOT_BYTES",
+              "original": "planner",
+              "offset": 1494,
+              "length": 48,
+              "sourceSha256": "4dab5656771a891ae1c55daac47bf3e21397483c60c386fb181f3b5c2861e661",
+              "leading": "\n",
+              "forwardModifier": null,
+              "afterOffset": 2185
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LINEAR_RECORD_TAG_OFFSET",
+              "original": "planner",
+              "offset": 1543,
+              "length": 42,
+              "sourceSha256": "9fc1996c544b52644704cfa6c880b2e9ecf2c51cc49acf330093760b84af739e",
+              "leading": "\n",
+              "forwardModifier": null,
+              "afterOffset": 2234
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LINEAR_RECORD_PAYLOAD_SIZE_OFFSET",
+              "original": "planner",
+              "offset": 1586,
+              "length": 51,
+              "sourceSha256": "ff8ce5bc4b6f80471d84f2a926ec28111d03ca2a190736832dfba2f3a228531e",
+              "leading": "\n",
+              "forwardModifier": null,
+              "afterOffset": 2277
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LINEAR_ARRAY_FORWARDING",
+              "original": "planner",
+              "offset": 1638,
+              "length": 554,
+              "sourceSha256": "6eaa9791863f5ca89aab6485fe703ec59f08909d74185fd995984196d60b149b",
+              "leading": "\n",
+              "forwardModifier": null,
+              "afterOffset": 2329
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LINEAR_VECTOR_LENGTH_OFFSET",
+              "original": "planner",
+              "offset": 2193,
+              "length": 45,
+              "sourceSha256": "eeeec9aa55c9b9789cc5248b258ad38a647d1e8a01fd7991202f8cb371f1f053",
+              "leading": "\n",
+              "forwardModifier": null,
+              "afterOffset": 2884
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LINEAR_VECTOR_CAPACITY_OFFSET",
+              "original": "planner",
+              "offset": 2239,
+              "length": 48,
+              "sourceSha256": "6f3f301294069c80256cca3310ecf3c76098976f1b352e455179330e9e028e77",
+              "leading": "\n",
+              "forwardModifier": null,
+              "afterOffset": 2930
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LINEAR_VECTOR_ELEMENTS_OFFSET",
+              "original": "planner",
+              "offset": 2288,
+              "length": 48,
+              "sourceSha256": "f32992e4c2e03f772e820d371923dfd884422f7787d8fd397f724527d727f114",
+              "leading": "\n",
+              "forwardModifier": null,
+              "afterOffset": 2979
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LINEAR_VECTOR_MINIMUM_CAPACITY",
+              "original": "planner",
+              "offset": 2337,
+              "length": 49,
+              "sourceSha256": "abdf7e0f67c14e43db7be7034f91954069f2f916163efd0399496a2b7a13d6fb",
+              "leading": "\n",
+              "forwardModifier": null,
+              "afterOffset": 3028
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LINEAR_STRING_LENGTH_OFFSET",
+              "original": "planner",
+              "offset": 2387,
+              "length": 45,
+              "sourceSha256": "d0b4afd21e86883b73636e11bcc196e2364767766d546dd25104209463fbd959",
+              "leading": "\n",
+              "forwardModifier": null,
+              "afterOffset": 3078
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LINEAR_STRING_ELEMENTS_OFFSET",
+              "original": "planner",
+              "offset": 2433,
+              "length": 48,
+              "sourceSha256": "851b89b272b32e9a2ab3d31579d82a3d31c640fe266cc2d79bfb7a6dffbf4b8b",
+              "leading": "\n",
+              "forwardModifier": null,
+              "afterOffset": 3124
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LINEAR_STRING_PAYLOAD_SIZE_OFFSET",
+              "original": "planner",
+              "offset": 2482,
+              "length": 83,
+              "sourceSha256": "4903d2ce9c0f2f2e6ab0dc0aa0eb712c2bc9ad60e96750c6646ef00d4d99ad1b",
+              "leading": "\n",
+              "forwardModifier": null,
+              "afterOffset": 3173
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LINEAR_STRING_PAYLOAD_PREFIX_BYTES",
+              "original": "planner",
+              "offset": 2566,
+              "length": 197,
+              "sourceSha256": "6798c9ac30f586331f81e32ee46a634c0ce9dcc475437de6662f1cf22c9d0dc1",
+              "leading": "\n",
+              "forwardModifier": null,
+              "afterOffset": 3257
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearAllocatorPolicyId",
+              "original": "planner",
+              "offset": 3014,
+              "length": 77,
+              "sourceSha256": "cb49d3c095f458fe3d6f609e0f2d8361c3d0e6db97fb6d7e3abefedefa38a96e",
+              "leading": "\n",
+              "forwardModifier": null,
+              "afterOffset": 3455
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearStringLayoutPlan",
+              "original": "planner",
+              "offset": 4850,
+              "length": 314,
+              "sourceSha256": "005193bfdb8497fa583f335aa8ea19e97f56ed6ca9fae2cc81816f524d7c05a7",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 3533
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearOpaqueLayoutPlan",
+              "original": "planner",
+              "offset": 5166,
+              "length": 133,
+              "sourceSha256": "2e894e4ff9058f3f98672cb0bfab33cff6b18a21c7f74b6f455f6a589f9b96ed",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 3849
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearLayoutPlan",
+              "original": "planner",
+              "offset": 5301,
+              "length": 139,
+              "sourceSha256": "30b7604e077b28c1392c69d895b199fe7e9bebdbdd1fcd760ed19fb92574ba3a",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 3984
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearAllocationFacts",
+              "original": "planner",
+              "offset": 6926,
+              "length": 280,
+              "sourceSha256": "1a8fc3511eb08bbf935b1cb1e5e8a21e496c7a30882161bc6023c0883ad5120c",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 4125
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearPreparedAllocationFact",
+              "original": "planner",
+              "offset": 7208,
+              "length": 851,
+              "sourceSha256": "9a0799c1f0363e83f4745c14b1371aada3b9f8c1f852963783911c3a7179cae2",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 4407
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearPreparedAllocationFacts",
+              "original": "planner",
+              "offset": 8061,
+              "length": 159,
+              "sourceSha256": "55508b53324f3dc1b8bdfaf75844a65d14db0c27a15553d60d028bbfea2bbc92",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 5260
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearAllocatorPolicy",
+              "original": "planner",
+              "offset": 8531,
+              "length": 213,
+              "sourceSha256": "b2cfcc220f9b17328dfb79f7385dfb79c250dd5bc40cc75a0cbde8411369cedc",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 5421
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearDataSegmentPlan",
+              "original": "planner",
+              "offset": 9302,
+              "length": 212,
+              "sourceSha256": "9be3e4ccbd8770d79149d74245c8cbb240fcbcfcb32f25da603bc6a122f80516",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 5636
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearGlobalStoragePlan",
+              "original": "planner",
+              "offset": 9516,
+              "length": 381,
+              "sourceSha256": "7460f7b7a711393ab5f83de49dc1d245b5d375159a5ffb5c7929821ed18c4e85",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 5850
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearMemoryPlanSnapshot",
+              "original": "planner",
+              "offset": 9899,
+              "length": 297,
+              "sourceSha256": "04244f4a376d5a7ac6d4cd996145860f8ef81e98756b5ae7f7bf2775ae5b5f90",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 6233
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearMemoryPlan",
+              "original": "planner",
+              "offset": 10198,
+              "length": 3997,
+              "sourceSha256": "d9afd2c556ad7dd8f25bdce18c9e5cb3d65ba3e3947db6e266d2248aeb058c90",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 6532
+            },
+            {
+              "kind": "original-declaration",
+              "name": "freezePlanValue",
+              "original": "planner",
+              "offset": 14197,
+              "length": 465,
+              "sourceSha256": "47063fe16f51e3df99727ee50c8198fb8d13f1253522831e30f4506b60f5a1c7",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 10531
+            },
+            {
+              "kind": "original-declaration",
+              "name": "indexUnique",
+              "original": "planner",
+              "offset": 14664,
+              "length": 363,
+              "sourceSha256": "73aa73d7fdec656f2879b0a2b66cc5ba00f6d47e5df6b6315d6e047199ef8240",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 10998
+            },
+            {
+              "kind": "original-declaration",
+              "name": "OwnershipMetadata",
+              "original": "planner",
+              "offset": 15029,
+              "length": 134,
+              "sourceSha256": "67c7124e52b5441f78cec67f49563161524790d28ead73a0c38328007ddedbd8",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 11363
+            },
+            {
+              "kind": "original-declaration",
+              "name": "DEFAULT_ARENA_POLICY",
+              "original": "planner",
+              "offset": 15165,
+              "length": 1427,
+              "sourceSha256": "97c74f8101bd6922e2907b259999461dfbfda593d93583f13469687f59d87bfa",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 11499
+            },
+            {
+              "kind": "original-declaration",
+              "name": "ANALYSIS_STACK_ARENA_POLICY",
+              "original": "planner",
+              "offset": 16594,
+              "length": 1138,
+              "sourceSha256": "176757b371194484705847ec5525cf364e3f4ddb727a47753360562faad49e36",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 12928
+            },
+            {
+              "kind": "original-declaration",
+              "name": "linearAllocatorPolicy",
+              "original": "planner",
+              "offset": 17734,
+              "length": 294,
+              "sourceSha256": "de1c3657a8d80420963173db903946c80d7d82df156e9e2c060b72acf9eb020e",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 14068
+            },
+            {
+              "kind": "original-declaration",
+              "name": "prepareLinearAllocationFacts",
+              "original": "planner",
+              "offset": 18030,
+              "length": 2969,
+              "sourceSha256": "130adfec8e9e00ef8368b14c96840321db36fc60f3d96d017b669d8b584e543c",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 14364
+            },
+            {
+              "kind": "original-declaration",
+              "name": "canonicalSiteFromSnapshot",
+              "original": "planner",
+              "offset": 21001,
+              "length": 190,
+              "sourceSha256": "b865a162f3264a5c687dc27d6a26d4b7f5863ce955c01d39831566c6933edc14",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 17335
+            },
+            {
+              "kind": "original-declaration",
+              "name": "canonicalIndexFromSnapshot",
+              "original": "planner",
+              "offset": 21193,
+              "length": 786,
+              "sourceSha256": "e068b6c44b7e836be8de17cf02bf295cd737d58788ad4668bb82148652ba685d",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 17527
+            },
+            {
+              "kind": "original-declaration",
+              "name": "snapshotSiteAtCanonicalIndex",
+              "original": "planner",
+              "offset": 21981,
+              "length": 307,
+              "sourceSha256": "c6eff4e6cadb4ea19cbce276512c3e086d2f9aef16b4cee61045fcf37c56870d",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 18315
+            },
+            {
+              "kind": "original-declaration",
+              "name": "metadataValue",
+              "original": "planner",
+              "offset": 22290,
+              "length": 454,
+              "sourceSha256": "4194094df5c7d6c80983c81b19281b58de053c95d8bd2bfede8f454f4e47fc29",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 18624
+            },
+            {
+              "kind": "original-declaration",
+              "name": "sameStringArray",
+              "original": "planner",
+              "offset": 22746,
+              "length": 183,
+              "sourceSha256": "94abf7aa99b296a7c9ea3a3cb1690ec3851928b4a4b63e0eea2d8ecd18f510f4",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 19080
+            },
+            {
+              "kind": "original-declaration",
+              "name": "sameDetachedValue",
+              "original": "planner",
+              "offset": 22931,
+              "length": 2737,
+              "sourceSha256": "890d6c03e0191d605d0e50990f1f87483955cbf832cc6fcbe7e531227991570a",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 19265
+            },
+            {
+              "kind": "original-declaration",
+              "name": "verifyRegistrySnapshot",
+              "original": "planner",
+              "offset": 25670,
+              "length": 1378,
+              "sourceSha256": "680a14fc146b80c08bf4bfee57617bcce15dc4214e8103026829999803386d58",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 22004
+            },
+            {
+              "kind": "original-declaration",
+              "name": "verifyLinearPreparedAllocationFacts",
+              "original": "planner",
+              "offset": 27050,
+              "length": 4592,
+              "sourceSha256": "679fec1867a000e64d470e9d1a16b03c4c2598a1ec51c02435041f924be170aa",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 23384
+            },
+            {
+              "kind": "original-declaration",
+              "name": "planLinearMemoryFromFrozenFacts",
+              "original": "planner",
+              "offset": 31644,
+              "length": 3663,
+              "sourceSha256": "a637af350e4a533aef6d487868c52701f25b3f6a4daced7d76a66ce5126a5056",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 27978
+            },
+            {
+              "kind": "original-declaration",
+              "name": "planLinearMemory",
+              "original": "planner",
+              "offset": 35309,
+              "length": 346,
+              "sourceSha256": "e4702a421a3d1286dc34c4cdc97823750ac20f823b4234a46ed29a232123dbfa",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 31643
+            },
+            {
+              "kind": "original-declaration",
+              "name": "planLinearRecordLayout",
+              "original": "planner",
+              "offset": 35657,
+              "length": 1283,
+              "sourceSha256": "e01b6f088298a95a7c834d5197276ca0b332c3191f1e6d8d8fae5c7eea824f2d",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 31991
+            },
+            {
+              "kind": "original-declaration",
+              "name": "planLinearVectorLayout",
+              "original": "planner",
+              "offset": 36942,
+              "length": 966,
+              "sourceSha256": "c66d757f7419ff213d642bcd712356709f3212f7ddf68c8e1aa8e8b944e644f3",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 33276
+            },
+            {
+              "kind": "original-declaration",
+              "name": "planLinearStringLayout",
+              "original": "planner",
+              "offset": 37910,
+              "length": 584,
+              "sourceSha256": "6c9c5e111cfd6d514166f99724882c02814ddb8ec50ac1183098a044640b8850",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 34244
+            },
+            {
+              "kind": "original-declaration",
+              "name": "linearObjectLayoutId",
+              "original": "planner",
+              "offset": 38496,
+              "length": 201,
+              "sourceSha256": "c8c3fcfcdd22bb114c57146d4f165b44f37b7fe0d2c553652f1d383a62fa8d11",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 34830
+            },
+            {
+              "kind": "original-declaration",
+              "name": "linearClassLayoutId",
+              "original": "planner",
+              "offset": 38699,
+              "length": 126,
+              "sourceSha256": "26b1133b7158ea5eb0d5d2696c3f865f6009457f5d846f4731bbc6375ed0c862",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 35033
+            },
+            {
+              "kind": "original-declaration",
+              "name": "linearRefCellLayoutId",
+              "original": "planner",
+              "offset": 38827,
+              "length": 117,
+              "sourceSha256": "cc72924d56c97fcc45c3cf74354429a874ddebcd623dd4597e2d76255bcfd243",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 35161
+            },
+            {
+              "kind": "original-declaration",
+              "name": "linearVectorLayoutId",
+              "original": "planner",
+              "offset": 38946,
+              "length": 112,
+              "sourceSha256": "f45f94c7e2e723d4ccc904a8a6228890a224e0ead8bbf9d07323ee818957e10e",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 35280
+            },
+            {
+              "kind": "original-declaration",
+              "name": "linearStringLayoutId",
+              "original": "planner",
+              "offset": 39060,
+              "length": 83,
+              "sourceSha256": "87535163045be0c441ab90f3470e3e747a248781833675982af943b6b5de747a",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 35394
+            },
+            {
+              "kind": "original-declaration",
+              "name": "linearStringDataSegmentId",
+              "original": "planner",
+              "offset": 39145,
+              "length": 117,
+              "sourceSha256": "49526f9e2b7ab01ea1b5b98b415ceeb931c2176a6290e4c787c7c881c18368a6",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 35479
+            },
+            {
+              "kind": "original-declaration",
+              "name": "linearStorageForIrType",
+              "original": "planner",
+              "offset": 39264,
+              "length": 443,
+              "sourceSha256": "abca91649a12cbfbfd329085a3fe609fcbb87e2e3f0bac9cd5a612185880c145",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 35598
+            },
+            {
+              "kind": "original-declaration",
+              "name": "storageBytes",
+              "original": "planner",
+              "offset": 39709,
+              "length": 309,
+              "sourceSha256": "028bb116292d8921bc444ba64a23e7c05c70324794e4ef359163a90e9a05323f",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 36043
+            },
+            {
+              "kind": "original-declaration",
+              "name": "storageAlignment",
+              "original": "planner",
+              "offset": 40020,
+              "length": 104,
+              "sourceSha256": "f225a01603d557332a54e3abe836cd92e42c38892e201d6a462f91de862a4e70",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 36354
+            },
+            {
+              "kind": "original-declaration",
+              "name": "linearRuntimeOperationKey",
+              "original": "planner",
+              "offset": 40126,
+              "length": 124,
+              "sourceSha256": "1b25d4f7f6459b9f19ac338dcf00f05d8bd21b293b56d7f5193e87837a4e22c2",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 36460
+            },
+            {
+              "kind": "original-declaration",
+              "name": "defaultOperationsForLayout",
+              "original": "planner",
+              "offset": 40252,
+              "length": 219,
+              "sourceSha256": "166f1d3cf8a58a936da47deaccfdb2cfa542a58eec22c6be80e0da5f9f7a2276",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 36586
+            },
+            {
+              "kind": "original-declaration",
+              "name": "operationsForLayout",
+              "original": "planner",
+              "offset": 40473,
+              "length": 1155,
+              "sourceSha256": "f1642d7c4b1732fe41fb1d772d276e9397ad05f338ba166c82cfd7b812373ddc",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 36807
+            },
+            {
+              "kind": "original-declaration",
+              "name": "allocationSize",
+              "original": "planner",
+              "offset": 41630,
+              "length": 555,
+              "sourceSha256": "b166779d612b706efe3f50aa02eb097b308bb4f988ad5323b710f77ba8b59a10",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 37964
+            },
+            {
+              "kind": "original-declaration",
+              "name": "layoutForAllocation",
+              "original": "planner",
+              "offset": 42187,
+              "length": 1615,
+              "sourceSha256": "9d4771151338899182a86b396e9606a52ec1ae3f8fa2cb1fd56964804da89001",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 38521
+            },
+            {
+              "kind": "original-declaration",
+              "name": "recordLayoutForObject",
+              "original": "planner",
+              "offset": 43804,
+              "length": 253,
+              "sourceSha256": "035b6978a65d8841162632b63b58829dc7f1d550f3774a98a9426e4f70d74c4f",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 40138
+            },
+            {
+              "kind": "original-declaration",
+              "name": "recordLayoutForClass",
+              "original": "planner",
+              "offset": 44059,
+              "length": 250,
+              "sourceSha256": "2c0dc973b5e1e53db925ab097f7abc94d76a390eee0f16984a1c00f42abba8d5",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 40393
+            },
+            {
+              "kind": "original-declaration",
+              "name": "opaqueLayout",
+              "original": "planner",
+              "offset": 44311,
+              "length": 313,
+              "sourceSha256": "a7ecc53b6f0338c24f092073a09173656a50aa3ddc7ca12df6b127019deb71fc",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 40645
+            },
+            {
+              "kind": "original-declaration",
+              "name": "internLayout",
+              "original": "planner",
+              "offset": 44626,
+              "length": 236,
+              "sourceSha256": "6887be20c9e222818ed32be408cd05bba0473359a044abe1fc9ee51406155b82",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 40960
+            },
+            {
+              "kind": "original-declaration",
+              "name": "collectModuleFacts",
+              "original": "planner",
+              "offset": 44864,
+              "length": 1342,
+              "sourceSha256": "55607fbc9c1901ace51378635daa9abb34d7dae7a8fa76b4e619c1ff311878f7",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 41198
+            },
+            {
+              "kind": "original-declaration",
+              "name": "collectModuleAllocationInstructions",
+              "original": "planner",
+              "offset": 46208,
+              "length": 1215,
+              "sourceSha256": "a30f2f5d79d9d8778a00e7090c6291251c1e060efbf5fc679c7e46b74675eb48",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 42542
+            },
+            {
+              "kind": "original-declaration",
+              "name": "collectLayoutsFromType",
+              "original": "planner",
+              "offset": 47425,
+              "length": 1683,
+              "sourceSha256": "f8228b0e6284eed459d9871d61c4cfc3284d1e0e9a44b5e396790c5b9cd3bf3c",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 43759
+            },
+            {
+              "kind": "original-declaration",
+              "name": "collectValueTypes",
+              "original": "planner",
+              "offset": 49110,
+              "length": 671,
+              "sourceSha256": "439d5f7e58d71731cc0fed4fb9db743868b7a70d5fce8ceaaecbaf0a81061248",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 45444
+            },
+            {
+              "kind": "original-declaration",
+              "name": "collectGlobalStorage",
+              "original": "planner",
+              "offset": 49783,
+              "length": 1034,
+              "sourceSha256": "aee5895430a9d1f9f2fb41dfdb87bc355ed8037b8a0ff18f6e59545cba71f10b",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 46117
+            },
+            {
+              "kind": "original-declaration",
+              "name": "linearIrTypeKey",
+              "original": "planner",
+              "offset": 50819,
+              "length": 1280,
+              "sourceSha256": "4711de733d19b63957e9b25e24bfddae27995963c487b6866b0beb2566f4c6eb",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 47153
+            },
+            {
+              "kind": "original-declaration",
+              "name": "shapeKey",
+              "original": "planner",
+              "offset": 52101,
+              "length": 163,
+              "sourceSha256": "eaab0118fbc1b09998f1da55ceba13a4b768232e0146c703d90f362dfaeeac30",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 48435
+            },
+            {
+              "kind": "original-declaration",
+              "name": "lifetimeFromEscape",
+              "original": "planner",
+              "offset": 52266,
+              "length": 323,
+              "sourceSha256": "af64598afc0eae259711be3a82d33a924e352238f0a6968c9e645608c2564eb3",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 48600
+            },
+            {
+              "kind": "original-declaration",
+              "name": "compareText",
+              "original": "planner",
+              "offset": 52591,
+              "length": 112,
+              "sourceSha256": "91dd6cc9e3f5f6c505354ec91ff27ae107e930144cabf622e0612c8801ecbbef",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 48925
+            },
+            {
+              "kind": "literal-trailer",
+              "text": "\n",
+              "afterOffset": 49039
+            }
+          ]
+        },
+        {
+          "path": "src/ir/analysis/contracts/linear-memory-layout.ts",
+          "currentPin": {
+            "bytes": 4670,
+            "sha256": "dba3ca2121063a52b0ae1130f48c0acc70e0f819a9e665a2a2744572eddfae72"
+          },
+          "completeCoverage": true,
+          "forwardFromAuthenticOriginal": true,
+          "pieces": [
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 0,
+              "text": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n\nimport type { AllocKind, AllocSiteId, IrSiteId } from \"../../core/nodes.js\";"
+            },
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 161,
+              "text": "\nimport type { Ownership } from \"../lattice.js\";"
+            },
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 209,
+              "text": "\nimport type { EscapeClass } from \"../escape.js\";"
+            },
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 258,
+              "text": "\nimport type { Encoding } from \"../encoding.js\";"
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearStorageKind",
+              "original": "planner",
+              "offset": 2765,
+              "length": 169,
+              "sourceSha256": "6c20d67ba72ba34f6caff27f384578abe4a626de0ff9a9e3233dd7df3cc59fec",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 306
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearAllocationClass",
+              "original": "planner",
+              "offset": 2936,
+              "length": 77,
+              "sourceSha256": "aa221e490e6cc96cea4a538cd7f24662cfe8b8f7c4bbcc3fb9f3e79ec4ae6a8c",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 477
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearSizePlan",
+              "original": "planner",
+              "offset": 3093,
+              "length": 306,
+              "sourceSha256": "4c2e8b579836654af4b00525b19161bfeba79c1f4506a32d692cbc1b1444cc77",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 556
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearFieldPlan",
+              "original": "planner",
+              "offset": 3401,
+              "length": 306,
+              "sourceSha256": "bfd7131ad5e0c5143219b57dc5f2ee6cbabe48e5b437cfe8a133a6669d34eeb8",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 864
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearPointerMap",
+              "original": "planner",
+              "offset": 3709,
+              "length": 348,
+              "sourceSha256": "79c46689f58d0250cfa9e93eda2634a86b4bc6905defa2d2b5157d32b3844ac5",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 1172
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearLayoutBase",
+              "original": "planner",
+              "offset": 4059,
+              "length": 225,
+              "sourceSha256": "a23f9708800a1e1c342a955af501358aeee7f4e6d6f092104f0676f1da9d1f50",
+              "leading": "\n\n",
+              "forwardModifier": ["interface LinearLayoutBase", "export interface LinearLayoutBase"],
+              "afterOffset": 1522
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearRecordLayoutPlan",
+              "original": "planner",
+              "offset": 4286,
+              "length": 246,
+              "sourceSha256": "2ce625dcb8c69624599aae4cf9a2c97da556b1a91d97d6c5121a1f36df530ec6",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 1756
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearVectorLayoutPlan",
+              "original": "planner",
+              "offset": 4534,
+              "length": 314,
+              "sourceSha256": "ec5d19565ca340020de45d51937517ae4b37153381e1eaca45f4c6064d916873",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 2004
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearRuntimeOperation",
+              "original": "planner",
+              "offset": 5442,
+              "length": 906,
+              "sourceSha256": "45f5bc2a72f302d6ecae27bb6e20d4c195f7ba11235523577165c685e852f0ad",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 2320
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearRootPlan",
+              "original": "planner",
+              "offset": 6350,
+              "length": 235,
+              "sourceSha256": "bfa0c008e96d64d0237630c47d8f9659872b51366418b8640264c21912fc408c",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 3228
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearSafepointPlan",
+              "original": "planner",
+              "offset": 6587,
+              "length": 103,
+              "sourceSha256": "fb60f5eb09b49bad4c3235108291084358a01c697529b83c1eeab81e33a86ca3",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 3465
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearBarrierPlan",
+              "original": "planner",
+              "offset": 6692,
+              "length": 146,
+              "sourceSha256": "ff59de00448c626079f37bd6c697955bd295d8743a133f7b5331ccbf83062729",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 3570
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearLifetime",
+              "original": "planner",
+              "offset": 6840,
+              "length": 84,
+              "sourceSha256": "360c71363aa342d28eb4381e9fc7dbe8be900b676b0245597868974b631fd5af",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 3718
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearAllocationDecision",
+              "original": "planner",
+              "offset": 8222,
+              "length": 307,
+              "sourceSha256": "cd8cd6be810408753d60878027b5073b9313789ec49968177cf320ebdd0cc4a2",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 3804
+            },
+            {
+              "kind": "original-declaration",
+              "name": "LinearAllocationSitePlan",
+              "original": "planner",
+              "offset": 8746,
+              "length": 554,
+              "sourceSha256": "a1da6701253a35516f19837b105d3cf3382f2d5f97fdfb60a00a1e11c210081d",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 4113
+            },
+            {
+              "kind": "literal-trailer",
+              "text": "\n",
+              "afterOffset": 4669
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "backend-legality",
+      "donorPath": "src/ir/backend/legality.ts",
+      "beforePin": {
+        "path": "src/ir/backend/legality.ts",
+        "bytes": 26410,
+        "sha256": "6a64764b2691d6b2994258a966afabdac0b981fc036f611be5d8969032a3db98",
+        "gitBlob": "d4854103ad1fae2f12c105fc0e1a66e2d20a5c6e"
+      },
+      "currentPaths": ["src/ir/backend/legality.ts", "src/ir/analysis/backend-legality.ts"],
+      "inverse": {
+        "label": "legality",
+        "beforePin": {
+          "bytes": 26410,
+          "sha256": "6a64764b2691d6b2994258a966afabdac0b981fc036f611be5d8969032a3db98"
+        },
+        "beforeDerivedFromActualCurrent": true,
+        "completeCoverage": true,
+        "pieces": [
+          {
+            "kind": "literal-import",
+            "beforeOffset": 0,
+            "text": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n//\n// Per-backend IR legality verifier (#1850).\n//\n// `verifyIrFunction` answers \"is this a valid IR function?\". This pass answers\n// the emit-boundary question: \"is this valid IR legal for the selected backend\n// emitter?\". Keeping the check before lowering gives unsupported backend\n// surfaces a localized diagnostic instead of a late raw-emitter throw or\n// malformed Wasm/bytecode.\n\nimport type { IrBinop, IrBlock, IrClassShape, IrFunction, IrInstr, IrType } from \"../nodes.js\";"
+          },
+          {
+            "kind": "literal-import",
+            "beforeOffset": 567,
+            "text": "\nimport { asVal } from \"../nodes.js\";"
+          },
+          {
+            "kind": "literal-import",
+            "beforeOffset": 604,
+            "text": "\nimport type { IrFnctorShape } from \"../fnctor-abi.js\";"
+          },
+          {
+            "kind": "literal-import",
+            "beforeOffset": 659,
+            "text": "\nimport type { ValType } from \"../types.js\";"
+          },
+          {
+            "kind": "literal-import",
+            "beforeOffset": 703,
+            "text": "\nimport type { CompileTargetProfile } from \"../../target-profile.js\";"
+          },
+          {
+            "kind": "moved",
+            "name": "IrBackendKind",
+            "path": "src/ir/analysis/backend-legality.ts",
+            "offset": 754,
+            "length": 73,
+            "sourceSha256": "bc7bea62259e4a4bc23d5635da1f1884f2f3fd7d0103eef610dc22194f2d2f6d",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 772
+          },
+          {
+            "kind": "retained",
+            "name": "IrBackendTargetCapability",
+            "path": "src/ir/backend/legality.ts",
+            "offset": 806,
+            "length": 428,
+            "sourceSha256": "a62229d15534bcb73d3e3d505577512eec6997ea1d6a6c3d350fb25db65bef78",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 847
+          },
+          {
+            "kind": "retained",
+            "name": "IrBackendTargetProfile",
+            "path": "src/ir/backend/legality.ts",
+            "offset": 1236,
+            "length": 508,
+            "sourceSha256": "6ae81cb0624dbacc4b47e9c33b669c8a57b910b522eda46be7ec913fbcadbfcc",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 1277
+          },
+          {
+            "kind": "retained",
+            "name": "projectIrBackendTargetProfile",
+            "path": "src/ir/backend/legality.ts",
+            "offset": 1746,
+            "length": 1053,
+            "sourceSha256": "a6cbbe40bb9160b5bfb819a12618fceee19deb7a176498fc173f5080055ab521",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 1787
+          },
+          {
+            "kind": "retained",
+            "name": "supportsIrBackendTargetCapability",
+            "path": "src/ir/backend/legality.ts",
+            "offset": 2801,
+            "length": 3031,
+            "sourceSha256": "42929f4b1de3a506f38527cb858909183520327f40f1a64066293cd2c972adc5",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 2842
+          },
+          {
+            "kind": "moved",
+            "name": "IrBackendLegalityError",
+            "path": "src/ir/analysis/backend-legality.ts",
+            "offset": 829,
+            "length": 150,
+            "sourceSha256": "8bd370156c3077fee8cc66c323c2ea0071b5d7506a8b73afc28f63219292278d",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 5875
+          },
+          {
+            "kind": "moved",
+            "name": "IrBackendFnctorResolver",
+            "path": "src/ir/analysis/backend-legality.ts",
+            "offset": 981,
+            "length": 259,
+            "sourceSha256": "21cb37a98bbeff7fc79bf257b2d02ca6899a007889936ca00ff76f7da55a31ef",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 6027
+          },
+          {
+            "kind": "moved",
+            "name": "verifyIrBackendLegality",
+            "path": "src/ir/analysis/backend-legality.ts",
+            "offset": 1242,
+            "length": 1480,
+            "sourceSha256": "4fe7deaa3f644ed2f24cc4017c6bf4d2c062159232f2b4ca9385c04134790885",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 6288
+          },
+          {
+            "kind": "moved",
+            "name": "checkInstr",
+            "path": "src/ir/analysis/backend-legality.ts",
+            "offset": 2724,
+            "length": 1940,
+            "sourceSha256": "ee85acb394bed1dd82666796cf0bd56a2e3a0dfd03151a49c7d5c839aed996af",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 7770
+          },
+          {
+            "kind": "moved",
+            "name": "linearInstrError",
+            "path": "src/ir/analysis/backend-legality.ts",
+            "offset": 4666,
+            "length": 4079,
+            "sourceSha256": "3b0541c1127fc981d1b5a4f11684ed4cd1afe71feee1ebea86219b29f67dddeb",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 9712
+          },
+          {
+            "kind": "moved",
+            "name": "bytecodeInstrError",
+            "path": "src/ir/analysis/backend-legality.ts",
+            "offset": 8747,
+            "length": 1009,
+            "sourceSha256": "727ab976ca08bd900a0d1fdc0bdea5f6f5a9de9b087b748dc11e128c888aa063",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 13793
+          },
+          {
+            "kind": "moved",
+            "name": "bytecodeBinopLegal",
+            "path": "src/ir/analysis/backend-legality.ts",
+            "offset": 9758,
+            "length": 441,
+            "sourceSha256": "0897c602a79ef7eec3e9514eeafeeceb1330d68174c7e9c26b4fe0c312fa4c2e",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 14804
+          },
+          {
+            "kind": "moved",
+            "name": "porfforInstrError",
+            "path": "src/ir/analysis/backend-legality.ts",
+            "offset": 10201,
+            "length": 1980,
+            "sourceSha256": "e70059333cdc4495a4f3ffe13318c2512bd67941ff3289d94689e60e2f8f2d7a",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 15247
+          },
+          {
+            "kind": "moved",
+            "name": "porfforBinopLegal",
+            "path": "src/ir/analysis/backend-legality.ts",
+            "offset": 12183,
+            "length": 1235,
+            "sourceSha256": "b8d508e2442fc8bb61123a4cd7ed707a74c2220e3b1f27f043d10f72bff21750",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 17229
+          },
+          {
+            "kind": "moved",
+            "name": "backendTypeError",
+            "path": "src/ir/analysis/backend-legality.ts",
+            "offset": 13420,
+            "length": 2065,
+            "sourceSha256": "f705a2b4c70cf50bf235d5ceaddd8b1dfa3f3489ed62bf2f8ee9b5b6a629cf45",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 18466
+          },
+          {
+            "kind": "moved",
+            "name": "porfforAggregateTypeError",
+            "path": "src/ir/analysis/backend-legality.ts",
+            "offset": 15487,
+            "length": 363,
+            "sourceSha256": "419a41dc836bfd75bba97903b120f64e016703ee68c2475ab509a6394520a837",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 20533
+          },
+          {
+            "kind": "moved",
+            "name": "linearAggregateTypeError",
+            "path": "src/ir/analysis/backend-legality.ts",
+            "offset": 15852,
+            "length": 859,
+            "sourceSha256": "b78ccc16952a5daf3c87d3ec9e7b3e072d24d66e0de6d678a747eb28f69f2911",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 20898
+          },
+          {
+            "kind": "moved",
+            "name": "checkValType",
+            "path": "src/ir/analysis/backend-legality.ts",
+            "offset": 16713,
+            "length": 473,
+            "sourceSha256": "1f276bb57397118e846eefe1fdff96df612e8c23589bff0d3f46d2d56cc87eb4",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 21759
+          },
+          {
+            "kind": "moved",
+            "name": "linearValTypeError",
+            "path": "src/ir/analysis/backend-legality.ts",
+            "offset": 17188,
+            "length": 246,
+            "sourceSha256": "8bcd93b1b5774bf804a888e65a1711bc4f3eb1b486fe87cd6ca29545f9c978c3",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 22234
+          },
+          {
+            "kind": "moved",
+            "name": "bytecodeValTypeError",
+            "path": "src/ir/analysis/backend-legality.ts",
+            "offset": 17436,
+            "length": 234,
+            "sourceSha256": "d46b9b468b5e99e635d440373dc8a0398ad2a8b3b8cd05015909cc8d68be17a0",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 22482
+          },
+          {
+            "kind": "moved",
+            "name": "porfforValTypeError",
+            "path": "src/ir/analysis/backend-legality.ts",
+            "offset": 17672,
+            "length": 232,
+            "sourceSha256": "e7e993d5373de8d6b614572496a94dc8637a458c0409a95526004115bc7daf74",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 22718
+          },
+          {
+            "kind": "moved",
+            "name": "checkNestedTypeShapes",
+            "path": "src/ir/analysis/backend-legality.ts",
+            "offset": 17906,
+            "length": 1232,
+            "sourceSha256": "76777880a9935a86112cfc86b65cd2412131bd6e6cfc7ae56d6252c77bad5baa",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 22952
+          },
+          {
+            "kind": "moved",
+            "name": "checkInstrEmbeddedTypes",
+            "path": "src/ir/analysis/backend-legality.ts",
+            "offset": 19140,
+            "length": 1303,
+            "sourceSha256": "072ad6bc3d957417e4b0dec1d4e8692938add13f075664190469be9981b54c10",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 24186
+          },
+          {
+            "kind": "moved",
+            "name": "nestedInstrBuffers",
+            "path": "src/ir/analysis/backend-legality.ts",
+            "offset": 20445,
+            "length": 916,
+            "sourceSha256": "d38a1079720531e7b14f9a70e4212a416ae9efea9f4f124b9d6509e7ae51b778",
+            "leading": "\n\n",
+            "reverseModifier": null,
+            "beforeOffset": 25491
+          },
+          {
+            "kind": "literal-trailer",
+            "beforeOffset": 26409,
+            "text": "\n"
+          }
+        ]
+      },
+      "forward": [
+        {
+          "path": "src/ir/backend/legality.ts",
+          "currentPin": {
+            "bytes": 5833,
+            "sha256": "5b67993fe312a0f5a52f9ef816c76a10cd32470f7e2a53819dec736764f45878"
+          },
+          "completeCoverage": true,
+          "forwardFromAuthenticOriginal": true,
+          "pieces": [
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 0,
+              "text": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n//\n// Per-backend IR legality verifier (#1850).\n//\n// `verifyIrFunction` answers \"is this a valid IR function?\". This pass answers\n// the emit-boundary question: \"is this valid IR legal for the selected backend\n// emitter?\". Keeping the check before lowering gives unsupported backend\n// surfaces a localized diagnostic instead of a late raw-emitter throw or\n// malformed Wasm/bytecode.\n\nimport type { CompileTargetProfile } from \"../../target-profile.js\";"
+            },
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 540,
+              "text": "\nimport type { IrBackendKind } from \"../analysis/backend-legality.js\";"
+            },
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 610,
+              "text": "\nexport type { IrBackendKind, IrBackendLegalityError, IrBackendFnctorResolver } from \"../analysis/backend-legality.js\";"
+            },
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 729,
+              "text": "\nexport { verifyIrBackendLegality } from \"../analysis/backend-legality.js\";"
+            },
+            {
+              "kind": "original-declaration",
+              "name": "IrBackendTargetCapability",
+              "original": "legality",
+              "offset": 849,
+              "length": 428,
+              "sourceSha256": "a62229d15534bcb73d3e3d505577512eec6997ea1d6a6c3d350fb25db65bef78",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 804
+            },
+            {
+              "kind": "original-declaration",
+              "name": "IrBackendTargetProfile",
+              "original": "legality",
+              "offset": 1279,
+              "length": 508,
+              "sourceSha256": "6ae81cb0624dbacc4b47e9c33b669c8a57b910b522eda46be7ec913fbcadbfcc",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 1234
+            },
+            {
+              "kind": "original-declaration",
+              "name": "projectIrBackendTargetProfile",
+              "original": "legality",
+              "offset": 1789,
+              "length": 1053,
+              "sourceSha256": "a6cbbe40bb9160b5bfb819a12618fceee19deb7a176498fc173f5080055ab521",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 1744
+            },
+            {
+              "kind": "original-declaration",
+              "name": "supportsIrBackendTargetCapability",
+              "original": "legality",
+              "offset": 2844,
+              "length": 3031,
+              "sourceSha256": "42929f4b1de3a506f38527cb858909183520327f40f1a64066293cd2c972adc5",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 2799
+            },
+            {
+              "kind": "literal-trailer",
+              "text": "\n",
+              "afterOffset": 5832
+            }
+          ]
+        },
+        {
+          "path": "src/ir/analysis/backend-legality.ts",
+          "currentPin": {
+            "bytes": 21362,
+            "sha256": "e6bdc35fbf47fc26581c24cbecb08f27a4d590a7006d005031b6a309db26b506"
+          },
+          "completeCoverage": true,
+          "forwardFromAuthenticOriginal": true,
+          "pieces": [
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 0,
+              "text": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n//\n// Per-backend IR legality verifier (#1850).\n//\n// `verifyIrFunction` answers \"is this a valid IR function?\". This pass answers\n// the emit-boundary question: \"is this valid IR legal for the selected backend\n// emitter?\". Keeping the check before lowering gives unsupported backend\n// surfaces a localized diagnostic instead of a late raw-emitter throw or\n// malformed Wasm/bytecode.\n\nimport type { IrBinop, IrBlock, IrFunction, IrInstr } from \"../core/nodes.js\";"
+            },
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 550,
+              "text": "\nimport { asVal, type IrClassShape, type IrType } from \"../core/types.js\";"
+            },
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 624,
+              "text": "\nimport type { IrFnctorShape } from \"../core/fnctor-shapes.js\";"
+            },
+            {
+              "kind": "literal-header-or-forward",
+              "afterOffset": 687,
+              "text": "\nimport type { ValType } from \"../../wasm/model/instructions.js\";"
+            },
+            {
+              "kind": "original-declaration",
+              "name": "IrBackendKind",
+              "original": "legality",
+              "offset": 774,
+              "length": 73,
+              "sourceSha256": "bc7bea62259e4a4bc23d5635da1f1884f2f3fd7d0103eef610dc22194f2d2f6d",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 752
+            },
+            {
+              "kind": "original-declaration",
+              "name": "IrBackendLegalityError",
+              "original": "legality",
+              "offset": 5877,
+              "length": 150,
+              "sourceSha256": "8bd370156c3077fee8cc66c323c2ea0071b5d7506a8b73afc28f63219292278d",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 827
+            },
+            {
+              "kind": "original-declaration",
+              "name": "IrBackendFnctorResolver",
+              "original": "legality",
+              "offset": 6029,
+              "length": 259,
+              "sourceSha256": "21cb37a98bbeff7fc79bf257b2d02ca6899a007889936ca00ff76f7da55a31ef",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 979
+            },
+            {
+              "kind": "original-declaration",
+              "name": "verifyIrBackendLegality",
+              "original": "legality",
+              "offset": 6290,
+              "length": 1480,
+              "sourceSha256": "4fe7deaa3f644ed2f24cc4017c6bf4d2c062159232f2b4ca9385c04134790885",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 1240
+            },
+            {
+              "kind": "original-declaration",
+              "name": "checkInstr",
+              "original": "legality",
+              "offset": 7772,
+              "length": 1940,
+              "sourceSha256": "ee85acb394bed1dd82666796cf0bd56a2e3a0dfd03151a49c7d5c839aed996af",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 2722
+            },
+            {
+              "kind": "original-declaration",
+              "name": "linearInstrError",
+              "original": "legality",
+              "offset": 9714,
+              "length": 4079,
+              "sourceSha256": "3b0541c1127fc981d1b5a4f11684ed4cd1afe71feee1ebea86219b29f67dddeb",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 4664
+            },
+            {
+              "kind": "original-declaration",
+              "name": "bytecodeInstrError",
+              "original": "legality",
+              "offset": 13795,
+              "length": 1009,
+              "sourceSha256": "727ab976ca08bd900a0d1fdc0bdea5f6f5a9de9b087b748dc11e128c888aa063",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 8745
+            },
+            {
+              "kind": "original-declaration",
+              "name": "bytecodeBinopLegal",
+              "original": "legality",
+              "offset": 14806,
+              "length": 441,
+              "sourceSha256": "0897c602a79ef7eec3e9514eeafeeceb1330d68174c7e9c26b4fe0c312fa4c2e",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 9756
+            },
+            {
+              "kind": "original-declaration",
+              "name": "porfforInstrError",
+              "original": "legality",
+              "offset": 15249,
+              "length": 1980,
+              "sourceSha256": "e70059333cdc4495a4f3ffe13318c2512bd67941ff3289d94689e60e2f8f2d7a",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 10199
+            },
+            {
+              "kind": "original-declaration",
+              "name": "porfforBinopLegal",
+              "original": "legality",
+              "offset": 17231,
+              "length": 1235,
+              "sourceSha256": "b8d508e2442fc8bb61123a4cd7ed707a74c2220e3b1f27f043d10f72bff21750",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 12181
+            },
+            {
+              "kind": "original-declaration",
+              "name": "backendTypeError",
+              "original": "legality",
+              "offset": 18468,
+              "length": 2065,
+              "sourceSha256": "f705a2b4c70cf50bf235d5ceaddd8b1dfa3f3489ed62bf2f8ee9b5b6a629cf45",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 13418
+            },
+            {
+              "kind": "original-declaration",
+              "name": "porfforAggregateTypeError",
+              "original": "legality",
+              "offset": 20535,
+              "length": 363,
+              "sourceSha256": "419a41dc836bfd75bba97903b120f64e016703ee68c2475ab509a6394520a837",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 15485
+            },
+            {
+              "kind": "original-declaration",
+              "name": "linearAggregateTypeError",
+              "original": "legality",
+              "offset": 20900,
+              "length": 859,
+              "sourceSha256": "b78ccc16952a5daf3c87d3ec9e7b3e072d24d66e0de6d678a747eb28f69f2911",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 15850
+            },
+            {
+              "kind": "original-declaration",
+              "name": "checkValType",
+              "original": "legality",
+              "offset": 21761,
+              "length": 473,
+              "sourceSha256": "1f276bb57397118e846eefe1fdff96df612e8c23589bff0d3f46d2d56cc87eb4",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 16711
+            },
+            {
+              "kind": "original-declaration",
+              "name": "linearValTypeError",
+              "original": "legality",
+              "offset": 22236,
+              "length": 246,
+              "sourceSha256": "8bcd93b1b5774bf804a888e65a1711bc4f3eb1b486fe87cd6ca29545f9c978c3",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 17186
+            },
+            {
+              "kind": "original-declaration",
+              "name": "bytecodeValTypeError",
+              "original": "legality",
+              "offset": 22484,
+              "length": 234,
+              "sourceSha256": "d46b9b468b5e99e635d440373dc8a0398ad2a8b3b8cd05015909cc8d68be17a0",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 17434
+            },
+            {
+              "kind": "original-declaration",
+              "name": "porfforValTypeError",
+              "original": "legality",
+              "offset": 22720,
+              "length": 232,
+              "sourceSha256": "e7e993d5373de8d6b614572496a94dc8637a458c0409a95526004115bc7daf74",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 17670
+            },
+            {
+              "kind": "original-declaration",
+              "name": "checkNestedTypeShapes",
+              "original": "legality",
+              "offset": 22954,
+              "length": 1232,
+              "sourceSha256": "76777880a9935a86112cfc86b65cd2412131bd6e6cfc7ae56d6252c77bad5baa",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 17904
+            },
+            {
+              "kind": "original-declaration",
+              "name": "checkInstrEmbeddedTypes",
+              "original": "legality",
+              "offset": 24188,
+              "length": 1303,
+              "sourceSha256": "072ad6bc3d957417e4b0dec1d4e8692938add13f075664190469be9981b54c10",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 19138
+            },
+            {
+              "kind": "original-declaration",
+              "name": "nestedInstrBuffers",
+              "original": "legality",
+              "offset": 25493,
+              "length": 916,
+              "sourceSha256": "d38a1079720531e7b14f9a70e4212a416ae9efea9f4f124b9d6509e7ae51b778",
+              "leading": "\n\n",
+              "forwardModifier": null,
+              "afterOffset": 20443
+            },
+            {
+              "kind": "literal-trailer",
+              "text": "\n",
+              "afterOffset": 21361
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -7238,3 +7238,537 @@ export function captureWasmGcHelperPredecessorPolicySource(raw: string): string 
     wasmGcHelperFail("raw/semantic reciprocal proof disagree");
   return before;
 }
+
+import {
+  captureLinearLayoutPredecessor as loweringAnalysisLayoutProof,
+  captureLoweringLegalityPredecessor as loweringAnalysisLegalityProof,
+} from "./ir-lowering-analysis-relocation.js";
+
+const loweringAnalysisExpected = {
+  schema: 1,
+  kind: "fixed-lowering-analysis-policy-relocation",
+  provenance: {
+    preparationCommit: "549b476e6a3ce6bfdb1a27a55bac6511a902a783",
+    planSha256: "e05d45764a4879e21a1bb22e25044a28f88de2f7be16dc90ccd56c3af86c2315",
+    sourceFreezeSha256: "144faf79398186b8392607a97d90ff351d6e5b3fe803396d2ad50682d30b5afe",
+    legacyRetained: true,
+  },
+  before: {
+    source: {
+      bytes: 583163,
+      sha256: "0ec45a8b2c003e0b4baf84556f8612e20fca88a3d48f81a13f8cf43ac113fdd0",
+      gitBlob: "391b2701b382df0af5a42536fd61a830fd596eb4",
+    },
+    dataSha256: "f7ed5862d447d03557ed0e2a61060d143fcc9f2036e02120ac56839829082a83",
+    fileCount: 1822,
+    filesSha256: "1c23754ff749eb559320fa01408ba5891f9f7f264f2fb890284ed252459e4053",
+    activationCount: 103,
+    activationHistorySha256: "17888cd13913d430ce7b5338ee4b686e2c4f8f9a8ffb08934a5ba80b187c661a",
+    layersSha256: "1987cb65521762925d57f822787a854b154297f98b3e736f1487154ebcf084d2",
+    allowedEdgesSha256: "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7",
+    moveCount: 10,
+    movesSha256: "8d85e70962ba34d74c9cabd9731601995ecc14434608a5d5deff99b186187224",
+  },
+  current: {
+    source: {
+      bytes: 583986,
+      sha256: "0cbff25993c92150c6c7cd45934b25552b315266833adc84301f49287d3982ee",
+      gitBlob: "37d83315305278b25047fa4ed6b38af24b3cf9ce",
+    },
+    dataSha256: "2d3c02197bd25875755aa64a0d7f9f8cdaba6f08f2394448e2e70870e327e738",
+    fileCount: 1824,
+    filesSha256: "04e5d8f08098f2f3f0d30813353c3521762c2f2f266b777083796549c3654156",
+    activationCount: 104,
+    activationHistorySha256: "27cbdad6be8299ff447e8407b2d04adbb44a28e11999c3dd56d75948f47b44ab",
+    layersSha256: "45c79ff9c27d08c74dfab859be8cec1ef6a85acbc1cae121e096c0ca35026eeb",
+    allowedEdgesSha256: "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7",
+    moveCount: 12,
+    movesSha256: "050fb62b7369179b0b3bd81193ec9bc275a77db1ebb45ac5fdef1a136ab037f2",
+  },
+  helperPrefix: {
+    path: "tests/helpers/ir-runtime-program-policy-evolution.ts",
+    bytes: 331953,
+    sha256: "735727a935f4a7d38ef65d8a43cfd8543ef110ddb9f5e2e840c59aa3a086e1b7",
+    gitBlob: "eb3bd1d242534987788ba3c6ea8dfd85534df056",
+  },
+  predecessorReceipt: {
+    path: "tests/helpers/ir-runtime-program-policy-wasmgc-helper-owners.json",
+    bytes: 28909,
+    sha256: "8e241366cd828fa0511dd399fbe127213808c8872dbd97ee536d89544de30b8b",
+    gitBlob: "69869dc01a37cb7bad968657e06e47d8581513b4",
+  },
+  sourceReceipt: {
+    path: "tests/helpers/ir-lowering-analysis-relocation.json",
+    bytes: 111423,
+    sha256: "dc8241d36da5b2fe29abe12ed6ee348fc456ef22939c61aabe05d09daad92134",
+    gitBlob: "6fee96e10bb22a1f3071ddc41b4a2af39ee96763",
+  },
+  componentImplementation: {
+    path: "tests/helpers/ir-lowering-analysis-relocation.ts",
+    bytes: 17637,
+    sha256: "4378d72f5b51148fa345f2544f1c43df12d4a967b369ef0be95d99c6f16c7ba4",
+    gitBlob: "832a2b1b88bd3eddbd89d78a3f23e917d7bff9ae",
+    mode: 420,
+  },
+  sourceInputs: [
+    {
+      path: "src/ir/analysis/linear-memory-plan.ts",
+      bytes: 49040,
+      sha256: "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",
+      gitBlob: "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",
+      mode: 420,
+    },
+    {
+      path: "src/ir/analysis/contracts/linear-memory-layout.ts",
+      bytes: 4670,
+      sha256: "dba3ca2121063a52b0ae1130f48c0acc70e0f819a9e665a2a2744572eddfae72",
+      gitBlob: "cac9d1e33659380a6ee8d8e03014af53e1123533",
+      mode: 420,
+    },
+    {
+      path: "src/ir/backend/legality.ts",
+      bytes: 5833,
+      sha256: "5b67993fe312a0f5a52f9ef816c76a10cd32470f7e2a53819dec736764f45878",
+      gitBlob: "c38edb2f3d1350b0ea23f887c9349ac768d48afa",
+      mode: 420,
+    },
+    {
+      path: "src/ir/analysis/backend-legality.ts",
+      bytes: 21362,
+      sha256: "e6bdc35fbf47fc26581c24cbecb08f27a4d590a7006d005031b6a309db26b506",
+      gitBlob: "34a1399bdd963163f2155f0de0933d085dbc4f25",
+      mode: 420,
+    },
+  ],
+  partialPairs: [
+    {
+      donor: "src/ir/analysis/linear-memory-plan.ts",
+      owner: "src/ir/analysis/contracts/linear-memory-layout.ts",
+      donorRowIndex: 1179,
+      donorRow: {
+        path: "src/ir/analysis/linear-memory-plan.ts",
+        state: "unmigrated",
+        layer: "mixed-needs-split",
+        destination: "ir-core",
+        owner: "3518-coordinator",
+        nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+      },
+      scope: "partial-layout-declaration-extraction",
+    },
+    {
+      donor: "src/ir/backend/legality.ts",
+      owner: "src/ir/analysis/backend-legality.ts",
+      donorRowIndex: 1207,
+      donorRow: {
+        path: "src/ir/backend/legality.ts",
+        state: "unmigrated",
+        layer: "mixed-needs-split",
+        destination: "ir-core",
+        owner: "3518-coordinator",
+        nextBoundary: "Separate pure IR contracts from frontend inventory and physical/backend dependencies.",
+      },
+      scope: "partial-verifier-body-extraction",
+    },
+  ],
+  topLevelKeys: [
+    "schema",
+    "description",
+    "sourceRoot",
+    "tsconfig",
+    "requireGitProvenance",
+    "externalAssets",
+    "frontendWrapper",
+    "moduleExtensions",
+    "layers",
+    "allowedEdges",
+    "externalPackages",
+    "activationHistory",
+    "nonModules",
+    "moves",
+    "evidence",
+    "files",
+  ],
+  delta: {
+    layerIndex: 6,
+    beforeLayer: {
+      id: "ir-analysis",
+      status: "active",
+      roots: [
+        "src/ir/analysis/contracts",
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/effects.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/analysis/async-plan.ts",
+        "src/ir/analysis/lattice.ts",
+        "src/ir/analysis/ownership.ts",
+        "src/ir/analysis/encoding.ts",
+        "src/ir/analysis/escape.ts",
+        "src/ir/analysis/dominance.ts",
+        "src/ir/analysis/alloc-verification.ts",
+        "src/ir/analysis/nested-stackification.ts",
+      ],
+      required: true,
+      entries: [
+        "src/ir/analysis/contracts/allocations.ts",
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/effects.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/analysis/async-plan.ts",
+        "src/ir/analysis/lattice.ts",
+        "src/ir/analysis/ownership.ts",
+        "src/ir/analysis/encoding.ts",
+        "src/ir/analysis/escape.ts",
+        "src/ir/analysis/dominance.ts",
+        "src/ir/analysis/alloc-verification.ts",
+        "src/ir/analysis/nested-stackification.ts",
+      ],
+      minModules: 12,
+    },
+    currentLayer: {
+      id: "ir-analysis",
+      status: "active",
+      roots: [
+        "src/ir/analysis/contracts",
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/effects.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/analysis/async-plan.ts",
+        "src/ir/analysis/lattice.ts",
+        "src/ir/analysis/ownership.ts",
+        "src/ir/analysis/encoding.ts",
+        "src/ir/analysis/escape.ts",
+        "src/ir/analysis/dominance.ts",
+        "src/ir/analysis/alloc-verification.ts",
+        "src/ir/analysis/nested-stackification.ts",
+        "src/ir/analysis/backend-legality.ts",
+      ],
+      required: true,
+      entries: [
+        "src/ir/analysis/contracts/allocations.ts",
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/effects.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/analysis/async-plan.ts",
+        "src/ir/analysis/lattice.ts",
+        "src/ir/analysis/ownership.ts",
+        "src/ir/analysis/encoding.ts",
+        "src/ir/analysis/escape.ts",
+        "src/ir/analysis/dominance.ts",
+        "src/ir/analysis/alloc-verification.ts",
+        "src/ir/analysis/nested-stackification.ts",
+        "src/ir/analysis/contracts/linear-memory-layout.ts",
+        "src/ir/analysis/backend-legality.ts",
+      ],
+      minModules: 14,
+    },
+    fileAppends: [
+      { path: "src/ir/analysis/contracts/linear-memory-layout.ts", state: "clean", layer: "ir-analysis" },
+      { path: "src/ir/analysis/backend-legality.ts", state: "clean", layer: "ir-analysis" },
+    ],
+    beforeMoveCount: 10,
+    moveBeforeTail: {
+      from: "src/ir/backend/wasm-math-minmax.ts",
+      to: "src/backend/wasmgc/lowering/wasm-math-minmax.ts",
+    },
+    moveAppends: [
+      { from: "src/ir/analysis/linear-memory-plan.ts", to: "src/ir/analysis/contracts/linear-memory-layout.ts" },
+      { from: "src/ir/backend/legality.ts", to: "src/ir/analysis/backend-legality.ts" },
+    ],
+    beforeActivationCount: 103,
+    activationBeforeTail: {
+      layer: "backend-wasmgc",
+      entries: [
+        "src/backend/wasmgc/lowering/dynamic-scratch.ts",
+        "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
+        "src/backend/wasmgc/lowering/wasm-math-minmax.ts",
+      ],
+      minModules: 55,
+    },
+    activationAppend: {
+      layer: "ir-analysis",
+      entries: ["src/ir/analysis/contracts/linear-memory-layout.ts", "src/ir/analysis/backend-legality.ts"],
+      minModules: 14,
+    },
+  },
+  raw: {
+    spans: [
+      {
+        name: "ir-analysis-layer",
+        beforeOffset: 4187,
+        afterOffset: 4187,
+        before:
+          '    {\n      "id": "ir-analysis",\n      "status": "active",\n      "roots": [\n        "src/ir/analysis/contracts",\n        "src/ir/analysis/alloc-registry.ts",\n        "src/ir/analysis/effects.ts",\n        "src/ir/analysis/intrinsics.ts",\n        "src/ir/analysis/async-plan.ts",\n        "src/ir/analysis/lattice.ts",\n        "src/ir/analysis/ownership.ts",\n        "src/ir/analysis/encoding.ts",\n        "src/ir/analysis/escape.ts",\n        "src/ir/analysis/dominance.ts",\n        "src/ir/analysis/alloc-verification.ts",\n        "src/ir/analysis/nested-stackification.ts"\n      ],\n      "required": true,\n      "entries": [\n        "src/ir/analysis/contracts/allocations.ts",\n        "src/ir/analysis/alloc-registry.ts",\n        "src/ir/analysis/effects.ts",\n        "src/ir/analysis/intrinsics.ts",\n        "src/ir/analysis/async-plan.ts",\n        "src/ir/analysis/lattice.ts",\n        "src/ir/analysis/ownership.ts",\n        "src/ir/analysis/encoding.ts",\n        "src/ir/analysis/escape.ts",\n        "src/ir/analysis/dominance.ts",\n        "src/ir/analysis/alloc-verification.ts",\n        "src/ir/analysis/nested-stackification.ts"\n      ],\n      "minModules": 12\n    }',
+        after:
+          '    {\n      "id": "ir-analysis",\n      "status": "active",\n      "roots": [\n        "src/ir/analysis/contracts",\n        "src/ir/analysis/alloc-registry.ts",\n        "src/ir/analysis/effects.ts",\n        "src/ir/analysis/intrinsics.ts",\n        "src/ir/analysis/async-plan.ts",\n        "src/ir/analysis/lattice.ts",\n        "src/ir/analysis/ownership.ts",\n        "src/ir/analysis/encoding.ts",\n        "src/ir/analysis/escape.ts",\n        "src/ir/analysis/dominance.ts",\n        "src/ir/analysis/alloc-verification.ts",\n        "src/ir/analysis/nested-stackification.ts",\n        "src/ir/analysis/backend-legality.ts"\n      ],\n      "required": true,\n      "entries": [\n        "src/ir/analysis/contracts/allocations.ts",\n        "src/ir/analysis/alloc-registry.ts",\n        "src/ir/analysis/effects.ts",\n        "src/ir/analysis/intrinsics.ts",\n        "src/ir/analysis/async-plan.ts",\n        "src/ir/analysis/lattice.ts",\n        "src/ir/analysis/ownership.ts",\n        "src/ir/analysis/encoding.ts",\n        "src/ir/analysis/escape.ts",\n        "src/ir/analysis/dominance.ts",\n        "src/ir/analysis/alloc-verification.ts",\n        "src/ir/analysis/nested-stackification.ts",\n        "src/ir/analysis/contracts/linear-memory-layout.ts",\n        "src/ir/analysis/backend-legality.ts"\n      ],\n      "minModules": 14\n    }',
+      },
+      {
+        name: "activationHistory-append",
+        beforeOffset: 67688,
+        afterOffset: 67843,
+        before: "",
+        after:
+          ',\n    {\n      "layer": "ir-analysis",\n      "entries": ["src/ir/analysis/contracts/linear-memory-layout.ts", "src/ir/analysis/backend-legality.ts"],\n      "minModules": 14\n    }',
+      },
+      {
+        name: "moves-append",
+        beforeOffset: 69213,
+        afterOffset: 69545,
+        before: "",
+        after:
+          ',\n    {\n      "from": "src/ir/analysis/linear-memory-plan.ts",\n      "to": "src/ir/analysis/contracts/linear-memory-layout.ts"\n    },\n    {\n      "from": "src/ir/backend/legality.ts",\n      "to": "src/ir/analysis/backend-legality.ts"\n    }',
+      },
+      {
+        name: "files-append",
+        beforeOffset: 583156,
+        afterOffset: 583727,
+        before: "",
+        after:
+          ',\n    {\n      "path": "src/ir/analysis/contracts/linear-memory-layout.ts",\n      "state": "clean",\n      "layer": "ir-analysis"\n    },\n    {\n      "path": "src/ir/analysis/backend-legality.ts",\n      "state": "clean",\n      "layer": "ir-analysis"\n    }',
+      },
+    ],
+  },
+} as const;
+type LoweringAnalysisReceipt = typeof loweringAnalysisExpected;
+type LoweringAnalysisPolicy = MutableIrRuntimeProgramPolicy & { moves: { from: string; to: string }[] };
+const loweringAnalysisReceiptPath = "tests/helpers/ir-runtime-program-policy-lowering-analysis.json";
+function loweringAnalysisFail(detail: string): never {
+  throw new Error("lowering analysis policy evolution: " + detail);
+}
+function loweringAnalysisPin(
+  bytes: Buffer,
+  expected: { readonly bytes: number; readonly sha256: string; readonly gitBlob: string },
+  label: string,
+): void {
+  if (
+    bytes.length !== expected.bytes ||
+    createHash("sha256").update(bytes).digest("hex") !== expected.sha256 ||
+    createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex") !== expected.gitBlob
+  )
+    loweringAnalysisFail("full pin changed: " + label);
+}
+function loweringAnalysisRead(path: string): string {
+  const url = new URL(`../../${path}`, import.meta.url);
+  const bytes = readFileSync(url);
+  const expected = loweringAnalysisExpected.sourceInputs.find((input) => input.path === path);
+  if (expected) {
+    const info = wasmGcHelperLstat(url);
+    if (!info.isFile() || info.isSymbolicLink() || (info.mode & 0o7777) !== expected.mode)
+      loweringAnalysisFail("source mode/identity changed: " + path);
+    loweringAnalysisPin(bytes, expected, path);
+  } else if (path !== loweringAnalysisExpected.sourceReceipt.path)
+    loweringAnalysisFail("source proof path outside fixed domain: " + path);
+  return bytes.toString("utf8");
+}
+function authenticateLoweringAnalysisPolicy(): LoweringAnalysisReceipt {
+  captureC1HistoricalAuthority();
+  const bytes = readFileSync(new URL(`../../${loweringAnalysisReceiptPath}`, import.meta.url));
+  loweringAnalysisPin(
+    bytes,
+    {
+      bytes: 13393,
+      sha256: "72db51a0e892a4fa8a2d9762042eacc8d88609ccd0ae1ac80f9f548852e04f9b",
+      gitBlob: "3c7ce06a7075d66f786e01b79d44527e86ae0f3f",
+    },
+    loweringAnalysisReceiptPath,
+  );
+  const receipt = JSON.parse(bytes.toString("utf8")) as LoweringAnalysisReceipt;
+  if (!same(receipt, loweringAnalysisExpected)) loweringAnalysisFail("fixed receipt schema/population mismatch");
+  const predecessorBytes = readFileSync(new URL(`../../${receipt.predecessorReceipt.path}`, import.meta.url));
+  loweringAnalysisPin(predecessorBytes, receipt.predecessorReceipt, receipt.predecessorReceipt.path);
+  const predecessor = JSON.parse(predecessorBytes.toString("utf8")) as typeof wasmGcHelperExpected;
+  if (!same(predecessor, wasmGcHelperExpected) || !same(predecessor.current, receipt.before))
+    loweringAnalysisFail("fixed D2 predecessor profile mismatch");
+  const prefix = readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)).subarray(
+    0,
+    receipt.helperPrefix.bytes,
+  );
+  loweringAnalysisPin(prefix, receipt.helperPrefix, receipt.helperPrefix.path + " prefix");
+  const implementationUrl = new URL(`../../${receipt.componentImplementation.path}`, import.meta.url);
+  const implementation = readFileSync(implementationUrl);
+  const implementationStat = wasmGcHelperLstat(implementationUrl);
+  if (
+    !implementationStat.isFile() ||
+    implementationStat.isSymbolicLink() ||
+    (implementationStat.mode & 0o7777) !== receipt.componentImplementation.mode
+  )
+    loweringAnalysisFail("component implementation mode/identity changed: " + receipt.componentImplementation.path);
+  loweringAnalysisPin(implementation, receipt.componentImplementation, receipt.componentImplementation.path);
+  // Both operations freshly read the fixed source receipt. No historical source enters current resolution.
+  const legality = loweringAnalysisLegalityProof(
+    loweringAnalysisRead("src/ir/backend/legality.ts"),
+    loweringAnalysisRead,
+  );
+  loweringAnalysisPin(
+    Buffer.from(legality),
+    {
+      bytes: 26410,
+      sha256: "6a64764b2691d6b2994258a966afabdac0b981fc036f611be5d8969032a3db98",
+      gitBlob: "d4854103ad1fae2f12c105fc0e1a66e2d20a5c6e",
+    },
+    "legality authentic predecessor",
+  );
+  const planner = loweringAnalysisLayoutProof(
+    loweringAnalysisRead("src/ir/analysis/linear-memory-plan.ts"),
+    loweringAnalysisRead,
+  );
+  loweringAnalysisPin(
+    Buffer.from(planner),
+    {
+      bytes: 52704,
+      sha256: "382cb4acee2de86904da1c0162ecc8b9de4250f9f9cb49dcba57b1a056c1cc3c",
+      gitBlob: "ae6f9ab03e01c80622e56a69c5b05c6826366d69",
+    },
+    "planner authentic predecessor",
+  );
+  let beforeEnd = 0,
+    afterEnd = 0,
+    delta = 0;
+  for (const span of receipt.raw.spans) {
+    if (
+      ![span.beforeOffset, span.afterOffset].every(Number.isSafeInteger) ||
+      span.beforeOffset < beforeEnd ||
+      span.afterOffset < afterEnd ||
+      span.afterOffset !== span.beforeOffset + delta
+    )
+      loweringAnalysisFail("fixed UTF8 span coordinates/order mismatch");
+    beforeEnd = span.beforeOffset + Buffer.byteLength(span.before);
+    afterEnd = span.afterOffset + Buffer.byteLength(span.after);
+    delta += Buffer.byteLength(span.after) - Buffer.byteLength(span.before);
+  }
+  if (
+    receipt.raw.spans.length !== 4 ||
+    receipt.before.source.bytes + delta !== receipt.current.source.bytes ||
+    beforeEnd > receipt.before.source.bytes ||
+    afterEnd > receipt.current.source.bytes
+  )
+    loweringAnalysisFail("fixed raw span population/coverage mismatch");
+  return freeze(receipt);
+}
+function loweringAnalysisProfile(
+  policy: LoweringAnalysisPolicy,
+  expected: LoweringAnalysisReceipt["before"] | LoweringAnalysisReceipt["current"],
+): void {
+  if (
+    digest(policy) !== expected.dataSha256 ||
+    policy.files.length !== expected.fileCount ||
+    digest(policy.files) !== expected.filesSha256 ||
+    policy.activationHistory.length !== expected.activationCount ||
+    digest(policy.activationHistory) !== expected.activationHistorySha256 ||
+    digest(policy.layers) !== expected.layersSha256 ||
+    digest(policy.allowedEdges) !== expected.allowedEdgesSha256 ||
+    !Array.isArray(policy.moves) ||
+    policy.moves.length !== expected.moveCount ||
+    digest(policy.moves) !== expected.movesSha256
+  )
+    loweringAnalysisFail("complete policy profile mismatch");
+}
+function loweringAnalysisRows(
+  policy: LoweringAnalysisPolicy,
+  receipt: LoweringAnalysisReceipt,
+  current: boolean,
+): void {
+  const d = receipt.delta;
+  if (
+    !same(Object.keys(policy), receipt.topLevelKeys) ||
+    !same(policy.layers[d.layerIndex], current ? d.currentLayer : d.beforeLayer) ||
+    !same(policy.moves[d.beforeMoveCount - 1], d.moveBeforeTail) ||
+    !same(policy.activationHistory[d.beforeActivationCount - 1], d.activationBeforeTail)
+  )
+    loweringAnalysisFail("fixed layer/topology/tail mismatch");
+  for (const pair of receipt.partialPairs) {
+    if (
+      !same(policy.files[pair.donorRowIndex], pair.donorRow) ||
+      policy.files.filter((row) => row.path === pair.donor).length !== 1
+    )
+      loweringAnalysisFail("retained mixed donor row changed: " + pair.donor);
+  }
+  for (let index = 0; index < d.fileAppends.length; index++) {
+    const row = d.fileAppends[index]!;
+    if (current) {
+      const actual = policy.files[receipt.before.fileCount + index];
+      if (
+        !same(actual, row) ||
+        !same(Object.keys(actual!), Object.keys(row)) ||
+        policy.files.filter((entry) => entry.path === row.path).length !== 1
+      )
+        loweringAnalysisFail("fixed clean owner row changed: " + row.path);
+    } else if (policy.files.some((entry) => entry.path === row.path))
+      loweringAnalysisFail("predecessor contains new owner: " + row.path);
+  }
+  if (
+    current &&
+    (!same(policy.moves.slice(d.beforeMoveCount), d.moveAppends) ||
+      !same(policy.activationHistory.slice(d.beforeActivationCount), [d.activationAppend]))
+  )
+    loweringAnalysisFail("fixed movement/activation append mismatch");
+}
+function captureLoweringAnalysisOperand(
+  current: LoweringAnalysisPolicy,
+  receipt: LoweringAnalysisReceipt,
+): MutableIrRuntimeProgramPolicy {
+  loweringAnalysisProfile(current, receipt.current);
+  loweringAnalysisRows(current, receipt, true);
+  const d = receipt.delta;
+  const before = capture(current) as LoweringAnalysisPolicy;
+  before.layers[d.layerIndex] = capture(d.beforeLayer) as LoweringAnalysisPolicy["layers"][number];
+  before.files.splice(receipt.before.fileCount, d.fileAppends.length);
+  before.moves.splice(d.beforeMoveCount, d.moveAppends.length);
+  before.activationHistory.splice(d.beforeActivationCount, 1);
+  loweringAnalysisProfile(before, receipt.before);
+  loweringAnalysisRows(before, receipt, false);
+  const replay = capture(before) as LoweringAnalysisPolicy;
+  replay.layers[d.layerIndex] = capture(d.currentLayer) as LoweringAnalysisPolicy["layers"][number];
+  replay.files.push(...d.fileAppends.map((row) => capture(row) as Record<string, string>));
+  replay.moves.push(...d.moveAppends.map((row) => capture(row) as LoweringAnalysisPolicy["moves"][number]));
+  replay.activationHistory.push(capture(d.activationAppend) as LoweringAnalysisPolicy["activationHistory"][number]);
+  loweringAnalysisProfile(replay, receipt.current);
+  loweringAnalysisRows(replay, receipt, true);
+  if (
+    !same(replay, current) ||
+    !same(before.allowedEdges, current.allowedEdges) ||
+    !same(before.moves, current.moves.slice(0, d.beforeMoveCount)) ||
+    !same(before.activationHistory, current.activationHistory.slice(0, d.beforeActivationCount))
+  )
+    loweringAnalysisFail("complete semantic inverse/replay/prefix mismatch");
+  return before;
+}
+export function captureLoweringAnalysisPredecessorPolicy(value: unknown): MutableIrRuntimeProgramPolicy {
+  const current = capture(value) as LoweringAnalysisPolicy;
+  if (current === null || typeof current !== "object" || Array.isArray(current))
+    loweringAnalysisFail("policy input must be a plain object");
+  return captureLoweringAnalysisOperand(current, authenticateLoweringAnalysisPolicy());
+}
+function loweringAnalysisRaw(raw: string, receipt: LoweringAnalysisReceipt, forward: boolean): string {
+  const bytes = Buffer.from(raw);
+  loweringAnalysisPin(bytes, forward ? receipt.before.source : receipt.current.source, "complete raw source profile");
+  const pieces: Buffer[] = [];
+  let consumed = 0;
+  for (const span of receipt.raw.spans) {
+    const at = forward ? span.beforeOffset : span.afterOffset;
+    const from = Buffer.from(forward ? span.before : span.after),
+      to = Buffer.from(forward ? span.after : span.before);
+    if (at < consumed || at + from.length > bytes.length || !bytes.subarray(at, at + from.length).equals(from))
+      loweringAnalysisFail("fixed raw span/membership/coordinate mismatch");
+    pieces.push(bytes.subarray(consumed, at), to);
+    consumed = at + from.length;
+  }
+  pieces.push(bytes.subarray(consumed));
+  const result = Buffer.concat(pieces);
+  loweringAnalysisPin(
+    result,
+    forward ? receipt.current.source : receipt.before.source,
+    "reciprocal raw source profile",
+  );
+  return result.toString("utf8");
+}
+export function captureLoweringAnalysisPredecessorPolicySource(raw: string): string {
+  if (typeof raw !== "string") loweringAnalysisFail("raw input must be a primitive string");
+  const receipt = authenticateLoweringAnalysisPolicy();
+  const before = loweringAnalysisRaw(raw, receipt, false);
+  const semantic = captureLoweringAnalysisOperand(capture(JSON.parse(raw)) as LoweringAnalysisPolicy, receipt);
+  const parsed = JSON.parse(before) as LoweringAnalysisPolicy;
+  loweringAnalysisProfile(parsed, receipt.before);
+  if (!same(parsed, semantic) || loweringAnalysisRaw(before, receipt, true) !== raw)
+    loweringAnalysisFail("raw/semantic reciprocal proof disagree");
+  return before;
+}
