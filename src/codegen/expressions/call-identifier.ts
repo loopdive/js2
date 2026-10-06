@@ -58,12 +58,7 @@ import { compileArrayConstructorCall, compileObjectLiteralAsExternref, compileSy
 import { fnShadowSlot, isShadowedTopLevelFn, withShadowReadSuppressed } from "../fn-global-shadow.js"; // (#4630)
 import { tryCompileNodeFsCall } from "../node-fs-api.js";
 import { emitSymbolOperandCoercionThrow } from "../tonumber-symbol-throw.js"; // (#3481)
-import {
-  boundFunctionTargetIsDefinitelyCompiled,
-  calleeIsBoundFunctionVar,
-  resolveApplyBindAlias,
-  resolveUncurryThisAlias,
-} from "../object-builtin-effects.js";
+import { boundFunctionTargetIsDefinitelyCompiled, calleeIsBoundFunctionVar } from "../object-builtin-effects.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import { hostFnctorCallableFallbackImportName, reserveHostFnctorMethodDriver } from "../host-fnctor-method-driver.js"; // (#4648)
 import { emitNullCheckThrow, typeErrorThrowInstrs } from "../property-access.js";
@@ -1794,37 +1789,10 @@ function compileBoundIdentifierCall(
     // `Function.prototype.call` VALUE, whose standalone body is the #2984
     // degrade throw. The resolver only matches the immutable harness idiom.
     if (!isLocallyShadowed && uncurriedBuiltinAliasArmActive(ctx)) {
-      // Deno's `uncurryThis = bind.bind(call)` has the exact native spelling
-      // `call.bind(...args)`. Construct that bound-function carrier directly;
-      // invoking the generic Function.prototype.bind method-value body would
-      // otherwise refuse dynamically discovered builtin method closures.
-      const callValue = resolveUncurryThisAlias(ctx.oracle, expr.expression);
-      if (callValue) {
-        const bindAccess = ts.factory.createPropertyAccessExpression(callValue, "bind");
-        ts.setTextRange(bindAccess, expr.expression);
-        const bindCall = ts.factory.createCallExpression(bindAccess, undefined, expr.arguments);
-        ts.setTextRange(bindCall, expr);
-        (bindAccess as { parent: ts.Node }).parent = bindCall;
-        (bindCall as { parent: ts.Node }).parent = expr.parent;
-        const compiledUncurryThis = compileCallExpression(ctx, fctx, bindCall);
-        if (compiledUncurryThis !== null) return compiledUncurryThis;
-      }
-      // Deno's `applyBind = bind.bind(apply)` is a bound invocation of the
-      // Function.prototype.bind METHOD VALUE. The generic method-value body is
-      // intentionally a catchable refusal, but the immutable alias has an
-      // exact equivalent native spelling: `apply.bind(...args)`. Compile that
-      // spelling so the result is the ordinary `$__bound_fn` carrier.
-      const applyValue = resolveApplyBindAlias(ctx.oracle, expr.expression);
-      if (applyValue) {
-        const bindAccess = ts.factory.createPropertyAccessExpression(applyValue, "bind");
-        ts.setTextRange(bindAccess, expr.expression);
-        const bindCall = ts.factory.createCallExpression(bindAccess, undefined, expr.arguments);
-        ts.setTextRange(bindCall, expr);
-        (bindAccess as { parent: ts.Node }).parent = bindCall;
-        (bindCall as { parent: ts.Node }).parent = expr.parent;
-        const compiledApplyBind = compileCallExpression(ctx, fctx, bindCall);
-        if (compiledApplyBind !== null) return compiledApplyBind;
-      }
+      // Native Function.prototype invokers now execute stored bind.bind(call)
+      // and bind.bind(apply) helpers directly. Rewriting them to the outer
+      // call/apply identifier invents a free variable absent from a nested
+      // function's capture plan. Preserve the actual helper value instead.
       const uncurriedCall = tryCompileStoredObjectBuiltinCall(ctx, fctx, expr);
       if (uncurriedCall !== undefined) return uncurriedCall;
     }
