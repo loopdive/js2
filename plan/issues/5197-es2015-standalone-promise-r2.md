@@ -2887,3 +2887,29 @@ count 613, expected 612): step 4 had imported `BFN_STATE_FIELD_IDX` from
 `closure-layouts` into `resolution-bodies.ts`; the index is now a local
 constant (the layout `buildPromiseSettleClosureValue` already asserts), which
 keeps main's edge count.
+
+### 2026-10-06 committed112 full-candidate evidence checkpoint
+
+The full candidate attempt at source commit112cea8e5a413eee1bec7ed955c14f73fc90bcdc
+completed all10 stages successfully at2026-10-06T20:40:37.448Z. Parent independently
+checked6795 passing executions covering6739 unique identities across87 files,
+including the scheduled56-case repeat; no failures, skips or todos. Complete raw
+channels were clean and all7772 before/after input maps matched the frozen
+309eacc2 authority. Current source hashes were also checked after completion.
+Root terminal SHA25610bde4889cdd2202e105ff4dc447b87ce5c74bafc12a346e503ad1a4040da6c9.
+
+Evidence is retained in
+`plan/agent-context/5883-final-candidate-terminal-custody-20261006.json`:
+63 byte-preserved payloads,25747854 decoded bytes. Repository-formatted wrapper
+SHA256137a06e414059938aa2ef2faf2d6865ba8b79d34cb2abbcc62d911e32787a8f7;
+original wrapper483c0d68fa8d490286daee7cafb2cf52bffff74227a5625de6fe270280febb06
+is retained in the repaired-baseline worktree. Parent verified deep JSON equality
+after formatting and independently decoded every payload against its original.
+Exact packager source is retained as
+`plan/agent-context/5883-final-candidate-custody-packager-20261006.txt`, SHA256
+59d8d260efc0128fb044bdb35565e33490bfc133fedfe0d2c1f203f3a707cb0e.
+
+This checkpoint preserves candidate evidence only: accepted=false. Original-main
+A and narrowly repaired B comparison are still required; keep HOLD and legacy
+code. Original-main69-file identity collection was separately released with the
+existing reviewed runner, with no automatic retry or repaired-baseline launch.
