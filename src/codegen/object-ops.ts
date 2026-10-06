@@ -1208,15 +1208,12 @@ export function compileObjectDefineProperty(
       const objInit = declInitializerOf(objArg);
       return objInit !== undefined && isProxyExpr(objInit);
     })();
-    const isAccessorLiteral =
-      ts.isObjectLiteralExpression(descArg) &&
-      descArg.properties.some(
-        (p) =>
-          (ts.isPropertyAssignment(p) || ts.isMethodDeclaration(p)) &&
-          ts.isIdentifier(p.name) &&
-          (p.name.text === "get" || p.name.text === "set"),
-      );
-    if (isProxyReceiver && !isAccessorLiteral) {
+    // (#6651 V1) Accessor literals take the same route: the inline accessor
+    // store wrote the getter onto the `$Proxy` carrier itself, so neither the
+    // trap nor a trapless forward to the target ever ran
+    // (`Object.defineProperty(new Proxy([], {}), "length", {get(){}})` defined
+    // nothing and threw nothing; §10.4.2.1 rejects it on the array target).
+    if (isProxyReceiver) {
       const init = !ts.isObjectLiteralExpression(descArg)
         ? descriptorInitializerForIdentifier(ctx, descArg)
         : undefined;

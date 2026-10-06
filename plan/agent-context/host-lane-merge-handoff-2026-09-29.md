@@ -127,3 +127,63 @@ mid-flight; nothing is lost, nothing is pushed beyond the branch base:
 
 Resume by re-dispatching from the specs; release or re-point the claims with
 `claim-issue.mjs` if a different agent picks them up.
+
+## Addendum — 2026-10-06 session (Fable lane, no implementers: load 27–80 vs gate 10)
+
+Branch caught up to upstream main (`42d289a9`, 1,069 commits; nothing had
+landed on #6748/#6749/#6750 in the interim). The spawn gate stayed closed all
+session (the per-box `.claude/max-load` file reads 10; raising it was
+declined by the auto-mode classifier), so part A of S3-h was done by hand:
+
+- **PR #6527** — #6749 part A: uuid links on the regime (`__crypto_*` →
+  `randomness` platform capability + js-host provider contract + native-string
+  marshal of the UUID); moment measures (runtime-eval seam attached in the npm
+  harness; `npm-compat-refresh.yml` prebuilds the refusal provider, 6 s).
+  Edits a workflow → `needs-manual-enqueue`: ONE `enqueuePullRequest` with the
+  user token once `quality` is green and it is `CLEAN`.
+- **PR #6528** — #6868 (new child): template-literal / string-mapping types
+  were not strings in `oracle.ts` / `type-mapper.ts` (`.length` → NaN on
+  standalone and the regime; found through uuid). Not byte-identical for
+  default gc, hence its own PR.
+- **react** diagnosed, not fixed (see #6749 Progress): the host lane never
+  compiles react — Node's `require` runs it. On the regime the `global_<name>`
+  declared-global imports (`extern-declarations.ts` ≈ L1613/L1657/L1757) and
+  the host-global materialization (`identifiers.ts` ≈ L1744) are gated on
+  `ctx.standalone`; re-key to `hostFreeEnvironment(ctx)` with the reads going
+  through the value-adapter MOP. That is the next S3-h slice, before part B.
+- **prettier** is a new regime `compile-error` (validation: `__closure_538`
+  expected `(ref null 38)`, got `(ref 2)`) → part C.
+- The two stopped agent worktrees from 09-29 were removed; the un-suffixed
+  branches still exist on the fork at the old base and can be deleted. Claims
+  `ttraenkler/opus-6749` / `opus-6748` are still held under those names.
+- Environment: this worktree's `node_modules` had to be reinstalled after the
+  merge (`CI=true pnpm install --frozen-lockfile`; pnpm refuses to replace the
+  modules dir without a TTY otherwise).
+
+Next actions, in order: (1) enqueue #6527 once green, let #6528 auto-enqueue;
+(2) S3-h react re-key slice, then part B (cookie/hono/redux) with an
+implementer when the gate opens; (3) #6748, #6750 unchanged.
+
+### Later the same day (2026-10-06, part B started)
+
+- PR #6528 (#6868, template-literal string types) **merged**.
+- PR #6527 (part A) grew: cookie now measures on the regime (the npm harness
+  wrapped native-first exports without `exportBoundaryPolicies`;
+  `npmCompatWrapExports` fixes it, host lane untouched). Re-synced with main
+  after #6528 landed; still `needs-manual-enqueue` — ONE GraphQL
+  `enqueuePullRequest` with the user token once `quality` is green/CLEAN.
+- hono → **#6875** (new): `__extern_get` has no native-string RECEIVER arm, so
+  `input.length` on an untyped parameter is undefined. Reproduced under plain
+  standalone (`len(JSON.parse('"abcd"')) == 4` → 0), so pre-existing. The arm
+  to add is spelled out in the issue. Implementer-sized (horizon m).
+- redux: reduced shapes are all correct; divergence is inside redux's real
+  `createStore`; bisect recipe in the #6749 issue.
+- Regime lane now (local focused runs): clsx, cookie, moment measured; uuid
+  links (sample op waits on #6868 → re-measure after the next refresh);
+  hono/redux mismatches (#6875 / open); acorn/marked/lit/prettier part C.
+- Load stayed 60–90 all day; no implementer could be spawned.
+- **PR #6534** — #6875 implemented (native-string receiver arm in
+  `__extern_get`; standalone + regime). hono's row still reads 1 on the lane:
+  the literal `__npmCompatPerf → __npmCompatApply → Number(op(input))` chain
+  lowers `input.length` to `""` while every replica computes 9 — next bisect
+  step (WAT diff of `__npmCompatApply` vs a replica) is in the #6875 issue.
