@@ -514,3 +514,43 @@ provenance. Observed main6998bf0b290c065249e01861ffdbec2dd268662a still lacks
 the required allocation-role and root-inclusive startup authority. This does not
 release managed activation or a budget increase. Constructor/binding worktrees
 retain unpublished other-owner changes and were left untouched. No tests run.
+
+### PR5748 publication blocker: initializer carrier checker query, 2026-10-06
+
+Normal pre-push passed typecheck, lint and formatting but rejected net new
+getTypeAtLocation/ctxChecker usage in
+src/codegen/bindings/initializer-carriers.ts. Remote remains db95b01c99c496a90de08cd09c20d1644fd46b47;
+the accumulated issue checkpoint was not published. The actual fallback is
+resolveWasmType(ctx, ctx.checker.getTypeAtLocation(receiver)) after local/global
+carrier lookup for slice/subarray receivers. The existing oracle exposes
+registry-free facts, not ts.Type: do not mechanically substitute a fact into
+resolveWasmType, silently decline supported receivers, or leak a raw checker
+object through a new wrapper merely to satisfy the counter.
+
+Sol6.1 Medium investigation scope: trace this fallback's exact receiver domain,
+existing oracle-to-carrier routes and provenance versus the gate's actual base.
+Propose the smallest semantics-preserving repair with explicit positive/negative
+receiver controls, including standalone/WASI subarray aliasing and slice copy,
+and a scoped typecheck/ratchet/test plan. Parent reviews the implementation plan
+before source edits. No allowance, baseline/gate change, refresh, hook bypass or
+new migration scope. Work read-only in the isolated5748 tree; preserve its other
+changes. The already-verified5883 source epoch is a separate worktree and must
+not be altered for this blocker.
+
+Provenance investigation corrects the initial growth diagnosis: the exact
+fallback already exists in base45626a53b3133bb5900be9d4df1753aaf8ea72a5
+index.ts. Parent verified counts21/74 to20/73 there, and0/0 to1/1 in the
+extracted initializer-carriers.ts. The existing issue1058 oracle allowance
+excludes index.ts's decrease from netting. This is relocation, not added debt.
+The bounded repair is therefore to REMOVE ONLY index.ts from issue1058's
+oracle-ratchet-allow list, restoring ordinary checking of both sides. Do not
+change its LOC/function allowances, other issue allowances, source, tests,
+baseline or gate implementation. Run the unchanged checker ratchet and require
+net0/0; preserve the failure evidence above. Parent reviews the exact diff and
+gate result before the normal publication retry. No receiver-oracle migration
+is released by this finding.
+
+Agent applied exactly that one-line removal; parent reviewed the diff. The
+unchanged ratchet now passes across22 changed codegen files with net0/0. No
+source/tests or other allowances changed. Retry the ordinary push hooks;
+passing this focused gate alone does not establish publication or PR acceptance.

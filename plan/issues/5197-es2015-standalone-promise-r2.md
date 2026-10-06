@@ -3044,3 +3044,14 @@ and collection authority in an inert lossless archive, accepted=false, verifying
 each decoded payload. Laplace may perform read-only formatting preflight of the
 39 owned publication paths. Neither assignment permits test execution or source
 rewrites. Parent reviews their results before staging/committing the merge.
+
+Formatting preflight found all35 test/support paths byte-stable and two of the
+four custody wrappers needing only single-element array layout changes.
+Parent authorizes normal Prettier formatting of those two wrappers after
+preserving their original bytes: old68 archive cd5269ae... becomes
+3ac02e3dffc9fdfea7ce8e21278d3ae149739861819dad1400cbb6ba392fd056;
+scoped archive814d4c42... becomes
+87847301195bc33f6665ce1aa7793571cc4f8fee91610d07a4f50977ff302961.
+Require exact deep JSON equality, unchanged embedded payloads and unchanged
+7772 input map. These wrapper-only changes do not alter tested compiler inputs
+or retrospectively replace the authenticated original evidence archives.

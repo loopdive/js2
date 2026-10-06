@@ -167,7 +167,6 @@ oracle-ratchet-allow:
   - src/codegen/expressions/new-super.ts
   - src/codegen/expressions/operator-assignment.ts
   - src/codegen/extern-declarations.ts
-  - src/codegen/index.ts
   - src/codegen/literals.ts
   - src/codegen/property-access-dispatch.ts
   - src/codegen/property-access.ts
