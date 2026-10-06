@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import {
-  captureProgramValidatorRelocation,
-  type ProgramValidatorRelocationCapture,
+  captureSourceMapSchemaSourceEpoch,
+  captureSourceMapProgramValidatorRelocation,
+  type SourceMapProgramValidatorCapture,
   type ProgramValidatorDonorPath,
 } from "./ir-program-validator-relocation.js";
 import { createHash } from "node:crypto";
@@ -34,6 +35,19 @@ import {
 } from "./ir-lowering-analysis-relocation.js";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+// Root independently bound the complete new component, including its appended APIs.
+const sourceMapComponentPath = "tests/helpers/ir-program-validator-relocation.ts";
+const sourceMapComponentPin: C1Pin = {
+  bytes: 46642,
+  sha256: "6e32ca208775e8eeae765bf3345cdd3cb1e0f40a1784f684afd9c4dff3a4cfe0",
+  gitBlob: "d82bdac04db23be88135f00a2b43bdb172cb5f89",
+};
+const sourceMapPopulationPaths = [
+  "src/ir/core/nodes.ts",
+  "src/ir/program/input-contracts.ts",
+  "src/ir/program/prepared-contracts.ts",
+  "src/shared/contracts/ir-unit-inventory.ts",
+] as const;
 const linearPath = "src/codegen-linear/index.ts";
 const loweringLegalityPath = "src/ir/backend/legality.ts";
 const loweringPlannerPath = "src/ir/analysis/linear-memory-plan.ts";
@@ -806,14 +820,23 @@ export function captureC1CurrentPopulation(
   // Retain the old receipt/source diagnostics before any narrower contract work.
   // No historical replacement is supplied to the old reconstruction until the live seam passes.
   const receipt = authenticateRuntimeProgramRelocationReceipt(receiptText);
-  let validatorRelocation: ProgramValidatorRelocationCapture | undefined;
+  const sourceMapComponent = readAuthority(sourceMapComponentPath);
+  primitive(sourceMapComponent, sourceMapComponentPath);
+  assertPin(sourceMapComponent, sourceMapComponentPin, sourceMapComponentPath);
+  const sourceMapEpoch = captureSourceMapSchemaSourceEpoch(readAuthority);
+  const sourceMapPredecessors = new Map<string, string>();
+  let validatorRelocation: SourceMapProgramValidatorCapture | undefined;
   let loweringLegalityPredecessor: string | undefined;
   let typesPredecessor: string | undefined;
   const relocatedDependencies = ["src/ir/program-runtime-abi.ts", "src/ir/program-validation.ts"] as const;
   for (const record of [...receipt.current, ...receipt.dependencies]) {
     if (record.path === linearPath) continue;
     const rawSource = current.get(record.path)!;
-    if (record.path === "src/ir/types.ts") {
+    if (sourceMapPopulationPaths.includes(record.path as (typeof sourceMapPopulationPaths)[number])) {
+      const predecessor = sourceMapEpoch.before(record.path, rawSource);
+      assertRuntimeProgramRelocationSource(predecessor, record, record.path);
+      sourceMapPredecessors.set(record.path, predecessor);
+    } else if (record.path === "src/ir/types.ts") {
       typesPredecessor = beforeCanonicalCurrentInput(record.path, rawSource);
       assertRuntimeProgramRelocationSource(typesPredecessor, record, record.path);
     } else if (record.path === loweringLegalityPath) {
@@ -824,7 +847,7 @@ export function captureC1CurrentPopulation(
       loweringLegalityPredecessor = captureCurrentLoweringLegalityPredecessor(rawSource, readAuthority);
       assertRuntimeProgramRelocationSource(loweringLegalityPredecessor, record, record.path);
     } else if (relocatedDependencies.includes(record.path as (typeof relocatedDependencies)[number])) {
-      validatorRelocation ??= captureProgramValidatorRelocation(readAuthority);
+      validatorRelocation ??= captureSourceMapProgramValidatorRelocation(readAuthority);
       // Authenticate the already-read population operand against the independent physical authority channel.
       // A supplied mutant is refused, never replaced by the healthy authority copy.
       if (rawSource !== validatorRelocation.readCurrent(record.path as ProgramValidatorDonorPath))
@@ -847,6 +870,10 @@ export function captureC1CurrentPopulation(
       closure.set(record.path, source);
     }
     assertPin(source, record.pin, record.path);
+    if (record.path === "src/position-map.ts" || record.path === "src/shared/contracts/ir-unit-inventory.ts") {
+      // Validate the historical inverse while the native type host retains actual current text.
+      sourceMapEpoch.before(record.path, source);
+    }
     if (record.path === loweringPlannerPath) {
       // The actual current string stays in closure and therefore in real type resolution.
       assertPin(
@@ -891,6 +918,7 @@ export function captureC1CurrentPopulation(
   const oldFile = parse(linearPath, historical);
   checkBindings(oldFile, declaration(oldFile, contract), contract);
   const historicalPopulation = new Map(current);
+  for (const [path, predecessor] of sourceMapPredecessors) historicalPopulation.set(path, predecessor);
   historicalPopulation.set(linearPath, historical);
   if (typesPredecessor === undefined) fail("missing Boolean types predecessor");
   historicalPopulation.set("src/ir/types.ts", typesPredecessor);

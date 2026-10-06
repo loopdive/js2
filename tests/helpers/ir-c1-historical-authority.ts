@@ -512,6 +512,24 @@ const predecessorClosureInputs = [
   },
 ] as const;
 // Fixed current epoch binds the audited instructions input and exact layout-declaration successor.
+const sourceMapClosureEpochs: readonly C1PathPin[] = [
+  {
+    path: "src/position-map.ts",
+    pin: {
+      bytes: 8649,
+      sha256: "aed06dbcabad1d12cfd4d228c25f30dca5d0ff0006ced9e467b26bf84485b8f9",
+      gitBlob: "19dd7fd273ad68976e9302fc14894b170541aa8c",
+    },
+  },
+  {
+    path: "src/shared/contracts/ir-unit-inventory.ts",
+    pin: {
+      bytes: 8077,
+      sha256: "6b5b77eeb6865023b01891bf2bc2efb1d803fac37c9f8ac739759e15e23fef83",
+      gitBlob: "180df8e4f8b7aa3eabac4cb88b54dc6b04a642bb",
+    },
+  },
+];
 const closureInputs = predecessorClosureInputs.map((entry) =>
   entry.path === "src/ir/analysis/linear-memory-plan.ts"
     ? {
@@ -549,7 +567,7 @@ const closureInputs = predecessorClosureInputs.map((entry) =>
                 gitBlob: "d6d98de15c656d3ecb32653b447b31486d3b9f05",
               },
             }
-          : entry,
+          : (sourceMapClosureEpochs.find((record) => record.path === entry.path) ?? entry),
 );
 const linearDeclarationPin = {
   bytes: 1633,

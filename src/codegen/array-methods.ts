@@ -6312,14 +6312,18 @@ function compileArraySplice(
     const recvType = compileExpression(ctx, fctx, propAccess.expression);
     const zeroArgSpeciesDeps = prepareArraySpeciesDeps(ctx, fctx);
     let zeroArgSpeciesLocal: number | undefined;
-    if (zeroArgSpeciesDeps !== undefined && (recvType?.kind === "ref" || recvType?.kind === "ref_null")) {
+    // (#6651 U5) An `externref` receiver — a module global in a runtime-eval
+    // module (every test262 file) — is already the step-1 `O`; dropping it
+    // skipped ArraySpeciesCreate for `a.splice()` only, while the 1+-arg paths ran it.
+    const recvIsRef = recvType?.kind === "ref" || recvType?.kind === "ref_null";
+    if (zeroArgSpeciesDeps !== undefined && (recvIsRef || recvType?.kind === "externref")) {
       const recvTmp = allocLocal(fctx, `__arr_spl0_recv_${fctx.locals.length}`, recvType);
       fctx.body.push({ op: "local.set", index: recvTmp });
       zeroArgSpeciesLocal = emitArraySpeciesCreate(
         ctx,
         fctx,
         zeroArgSpeciesDeps,
-        [{ op: "local.get", index: recvTmp }, { op: "extern.convert_any" }],
+        [{ op: "local.get", index: recvTmp }, ...(recvIsRef ? [{ op: "extern.convert_any" } as Instr] : [])],
         [{ op: "f64.const", value: 0 }],
       );
     } else {

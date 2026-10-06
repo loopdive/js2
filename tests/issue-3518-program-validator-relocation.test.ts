@@ -20,8 +20,8 @@ import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import ts from "typescript";
 import {
-  beforeProgramValidatorRelocation,
-  captureProgramValidatorRelocation,
+  beforeSourceMapProgramValidatorRelocation,
+  captureSourceMapProgramValidatorRelocation,
   programValidatorRelocationReceiptPath,
   type ProgramValidatorDonorPath,
   type ProgramValidatorCurrentPath,
@@ -393,7 +393,16 @@ const read = (path: string): string => {
 };
 const faultPins = [
   { path: receiptPath, bytes: 27069, sha256: receiptSha256 },
-  ...expected.pairs.flatMap((pair) => [pair.facade, pair.implementation]),
+  ...expected.pairs.flatMap((pair) => [
+    pair.facade,
+    pair.implementation.path === "src/ir/program/validation.ts"
+      ? {
+          ...pair.implementation,
+          bytes: 45816,
+          sha256: "33cba90b606278805766b4eb739214c31dd84babafb873773f3e92f60c470231",
+        }
+      : pair.implementation,
+  ]),
 ];
 const sha = (source: string | Buffer): string => createHash("sha256").update(source).digest("hex");
 function assertPin(
@@ -602,7 +611,14 @@ describe("fixed program validator source relocation", () => {
     };
     const first = captureProgramValidatorRelocation(readLive),
       second = captureProgramValidatorRelocation(readLive);
-    expect(trace).toEqual([receiptPath, ...expected.currentPaths, receiptPath, ...expected.currentPaths]);
+    const operation = [
+      "tests/helpers/ir-program-validator-relocation.ts",
+      "tests/helpers/ir-source-map-schema-source-epoch.json",
+      "tests/helpers/ir-program-validator-relocation.ts",
+      receiptPath,
+      ...expected.currentPaths,
+    ];
+    expect(trace).toEqual([...operation, ...operation]);
     expect(Buffer.byteLength(read(receiptPath))).toBe(27069);
     expect(sha(read(receiptPath))).toBe(receiptSha256);
     expect(JSON.parse(read(receiptPath))).toEqual(expected);
@@ -612,15 +628,17 @@ describe("fixed program validator source relocation", () => {
   for (const pair of expected.pairs) {
     it(`independently proves predecessor and two current replays for ${pair.donorPath}`, () => {
       const captured = captureProgramValidatorRelocation(read);
-      const implementation = read(pair.implementationPath),
+      const actualImplementation = read(pair.implementationPath);
+      const implementation = captured.readRelocationCurrent(pair.implementationPath),
         facade = read(pair.donorPath);
+      expect(captured.readCurrent(pair.implementationPath)).toBe(actualImplementation);
       const original = independentInverse(pair, implementation);
       assertPin(original, pair.before);
       assertPin(implementation, pair.implementation);
       assertPin(facade, pair.facade);
       expect(captured.readBefore(pair.donorPath)).toBe(original);
       expect(captured.readCurrent(pair.donorPath)).toBe(facade);
-      expect(captured.readCurrent(pair.implementationPath)).toBe(implementation);
+      expect(captured.readRelocationCurrent(pair.implementationPath)).toBe(implementation);
       expect(independentReplay(pair, original)).toBe(implementation);
       expect(facade).toBe(pair.facadeText);
       const parsed = ts.createSourceFile(pair.donorPath, facade, ts.ScriptTarget.Latest, true);
@@ -830,3 +848,28 @@ describe("C1 validator relocation channel separation", () => {
     expect(() => captureC1CurrentPopulation(read, authority)).toThrow("complete source pin mismatch");
   });
 });
+
+function captureProgramValidatorRelocation(readLive: (path: string) => string) {
+  if (typeof readLive !== "function") throw new Error("program validator relocation: physical reader required");
+  assertSourceMapValidatorComponent(readLive);
+  return captureSourceMapProgramValidatorRelocation(readLive);
+}
+
+// Fresh whole component authentication precedes each explicit source-epoch bridge.
+function assertSourceMapValidatorComponent(readLive: (path: string) => string): void {
+  const path = "tests/helpers/ir-program-validator-relocation.ts";
+  const text = readLive(path);
+  if (typeof text !== "string" || text.length === 0)
+    throw new Error("program validator relocation: nonempty primitive text required: " + path);
+  if (
+    Buffer.byteLength(text) !== 46642 ||
+    createHash("sha256").update(text).digest("hex") !==
+      "6e32ca208775e8eeae765bf3345cdd3cb1e0f40a1784f684afd9c4dff3a4cfe0"
+  )
+    throw new Error("program validator relocation: complete source pin mismatch: " + path);
+}
+function beforeProgramValidatorRelocation(readLive: (path: string) => string): (path: string) => string {
+  if (typeof readLive !== "function") throw new Error("program validator relocation: physical reader required");
+  assertSourceMapValidatorComponent(readLive);
+  return beforeSourceMapProgramValidatorRelocation(readLive);
+}

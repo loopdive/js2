@@ -1,7 +1,11 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { IrBindingId, IrSourceId, IrUnitId } from "../../shared/contracts/ir-identity.js";
-import type { IrTerminalUnitRecord, IrUnitInventory } from "../../shared/contracts/ir-unit-inventory.js";
+import type {
+  IrTerminalUnitRecord,
+  IrUnitInventory,
+  IrPreparedSourceMap,
+} from "../../shared/contracts/ir-unit-inventory.js";
 import type { IrPreparationFailure } from "../../shared/contracts/ir-preparation-failure.js";
 import type { IrClassShape, IrType, IrTypeRef } from "../core/types.js";
 import type { IrFuncRef, IrGlobalRef } from "../core/value-references.js";
@@ -83,6 +87,7 @@ export interface PreparedIrProgram {
   readonly startup: readonly IrModuleInitPlan[];
   readonly allocations: AllocRegistrySnapshot;
   readonly runtimeSupport?: IrRuntimeSupport;
+  readonly sourceMap?: IrPreparedSourceMap;
   readonly runtime: readonly PreparedIrProgramRuntimeProjection[];
   readonly reconciliation: "complete";
   readonly sealed: true;

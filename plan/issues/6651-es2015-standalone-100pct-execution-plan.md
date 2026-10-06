@@ -4,7 +4,7 @@ title: "ES2015 standalone → 100%: cluster execution plan from the 2026-09-20 c
 status: in-progress
 sprint: current
 created: 2026-09-20
-updated: 2026-10-05
+updated: 2026-10-06
 priority: high
 horizon: xl
 feasibility: hard
@@ -183,6 +183,10 @@ loc-budget-allow:
   # both have to live beside the two functions they complete.
   # `call-builtin-static.ts` +3 (import + one call in the static `TA.from` copy),
   # `array-methods.ts` +1 (join's length read routed through the helper).
+  # 2026-10-06 — uncovered slice U5 (record `### 2026-10-06 — Uncovered slice
+  # U5`): `array-methods.ts` +4 more, in `compileArraySplice`'s zero-argument
+  # branch, which now hands an `externref` receiver to the existing species
+  # prologue instead of dropping it. The decision belongs to that branch.
   - src/codegen/dataview-native.ts
   - src/codegen/expressions/identifiers.ts
   - src/codegen/index.ts
@@ -2658,6 +2662,81 @@ unrelated standalone rows.
 dynamic `arr[Symbol.iterator]` read still do not yield
 `%Array.prototype.values%`; `String.prototype` / `Function.prototype` own
 `length`/`name` are still missing on the dynamic paths.
+
+### 2026-10-06 — Uncovered slice U5
+
+Slice U5 of the uncovered-residue census (G2, ArraySpeciesCreate for non-Array
+constructors). Senior-dev lane, branch `issue-6651-u5-species-v2` off
+`origin/main` @ `47f186384c`. Base = a copy of the fork-point `src/` taken
+before the first edit; every number below was run by this lane on both trees,
+standalone, QuickJS eval engine, provider rebuilt per tree.
+
+**Which rows were still open.** U1 flipped four of the five G2 rows
+(`{concat,filter,map,slice}/create-proto-from-ctor-realm-non-array`, see the U1
+amendment). Re-measured on the fork point: those four pass, only
+`splice/create-proto-from-ctor-realm-non-array.js` fails
+(`SameValue(«[object Array]», «[object Object]»)` at L43). #6771's rows
+(`create-proxy`, `create-species-undef-invalid-len`,
+`property-traps-order-with-species`) were not touched.
+
+**Root cause — not the census guess.** The species prologue already exists
+(`array-species.ts`, #5145) and runs for every producer, user constructors
+included. The splice row differs from the slice row only in calling
+`array.splice()` with NO arguments. `compileArraySplice`'s zero-argument
+shortcut ran `emitArraySpeciesCreate` only when the receiver compiled to a vec
+ref and **dropped** an `externref` receiver. Every test262 module is a
+runtime-eval module, and there the module-global `var array = []` compiles as
+`externref`. So `@@species` was never read for `a.splice()`, while `a.splice(0, 0)`
+on the same receiver ran it (measured: that variant of the row passes on base).
+
+**Fix (`array-methods.ts::compileArraySplice`, +4 lines).** The zero-argument
+branch also admits an `externref` receiver and hands it to the prologue as-is,
+without `extern.convert_any`. The gate is unchanged: `prepareArraySpeciesDeps`
+returns `undefined` unless the target is standalone/wasi AND the module is
+species-dirty, so every other module is byte-identical.
+
+**Before → after (standalone, `--isolate`):**
+
+| set | base pass | branch pass |
+| --- | ---: | ---: |
+| G2, 5 rows | 4 | **5** |
+| control, 144 rows | 129 | 130 |
+
+The 144 control rows are all of `built-ins/Array/prototype/splice/**`, every
+`{concat,filter,map,slice}/create-*` file (species, ctor and proto rows), and
+every non-staging test262 file that calls `.splice()` with no arguments.
+Result: **0 pass → non-pass**, 1 fail → pass (the G2 row), and no other status
+change.
+
+**Controls:**
+- Compile-only byte differential: 32 files under `website/playground/examples`,
+  `benchmarks/suites` and `examples`, × {gc, standalone, wasi}. Byte-identical,
+  and the 23 compile errors are the same on both trees.
+- Temporal: all 126 `built-ins/Temporal/Duration/prototype/round/*.js` rows,
+  run in-process (no `--isolate`). Each tree got its own bundles, a freshly
+  prewarmed standalone Temporal provider (`JS2WASM_TEMPORAL_CACHE`) and a
+  rebuilt QuickJS provider. Base and branch both give 119 pass / 7 fail, with
+  the same rows, the same messages and 0 `illegal cast`.
+- `node scripts/equivalence-gate.mjs`: 1,748 passing, the 22 known failures, no
+  new regressions.
+- Pin: `tests/issue-6651-u5-splice-zero-arg-species.test.ts`, no eval, 3 tests.
+  Two fail on base and pass on the branch: species construction for a
+  literal-backed and a call-returned receiver, and the step-9 TypeError for a
+  non-constructor `@@species`. One guard is green on both: without species the
+  result stays an empty Array and the receiver is not mutated.
+
+**Residual, not taken.** It sits in #6771's territory, and no ES2015 row
+depends on it. Inside a FUNCTION body, `var r; r = a.slice()` with a user
+`@@species` constructor still answers an Array (`Array.isArray(r)` is true).
+`r instanceof Ctor` holds and the constructor ran, so the species object is
+built. The likely cause is that the evolving-`var` local slot is typed as a vec
+and coerces the species result back into one. That is the class of #6771's S7
+follow-up (`transferredArrayLikeResultNeedsExternref`). Not verified: whether
+that hook sees this assignment shape. The same code at top level passes. Separately,
+`Reflect.construct(F, [])` on a function whose `.prototype` was never read
+before the construct answers a prototype that is not `F.prototype`. That is the
+U1-recorded GetPrototypeFromConstructor construct-route residual, and U5 did not
+widen it.
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 

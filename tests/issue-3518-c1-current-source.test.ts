@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import {
-  captureProgramValidatorRelocation,
+  captureSourceMapProgramValidatorRelocation,
   programValidatorRelocationCurrentPaths,
   programValidatorRelocationReceiptPath,
   type ProgramValidatorDonorPath,
@@ -52,7 +52,7 @@ afterEach(async () => {
 // Root replaces this ONE external assertion root after final instrument formatting/manifest assembly.
 // A missing freeze is a hard failure, never an alternate accepted manifest.
 const independentFreeze: string =
-  '{"manifestSha256":"beb8cc55ab519aba4135338c854db06b48b78328bad7f9048e1c061098269328","anchorSource":"// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\\n\\nexport const c1AuthorityManifestSha256 = \\"beb8cc55ab519aba4135338c854db06b48b78328bad7f9048e1c061098269328\\";\\n","anchorPin":{"bytes":194,"sha256":"63fe4565ec7aa6058d36d706f8058954bd10160e636b6bf9863b7e68c0271655","gitBlob":"04a5f018c32375cdacdfaf7df4312f35940f92f0"},"declarationPin":{"bytes":1633,"sha256":"5294c0fce2be6c6974b61a3686c05e60aa66d5bb4599fc97cb315ee53cab71be","gitBlob":"8c594e598e0d946ed92fd658cbe2efe3063ca2c4"}}';
+  '{"manifestSha256":"c0a10ae0c0bfc4d27fc24bea20401edc2cac683254fc1664781889c98f63ed66","anchorSource":"// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\\n\\nexport const c1AuthorityManifestSha256 = \\"c0a10ae0c0bfc4d27fc24bea20401edc2cac683254fc1664781889c98f63ed66\\";\\n","anchorPin":{"bytes":194,"sha256":"392aac19ed2daac78bafb25369176cb90870cc866f6a6f7c2ac6ae7805f9220e","gitBlob":"4d66b803deb8de9c686b7853464672affa156061"},"declarationPin":{"bytes":1633,"sha256":"5294c0fce2be6c6974b61a3686c05e60aa66d5bb4599fc97cb315ee53cab71be","gitBlob":"8c594e598e0d946ed92fd658cbe2efe3063ca2c4"}}';
 const root = resolve(import.meta.dirname, "..");
 const manifestPath = "tests/helpers/ir-c1-authority.json";
 const anchorPath = "tests/helpers/ir-c1-authority-root.ts";
@@ -75,9 +75,9 @@ function actualIO(): C1ResolverObservationIO {
   };
 }
 
-// Complete authority read order measured on authentic549, with six reviewed
-// source-proof reads inserted. These63 reads are separate from the resolver's
-// thirteen requests/fifty-seven filesystem observations and population47.
+// The complete authority channel is separate from the independently measured
+// thirteen resolver requests/fifty-seven filesystem observations and receipt+46
+// population reads. Its explicit order is checked on the coherent current seal.
 const loweringAnalysisAuthorityTrace = [
   "tests/helpers/ir-c1-authority-root.ts",
   "tests/helpers/ir-c1-authority.json",
@@ -111,10 +111,15 @@ const loweringAnalysisAuthorityTrace = [
   "tests/fixtures/issue-3518-c1-historical-authority/program-pre-a-evolution.test.ts.txt",
   "tests/fixtures/issue-3518-c1-historical-authority/program-initial-graph-evolution.test.ts.txt",
   "tests/fixtures/issue-3518-c1-historical-authority/runtime-program-policy-evolution.ts.txt",
+  "tests/helpers/ir-program-validator-relocation.ts",
+  "tests/helpers/ir-source-map-schema-source-epoch.json",
+  "tests/helpers/ir-program-validator-relocation.ts",
   "tests/helpers/ir-lowering-analysis-relocation.ts",
   "tests/helpers/ir-lowering-analysis-relocation.json",
   "src/ir/backend/legality.ts",
   "src/ir/analysis/backend-legality.ts",
+  "tests/helpers/ir-source-map-schema-source-epoch.json",
+  "tests/helpers/ir-program-validator-relocation.ts",
   "tests/helpers/ir-program-validator-relocation.json",
   "src/ir/program-runtime-demands.ts",
   "src/ir/program/runtime-demands.ts",
@@ -561,6 +566,8 @@ describe("C1 fresh live source contract bridge", () => {
     // New authority reads are independently counted; the original receipt+46 population channel stays unchanged.
     for (const path of [programValidatorRelocationReceiptPath, ...programValidatorRelocationCurrentPaths])
       expect(authority.filter((item) => item === path)).toHaveLength(2);
+    expect(authority.filter((path) => path === sourceMapEpochPath)).toHaveLength(4);
+    expect(authority.filter((path) => path === sourceMapComponentPath)).toHaveLength(6);
     const originalReceipt = JSON.parse(first.receiptText);
     expect(originalReceipt.transfers).toHaveLength(91);
     expect(originalReceipt.transfers.filter((item: { moved: boolean }) => item.moved)).toHaveLength(12);
@@ -568,8 +575,8 @@ describe("C1 fresh live source contract bridge", () => {
   });
   it("substitutes only the historical linear dependency and keeps detached mutation on the old guard", () => {
     const capture = captureC1CurrentPopulation(read, read);
-    // The original linear substitution is retained. Exactly two fixed dependency operands now have an outer reciprocal relocation proof.
-    const validator = captureProgramValidatorRelocation(read);
+    // Preserve the original linear substitution and two validator facades; four actual population operands additionally receive the exact independently checked source-map inverse.
+    const validator = captureSourceMapProgramValidatorRelocation(read);
     const relocated = ["src/ir/program-runtime-abi.ts", "src/ir/program-validation.ts"] as const;
     for (const [path, source] of capture.historicalPopulation)
       if (path === "src/ir/backend/legality.ts") {
@@ -596,6 +603,11 @@ describe("C1 fresh live source contract bridge", () => {
           sha256: "0282ae61c6a43f837a9a3c7b12d879151e67ec155939c541cd9b5ea662979140",
           gitBlob: "bdf9d6ace5f7f5530373cea6007a1ad7dfe905d0",
         });
+      } else if (sourceMapPopulationPaths.includes(path)) {
+        const proven = independentSourceMapPredecessor(path, read(path));
+        expect(source).toBe(proven.before);
+        expect(source).not.toBe(read(path));
+        expect(capture.observedCurrentPins.find((record) => record.path === path)!.pin).toEqual(proven.currentPin);
       } else if (path !== linearPath)
         expect(source).toBe(
           relocated.includes(path as (typeof relocated)[number])
@@ -3054,4 +3066,210 @@ describe("C1 fixed current SourceOrigin closure epoch", () => {
     // This independent program read is outside C1's fixed13/57 ModuleResolutionHost observations.
     sourceOriginHealthy();
   });
+});
+
+// Independent fixed source-map recipe authority; production normalizers are
+// never used as the oracle for the four historical population operands.
+const sourceMapEpochPath = "tests/helpers/ir-source-map-schema-source-epoch.json";
+const sourceMapComponentPath = "tests/helpers/ir-program-validator-relocation.ts";
+const sourceMapPopulationPaths: readonly string[] = [
+  "src/ir/core/nodes.ts",
+  "src/ir/program/input-contracts.ts",
+  "src/ir/program/prepared-contracts.ts",
+  "src/shared/contracts/ir-unit-inventory.ts",
+];
+const sourceMapClosurePaths = ["src/position-map.ts", "src/shared/contracts/ir-unit-inventory.ts"] as const;
+const sourceMapComponentPin = {
+  bytes: 46642,
+  sha256: "6e32ca208775e8eeae765bf3345cdd3cb1e0f40a1784f684afd9c4dff3a4cfe0",
+  gitBlob: "d82bdac04db23be88135f00a2b43bdb172cb5f89",
+};
+function independentSourceMapPredecessor(path: string, current: string) {
+  const raw = read(sourceMapEpochPath);
+  expect(Buffer.byteLength(raw)).toBe(49534);
+  expect(digest(raw)).toBe("7dda716408c18981a48dc6fba90834aa0e7fb95f3f8900b7c4c16e1545f38f3c");
+  const recipe = JSON.parse(raw);
+  const matches = recipe.entries.filter((entry: { path: string }) => entry.path === path);
+  expect(matches).toHaveLength(1);
+  const entry = matches[0];
+  expect(entry.current.path).toBe(path);
+  expect(entry.before.path).toBe(path);
+  const currentPin = { bytes: entry.current.bytes, sha256: entry.current.sha256, gitBlob: entry.current.gitBlob };
+  const beforePin = { bytes: entry.before.bytes, sha256: entry.before.sha256, gitBlob: entry.before.gitBlob };
+  expect(pin(current)).toEqual(currentPin);
+  const bytes = Buffer.from(current),
+    parts: Buffer[] = [];
+  let cursor = 0;
+  for (const span of entry.spans) {
+    expect(bytes.subarray(span.currentStart, span.currentEnd).toString("utf8")).toBe(span.currentText);
+    parts.push(bytes.subarray(cursor, span.currentStart), Buffer.from(span.beforeText));
+    cursor = span.currentEnd;
+  }
+  parts.push(bytes.subarray(cursor));
+  const before = Buffer.concat(parts).toString("utf8");
+  expect(pin(before)).toEqual(beforePin);
+  const old = Buffer.from(before),
+    replay: Buffer[] = [];
+  cursor = 0;
+  for (const span of entry.spans) {
+    expect(old.subarray(span.beforeStart, span.beforeEnd).toString("utf8")).toBe(span.beforeText);
+    replay.push(old.subarray(cursor, span.beforeStart), Buffer.from(span.currentText));
+    cursor = span.beforeEnd;
+  }
+  replay.push(old.subarray(cursor));
+  const replayed = Buffer.concat(replay).toString("utf8");
+  expect(pin(replayed)).toEqual(currentPin);
+  expect(replayed).toBe(current);
+  return { before, currentPin, beforePin };
+}
+function sourceMapFactoryHealthy() {
+  expect(pin(read(sourceMapComponentPath))).toEqual(sourceMapComponentPin);
+  const capture = captureC1CurrentPopulation(read, read);
+  expect(capture.historicalPopulation.size).toBe(46);
+  expect(capture.observedCurrentPins).toHaveLength(46);
+  return capture;
+}
+
+describe("C1 source-map epoch actual population and authority operands", () => {
+  it.each(sourceMapPopulationPaths)(
+    "retains actual current and independently proven historical bytes for %s",
+    (path) => {
+      const capture = sourceMapFactoryHealthy();
+      const current = read(path),
+        proven = independentSourceMapPredecessor(path, current);
+      expect(capture.historicalPopulation.get(path)).toBe(proven.before);
+      expect(capture.observedCurrentPins.find((record) => record.path === path)!.pin).toEqual(pin(current));
+      expect(current).not.toBe(proven.before);
+      sourceMapFactoryHealthy();
+    },
+  );
+  it.each(sourceMapPopulationPaths)(
+    "refuses the warm changed supplied population operand %s and accepts its exact restoration",
+    (path) => {
+      const healthy = sourceMapFactoryHealthy();
+      const current = read(path);
+      let operand = current,
+        supplied: string | undefined;
+      const reader = (request: string): string => {
+        if (request !== path) return read(request);
+        supplied = operand;
+        return operand;
+      };
+      expect(captureC1CurrentPopulation(reader, read).historicalPopulation).toEqual(healthy.historicalPopulation);
+      operand += "\n// actual supplied population mutation\n";
+      expect(() => captureC1CurrentPopulation(reader, read)).toThrow(/complete source pin mismatch/);
+      expect(supplied).toBe(operand);
+      operand = current;
+      expect(
+        captureC1CurrentPopulation(reader, read).observedCurrentPins.find((record) => record.path === path)!.pin,
+      ).toEqual(pin(current));
+      sourceMapFactoryHealthy();
+    },
+  );
+  it.each(sourceMapPopulationPaths)("rejects boxed supplied population %s before getters or coercion", (path) => {
+    sourceMapFactoryHealthy();
+    let getters = 0,
+      coercions = 0,
+      reached = false;
+    const boxed = Object(read(path));
+    Object.defineProperty(boxed, Symbol.toPrimitive, {
+      get() {
+        getters++;
+        return () => {
+          coercions++;
+          return read(path);
+        };
+      },
+    });
+    expect(() =>
+      captureC1CurrentPopulation((request) => {
+        if (request !== path) return read(request);
+        reached = true;
+        return boxed as string;
+      }, read),
+    ).toThrow(/primitive source/);
+    expect(reached).toBe(true);
+    expect([getters, coercions]).toEqual([0, 0]);
+    sourceMapFactoryHealthy();
+  });
+  it.each(sourceMapClosurePaths)(
+    "refuses the changed actual native closure source %s without substituting its historical text",
+    (path) => {
+      sourceMapFactoryHealthy();
+      const mutant = read(path) + "\n// actual current closure mutation\n";
+      let reached = false;
+      const supplied = (request: string): string => {
+        if (request !== path) return read(request);
+        reached = true;
+        return mutant;
+      };
+      expect(() =>
+        sourceMapPopulationPaths.includes(path)
+          ? captureC1CurrentPopulation(supplied, read)
+          : captureC1CurrentPopulation(read, supplied),
+      ).toThrow(/full pin mismatch|complete source pin mismatch/);
+      expect(reached).toBe(true);
+      sourceMapFactoryHealthy();
+    },
+  );
+  it("rejects a supplied component suffix mutant through full current authority before its prefix-only API", () => {
+    sourceMapFactoryHealthy();
+    const mutant = read(sourceMapComponentPath) + "\n// supplied component suffix mutation\n";
+    let reached = false;
+    expect(() =>
+      captureC1CurrentPopulation(read, (path) => {
+        if (path !== sourceMapComponentPath) return read(path);
+        reached = true;
+        return mutant;
+      }),
+    ).toThrow(/full pin mismatch/);
+    expect(reached).toBe(true);
+    sourceMapFactoryHealthy();
+  });
+  it("refuses a boxed component authority without invoking its conversion hooks", () => {
+    sourceMapFactoryHealthy();
+    let calls = 0,
+      reached = false;
+    const boxed = Object(read(sourceMapComponentPath));
+    Object.defineProperty(boxed, "valueOf", {
+      get() {
+        calls++;
+        return () => {
+          calls++;
+          return read(sourceMapComponentPath);
+        };
+      },
+    });
+    expect(() =>
+      captureC1CurrentPopulation(read, (path) => {
+        if (path !== sourceMapComponentPath) return read(path);
+        reached = true;
+        return boxed as string;
+      }),
+    ).toThrow(/primitive source/);
+    expect(reached).toBe(true);
+    expect(calls).toBe(0);
+    sourceMapFactoryHealthy();
+  });
+  for (const kind of ["missing", "corrupt", "stale recipe"] as const)
+    it(`refuses a supplied ${kind} source-map epoch and observes exact restoration`, () => {
+      sourceMapFactoryHealthy();
+      const original = read(sourceMapEpochPath),
+        recipe = JSON.parse(original);
+      recipe.entries.find((entry: { path: string }) => entry.path === "src/ir/program/validation.ts").current =
+        recipe.entries.find((entry: { path: string }) => entry.path === "src/ir/program/validation.ts").before;
+      let reached = false;
+      const mutant = kind === "corrupt" ? original + "{" : JSON.stringify(recipe);
+      expect(() =>
+        captureC1CurrentPopulation(read, (path) => {
+          if (path !== sourceMapEpochPath) return read(path);
+          reached = true;
+          if (kind === "missing") return read(path + ".missing-independent-control");
+          return mutant;
+        }),
+      ).toThrow(kind === "missing" ? /ENOENT/ : /source map schema receipt bytes mismatch/);
+      expect(reached).toBe(true);
+      // Corrupt/stale records stop at the immutable recipe digest, not a row guard.
+      sourceMapFactoryHealthy();
+    });
 });

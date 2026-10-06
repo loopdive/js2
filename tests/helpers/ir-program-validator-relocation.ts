@@ -473,3 +473,329 @@ export function beforeProgramValidatorRelocation(readLive: Reader): Reader {
   const donors: readonly string[] = expected.pairs.map((pair) => pair.donorPath);
   return (path) => (donors.includes(path) ? captured.readBefore(path as ProgramValidatorDonorPath) : readLive(path));
 }
+
+// Source-map production changes compose outside the immutable relocation proof.
+const sourceMapSchemaEpochPath = "tests/helpers/ir-source-map-schema-source-epoch.json";
+const sourceMapSchemaEpochBytes = 49534;
+const sourceMapSchemaEpochSha256 = "7dda716408c18981a48dc6fba90834aa0e7fb95f3f8900b7c4c16e1545f38f3c";
+const sourceMapSchemaEpochExpected = {
+  schema: "ir-source-map-schema-source-epoch-v1",
+  coordinateUnit: "utf8-byte",
+  baseMain: "f02ded0b9bcd22fc5f6a1c88fcee0bb0b98303eb",
+  helperPrefix: {
+    path: "tests/helpers/ir-program-validator-relocation.ts",
+    bytes: 33271,
+    sha256: "7c81f94913cc91e45e8afe779979ec3e01ddf5622b14716956ffa2bdf15ba5e5",
+    gitBlob: "ab945aff6be69db9c80b8ec526d0c2a58a13c962",
+  },
+  entries: [
+    {
+      path: "src/compiler/define-substitution.ts",
+      before: {
+        path: "src/compiler/define-substitution.ts",
+        bytes: 3653,
+        sha256: "6d39f71c8fc108cd27285f31819b2101970603c095c3bbf5f9e32e1021ac32b1",
+        gitBlob: "23d1827ef8abe8d35ff23f42562b2d5460389881",
+      },
+      current: {
+        path: "src/compiler/define-substitution.ts",
+        bytes: 3901,
+        sha256: "4fb03b0ec93fe23c5f8feabcf8be4810dd417bc436637b003693e84a0d336f75",
+        gitBlob: "8a8d6e22eb62b8d01506009b9e76421952d33bc9",
+      },
+    },
+    {
+      path: "src/ir/core/async-plan.ts",
+      before: {
+        path: "src/ir/core/async-plan.ts",
+        bytes: 5072,
+        sha256: "110a4529b81ecec8a51943d3d33643cc7374959eabf382bc22dbbe066ca642d8",
+        gitBlob: "9bcfbb701fc410e9034fed8836ad9a0a828345d8",
+      },
+      current: {
+        path: "src/ir/core/async-plan.ts",
+        bytes: 5278,
+        sha256: "d840b1eac116e6e4b8ea61d2019f3117013e2a15e88436fe9ff562a54010f173",
+        gitBlob: "934603c9b5215570851500f60bfb613e871b688e",
+      },
+    },
+    {
+      path: "src/ir/core/nodes.ts",
+      before: {
+        path: "src/ir/core/nodes.ts",
+        bytes: 96066,
+        sha256: "ad0aa4b2aa29cb030a5f46dc29ec71d8a336e76e12737c78afe6bb5d9732fd77",
+        gitBlob: "3554d930c5873b9133666b32a14b34ef30df1d81",
+      },
+      current: {
+        path: "src/ir/core/nodes.ts",
+        bytes: 96440,
+        sha256: "edbebcf99227dc64eaf1dd83cec02a2431b21c25992e20138c0917f09487dccd",
+        gitBlob: "2f26e8acb8f2c68b97a71d41c1176dd79da2bd40",
+      },
+    },
+    {
+      path: "src/ir/program-codec.ts",
+      before: {
+        path: "src/ir/program-codec.ts",
+        bytes: 30465,
+        sha256: "566b3d1ab02657429818d91f5cdeb80c3d80460f6f7adbf0bda9d178d0327d91",
+        gitBlob: "0f7bc3c07f194ab197805b952c61cddb739f2e39",
+      },
+      current: {
+        path: "src/ir/program-codec.ts",
+        bytes: 30714,
+        sha256: "69c988fa6366e8627d24abb6de4c5d8855856567e8294a471e53e852b4766062",
+        gitBlob: "5877e871b6cdc893e0ceb127eb0c91f51fdcb0fd",
+      },
+    },
+    {
+      path: "src/ir/program-prepare-ir.ts",
+      before: {
+        path: "src/ir/program-prepare-ir.ts",
+        bytes: 6738,
+        sha256: "2965ad4e3ab247413a8a4d3597f6fccb5adc421bf80b38585be5b910f7ed9e83",
+        gitBlob: "34c80c180b1f40b4b403811af059937867b47e1f",
+      },
+      current: {
+        path: "src/ir/program-prepare-ir.ts",
+        bytes: 6832,
+        sha256: "211ca16d6c0c3b0378c8347bb0eedc074d237d90aee8f4a45073cbd6cfa480dd",
+        gitBlob: "1e9f6c0e18fe47d06536d4688516fbf54a565333",
+      },
+    },
+    {
+      path: "src/ir/program/input-contracts.ts",
+      before: {
+        path: "src/ir/program/input-contracts.ts",
+        bytes: 2375,
+        sha256: "755022df130534f4ddeb0dab4eaebd50a5a1f9790bbc9a98d2e3d74e29e65fe7",
+        gitBlob: "ae84ebb03ddd7461cf887d1028d558140ecba156",
+      },
+      current: {
+        path: "src/ir/program/input-contracts.ts",
+        bytes: 2440,
+        sha256: "db4965e7dbd76eb88bb9c9ccbe848d3a7c3a11e3af26032a1751684d086048f8",
+        gitBlob: "0dbacd92330e06a788088d9db5d3c825a2a4c56d",
+      },
+    },
+    {
+      path: "src/ir/program/input.ts",
+      before: {
+        path: "src/ir/program/input.ts",
+        bytes: 6763,
+        sha256: "3c9da679634f7fcb8fee9a8e5664cc752ee1e6a370148d4d375e56f6462afbda",
+        gitBlob: "07e2f9c4ec8b24f94028f76ba0ac7daebd963fb7",
+      },
+      current: {
+        path: "src/ir/program/input.ts",
+        bytes: 6872,
+        sha256: "66f7f3c1b233f889d9e578bbe6532ce2265b4a52feb72d0edf5bb7d417ef5520",
+        gitBlob: "7518528738b783afbb8e933480f74c5f5965486b",
+      },
+    },
+    {
+      path: "src/ir/program/prepared-contracts.ts",
+      before: {
+        path: "src/ir/program/prepared-contracts.ts",
+        bytes: 4843,
+        sha256: "889bedc1c23fb8e26db609634ce0a0137da73a9cc85f636b810a86a396173225",
+        gitBlob: "e8443bbd780aff5284f322d89748b8de691babe3",
+      },
+      current: {
+        path: "src/ir/program/prepared-contracts.ts",
+        bytes: 4915,
+        sha256: "252ad6fb99453fc4bf5a5b8107a9947a338638d51b8016dc75a2c262b0d659d6",
+        gitBlob: "92148be56b1df81b323e453bcc6f119a6fa7575e",
+      },
+    },
+    {
+      path: "src/ir/program/validation.ts",
+      before: {
+        path: "src/ir/program/validation.ts",
+        bytes: 19448,
+        sha256: "572aab2d72f9eabf322347e90c3d13e25f690a44fa3cede1ac5666dcd1674354",
+        gitBlob: "18e65c59b175e01412683b4c0b977513bde868fe",
+      },
+      current: {
+        path: "src/ir/program/validation.ts",
+        bytes: 45816,
+        sha256: "33cba90b606278805766b4eb739214c31dd84babafb873773f3e92f60c470231",
+        gitBlob: "1f1e3b4c02e64727da5bf4996ff8d24ad1d322a2",
+      },
+    },
+    {
+      path: "src/position-map.ts",
+      before: {
+        path: "src/position-map.ts",
+        bytes: 6306,
+        sha256: "18e228f204079171a28bfc763514fe54aa30030b3e1529dae706f86488b0aecb",
+        gitBlob: "a79a6f460eae2d51028e1eef673b3f7b363ae243",
+      },
+      current: {
+        path: "src/position-map.ts",
+        bytes: 8649,
+        sha256: "aed06dbcabad1d12cfd4d228c25f30dca5d0ff0006ced9e467b26bf84485b8f9",
+        gitBlob: "19dd7fd273ad68976e9302fc14894b170541aa8c",
+      },
+    },
+    {
+      path: "src/shared/contracts/ir-unit-inventory.ts",
+      before: {
+        path: "src/shared/contracts/ir-unit-inventory.ts",
+        bytes: 4708,
+        sha256: "f6f253cefa3b4618bd5f2daf2555b6c0d734a715f2dd44a30a83921c0d9b6496",
+        gitBlob: "e7f088edffda5ef76b726b6786341e5bcc744078",
+      },
+      current: {
+        path: "src/shared/contracts/ir-unit-inventory.ts",
+        bytes: 8077,
+        sha256: "6b5b77eeb6865023b01891bf2bc2efb1d803fac37c9f8ac739759e15e23fef83",
+        gitBlob: "180df8e4f8b7aa3eabac4cb88b54dc6b04a642bb",
+      },
+    },
+  ],
+} as const;
+interface SourceMapSchemaSpan {
+  readonly beforeStart: number;
+  readonly beforeEnd: number;
+  readonly currentStart: number;
+  readonly currentEnd: number;
+  readonly beforeText: string;
+  readonly currentText: string;
+}
+interface SourceMapSchemaEntry {
+  readonly path: string;
+  readonly before: Pin;
+  readonly current: Pin;
+  readonly spans: readonly SourceMapSchemaSpan[];
+}
+export interface SourceMapSchemaSourceEpoch {
+  before(path: string, actualCurrent: string): string;
+}
+
+/** Authenticate a fixed complete source inverse without substituting a live operand. */
+export function captureSourceMapSchemaSourceEpoch(readAuthority: Reader): SourceMapSchemaSourceEpoch {
+  if (typeof readAuthority !== "function") fail("physical reader required");
+  const raw = primitive(readAuthority(sourceMapSchemaEpochPath), sourceMapSchemaEpochPath);
+  if (Buffer.byteLength(raw) !== sourceMapSchemaEpochBytes || hash(raw) !== sourceMapSchemaEpochSha256)
+    fail("source map schema receipt bytes mismatch");
+  const receipt = JSON.parse(raw) as Omit<typeof sourceMapSchemaEpochExpected, "entries"> & {
+    readonly entries: readonly SourceMapSchemaEntry[];
+  };
+  const summary = {
+    schema: receipt.schema,
+    coordinateUnit: receipt.coordinateUnit,
+    baseMain: receipt.baseMain,
+    helperPrefix: receipt.helperPrefix,
+    entries: receipt.entries.map(({ path, before, current }) => ({ path, before, current })),
+  };
+  if (JSON.stringify(summary) !== JSON.stringify(sourceMapSchemaEpochExpected))
+    fail("fixed source map schema epoch mismatch");
+  const prefix = Buffer.from(primitive(readAuthority(receipt.helperPrefix.path), receipt.helperPrefix.path)).subarray(
+    0,
+    receipt.helperPrefix.bytes,
+  );
+  assertPin(prefix, receipt.helperPrefix, receipt.helperPrefix.path);
+  const entries = new Map<string, SourceMapSchemaEntry>(receipt.entries.map((entry) => [entry.path, entry]));
+  return Object.freeze({
+    before(path: string, actualCurrent: string): string {
+      primitive(path, "source map schema path");
+      primitive(actualCurrent, path);
+      const entry = entries.get(path);
+      if (!entry) fail("unexpected source map schema domain: " + path);
+      const current = Buffer.from(actualCurrent);
+      assertPin(current, entry.current, path);
+      const before = inverseSourceMapSchemaEntry(entry, current);
+      assertPin(before, entry.before, path);
+      const replay: Buffer[] = [];
+      let cursor = 0;
+      for (const span of entry.spans) {
+        replay.push(before.subarray(cursor, span.beforeStart), Buffer.from(span.currentText));
+        cursor = span.beforeEnd;
+      }
+      replay.push(before.subarray(cursor));
+      const replayed = Buffer.concat(replay);
+      assertPin(replayed, entry.current, path);
+      if (!replayed.equals(current)) fail("complete source map schema replay mismatch: " + path);
+      return before.toString("utf8");
+    },
+  });
+}
+
+function inverseSourceMapSchemaEntry(entry: SourceMapSchemaEntry, current: Buffer): Buffer {
+  const pieces: Buffer[] = [];
+  let beforeCursor = 0,
+    currentCursor = 0;
+  for (const span of entry.spans) {
+    if (
+      ![span.beforeStart, span.beforeEnd, span.currentStart, span.currentEnd].every(Number.isSafeInteger) ||
+      span.beforeStart < beforeCursor ||
+      span.currentStart < currentCursor ||
+      span.beforeEnd < span.beforeStart ||
+      span.currentEnd < span.currentStart ||
+      span.beforeEnd > entry.before.bytes ||
+      span.currentEnd > current.length ||
+      span.beforeStart - beforeCursor !== span.currentStart - currentCursor
+    )
+      fail("source map schema inverse coordinates mismatch: " + entry.path);
+    const old = Buffer.from(span.beforeText),
+      next = Buffer.from(span.currentText);
+    if (
+      old.length !== span.beforeEnd - span.beforeStart ||
+      next.length !== span.currentEnd - span.currentStart ||
+      old.equals(next) ||
+      !current.subarray(span.currentStart, span.currentEnd).equals(next)
+    )
+      fail("source map schema inverse span mismatch: " + entry.path);
+    pieces.push(current.subarray(currentCursor, span.currentStart), old);
+    beforeCursor = span.beforeEnd;
+    currentCursor = span.currentEnd;
+  }
+  if (!entry.spans.length || entry.before.bytes - beforeCursor !== current.length - currentCursor)
+    fail("source map schema inverse coverage mismatch: " + entry.path);
+  pieces.push(current.subarray(currentCursor));
+  return Buffer.concat(pieces);
+}
+
+export interface SourceMapProgramValidatorCapture {
+  readBefore(path: ProgramValidatorDonorPath): string;
+  readCurrent(path: ProgramValidatorCurrentPath): string;
+  readRelocationCurrent(path: ProgramValidatorCurrentPath): string;
+}
+
+/** Physical current sources are captured once; only the historical delegate sees projected validation. */
+export function captureSourceMapProgramValidatorRelocation(readLive: Reader): SourceMapProgramValidatorCapture {
+  if (typeof readLive !== "function") fail("physical reader required");
+  const epoch = captureSourceMapSchemaSourceEpoch(readLive);
+  const rawReceipt = primitive(readLive(programValidatorRelocationReceiptPath), programValidatorRelocationReceiptPath);
+  if (Buffer.byteLength(rawReceipt) !== receiptBytes || hash(rawReceipt) !== receiptSha256)
+    fail("immutable receipt bytes mismatch");
+  const current = new Map<ProgramValidatorCurrentPath, string>();
+  for (const path of expected.currentPaths) current.set(path, primitive(readLive(path), path));
+  const relocated = new Map(current);
+  const validatorPath = "src/ir/program/validation.ts";
+  relocated.set(validatorPath, epoch.before(validatorPath, current.get(validatorPath)!));
+  const historical = captureProgramValidatorRelocation((path) => {
+    if (path === programValidatorRelocationReceiptPath) return rawReceipt;
+    const value = relocated.get(path as ProgramValidatorCurrentPath);
+    if (value === undefined) fail("unexpected closed relocation domain: " + path);
+    return value;
+  });
+  return Object.freeze({
+    readBefore: historical.readBefore,
+    readCurrent(path: ProgramValidatorCurrentPath): string {
+      const value = current.get(path);
+      if (value === undefined) fail("unexpected current domain: " + path);
+      return value;
+    },
+    readRelocationCurrent: historical.readCurrent,
+  });
+}
+
+/** Only the original five donor paths are substituted after the fresh fixed current proof. */
+export function beforeSourceMapProgramValidatorRelocation(readLive: Reader): Reader {
+  const captured = captureSourceMapProgramValidatorRelocation(readLive);
+  const donors: readonly string[] = expected.pairs.map((pair) => pair.donorPath);
+  return (path) => (donors.includes(path) ? captured.readBefore(path as ProgramValidatorDonorPath) : readLive(path));
+}
