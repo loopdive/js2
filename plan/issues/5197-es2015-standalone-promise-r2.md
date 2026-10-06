@@ -2532,3 +2532,83 @@ not pass counts. Darwin may prepare the bounded runner in E .tmp while Laplace
 prepares v2, but execution and changed-source input maps require parent review.
 Retain35000ms native timeout, one worker/2048MB, all raw errors and complete
 before/after maps; no retries or unselected cases in the actual execution stage.
+
+Parent reviewed and applied the v2 patch554236591618d5ecfd14160d39f53c01165c0fc6bead64f4e0aadc17fa076ad4
+after additional18 terminated. Independent source verification reconstructed
+both exact Git predecessors, reciprocally replayed current sources, checked
+producer/incoming hashes and every27-dependency/7-operand endpoint through the
+unchanged main5f layer. Physical postcheck confirms7772 inputs: exactly two
+existing test/helper changes plus three new files; all other inputs unchanged.
+No production change and no native test execution in this step.
+
+Five-file formatting check reported only the NEW successor JSON receipt needs
+formatting. Release Laplace for formatting that new receipt, proving parsed JSON
+equality, and updating its SHA literal only in the new helper and new test. All
+old fixture bytes and v2 pre-format artifacts remain immutable. Return final
+three new-file hashes and format results for parent review before collecting or
+executing tests. Never use the obsolete unformatted hash as final run authority.
+
+Parent verified the formatting-only JSON equivalence and exact single hash
+substitutions in the two new TypeScript files. Final five-file format check is
+clean. Parent independently enumerated and hashed all7772 physical inputs and
+derived the final map from3a81552e plus only the reviewed two changes/three adds.
+Map E `.tmp/5883-main4bff-v2-parent-map-20261006.json` SHA256
+309eacc2b0f9b63d89f4a38a7c82fb2492a6bd296bd968c4732c70b7002c117e;
+collection descriptor `.tmp/5883-main4bff-v2-helper-collection-authority-20261006.json`
+SHA2565d7b797baab20fedac4cc2ed2492e42fb8b75194a5e328d2a267232b7dd4a41f.
+
+Parent read the complete helper collection runner cdb5060cb07ad9a93b18ae31cdf566dc8c9d7b37c91dd4ea56e179e820c005fc
+and reviewed the full acceptance runner's bounded corrections to d96bb95135ab9ccf5fdba907db393837f4bdbf90b9ac0e1417bdc4445720b33f.
+Release only helper native collection against this descriptor and exact source
+map, one worker/2048MB, original35s, all cases deliberately unselected. No static
+47-case inference. Source freezes for collection. Actual936-plus-new execution
+requires parent verification of the terminal native result and a separate
+descriptor pinning every required collection stream; no blanket acceptance.
+
+Helper collection terminated exit0 (job69790), native47 identities across one
+file, all unselected. Parent read complete stdout/stderr and independently
+verified native statuses, all artifact hashes and exact7772 before/after map
+309eacc2. Evidence E `.tmp/5883-main4bff-v2-helper-identity-collection-20261006-XVNXuN`;
+nativecfed462d41b3185e0576d218758c26f9c8a905256da9dd7e72b94df999f5a690,
+terminal49b07d2357d9d5d33a45bbd2ff1b64aa8144a81b54dfff8133fb28487f472d17.
+Release the reviewed d96 acceptance runner only with the separately pinned
+parent descriptor:936 original identities plus47 measured additive controls,
+983 total, all selected. Retain original35000ms, one worker/2048MB, full raw
+errors, exact identity multisets and7772 input-map checks. Source stays frozen
+until terminal outcome. Stop on failure; no automatic retry or blanket success.
+This scoped execution does not replace old68 recollection, next23 execution,
+complete three-arm comparison, protected-queue checks or legacy-equivalence proof.
+
+While the983 execution owns the test slot, Laplace may prepare only the old68
+recollection runner in E .tmp. Reuse the reviewed original native86 collection
+logic, selecting the exact original68 files and4515 identities plus the four
+previously accepted freshness additions (4519 total). Replace only the source
+epoch authority with the exact reviewed7772 map309eacc2 and two-change/three-add
+descriptor5d7b797b, leaving the original manifest/identity authority untouched.
+No new static denominator, automatic additional18 execution, source edits or
+test launch. Preserve the prior failed runner and all attempts. Parent reviews
+the new runner and releases it only after983 reaches a terminal outcome.
+
+Parent copied the two independently verified inert archives byte-exact into E
+`plan/agent-context/5883-scoped-checkpoint-evidence-20261006.json` (10010915bytes,
+SHA814d4c427440909a787b1bbed702a844f774e3e62fd8b9931abf10ad3dd012c8) and
+`plan/agent-context/5883-old68-failed-collections-evidence-20261006.json`
+(2552552bytes,SHAcd5269ae32003d55d6856f4a7bdc761c116344d95eddbfae7affed3e810717b4).
+Both retain accepted=false and every original is preserved. These handoff files
+are prepared for the source checkpoint, not yet committed or pushed. They are
+outside the declared src/tests/scripts/config input domain; no frozen execution
+input was changed while983 ran. No outcome is promoted by packaging evidence.
+
+The983 execution terminated exit0 (job30775), all983 passed, zero failed/skipped/
+todo,371.30seconds. Parent read complete raw output and independently compared
+every native identity against the original manifest plus the measured47 helper
+identities. All7772 input pins remain309eacc2; instrumentation errors are empty.
+Evidence E `.tmp/5883-main4bff-successor-v2-acceptance-20261006-kzRWTm`;
+native275540825da0e35d1eec196158c2f886370d7dd275afcd5491aa8b9e5b323f13,
+raw477e1f549ee596841c65f11dd7d6d3e7e5c1e3cdc138dfcb6b5b953753221595,
+terminal649c2733214bcade8ce701fa6051a7f1ae7df2dcc8b69f23ef645f820e91a50d.
+This closes the scoped two-path repair acceptance, not broader landing acceptance.
+Parent reviewed old68 recollection runner264facf75a29de41a3d06135de140df63ce624ebccb31523212d2f0743fff4a6
+against its immutable predecessor and releases that collection now: exact4519
+identities, no passing execution credit, unchanged7772 inputs and original
+resource controls. Preserve every original failed attempt; no automatic retries.

@@ -1952,6 +1952,41 @@ Fifth in the real-world stress-test set:
 **Soft dependencies:** template literal interpolation, large-switch codegen, recursive type inference.
 **Unlocks:** ultimate self-hosting milestone, concrete stewardship-pitch deliverable ("js2wasm compiles tsc").
 
+## October 6 queue-only attribution preparation (PR5753 remains held)
+
+Parent read the published head11b39957841119c75b9703b8bad0cdcecf80f226
+handoff and complete selected paired rows. The recorded September27 comparison
+is main4418cd8510877c0fd5a3aab8a543934167e95c8c versus candidate
+a10bf6c3d1f129604c43c834a492db54a6ec93a2:154/176 versus38/176 passed,
+129 losses and13 gains. These are pinned historical-subject results, NOT a fresh
+October6 main measurement. Preserve the full176 population and broader landing
+gates; three diagnostic fixtures cannot substitute for them.
+
+Bounded read-only review lane (Sol6.1 medium) while PR5883 owns the test slot:
+trace the exact original fixtures below through the candidate and pinned main,
+then check whether the implicated code changed on current available main.
+
+- test/language/expressions/class/elements/multiple-definitions-private-field-usage.js:
+  main passes; candidate reports foo is not an own property of constructor C.
+- test/language/expressions/object/method-definition/fn-name-gen.js:
+  main passes; candidate emits seven forbidden generator host imports.
+- test/built-ins/Error/prototype/stack/setter-non-extensible-receiver.js:
+  main passes; candidate reports hasOwnProperty called on null or undefined.
+
+Use the retained original corpus, fixtures/harness and paired receipt at
+plan/agent-context/5753-current-original176-pair-20260927.json in that published
+commit. The original pair worktrees remain immutable. Report exact source sites,
+the candidate-only decisions and whether attribution is demonstrated or merely
+hypothesized. Do not infer one root cause from shared error text or restore an
+unsound fold to hide a failure. Prior Function.call repair is already excluded
+as the introducer of the Error fixture failure by a retained earlier control.
+
+No source edits, tests, builds, branch refreshes, commits, publication or hold
+removal in this lane. Parent will write any bounded implementation plan only
+after source evidence and current-main supersession checks. This prepares the
+existing queue's next blocker; it does not open new migration scope or authorize
+legacy retirement. Preserve original fixtures and every failure row.
+
 ## Stewardship angle
 
 "js2wasm compiles 60% of test262" is a percentage. "js2wasm compiles the TypeScript compiler itself" is a story. Landing even Tier 3 is the single strongest artifact for conversations with potential maintainers or funders — it demonstrates the compiler has enough depth to handle production TypeScript, not just hand-picked benchmark inputs. The gap between "a toy subset compiles" and "the real compiler compiles" is exactly what separates a proof-of-concept from a usable tool.
