@@ -554,3 +554,23 @@ Agent applied exactly that one-line removal; parent reviewed the diff. The
 unchanged ratchet now passes across22 changed codegen files with net0/0. No
 source/tests or other allowances changed. Retry the ordinary push hooks;
 passing this focused gate alone does not establish publication or PR acceptance.
+
+### Queue snapshot after checkpoint publication, 2026-10-06
+
+Single read-only inventory found19 open PRs and no independently ready or
+verified-superseded item among5748/5753/5784/5883/5911/5942/6195.
+Published5748 head1d05ad0c is held and conflicting; its CLA success alone is
+not complete CI. Published5883 head112cea8e is mergeable but behind/held,
+with quality still pending, no unresolved review threads and the full candidate
+validation active.6195 remains0f858c60 with the recorded quality failure
+988>952 and missing producer/startup authority.5753/5784/5911/5942 retain
+their recorded heads and are conflicting;5942 retains do-not-merge.
+
+Keep the existing partial dependency order: complete frozen5883 validation;
+producer/allocation/startup authority before lifecycle integration and5748
+live-array semantics before parent admission.5753 still needs original-cohort
+loss attribution/current-main comparison;5911 still needs regression
+attribution;5942 remains experimental.6341 and its draft child6468 are
+other-owner work, not adopted. No branch refresh, new compiler scope or test
+launch is released by this snapshot. Recheck live state before any future merge
+or closure; no item is delivered merely because its checkpoint is published.

@@ -3090,3 +3090,16 @@ Node and original resource controls, after verifying the slot is free. Preserve
 all stage records and stop on the first failure. No automatic retries, baseline
 launch, source edits, next-stage scope expansion or HOLD removal. Full candidate
 success still requires independent review and separate A/B comparison.
+
+Current full attempt: E .tmp/laplace-5883-full-candidate-committed112-20261006-4Dt9nJ,
+runner PID17314, owned by Darwin. Parent independently verified canonical
+typecheck, compiler-readers176/176, text-readers992/992 and runtime505/505;
+each completed stage has clean raw output, exact native identity multisets and
+unchanged7772 before/after pins. Text native SHA
+fe0276eb1d0ed97cbc9aa77f7192909ac08ffe269702c182d8115875bb4a4776;
+runtime native SHA8596e598ff95fe3a898c82a409de017ad3046ccc2a58d436418dc14c70b1c654.
+The incoming23 stage with2407 scheduled cases is active. This is not a terminal
+full-run result. Resume the same process/agent; never launch another attempt
+because observation timed out. Remaining repair/successor/imported/additional/
+helper stages and separate A/B comparison remain required. Source HEAD112cea8e,
+all input pins, schedule and runner authorities remain frozen during execution.
