@@ -12,6 +12,7 @@ import { restPatternParamSlot } from "./resolved-rest-param.js"; // (#6774 S7)
 import { hoistParameterEvalVars } from "./expressions/eval-param-scope-hoist.js"; // (#6774 S7)
 import ts from "typescript";
 import { hoistFunctionDeclarations } from "./statements/nested-declarations.js";
+import { objectLiteralReadsAmbientRedeclaredVar } from "./module-global-registration.js"; // (#6651 V10b)
 import { isStringType, isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction } from "../ir/types.js";
 import {
@@ -2271,6 +2272,11 @@ export function compileObjectLiteral(
   }
   // (#3633) Foreign eval literals lack checker types and require the open representation.
   if (isForeignEvalNode(expr)) return compileObjectLiteralAsExternref(ctx, fctx, expr);
+  // (#6651 V10b) A literal reading an ambient-redeclaring script var takes the open path.
+  if (objectLiteralReadsAmbientRedeclaredVar(ctx, expr)) {
+    const open = compileObjectLiteralAsExternref(ctx, fctx, expr);
+    if (open !== null) return open;
+  }
   // (#2714) A spread-containing literal evaluated in a NON-SPECIFIC contextual
   // type (`any`/`unknown`/`object`, or no contextual type) must take the host
   // plain-object path, like the empty-`{}` any-context arm below. The struct

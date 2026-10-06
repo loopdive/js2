@@ -216,6 +216,11 @@ function instanceCarrierTypeIdxs(ctx: CodegenContext): number[] {
       idxs.push(info.stateTypeIdx);
     }
   }
+  // (#6651 V10b) A DataView instance is an ordinary extensible object with NO
+  // own properties of its own (§25.3.4: every accessor lives on the prototype),
+  // so its `$__dv_window` carrier can take the same identity bag — none of its
+  // physical fields is a JS-visible own name, so the bag cannot shadow one.
+  if (ctx.dvWindowTypeIdx >= 0 && !seen.has(ctx.dvWindowTypeIdx)) idxs.push(ctx.dvWindowTypeIdx);
   return idxs;
 }
 

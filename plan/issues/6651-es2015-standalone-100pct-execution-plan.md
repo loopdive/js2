@@ -174,6 +174,25 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-10-06 — slice V10b (ArraySetLength order / DataView expandos /
+  # arguments @@iterator; record `### 2026-10-06 — Slice V10b`). Paths other
+  # than `array-holes.ts` are already listed below (restated per the
+  # stranded-grant rule):
+  #   - `array-holes.ts` +18: the pre-scan predicate that arms
+  #     `protoMemberDirty` for a `[…][Symbol.iterator]` /
+  #     `arguments[Symbol.iterator]` VALUE read — it must sit in the one pre-pass
+  #     that arms every sibling flag (compile order is not source order);
+  #   - `array-object-proto.ts` +21: `demandArrayProtoDynamicCompanion`, beside
+  #     `ensureArrayNativeProtoGlue` whose brand it registers;
+  #   - `property-access.ts` +16: the standalone `vec[Symbol.iterator]` arm of
+  #     the element read (it read element 1 on `arguments`);
+  #   - `declarations.ts` +10: `moduleVarDeclType` types a script var that
+  #     redeclares an ambient lib global from its initializer;
+  #   - `literals.ts` +6: the open-object hand-off for a literal reading one.
+  # Mechanisms live in `arguments-callee-poison-accessor.ts`,
+  # `module-global-registration.ts`, `vec-bag-seed.ts`, `instance-props.ts`,
+  # `carrier-bag-delete.ts`.
+  - src/codegen/array-holes.ts
   # 2026-10-06 — slice V6 (module namespace internals; record under "2026-10-06
   # — Slice V6"). The §10.4.6 arms live in the NEW leaf
   # `object-model/module-namespace-exotic.ts`. What stays in god-files (paths
@@ -1303,6 +1322,11 @@ loc-budget-allow:
   # `promise-subclass-cell-read.ts`; the hand-off cannot move, because it is the
   # arm that would otherwise emit the bare `global.get` of the cell.
 func-budget-allow:
+  # 2026-10-06 — slice V10b (see the loc-budget note): `compileElementAccessBody`
+  # +15 (the standalone `vec[Symbol.iterator]` arm), `collectDeclarations` +9
+  # (`moduleVarDeclType` from the initializer — both keys already listed below)
+  # and `compileObjectLiteral` +5 (the open-object hand-off).
+  - src/codegen/literals.ts::compileObjectLiteral
   # 2026-10-06 — slice V6 (see the loc-budget note): `compileArrayLiteral` +14
   # (the externref widening for a non-string fixed element after a string
   # spread) and `compileDeclarations` +1 (the early TDZ-flag call).
@@ -3681,6 +3705,65 @@ of 126, 0 `illegal cast`** — unchanged.
 Not fixed (base fails identically): the `obj-rest-*` rows in for-of/dstr and
 assignment/dstr (object rest over runtime sources), `array-elem-init-in.js`
 (parse), and three `with` Proxy-env rows.
+
+### 2026-10-06 — Slice V10b
+
+H10 singles, second group (ArraySetLength order, DataView expandos, unmapped
+`arguments` @@iterator), on `0bead4077c`. **3/3 target rows flip**, plus
+`language/arguments-object/mapped/Symbol.iterator.js` (same cause). Measured
+base vs branch with `JS2WASM_EVAL_ENGINE=quickjs … run-test262-paths.mts
+--standalone`, provider rebuilt for each side.
+
+Root causes:
+
+1. **`arguments` had no own `@@iterator`** (§10.4.4.6 step 7 / §10.4.4.7 step
+   20). `seedArgumentsIteratorProperty` (`arguments-callee-poison-accessor.ts`)
+   now defines `{value: %Array.prototype.values%, writable, !enumerable,
+   configurable}` before `callee`, through the same `__defineProperty_value` as
+   the callee seed and under the same #4578 observability proof (an arguments
+   object that only answers `.length`/proven indices keeps its bytes). The value
+   is the Array glue's `values` closure singleton. Three more defects stood
+   between the seed and the row:
+   - `[][Symbol.iterator]` read **`undefined`**: the vec arm of `__extern_get`
+     resolves inherited members through the seeded Array companion, which was
+     registered only when the module spelled `Array.prototype` as a value. The
+     `array-holes.ts` pre-scan now arms `protoMemberDirty` for a
+     `[…][Symbol.iterator]` / `arguments[Symbol.iterator]` VALUE read, and the
+     read site calls `demandArrayProtoDynamicCompanion`.
+   - `arguments[Symbol.iterator]` read **element 1** (`Symbol.iterator` lowers
+     to its i32 well-known id, and `arguments` was excluded from the dynamic key
+     route). Standalone `vec[Symbol.iterator]` now always takes the dynamic route.
+   - `delete vec[sym]` **trapped** (`illegal cast`): the vec delete prologue cast
+     every key to a string to parse an index. `vec-bag-seed.ts` answers -1 for a
+     `$Symbol` key.
+2. **A `$__dv_window` DataView carrier had no own-property storage**, so
+   `Object.defineProperty(dv, 'baz', {})` landed nowhere. A DataView instance
+   has no own properties of its own (§25.3.4), so it now takes the instance
+   identity bag (`instance-props.ts`), with the matching delete admission in
+   `carrier-bag-delete.ts` (the generator-state precedent).
+3. **The ArraySetLength row was not an ArraySetLength bug.** In the original
+   harness (a script, not a module) `var length = {valueOf…}` merges with
+   lib.dom's `declare var length: number`, so the global was typed f64 —
+   one `valueOf` at the declaration — and the `{value: length}` descriptor
+   literal passed to `Reflect.defineProperty` got an f64 field (a second
+   ToNumber at construction). The overlay's §10.4.2.4 order was already right
+   (a module-mode repro passed on base). Standalone script vars that redeclare an
+   ambient lib global are now typed from their initializer (`moduleVarDeclType`),
+   and a call-argument object literal reading one is built as an open `$Object`
+   (`module-global-registration.ts`). Host lane untouched.
+
+**Receipts.** Family `Array/length/**` + `Array/prototype/{push,splice}/**` +
+`Object/defineProperty/15.2.3.6-4-1*` + `DataView/**` + `language/arguments-
+object/**` (1,068 rows, 6 chunks): base 886 → branch 890, **0 lost**. Pin
+`tests/issue-6651-v10b-length-dataview-arguments.test.ts` (4 shape cases + the
+3 rows, 7/7). Equivalence gate green (1748 pass, 22 known). Temporal control
+(`Duration/prototype/round/*`, standalone, prewarmed cache): **119 pass / 7 fail
+of 126, 0 `illegal cast`** — unchanged.
+
+Known gaps: the closed-struct field typing for OTHER reads of an
+ambient-redeclaring script var (a declaration initializer, an expression whose
+TS type is the lib's) still follows the lib type; a bare-vec `new DataView(buf)`
+was not separately measured beyond a probe (it passed).
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 

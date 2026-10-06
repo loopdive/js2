@@ -31,6 +31,7 @@ import {
   registerNativeProtoBuiltin,
   emitBrandCheckTypeError,
   emitLazyNativeProtoGet,
+  ensureNativeProtoCompanionSeeder,
   ensureStandaloneNativeMethodClosure,
   type NativeProtoBuiltinGlue,
 } from "./native-proto.js";
@@ -2870,6 +2871,26 @@ export function ensureArrayNativeProtoGlue(ctx: CodegenContext): number | undefi
     });
   }
   return brand;
+}
+
+/**
+ * (#6651 V10b) Demand the `Array.prototype` companion for a DYNAMIC
+ * `<vec>[Symbol.iterator]` value read on the host-free lane.
+ *
+ * The read goes through `__extern_get`, whose vec arm resolves an inherited
+ * member through the per-brand `$Object` companion — and that companion is
+ * seeded only when its seeder was registered at compile time, which nothing
+ * did unless the module also spelled `Array.prototype` as a value. So
+ * `[][Symbol.iterator]` read `undefined` where §23.1.3.40 answers
+ * `%Array.prototype.values%`. Registering the seeder here is the same demand a
+ * bare `Array.prototype` mention makes; it is still gated on the pre-scan's
+ * `protoMemberDirty` (inside `ensureNativeProtoCompanionSeeder`), so a module
+ * that never reflects on a builtin prototype keeps its bytes.
+ */
+export function demandArrayProtoDynamicCompanion(ctx: CodegenContext): void {
+  if (!ctx.standalone) return;
+  const brand = ensureArrayNativeProtoGlue(ctx);
+  if (brand !== undefined) ensureNativeProtoCompanionSeeder(ctx, brand);
 }
 
 /** Register `Object.prototype` glue (idempotent) and return its brand. */
