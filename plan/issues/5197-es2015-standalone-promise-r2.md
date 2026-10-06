@@ -1889,3 +1889,250 @@ Pinned main itself has a source-level inventory-profile mismatch; preserve the
 unrepaired arm, narrowly repaired baseline and candidate as distinct arms with
 exact fixture/assertion/result comparison. No measured main failure count is
 claimed before execution. No gate waiver, hold removal or legacy retirement.
+
+### Phase-two release after parent source review
+
+Parent read all201 helper lines, the complete fixed receipt and all682 lines of
+the new control test. Receipt SHA256 is
+2b11315b63f58739bb17506a16ab6290ff7fc276c85b506ce8c0d73e8cfec136;
+helper b11f32e62f3866aa6213b6ec5f0faeaa091d241af2509c49e9bece08abce86fd;
+control test fc8016e71bd686e56542a537ec6f61fb4427f02d10357566a0180cdec91b5502.
+Parent independently compared all three raw inverses, semantic projections and
+raw replays against the exact Git blobs/current union: byte-exact throughout.
+Union-to-incoming removes nine file rows and the three PR5883 moves; those are
+explicit historical views only, not changes to production inventory.171 controls
+are authored but unexecuted. Source review releases caller work, not acceptance.
+
+Laplace owns acquisition-only conflict resolution in the seven previously named
+policy callers, plus runtime-program-policy-evolution, well-known-symbol-policy-
+evolution and number-prerequisite-policy-evolution. Prefer preserving the incoming
+three-helper acquisition chain, with the new explicit union-to-incoming view
+immediately around each actual physical inventory read. All downstream policy
+fixtures/assertions and D's fairness changes remain. Both historical paths end at
+the same588351-byte authority; add independent raw/semantic equivalence controls
+between union-to-d followed by the old PR5883 chain and union-to-incoming followed
+by the incoming three-helper chain. Retain all original171 new controls.
+
+A separate Sol6.1 Medium writer may own acquisition-only updates to the three
+incoming6866 physical-source successor tests and the three PR5883 inventory
+successor tests (original, bba74 and d0a13). For every fresh physical read, select
+its exact named view before invoking the unchanged historical proof. Preserve
+all fixtures, expected profiles, corruption mutations and assertion identities;
+physical-source corruption must still be observed on each actual re-read.
+Account explicitly for additional receipt reads without dropping earlier trace
+entries. Do not route only the positive fixture, cache a projection, change a
+negative into an earlier unrelated failure, or weaken error expectations. Report
+any control that cannot be preserved through acquisition-only edits before
+altering its assertion. Additive controls may verify the new acquisition edge.
+
+Neither writer may edit the fixed helper/receipt, C1's three authority files,
+production sources or policy inventory, or stage/commit/complete the merge.
+No Vitest/compiler execution until the parent releases the heavy-run slot.
+C1 recipe reconciliation follows finalized caller bytes, with all historical
+before-fields and D's120000/150000 probe budgets retained.
+
+### Finally physical-control composition decision
+
+Darwin preserved five acquisition files and stopped at the finally successor's
+two physical-corruption controls. Parent inspected lines612-663: the current-
+policy control requires the historical helper to read its authority four times
+while rejecting raw and semantic corruption. Wrapping every mutated union read
+in the new fail-closed projection rejects earlier, so it cannot preserve that
+historical negative's failure owner/trace. Do not broaden its error expectations
+or pretend an earlier rejection proves the historical control.
+
+Preserve that historical control as an explicitly staged physical fixture:
+authenticate the actual union freshly, derive the exact589117 witness, stage
+those unchanged witness bytes in an owned temporary file, then run the original
+healthy/corrupt/raw/semantic/restored sequence through actual reads of that file
+with the original four historical-authority calls. Retain the receipt-corruption
+sequence on the real historical receipt and keep its four-read assertion. Do
+not replace the repository inventory with a historical profile or edit stored
+fixtures/expected values. Document that staging preserves the historical reader
+contract; it is not a claim about admission of the current union.
+
+Add separate current-union physical controls: read the real union freshly,
+verify its exact pinned profile, stage an exact copy in a second owned temporary
+file, and check healthy projection plus raw-newline and semantic-row corruption
+plus exact restoration through fresh file reads. Assert the new projection is
+the rejection owner, authenticate fresh new receipts with explicit read traces,
+and confirm no historical helper is called for rejected union inputs. Keep all
+preexisting test identities, bodies' mutation semantics and historical assertion
+values; add tests rather than replace the original negative population. Both
+layers must pass, so no original proof obligation is traded for an easier one.
+The same separation must be explicit in the repaired baseline/candidate plan.
+Parent must review the actual diff before execution or acceptance.
+
+### C1 reconciliation release after caller review
+
+Parent read the complete ten-caller diff and both additive chain-equivalence
+controls. Seventeen physical reads now pass through the named incoming view;
+all non-acquisition syntax and226 static registration expressions are retained.
+The new control file has173 authored tests, zero executed; its original171-control
+body is byte-identical. Final SHA is
+aa3e133828d840abf4960cf90658e23e2b4d75abb337d34b7d91d06297bce3ce.
+Pre-edit archive895dcf3e097edc2091b3675f2a1f69048a7d5f3d1c3a5ab506e416bad766accc
+retains14 files including the ten original conflicts,1173427 decoded bytes.
+
+Release Laplace to exactly the three remaining C1 files: helper authority JSON,
+helper authority root and current-source test. Use finalized four instrument
+files (boundary, runtime-program, well-known-symbol, number-prerequisite) and
+refresh only their current pins/after-side inverse recipes plus the root/test
+freeze. Preserve every historical before-pin/text/offset and span count from
+the original authority; preserve all other current instrument and recipe fields.
+Reconstruct each exact historical source by inverse and replay to final current
+bytes, verifying independent old Git/blob/hash identities. Keep343 original C1
+test identities/bodies and D's120000/150000 native-probe budgets unchanged; the
+current-source test's only source change relative to D is the independent freeze.
+No test execution, Git staging/commit/merge completion, policy/source change or
+new budget grants. Return exact before/after field diff, all inverse/replay
+checks, final hashes and any mismatch. Parent reviews before resolving the index
+and publishing; no historical authority is regenerated from current sources.
+
+### Failed-attempt archival release
+
+The frozen run has printed failure markers but is still live; neither exact
+failures nor a failed terminal result is inferred from those markers alone.
+Darwin may prepare a separate failed-terminal evidence packer in C's .tmp,
+leaving the reviewed success-only packer and all test sources unchanged. Actual
+invocation requires parent confirmation of process termination.
+
+Require the same explicit run/manifest/runner paths and SHA authorities. Inventory
+every regular file under the run; reject symlinks/unsafe paths and unexpected
+stage names. A failed-run archive must contain a contiguous prefix of the eight
+declared stages, every present stage's invocation and terminal, successful earlier
+terminals and one explicitly failed final terminal. Preserve all native/raw and
+before/after bytes even when they record failures or input drift; report absent
+optional records explicitly instead of inventing them. Record all unstarted
+stages as unexecuted, not skipped/passed. Keep accepted=false and raw review
+required, with stage outcome metadata subordinate to the retained records.
+
+Retain the manifest, runner and original v2 boundary authority; authenticate their
+expected hashes. Gzip/base64 streams carry byte counts, hashes and source paths.
+Decode/readback every stream, recheck input inventory and bytes before exclusive
+output creation in C's .tmp. Reject partial/live prefixes, unknown final outcome,
+wrong authority and reused output. Artificial smoke fixtures only; no actual
+run packaging before parent release, no compiler/Vitest/Git work, no changes to
+the existing success packer. Parent reviews the complete script before use.
+
+### Frozen run terminal result, not acceptance (15:23 CEST)
+
+Execution65800 terminated exit1 on incoming23. Native report records2397/2403
+passed,6 failed,0 pending across23 files; raw output additionally reports one
+unhandled onTaskUpdate RPC timeout. All six failures report35000ms test timeouts:
+two distinct manifest initializer/body mutations sharing one test name, one
+manifest declaration-reordering control, and three runtime-data seam receipts
+(contracts/manifest.ts, runtime-manifest.ts, intrinsic-support.ts). Observed
+durations range35141 to45589ms. Do not classify these as semantic passes or
+waive the RPC failure. Native JSON alone omits that error channel.
+
+Parent independently verified all23 exact identity multisets, including duplicate
+names, against the predeclared manifest and both7769-file before/after pin maps.
+There was no input drift. Native SHA256
+6b01ea76b2fecd805212422a1d172401df5ea674ae06f81395880e4de3da0068;
+raw SHA256d2f4ae6b0f879d8d55de9eef091b5e785573c2b3e7efcd14bc58fa96f3c18080.
+Runtime/compiler/text/canonical earlier stage results remain scoped to8b9.
+Repair-controls305, successor-proof73 and imported-main117 were not executed.
+
+Next diagnostic must retain this entire attempt, preserve all six exact case
+identities/multiplicity and run unchanged source. Any longer diagnostic deadline
+is observation-only, not a committed timeout repair or acceptance result. Inspect
+duplicate reconstruction within these six bodies and event-loop yield behavior
+before proposing a bounded implementation fix. No fixture, assertion, denominator
+or currentness/freshness check may be removed to reduce elapsed time.
+
+### Exact-six diagnostic dispatch
+
+Parent reviewed the complete failed-terminal packer and executed it only after
+65800 terminated. Archive546102854cddc7114428503e74035fd4fc02514bfd05427026e6bb426a5c1c86
+in C .tmp/5883-failed-successor-evidence-P9MBh8-20261006.json contains32
+lossless streams/14598024 decoded bytes, accepted=false. It explicitly records
+the three unexecuted stages. The original attempt remains untouched.
+
+Release Darwin the single compiler-test slot for an observation-only diagnostic
+of the exact six failed identities on unchanged D8b9. Derive selection from the
+authenticated native report6b01ea76b2fecd805212422a1d172401df5ea674ae06f81395880e4de3da0068;
+retain duplicate-name multiplicity. Run the two original files with exact-name
+selection, fixed one worker/2048MB controls and an explicit120000ms diagnostic
+deadline only. Assert exactly six selected cases and the complete original file
+identity populations, with all other cases explicitly reported unselected.
+Capture command/environment, original35-second failures, full raw/native output,
+exit and before/after full manifest pins. Do not edit source or committed test
+timeouts. Missing/extra selections, raw RPC errors or any drift reject diagnosis.
+No other compiler run is authorized until this diagnostic terminates.
+
+Parent inspected the failing bodies: the remaining global read/historicalRead
+wrappers reconstruct sources again on each requested path, unlike the scoped
+currentHistoricalRead used by previously repaired proofs. Timing work may later
+reuse one freshly authenticated capture within a single proof, but no cross-case
+cache, reduced source population or skipped mutation is authorized. Implement
+only after reporting this unchanged diagnostic; parent retains repair release.
+
+### Parent planning and Sol 6.1 dispatch contract
+
+User reconfirmed that the parent writes implementation plans and files or updates
+repository issues before dispatch. Bounded implementation and verification work
+goes to native Sol 6.1 agents at medium effort; the parent owns acceptance,
+integration and protected-queue landing. Do not substitute separate sidebar
+sessions or let implementers silently expand their scope.
+
+Darwin retains the exact-six observation-only diagnostic and the sole heavy-test
+slot above. Laplace may independently audit the completed C1 refresh without
+running compiler tests or editing source: compare all historical recipe fields
+against independent Git blobs, recompute inverse/replay and current pins, and
+check the 343-case test change is only its independent freeze. Report concrete
+differences and evidence paths; passing an audit does not establish test success.
+
+After the diagnostic, the parent will specify any demonstrated timing repair,
+its exact writable files, preserved controls and before/after acceptance tests
+before releasing implementation. Original failures and the raw RPC error remain
+retained evidence. No legacy retirement, timeout waiver, fixture reduction or
+additional migration scope is authorized by this dispatch.
+
+### Six-timeout repair release after unchanged diagnostic
+
+Diagnostic job2421 is terminal exit1. The unchanged D run selected exactly six
+cases, preserving782 total identities and776 explicitly unselected cases. Six
+assertions passed under the diagnostic120000ms deadline, but raw output contains
+two onTaskUpdate RPC timeouts. It is rejected, not acceptance. Both7769-pin maps
+were unchanged. Preserve directory
+`.tmp/5883-six-historical-diagnostic-20261006-mkZqyl` in D; native SHA256
+bf6803bfa16fd5fe7777532a2c93ff7775f08f7d8877ecb02e7acae57ec540b9,
+raw SHA256e6bec7cff380149ae6fa5d57d8ef5e99c850f6bd52dc024fc17a4231c31aa82d.
+Parent read terminal and complete raw output. Durations31.091–49.888seconds
+demonstrate that increasing the assertion deadline does not cure the RPC failure.
+
+Release Darwin to the two test files only in E, branch
+codex/5883-main4bff-composition-20261006: historical-runtime-reconstruction and
+runtime-data-contract-seam. D remains immutable. First archive exact pre-edit
+bytes in E's .tmp and verify the seam retains the finalized acquisition changes.
+Replace repeated global reconstruction in the failing parameterized proof bodies
+with one fresh authenticated complete source capture per proof. Reuse the existing
+currentHistoricalRead pattern, validating every runtimeContractCurrentPaths entry;
+all non-population reads still delegate to the original composed reader. Scope
+captures inside callbacks, never at suite/module level or across cases.
+
+For initializer/body and declaration-reorder proofs, thread that same fresh
+reader through positive validation, declaration lookup and mutation construction.
+An optional reader parameter may be added to local mutation helpers; unchanged
+callers must preserve their existing fresh-capture defaults. Retain the positive
+callable validation, valid-syntax mutations, actual changed-text checks, original
+failure expectations and all fixture values. For moved/retained seam receipts,
+use a fresh local capture for the complete callback, retaining every row/hash/
+declaration and mutation assertion. Do not rewrite unrelated global readers.
+
+No production/helper authority changes, committed deadline increases, assertion
+deletions, renamed cases or skipped cases. Preserve existing per-case event-loop
+yields. Return source diff, before/after hashes, original registration/fixture
+equality and a proposal for any additional within-case yield if still necessary;
+do not introduce a yield-only timing workaround without parent review. New
+freshness controls must prove a second capture observes changed mandatory input
+and rejects it, then accepts restoration; no cached-source substitution.
+
+Implementation first, no compiler tests until parent source review and explicit
+serial-slot release. Acceptance starts with the same six identities under the
+original35000ms deadline, zero raw RPC/unhandled errors, exact complete identity
+multisets and stable before/after inputs. Then run both complete files with all
+original782 identities plus separately accounted new controls. This does not
+replace remaining full-composition or three-arm acceptance. Parent independently
+verified C1's10 inverse/replays and12 current pins against Git before this release.
