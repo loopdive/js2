@@ -4618,6 +4618,33 @@ jobs:
             fi
           fi
 
+      # #6783 — the root-suite known-failures bank needs a COMPLETE measured run
+      # of this SHA: the merged shard partials ci.yml's `issue-tests-gate` job
+      # keeps as `issue-tests-partials-<sha>` (from the merge_group run or the
+      # push run of the same commit, whichever finished). Absent — those shards
+      # are slower than this job — the bank simply skips this promote; every
+      # later one banks its own newer run, so nothing is lost, only delayed.
+      # Never fatal: the summary commit below must not wait on it.
+      - name: Fetch the issue-tests partials for the known-failures bank (#6783)
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          ART_NAME="issue-tests-partials-${GITHUB_SHA}"
+          ART_ID=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ART_NAME}&per_page=100" \
+            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last | .id // empty' || true)
+          if [ -z "$ART_ID" ]; then
+            echo "::notice::#6783 no ${ART_NAME} artifact yet — the known-failures bank skips this promote."
+            exit 0
+          fi
+          DEST="${RUNNER_TEMP}/issue-tests-partials"
+          mkdir -p "$DEST"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > "${RUNNER_TEMP}/issue-tests-partials.zip"
+          unzip -o "${RUNNER_TEMP}/issue-tests-partials.zip" -d "$DEST" >/dev/null
+          echo "Fetched ${ART_NAME} (id=${ART_ID}): $(ls "$DEST" | wc -l) partial(s)."
+
       # Commit the small summary JSON files back to main via the SSH deploy key.
       #
       # WHY A DEPLOY KEY (the GH013 saga, #1861): the repo ruleset "main: merge
@@ -4993,6 +5020,12 @@ jobs:
               git add -f "$f"
             done <<< "$PROMOTE_FILES"
           }
+          # #6783 — the known-failures bank reads allowances from the landed
+          # merge's change-set (and everything after it on the re-anchored
+          # tip), so pin the landed merge's first parent BEFORE the loop moves
+          # HEAD. Empty (single-parent push) => the gate's own base resolution.
+          KF_ALLOW_BASE=$(git rev-parse --verify --quiet HEAD^1 || true)
+          KF_PARTIALS="${RUNNER_TEMP}/issue-tests-partials"
           PUSHED=0
           # #3382 — 14 attempts (was 5) with capped backoff. Under sustained
           # two-lane merge velocity main advances between fetch and push on every
@@ -5018,6 +5051,19 @@ jobs:
             # commit. The [skip ci] trailer prevents the push from re-triggering
             # the shard matrix (#1156).
             reapply_promote_files
+            # #6783 — root-suite known-failures bank, on the RE-ANCHORED tip:
+            # it edits the tip's own scripts/issue-tests-baseline.json (drop
+            # newly-fixed / deleted files, add allowed red ones; seed it from
+            # this complete run when it does not exist yet). Never a snapshot
+            # from the pre-loop checkout — the PR gate reads this file, so a
+            # stale copy could undercut main. Non-fatal: a refused bank (an
+            # integrity failure in the run) leaves the file unchanged.
+            if [ -d "$KF_PARTIALS" ] && [ -f scripts/known-failures-gate.mjs ]; then
+              KNOWN_FAILURES_ALLOW_BASE="$KF_ALLOW_BASE" MERGE_PARTIALS_DIR="$KF_PARTIALS" \
+                node scripts/known-failures-gate.mjs --suite issue-tests --update-on-decrease --seed-if-missing || \
+                echo "WARN: issue-tests known-failures bank on re-anchored tip refused or failed (non-fatal)"
+              git add -f scripts/issue-tests-baseline.json 2>/dev/null || true
+            fi
             # (#3115) STALE-CHECKOUT GUARD. The coercion-site baseline is the ONE
             # promote file derived from the SOURCE TREE (a pure src/codegen/**
             # grep) rather than from this run's test262 report. The `--update`
