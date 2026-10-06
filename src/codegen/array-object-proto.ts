@@ -153,6 +153,7 @@ import { emitNumberProtoFormatBody } from "./number-proto-format.js";
 import { emitDateProtoToPrimitiveBody } from "./date-proto-to-primitive.js"; // (#5156)
 import { emitDateProtoToJsonBody } from "./date-proto-to-json.js"; // (#6775 S8)
 import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
+import { primitiveCarrierTestInstrs } from "./object-model/primitive-carrier-test.js"; // (#6651 V10a)
 import {
   emitStandalonePromiseFinally,
   emitStandalonePromiseThen,
@@ -2451,6 +2452,7 @@ function emitPromiseProtoCatchBody(ctx: CodegenContext, fctx: FunctionContext): 
   ) {
     return null;
   }
+  if (usesNativeSymbolProvider(ctx)) ensureSymbolCarrier(ctx); // (#6651 V10a) the primitive-`this` test below
   const promiseTypeIdx = getOrRegisterPromiseType(ctx);
   const argsLocal = allocLocal(fctx, `__pcatch_args_${fctx.locals.length}`, { kind: "externref" });
 
@@ -2489,12 +2491,19 @@ function emitPromiseProtoCatchBody(ctx: CodegenContext, fctx: FunctionContext): 
     fctx.body = saved;
   }
 
+  // (#6651 V10a) The predicate is the RESOLVE-path thenable test, which must
+  // answer 0 for every primitive (§27.2.1.3.2 step 8). Invoke's GetV ToObjects
+  // instead, so a primitive `this` skips it and reaches the dispatcher's
+  // `__extern_method_call` fallback, which walks the wrapper prototype.
+  const primitiveThis = primitiveCarrierTestInstrs(ctx, 1);
   const genericArm: Instr[] = [
     ...(hasCallableThenIdx !== undefined && notCallableThrow.length > 0
       ? ([
           { op: "local.get", index: 1 },
           { op: "call", funcIdx: hasCallableThenIdx },
           { op: "i32.eqz" },
+          ...primitiveThis,
+          ...(primitiveThis.length > 0 ? ([{ op: "i32.eqz" }, { op: "i32.and" }] satisfies Instr[]) : []),
           { op: "if", blockType: { kind: "empty" }, then: notCallableThrow },
         ] satisfies Instr[])
       : []),
