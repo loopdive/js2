@@ -3645,3 +3645,36 @@ HOLD release, retirement or delivery conclusion. Parent reviews full source and
 pins before invoking against terminal B. Deliver source/hash and a narrow
 self-check proposal for missing reports, duplicate identities and preserved
 failures; do not launch tests during the occupied heavy execution slot.
+
+Execution progress: JVPkM7 canonical typecheck, compiler-readers176 and
+text-readers240 completed cleanly, with before/after maps unchanged; runtime
+is still in flight under session65386. This is416 passed cases, not full-B
+acceptance. Comparator implementation is dispatched to Erdos, Sol6.1 medium.
+
+Live upstream inspection found main410cc7da1d7385b68e109fca87099c8bce85b0fc,
+60 commits ahead of pinned4bff and zero behind. The delta includes compiler and
+runtime source changes, so this frozen comparison cannot certify that newer
+composition. Finish and preserve this epoch unchanged, then review the exact
+main delta and specify the required refreshed composition/validation before
+landing. Do not alter A/B/E during the active run or imply current-main coverage.
+
+#### Parent implementation plan: terminal evidence publication
+
+Assign Avicenna, Sol6.1 medium, an inert custody packager in a unique docs `.tmp/`
+file. Preparation only while B runs. Require an explicit parent-reviewed full
+B terminal SHA256 argument; refuse a missing terminal or mismatched hash.
+Archive the root terminal, every exact terminal-listed run artifact and nested
+stage artifact, frozen runner and schedule. Verify unique safe paths, regular
+files without symlinks, byte lengths and SHA256, then gzip/base64 losslessly.
+Round-trip every payload against original bytes before producing a fresh output
+file with exclusive creation. Keep originals untouched; do not infer acceptance
+from packing success. Record complete/failed/unexecuted stages exactly as stored,
+with accepted=false and historical failures preserved in their existing archives.
+
+Identify any child-created evidence referenced by native public-source tests;
+return an explicit child-evidence inventory proposal for parent review, not an
+unbounded directory sweep. Missing referenced evidence must be reported, never
+silently omitted. No tests, compiler, Git or tracked-file edits. Return complete
+packager source/hash and proposed exact publication file under plan/agent-context;
+parent reviews and authorizes invocation after terminal B and child-inventory
+inspection. This belongs in existing PR5883, not an additional checkpoint PR.
