@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11521,
-    "fail": 167,
+    "pass": 11528,
+    "fail": 160,
     "ce": 16,
     "skip": 0,
     "total": 11704,
@@ -84,8 +84,8 @@
       },
       {
         "name": "TypedArray",
-        "pass": 1038,
-        "fail": 12,
+        "pass": 1040,
+        "fail": 10,
         "ce": 0,
         "skip": 0,
         "total": 1050,
@@ -1062,8 +1062,8 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3885,
-    "fail": 479,
+    "pass": 3887,
+    "fail": 477,
     "ce": 459,
     "skip": 0,
     "total": 4823,
@@ -1071,8 +1071,8 @@
     "features": [
       {
         "name": "async-iteration",
-        "pass": 2957,
-        "fail": 409,
+        "pass": 2959,
+        "fail": 407,
         "ce": 444,
         "skip": 0,
         "total": 3810,
@@ -1080,8 +1080,8 @@
       },
       {
         "name": "destructuring-binding",
-        "pass": 1103,
-        "fail": 87,
+        "pass": 1105,
+        "fail": 85,
         "ce": 195,
         "skip": 0,
         "total": 1385,
@@ -1316,8 +1316,8 @@
   },
   {
     "edition": "ES2019",
-    "pass": 96,
-    "fail": 39,
+    "pass": 97,
+    "fail": 38,
     "ce": 1,
     "skip": 0,
     "total": 136,
@@ -1415,12 +1415,12 @@
       },
       {
         "name": "optional-catch-binding",
-        "pass": 4,
-        "fail": 1,
+        "pass": 5,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 5,
-        "pct": 80
+        "pct": 100
       },
       {
         "name": "Symbol.species",
@@ -2187,8 +2187,8 @@
   {
     "edition": "ES2022",
     "pass": 4249,
-    "fail": 1164,
-    "ce": 379,
+    "fail": 1163,
+    "ce": 380,
     "skip": 0,
     "total": 5792,
     "pct": 73,
@@ -2277,8 +2277,8 @@
       {
         "name": "resizable-arraybuffer",
         "pass": 133,
-        "fail": 270,
-        "ce": 29,
+        "fail": 269,
+        "ce": 30,
         "skip": 0,
         "total": 432,
         "pct": 31
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4600,
+    "pass": 4599,
     "fail": 188,
-    "ce": 133,
+    "ce": 134,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4497,
+        "pass": 4496,
         "fail": 107,
-        "ce": 7,
+        "ce": 8,
         "skip": 0,
         "total": 4611,
         "pct": 98
@@ -3789,8 +3789,8 @@
   },
   {
     "edition": "ES2027",
-    "pass": 382,
-    "fail": 307,
+    "pass": 384,
+    "fail": 305,
     "ce": 208,
     "skip": 0,
     "total": 897,
@@ -3798,8 +3798,8 @@
     "features": [
       {
         "name": "explicit-resource-management",
-        "pass": 244,
-        "fail": 98,
+        "pass": 246,
+        "fail": 96,
         "ce": 88,
         "skip": 0,
         "total": 430,
@@ -4305,8 +4305,8 @@
   {
     "edition": "Unclassified (untagged)",
     "pass": 4651,
-    "fail": 725,
-    "ce": 69,
+    "fail": 726,
+    "ce": 68,
     "skip": 0,
     "total": 5445,
     "pct": 85
