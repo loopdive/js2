@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { unshiftExternGetNativeStringReceiverArm } from "./object-model/extern-get-string-receiver.js"; // (#6875)
 import { ts, forEachChild } from "../ts-api.js";
 import { restPatternParamSlot } from "./resolved-rest-param.js"; // (#6774 S7)
 import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
@@ -6738,6 +6739,7 @@ export function generateModule(
     // __extern_get; answer the String-exotic virtual character before the
     // ordinary $Object numeric adapter can box its miss as 0.
     unshiftExternGetStringExoticArm(ctx);
+    unshiftExternGetNativeStringReceiverArm(ctx); // (#6875)
 
     // Dynamic-path ArraySetLength-lite + vec-"length" own-ness: splice the
     // `$__vec_base` `"length"` WRITE arm into `__extern_set` and the
@@ -11416,6 +11418,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // and `Object.keys(target)` instead of looking like an empty plain object.
     profilePhase("fill-dynamic-forin-vec-arms", () => fillDynamicForinVecArms(ctx));
     profilePhase("unshift-extern-get-string-exotic", () => unshiftExternGetStringExoticArm(ctx));
+    profilePhase("unshift-extern-get-string-receiver", () => unshiftExternGetNativeStringReceiverArm(ctx)); // (#6875)
 
     // Dynamic ArraySetLength/own-length semantics must land after the generic
     // vec write arm and before the overlay/typed-view fills that require front
@@ -14433,16 +14436,19 @@ export function preallocateBlockScopedSlots(
   fctx: FunctionContext,
   stmts: readonly ts.Statement[],
 ): void {
-  // (#5271 step 5) A block that also hoists a FUNCTION DECLARATION as a DIRECT
-  // child is left alone. The hoisted function is materialized before the
-  // block's statements run, so giving it a block-scoped binding to capture
-  // makes it capture a ref cell that is only minted at the DECLARATION — a call
-  // before that point then dereferences null instead of throwing the §13.3.1
-  // ReferenceError. Boxing the value + flag at block entry is the real fix
-  // (#5271 cluster B2, not done); until then this keeps the pre-#5271 lowering
-  // for that shape rather than turning a wrong answer into a trap.
-  for (const stmt of stmts) {
-    if (ts.isFunctionDeclaration(stmt)) return;
+  // (#5271 step 5) In a FUNCTION, a block that also hoists a function declaration
+  // as a DIRECT child only re-installs the function-entry pre-hoist slots (and
+  // TDZ flags) that hoisted function already pinned: fresh block slots would hand
+  // it a ref cell minted only at the DECLARATION (a null deref instead of the
+  // §13.3.1 ReferenceError). (#6651 V5) `__module_init` has no function-entry
+  // pre-hoist, so its blocks allocate here as usual — otherwise a script-scope
+  // block function captures nothing and reads its own `undefined` local. A TDZ
+  // flag box teed at a non-dominating call is null-guarded (`emitLocalTdzInit`).
+  if (fctx.name !== "__module_init" && stmts.some((stmt) => ts.isFunctionDeclaration(stmt))) {
+    for (const stmt of stmts) {
+      if (ts.isVariableStatement(stmt)) reinstallPreHoistedCapturedSlots(ctx, fctx, stmt);
+    }
+    return;
   }
   for (const stmt of stmts) {
     if (!ts.isVariableStatement(stmt)) continue;

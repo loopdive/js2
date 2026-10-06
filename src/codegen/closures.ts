@@ -47,6 +47,7 @@ import {
   hostFacingCallbackReturnType,
   resolveCallbackMakerName,
 } from "./callback-ctor-bridge.js"; // (#4394) bridge [[Construct]] parity · (#5375) host-facing result type
+import { BOOLEAN_I32, callbackBodyBoxesBoolean, hostBooleanCallbackResult } from "./closures/host-boolean-callback.js";
 import { registerStandaloneDomCallbackDirectClosure } from "./standalone-dom-callback-authority.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
@@ -4448,6 +4449,7 @@ export function compileArrowAsCallback(
   // return type instead of crashing the whole compile — the body still coerces
   // its actual return value via the normal path.
   let cbReturnType: ValType | null = null;
+  let hostBooleanResult = false;
   try {
     const sig = ctx.checker.getSignatureFromDeclaration(arrow);
     if (sig) {
@@ -4457,6 +4459,8 @@ export function compileArrowAsCallback(
         // object-literal return types lower to externref (host plain objects).
         // (#5375) A host-invoked accessor/method returns references as externref.
         cbReturnType = hostFacingCallbackReturnType(resolveWasmTypeForClosureReturn(ctx, retType), needsThis);
+        hostBooleanResult = hostBooleanCallbackResult(ctx, retType, cbReturnType); // (#6417)
+        if (hostBooleanResult) cbReturnType = { kind: "externref" };
       }
     }
   } catch {
@@ -4488,6 +4492,7 @@ export function compileArrowAsCallback(
     locals: [],
     localMap: new Map(),
     returnType: cbReturnType,
+    hostBooleanReturn: hostBooleanResult || undefined,
     body: [],
     blockDepth: 0,
     breakStack: [],
@@ -4648,7 +4653,9 @@ export function compileArrowAsCallback(
       // Expression result is the return value — already on stack
       exprBodyHasReturnValue = true;
       // Coerce expression type to declared return type if needed
-      if (exprType.kind !== cbReturnType.kind) {
+      if (callbackBodyBoxesBoolean(ctx, exprType, cbReturnType, hostBooleanResult, body)) {
+        coerceType(ctx, cbFctx, BOOLEAN_I32, cbReturnType); // (#6417) `true`, not `1`
+      } else if (exprType.kind !== cbReturnType.kind) {
         const instrs = coercionInstrs(ctx, exprType, cbReturnType, cbFctx);
         if (instrs.length > 0) {
           cbFctx.body.push(...instrs);

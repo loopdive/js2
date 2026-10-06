@@ -31,7 +31,7 @@ import {
   isVoidType,
 } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
-import { compileHostFreeCryptoCall, isHostFreeCryptoCall } from "./standalone-crypto.js";
+import { compileHostFreeCryptoCall, isHostFreeCryptoCall, marshalRegimeCryptoUuid } from "./standalone-crypto.js";
 import { tryStandaloneQueueMicrotaskCall } from "./standalone-queue-microtask.js";
 import { tryStandaloneHostFreeCall } from "./standalone-dynamic-code.js"; // (#6675/#6676) timers, Function(src)
 import { compileArrayMethodCall, compileArrayPrototypeCall, resolveArrayInfo } from "../array-methods.js";
@@ -9763,6 +9763,7 @@ function compileCallExpression(
           flushLateImportShifts(ctx, fctx);
           if (idx !== undefined) {
             fctx.body.push({ op: "call", funcIdx: idx });
+            return marshalRegimeCryptoUuid(ctx, fctx) ?? { kind: "externref" }; // (#6749)
           } else {
             fctx.body.push({ op: "ref.null.extern" });
           }
