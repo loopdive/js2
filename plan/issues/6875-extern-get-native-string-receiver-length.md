@@ -1,7 +1,8 @@
 ---
 id: 6875
 title: "`__extern_get` has no native-string receiver arm: `.length` on a dynamically typed string reads undefined on standalone and on the native regime (hono `input.length`)"
-status: in-progress
+status: done
+completed: 2026-10-06
 assignee: ttraenkler/fable
 created: 2026-10-06
 updated: 2026-10-06
@@ -88,7 +89,7 @@ deliberately: equivalence gate + a focused test.
 ## Acceptance
 
 - [x] The reduced `probe()` is 1 on standalone; `len("/users/1")` is 8 on the regime.
-- [ ] hono measures on `jsHostNative` with the host lane's checksum
+- [x] hono measures on `jsHostNative` with the host lane's checksum
       (`--only hono --perf-only --lane js-host-native`).
 - [x] Focused test covering `length` and index through an untyped parameter
       (`String.prototype` members through a dynamic receiver stay on their
@@ -117,3 +118,18 @@ Next: dump the WAT (`optimize: false`, `wasm-opt -all --print`) of
 `__npmCompatApply` and `mid2` side by side; the difference is in how that one
 chain lowers the parameter (specialisation from a single dynamic call site vs
 the externref path this arm fixes).
+
+### Resolution of the hono residual (2026-10-06, later)
+
+The literal chain differed from every replica by one thing: the export's
+NAME. `wrapExports` (`src/runtime.ts`) passed any `__`-prefixed export through
+raw ("unmarked internal helper") unless it had a Boolean boundary — and the
+npm-compat drivers export `__npmCompatPerf(input)`. On the regime the string
+therefore arrived un-marshalled, `input.length` read `""`, and
+`Number(1 + "")` is 1; redux's `Number(input)` on the raw string was the
+`NaN`. The rule is now "unmarked = carries no signature": a user export keeps
+its adapter whatever its name (host-lane semantics unchanged; such exports
+gain the wrapper's call overhead there). Re-measured on the regime lane:
+**hono measured** (ratio 0.178), **redux measured** (ratio 0.054). Focused
+test extended with a `__perf(input)` export. Pre-existing reds on base,
+unrelated: `issue-3426` ×2, `issue-4397` object-rest.

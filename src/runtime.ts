@@ -19967,10 +19967,10 @@ export function wrapExports(
       continue;
     }
     const sig = signatures && _hasOwn(signatures, key) ? signatures[key] : undefined;
-    const hasBooleanBoundary = sig?.result === "boolean" || sig?.params.includes("boolean");
-    // Unmarked internal helpers retain their exact passthrough. Explicit
-    // Boolean user exports receive their adapter regardless of their name.
-    if (key.startsWith("__") && !hasBooleanBoundary) {
+    // Unmarked internal helpers retain their exact passthrough. A user export
+    // carries a signature whatever its name (#6875: `__npmCompatPerf(input)`
+    // skipped argument marshalling, so a native-regime string arrived raw).
+    if (key.startsWith("__") && sig === undefined) {
       wrapped[key] = val;
       continue;
     }

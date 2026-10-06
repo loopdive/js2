@@ -10,6 +10,7 @@ import { buildCompiledImports, wrapCompiledExports } from "../src/runtime.js";
 const SRC = `export function len(input) { return input.length; }
 export function at(input, i) { return input[i]; }
 export function routes(input) { const a = []; a.push(1); return a.length + input.length; }
+export function __perf(input) { return input.length; }
 export function probe() { const v = JSON.parse('"abcd"'); return len(v) == 4 && at(v, 2) == "c" && at(v, 9) === undefined ? 1 : 0; }
 `;
 
@@ -49,5 +50,9 @@ describe("#6875 native-string receiver in __extern_get", () => {
     expect(exports.len("/users/1")).toBe(8);
     expect(exports.at("/users/1", 1)).toBe("u");
     expect(exports.routes("/users/1")).toBe(9);
+    // A user export whose name starts with `__` still carries a signature, so
+    // the adapter marshals its argument (the npm-compat drivers export
+    // `__npmCompatPerf`; before, their string arrived raw and read `""`).
+    expect(exports.__perf("/users/1")).toBe(8);
   });
 });
