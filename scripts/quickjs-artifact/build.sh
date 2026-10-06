@@ -56,6 +56,11 @@ fetch_pinned() {
 }
 
 fetch_pinned https://github.com/quickjs-ng/quickjs "$WORK/quickjs-ng" "$QUICKJS_NG_REF"
+# P1 requires pristine pinned source in THIS build's exclusive staging tree.
+# Exact pin/preimage/patch/postimage checks reject edits and second application;
+# no reset or reverse-patching is performed to make an old staging tree fit.
+say "apply verified inactive Script-plan v1 source patch"
+SCRIPT_PLAN_PATCH_RECEIPT="$(node "$HERE/patches/script-plan-v1.mjs" "$WORK/quickjs-ng" "$QUICKJS_NG_REF")"
 fetch_pinned https://github.com/WebAssembly/wasi-libc "$WORK/wasi-libc" "$WASI_LIBC_REF"
 
 # ------------------------------------------------ 2. compiler-rt builtins ----
@@ -122,11 +127,21 @@ CFLAGS=(
   -Wno-unused-but-set-variable -Wno-unused-result -Wno-array-bounds
 )
 
+# Dedicated producer allocation fixture only. Normal artifact flags and
+# allocator/linker contracts stay exactly as above. Test controls never ship.
+SCRIPT_PLAN_TEST_BUILD=false
+SCRIPT_PLAN_SHIM="$HERE/qjs_shim.c"
+if [ "${JS2WASM_SCRIPT_PLAN_TEST_BUILD:-0}" = 1 ]; then
+  CFLAGS+=(-DJS2WASM_SCRIPT_PLAN_TEST)
+  SCRIPT_PLAN_TEST_BUILD=true
+  SCRIPT_PLAN_SHIM="$HERE/probe/script-plan-test-hooks.c"
+fi
+
 say "compile quickjs core + shim"
 for f in dtoa libregexp libunicode quickjs; do
   "$CC" "${CFLAGS[@]}" -c "$QJS/$f.c" -o "$OBJ/$f.o"
 done
-"$CC" "${CFLAGS[@]}" -c "$HERE/qjs_shim.c" -o "$OBJ/qjs_shim.o"
+"$CC" "${CFLAGS[@]}" -c "$SCRIPT_PLAN_SHIM" -o "$OBJ/qjs_shim.o"
 "$AR" rcs "$OBJ/libquickjs.a" "$OBJ/dtoa.o" "$OBJ/libregexp.o" "$OBJ/libunicode.o" "$OBJ/quickjs.o"
 
 # ----------------------------------------------------------------- 5. link --
@@ -139,22 +154,24 @@ done
 # functions into the fresh slots, so the trap edge is a wasm `call_indirect`,
 # not a JS closure — the artifact still imports ONLY wasi_snapshot_preview1.
 say "link libquickjs.wasm"
-"$CC" "${CFLAGS[@]}" \
-  -mexec-model=reactor \
-  -Wl,--export=malloc \
-  -Wl,--export=free \
-  -Wl,--export=realloc \
-  -Wl,--export=calloc \
-  -Wl,--export-memory \
-  -Wl,--export-table \
-  -Wl,--growable-table \
-  -Wl,--initial-memory=16777216 \
-  -Wl,--max-memory=1073741824 \
-  -Wl,--stack-first \
-  -Wl,--gc-sections \
-  -Wl,--strip-all \
-  -lwasi-emulated-process-clocks \
-  -lwasi-emulated-signal \
+LINK_FLAGS=(
+  -mexec-model=reactor
+  -Wl,--export=malloc
+  -Wl,--export=free
+  -Wl,--export=realloc
+  -Wl,--export=calloc
+  -Wl,--export-memory
+  -Wl,--export-table
+  -Wl,--growable-table
+  -Wl,--initial-memory=16777216
+  -Wl,--max-memory=1073741824
+  -Wl,--stack-first
+  -Wl,--gc-sections
+  -Wl,--strip-all
+  -lwasi-emulated-process-clocks
+  -lwasi-emulated-signal
+)
+"$CC" "${CFLAGS[@]}" "${LINK_FLAGS[@]}" \
   -o "$OUT_DIR/libquickjs.wasm" \
   "$OBJ/qjs_shim.o" "$OBJ/libquickjs.a"
 
@@ -162,23 +179,12 @@ say "link libquickjs.wasm"
 say "extract ABI constants from the built module"
 node "$HERE/extract-abi.mjs" "$OUT_DIR/libquickjs.wasm" > "$OUT_DIR/qjs-abi.json"
 
-SHA="$(sha256sum "$OUT_DIR/libquickjs.wasm" | cut -d' ' -f1)"
-# portable file size: GNU coreutils `stat -c%s`, BSD/macOS `stat -f%z`
-RAW="$(stat -c%s "$OUT_DIR/libquickjs.wasm" 2>/dev/null || stat -f%z "$OUT_DIR/libquickjs.wasm")"
-GZ="$(gzip -9 -c "$OUT_DIR/libquickjs.wasm" | wc -c)"
-
-cat > "$OUT_DIR/build-info.json" <<EOF
-{
-  "quickjs_ng_ref": "$QUICKJS_NG_REF",
-  "wasi_libc_ref": "$WASI_LIBC_REF",
-  "builtins_url": "$BUILTINS_URL",
-  "target_triple": "$TARGET_TRIPLE",
-  "compiler": "$("$CC" --version | head -1)",
-  "raw_bytes": $RAW,
-  "gzip_bytes": $GZ,
-  "sha256": "$SHA"
-}
-EOF
+# JSON encoding preserves exact compiler argument boundaries, including paths
+# with spaces. Both actual binary and extracted ABI hashes are build products.
+node "$HERE/patches/script-plan-v1.mjs" --build-info "$OUT_DIR" \
+  "$SCRIPT_PLAN_PATCH_RECEIPT" "$SCRIPT_PLAN_TEST_BUILD" "$QUICKJS_NG_REF" \
+  "$WASI_LIBC_REF" "$BUILTINS_URL" "$TARGET_TRIPLE" "$CC" "$AR" "$RANLIB" "$NM" \
+  -- "${CFLAGS[@]}" --link-flags "${LINK_FLAGS[@]}"
 
 say "done"
 cat "$OUT_DIR/build-info.json"

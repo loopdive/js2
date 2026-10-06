@@ -4,7 +4,7 @@ title: "ci: ~4,100 test files run under no required check, and main is red (2 of
 status: in-progress
 sprint: Backlog
 created: 2026-09-30
-updated: 2026-10-02
+updated: 2026-10-06
 assignee: "ttraenkler/claude-dev-6783"
 branch: "claude/issue-6783-known-failures-gate"
 priority: critical
@@ -194,3 +194,16 @@ seeding); wiring `baseline-summary-sync.yml`; retiring `issue-tests.yml`. The
 shard wall-clock on CI is not measured yet — estimate from the detector's
 single-fork shards (10–53 min for ~366 files): ~10–30 min for ~550 files at 3
 forks.
+
+## Transplant (2026-10-06, lead)
+
+The implementing agent's tree (worktree `agent-a46f6d39cacfb28ed`, checkpoint
+`c8cb97e5` plus its uncommitted files) was moved onto the PR branch by the
+lead as a patch, because the shared repository is still bare (#6822) and the
+agent cannot be resumed. The gates listed under Resolution are the agent's
+runs before the breakage; the git-based gates (budgets, oracle ratchet,
+dead exports, compiler boundaries) run in CI on the PR. On merging `main`,
+its new `issue-tests-select` / `issue-tests-changed` / `issue-tests`
+aggregator jobs were kept and the `issue-tests-shard` / `issue-tests-gate`
+jobs of this change appended after them; this change's edit of the old
+"issue tests this PR touched" step was dropped with that step.

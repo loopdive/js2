@@ -61,8 +61,7 @@ import { ensureNativeArrayFromIterN } from "./iterator-native.js";
 // (#4768) Recover a native generator state after it crosses a known closure
 // parameter's externref ABI, then drain only the binding pattern's steps.
 import { emitNativeGeneratorToVec } from "./generators-native.js";
-import { arrayIteratorDeletedGlobalIdx, arrayIteratorOverrideGlobalIdx } from "./expressions/proto-override.js";
-import { buildThrowJsErrorInstrs } from "./js-errors.js";
+import { arrayIteratorOverrideGlobalIdx, emitArrayIteratorDeletedGuard } from "./expressions/proto-override.js";
 import { nestedObjectPatternCarrier } from "./object-literal-carrier.js";
 import {
   coerceTupleBindingElement,
@@ -1791,20 +1790,6 @@ export function destructureParamObject(
     fctx.body.push(...destructInstrs);
     fctx.savedBodies.pop();
   }
-}
-
-/**
- * (#5139) Emit the §7.4.2 GetIterator TypeError guard for an array binding
- * pattern when the program contains `delete Array.prototype[Symbol.iterator]`.
- * No-op (and no emitted bytes) for every source without such a delete, because
- * the flag global is only rooted by the pre-scan that sees one.
- */
-function emitArrayIteratorDeletedGuard(ctx: CodegenContext, fctx: FunctionContext): void {
-  const flagIdx = arrayIteratorDeletedGlobalIdx(ctx);
-  if (flagIdx === undefined) return;
-  const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "array is not iterable", { flush: fctx });
-  fctx.body.push({ op: "global.get", index: flagIdx });
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs, else: [] });
 }
 
 /** (#6651 C4) The recursion `emitExhaustedTupleElement` needs for a nested pattern over an externref local. */

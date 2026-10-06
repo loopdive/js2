@@ -11,6 +11,7 @@
  */
 import { ts } from "../ts-api.js";
 import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
+import { vecStaticIndexPresenceInstrs } from "./array/array-length-holes.js"; // (#6771 S3)
 import { getArrTypeIdxFromVec } from "./registry/types.js"; // (#4491 T11)
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import { popBody, pushBody } from "./context/bodies.js";
@@ -523,7 +524,10 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       }
       // Compile the array expression to get the vec struct
       const rightResult = compileExpression(ctx, fctx, expr.right);
-      if (rightResult) {
+      const holePresence = rightResult ? vecStaticIndexPresenceInstrs(ctx, fctx, vecTypeIdx, numIdx) : undefined;
+      if (holePresence) {
+        fctx.body.push(...holePresence); // (#6771 S3) an `Array(n)` slot may be `$Hole`
+      } else if (rightResult) {
         // Read length field (field 0 of vec struct)
         fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
         // Compare: numIdx < length

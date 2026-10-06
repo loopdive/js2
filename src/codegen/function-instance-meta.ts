@@ -427,6 +427,12 @@ export function fnInstanceNameOf(decl: ts.Node): string {
     return decl.name.text;
   }
   if (ts.isClassExpression(decl) && decl.name !== undefined) return decl.name.text;
+  if (
+    ts.isFunctionDeclaration(decl) &&
+    decl.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DefaultKeyword)
+  ) {
+    return "default";
+  }
 
   // NamedEvaluation: the anonymous definition takes the name of what it is
   // being bound to. Only the syntactic forms that carry an identifier/literal
@@ -444,6 +450,14 @@ export function fnInstanceNameOf(decl: ts.Node): string {
   while (node.parent !== undefined && ts.isParenthesizedExpression(node.parent)) node = node.parent;
   const parent = node.parent as ts.Node | undefined;
   if (parent === undefined) return "";
+  if (
+    (ts.isFunctionExpression(decl) || ts.isArrowFunction(decl)) &&
+    ts.isExportAssignment(parent) &&
+    !parent.isExportEquals &&
+    parent.expression === node
+  ) {
+    return "default";
+  }
   if ((ts.isVariableDeclaration(parent) || ts.isBindingElement(parent)) && parent.initializer === node) {
     return ts.isIdentifier(parent.name) ? parent.name.text : "";
   }

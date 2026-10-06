@@ -4,12 +4,88 @@
 // runners. This module deliberately performs no compilation and imports no
 // optional test262.fyi code, so both verdict lanes can use one graph oracle.
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TEST262_ROOT = join(ROOT, "test262");
 const NAMESPACE_TEST_PREFIX = "language/module-code/namespace/";
+const requireParser = createRequire(join(ROOT, "package.json"));
+let parser;
+
+function isCanonicalValueSelfEntry(entryFile) {
+  return (
+    typeof entryFile === "string" &&
+    entryFile.startsWith("./language/module-code/") &&
+    !entryFile.startsWith(`./${NAMESPACE_TEST_PREFIX}`) &&
+    entryFile.endsWith(".js") &&
+    !/[\\?#]/.test(entryFile) &&
+    !entryFile.includes("_FIXTURE") &&
+    entryFile
+      .slice(2)
+      .split("/")
+      .every((part) => part && part !== "." && part !== "..")
+  );
+}
+
+function isValueSelfImport(ts, node, sourceFile, entryFile) {
+  const clause = node.importClause;
+  const bindings = clause?.namedBindings;
+  if (node.parent !== sourceFile || !clause || clause.isTypeOnly || node.attributes || node.assertClause) return false;
+  if (bindings) {
+    if (!ts.isNamedImports(bindings) || bindings.elements.length === 0) return false;
+    if (
+      bindings.elements.some((element) => element.isTypeOnly || !ts.isIdentifier(element.propertyName ?? element.name))
+    ) {
+      return false;
+    }
+  }
+  if (!clause.name && !bindings) return false;
+  if (!ts.isStringLiteral(node.moduleSpecifier)) return false;
+  const specifier = node.moduleSpecifier.text;
+  if (!/^\.\.?\//.test(specifier) || !specifier.endsWith(".js") || /[\\?#]/.test(specifier)) return false;
+  const entry = resolve(ROOT, "test262", "test", entryFile);
+  return resolve(dirname(entry), specifier) === entry;
+}
+
+/**
+ * Admit only an entry-only ES2015 value-import graph. Every actual static
+ * edge must resolve to this entry; syntax we cannot represent declines the
+ * route. The parser is loaded only for candidates, never for ordinary tests.
+ * Namespace self-imports retain their independent #4759 route below.
+ */
+export function hasPinnedEntryValueSelfImport(entryFile, source) {
+  if (!isCanonicalValueSelfEntry(entryFile) || typeof source !== "string" || !/\bimport\b/.test(source)) return false;
+  const ts = (parser ??= requireParser("typescript"));
+  const sourceFile = ts.createSourceFile(entryFile, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  if (sourceFile.parseDiagnostics.length > 0) return false;
+  let importCount = 0;
+  let valid = true;
+  const visit = (node) => {
+    if (!valid) return;
+    if (
+      ts.isImportEqualsDeclaration(node) ||
+      ts.isImportTypeNode(node) ||
+      (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword) ||
+      (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) ||
+      (ts.isExportDeclaration(node) && node.moduleSpecifier)
+    ) {
+      valid = false;
+      return;
+    }
+    if (ts.isImportDeclaration(node)) {
+      if (!isValueSelfImport(ts, node, sourceFile, entryFile)) {
+        valid = false;
+        return;
+      }
+      importCount++;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return valid && importCount > 0;
+}
 
 function normalizeTestPath(path) {
   const normalized = path
@@ -207,5 +283,10 @@ export function discoverFixtureGraph(testPath, entrySource, { test262Root = TEST
     entryFile: `./${normalizedEntry}`,
     fixtureFiles,
     dynamicFixtureFiles,
+    ...(Object.keys(fixtureFiles).length === 0 &&
+    Object.keys(dynamicFixtureFiles).length === 0 &&
+    hasPinnedEntryValueSelfImport(`./${normalizedEntry}`, entrySource)
+      ? { requiresEntrySelfImportGraph: true }
+      : {}),
   };
 }

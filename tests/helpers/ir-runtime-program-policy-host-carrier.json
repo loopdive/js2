@@ -1,0 +1,85 @@
+{
+  "schema": "ir-runtime-program-policy-host-carrier-v1",
+  "kind": "external-main-host-carrier-inventory-successor",
+  "checkpoint": "f145ce94178071753e418021a586631441d19977",
+  "incomingMain": "4509239df1d3454163b4656d39dfe8733714a47b",
+  "before": {
+    "source": {
+      "bytes": 567908,
+      "sha256": "5c1c4a16928b421c112eb81180a315d31e116ff442a40375e8c6efb4f220c685",
+      "gitBlob": "59bdd78821afa174b9273c100a03ec79713249b4"
+    },
+    "dataSha256": "65b382b173594abd15ffdef1a51f96daf017f4d91bd60e47f6308da434ab97b3",
+    "fileCount": 1778,
+    "filesSha256": "c306548d8e3f44695a102d10ef8a9503860e39ef6168719f88f874f616563f54",
+    "activationCount": 101,
+    "activationHistorySha256": "9629c457a160096e70c35fc3a986abbd8eca145ac4eb688995194d6c29c83650",
+    "layersSha256": "3f66bbff64c157092a04740c644ae17d476d7d168faa1bd23629f97492e0c4f7",
+    "allowedEdgesSha256": "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7"
+  },
+  "current": {
+    "source": {
+      "bytes": 568231,
+      "sha256": "f3af1f31d813eaef9bd2b955466390616e9549f36e1e7ffffdcead812a611ac3",
+      "gitBlob": "d61ee74048fa3d16c2986fd3e448d234f4e5594b"
+    },
+    "dataSha256": "89780e5ff7c660518ca92981369dab0e341b77e55f02f8e23d2312b615a97856",
+    "fileCount": 1779,
+    "filesSha256": "ced3f8116817be3978f55f438b657ca6b36ec8d50827db92bd7d708c2940853b",
+    "activationCount": 101,
+    "activationHistorySha256": "9629c457a160096e70c35fc3a986abbd8eca145ac4eb688995194d6c29c83650",
+    "layersSha256": "3f66bbff64c157092a04740c644ae17d476d7d168faa1bd23629f97492e0c4f7",
+    "allowedEdgesSha256": "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7"
+  },
+  "helperPrefix": {
+    "path": "tests/helpers/ir-runtime-program-policy-evolution.ts",
+    "bytes": 68822,
+    "sha256": "90dce1410780cf924e78bdd4086be5b1b8c35cdbeb676c46126ac7e0f5f47c5c"
+  },
+  "dynamicReceipt": {
+    "path": "tests/helpers/ir-runtime-program-policy-dynamic-code.json",
+    "bytes": 6159,
+    "sha256": "785ef0a740ac17ba636bb75b15cf4eed2266ac4ca0ec588e1eb4cff3642a708f"
+  },
+  "addition": {
+    "fileIndex": 605,
+    "beforeIndex": 605,
+    "row": {
+      "path": "src/codegen/host-carrier-to-primitive.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    "previous": {
+      "path": "src/codegen/host-bridge-exports.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    "next": {
+      "path": "src/codegen/host-fnctor-method-driver.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    "sourcePin": {
+      "path": "src/codegen/host-carrier-to-primitive.ts",
+      "bytes": 14025,
+      "sha256": "6f74bd8c4b97789a1dbfe92dc18dd6e71e11860b0e8efd913c523bca032ce504"
+    },
+    "rawSpan": {
+      "beforeOffset": 239710,
+      "afterOffset": 239710,
+      "before": "    {\n      \"path\": \"src/codegen/host-fnctor-method-driver.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n",
+      "after": "    {\n      \"path\": \"src/codegen/host-carrier-to-primitive.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/host-fnctor-method-driver.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n",
+      "beforeSha256": "3e551509901b9201393becb318e31b2c40e5a8be0d17fa97975556e33dda6bdc",
+      "afterSha256": "84ec8fc955578c6b77c59141a048c9233b0be087e2e45d3f5a11eb2e275a36db"
+    }
+  }
+}

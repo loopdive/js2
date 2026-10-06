@@ -600,6 +600,18 @@ on([ts.SyntaxKind.CaseClause], (ctx, node) => {
   }
 });
 
+// (#6864) Parentheses require an expression, even when TS1109 is tolerated.
+on([ts.SyntaxKind.ParenthesizedExpression], (ctx, node) => {
+  if (ts.isParenthesizedExpression(node) && nodeIsParserSynthesizedMissing(node.expression)) {
+    ctx.errors.push({
+      message: "Expression expected: a parenthesized expression requires an expression",
+      ...ctx.pos(node),
+      severity: "error",
+      file: ctx.sourceFile.fileName,
+    });
+  }
+});
+
 // Check 'with' statement — SyntaxError in strict mode (all modules are strict)
 on([ts.SyntaxKind.WithStatement], (ctx, node) => {
   if (ts.isWithStatement(node) && isStrictMode(node)) {

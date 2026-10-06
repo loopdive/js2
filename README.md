@@ -13,7 +13,7 @@ Conformance is tracked along the two compile paths — both figures auto-update 
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 39,239 / 48,232 (81.4 %)
+**test262 conformance**: 39,292 / 48,232 (81.5 %)
 
 <!-- AUTO:conformance-end -->
 
@@ -21,7 +21,7 @@ The line above is the **JS-host path** (default `gc` target): runs alongside the
 
 <!-- AUTO:conformance-standalone-start -->
 
-**standalone (host-free) test262 conformance**: 41,411 / 48,232 (85.9 %)
+**standalone (host-free) test262 conformance**: 41,948 / 48,232 (87.0 %)
 
 <!-- AUTO:conformance-standalone-end -->
 
@@ -138,6 +138,11 @@ preview backend and Binaryen optimizer remain development/optimization opt-ins
 and are not bundled into this standalone artifact. If you use `-O` with the
 standalone CLI, install `binaryen` next to the runner or put `wasm-opt` on PATH;
 you can also run `wasm-opt` directly on the emitted `.wasm` afterward.
+
+Runtime requirements: the package needs Node.js ≥ 20 (`engines` in
+`package.json`). Deno ≥ 2.8.1 and Bun ≥ 1.3.14 are only needed for the optional
+`deno compile` / `bun build --compile` steps above; they are not package
+dependencies.
 
 ### Compile modes and imports
 
@@ -358,7 +363,7 @@ Loopdive develops `js2wasm` with an **Automated Agile Team** model. The goal is 
 
 The workflow is not hidden behind a consultancy. It is **in this repository**:
 
-- `plan/issues/` — architect-written implementation specs for every open and completed work item
+- `plan/issues/` — one file per open and completed work item: the problem, acceptance criteria and status, plus an architect-written implementation plan for the harder ones (about one in five carries one)
 - `plan/log/dependency-graph.md` — current priorities and what's blocked on what
 - `plan/issues/sprints/` — sprint plans and retrospectives
 - `.claude/agents/` — agent role definitions (product owner, architect, tech lead, developer, senior developer)

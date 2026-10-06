@@ -206,6 +206,65 @@ export function descriptorValueWidenedArrayVecType(
 }
 
 /**
+ * (#6651 U4) Compile a rebind-widened binding's `[…]` initializer straight into
+ * the widened `externref`-element vec. Left to the checker's element type, the
+ * literal is built as e.g. `$__vec_i32` and then converted element-wise into the
+ * slot, which re-boxes `true` as the NUMBER 1. Returns the literal the caller
+ * should compile with an `externref` element hint, or undefined when the
+ * declaration is not a widened array-literal binding. (The caller compiles it:
+ * importing `literals.js` here would pull this leaf into the import-cycle SCC.)
+ */
+export function rebindWidenedArrayInit(
+  ctx: CodegenContext,
+  decl: ts.VariableDeclaration,
+  slotType: ValType,
+): ts.ArrayLiteralExpression | undefined {
+  const init = decl.initializer;
+  if (init === undefined || !ts.isArrayLiteralExpression(init) || !ts.isIdentifier(decl.name)) return undefined;
+  if (!isModuleScoped(decl) || !widenedVarsOf(ctx, decl.getSourceFile()).has(decl.name.text)) return undefined;
+  if (init.elements.some((element) => ts.isSpreadElement(element) || ts.isOmittedExpression(element))) return undefined;
+  // Only when the slot really is the widened vec (an earlier arm may have chosen another).
+  const widenedIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+  if ((slotType.kind !== "ref" && slotType.kind !== "ref_null") || slotType.typeIdx !== widenedIdx) return undefined;
+  return init;
+}
+
+/**
+ * (#6651 U4) The field type for an object-literal property whose value is a
+ * widened module-scoped array binding (`{ value: item }`): that binding's own
+ * carrier, so the store ALIASES the array.
+ *
+ * An anonymous struct field is typed from the CHECKER (`string[]` → a string
+ * vec) while a widened binding lives in an `externref`-element vec, so the store
+ * copied the array element-wise and the property no longer held `item` itself:
+ * `({ v: item }).v === item` was false, and an accessor installed on `item[0]`
+ * (keyed by vec identity) was invisible through the copy. That is how
+ * `new Map(iterable)` never saw `Get(item, "0")` throw in
+ * `Map/iterator-item-first-entry-returns-abrupt.js` and spun to the step cap.
+ * Any other property keeps `fieldType`.
+ */
+export function propertyValueWidenedArrayCarrier(ctx: CodegenContext, prop: ts.Symbol, fieldType: ValType): ValType {
+  if (fieldType.kind !== "ref" && fieldType.kind !== "ref_null") return fieldType;
+  for (const declaration of prop.declarations ?? []) {
+    if (!ts.isPropertyAssignment(declaration)) continue;
+    let value: ts.Expression = declaration.initializer;
+    while (ts.isParenthesizedExpression(value)) value = value.expression;
+    if (!ts.isIdentifier(value)) continue;
+    const decl = ctx.oracle.variableDeclarationOf(value);
+    if (decl === undefined || !isModuleScoped(decl) || !ts.isVariableStatement(decl.parent.parent)) continue;
+    const carrier = rebindWidenedArrayVecType(ctx, decl.getSourceFile(), decl);
+    if (carrier === undefined || (carrier.kind !== "ref" && carrier.kind !== "ref_null")) continue;
+    // An earlier `moduleGlobalWasmType` arm may have chosen another slot; alias
+    // only into the slot the binding really has.
+    const globalIdx = ts.isIdentifier(decl.name) ? ctx.moduleGlobals.get(decl.name.text) : undefined;
+    const slot = globalIdx === undefined ? undefined : ctx.mod.globals[globalIdx - ctx.numImportGlobals]?.type; // = localGlobalIdx (inlined: registry/imports.js is inside the import-cycle SCC)
+    if (slot !== undefined && (slot.kind !== carrier.kind || slot.typeIdx !== carrier.typeIdx)) continue;
+    return carrier;
+  }
+  return fieldType;
+}
+
+/**
  * Memoized analysis result for one file. Both entry points go through here:
  * `typeof` asks per OPERAND, so an uncached recompute would walk the whole file
  * once per `typeof x[i]` in it.
@@ -349,8 +408,19 @@ function collectElementRebindWidenedVars(ctx: CodegenContext, sourceFile: ts.Sou
   /** name → domains seen, or `null` once an unclassifiable write abandons it. */
   const seen = new Map<string, Set<WriteDomain> | null>();
 
+  /** name → module-scoped bindings it was assigned from (`x = y`). */
+  const aliases = new Map<string, Set<string>>();
+
   const record = (name: string, value: ts.Expression): void => {
     if (seen.get(name) === null) return;
+    const source = aliasSourceOf(ctx, sourceFile, value);
+    if (source !== undefined) {
+      // (#6651 U4) `x = y` / `x = null` carries no element evidence of its
+      // own; an identifier source joins `y`'s group below.
+      if (!seen.has(name)) seen.set(name, new Set());
+      if (source !== null) aliases.set(name, (aliases.get(name) ?? new Set()).add(source));
+      return;
+    }
     const tags = writtenElementTags(ctx, value);
     if (tags === null) {
       seen.set(name, null);
@@ -390,9 +460,73 @@ function collectElementRebindWidenedVars(ctx: CodegenContext, sourceFile: ts.Sou
   };
   visit(sourceFile);
 
+  // (#6651 U4) Bindings assigned to one another hold the SAME array objects,
+  // so they must share one element carrier: a vec→vec store between two
+  // element types copies and converts instead of aliasing — `second = third`
+  // turned `[null, undefined]` into `[false, false]` (test262 `for-of/map.js`).
+  // Union the alias groups and decide per group; an abandoned member abandons
+  // its whole group, which keeps today's types for every member.
+  const parent = new Map<string, string>();
+  const find = (name: string): string => {
+    let root = name;
+    for (let next = parent.get(root); next !== undefined; next = parent.get(root)) root = next;
+    return root;
+  };
+  const members = new Set<string>(seen.keys());
+  for (const [name, sources] of aliases) {
+    members.add(name);
+    for (const source of sources) {
+      members.add(source);
+      const a = find(name);
+      const b = find(source);
+      if (a !== b) parent.set(a, b);
+    }
+  }
+  const groupDomains = new Map<string, Set<WriteDomain> | null>();
+  for (const name of members) {
+    const root = find(name);
+    const domains = seen.get(name);
+    if (domains === null || groupDomains.get(root) === null) {
+      groupDomains.set(root, null);
+      continue;
+    }
+    const acc = groupDomains.get(root) ?? new Set<WriteDomain>();
+    for (const domain of domains ?? []) acc.add(domain);
+    groupDomains.set(root, acc);
+  }
+
   const widened = new Set<string>();
-  for (const [name, domains] of seen) {
-    if (domains !== null && domains.has("object") && domains.has("primitive")) widened.add(name);
+  for (const name of members) {
+    const domains = groupDomains.get(find(name));
+    if (domains && domains.has("object") && domains.has("primitive")) widened.add(name);
   }
   return widened;
+}
+
+/**
+ * (#6651 U4) The module-scoped `var` binding a whole-value write aliases
+ * (`x = y`), `null` for a nullish write (`x = null` — no element evidence),
+ * or `undefined` for any other shape.
+ */
+function aliasSourceOf(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  value: ts.Expression,
+): string | null | undefined {
+  let expr = value;
+  while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
+  if (expr.kind === ts.SyntaxKind.NullKeyword) return null;
+  if (!ts.isIdentifier(expr)) return undefined;
+  if (expr.text === "undefined") return null;
+  const decl = ctx.oracle.variableDeclarationOf(expr);
+  if (
+    decl === undefined ||
+    !ts.isIdentifier(decl.name) ||
+    decl.getSourceFile() !== sourceFile ||
+    !isModuleScoped(decl) ||
+    !ts.isVariableStatement(decl.parent.parent)
+  ) {
+    return undefined;
+  }
+  return decl.name.text;
 }

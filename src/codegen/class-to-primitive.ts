@@ -40,6 +40,7 @@
  * `reserveArrayToPrimitiveString` / `reserveAccessorGetDriver`.
  */
 
+import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { addFuncType } from "./registry/types.js";
@@ -373,6 +374,42 @@ const exhaustiveModules = new WeakSet<CodegenContext>();
 
 export function requireExhaustiveClassToPrimitive(ctx: CodegenContext): void {
   exhaustiveModules.add(ctx);
+}
+
+/**
+ * (#6771 S2d) The second opt-in: an object LITERAL whose `valueOf` / `toString`
+ * member is written as a value that can never be callable (`null`, `undefined`,
+ * `void 0`, a number / string / boolean / object / array literal). Its §7.1.1.1
+ * answer hinges on step 2.b's IsCallable skip, which is exactly what the
+ * declining walk cannot express: `{valueOf: null, toString: null}` must throw,
+ * and the compile-time dispatchers see no method in either field, so the
+ * driver returned the object UNCHANGED and ToNumber read NaN — `length` of such
+ * an array-like was 0 instead of a TypeError
+ * (`concat/Array.prototype.concat_array-like-to-length-throws.js`). Called from
+ * the module pre-scan (array-holes.ts), so the driver is armed before it is
+ * filled at finalize regardless of function compilation order. Answers whether
+ * the module is armed (either opt-in) after looking at `node`.
+ */
+export function armExhaustiveForNonCallableMemberLiteral(ctx: CodegenContext, node: ts.Node): boolean {
+  if (exhaustiveModules.has(ctx)) return true;
+  if (!ctx.standalone || !ts.isPropertyAssignment(node) || !ts.isObjectLiteralExpression(node.parent)) return false;
+  const name = node.name;
+  const key = ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
+  if (key !== "valueOf" && key !== "toString") return false;
+  let init = node.initializer;
+  while (ts.isParenthesizedExpression(init)) init = init.expression;
+  const nonCallable =
+    init.kind === ts.SyntaxKind.NullKeyword ||
+    init.kind === ts.SyntaxKind.TrueKeyword ||
+    init.kind === ts.SyntaxKind.FalseKeyword ||
+    (ts.isIdentifier(init) && init.text === "undefined") ||
+    ts.isVoidExpression(init) ||
+    ts.isNumericLiteral(init) ||
+    ts.isStringLiteralLike(init) ||
+    ts.isObjectLiteralExpression(init) ||
+    ts.isArrayLiteralExpression(init);
+  if (nonCallable) requireExhaustiveClassToPrimitive(ctx);
+  return nonCallable;
 }
 
 function exhaustiveWalkThrow(ctx: CodegenContext): (() => Instr[]) | undefined {

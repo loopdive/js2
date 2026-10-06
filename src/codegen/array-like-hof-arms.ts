@@ -32,6 +32,7 @@ import { ensureObjVecBuilders } from "./object-runtime.js";
 import { coercionInstrs } from "./type-coercion.js";
 import { compileExpression, ensureLateImport, flushLateImportShifts, VOID_RESULT } from "./shared.js";
 import { guardedFuncRefCastInstrs } from "./array-methods.js";
+import { undefinedExternInstrs } from "./any-helpers.js";
 
 /**
  * Shared per-call locals (as local indices) + pre-built instruction templates
@@ -190,7 +191,7 @@ export function emitArrayLikeHofArm(
 
     case "find": {
       const resTmp = allocLocal(fctx, `__ali_fd_res_${fctx.locals.length}`, { kind: "externref" });
-      fctx.body.push({ op: "ref.null.extern" });
+      fctx.body.push(...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" } satisfies Instr]));
       fctx.body.push({ op: "local.set", index: resTmp });
       fctx.body.push({
         op: "block",

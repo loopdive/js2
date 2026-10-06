@@ -137,7 +137,7 @@ export interface WasmModule {
 export type TypedArrayKind = "uint8array" | "typed-array" | "other";
 
 /** Source-level value kind that needs an explicit JS/Wasm boundary adapter. */
-export type ExportBoundaryKind = TypedArrayKind | "string" | "symbol" | "promise" | "dynamic" | "aggregate";
+export type ExportBoundaryKind = TypedArrayKind | "boolean" | "string" | "symbol" | "promise" | "dynamic" | "aggregate";
 
 /** TS-level boundary classification of one export's params and result. */
 export interface ExportSignature {

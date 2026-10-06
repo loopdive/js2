@@ -55,13 +55,13 @@ import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
-import { ensureObjectRuntime } from "./object-runtime.js";
+import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import {
   OBJECT_PROTO_TOSTRING_CLASSIFY_FN,
   emitClassifierSelect,
   ensureObjectProtoToStringClassifierFn,
 } from "./object-proto-tostring-native.js";
-import type { ObjectToStringTagProof } from "./object-proto-tostring.js";
+import { ensureObjectProtoToStringRuntimeHelper, type ObjectToStringTagProof } from "./object-proto-tostring.js";
 import { coerceType, compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
@@ -171,11 +171,9 @@ export function emitObjectProtoToStringWithSymbolTag(
   if (recvResult.kind !== "externref") coerceType(ctx, fctx, recvResult, EXTERNREF);
   fctx.body.push({ op: "local.set", index: recvLocal });
 
-  const symTagLocal = allocLocal(fctx, `__opts_symtag_${fctx.locals.length}`, EXTERNREF);
-  fctx.body.push({ op: "local.get", index: recvLocal });
-  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(OBJECT_PROTO_SYMBOL_TAG_FN) ?? symbolTagIdx });
-  fctx.body.push({ op: "local.set", index: symTagLocal });
-
+  // (#6770 S6) builtinTag FIRST (steps 4-13), the tag `Get` SECOND (step 14):
+  // IsArray on a proxy is the one observable builtinTag step, and a `get` trap
+  // that revokes its own proxy must not make that IsArray throw.
   const builtinLocal = allocLocal(fctx, `__opts_builtin_${fctx.locals.length}`, EXTERNREF);
   let banked = false;
   if (proof.unprovenDefault) {
@@ -195,6 +193,11 @@ export function emitObjectProtoToStringWithSymbolTag(
     fctx.body.push({ op: "local.set", index: builtinLocal });
   }
 
+  const symTagLocal = allocLocal(fctx, `__opts_symtag_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "local.get", index: recvLocal });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(OBJECT_PROTO_SYMBOL_TAG_FN) ?? symbolTagIdx });
+  fctx.body.push({ op: "local.set", index: symTagLocal });
+
   fctx.body.push({ op: "local.get", index: symTagLocal });
   fctx.body.push({ op: "ref.is_null" });
   fctx.body.push({
@@ -203,5 +206,71 @@ export function emitObjectProtoToStringWithSymbolTag(
     then: [{ op: "local.get", index: builtinLocal }],
     else: [{ op: "local.get", index: symTagLocal }],
   });
+  return EXTERNREF;
+}
+
+/**
+ * (#6770 S6) `o.toString()` on an untyped receiver is `Invoke(o, "toString")`.
+ * The generic lowering answered `ToString(o)` (`__extern_toString`), whose
+ * `__to_primitive` step returns a CONSTANT `"[object Object]"` when no
+ * `toString` is found — i.e. exactly when the intrinsic
+ * `Object.prototype.toString` applies — so its step 14 `Get(O, @@toStringTag)`
+ * never ran: `Object.defineProperty({}, Symbol.toStringTag, {get(){throw …}})
+ * .toString()` did not throw (test262 `Object/prototype/toString/
+ * get-symbol-tag-err.js`).
+ *
+ * This performs the Invoke: `m = Get(o, "toString")`; a found `m` is called with
+ * `this = o` (`__apply_closure`, which throws the TypeError for a non-callable);
+ * an ABSENT one is the unmaterialized intrinsic, answered by the §20.1.3.6
+ * runtime (`__object_proto_to_string_runtime`: the tag consult, then the
+ * classifier). Demand-gated on a module that can have stored a tag at all — the
+ * `$Symbol` carrier exists and the source names `toStringTag` — so every other
+ * module keeps its bytes. Returns `null` when the receiver reported a compile
+ * error (operands emitted), `undefined` to decline with nothing emitted.
+ */
+export function tryEmitTaggedToStringInvoke(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  recvExpr: ts.Expression,
+  node: ts.Node,
+): ValType | null | undefined {
+  if (!ctx.standalone || !ctx.nativeStrings || ctx.symbolTypeIdx < 0) return undefined;
+  if (!node.getSourceFile().text.includes("toStringTag")) return undefined;
+  flushLateImportShifts(ctx, fctx);
+  if (ensureObjectProtoToStringRuntimeHelper(ctx) === undefined) return undefined;
+  ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
+  const applyIdx = reserveApplyClosure(ctx);
+  const vecNewIdx = ensureObjVecBuilders(ctx).newIdx;
+  addStringConstantGlobal(ctx, "toString");
+  flushLateImportShifts(ctx, fctx);
+  const recvLocal = allocLocal(fctx, `__tsi_recv_${fctx.locals.length}`, EXTERNREF);
+  const fnLocal = allocLocal(fctx, `__tsi_fn_${fctx.locals.length}`, EXTERNREF);
+  const recvType = compileExpression(ctx, fctx, recvExpr, EXTERNREF);
+  if (recvType === null) return null;
+  if (recvType.kind !== "externref") coerceType(ctx, fctx, recvType, EXTERNREF);
+  const nullishToNullIdx = ctx.funcMap.get("__nullish_to_null");
+  fctx.body.push(
+    { op: "local.tee", index: recvLocal },
+    ...stringConstantExternrefInstrs(ctx, "toString"),
+    { op: "call", funcIdx: ctx.funcMap.get("__extern_get")! },
+    ...(nullishToNullIdx === undefined ? [] : ([{ op: "call", funcIdx: nullishToNullIdx }] satisfies Instr[])),
+    { op: "local.tee", index: fnLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: EXTERNREF },
+      then: [
+        { op: "ref.null.extern" }, // the runtime helper's unused closure-self slot
+        { op: "local.get", index: recvLocal },
+        { op: "call", funcIdx: ctx.funcMap.get("__object_proto_to_string_runtime")! },
+      ],
+      else: [
+        { op: "local.get", index: fnLocal },
+        { op: "local.get", index: recvLocal },
+        { op: "call", funcIdx: vecNewIdx },
+        { op: "call", funcIdx: ctx.funcMap.get("__apply_closure") ?? applyIdx },
+      ],
+    },
+  );
   return EXTERNREF;
 }

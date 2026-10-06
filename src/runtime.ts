@@ -57,7 +57,8 @@ import { decodeCompiledEntryPair } from "./runtime/compiled-entry-pair.js";
 import { rawExportsStructDecodeError } from "./runtime/raw-exports-struct-authority.js"; // (#6438)
 import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./runtime/string-predicate-adapter.js";
 import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
-import { DATE_HOST_METHOD_UNHANDLED, tryCallWasmDateHostMethod, wasmDateHostView } from "./runtime/date-host-method.js";
+import { DATE_HOST_METHOD_UNHANDLED, hostArgsWithDates } from "./runtime/date-host-method.js";
+import { tryCallWasmDateHostMethod, wasmDateHostView } from "./runtime/date-host-method.js";
 import { wasmCarrierBuiltinPrototype } from "./runtime/wasm-carrier-prototype.js"; // (#5325)
 import { compiledClassInstancePrototype } from "./runtime/compiled-class-prototype.js"; // (#5347)
 import { compiledClosureLength } from "./runtime/compiled-closure-length.js"; // (#5365)
@@ -2483,6 +2484,17 @@ function _maybeWrapCallable(
   if (!_isWasmStruct(val)) return val;
   const wrapped = _wrapWasmClosure(val, arity, callbackState);
   return wrapped ?? val;
+}
+
+/**
+ * (#6417) Wrap a closure stored as property `key` for host [[Call]]. A fixed
+ * zero-arity bridge dropped `encoder` from axios' `p.toString(encoder)`; it is
+ * now only the fallback when the unknown-arity export family is not live.
+ */
+function _wrapStoredMethodValue(key: unknown, val: any, callbackState?: MarshalExportSource): any {
+  const wrapped = _maybeWrapCallableUnknownArity(val, callbackState);
+  if (typeof wrapped === "function" || (key !== "valueOf" && key !== "toString")) return wrapped;
+  return _maybeWrapCallable(val, 0, callbackState);
 }
 
 function _wrapVoidHostCallback(
@@ -6624,6 +6636,14 @@ function _getProtoMethodBridge(proto: object, name: string): Function {
 
 const _staticMethodNames = new WeakMap<object, string[]>();
 const _classObjectOwnPropertyNames = new WeakMap<object, string[]>();
+// (#6798) Each eager generator buffer's last `yield*` completion value, read
+// (and cleared) once by `__gen_yield_star_result`.
+const _genYieldStarResults = new WeakMap<object, unknown>();
+const _takeGenYieldStarResult = (buf: object): unknown => {
+  const result = _genYieldStarResults.get(buf);
+  _genYieldStarResults.delete(buf);
+  return result;
+};
 // Static methods are invoked by host frameworks through the generic closure
 // bridge. Their object results must be readable host objects (React consumes
 // getDerivedStateFromProps' returned partial state immediately), unlike the
@@ -13137,13 +13157,9 @@ assert._isSameValue = isSameValue;
           // struct — `p1.then = fn; Promise.race([p1])` traps with
           // "object is not a function". Wrap it via __call_fn_<arity> so
           // host-driven invocation reaches the closure body.
-          // OrdinaryToPrimitive methods have a fixed zero-argument call shape.
-          // Prefer the exact dispatcher so a method-only object literal does
-          // not depend on the broader unknown-arity export family being live.
-          let wrappedVal =
-            key === "valueOf" || key === "toString"
-              ? _maybeWrapCallable(val, 0, callbackState)
-              : _maybeWrapCallableUnknownArity(val, callbackState);
+          // valueOf/toString keep the exact zero-arity dispatcher as a fallback
+          // only (#6417, see `_wrapStoredMethodValue`).
+          let wrappedVal = _wrapStoredMethodValue(key, val, callbackState);
           // (#3051) `regexp.exec = fn` override: the native RegExp protocol
           // (@@replace/@@split/@@match/@@search) calls this and reads the
           // returned match-result object via Get + ToXxx. A compiled result
@@ -13222,10 +13238,7 @@ assert._isSameValue = isSameValue;
       // throw catchable by the user's try/catch.
       if (name === "__extern_set_strict")
         return (obj: any, key: any, val: any) => {
-          let wrappedVal =
-            key === "valueOf" || key === "toString"
-              ? _maybeWrapCallable(val, 0, callbackState)
-              : _maybeWrapCallableUnknownArity(val, callbackState);
+          let wrappedVal = _wrapStoredMethodValue(key, val, callbackState);
           // (#3051) See __extern_set: wrap a `regexp.exec` override's return so
           // the native RegExp protocol can read the compiled result object.
           // (Slice 3) Widened to any object receiver — see __extern_set.
@@ -15231,7 +15244,7 @@ assert._isSameValue = isSameValue;
             return callable !== v ? callable : _wrapForHost(v, marshalExp);
           };
           const wrappedObj = wrapHostValue(obj);
-          const wrappedArgs = (args ?? []).map(wrapHostValue);
+          const wrappedArgs = hostArgsWithDates(args, marshalExp, wrapHostValue, _marshalWasmDateForHost);
           const dateResult = tryCallWasmDateHostMethod(obj, method, wrappedArgs, exports, _isWasmStruct);
           if (dateResult !== DATE_HOST_METHOD_UNHANDLED) return dateResult;
           // Wrap callback slots before native method dispatch (#1382).
@@ -17608,14 +17621,26 @@ assert._isSameValue = isSameValue;
           }
           const iterable = _materializeIterable(rawIterable, callbackState);
           if (iterable != null && typeof iterable[Symbol.iterator] === "function") {
-            for (const v of iterable) {
+            // (#6798) Step by hand (not for-of) so the delegate's terminal
+            // `{done: true, value}` survives: it is the `yield*` expression's value.
+            const iterator = iterable[Symbol.iterator]();
+            const next = iterator.next;
+            for (;;) {
+              const step = next.call(iterator);
+              if (Object(step) !== step) throw new TypeError("Iterator result is not an object");
+              if (step.done) {
+                _genYieldStarResults.set(buf, step.value);
+                return;
+              }
               if (buf.length >= __EAGER_GEN_LIMIT) {
+                iterator.return?.();
                 throw new RangeError("Eager generator buffer exceeded " + __EAGER_GEN_LIMIT + " yields");
               }
-              buf.push(v);
+              buf.push(step.value);
             }
           }
         };
+      if (name === "__gen_yield_star_result") return _takeGenYieldStarResult;
       // __gen_set_return: (buf, value) → void. Stashes the generator's `return`
       // value on the buffer object (a non-enumerable side property) rather than
       // pushing it as a yielded element. `__create_generator` reads it into
@@ -18452,6 +18477,7 @@ assert._isSameValue = isSameValue;
           // spec answer is "function". Probe via `__is_closure` (matches the
           // discriminator used by `_maybeWrapCallableUnknownArity`).
           if (v != null && typeof v === "object" && _isWasmStruct(v)) {
+            if (_classObjectOwnPropertyNames.has(v)) return "function"; // (#6798) class object (host twin of #6420)
             const exports = callbackState?.getExports();
             const isClosureFn = exports?.__is_closure as ((x: any) => number) | undefined;
             if (typeof isClosureFn === "function") {
@@ -18973,6 +18999,7 @@ assert._isSameValue = isSameValue;
       // wired through setInstance after instantiation. Consult it for the two
       // overlapping categories; ordinary host values stay on native typeof.
       const isCompiledClosure = (value: any): boolean => {
+        if (_classObjectOwnPropertyNames.has(value)) return true; // (#6798) a class object is a constructor
         const classifier = callbackState?.getExports()?.__is_closure;
         if (typeof classifier !== "function") return false;
         try {
@@ -19260,10 +19287,7 @@ assert._isSameValue = isSameValue;
       return (obj: any, key: any, val: any) => {
         // (#860) Wrap closure-as-value before storing — see __extern_set
         // binding above. Mirrors the by-name path.
-        let wrappedVal =
-          key === "valueOf" || key === "toString"
-            ? _maybeWrapCallable(val, 0, callbackState)
-            : _maybeWrapCallableUnknownArity(val, callbackState);
+        let wrappedVal = _wrapStoredMethodValue(key, val, callbackState);
         // (#3051) `regexp.exec = fn` override — wrap the return so the native
         // RegExp protocol (@@replace/@@split/@@match/@@search) can read the
         // compiled match-result object (a WasmGC struct) via Get + ToXxx.
@@ -19306,10 +19330,7 @@ assert._isSameValue = isSameValue;
       // `obj.k = v` accessor writes here (ESM is always strict); the throw is
       // catchable in the user's try/catch via the host-import exception bridge.
       return (obj: any, key: any, val: any) => {
-        let wrappedVal =
-          key === "valueOf" || key === "toString"
-            ? _maybeWrapCallable(val, 0, callbackState)
-            : _maybeWrapCallableUnknownArity(val, callbackState);
+        let wrappedVal = _wrapStoredMethodValue(key, val, callbackState);
         // (#3051) See extern_set — wrap a `regexp.exec` override's return so the
         // native RegExp protocol can read the compiled result object.
         if (typeof wrappedVal === "function" && key === "exec" && obj instanceof RegExp) {
@@ -19726,10 +19747,21 @@ export function buildImports(
  */
 export interface WrapExportsSignature {
   /** Per-parameter boundary kind, positionally. */
-  params: ("uint8array" | "typed-array" | "string" | "symbol" | "promise" | "dynamic" | "aggregate" | "other")[];
+  params: WrapExportsBoundaryKind[];
   /** Boundary kind of the return value. */
-  result: "uint8array" | "typed-array" | "string" | "symbol" | "promise" | "dynamic" | "aggregate" | "other";
+  result: WrapExportsBoundaryKind;
 }
+
+type WrapExportsBoundaryKind =
+  | "boolean"
+  | "uint8array"
+  | "typed-array"
+  | "string"
+  | "symbol"
+  | "promise"
+  | "dynamic"
+  | "aggregate"
+  | "other";
 
 /**
  * (#1700) Copy each `Uint8Array` / TypedArray / plain-array argument into a
@@ -19933,20 +19965,24 @@ export function wrapExports(
       wrapped[key] = val;
       continue;
     }
-    // Pass internal helpers through unchanged so the runtime can still
-    // reach them by name (`__call_fn_0`, `__vec_get`, etc.).
-    if (key.startsWith("__")) {
+    const sig = signatures && _hasOwn(signatures, key) ? signatures[key] : undefined;
+    // Unmarked internal helpers retain their exact passthrough. A user export
+    // carries a signature whatever its name (#6875: `__npmCompatPerf(input)`
+    // skipped argument marshalling, so a native-regime string arrived raw).
+    if (key.startsWith("__") && sig === undefined) {
       wrapped[key] = val;
       continue;
     }
     // Wrap user exports: closures become callables; structs/vecs marshal to JS;
     // primitives, strings, and raw externrefs pass through.
-    const sig = signatures ? signatures[key] : undefined;
-    const exportBoundaryPolicy = boundaryPolicies?.[key];
+    const exportBoundaryPolicy = boundaryPolicies && _hasOwn(boundaryPolicies, key) ? boundaryPolicies[key] : undefined;
     const invoke = function (this: any, ...args: any[]): any {
       // A live boundary view is only a JS façade. Recover its canonical WasmGC
       // identity before calling a typed export; ordinary JS values are no-ops.
       let boundaryArgs = args.map((arg, index) => {
+        // ToBoolean never calls user coercion hooks, including under a live
+        // object policy or marshal:false.
+        if (sig?.params[index] === "boolean") return arg ? 1 : 0;
         const paramMode = hasMarshalOverride
           ? marshal
           : marshalModeForBoundaryPolicy(exportBoundaryPolicy?.params[index]?.policy);
@@ -19954,6 +19990,10 @@ export function wrapExports(
       });
       const stringFromHost = exportsForMarshal.__str_from_extern as ((value: string) => any) | undefined;
       if (sig) {
+        // Required Boolean slots also materialize omitted arguments as false.
+        for (let index = boundaryArgs.length; index < sig.params.length; index++) {
+          if (sig.params[index] === "boolean") boundaryArgs[index] = 0;
+        }
         boundaryArgs = boundaryArgs.map((arg, index) => {
           if (sig.params[index] === "string" && typeof arg === "string" && typeof stringFromHost === "function") {
             return stringFromHost(arg);
@@ -19988,6 +20028,12 @@ export function wrapExports(
         );
         const translated = _nativeErrorToHost(payload, exportsForMarshal);
         throw translated === _MISS ? payload : translated;
+      }
+      if (sig?.result === "boolean") {
+        if (typeof result !== "number" || (result !== 0 && result !== 1) || Object.is(result, -0)) {
+          throw new TypeError(`wrapExports: export "${key}" returned a noncanonical Boolean wire value`);
+        }
+        return result === 1;
       }
       if (sig?.result === "string" && result != null) {
         const stringToHost = exportsForMarshal.__str_to_extern as ((value: any) => string) | undefined;

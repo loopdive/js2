@@ -6346,6 +6346,7 @@ function emitTaDynCtorConstructInline(
         fctx.body.push({ op: "local.get", index: srcVecLocal });
         fctx.body.push({ op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 1 });
         fctx.body.push({ op: "local.set", index: srcDataLocal });
+        emitRefElemArraySnapshot(ctx, fctx, objVecArrTypeIdx, srcDataLocal, dstNLocal); // (#6651 U2)
         emitAllocViewFromN();
         emitCopyLoop((iLocal) => {
           emitTaExternrefElementToF64(ctx, fctx, () => {
@@ -6410,6 +6411,7 @@ function emitTaDynCtorConstructInline(
       fctx.body.push({ op: "local.get", index: srcVecLocal });
       fctx.body.push({ op: "struct.get", typeIdx: vIdx, fieldIdx: 1 });
       fctx.body.push({ op: "local.set", index: srcDataLocal });
+      emitRefElemArraySnapshot(ctx, fctx, srcArrIdx, srcDataLocal, dstNLocal); // (#6651 U2) IteratorToList first
       if (carrierKey === "i8_byte" || carrierKey === "i16_byte") {
         // (#5349 r3) §23.2.5.1.2 step 5: a content-type mismatch between the
         // source TypedArray and the destination is a TypeError. This carrier is
@@ -6706,6 +6708,43 @@ function ensureTaDynCtorConstructHelper(ctx: CodegenContext, arity: number): num
     body: hfctx.body,
     exported: false,
   });
+  return funcIdx;
+}
+
+/**
+ * (#6651 V3) Faithful parent construction for a STATIC `class S extends <TA>`
+ * (one of the nine number-element kinds) in the no-JS-host lanes: `super(...)`
+ * runs §23.2.5.1 through the same `__ta_dyn_ctor_construct_a<k>` body a
+ * dynamic `new ctor(...)` uses, with the per-kind `$__ta_ctor` singleton as the
+ * descriptor — so `new S(3).length === 3` and `ArrayBuffer.isView(new S(3))`.
+ * #3239 returned an identity-only EMPTY vec here (its recorded scope: no
+ * behaviour test passed then); `instanceof` stays the static
+ * `tryStaticInstanceOf` answer either way. BigInt kinds keep the #3239 carrier.
+ * Registered per arity under the same `__new_<Parent>@<argCount>` key, so the
+ * caller's lookup is unchanged; arguments past the third are evaluated by the
+ * caller and ignored, as §23.2.5.1 reads at most three.
+ */
+export function ensureStandaloneTaSubclassParentCtor(
+  ctx: CodegenContext,
+  parentName: string,
+  argCount: number,
+): number | undefined {
+  const kind = taCtorKindOf(parentName);
+  if (kind < 0 || kind > 8 || !noJsHost(ctx)) return undefined;
+  const key = `__new_${parentName}@${argCount}`;
+  const existing = ctx.funcMap.get(key);
+  if (existing !== undefined) return existing;
+  const singletonIdx = getOrRegisterTaCtorSingleton(ctx, kind);
+  const arity = Math.min(argCount, TA_DYN_CTOR_MAX_READ_ARGS);
+  const helperIdx = ensureTaDynCtorConstructHelper(ctx, arity);
+  const params: ValType[] = Array.from({ length: argCount }, () => ({ kind: "externref" }) as ValType);
+  const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }], `${key}_type`);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(key, funcIdx);
+  const body: Instr[] = [{ op: "global.get", index: singletonIdx }];
+  for (let i = 0; i < arity; i++) body.push({ op: "local.get", index: i });
+  body.push({ op: "call", funcIdx: helperIdx });
+  pushDefinedFunc(ctx, funcIdx, { name: key, typeIdx, locals: [], body, exported: false });
   return funcIdx;
 }
 
@@ -9467,6 +9506,81 @@ export function emitTaViewValidate(
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwArm, else: [] });
 }
 
+/** Run `emit` against a fresh body and return it (late-import shifts still patch the outer body). */
+function captureTaViewArm(fctx: FunctionContext, emit: () => void): Instr[] {
+  const arm: Instr[] = [];
+  const saved = fctx.body;
+  fctx.savedBodies.push(saved);
+  fctx.body = arm;
+  emit();
+  fctx.body = saved;
+  fctx.savedBodies.pop();
+  return arm;
+}
+
+/**
+ * (#6651 V3) `ta.set(src)` on an EXTERNREF receiver whose runtime carrier may be
+ * a buffer-backed `$__ta_view` (a script-level binding that the eval-capable
+ * global scope keeps as an externref global, e.g. test262's
+ * `let target = new Int8Array(ab)` next to the harness's `evalScript`). The
+ * externref lane `ref.cast`-ed straight to the element vec and trapped
+ * `illegal cast`. Same de-view the identifier-local arm in
+ * `compileArrayMethodCall` (#3054 B1/B3) runs, chosen at RUNTIME: a view is
+ * validated (§23.2.3.26 step — a detached/out-of-bounds target throws a
+ * TypeError), materialized into the native vec, and written back through
+ * {@link emitExternTaViewSetWriteBack}; anything else keeps the old cast.
+ * Stack: anyref in, `(ref null nativeVecTypeIdx)` out. Returns the view local
+ * (null at runtime when the receiver was not a view).
+ */
+export function emitExternTaViewReceiverAsVec(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  taViewTypeIdx: number,
+  nativeVecTypeIdx: number,
+): number {
+  const anyLocal = allocLocal(fctx, `__tav_xrecv_${fctx.locals.length}`, { kind: "anyref" });
+  const viewLocal = allocLocal(fctx, `__tav_xview_${fctx.locals.length}`, { kind: "ref_null", typeIdx: taViewTypeIdx });
+  fctx.body.push({ op: "local.set", index: anyLocal });
+  const viewArm = captureTaViewArm(fctx, () => {
+    fctx.body.push({ op: "local.get", index: anyLocal });
+    fctx.body.push({ op: "ref.cast", typeIdx: taViewTypeIdx });
+    fctx.body.push({ op: "local.set", index: viewLocal });
+    emitTaViewValidate(ctx, fctx, taViewTypeIdx, viewLocal);
+    fctx.body.push({ op: "local.get", index: viewLocal });
+    emitTaViewToVec(ctx, fctx, taViewTypeIdx, nativeVecTypeIdx);
+  });
+  fctx.body.push({ op: "local.get", index: anyLocal });
+  fctx.body.push({ op: "ref.test", typeIdx: taViewTypeIdx });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "ref_null", typeIdx: nativeVecTypeIdx } },
+    then: viewArm,
+    else: [
+      { op: "local.get", index: anyLocal },
+      { op: "ref.cast_null", typeIdx: nativeVecTypeIdx },
+    ],
+  });
+  return viewLocal;
+}
+
+/** (#6651 V3) Write the mutated copy back through the view, when the receiver was one. */
+export function emitExternTaViewSetWriteBack(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  taViewTypeIdx: number,
+  viewLocal: number,
+  matLocal: number,
+  nativeVecTypeIdx: number,
+): void {
+  const arm = captureTaViewArm(fctx, () =>
+    emitTaViewWriteBack(ctx, fctx, taViewTypeIdx, viewLocal, matLocal, nativeVecTypeIdx),
+  );
+  fctx.body.push({ op: "local.get", index: viewLocal });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({ op: "i32.eqz" });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: arm });
+}
+
 /**
  * (#3058) ValidateTypedArray (§10.4.5.11 IsTypedArrayOutOfBounds, §23.2.3.* step 1)
  * for a boxed `$__ta_dyn_view` reached through an `any` receiver: throw a TypeError
@@ -9884,4 +9998,38 @@ export function emitResizableAbExports(ctx: CodegenContext): void {
     } as any);
     mod.exports.push({ name: "__rab_resize", desc: { kind: "func", index: funcIdx } });
   }
+}
+
+/**
+ * (#6651 U2) §23.2.2.1 step 5 / §23.2.5.1 step 6.a: an iterable source is
+ * drained (IteratorToList) BEFORE the first element's ToNumber. For a source whose elements are
+ * references, that ToNumber can run user code (`valueOf`) that truncates the
+ * source in place (`values.length = 0` clears the backing slots), so the copy
+ * loop must read a snapshot. Primitive-element sources cannot observe the
+ * difference and keep their exact bytes.
+ */
+export function emitRefElemArraySnapshot(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  srcArrIdx: number,
+  srcDataLocal: number,
+  lenLocal: number,
+): void {
+  const arrDef = ctx.mod.types[srcArrIdx];
+  if (!arrDef || arrDef.kind !== "array") return;
+  const elem = arrDef.element;
+  if (elem.kind !== "externref" && elem.kind !== "ref_null") return;
+  const copy = allocLocal(fctx, `__tafrom_snap_${fctx.locals.length}`, { kind: "ref", typeIdx: srcArrIdx });
+  fctx.body.push(
+    { op: "local.get", index: lenLocal },
+    { op: "array.new_default", typeIdx: srcArrIdx },
+    { op: "local.tee", index: copy },
+    { op: "i32.const", value: 0 },
+    { op: "local.get", index: srcDataLocal },
+    { op: "i32.const", value: 0 },
+    { op: "local.get", index: lenLocal },
+    { op: "array.copy", dstTypeIdx: srcArrIdx, srcTypeIdx: srcArrIdx },
+    { op: "local.get", index: copy },
+    { op: "local.set", index: srcDataLocal },
+  );
 }

@@ -30,7 +30,9 @@ import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import { concatCallYieldsDynamicCarrier } from "../array-concat-carrier.js"; // (#4655) concat result-slot carrier
 import { filterResultNeedsDynamicCarrier } from "../array-filter-spec-access.js";
 import { emitShapeInferredVecInit } from "../shape-vec-literal-seed.js"; // (#4491) module-global array-carrier seed
+import { rebindWidenedArrayInit } from "../declarations/array-rebind-element-widening.js"; // (#6651 U4)
 import {
+  compileArrayLiteral,
   arrayLiteralEscapeWidensToExternref,
   objectLiteralIsStandaloneAnyObjectCarrier,
   objectLiteralForcesHostPath,
@@ -60,6 +62,8 @@ import { typedArrayCtorArgIsArithmeticPrimitive } from "../expressions/typed-arr
 import { compileArrayDestructuring, compileObjectDestructuring } from "./destructuring.js";
 import { compileNestedClassDeclaration, emitUnresolvedComputedAccessorNameEffects } from "./nested-declarations.js";
 import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5195 r3-5)
+import { emitStandaloneCommaHeritageEffects } from "../classes/class-heritage-comma.js"; // (#6772 S6)
+import { emitStandaloneHeritagePrototypeGet } from "../classes/class-heritage-runtime-get.js"; // (#6772 S11)
 import { emitLocalTdzInit, emitTdzInit } from "./tdz.js";
 import { ensureNativeStringHelpers, flatStringType } from "../native-strings.js";
 import { compileStringBuilderInit } from "../string-builder.js";
@@ -92,6 +96,9 @@ import {
 } from "../expressions/promise-subclass.js";
 import { hostRegExpMatchResultNeedsExternref, stripInferenceWrapper } from "../regexp-host-match.js";
 import { taStaticFromOfReflectiveCallNeedsExternref } from "../ta-static-from-of-spec.js";
+import { objectAssignResultNeedsExternref } from "../object-model/object-assign-primitive-operands.js";
+import { integrityLiteralResultNeedsExternref } from "../object-model/object-literal-reflective-escape.js";
+import { reflectiveArrayCallNeedsExternref } from "../array/array-ctor-this.js"; // (#6771)
 import { inferStandaloneRegExpMatchResultType } from "../regexp-standalone.js";
 
 /**
@@ -114,6 +121,8 @@ function emitHandledClassExpressionBindingEffects(
   // is IsConstructor-checked before the class object exists, and before the
   // computed-key effects that follow it here.
   emitStandaloneHeritageCheck(ctx, fctx, initializer, compileExpression);
+  emitStandaloneCommaHeritageEffects(ctx, fctx, initializer, compileExpression); // (#6772 S6)
+  emitStandaloneHeritagePrototypeGet(ctx, fctx, initializer); // (#6772 S11)
   emitUnresolvedComputedAccessorNameEffects(ctx, fctx, initializer);
   const materialization = fctx.body.splice(materializationStart, materializationEnd - materializationStart);
   const effects = fctx.body.splice(materializationStart);
@@ -166,6 +175,9 @@ export function transferredArrayLikeResultNeedsExternref(
 ): boolean {
   if (hostRegExpMatchResultNeedsExternref(ctx, initializer)) return true;
   if (taStaticFromOfReflectiveCallNeedsExternref(ctx, initializer)) return true; // (#6651 E5)
+  if (objectAssignResultNeedsExternref(ctx, initializer)) return true; // (#6770 S1)
+  if (integrityLiteralResultNeedsExternref(ctx.standalone, initializer)) return true; // (#6770 S2)
+  if (reflectiveArrayCallNeedsExternref(ctx, initializer)) return true; // (#6771) Array.from/of.call, O-returning borrows
   if (!(ctx.standalone || ctx.wasi) || !initializer || !ts.isCallExpression(initializer)) return false;
   const callee = initializer.expression;
   if (!ts.isPropertyAccessExpression(callee) || ts.isPrivateIdentifier(callee.name)) return false;
@@ -1290,7 +1302,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
   const chunkedModuleInit = isModuleInitChunkFunctionContext(fctx);
   for (const decl of stmt.declarationList.declarations) {
     if (ts.isObjectBindingPattern(decl.name)) {
-      compileObjectDestructuring(ctx, fctx, decl);
+      // (#6651 V7) a `var` pattern inside a `with` body resolves through the object first.
+      if (!tryCompileWithScopedVarDeclaration(ctx, fctx, stmt, decl)) compileObjectDestructuring(ctx, fctx, decl);
       continue;
     }
 
@@ -1703,7 +1716,10 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
         const wasmType = globalDef?.type ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(decl));
         const materializationStart = fctx.body.length;
-        if (tryEmitPromiseSubclassClassExpressionValue(ctx, fctx, decl.initializer, wasmType) === undefined) {
+        const widenedInit = rebindWidenedArrayInit(ctx, decl, wasmType);
+        if (widenedInit) {
+          compileArrayLiteral(ctx, fctx, widenedInit, { kind: "externref" }); // (#6651 U4) straight into the widened vec
+        } else if (tryEmitPromiseSubclassClassExpressionValue(ctx, fctx, decl.initializer, wasmType) === undefined) {
           compileExpression(ctx, fctx, decl.initializer, wasmType);
         } else {
           emitHandledClassExpressionBindingEffects(ctx, fctx, decl.initializer, materializationStart);
@@ -1719,7 +1735,14 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         // variables are `undefined`. For externref globals, emit __get_undefined()
         // so `x === undefined` works correctly (#737).
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
-        if (globalDef?.type.kind === "externref") {
+        if (
+          globalDef?.type.kind === "externref" &&
+          !(
+            ctx.standaloneScriptVarBindings &&
+            !ctx.sourceIsModule &&
+            (stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0
+          )
+        ) {
           emitUndefined(ctx, fctx);
           fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
         }

@@ -24,7 +24,7 @@ import { compileMultiSource } from "./compiler.js";
 import type { ProjectModuleResolutions } from "./checker/index.js";
 import { getBarePackageName } from "./resolve.js";
 import { LINKED_IMPORT_GETTER_PREFIX, LINKED_IMPORT_REEXPORT_PREFIX } from "./linked-import-getter-names.js";
-import { getDefaultEnvironment } from "./env.js";
+import { defaultCacheDir, getDefaultEnvironment } from "./env.js";
 import { buildCompiledImports } from "./runtime.js";
 import { installSharedExceptionTag } from "./linked-provider-runtime.js";
 import { RUNTIME_RECGROUP_ABI_VERSION } from "./emit/canonical-recgroup.js";
@@ -1721,7 +1721,7 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
     }
   }
 
-  const cacheDir = input.options.packageCacheDir ?? path.join(input.rootDir, ".js2wasm-cache", "npm-modules");
+  const cacheDir = input.options.packageCacheDir ?? defaultCacheDir(input.rootDir, "npm-modules");
   const namespaceByRoot = new Map<string, string>();
   const artifactByRoot = new Map<string, LinkedModuleArtifact>();
   let compiledProviders = 0;

@@ -23,6 +23,34 @@ function hostBigIntExpected(ctx: CodegenContext, expr: ts.Expression): ValType |
   return ctx.oracle.staticJsTypeOf(expr) === "bigint" ? { kind: "externref" } : undefined;
 }
 
+/**
+ * (#6798) Result carrier of a `&&`/`||` whose arms are a boolean and a number.
+ * The f64 merge is exact for conditions and arithmetic (the overwhelmingly
+ * common uses, and much cheaper), but it erases the boolean TAG: stringified,
+ * `false && f()` printed "0". Where the value is stringified or stored as an
+ * `any`, keep the tag instead: an externref with each arm boxed by its own type.
+ */
+function logicalMergeType(
+  ctx: CodegenContext,
+  expr: ts.BinaryExpression,
+  left: ValType,
+  right: ValType,
+  expected?: ValType,
+): ValType {
+  const isBool = (t: ValType) => t.kind === "i32" && t.boolean === true;
+  if (!((isBool(left) && right.kind === "f64") || (left.kind === "f64" && isBool(right)))) return { kind: "f64" };
+  let node: ts.Node = expr;
+  while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
+  const user = node.parent;
+  const stringified =
+    (ts.isCallExpression(user) && ts.isIdentifier(user.expression) && user.expression.text === "String") ||
+    ts.isTemplateSpan(user) ||
+    (ts.isBinaryExpression(user) &&
+      user.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+      [user.left, user.right].some((side) => side !== node && ctx.oracle.staticJsTypeOf(side) === "string"));
+  return stringified || expected?.kind === "externref" ? { kind: "externref" } : { kind: "f64" };
+}
+
 /** Runtime half of the mapped-arguments guard. A null state local means no
  * runtime eval has initialized/severed the map yet, so the correspondence is
  * still live. Once initialized, a null vector entry means it was severed. */
@@ -105,7 +133,7 @@ export function compileLogicalAnd(
   let resultType: ValType = leftType;
   if (!valTypesMatch(leftType, rType)) {
     if ((leftType.kind === "i32" || leftType.kind === "f64") && (rType.kind === "i32" || rType.kind === "f64")) {
-      resultType = { kind: "f64" };
+      resultType = logicalMergeType(ctx, expr, leftType, rType, _expectedType);
     } else {
       resultType = { kind: "externref" };
     }
@@ -186,7 +214,7 @@ export function compileLogicalOr(
   let resultType: ValType = leftType;
   if (!valTypesMatch(leftType, rType)) {
     if ((leftType.kind === "i32" || leftType.kind === "f64") && (rType.kind === "i32" || rType.kind === "f64")) {
-      resultType = { kind: "f64" };
+      resultType = logicalMergeType(ctx, expr, leftType, rType, _expectedType);
     } else {
       resultType = { kind: "externref" };
     }

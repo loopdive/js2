@@ -7,6 +7,11 @@ import { allocLocal, getLocalType } from "../context/locals.js";
 import { localGlobalIdx } from "../registry/imports.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { emitTdzCheckAtGlobal } from "../statements/tdz.js";
+import {
+  emitGlobalEnvironmentKey,
+  emitGlobalEnvironmentObject,
+  ensureGlobalEnvironmentOperation,
+} from "../global-environment.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
 import { emitThrowTypeError, isConstIdentifierAssignmentTarget } from "./helpers.js";
 import {
@@ -288,6 +293,7 @@ export function emitResolvedIdentifierWriteFromStack(
   if (targetType && !valTypesMatch(valueType, targetType)) coerceType(ctx, fctx, valueType, targetType);
   if (currentLocalIdx !== undefined) {
     fctx.body.push({ op: "local.set", index: currentLocalIdx });
+    mirrorImplicitGlobalWrite(ctx, fctx, id, currentLocalIdx); // (#6774 S12)
     return true;
   }
   // A closure-backed top-level binding keeps an externref shadow local for
@@ -316,4 +322,31 @@ export function emitResolvedIdentifierWriteFromStack(
   // Re-read after coercion/guard helpers: either can settle imports/globals.
   fctx.body.push({ op: "global.set", index: ctx.moduleGlobals.get(id.text)! });
   return true;
+}
+
+/**
+ * (#6774 S12) A sloppy destructuring target that names an UNDECLARED binding
+ * (`[arguments, eval] = vals` at script top level) was auto-allocated a frame
+ * local by its caller; the reference is the global object's property
+ * (§9.1.1.4 via PutValue on an unresolvable reference), which the #2726
+ * pre-scan already routes every read to. Mirror the write there.
+ */
+function mirrorImplicitGlobalWrite(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+  localIdx: number,
+): void {
+  if (!ctx.standalone || !ctx.sloppyImplicitGlobals?.has(id.text) || !ctx.oracle.isUnresolvableIdentifier(id)) return;
+  if (!emitGlobalEnvironmentObject(ctx, fctx)) return;
+  const setIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_set");
+  if (setIdx === undefined) {
+    fctx.body.push({ op: "drop" });
+    return;
+  }
+  emitGlobalEnvironmentKey(ctx, fctx, id.text);
+  fctx.body.push({ op: "local.get", index: localIdx });
+  const localType = getLocalType(fctx, localIdx);
+  if (localType && localType.kind !== "externref") coerceType(ctx, fctx, localType, { kind: "externref" });
+  fctx.body.push({ op: "call", funcIdx: setIdx });
 }

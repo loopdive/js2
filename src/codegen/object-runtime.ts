@@ -1,3 +1,6 @@
+import { installableReceiverInstrs } from "./helpers/undefined-receiver.js";
+import { buildClosureResultBoxing } from "./closures/result-boxing.js";
+import { classifyClosureDispatchRest } from "./closures/closure-dispatch-rest.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { buildOwnPropertyBody, buildPropertyIsEnumerableBody } from "../runtime/wasmgc/values/own-property-bodies.js";
 import {
@@ -63,6 +66,7 @@ import { buildObjectGetBody } from "../runtime/wasmgc/values/object-get-bodies.j
  * `ensureLateImport` for these names.
  */
 import { buildVariadicBuiltinApplyArm } from "./apply-closure-variadic-builtin.js"; // (#6701)
+import { buildRestOnlyApply } from "./closures/rest-only-apply.js";
 import {
   buildObjectPropertyKeyPrefix,
   prependObjectKeyCoercion,
@@ -93,7 +97,7 @@ import {
   ARGUMENTS_LENGTH_VALUE_FIELD,
   reserveArgumentsLengthBrand,
 } from "./arguments-length-brand.js"; // (#4658/#4491)
-import { BFN_ID_FIELD_IDX, BFN_STATE_FIELD_IDX } from "./builtin-fn-meta.js"; // (#4241) header-derived
+import { BFN_ID_FIELD_IDX, BFN_STATE_FIELD_IDX, linkedMetaSignatureGuard } from "./builtin-fn-meta.js"; // (#4241) header-derived
 import { ensureNativeCharCodeAtHelper } from "./char-code-at-helpers.js";
 import { getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js"; // (#3673 round 19b)
 import { lazyStrFlattenEnabled, redundantFlattenCall } from "./lazy-str-flatten.js"; // (#4157)
@@ -132,6 +136,7 @@ import {
 } from "./closures/transferred-native-proto.js";
 import type { TransferredNativeReceiverEntry } from "./closures/transferred-native-proto.js";
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { reserveLinkedRealmPropertyRead } from "./object-model/linked-realm-property-read.js";
 import { reserveAccessorGetDriver, reserveAccessorSetDriver } from "./accessor-driver.js";
 import { registerDescriptorHasOwn } from "./carrier-bag-hasown.js"; // (#4055) descriptor-scoped HasProperty over the #3468 bag
 import { buildNonObjectDeleteArms, reserveCarrierBagDelete } from "./carrier-bag-delete.js"; // (#4010 S2) OrdinaryDelete over the carrier bags
@@ -270,7 +275,7 @@ import {
   protoLinkSetWalkArm,
   withProtoLinkNull,
 } from "./object-runtime-proxy-chain.js"; // (#6766) a Proxy as [[Prototype]]
-import { ensureArgcGlobal } from "./statements/nested-declarations.js";
+import { ensureArgcGlobal, ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { buildLazyNativeProtoGetInstrs, flushPendingNativeProtoSeeders, getBuiltinBrand } from "./native-proto.js";
 import { applyUndefinedInstrs } from "./apply-closure-args.js";
 import {
@@ -285,6 +290,7 @@ import {
   registerStringExoticPushKeys,
   stringExoticHasOwnPrologue,
 } from "./string-exotic-own-props.js"; // (#4232/#4491) §10.4.3 own props + own keys
+import { inOwnKeyOrder, registerObjOrderIndexOfKey } from "./object-model/object-own-key-order.js"; // (#6770 S3)
 import { ensureWrapperConstructorCarriers, wrapperConstructorArmInstrs } from "./wrapper-constructor-carrier.js"; // (#4223) runtime `<wrapper>.constructor`
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
 import { backedBoundsGuard, canonicalIndexDigitStep } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
@@ -292,7 +298,7 @@ import { buildVecIndexKeyPush, reserveVecIndexEnumerable } from "./vec-index-enu
 import { fillHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649) js-host late-bound carrier test
 import {
   emitStandaloneLinkBoundaryTerminals,
-  peerNullMethodResultInstrs,
+  methodCallForwardArmInstrs,
   standaloneLinkBoundaryPeerIndex,
   standaloneLinkBoundaryPeerIndices,
 } from "./standalone-link-boundary.js"; // (#5383 S2d/S2f) wasm→wasm peer terminals
@@ -305,11 +311,32 @@ import {
 import { stringWrapperLengthArm } from "./string-wrapper-dynamic-length.js"; // (#6651 C5)
 import { captureWrapperPrimitiveKey } from "./to-primitive-wrapper-slot.js"; // (#4492 wave-5) __to_primitive's [[PrimitiveValue]] arms
 import { buildToPrimitiveBody } from "../runtime/wasmgc/values/to-primitive-bodies.js";
+import { proxyTrapAbsentTail } from "./object-model/proxy-trap-read.js"; // (#6770 S8)
+import { registerExpressionHelpers } from "./registry/expression-helper-delegates.js";
+import { ensureStandaloneTaSubclassParentCtor } from "./dataview-native.js"; // (#6651 V3) faithful TA subclass parent
 import type {
   ToPrimitiveCoreBindings,
   ToPrimitiveMethodLiterals,
   ToPrimitiveSymbolBindings,
 } from "../runtime/wasmgc/values/to-primitive-method-bodies.js";
+
+const restOnlyApplyServices = {
+  get classifyClosureDispatchRest() {
+    return classifyClosureDispatchRest;
+  },
+  get buildClosureResultBoxing() {
+    return buildClosureResultBoxing;
+  },
+  get ensureCurrentThisGlobal() {
+    return ensureCurrentThisGlobal;
+  },
+  get installableReceiverInstrs() {
+    return installableReceiverInstrs;
+  },
+  get ensureExnTag() {
+    return ensureExnTag;
+  },
+} as const;
 export { fillProxyDispatch } from "./object-runtime-proxy.js";
 
 /** Initial `$PropMap` capacity. Must be a power of two (mask = cap - 1).
@@ -701,6 +728,9 @@ export function emitStandaloneVecBuiltinConstructor(
   const key = `${importName}@${argCount}`;
   const existing = ctx.funcMap.get(key);
   if (existing !== undefined) return existing;
+  // (#6651 V3) number-element TypedArray parents construct for real.
+  const faithful = ensureStandaloneTaSubclassParentCtor(ctx, importName.slice("__new_".length), argCount);
+  if (faithful !== undefined) return faithful;
 
   // A single shared externref-element vec type backs every one of these parents:
   // the element kind is irrelevant to the identity-only `instanceof` result, and
@@ -2004,6 +2034,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // body bakes its `call`. The driver body is filled in finalize once
     // `__call_fn_method_0` exists (fillAccessorDrivers). Routing through funcMap
     // keeps the late-import shifter in sync (#329/#1899).
+    reserveLinkedRealmPropertyRead(ctx);
     const callAccessorGetIdx = reserveAccessorGetDriver(ctx);
     // (#2106 S1) Under the `undefinedSingleton` regime a MISSING property read
     // answers the extern-wrapped tag-1 `$undefined` singleton — the value JS
@@ -2031,7 +2062,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // Capture each real dependency at the donor occurrence. Only leaf operands
     // (not complete semantic arms) cross into the pure body builder.
     const boundaryGet = boundaryObjectGetIdx ?? peerMemberGetIdx;
-    const reversePeer = boundaryGet === undefined ? captureReversePeerReadBinding(reversePeerHops) : undefined;
+    // (#6748) A native-regime module in a JS environment owns both families
+    // (peer/reverse hop AND the JS boundary); each answers for different values.
+    const peerGetFirst = boundaryObjectGetIdx !== undefined ? peerMemberGetIdx : undefined;
+    const reversePeer = captureReversePeerReadBinding(reversePeerHops);
     const instance = captureInstanceReadBinding(ctx, ispScratchLocal);
     const missingPrototype = captureVecOrClosureReadBinding(ctx, getMiss, explicitReceiverLocal);
     const invalidPrototype =
@@ -2057,6 +2091,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       objectTerminalAllowsImplicitProtoIdx,
       templateRaw: templateRawReadBinding,
       boundaryGet,
+      peerGetFirst,
       reversePeer,
       instance,
       missingPrototype,
@@ -4021,10 +4056,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         else: [
           { op: "local.get", index: 2 },
           { op: "ref.cast", typeIdx: proxyTypeIdx },
-          { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: 3 },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: 2 },
-          { op: "ref.is_null" },
+          ...proxyTrapAbsentTail(ctx, 2), // (#6770 S8) has
           {
             op: "if",
             blockType: { kind: "empty" },
@@ -4251,6 +4283,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         boxSymbolIdx,
         applyClosureIdx,
         defaultHint: stringExtern("default"),
+        defaultHintNative: nativeStringLiteralInstrs(ctx, "default"),
         errors: [
           stringExtern(typeErrorMessage),
           stringExtern(typeErrorMessage),
@@ -4405,6 +4438,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // never has a wasm peer — so ONE arm serves both lanes, exactly as
     // `hasBoundaryOrReverseIdx` does for `__extern_has`.
     boundaryObjectGetPrototypeIdx: boundaryObjectGetPrototypeIdx ?? peerGetPrototypeOfIdx,
+    // (#6748) …except in a native-regime module in a JS environment, which has
+    // both: the wasm peer is asked first.
+    peerGetPrototypeFirstIdx: boundaryObjectGetPrototypeIdx !== undefined ? peerGetPrototypeOfIdx : undefined,
     boundaryObjectSetPrototypeIdx,
     INITIAL_CAP,
     OBJ_FLAG_NONEXTENSIBLE,
@@ -4573,7 +4609,11 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   //         12=candIdx 13=bestIdx 14=candSeq 15=bestSeq 16=tmp(ref null $PropEntry)
   {
     const entryRef: ValType = { kind: "ref", typeIdx: propEntryTypeIdx };
-    // Inline: leave on stack the array index (i32) for entry `e` (local idx given
+    // (#6770 S3) The sort key covers the FULL array-index domain [0, 2^32-2]
+    // as an i64 (see object-own-key-order.ts); `__obj_index_of_key`'s i32
+    // answer stops at 2^31-1.
+    const orderIndexIdx = registerObjOrderIndexOfKey(ctx, strFlattenIdx);
+    // Inline: leave on stack the array index (i64) for entry `e` (local idx given
     // by `entryLocal`) — its key parsed as a canonical array index, else -1.
     const entryIndexOf = (entryLocal: number): Instr[] => [
       { op: "local.get", index: entryLocal },
@@ -4582,7 +4622,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       // (#2866) key is anyref; entries reaching here are pre-filtered to string
       // keys (the compaction pass excludes `$Symbol` keys), so this cast is safe.
       { op: "ref.cast", typeIdx: anyStrTypeIdx },
-      { op: "call", funcIdx: objIndexOfKeyIdx },
+      { op: "call", funcIdx: orderIndexIdx },
     ];
     const entrySeqOf = (entryLocal: number): Instr[] => [
       { op: "local.get", index: entryLocal },
@@ -4597,8 +4637,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     const keyLess = (candIdx: number, candSeq: number, bestIdx: number, bestSeq: number): Instr[] => [
       // if candIdx >= 0
       { op: "local.get", index: candIdx },
-      { op: "i32.const", value: 0 },
-      { op: "i32.ge_s" },
+      { op: "i64.const", value: 0n },
+      { op: "i64.ge_s" },
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "i32" } },
@@ -4606,12 +4646,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           // candidate is an integer index
           // if bestIdx >= 0 → candIdx < bestIdx ; else → true (int before string)
           { op: "local.get", index: bestIdx },
-          { op: "i32.const", value: 0 },
-          { op: "i32.ge_s" },
+          { op: "i64.const", value: 0n },
+          { op: "i64.ge_s" },
           {
             op: "if",
             blockType: { kind: "val", type: { kind: "i32" } },
-            then: [{ op: "local.get", index: candIdx }, { op: "local.get", index: bestIdx }, { op: "i32.lt_s" }],
+            then: [{ op: "local.get", index: candIdx }, { op: "local.get", index: bestIdx }, { op: "i64.lt_s" }],
             else: [{ op: "i32.const", value: 1 }],
           },
         ],
@@ -4619,8 +4659,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           // candidate is a string key
           // if bestIdx >= 0 → false (string never precedes int) ; else → candSeq < bestSeq
           { op: "local.get", index: bestIdx },
-          { op: "i32.const", value: 0 },
-          { op: "i32.ge_s" },
+          { op: "i64.const", value: 0n },
+          { op: "i64.ge_s" },
           {
             op: "if",
             blockType: { kind: "val", type: { kind: "i32" } },
@@ -4871,8 +4911,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       { name: "k", type: { kind: "i32" } },
       { name: "cand", type: entryRefNull },
       { name: "bestE", type: entryRefNull },
-      { name: "candIdx", type: { kind: "i32" } },
-      { name: "bestIdx", type: { kind: "i32" } },
+      { name: "candIdx", type: { kind: "i64" } },
+      { name: "bestIdx", type: { kind: "i64" } },
       { name: "candSeq", type: { kind: "i32" } },
       { name: "bestSeq", type: { kind: "i32" } },
       { name: "tmp", type: entryRefNull },
@@ -5467,8 +5507,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // shape: here a `null` answer is ambiguous between "not the consumer's" and
     // "the method returned null", exactly as it is for `__extern_get`, so the
     // arm reads the hop's `callOwned` verdict instead of treating null as a
-    // miss. Mutually exclusive with the forward peer by construction.
-    const reverseMethodCallIdx = boundaryOrPeerCallIdx === undefined ? reversePeerHops.methodCall : undefined;
+    // miss. (#6748) A regime module in a JS env has BOTH families: peer first.
+    const peerCallFirst = boundaryObjectCallIdx !== undefined ? peerMethodCallIdx : undefined;
+    const reverseMethodCallIdx =
+      boundaryOrPeerCallIdx === undefined || boundaryObjectCallIdx !== undefined
+        ? reversePeerHops.methodCall
+        : undefined;
     const boundaryCallResultLocal =
       boundaryOrPeerCallIdx === undefined && reverseMethodCallIdx === undefined
         ? undefined
@@ -5476,6 +5520,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     if (boundaryCallResultLocal !== undefined) {
       methodCallLocals.push({ name: "boundaryCallResult", type: { kind: "externref" } });
     }
+    const forwardMethodCallArm = (callIdx: number, resultLocal: number, peerNullAware: boolean): Instr[] =>
+      methodCallForwardArmInstrs(ctx, callIdx, resultLocal, peerNullAware, peerMemberGetIdx, peerGetPrototypeOfIdx);
 
     const body: Instr[] = [
       // any = any.convert_extern(recv); if null → return undefined
@@ -5519,25 +5565,11 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         // ($Vec/string/Map/Set) are the Slice-4 arms → undefined for now (never
         // invalid Wasm).
         else: [
+          ...(peerCallFirst !== undefined && boundaryCallResultLocal !== undefined
+            ? forwardMethodCallArm(peerCallFirst, boundaryCallResultLocal, true)
+            : []),
           ...(boundaryOrPeerCallIdx !== undefined && boundaryCallResultLocal !== undefined
-            ? ([
-                { op: "local.get", index: 0 },
-                { op: "local.get", index: 1 },
-                { op: "local.get", index: 2 },
-                { op: "call", funcIdx: boundaryOrPeerCallIdx },
-                { op: "local.tee", index: boundaryCallResultLocal },
-                { op: "ref.is_null" },
-                { op: "i32.eqz" },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [{ op: "local.get", index: boundaryCallResultLocal }, { op: "return" }],
-                },
-                // (#5383) …or a peer method that returned `null` (see helper).
-                ...(boundaryObjectCallIdx === undefined
-                  ? peerNullMethodResultInstrs(ctx, peerMemberGetIdx, peerGetPrototypeOfIdx, boundaryCallResultLocal)
-                  : []),
-              ] satisfies Instr[])
+            ? forwardMethodCallArm(boundaryOrPeerCallIdx, boundaryCallResultLocal, boundaryObjectCallIdx === undefined)
             : []),
           ...(reverseMethodCallIdx !== undefined && boundaryCallResultLocal !== undefined
             ? reverseMethodCallArmInstrs(reversePeerHops, boundaryCallResultLocal)
@@ -6351,6 +6383,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
 
   const variadicNativeApply = reserveVariadicNativeApplyState(ctx, locals);
   const variadicBuiltinArm = buildVariadicBuiltinApplyArm(ctx, locals, 3, argcGlobalIdx);
+  const restOnlyApply = buildRestOnlyApply(ctx, locals, 3, argcGlobalIdx, restOnlyApplyServices);
 
   // (#3673) Read the in-module $ObjVec argument carrier directly, avoiding a
   // dynamic `__extern_get_idx` per argument. Non-$ObjVec args keep the generic
@@ -6522,6 +6555,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     { op: "global.set", index: argcGlobalIdx },
     ...buildVariadicNativeApplyDispatch(ctx, variadicNativeApply, objVecTypeIdx, objVecArrTypeIdx),
     ...variadicBuiltinArm, // (#6701) Math.max/min, String.fromCharCode values
+    ...restOnlyApply,
     ...widen,
     // A compiled closure above the module's TOP dispatcher arity must fail
     // loudly rather than falling through to the undefined sentinel (#1058).
@@ -8675,7 +8709,7 @@ function buildClosedStructEnumerationArms(
   const arms: Instr[] = [];
   for (const entry of entries) {
     const pushFields: Instr[] = [];
-    for (const field of entry.fields) {
+    for (const field of inOwnKeyOrder(entry.fields, (f) => f.name)) {
       const pushName: Instr[] = [
         { op: "local.get", index: vecLocalIdx },
         ...nativeStringLiteralInstrs(ctx, field.name),
@@ -11509,6 +11543,7 @@ export function fillBuiltinFnMeta(ctx: CodegenContext): void {
         { op: "struct.get", typeIdx, fieldIdx: BFN_ID_FIELD_IDX },
         { op: "i32.const", value: typeIdx },
         { op: "i32.eq" },
+        ...linkedMetaSignatureGuard(ctx, typeIdx, [{ op: "local.get", index: 2 }]), // (#6651 V0) linked peer ids
         { op: "if", blockType: { kind: "empty" }, then },
       ],
     },
@@ -11895,3 +11930,5 @@ export const OBJECT_RUNTIME_HELPER_NAMES: ReadonlySet<string> = new Set([
   // builder (the value arrives already boxed as a `$Symbol` carrier).
   "__new_Symbol",
 ]);
+
+registerExpressionHelpers({ ensureObjVecBuilders, reserveApplyClosure }); // (#6797) late-bound for the expressions/ leaves

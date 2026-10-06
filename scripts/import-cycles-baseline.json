@@ -1,0 +1,26 @@
+{
+  "largestSccSize": 698,
+  "sccCountOver1": 4,
+  "twoWayDirEdges": {
+    "backend->ir": 115,
+    "checker->ir": 1,
+    "codegen->ir": 295,
+    "codegen-linear->ir": 9,
+    "compiler->deadcode-elide.ts": 1,
+    "deadcode-elide.ts->compiler": 1,
+    "frontend->ir": 17,
+    "frontend->ts-api.ts": 2,
+    "ir->backend": 25,
+    "ir->checker": 8,
+    "ir->codegen": 74,
+    "ir->codegen-linear": 4,
+    "ir->frontend": 7,
+    "ir->runtime": 9,
+    "runtime->ir": 1,
+    "runtime->timer-capability-contract.ts": 1,
+    "runtime-eval.ts->runtime.ts": 1,
+    "runtime.ts->runtime-eval.ts": 1,
+    "timer-capability-contract.ts->runtime": 1,
+    "ts-api.ts->frontend": 1
+  }
+}

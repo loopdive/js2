@@ -838,6 +838,7 @@ export function lowerIrFunctionBody<S, Slot>(
   // like `emitStandaloneAwaitUnwrap`'s temp local). Allocated lazily on the
   // first await in the function; reused across subsequent awaits.
   let awaitScratchPromiseIdx: number | null = null;
+  let rejectedScratchPromiseIdx: number | null = null;
   // #1804 — scratch locals for `vec.new_fixed`: one per (array typeIdx) to stash
   // the `array.new_fixed` data ref while the length is pushed below it for the
   // (length, data) struct.new field order. Keyed by arrayTypeIdx so distinct
@@ -1027,8 +1028,18 @@ export function lowerIrFunctionBody<S, Slot>(
   type CtrlFrame =
     | { kind: "break"; label: IrLabelId; iterCloseSlot?: number }
     | { kind: "continue"; label: IrLabelId }
-    | { kind: "plain"; finallyBody?: readonly IrInstr[] | undefined; iterCloseSlot?: number };
+    | { kind: "plain"; finallyBody?: readonly IrInstr[]; iterCloseSlot?: number; finallyRanSlot?: number };
   const ctrlStack: CtrlFrame[] = [];
+  // (#6651 U4) per-try i32 `finallyRan` flag — see the "try" arm.
+  const setFinallyRan = (slot: number, value: 0 | 1, out: S): void => {
+    emitter.emitScalarConst("i32", value, out);
+    emitter.emitLocalSet(slot, out);
+  };
+  const allocScratchLocal = (name: string, type: ValType): number => {
+    const idx = func.params.length + locals.length;
+    locals.push({ name: `${name}_${idx}`, type, logicalType: { kind: "val", val: type } });
+    return idx;
+  };
 
   /**
    * Emit a nested buffer as a statement sequence with the standard SSA
@@ -1080,6 +1091,7 @@ export function lowerIrFunctionBody<S, Slot>(
       if (frame.kind === "plain" && frame.finallyBody) {
         const saved = frame.finallyBody;
         frame.finallyBody = undefined; // mask: a finally never re-runs itself
+        if (frame.finallyRanSlot !== undefined) setFinallyRan(frame.finallyRanSlot, 1, out); // (#6651 U4)
         emitBufferAsStatements(saved, out);
         frame.finallyBody = saved;
       }
@@ -2952,17 +2964,33 @@ export function lowerIrFunctionBody<S, Slot>(
         // finally's own inline emissions, the catch path) it is masked —
         // the catch path's finally obligations are owned by the dedicated
         // inner-try frame below, and a finally must never re-run itself.
-        const tryFrame: { kind: "plain"; finallyBody?: readonly IrInstr[] | undefined } = {
-          kind: "plain",
-          finallyBody: instr.finallyBody,
+        // (#6651 U4) §14.15.3: a throw BY the finally completes the try; this
+        // statement's handlers must not see it (`finally { i++; throw }` ran
+        // twice). Every inlined finally copy raises `finallyRan` first and
+        // every handler skips its own work while it is set. Async bodies are
+        // out of scope (see `statements/finally-ran-guard.ts`).
+        const finallyRanSlot =
+          instr.finallyBody && func.funcKind !== "async"
+            ? allocScratchLocal("$finally_ran", { kind: "i32" })
+            : undefined;
+        const emitGuardedFinally = (target: Instr[]): void => {
+          const runFinally: Instr[] = finallyRanSlot === undefined ? target : [];
+          emitBodyBuffer(instr.finallyBody!, runFinally);
+          if (finallyRanSlot === undefined) return;
+          emitter.emitLocalGet(finallyRanSlot, target as unknown as S);
+          emitter.emitIf({ kind: "empty" }, [] as unknown as S, runFinally as unknown as S, target as unknown as S);
         };
+        const tryFrame: Extract<CtrlFrame, { kind: "plain" }> = { kind: "plain", finallyBody: instr.finallyBody };
+        if (finallyRanSlot !== undefined) tryFrame.finallyRanSlot = finallyRanSlot;
         ctrlStack.push(tryFrame);
 
         // Try body — emits user instrs + inlined finally on normal exit.
         const tryBody: Instr[] = [];
+        if (finallyRanSlot !== undefined) setFinallyRan(finallyRanSlot, 0, tryBody as unknown as S);
         emitBodyBuffer(instr.body, tryBody);
         tryFrame.finallyBody = undefined; // mask for all remaining emissions
         if (instr.finallyBody) {
+          if (finallyRanSlot !== undefined) setFinallyRan(finallyRanSlot, 1, tryBody as unknown as S);
           emitBodyBuffer(instr.finallyBody, tryBody);
         }
 
@@ -2972,6 +3000,17 @@ export function lowerIrFunctionBody<S, Slot>(
 
         if (instr.catchClause) {
           const catchBody: Instr[] = [];
+          if (finallyRanSlot !== undefined) {
+            // (#6651 U4) the finally threw — propagate its value, skip the catch.
+            const pending = allocScratchLocal("$finally_exn", { kind: "externref" });
+            const propagate: Instr[] = [];
+            emitter.emitLocalGet(pending, propagate as unknown as S);
+            emitter.emitThrow(tagIdx, propagate as unknown as S);
+            emitter.emitLocalSet(pending, catchBody as unknown as S);
+            emitter.emitLocalGet(finallyRanSlot, catchBody as unknown as S);
+            emitter.emitIf({ kind: "empty" }, propagate as unknown as S, [] as unknown as S, catchBody as unknown as S);
+            emitter.emitLocalGet(pending, catchBody as unknown as S);
+          }
           // Bind payload (or drop). Slot index === -1 means no binding.
           if (instr.catchClause.payloadSlot >= 0) {
             catchBody.push({
@@ -2989,16 +3028,13 @@ export function lowerIrFunctionBody<S, Slot>(
             // frame carries the finally while the catch body emits (a
             // br.label out of the catch must run the finally), masked while
             // the finally itself emits into the inner catch_all.
-            const innerFrame: { kind: "plain"; finallyBody?: readonly IrInstr[] | undefined } = {
-              kind: "plain",
-              finallyBody: instr.finallyBody,
-            };
+            const innerFrame: Extract<CtrlFrame, { kind: "plain" }> = { ...tryFrame, finallyBody: instr.finallyBody };
             ctrlStack.push(innerFrame);
             const innerBody: Instr[] = [];
             emitBodyBuffer(instr.catchClause.body, innerBody);
             innerFrame.finallyBody = undefined;
             const innerCatchAll: Instr[] = [];
-            emitBodyBuffer(instr.finallyBody, innerCatchAll);
+            emitGuardedFinally(innerCatchAll);
             emitter.emitRethrow(0, innerCatchAll as unknown as S);
             ctrlStack.pop();
             emitter.emitTry(
@@ -3027,7 +3063,7 @@ export function lowerIrFunctionBody<S, Slot>(
           // (out-of-memory, host runtime aborts, etc.). Slice 9 still
           // emits it because finally MUST run on EVERY exit path.
           const ca: Instr[] = [];
-          emitBodyBuffer(instr.finallyBody, ca);
+          emitGuardedFinally(ca);
           emitter.emitRethrow(0, ca as unknown as S);
           catchAll = ca;
         }
@@ -3396,6 +3432,34 @@ export function lowerIrFunctionBody<S, Slot>(
         emitter.emitNull({ kind: "val", val: { kind: "externref" } }, out);
         emitter.emitPromiseNew(promiseTypeIdx, out);
         emitter.emitToExternref(out);
+        const dispatch = resolver.resolvePromiseRejectionDispatcher?.();
+        if (dispatch !== undefined) {
+          const buildPromiseRejectionEvent = resolver.buildPromiseRejectionEvent;
+          if (!buildPromiseRejectionEvent) {
+            throw new Error("ir/lower: rejection dispatcher requires resolver.buildPromiseRejectionEvent");
+          }
+          if (rejectedScratchPromiseIdx === null) {
+            rejectedScratchPromiseIdx = func.params.length + locals.length;
+            locals.push({
+              name: "$rejected_promise",
+              type: { kind: "externref" },
+              logicalType: { kind: "val", val: { kind: "externref" } },
+            });
+          }
+          const promise = (): Instr[] => [
+            { op: "local.get", index: rejectedScratchPromiseIdx! },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: promiseTypeIdx },
+          ];
+          emitter.emitLocalSet(rejectedScratchPromiseIdx, out);
+          for (const instruction of buildPromiseRejectionEvent(dispatch, 0, promise(), [
+            ...promise(),
+            { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
+          ]))
+            // pushraw-ok(#4376): native WasmGC rejection-event resolver fragment; async.throw is rejected by other backends.
+            emitter.pushRaw(out, instruction);
+          emitter.emitLocalGet(rejectedScratchPromiseIdx, out);
+        }
         return;
       }
       case "await": {
@@ -3445,10 +3509,26 @@ export function lowerIrFunctionBody<S, Slot>(
         wasmOut.push({ op: "local.get", index: awaitScratchPromiseIdx });
         wasmOut.push({ op: "any.convert_extern" });
         wasmOut.push({ op: "ref.test", typeIdx: promiseTypeIdx });
+        const dispatch = resolver.resolvePromiseRejectionDispatcher?.();
+        const buildPromiseReactionHandled = resolver.buildPromiseReactionHandled;
+        if (dispatch !== undefined && !buildPromiseReactionHandled) {
+          throw new Error("ir/lower: rejection dispatcher requires resolver.buildPromiseReactionHandled");
+        }
+        const handled: Instr[] =
+          dispatch !== undefined
+            ? buildPromiseReactionHandled!(dispatch, promiseTypeIdx, awaitScratchPromiseIdx, "extern")
+            : [
+                { op: "local.get", index: awaitScratchPromiseIdx },
+                { op: "any.convert_extern" },
+                { op: "ref.cast", typeIdx: promiseTypeIdx },
+                { op: "i32.const", value: 1 },
+                { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 },
+              ];
         wasmOut.push({
           op: "if",
           blockType: { kind: "val", type: { kind: "externref" } as ValType },
           then: [
+            ...handled,
             { op: "local.get", index: awaitScratchPromiseIdx },
             { op: "any.convert_extern" },
             { op: "ref.cast", typeIdx: promiseTypeIdx },

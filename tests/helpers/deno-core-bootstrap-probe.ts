@@ -486,6 +486,7 @@ files["/deno-bootstrap/hello-world-usage-stage.ts"] =
   `${usageSource}}\n`;
 
 const result = await compileMulti(files, "/deno-bootstrap/entry.ts", {
+  ...(process.argv.includes("--allocation-owner") ? { standaloneAllocationOwnerExport: "__allocation_owned" } : {}),
   target: "standalone",
   platform: "deno",
   allowJs: true,

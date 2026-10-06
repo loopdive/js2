@@ -1,16 +1,23 @@
 #!/bin/sh
-# Pre-push hook with two responsibilities:
+# Pre-push hook:
 #
 #   1. (safety) Refuse to push anything under `labs/` to the public remote.
 #      The `labs/` top-level directory holds private content that must
 #      only ship to `loopdive/js2wasm-labs` (the `labs` remote).
 #
-#   2. (convenience) Refresh landing-page benchmarks locally when pushing
-#      a version tag. Benchmarks are tied to releases, not every push —
-#      CI runners are too noisy for display-quality numbers.
+#   2. (fast local gates) typecheck, lint, prettier on the changed files, the
+#      change-scoped ratchets and issue integrity — the checks CI's `quality`
+#      lane would otherwise reject a full cycle later.
 #
-# Skip the entire hook with: git push --no-verify  (only do this when you
-# *know* you are not pushing private content to public).
+# This hook never commits. It used to auto-commit a benchmark refresh when a
+# `v*` tag was pushed and a conformance-number sync, both with the hook-bypass
+# flag (#6799) — and a commit made inside pre-push is not even part of the push
+# that triggered it. The benchmark refresh now lives in scripts/release.mjs
+# (the only sanctioned tag path); a conformance drift now blocks the push with
+# the fix-up command instead.
+#
+# Bypassing the hooks is forbidden by project-lead order (CLAUDE.md,
+# 2026-08-22). A slow or failing gate gets fixed, not skipped.
 #
 # ---------------------------------------------------------------------------
 # FALSE-NEGATIVE PUSHES: a non-zero exit does NOT mean the push failed.
@@ -39,9 +46,8 @@
 remote="$1"
 remote_url=$(git remote get-url "$remote" 2>/dev/null || echo "")
 
-# Capture the ref-update lines once (git streams them on stdin). Both the labs
-# guard and the version-tag refresh below consume them, so read them into a
-# variable rather than draining stdin twice.
+# Capture the ref-update lines once (git streams them on stdin) so the labs
+# guard below reads them from a variable rather than draining stdin.
 push_refs=$(cat)
 
 # ---------- (1) labs/ safety check ---------------------------------------
@@ -62,41 +68,21 @@ if [ -r "$hook_lib" ]; then
   fi
 else
   echo "Pre-push: ERROR — cannot read $hook_lib; refusing to push without the labs/ guard." >&2
-  echo "          Restore the file, or use 'git push --no-verify' only if you are certain" >&2
-  echo "          the diff contains no labs/ content." >&2
+  echo "          Restore the file (git checkout -- scripts/hooks/push-remote-classify.sh)." >&2
   exit 1
 fi
 
-# ---------- (2) version-tag benchmark refresh ----------------------------
-
-if [ "$remote" = "origin" ]; then
-  printf '%s\n' "$push_refs" | while read local_ref local_oid remote_ref remote_oid; do
-    case "$remote_ref" in
-      refs/tags/v[0-9]*)
-        echo "Pre-push: version tag detected ($remote_ref) — refreshing benchmarks..."
-        pnpm run refresh:benchmarks 2>&1 | tail -5
-        git add -f \
-          benchmarks/results/playground-benchmark-sidebar.json \
-          benchmarks/results/size-benchmarks.json \
-          benchmarks/results/latest.json \
-          benchmarks/results/history.json \
-          public/benchmarks/results/playground-benchmark-sidebar.json \
-          public/benchmarks/results/size-benchmarks.json \
-          playground/public/benchmarks/results/playground-benchmark-sidebar.json 2>/dev/null
-        if ! git diff --cached --quiet 2>/dev/null; then
-          git commit --no-verify -m "chore(benchmarks): refresh for $remote_ref"
-          echo "Pre-push: benchmark data committed."
-        fi
-        ;;
-    esac
-  done
-fi
+# ---------- (2) version-tag benchmark refresh: MOVED ---------------------
+#
+# (#6799) Refreshing benchmarks on a `v*` tag push now happens in
+# `node scripts/release.mjs`, as a reviewed commit on the release branch. The
+# hook used to do it here and commit the result with the hook-bypass flag —
+# after the tag, so the data never travelled with the tag it described.
 
 # ---------- (3) typecheck + lint -----------------------------------------
 #
 # Run locally before push so failures don't waste a CI cycle. CI's cheap
-# gate is the safety net for --no-verify pushes and contributors without
-# the hook installed. Skip with `git push --no-verify`.
+# gate is the safety net for contributors without the hook installed.
 #
 # Run in parallel to minimize push latency (typecheck ~5-10s, lint ~1-2s).
 
@@ -113,7 +99,7 @@ if [ "$tc_rc" -ne 0 ]; then
   echo "Pre-push: typecheck FAILED (rc=$tc_rc). Output:"
   tail -50 "$tmp_tc"
   echo ""
-  echo "Fix typecheck errors before pushing, or use --no-verify (CI will catch)."
+  echo "Fix typecheck errors before pushing."
   rm -f "$tmp_tc" "$tmp_lint"
   exit 1
 fi
@@ -121,53 +107,41 @@ if [ "$lint_rc" -ne 0 ]; then
   echo "Pre-push: lint FAILED (rc=$lint_rc). Output:"
   tail -50 "$tmp_lint"
   echo ""
-  echo "Fix lint errors before pushing, or use --no-verify (CI will catch)."
+  echo "Fix lint errors before pushing."
   rm -f "$tmp_tc" "$tmp_lint"
   exit 1
 fi
 rm -f "$tmp_tc" "$tmp_lint"
 echo "Pre-push: typecheck + lint OK."
 
-# ---------- (3b) prettier format check -----------------------------------
+# ---------- (3b) prettier format check (changed files) -------------------
 #
-# Catch formatting drift locally — this is the SAME gate CI's `quality` job
-# runs (`pnpm run format:check` = prettier --check). Previously formatting
-# only got caught in CI (e.g. #914's typeof-delete.ts drift) because the
-# on-edit/lint-staged prettier is best-effort + bypassable. Worktrees now get
-# node_modules symlinked (provision-worktree.sh) so the PINNED prettier runs
-# here — matching CI exactly. Skip with --no-verify (CI is the backstop).
+# Catch formatting drift locally with the SAME prettier and config CI's
+# `quality` `format:check` uses (worktrees get node_modules symlinked by
+# provision-worktree.sh, so the PINNED prettier runs here).
+#
+# (#6799) Only the src/tests/scripts *.ts files this branch changes since its
+# merge-base with upstream main are checked, with NO watchdog. The old
+# whole-tree run sat under a 90 s watchdog and printed "TIMED OUT — skipping"
+# when it expired — measured 82 s idle, 108 s with one concurrent job, so it
+# skipped itself exactly when the box was busy. A changed-files check takes
+# seconds, so its verdict is final; CI still checks the whole tree. The logic
+# lives in a sourced, unit-tested helper (scripts/hooks/format-gate.sh,
+# tests/hooks/pre-push-format-gate.test.ts).
 
 if grep -q '"format:check"' package.json 2>/dev/null; then
-  echo "Pre-push: prettier format:check ..."
-  # Wrap in a hard timeout. In agent worktrees pnpm/prettier can hang
-  # (pnpm-store contention under concurrent worktrees, symlinked node_modules).
-  # A hung check used to SIGTERM at git's 300s limit and SILENTLY abort the push
-  # (it reported success but never updated the remote — stranding branches and
-  # wedging agents in push wait-loops). CI's `quality` job re-runs the exact same
-  # `format:check`, so on a LOCAL hang we degrade to a warning and let the push
-  # proceed; on a genuine format failure (prettier exits non-zero fast) we block.
-  #
-  # The watchdog is PORTABLE (#3409): stock macOS ships no GNU `timeout`, so an
-  # unconditional `timeout 90 …` used to exit 127 (command-not-found) before
-  # prettier ran and get mislabeled as a format failure, blocking every macOS
-  # push with a blank "Offending files" list. run_format_watchdog probes for
-  # `timeout`/`gtimeout` and falls open to a direct (un-watchdogged) run when
-  # neither exists — never synthesizing a 127. It lives in a sourced helper so it
-  # can be unit-tested (tests/hooks/pre-push-format-timeout.test.ts), mirroring
-  # the #3410 push-remote-classify.sh split.
+  echo "Pre-push: prettier --check (changed files) ..."
   fmt_lib="$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/format-gate.sh"
   if [ -r "$fmt_lib" ]; then
     . "$fmt_lib"
-    fmt_out=$(run_format_watchdog 90 pnpm run format:check 2>&1)
+    fmt_out=$(run_format_gate)
   else
-    echo "Pre-push: WARNING — cannot read $fmt_lib; running format:check without a watchdog." >&2
+    echo "Pre-push: WARNING — cannot read $fmt_lib; checking the whole tree." >&2
     fmt_out=$(pnpm run format:check 2>&1)
   fi
   fmt_rc=$?
-  if [ "$fmt_rc" -eq 124 ]; then
-    echo "Pre-push: format:check TIMED OUT (90s) — skipping local check, CI 'quality' will enforce it."
-  elif [ "$fmt_rc" -ne 0 ]; then
-    echo "Pre-push: format:check FAILED. Offending files:"
+  if [ "$fmt_rc" -ne 0 ]; then
+    echo "Pre-push: format check FAILED. Offending files:"
     # Prefer the prettier warning / *.ts filter, but if it matches nothing (e.g.
     # a runner/setup error rather than a formatting defect) show the RAW output
     # instead of an empty section, so the real cause is visible (#3409).
@@ -178,11 +152,12 @@ if grep -q '"format:check"' package.json 2>/dev/null; then
       echo "$fmt_out" | head -30
     fi
     echo ""
-    echo "Fix with: pnpm run format:write   (or: npx prettier --write <file>)"
-    echo "Then re-push. (Or --no-verify to defer to CI.)"
+    echo "Fix with: npx prettier --write <file>   (or: pnpm run format)"
+    echo "Then commit and re-push."
     exit 1
   else
-    echo "Pre-push: format:check OK."
+    echo "$fmt_out" | grep '^Pre-push:'
+    echo "Pre-push: format check OK."
   fi
 fi
 
@@ -196,7 +171,7 @@ if grep -q '"check:oracle-ratchet"' package.json 2>/dev/null; then
   echo "Pre-push: oracle ratchet ..."
   if ! pnpm run check:oracle-ratchet; then
     echo ""
-    echo "Fix direct checker growth before pushing, or use --no-verify (CI will catch)."
+    echo "Fix direct checker growth before pushing."
     exit 1
   fi
   echo "Pre-push: oracle ratchet OK."
@@ -211,7 +186,7 @@ if grep -q '"check:coercion-sites"' package.json 2>/dev/null; then
   echo "Pre-push: coercion-site ratchet ..."
   if ! pnpm run check:coercion-sites; then
     echo ""
-    echo "Route new coercions through the shared engine before pushing, or use --no-verify (CI will catch)."
+    echo "Route new coercions through the shared engine before pushing."
     exit 1
   fi
   echo "Pre-push: coercion-site ratchet OK."
@@ -227,33 +202,35 @@ echo "Pre-push: numeric-local IR parity (#3765) ..."
 if ! pnpm exec vitest run tests/issue-3765-numeric-locals.test.ts \
   --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism; then
   echo ""
-  echo "Fix the #3765 direct/IR numeric-local regression before pushing, or use --no-verify (CI will catch)."
+  echo "Fix the #3765 direct/IR numeric-local regression before pushing."
   exit 1
 fi
 echo "Pre-push: numeric-local IR parity OK."
 
-# ---------- (4) sync conformance numbers in docs -------------------------
+# ---------- (4) conformance numbers in docs: CHECK, never commit ----------
 #
-# Keeps README.md / ROADMAP.md / CLAUDE.md / plan/goals/goal-graph.md in
-# sync with benchmarks/results/test262-current.json. The quality CI gate
-# fails with "Conformance numbers in sync (#1522)" when these drift.
-# Running here auto-commits any change so the push carries the update.
+# README.md / ROADMAP.md / CLAUDE.md / plan/goals/goal-graph.md embed the
+# figures from benchmarks/results/test262-current.json; the quality CI gate
+# fails with "Conformance numbers in sync (#1522)" when they drift.
+# (#6799) This section used to rewrite the docs and auto-commit them with the
+# hook-bypass flag — a commit that was not even part of the push that
+# triggered it. Now a real drift blocks the push with the fix-up command; a
+# malformed input stays non-fatal, as before.
 # Note: reads from the local test262-current.json — merge main first so
 # your baseline is current before pushing.
 
-if command -v pnpm > /dev/null 2>&1 && [ -f package.json ]; then
-  conf_out=$(pnpm run sync:conformance 2>&1)
+if command -v pnpm > /dev/null 2>&1 && grep -q '"sync:conformance:check"' package.json 2>/dev/null; then
+  conf_out=$(pnpm run sync:conformance:check 2>&1)
   conf_rc=$?
-  if [ "$conf_rc" -eq 0 ]; then
-    changed=$(echo "$conf_out" | grep "wrote" | sed 's/.*wrote  //')
-    if [ -n "$changed" ]; then
-      echo "Pre-push: conformance numbers updated in: $(echo "$changed" | tr '\n' ' ')"
-      echo "$changed" | xargs git add --
-      git commit --no-verify -m "chore: sync conformance numbers [skip ci]"
-      echo "Pre-push: conformance commit added to push."
+  if [ "$conf_rc" -ne 0 ]; then
+    if echo "$conf_out" | grep -q -- '--check failed'; then
+      echo "$conf_out" | tail -25
+      echo ""
+      echo "PRE-PUSH BLOCKED: conformance numbers in docs drift from test262-current.json."
+      echo "Fix with: pnpm run sync:conformance, then commit the files it wrote and re-push."
+      exit 1
     fi
-  else
-    echo "Pre-push: sync:conformance failed (non-fatal) — CI quality gate may flag drift."
+    echo "Pre-push: sync:conformance:check failed (non-fatal) — CI quality gate may flag drift."
   fi
 fi
 
@@ -268,7 +245,7 @@ fi
 # the agents' local `check:issues` falsely passed. Also checks committed-tree
 # dependencies so uncommitted sibling issue files cannot hide a dangling
 # depends_on, then runs the full check:issues for dup-IDs / broken links.
-# Skip the whole hook with --no-verify.
+# A failure here blocks the push; fix the issue file, do not bypass the hook.
 
 if command -v node > /dev/null 2>&1 && [ -d plan/issues ]; then
   issue_block=0
@@ -331,7 +308,7 @@ if command -v node > /dev/null 2>&1 && [ -d plan/issues ]; then
 
   if [ "$issue_block" -ne 0 ]; then
     echo ""
-    echo "Fix the issue-integrity problem(s) above, or 'git push --no-verify' to defer to CI."
+    echo "Fix the issue-integrity problem(s) above, commit, and re-push."
     exit 1
   fi
   echo "Pre-push: issue integrity OK."

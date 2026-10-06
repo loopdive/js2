@@ -1,14 +1,16 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { createHash } from "node:crypto";
+import { beforeSourceMapProgramValidatorRelocation } from "./helpers/ir-program-validator-relocation.js";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import ts from "typescript";
 import {
   assertRuntimeContractSource,
   authenticateRuntimeContractEvolution,
-  beforeRuntimeContractReceiptSource,
-  readRuntimeContractActual,
-  readRuntimeContractReceiptSource,
-  reconstructRuntimeContractReceiptSources,
+  beforeRuntimeContractReceiptSource as originalBeforeRuntimeContractReceiptSource,
+  readRuntimeContractActual as originalReadRuntimeContractActual,
+  readRuntimeContractReceiptSource as originalReadRuntimeContractReceiptSource,
+  reconstructRuntimeContractReceiptSources as originalReconstructRuntimeContractReceiptSources,
   runtimeContractCurrentPaths,
   runtimeContractGitBlob,
   runtimeContractReceiptPath,
@@ -21,6 +23,23 @@ import {
   historicalIntrinsicSource,
   receiptRows,
 } from "./helpers/ir-historical-runtime-reconstruction.js";
+
+import { beforeRuntimePreparationRelocation } from "./helpers/ir-runtime-preparation-relocation.js";
+
+type SourceReader = (path: string) => string;
+// These tests' "current" is the immutable pre-C2a evolution input.
+const prePreparationRead = (): SourceReader =>
+  beforeRuntimePreparationRelocation(beforeProgramValidatorRelocation(originalReadRuntimeContractActual));
+const readRuntimeContractActual: SourceReader = (path) => prePreparationRead()(path);
+function reconstructRuntimeContractReceiptSources(reader?: SourceReader, receiptText?: string) {
+  return originalReconstructRuntimeContractReceiptSources(reader ?? prePreparationRead(), receiptText);
+}
+function beforeRuntimeContractReceiptSource(path: string, source: string, reader?: SourceReader): string {
+  return originalBeforeRuntimeContractReceiptSource(path, source, reader ?? prePreparationRead());
+}
+function readRuntimeContractReceiptSource(path: string, reader?: SourceReader): string {
+  return originalReadRuntimeContractReceiptSource(path, reader ?? prePreparationRead());
+}
 
 const receiptText = readRuntimeContractActual(runtimeContractReceiptPath);
 const receipt = authenticateRuntimeContractEvolution(receiptText);
@@ -773,3 +792,22 @@ describe("issue 3518: runtime contract initial-source evolution", () => {
     );
   });
 });
+
+// Fresh whole component authentication precedes each explicit source-epoch bridge.
+function assertSourceMapValidatorComponent(readLive: (path: string) => string): void {
+  const path = "tests/helpers/ir-program-validator-relocation.ts";
+  const text = readLive(path);
+  if (typeof text !== "string" || text.length === 0)
+    throw new Error("program validator relocation: nonempty primitive text required: " + path);
+  if (
+    Buffer.byteLength(text) !== 46642 ||
+    createHash("sha256").update(text).digest("hex") !==
+      "6e32ca208775e8eeae765bf3345cdd3cb1e0f40a1784f684afd9c4dff3a4cfe0"
+  )
+    throw new Error("program validator relocation: complete source pin mismatch: " + path);
+}
+function beforeProgramValidatorRelocation(readLive: (path: string) => string): (path: string) => string {
+  if (typeof readLive !== "function") throw new Error("program validator relocation: physical reader required");
+  assertSourceMapValidatorComponent(readLive);
+  return beforeSourceMapProgramValidatorRelocation(readLive);
+}

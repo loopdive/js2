@@ -55,7 +55,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitCachedMethodClosureAccess } from "./closures.js";
-import { classMemberFuncKey } from "./class-member-keys.js";
+import { classMemberFuncKey, isInstanceAccessorKey } from "./class-member-keys.js";
 import { dynamicClassKeyGlobalKey, dynamicClassMemberOrdinal } from "./class-dynamic-keys.js"; // (#5195 Step 1)
 
 /** The `__priv_` prefix `resolveClassMemberName` gives `#private` element names. */
@@ -139,8 +139,7 @@ export function installableClassAccessors(ctx: CodegenContext, className: string
     // `classMethodNames` folds accessors in with methods and carries no kind
     // tag; `classAccessorSet` is what separates the two. `staticAccessorSet` is
     // a subset of it — a static accessor is not a prototype member at all.
-    if (!ctx.classAccessorSet.has(fullName)) continue;
-    if (ctx.staticAccessorSet.has(fullName)) continue;
+    if (!isInstanceAccessorKey(ctx, fullName)) continue; // (#6772 S12) an instance accessor with a static twin installs too
     const getterFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, `${className}_get_${name}`));
     const setterFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, `${className}_set_${name}`));
     if (getterFuncIdx === undefined && setterFuncIdx === undefined) continue;

@@ -9,6 +9,7 @@
 // unconditional, so it ALWAYS returns an InnerResult — compileCallExpression's
 // tail is a single `return compileTailDispatch(...)`. Moved verbatim: the
 // emitted Wasm is byte-identical.
+import { isAccessorReceiver } from "../accessor-object-literal.js"; // (#6774 S6)
 import { forEachChild, ts } from "../../ts-api.js";
 import { widenJsDefaultGuessSymbolSlot } from "../js-default-param-type-guess.js";
 import { profilePhase } from "../../compile-profile.js";
@@ -45,7 +46,13 @@ import { objectLiteralTakesStandaloneAnyObjectPath, resolveComputedKeyExpression
 import { emitNullCheckThrow, typeErrorThrowInstrs } from "../property-access.js";
 import { tryCompileStandaloneRegExpSymbolCall, usesNativeRegExpProvider } from "../regexp-standalone.js";
 import type { InnerResult } from "../shared.js";
-import { brandExternMethodResult, coerceType, compileExpression, VOID_RESULT } from "../shared.js";
+import {
+  brandExternMethodResult,
+  coerceType,
+  compileExpression,
+  skipTransparentExpressions,
+  VOID_RESULT,
+} from "../shared.js";
 import { compileStatement, hoistFunctionDeclarations } from "../statements.js";
 import { ensureExtrasArgvGlobal, maybeSetArgcForKnownCall } from "../statements/nested-declarations.js";
 import { compileStringLiteral, isStaticUndefinedArg } from "../string-ops.js";
@@ -1072,7 +1079,7 @@ export function compileTailDispatch(
       }
       if (receiverClassName && ctx.classSet.has(receiverClassName)) {
         const fullName = `${receiverClassName}_${methodName}`;
-        const funcIdx = ctx.funcMap.get(fullName);
+        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")); // (#6772 S4)
         if (funcIdx !== undefined && !elementCallTargetsStaticMethod(ctx, elemAccess.expression, methodName)) {
           // Push self (the receiver) as first argument
           compileExpression(ctx, fctx, elemAccess.expression);
@@ -1113,10 +1120,15 @@ export function compileTailDispatch(
       }
 
       // Try struct method: structName_methodName
-      const structTypeName = resolveStructName(ctx, receiverType);
+      // (#6774 S6) An open `$Object` literal binding keeps the dynamic call: the
+      // closed-shape method arm would `ref.cast` it to the stale inferred struct.
+      const structTypeName =
+        ctx.standalone && isAccessorReceiver(ctx, skipTransparentExpressions(elemAccess.expression))
+          ? undefined
+          : resolveStructName(ctx, receiverType);
       if (structTypeName) {
         const fullName = `${structTypeName}_${methodName}`;
-        const funcIdx = ctx.funcMap.get(fullName);
+        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")); // (#6772 S4)
         if (funcIdx !== undefined && !elementCallTargetsStaticMethod(ctx, elemAccess.expression, methodName)) {
           const recvType = compileExpression(ctx, fctx, elemAccess.expression);
           // Check if receiver went through emitGuardedRefCast — null may mean

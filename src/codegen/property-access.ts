@@ -33,7 +33,12 @@ import {
 } from "./proxy-receiver-generic-read.js"; // (#6651 F4)
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
-import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js"; // (#1983) collision-free class-member funcMap keys; (#2963) method-owner chain
+import {
+  classMemberFuncKey,
+  isInstanceAccessorKey,
+  resolveMethodOwnerClass,
+  staticReceiverAccessorKey,
+} from "./class-member-keys.js"; // (#1983) collision-free class-member funcMap keys; (#2963) method-owner chain
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { resolveWidenedVarKey, integrityVarKey } from "./widened-var-key.js";
@@ -87,6 +92,7 @@ import {
   ab4519RevertsToBase,
   emitIsNullishAnyAt,
   ensureAnyFromExternHelper,
+  isAnyValue,
   nullishExternTestInstrs,
   undefinedExternInstrs,
   undefinedSingletonActive,
@@ -227,6 +233,7 @@ import { classMethodCandidatesForProp, reserveMemberGetDispatch } from "./member
 import { resolveReceiverStruct } from "./fnctor-escape-gate.js"; // (#2681/#2686 A3) pinned-struct read dispatch
 import { emitGuardedNativeStringElementGet } from "./string-element-read.js"; // (#3973) any-typed native-string element read
 import { emitStringExoticIndexGet } from "./string-exotic-index.js"; // (#4232) §10.4.3.5 bounds for a statically-string receiver
+import { isObjectAssignPrimitiveResultBinding } from "./object-model/object-assign-primitive-operands.js"; // (#6770 S1)
 import { reserveAccessorGetDriver } from "./accessor-driver.js";
 import { S5C_STRUCT_ACCESSOR_CLOSURE } from "./struct-accessor-closure.js";
 import { tryCompileTemporalPropertyAccess } from "./temporal-native.js";
@@ -456,6 +463,7 @@ import { tryEmitPrimitiveAbsentPropertyRead } from "./primitive-absent-property.
 import { tryEmitPrimitiveProtoMemberGet } from "./primitive-proto-member-get.js"; // (#4668) PRESENT prop of a number/boolean primitive → chain walk
 import { isForeignEvalNode } from "./expressions/eval-source.js";
 import { identityPreservingStructuralParamCarrier } from "./identity-preserving-structural-param.js";
+import { isReturnOverrideMemberRead, returnOverrideReceiverIsDynamic } from "./classes/ctor-return-override.js"; // (#6772 S2)
 import { ensureFunctionProtoEdge, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
 import {
   finalizeStructAndDynamicMemberGet,
@@ -1210,6 +1218,13 @@ export function resolveStructNameForExpr(
     typeName = resolveThisStructName(ctx, fctx);
   }
   typeName = typeName ?? carrierNameForAccess(ctx, resolvedCarrier, accessedMember); // (#5187)
+  // (#6772 S2) A binding of a return-override class may hold the FOREIGN
+  // override object, never castable to the struct: take the dynamic member
+  // path (it reads a real instance's fields too). Private members, and `this`
+  // outside an override-capable derived frame, keep the exact struct.
+  if (typeName !== undefined && returnOverrideReceiverIsDynamic(ctx, fctx, typeName, bareIdent, accessedMember)) {
+    return undefined;
+  }
   return typeName;
 }
 
@@ -1664,6 +1679,7 @@ export function findAlternateStructsForField(
     // (#6651 B6) A RegExp's `lastIndex` is two slots (f64 + deferred raw); a field arm sees only the f64.
     // (B9) Its `flags` slot is the i32 bitfield, not §22.2.6.4's string: `__extern_get` runs the accessor.
     if ((propName === "lastIndex" || propName === "flags") && typeName === "__StandaloneRegExp") continue;
+    if (typeName === "$Promise" && propName === "$handled") continue;
     const fIdx = fields.findIndex((f) => f.name === propName);
     if (fIdx !== -1) {
       const shapeId = ctx.shapeIdByStructName.get(typeName);
@@ -2097,7 +2113,7 @@ export function emitExternrefBackedOwnFieldRead(
 ): ValType | null | undefined {
   const backing =
     backingOverride ?? (className === undefined ? "error-struct" : externrefBackedOwnFieldBacking(ctx, className));
-  if (backing === undefined) return undefined;
+  if (backing === undefined || backing === "collection-struct") return undefined; // (#6754) struct path reads it
   ensureObjectRuntime(ctx);
   const externGetIdx = ensureLateImport(
     ctx,
@@ -2817,15 +2833,18 @@ export function receiverIsNativeStringValType(
  * {@link emitGuardedNativeStringLength} and `compileGuardedNativeStringMethodCall`)
  * and keep the prior behaviour in the else arm for non-string values.
  *
- * Narrow scope: `any`/`unknown` only (NOT `object`/`{}`, NOT unions containing
- * `string`), native-string mode only (host/gc mode's generic `__extern_get`
+ * Narrow scope: `any`/`unknown` or unions containing string (NOT `object`/`{}`),
+ * native-string mode only (host/gc mode's generic `__extern_get`
  * already returns the correct length from the real JS value).
  */
 export function receiverMayBeNativeStringAtRuntime(ctx: CodegenContext, recv: ts.Expression): boolean {
   if (!(ctx.wasi || ctx.standalone)) return false;
   if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
   const t = ctx.checker.getTypeAtLocation(recv);
-  return (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+  return (
+    (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+    (t.isUnion() && t.types.some((part) => (part.flags & ts.TypeFlags.StringLike) !== 0))
+  );
 }
 
 /**
@@ -3528,6 +3547,13 @@ export function taViewReceiverTypeIdx(
   return undefined;
 }
 
+function receiverHasOwnComputedProto(ctx: CodegenContext, expr: ts.PropertyAccessExpression): boolean {
+  // The member resolves to a `["__proto__"]: v` definition of an object literal.
+  return ctx.oracle
+    .declarationsOf(expr.name)
+    .some((d) => ts.isPropertyAssignment(d) && ts.isComputedPropertyName(d.name));
+}
+
 /**
  * Dynamic member READ off an open-object carrier. The established standalone
  * growable-object case keeps its reserved-accessor/callable exclusions. The
@@ -3543,9 +3569,16 @@ function tryOpenObjectDynamicGet(
   expr: ts.PropertyAccessExpression,
   propName: string,
 ): ValType | null | undefined {
-  const irWithTarget = isIrWithOpenObjectTargetReceiver(ctx, expr.expression);
+  // (#6774 S2) `{ ["__proto__"]: v }` holds an OWN "__proto__" data property:
+  // read it raw, never through the reserved proto-walk / typed-unbox lowerings.
+  const ownProto = ctx.standalone && propName === "__proto__" && receiverHasOwnComputedProto(ctx, expr);
+  const irWithTarget = ownProto || isIrWithOpenObjectTargetReceiver(ctx, expr.expression);
   if (!irWithTarget && !ctx.standalone) return undefined;
-  if (!irWithTarget && !chainRootIsGrowable(ctx, expr.expression)) return undefined;
+  // (#6772 S2) a return-override class binding may hold the foreign override
+  // object: read the raw MOP value (never the checker's field type).
+  if (!irWithTarget && !chainRootIsGrowable(ctx, expr.expression) && !isReturnOverrideMemberRead(ctx, expr)) {
+    return undefined;
+  }
   if (
     !irWithTarget &&
     (propName === "length" ||
@@ -3987,6 +4020,14 @@ export function compilePropertyAccess(
   // file; their identifiers are compiled as externrefs, but the checker cannot
   // answer property-access queries for those unbound declarations. Keep this
   // lane dynamic so expressions such as `a1.length` and `this.shifted` remain evaluable.
+  // (#6774 S5) A spliced `eval("super.x")` resolves against the CALLER frame's home object.
+  if (
+    isForeignEvalNode(expr) &&
+    expr.expression.kind === ts.SyntaxKind.SuperKeyword &&
+    !ts.isPrivateIdentifier(expr.name)
+  ) {
+    return compileSuperPropertyAccess(ctx, fctx, expr, expr.name.text);
+  }
   if (isForeignEvalNode(expr)) {
     const foreignPoison = tryCompileFunctionPoisonRead(ctx, fctx, expr);
     if (foreignPoison !== undefined) return foreignPoison;
@@ -5222,7 +5263,7 @@ export function compileElementAccess(
         const accessorKey = `${resolvedClass}_${key}`;
         if (ctx.classAccessorSet.has(accessorKey)) {
           const getterName = `${resolvedClass}_get_${key}`;
-          const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, getterName));
+          const funcIdx = ctx.funcMap.get(staticReceiverAccessorKey(ctx, resolvedClass, "get", key)); // (#6772 S12)
           if (funcIdx !== undefined) {
             const retType = emitGetterCallWithDummy(ctx, fctx, resolvedClass, getterName, funcIdx);
             return retType ?? { kind: "externref" };
@@ -5276,7 +5317,7 @@ export function compileElementAccess(
       const key = resolveComputedKeyExpression(ctx, expr.argumentExpression);
       if (key !== undefined) {
         const accessorKey = `${className}_${key}`;
-        if (ctx.classAccessorSet.has(accessorKey) && !ctx.staticAccessorSet.has(accessorKey)) {
+        if (isInstanceAccessorKey(ctx, accessorKey)) {
           const getterName = `${className}_get_${key}`;
           const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, getterName));
           if (funcIdx !== undefined) {
@@ -5290,7 +5331,7 @@ export function compileElementAccess(
         // dot-access path at property-access.ts:1361–1383.
         const methodFullName = `${className}_${key}`;
         if (ctx.classMethodSet.has(methodFullName) && !ctx.staticMethodSet.has(methodFullName)) {
-          const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, methodFullName));
+          const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, methodFullName, "instance"));
           const structTypeIdx = ctx.structMap.get(className);
           if (funcIdx !== undefined && structTypeIdx !== undefined) {
             if (emitCachedMethodClosureAccess(ctx, fctx, methodFullName, funcIdx, structTypeIdx)) {
@@ -5326,7 +5367,8 @@ export function compileElementAccess(
     const recvWrapTsType = ctx.checker.getTypeAtLocation(expr.expression);
     if (
       (isStringWrapperType(recvWrapTsType) || ctx.oracle.staticJsTypeOf(expr.expression) === "string") &&
-      isNumericIndexExpression(ctx, expr.argumentExpression, fctx)
+      isNumericIndexExpression(ctx, expr.argumentExpression, fctx) &&
+      !isObjectAssignPrimitiveResultBinding(ctx, expr.expression) // (#6770 S1) checker type is `T & U`, runtime is ToObject(T)
     ) {
       // (#4232) …with §10.4.3.5 bounds, not §22.1.3.1 charAt bounds: an index
       // outside `[0, len)` — or a non-canonical one like `NaN` / `1.5` — is
@@ -5347,7 +5389,17 @@ export function compileElementAccess(
       receiverMayBeNativeStringAtRuntime(ctx, expr.expression)
     ) {
       const guarded = emitGuardedNativeStringElementGet(ctx, fctx, expr.expression, expr.argumentExpression);
-      if (guarded) return guarded;
+      if (guarded) {
+        // The string/array arms return raw externrefs. A heterogeneous union
+        // sink must classify those values, not label a boxed number "string".
+        if (expectedType && isAnyValue(expectedType, ctx)) {
+          const classify = ensureAnyFromExternHelper(ctx, { forceHonest: true });
+          if (classify === undefined) throw new Error("native string union read requires honest value classification");
+          fctx.body.push({ op: "call", funcIdx: classify });
+          return { kind: "ref", typeIdx: ctx.anyValueTypeIdx };
+        }
+        return guarded;
+      }
     }
   }
 

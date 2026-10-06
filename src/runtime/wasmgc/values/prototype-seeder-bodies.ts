@@ -6,6 +6,8 @@ export const PROTOTYPE_SEED_FLAGS = Object.freeze({
   method: 0xbd,
   symbolTag: 0xbc,
   constant: 0xb8,
+  // (#6651 U3) {w:T, e:F, c:F} — %Array.prototype%'s own `length` (§23.1.3).
+  arrayLength: 0xb9,
   accessor: (1 << 4) | (1 << 5) | (1 << 2),
 });
 
@@ -126,14 +128,10 @@ export function buildPrototypeSeedMemberTail(member: string, kind: "method" | "g
   ];
 }
 
-export function buildPrototypeSeedDataPropertyTail(
-  kind: "string" | "number",
-  defineValueIdx: number,
-  flags?: number,
-): Instr[] {
+export function buildPrototypeSeedDataPropertyTail(kind: "string" | "number", defineValueIdx: number): Instr[] {
   return buildPrototypeSeedDataTail(
     defineValueIdx,
-    flags ?? (kind === "number" ? PROTOTYPE_SEED_FLAGS.constant : PROTOTYPE_SEED_FLAGS.method),
+    kind === "number" ? PROTOTYPE_SEED_FLAGS.constant : PROTOTYPE_SEED_FLAGS.method,
   );
 }
 

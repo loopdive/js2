@@ -1485,6 +1485,23 @@ function collectDerivedPatternParams(decl: ts.FunctionLikeDeclaration, fctx: Fun
     if (type === undefined) continue;
     out.push({ name, type, entryLocalIdx: idx });
   }
+  // (#6859) An ASSIGNED identifier param rides the frame like a derived
+  // binding. Its param field is an immutable snapshot taken at activation, so
+  // `x ||= d; await p; use(x)` read the pre-assignment value after the resume,
+  // and a nested closure's `resolve = r` (hono `createPool`) never reached it at
+  // all. As a spill it is stored at every suspend and restored at every resume,
+  // and one a nested function also references gets the shared cell.
+  if (decl.body !== undefined && decl.asteriskToken === undefined) {
+    const { assigned } = collectNestedRefsAndAssigns(decl.body);
+    for (const parameter of decl.parameters) {
+      if (!ts.isIdentifier(parameter.name)) continue;
+      const name = parameter.name.text;
+      if (!assigned.has(name)) continue;
+      const idx = fctx.localMap.get(name);
+      if (idx === undefined || idx >= fctx.params.length || fctx.boxedCaptures?.has(name)) continue;
+      out.push({ name, type: fctx.params[idx]!.type, entryLocalIdx: idx });
+    }
+  }
   return out;
 }
 
@@ -2256,6 +2273,7 @@ export function ensureAsyncResumeFunction(
               fulfillStepFuncIdx: info.stepFulfillFuncIdx ?? -1,
               rejectStepFuncIdx: info.stepRejectFuncIdx ?? -1,
               markRejectionHandledFuncIdx: rt?.markRejectionHandledFuncIdx ?? -1,
+              rejectionDispatchFuncIdx: rt?.rejectionDispatchFuncIdx,
               setThrowMode: setStateI32FromConst(info, frameLocal, MODE_FIELD, MODE_THROW),
             }),
           );
@@ -2735,6 +2753,7 @@ function emitAsyncFrameEntry(
     fctx.body.push({ op: "ref.null.extern" });
     fctx.body.push({ op: "ref.null.extern" });
     fctx.body.push(closureBagInitInstr());
+    fctx.body.push({ op: "i32.const", value: 0 });
     fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   }
   fctx.body.push({ op: "local.set", index: resultPromiseLocal });
@@ -3235,6 +3254,7 @@ export function emitAsyncGenerator(ctx: CodegenContext, fctx: FunctionContext, d
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push(closureBagInitInstr());
+  fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "struct.new", typeIdx: info.stateTypeIdx });
 
@@ -3277,6 +3297,7 @@ function emitAsyncGenNextHelper(ctx: CodegenContext, info: AsyncFrameInfo, promi
     { op: "ref.null.extern" },
     { op: "ref.null.extern" },
     closureBagInitInstr(),
+    { op: "i32.const", value: 0 },
     { op: "struct.new", typeIdx: promiseTypeIdx },
     { op: "local.set", index: pLocal },
     // frame.result_promise = p
@@ -3346,6 +3367,7 @@ function emitAsyncGenReturnThrowHelpers(ctx: CodegenContext, info: AsyncFrameInf
     { op: "ref.null.extern" },
     { op: "ref.null.extern" },
     closureBagInitInstr(),
+    { op: "i32.const", value: 0 },
     { op: "struct.new", typeIdx: promiseTypeIdx },
     { op: "local.set", index: pLocal },
     { op: "local.get", index: fLocal },
