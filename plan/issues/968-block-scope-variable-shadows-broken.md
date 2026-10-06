@@ -273,7 +273,7 @@ Normal gates are the remaining publication prerequisite.
 Initial normal-gate observer22227 completed1/EOF, receipt
 `7ebc6f68a8d8dedd5eb0053e25efaf9b9ce9a8ff15979850823f4caa96c2ee21`.
 Whole-tree format, TypeScript7 typecheck, LOC/function/oracle/pushRaw/coercion
-ratchets and issue IDs/status/integrity passed. The source remains1459 lines,
+ratchets and issue IDs/status/integrity passed. The source remains1457 lines,
 under1500; no file or function budget exception is necessary or granted.
 Lint correctly rejected the new test's unnecessary array export. Removing only
 the export modifier leaves all twelve source bodies and assertions unchanged;
