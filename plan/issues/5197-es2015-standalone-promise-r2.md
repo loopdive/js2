@@ -2263,3 +2263,197 @@ retains7 files/338625 decoded bytes. Static preservation covers152 registrations
 The source patch is approved but unapplied pending terminal786-run evidence.
 After termination, recheck exact preimages before application; preserve that run's
 original7769-pin result and define the seven-file delta for subsequent acceptance.
+
+### Full two-file repair accepted; seven-site patch applied
+
+Job46916 terminated exit0; E evidence directory
+`.tmp/5883-two-file-historical-acceptance-20261006-rBuRO1` records786/786 passed
+(636 historical,150 seam), zero failed/skipped/todo and clean complete raw output.
+Native SHA2568f8e126119ba5408f88a55df34e6695cec2212c6532b2dbeeef7ccfd9fe947d3;
+raw SHA256e9127ec708087ad130688b26ecb99bd8aba25ac9e8e5bfb7ff3eb60e25ecfb60.
+Parent read the terminal and entire raw log and independently checked every
+identity/multiplicity and all7769 before/after pins. This accepts the two-file
+repair only, not overall successor or IR acceptance. All original attempts remain.
+
+After that terminal confirmation, parent revalidated and applied only the seven
+reviewed acquisition edits. All seven postimage byte counts and SHA256 values
+match the approved patch report exactly. Subsequent validation must declare that
+seven-file input delta; the successful run above must not be relabeled as covering
+the revised candidate. No merge commit, push or hold removal has occurred in E.
+
+Release Darwin the next serial validation slot for the complete new inventory-view
+control file, issue-5883-main-4bff-inventory-views.test.ts: all173 declared cases,
+original35000ms deadline, one worker/2048MB, zero failures/skips/todos and no raw
+RPC/unhandled errors. Retain command/environment, complete raw/native/exit and
+full source/script/test/config maps. Before execution, verify exactly the seven
+approved postimage changes from the accepted7769 map and no other input delta.
+Preserve the prior map and attempts. This focused helper check precedes the
+remaining complete caller/C1/successor and full-composition checks; it replaces
+none of them. Record collected names, not just aggregate totals.
+
+### Candidate validation inventory after the pinned-main composition
+
+Parent compared actual E test paths with the prior manifest:68 previously
+declared files,29 changed tracked test files and one new untracked test file
+produce86 distinct required test files. Eighteen are absent from the old manifest:
+the seven additional acquisition callers, number-prerequisite/runtime-program/
+well-known-symbol policy callers, axios-residual-mechanisms, typedarray-residue,
+crypto-regime, the three6866 inventory successor files, source-map-position-
+projection and the new173 inventory-view controls. These cannot be omitted merely
+because the earlier D manifest did not know them.
+
+The next collection plan must use the union of prior manifest.assertions keys,
+actual changed tracked .test.ts paths versus8b9 and untracked .test.ts paths,
+requiring exactly these86 files before any native collection. Preserve the
+original68 identity multisets (four known additive freshness cases separately
+accounted); obtain full native identities for the18 additional files. Do not
+treat static registration counts or all-skipped collection as passing execution.
+The earlier repeated56-case file across runtime/text stages remains explicit in
+the eventual execution schedule rather than silently deduplicating executions.
+
+Release Laplace only to prepare a read-only collection/inventory plan and a
+candidate input-delta manifest in E .tmp. Derive the exact seven approved source
+changes from the accepted7769 map, verify unchanged C1/helper authorities and
+test deadlines, and enumerate native collection commands and expected file set.
+No collection execution while Darwin owns the173-test slot, no source edits,
+new authorities inferred from candidate results, merge commit or push. Parent
+reviews the prepared inventory before authorizing collection and stage execution.
+
+The complete inventory-view check terminated exit0 (job22850),173/173 passed,
+zero failed/skipped/todo,7.08seconds. Parent reviewed complete raw output and
+independently verified every native status, equal7769-input maps and exactly the
+seven approved postimage deltas from the prior two-file epoch. Evidence is in E
+`.tmp/5883-inventory-views-acceptance-20261006-eMlflk`; map SHA256
+3a81552e88eea59b0f56c6ecd26411ba6c66481fe3c944e1156f2cfa92a5e658,
+native443eb2a569775c9101fb920cc7a13ac6860a72c9fe5dcb7a30466120f7719606,
+raw109ac53a17b5e5abfec584bd037fc4c7b6533556d592ba17793a4c164adb1bc3.
+This proves the helper controls only. No caller/C1/full-composition acceptance
+is inferred. The serial test slot is free for the next reviewed collection.
+
+### Native86 collection release
+
+Parent reviewed the prepared commands/requirements and independently verified
+the86-file union from actual Git paths plus all7769 physical input hashes.
+Plan E `.tmp/laplace-5883-candidate-86-collection-plan-20261006.json` has SHA256
+89588f9a09e7c2974911aff71b0c0b4904ea12f91e7f160cc175569244d3d263;
+delta `.tmp/laplace-5883-candidate-seven-input-delta-20261006.json` has SHA256
+9447b59df00bc18c431e0d46d4bda257b01ce272ead6a5150ce36df6b6444307.
+Release Laplace to the two proposed collection commands sequentially, using fresh
+exclusive output directories and the impossible a^ name pattern. Require exact
+native file sets, all cases unselected and no passed/failed/todo or raw errors.
+Old68 must retain4515 original identities plus exactly four freshness controls;
+the18 additional files require complete measured native identity multisets.
+Preserve invocation, Node identity, command/environment, stdout/stderr, native,
+terminal and full before/after maps. No source edits, automatic retries or actual
+test execution. This collection result never substitutes for passing execution.
+
+The first collection preflight stopped before launching Vitest because inherited
+GIT_PAGER=cat was rejected by its blanket Git-environment check. Preserve E
+`.tmp/laplace-5883-native86-old68-identity-preservation-20261006-mX2YJ9`, terminal
+SHA25658a85c085a5b73fffa0bc802984c30971fb297060f1461eff8be81a0673cbbe2.
+Both retained7769 maps equal the accepted3a81552e input authority; no native
+counts were collected. Parent read the terminal and released a fresh launch with
+env -u GIT_PAGER, matching earlier controlled runs. Do not weaken the override
+check or change Git configuration. All collection/identity/raw checks remain.
+
+### Parallel scoped-evidence packaging for the PR checkpoint
+
+Release Darwin to create an inert lossless evidence archive under E .tmp only,
+without compiler/test work or edits to source, existing reports or runners.
+Include the previously verified failed full-run archive546102854cddc7114428503e74035fd4fc02514bfd05427026e6bb426a5c1c86
+from C, plus every regular file from four terminal run directories: D's unchanged
+six-case diagnostic mkZqyl, E's exact-six huPmgk, full-two-file rBuRO1 and173-view
+eMlflk. Include their four exact runner sources and the approved seven-file patch,
+preimage archive and verification report. Never read an active collection output
+into this package or imply the incomplete full successor run passed.
+
+Use explicit logical scope tags and source paths, unique safe row names, byte
+counts, SHA256 and gzip/base64 payloads. Authenticate known report/runner/archive
+hashes and terminal outcomes before packaging; reject symlinks, missing expected
+files, duplicate rows or any source drift. Preserve raw error channels and
+accepted=false at the package level: passed scoped checks are not overall
+acceptance. Decode every row and compare it to its original source, then return
+the exact inventory and package hash for parent independent verification. Keep
+all originals untouched. No source checkpoint publication before parent review.
+
+Parent independently decoded all32 rows of E
+`.tmp/5883-scoped-checkpoint-evidence-20261006.json` and compared every byte to
+its original, verifying15107850 decoded bytes and package SHA256
+814d4c427440909a787b1bbed702a844f774e3e62fd8b9931abf10ad3dd012c8.
+The package remains accepted=false and is not yet published.
+
+### Next caller/C1 checkpoint validation preparation
+
+After native86 collection, execute a bounded23-file checkpoint stage: the16
+ordinary acquisition caller files other than runtime-data-contract-seam, the
+C1 current-source file, and all six inventory successors (PR5883 original,
+bba74,d0a13 and6866 finally,class-fields,source-map-position). This is the complete
+changed acquisition/C1 blast-radius check, not a replacement for the remaining
+86-file execution coverage, original repeated56-case execution or three-arm
+comparison. The full786 and173 checks remain separately scoped evidence.
+
+Release Darwin to prepare, not execute, a runner and exact23-file list in E .tmp.
+Resolve names from the approved86 plan and require the described set exactly.
+Expected identity multisets and total counts must come from the completed native
+collection, authenticated by parent-approved hashes before execution; never
+derive passing counts from static source. Keep original35000ms suite deadline
+and unchanged120000/150000 C1 probe budgets, one worker/2048MB, full7769 maps
+matching3a81552e, complete command/raw/native/exit, zero skipped/failed/todo and
+no unhandled/RPC errors. Preserve all histories and stop on any failed stage.
+No source edits, merge completion or execution before collection review/release.
+
+### Three collection blockers: main4bff context successor plan
+
+Parent read the complete native collection stderr and terminal record for
+E `.tmp/laplace-5883-native86-old68-identity-preservation-20261006-lKxd9J`.
+Exit1;3859 cases unselected, no passing execution, three suites failed before
+registration. Missing original identities: earlier-main216, export-main24,
+historical-reader420 (660 total). Additional18 were not launched. Native SHA256
+a1643c89dc6e935a6fe6e94357fb71611315b49f4e3e7cb66c56cf3fa8f3ca15;
+all7769 input pins remain3a81552e. Preserve this failed run without retries or
+overwriting any stream; the next23 runner remains preparation-only.
+
+The apparent missing builtin-static-globals and promise-class-receiver-drive
+errors come from broad catches around the historical reader, not absent files.
+That reader authenticates the entire historical successor dependency set. Its
+context/types.ts input no longer matches the main5f epoch: incoming commit
+192b3688090824a1c48a87ccbd3d9a0b9bb568aa added the hostBooleanReturn comment and
+optional boolean field. Parent verified the candidate-versus8b9 diff contains
+exactly those two lines for this path and no changes in either named missing file.
+Keep the production addition. Do not repin the original main5f receipt or remove
+dependency authentication to make collection succeed.
+
+Implementation lane (Laplace, Sol6.1 medium): prepare a reviewed patch in E .tmp
+for an additive, independently authenticated main4bff-to-predecessor context
+source view. Record both complete source endpoints, the exact two-line span,
+retained regions, Git provenance and reciprocal replay. Read the actual supplied
+source, never substitute a stored whole historical operand. Reject source or
+receipt mutation, wrong epoch, duplicate/missing span and stale captures. Other
+paths must pass through unchanged without extra authority reads. Preserve the
+existing main5f API, fixture bytes, assertions, mutation operands and error owners.
+Apply the new view at current-source acquisition/composition boundaries before
+the old main5f projection, not inside old inverse functions or after mutants are
+constructed. Keep physical raw reads available and explicitly named.
+
+Allowed patch scope: one new successor helper/receipt, one new focused test,
+historical-promise-successors.ts composition sites, and acquisition-only changes
+in issue-5883-main5f-reader-epoch.test.ts if needed to retain its historical
+endpoint assertions. Existing tests/fixtures and historical-promise-main5f-epoch.ts
+are immutable. Do not edit production, C1, deadlines, existing assertions or
+earlier/export authenticators. If preserving a reader trace/error owner requires
+a wider change, return the concrete conflict for parent review first.
+
+Acceptance: independently verify Git endpoints and round-trip bytes; add fresh
+capture/mutation/restore and foreign-path controls; preserve all old native
+identity multisets and fixtures. Run new helper and the four affected existing
+files under original budgets after parent source review, then recollect old68
+and additional files with the additive test explicitly accounted. Collection is
+not execution credit. Update input maps by exact reviewed delta, not blanket
+repinning. Preserve original-main failures separately; this candidate repair
+does not establish repaired-baseline equality or authorize legacy retirement.
+
+Parallel lane (Darwin, Sol6.1 medium): preserve both terminal collection attempts
+in a separate inert lossless archive in E .tmp, with full commands, raw streams,
+native results where present, exits and input maps. No active-run capture, source
+edits, native test execution, commits or publication. Parent owns issue updates,
+patch review, test release, integration and protected-queue landing.
