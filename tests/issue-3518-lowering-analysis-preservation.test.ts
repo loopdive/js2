@@ -1,4 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
+import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
+import { captureSourceMapPositionInventoryPredecessorPolicySource } from "./helpers/ir-source-map-position-inventory-successor.js";
+import { captureMainInventoryPredecessorPolicySource } from "./helpers/ir-main-inventory-source-successor.js";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -734,7 +738,15 @@ function applicationInput(entry: ApplicationEntry): string | undefined {
   const bytes = Buffer.from(
     capturePresentationClassificationPredecessorPolicySource(
       captureArrayBufferIsViewMainPredecessorPolicySource(
-        readFileSync(join(root, "scripts/compiler-boundaries.json"), "utf8"),
+        captureMainInventoryPredecessorPolicySource(
+          captureSourceMapPositionInventoryPredecessorPolicySource(
+            capturePositionClassFieldsMainPredecessorPolicySource(
+              capturePositionFinallyMainPredecessorPolicySource(
+                readFileSync(join(root, "scripts/compiler-boundaries.json"), "utf8"),
+              ),
+            ),
+          ),
+        ),
       ),
     ),
   );

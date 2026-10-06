@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11516,
-    "fail": 172,
+    "pass": 11521,
+    "fail": 167,
     "ce": 16,
     "skip": 0,
     "total": 11704,
@@ -102,8 +102,8 @@
       },
       {
         "name": "Symbol",
-        "pass": 590,
-        "fail": 19,
+        "pass": 591,
+        "fail": 18,
         "ce": 0,
         "skip": 0,
         "total": 609,
@@ -120,12 +120,12 @@
       },
       {
         "name": "Proxy",
-        "pass": 387,
-        "fail": 41,
+        "pass": 392,
+        "fail": 36,
         "ce": 3,
         "skip": 0,
         "total": 431,
-        "pct": 90
+        "pct": 91
       },
       {
         "name": "Reflect.construct",
@@ -147,8 +147,8 @@
       },
       {
         "name": "Reflect",
-        "pass": 283,
-        "fail": 40,
+        "pass": 285,
+        "fail": 38,
         "ce": 7,
         "skip": 0,
         "total": 330,
@@ -3571,21 +3571,21 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4598,
+    "pass": 4600,
     "fail": 188,
-    "ce": 135,
+    "ce": 133,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4495,
+        "pass": 4497,
         "fail": 107,
-        "ce": 9,
+        "ce": 7,
         "skip": 0,
         "total": 4611,
-        "pct": 97
+        "pct": 98
       },
       {
         "name": "Symbol",
