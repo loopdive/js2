@@ -3790,3 +3790,22 @@ and `plan/agent-context/5883-full-b-terminal-custody-packager-20261006.txt`
 portable launch paths; original pinned paths and explicit parent terminal hashes
 remain required. Publication of this documentation checkpoint waits for the
 normal push gates to obtain the heavy slot after B terminates.
+
+### 2026-10-07 terminal failure and requested wrap-up
+
+Full B is now terminal, exit1 at2026-10-06T22:53:42.395Z; no baseline job is
+still running. Root terminal SHA256 is
+`20c0e59350ea2037707dcbde9325a04a9d5e9f891ea5c2e7ed4b02efcfa04d33`.
+The first767 native tests passed; incoming23 then passed2396/2399 with3 failures.
+All three are35000ms timeouts in issue3518 historical-runtime reconstruction
+(population separation, manifest receipt, overload ordinals). Raw stderr retains
+the timeout reasons; native JSON retains exact identities and failure stacks.
+Total attempted3166:3163passed/3failed; remaining2344 scheduled cases unexecuted.
+All A/B/E input maps unchanged. No acceptance, equivalence or HOLD release.
+
+User requested wrap-up, handoff and PR publication, not another repair/run.
+See `plan/agent-context/ir-migration-handoff-20261007.md` for exact worktrees,
+pins, failed identities, publication targets, queue blockers and restart order.
+Preserve failures and fixtures; diagnose before any new narrowly repaired epoch.
+Reviewed comparator remains unexecuted. Existing non-draft PR5748 receives this
+handoff; candidate evidence already published on PR5883 remains held.
