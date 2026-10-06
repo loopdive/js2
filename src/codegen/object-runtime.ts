@@ -293,7 +293,7 @@ import { buildVecIndexKeyPush, reserveVecIndexEnumerable } from "./vec-index-enu
 import { fillHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649) js-host late-bound carrier test
 import {
   emitStandaloneLinkBoundaryTerminals,
-  peerNullMethodResultInstrs,
+  methodCallForwardArmInstrs,
   standaloneLinkBoundaryPeerIndex,
   standaloneLinkBoundaryPeerIndices,
 } from "./standalone-link-boundary.js"; // (#5383 S2d/S2f) wasm→wasm peer terminals
@@ -2034,7 +2034,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // Capture each real dependency at the donor occurrence. Only leaf operands
     // (not complete semantic arms) cross into the pure body builder.
     const boundaryGet = boundaryObjectGetIdx ?? peerMemberGetIdx;
-    const reversePeer = boundaryGet === undefined ? captureReversePeerReadBinding(reversePeerHops) : undefined;
+    // (#6748) A native-regime module in a JS environment owns both families
+    // (peer/reverse hop AND the JS boundary); each answers for different values.
+    const peerGetFirst = boundaryObjectGetIdx !== undefined ? peerMemberGetIdx : undefined;
+    const reversePeer = captureReversePeerReadBinding(reversePeerHops);
     const instance = captureInstanceReadBinding(ctx, ispScratchLocal);
     const missingPrototype = captureVecOrClosureReadBinding(ctx, getMiss, explicitReceiverLocal);
     const invalidPrototype =
@@ -2060,6 +2063,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       objectTerminalAllowsImplicitProtoIdx,
       templateRaw: templateRawReadBinding,
       boundaryGet,
+      peerGetFirst,
       reversePeer,
       instance,
       missingPrototype,
@@ -4406,6 +4410,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // never has a wasm peer — so ONE arm serves both lanes, exactly as
     // `hasBoundaryOrReverseIdx` does for `__extern_has`.
     boundaryObjectGetPrototypeIdx: boundaryObjectGetPrototypeIdx ?? peerGetPrototypeOfIdx,
+    // (#6748) …except in a native-regime module in a JS environment, which has
+    // both: the wasm peer is asked first.
+    peerGetPrototypeFirstIdx: boundaryObjectGetPrototypeIdx !== undefined ? peerGetPrototypeOfIdx : undefined,
     boundaryObjectSetPrototypeIdx,
     INITIAL_CAP,
     OBJ_FLAG_NONEXTENSIBLE,
@@ -5472,8 +5479,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // shape: here a `null` answer is ambiguous between "not the consumer's" and
     // "the method returned null", exactly as it is for `__extern_get`, so the
     // arm reads the hop's `callOwned` verdict instead of treating null as a
-    // miss. Mutually exclusive with the forward peer by construction.
-    const reverseMethodCallIdx = boundaryOrPeerCallIdx === undefined ? reversePeerHops.methodCall : undefined;
+    // miss. (#6748) A regime module in a JS env has BOTH families: peer first.
+    const peerCallFirst = boundaryObjectCallIdx !== undefined ? peerMethodCallIdx : undefined;
+    const reverseMethodCallIdx =
+      boundaryOrPeerCallIdx === undefined || boundaryObjectCallIdx !== undefined
+        ? reversePeerHops.methodCall
+        : undefined;
     const boundaryCallResultLocal =
       boundaryOrPeerCallIdx === undefined && reverseMethodCallIdx === undefined
         ? undefined
@@ -5481,6 +5492,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     if (boundaryCallResultLocal !== undefined) {
       methodCallLocals.push({ name: "boundaryCallResult", type: { kind: "externref" } });
     }
+    const forwardMethodCallArm = (callIdx: number, resultLocal: number, peerNullAware: boolean): Instr[] =>
+      methodCallForwardArmInstrs(ctx, callIdx, resultLocal, peerNullAware, peerMemberGetIdx, peerGetPrototypeOfIdx);
 
     const body: Instr[] = [
       // any = any.convert_extern(recv); if null → return undefined
@@ -5524,25 +5537,11 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         // ($Vec/string/Map/Set) are the Slice-4 arms → undefined for now (never
         // invalid Wasm).
         else: [
+          ...(peerCallFirst !== undefined && boundaryCallResultLocal !== undefined
+            ? forwardMethodCallArm(peerCallFirst, boundaryCallResultLocal, true)
+            : []),
           ...(boundaryOrPeerCallIdx !== undefined && boundaryCallResultLocal !== undefined
-            ? ([
-                { op: "local.get", index: 0 },
-                { op: "local.get", index: 1 },
-                { op: "local.get", index: 2 },
-                { op: "call", funcIdx: boundaryOrPeerCallIdx },
-                { op: "local.tee", index: boundaryCallResultLocal },
-                { op: "ref.is_null" },
-                { op: "i32.eqz" },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [{ op: "local.get", index: boundaryCallResultLocal }, { op: "return" }],
-                },
-                // (#5383) …or a peer method that returned `null` (see helper).
-                ...(boundaryObjectCallIdx === undefined
-                  ? peerNullMethodResultInstrs(ctx, peerMemberGetIdx, peerGetPrototypeOfIdx, boundaryCallResultLocal)
-                  : []),
-              ] satisfies Instr[])
+            ? forwardMethodCallArm(boundaryOrPeerCallIdx, boundaryCallResultLocal, boundaryObjectCallIdx === undefined)
             : []),
           ...(reverseMethodCallIdx !== undefined && boundaryCallResultLocal !== undefined
             ? reverseMethodCallArmInstrs(reversePeerHops, boundaryCallResultLocal)
