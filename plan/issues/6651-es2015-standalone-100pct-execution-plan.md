@@ -203,6 +203,19 @@ loc-budget-allow:
   # declines when the module writes `Symbol.prototype` / `Object.prototype`.
   - src/codegen/array-object-proto.ts
   - src/codegen/property-access-dispatch.ts
+  # 2026-10-06 — slice V11 (a writable [[Prototype]] on builtin prototypes;
+  # record under "2026-10-06 — Slice V11"). The arms, the pre-scan predicate and
+  # the primitive-write predicate live in the NEW leaf
+  # `object-model/native-proto-reparent.ts`; these are call sites only.
+  # `array-holes.ts` +2: the pre-scan line + import. `expressions/assignment.ts`
+  # +6 (path already listed below): the import, the 3-line routing of a sloppy
+  # boolean/string/symbol-base write to `__extern_set`, and the 2-line i32
+  # (boolean/symbol) receiver box in `compilePropertyAssignmentExternSet`.
+  # `context/types.ts` (already listed) +2: the `builtinProtoReparentDirty` flag.
+  # `proto-index-store.ts` (already listed) +19: the gated identity-stub reserve
+  # of `__protoidx_reparent_gpo`, the import, and the finalize binder that hands
+  # the store's helper indices to the leaf.
+  - src/codegen/array-holes.ts
   # 2026-10-06 — slice V5 (captured-binding TDZ; record under "2026-10-06 —
   # Slice V5"). `index.ts` +3: `preallocateBlockScopedSlots` stops skipping a
   # block that hoists a function declaration when the frame is `__module_init`
@@ -1321,6 +1334,8 @@ loc-budget-allow:
   # `promise-subclass-cell-read.ts`; the hand-off cannot move, because it is the
   # arm that would otherwise emit the bare `global.get` of the cell.
 func-budget-allow:
+  # 2026-10-06 — slice V11 (see the loc-budget note): `compileAssignment` +3
+  # (key already listed below) — the call of `isReparentObservablePrimitiveWrite`.
   # 2026-10-06 — slice V6 (see the loc-budget note): `compileArrayLiteral` +14
   # (the externref widening for a non-string fixed element after a string
   # spread) and `compileDeclarations` +1 (the early TDZ-flag call).
@@ -3824,6 +3839,99 @@ baked, so the `$Symbol` test exists when the harness has not yet minted one.
 
 Pin: `tests/issue-6651-v10a-primitive-base.test.ts` (first describe fails on the
 base tree with `undefined|undefined` / `!TypeError`; the controls pass on both).
+
+### 2026-10-06 — Slice V11
+
+A writable `[[Prototype]]` on builtin prototypes (the V10a residual). Base
+`ab86c902c3` (harness worktree branch; the lead merges by sha). **The target
+row flips, and so does `Object/prototype/__proto__/set-immutable.js`.**
+
+**Root cause, measured with probes.** Four separate gaps, each of which alone
+kept the row red:
+
+1. `Object.setPrototypeOf(<X>.prototype, v)` was a no-op on the `$NativeProto`
+   carrier. Every writer arm tests `$Object`, and `$NativeProto` is not one.
+2. Nothing read a stored parent back. `__getPrototypeOf` had no `$NativeProto`
+   arm. `Object.getPrototypeOf(Number.prototype)` is also folded at compile
+   time. That fold is wrong even on base: it answers `Number.prototype`
+   itself, read back as `0`.
+3. The companion consults (`__protoidx_get_k` / `has_k` / `set_r`) went
+   straight from the receiver's brand companion to Object's.
+4. A sloppy `true.x = v` / `Symbol().x = v` emitted no write at all.
+   `compilePropertyAssignmentExternSet` returned `null` for an i32 receiver,
+   and the #5269 B-d symbol arm folds the write to a no-op.
+
+**Fix.** Everything is in a new leaf, `object-model/native-proto-reparent.ts`.
+The new parent is stored on the brand **companion**, as that companion's own
+`[[Prototype]]`. The `$NativeProto` arm of `__object_setPrototypeOf{,_status}`
+re-targets the call at the companion (minted on demand) and recurses, so the
+following apply unchanged:
+
+- the §10.1.2.1 checks;
+- the #6766 Proxy link encoding;
+- the explicit-null flag.
+
+`%Object.prototype%` answers §10.4.7.1 SetImmutablePrototype: true only for
+`null`. A companion counts as *re-parented* when its `$proto` is non-null or it
+carries the null flag, so a fresh companion keeps the implicit
+`brand → Object.prototype` chain. Reads and writes take the stored parent:
+
+| path | arm |
+| --- | --- |
+| `__getPrototypeOf` | answers the stored parent |
+| the compile-time fold | wrapped in `__protoidx_reparent_gpo(proto, fold)`, which answers the stored parent when one exists and the fold otherwise (reserved as an identity stub, filled at finalize) |
+| `get_k` | a key the companion does not own goes to `__reflect_get_receiver(parent, key, ORIGINAL receiver)` |
+| `has_k` | goes to `__extern_has(parent, key)` |
+| `set_r` | `__protoidx_reparent_set` → `__reflect_set_receiver(parent, key, v, receiver)` |
+| `__extern_set`, when there is no #4504 channel | the same helper, at the head of the function, for a receiver that is neither `$Object` nor `$NativeProto` |
+
+The set helper skips the receiver's own properties, such as a string's
+`length`. A Proxy parent is dispatched to its traps by the existing
+chokepoints. A sloppy boolean/string/symbol-base `x.p = v` is routed through
+`__extern_set`.
+
+**Gate.** Everything above sits behind a pre-scan flag,
+`ctx.builtinProtoReparentDirty`, which is set only when the module syntactically
+re-parents a branded builtin `.prototype` (`Object.setPrototypeOf` /
+`Reflect.setPrototypeOf` / `.__proto__ =`). The flag implies
+`protoNamedDirty`. Measured over test262: 5 files match, 2 of them in staging.
+Every other module compiles byte-identically by construction: each new arm,
+reserve and lowering change checks the flag first. This was not measured with a
+byte diff.
+
+**Rows (standalone, QuickJS eval, in-process, one chunk of 191 rows plus the 2
+staging gated files, which the runner skips):**
+
+| family | base pass | branch pass |
+| --- | --- | --- |
+| `Object/{set,get}PrototypeOf/**` + `Reflect/{get,set}PrototypeOf/**` + `Object/prototype/__proto__/**` + `types/reference/**` + `Proxy/{get,set,has}/**` (191) | 178 | 180 (+`put-value-prop-base-primitive`, +`__proto__/set-immutable`; 0 lost — the branch non-pass set is a strict subset of base's) |
+
+**Residuals.**
+- A re-parent reached only through an alias (`var p = Number.prototype;
+  Object.setPrototypeOf(p, …)`) or through eval'd code is outside the gate and
+  stays a no-op.
+- `Object.preventExtensions(<X>.prototype)` does not mark the companion, so a
+  later re-parent is still accepted (probe: `Reflect.setPrototypeOf(Date.prototype,
+  {})` answers true after preventExtensions).
+- When the module is *not* re-parenting, `getPrototypeOf(Number.prototype)`
+  keeps the base fold's wrong answer (`Number.prototype` itself). That is a
+  base bug and is not widened here.
+- Strict-mode primitive writes keep the base lowering. The B-d symbol arm still
+  throws, even when a Proxy parent's `set` trap would return true.
+- Only the receiver's first brand hop consults the stored parent. A
+  re-parented `Error.prototype` is not seen through `TypeError.prototype`.
+- The `*-realm` twins still fail on cross-realm `evalScript`.
+
+Pin: `tests/issue-6651-v11-builtin-proto-setprototypeof.test.ts`. The first
+describe fails on the base tree, measured with a file-copy swap (`0000` /
+`true,false,false,,false,…`). The control (an un-reparented wrapper prototype
+member, an ordinary re-parent, an absent primitive read) passes on both trees.
+
+Controls:
+- `node scripts/equivalence-gate.mjs` is green: 22 known failures, 1748
+  passing.
+- Temporal `Duration/prototype/round/*` standalone: 119 pass / 7 fail of 126,
+  0 `illegal cast`.
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 

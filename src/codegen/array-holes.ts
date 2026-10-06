@@ -51,6 +51,7 @@ import { armExhaustiveForNonCallableMemberLiteral } from "./class-to-primitive.j
 import { isArrayLengthConstructor } from "./array/array-length-holes.js"; // (#6771 S3)
 import { noteArrayCtorThisCall } from "./array/array-ctor-this.js"; // (#6771 S7)
 import { readEnv } from "../env.js";
+import { isBuiltinProtoReparentNode } from "./object-model/native-proto-reparent.js"; // (#6651 V11)
 
 /**
  * Cheap AST pre-scan: set `ctx.usesArrayHoles` when the program contains any
@@ -135,6 +136,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
         if (ts.isPropertyAccessExpression(lhs)) ctx.protoNamedWrittenMembers.add(lhs.name.text);
       }
     }
+    if (isBuiltinProtoReparentNode(node)) ctx.builtinProtoReparentDirty = ctx.protoNamedDirty = true; // (#6651 V11)
     if (!ctx.protoMemberDirty && isProtoMemberValueUse(node)) {
       ctx.protoMemberDirty = true;
     }

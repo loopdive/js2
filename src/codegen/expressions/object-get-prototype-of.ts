@@ -30,6 +30,7 @@ import { bindingIsUniqueAndNeverWritten } from "../class-heritage-check.js"; // 
 import { heritageBindsParentClass } from "../classes/class-heritage-comma.js"; // (#6772 S6)
 import { emitLazyClassObjectGet } from "./extern.js"; // (#6772 S6)
 import { arrayTypedValueMayNotBeArray } from "../proxy-array-like.js"; // (#6651 H6)
+import { reparentGetPrototypeOfHelper, withReparentFold } from "../object-model/native-proto-reparent.js"; // (#6651 V11)
 
 const NATIVE_COLLECTION_NAMES = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
 
@@ -347,6 +348,17 @@ export function tryCompileEs5GetPrototypeOfEarly(
 ): InnerResult | null {
   if (expr.arguments.length === 0) {
     emitThrowTypeError(ctx, fctx, "Object.getPrototypeOf requires an object");
+    return { kind: "externref" };
+  }
+  // (#6651 V11) A re-parenting module: the fold below answers only the default.
+  if (reparentGetPrototypeOfHelper(ctx, expr) !== undefined) {
+    const toExtern = (type: InnerResult | null | undefined): void => {
+      if (!type || typeof type !== "object") fctx.body.push({ op: "ref.null.extern" });
+      else if (type.kind !== "externref") coerceType(ctx, fctx, type, { kind: "externref" });
+    };
+    toExtern(compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" }));
+    toExtern(withReparentFold(expr, () => compileExpression(ctx, fctx, expr, { kind: "externref" })));
+    fctx.body.push({ op: "call", funcIdx: reparentGetPrototypeOfHelper(ctx, expr)! });
     return { kind: "externref" };
   }
 
