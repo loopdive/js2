@@ -235,3 +235,84 @@ six streams equal their original bytes, lengths and SHA256. Archive SHA256 is
 00ae5a461653372d5b376bc3d529e6877f3c81f433bff62786c3add9090f2026.
 Save this composition as a local signed checkpoint with normal fast hooks;
 this does not waive the pending runtime, pre-push or protected-queue gates.
+
+Actual local checkpoint is 2e313209222b475a9b7718be55f4508f701ed316, with
+e0068 and5f953c as parents. Normal formatting/lint and LOC/function hooks passed;
+all7346 source/test/config pins remain identical after the hooks. Issue integrity
+also exited0. Contrary to the intended signing description above, the commit is
+unsigned: this host has no commit.gpgsign, gpg.format or user.signingkey configured,
+and the raw commit contains no signature. No signing setting or hook was disabled.
+The remembered configured SSH signer belongs to a different Linux container,
+not this Mac checkout. Do not claim signing or change shared Git configuration
+based on that memory. Correct Thomas author and Codex co-author are present.
+
+Remaining runtime selection retains all22 prior population files and adds the
+six incoming coverage files specified above,28 unique files, all present. No
+execution result is claimed from checking this selection. The shared ES6 census
+processes69067/69088/69157 remain live; heavy validation has not restarted.
+
+## Pending-run instrumentation repair (2026-10-06)
+
+Independent Sol-6.1 Medium review found three gaps in the unexecuted final
+sequence: file counts do not authenticate selected identities; per-child
+before/after equality permits a different epoch between children; repository
+script dependencies and the scratch runners are outside the earlier7346 pins.
+No prior result is relabeled or discarded. Native Vitest JSON omits a complete
+unhandled-error channel, so full raw-channel review remains mandatory.
+
+Release a bounded Sol-6.1 Medium implementation task for new v2 scratch runners
+and their local instrument controls only. Preserve both original runners and
+all prior receipts. Authenticate the retained22 runtime path list and prior
+assertion identities from their exact archived streams; authenticate the176
+compiler-reader identities from their archived preformat result. Require exact
+reported file sets, no duplicate file rows, and no lost/changed prior assertion
+identities. Any genuine population change stops acceptance for parent review;
+do not silently regenerate the expected population. The six incoming suites
+have no historical accepted assertion manifest: require exact file identities,
+nonempty assertion rows and complete passing execution, and label them fresh.
+
+Freeze the complete current path/hash domain once, extending the unchanged7346
+baseline with repository scripts and explicitly authenticated runner bytes.
+Compare full maps (including added/deleted paths) and HEAD before and after
+every stage against that one epoch. Reject source drift between stages. Record
+the extended domain as a new provenance boundary, never imply it was measured
+in historical runs. Keep serial execution and preserve each failed attempt.
+
+Instrument controls may use synthetic report/maps in memory, without running
+the compiler or Vitest: demonstrate rejection of swapped files, duplicates,
+lost assertions, same-count identity changes, pending/failed rows, added paths,
+between-stage changes and changed runner bytes. Parent reviews implementation
+and controls before releasing heavy execution. No production/test/fixture/gate
+changes, existing evidence rewrites, commits or pushes are delegated.
+
+Fresh canonical-main read during implementation found6128dd8244b65028ea89a48eb7259efebd3c8fba,
+nine commits ahead of5f953c. Server comparison includes source-provenance PR6520
+(merge15d02b05a2ebfd1aecf1da8324e8bd4509a27115), splice U5 and benchmark
+updates. Its changes include IR preparation, source contracts, shared inventory
+and C1 reader helpers; this is not a documentation-only delta. Local2e313 is
+still frozen. Finish reviewing the bounded instrument repair, then explicitly
+reconcile the incoming main and establish a successor input manifest before
+heavy validation. Do not run the old epoch and label it current-main evidence,
+or let a runner automatically accept changed inputs. PR6521 remains a separate
+held specialization follow-up; do not interfere with its current owner.
+
+Read-only integration preview against fetched6128dd succeeds without conflicts:
+`git merge-tree --write-tree --name-only HEAD upstream/main` returned tree
+bdd443e8107b7be8494beb782070265bdf86b44d and exit0. This is not an actual
+branch merge. All seven authenticated Promise receipt source paths and all22
+retained runtime test files are unchanged in that tree relative to2e313.
+Consequently no new Promise historical receipt is currently justified. The
+incoming48 source/test files still require explicit successor provenance and
+appropriate regression coverage; unchanged fixture bytes do not prove behavior.
+
+Parent reviewed all four v2 scripts and independently reran their45 synthetic
+controls: exit0, no compiler/Vitest execution. All seven returned artifacts and
+both preserved original runner hashes match the handoff at
+`.tmp/5883-handoff-v2-20261006.json`. Future v2 epoch55ee6b95e568c5c803fd5b5c57ae64ac0b00fc7c0108a8d30d194f9971b6e740
+authenticates7727 inputs, including371 scripts compared with local HEAD.
+It remains an instrument result for2e313, not a compiler acceptance result.
+Native raw-channel review, dependency-byte limitations and endpoint-only drift
+detection are explicit. Save these parent-owned plan/issue changes with normal
+fast hooks, then merge the already previewed6128dd without rewriting this epoch.
+Only after reviewing the actual composition may a new explicit manifest be
+released. All original v1/v2 instrumentation and archives remain preserved.

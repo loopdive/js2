@@ -7750,3 +7750,17 @@ The first normal commit attempt completed all 17 changed-root suites: 2646 passe
 The original frozen caller cohort subsequently completed 2254/2254 across 13 suites with all 26 collection/ordinary children exiting0, exact ordered names (including duplicate occurrences), clean error channels and all2314 input custody rows restored. Its attribution remains pre-normalization ca11, not the final formatted epoch. The earlier .tmp Prettier check was partially ignored and is not a 30-file coverage claim: actual lint-staged formatted all26TS+4JSON, and 30 independent stdin formatting operations over real target paths returned nonempty byte-identical staged output. The unique C1 test scalar changed only quote rendering; AST-decoded authority data and all other test bytes remain identical.
 
 Canonical fdb116928b5861fd628abfde95da5e3deb91f689 is now integrated. Its delta contains nine benchmark artifacts and issue6651 documentation; all31 owned IR paths, 103 authenticated C1 inputs and both1969/2314 custody domains remain unchanged. Independent reconciliation SHA2569df5899daade37d1646c9740e27c877f5625de0580491928cd121baa8934ca51. A fresh complete17-PR census confirms allfour qualified D1 claims remain held, no duplicate D1 ref and no overlap with the four production paths; existing shared metadata intersections remain recorded. Normal signed commit retry, pre-push checks and protected main delivery are still pending. Legacy retirement and complete IR parity remain unproved.
+
+### Promise checkpoint: pending validation instrumentation repair (2026-10-06)
+
+PR5883's local integration checkpoint2e313 remains unpublished and held. A
+read-only review of its unexecuted final validation runner identified missing
+exact test identities, cross-stage source-epoch enforcement and repository
+script/runner provenance. The implementation and synthetic rejection-control
+plan is recorded in
+`plan/agent-context/5883-main5f-reader-epoch-plan-20261006.md`, under
+"Pending-run instrumentation repair". Parent owns this plan and acceptance;
+Sol-6.1 Medium owns only new scratch instrumentation. Existing fixtures,
+original failures and result archives stay unchanged. Final compiler176,
+runtime28 files, canonical typing, normal publication hooks and protected
+delivery remain pending. This is not compiler equivalence or retirement proof.
