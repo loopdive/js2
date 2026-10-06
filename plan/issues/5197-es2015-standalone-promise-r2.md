@@ -3103,3 +3103,48 @@ full-run result. Resume the same process/agent; never launch another attempt
 because observation timed out. Remaining repair/successor/imported/additional/
 helper stages and separate A/B comparison remain required. Source HEAD112cea8e,
 all input pins, schedule and runner authorities remain frozen during execution.
+
+Later exact-head CI snapshot for112cea8e: no pending/failed check runs. Quality,
+smoke, the issue-tests aggregate with15 changed-file jobs, and equivalence gate
+with eight shards completed successfully. Quality evidence:
+https://github.com/loopdive/js2/actions/runs/37509282491/job/112425898365;
+equivalence evidence:
+https://github.com/loopdive/js2/actions/runs/37509282491/job/112431384457.
+Test262 stubs and actual Test262 shard jobs were skipped; green report/regression
+checks are not full conformance execution. Keep HOLD and the independent local
+full-candidate/three-arm obligations. Read-only preflight may verify that the
+prepared A/B collection runner still applies after E's commit and custody-wrapper
+formatting; no baseline execution or instrument edits are released by this check.
+
+### Parent-owned plan and Sol 6.1 implementation routing (2026-10-06)
+
+The parent owns implementation specifications, issue updates, independent review
+and landing decisions. Implementation goes to native Sol 6.1 agents at medium
+effort by default; scope and acceptance criteria precede dispatch. Do not start
+new migration scope or retire legacy code before full IR equivalence is proved.
+
+Next bounded preparation: implement a final-candidate evidence packager only in
+the repaired-baseline worktree's ignored `.tmp/` directory. Preserve the running
+candidate, its runner, source inputs, schedule and existing archives unchanged.
+The packager must refuse incomplete runs: require the root terminal and each
+scheduled stage's records, then preserve exact original bytes using the existing
+gzip/base64 custody convention, with safe unique relative paths, byte lengths
+and SHA256 for every payload. Include invocation, raw/native results, input
+maps, stage/root terminals, exact runner and schedule; explicitly identify any
+record absent by design rather than inventing it. Verify round-trip bytes and
+record the source commit and input-map authority. Always retain accepted=false:
+candidate success alone does not establish equality with the repaired baseline.
+No execution against the live run, test launch, Git mutation or publication is
+released by this preparation. Return the packager path/hash, complete expected
+record list and source-only validation to the parent for review before use.
+
+Read-only baseline-runner applicability review found no mismatch: exact A/B
+heads remain4bff, their7735/7737 maps are unchanged, and E's7772 input map remains
+309eacc2. The runner binds A/B Git state, not E's former pending merge or custody
+wrapper formatting. This is applicability evidence, not baseline execution.
+
+Dispatch is explicit: Avicenna (01a112aa-f27d-78c0-adfc-4faa8482b096) was spawned
+with model gpt-6.1-sol and reasoning_effort medium for that packager-only scope.
+The prior preparation agent could not verify its own model settings and made no
+implementation changes. At19:22 UTC the existing PID17314 remained live, with
+additional18 raw output advancing; no restart or competing heavy job was issued.
