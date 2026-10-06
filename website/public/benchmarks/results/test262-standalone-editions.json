@@ -48,12 +48,12 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11528,
-    "fail": 160,
+    "pass": 11531,
+    "fail": 157,
     "ce": 16,
     "skip": 0,
     "total": 11704,
-    "pct": 98,
+    "pct": 99,
     "features": [
       {
         "name": "destructuring-binding",
@@ -120,8 +120,8 @@
       },
       {
         "name": "Proxy",
-        "pass": 392,
-        "fail": 36,
+        "pass": 394,
+        "fail": 34,
         "ce": 3,
         "skip": 0,
         "total": 431,
@@ -138,12 +138,12 @@
       },
       {
         "name": "class",
-        "pass": 395,
-        "fail": 10,
+        "pass": 396,
+        "fail": 9,
         "ce": 5,
         "skip": 0,
         "total": 410,
-        "pct": 96
+        "pct": 97
       },
       {
         "name": "Reflect",
@@ -183,12 +183,12 @@
       },
       {
         "name": "cross-realm",
-        "pass": 77,
-        "fail": 49,
+        "pass": 78,
+        "fail": 48,
         "ce": 2,
         "skip": 0,
         "total": 128,
-        "pct": 60
+        "pct": 61
       },
       {
         "name": "Symbol.toPrimitive",
@@ -3571,21 +3571,21 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4599,
+    "pass": 4597,
     "fail": 188,
-    "ce": 134,
+    "ce": 136,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4496,
+        "pass": 4494,
         "fail": 107,
-        "ce": 8,
+        "ce": 10,
         "skip": 0,
         "total": 4611,
-        "pct": 98
+        "pct": 97
       },
       {
         "name": "Symbol",

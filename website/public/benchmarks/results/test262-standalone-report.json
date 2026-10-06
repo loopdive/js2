@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-10-06T15:34:22.060Z",
-  "baseline_generated_at": "2026-10-06T15:34:22.060Z",
-  "baseline_sha": "941d58952b52f908c9f399b81aa5a4952a899fac",
+  "timestamp": "2026-10-06T16:13:58.416Z",
+  "baseline_generated_at": "2026-10-06T16:13:58.416Z",
+  "baseline_sha": "d1e4a93f52da3f3972be9e198246acd91c94a4de",
   "oracle_version": 14,
   "mode": {
     "target": "standalone",
@@ -11,24 +11,24 @@
   },
   "summary": {
     "total": 48232,
-    "pass": 41923,
-    "fail": 4408,
-    "compile_error": 1864,
-    "compile_timeout": 19,
+    "pass": 41924,
+    "fail": 4405,
+    "compile_error": 1865,
+    "compile_timeout": 20,
     "skip": 18,
-    "compilable": 46331,
-    "host_free_pass": 41923,
+    "compilable": 46329,
+    "host_free_pass": 41924,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
-        "pass": 40882,
-        "fail": 4379,
-        "compile_error": 1848,
-        "compile_timeout": 19,
+        "pass": 40883,
+        "fail": 4376,
+        "compile_error": 1849,
+        "compile_timeout": 20,
         "skip": 18,
-        "compilable": 45261,
-        "host_free_pass": 40882,
+        "compilable": 45259,
+        "host_free_pass": 40883,
         "stale": 0,
         "label": "ECMAScript current standard"
       },
@@ -58,25 +58,25 @@
       },
       "official": {
         "total": 48232,
-        "pass": 41923,
-        "fail": 4408,
-        "compile_error": 1864,
-        "compile_timeout": 19,
+        "pass": 41924,
+        "fail": 4405,
+        "compile_error": 1865,
+        "compile_timeout": 20,
         "skip": 18,
-        "compilable": 46331,
-        "host_free_pass": 41923,
+        "compilable": 46329,
+        "host_free_pass": 41924,
         "stale": 0,
         "label": "standard + annex_b (default)"
       },
       "full": {
         "total": 48735,
-        "pass": 42159,
-        "fail": 4424,
-        "compile_error": 2019,
-        "compile_timeout": 19,
+        "pass": 42160,
+        "fail": 4421,
+        "compile_error": 2020,
+        "compile_timeout": 20,
         "skip": 114,
-        "compilable": 46583,
-        "host_free_pass": 42159,
+        "compilable": 46581,
+        "host_free_pass": 42160,
         "stale": 0,
         "label": "standard + annex_b + proposals"
       }
@@ -84,35 +84,35 @@
   },
   "official_summary": {
     "total": 48232,
-    "pass": 41923,
-    "fail": 4408,
-    "compile_error": 1864,
-    "compile_timeout": 19,
+    "pass": 41924,
+    "fail": 4405,
+    "compile_error": 1865,
+    "compile_timeout": 20,
     "skip": 18,
-    "compilable": 46331,
-    "host_free_pass": 41923,
+    "compilable": 46329,
+    "host_free_pass": 41924,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
-    "pass": 42159,
-    "fail": 4424,
-    "compile_error": 2019,
-    "compile_timeout": 19,
+    "pass": 42160,
+    "fail": 4421,
+    "compile_error": 2020,
+    "compile_timeout": 20,
     "skip": 114,
-    "compilable": 46583,
-    "host_free_pass": 42159,
+    "compilable": 46581,
+    "host_free_pass": 42160,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
-    "pass": 39561,
-    "fail": 4314,
-    "compile_error": 1809,
-    "compile_timeout": 19,
+    "pass": 39562,
+    "fail": 4311,
+    "compile_error": 1810,
+    "compile_timeout": 20,
     "skip": 18,
-    "compilable": 43875,
-    "host_free_pass": 39561,
+    "compilable": 43873,
+    "host_free_pass": 39562,
     "stale": 0
   },
   "scope_summaries": {
@@ -140,13 +140,13 @@
     },
     "standard": {
       "total": 47146,
-      "pass": 40882,
-      "fail": 4379,
-      "compile_error": 1848,
-      "compile_timeout": 19,
+      "pass": 40883,
+      "fail": 4376,
+      "compile_error": 1849,
+      "compile_timeout": 20,
       "skip": 18,
-      "compilable": 45261,
-      "host_free_pass": 40882,
+      "compilable": 45259,
+      "host_free_pass": 40883,
       "stale": 0
     }
   },
@@ -440,13 +440,13 @@
     {
       "name": "built-ins/Function",
       "path": "built-ins/Function",
-      "pass": 462,
-      "fail": 45,
+      "pass": 465,
+      "fail": 42,
       "compile_error": 2,
       "compile_timeout": 0,
       "skip": 0,
       "total": 509,
-      "host_free_pass": 462
+      "host_free_pass": 465
     },
     {
       "name": "built-ins/GeneratorFunction",
@@ -781,13 +781,13 @@
     {
       "name": "built-ins/Temporal",
       "path": "built-ins/Temporal",
-      "pass": 4493,
+      "pass": 4491,
       "fail": 102,
       "compile_error": 0,
-      "compile_timeout": 8,
+      "compile_timeout": 10,
       "skip": 0,
       "total": 4603,
-      "host_free_pass": 4493
+      "host_free_pass": 4491
     },
     {
       "name": "built-ins/ThrowTypeError",
@@ -805,8 +805,8 @@
       "path": "built-ins/TypedArray",
       "pass": 1086,
       "fail": 349,
-      "compile_error": 10,
-      "compile_timeout": 1,
+      "compile_error": 11,
+      "compile_timeout": 0,
       "skip": 0,
       "total": 1446,
       "host_free_pass": 1086
@@ -1198,14 +1198,14 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 2581,
+    "assertion_fail": 2578,
     "host_import_leak": 1207,
     "illegal_cast": 226,
     "missing_builtin": 3,
     "negative_test_fail": 4,
     "null_deref": 9,
     "oob": 7,
-    "other": 1206,
+    "other": 1207,
     "promise_error": 41,
     "range_error": 27,
     "runtime_error": 342,
@@ -1221,8 +1221,8 @@
   },
   "root_cause_map": {
     "target": "standalone",
-    "total_non_pass_non_skip": 6462,
-    "classified": 6462,
+    "total_non_pass_non_skip": 6461,
+    "classified": 6461,
     "unclassified_threshold": null,
     "has_edition_breakdown": true,
     "buckets": [
@@ -1272,14 +1272,14 @@
           "#661"
         ],
         "label": "Temporal proposal/polyfill gap",
-        "count": 110,
+        "count": 112,
         "statuses": {
           "pass": 0,
           "fail": 102,
           "compile_error": 0,
-          "compile_timeout": 8,
+          "compile_timeout": 10,
           "skip": 0,
-          "total": 110,
+          "total": 112,
           "host_free_pass": 0
         },
         "error_categories": {
@@ -1290,7 +1290,7 @@
           "illegal_cast": 1
         },
         "by_edition": {
-          "ES2026": 110
+          "ES2026": 112
         },
         "sample_files": [
           "test/built-ins/Temporal/Duration/prototype/subtract/precision-no-floating-point-loss.js",
@@ -1462,15 +1462,15 @@
         "sample_files": [
           "test/built-ins/JSON/stringify/replacer-function-result-undefined.js",
           "test/built-ins/JSON/parse/reviver-context-source-object-literal.js",
-          "test/built-ins/JSON/stringify/replacer-array-duplicates.js",
           "test/built-ins/JSON/stringify/value-bigint-replacer.js",
+          "test/built-ins/JSON/stringify/replacer-array-duplicates.js",
           "test/built-ins/JSON/parse/reviver-context-source-primitive-literal.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected SameValue(«\"null\"», «undefined») to be true",
           "type_error:TypeError: Cannot convert undefined or null to object",
-          "assertion_fail:Test262Error: Expected SameValue(«\"{\\\"key\\\":null}\"», «\"{\\\"key\\\":true}\"») to be true",
           "assertion_fail:Test262Error: Expected SameValue(«\"null\"», «\"\\\"bigint\\\"\"») to be true",
+          "assertion_fail:Test262Error: Expected SameValue(«\"{\\\"key\\\":null}\"», «\"{\\\"key\\\":true}\"») to be true",
           "assertion_fail:Test262Error: Expected SameValue(«#», «null») to be true"
         ]
       },
@@ -1789,15 +1789,15 @@
         "sample_files": [
           "test/language/statements/class/async-gen-method/yield-star-async-next.js",
           "test/language/statements/async-generator/yield-star-return-missing-value-is-awaited.js",
-          "test/language/statements/for-of/head-using-fresh-binding-per-iteration.js",
           "test/language/statements/async-generator/generator-created-after-decl-inst.js",
+          "test/language/statements/for-of/head-using-fresh-binding-per-iteration.js",
           "test/language/expressions/class/elements/async-gen-private-method-static/yield-star-async-next.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::__create_async_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_done, env::__gen_result_value, env::__gen_return, env::__gen_set_return, env::__gen_yield_star, env::__gen_y",
           "host_import_leak:standalone target emitted host imports: env::__gen_result_done, env::__gen_result_value_f64, env::__gen_return (##)",
-          "assertion_fail:Test262Error: `f[#]()` returns `obj1` Expected SameValue(«null», «[object Object]») to be true",
           "host_import_leak:standalone target emitted host imports: env::__get_async_generator_prototype (##)",
+          "assertion_fail:Test262Error: `f[#]()` returns `obj1` Expected SameValue(«null», «[object Object]») to be true",
           "host_import_leak:standalone target emitted host imports: env::__gen_result_done, env::__gen_result_value (##)"
         ]
       },
@@ -1966,8 +1966,8 @@
         "statuses": {
           "pass": 0,
           "fail": 1171,
-          "compile_error": 186,
-          "compile_timeout": 11,
+          "compile_error": 187,
+          "compile_timeout": 10,
           "skip": 0,
           "total": 1368,
           "host_free_pass": 0
@@ -1978,7 +1978,7 @@
           "host_import_leak": 179,
           "type_error": 156,
           "oob": 5,
-          "other": 11,
+          "other": 12,
           "null_deref": 2,
           "wasm_compile": 1
         },
@@ -2071,8 +2071,8 @@
         },
         "error_categories": {
           "assertion_fail": 118,
-          "other": 15,
           "type_error": 34,
+          "other": 15,
           "wasm_compile": 1,
           "host_import_leak": 29,
           "runtime_error": 13,
@@ -2082,8 +2082,8 @@
         "by_edition": {
           "ES2017": 21,
           "ES2019": 14,
-          "ES2023": 5,
           "ES2015": 20,
+          "ES2023": 5,
           "Unclassified (untagged)": 49,
           "ES2022": 24,
           "ES2024": 17,
@@ -2098,15 +2098,15 @@
         "sample_files": [
           "test/built-ins/Object/prototype/toString/proxy-function-async.js",
           "test/built-ins/Object/fromEntries/uses-define-semantics.js",
-          "test/built-ins/ShadowRealm/prototype/evaluate/returns-proxy-callable-object.js",
           "test/language/global-code/script-decl-lex.js",
+          "test/built-ins/ShadowRealm/prototype/evaluate/returns-proxy-callable-object.js",
           "test/built-ins/Object/seal/configurable-attribute-all-own-properties-set-from-true-to-false-property-are-unaltered.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: async function proxy Expected SameValue(«\"[object Function]\"», «\"[object AsyncFunction]\"») to be true",
           "assertion_fail:Test262Error: should not trigger setter on Object.prototype",
-          "other:ReferenceError: ShadowRealm is not defined",
           "type_error:TypeError: TypeError: Cannot define property, object is not extensible",
+          "other:ReferenceError: ShadowRealm is not defined",
           "assertion_fail:Test262Error: Expected obj[foo2] to be writable, but was not."
         ]
       },
@@ -2325,24 +2325,24 @@
           "#1596"
         ],
         "label": "Function object name/length/prototype/call semantics",
-        "count": 25,
+        "count": 22,
         "statuses": {
           "pass": 0,
-          "fail": 25,
+          "fail": 22,
           "compile_error": 0,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 25,
+          "total": 22,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 22,
+          "assertion_fail": 19,
           "illegal_cast": 1,
           "type_error": 2
         },
         "by_edition": {
           "Unclassified (untagged)": 4,
-          "ES2015": 16,
+          "ES2015": 13,
           "ES2022": 1,
           "ES2018": 1,
           "ES2017": 3
