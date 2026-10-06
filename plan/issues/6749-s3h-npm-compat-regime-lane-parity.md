@@ -173,3 +173,16 @@ regression; filed as #6875 with the arm to add. redux (`Wasm NaN, Node 7`)
 not yet bisected — same lane recipe; `Number(input)` alone is fine in
 isolation, so look at the reducer's default parameter / `action.amount` read
 on a dynamic object next.
+
+### redux, first bisect (2026-10-06)
+
+Reduced shapes all compute 1 for `op("1")` on the regime: a hand-written
+`createStore` with a default-parameter reducer, the reducer without the
+default, `Number(input) + 6`, and `a.type === "add" ? a.amount : -1`. So the
+`Wasm NaN, Node 7` is inside redux's real `createStore` (`redux.mjs`): the
+`ActionTypes.INIT` string built from `Math.random().toString(36)`, the
+`isPlainObject` `Object.getPrototypeOf` walk, `typeof action.type ===
+"undefined"` guards, `Symbol.observable`. Next step: copy `redux.mjs` into
+`.tmp/`, add prints at `dispatch` entry (`action.type`, `typeof
+action.amount`) and after `currentReducer(currentState, action)`, run the lane
+with the copied entry, and bisect from there.

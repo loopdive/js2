@@ -163,3 +163,22 @@ declined by the auto-mode classifier), so part A of S3-h was done by hand:
 Next actions, in order: (1) enqueue #6527 once green, let #6528 auto-enqueue;
 (2) S3-h react re-key slice, then part B (cookie/hono/redux) with an
 implementer when the gate opens; (3) #6748, #6750 unchanged.
+
+### Later the same day (2026-10-06, part B started)
+
+- PR #6528 (#6868, template-literal string types) **merged**.
+- PR #6527 (part A) grew: cookie now measures on the regime (the npm harness
+  wrapped native-first exports without `exportBoundaryPolicies`;
+  `npmCompatWrapExports` fixes it, host lane untouched). Re-synced with main
+  after #6528 landed; still `needs-manual-enqueue` — ONE GraphQL
+  `enqueuePullRequest` with the user token once `quality` is green/CLEAN.
+- hono → **#6875** (new): `__extern_get` has no native-string RECEIVER arm, so
+  `input.length` on an untyped parameter is undefined. Reproduced under plain
+  standalone (`len(JSON.parse('"abcd"')) == 4` → 0), so pre-existing. The arm
+  to add is spelled out in the issue. Implementer-sized (horizon m).
+- redux: reduced shapes are all correct; divergence is inside redux's real
+  `createStore`; bisect recipe in the #6749 issue.
+- Regime lane now (local focused runs): clsx, cookie, moment measured; uuid
+  links (sample op waits on #6868 → re-measure after the next refresh);
+  hono/redux mismatches (#6875 / open); acorn/marked/lit/prettier part C.
+- Load stayed 60–90 all day; no implementer could be spawned.
