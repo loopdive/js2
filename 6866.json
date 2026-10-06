@@ -1,10 +1,11 @@
 {
   "id": "6866",
   "assignee": "ttraenkler/codex-ir-source-map-position-projection-20261006",
-  "requested_by": "ttraenkler/codex-ir-source-map-position-projection-20261006",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/6866-current-main-finally-composition-20261006",
   "claimed_at": "2026-10-06T11:15:04Z",
-  "updated_at": "2026-10-06T11:15:04Z",
-  "write_id": "14140-zdhk8re5"
+  "updated_at": "2026-10-06T12:31:51Z",
+  "write_id": "57184-qdlvyjbf",
+  "released_at": "2026-10-06T12:31:51Z"
 }
