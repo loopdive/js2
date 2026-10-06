@@ -174,6 +174,16 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-10-06 — slice V0 (record `### 2026-10-06 — Slice V0`): one guard call
+  # per `bfnid` compare site. `object-runtime.ts` +1 (the import widens, and
+  # one line in `fillBuiltinFnMeta`'s shared `exactMetaArm`); `ta-dyn-mop.ts`
+  # +2 (one call in the refusal-closure ladder plus its `self` thunk). The
+  # guard itself lives in the leaf `builtin-fn-meta.ts`, moved there from
+  # `closures/transferred-native-proto.ts` so the non-SCC callers can reach it
+  # without joining the import-cycle SCC. Both paths are already listed below;
+  # restated here per the stranded-grant rule.
+  - src/codegen/object-runtime.ts
+  - src/codegen/ta-dyn-mop.ts
   # 2026-10-05 — uncovered slice U2 (TypedArray residue; record under
   # "2026-10-05 — Uncovered slice U2"). Every mechanism is a few lines at the
   # site that owns the decision; the shared helper `taDynJoinLengthInstrs` is in
@@ -1244,6 +1254,11 @@ loc-budget-allow:
   # `promise-subclass-cell-read.ts`; the hand-off cannot move, because it is the
   # arm that would otherwise emit the bare `global.get` of the cell.
 func-budget-allow:
+  # 2026-10-06 — slice V0 (see the loc-budget note): the refusal-closure ladder
+  # is a closure inside `fillTaDynViewMopArms`, emitted through
+  # `buildStringKeyArm`, so its +2 (guard call + `self` thunk) counts in both.
+  - src/codegen/ta-dyn-mop.ts::fillTaDynViewMopArms
+  - src/codegen/ta-dyn-mop.ts::buildStringKeyArm
   # 2026-10-05 — uncovered slice U2 (see the loc-budget note): one-line calls
   # of `emitRefElemArraySnapshot` — `emitTaDynCtorConstructInline` +2 (the
   # `$ObjVec` and plain-vec arms) and `compileBuiltinStaticCall` +1 (the static
@@ -2839,6 +2854,79 @@ With the guard in place, the seed list change is exactly U1's
 - A durable fix is a link-unique bfnid, or a guard at every site.
 - Transferred `Number.prototype.toFixed` (`o.p = Number.prototype.toFixed;
   o.p.call(2.5, 1)`) throws on base and branch alike, linked or not.
+
+### 2026-10-06 — Slice V0
+
+Routes U1b's four residual `bfnid` sites through its linked-module signature
+guard. Opus lane, harness branch off `origin/main` @ `bba74cfa80`. `src/` was
+copied to `.tmp/base/src` before the first edit, and every "base" number below
+was run by this lane.
+
+**Why.** A `bfnid` is a module-local type index, so in a canonically linked
+module (`canonicalRuntimeRecGroup`) a peer's builtin closure passes the family
+`ref.test` and can carry one of our ids (see U1b). U1b guarded the three
+`transferred-native-proto.ts` arms; four other compare sites stayed exposed.
+
+**Where the guard lives.** `closures/transferred-native-proto.ts` is in the
+import-cycle SCC (697 files) and `apply-closure-variadic-builtin.ts` is not, so
+importing the guard from there would have grown the SCC. It moved to the leaf
+`builtin-fn-meta.ts`, which every site already imports (`BFN_ID_FIELD_IDX`).
+That adds no import edge; `check:import-cycles` stays at 697. Its signature now
+takes `{ typeIdx, funcTypeIdx }` instead of a receiver entry, and a wrapper,
+`linkedMetaSignatureGuard`, looks the signature up from the meta type's closure
+info (`ensureBuiltinFnMetaType` always records it).
+
+**Per site** (all emit nothing unless linked):
+
+| site | what a colliding peer closure did | now (linked) |
+| --- | --- | --- |
+| `char-at-transfer.ts`, transferred `String.prototype.<m>` arm of `__apply_closure` | different signature: `illegal cast` on the self cast. Same signature: ran OUR member body (`call $__proto_method_…`) on the peer closure | guarded, and the arm calls through field 0 (the peer's own function), as U1b's arms do |
+| `apply-closure-variadic-builtin.ts`, `Math.max`/`min`/`String.fromCharCode` identity | already safe: the arm re-tests field 0 against the variadic type and calls through it | guarded (defence in depth: the identity predicate now holds the invariant by itself) |
+| `object-runtime.ts`, `exactMetaArm` (shared by `__builtinfn_get_meta`/`_gopd`/`_delete`/`_push_ownnames`) | answered OUR `name`/`length` for the peer function, and gOPD/delete/own-keys treated it as ours | a different-signature peer declines to the default tail, which is what a non-colliding peer already got |
+| `ta-dyn-mop.ts`, dyn-view [[Get]] refusal-closure filter | a working peer method read back as `undefined` | each id compare is guarded; the cast is to the family type the ladder already tested |
+
+**Rows and controls.**
+
+| control | base | branch |
+| --- | --- | --- |
+| `Temporal/Duration/prototype/round/*.js` (126, standalone, linked provider, in-process, `JS2WASM_TEMPORAL_CACHE`) | 119 / 7, 0 `illegal cast` | 119 / 7, 0 `illegal cast`; same 7 rows, same messages |
+| byte identity, unlinked: playground examples + `benchmarks/suites` + `examples` (32 files) and a seeded 150-row random test262 sample (wrapped with `wrapTest`), each on gc / standalone / wasi | 546 rows (432 binaries, 114 compile errors) | identical JSONL, every sha and every error message |
+| Temporal provider (linked, standalone) | 3,928,602 B | 3,949,153 B (the guards). Re-built after the final refactor: same sha |
+| QuickJS eval adapter (unlinked) | 617,752 B | 617,752 B |
+
+- Pins: `tests/issue-6651-v0-linked-bfnid-sites.test.ts`, 8 tests. The 4
+  linked tests are red on base; the 4 unlinked tests pass on base (invariants:
+  no guard, direct call). U1b's 6 pins still pass.
+- `node scripts/equivalence-gate.mjs`: no new regressions (22 known failures,
+  1748 passing).
+- Every fast `quality` gate exits 0. Loc and func budgets also pass with
+  `LOC_GATE_BASE=origin/main`, given the dated grants in the frontmatter
+  (`object-runtime.ts` +1, `ta-dyn-mop.ts` +2).
+
+**Not verified.**
+
+- No row that reaches a real cross-module collision at sites 1–4 was found;
+  the Temporal control did not trap at these sites on base either. The pins
+  prove the guard is emitted, not that a collision is now answered correctly.
+- `__builtinfn_gopd`/`_delete`/`_push_ownnames` are dead-code-eliminated in
+  every probe tried. They share `exactMetaArm` with `get_meta`, which is pinned.
+- No host linked-harness lane was run. Those modules also carry
+  `canonicalRuntimeRecGroup`, so they get the guards.
+
+**Residuals.**
+
+- A same-signature collision is still wrong at the two metadata-style sites,
+  which read local data, not the peer's function: `exactMetaArm` answers our
+  `name`/`length`, and the dyn-view filter hides a same-signature peer method.
+  A link-unique `bfnid` (or the realm/singleton identity test that
+  `runtime/wasmgc/values/builtin-function-bodies.ts` already uses) is the
+  durable fix.
+- A peer STATIC builtin whose lifted signature equals a local method's
+  `(self, this, args…)` would still be dispatched with a receiver. This also
+  applies to U1b's arms.
+- `runtime/wasmgc/values/builtin-function-bodies.ts` also compares a bfnid,
+  but it already requires realm and singleton `ref.eq` plus the lifted
+  signature, so it is identity-safe and was left alone.
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 
