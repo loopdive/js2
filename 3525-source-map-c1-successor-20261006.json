@@ -2,10 +2,11 @@
   "id": "3525",
   "slice": "source-map-c1-successor-20261006",
   "assignee": "ttraenkler/codex-3525-source-map-c1-successor-20261006",
-  "requested_by": "ttraenkler/codex-3525-source-map-c1-successor-20261006",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3525-source-map-inline-origins-20261006",
   "claimed_at": "2026-10-06T03:25:40Z",
-  "updated_at": "2026-10-06T03:25:40Z",
-  "write_id": "64251-omkim34c"
+  "updated_at": "2026-10-06T05:59:26Z",
+  "write_id": "36726-10ia0gr8",
+  "released_at": "2026-10-06T05:59:26Z"
 }
