@@ -15075,6 +15075,30 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/expressions/callable-property-omittable-param.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/closures/host-boolean-callback.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/expressions/typeof-import-binding.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/expressions/dispatch-vec-result-bridge.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
