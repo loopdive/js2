@@ -3451,13 +3451,14 @@ export function lowerIrFunctionBody<S, Slot>(
             { op: "any.convert_extern" },
             { op: "ref.cast", typeIdx: promiseTypeIdx },
           ];
-          emitter.pushRaw(out, { op: "local.set", index: rejectedScratchPromiseIdx });
+          emitter.emitLocalSet(rejectedScratchPromiseIdx, out);
           for (const instruction of buildPromiseRejectionEvent(dispatch, 0, promise(), [
             ...promise(),
             { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
           ]))
+            // pushraw-ok(#4376): native WasmGC rejection-event resolver fragment; async.throw is rejected by other backends.
             emitter.pushRaw(out, instruction);
-          emitter.pushRaw(out, { op: "local.get", index: rejectedScratchPromiseIdx });
+          emitter.emitLocalGet(rejectedScratchPromiseIdx, out);
         }
         return;
       }

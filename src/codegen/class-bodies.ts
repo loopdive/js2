@@ -107,6 +107,7 @@ import {
   resolveWasmType,
 } from "./index.js";
 import { replayMissingSuperBody } from "./missing-super-replay.js";
+import { missingSuperReturnIsTypeError } from "./classes/missing-super-return.js"; // (#6651 V4)
 import { detectStringBuilders } from "./string-builder.js"; // (#2641/#1210) string-builder fast-path parity in class methods
 import type { StringBuilderPresizeInfo } from "./string-builder.js";
 import { compileStringLiteral } from "./string-ops.js";
@@ -3023,22 +3024,10 @@ function compileClassBodiesInner(
       // missing-`super` ReferenceError is correct when the body falls through
       // (or returns undefined), but a primitive return is the specified
       // TypeError instead.  Keep this deliberately narrow: a single return
-      // statement with a checker-proven primitive can be diagnosed without
-      // replaying the whole constructor body, while all other missing-super
-      // bodies retain the established ReferenceError path. (#4450)
-      const onlyStatement = ctor?.body?.statements.length === 1 ? ctor.body.statements[0] : undefined;
-      if (
-        onlyStatement &&
-        ts.isReturnStatement(onlyStatement) &&
-        onlyStatement.expression &&
-        (ctx.checker.getTypeAtLocation(onlyStatement.expression).flags &
-          (ts.TypeFlags.NumberLike |
-            ts.TypeFlags.BooleanLike |
-            ts.TypeFlags.BigIntLike |
-            ts.TypeFlags.StringLike |
-            ts.TypeFlags.ESSymbolLike)) !==
-          0
-      ) {
+      // statement with a statically primitive (or `null`, #6651 V4) operand can
+      // be diagnosed without replaying the whole constructor body, while all
+      // other missing-super bodies retain the established ReferenceError path. (#4450)
+      if (missingSuperReturnIsTypeError(ctx, ctor)) {
         emitThrowTypeError(ctx, fctx, "Derived constructors may only return an object or undefined");
       } else {
         // (#1682) Throw a real ReferenceError instance (not a bare string) so

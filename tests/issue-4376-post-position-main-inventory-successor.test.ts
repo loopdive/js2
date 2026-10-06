@@ -13,23 +13,52 @@ import {
 } from "./helpers/ir-deno-post-position-main-successor.js";
 // Complete fixed source/receipt pins are independently frozen after formatting.
 const helperPin = {
-  bytes: 82292,
-  sha256: "9cfdc79238aff21d63ef08bf3813a604eff08bf59bac036490a48b5216919ec5",
+  bytes: 85382,
+  sha256: "7432828baccad03b5e2810cc252308190a1484ed0886d2fb2a573d6049dc50b5",
 };
 const receiptPin = {
-  bytes: 75435,
-  sha256: "b13e16fd646817bc09ee32318fdcf25a52a941f24ed6e949c93b167f68e75953",
+  bytes: 78647,
+  sha256: "573a2bda98b3116c7082697c0268885c19cfb3ea2675fac1416363c3d8232f3d",
 };
 const expected = {
   current: {
     source: {
-      bytes: 596437,
-      sha256: "a93b6e37ab492e3b3cb591e1f10a394291580bd1aea17b2b01062244e977a966",
-      gitBlob: "20c80a1be26998bb19127f3c1104db8f05e57c35",
+      bytes: 596763,
+      sha256: "b14d7e1d560ab263f0cfbdd1ae4d90e8f84a8aeba082296e58a497152ae5b848",
+      gitBlob: "2c57eed9dcc9da1fd752899b11709082002355a7",
     },
-    fileCount: 1863,
-    dataSha256: "7c86de710df485d944c4b908cf6932ffcf04cdce994961ff05ecb753033f683b",
-    filesSha256: "40ddff4b9aba0299374989a10af7714f2477c6c2c3e36cc7eb47d08c71a24429",
+    fileCount: 1864,
+    dataSha256: "2e6ecbd9f31bc736b13996c281cb1896bbb946c193a3bc427f8218ced615f314",
+    filesSha256: "8ca6ab83fad1a29c5f0e82a75383a7629c27a9ee3b35c5ffef485c845e798448",
+    nonFilesSha256: "3a4788461bc5c6757c931554be0ec6218711f00814f580d9bb70d26a5929c1ce",
+    topLevelKeys: [
+      "schema",
+      "description",
+      "sourceRoot",
+      "tsconfig",
+      "requireGitProvenance",
+      "externalAssets",
+      "frontendWrapper",
+      "moduleExtensions",
+      "layers",
+      "allowedEdges",
+      "externalPackages",
+      "activationHistory",
+      "nonModules",
+      "moves",
+      "evidence",
+      "files",
+    ],
+  },
+  main58d: {
+    source: {
+      bytes: 591096,
+      sha256: "af43508deba915273295751c8bc0487e5febb8c36bd8ced5a22dde06cde2d898",
+      gitBlob: "1e939d20897d184052de927cf5f5804a7418dfa3",
+    },
+    fileCount: 1846,
+    dataSha256: "94fc067472238cc6a70058ba772c49cf52cd7a33ceea6a6fce6ea289a548fa51",
+    filesSha256: "f9fdea78085035b3bbc8ca16d25bea04a2bd5883219f00bc0cc09b93334b894d",
     nonFilesSha256: "3a4788461bc5c6757c931554be0ec6218711f00814f580d9bb70d26a5929c1ce",
     topLevelKeys: [
       "schema",
@@ -138,7 +167,7 @@ const expected = {
     ],
   },
   projections: {
-    main6998: {
+    main58d: {
       removedRows: [
         {
           index: 47,
@@ -289,7 +318,7 @@ const expected = {
           },
         },
         {
-          index: 709,
+          index: 710,
           row: {
             path: "src/codegen/object-model/linked-realm-property-read.ts",
             state: "unmigrated",
@@ -317,7 +346,7 @@ const expected = {
           },
         },
         {
-          index: 711,
+          index: 712,
           row: {
             path: "src/codegen/array/live-array-iterator-value.ts",
             state: "unmigrated",
@@ -345,7 +374,7 @@ const expected = {
           },
         },
         {
-          index: 842,
+          index: 843,
           row: {
             path: "src/codegen/closures/ordinary-new-target.ts",
             state: "unmigrated",
@@ -373,7 +402,7 @@ const expected = {
           },
         },
         {
-          index: 879,
+          index: 880,
           row: {
             path: "src/codegen/registry/promise-handler-boundary.ts",
             state: "unmigrated",
@@ -401,7 +430,7 @@ const expected = {
           },
         },
         {
-          index: 900,
+          index: 901,
           row: {
             path: "src/codegen/closures/promoted-capture-value.ts",
             state: "unmigrated",
@@ -429,7 +458,7 @@ const expected = {
           },
         },
         {
-          index: 943,
+          index: 944,
           row: {
             path: "src/codegen/closures/rest-only-apply.ts",
             state: "unmigrated",
@@ -457,7 +486,7 @@ const expected = {
           },
         },
         {
-          index: 959,
+          index: 960,
           row: {
             path: "src/codegen/declarations/shared-script-var-access.ts",
             state: "unmigrated",
@@ -485,7 +514,7 @@ const expected = {
           },
         },
         {
-          index: 1502,
+          index: 1503,
           row: {
             path: "src/runtime/wasmgc/promise/resolving-pair-bodies.ts",
             state: "clean",
@@ -503,7 +532,7 @@ const expected = {
           },
         },
         {
-          index: 1526,
+          index: 1527,
           row: {
             path: "src/wasm/physical/allocation-owner.ts",
             state: "clean",
@@ -521,7 +550,7 @@ const expected = {
           },
         },
         {
-          index: 1661,
+          index: 1662,
           row: {
             path: "src/codegen/registry/microtask-drain-boundary.ts",
             state: "unmigrated",
@@ -550,7 +579,7 @@ const expected = {
           },
         },
         {
-          index: 1662,
+          index: 1663,
           row: {
             path: "src/codegen/registry/microtask-notification.ts",
             state: "unmigrated",
@@ -579,7 +608,7 @@ const expected = {
           },
         },
         {
-          index: 1793,
+          index: 1794,
           row: {
             path: "src/codegen/registry/promise-rejection-dispatch.ts",
             state: "unmigrated",
@@ -644,78 +673,78 @@ const expected = {
             '    },\n    {\n      "path": "src/codegen/object-model/closed-object-prototype-edges.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate codegen-context prototype edge registration and physical function/global allocation from native prototype bodies."\n',
         },
         {
-          beforeOffset: 273122,
-          afterOffset: 274923,
+          beforeOffset: 273448,
+          afterOffset: 275249,
           before: "",
           after:
             '      "path": "src/codegen/object-model/linked-realm-property-read.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate linked-realm late-import reservation and context-owned function filling from its native read body."\n    },\n    {\n',
         },
         {
-          beforeOffset: 273415,
-          afterOffset: 275572,
+          beforeOffset: 273741,
+          afterOffset: 275898,
           before: "",
           after:
             '    },\n    {\n      "path": "src/codegen/array/live-array-iterator-value.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate codegen-context iterator kind and layout selection from the receiver-backed native iterator value body."\n',
         },
         {
-          beforeOffset: 315367,
-          afterOffset: 317877,
+          beforeOffset: 315693,
+          afterOffset: 318203,
           before: "",
           after:
             '      "path": "src/codegen/closures/ordinary-new-target.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST lexical-target detection and context/local/global registration from ordinary construction target frame instructions."\n    },\n    {\n',
         },
         {
-          beforeOffset: 327271,
-          afterOffset: 330148,
+          beforeOffset: 327597,
+          afterOffset: 330474,
           before: "",
           after:
             '      "path": "src/codegen/registry/promise-handler-boundary.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate context-owned Promise handling boundary export and physical function registration from native handling instructions."\n    },\n    {\n',
         },
         {
-          beforeOffset: 334118,
-          afterOffset: 337363,
+          beforeOffset: 334444,
+          afterOffset: 337689,
           before: "",
           after:
             '    },\n    {\n      "path": "src/codegen/closures/promoted-capture-value.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate context-bound promoted capture lookup and ref-cell type selection from native capture-value instructions."\n',
         },
         {
-          beforeOffset: 347537,
-          afterOffset: 351137,
+          beforeOffset: 347863,
+          afterOffset: 351463,
           before: "",
           after:
             '      "path": "src/codegen/closures/rest-only-apply.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate closure/context dispatch, receiver state and exception registration from full-vector rest-call bodies."\n    },\n    {\n',
         },
         {
-          beforeOffset: 352302,
-          afterOffset: 356247,
+          beforeOffset: 352628,
+          afterOffset: 356573,
           before: "",
           after:
             '    },\n    {\n      "path": "src/codegen/declarations/shared-script-var-access.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate context-owned Script binding/global-environment registration and final instruction rewriting from explicit native binding resources."\n',
         },
         {
-          beforeOffset: 512224,
-          afterOffset: 516557,
+          beforeOffset: 512550,
+          afterOffset: 516883,
           before: "",
           after:
             '      "path": "src/runtime/wasmgc/promise/resolving-pair-bodies.ts",\n      "state": "clean",\n      "layer": "native-runtime"\n    },\n    {\n',
         },
         {
-          beforeOffset: 517436,
-          afterOffset: 521907,
+          beforeOffset: 517762,
+          afterOffset: 522233,
           before: "",
           after:
             '      "state": "clean",\n      "layer": "wasm-physical"\n    },\n    {\n      "path": "src/wasm/physical/allocation-owner.ts",\n',
         },
         {
-          beforeOffset: 542232,
-          afterOffset: 546826,
+          beforeOffset: 542558,
+          afterOffset: 547152,
           before: "",
           after:
             '    },\n    {\n      "path": "src/codegen/registry/microtask-drain-boundary.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate scheduler-context and physical export registration from the canonical native microtask drain body."\n    },\n    {\n      "path": "src/codegen/registry/microtask-notification.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate context-owned late notification import and index shifting from native scheduling instructions."\n',
         },
         {
-          beforeOffset: 580563,
-          afterOffset: 585851,
+          beforeOffset: 580889,
+          afterOffset: 586177,
           before: "",
           after:
             '      "path": "src/codegen/registry/promise-rejection-dispatch.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Place context-dependent rejection dispatcher resolution and import/defined-function identity checks behind explicit backend resources."\n    },\n    {\n',
@@ -874,7 +903,34 @@ const expected = {
           },
         },
         {
-          index: 709,
+          index: 381,
+          row: {
+            path: "src/codegen/classes/missing-super-return.ts",
+            state: "unmigrated",
+            layer: "mixed-needs-split",
+            destination: "backend-wasmgc",
+            owner: "3518-coordinator",
+            nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
+          },
+          previous: {
+            path: "src/codegen/classes/ctor-return-override.ts",
+            state: "unmigrated",
+            layer: "mixed-needs-split",
+            destination: "backend-wasmgc",
+            owner: "3518-coordinator",
+            nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
+          },
+          next: {
+            path: "src/codegen/custom-iterable.ts",
+            state: "unmigrated",
+            layer: "mixed-needs-split",
+            destination: "backend-wasmgc",
+            owner: "3518-coordinator",
+            nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
+          },
+        },
+        {
+          index: 710,
           row: {
             path: "src/codegen/object-model/linked-realm-property-read.ts",
             state: "unmigrated",
@@ -902,7 +958,7 @@ const expected = {
           },
         },
         {
-          index: 711,
+          index: 712,
           row: {
             path: "src/codegen/array/live-array-iterator-value.ts",
             state: "unmigrated",
@@ -930,7 +986,7 @@ const expected = {
           },
         },
         {
-          index: 842,
+          index: 843,
           row: {
             path: "src/codegen/closures/ordinary-new-target.ts",
             state: "unmigrated",
@@ -958,7 +1014,7 @@ const expected = {
           },
         },
         {
-          index: 879,
+          index: 880,
           row: {
             path: "src/codegen/registry/promise-handler-boundary.ts",
             state: "unmigrated",
@@ -986,7 +1042,7 @@ const expected = {
           },
         },
         {
-          index: 898,
+          index: 899,
           row: {
             path: "src/codegen/object-model/proxy-forward-carriers.ts",
             state: "unmigrated",
@@ -1013,7 +1069,7 @@ const expected = {
           },
         },
         {
-          index: 900,
+          index: 901,
           row: {
             path: "src/codegen/closures/promoted-capture-value.ts",
             state: "unmigrated",
@@ -1041,7 +1097,7 @@ const expected = {
           },
         },
         {
-          index: 943,
+          index: 944,
           row: {
             path: "src/codegen/closures/rest-only-apply.ts",
             state: "unmigrated",
@@ -1069,7 +1125,7 @@ const expected = {
           },
         },
         {
-          index: 959,
+          index: 960,
           row: {
             path: "src/codegen/declarations/shared-script-var-access.ts",
             state: "unmigrated",
@@ -1097,7 +1153,7 @@ const expected = {
           },
         },
         {
-          index: 1059,
+          index: 1060,
           row: {
             path: "src/codegen/array/ta-iter-detach.ts",
             state: "unmigrated",
@@ -1124,7 +1180,7 @@ const expected = {
           },
         },
         {
-          index: 1502,
+          index: 1503,
           row: {
             path: "src/runtime/wasmgc/promise/resolving-pair-bodies.ts",
             state: "clean",
@@ -1142,7 +1198,7 @@ const expected = {
           },
         },
         {
-          index: 1526,
+          index: 1527,
           row: {
             path: "src/wasm/physical/allocation-owner.ts",
             state: "clean",
@@ -1160,7 +1216,7 @@ const expected = {
           },
         },
         {
-          index: 1661,
+          index: 1662,
           row: {
             path: "src/codegen/registry/microtask-drain-boundary.ts",
             state: "unmigrated",
@@ -1189,7 +1245,7 @@ const expected = {
           },
         },
         {
-          index: 1662,
+          index: 1663,
           row: {
             path: "src/codegen/registry/microtask-notification.ts",
             state: "unmigrated",
@@ -1218,7 +1274,7 @@ const expected = {
           },
         },
         {
-          index: 1782,
+          index: 1783,
           row: {
             path: "src/codegen/expressions/callable-property-omittable-param.ts",
             state: "unmigrated",
@@ -1245,7 +1301,7 @@ const expected = {
           },
         },
         {
-          index: 1783,
+          index: 1784,
           row: {
             path: "src/codegen/closures/host-boolean-callback.ts",
             state: "unmigrated",
@@ -1272,7 +1328,7 @@ const expected = {
           },
         },
         {
-          index: 1784,
+          index: 1785,
           row: {
             path: "src/codegen/expressions/typeof-import-binding.ts",
             state: "unmigrated",
@@ -1299,7 +1355,7 @@ const expected = {
           },
         },
         {
-          index: 1793,
+          index: 1794,
           row: {
             path: "src/codegen/registry/promise-rejection-dispatch.ts",
             state: "unmigrated",
@@ -1364,99 +1420,106 @@ const expected = {
             '    },\n    {\n      "path": "src/codegen/object-model/closed-object-prototype-edges.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate codegen-context prototype edge registration and physical function/global allocation from native prototype bodies."\n',
         },
         {
+          beforeOffset: 166964,
+          afterOffset: 168765,
+          before: "",
+          after:
+            '      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n      "path": "src/codegen/classes/missing-super-return.ts",\n',
+        },
+        {
           beforeOffset: 273122,
-          afterOffset: 274923,
+          afterOffset: 275249,
           before: "",
           after:
             '      "path": "src/codegen/object-model/linked-realm-property-read.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate linked-realm late-import reservation and context-owned function filling from its native read body."\n    },\n    {\n',
         },
         {
           beforeOffset: 273415,
-          afterOffset: 275572,
+          afterOffset: 275898,
           before: "",
           after:
             '    },\n    {\n      "path": "src/codegen/array/live-array-iterator-value.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate codegen-context iterator kind and layout selection from the receiver-backed native iterator value body."\n',
         },
         {
           beforeOffset: 315367,
-          afterOffset: 317877,
+          afterOffset: 318203,
           before: "",
           after:
             '      "path": "src/codegen/closures/ordinary-new-target.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST lexical-target detection and context/local/global registration from ordinary construction target frame instructions."\n    },\n    {\n',
         },
         {
           beforeOffset: 327271,
-          afterOffset: 330148,
+          afterOffset: 330474,
           before: "",
           after:
             '      "path": "src/codegen/registry/promise-handler-boundary.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate context-owned Promise handling boundary export and physical function registration from native handling instructions."\n    },\n    {\n',
         },
         {
           beforeOffset: 333472,
-          afterOffset: 336717,
+          afterOffset: 337043,
           before: "",
           after:
             '      "path": "src/codegen/object-model/proxy-forward-carriers.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n',
         },
         {
           beforeOffset: 333785,
-          afterOffset: 337363,
+          afterOffset: 337689,
           before: "",
           after:
             '    },\n    {\n      "path": "src/codegen/closures/promoted-capture-value.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate context-bound promoted capture lookup and ref-cell type selection from native capture-value instructions."\n',
         },
         {
           beforeOffset: 347204,
-          afterOffset: 351137,
+          afterOffset: 351463,
           before: "",
           after:
             '      "path": "src/codegen/closures/rest-only-apply.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate closure/context dispatch, receiver state and exception registration from full-vector rest-call bodies."\n    },\n    {\n',
         },
         {
           beforeOffset: 351969,
-          afterOffset: 356247,
+          afterOffset: 356573,
           before: "",
           after:
             '    },\n    {\n      "path": "src/codegen/declarations/shared-script-var-access.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate context-owned Script binding/global-environment registration and final instruction rewriting from explicit native binding resources."\n',
         },
         {
           beforeOffset: 383494,
-          afterOffset: 388160,
+          afterOffset: 388486,
           before: "",
           after:
             '      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n      "path": "src/codegen/array/ta-iter-detach.ts",\n',
         },
         {
           beforeOffset: 511573,
-          afterOffset: 516557,
+          afterOffset: 516883,
           before: "",
           after:
             '      "path": "src/runtime/wasmgc/promise/resolving-pair-bodies.ts",\n      "state": "clean",\n      "layer": "native-runtime"\n    },\n    {\n',
         },
         {
           beforeOffset: 516785,
-          afterOffset: 521907,
+          afterOffset: 522233,
           before: "",
           after:
             '      "state": "clean",\n      "layer": "wasm-physical"\n    },\n    {\n      "path": "src/wasm/physical/allocation-owner.ts",\n',
         },
         {
           beforeOffset: 541581,
-          afterOffset: 546826,
+          afterOffset: 547152,
           before: "",
           after:
             '    },\n    {\n      "path": "src/codegen/registry/microtask-drain-boundary.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate scheduler-context and physical export registration from the canonical native microtask drain body."\n    },\n    {\n      "path": "src/codegen/registry/microtask-notification.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate context-owned late notification import and index shifting from native scheduling instructions."\n',
         },
         {
           beforeOffset: 576359,
-          afterOffset: 582298,
+          afterOffset: 582624,
           before: "",
           after:
             '      "path": "src/codegen/expressions/callable-property-omittable-param.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n      "path": "src/codegen/closures/host-boolean-callback.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n      "path": "src/codegen/expressions/typeof-import-binding.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n',
         },
         {
           beforeOffset: 578897,
-          afterOffset: 585838,
+          afterOffset: 586164,
           before: "",
           after:
             '    },\n    {\n      "path": "src/codegen/registry/promise-rejection-dispatch.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Place context-dependent rejection dispatcher resolution and import/defined-function identity checks behind explicit backend resources."\n',
@@ -1485,7 +1548,34 @@ const expected = {
           },
         },
         {
-          index: 898,
+          index: 381,
+          row: {
+            path: "src/codegen/classes/missing-super-return.ts",
+            state: "unmigrated",
+            layer: "mixed-needs-split",
+            destination: "backend-wasmgc",
+            owner: "3518-coordinator",
+            nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
+          },
+          previous: {
+            path: "src/codegen/classes/ctor-return-override.ts",
+            state: "unmigrated",
+            layer: "mixed-needs-split",
+            destination: "backend-wasmgc",
+            owner: "3518-coordinator",
+            nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
+          },
+          next: {
+            path: "src/codegen/custom-iterable.ts",
+            state: "unmigrated",
+            layer: "mixed-needs-split",
+            destination: "backend-wasmgc",
+            owner: "3518-coordinator",
+            nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
+          },
+        },
+        {
+          index: 899,
           row: {
             path: "src/codegen/object-model/proxy-forward-carriers.ts",
             state: "unmigrated",
@@ -1512,7 +1602,7 @@ const expected = {
           },
         },
         {
-          index: 996,
+          index: 997,
           row: {
             path: "src/codegen/statements/finally-private-local.ts",
             state: "unmigrated",
@@ -1539,7 +1629,7 @@ const expected = {
           },
         },
         {
-          index: 1059,
+          index: 1060,
           row: {
             path: "src/codegen/array/ta-iter-detach.ts",
             state: "unmigrated",
@@ -1566,7 +1656,7 @@ const expected = {
           },
         },
         {
-          index: 1782,
+          index: 1783,
           row: {
             path: "src/codegen/expressions/callable-property-omittable-param.ts",
             state: "unmigrated",
@@ -1593,7 +1683,7 @@ const expected = {
           },
         },
         {
-          index: 1783,
+          index: 1784,
           row: {
             path: "src/codegen/closures/host-boolean-callback.ts",
             state: "unmigrated",
@@ -1620,7 +1710,7 @@ const expected = {
           },
         },
         {
-          index: 1784,
+          index: 1785,
           row: {
             path: "src/codegen/expressions/typeof-import-binding.ts",
             state: "unmigrated",
@@ -1649,36 +1739,43 @@ const expected = {
       ],
       rawSpans: [
         {
-          beforeOffset: 82963,
-          afterOffset: 82963,
+          beforeOffset: 83028,
+          afterOffset: 83028,
           before: "",
           after:
-            '      "state": "clean",\n      "layer": "ir-program"\n    },\n    {\n      "path": "src/ir/program/source-map-position.ts",\n',
+            '      "path": "src/ir/program/source-map-position.ts",\n      "state": "clean",\n      "layer": "ir-program"\n    },\n    {\n',
+        },
+        {
+          beforeOffset: 168645,
+          afterOffset: 168765,
+          before: "",
+          after:
+            '      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n      "path": "src/codegen/classes/missing-super-return.ts",\n',
         },
         {
           beforeOffset: 336597,
-          afterOffset: 336717,
+          afterOffset: 337043,
           before: "",
           after:
             '      "path": "src/codegen/object-model/proxy-forward-carriers.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n',
         },
         {
           beforeOffset: 367846,
-          afterOffset: 368299,
+          afterOffset: 368625,
           before: "",
           after:
             '      "path": "src/codegen/statements/finally-private-local.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "5267",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n',
         },
         {
           beforeOffset: 387389,
-          afterOffset: 388160,
+          afterOffset: 388486,
           before: "",
           after:
             '      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n      "path": "src/codegen/array/ta-iter-detach.ts",\n',
         },
         {
           beforeOffset: 581209,
-          afterOffset: 582298,
+          afterOffset: 582624,
           before: "",
           after:
             '      "path": "src/codegen/expressions/callable-property-omittable-param.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n      "path": "src/codegen/closures/host-boolean-callback.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n      "path": "src/codegen/expressions/typeof-import-binding.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n',
@@ -1688,6 +1785,46 @@ const expected = {
     },
   },
 } as const;
+const formerCurrentProfile = {
+  source: {
+    bytes: 596437,
+    sha256: "a93b6e37ab492e3b3cb591e1f10a394291580bd1aea17b2b01062244e977a966",
+    gitBlob: "20c80a1be26998bb19127f3c1104db8f05e57c35",
+  },
+  fileCount: 1863,
+  dataSha256: "7c86de710df485d944c4b908cf6932ffcf04cdce994961ff05ecb753033f683b",
+  filesSha256: "40ddff4b9aba0299374989a10af7714f2477c6c2c3e36cc7eb47d08c71a24429",
+  nonFilesSha256: "3a4788461bc5c6757c931554be0ec6218711f00814f580d9bb70d26a5929c1ce",
+  topLevelKeys: [
+    "schema",
+    "description",
+    "sourceRoot",
+    "tsconfig",
+    "requireGitProvenance",
+    "externalAssets",
+    "frontendWrapper",
+    "moduleExtensions",
+    "layers",
+    "allowedEdges",
+    "externalPackages",
+    "activationHistory",
+    "nonModules",
+    "moves",
+    "evidence",
+    "files",
+  ],
+} as const;
+const formerCurrentInsertion = {
+  offset: 169058,
+  literal:
+    'lasses/missing-super-return.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n      "path": "src/codegen/c',
+} as const;
+const formerMainInsertion = {
+  offset: 167257,
+  literal:
+    'lasses/missing-super-return.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n      "path": "src/codegen/c',
+} as const;
+
 const previousCurrentProfile = {
   source: {
     bytes: 596119,
@@ -1763,11 +1900,13 @@ const sha = (value: string | Buffer): string => createHash("sha256").update(valu
 type Policy = Record<string, unknown> & { files: Record<string, unknown>[] };
 type Profile =
   | typeof expected.current
+  | typeof expected.main58d
   | typeof expected.main6998
   | typeof expected.oldPosition
   | typeof expected.oldDeno
   | typeof previousCurrentProfile
-  | typeof main431Profile;
+  | typeof main431Profile
+  | typeof formerCurrentProfile;
 function profile(raw: string, target: Profile): Policy {
   expect(Buffer.byteLength(raw)).toBe(target.source.bytes);
   expect(sha(raw)).toBe(target.source.sha256);
@@ -1792,7 +1931,30 @@ function pin(path: string, target: { bytes: number; sha256: string }) {
   expect(Buffer.byteLength(raw)).toBe(target.bytes);
   expect(sha(raw)).toBe(target.sha256);
 }
-function independent(raw: string, which: "main6998" | "oldPosition" | "oldDeno"): string {
+function undo58d(
+  raw: string,
+  insertion: { readonly offset: number; readonly literal: string },
+  target: Profile,
+): string {
+  const bytes = Buffer.from(raw),
+    inserted = Buffer.from(insertion.literal);
+  expect(bytes.subarray(insertion.offset, insertion.offset + inserted.length)).toEqual(inserted);
+  const previous = Buffer.concat([
+    bytes.subarray(0, insertion.offset),
+    bytes.subarray(insertion.offset + inserted.length),
+  ]).toString("utf8");
+  profile(previous, target);
+  expect(
+    Buffer.concat([
+      Buffer.from(previous).subarray(0, insertion.offset),
+      inserted,
+      Buffer.from(previous).subarray(insertion.offset),
+    ]).toString("utf8"),
+  ).toBe(raw);
+  return previous;
+}
+function independent(raw: string, which: "main58d" | "main6998" | "oldPosition" | "oldDeno"): string {
+  if (which === "main6998") return undo58d(independent(raw, "main58d"), formerMainInsertion, expected.main6998);
   const current = profile(raw, expected.current),
     projection = expected.projections[which],
     bytes = Buffer.from(raw);
@@ -1879,9 +2041,9 @@ describe("fixed post-position main and Deno predecessor routes", () => {
 
   it("independently proves all three complete inverses and replays", () => {
     healthy();
-    expect(expected.projections.main6998.removedRows).toHaveLength(18);
-    expect(expected.projections.oldPosition.removedRows).toHaveLength(23);
-    expect(expected.projections.oldDeno.removedRows).toHaveLength(7);
+    expect(expected.projections.main58d.removedRows).toHaveLength(18);
+    expect(expected.projections.oldPosition.removedRows).toHaveLength(24);
+    expect(expected.projections.oldDeno.removedRows).toHaveLength(8);
   });
   it("detaches both semantic routes and preserves every frozen input byte", () => {
     const { current } = healthy();
@@ -1898,7 +2060,8 @@ describe("fixed post-position main and Deno predecessor routes", () => {
     const rawCapture = route === "main" ? mainRaw : denoRaw,
       dataCapture = route === "main" ? mainData : denoData;
     it(`${route} refuses the exact stale previousCurrent profile as current`, () => {
-      const { raw } = healthy();
+      const { raw: fresh } = healthy();
+      const raw = undo58d(fresh, formerCurrentInsertion, formerCurrentProfile);
       const bytes = Buffer.from(raw);
       const offset = previousCurrentInsertion.offset;
       const inserted = Buffer.from(previousCurrentInsertion.literal);
@@ -1924,7 +2087,13 @@ describe("fixed post-position main and Deno predecessor routes", () => {
       expect(() => rawCapture(stale)).toThrow(/complete raw source profile mismatch/);
       expect(() => dataCapture(JSON.parse(stale))).toThrow(/complete policy profile mismatch/);
     });
-    for (const epoch of ["oldPosition", "oldDeno", "main6998"] as const)
+    it(`${route} refuses the exact stale formerCurrent1863 profile as current`, () => {
+      const { raw } = healthy();
+      const stale = undo58d(raw, formerCurrentInsertion, formerCurrentProfile);
+      expect(() => rawCapture(stale)).toThrow(/complete raw source profile mismatch/);
+      expect(() => dataCapture(JSON.parse(stale))).toThrow(/complete policy profile mismatch/);
+    });
+    for (const epoch of ["oldPosition", "oldDeno", "main6998", "main58d"] as const)
       it(`${route} refuses the exact stale ${epoch} profile as current`, () => {
         const { raw } = healthy(),
           stale = independent(raw, epoch);

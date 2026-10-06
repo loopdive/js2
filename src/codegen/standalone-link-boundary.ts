@@ -664,6 +664,64 @@ export function standaloneLinkBoundaryPeerIndex(
 }
 
 /**
+ * (#6748) The coherent (`callableKind`, `construct`) pairs a dynamic `new`
+ * consults, wasm peer first. The two families answer for DIFFERENT values — the
+ * peer for a struct the provider minted, the JS boundary for a host object this
+ * instance admitted — and a native-regime consumer in a JavaScript environment
+ * has both. Picking each index with `boundary ?? peer` separately paired the
+ * peer's "constructible" verdict with the boundary's construct, which refuses
+ * every value it did not admit: `new Temporal.PlainTime()` threw "Reflect.construct
+ * target is not an admitted JavaScript constructor". A module with only one
+ * family gets exactly the one arm it had.
+ */
+export function constructBoundaryPairs(ctx: CodegenContext): { callableKind: number; construct: number }[] {
+  const pairs: { callableKind: number; construct: number }[] = [];
+  const peerKind = standaloneLinkBoundaryPeerIndex(ctx, "callableKind");
+  const peerConstruct = standaloneLinkBoundaryPeerIndex(ctx, "construct");
+  if (peerKind !== undefined && peerConstruct !== undefined) {
+    pairs.push({ callableKind: peerKind, construct: peerConstruct });
+  }
+  const boundaryKind = ctx.funcMap.get("__boundary_object_callable_kind");
+  const boundaryConstruct = ctx.funcMap.get("__boundary_object_construct");
+  if (boundaryKind !== undefined && boundaryConstruct !== undefined) {
+    pairs.push({ callableKind: boundaryKind, construct: boundaryConstruct });
+  }
+  return pairs;
+}
+
+/**
+ * One forward `__extern_method_call` arm over a JS-boundary or peer call
+ * terminal (params 0..2 = recv, name, args): a non-null answer is returned. A
+ * PEER's null may also be a method's real answer (`peerNullAware`, see
+ * {@link peerNullMethodResultInstrs}). (#6748) Factored out so a regime module
+ * can emit it twice — peer first, then the JS boundary.
+ */
+export function methodCallForwardArmInstrs(
+  ctx: CodegenContext,
+  callIdx: number,
+  resultLocal: number,
+  peerNullAware: boolean,
+  memberGetIdx: number | undefined,
+  getPrototypeOfIdx: number | undefined,
+): Instr[] {
+  return [
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 1 },
+    { op: "local.get", index: 2 },
+    { op: "call", funcIdx: callIdx },
+    { op: "local.tee", index: resultLocal },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "local.get", index: resultLocal }, { op: "return" }],
+    },
+    ...(peerNullAware ? peerNullMethodResultInstrs(ctx, memberGetIdx, getPrototypeOfIdx, resultLocal) : []),
+  ];
+}
+
+/**
  * (#5383) The CONSUMER's `__extern_method_call` arm for a method-call terminal
  * answer of `null`, spliced right after the forward peer arm.
  *
