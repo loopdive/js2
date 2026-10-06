@@ -3126,14 +3126,21 @@ new migration scope or retire legacy code before full IR equivalence is proved.
 Next bounded preparation: implement a final-candidate evidence packager only in
 the repaired-baseline worktree's ignored `.tmp/` directory. Preserve the running
 candidate, its runner, source inputs, schedule and existing archives unchanged.
-The packager must refuse incomplete runs: require the root terminal and each
-scheduled stage's records, then preserve exact original bytes using the existing
+The packager must refuse live/incomplete runs: require the root terminal and each
+executed stage's records, then preserve exact original bytes using the existing
 gzip/base64 custody convention, with safe unique relative paths, byte lengths
 and SHA256 for every payload. Include invocation, raw/native results, input
 maps, stage/root terminals, exact runner and schedule; explicitly identify any
 record absent by design rather than inventing it. Verify round-trip bytes and
 record the source commit and input-map authority. Always retain accepted=false:
 candidate success alone does not establish equality with the repaired baseline.
+Preserve terminal failures too: the executed stages must be a contiguous prefix
+of clean stages followed by at most one failed stage, consistent with the root
+terminal. List subsequent stages explicitly as unexecuted. A missing native
+report for a failed child must be recorded as missing, never an empty result;
+canonical typecheck has no native report by design. Reject unexplained holes or
+contradictory terminal counts. Never require a failed run to have executed the
+remaining schedule, and never manufacture evidence to complete its archive.
 No execution against the live run, test launch, Git mutation or publication is
 released by this preparation. Return the packager path/hash, complete expected
 record list and source-only validation to the parent for review before use.
