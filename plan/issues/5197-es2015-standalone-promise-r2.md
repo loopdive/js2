@@ -3678,3 +3678,49 @@ silently omitted. No tests, compiler, Git or tracked-file edits. Return complete
 packager source/hash and proposed exact publication file under plan/agent-context;
 parent reviews and authorizes invocation after terminal B and child-inventory
 inspection. This belongs in existing PR5883, not an additional checkpoint PR.
+
+Parent reviewed the complete476-line comparator, frozen SHA256
+63d830bd6abe5d5ba459e856be2e6ea1571e32537a70e44381ac47835e18ecd8,
+and complete293-line packager, frozen SHA256
+04edccb7d60147d2b05093c2fdb37f84f8e76e8e93d1c3c4bd6187b54fc13424.
+Neither has been invoked against terminal B. The packager additionally requires
+a parent-pinned child inventory. The observed delay child is
+`.tmp/delay-combinator-preservation-pyQBRk` in B, explicitly referenced by the
+compiler-readers raw output. Its stderr log is created only on a stderr chunk;
+account for its absence explicitly. Source-map helper folders must be derived
+from exact SAFE_PASS_ARTIFACT records, with failures before those markers
+explicitly accounted for. No unrestricted child-directory discovery.
+
+Runtime completed351/351 across17 files, zero failed/skipped/todo; parent checked
+native assertion statuses, not only the stage summary. Completed total is767
+passing cases plus canonical typing. Incoming23 is still running; no terminal B
+result or exact B/E outcome equality is claimed.
+
+#### Parent refresh boundary after terminal comparison
+
+Read-only exact-main audit found103 changed paths across60 commits through
+410cc7da. None overlap candidate5883's11 production files; the only direct
+candidate change-set overlap is compiler-boundaries.json. Preserve candidate
+four rows/three moves and upstream five new rows (missing-super-return,
+primitive-carrier-test,module-namespace-exotic,for-head-parser-compat,
+extern-get-string-receiver). Proposed union1854 files/15 moves must be verified
+in the actual composition, not treated as an accepted count.
+
+Indirect byte receipts are affected: historical-promise-successors.ts reads
+builtin-fn-meta.ts and object-runtime.ts; historical-promise-main4bff-successor.ts
+authenticates the latter endpoint; ir-5883-main-4bff-inventory-views.ts pins whole
+inventory profiles. Audit active consumers of accessor-driver,
+apply-closure-variadic-builtin,object-runtime-prototype and
+prototype-receiver-bodies before claiming further blockers. Preserve upstream
+replay-helper typing, eleven new tests, scheduled-test comment and Test262 fixture
+discovery changes. Package/lock/type/Vitest configuration is unchanged.
+
+After the frozen comparison is finished and preserved, compose in a separate
+new-main worktree; never rewrite this A/B/E epoch. Parent must then specify exact
+inverse spans and physical corruption controls for each demonstrated receipt
+blocker before Sol6.1 medium implementation. Retain old endpoints, fixtures and
+assertions; no blanket hash updates. Collect fresh native identities and pin
+new maps for both new-main baseline and candidate. Validate changed upstream
+regression tests and preservation controls before the complete reviewed schedule.
+Old B results do not confer acceptance on a new-main composition. Normal protected
+landing gates and legacy-retirement restrictions remain unchanged.
