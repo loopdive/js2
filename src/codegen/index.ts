@@ -603,7 +603,7 @@ import type { ModuleInitMode } from "./declarations.js";
 import { prepareModuleTdzGlobals } from "./module-global-registration.js";
 import { hoistedVarPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
 import { inferParamTypeFromCallSites } from "./declarations/param-return-inference.js";
-import { optionalFieldFlag } from "./struct-optional-widen.js"; // (#6867)
+import { optionalFieldFlag } from "./object-model/struct-optional-widen.js"; // (#6867)
 import {
   destructureParamArray,
   destructureParamObject,

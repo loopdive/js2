@@ -49,7 +49,7 @@ import { structMustReifyAtExternrefBoundary } from "./struct-boundary-reify.js";
 import { pushZeroArgCallPad } from "./zero-arg-method-pad.js"; // (#4644) declared-but-unpassed params
 import { samePhysicalValType } from "./struct-hierarchy-layout.js";
 import { wrapArrayProtoVecAlias } from "./vec-proto-link.js"; // (#2917) stable Array.prototype in vec slots
-import { emitOptionalFieldWidening } from "./struct-optional-widen.js"; // (#6867)
+import { emitOptionalFieldWidening } from "./object-model/struct-optional-widen.js"; // (#6867)
 
 /**
  * Emit a guarded ref.cast: use ref.test to check if the cast will succeed.

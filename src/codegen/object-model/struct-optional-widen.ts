@@ -23,11 +23,11 @@
 // A missing REQUIRED field still declines, so `base as Derived` keeps the
 // established guarded-cast behaviour.
 
-import type { Instr, ValType } from "../ir/types.js";
-import { ts } from "../ts-api.js";
-import type { FunctionContext } from "./context/types.js";
-import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
-import { popBody, pushBody } from "./context/bodies.js";
+import type { Instr, ValType } from "../../ir/types.js";
+import { ts } from "../../ts-api.js";
+import type { FunctionContext } from "../context/types.js";
+import { allocTempLocal, releaseTempLocal } from "../context/locals.js";
+import { popBody, pushBody } from "../context/bodies.js";
 
 /** Record a declared-optional property (`k?: T`) on its struct field. */
 export function optionalFieldFlag(prop: ts.Symbol): { optional?: true } {

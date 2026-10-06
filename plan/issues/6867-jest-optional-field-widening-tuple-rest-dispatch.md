@@ -16,7 +16,7 @@ goal: npm-library-support
 requested_by: ttraenkler/wave11-jest
 related: [3995, 4394, 4529, 5329, 6735]
 files:
-  - src/codegen/struct-optional-widen.ts
+  - src/codegen/object-model/struct-optional-widen.ts
   - src/codegen/type-coercion.ts
   - src/codegen/declarations/struct-type-registration.ts
   - src/codegen/index.ts

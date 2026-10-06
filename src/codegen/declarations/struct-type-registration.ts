@@ -12,7 +12,7 @@ import type { FieldDef, StructTypeDef } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import { readonlyErasureMappedAliasTarget } from "../readonly-erasure-mapped-type.js";
-import { optionalFieldFlag } from "../struct-optional-widen.js"; // (#6867)
+import { optionalFieldFlag } from "../object-model/struct-optional-widen.js"; // (#6867)
 import {
   hasStructPrefix,
   linkCompatibleDeclaredStructAncestor,
