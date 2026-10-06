@@ -40,6 +40,7 @@ export type RuntimeFeature =
   | "js.closure.undefined"
   | VectorCallableRuntimeFeature
   | OrdinaryObjectRuntimeFeature
+  | NumberRemainderRuntimeFeature
   | "js.number.from-value"
   | ReferenceErrorRuntimeFeature;
 
@@ -423,6 +424,18 @@ export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
 ] as const);
 export type OrdinaryObjectRuntimeProviderId = (typeof ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS)[number];
 
+/** The two existing numeric remainder recipes; not an open symbol family. */
+export const NUMBER_REMAINDER_RUNTIME_FEATURES = Object.freeze([
+  "js.number.remainder",
+  "js.number.remainder.early-magnitude",
+] as const);
+export type NumberRemainderRuntimeFeature = (typeof NUMBER_REMAINDER_RUNTIME_FEATURES)[number];
+export const NUMBER_REMAINDER_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "backend.js.number.remainder",
+  "backend.js.number.remainder.early-magnitude",
+] as const);
+export type NumberRemainderRuntimeProviderId = (typeof NUMBER_REMAINDER_RUNTIME_PROVIDER_IDS)[number];
+
 export type RuntimeProviderId =
   | MathRuntimeProviderId
   | NumericCoercionRuntimeProviderId
@@ -442,6 +455,7 @@ export type RuntimeProviderId =
   | ReferenceErrorRuntimeProviderId
   | NativeAsyncCallableRuntimeProviderId
   | OrdinaryObjectRuntimeProviderId
+  | NumberRemainderRuntimeProviderId
   | VectorCallableRuntimeProviderId
   | AsyncRuntimeProviderId;
 

@@ -5,6 +5,11 @@ import {
   programValidatorRelocationReceiptPath,
   type ProgramValidatorDonorPath,
 } from "./helpers/ir-program-validator-relocation.js";
+import {
+  authenticateRuntimePreparationPolicyEvolution,
+  authenticateCurrentMainInventoryEvolution,
+  runtimePreparationRemainderHistoricalSource,
+} from "./helpers/ir-runtime-program-policy-evolution.js";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -52,7 +57,7 @@ afterEach(async () => {
 // Root replaces this ONE external assertion root after final instrument formatting/manifest assembly.
 // A missing freeze is a hard failure, never an alternate accepted manifest.
 const independentFreeze: string =
-  '{"manifestSha256":"aaeaf4079f22c3d76bc1257159c1f4b9f1c0f528e12e871314b847b9fcedfbc1","anchorSource":"// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\\n\\nexport const c1AuthorityManifestSha256 = \\"aaeaf4079f22c3d76bc1257159c1f4b9f1c0f528e12e871314b847b9fcedfbc1\\";\\n","anchorPin":{"bytes":194,"sha256":"8fcd9b7de8cec53dd8db6c8d99a88719ae60708ed0cac6149a7040d1347dea1d","gitBlob":"52c93866bd73a5614236e5ec76c8daaeb4761163"},"declarationPin":{"bytes":1633,"sha256":"5294c0fce2be6c6974b61a3686c05e60aa66d5bb4599fc97cb315ee53cab71be","gitBlob":"8c594e598e0d946ed92fd658cbe2efe3063ca2c4"}}';
+  '{"manifestSha256":"c2ef32c1a52c73496a5d8be1b773e03896b888880be906ed923fcbfc162b5fa4","anchorSource":"// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\\n\\nexport const c1AuthorityManifestSha256 = \\"c2ef32c1a52c73496a5d8be1b773e03896b888880be906ed923fcbfc162b5fa4\\";\\n","anchorPin":{"bytes":194,"sha256":"c6dd5fd067f4031975eeb6c95d3387110f8fa0cbfb47c2735c70e4b83f5cd92a","gitBlob":"4431b74a026ba251fde495056cb4c2440219dc26"},"declarationPin":{"bytes":1633,"sha256":"5294c0fce2be6c6974b61a3686c05e60aa66d5bb4599fc97cb315ee53cab71be","gitBlob":"8c594e598e0d946ed92fd658cbe2efe3063ca2c4"}}';
 const root = resolve(import.meta.dirname, "..");
 const manifestPath = "tests/helpers/ir-c1-authority.json";
 const anchorPath = "tests/helpers/ir-c1-authority-root.ts";
@@ -3272,4 +3277,374 @@ describe("C1 source-map epoch actual population and authority operands", () => {
       // Corrupt/stale records stop at the immutable recipe digest, not a row guard.
       sourceMapFactoryHealthy();
     });
+});
+
+const remainderPreparationPath = "src/ir/runtime/intrinsic-preparation.ts";
+const remainderPolicyPath = "tests/helpers/ir-runtime-program-policy-evolution.ts";
+const remainderIndependentProof = {
+  source: {
+    before: {
+      bytes: 49541,
+      sha256: "bd27170fd1df4a9bbad2874e5f2db34bc455fb6807b26523da4be8c182f3622b",
+      gitBlob: "d8726293aa8df3f95df1962e4c21df437d37d723",
+    },
+    current: {
+      bytes: 49704,
+      sha256: "171aa93513aacb9bebf80897f2c67a827b71f082647ced04a689ca17d116ba82",
+      gitBlob: "f018b105325cdd04934ba538bb5e32ef115b7976",
+    },
+    edits: [
+      {
+        beforeOffset: 1142,
+        afterOffset: 1142,
+        before: "",
+        after: 'import { irNumberRemainderCallableDeclaration } from "./number-remainder-callables.js";\n',
+      },
+      {
+        beforeOffset: 39459,
+        afterOffset: 39547,
+        before: "                  irOrdinaryObjectCallableDeclaration(declaration.ref))\n",
+        after:
+          "                  irOrdinaryObjectCallableDeclaration(declaration.ref) ||\n                  irNumberRemainderCallableDeclaration(declaration.ref))\n",
+      },
+    ],
+  },
+  helper: {
+    before: {
+      bytes: 402646,
+      sha256: "0ddf7556360e8937b25ba58b23629533c8042e026a4b6e6fc05df3d1263c97b8",
+      gitBlob: "201e131a7a67df8a34256f63ee0205b407794ad1",
+    },
+    current: {
+      bytes: 403311,
+      sha256: "a38d46359693dd3b63dfd79642a241385e347273bb4cfb06dad177c063a1c375",
+      gitBlob: "763d42a7d7ab7278149cbc7258f3e90d19371408",
+    },
+    edits: [
+      {
+        beforeOffset: 48240,
+        afterOffset: 48240,
+        before: "    const bytes = readFileSync(new URL(`../../${pin.path}`, import.meta.url));\n",
+        after:
+          '    const bytes =\n      pin.path === "src/ir/runtime/intrinsic-preparation.ts"\n        ? Buffer.from(\n            runtimePreparationRemainderHistoricalSource(\n              readFileSync(new URL(`../../${pin.path}`, import.meta.url), "utf8"),\n            ),\n            "utf8",\n          )\n        : readFileSync(new URL(`../../${pin.path}`, import.meta.url));\n',
+      },
+      {
+        beforeOffset: 108748,
+        afterOffset: 109029,
+        before:
+          '  const prefix = readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url));\n',
+        after:
+          '  const prefix = remainderPolicyHistoricalPrefix(\n    readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n  );\n',
+      },
+      {
+        beforeOffset: 180626,
+        afterOffset: 180949,
+        before:
+          '  const helper = readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url));\n',
+        after:
+          '  const helper = remainderPolicyHistoricalPrefix(\n    readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n  );\n',
+      },
+      {
+        beforeOffset: 202965,
+        afterOffset: 203330,
+        before:
+          '  const helper = readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url));\n',
+        after:
+          '  const helper = remainderPolicyHistoricalPrefix(\n    readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n  );\n',
+      },
+      {
+        beforeOffset: 244703,
+        afterOffset: 245110,
+        before:
+          '  const helper = readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url));\n',
+        after:
+          '  const helper = remainderPolicyHistoricalPrefix(\n    readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n  );\n',
+      },
+      {
+        beforeOffset: 284189,
+        afterOffset: 284638,
+        before:
+          '  const helper = readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url));\n',
+        after:
+          '  const helper = remainderPolicyHistoricalPrefix(\n    readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n  );\n',
+      },
+      {
+        beforeOffset: 323096,
+        afterOffset: 323587,
+        before: "    readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)),\n",
+        after:
+          "    remainderPolicyHistoricalPrefix(readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url))),\n",
+      },
+      {
+        beforeOffset: 348259,
+        afterOffset: 348783,
+        before: "    readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)),\n",
+        after:
+          "    remainderPolicyHistoricalPrefix(readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url))),\n",
+      },
+      {
+        beforeOffset: 363311,
+        afterOffset: 363868,
+        before: '        readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n',
+        after:
+          '        remainderPolicyHistoricalPrefix(\n          readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n        ),\n',
+      },
+      {
+        beforeOffset: 376873,
+        afterOffset: 377484,
+        before: '        readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n',
+        after:
+          '        remainderPolicyHistoricalPrefix(\n          readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n        ),\n',
+      },
+    ],
+  },
+} as const;
+function independentlyInvertRemainderBytes(
+  current: string,
+  proof: typeof remainderIndependentProof.source | typeof remainderIndependentProof.helper,
+): string {
+  const bytes = Buffer.from(current, "utf8");
+  expect(pin(current)).toEqual(proof.current);
+  const pieces: Buffer[] = [];
+  let end = 0;
+  for (const edit of proof.edits) {
+    const after = Buffer.from(edit.after),
+      before = Buffer.from(edit.before);
+    expect(bytes.subarray(edit.afterOffset, edit.afterOffset + after.length)).toEqual(after);
+    pieces.push(bytes.subarray(end, edit.afterOffset), before);
+    end = edit.afterOffset + after.length;
+  }
+  pieces.push(bytes.subarray(end));
+  const previous = Buffer.concat(pieces);
+  expect(pin(previous.toString("utf8"))).toEqual(proof.before);
+  const replay: Buffer[] = [];
+  end = 0;
+  for (const edit of proof.edits) {
+    const before = Buffer.from(edit.before);
+    expect(previous.subarray(edit.beforeOffset, edit.beforeOffset + before.length)).toEqual(before);
+    replay.push(previous.subarray(end, edit.beforeOffset), Buffer.from(edit.after));
+    end = edit.beforeOffset + before.length;
+  }
+  replay.push(previous.subarray(end));
+  expect(Buffer.concat(replay)).toEqual(bytes);
+  return previous.toString("utf8");
+}
+function remainderPolicyHealthy(): void {
+  captureC1HistoricalAuthority(read);
+  expect(runtimePreparationRemainderHistoricalSource(read(remainderPreparationPath))).toBe(
+    independentlyInvertRemainderBytes(read(remainderPreparationPath), remainderIndependentProof.source),
+  );
+  const receipt = authenticateRuntimePreparationPolicyEvolution();
+  expect(receipt.sourceInputs.find((entry) => entry.path === remainderPreparationPath)).toEqual({
+    path: remainderPreparationPath,
+    bytes: remainderIndependentProof.source.before.bytes,
+    sha256: remainderIndependentProof.source.before.sha256,
+  });
+  expect(authenticateCurrentMainInventoryEvolution().schema).toBe(1);
+}
+function remainderSourceWithFault(path: string, kind: "mutation" | "missing", action: () => void, byte: 0 = 0): void {
+  if (path !== remainderPreparationPath) throw new Error("unapproved remainder source authority fault: " + path);
+  if (byte !== 0) throw new Error("unapproved remainder source fault byte");
+  const target = resolve(root, path);
+  const scratch = resolve(import.meta.dirname, "../.tmp/c1-remainder-source-authority-faults");
+  mkdirSync(scratch, { recursive: true });
+  const lock = resolve(scratch, "checkout.lock");
+  // Exclusive creation fails closed if another operation owns this checkout.
+  const descriptor = openSync(lock, "wx", 0o600);
+  closeSync(descriptor);
+  let backupDirectory: string | undefined;
+  let backup: string | undefined;
+  let restored = true;
+  const failures: unknown[] = [];
+  const cleanupRestoredFault = (): void => {
+    if (backup) {
+      // Missing-input restoration renames the sole original out of this operation directory.
+      try {
+        lstatSync(backup);
+        unlinkSync(backup);
+      } catch (error) {
+        if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+      }
+    }
+    if (backupDirectory) rmdirSync(backupDirectory);
+    unlinkSync(lock);
+  };
+  try {
+    const initial = lstatSync(target);
+    if (!initial.isFile() || initial.isSymbolicLink())
+      throw new Error("authority target must be a regular non-symlink file: " + target);
+    const original = readFileSync(target);
+    const mode = initial.mode & 0o7777;
+    const mutated = Buffer.from(original);
+    if (mutated.length === 0) throw new Error("empty authority target: " + target);
+    if (byte >= mutated.length) throw new Error("authority fault byte outside target");
+    mutated[byte] = mutated[byte]! ^ 1;
+    backupDirectory = mkdtempSync(resolve(scratch, "operation-"));
+    backup = resolve(backupDirectory, "original");
+    const recovery = backup;
+    writeFileSync(lock, JSON.stringify({ path, kind, backup }) + "\n", {
+      flag: "r+",
+    });
+    const verifyTarget = (bytes: Buffer): void => {
+      const stat = lstatSync(target);
+      if (
+        !stat.isFile() ||
+        stat.isSymbolicLink() ||
+        stat.ino !== initial.ino ||
+        stat.dev !== initial.dev ||
+        (stat.mode & 0o7777) !== mode ||
+        !readFileSync(target).equals(bytes)
+      )
+        throw new Error("unexpected authority edit; refusing to overwrite: " + target);
+    };
+    const restoreFault = (): void => {
+      const saved = lstatSync(recovery);
+      if (
+        !saved.isFile() ||
+        saved.isSymbolicLink() ||
+        (saved.mode & 0o7777) !== mode ||
+        !readFileSync(recovery).equals(original)
+      )
+        throw new Error("recovery copy differs from captured authority");
+      if (kind === "mutation") {
+        verifyTarget(mutated);
+        writeFileSync(target, original);
+        chmodSync(target, mode);
+      } else {
+        booleanTypesExpectMissing(() => {
+          lstatSync(target);
+        }, path);
+        if (saved.ino !== initial.ino || saved.dev !== initial.dev)
+          throw new Error("renamed authority identity changed");
+        renameSync(recovery, target);
+        chmodSync(target, mode);
+      }
+      verifyTarget(original);
+      restored = true;
+    };
+    verifyTarget(original);
+    if (kind === "mutation") {
+      writeFileSync(recovery, original, { flag: "wx", mode });
+      chmodSync(recovery, mode);
+    }
+    restored = false;
+    try {
+      if (kind === "mutation") {
+        writeFileSync(target, mutated);
+        chmodSync(target, mode);
+        verifyTarget(mutated);
+        if (byte === 0) {
+          expect(mutated[0]).not.toBe(original[0]);
+          expect(mutated.subarray(1).equals(original.subarray(1))).toBe(true);
+        } else {
+          expect(mutated[byte]).not.toBe(original[byte]);
+          expect(mutated.subarray(0, byte).equals(original.subarray(0, byte))).toBe(true);
+          expect(mutated.subarray(byte + 1).equals(original.subarray(byte + 1))).toBe(true);
+        }
+      } else {
+        renameSync(target, recovery);
+        booleanTypesExpectMissing(() => {
+          readFileSync(target);
+        }, path);
+        expect(() => lstatSync(target)).toThrow(/ENOENT/);
+      }
+      action();
+    } catch (error) {
+      failures.push(error);
+    } finally {
+      try {
+        restoreFault();
+      } catch (error) {
+        failures.push(
+          new Error(
+            "authority restoration failed; recovery retained at " + backup + "; checkout lock retained at " + lock,
+            { cause: error },
+          ),
+        );
+      }
+    }
+  } catch (error) {
+    failures.push(error);
+  } finally {
+    if (restored) {
+      try {
+        cleanupRestoredFault();
+      } catch (error) {
+        failures.push(
+          new Error("authority cleanup failed; checkout lock/recovery retained at " + lock + " / " + backup, {
+            cause: error,
+          }),
+        );
+      }
+    }
+  }
+  // Propagate only after every safe restoration/cleanup path has completed.
+  if (failures.length > 1) throw new AggregateError(failures, "authority operation and recovery failures: " + target);
+  if (failures.length === 1) throw failures[0];
+}
+
+describe("C1 finite numeric remainder historical inputs", () => {
+  it("independently proves exact current source inverse and full forward replay", () => {
+    const current = read(remainderPreparationPath);
+    const prior = independentlyInvertRemainderBytes(current, remainderIndependentProof.source);
+    expect(runtimePreparationRemainderHistoricalSource(current)).toBe(prior);
+    remainderPolicyHealthy();
+  });
+  it("independently recovers the complete prior helper before every old prefix algorithm", () => {
+    const prefix = Buffer.from(read(remainderPolicyPath))
+      .subarray(0, remainderIndependentProof.helper.current.bytes)
+      .toString("utf8");
+    independentlyInvertRemainderBytes(prefix, remainderIndependentProof.helper);
+    remainderPolicyHealthy();
+  });
+  it.each(["missing import", "missing predicate", "unrelated byte", "exact stale original"] as const)(
+    "refuses %s as current preparation source",
+    (kind) => {
+      const current = read(remainderPreparationPath);
+      const old = independentlyInvertRemainderBytes(current, remainderIndependentProof.source);
+      const mutant =
+        kind === "missing import"
+          ? current.replace(remainderIndependentProof.source.edits[0].after, "")
+          : kind === "missing predicate"
+            ? current.replace(
+                remainderIndependentProof.source.edits[1].after,
+                remainderIndependentProof.source.edits[1].before,
+              )
+            : kind === "unrelated byte"
+              ? current.replace("Licensed", "licensed")
+              : old;
+      expect(mutant).not.toBe(current);
+      runtimePreparationRemainderHistoricalSource(current);
+      expect(() => runtimePreparationRemainderHistoricalSource(mutant)).toThrow(
+        "complete current remainder preparation source changed",
+      );
+      remainderPolicyHealthy();
+    },
+  );
+  it("refuses non-string current source without coercion", () => {
+    let coercions = 0;
+    const source = {
+      toString() {
+        coercions++;
+        return read(remainderPreparationPath);
+      },
+    };
+    expect(() => runtimePreparationRemainderHistoricalSource(source)).toThrow(
+      "primitive current remainder preparation source required",
+    );
+    expect(coercions).toBe(0);
+    remainderPolicyHealthy();
+  });
+  it("rereads a changed actual source after healthy capture and restores exact custody", () => {
+    const original = read(remainderPreparationPath);
+    remainderPolicyHealthy();
+    remainderSourceWithFault(remainderPreparationPath, "mutation", () => {
+      expect(() => authenticateRuntimePreparationPolicyEvolution()).toThrow(
+        "complete current remainder preparation source changed",
+      );
+    });
+    expect(read(remainderPreparationPath)).toBe(original);
+    expect(pin(read(remainderPreparationPath))).toEqual(remainderIndependentProof.source.current);
+    remainderPolicyHealthy();
+  });
 });

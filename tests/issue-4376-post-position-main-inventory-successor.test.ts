@@ -13,23 +13,23 @@ import {
 } from "./helpers/ir-deno-post-position-main-successor.js";
 // Complete fixed source/receipt pins are independently frozen after formatting.
 const helperPin = {
-  bytes: 97612,
-  sha256: "8e8b9dc2d209e4077b60b028fb9b97e85551e7ed5153d7c3d9c7e782eb72b572",
+  bytes: 102073,
+  sha256: "1bfbd1c6b8f5e38494c5fc4576ca07e2bb071691812d68de6de957e6eb6ce93b",
 };
 const receiptPin = {
-  bytes: 91371,
-  sha256: "e6974631780ed13d00783ff7367613d0c2dc92454f8693dd4250a068f826334a",
+  bytes: 95913,
+  sha256: "851b90c2148583c5c0c73ed5d4562dd10ad6c250649993d84eb510f7d9732534",
 };
 const expected = {
   current: {
     source: {
-      bytes: 598081,
-      sha256: "72ae9374fd01afa852e48d3ded9f1b6dc805b055e7f18035e86d964aced31e93",
-      gitBlob: "d9203627fc082fb37e845a5fb43a077716400cc9",
+      bytes: 598331,
+      sha256: "a524ce190ef6fc619b92539c328e52b7abe5692d362238d11f4e4082953a6d33",
+      gitBlob: "c71e86bc69a505c376c7ae44dfafedbb6bdf41ba",
     },
-    fileCount: 1868,
-    dataSha256: "094008c6228edbc91791ba3bb5d632ab4d70b92dc8bb576f9ce861b750c7551c",
-    filesSha256: "d2a0c67c95068f8c77ec70e37cb9e0864039c4e5f856fcf24d07f2c4cadf3079",
+    fileCount: 1870,
+    dataSha256: "5a645d16548efe08cf48aaca516395f9b1daa6ca422a36f5324fcf2caf642c1a",
+    filesSha256: "fca6999b15194212637c395e81534200d235f763d2393ae9afa873559eca57fd",
     nonFilesSha256: "3a4788461bc5c6757c931554be0ec6218711f00814f580d9bb70d26a5929c1ce",
     topLevelKeys: [
       "schema",
@@ -693,6 +693,42 @@ const expected = {
             nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
           },
         },
+        {
+          index: 1868,
+          row: {
+            path: "src/ir/runtime/number-remainder-callables.ts",
+            state: "clean",
+            layer: "ir-runtime",
+          },
+          previous: {
+            path: "src/compiler/ir-program-presentation.ts",
+            state: "unmigrated",
+            layer: "mixed-needs-split",
+            destination: "compiler",
+            owner: "3525-prepared-presentation",
+            nextBoundary:
+              "Separate AST declaration capture and finalizer presentation from prepared-program output association before compiler-layer activation.",
+          },
+          next: {
+            path: "src/wasm/physical/number-remainder.ts",
+            state: "clean",
+            layer: "wasm-physical",
+          },
+        },
+        {
+          index: 1869,
+          row: {
+            path: "src/wasm/physical/number-remainder.ts",
+            state: "clean",
+            layer: "wasm-physical",
+          },
+          previous: {
+            path: "src/ir/runtime/number-remainder-callables.ts",
+            state: "clean",
+            layer: "ir-runtime",
+          },
+          next: undefined,
+        },
       ],
       rawSpans: [
         {
@@ -806,6 +842,13 @@ const expected = {
           before: "",
           after:
             '      "path": "src/codegen/registry/promise-rejection-dispatch.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Place context-dependent rejection dispatcher resolution and import/defined-function identity checks behind explicit backend resources."\n    },\n    {\n',
+        },
+        {
+          beforeOffset: 592407,
+          afterOffset: 598074,
+          before: "",
+          after:
+            ',\n    {\n      "path": "src/ir/runtime/number-remainder-callables.ts",\n      "state": "clean",\n      "layer": "ir-runtime"\n    },\n    {\n      "path": "src/wasm/physical/number-remainder.ts",\n      "state": "clean",\n      "layer": "wasm-physical"\n    }',
         },
       ],
       fullSemanticAndRawTargetExact: true,
@@ -1548,6 +1591,42 @@ const expected = {
             nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
           },
         },
+        {
+          index: 1868,
+          row: {
+            path: "src/ir/runtime/number-remainder-callables.ts",
+            state: "clean",
+            layer: "ir-runtime",
+          },
+          previous: {
+            path: "src/compiler/ir-program-presentation.ts",
+            state: "unmigrated",
+            layer: "mixed-needs-split",
+            destination: "compiler",
+            owner: "3525-prepared-presentation",
+            nextBoundary:
+              "Separate AST declaration capture and finalizer presentation from prepared-program output association before compiler-layer activation.",
+          },
+          next: {
+            path: "src/wasm/physical/number-remainder.ts",
+            state: "clean",
+            layer: "wasm-physical",
+          },
+        },
+        {
+          index: 1869,
+          row: {
+            path: "src/wasm/physical/number-remainder.ts",
+            state: "clean",
+            layer: "wasm-physical",
+          },
+          previous: {
+            path: "src/ir/runtime/number-remainder-callables.ts",
+            state: "clean",
+            layer: "ir-runtime",
+          },
+          next: undefined,
+        },
       ],
       rawSpans: [
         {
@@ -1710,6 +1789,13 @@ const expected = {
           before: "",
           after:
             '    },\n    {\n      "path": "src/codegen/registry/promise-rejection-dispatch.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Place context-dependent rejection dispatcher resolution and import/defined-function identity checks behind explicit backend resources."\n',
+        },
+        {
+          beforeOffset: 589110,
+          afterOffset: 598074,
+          before: "",
+          after:
+            ',\n    {\n      "path": "src/ir/runtime/number-remainder-callables.ts",\n      "state": "clean",\n      "layer": "ir-runtime"\n    },\n    {\n      "path": "src/wasm/physical/number-remainder.ts",\n      "state": "clean",\n      "layer": "wasm-physical"\n    }',
         },
       ],
       fullSemanticAndRawTargetExact: true,
@@ -2031,6 +2117,42 @@ const expected = {
             nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
           },
         },
+        {
+          index: 1868,
+          row: {
+            path: "src/ir/runtime/number-remainder-callables.ts",
+            state: "clean",
+            layer: "ir-runtime",
+          },
+          previous: {
+            path: "src/compiler/ir-program-presentation.ts",
+            state: "unmigrated",
+            layer: "mixed-needs-split",
+            destination: "compiler",
+            owner: "3525-prepared-presentation",
+            nextBoundary:
+              "Separate AST declaration capture and finalizer presentation from prepared-program output association before compiler-layer activation.",
+          },
+          next: {
+            path: "src/wasm/physical/number-remainder.ts",
+            state: "clean",
+            layer: "wasm-physical",
+          },
+        },
+        {
+          index: 1869,
+          row: {
+            path: "src/wasm/physical/number-remainder.ts",
+            state: "clean",
+            layer: "wasm-physical",
+          },
+          previous: {
+            path: "src/ir/runtime/number-remainder-callables.ts",
+            state: "clean",
+            layer: "ir-runtime",
+          },
+          next: undefined,
+        },
       ],
       rawSpans: [
         {
@@ -2096,11 +2218,56 @@ const expected = {
           after:
             '      "path": "src/codegen/expressions/callable-property-omittable-param.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n      "path": "src/codegen/closures/host-boolean-callback.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n      "path": "src/codegen/expressions/typeof-import-binding.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n',
         },
+        {
+          beforeOffset: 594339,
+          afterOffset: 598074,
+          before: "",
+          after:
+            ',\n    {\n      "path": "src/ir/runtime/number-remainder-callables.ts",\n      "state": "clean",\n      "layer": "ir-runtime"\n    },\n    {\n      "path": "src/wasm/physical/number-remainder.ts",\n      "state": "clean",\n      "layer": "wasm-physical"\n    }',
+        },
       ],
       fullSemanticAndRawTargetExact: true,
     },
   },
 } as const;
+const former1868Profile = {
+  source: {
+    bytes: 598081,
+    sha256: "72ae9374fd01afa852e48d3ded9f1b6dc805b055e7f18035e86d964aced31e93",
+    gitBlob: "d9203627fc082fb37e845a5fb43a077716400cc9",
+  },
+  fileCount: 1868,
+  dataSha256: "094008c6228edbc91791ba3bb5d632ab4d70b92dc8bb576f9ce861b750c7551c",
+  filesSha256: "d2a0c67c95068f8c77ec70e37cb9e0864039c4e5f856fcf24d07f2c4cadf3079",
+  nonFilesSha256: "3a4788461bc5c6757c931554be0ec6218711f00814f580d9bb70d26a5929c1ce",
+  topLevelKeys: [
+    "schema",
+    "description",
+    "sourceRoot",
+    "tsconfig",
+    "requireGitProvenance",
+    "externalAssets",
+    "frontendWrapper",
+    "moduleExtensions",
+    "layers",
+    "allowedEdges",
+    "externalPackages",
+    "activationHistory",
+    "nonModules",
+    "moves",
+    "evidence",
+    "files",
+  ],
+} as const;
+const remainderInsertions = [
+  {
+    beforeOffset: 598074,
+    afterOffset: 598074,
+    before: "",
+    after:
+      ',\n    {\n      "path": "src/ir/runtime/number-remainder-callables.ts",\n      "state": "clean",\n      "layer": "ir-runtime"\n    },\n    {\n      "path": "src/wasm/physical/number-remainder.ts",\n      "state": "clean",\n      "layer": "wasm-physical"\n    }',
+  },
+] as const;
 const current1866Profile = {
   source: {
     bytes: 597434,
@@ -2370,6 +2537,7 @@ const sha = (value: string | Buffer): string => createHash("sha256").update(valu
 type Policy = Record<string, unknown> & { files: Record<string, unknown>[] };
 type Profile =
   | typeof expected.current
+  | typeof former1868Profile
   | typeof current1866Profile
   | typeof expected.main46caf
   | typeof expected.main0be
@@ -2457,6 +2625,9 @@ function undo0be(
     ]);
   expect(replay.toString("utf8")).toBe(raw);
   return previous.toString("utf8");
+}
+function former1868(raw: string): string {
+  return undo0be(raw, remainderInsertions, former1868Profile);
 }
 function independent(
   raw: string,
@@ -2551,9 +2722,12 @@ describe("fixed post-position main and Deno predecessor routes", () => {
 
   it("independently proves all three complete inverses and replays", () => {
     healthy();
-    expect(expected.projections.main46caf.removedRows).toHaveLength(18);
-    expect(expected.projections.oldPosition.removedRows).toHaveLength(28);
-    expect(expected.projections.oldDeno.removedRows).toHaveLength(12);
+    expect(expected.projections.main46caf.removedRows.filter((row) => row.index < 1868)).toHaveLength(18);
+    expect(expected.projections.main46caf.removedRows).toHaveLength(20);
+    expect(expected.projections.oldPosition.removedRows.filter((row) => row.index < 1868)).toHaveLength(28);
+    expect(expected.projections.oldPosition.removedRows).toHaveLength(30);
+    expect(expected.projections.oldDeno.removedRows.filter((row) => row.index < 1868)).toHaveLength(12);
+    expect(expected.projections.oldDeno.removedRows).toHaveLength(14);
   });
   it("detaches both semantic routes and preserves every frozen input byte", () => {
     const { current } = healthy();
@@ -2572,7 +2746,11 @@ describe("fixed post-position main and Deno predecessor routes", () => {
     it(`${route} refuses the exact stale previousCurrent profile as current`, () => {
       const { raw: fresh } = healthy();
       const raw = undo58d(
-        undo0be(undo0be(fresh, current46Insertions, current1866Profile), current0beInsertions, current1864Profile),
+        undo0be(
+          undo0be(former1868(fresh), current46Insertions, current1866Profile),
+          current0beInsertions,
+          current1864Profile,
+        ),
         formerCurrentInsertion,
         formerCurrentProfile,
       );
@@ -2604,7 +2782,11 @@ describe("fixed post-position main and Deno predecessor routes", () => {
     it(`${route} refuses the exact stale formerCurrent1863 profile as current`, () => {
       const { raw } = healthy();
       const stale = undo58d(
-        undo0be(undo0be(raw, current46Insertions, current1866Profile), current0beInsertions, current1864Profile),
+        undo0be(
+          undo0be(former1868(raw), current46Insertions, current1866Profile),
+          current0beInsertions,
+          current1864Profile,
+        ),
         formerCurrentInsertion,
         formerCurrentProfile,
       );
@@ -2621,7 +2803,7 @@ describe("fixed post-position main and Deno predecessor routes", () => {
     it(`${route} refuses the exact stale formerCurrent1864 profile as current`, () => {
       const { raw } = healthy();
       const stale = undo0be(
-        undo0be(raw, current46Insertions, current1866Profile),
+        undo0be(former1868(raw), current46Insertions, current1866Profile),
         current0beInsertions,
         current1864Profile,
       );
@@ -2631,28 +2813,84 @@ describe("fixed post-position main and Deno predecessor routes", () => {
     it(`${route} accepts fresh current1866 after exact two-row insertion replay`, () => {
       const { raw, current } = healthy();
       const stale = undo0be(
-        undo0be(raw, current46Insertions, current1866Profile),
+        undo0be(former1868(raw), current46Insertions, current1866Profile),
         current0beInsertions,
         current1864Profile,
       );
-      expect(Buffer.byteLength(undo0be(raw, current46Insertions, current1866Profile)) - Buffer.byteLength(stale)).toBe(
-        671,
-      );
+      expect(
+        Buffer.byteLength(undo0be(former1868(raw), current46Insertions, current1866Profile)) - Buffer.byteLength(stale),
+      ).toBe(671);
       expect(rawCapture(raw)).toBe(independent(raw, route === "main" ? "oldPosition" : "oldDeno"));
       expect(dataCapture(current)).toEqual(JSON.parse(rawCapture(raw)));
     });
     it(`${route} refuses the exact stale formerCurrent1866 profile as current`, () => {
       const { raw } = healthy();
-      const stale = undo0be(raw, current46Insertions, current1866Profile);
+      const stale = undo0be(former1868(raw), current46Insertions, current1866Profile);
       expect(() => rawCapture(stale)).toThrow(/complete raw source profile mismatch/);
       expect(() => dataCapture(JSON.parse(stale))).toThrow(/complete policy profile mismatch/);
     });
     it(`${route} accepts fresh current1868 after exact two-row insertion replay`, () => {
       const { raw, current } = healthy();
-      const stale = undo0be(raw, current46Insertions, current1866Profile);
-      expect(Buffer.byteLength(raw) - Buffer.byteLength(stale)).toBe(647);
+      const stale = undo0be(former1868(raw), current46Insertions, current1866Profile);
+      expect(Buffer.byteLength(former1868(raw)) - Buffer.byteLength(stale)).toBe(647);
       expect(rawCapture(raw)).toBe(independent(raw, route === "main" ? "oldPosition" : "oldDeno"));
       expect(dataCapture(current)).toEqual(JSON.parse(rawCapture(raw)));
+    });
+    it(`${route} accepts productive current1870 and reciprocally preserves the complete former1868 epoch`, () => {
+      const { raw, current } = healthy();
+      const previous = former1868(raw);
+      expect(Buffer.byteLength(raw) - Buffer.byteLength(previous)).toBe(250);
+      const before = profile(previous, former1868Profile);
+      expect(current.files.slice(0, former1868Profile.fileCount)).toEqual(before.files);
+      expect(current.files.slice(former1868Profile.fileCount)).toEqual(
+        expected.projections.oldPosition.removedRows.slice(-2).map((row) => row.row),
+      );
+      expect(current.files).toHaveLength(1870);
+      expect(Object.fromEntries(Object.entries(current).filter(([key]) => key !== "files"))).toEqual(
+        Object.fromEntries(Object.entries(before).filter(([key]) => key !== "files")),
+      );
+      expect(rawCapture(raw)).toBe(independent(raw, route === "main" ? "oldPosition" : "oldDeno"));
+      expect(dataCapture(current)).toEqual(JSON.parse(rawCapture(raw)));
+    });
+    it(`${route} refuses the exact stale formerCurrent1868 profile as current`, () => {
+      const { raw } = healthy();
+      const stale = former1868(raw);
+      expect(() => rawCapture(stale)).toThrow(/complete raw source profile mismatch/);
+      expect(() => dataCapture(JSON.parse(stale))).toThrow(/complete policy profile mismatch/);
+      healthy();
+    });
+    it(`${route} refuses new-row accessors and hidden data without observation and restores healthy input`, () => {
+      const { raw, current } = healthy();
+      const original = JSON.stringify(current);
+      for (const index of [1868, 1869]) {
+        for (const kind of ["accessor", "hidden data"] as const) {
+          const mutant = structuredClone(current);
+          let touched = 0,
+            reads = 0;
+          const descriptor =
+            kind === "accessor"
+              ? {
+                  enumerable: true,
+                  get() {
+                    touched++;
+                    throw new Error("new-row getter observed");
+                  },
+                }
+              : { value: "clean", enumerable: false };
+          Object.defineProperty(mutant.files[index]!, "state", descriptor);
+          expect(() =>
+            dataCapture(mutant, (path) => {
+              reads++;
+              return read(path);
+            }),
+          ).toThrow(/accessor or hidden field/);
+          expect(touched).toBe(0);
+          expect(reads).toBe(0);
+          expect(JSON.stringify(current)).toBe(original);
+          expect(dataCapture(current)).toEqual(JSON.parse(rawCapture(raw)));
+        }
+      }
+      healthy();
     });
     it(`${route} refuses the exact stale main1850 profile as current`, () => {
       const { raw } = healthy();
@@ -2680,7 +2918,12 @@ describe("fixed post-position main and Deno predecessor routes", () => {
             const { current } = healthy(),
               mutant = structuredClone(current),
               index = row.index + (location === "previous" ? -1 : location === "next" ? 1 : 0);
-            mutant.files[index]!.state = "foreign";
+            if (index === mutant.files.length) {
+              expect(location).toBe("next");
+              expect(row.index).toBe(expected.current.fileCount - 1);
+              expect(row.next).toBeUndefined();
+              mutant.files.push({ path: "src/foreign-boundary.ts", state: "foreign", layer: "ir-runtime" });
+            } else mutant.files[index]!.state = "foreign";
             expect(() => dataCapture(mutant)).toThrow(/complete policy profile mismatch/);
           });
     for (const kind of ["whitespace", "span"] as const)

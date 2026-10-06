@@ -3,20 +3,20 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 export const denoPostPositionMainSuccessorReceiptPath = "tests/helpers/ir-deno-post-position-main-successor.json";
 type Reader = (path: string) => string;
-const receiptBytes = 91371;
-const receiptSha256 = "e6974631780ed13d00783ff7367613d0c2dc92454f8693dd4250a068f826334a";
+const receiptBytes = 95913;
+const receiptSha256 = "851b90c2148583c5c0c73ed5d4562dd10ad6c250649993d84eb510f7d9732534";
 const expected = {
   schema: "fixed-deno-post-position-main-successor-v1",
   coordinateUnit: "utf8-byte",
   current: {
     source: {
-      bytes: 598081,
-      sha256: "72ae9374fd01afa852e48d3ded9f1b6dc805b055e7f18035e86d964aced31e93",
-      gitBlob: "d9203627fc082fb37e845a5fb43a077716400cc9",
+      bytes: 598331,
+      sha256: "a524ce190ef6fc619b92539c328e52b7abe5692d362238d11f4e4082953a6d33",
+      gitBlob: "c71e86bc69a505c376c7ae44dfafedbb6bdf41ba",
     },
-    fileCount: 1868,
-    dataSha256: "094008c6228edbc91791ba3bb5d632ab4d70b92dc8bb576f9ce861b750c7551c",
-    filesSha256: "d2a0c67c95068f8c77ec70e37cb9e0864039c4e5f856fcf24d07f2c4cadf3079",
+    fileCount: 1870,
+    dataSha256: "5a645d16548efe08cf48aaca516395f9b1daa6ca422a36f5324fcf2caf642c1a",
+    filesSha256: "fca6999b15194212637c395e81534200d235f763d2393ae9afa873559eca57fd",
     nonFilesSha256: "3a4788461bc5c6757c931554be0ec6218711f00814f580d9bb70d26a5929c1ce",
     topLevelKeys: [
       "schema",
@@ -534,6 +534,42 @@ const expected = {
           nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
         },
       },
+      {
+        index: 1868,
+        row: {
+          path: "src/ir/runtime/number-remainder-callables.ts",
+          state: "clean",
+          layer: "ir-runtime",
+        },
+        previous: {
+          path: "src/compiler/ir-program-presentation.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "compiler",
+          owner: "3525-prepared-presentation",
+          nextBoundary:
+            "Separate AST declaration capture and finalizer presentation from prepared-program output association before compiler-layer activation.",
+        },
+        next: {
+          path: "src/wasm/physical/number-remainder.ts",
+          state: "clean",
+          layer: "wasm-physical",
+        },
+      },
+      {
+        index: 1869,
+        row: {
+          path: "src/wasm/physical/number-remainder.ts",
+          state: "clean",
+          layer: "wasm-physical",
+        },
+        previous: {
+          path: "src/ir/runtime/number-remainder-callables.ts",
+          state: "clean",
+          layer: "ir-runtime",
+        },
+        next: undefined,
+      },
     ],
     rawSpans: [
       {
@@ -647,6 +683,13 @@ const expected = {
         before: "",
         after:
           '      "path": "src/codegen/registry/promise-rejection-dispatch.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Place context-dependent rejection dispatcher resolution and import/defined-function identity checks behind explicit backend resources."\n    },\n    {\n',
+      },
+      {
+        beforeOffset: 592407,
+        afterOffset: 598074,
+        before: "",
+        after:
+          ',\n    {\n      "path": "src/ir/runtime/number-remainder-callables.ts",\n      "state": "clean",\n      "layer": "ir-runtime"\n    },\n    {\n      "path": "src/wasm/physical/number-remainder.ts",\n      "state": "clean",\n      "layer": "wasm-physical"\n    }',
       },
     ],
     fullSemanticAndRawTargetExact: true,
@@ -1418,6 +1461,42 @@ const expected = {
           nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
         },
       },
+      {
+        index: 1868,
+        row: {
+          path: "src/ir/runtime/number-remainder-callables.ts",
+          state: "clean",
+          layer: "ir-runtime",
+        },
+        previous: {
+          path: "src/compiler/ir-program-presentation.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "compiler",
+          owner: "3525-prepared-presentation",
+          nextBoundary:
+            "Separate AST declaration capture and finalizer presentation from prepared-program output association before compiler-layer activation.",
+        },
+        next: {
+          path: "src/wasm/physical/number-remainder.ts",
+          state: "clean",
+          layer: "wasm-physical",
+        },
+      },
+      {
+        index: 1869,
+        row: {
+          path: "src/wasm/physical/number-remainder.ts",
+          state: "clean",
+          layer: "wasm-physical",
+        },
+        previous: {
+          path: "src/ir/runtime/number-remainder-callables.ts",
+          state: "clean",
+          layer: "ir-runtime",
+        },
+        next: undefined,
+      },
     ],
     rawSpans: [
       {
@@ -1580,6 +1659,13 @@ const expected = {
         before: "",
         after:
           '    },\n    {\n      "path": "src/codegen/registry/promise-rejection-dispatch.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Place context-dependent rejection dispatcher resolution and import/defined-function identity checks behind explicit backend resources."\n',
+      },
+      {
+        beforeOffset: 589110,
+        afterOffset: 598074,
+        before: "",
+        after:
+          ',\n    {\n      "path": "src/ir/runtime/number-remainder-callables.ts",\n      "state": "clean",\n      "layer": "ir-runtime"\n    },\n    {\n      "path": "src/wasm/physical/number-remainder.ts",\n      "state": "clean",\n      "layer": "wasm-physical"\n    }',
       },
     ],
     fullSemanticAndRawTargetExact: true,
@@ -1930,6 +2016,42 @@ const expected = {
           nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
         },
       },
+      {
+        index: 1868,
+        row: {
+          path: "src/ir/runtime/number-remainder-callables.ts",
+          state: "clean",
+          layer: "ir-runtime",
+        },
+        previous: {
+          path: "src/compiler/ir-program-presentation.ts",
+          state: "unmigrated",
+          layer: "mixed-needs-split",
+          destination: "compiler",
+          owner: "3525-prepared-presentation",
+          nextBoundary:
+            "Separate AST declaration capture and finalizer presentation from prepared-program output association before compiler-layer activation.",
+        },
+        next: {
+          path: "src/wasm/physical/number-remainder.ts",
+          state: "clean",
+          layer: "wasm-physical",
+        },
+      },
+      {
+        index: 1869,
+        row: {
+          path: "src/wasm/physical/number-remainder.ts",
+          state: "clean",
+          layer: "wasm-physical",
+        },
+        previous: {
+          path: "src/ir/runtime/number-remainder-callables.ts",
+          state: "clean",
+          layer: "ir-runtime",
+        },
+        next: undefined,
+      },
     ],
     rawSpans: [
       {
@@ -1994,6 +2116,13 @@ const expected = {
         before: "",
         after:
           '      "path": "src/codegen/expressions/callable-property-omittable-param.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n      "path": "src/codegen/closures/host-boolean-callback.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n      "path": "src/codegen/expressions/typeof-import-binding.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n',
+      },
+      {
+        beforeOffset: 594339,
+        afterOffset: 598074,
+        before: "",
+        after:
+          ',\n    {\n      "path": "src/ir/runtime/number-remainder-callables.ts",\n      "state": "clean",\n      "layer": "ir-runtime"\n    },\n    {\n      "path": "src/wasm/physical/number-remainder.ts",\n      "state": "clean",\n      "layer": "wasm-physical"\n    }',
       },
     ],
     fullSemanticAndRawTargetExact: true,

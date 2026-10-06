@@ -57,6 +57,7 @@ import {
   type PreparedAsyncFrameReservations,
 } from "../backend/wasmgc/resources/prepared-async-frame.js";
 import { sameValTypes } from "../wasm/physical/function-types.js";
+import { buildNumberRemainderBody } from "../wasm/physical/number-remainder.js";
 import {
   planNativeStringValuePhysical,
   reserveNativeStringValueResources,
@@ -995,6 +996,25 @@ function fillStartupAdapter(
 }
 
 /** Bind the already sealed ABI to the exact reservations of this transaction. */
+function reserveNumberRemainders(
+  plan: PhysicalSetupPlan,
+  context: NativeReconciliationContext,
+  supportFunctions: Map<WasmFunction, FunctionReservation>,
+): void {
+  const { reservations, functionsByKey, resourcesByBinding } = context;
+  for (const resource of plan.numberRemainders) {
+    const token = reservations.reserveFunction(resource.bindingId, resource.symbol, {
+      params: [...resource.params],
+      results: [...resource.results],
+    });
+    if (functionsByKey.has(resource.referenceKey) || resourcesByBinding.has(resource.bindingId))
+      emissionFailed("number remainder has competing physical owners");
+    functionsByKey.set(resource.referenceKey, token);
+    resourcesByBinding.set(resource.bindingId, token);
+    supportFunctions.set(token.object, token);
+  }
+}
+
 function bindPhysicalAbi(
   abi: ProgramAbiMap,
   plan: PhysicalSetupPlan,
@@ -1023,6 +1043,12 @@ function bindPhysicalAbi(
       space: "function",
       index: reservations.physicalIndex(vectorHelper.function),
     });
+  }
+  for (const remainder of plan.numberRemainders) {
+    const token = resourcesByBinding.get(remainder.bindingId);
+    if (!token || token.kind !== "function" || functionsByKey.get(remainder.referenceKey) !== token)
+      emissionFailed("number remainder lost its exact reserved ABI owner");
+    abi.bindFinalIndex(remainder.bindingId, { space: "function", index: reservations.physicalIndex(token) });
   }
   for (const global of [...plan.importedGlobals, ...plan.definedGlobals]) {
     abi.bindFinalIndex(global.bindingId, {
@@ -1172,12 +1198,17 @@ function publishPhysicalExports(
 }
 
 /** Fill the reserved globals only after the physical index space is frozen. */
-function fillPhysicalGlobals(plan: PhysicalSetupPlan, context: NativeReconciliationContext): void {
+function fillPhysicalScalarResources(plan: PhysicalSetupPlan, context: NativeReconciliationContext): void {
   const { reservations, globalsByKey } = context;
   for (const global of plan.definedGlobals) {
     const reserved = globalsByKey.get(global.referenceKey);
     if (!reserved || reserved.kind !== "global") emissionFailed(`global ${global.name} has no defined reservation`);
     reservations.fillGlobal(reserved, defaultInit(global.type));
+  }
+  for (const resource of plan.numberRemainders) {
+    const token = context.resourcesByBinding.get(resource.bindingId);
+    if (!token || token.kind !== "function") emissionFailed("number remainder reservation vanished before fill");
+    context.reservations.fillFunction(token, buildNumberRemainderBody(resource.earlyMagnitude));
   }
 }
 
@@ -1345,7 +1376,6 @@ function materializePhysicalProgram(
   }
   reconcileInvocationBindings(plan, invocationFunctions, reconciliation);
   const asyncReservations = new Map<IrUnitId, PreparedAsyncFrameReservations>();
-  const asyncHelpers = new Set<WasmFunction>();
   const supportFunctions = indexSupportFunctions([...nativeRows, ...formatterRows]);
   for (const token of [...invocationFunctions, ...realmFunctions]) supportFunctions.set(token.object, token);
   for (const frame of plan.asyncFrames?.frames ?? []) {
@@ -1360,7 +1390,6 @@ function materializePhysicalProgram(
       const token = pack[role];
       resourcesByBinding.set(row.bindingId, token);
       functionsByKey.set(irCallableBindingKey(row.reference.binding), token);
-      asyncHelpers.add(token.object);
       supportFunctions.set(token.object, token);
     }
   }
@@ -1373,6 +1402,7 @@ function materializePhysicalProgram(
   } else if (plan.vectors.helper) {
     emissionFailed("planned vector helper was not reserved");
   }
+  reserveNumberRemainders(plan, reconciliation, supportFunctions);
   let startAdapter: FunctionReservation | undefined;
   if (plan.startup.units.length > 0) {
     startAdapter = reservations.reserveFunction("physical:startup-adapter", "__module_init", {
@@ -1385,7 +1415,7 @@ function materializePhysicalProgram(
   reservations.freezeReservations();
   if (sourceClosures) bindNativeSourceClosureUnits(reservations, sourceClosures, slots);
   const exnTagIdx = exceptionTag === undefined ? undefined : reservations.physicalIndex(exceptionTag);
-  fillPhysicalGlobals(plan, reconciliation);
+  fillPhysicalScalarResources(plan, reconciliation);
 
   // 3. A's authoritative ABI over the program's entries, bound to the reserved indices.
   if (!abi) {
@@ -1473,7 +1503,7 @@ function materializePhysicalProgram(
         fn !== vectorHelper?.function.object &&
         fn !== formatterPack?.functions["radix-body"].object &&
         !nativeFunctions.has(fn) &&
-        !asyncHelpers.has(fn)
+        !supportFunctions.has(fn)
       ) {
         emissionFailed(`module carries an unowned function ${fn.name}`);
       }
