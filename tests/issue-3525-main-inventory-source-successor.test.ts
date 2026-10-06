@@ -6,6 +6,10 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { captureArrayBufferIsViewMainPredecessorPolicy } from "./helpers/ir-runtime-program-policy-evolution.js";
 import {
+  capture5883InventoryPredecessorPolicy,
+  capture5883InventoryPredecessorPolicySource,
+} from "./helpers/ir-5883-inventory-source-successor.js";
+import {
   captureMainInventoryPredecessorPolicy,
   captureMainInventoryPredecessorPolicySource,
 } from "./helpers/ir-main-inventory-source-successor.js";
@@ -305,7 +309,7 @@ function healthy() {
   expect(sha(receipt)).toBe("06a6fcd2df50e87b1cd14d684db90e31e221bb9f001f52f2e5158720a93f50ef");
   expect(Buffer.byteLength(helper)).toBe(20834);
   expect(sha(helper)).toBe("41012f3d03e1521eb217c94996c542ae84b3de1410b2cf6c6744319c5da64b86");
-  const current = read(sourcePath),
+  const current = capture5883InventoryPredecessorPolicySource(read(sourcePath)),
     before = independentRawBefore(current),
     input = JSON.parse(current) as Policy;
   const sourceAuthority = authorityReader(),
@@ -516,7 +520,7 @@ describe("fixed main inventory source successor independent proof", () => {
 
 describe("main inventory successor legacy semantic compatibility", () => {
   it("passes authentic semantic bridge output to the unchanged isView consumer with ordinary nested records", () => {
-    const input = JSON.parse(read(sourcePath)) as Policy;
+    const input = capture5883InventoryPredecessorPolicy(JSON.parse(read(sourcePath))) as Policy;
     const bridge = captureMainInventoryPredecessorPolicy(input) as Policy;
     profile(bridge, "before");
     const pending: unknown[] = [bridge];

@@ -1,0 +1,394 @@
+{
+  "schema": "5883-combined-repair-transfer-exact-v2",
+  "purpose": "Preparation-only exact held-B transfer inventory for parent review. No integration, validation execution, acceptance, commit or publication is implied.",
+  "source": {
+    "root": "/private/tmp/js2-5883-held-b-20261006",
+    "branch": "codex/5883-held-b-fixture-20261006",
+    "head": "884d2fc58f40a28c391ef5cf238b49582329e55b"
+  },
+  "destination": {
+    "root": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-cycle-main9c-20261002",
+    "requiredPredecessorHead": "884d2fc58f40a28c391ef5cf238b49582329e55b",
+    "predecessorBytesCheckedAgainstLiveDestination": true
+  },
+  "integrationRules": [
+    "Parent must authorize integration after candidate session 9177 is terminal; this preparation neither inspects its results nor grants acceptance. Reverify all candidate and destination pins immediately before integration.",
+    "For every replacement, refuse a destination whose complete bytes/SHA256 differ from its recorded HEAD predecessor.",
+    "For every addition, refuse an existing destination; compare candidate bytes/SHA256 before copying.",
+    "Preserve every non-enumerated destination file, including independent fairness-yield repair, issue updates and historical validation evidence.",
+    "Parent owns subsequent outer successor validation authority over original 7752 inputs and all enumerated changes; this manifest and the narrower C1 authority are not substitutes."
+  ],
+  "counts": {
+    "trackedReplacements": 12,
+    "newBridgeFiles": 3,
+    "sourceFiles": 15,
+    "existingEvidenceArchives": 7,
+    "copiedEvidenceArchives": 1,
+    "totalEvidenceArchives": 10,
+    "additionalEvidenceArchives": 2,
+    "preservedContextFiles": 1,
+    "totalContextAndEvidenceInputs": 11
+  },
+  "sourceFiles": [
+    {
+      "path": "tests/helpers/ir-c1-authority-root.ts",
+      "operation": "replace",
+      "predecessor": {
+        "head": "884d2fc58f40a28c391ef5cf238b49582329e55b",
+        "bytes": 194,
+        "sha256": "392aac19ed2daac78bafb25369176cb90870cc866f6a6f7c2ac6ae7805f9220e",
+        "gitBlob": "4d66b803deb8de9c686b7853464672affa156061"
+      },
+      "candidate": {
+        "bytes": 194,
+        "sha256": "24a934d68e3b809edb19151df0c230473644a801631c72a689de6c772437578b",
+        "gitBlob": "2b4712a7a7fbd12fdfdc0940227bcc2c581f2c88",
+        "mode": "644"
+      }
+    },
+    {
+      "path": "tests/helpers/ir-c1-authority.json",
+      "operation": "replace",
+      "predecessor": {
+        "head": "884d2fc58f40a28c391ef5cf238b49582329e55b",
+        "bytes": 402517,
+        "sha256": "c0a10ae0c0bfc4d27fc24bea20401edc2cac683254fc1664781889c98f63ed66",
+        "gitBlob": "946df13868465d20d0ff21d43429b2f86446db02"
+      },
+      "candidate": {
+        "bytes": 402731,
+        "sha256": "373de19c1adc1349e58e2f8472114c85bbc0163933e9b9fe77df896c35d84934",
+        "gitBlob": "b73242f7ea9df45b4d4a27c9c4111652b40746b6",
+        "mode": "644"
+      }
+    },
+    {
+      "path": "tests/issue-3518-c1-current-source.test.ts",
+      "operation": "replace",
+      "predecessor": {
+        "head": "884d2fc58f40a28c391ef5cf238b49582329e55b",
+        "bytes": 137373,
+        "sha256": "8a7458a6af77608b8c1acc6b8935e7f8b14e4ca3da23d03e7cca0775e615316a",
+        "gitBlob": "c4dbbd6420e7e51aa955818c3ac9b91ee0ccc5fa"
+      },
+      "candidate": {
+        "bytes": 137383,
+        "sha256": "30dbc4476a138b3dd0df46ec9b8f2597a95c7947fb04d222751306711a59a469",
+        "gitBlob": "15d401afb155668402f2dea421affa36d4c4336c",
+        "mode": "644"
+      }
+    },
+    {
+      "path": "tests/issue-3518-compiler-boundaries.test.ts",
+      "operation": "replace",
+      "predecessor": {
+        "head": "884d2fc58f40a28c391ef5cf238b49582329e55b",
+        "bytes": 35951,
+        "sha256": "baf0698c25b77b6235d901de8cec761c3cef41d9c5f4e3e18a646eab5a4257e2",
+        "gitBlob": "71040b55e6bd4ff63b1262def182d14fe9e4ea33"
+      },
+      "candidate": {
+        "bytes": 40599,
+        "sha256": "f70da8bbeb8d6d614a5f301f0ee0eec6647f3a79053826c3c8e6c23262a0d62f",
+        "gitBlob": "67457d53c184f9c81fbcc94319b9b3d0cb4fbcbd",
+        "mode": "644"
+      }
+    },
+    {
+      "path": "tests/issue-3518-program-data-contract-boundary.test.ts",
+      "operation": "replace",
+      "predecessor": {
+        "head": "884d2fc58f40a28c391ef5cf238b49582329e55b",
+        "bytes": 32195,
+        "sha256": "1f3785924d4c783b0c3fe7b902ae30e4b0e03341215c299df9fc8af5bbfcf256",
+        "gitBlob": "c4ecefd8b73662ee17ce218d7c0414e83c74020e"
+      },
+      "candidate": {
+        "bytes": 32404,
+        "sha256": "296af02116531d952e9861d789cbe4b23796597259b0be8845dcb82398747c0c",
+        "gitBlob": "fbc0e7aa20a7f26c4952c8f571a4b93a127787c2",
+        "mode": "644"
+      }
+    },
+    {
+      "path": "tests/issue-3518-program-validator-policy-evolution.test.ts",
+      "operation": "replace",
+      "predecessor": {
+        "head": "884d2fc58f40a28c391ef5cf238b49582329e55b",
+        "bytes": 49209,
+        "sha256": "e62931f8038e76a012689a70a6a59777a53566f08f7fcad4f48164fec41fd196",
+        "gitBlob": "d3b8cd04e1df83e77c5c9f978c5b49b3e7243201"
+      },
+      "candidate": {
+        "bytes": 49394,
+        "sha256": "67b1724b5c7f3e541292dcb7ffeb89fed2a84be2648cca43fa859327324b7fc7",
+        "gitBlob": "1420e5aef4c97a2bc86708c453b31992a21fb2cf",
+        "mode": "644"
+      }
+    },
+    {
+      "path": "tests/issue-3518-runtime-data-contract-seam.test.ts",
+      "operation": "replace",
+      "predecessor": {
+        "head": "884d2fc58f40a28c391ef5cf238b49582329e55b",
+        "bytes": 177799,
+        "sha256": "87e6b3afe75c8765d6f9a8949604177d3743002ac4c9e53669428030cab857ab",
+        "gitBlob": "4a5ec99d985544ef7fe901258197e21749818121"
+      },
+      "candidate": {
+        "bytes": 178082,
+        "sha256": "7376c43bf2b87d4b9f4d6ac048d4cc3262b13396d33e067790d563fce86028ea",
+        "gitBlob": "695e2e619de98fd85e7244543644b1452a1f73e6",
+        "mode": "644"
+      }
+    },
+    {
+      "path": "tests/issue-3518-wasmgc-helper-policy-evolution.test.ts",
+      "operation": "replace",
+      "predecessor": {
+        "head": "884d2fc58f40a28c391ef5cf238b49582329e55b",
+        "bytes": 71201,
+        "sha256": "41a93e6ff59fbc42283522059edeef3e66e37d8d2280ec5b71da23ed28ad9277",
+        "gitBlob": "c68eae69fe3cea9f509e25f82a392c5636ffd1af"
+      },
+      "candidate": {
+        "bytes": 71382,
+        "sha256": "10e877378d67c429357d259da9136c027b752527a514bd907656db2f3e1385b0",
+        "gitBlob": "aa38ab645dc9a524651e23fa20fc745a2ac13106",
+        "mode": "644"
+      }
+    },
+    {
+      "path": "tests/issue-3525-arraybuffer-isview-main-policy.test.ts",
+      "operation": "replace",
+      "predecessor": {
+        "head": "884d2fc58f40a28c391ef5cf238b49582329e55b",
+        "bytes": 35794,
+        "sha256": "0de89db7b1fa9b320bb86cc6717056dad058908c1430352b40194d1d7b96c388",
+        "gitBlob": "53566b0eabbf9e7612384e441b7ddedbe4b53326"
+      },
+      "candidate": {
+        "bytes": 35959,
+        "sha256": "5a250bafff56c005bfc90f0fd9e70f16a3cc640ee345afc87ba63ff683a84503",
+        "gitBlob": "0664234508a19573d317f139755df879d3e3d1df",
+        "mode": "644"
+      }
+    },
+    {
+      "path": "tests/issue-3525-main-inventory-source-successor.test.ts",
+      "operation": "replace",
+      "predecessor": {
+        "head": "884d2fc58f40a28c391ef5cf238b49582329e55b",
+        "bytes": 23156,
+        "sha256": "2675f36e19e384cf5bade4ee80484cbf69ace9e8ef5c1aa04889e597bf495c13",
+        "gitBlob": "8ccd8a1a57e675e2686d2799a8d6d7bc70071169"
+      },
+      "candidate": {
+        "bytes": 23395,
+        "sha256": "ab3fa29474a9ac503c1cfde501692c61f87b54d07fe5d613e22971571055f717",
+        "gitBlob": "dba7bcce6ad10f8dfff533e6fb2da1c9077e925e",
+        "mode": "644"
+      }
+    },
+    {
+      "path": "tests/issue-3525-presentation-classification-policy.test.ts",
+      "operation": "replace",
+      "predecessor": {
+        "head": "884d2fc58f40a28c391ef5cf238b49582329e55b",
+        "bytes": 32070,
+        "sha256": "bfbb2a11df96bab82d8b0d412dc1a0a15c7806bd0dad5a8ce338d80368b04ec4",
+        "gitBlob": "ce174f8963cfdbab10b254a3fe258b8465123563"
+      },
+      "candidate": {
+        "bytes": 32239,
+        "sha256": "9fad4b555c0e4f58ed93ee4a30ddc0842cadfa330ef780184d273a0ef72c2e82",
+        "gitBlob": "98133e118a3ef3f5c6e5f0fd8f8af6641780ddb0",
+        "mode": "644"
+      }
+    },
+    {
+      "path": "tests/helpers/ir-5883-inventory-source-successor.json",
+      "operation": "add",
+      "predecessor": null,
+      "candidate": {
+        "bytes": 8642,
+        "sha256": "dae4ccaa122c9b406f136d71a89e613e80d677392cc5ddd9456c90424316bba6",
+        "gitBlob": "3690625c04979feca929ac30540220a7af6abf4c",
+        "mode": "644"
+      }
+    },
+    {
+      "path": "tests/helpers/ir-5883-inventory-source-successor.ts",
+      "operation": "add",
+      "predecessor": null,
+      "candidate": {
+        "bytes": 8275,
+        "sha256": "80aa8ca7d981e486e171150a8c34b3afdbc093ac10efc9fc0028f0c6ed34f3b6",
+        "gitBlob": "9216316d03dca3eec97e40e91c1da802417bcdf0",
+        "mode": "644"
+      }
+    },
+    {
+      "path": "tests/issue-5883-inventory-source-successor.test.ts",
+      "operation": "add",
+      "predecessor": null,
+      "candidate": {
+        "bytes": 28592,
+        "sha256": "542716222ff7b4227891c8b091853497fb638820d92e318efb94587648efb2ff",
+        "gitBlob": "33cba505acae15507e97ff398e7b62b8156a34f2",
+        "mode": "644"
+      }
+    },
+    {
+      "path": "tests/issue-3518-historical-runtime-reconstruction.test.ts",
+      "operation": "replace",
+      "predecessor": {
+        "head": "884d2fc58f40a28c391ef5cf238b49582329e55b",
+        "bytes": 58067,
+        "sha256": "7dba8635ec6dde232069a645982497f7586e054866ddc3c03da8c4f7101d63d7",
+        "gitBlob": "524b1526e088faff1fbe6f08c43a838119274bf7"
+      },
+      "candidate": {
+        "bytes": 59502,
+        "sha256": "dd20bfaf5398b76b616091741b40c4a3c63bd57c86fa145ee70e94d6478f144c",
+        "gitBlob": "243253a37fa5ee4df271bd6eda49ea771999b196",
+        "mode": "644"
+      }
+    }
+  ],
+  "existingEvidenceArchives": [
+    {
+      "path": "plan/agent-context/5883-c1-before-instrument-epoch-20261006.json.txt",
+      "candidate": {
+        "bytes": 123703,
+        "sha256": "0946a6124f6e78eaf5bbe1f48fbe2600884fc78702ec8b38118a5e13f78e35f0",
+        "gitBlob": "b40f71bcea4f5ce3e2bc35172c6fdcb2b5f04efd",
+        "mode": "644"
+      },
+      "role": "Preserved evidence only; not executable proof or new acceptance authority"
+    },
+    {
+      "path": "plan/agent-context/5883-c1-before-probe-budget-20261006.ts.txt",
+      "candidate": {
+        "bytes": 137373,
+        "sha256": "098e17bb22d56b52d0e11f1a699f30b75a2e2257dce65f9c8e4ab7e9a84dc778",
+        "gitBlob": "c5ca9782f70c9e79d6df51dd75030b3998690469",
+        "mode": "644"
+      },
+      "role": "Preserved evidence only; not executable proof or new acceptance authority"
+    },
+    {
+      "path": "plan/agent-context/5883-c1-budget-validation-results-20261006.json.txt",
+      "candidate": {
+        "bytes": 24258,
+        "sha256": "e5807512a9d1d8546e686efe415c61b255387e976a5d82aec9ce030f28011fa1",
+        "gitBlob": "cb7f8cc3067bf471d10bb5c91ffa0733dbd3c013",
+        "mode": "644"
+      },
+      "role": "Preserved evidence only; not executable proof or new acceptance authority"
+    },
+    {
+      "path": "plan/agent-context/5883-c1-observations-and-epoch-results-20261006.json.txt",
+      "candidate": {
+        "bytes": 3047585,
+        "sha256": "136cf1158cc1913d2ecf56ee2cefee576cbd19cc70c59683c1687d760774ec6a",
+        "gitBlob": "fc81e898a6e24cfc3d96a3324432079745e0cc60",
+        "mode": "644"
+      },
+      "role": "Preserved evidence only; not executable proof or new acceptance authority"
+    },
+    {
+      "path": "plan/agent-context/5883-held-b-boundary-before-selection-20261006.ts.txt",
+      "candidate": {
+        "bytes": 35951,
+        "sha256": "baf0698c25b77b6235d901de8cec761c3cef41d9c5f4e3e18a646eab5a4257e2",
+        "gitBlob": "71040b55e6bd4ff63b1262def182d14fe9e4ea33",
+        "mode": "644"
+      },
+      "role": "Preserved evidence only; not executable proof or new acceptance authority"
+    },
+    {
+      "path": "plan/agent-context/5883-incoming23-failed-attempt-20261006.json.txt",
+      "candidate": {
+        "bytes": 1102007,
+        "sha256": "197aa8a4bcd7c156dea6201d30b0028edc0d963d67e284da278424c832f485db",
+        "gitBlob": "66233a3f928e6b98e002cc1248c234f2c689e827",
+        "mode": "644"
+      },
+      "role": "Preserved evidence only; not executable proof or new acceptance authority"
+    },
+    {
+      "path": "plan/agent-context/5883-scoped-validation-attempts-20261006.json.txt",
+      "candidate": {
+        "bytes": 33457,
+        "sha256": "cd8a69f513c7cf09303fd3f9dcd3b9102fa651622039b2db02693e235babad0d",
+        "gitBlob": "2d2479b7677a2885e512293fe01019a825ca107d",
+        "mode": "644"
+      },
+      "role": "Preserved evidence only; not executable proof or new acceptance authority"
+    }
+  ],
+  "copiedEvidenceArchive": {
+    "path": "plan/agent-context/5883-policy-callers-before-adaptation-20261006.json.txt",
+    "sourceRoot": "/private/tmp/js2-5883-policy-callers-20261006",
+    "candidate": {
+      "bytes": 108167,
+      "sha256": "339f01ee15fc558628949a57cc19d52577ba8707b7b3893df1be6e62cb4c6d36",
+      "gitBlob": "3762e5030d581741707b7da6a0089491cc06ecd9",
+      "mode": "644"
+    },
+    "role": "Separate eighth evidence archive: exact original seven callers",
+    "copyVerifiedByteIdentical": true,
+    "decodedInventoryCount": 7,
+    "decodedBytes": 421424,
+    "decodedPayloadsMatchRecordedHEAD": true
+  },
+  "productionConfigDependencyChanges": false,
+  "applied": false,
+  "accepted": false,
+  "successorOf": {
+    "path": "plan/agent-context/5883-combined-repair-transfer-20261006.json.txt",
+    "sha256": "7c5b612bd7bb623fb132e9fe4d0aa375fac854567c93b570e443bd194a17f8a1"
+  },
+  "preparationContext": {
+    "parentOwnedCandidateRoot": "/private/tmp/js2-5883-held-b-20261006",
+    "parentOwnedCandidateSession": 9177,
+    "candidateResultArtifactsRead": false,
+    "headAuthority": "Explicit parent-declared frozen HEAD inherited from predecessor manifest; no Git commands run during this manifest-only preparation.",
+    "integrationAuthorized": false
+  },
+  "additionalEvidenceArchives": [
+    {
+      "path": "plan/agent-context/5883-historical-reader-before-capture-20261006.ts.txt",
+      "candidate": {
+        "bytes": 58067,
+        "sha256": "7dba8635ec6dde232069a645982497f7586e054866ddc3c03da8c4f7101d63d7",
+        "gitBlob": "524b1526e088faff1fbe6f08c43a838119274bf7",
+        "mode": "644"
+      },
+      "role": "Preserved historical evidence only; not executable proof or new acceptance authority"
+    },
+    {
+      "path": "plan/agent-context/5883-seven-historical-diagnostics-20261006.json.txt",
+      "candidate": {
+        "bytes": 2006715,
+        "sha256": "dd08ea05b073d1015f10b2f518fa05d70fce114c0558cc27947210b8e9309737",
+        "gitBlob": "db97087679cc3bd5457f4b878c3c3d1a688b6e3a",
+        "mode": "644"
+      },
+      "role": "Preserved historical evidence only; not executable proof or new acceptance authority"
+    }
+  ],
+  "preservedContext": [
+    {
+      "path": "plan/agent-context/5883-combined-repair-transfer-20261006.json.txt",
+      "candidate": {
+        "bytes": 12928,
+        "sha256": "7c5b612bd7bb623fb132e9fe4d0aa375fac854567c93b570e443bd194a17f8a1",
+        "gitBlob": "a47d682065f9167890beec13d5804dcf2626c710",
+        "mode": "644"
+      },
+      "role": "Immutable predecessor transfer manifest; historical preparation context, not current execution or integration authority"
+    }
+  ]
+}

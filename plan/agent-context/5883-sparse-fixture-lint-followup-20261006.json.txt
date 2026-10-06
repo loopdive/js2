@@ -1,0 +1,43 @@
+{
+  "schema": "5883-post-transfer-sparse-fixture-lint-repair-v1",
+  "integrationManifestSha256": "cb20bf460eb5fa9dbc02dae79ca575986063fc2de3d2cf2137a1b284359273a0",
+  "reason": "Normal commit hook rejected delete syntax; Reflect.deleteProperty retains actual holes and asserts successful deletion. No configuration suppression or undefined substitution.",
+  "changes": [
+    {
+      "path": "tests/issue-5883-inventory-source-successor.test.ts",
+      "before": {
+        "bytes": 28682,
+        "sha256": "0eb57c6f864fb442541cebc757ea74eb4102a5b02df2b25f38626081c417e11c"
+      },
+      "after": {
+        "bytes": 28720,
+        "sha256": "7ee543266852be555e970f40f934654e8ca2b6e0b9b95d201d1e9bd38095f3f0"
+      }
+    },
+    {
+      "path": "tests/issue-5883-main-bba74-inventory-source-successor.test.ts",
+      "before": {
+        "bytes": 24157,
+        "sha256": "3278a95bc480ea627fe16e47c4b7af422403a49fcc9fb80adc62978d6ea204d0"
+      },
+      "after": {
+        "bytes": 24195,
+        "sha256": "cb8fb2a001671a42b25e53d8bd93942f5e597c3ae6e7ed2c823e2c9759e28284"
+      }
+    }
+  ],
+  "beforeArchive": {
+    "path": "plan/agent-context/5883-bridge-tests-before-sparse-lint-repair-20261006.json.txt",
+    "sha256": "a9a938d4706c3811a6d537bac6f20cc9acf136bf0482f4309d172488e3ab0cd4"
+  },
+  "validationArchive": {
+    "path": "plan/agent-context/5883-sparse-fixture-validation-20261006.json.txt",
+    "sha256": "deeb134eafde617d788266ef1bc96917949fea8270f07799f17501f109d40667"
+  },
+  "selected": 174,
+  "passed": 174,
+  "failed": 0,
+  "skipped": 0,
+  "rawReviewed": true,
+  "accepted": false
+}

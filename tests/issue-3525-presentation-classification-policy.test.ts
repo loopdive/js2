@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { capture5883InventoryPredecessorPolicySource } from "./helpers/ir-5883-inventory-source-successor.js";
 import { captureMainInventoryPredecessorPolicySource } from "./helpers/ir-main-inventory-source-successor.js";
 import { createHash } from "node:crypto";
 import {
@@ -133,7 +134,9 @@ const physical = (path: string) => fileURLToPath(new URL(`../${path}`, import.me
 const physicalFaultAuthorities = [receiptPath, helperPath, expected.predecessorReceipt.path];
 const raw = () =>
   captureArrayBufferIsViewMainPredecessorPolicySource(
-    captureMainInventoryPredecessorPolicySource(readFileSync(physical("scripts/compiler-boundaries.json"), "utf8")),
+    captureMainInventoryPredecessorPolicySource(
+      capture5883InventoryPredecessorPolicySource(readFileSync(physical("scripts/compiler-boundaries.json"), "utf8")),
+    ),
   );
 const policy = () => JSON.parse(raw()) as Policy;
 afterEach(async () => {

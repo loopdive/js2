@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { capture5883InventoryPredecessorPolicySource } from "./helpers/ir-5883-inventory-source-successor.js";
 import { captureMainInventoryPredecessorPolicySource } from "./helpers/ir-main-inventory-source-successor.js";
 import {
   captureArrayBufferIsViewMainPredecessorPolicySource,
@@ -710,7 +711,9 @@ const raw = () =>
       capturePresentationClassificationPredecessorPolicySource(
         captureArrayBufferIsViewMainPredecessorPolicySource(
           captureMainInventoryPredecessorPolicySource(
-            readFileSync(new URL("../scripts/compiler-boundaries.json", import.meta.url), "utf8"),
+            capture5883InventoryPredecessorPolicySource(
+              readFileSync(new URL("../scripts/compiler-boundaries.json", import.meta.url), "utf8"),
+            ),
           ),
         ),
       ),

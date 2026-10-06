@@ -7764,3 +7764,873 @@ Sol-6.1 Medium owns only new scratch instrumentation. Existing fixtures,
 original failures and result archives stay unchanged. Final compiler176,
 runtime28 files, canonical typing, normal publication hooks and protected
 delivery remain pending. This is not compiler equivalence or retirement proof.
+
+### Promise checkpoint: strict reporting blocker (2026-10-06)
+
+The explicit successor is HEAD884d2fc58f40a28c391ef5cf238b49582329e55b,
+integrating canonical6128dd. Reviewed v3 instrumentation pins7750 inputs and
+preserves exact historical assertion identities;65 synthetic rejection controls
+passed. Canonical typing exited0 and text readers passed992/992 across five
+files with clean raw output. Compiler readers twice reported176/176 passes but
+exited1 with an unhandled Vitest `onTaskUpdate` RPC timeout. Both attempts are
+FAILED and preserved separately; native passing counts do not waive the error.
+Independent review found unchanged input pins and no additional recorded error
+in the first attempt, but did not establish the timeout's cause or harmlessness.
+
+No further blind retry or timeout increase is authorized by this plan. Sol6.1
+Medium is tracing the reporting/test child-wait paths read-only; parent will
+specify any narrow repair from concrete evidence, retaining all original
+fixtures, assertions and failed output. See the existing reader-epoch plan's
+"V3 execution and preserved reporting failure" section for exact attempt paths.
+Runtime28 and incoming23 have not run. PR5883 remains unpublished at this local
+successor and held; normal hooks, protected delivery, full equivalence and
+legacy retirement remain unproved.
+
+The reporting investigation identified144 consecutive synchronous controls
+whose recorded combined duration exceeded Vitest's60s RPC deadline. This is a
+plausible IPC-starvation mechanism, not a proven trace of the expired request.
+Parent's "File-local reporting fairness repair plan" in the reader-epoch plan
+releases Sol6.1 Medium to add only an awaited `setImmediate` in file-local
+`afterEach`, preserving exact original test bytes separately. No assertions,
+fixtures, timeouts, dependency or error gates change. The modified test requires
+an explicit successor validation authority; old v3 evidence remains immutable.
+Implementation and clean compiler176 revalidation are still pending.
+
+The scheduling-only patch is now implemented and parent-reviewed. Reversing
+only the imports/hook recovers the original18744 bytes exactly; the successor
+is18885 bytes. Original SHA256036534f9d24152746c58f305dee8c3405f05788b4f48a47296b51cbe1d62f3ae
+is archived in `plan/agent-context/5883-compiler-reader-before-yield-20261006.ts.txt`;
+successor SHA2562ec6925119fcc55004718bd1525af3b1d5d5cdcd3f8642983b3df6294dc85c82.
+No assertion body changed. A small new v4 wrapper is delegated to explicitly
+bind this one-path successor while preserving all v3 authority/results.
+Revalidation remains pending; the patch is not yet established to fix the error.
+
+Successor validation now has clean canonical typing, compiler176/176 and
+text992/992 results, unchanged7752 pins and parent-reviewed complete raw logs.
+The compiler reporting error did not recur with the scheduling-only change;
+both original failed attempts remain retained. Runtime28 subsequently failed:
+495/505 passed, ten failures all in issue-6794-cli with multiple explicit tsx
+`listen EPERM` temporary socket denials. This failed result is retained rather
+than waived. Parent plans the same full runtime cohort with approved execution
+permissions, followed by incoming23; no source/test/config changes or assertion
+relaxation. Success on that rerun is not yet measured. The initial v4 launch
+briefly overlapped another probe; the reader-epoch plan records that scheduling
+error and does not claim an exclusive-slot start. Publication remains pending.
+
+### Held-B fixture selection repair plan (2026-10-06, not yet released)
+
+Read-only inspection at frozen884d2fc5 confirms the compiler-boundary test uses
+`manifest.moves.slice(0,2)` and later `manifest.moves[0].to`. Here these select
+two Promise moves, not the two intended async-frame moves. Thus generated files
+contain no matching held declarations. This is static evidence; incoming23 is
+still running and its failures have not yet been attributed.
+
+After terminal evidence is preserved, repair only fixture selection in
+`tests/issue-3518-compiler-boundaries.test.ts`: select exactly one move for each
+original path `src/codegen/prepared-async-frame-engine.ts` and
+`src/codegen/prepared-async-frame-adapter.ts`, requiring respectively destinations
+`src/runtime/wasmgc/async/prepared-async-frame-engine.ts` and
+`src/backend/wasmgc/async/prepared-async-frame-adapter.ts`. Use the selected engine
+destination for the removed-declaration phase too. Require the original ten
+path-qualified identities (engine:get/set/constant/physicalIndex/resources/
+sameType/preflightPreparedFrame/emitPreparedFrame; adapter:sameType/
+emitPreparedIrAsyncFrame), retaining both distinct sameType findings.
+
+Preserve original test bytes and failed run, every existing assertion, absent
+and moved phases, dummy calls, complete-mode refusal, evidence-symbol-missing
+and evidence-policy rejection. No checker/manifest/evidence pins change.
+Add controls that unrelated prepends/reordering preserve selection and missing
+or duplicate intended moves, wrong destinations and altered symbol identities
+reject. Parent owns acceptance; Sol6.1 Medium implements only after release.
+Validate original full125 population plus added controls, with exact retained
+identities and strict raw error review. Any further incoming23 failure requires
+independent attribution; this plan is not authority to waive the population.
+
+Parallel release clarification: implementation may proceed in a NEW isolated
+worktree at frozen884d2fc5 while D's validation remains live. This does not
+release edits to D or heavy test execution. The static positional-selection
+defect is sufficient to prepare a candidate; no claim is made that it explains
+incoming23 (which does not select this boundary test). Sol6.1 Medium owns only
+the boundary test and an exact original-byte archive in that isolated worktree.
+Parent will inspect the patch, preserve the original failure through a serial
+baseline/candidate comparison, and integrate only after the frozen run ends.
+Do not broaden this repair into production checker or manifest changes.
+
+Parent created `/private/tmp/js2-5883-held-b-20261006` at884d2fc5 on branch
+`codex/5883-held-b-fixture-20261006` and dispatched the isolated implementation
+to Sol6.1 Medium. Owned outputs are the boundary test and
+`plan/agent-context/5883-held-b-boundary-before-selection-20261006.ts.txt`.
+Execution is NOT RUN; no integration, commit or publication is yet authorized
+for that agent. D's permission validation session17214 remains untouched.
+
+The isolated candidate is implemented and parent diff-reviewed. Original35951
+bytes SHA256baf0698c25b77b6235d901de8cec761c3cef41d9c5f4e3e18a646eab5a4257e2
+are archived unchanged; candidate40599 bytes
+SHA256f70da8bbeb8d6d614a5f301f0ee0eec6647f3a79053826c3c8e6c23262a0d62f.
+Parent independently reversed only the added selector/controls and two move
+selection replacements and recovered every original byte. The first ad-hoc
+reverse check inserted an extra final newline; correcting that reconstruction
+made the comparison exact without editing either source. Six new controls cover
+prepend, ordering, missing/duplicate moves, wrong destinations and changed
+path-qualified symbol identities. Runtime execution remains NOT RUN; this is
+reviewed candidate code, not demonstrated repair or merge readiness.
+
+### Incoming23 terminal blockers (2026-10-06)
+
+Session17214 ended with exit1 at09:47:20Z. Native report:1816 passed,
+583 failed of2399, nine failed/fourteen passed files of23, no pending tests.
+Full raw output additionally reports one unhandled onTaskUpdate RPC timeout.
+All7752 successor pins were verified unchanged. Preserve raw/native/invocation/
+before/after/terminal files under
+`.tmp/5883-main5f-final-v4-permission-incoming23-20261006`; this failed attempt
+must not be overwritten or retrospectively accepted.
+
+Next bounded diagnosis: Sol6.1 Medium reads every failed row reaching
+ir-main-inventory-source-successor and traces the exact current-vs-required
+policy/source differences. Include the twenty590105-vs588351 length failures;
+do not assume matching error text proves one cause. Return exact ownership and
+a minimal reversible preservation proposal; no edits, repins, exclusions or
+tests are released by this diagnosis. Parent separately inspects the seven
+STACK_TRACE_ERROR rows, C1 native type-probe timeout and unhandled RPC channel.
+The isolated held-B repair is separate and does not explain incoming23.
+
+Parent matched all seven STACK_TRACE_ERROR native rows to raw35000ms test
+timeouts (six historical-runtime reconstruction, one runtime data-contract
+seam); the native placeholder alone hid the actual errors. C1 separately hit
+its existing30000ms child type-probe deadline. The unhandled onTaskUpdate error
+is an additional raw-channel failure. Do not increase deadlines, waive these
+rows or claim resource contention caused them from co-occurrence alone.
+Once the shared test slot is free, run the unchanged exact C1 failing control
+first under the same permissions/settings, saving a fresh native/raw result.
+A clean isolated retry is scoped evidence only, not a substitute for the failed
+full population. Any continued timeout needs diagnosis before code changes.
+
+Sol6.1 Medium evidence worker owns only
+`plan/agent-context/5883-incoming23-failed-attempt-20261006.json.txt` in the
+isolated held-B worktree. It will losslessly archive every terminal incoming23
+record and independently verify decoded bytes. No execution/acceptance claims
+or modifications to the boundary candidate are part of that assignment.
+
+The incoming23 archive is complete. Parent independently verified its exact
+six-file inventory and all4345608 decoded bytes against the original run,
+including raw errors and native failures. Archive SHA256:
+197aa8a4bcd7c156dea6201d30b0028edc0d963d67e284da278424c832f485db.
+It remains in the isolated worktree pending integration/publication; preservation
+does not change the failed outcome or certify acceptance.
+
+### PR5883 policy-source preservation implementation plan
+
+Per-row diagnosis attributes575 failures to four entry paths:449 raw-pin,
+105 semantic-profile,20 independent length checks and one wrapped whitespace
+positive witness. This identifies where those tests stop, not their eventual
+outcome after repair. The original helper and receipt match their independent
+pins. Canonical6128dd contains588351-byte policy blob
+c5da824f89dded25e85e7e315825d2d61d97f906, SHA256
+4b442f641a2a99fd4abffc5ef85271858f4a3ae2337fcde8c380fba076a22d05.
+D already had590105-byte blob2d69c0400d7d42a5d8d4103ada085a071bb00a37,
+SHA25629f555ed9afe384c0cf7d3bfe45115083eb42d5445d1f6c983f85aaa6424bad9,
+before the last merge: this is its retained extension, not run-time drift.
+
+Implement a separate fixed successor, not a widened historical reader:
+
+1. New `tests/helpers/ir-5883-inventory-source-successor.ts` and matching JSON
+   receipt authenticate the entire590105-byte current domain and reconstruct
+   exactly588351 bytes. Export `capture5883InventoryPredecessorPolicySource`
+   and `capture5883InventoryPredecessorPolicy`, taking raw string/unknown and
+   optional fresh authority reader respectively. Neither API invokes the older
+   successor; callers explicitly compose it afterward to reach584712 bytes.
+   Preserve primitive/descriptor guards BEFORE authority IO; no getter calls,
+   caching, Git fallback, storage-layout inference or acceptance of both domains.
+2. Authenticate exactly three prepended move rows (the two Promise relocations
+   and vec-pop relocation), and four inserted file rows (vector-storage-copy,
+   two Promise destinations, vec-pop destination) with exact order/neighbors.
+   All retained fields/rows must be unchanged. Raw reciprocal insertions use
+   before/after UTF8 byte offsets68319/68319(length414),78933/79347(length140),
+   326831/327385(length829),401719/403102(length371). Independently validate
+   these coordinates and literal contents against the pinned blobs; reject
+   missing/duplicate/reordered/relocated spans. Full inverse and forward replay
+   must be byte-exact and agree with independently checked semantic inversion.
+3. New `tests/issue-5883-inventory-source-successor.test.ts` must independently
+   pin both complete domains, literal rows/order/neighbors and reciprocal spans.
+   Include genuine positive composition through the unchanged older helper;
+   reject wrong domains, removed/duplicate/relocated/changed added rows, retained
+   changes and raw whitespace drift. Exercise primitive/descriptor guard ordering
+   with observed authority IO, missing/mutated/restored authority after success,
+   and raw/semantic parity. Do not use implementation output as expected truth.
+4. A disjoint caller writer changes ONLY imports and live-source acquisition
+   adapters in issue3518 program-data-contract-boundary, program-validator-policy-
+   evolution, runtime-data-contract-seam (both adapters), wasmgc-helper-policy-
+   evolution; issue3525 arraybuffer-isview-main-policy, presentation-classification-
+   policy, main-inventory-source-successor (healthy and compatibility acquisition).
+   Keep all original test names, fixture strings, assertions, old helper/receipt
+   hashes,588351/584712 expectations and mutation logic intact. Archive original
+   caller bytes losslessly. New composition must not intercept old authority
+   callbacks or let expected negative controls fail earlier for unrelated reasons.
+5. Sol6.1 Medium implements in isolated worktrees with disjoint ownership. No
+   production policy/checker/compiler changes, repinning old authority, timeout
+   increases, tests, commits or publication until parent integration/review.
+6. Parent reviews exact diffs, preserves the original583 failures and eight
+   timeout rows separately, validates new controls plus every retained identity
+   of the affected original population, then reruns the whole2399 population
+   with all error channels checked. New pins/settings require explicit recorded
+   successor authority; no rewriting prior results. This proves preservation
+   only, not emitted IR equivalence or permission for legacy retirement.
+
+Caller candidate is complete in `/private/tmp/js2-5883-policy-callers-20261006`
+on `codex/5883-policy-callers-20261006`, still at884d2fc5. Parent reviewed the
+seven-file diff: imports and nine live acquisitions only (33 additions/9
+deletions), no altered assertions/fixtures/pins. Diff SHA256:
+dfe6922c1262b52bcaf9c476b2412dbe6592a9795fbb42e211cf133d8c83b653.
+Parent independently decoded its original-byte archive: seven unique files,
+421424 bytes, all matching HEAD. Archive SHA256:
+339f01ee15fc558628949a57cc19d52577ba8707b7b3893df1be6e62cb4c6d36.
+Helper implementation is still pending; caller execution remains NOT RUN.
+
+Helper candidate is now parent-reviewed in the held-B isolated worktree:
+183 lines, SHA25680aa8ca7d981e486e171150a8c34b3afdbc093ac10efc9fc0028f0c6ed34f3b6;
+fixed receipt SHA256dae4ccaa122c9b406f136d71a89e613e80d677392cc5ddd9456c90424316bba6.
+Formatted new test SHA256542716222ff7b4227891c8b091853497fb638820d92e318efb94587648efb2ff;
+static enumeration97 controls (including14 metadata mutations), pending native
+collection. Parent read complete helper/test and reviewed guard ordering,
+detachment, fixed authority, reciprocal reconstruction and unchanged older APIs.
+Next integrate the reviewed caller diff into this isolated worktree, leaving
+D unchanged for the original-input C1 retry. Tests/typecheck remain NOT RUN.
+
+Parent applied only the reviewed seven-file caller diff into the held-B isolated
+worktree after checking every destination still matched original HEAD. All seven
+resulting files are byte-identical to the reviewed caller candidate. D's source
+inputs remain unchanged. Combined candidate is ready for scoped execution;
+ongoing other-session test processes still occupy the shared test slot.
+
+Parent released only the lightweight policy-data controls (no compiler child)
+while other-session compiler probes continued. Isolated run
+`.tmp/5883-policy-bridge-20261006` exited0:97/97 passed, one file, no pending/todo,
+complete raw channel clean. All helper/receipt/test hashes remained unchanged.
+Settings:one fork, fork/parent2048MB; native duration11.50s. This is NOT an
+exclusive-resource run and proves only the new preservation controls. The
+retained caller population, boundary comparison, canonical typing, C1 retry
+and complete regression/PR admission still remain outstanding.
+
+Original inventory21 isolated execution now records20 passes/1 failure, exit1,
+under `.tmp/5883-original-inventory-20261006` in the held-B worktree. The retained
+compatibility test reaches a deeper authentic failure:
+`C1 historical authority: full-file pin changed: tests/issue-3518-program-data-contract-boundary.test.ts`.
+All21 originally failed before the adapter; this is progress, not acceptance.
+Do not repin that historical authority or waive the remaining test. Diagnose
+its existing live-source reconstruction seam and authenticate a byte-exact
+inverse of the caller acquisition changes if needed; preserve the original
+caller files and this new failed run. No further implementation is released
+until parent specifies the narrow source-preservation extension.
+
+Unchanged C1 diagnostic retry started after an authoritative process check found
+no Vitest/tsc/tsgo workers. D HEAD884d2fc5 and C1 test SHA256
+8a7458a6af77608b8c1acc6b8935e7f8b14e4ca3da23d03e7cca0775e615316a
+were recorded before launch. `.tmp/5883-c1-unchanged-retry-20261006` exited1:
+selected control0/1 passed,342 intentionally unselected/skipped, same30000ms
+native type-probe timeout,31.80s total. No deadline change, no full343-pass claim.
+Do not label the original failure a transient suite-only event. Diagnose probe
+invocation/configuration before releasing any fix; retain both failed attempts.
+
+Held-B original failure is now directly reproduced in unchanged D:
+`.tmp/5883-held-b-original-20261006` exited1 with selected control0/1 passed,
+124 unselected/skipped, at the original bound-unresolved assertion(line797).
+No timeout or RPC error appeared in its complete raw output. Parent then
+started the candidate's entire boundary file in the isolated tree under
+`.tmp/5883-held-b-candidate-20261006`, one fork/2048MB settings. Expected original
+125 plus six new controls; native collection/result still pending. This static
+checker validation is separate from compiler/type-probe execution and from
+the unresolved C1 historical-authority pin extension.
+
+### C1 native-probe measurement plan (no acceptance change)
+
+Read-only diagnosis found no invocation/configuration defect. Static TS5 import
+resolution from the current LinearOptions module reaches1758 repository source
+files/40629485 bytes; this is not an observed native program census. The native
+TS7 wrapper matches the canonical invocation. NODE_OPTIONS heap4096 does not
+establish a4GiB native compiler heap cap. Original scratch projects were removed
+by the test's finally block; their original runtime executable identity is not
+recoverable from current installation identity alone.
+
+Release a separate diagnostic runner, not a test rewrite. Recreate the exact
+seven-file project using the original test's declaration, forwarders, entry
+literal and configuration; authenticate original test bytes and declaration pin
+before deriving inputs. Record exact generated bytes, hashes, root/HEAD,
+configuration and native executable identity before launch. Keep both assignment
+directions, empty-object controls, all six negative annotations and all original
+compiler options. Run the identical child arguments/environment with the same
+30000ms deadline and owned process-group termination; retain all generated files,
+stdout/stderr, exit/signal and timeout status. Observe only this child PID's CPU/
+RSS and optionally one bounded native stack sample, disclosing observation
+overhead. Never treat the measurement as passing the original test, extend its
+deadline or kill another job. Parent reviews the runner before serial execution.
+
+Held-B candidate completed131/131, exit0,143.26s, full raw channel clean. Parent
+compared native identities as a multiset: every original125 identity is present
+and passing, with exactly six additions. Candidate source hash remainsf70da8bb.
+Original targeted failure remains retained separately. This demonstrates the
+fixture selection repair; it does not resolve the separate authority/timeout
+blockers or establish PR/full-IR acceptance.
+
+### Explicit C1 current-instrument epoch implementation plan
+
+Complete closure inspection found11/11 immutable authorities and7/7 historical
+artifacts unchanged;11/12 current instruments match. The sole changed current
+instrument is program-data-contract-boundary: adapted32404 bytes SHA256
+296af02116531d952e9861d789cbe4b23796597259b0be8845dcb82398747c0c,
+previous current32195 bytes SHA256
+1f3785924d4c783b0c3fe7b902ae30e4b0e03341215c299df9fc8af5bbfcf256,
+historical28535 bytes SHA256
+cd1938063fa11485d4ec15fd260aeb3e65b6fa7a220e46932978f7a06528b8e0.
+The old authority is correct to refuse the unadmitted new instrument. Reader
+injection at the policy acquisition would not reach its nested default C1 calls.
+
+Use the existing deliberately acyclic manifest/root/independent-freeze mechanism:
+archive exact prior bytes of `tests/helpers/ir-c1-authority.json`,
+`tests/helpers/ir-c1-authority-root.ts` and `tests/issue-3518-c1-current-source.test.ts`
+before changes. Modify only the boundary CURRENT pin and corresponding afterPin
+in the manifest, composing its old recipe with the two caller adapter edits into
+one exact28535-to32404 recipe. Offsets relative to32195 cannot just be appended.
+Keep the historical beforePin, all base labels,11 immutable authorities,7
+artifacts, other11 current pins, other9 recipes, population, declaration and
+resolver contracts unchanged. Independently inverse/replay all recipes and
+compare full historical originals, not just changed spans.
+
+Bind the new manifest digest in the root, then replace only the independent
+current-epoch assertion scalar in the C1 test. Preserve its declaration pin and
+every test body/fixture/timeout. No H1/H2/helper-source or policy-helper edits.
+Archive prior epoch, exact three-file changes and new digest attribution; do not
+claim unchanged historical authority was widened. Parent's next outer validation
+epoch must additionally bind seven adapters, the new bridge/receipt/tests,
+archives and this three-file assembly: C1's twelve-member domain alone does not
+authenticate all new imported bridge code.
+
+Sol6.1 Medium owns only these three active files plus a lossless prior-epoch
+archive in the held-B isolated worktree. No tests/commits/publication until parent
+review. Acceptance requires existing acyclic membership, full inverse/replay,
+physical-mutation and explicit-reader controls, original inventory21, affected
+callers and full population; the separate native timeout remains a blocker.
+
+Parent losslessly archived the five scoped attempts (C1 unchanged retry, held-B
+original failure,97-control bridge,20/21 inventory intermediate,131/131 boundary
+candidate) in the held-B tree's
+`plan/agent-context/5883-scoped-validation-attempts-20261006.json.txt`.
+Independent decode verified exact ten-file inventory and243226 bytes against
+original raw/native sources. Archive SHA256:
+cd8a69f513c7cf09303fd3f9dcd3b9102fa651622039b2db02693e235babad0d.
+Selected retries retain their native unselected/pending counts; they are not
+reported as full-file successes. All failures remain failures in this archive.
+
+Parent reviewed the three-file current-instrument update and independently
+verified all10 recipes against full historical Git blobs and exact forward
+replay; all protected historical fields, other11 pins and other9 recipes match.
+Prior-epoch archive3/3 originals,540084 bytes, SHA256
+0946a6124f6e78eaf5bbe1f48fbe2600884fc78702ec8b38118a5e13f78e35f0.
+Successor manifest373de19c1adc1349e58e2f8472114c85bbc0163933e9b9fe77df896c35d84934,
+root24a934d68e3b809edb19151df0c230473644a801631c72a689de6c772437578b,
+C1 test098e17bb22d56b52d0e11f1a699f30b75a2e2257dce65f9c8e4ab7e9a84dc778.
+
+`.tmp/5883-c1-epoch-admission-20261006` exited0: original inventory21/21 plus
+existing C1 acyclic-membership and complete-inverse/replay2/2 passed;341 C1
+controls intentionally unselected. Native identities and entire raw channel
+verified. This resolves the demonstrated deeper pin failure for this scoped
+population, not the still-pending full C1/caller/regression acceptance.
+
+Full non-native C1 authority regression completed342/342 selected controls,
+exit0,186.33s, under `.tmp/5883-c1-authority-regression-20261006` in the isolated
+tree. Parent verified the exact original343 identity multiset, only the known
+native type-probe unselected, clean complete raw output, and unchanged three
+successor-epoch hashes after all physical mutation/restoration controls.
+
+Parent reviewed the complete native diagnostic runner and its provenance update,
+SHA25640dc509e1eda224f83f173699a6d32fc8953956e3afa7848d66126ce9ed4e252.
+It additionally compares full D7752 pins to the fixed v4 post-run map and records
+its own/Node/native executable identity. Process observations are launcher-only
+unless its command exactly matches the native executable. After no test/compiler
+workers were observed, parent launched diagnostic session53337 with approved
+permissions; original30s deadline remains. No result/acceptance is claimed yet.
+
+Diagnostic53337 ended in the original30s timeout (observed30261ms), retained at
+`.tmp/5883-c1-native-observe-20261006-4Rui5E`. Seven exact generated inputs and
+all7752 unchanged baseline pins are retained; stdout/stderr are both empty.
+Owned PID84745 became the authenticated native executable. Observations show
+47.28 CPU seconds by30.14 wall seconds and sampled RSS up to1612432KiB. This
+proves active native work, not its cause, eventual success, exclusive resources
+throughout, or a justified acceptance deadline. Sampling overhead is disclosed.
+
+Next diagnostic only: make a separate completion-measurement runner with a
+120000ms safety bound, fresh output prefix and explicit non-acceptance label.
+Keep exact project generation, compiler flags, inputs, provenance and observation
+logic. Preserve both original30s test failures and the30s observation unchanged.
+This is measurement of eventual completion/errors, NOT a test-timeout edit or
+acceptance waiver. Parent reviews the bounded runner diff before serial launch;
+no production or test source changes are authorized by this diagnostic plan.
+
+Completion measurement finished successfully in35747ms at
+`.tmp/5883-c1-native-completion-observe-20261006-a5R5lJ`, exit0/no signal and
+empty stdout/stderr. Parent independently compared all seven generated files
+byte-for-byte with the failed30s measurement and all7752 baseline pins before/
+after/between attempts. Runner SHA2561720948ff6735a57724eb9f56feea186c251ad2f59b6de1b51affbf0657f4649.
+Earlier canonical checks of the same D source took32.076s and36.910s, both exit0.
+This is completion evidence, not a retroactive pass of the original30s test.
+
+### Narrow C1 execution-budget repair decision
+
+The probe checks contract equivalence, not a30s compiler performance target;
+its imported project reaches most of the compiler. Given the unchanged project
+completing cleanly after35.747s, parent now releases a targeted test-infrastructure
+repair, superseding the temporary no-deadline-edit diagnostic restriction only
+for this one measured probe. Set its owned child safety deadline to120000ms and
+its containing Vitest case deadline to150000ms. Keep global test timeouts and
+the other seven unmeasured timeout failures unchanged. Preserve exact prior
+current-epoch C1 test bytes separately before editing.
+
+Scope: that test case's deadline constant/message and explicit per-case timeout
+only. All fixture generation, both assignment directions, empty-object positives,
+six negative annotations, compiler flags, source/authority/resolver contracts,
+assertions,8MiB output limit and process-group termination remain byte-identical.
+No retries, swallowed errors, narrowed graph or alternate success condition.
+This changes scheduling allowance, not required semantic outcomes. Retain original
+30s failures and both diagnostic runs. Validate the repaired single control,
+then the full343 controls; accept only native exit0, no signal/output errors,
+all original identities and clean raw channels. Full PR regression remains
+required. Sol6.1 Medium implements; parent reviews before execution.
+
+The repair is exactly two changed lines. Parent independently reversed both
+deadline edits and recovered the complete137373-byte prior current-epoch test
+SHA256098e17bb22d56b52d0e11f1a699f30b75a2e2257dce65f9c8e4ab7e9a84dc778,
+preserved as `plan/agent-context/5883-c1-before-probe-budget-20261006.ts.txt`.
+Candidate SHA25630dbc4476a138b3dd0df46ec9b8f2597a95c7947fb04d222751306711a59a469.
+Targeted `.tmp/5883-c1-probe-budget-candidate-20261006` exited0: selected1/1
+passed,342 intentionally unselected; native test duration43.35s,45.11s overall,
+complete raw output clean. This is the repaired test's measured result, not
+relabeling any original30s attempt. Full343 execution is next.
+
+Both native diagnostic runs, both reviewed runners and the two C1 epoch proof
+results are losslessly retained in the isolated tree's
+`plan/agent-context/5883-c1-observations-and-epoch-results-20261006.json.txt`.
+Parent independently verified exact recursive30-file inventory and all5891551
+decoded bytes, including four empty logs. Archive SHA256:
+136cf1158cc1913d2ecf56ee2cefee576cbd19cc70c59683c1687d760774ec6a.
+Original timeout failures and completion-only non-acceptance labels are retained.
+Full343 candidate run is now live as session75713 with no exclusions, one fork,
+2048MB parent/fork settings and the reviewed120s-child/150s-case allowance.
+
+Remaining seven35s historical-reader timeouts need separate attribution. Release
+read-only Sol6.1 Medium inspection of their exact control bodies, shared helper
+call paths and fresh-read/identity obligations. No code edits, caching changes,
+deadline increases or test execution. Parent will retry the exact seven native
+identities (including both identically named manifest mutations) on unchanged D
+after the C1 run, preserving separate logs and all unselected counts. Do not
+generalize the measured native-probe budget repair to these different controls.
+
+### Full C1 result and seven-control retry implementation plan
+
+Full candidate C1 completed343/343, exit0, no pending controls,177.84s overall,
+at `.tmp/5883-c1-full-candidate-20261006` in the isolated held-B tree.
+Parent verified the exact original343-name multiset (not a deduplicated set),
+clean complete raw output, and unchanged candidate test/manifest/root hashes
+30dbc4476a138b3dd0df46ec9b8f2597a95c7947fb04d222751306711a59a469,
+373de19c1adc1349e58e2f8472114c85bbc0163933e9b9fe77df896c35d84934,
+24a934d68e3b809edb19151df0c230473644a801631c72a689de6c772437578b.
+This is scoped acceptance only; original30s failures remain failures.
+
+Dispatch two independent Sol6.1 Medium tasks; parent owns integration:
+
+1. Preserve targeted and full C1 candidate raw/native records losslessly in a
+   separate archive, keeping their original statuses and all identities. Verify
+   complete file inventory, byte lengths, decoded SHA256 and source paths.
+   Do not rewrite any earlier evidence archive or change tests.
+2. Implement a diagnostic-only runner in the caller-agent tree, targeting the
+   unchanged D integration tree. Read the original incoming2399 native report;
+   select exactly seven35s timeout rows across historical reconstruction631
+   and runtime seam147. Assert six distinct names/seven records, retain both
+   manifest mutation occurrences, and generate an anchored escaped Vitest name
+   expression. Use unchanged deadlines, one fork and2048MB parent/fork. Save
+   invocation, full raw/native output, terminal status and baseline7752 pins
+   before/after in a fresh directory. Require selected6+1 and unselected625+146;
+   any selection or identity mismatch is a failed diagnostic, never acceptance.
+   Parent reviews runner before serial execution. No source edits, retries,
+   caching, time-budget changes or success reinterpretation.
+
+Read-only inspection found repeated full27-owner runtime reconstruction per
+requested path beneath validator/preparation authentication. This is a concrete
+redundant call pattern, not yet measured time attribution. Any later optimization
+needs a separate implementation decision preserving fresh authentication per
+top-level proof, all27 owners, healthy positives, mutation-after-inversion order,
+overload ordinals, declaration order, documentation and exact receipt hashes.
+Do not introduce a global or reader-identity success cache.
+
+Task1 complete: parent independently decoded all four targeted/full C1 raw and
+native records and verified exact directory inventory, all230647 bytes and
+per-file hashes against original sources. Archive
+`plan/agent-context/5883-c1-budget-validation-results-20261006.json.txt` in held-B,
+SHA256e5807512a9d1d8546e686efe415c61b255387e976a5d82aec9ce030f28011fa1.
+No earlier evidence was rewritten. The seven-control diagnostic runner is
+still being implemented; no result for those controls is implied.
+
+Parent reviewed the complete seven-control runner, final SHA256
+49502691f8a05d91290efda57a00f218aeac0d191707ad1a6f757a05f4a30734.
+It authenticates original raw/native records, preserves indices608/609 as
+distinct manifest mutants, verifies all7752 original pins and records terminal
+failures without granting acceptance. Launch is waiting for another session's
+observed live Vitest processes12939/12958/12989, not for permission or a code
+decision. Do not interrupt that work or infer that this explains earlier failures.
+
+The observed competing job ended; a fresh process inventory found no replacement
+Vitest/native compiler. Parent launched reviewed retry session29563 on unchanged
+D. Keep its source epoch fixed until terminal and preserve all failures.
+
+### Combined repair checkpoint integration plan
+
+Prepare, but do not apply while the unchanged retry runs, an exact transfer
+manifest from held-B to D. Sol6.1 Medium owns preparation only. Enumerate exactly
+11 tracked test/authority changes and three new bridge files, recording paths,
+HEAD predecessor bytes/SHA256 where present, and candidate bytes/SHA256. Reject
+unexpected tracked edits and every production/config/dependency change. Record
+all seven existing held-B evidence archives separately, without counting them
+as executable proof. Also copy the reviewed original seven-caller archive from
+the caller-agent tree into held-B byte-for-byte and authenticate all its payloads.
+Use a new transfer-manifest file; do not rewrite old evidence or freeze claims.
+
+Parent will verify manifest against live files and current D before authorizing
+integration. Preserve D's independent fairness-yield repair, issue updates and
+all historical validation evidence. No remote/base refresh or D source edit
+until the unchanged diagnostic is terminal. Integration must refuse any
+destination differing from its recorded predecessor, except separately owned
+non-overlapping D files which remain untouched. No commits or pushes by this
+preparation task.
+
+After integration, create an explicit outer successor validation authority over
+all original7752 inputs with only reviewed replacements and enumerated new
+bridge/test/evidence inputs. The narrower C1 current-instrument authority does
+not cover the bridge transitively and must not be described as doing so.
+Recheck all original cohorts and the new97 bridge controls with exact original
+identity multisets (including duplicates), explicit added controls and complete
+raw/native review. No acceptance from a filtered seven-control retry alone.
+Only then refresh the live base/PR branch, preserve and resolve real conflicts,
+run required post-refresh checks and publish through the existing ready PR.
+Protected-queue landing and full IR equivalence remain separate unmet outcomes.
+
+Seven-control attempt29563 is terminal and FAILED instrument validation: native
+Vitest exited0 but selected0/778, all778 skipped. The runner correctly refused
+acceptance (Selected control was not terminal); all7752 pins stayed unchanged.
+Retain `.tmp/5883-seven-historical-retry-20261006-tboeI8` and original runner
+unchanged. This gives no evidence about whether the seven controls pass.
+Release a separate v2 diagnostic runner differing only in name-filter construction,
+fresh output prefix and self identity. Inspect installed Vitest name matching
+before choosing the pattern; preserve exact original file-qualified identity
+validation, duplicate multiplicities and6+1/625+146 assertions. No tests,
+deadlines, fixture, provenance or acceptance criteria may change. Parent reviews
+the patch before serial launch. Preserve both diagnostic attempts separately.
+
+Parent verified the installed Vitest matcher follows suite links, not file
+links; these controls have no file prefix or leading blank in the matched name.
+Reviewed v2 changes only SELF/output prefix and separates execution names from
+file-qualified identity validation. SHA256
+34342352a78b1999b7f6e285bb2e8d6346202e94ae90268e200052b8aa3c960c.
+After the next observed external probe finished, parent launched session46360,
+output `.tmp/5883-seven-historical-retry-v2-20261006-8WvvTd` on unchanged D.
+This run is still live; do not infer results from progress markers.
+
+Transfer manifest prepared in held-B, SHA256
+7c5b612bd7bb623fb132e9fe4d0aa375fac854567c93b570e443bd194a17f8a1.
+Parent verified all14 source candidates and eight evidence archive hashes,
+all11 live D predecessors, and absence of all11 addition destinations. No files
+have been transferred into D. The copied caller archive remains byte-identical
+to the reviewed source. The manifest's earlier session29563 reference is a
+preparation record, not authorization to modify D during successor session46360.
+
+Parallel queue-side task while the serial diagnostic runs: Sol6.1 Medium may
+inspect PR6195's current head, base, actual failing quality log and the precise
+ownership paths responsible for ownedAdapterLines988 versus952. Reconcile with
+the existing managed-constructor worktree and identify a bounded ownership fix
+for parent specification, including actual callers and lifecycle obligations.
+Read-only only: no tests, source/issue writes, branch refresh, messages, hold
+removal or PR changes; do not raise or bypass the ownership limit. Parent retains
+integration and must write a reviewed implementation plan before any fix dispatch.
+
+### Measured historical-reader repair plan
+
+Unchanged v2 retry46360 finished exit1 in224.91s: selected5/7 passed,2/7
+timed out,771 deliberately unselected. Both duplicate manifest mutants ran.
+All7752 pins unchanged; exact full778-identity multiset and selection counts
+verified. Parent read complete raw output: the population census control timed
+out at35.066s and the intrinsic-support receipt positive at40.784s; there is
+also one unhandled onTaskUpdate RPC timeout. Original attempts remain failed.
+The five passing controls took26.545–33.827s and do not prove full-suite health.
+
+Release Sol6.1 Medium implementation in held-B ONLY:
+
+1. Preserve exact predecessor historical-runtime-reconstruction test bytes in
+   a new archive before editing. Do not modify unchanged D or any previous
+   transfer manifest/evidence. Separately losslessly archive both diagnostic
+   directories and both reviewed runners, including failed zero-selection v1.
+2. Reuse the existing currentHistoricalRead factory in the population census
+   control: obtain one fresh capture inside the test, pass it to the existing
+   acceptedCallablePositive, all six current-declaration censuses and historical
+   manifest-contract receipt. Keep counts6/21/7/82/75/37 and38 exactly.
+3. In the existing eight-row original-receipt positive table, pass a newly
+   created currentHistoricalRead to acceptedHistoricalDeclarations for EACH
+   test invocation. Keep every fixture, assertion, name and expected identity,
+   declaration/function count unchanged. This includes the failed intrinsic
+   receipt without special-casing that path or removing any other seven rows.
+4. Permit an optional injected SourceReader in currentHistoricalRead, default
+   rawRead unchanged, solely to test freshness without filesystem mutation.
+   Pass that reader through the existing validator/preparation composition;
+   do not change its complete mandatory runtime population reconstruction,
+   membership/count checks or non-runtime fallback. No shared/global cache.
+5. Add bounded controls proving healthy fresh captures, then rejection after a
+   source changes behind the SAME reader function, then healthy recapture after
+   restoration. A healthy positive must execute before the rejection assertion.
+   Show exact outputs for every runtimeContractCurrentPaths entry agree across
+   fresh healthy captures. Preserve historical mutants after inversion; do not
+   change mutation() or declarationMutation() or any existing negative control.
+
+No deadline/yield/RPC settings, helper-library algorithms, production sources,
+policy pins or assertions may change. Parent reviews patch and reverse-byte
+preservation, runs the same seven controls on candidate plus new freshness
+controls, then the complete historical population and affected receipt cohorts.
+Clean full raw output is required; an RPC error still rejects the run even if
+all assertions pass. The runtime-seam control remains unchanged by this repair.
+This targets independently inspected redundant27-owner reconstruction, not a
+claim that every timeout has this cause. Compare measured results; reject the
+repair if it changes outcomes or fails fresh-authentication obligations.
+
+Parent reviewed the complete narrow patch: only the factory's injected-reader
+parameter, the census proof's one captured reader, the unchanged eight-row
+positive table's reader argument and four added freshness controls changed.
+Original635 candidate count is631 preserved plus4 new, pending collection.
+Candidate historical test SHA256
+dd20bfaf5398b76b616091741b40c4a3c63bd57c86fa145ee70e94d6478f144c;
+58067-byte predecessor archive SHA256
+7dba8635ec6dde232069a645982497f7586e054866ddc3c03da8c4f7101d63d7.
+Parent independently decoded all14 diagnostic evidence files (4198618 bytes)
+and compared lengths, hashes and exact source bytes. Archive SHA256
+dd08ea05b073d1015f10b2f518fa05d70fce114c0558cc27947210b8e9309737.
+No original failure or RPC error was waived.
+
+After an empty compiler-process inventory, parent launched candidate session9177
+in held-B: same seven controls plus four added freshness controls, expected11
+selected and771 unselected out of782 across two files. Existing35s deadlines,
+one fork and2048MB settings unchanged. Input snapshots bind tracked src/tests/
+scripts, listed package/config files and the three new bridge inputs; this is
+scoped candidate evidence, not the full outer successor7752 provenance claim.
+Results are under `.tmp/5883-historical-capture-candidate-20261006`, pending.
+
+Release manifest-only preparation while candidate inputs remain frozen: create
+an explicit transfer-v2 file referring to the original transfer SHA2567c5b612b.
+Keep all14 old source entries byte-identical, add only the historical test as
+the twelfth replacement (15 source files total). Include its predecessor and
+diagnostic archives, and the old transfer manifest as preserved context, with
+full hashes; do not archive the currently running candidate result. Preserve
+the old manifest. Parent will verify all live predecessors and additions again
+before actual D integration. No source edits, tests, git or remote mutations.
+
+Candidate9177 completed exit1,163.60s:10/11 selected passed,771 unselected,
+782 identities total, all tracked input snapshots unchanged. Complete raw log
+has one35s timeout and no unhandled RPC error. Both repaired original controls
+passed at1.853s and0.785s (previous35.066s/40.784s timeouts); all4 new freshness
+controls passed,1.778–3.361s. The unchanged overload-identity positive timed out
+at35.476s. Other original selected controls passed26.221–30.246s. Preserve the
+failed candidate; absence of an RPC error here does not waive its earlier failure.
+
+Release one-line follow-up in held-B: within the overload-identity positive,
+replace only acceptedHistoricalDeclarations(support, read) with the same call
+using currentHistoricalRead(). Keep all three source/kind/ordinal records and
+body-presence assertions exact. Archive the entire failed candidate test before
+editing and preserve the complete six-file candidate attempt separately. No
+other fixture, mutation, yield, timeout, helper algorithm or manifest change.
+Parent reviews, then reruns the same11 controls with a new output directory.
+Transfer-v2 remains a preserved preparation record, not current authority after
+this new source edit; update transfer authority only after reviewing this repair.
+
+### Current-main refresh sequencing decision
+
+Parent fetched canonical upstream/main without modifying D's worktree. Verified
+tip bba74cfa80aac38a3d29ba6b331d70f6bb0f9cb1; D/main diverge72/30 commits.
+Incoming changes include scripts/compiler-boundaries.json, not only unrelated
+production files. Therefore completing every broad cohort on the old6128 base
+before refreshing would not establish current-main acceptance and would duplicate
+the expensive validation cycle.
+
+Supersede only the earlier sequencing requirement: finish the narrow current
+reader repair check and preserve all terminal evidence, integrate the reviewed
+candidate with predecessor guards, then checkpoint locally and compose the live
+PR branch/main before broad final validation. Review each real conflict and each
+changed proof input; old bridge pins cannot silently admit a new policy epoch.
+Preserve original fixtures, original failures, protected queue requirements and
+the same complete acceptance populations. No claims of current-main equivalence
+from old-base tests, no force push, no unattended conflict resolution, no dirty
+main-checkout changes. Parent remains the only integration owner.
+
+Non-worktree merge preview against bba74c completed without conflicts, resulting
+tree3b37a9a1e7a28e6b1b30fb6c3b25f48768b53844. This previews committed HEAD,
+not the pending repair integration. Parent reviewed the entire inventory delta:
+exactly two inserted unmigrated file rows, finally-private-local.ts (owner5267)
+and externref-class-fields.ts (owner3518-coordinator); no moved or removed row.
+
+### Two-row current-main preservation implementation plan
+
+Release a disjoint Sol6.1 Medium implementation in caller-agent C, while held-B
+candidate tests remain frozen. Copy the reviewed existing PR5883 bridge helper,
+immutable receipt and97-control test from held-B byte-for-byte; archive original
+helper/test before changing them. Do not modify C's seven caller adapters.
+
+Add a separate fixed receipt for the exact preview policy Git blob109e1bab21,
+mapping only those two inserted rows back to original checkpoint blob2d69c0400d.
+Bind full UTF8 bytes, SHA256, Git blob, semantic profiles, top-level keys, full
+moves/files/retained hashes, row positions/neighbors and two exact raw spans.
+Require byte-exact inverse AND forward replay and semantic equality. Never edit
+the original8642-byte receipt or its historic590105/588351 profiles.
+
+Extend the existing bridge's public raw/data capture functions to compose this
+new exact transition before the old one for the exact recognized new profile.
+Preserve old-input behavior, descriptor-before-IO guards, unchanged old receipt
+reads and all97 controls. Unknown profiles still reject, including whitespace,
+row/property/order/neighbor changes; no catch-and-fallback, cache or Git reads.
+Authenticate every applicable receipt freshly on every call; check full profiles
+before and after each stage. Keep existing seven caller import/call sites intact.
+
+Expose one narrow raw projection to the590105 checkpoint for the97-control
+test's initial independent fixture acquisition. It must authenticate exact old
+or new source and reject any other input, not silently ignore new rows. Change
+only that test acquisition/import, preserving its entire independent expected
+literal, all fixtures,97 names/assertions and original mutation matrix. New
+main-specific controls must independently bind the actual raw new/old profiles,
+prove the two-row inverse/replay, reject changed rows/order/neighbors/retained
+fields and corrupt receipt metadata, and detect a receipt changed behind the
+same reader after a healthy call. Malformed primitive/accessor inputs must still
+reject before authority IO. Cover raw and semantic composition down to the
+original historical predecessor, without deriving expected values from the
+implementation under test.
+
+For authoring only, derive fixed evidence from the authenticated preview Git
+tree and checkpoint. Runtime tests/helpers must use fresh physical sources and
+fixed receipts, never historical Git fallback. Preview-only fixture controls
+are not current-main execution evidence; final integrated tests must run after
+the actual main merge. No production/gate/config/dependency/caller/C1-authority
+edits, tests, git mutations or publication in this side task. Parent reviews
+the exact source diff and all old/new population preservation before execution.
+
+Candidate62237 completed exit0 in126.80s:11/11 selected passed,771 unselected,
+782 total. Parent verified the exact previous candidate identity multiset,
+complete clean raw output (no RPC error), and identical before/after snapshots.
+The three repaired positive controls took2.291s/2.132s/1.451s; all4 freshness
+controls and4 other originals passed. Source was formatted before launch;
+final historical test SHA256
+2c8445d20624bcbedfa12b62b9f0aaae5377ebafaa5a2023bbcc97373a520575.
+This clears the narrow integration prerequisite, not whole635-control, main-
+refresh, full incoming population or protected-queue acceptance.
+
+Release final preservation/preparation only: archive all six terminal candidate-v2
+records losslessly; create transfer-v3 preserving earlier manifests and recording
+the final historical test hash plus all accumulated reviewed evidence/context.
+Keep the same15 source files (12 replacements/3 additions), no further source
+changes. Parent will independently recheck live D predecessors, apply the exact
+files with apply_patch, preserve its separate fairness repair/docs, then prepare
+the local checkpoint before the already-previewed main merge. No source writes
+or git operations by this preparation agent.
+
+### Formatting and current-instrument proof update
+
+Parent's complete15-file Prettier check found exactly three warnings:
+compiler-boundaries.test.ts, program-data-contract-boundary.test.ts, and
+runtime-data-contract-seam.test.ts (all issue-3518). This must be repaired before
+normal commit hooks; hook formatting must not silently invalidate source pins.
+Transfer-v3, if already created, remains an immutable pre-format record.
+
+Release Sol6.1 Medium in held-B: preserve all six affected pre-format files
+(the three tests, C1 manifest/root/current-source test) in a new exact archive.
+Format only the three warned tests with the repository formatter. Verify their
+token/AST content and all fixture/assertion identities are unchanged. Then
+compose only the program-data-boundary current-instrument recipe to the newly
+formatted bytes, retaining its exact28535-byte historical predecessor. Update
+that single current pin and afterPin/span recipe, manifest anchor and the C1
+test's independentFreeze scalar exactly as the earlier current-instrument epoch
+procedure. Preserve the other11 pins, other9 recipes, all immutable authorities,
+artifact records, bases, populations, resolver and LinearOptions contracts.
+Require exact old-source inverse and full new-source replay. No test bodies,
+deadlines, bridge logic, assertion changes or historic repinning are permitted.
+
+Verify formatting on all15 candidate source files, and parent reviews exact diff
+and independently replays all10 recipes before rerunning full C1 and scoped
+affected tests. Do not update transfer manifests again until this proof is
+reviewed. No tests, git mutations, D/C edits or publication by the formatting
+worker. Separate current-main two-row bridge worker remains isolated in C.
+
+Pre-commit preparation on unchanged D/884d: LOC and function budget gates both
+exited0 against the fetched upstream merge base, covering11 changed src files.
+Existing issue3518/5197 grants remain explicit; no limit or grant was changed.
+These are pre-integration results only; normal commit hooks will rerun after
+integration. The staged-issue check earlier had zero staged issues and is not
+evidence that the eventual checkpoint's issue checks pass.
+
+Parent reviewed both completed workers. Formatting archive6/6 decoded files,
+791393 bytes, independently verified; all10 recipes recover full matching Git
+blobs and reproduce current bytes. Other11 current pins/nine recipes and all
+historical fields remain exact; C1 test differs only in independentFreeze.
+Final formatted manifest594a3fa1b567adb41f64c67410a3c03fac04c981e7d19f73b8ef78a698f2534e,
+root30c8c5abeb4e55368d5c89e1de8d9c23068a9ce951f212eec1efb1ac5a2a87e0,
+C1 test187ad911483390e121a6ea37350ccba4ef005085b6b7b62718867f38eba8135b.
+Full343 C1 execution is live as session50099, in held-B; do not copy its mutable
+proof inputs while controls are running.
+
+Main bridge session34874 completed174/174, exit0,29.20s with clean raw channel
+and unchanged scoped before/after inputs. Parent independently compared all97
+original identities and77 distinct added controls. The separate two-original-
+source archive decoded2/2 files,36867 bytes, matching held-B source exactly.
+Authoring witness independently matches exact Git blobs:590751-byte preview
+policy491fc3c8e470a5a4c58da8e7d78cd24ab3a2cd18d7ce6bcccf279d927c0ea942
+inverts to original590105 bytes and replays exactly; exactly two rows change,
+all retained semantics unchanged. New5514-byte receipt SHA256
+18c1fdee2a7d8c56ed9c1dcea6c6fe2624eec568181e4f27fdd3e924b80f1c18.
+Old receipt remains immutable. Helpers have no runtime Git fallback, unknown
+profiles reject, and both receipts reauthenticate behind reused reader functions.
+This was preview-fixture validation on old C, not actual merged-main execution.
+Pure-data bridge checks overlapped the one compiler-heavy C1 job; no exclusive
+scheduling claim is made for either run.
+
+Release C archive-only preservation of all six terminal bridge attempt files,
+with exact source inventory, hashes and decoded bytes. No source changes. Parent
+will integrate C's extended helper/test over the corresponding two held-B bridge
+files, plus its separate receipt/test and archives, only after C1 is terminal and
+all resulting17 source inputs (12 replacements/5 additions) are freshly verified.
+
+Reviewed integration completed into D:17 source files plus20 evidence/context
+files, preserving all six pre-existing owned inputs. Manifest
+`5883-combined-checkpoint-integration-20261006.json.txt`, SHA256
+cb20bf460eb5fa9dbc02dae79ca575986063fc2de3d2cf2137a1b284359273a0.
+An input-waiting apply_patch child14857 was sampled, then stopped only after its
+next destination was proven unchanged. Wrapper26404 exited1. Async-stdin resume
+verified and retained its eight exact writes and finished the remainder. No
+tests or other sessions were interrupted, no source was reverted or discarded.
+
+Commit attempt52538 failed normal Biome hooks; HEAD remains884d. Formatter
+passed. Exactly two noDelete diagnostics occur in the sparse-input controls of
+issue-5883-inventory-source-successor and issue-5883-main-bba74-inventory-source-
+successor tests. The hook restored the original staged state and cleaned its
+own temporary backup. This is a real checkpoint blocker, not a waived lint error.
+
+Release two-line Sol6.1 Medium repair in C: replace each sparse-array delete
+operator with an asserted Reflect.deleteProperty call at the exact same index
+(0 and984). It must create a hole, not an undefined-valued property; do NOT take
+the linter's unsafe undefined-assignment suggestion. Retain all97+77 identities,
+fixtures, existing assertions and malformed-input-before-IO obligations. Preserve
+both pre-edit test files in a new exact archive. No suppression or config edits.
+Parent reviews the resulting diff, reruns174 controls and integrates these two
+post-transfer changes with explicit before/after hashes before retrying normal
+commit hooks. No source helper, receipt, caller or production changes authorized.
+
+Sparse repair integrated and independently verified against the two exact
+pre-edit files; all17 transfer source hashes were unchanged after the failed
+hook, and the published6f73c8ed PR head is an ancestor of D. Both new Reflect
+calls assert successful property deletion, retaining actual holes. Biome exits0.
+Integrated D run49396 completed174/174, exit0,34.85s, all original174 identities
+unchanged and complete raw output clean. Scoped before/after pins are identical.
+All six records (61293 decoded bytes) are preserved in
+`5883-sparse-fixture-validation-20261006.json.txt`, SHA256
+deeb134eafde617d788266ef1bc96917949fea8270f07799f17501f109d40667.
+Separate `5883-sparse-fixture-lint-followup-20261006.json.txt` records the two
+post-transfer source hashes without rewriting the original transfer snapshot.
+Normal commit hooks will be retried; current-main and full-population acceptance
+remain pending.

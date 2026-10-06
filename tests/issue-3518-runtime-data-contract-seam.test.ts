@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { capture5883InventoryPredecessorPolicySource } from "./helpers/ir-5883-inventory-source-successor.js";
 import { captureMainInventoryPredecessorPolicySource } from "./helpers/ir-main-inventory-source-successor.js";
 import {
   captureArrayBufferIsViewMainPredecessorPolicySource,
@@ -2666,7 +2667,9 @@ function fixtureCaptureInput(epoch: (typeof fixtureCaptureEpochs)[number]): stri
           captureLoweringAnalysisPredecessorPolicySource(
             capturePresentationClassificationPredecessorPolicySource(
               captureArrayBufferIsViewMainPredecessorPolicySource(
-                captureMainInventoryPredecessorPolicySource(fixtureCaptureRead("scripts/compiler-boundaries.json")),
+                captureMainInventoryPredecessorPolicySource(
+                  capture5883InventoryPredecessorPolicySource(fixtureCaptureRead("scripts/compiler-boundaries.json")),
+                ),
               ),
             ),
           ),
@@ -3384,7 +3387,11 @@ function fourStageCaptureInput(epoch: (typeof fourStageCaptureEpochs)[number]): 
               captureLoweringAnalysisPredecessorPolicySource(
                 capturePresentationClassificationPredecessorPolicySource(
                   captureArrayBufferIsViewMainPredecessorPolicySource(
-                    captureMainInventoryPredecessorPolicySource(fixtureCaptureRead("scripts/compiler-boundaries.json")),
+                    captureMainInventoryPredecessorPolicySource(
+                      capture5883InventoryPredecessorPolicySource(
+                        fixtureCaptureRead("scripts/compiler-boundaries.json"),
+                      ),
+                    ),
                   ),
                 ),
               ),

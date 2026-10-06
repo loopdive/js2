@@ -106,43 +106,6 @@ afterEach(async () => {
 const codes = (result: ReturnType<ReturnType<typeof fixture>["run"]>) =>
   result.report.errors.map((error: { code: string }) => error.code);
 
-const heldBFixtureOwners = [
-  {
-    from: "src/codegen/prepared-async-frame-engine.ts",
-    to: "src/runtime/wasmgc/async/prepared-async-frame-engine.ts",
-    symbols: [
-      "get",
-      "set",
-      "constant",
-      "physicalIndex",
-      "resources",
-      "sameType",
-      "preflightPreparedFrame",
-      "emitPreparedFrame",
-    ],
-  },
-  {
-    from: "src/codegen/prepared-async-frame-adapter.ts",
-    to: "src/backend/wasmgc/async/prepared-async-frame-adapter.ts",
-    symbols: ["sameType", "emitPreparedIrAsyncFrame"],
-  },
-];
-
-function selectHeldBFixtureMoves(manifest: Policy) {
-  const evidence = manifest.evidence[0];
-  expect(evidence.id).toBe("held-b-unreferenced-functions");
-  expect(evidence.expectedCount).toBe(10);
-  expect(evidence.symbols.map((item: any) => `${item.originalPath}#${item.symbol}`).sort()).toEqual(
-    heldBFixtureOwners.flatMap((owner) => owner.symbols.map((symbol) => `${owner.from}#${symbol}`)).sort(),
-  );
-  return heldBFixtureOwners.map((owner) => {
-    const matches = manifest.moves.filter((move: any) => move.from === owner.from);
-    expect(matches).toHaveLength(1);
-    expect(matches[0].to).toBe(owner.to);
-    return matches[0];
-  });
-}
-
 it("records exactly the existing frontend debt affected by contracts-only activation", () => {
   const policy = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
   const changed = [
@@ -810,7 +773,6 @@ describe("#3518 real compiler boundary detector", () => {
 
   it("preserves all ten held B findings across moves, dummy callers and removed exports", () => {
     const manifest = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
-    const heldMoves = selectHeldBFixtureMoves(manifest);
     expect(manifest.evidence[0].expectedCount).toBe(10);
     expect(manifest.evidence[0].symbols).toHaveLength(10);
     expect(manifest.evidence[0].symbols.filter((symbol: any) => symbol.symbol === "sameType")).toHaveLength(2);
@@ -821,7 +783,7 @@ describe("#3518 real compiler boundary detector", () => {
     expect(absent.exit).toBe(0);
     expect(absent.report.evidence[0]).toMatchObject({ accounted: 10, resolved: 0 });
     expect(absent.report.evidence[0].symbols.every((symbol: any) => symbol.status === "external-unbound")).toBe(true);
-    for (const move of heldMoves) {
+    for (const move of manifest.moves.slice(0, 2)) {
       const symbols = manifest.evidence[0].symbols.filter((item: any) => item.originalPath === move.from);
       f.put(
         move.to,
@@ -834,78 +796,9 @@ describe("#3518 real compiler boundary detector", () => {
     expect(moved.report.evidence[0]).toMatchObject({ accounted: 10, resolved: 0 });
     expect(moved.report.evidence[0].symbols.every((symbol: any) => symbol.status === "bound-unresolved")).toBe(true);
     expect(f.run().exit).not.toBe(0);
-    f.put(heldMoves[0].to, "export {};");
+    f.put(manifest.moves[0].to, "export {};");
     expect(codes(f.run("inventory"))).toContain("evidence-symbol-missing");
     f.policy.evidence[0].status = "resolved";
     expect(codes(f.run("inventory"))).toContain("evidence-policy");
-  });
-
-  it("selects held B fixture moves after an unrelated prepend", () => {
-    const manifest = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
-    const expected = selectHeldBFixtureMoves(manifest);
-    manifest.moves.unshift({ from: "src/unrelated.ts", to: "src/moved/unrelated.ts" });
-    expect(selectHeldBFixtureMoves(manifest)).toEqual(expected);
-  });
-
-  it("selects held B fixture moves independently of move and symbol ordering", () => {
-    const manifest = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
-    const expected = selectHeldBFixtureMoves(manifest);
-    manifest.moves.reverse();
-    manifest.evidence[0].symbols.reverse();
-    expect(selectHeldBFixtureMoves(manifest)).toEqual(expected);
-  });
-
-  it("rejects either missing held B fixture move", () => {
-    const manifest = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
-    for (const owner of heldBFixtureOwners) {
-      const changed = structuredClone(manifest);
-      changed.moves = changed.moves.filter((move: any) => move.from !== owner.from);
-      expect(() => selectHeldBFixtureMoves(changed)).toThrow();
-    }
-  });
-
-  it("rejects either duplicated held B fixture move", () => {
-    const manifest = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
-    for (const move of selectHeldBFixtureMoves(manifest)) {
-      const changed = structuredClone(manifest);
-      changed.moves.push(structuredClone(move));
-      expect(() => selectHeldBFixtureMoves(changed)).toThrow();
-    }
-  });
-
-  it("rejects either incorrect held B fixture destination", () => {
-    const manifest = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
-    for (const owner of heldBFixtureOwners) {
-      const changed = structuredClone(manifest);
-      changed.moves.find((move: any) => move.from === owner.from).to = "src/moved/wrong.ts";
-      expect(() => selectHeldBFixtureMoves(changed)).toThrow();
-    }
-  });
-
-  it("rejects altered held B path-qualified symbol identities", () => {
-    const manifest = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
-    for (const owner of heldBFixtureOwners) {
-      for (const symbol of owner.symbols) {
-        const renamed = structuredClone(manifest);
-        renamed.evidence[0].symbols.find(
-          (item: any) => item.originalPath === owner.from && item.symbol === symbol,
-        ).symbol = "notAHeldFinding";
-        expect(() => selectHeldBFixtureMoves(renamed)).toThrow();
-        const relocated = structuredClone(manifest);
-        relocated.evidence[0].symbols.find(
-          (item: any) => item.originalPath === owner.from && item.symbol === symbol,
-        ).originalPath = "src/unrelated.ts";
-        expect(() => selectHeldBFixtureMoves(relocated)).toThrow();
-      }
-    }
-    const missing = structuredClone(manifest);
-    missing.evidence[0].symbols.pop();
-    expect(() => selectHeldBFixtureMoves(missing)).toThrow();
-    const duplicate = structuredClone(manifest);
-    const adapterSameType = duplicate.evidence[0].symbols.find(
-      (item: any) => item.originalPath === "src/codegen/prepared-async-frame-adapter.ts" && item.symbol === "sameType",
-    );
-    adapterSameType.originalPath = "src/codegen/prepared-async-frame-engine.ts";
-    expect(() => selectHeldBFixtureMoves(duplicate)).toThrow();
   });
 });

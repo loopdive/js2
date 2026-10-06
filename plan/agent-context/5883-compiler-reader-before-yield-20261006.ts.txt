@@ -2,8 +2,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { setImmediate as yieldToEventLoop } from "node:timers/promises";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import ts from "typescript";
 import { B1_FACTORY_PATH } from "./helpers/native-delay-combinator-b1-inverse.mjs";
 import { beforePromiseExportMain } from "./helpers/promise-export-main-port.js";
@@ -29,10 +28,6 @@ import {
   DELAY_EH_FORWARD_EVIDENCE,
   verifyRetainedDeclarations,
 } from "./helpers/native-delay-combinator-source-receipts.mjs";
-
-afterEach(async () => {
-  await yieldToEventLoop();
-});
 
 const root = resolve(import.meta.dirname, ".."),
   rawRead = readerAt(root),

@@ -859,9 +859,7 @@ describe("historical runtime receipts after checked extension reconstruction fro
   });
 
   it("retains the three overload records with their individual source-qualified ordinals", () => {
-    const rows = acceptedHistoricalDeclarations(support, currentHistoricalRead()).filter(
-      (row) => row.name === "prepareIrRuntimeManifest",
-    );
+    const rows = acceptedHistoricalDeclarations(support, read).filter((row) => row.name === "prepareIrRuntimeManifest");
     expect(rows.map(({ path, kind, ordinal }) => [path, kind, ordinal])).toEqual([
       [support, "function", 0],
       [support, "function", 1],
