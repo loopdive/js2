@@ -6264,6 +6264,9 @@ export function compileDeclarations(
         let chunkOrdinal = 0;
         for (const chunk of chunks) {
           const chunkFctx = createModuleInitFunctionContext(true);
+          // (#6651 V10c) Chunks split ONE top-level frame: a raw-lastIndex identity
+          // recorded in chunk N must still suppress the ToPrimitive copy in chunk N+1.
+          chunkFctx.regexpLastIndexIdentityStructTypes = initFctx.regexpLastIndexIdentityStructTypes ??= new Set();
           ctx.currentFunc = chunkFctx;
           for (const initEntry of chunk) compileOrderedModuleInitEntry(chunkFctx, initEntry);
           if (chunkFctx.body.length === 0) continue;
