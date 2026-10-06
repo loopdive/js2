@@ -48,17 +48,17 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11477,
-    "fail": 213,
-    "ce": 14,
+    "pass": 11516,
+    "fail": 172,
+    "ce": 16,
     "skip": 0,
     "total": 11704,
     "pct": 98,
     "features": [
       {
         "name": "destructuring-binding",
-        "pass": 4148,
-        "fail": 4,
+        "pass": 4149,
+        "fail": 3,
         "ce": 1,
         "skip": 0,
         "total": 4153,
@@ -66,8 +66,8 @@
       },
       {
         "name": "generators",
-        "pass": 2476,
-        "fail": 9,
+        "pass": 2477,
+        "fail": 8,
         "ce": 1,
         "skip": 0,
         "total": 2486,
@@ -84,26 +84,26 @@
       },
       {
         "name": "TypedArray",
-        "pass": 1033,
-        "fail": 17,
+        "pass": 1038,
+        "fail": 12,
         "ce": 0,
         "skip": 0,
         "total": 1050,
-        "pct": 98
+        "pct": 99
       },
       {
         "name": "Symbol.iterator",
-        "pass": 781,
-        "fail": 14,
+        "pass": 786,
+        "fail": 9,
         "ce": 0,
         "skip": 0,
         "total": 795,
-        "pct": 98
+        "pct": 99
       },
       {
         "name": "Symbol",
-        "pass": 588,
-        "fail": 21,
+        "pass": 590,
+        "fail": 19,
         "ce": 0,
         "skip": 0,
         "total": 609,
@@ -120,12 +120,12 @@
       },
       {
         "name": "Proxy",
-        "pass": 379,
-        "fail": 49,
+        "pass": 387,
+        "fail": 41,
         "ce": 3,
         "skip": 0,
         "total": 431,
-        "pct": 88
+        "pct": 90
       },
       {
         "name": "Reflect.construct",
@@ -147,21 +147,21 @@
       },
       {
         "name": "Reflect",
-        "pass": 267,
-        "fail": 56,
+        "pass": 283,
+        "fail": 40,
         "ce": 7,
         "skip": 0,
         "total": 330,
-        "pct": 81
+        "pct": 86
       },
       {
         "name": "Symbol.species",
-        "pass": 178,
-        "fail": 7,
+        "pass": 183,
+        "fail": 2,
         "ce": 0,
         "skip": 0,
         "total": 185,
-        "pct": 96
+        "pct": 99
       },
       {
         "name": "destructuring-assignment",
@@ -183,12 +183,12 @@
       },
       {
         "name": "cross-realm",
-        "pass": 57,
-        "fail": 71,
-        "ce": 0,
+        "pass": 77,
+        "fail": 49,
+        "ce": 2,
         "skip": 0,
         "total": 128,
-        "pct": 45
+        "pct": 60
       },
       {
         "name": "Symbol.toPrimitive",
@@ -399,21 +399,21 @@
       },
       {
         "name": "Reflect.setPrototypeOf",
-        "pass": 22,
-        "fail": 1,
+        "pass": 23,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 23,
-        "pct": 96
+        "pct": 100
       },
       {
         "name": "Map",
-        "pass": 21,
-        "fail": 1,
+        "pass": 22,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 22,
-        "pct": 95
+        "pct": 100
       },
       {
         "name": "String.fromCodePoint",
@@ -472,8 +472,8 @@
       {
         "name": "error-stack-accessor",
         "pass": 7,
-        "fail": 4,
-        "ce": 0,
+        "fail": 2,
+        "ce": 2,
         "skip": 0,
         "total": 11,
         "pct": 64
@@ -1507,17 +1507,17 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1150,
-    "fail": 714,
+    "pass": 1176,
+    "fail": 688,
     "ce": 153,
     "skip": 18,
     "total": 2035,
-    "pct": 57,
+    "pct": 58,
     "features": [
       {
         "name": "BigInt",
-        "pass": 641,
-        "fail": 330,
+        "pass": 643,
+        "fail": 328,
         "ce": 77,
         "skip": 0,
         "total": 1048,
@@ -1525,8 +1525,8 @@
       },
       {
         "name": "TypedArray",
-        "pass": 425,
-        "fail": 208,
+        "pass": 427,
+        "fail": 206,
         "ce": 75,
         "skip": 0,
         "total": 708,
@@ -1534,8 +1534,8 @@
       },
       {
         "name": "dynamic-import",
-        "pass": 243,
-        "fail": 264,
+        "pass": 245,
+        "fail": 262,
         "ce": 32,
         "skip": 18,
         "total": 557,
@@ -1552,21 +1552,21 @@
       },
       {
         "name": "globalThis",
-        "pass": 120,
-        "fail": 2,
+        "pass": 121,
+        "fail": 1,
         "ce": 0,
         "skip": 0,
         "total": 122,
-        "pct": 98
+        "pct": 99
       },
       {
         "name": "Promise.allSettled",
-        "pass": 32,
-        "fail": 45,
+        "pass": 53,
+        "fail": 24,
         "ce": 25,
         "skip": 0,
         "total": 102,
-        "pct": 31
+        "pct": 52
       },
       {
         "name": "ArrayBuffer",
@@ -1651,12 +1651,12 @@
       },
       {
         "name": "Symbol.iterator",
-        "pass": 17,
-        "fail": 34,
+        "pass": 37,
+        "fail": 14,
         "ce": 0,
         "skip": 0,
         "total": 51,
-        "pct": 33
+        "pct": 73
       },
       {
         "name": "Reflect",
@@ -1923,12 +1923,12 @@
   },
   {
     "edition": "ES2021",
-    "pass": 317,
-    "fail": 105,
+    "pass": 336,
+    "fail": 86,
     "ce": 50,
     "skip": 0,
     "total": 472,
-    "pct": 67,
+    "pct": 71,
     "features": [
       {
         "name": "numeric-separator-literal",
@@ -1941,12 +1941,12 @@
       },
       {
         "name": "Promise.any",
-        "pass": 33,
-        "fail": 41,
+        "pass": 49,
+        "fail": 25,
         "ce": 18,
         "skip": 0,
         "total": 92,
-        "pct": 36
+        "pct": 53
       },
       {
         "name": "logical-assignment-operators",
@@ -1977,12 +1977,12 @@
       },
       {
         "name": "arrow-function",
-        "pass": 15,
-        "fail": 17,
+        "pass": 17,
+        "fail": 15,
         "ce": 8,
         "skip": 0,
         "total": 40,
-        "pct": 38
+        "pct": 43
       },
       {
         "name": "String.prototype.replaceAll",
@@ -1995,12 +1995,12 @@
       },
       {
         "name": "Symbol",
-        "pass": 4,
-        "fail": 30,
+        "pass": 13,
+        "fail": 21,
         "ce": 5,
         "skip": 0,
         "total": 39,
-        "pct": 10
+        "pct": 33
       },
       {
         "name": "WeakRef",
@@ -2013,30 +2013,30 @@
       },
       {
         "name": "AggregateError",
-        "pass": 10,
-        "fail": 20,
+        "pass": 15,
+        "fail": 15,
         "ce": 0,
+        "skip": 0,
+        "total": 30,
+        "pct": 50
+      },
+      {
+        "name": "Symbol.iterator",
+        "pass": 10,
+        "fail": 19,
+        "ce": 1,
         "skip": 0,
         "total": 30,
         "pct": 33
       },
       {
-        "name": "Symbol.iterator",
-        "pass": 3,
-        "fail": 26,
-        "ce": 1,
-        "skip": 0,
-        "total": 30,
-        "pct": 10
-      },
-      {
         "name": "computed-property-names",
-        "pass": 15,
-        "fail": 12,
+        "pass": 22,
+        "fail": 5,
         "ce": 0,
         "skip": 0,
         "total": 27,
-        "pct": 56
+        "pct": 81
       },
       {
         "name": "Reflect.construct",
@@ -3571,21 +3571,21 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4601,
+    "pass": 4597,
     "fail": 188,
-    "ce": 132,
+    "ce": 136,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4498,
+        "pass": 4494,
         "fail": 107,
-        "ce": 6,
+        "ce": 10,
         "skip": 0,
         "total": 4611,
-        "pct": 98
+        "pct": 97
       },
       {
         "name": "Symbol",
@@ -3789,21 +3789,21 @@
   },
   {
     "edition": "ES2027",
-    "pass": 379,
-    "fail": 310,
+    "pass": 382,
+    "fail": 307,
     "ce": 208,
     "skip": 0,
     "total": 897,
-    "pct": 42,
+    "pct": 43,
     "features": [
       {
         "name": "explicit-resource-management",
-        "pass": 241,
-        "fail": 101,
+        "pass": 244,
+        "fail": 98,
         "ce": 88,
         "skip": 0,
         "total": 430,
-        "pct": 56
+        "pct": 57
       },
       {
         "name": "await-dictionary",
@@ -3924,12 +3924,12 @@
       },
       {
         "name": "Symbol",
-        "pass": 4,
-        "fail": 7,
+        "pass": 5,
+        "fail": 6,
         "ce": 6,
         "skip": 0,
         "total": 17,
-        "pct": 24
+        "pct": 29
       },
       {
         "name": "Proxy",
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4648,
-    "fail": 728,
+    "pass": 4651,
+    "fail": 725,
     "ce": 69,
     "skip": 0,
     "total": 5445,

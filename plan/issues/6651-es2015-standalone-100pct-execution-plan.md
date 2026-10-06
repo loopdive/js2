@@ -10,6 +10,11 @@ horizon: xl
 feasibility: hard
 reasoning_effort: max
 task_type: conformance
+trap-growth-allow:
+  count: 1
+  reason: "2026-10-06 — host lane, not caused by this change: language/computed-property-names/object/method/number.js is baseline `fail` and already traps with `RuntimeError: dereferencing a null pointer in __module_init_chunk_0() at source L20` on origin/main 499d16a1c1 without any #6651 slice (reproduced locally with TEST262_ORACLE_MODE=linked --isolate). The baseline records it as a non-trapping fail, so every merge group re-counts it as null_deref growth (37 -> 38); it parked #6512 (run 37402183200) and #6519 (run 37417917245). Failure-flavour reclassification of one baseline-fail row only."
+  tests:
+    - test/language/computed-property-names/object/method/number.js
 area: codegen, runtime, conformance
 es_edition: ES2015
 goal: standalone-mode
@@ -2737,6 +2742,103 @@ that hook sees this assignment shape. The same code at top level passes. Separat
 before the construct answers a prototype that is not `F.prototype`. That is the
 U1-recorded GetPrototypeFromConstructor construct-route residual, and U5 did not
 widen it.
+
+### 2026-10-06 — Uncovered slice U1b (seed re-land)
+
+Re-lands U1's nine realm-global seeds (`String Boolean Number Date RegExp Map
+Set WeakMap WeakSet` in runtime-eval modules), which were reverted after PR
+#6504 parked on 158 standalone Temporal `illegal cast` rows (see the U1
+amendment above). Opus lane, branch `issue-6651-u1b-seeds-v2` off `origin/main`
+@ `47f186384c`. `src/` was copied to `.tmp/base/src` before the first edit.
+Every "base" number below was run by this lane, except where it names the CI
+baseline.
+
+**Root cause.** The seeds were not wrong. They only changed type-index
+numbering, and that exposed a latent cross-module dispatch bug. Measured on
+`Temporal/Duration/prototype/round/balance-subseconds.js` (standalone, linked
+provider, in-process), using a raw wasm stack and the bytes at the trap offset:
+
+- The polyfill's `n.toPrecision(o)` (`de()`) misses in the provider. It takes
+  the #6605 reverse method-call hop into the consumer, which resolves it to
+  the **provider's** `Number.prototype.toPrecision` closure.
+- The consumer then dispatches that closure with its own `__call_fn_method_1`.
+- Native-prototype closures are claimed by `ref.test` on the per-(brand,
+  member) meta struct, then an exact `bfnid` compare. `bfnid` is a
+  **module-local type index**.
+- Meta structs are structurally equal in every module, so a peer's closure
+  passes the family test. The provider's `toPrecision` carries bfnid **719**.
+- With `Set` seeded, the consumer's own `Set.prototype.values` meta type is
+  also index 719.
+- The arm casts the `(self, this, arg)` funcref to `values`' `(self, this)`
+  signature and traps.
+
+Unseeded, nothing local was 719. The foreign closure fell through to the
+funcref-type ladder, which dispatches it correctly. This is not specific to one
+of the nine names: any seed that materialises more native-prototype closures
+shifts the local indices, so bisecting the names would only pick a lucky
+numbering. #6643's note that bfnid "is a MODULE-LOCAL type index and is
+therefore … an ownership answer" holds only while no peer closure can reach the
+module.
+
+**Fix.** `closures/transferred-native-proto.ts::linkedSignatureGuard`:
+
+- In a canonically linked module (`ctx.mod.canonicalRuntimeRecGroup` set: the
+  Temporal provider and its consumer, linked harness, package graphs), the
+  bfnid claim additionally requires `ref.test` of the closure's funcref against
+  the entry's exact signature.
+- It applies at three sites: the `__call_fn_method_N` arm, the variadic
+  `__apply_closure` arm, and the #6643 owned bit.
+- A same-signature collision is harmless, because every arm calls through
+  field 0, i.e. the peer's own function.
+- Unlinked modules emit no guard and keep their bytes.
+
+With the guard in place, the seed list change is exactly U1's
+(`STANDALONE_GLOBAL_EVAL_MODULE_EXTRA_NAMES`, all nine names).
+
+**Rows.**
+
+| set | base | seeds only | seeds + guard |
+| --- | --- | --- | --- |
+| `Temporal/Duration/prototype/round/**` (126, in-process, linked) | 119 / 7, 0 casts | 95 / 31, **26 casts** | 119 / 7, 0 casts, same 7 rows |
+| rest of `Temporal/Duration/**` + `PlainDateTime/prototype/{since,until}/**` (607, in-process, linked) | not run locally (time box); CI standalone baseline cache of 2026-10-05 13:34 used as the reference | — | 587 / 20, 0 casts; vs that baseline 0 pass→non-pass, 2 gained (`PlainDateTime/prototype/{since,until}/roundingmode-half-boundary.js`) |
+| 11 targets (`--isolate`) | 0 / 11 per the CI standalone baseline (not re-run locally) | — | **11 / 11** |
+
+**Controls.**
+
+- playground + `benchmarks/{suites,cross-engine}`: 18 files × gc/standalone/wasi
+  (54 compiles), byte-identical.
+- The Temporal provider changes: 3,891,130 → 3,928,602 B, from the guard.
+- `node scripts/equivalence-gate.mjs`: no new regressions (22 known failures,
+  1748 passing).
+- Every fast `quality` gate exits 0. Loc and func budgets also pass with
+  `LOC_GATE_BASE=origin/main`, and the `check:compiler-boundaries` inventory is
+  valid.
+- Pins: `tests/issue-6651-u1b-seeds-linked-bfnid.test.ts`, 6 tests, 4 red on
+  base. The 2 that pass on base are invariants: an unlinked module stays
+  unguarded, and a linked module still dispatches.
+
+**Not verified.**
+
+- The full no-loss status check over
+  `built-ins/{String,Boolean,Number,Date,RegExp,Map,Set,WeakMap,WeakSet}/**`
+  (4,900 rows) was **not run** — it did not fit the time box on one runner.
+  Run instead, on the branch only, in-process, against the CI standalone
+  baseline: 136 rows, i.e. the 53 family rows that read `globalThis` /
+  `createRealm` / `this.<Name>` / `eval(` plus the 83 eval-using rows elsewhere
+  that name these globals. Result: 112 pass, **0 pass→non-pass**, 11 gained —
+  exactly the 11 targets.
+- No host linked-harness lane was run, and that lane's modules also carry
+  `canonicalRuntimeRecGroup`, so they get the guard.
+
+**Residuals.**
+
+- Other bfnid exact-identity sites carry the same latent cross-module collision
+  and are left unguarded: `char-at-transfer.ts` (calls the LOCAL function on a
+  match), `apply-closure-variadic-builtin.ts`, `object-runtime.ts` builtin-fn
+  get_meta/delete, and `ta-dyn-mop.ts`.
+- A durable fix is a link-unique bfnid, or a guard at every site.
+- Transferred `Number.prototype.toFixed` (`o.p = Number.prototype.toFixed;
+  o.p.call(2.5, 1)`) throws on base and branch alike, linked or not.
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 
