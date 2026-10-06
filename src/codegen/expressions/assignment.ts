@@ -65,7 +65,7 @@ import {
 } from "../registry/types.js"; // (#2357/#47) subview write; (#3054 B1) TA view write; vec-base length write
 import { emitTaDynViewElementSet, emitTaViewElementSet } from "../dataview-native.js"; // (#3054 B1) shared-backing TA view write; (#3057) dynamic view element write
 import { buildDestructureNullThrow, emitNativeObjectRest, patternIteratorStepCount } from "../destructuring-params.js";
-import { tryEmitSpecOrderedArrayAssignDrive } from "../dstr-assign-iterator-drive.js"; // (#6651 G1) §13.15.5.2 lazy drive
+import { tryEmitSpecOrderedArrayAssignDrive, tryEmitSpecOrderedObjectAssign } from "../dstr-assign-iterator-drive.js"; // (#6651 G1/V7)
 import { isProvablyNonIterableStructSource } from "../dstr-non-iterable-guard.js"; // (#6651 G4)
 import { resolveComputedKeyExpression } from "../literals.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js"; // (#2681/#2686 A3) pinned-struct write dispatch
@@ -1296,6 +1296,9 @@ function compileDestructuringAssignment(
     fctx.body.push({ op: "ref.null.extern" });
     return { kind: "externref" };
   }
+
+  // (#6651 V7) A runtime-only key: spec-ordered externref lowering (standalone/WASI).
+  if (tryEmitSpecOrderedObjectAssign(ctx, fctx, target, resultType)) return { kind: "externref" };
 
   // Determine struct type from the RHS expression's type
   const rhsType = ctx.checker.getTypeAtLocation(value);
