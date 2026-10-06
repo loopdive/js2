@@ -897,7 +897,7 @@
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1814,
+      "passCount": 1815,
       "totalCount": 1896,
       "editionSpread": [
         {
@@ -917,7 +917,7 @@
         },
         {
           "edition": "ES2018",
-          "pass": 636,
+          "pass": 637,
           "total": 648
         },
         {
@@ -1013,7 +1013,7 @@
     {
       "name": "Destructuring",
       "testCategories": ["language/destructuring"],
-      "passCount": 4286,
+      "passCount": 4289,
       "totalCount": 4290
     },
     {
@@ -1080,7 +1080,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1916,
+      "passCount": 1922,
       "totalCount": 1955
     },
     {
@@ -1098,12 +1098,12 @@
     {
       "name": "Modules (import / export)",
       "testCategories": ["language/module-code", "language/import", "language/export"],
-      "passCount": 433,
+      "passCount": 441,
       "totalCount": 731,
       "editionSpread": [
         {
           "edition": "ES2015",
-          "pass": 58,
+          "pass": 65,
           "total": 68
         },
         {
@@ -1143,7 +1143,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 159,
+          "pass": 160,
           "total": 225
         }
       ]
@@ -1151,7 +1151,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 997,
+      "passCount": 1003,
       "totalCount": 1072
     },
     {
@@ -1222,7 +1222,7 @@
     {
       "name": "Optional chaining (?.)",
       "testCategories": ["language/expressions/optional-chaining"],
-      "passCount": 41,
+      "passCount": 42,
       "totalCount": 52
     },
     {

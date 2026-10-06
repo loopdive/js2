@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11531,
-    "fail": 157,
+    "pass": 11543,
+    "fail": 145,
     "ce": 16,
     "skip": 0,
     "total": 11704,
@@ -57,8 +57,8 @@
     "features": [
       {
         "name": "destructuring-binding",
-        "pass": 4149,
-        "fail": 3,
+        "pass": 4152,
+        "fail": 0,
         "ce": 1,
         "skip": 0,
         "total": 4153,
@@ -93,8 +93,8 @@
       },
       {
         "name": "Symbol.iterator",
-        "pass": 786,
-        "fail": 9,
+        "pass": 790,
+        "fail": 5,
         "ce": 0,
         "skip": 0,
         "total": 795,
@@ -102,8 +102,8 @@
       },
       {
         "name": "Symbol",
-        "pass": 591,
-        "fail": 18,
+        "pass": 592,
+        "fail": 17,
         "ce": 0,
         "skip": 0,
         "total": 609,
@@ -120,12 +120,12 @@
       },
       {
         "name": "Proxy",
-        "pass": 394,
-        "fail": 34,
+        "pass": 396,
+        "fail": 32,
         "ce": 3,
         "skip": 0,
         "total": 431,
-        "pct": 91
+        "pct": 92
       },
       {
         "name": "Reflect.construct",
@@ -147,12 +147,12 @@
       },
       {
         "name": "Reflect",
-        "pass": 285,
-        "fail": 38,
+        "pass": 289,
+        "fail": 34,
         "ce": 7,
         "skip": 0,
         "total": 330,
-        "pct": 86
+        "pct": 88
       },
       {
         "name": "Symbol.species",
@@ -201,12 +201,12 @@
       },
       {
         "name": "let",
-        "pass": 71,
-        "fail": 5,
+        "pass": 76,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 76,
-        "pct": 93
+        "pct": 100
       },
       {
         "name": "Symbol.match",
@@ -255,12 +255,12 @@
       },
       {
         "name": "Symbol.toStringTag",
-        "pass": 45,
-        "fail": 7,
+        "pass": 48,
+        "fail": 4,
         "ce": 0,
         "skip": 0,
         "total": 52,
-        "pct": 87
+        "pct": 92
       },
       {
         "name": "WeakMap",
@@ -1062,8 +1062,8 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3887,
-    "fail": 477,
+    "pass": 3888,
+    "fail": 476,
     "ce": 459,
     "skip": 0,
     "total": 4823,
@@ -1152,12 +1152,12 @@
       },
       {
         "name": "regexp-named-groups",
-        "pass": 82,
-        "fail": 8,
+        "pass": 83,
+        "fail": 7,
         "ce": 3,
         "skip": 0,
         "total": 93,
-        "pct": 88
+        "pct": 89
       },
       {
         "name": "arrow-function",
@@ -1242,12 +1242,12 @@
       },
       {
         "name": "Symbol.replace",
-        "pass": 7,
-        "fail": 2,
+        "pass": 8,
+        "fail": 1,
         "ce": 0,
         "skip": 0,
         "total": 9,
-        "pct": 78
+        "pct": 89
       },
       {
         "name": "Reflect.construct",
@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1176,
-    "fail": 688,
+    "pass": 1177,
+    "fail": 687,
     "ce": 153,
     "skip": 18,
     "total": 2035,
@@ -1642,12 +1642,12 @@
       },
       {
         "name": "optional-chaining",
-        "pass": 41,
-        "fail": 8,
+        "pass": 42,
+        "fail": 7,
         "ce": 3,
         "skip": 0,
         "total": 52,
-        "pct": 79
+        "pct": 81
       },
       {
         "name": "Symbol.iterator",
@@ -3572,8 +3572,8 @@
   {
     "edition": "ES2026",
     "pass": 4600,
-    "fail": 188,
-    "ce": 133,
+    "fail": 187,
+    "ce": 134,
     "skip": 0,
     "total": 4921,
     "pct": 93,
@@ -3581,8 +3581,8 @@
       {
         "name": "Temporal",
         "pass": 4497,
-        "fail": 107,
-        "ce": 7,
+        "fail": 106,
+        "ce": 8,
         "skip": 0,
         "total": 4611,
         "pct": 98
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4651,
-    "fail": 725,
+    "pass": 4653,
+    "fail": 723,
     "ce": 69,
     "skip": 0,
     "total": 5445,

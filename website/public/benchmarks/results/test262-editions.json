@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10301,
-    "fail": 1385,
+    "pass": 10306,
+    "fail": 1380,
     "ce": 18,
     "skip": 0,
     "total": 11704,
@@ -57,12 +57,12 @@
     "features": [
       {
         "name": "destructuring-binding",
-        "pass": 3922,
-        "fail": 230,
+        "pass": 3925,
+        "fail": 227,
         "ce": 1,
         "skip": 0,
         "total": 4153,
-        "pct": 94
+        "pct": 95
       },
       {
         "name": "generators",
@@ -93,12 +93,12 @@
       },
       {
         "name": "Symbol.iterator",
-        "pass": 615,
-        "fail": 179,
+        "pass": 618,
+        "fail": 176,
         "ce": 1,
         "skip": 0,
         "total": 795,
-        "pct": 77
+        "pct": 78
       },
       {
         "name": "Symbol",
@@ -147,8 +147,8 @@
       },
       {
         "name": "Reflect",
-        "pass": 244,
-        "fail": 86,
+        "pass": 245,
+        "fail": 85,
         "ce": 0,
         "skip": 0,
         "total": 330,
@@ -201,12 +201,12 @@
       },
       {
         "name": "let",
-        "pass": 63,
-        "fail": 13,
+        "pass": 65,
+        "fail": 11,
         "ce": 0,
         "skip": 0,
         "total": 76,
-        "pct": 83
+        "pct": 86
       },
       {
         "name": "Symbol.match",
