@@ -48,18 +48,18 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10306,
+    "pass": 10308,
     "fail": 1380,
-    "ce": 18,
+    "ce": 16,
     "skip": 0,
     "total": 11704,
     "pct": 88,
     "features": [
       {
         "name": "destructuring-binding",
-        "pass": 3925,
+        "pass": 3926,
         "fail": 227,
-        "ce": 1,
+        "ce": 0,
         "skip": 0,
         "total": 4153,
         "pct": 95
