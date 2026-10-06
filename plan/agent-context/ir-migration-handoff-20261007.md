@@ -60,8 +60,11 @@ does not prove contention caused any failure. Do not silently raise timeouts,
 drop cases, rerun over these receipts or claim the failed run passed.
 
 Published custody artifact in this checkpoint:
-`plan/agent-context/5883-full-b-terminal-custody-20261006.json`,31373035bytes,
-SHA256 `cfba79344490cde519961ce130b4ace0bf75ec8862528a5e7bb330469e385cc6`.
+`plan/agent-context/5883-full-b-terminal-custody-20261006.json`,31372949bytes,
+SHA256 `3d1a0b224d7b903a94851b4afa4beed495f31a7959a2d32e47dd152cccc3d6f5`.
+The normal commit formatter changed only outer JSON whitespace; parent verified
+deep equality with the31373035-byte packager output whose SHA256 was
+`cfba79344490cde519961ce130b4ace0bf75ec8862528a5e7bb330469e385cc6`.
 Reviewed packager exited0; parent independently verified all168payloads against
 source bytes and decompressed hashes (81run records,86child records,1manifest).
 Nine explicitly referenced child directories are preserved. Missing conditional
