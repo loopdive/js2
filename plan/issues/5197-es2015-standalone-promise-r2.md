@@ -3608,3 +3608,40 @@ by its existing owner at f4a03caea2cfd108b9396c49ee6fc7e8a6ff0afc, with unfinish
 CI and no verified main delivery. Its closed-struct setter already checks bag
 flags0x04 before struct.set; the contrary source-absence claim is stale.
 Do not adopt that lane or count owner-reported tests as this lane's validation.
+
+#### Parent implementation plan: exact terminal B/E comparator
+
+Assign Erdos (Sol6.1 medium) a standalone, read-only artifact comparator in
+this documentation worktree's uniquely named `.tmp/` files. No subprocesses,
+tests, Git operations, A/B/E writes, repairs or automatic acceptance. Parent
+will review the implementation and supply the B root terminal's SHA256 only
+after execution finishes; preparation must not infer a result from partials.
+
+Authenticate frozen B runner a0246dd4, schedule57619715 and every terminal-listed
+artifact; authenticate E root terminal10bde488 and its complete stage evidence.
+Require explicit full parent-provided B terminal hash, not a computed trust-on-
+first-use value. Bind the reviewed maps and unchanged evidence-only E HEAD
+transition. Read native rows and preserve failure/error/raw channels before
+applying pass gates. Missing reports or unexecuted stages mean incomplete or
+unknown, never equality. Original A failures and focused failed runs remain
+immutable historical evidence, not fresh A executions.
+
+Case key is relative repository path plus the exact JSON tuple
+`[ancestorTitles, fullName, title]`. Reject malformed identities, duplicate file
+rows, extra/missing files or cases. Retain duplicate case multiplicities.
+Verify each native multiset against its frozen authority, then recompute exact
+partition contents, not merely counts: shared5406; B-only2; B-projection102;
+E-only16 in common files; E-only1317 across18 files. E's declared repeated
+flat-layout56 execution must independently pass both occurrences before folding
+only that repetition for unique-population comparison (6795 executions/6739
+unique). Compare shared outcome multiplicities without arbitrarily pairing
+duplicate cases. Equal failures are still failures.
+
+Emit independent completeness, identity equality, outcome equality and evidence
+cleanliness fields. Clean requires all expected cases passed, zero skipped,
+todo or failed cases, no file/child/raw errors or snapshot updates, and unchanged
+maps at every stage. Keep accepted=false regardless of result; no conformance,
+HOLD release, retirement or delivery conclusion. Parent reviews full source and
+pins before invoking against terminal B. Deliver source/hash and a narrow
+self-check proposal for missing reports, duplicate identities and preserved
+failures; do not launch tests during the occupied heavy execution slot.
