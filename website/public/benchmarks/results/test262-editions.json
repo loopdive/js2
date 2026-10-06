@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10299,
-    "fail": 1387,
+    "pass": 10300,
+    "fail": 1386,
     "ce": 18,
     "skip": 0,
     "total": 11704,
@@ -1062,8 +1062,8 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3721,
-    "fail": 1098,
+    "pass": 3725,
+    "fail": 1094,
     "ce": 4,
     "skip": 0,
     "total": 4823,
@@ -1071,8 +1071,8 @@
     "features": [
       {
         "name": "async-iteration",
-        "pass": 2779,
-        "fail": 1028,
+        "pass": 2783,
+        "fail": 1024,
         "ce": 3,
         "skip": 0,
         "total": 3810,
@@ -1080,8 +1080,8 @@
       },
       {
         "name": "destructuring-binding",
-        "pass": 998,
-        "fail": 385,
+        "pass": 1002,
+        "fail": 381,
         "ce": 2,
         "skip": 0,
         "total": 1385,
@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1398,
-    "fail": 608,
+    "pass": 1400,
+    "fail": 606,
     "ce": 11,
     "skip": 18,
     "total": 2035,
@@ -1516,17 +1516,17 @@
     "features": [
       {
         "name": "BigInt",
-        "pass": 842,
-        "fail": 205,
+        "pass": 844,
+        "fail": 203,
         "ce": 1,
         "skip": 0,
         "total": 1048,
-        "pct": 80
+        "pct": 81
       },
       {
         "name": "TypedArray",
-        "pass": 557,
-        "fail": 151,
+        "pass": 559,
+        "fail": 149,
         "ce": 0,
         "skip": 0,
         "total": 708,
@@ -1633,12 +1633,12 @@
       },
       {
         "name": "Symbol.species",
-        "pass": 41,
-        "fail": 12,
+        "pass": 42,
+        "fail": 11,
         "ce": 0,
         "skip": 0,
         "total": 53,
-        "pct": 77
+        "pct": 79
       },
       {
         "name": "optional-chaining",
@@ -2187,8 +2187,8 @@
   {
     "edition": "ES2022",
     "pass": 4432,
-    "fail": 1312,
-    "ce": 48,
+    "fail": 1311,
+    "ce": 49,
     "skip": 0,
     "total": 5792,
     "pct": 77,
@@ -2277,8 +2277,8 @@
       {
         "name": "resizable-arraybuffer",
         "pass": 190,
-        "fail": 240,
-        "ce": 2,
+        "fail": 239,
+        "ce": 3,
         "skip": 0,
         "total": 432,
         "pct": 44
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4531,
-    "fail": 768,
+    "pass": 4536,
+    "fail": 763,
     "ce": 146,
     "skip": 0,
     "total": 5445,

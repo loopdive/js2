@@ -67,6 +67,7 @@ import { addFuncType } from "./registry/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { constructIsConstructorGuard } from "./construct-is-constructor-guard.js"; // (#6612 / #5383 S25)
+import { proxyNewTargetProtoInstrs } from "./object-runtime-proxy-construct-chain.js"; // (#6651 V4)
 import {
   builtinCollectionConstructArm,
   fillBuiltinCollectionDynConstruct,
@@ -633,7 +634,7 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
                 { op: "ref.cast", typeIdx: proxyTypeIdx },
                 { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: 1 },
                 { op: "extern.convert_any" },
-                { op: "local.get", index: 1 },
+                ...proxyNewTargetProtoInstrs(ctx.funcMap.get("__proxy_construct_newtarget_proto")),
                 ...Array.from({ length: arity }, (_, arg) => ({
                   op: "local.get" as const,
                   index: arg + 2,
