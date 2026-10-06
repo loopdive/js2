@@ -3359,3 +3359,43 @@ until parent reviews that diff. Preserve3bWJ6h and both original failed native
 collections intact. A fresh subsequent run must have new records and a new
 six-path input delta; the original7737 map remains immutable. This repair still
 does not authorize changing source semantics,fixtures,denominators or HOLD.
+
+Parent reviewed the completed two-site diff: only one import and physical-read
+wrapper per file, with original assertions unchanged. Layout postimage is
+8cf089c397d26cb8ed9d1c6bb24f859b279eac2282502a767263276c10e94743;
+native-preservation postimage is
+cac6bbdbc54c06cae86a8e65a734243856dee623a6ec9ba7a25dd4ca1511e71e.
+Released focused-v2 session56112 after the prior run terminated. The new runner
+pins all six paths,retains all7740 inputs,requires102 controls plus416 affected
+cases, and compares exact native identity multisets with the preserved failed
+run. It writes a new directory and never overwrites3bWJ6h. No result yet.
+
+While v2 executes, Sol6.1/medium may prepare an inert custody packager under a
+new uniquely named B.tmp path only. No source changes or tests. The packager
+must refuse a live v2 run without a root terminal. On later parent release,
+preserve all files from both focused run directories, the prior28-payload A/B
+failure archive, source audit and proposal, and all six reviewed repair
+postimages. Include exact runner bytes and maps already in each run directory;
+retain each run's terminal result and explicit unexecuted stages/missing native
+report if applicable. Never require success to preserve a failed run. Record
+safe unique relative paths, exact lengths and SHA256, gzip/base64 originals,
+then independently round-trip and compare every decoded payload to its source.
+Preserve historical failed source pins through the original runner/map; do not
+claim current six postimages were used by3bWJ6h. Always accepted=false; no
+equality/landing inference. Return packager source/hash for parent review before
+execution or publication. No Git mutation or candidate-tree write is delegated.
+
+Focused-v2 CzL1Nu/session56112 completed exit0 at21:13:52.016Z: controls102/102
+and affected416/416 pass,zero failed/skipped/todo,exact identity multisets match
+the preserved first run,and7740 input hashes remain unchanged. Both runs report
+11 public artifacts/19 executions with the optional historical pair NOT RUN;
+this must not become a paired execution or physical acceptance claim.
+
+Custody packager must additionally include every record in the two child
+evidence directories named by those raw outputs: B.tmp
+`delay-combinator-preservation-MSmWPh` (first run) and
+`delay-combinator-preservation-EDZCeL` (v2), each with candidate start/progress/log,
+native result,terminal and verdict. Refuse symlinks and unexplained inventory
+changes. The scoped pass permits preparation of a new B69 collection epoch,
+not a full baseline execution or equality claim. Parent review and publication
+of the source/evidence checkpoint remain pending.
