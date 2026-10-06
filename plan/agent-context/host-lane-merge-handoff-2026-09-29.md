@@ -206,3 +206,15 @@ implementer when the gate opens; (3) #6748, #6750 unchanged.
   context; ES5's 62 are small independent gaps listed in the issue.
 - Next, in order: land #6534; dispatch #6748 (lifts ES2026); #6651 PR-C tail;
   the ES5 list; part C; react hoist; then re-evaluate the S6 bar.
+- **PR #6542 (#6748) open** — regime Temporal lane 0 → 473/493 on
+  `PlainTime/` (standalone 485, host 374): the provider init throw now
+  renders; the regime provider gets the module-scoped `Intl` shim; the
+  provider–consumer link uses matching boundary/peer pairs (`new`, reads,
+  method calls, `getPrototypeOf`). Left: 20 PlainTime rows, the remaining
+  `boundary ?? peer` sites (`__extern_has`, keys, `__apply_closure`,
+  `typeof`), host `Intl` on the regime (S3-h re-key). Hazard: the local
+  `.test262-cache/temporal` key omits the compiler version — delete it
+  between codegen changes. Synced with main from the lead worktree (the
+  agent worktree's cwd hook blocks non-ff merges there).
+- **#6876** (react CJS hoist) is filed and spec'd; dispatch waits on the
+  spawn gate (box load 60–400 all afternoon from other lanes).
