@@ -202,20 +202,28 @@ jobs:
         if: steps.npm_compat.outputs.only != 'true'
         # codegen, ir and frontend form one ~700-file strongly-connected
         # component of the value-import graph, so the layers cannot be
-        # retired one at a time. Fails when the largest SCC, the number of
-        # multi-file SCCs, or any two-way directory edge count (e.g. ir->codegen)
-        # grows vs scripts/import-cycles-baseline.json. Decreases are banked
-        # post-merge (--update-on-decrease in the promote/summary-sync jobs).
-        # Intended growth: `node scripts/check-import-cycles.mjs --update` in
-        # the PR, committed, so review sees it.
-        run: pnpm run check:import-cycles
+        # retired one at a time. CHANGE-SCOPED like check:loc-budget: fails when
+        # the largest SCC, the number of multi-file SCCs, or any two-way
+        # directory edge count (e.g. ir->codegen) is higher at HEAD than at this
+        # change-set's own base (HEAD^1 of the synthetic merge). Intended growth
+        # is granted by an `import-cycles-allow:` frontmatter entry in the PR's
+        # own plan/issues/*.md (`- largestSccSize: 699 # <date> (#N): <why>`);
+        # PRs never edit scripts/import-cycles-baseline.json, which is the
+        # post-merge low-water mark and the no-git fallback only. The fetch
+        # feeds the merge-base fallback for non-synthetic checkouts.
+        run: |
+          git fetch --no-tags --depth=200 origin main 2>/dev/null || true
+          pnpm run check:import-cycles
 
       - name: src/codegen flat-directory budget (#6797)
         if: steps.npm_compat.outputs.only != 'true'
-        # Fails when the number of .ts files directly in src/codegen/ (824 when
-        # #6797 was filed) grows past scripts/flat-dir-budget-baseline.json.
-        # New files go into the existing sub-directories.
-        run: pnpm run check:flat-dir-budget
+        # Fails when this change-set adds top-level .ts files to src/codegen/
+        # (824 when #6797 was filed) beyond those it lists under
+        # `flat-dir-budget-allow:` in its own plan/issues/*.md. New files go
+        # into the existing sub-directories. Same change-scoping as above.
+        run: |
+          git fetch --no-tags --depth=200 origin main 2>/dev/null || true
+          pnpm run check:flat-dir-budget
 
       - name: IR fallback gate (#1376)
         if: steps.npm_compat.outputs.only != 'true'
