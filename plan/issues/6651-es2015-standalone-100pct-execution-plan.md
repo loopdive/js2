@@ -206,7 +206,11 @@ loc-budget-allow:
   # `generateMultiModule`) that unshift the ToPropertyKey arm onto
   # `__extern_get`; the arm itself lives in the NEW leaf
   # `object-model/extern-get-object-key.ts` and `symbol-to-primitive-arms.ts`.
+  # `closures/arrow-phases.ts` +4 (same slice): the read-only-closure skip in
+  # `planClosureCaptures` (see the func-budget note); it must sit in the capture
+  # loop beside the sibling `isDirectRuntimeModuleVariableBinding` skip.
   - src/codegen/index.ts
+  - src/codegen/closures/arrow-phases.ts
   # 2026-10-06 — slice V6 (module namespace internals; record under "2026-10-06
   # — Slice V6"). The §10.4.6 arms live in the NEW leaf
   # `object-model/module-namespace-exotic.ts`. What stays in god-files (paths
