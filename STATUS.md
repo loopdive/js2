@@ -24,7 +24,7 @@ prose anywhere in the repo.
 
 <!-- AUTO:conformance-standalone-start -->
 
-**standalone (host-free) test262 conformance**: 41,924 / 48,232 (86.9 %)
+**standalone (host-free) test262 conformance**: 41,927 / 48,232 (86.9 %)
 
 <!-- AUTO:conformance-standalone-end -->
 
