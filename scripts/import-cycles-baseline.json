@@ -1,5 +1,5 @@
 {
-  "largestSccSize": 697,
+  "largestSccSize": 698,
   "sccCountOver1": 4,
   "twoWayDirEdges": {
     "backend->ir": 115,
