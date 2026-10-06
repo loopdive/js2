@@ -22,6 +22,7 @@ import { adjustRethrowDepth, restoreBlockScopedShadows, saveBlockScopedShadows }
 import { beginFinallyCompletionSnapshot, endFinallyCompletionSnapshot } from "./eval-completion-value.js";
 import { buildStandardTryTable } from "../../ir/try-table.js";
 import { createFinallyRanGuard } from "./finally-ran-guard.js"; // (#6651 U4)
+import { allocFinallyPrivateLocal } from "./finally-private-local.js";
 
 type BoxedCapture = { refCellTypeIdx: number; valType: ValType };
 
@@ -432,7 +433,7 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
   }
 
   // (#6651 U4) a throw BY the finally must not reach this statement's own handlers.
-  const ran = finallyInstrs ? createFinallyRanGuard(fctx, tagIdx, stmt, allocLocal) : undefined;
+  const ran = finallyInstrs ? createFinallyRanGuard(fctx, tagIdx, stmt, allocFinallyPrivateLocal) : undefined;
 
   // Compile the try block body
   const savedBody = pushBody(fctx);
