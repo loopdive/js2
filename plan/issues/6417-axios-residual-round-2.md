@@ -1,10 +1,12 @@
 ---
 id: 6417
 title: "axios residual round 2: 23 failures across eight files after the under-applied `.call` receiver fix"
-status: ready
+status: done
 sprint: current
 created: 2026-09-12
-updated: 2026-09-12
+updated: 2026-10-05
+completed: 2026-10-05
+assignee: ttraenkler/wave11-axios
 priority: medium
 horizon: m
 feasibility: medium
@@ -12,6 +14,24 @@ reasoning_effort: high
 task_type: bug
 area: compiler
 goal: correctness
+loc-budget-allow:
+  # 2026-10-05 (#6417): one-line call sites into the new leaf modules
+  # closures/host-boolean-callback.ts, expressions/typeof-import-binding.ts and
+  # expressions/callable-property-omittable-param.ts; the mechanisms live there.
+  - src/codegen/closures.ts
+  - src/codegen/context/types.ts
+  - src/codegen/expressions/calls-closures.ts
+  - src/codegen/statements/control-flow.ts
+  - src/codegen/typeof-delete.ts
+oracle-ratchet-allow:
+  # 2026-10-05 (#6417): `nativeTypeOfDeclaration(ctx.checker, decl)` mirrors
+  # lowerParamType's own native-annotation test byte-for-byte — a wasm-lowering
+  # ValType question (does `x: i32` pin a scalar slot?) the oracle cannot answer.
+  - src/codegen/expressions/callable-property-omittable-param.ts
+func-budget-allow:
+  # 2026-10-05 (#6417): the same call sites (+6 / +1 lines).
+  - src/codegen/closures.ts::compileArrowAsCallback
+  - src/codegen/expressions/calls-closures.ts::compileCallablePropertyCall
 ---
 
 ## Problem
@@ -83,3 +103,78 @@ next step is 1 + 2 (10 tests).
 3. Regression tests with untyped `.js` two-file fixtures, failing on the
    parent, with an anti-vacuity control.
 4. A/B at one HEAD over the 17 dogfood suites, per test file.
+
+## Implementation Plan (2026-10-05, re-measured)
+
+Base re-measured on `upstream/main` `42d289a96f`: **212/231**, 19 failures
+(the four `transformData`-adjacent rows and `fromDataURI` ×1 of the table
+above had already moved). Regrouped by root cause from
+`tests/dogfood/report/axios-upstream-suite.json`, each reduced to an untyped
+two-file fixture:
+
+| # | Root cause | Tests | Action |
+|---|---|---|---|
+| A | `typeof importedBinding` folds to `"undefined"`: the alias symbol has no `valueDeclaration` | buildURL ×1 | fix here |
+| B | A callable property whose stored closure widened an omittable formal to `externref` (`@param {Number} [position]`, TS `function f(x?: number)`) is dispatched only through the declared-f64 arm → "Cannot access property on null or undefined". `utils.endsWith` is that shape; `toFormData` calls it for every non-scalar param | buildURL ×3 | fix here |
+| C | `X.prototype.toString = function (encoder)` stored through the fixed zero-arity bridge loses its argument | buildURL ×1 (special chars) | fix here |
+| D | A compiled Date passed to a dynamic host method crosses as the struct facade → `Object.prototype.toString.call(d)` is `[object Object]` | isX Date ×1, buildURL date (with B) | fix here |
+| E | A host-invoked `boolean` callback returns the raw i32 → `assert.throws` validator "Received 1" | fromDataURI ×1, transformResponse ×1 | fix here |
+| F | Dynamic `actual instanceof expected` with a compiled CLASS VALUE on the right answers false | AxiosError ×1, settle ×1, validator ×2 | → [#6873](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6873-dynamic-instanceof-compiled-class-value) |
+| G | A hoisted function declaration taken as a VALUE before a later `const` it closes over is initialized captures the TDZ snapshot (`null`) | buildURL array ×1 | → [#6874](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6874-hoisted-fn-value-captures-tdz-snapshot) |
+| H | byte-vec carrier tags `[object Array]` (ArrayBuffer) / `ArrayBuffer.isView(DataView)` false | isX ×2 | #6433 + follow-up |
+| I | AxiosError enumerable `message` / toJSON identity | AxiosError ×2 | follow-up |
+| J | `composeSignals` null deref (capture-cell family #5320/#5323) | ×1 | follow-up |
+| K | `crypto.randomFillSync` absent from the web host shim — not a compiler bug | platform ×2 | record only |
+
+Mechanisms for A–E (one PR, five small leaf changes):
+
+- **A** `src/codegen/expressions/typeof-import-binding.ts::typeofOperandIsDeclared` resolves an
+  `Alias` symbol through `ctx.oracle.aliasedValueDeclarationOf`; both
+  `compileTypeofExpression` and `compileTypeofComparison` use it in place of
+  `!!sym?.valueDeclaration`.
+- **B** `src/codegen/expressions/callable-property-omittable-param.ts` mirrors the two
+  lowering rules exactly (function declaration: `parameterMayBeOmitted` without a
+  native annotation; arrow/function expression: JSDoc-optional only) and
+  `compileCallablePropertyCall` widens that slot to `externref`.
+- **C** `src/runtime.ts::_wrapStoredMethodValue` (the four `__extern_set*`
+  sites): unknown-arity bridge first, the zero-arity dispatcher only as fallback.
+- **D** `src/runtime/date-host-method.ts::hostArgsWithDates` marshals Date
+  carrier ARGUMENTS of `__extern_method_call` as their host Date view (the
+  receiver keeps `tryCallWasmDateHostMethod`).
+- **E** `src/codegen/closures/host-boolean-callback.ts`: host lane only, a callback whose
+  TS result is `boolean` declares an `externref` result; `return` operands are
+  branded `boolean` (`FunctionContext.hostBooleanReturn`) so `coerceType` boxes
+  through `__box_boolean`; an expression body boxes the same way.
+
+## Resolution (2026-10-05)
+
+A–E landed in one PR; axios **212 → 219/231** (buildURL 15→19, fromDataURI
+11→12, transformResponse 5→6, isX 11→12). F and G are filed with plans as
+#6873 and #6874; H–K remain as listed above.
+
+A/B at one HEAD (`42d289a96f` base vs the fix, same scratch copies, run one
+at a time), per test file:
+
+| suite | base | fix |
+|---|---|---|
+| axios | 212/231 | **219/231** |
+| prettier | 75/151 | 75/151 |
+| hono | 294/324 | 294/324 |
+| redux | 76/82 | 76/82 |
+| lodash | 60/62 | 60/62 |
+| jest | 336/356 | 336/356 |
+| marked | 18/30 | 18/30 |
+| uuid | 75/75 | 75/75 |
+| clsx | 32/32 | 32/32 |
+| cookie | 63740/63740 | 63740/63740 |
+| moment | 10/10 | 10/10 |
+
+No per-file line differs outside axios. Scoped test262 slices
+(`expressions/typeof`, `module-code/instn-*`, `expressions/call`,
+`expressions/instanceof`; plus host-lane `expressions/addition`,
+`String/prototype/split`, `Date/prototype/toJSON`,
+`Object/prototype/toString`): standalone 134/289 → 134/289 and host 225/281 →
+225/281, identical non-pass sets.
+
+Regression test: `tests/issue-6417-axios-residual-mechanisms.test.ts` —
+9 failed / 4 passed on the parent, 13/13 with the fix.

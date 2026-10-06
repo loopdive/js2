@@ -70,6 +70,7 @@ import {
   widenNonDefaultableTypes,
   type FailureTelemetry,
 } from "./compiler/output.js";
+import { stampAllocationOwners } from "./wasm/physical/allocation-owner.js";
 import {
   detectEarlyErrors,
   gateEmittedModule,
@@ -100,6 +101,7 @@ import { injectProcessStdinPrelude } from "./process-stdin-prelude.js";
 import { injectIteratorStaticsPrelude } from "./iterator-statics-prelude.js";
 import { applyIntlListFormatPrelude, applyIntlListFormatPreludeToFiles } from "./intl-listformat-prelude.js";
 import { normalizeScriptHtmlLikeComments } from "./compiler/html-like-comments.js";
+import { normalizeForHeadParserCompat } from "./compiler/for-head-parser-compat.js";
 import * as irIds from "./compiler/ir-outcome-inventory.js";
 import { buildLinearOptions } from "./compiler/linear-options.js";
 import type { CompileError, CompileOptions, CompileResult } from "./index.js";
@@ -815,6 +817,10 @@ function buildCodegenOptions(
     throw new Error('Compile option runtimeEvalProvider: false requires target: "standalone".');
   }
   if (options.standaloneGlobalThisImport !== undefined) {
+    const { owns, get } = options.standaloneGlobalThisImport;
+    if ((owns !== undefined || get !== undefined) && (!owns || !get)) {
+      throw new Error("standaloneGlobalThisImport.owns and get must be provided together and non-empty.");
+    }
     if (options.target !== "standalone") {
       throw new Error('Compile option standaloneGlobalThisImport requires target: "standalone".');
     }
@@ -827,8 +833,40 @@ function buildCodegenOptions(
     if (options.standaloneGlobalThisImport.call !== undefined && !options.standaloneGlobalThisImport.call) {
       throw new Error("Compile option standaloneGlobalThisImport.call must be non-empty when provided.");
     }
+    if (
+      options.standaloneGlobalThisImport.exceptionTag !== undefined &&
+      !options.standaloneGlobalThisImport.exceptionTag
+    ) {
+      throw new Error("Compile option standaloneGlobalThisImport.exceptionTag must be non-empty when provided.");
+    }
+  }
+  if (
+    options.standaloneAllocationOwnerExport !== undefined &&
+    (options.target !== "standalone" || !options.standaloneAllocationOwnerExport)
+  ) {
+    throw new Error("standaloneAllocationOwnerExport requires standalone and a non-empty export name.");
   }
   const targetProfile = resolveCompileTargetProfile(options);
+  if (
+    options.standaloneScriptVarBindings &&
+    (options.target !== "standalone" ||
+      !options.scriptGoal ||
+      !options.standaloneGlobalThisImport?.owns ||
+      !options.standaloneGlobalThisImport.get ||
+      !options.standaloneGlobalThisImport.exceptionTag)
+  ) {
+    throw new Error(
+      "standaloneScriptVarBindings requires standalone, scriptGoal, ownership-aware shared realm reads and a shared exception tag",
+    );
+  }
+  if (options.standaloneMicrotaskNotifyImport !== undefined) {
+    const { module, name } = options.standaloneMicrotaskNotifyImport;
+    if (options.target !== "standalone" || !module || !name || !options.link?.includes(module)) {
+      throw new Error(
+        "standaloneMicrotaskNotifyImport requires standalone, non-empty module/name, and its namespace in link.",
+      );
+    }
+  }
   return {
     irCutoverRoute: readIrCompileRoute(options, "compileSourceSync"),
     sourceMap: emitSourceMap,
@@ -847,6 +885,7 @@ function buildCodegenOptions(
     linkedPackageBindings: options.linkedPackageBindings,
     standalone: targetProfile.target === "standalone",
     standaloneGlobalThisImport: options.standaloneGlobalThisImport,
+    standaloneMicrotaskNotifyImport: options.standaloneMicrotaskNotifyImport,
     directEval: options.directEval,
     runtimeEvalProvider: options.runtimeEvalProvider,
     // (#2141 S1) honest any-boxing regime flag (default off = legacy tag-5 ABI).
@@ -865,6 +904,7 @@ function buildCodegenOptions(
     // (#2796) Diff-test-harness fidelity — defer top-level init to an export so
     // the host runs it after setExports (symmetric with standalone `_start`).
     deferTopLevelInit: options.deferTopLevelInit,
+    standaloneScriptVarBindings: options.standaloneScriptVarBindings,
     strictNoHostImports: targetProfile.strictEnvImportGate,
     // (#2119) thread module-strictness inference uniformly across all drivers.
     inferModuleStrictArguments: options.inferModuleStrictArguments,
@@ -1038,6 +1078,11 @@ function isWasmException(e: unknown): boolean {
  */
 function runPipeline(input: PipelineInput): CompileResult {
   const { errors, options, entryAst, multiAst, diagnosticAnchor } = input;
+  if (options.standaloneScriptVarBindings && multiAst) {
+    throw new Error(
+      "standaloneScriptVarBindings requires independent single-source Scripts, not a flattened module graph",
+    );
+  }
   const targetProfile = resolveCompileTargetProfile(options);
   const emitWatOutput = options.emitWat !== false;
 
@@ -1282,6 +1327,19 @@ function finalizePipelineModule(
   // Step 2c: Widen non-defaultable ref types to ref_null in locals, params, and
   // results. Avoids "uninitialized non-defaultable local" and struct.get/set
   // type errors.
+  if (options.standaloneAllocationOwnerExport !== undefined) {
+    try {
+      stampAllocationOwners(mod, options.standaloneAllocationOwnerExport);
+    } catch (error) {
+      pushSourceAnchoredDiagnostic(
+        errors,
+        diagnosticAnchor,
+        `Allocation provenance: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
+      return failResult(errors, telemetry);
+    }
+  }
   widenNonDefaultableTypes(mod);
   if (finalization) finalization.receipt = completePreparedPresentationFinalization(finalization.token);
 
@@ -1661,7 +1719,11 @@ export function compileSourceSync(
   const defineResult = options.define
     ? applyDefineSubstitutionsWithMap(lexScriptSource(source, options), options.define)
     : { source: lexScriptSource(source, options), positionMap: PositionMap.identity() };
-  const definedSource = defineResult.source;
+  // #6836 — `for (let; ;)` / `for ([x = 'x' in o] of …)` heads TypeScript misparses.
+  const forHeadResult = normalizeForHeadParserCompat(defineResult.source, {
+    scriptGoal: options.inferModuleStrictArguments === false,
+  });
+  const definedSource = forHeadResult.source;
 
   // Step 0a.4: #2632 Phase 3 — inject the faithful `process.stdin` Node `Readable`
   // source-prelude (string/Buffer chunks over the fd0 reactor substrate) and
@@ -1720,13 +1782,14 @@ export function compileSourceSync(
   const { rawWasi: wasiRawImports, memAccessors: wasiMemAccessors } = detectRawWasiImports(cjsRewritten);
   const preprocessed = preprocessImports(cjsRewritten2, { wasi: targetProfile.target === "wasi" });
   let processedSource = preprocessed.source;
-  // Compose imports → eval/super → CJS → ListFormat → Iterator → stdin → define back to the original source.
+  // Compose imports → eval/super → CJS → ListFormat → Iterator → stdin → for-head → define back to the original source.
   const positionMap = preprocessed.positionMap
     .compose(evalResult.positionMap)
     .compose(cjsResult.positionMap)
     .compose(listFormatResult.positionMap)
     .compose(iterStaticsResult.positionMap)
     .compose(stdinResult.positionMap)
+    .compose(forHeadResult.positionMap)
     .compose(defineResult.positionMap);
 
   // Step 1: Parse and type-check
@@ -1755,7 +1818,13 @@ export function compileSourceSync(
 
   // Step 1a: #3418 — host-free targets elide dead pure top-level bindings before
   // parsing so unreachable bodies do not register host imports.
-  if (targetProfile.environment === "none" || targetProfile.environment === "wasi") {
+  // Context-owned declarations remain observable from later Scripts even when
+  // this source never reads them. Private-program dead-binding proofs do not
+  // apply; keep their original source and stable IR inventory intact.
+  if (
+    !options.standaloneScriptVarBindings &&
+    (targetProfile.environment === "none" || targetProfile.environment === "wasi")
+  ) {
     const scriptKind = isJsMode && !forceTsGrammar ? ts.ScriptKind.JS : ts.ScriptKind.TS;
     const elision = irIds.elideWithIrIds(processedSource, effectiveFileName, scriptKind, irInventory);
     processedSource = elision.source;

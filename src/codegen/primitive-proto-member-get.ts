@@ -89,7 +89,10 @@ import {
   WRAPPER_CHAIN_MEMBERS,
   isWriteOrDeleteTarget,
   moduleExtendsPrimitiveProtos,
+  moduleExtendsSymbolProto,
 } from "./primitive-absent-property.js";
+import { usesNativeSymbolProvider } from "./symbol-native.js"; // (#6651 V10a)
+import { linkSymbolWrapperPrototype } from "./expressions/calls-guards.js"; // (#6651 V10a)
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal, addUnionImports } from "./registry/imports.js";
 import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
@@ -124,6 +127,7 @@ export function tryEmitPrimitiveProtoMemberGet(
   if (isCallCallee(expr)) return undefined;
 
   const fact = ctx.oracle.typeFactOf(expr.expression);
+  if (fact.kind === "symbol") return tryEmitSymbolProtoMemberGet(ctx, fctx, expr, propName);
   if (fact.kind !== "number" && fact.kind !== "boolean") return undefined;
 
   // The complement of #4483's gate: only take over when a write to one of the
@@ -222,4 +226,49 @@ export function tryEmitPrimitiveProtoMemberGet(
   // coercion rather than dragging a getter's object result through
   // `__unbox_number`.
   return { kind: "externref" };
+}
+
+/**
+ * (#6651 V10a) §6.2.4.8 GetValue step 5.a for a `symbol` base: ToObject walks
+ * `%Symbol.prototype% → %Object.prototype%`, so `Symbol.prototype.x = v;
+ * Symbol().x` is `v`. #5269 B-d folds every non-own read of a symbol to
+ * `undefined`; it declines when {@link moduleExtendsSymbolProto} holds and the
+ * read lands here. The boxed `$Symbol` carrier is classified onto the Symbol
+ * brand by `__protoidx_brand_off`, so `__extern_get` reaches the companion that
+ * the prototype write populated. Sloppy code hands a getter the wrapper
+ * (`__new_Symbol` + linked prototype), strict code the primitive — the same
+ * §10.4.3 split as the number/boolean arm above.
+ */
+function tryEmitSymbolProtoMemberGet(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+  propName: string,
+): ValType | undefined {
+  if (!usesNativeSymbolProvider(ctx)) return undefined;
+  if (!moduleExtendsSymbolProto(expr.getSourceFile())) return undefined;
+  const ext: ValType = { kind: "externref" };
+  // Resolve every helper before the receiver is emitted (decline-before-emit).
+  const getIdx = ensureLateImport(ctx, "__extern_get", [ext, ext], [ext]);
+  const boxIdx = ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [ext]);
+  const strictReceiver = isStrictContext(expr, ctx.inferModuleStrictArguments);
+  const wrapIdx = strictReceiver ? undefined : ensureLateImport(ctx, "__new_Symbol", [ext], [ext]);
+  flushLateImportShifts(ctx, fctx);
+  if (getIdx === undefined || boxIdx === undefined || (!strictReceiver && wrapIdx === undefined)) return undefined;
+  addStringConstantGlobal(ctx, propName);
+  if (stringConstantExternrefInstrs(ctx, propName).length === 0) return undefined;
+
+  // ── committed ───────────────────────────────────────────────────────────
+  const recvType = compileExpression(ctx, fctx, expr.expression);
+  if (recvType === null) fctx.body.push({ op: "ref.null.extern" });
+  else if (recvType.kind === "i32") fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__box_symbol") ?? boxIdx });
+  else if (recvType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+  if (!strictReceiver) {
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__new_Symbol") ?? wrapIdx! });
+    linkSymbolWrapperPrototype(ctx, fctx);
+  }
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
+  if (ctx.runtimeEvalGlobalFunctionBindings === true) emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+  return ext;
 }

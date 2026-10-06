@@ -1,4 +1,8 @@
+import { captureDenoPostPositionMainPredecessorPolicySource } from "./helpers/ir-deno-post-position-main-successor.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
+import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
+import { captureSourceMapPositionInventoryPredecessorPolicySource } from "./helpers/ir-source-map-position-inventory-successor.js";
 import { captureMainInventoryPredecessorPolicySource } from "./helpers/ir-main-inventory-source-successor.js";
 import { createHash } from "node:crypto";
 import {
@@ -133,7 +137,17 @@ const physical = (path: string) => fileURLToPath(new URL(`../${path}`, import.me
 const physicalFaultAuthorities = [receiptPath, helperPath, expected.predecessorReceipt.path];
 const raw = () =>
   captureArrayBufferIsViewMainPredecessorPolicySource(
-    captureMainInventoryPredecessorPolicySource(readFileSync(physical("scripts/compiler-boundaries.json"), "utf8")),
+    captureMainInventoryPredecessorPolicySource(
+      captureSourceMapPositionInventoryPredecessorPolicySource(
+        capturePositionClassFieldsMainPredecessorPolicySource(
+          capturePositionFinallyMainPredecessorPolicySource(
+            captureDenoPostPositionMainPredecessorPolicySource(
+              readFileSync(physical("scripts/compiler-boundaries.json"), "utf8"),
+            ),
+          ),
+        ),
+      ),
+    ),
   );
 const policy = () => JSON.parse(raw()) as Policy;
 afterEach(async () => {

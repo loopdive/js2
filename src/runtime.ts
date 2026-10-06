@@ -57,7 +57,8 @@ import { decodeCompiledEntryPair } from "./runtime/compiled-entry-pair.js";
 import { rawExportsStructDecodeError } from "./runtime/raw-exports-struct-authority.js"; // (#6438)
 import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./runtime/string-predicate-adapter.js";
 import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
-import { DATE_HOST_METHOD_UNHANDLED, tryCallWasmDateHostMethod, wasmDateHostView } from "./runtime/date-host-method.js";
+import { DATE_HOST_METHOD_UNHANDLED, hostArgsWithDates } from "./runtime/date-host-method.js";
+import { tryCallWasmDateHostMethod, wasmDateHostView } from "./runtime/date-host-method.js";
 import { wasmCarrierBuiltinPrototype } from "./runtime/wasm-carrier-prototype.js"; // (#5325)
 import { compiledClassInstancePrototype } from "./runtime/compiled-class-prototype.js"; // (#5347)
 import { compiledClosureLength } from "./runtime/compiled-closure-length.js"; // (#5365)
@@ -2483,6 +2484,17 @@ function _maybeWrapCallable(
   if (!_isWasmStruct(val)) return val;
   const wrapped = _wrapWasmClosure(val, arity, callbackState);
   return wrapped ?? val;
+}
+
+/**
+ * (#6417) Wrap a closure stored as property `key` for host [[Call]]. A fixed
+ * zero-arity bridge dropped `encoder` from axios' `p.toString(encoder)`; it is
+ * now only the fallback when the unknown-arity export family is not live.
+ */
+function _wrapStoredMethodValue(key: unknown, val: any, callbackState?: MarshalExportSource): any {
+  const wrapped = _maybeWrapCallableUnknownArity(val, callbackState);
+  if (typeof wrapped === "function" || (key !== "valueOf" && key !== "toString")) return wrapped;
+  return _maybeWrapCallable(val, 0, callbackState);
 }
 
 function _wrapVoidHostCallback(
@@ -13145,13 +13157,9 @@ assert._isSameValue = isSameValue;
           // struct — `p1.then = fn; Promise.race([p1])` traps with
           // "object is not a function". Wrap it via __call_fn_<arity> so
           // host-driven invocation reaches the closure body.
-          // OrdinaryToPrimitive methods have a fixed zero-argument call shape.
-          // Prefer the exact dispatcher so a method-only object literal does
-          // not depend on the broader unknown-arity export family being live.
-          let wrappedVal =
-            key === "valueOf" || key === "toString"
-              ? _maybeWrapCallable(val, 0, callbackState)
-              : _maybeWrapCallableUnknownArity(val, callbackState);
+          // valueOf/toString keep the exact zero-arity dispatcher as a fallback
+          // only (#6417, see `_wrapStoredMethodValue`).
+          let wrappedVal = _wrapStoredMethodValue(key, val, callbackState);
           // (#3051) `regexp.exec = fn` override: the native RegExp protocol
           // (@@replace/@@split/@@match/@@search) calls this and reads the
           // returned match-result object via Get + ToXxx. A compiled result
@@ -13230,10 +13238,7 @@ assert._isSameValue = isSameValue;
       // throw catchable by the user's try/catch.
       if (name === "__extern_set_strict")
         return (obj: any, key: any, val: any) => {
-          let wrappedVal =
-            key === "valueOf" || key === "toString"
-              ? _maybeWrapCallable(val, 0, callbackState)
-              : _maybeWrapCallableUnknownArity(val, callbackState);
+          let wrappedVal = _wrapStoredMethodValue(key, val, callbackState);
           // (#3051) See __extern_set: wrap a `regexp.exec` override's return so
           // the native RegExp protocol can read the compiled result object.
           // (Slice 3) Widened to any object receiver — see __extern_set.
@@ -15239,7 +15244,7 @@ assert._isSameValue = isSameValue;
             return callable !== v ? callable : _wrapForHost(v, marshalExp);
           };
           const wrappedObj = wrapHostValue(obj);
-          const wrappedArgs = (args ?? []).map(wrapHostValue);
+          const wrappedArgs = hostArgsWithDates(args, marshalExp, wrapHostValue, _marshalWasmDateForHost);
           const dateResult = tryCallWasmDateHostMethod(obj, method, wrappedArgs, exports, _isWasmStruct);
           if (dateResult !== DATE_HOST_METHOD_UNHANDLED) return dateResult;
           // Wrap callback slots before native method dispatch (#1382).
@@ -19282,10 +19287,7 @@ assert._isSameValue = isSameValue;
       return (obj: any, key: any, val: any) => {
         // (#860) Wrap closure-as-value before storing — see __extern_set
         // binding above. Mirrors the by-name path.
-        let wrappedVal =
-          key === "valueOf" || key === "toString"
-            ? _maybeWrapCallable(val, 0, callbackState)
-            : _maybeWrapCallableUnknownArity(val, callbackState);
+        let wrappedVal = _wrapStoredMethodValue(key, val, callbackState);
         // (#3051) `regexp.exec = fn` override — wrap the return so the native
         // RegExp protocol (@@replace/@@split/@@match/@@search) can read the
         // compiled match-result object (a WasmGC struct) via Get + ToXxx.
@@ -19328,10 +19330,7 @@ assert._isSameValue = isSameValue;
       // `obj.k = v` accessor writes here (ESM is always strict); the throw is
       // catchable in the user's try/catch via the host-import exception bridge.
       return (obj: any, key: any, val: any) => {
-        let wrappedVal =
-          key === "valueOf" || key === "toString"
-            ? _maybeWrapCallable(val, 0, callbackState)
-            : _maybeWrapCallableUnknownArity(val, callbackState);
+        let wrappedVal = _wrapStoredMethodValue(key, val, callbackState);
         // (#3051) See extern_set — wrap a `regexp.exec` override's return so the
         // native RegExp protocol can read the compiled result object.
         if (typeof wrappedVal === "function" && key === "exec" && obj instanceof RegExp) {
@@ -19967,10 +19966,10 @@ export function wrapExports(
       continue;
     }
     const sig = signatures && _hasOwn(signatures, key) ? signatures[key] : undefined;
-    const hasBooleanBoundary = sig?.result === "boolean" || sig?.params.includes("boolean");
-    // Unmarked internal helpers retain their exact passthrough. Explicit
-    // Boolean user exports receive their adapter regardless of their name.
-    if (key.startsWith("__") && !hasBooleanBoundary) {
+    // Unmarked internal helpers retain their exact passthrough. A user export
+    // carries a signature whatever its name (#6875: `__npmCompatPerf(input)`
+    // skipped argument marshalling, so a native-regime string arrived raw).
+    if (key.startsWith("__") && sig === undefined) {
       wrapped[key] = val;
       continue;
     }

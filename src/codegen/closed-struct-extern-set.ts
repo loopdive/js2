@@ -302,6 +302,31 @@ export function fillClosedStructExternSetArms(ctx: CodegenContext): void {
       // before every value-coercion fill.
       const buildStore = (): Instr[] => {
         const store: Instr[] = [
+          // #4376: freeze records integrity on a closed carrier's bag, not
+          // its physical slots. Consult that existing bag before a raw data
+          // store; lookup must not allocate a bag on ordinary writes.
+          ...(bagLookupIdx === undefined || objectTypes === undefined
+            ? []
+            : ([
+                { op: "local.get", index: 0 },
+                { op: "call", funcIdx: bagLookupIdx },
+                { op: "local.tee", index: BAG },
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: objectTypes.objectTypeIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: BAG },
+                    { op: "any.convert_extern" },
+                    { op: "ref.cast", typeIdx: objectTypes.objectTypeIdx },
+                    { op: "struct.get", typeIdx: objectTypes.objectTypeIdx, fieldIdx: 4 },
+                    { op: "i32.const", value: 0x04 }, // OBJ_FLAG_FROZEN
+                    { op: "i32.and" },
+                    { op: "if", blockType: { kind: "empty" }, then: refusalAndReturn() },
+                  ],
+                },
+              ] satisfies Instr[])),
           { op: "local.get", index: RECV_ANY },
           { op: "ref.cast", typeIdx: entry.typeIdx },
           { op: "local.get", index: 2 }, // value (externref)

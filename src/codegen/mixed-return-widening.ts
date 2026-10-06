@@ -88,20 +88,29 @@ function unionCarriesUndefined(retType: ts.Type): boolean {
 /**
  * Widen a function-declaration RESULT type when the declaration is
  * mixed-return: some path yields a value, some path yields `undefined`, and the
- * value's carrier is a wasm SCALAR that has no room for the absent value.
+ * value's carrier cannot preserve the absent value through generic calls.
  *
  * `lowered` is what the existing pipeline already resolved (so this never
  * re-runs `resolveWasmType` and cannot register a type twice); the return value
- * replaces it. Every non-mixed / non-scalar case returns `lowered` UNCHANGED,
- * which is what keeps this byte-inert for the corpora measured above.
+ * replaces it. Non-mixed and already-boxed cases return `lowered` unchanged.
+ * The original scalar-only benchmark census above predates the reference
+ * result extension; it is not a performance measurement of that extension.
  *
- * Reference carriers are left alone on purpose: a `ref_null` / `externref`
- * result already represents `undefined` (both default-value emit sites push
- * `ref.null` / `emitUndefined` for them), so widening would be a no-op that
- * only cost a coercion.
+ * (#4376) A nullable native reference can encode absence inside a typed call,
+ * but generic function-value dispatch boxes its null with extern.convert_any.
+ * That becomes JavaScript null, not undefined. Preserve the original nullish
+ * value in externref at the result's producer, before that information is lost.
+ * Already-boxed results and unions without undefined remain unchanged.
  */
 export function widenMixedUndefinedReturn(retType: ts.Type, lowered: ValType): ValType {
-  if (lowered.kind !== "f64" && lowered.kind !== "i32" && lowered.kind !== "i64") return lowered;
+  if (
+    lowered.kind !== "f64" &&
+    lowered.kind !== "i32" &&
+    lowered.kind !== "i64" &&
+    lowered.kind !== "ref" &&
+    lowered.kind !== "ref_null"
+  )
+    return lowered;
   if (!unionCarriesUndefined(retType)) return lowered;
   return { kind: "externref" };
 }

@@ -107,6 +107,7 @@ import {
   resolveWasmType,
 } from "./index.js";
 import { replayMissingSuperBody } from "./missing-super-replay.js";
+import { missingSuperReturnIsTypeError } from "./classes/missing-super-return.js"; // (#6651 V4)
 import { detectStringBuilders } from "./string-builder.js"; // (#2641/#1210) string-builder fast-path parity in class methods
 import type { StringBuilderPresizeInfo } from "./string-builder.js";
 import { compileStringLiteral } from "./string-ops.js";
@@ -156,6 +157,8 @@ import {
   valTypesMatch,
 } from "./shared.js";
 import { readEnv } from "../env.js";
+import { emitExternrefBackedFieldInitializers, type ExternrefFieldOps } from "./classes/externref-class-fields.js"; // (#6844)
+import { stringConstantExternrefInstrs } from "./native-strings.js";
 
 /**
  * (#846h / #1682) Returns true if `body` lexically contains a `super(...)` call
@@ -632,6 +635,18 @@ function evaluateArgumentForSideEffects(ctx: CodegenContext, fctx: FunctionConte
   if (argResult !== null) {
     fctx.body.push({ op: "drop" });
   }
+}
+
+/** (#6844) Externref-backed field initializers, with the codegen entry points the leaf needs injected. */
+function emitExternrefFields(ctx: CodegenContext, fctx: FunctionContext, decl: ts.ClassLikeDeclaration, self: number) {
+  const ops: ExternrefFieldOps = {
+    ...{ compileExpression, coerceType, ensureLateImport, flushLateImportShifts },
+    pushStringKey: (key) => {
+      addStringConstantGlobal(ctx, key);
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, key));
+    },
+  };
+  emitExternrefBackedFieldInitializers(ctx, fctx, decl, self, ops);
 }
 
 /**
@@ -2584,13 +2599,7 @@ function compileClassBodiesInner(
       savedBodies: [],
       isConstructor: true,
       isDerivedConstructor: ctx.classParentMap.has(className),
-      // (#5197 r3) `resolveEnclosingClassName` reads the class off the `<C>_new`
-      // prefix, which a synthetic `__anonClass_N` name defeats: a nested
-      // `return super(executor)` in an anonymous class then lowered to nothing.
-      // Scoped to the standalone Promise-rooted (D4 carrier) classes this round.
-      ...(ctx.standalone && ctx.classBuiltinParentMap.get(className) === "Promise" && className.indexOf("_") <= 0
-        ? { enclosingClassName: className }
-        : {}),
+      enclosingClassName: className,
     };
     fctx.activationEntryBody = fctx.body;
 
@@ -2971,12 +2980,13 @@ function compileClassBodiesInner(
     let ownFieldInitializersEmitted = false;
     const emitOwnInstanceFieldInitializers = (): void => {
       // Compile field initializers from property declarations
-      // (e.g., x: number = 42, #x: number = 42). (#1366a) Skip for
-      // externref-backed classes — they have no WasmGC struct fields; user
-      // `prop = ...` declarations inside `class Sub extends Error` would need
-      // to be installed via host setters, which is out of scope.
-      if ((isExternrefBacked && !isCollectionCarrierClass(ctx, className)) || ownFieldInitializersEmitted) return;
+      // (e.g., x: number = 42, #x: number = 42). (#6844) Externref-backed: DEFINEd on the host instance.
+      if (ownFieldInitializersEmitted) return;
       ownFieldInitializersEmitted = true;
+      if (isExternrefBacked && !isCollectionCarrierClass(ctx, className)) {
+        emitExternrefFields(ctx, fctx, decl, selfLocal);
+        return;
+      }
       for (const member of decl.members) {
         if (ts.isPropertyDeclaration(member) && member.name && member.initializer && !hasStaticModifier(member)) {
           const fieldName = resolveClassMemberName(ctx, member.name);
@@ -3014,22 +3024,10 @@ function compileClassBodiesInner(
       // missing-`super` ReferenceError is correct when the body falls through
       // (or returns undefined), but a primitive return is the specified
       // TypeError instead.  Keep this deliberately narrow: a single return
-      // statement with a checker-proven primitive can be diagnosed without
-      // replaying the whole constructor body, while all other missing-super
-      // bodies retain the established ReferenceError path. (#4450)
-      const onlyStatement = ctor?.body?.statements.length === 1 ? ctor.body.statements[0] : undefined;
-      if (
-        onlyStatement &&
-        ts.isReturnStatement(onlyStatement) &&
-        onlyStatement.expression &&
-        (ctx.checker.getTypeAtLocation(onlyStatement.expression).flags &
-          (ts.TypeFlags.NumberLike |
-            ts.TypeFlags.BooleanLike |
-            ts.TypeFlags.BigIntLike |
-            ts.TypeFlags.StringLike |
-            ts.TypeFlags.ESSymbolLike)) !==
-          0
-      ) {
+      // statement with a statically primitive (or `null`, #6651 V4) operand can
+      // be diagnosed without replaying the whole constructor body, while all
+      // other missing-super bodies retain the established ReferenceError path. (#4450)
+      if (missingSuperReturnIsTypeError(ctx, ctor)) {
         emitThrowTypeError(ctx, fctx, "Derived constructors may only return an object or undefined");
       } else {
         // (#1682) Throw a real ReferenceError instance (not a bare string) so
@@ -4017,6 +4015,7 @@ function emitPromiseSubclassOnHostCtor(
     savedBodies: [],
     isConstructor: true,
     isDerivedConstructor: ctx.classParentMap.has(className),
+    enclosingClassName: className,
     // The host installs the capability promise into `__current_this` before
     // dispatching this body via `__call_fn_method_1`; `this` reads that global.
     readsCurrentThis: true,

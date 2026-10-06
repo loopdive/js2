@@ -36,6 +36,7 @@ import {
   ensureOwnKeysAllNative,
   installProxyKeyBagGuards,
 } from "./object-model/proxy-own-keys-surfaces.js"; // (#6770 S7)
+import { installProxyForwardArms } from "./object-model/proxy-forward-carriers.js"; // (#6651 V1)
 
 /** (#1100/#1355) Reserved trap-invoke driver names — filled by `fillProxyDispatch`. */
 const PROXY_CALL_GET = "__proxy_call_get";
@@ -1562,7 +1563,23 @@ export function ensureProxyRuntime(
       ],
     );
 
-    registerProxyConstructChainNatives(registerNative, proxyTypeIdx, F_PTARGET, constructDispatchIdx);
+    const getDispatchIdx = ctx.funcMap.get("__proxy_get_dispatch");
+    if (getDispatchIdx !== undefined) addStringConstantGlobal(ctx, "prototype");
+    registerProxyConstructChainNatives(
+      registerNative,
+      proxyTypeIdx,
+      F_PTARGET,
+      constructDispatchIdx,
+      getDispatchIdx === undefined
+        ? undefined
+        : {
+            getDispatchIdx,
+            protoKeyInstrs: () => stringConstantExternrefInstrs(ctx, "prototype"),
+            objectTest,
+            throwRevoked,
+            fieldRevoked: F_REVOKED,
+          }, // (#6651 V4) GetPrototypeFromConstructor(proxy newTarget)
+    );
   }
 
   // ── __proxy_create(target, handler) -> externref ──────────────────────────
@@ -2583,6 +2600,7 @@ export function ensureProxyRuntime(
     objDefineBody.unshift(...guard);
   }
   installProxyKeyBagGuards(ctx, proxyTypeIdx, findBody); // (#6770 S7) gOPDs / defineProperties bags
+  installProxyForwardArms(ctx, { proxyTypeIdx, findBody }); // (#6651 V1)
 
   void objectTypeIdx;
 }

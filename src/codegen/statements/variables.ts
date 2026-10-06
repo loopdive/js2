@@ -1302,7 +1302,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
   const chunkedModuleInit = isModuleInitChunkFunctionContext(fctx);
   for (const decl of stmt.declarationList.declarations) {
     if (ts.isObjectBindingPattern(decl.name)) {
-      compileObjectDestructuring(ctx, fctx, decl);
+      // (#6651 V7) a `var` pattern inside a `with` body resolves through the object first.
+      if (!tryCompileWithScopedVarDeclaration(ctx, fctx, stmt, decl)) compileObjectDestructuring(ctx, fctx, decl);
       continue;
     }
 
@@ -1734,7 +1735,14 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         // variables are `undefined`. For externref globals, emit __get_undefined()
         // so `x === undefined` works correctly (#737).
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
-        if (globalDef?.type.kind === "externref") {
+        if (
+          globalDef?.type.kind === "externref" &&
+          !(
+            ctx.standaloneScriptVarBindings &&
+            !ctx.sourceIsModule &&
+            (stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0
+          )
+        ) {
           emitUndefined(ctx, fctx);
           fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
         }

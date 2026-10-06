@@ -154,6 +154,13 @@ function classifyBuiltin(name: string): HostImportPolicy {
       "explicit exceptional host engine with a native or linked-provider path",
     );
   }
+  if (name === "__crypto_random_uuid" || name === "__crypto_get_random_values") {
+    // (#6749) Web Crypto is entropy, not ECMAScript semantics: the same
+    // `randomness` capability as `Math.random` / WASI `random_get`. No native
+    // fallback by design — a host-free build throws rather than degrade to a
+    // PRNG (#1503/#6659).
+    return policy("platform-capability", "randomness", 4398, false, "Web Crypto entropy capability");
+  }
   if (LEGACY_SEMANTIC_BUILTIN_PREFIXES.some((prefix) => name.startsWith(prefix))) {
     return policy("legacy-semantic", "ecmascript-runtime", 4397, false, "implicit JavaScript semantic fallback");
   }

@@ -26,6 +26,7 @@ import {
   closureBagInitInstr,
   getOrCreateConstructibleFuncRefWrapperTypes,
   getOrCreateFuncRefWrapperTypes,
+  ensureRestFnWrapSubtype,
 } from "./funcref-wrapper-types.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { closureObservesBindingValue, collectTransitiveCaptureNames } from "../function-declaration-observation.js";
@@ -213,6 +214,11 @@ function canBoxBindingInDominatingParent(
   let owner: ts.Node | undefined = closure.parent;
   while (owner && !ts.isFunctionLike(owner)) owner = owner.parent;
   if (!owner || ts.isSourceFile(owner)) return false;
+  // An inlined IIFE's preceding declarations live in its detached block,
+  // not in the caller's activation-entry buffer. Moving the cell there
+  // would read the raw slot before initialization and leave the initializer
+  // writing behind the cell's back. Keep construction-site boxing instead.
+  if (fctx.inlinedIifeNodes?.has(owner)) return false;
   const ownerBody = (owner as ts.FunctionLikeDeclarationBase).body;
   if (!ownerBody || !ts.isBlock(ownerBody)) return false;
   let region: ts.Node = closure;
@@ -437,6 +443,33 @@ function referencedBindingDeclaration(
   };
   visit(closure);
   return ambiguous ? undefined : declaration;
+}
+
+/**
+ * (#6651 V5) True when `closure` references `name` and NO such reference binds
+ * to a declaration — the name is free (a global / unresolvable reference), so a
+ * same-spelled slot in the enclosing frame belongs to a block that has already
+ * been left (§14.2.2 restores the outer environment on block exit) and must
+ * not be resurrected as a capture.
+ */
+function closureReferencesOnlyUnboundName(
+  ctx: CodegenContext,
+  closure: ts.ArrowFunction | ts.FunctionExpression,
+  name: string,
+): boolean {
+  let seen = false;
+  let bound = false;
+  const visit = (node: ts.Node): void => {
+    if (bound) return;
+    if (ts.isIdentifier(node) && node.text === name && isCaptureValueReference(node)) {
+      seen = true;
+      if (ctx.oracle.valueDeclarationOf(node)) bound = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  visit(closure);
+  return seen && !bound;
 }
 
 /**
@@ -812,6 +845,8 @@ export function planClosureCaptures(
       // the slot still exists in fctx.locals — find it by name. This restores
       // the ability of closures constructed inside the block to capture the
       // hoisted slot, which is essential for TDZ-through-closure to fire.
+      // (#6651 V5) A FREE name has no hoisted slot — the same-spelled local is from a left block.
+      if (closureReferencesOnlyUnboundName(ctx, arrow, name)) continue;
       for (let i = 0; i < fctx.locals.length; i++) {
         const slot = fctx.locals[i]!;
         if (slot.name === name) {
@@ -1016,6 +1051,27 @@ export function mintClosureStructTypes(
       liftedFuncTypeIdx = wrapperTypes.liftedFuncTypeIdx;
       liftedSelfTypeIdx = wrapperTypes.liftedSelfTypeIdx;
       liftedParams = [{ kind: "ref", typeIdx: liftedSelfTypeIdx }, ...arrowParams];
+      // Rest and ordinary array formals can share a Wasm signature, but not
+      // their calling convention. Preserve the existing rest marker at the
+      // allocation site, as function-declaration singletons already do.
+      if (
+        opts.decl &&
+        (ts.isArrowFunction(opts.decl) || ts.isFunctionExpression(opts.decl)) &&
+        runtimeParameters(opts.decl).some((param) => param.dotDotDotToken !== undefined)
+      ) {
+        structTypeIdx = ensureRestFnWrapSubtype(ctx, structTypeIdx);
+        if (constructible) ctx.constructibleClosureTypeIdxs.add(structTypeIdx);
+        return {
+          structTypeIdx,
+          liftedFuncTypeIdx,
+          liftedSelfTypeIdx,
+          liftedParams,
+          meta: {
+            allocTypeIdx: (metaSlot && ensureFnMetaSubtype(ctx, structTypeIdx)) ?? structTypeIdx,
+            init: [{ op: "f64.const", value: 0 }, ...(metaSlot?.init ?? [])],
+          },
+        };
+      }
       // (#4437) Shared wrapper ⇒ the metadata slot needs a per-base subtype.
       const allocTypeIdx = metaSlot ? ensureFnMetaSubtype(ctx, structTypeIdx) : undefined;
       if (metaSlot && allocTypeIdx !== undefined) {
@@ -1309,7 +1365,10 @@ export function emitClosureConstruction(
     const entryBody = fctx.activationEntryBody;
     if (!entryBody) continue;
     const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.type);
-    const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, { kind: "ref", typeIdx: refCellTypeIdx });
+    const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}@cell:${fctx.params.length + fctx.locals.length}`, {
+      kind: "ref",
+      typeIdx: refCellTypeIdx,
+    });
     entryBody.push(
       { op: "local.get", index: cap.localIdx },
       { op: "struct.new", typeIdx: refCellTypeIdx },
@@ -1344,7 +1403,10 @@ export function emitClosureConstruction(
         fctx.body.push({ op: "local.get", index: cap.localIdx });
         fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
         // Also box the outer local so subsequent reads/writes go through the ref cell
-        const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, { kind: "ref_null", typeIdx: refCellTypeIdx });
+        const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}@cell:${fctx.params.length + fctx.locals.length}`, {
+          kind: "ref_null",
+          typeIdx: refCellTypeIdx,
+        });
         // Duplicate: we need the ref cell for the closure struct AND for the outer local
         fctx.body.push({ op: "local.tee", index: boxedLocalIdx });
         // Re-register the original name to point to the boxed local
