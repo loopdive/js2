@@ -48,7 +48,9 @@ export function demandStringWrapperDynamicLength(ctx: CodegenContext): void {
  * fall through. Empty when not demanded or a helper is missing.
  */
 export function stringWrapperLengthArm(ctx: CodegenContext, keyParam: number, stringDataLocal: number): Instr[] {
-  if (!demanded.has(ctx)) return [];
+  // (#6651 V1) a module that uses `Proxy` forwards a trapless [[Get]] on a
+  // String-wrapper target through this boundary, so it demands the arm too.
+  if (!demanded.has(ctx) && !(ctx.standalone && ctx.proxyDirty === true)) return [];
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
   const boxIdx = ctx.funcMap.get("__box_number");
