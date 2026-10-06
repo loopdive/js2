@@ -3,7 +3,7 @@ id: 6750
 title: "S3-i: the native regime must clear the per-edition ratchet floors (ES5 −99, ES2026 −179, ES2016 −9, ES2023 −4 vs the host lane)"
 status: ready
 created: 2026-09-29
-updated: 2026-09-29
+updated: 2026-10-06
 priority: high
 horizon: l
 feasibility: hard
@@ -79,3 +79,25 @@ protocol` 44, `__get_builtin` dynamic-shape refusal 41.
       host floors untouched.
 - [ ] Standalone high-water floor moves up or stays; default `gc` output
       byte-identical throughout.
+
+## Attribution (2026-10-06, nightly 37440804249 regime artifact vs host baseline of the same day)
+
+`check:edition-ratchet --results <regime.jsonl> --compare <host.jsonl>`:
+ES5 8933 vs 9028 (−95), ES2016 96 vs 99 (−3), ES2023 167 vs 172 (−5),
+ES2026 88 vs 266 (−178); every other edition up (ES2015 +1229, ES2018 +529,
+ES2025 +339, …). Per-test join on `file` (host pass → regime not-pass:
+5,946 rows; regime gains: 3,636), bucketed by error text
+(`.tmp/census-6750.ts`, shape in #5385 "census reproducibility"):
+
+| edition | lost | dominant buckets (count — first example) |
+| --- | --- | --- |
+| ES2026 | 3,492 | **3,383 × "wasm exception during module init"** (Temporal — **#6748**, the whole share); 33 × policy rejected `env::__array_from_async` (legacy-semantic; `Array.fromAsync` needs a native provider or accelerator classification); 13 × `__get_builtin` dynamic-shape codegen error (`Uint8Array.fromBase64/fromHex`); 11 + 9 × Uint8Array base64/hex `setFrom*`/`toBase64` null-deref; 4 × `WeakMap.prototype.set` not implemented (`getOrInsert*`) |
+| ES5 | 62 | 9 × `'this' had incorrect value!` (`language/function-code/10.4.3-1-*gs.js`, global-code `this` in non-strict function code); 5 × `called value is not a function` (`S13.2.1_A6_T3`, `harness/deepEqual-object`); 4 × `filter` result length (`15.4.4.20-9-*`); 3 × `10.4.3-1-9*-s.js` strictness; 2 × `z["N.N"]` numeric-string keys on arrays (`S15.4_A1.1_T7/T8`); 2 × `defineProperties` 15.2.3.7-5-b-125/204 |
+| ES2023 | 61 | 9 × TypedArray `toReversed`/`with` "argument [null] shouldn't be primitive"; 4+3+3+2 × `Array.prototype.{toSpliced,toSorted,toReversed,with}` "not yet callable as a value" (the #6709 tail — PR-C of #6651); 4 × missing RangeError on length > 2^53−1; 3 × `Object.prototype.toString` not implemented on TypedArray species rows; 2 × property-descriptor rows |
+| ES2016 | 21 | **10 × policy rejected `env::__js_array_new` / `__js_array_push`** on `Array.prototype.includes/sparse.js`-family rows — a legacy host-array materialisation still reachable on the regime; the isolated `[, , ,].includes(undefined)` compiles clean in every shape probed (literal, argument, assert-like), so the emission is in the linked-harness context — bisect with the real row; 3 × `Array.prototype.push.call(...)` unsupported; 2 × `pop` not callable as a value; 3 × `splice` beyond 2^53−1 |
+
+So: #6748 alone returns ES2026 to parity; ES2023/ES2016 are mostly the
+"callable as a value" tail (#6709 → #6651 PR-C) plus one legacy-import leak
+to bisect; ES5's 62 are small independent semantic gaps (list above) — none
+is a regime regression of something standalone had, they are rows the host
+lane passes through V8.

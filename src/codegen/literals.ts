@@ -5668,6 +5668,20 @@ export function compileArrayLiteral(
       const innerType = typeArgs[0];
       elemWasm = innerType ? resolveWasmType(ctx, innerType) : { kind: "f64" };
     }
+    // (#6651 V6) `[...strings, Symbol.toStringTag]`: the spread source picked a
+    // native-string vec, and the later non-string element was coerced to it as
+    // `ref.null; ref.as_non_null` — a null-deref trap at construction. Widen to
+    // the universal carrier when any fixed element is not a string.
+    if (
+      ctx.nativeStrings &&
+      (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
+      (elemWasm.typeIdx === ctx.anyStrTypeIdx || elemWasm.typeIdx === ctx.nativeStrTypeIdx) &&
+      expr.elements.some(
+        (el) => !ts.isSpreadElement(el) && !ts.isOmittedExpression(el) && ctx.oracle.staticJsTypeOf(el) !== "string",
+      )
+    ) {
+      elemWasm = { kind: "externref" };
+    }
   } else if (ts.isOmittedExpression(firstElem) || _isUndefinedLike(firstElem)) {
     // All elements are omitted or undefined-like — consult the contextual type
     // to choose an element kind so destructuring defaults fire correctly (#1553e).

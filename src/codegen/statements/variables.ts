@@ -1302,7 +1302,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
   const chunkedModuleInit = isModuleInitChunkFunctionContext(fctx);
   for (const decl of stmt.declarationList.declarations) {
     if (ts.isObjectBindingPattern(decl.name)) {
-      compileObjectDestructuring(ctx, fctx, decl);
+      // (#6651 V7) a `var` pattern inside a `with` body resolves through the object first.
+      if (!tryCompileWithScopedVarDeclaration(ctx, fctx, stmt, decl)) compileObjectDestructuring(ctx, fctx, decl);
       continue;
     }
 

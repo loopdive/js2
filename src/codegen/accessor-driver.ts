@@ -41,6 +41,7 @@ import { addFuncType } from "./registry/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { ensureArgcGlobal } from "./statements/nested-declarations.js";
 import { buildAccessorCallBody, type AccessorDispatchBinding } from "../runtime/wasmgc/values/accessor-call-bodies.js";
+import { installModuleNamespaceExoticArms } from "./object-model/module-namespace-exotic.js"; // (#6651 V6)
 
 /** Reserved name for the accessor-get driver (arity-0 getter wrapper). */
 export const CALL_ACCESSOR_GET = "__call_accessor_get";
@@ -311,6 +312,8 @@ export function reserveReplacerDriver(ctx: CodegenContext): number {
  * mirrors `fillProtoIteratorDriver`'s null fallback.
  */
 export function fillAccessorDrivers(ctx: CodegenContext): void {
+  // (#6651 V6) Every native the namespace arms patch exists by now.
+  installModuleNamespaceExoticArms(ctx);
   if (ctx.accessorGetDriverReserved) {
     const driverIdx = ctx.funcMap.get(CALL_ACCESSOR_GET);
     if (driverIdx !== undefined) {

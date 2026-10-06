@@ -1,0 +1,18 @@
+# IR PR6341 current-main publication handoff
+
+Existing ready PR: https://github.com/loopdive/js2/pull/6341 — fix(deno): preserve ordinary callback construction state. No duplicate PR.
+
+Integration owner: Codex GPT-6.1 Sol High. Worktree: /Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6341-post-6535-main-composition-20261006; local branch codex/6341-post-6535-main-composition-20261006; remote upstream branch codex/4376-deno-callback-construction-20260930. Validated merge operands are published f22b431356bda8dec7ea21c834adf790e414aba9 and freshly fetched/GitHub-agreed main0bead4077c273bc05a9657819ade8049457bd32d. Derive the final signed published head from the current PR/ref; cached metadata is not authority.
+
+All858native and631metadata cases qualify on the current integrated epoch, with exact original identities and respective7794/7803custody. Source/metadata TS7, production build, full format/lint and15gates pass. Two source additions are accounted for by exactly three reviewed outer-successor files; C1 is unchanged. Preserved baseline260failures are not rewritten. Independent whole-source and successor reviews found no remaining composition blocker. Evidence and prior history: plan/log/ir6341-main-composition-20261006.md and .tmp/post-0be-main-refresh/.
+
+At this authored checkpoint, final normal signed commit, push and protected exact-head admission are the next actions. Only verified main ancestry and file content count as delivery; local checks or auto-merge enablement do not. Maintain claims4376:6341-main-composition-20261006 and4376:6341-post0be-metadata-successor-20261006 until that proof. Never forcepush, bypass hooks/protections or push main directly. Preserve dirty primary checkout and every historical fixture/failure/prepared worktree.
+
+Prepared SourceMap6865 work is isolated in codex-6865-public-source-map-integration-20261006 and excluded here. Numeric N1 correction is independently approved at57/57; output-holder L2 successor has60/60 local cases and requires its independent review plus root startup/public-finalizer wiring. Full public map/async/multi-source/support coverage and performance parity remain open. Performance attempt5 and six-cell diagnostic failed/inconclusive; no new timing or acceptance credit. The public/legacy compiler remains until complete IR equality is tested.
+
+No recurring GitHub polling is authorized. Available tools have no passive subscription; meaningful events or explicit state requests drive reads. A one-shot current-head/base read before publication/admission is required. Keep this existing PR ready and use protected merge-group conformance; never substitute a stale baseRefOid or queued old head for actual delivered content.
+
+
+### Actual protected-queue hold discovered before publication
+
+Fresh purposeful publication guard confirms existing PR6341 stillOPEN atf22, basemain0be, but now bot-held andautoMerge disabled. Actual timeline records a failed required merge-group test262 verdict: run37510995236/job112437743141, failingstep Fail on regressions, parked18:51:47Z. Local current858/631 passes do not supersede that full-corpus verdict. Root assigned a readonly row-level run/log/artifact diagnosis to the existing native Sol agent; no new source scope, no hold removal or admission yet. Preserve exact baseline/harness/lanes and original failures. The current independently approved0be merge can be signed and published through the existing heldPR to retain concrete progress, while protected admission stays blocked until the actual conformance cause is fixed or proved addressed. No main delivery is claimed.

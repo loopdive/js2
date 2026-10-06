@@ -51,6 +51,8 @@ import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { buildDestructureNullThrow } from "./destructuring-params.js";
 import { emitObjectDestructureFromLocal } from "./expressions/assignment.js";
+import { emitToPropertyKeyOnce } from "./expressions/computed-member-reference.js";
+import { isStrictContext } from "./helpers/is-strict-function.js";
 import {
   emitResolvedIdentifierWriteFromStack,
   resolveModuleAwareIdentifierWriteTarget,
@@ -418,6 +420,19 @@ function emitAssignmentElement(
   if (ref) fctx.body.push({ op: "local.get", index: ref.objLocal }, { op: "local.get", index: ref.keyLocal });
   pushSlotValue(ctx, fctx, st);
   if (init) emitApplyDefault(ctx, fctx, init, target.kind === "array" && ts.isArrayLiteralExpression(init));
+  emitTargetPut(ctx, fctx, target);
+}
+
+/**
+ * PutValue / nested-pattern dispatch for one target. Stack: the value, with a
+ * member target's parked (base, key) beneath it. `setOp` is the [[Set]] flavour.
+ */
+function emitTargetPut(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ElemTarget,
+  setOp: "__extern_set_strict" | "__extern_set" = "__extern_set_strict",
+): void {
   switch (target.kind) {
     case "ident": {
       const { localIdx, moduleGlobalIdx } = resolveModuleAwareIdentifierWriteTarget(
@@ -430,7 +445,7 @@ function emitAssignmentElement(
       return;
     }
     case "member":
-      fctx.body.push(call(ctx, "__extern_set_strict"));
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(setOp)! });
       return;
     case "array": {
       // §13.15.5.5 step 6: a nested array pattern runs its OWN GetIterator /
@@ -595,4 +610,166 @@ export function objectPatternHasRuntimeKey(ctx: CodegenContext, pattern: ts.Obje
       ts.isComputedPropertyName(prop.name) &&
       resolveComputedKeyExpression(ctx, prop.name.expression) === undefined,
   );
+}
+
+/**
+ * (#6651 V7) §13.15.5.3 / §14.3.3.1 step 1 — Evaluation of a PropertyName,
+ * ToPropertyKey'd exactly ONCE, before the target Reference and the GetV. A
+ * literal name is its string constant. Returns the local holding the key.
+ */
+function emitPatternPropertyKey(ctx: CodegenContext, fctx: FunctionContext, name: ts.PropertyName): number {
+  if (ts.isComputedPropertyName(name)) {
+    const keyType = compileExpression(ctx, fctx, name.expression, EXTERNREF);
+    if (!keyType) fctx.body.push({ op: "ref.null.extern" });
+    else coerceType(ctx, fctx, keyType, EXTERNREF);
+    emitToPropertyKeyOnce(ctx, fctx);
+  } else {
+    const text = (name as ts.Identifier).text;
+    addStringConstantGlobal(ctx, text);
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, text));
+  }
+  const keyLocal = allocLocal(fctx, `__dstr_pkey_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "local.set", index: keyLocal });
+  return keyLocal;
+}
+
+function isPlainPropertyName(name: ts.PropertyName): boolean {
+  return (
+    ts.isComputedPropertyName(name) || ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)
+  );
+}
+
+/** The admitted `PropertyName: target = init` entries of an object assignment pattern. */
+type ObjectAssignPlan = { name: ts.PropertyName; target: ElemTarget; init: ts.Expression | undefined }[];
+
+/**
+ * (#6651 V7) Admission for {@link emitSpecOrderedObjectAssign}: standalone/WASI
+ * only (the host-lane argument of the array drive applies unchanged), and only
+ * for a pattern carrying a key only the runtime can name — the struct lowering
+ * cannot reach such a property at all, so it skipped the whole element (no
+ * ToPropertyKey, no GetV, no PutValue). A spread / method shape refuses before
+ * anything is emitted, keeping the caller's fall-through intact.
+ */
+function planSpecOrderedObjectAssign(
+  ctx: CodegenContext,
+  pattern: ts.ObjectLiteralExpression,
+): ObjectAssignPlan | undefined {
+  if (!(ctx.standalone || ctx.wasi) || !objectPatternHasRuntimeKey(ctx, pattern)) return undefined;
+  const plans: ObjectAssignPlan = [];
+  for (const prop of pattern.properties) {
+    if (ts.isShorthandPropertyAssignment(prop)) {
+      const init = prop.objectAssignmentInitializer;
+      plans.push({ name: prop.name, target: { kind: "ident", target: prop.name }, init });
+      continue;
+    }
+    if (!ts.isPropertyAssignment(prop) || !isPlainPropertyName(prop.name)) return undefined;
+    const el = prop.initializer;
+    const isDefault = ts.isBinaryExpression(el) && el.operatorToken.kind === ts.SyntaxKind.EqualsToken;
+    const target = planTarget(isDefault ? el.left : el);
+    if (!target) return undefined;
+    plans.push({ name: prop.name, target, init: isDefault ? el.right : undefined });
+  }
+  return plans;
+}
+
+/** Ensure `__extern_get` / `__extern_is_undefined` (+ `extra` [[Set]] ops, + the drive ops). */
+function ensureObjectOps(ctx: CodegenContext, fctx: FunctionContext, extra: readonly string[], drive: boolean): void {
+  ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
+  ensureLateImport(ctx, "__extern_is_undefined", [EXTERNREF], [{ kind: "i32" }]);
+  for (const name of extra) ensureLateImport(ctx, name, [EXTERNREF, EXTERNREF, EXTERNREF], []);
+  if (drive) for (const [name, params, results] of DRIVE_OPS) ensureLateImport(ctx, name, [...params], [...results]);
+  flushLateImportShifts(ctx, fctx);
+}
+
+/** `GetV(src, key)` onto the stack — looked up by name, a prior emit may have shifted indices. */
+function pushGetV(ctx: CodegenContext, fctx: FunctionContext, srcLocal: number, keyLocal: number): void {
+  fctx.body.push({ op: "local.get", index: srcLocal }, { op: "local.get", index: keyLocal });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get")! });
+}
+
+/**
+ * (#6651 V7) §13.15.5.2 ObjectAssignmentPattern over an externref source, each
+ * property in §13.15.5.6 KeyedDestructuringAssignmentEvaluation order:
+ * PropertyName + ToPropertyKey → the target Reference (base and RAW key, step
+ * 1) → GetV → Initializer when undefined → PutValue (the target key's own
+ * ToPropertyKey runs inside the [[Set]], after the Initializer). A nested
+ * pattern target runs against the (defaulted) value.
+ */
+export function tryEmitSpecOrderedObjectAssign(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  pattern: ts.ObjectLiteralExpression,
+  srcType: ValType,
+): boolean {
+  const plans = planSpecOrderedObjectAssign(ctx, pattern);
+  if (!plans) return false;
+  // The RHS value (already on the stack) is the assignment expression's result.
+  const srcLocal = allocLocal(fctx, `__dstr_obj_src_${fctx.locals.length}`, EXTERNREF);
+  coerceType(ctx, fctx, srcType, EXTERNREF);
+  fctx.body.push({ op: "local.set", index: srcLocal });
+  emitSpecOrderedObjectAssign(ctx, fctx, plans, srcLocal, isStrictContext(pattern, ctx.inferModuleStrictArguments));
+  fctx.body.push({ op: "local.get", index: srcLocal });
+  return true;
+}
+
+function emitSpecOrderedObjectAssign(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  plans: ObjectAssignPlan,
+  srcLocal: number,
+  strict: boolean,
+): void {
+  const setOp = strict ? "__extern_set_strict" : "__extern_set";
+  ensureObjectOps(
+    ctx,
+    fctx,
+    [setOp],
+    plans.some((p) => p.target.kind === "array"),
+  );
+  emitNullishGuard(ctx, fctx, srcLocal);
+  for (const plan of plans) {
+    const keyLocal = emitPatternPropertyKey(ctx, fctx, plan.name);
+    const ref = plan.target.kind === "member" ? emitMemberReference(ctx, fctx, plan.target.target) : undefined;
+    if (ref) fctx.body.push({ op: "local.get", index: ref.objLocal }, { op: "local.get", index: ref.keyLocal });
+    pushGetV(ctx, fctx, srcLocal, keyLocal);
+    const init = plan.init;
+    if (init) emitApplyDefault(ctx, fctx, init, plan.target.kind === "array" && ts.isArrayLiteralExpression(init));
+    emitTargetPut(ctx, fctx, plan.target, setOp);
+  }
+}
+
+/**
+ * (#6651 V7) §14.3.3.1 PropertyBindingInitialization for an object BINDING
+ * pattern of single-name elements over an externref source, each in §14.3.3.3
+ * KeyedBindingInitialization order: PropertyName + ToPropertyKey →
+ * ResolveBinding (`resolve` — under `with` that is the object's HasBinding) →
+ * GetV → Initializer when undefined → InitializeReferencedBinding (the writer
+ * `resolve` returned, fed the value's local). Returns false, emitting nothing,
+ * for a rest element or a nested pattern.
+ */
+export function tryEmitSpecOrderedBindingPattern(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  pattern: ts.ObjectBindingPattern,
+  emitSource: () => number,
+  resolve: (id: ts.Identifier) => (valueLocal: number) => void,
+): boolean {
+  for (const el of pattern.elements) {
+    if (el.dotDotDotToken || !ts.isIdentifier(el.name)) return false;
+    if (el.propertyName && !isPlainPropertyName(el.propertyName)) return false;
+  }
+  const srcLocal = emitSource();
+  ensureObjectOps(ctx, fctx, [], false);
+  emitNullishGuard(ctx, fctx, srcLocal);
+  for (const el of pattern.elements) {
+    const id = el.name as ts.Identifier;
+    const keyLocal = emitPatternPropertyKey(ctx, fctx, el.propertyName ?? id);
+    const write = resolve(id);
+    pushGetV(ctx, fctx, srcLocal, keyLocal);
+    if (el.initializer) emitApplyDefault(ctx, fctx, el.initializer, false);
+    const valueLocal = allocLocal(fctx, `__dstr_bval_${fctx.locals.length}`, EXTERNREF);
+    fctx.body.push({ op: "local.set", index: valueLocal });
+    write(valueLocal);
+  }
+  return true;
 }

@@ -217,6 +217,38 @@ export function arrayIteratorDeletedGlobalIdx(ctx: CodegenContext): number | und
 }
 
 /**
+ * (#5139) Emit the §7.4.2 GetIterator TypeError guard at an Array GetIterator
+ * site (array binding pattern, #6651 V7: the for-of array fast path) when the
+ * program contains `delete Array.prototype[Symbol.iterator]`. Stack-neutral (any
+ * operand below is left untouched). No-op — no emitted bytes — for every source
+ * without such a delete, because the flag global is only rooted by the pre-scan.
+ */
+export function emitArrayIteratorDeletedGuard(ctx: CodegenContext, fctx: FunctionContext): void {
+  if (arrayIteratorDeletedGlobalIdx(ctx) === undefined) return;
+  const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "array is not iterable", { flush: fctx });
+  // Re-read after the throw construction: it may settle late imports that shift globals.
+  const flagIdx = arrayIteratorDeletedGlobalIdx(ctx)!;
+  fctx.body.push({ op: "global.get", index: flagIdx });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs, else: [] });
+}
+
+/**
+ * (#6651 V7, #5154 A(a)) The for-of array fast path's §7.4.3 GetIterator: after
+ * `delete Array.prototype[Symbol.iterator]` the method is undefined ⇒ TypeError.
+ * Only for an Array/tuple-typed iterable — a TypedArray (also a vec carrier)
+ * keeps its own `%TypedArray%.prototype[@@iterator]`.
+ */
+export function emitForOfArrayIteratorDeletedGuard(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  iterable: ts.Expression,
+): void {
+  if (arrayIteratorDeletedGlobalIdx(ctx) === undefined) return;
+  const fact = ctx.oracle.typeFactOf(iterable).kind;
+  if (fact === "array" || fact === "tuple") emitArrayIteratorDeletedGuard(ctx, fctx);
+}
+
+/**
  * Compile `delete Array.prototype[Symbol.iterator]` / `delete
  * Array.prototype.values`: raise the flag global and answer `true` (the property
  * is configurable, so the delete succeeds). Returns `false` when `node` is not
