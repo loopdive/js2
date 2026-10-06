@@ -174,6 +174,14 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-10-06 — slice V10c (RegExp singles; record `### 2026-10-06 — Slice
+  # V10c`). The assignment-shape analysis lives in the NEW leaf
+  # `declarations/assigned-shape-divergent-objects.ts`. What stays in god-files:
+  # `declarations/object-shape-widening.ts` +4 (import + the one call beside its
+  # #5270 redeclaration sibling) and `declarations.ts` +3 (module-init chunks
+  # share the raw-lastIndex identity record). Paths already listed; restated.
+  - src/codegen/declarations.ts
+  - src/codegen/declarations/object-shape-widening.ts
   # 2026-10-06 — slice V6 (module namespace internals; record under "2026-10-06
   # — Slice V6"). The §10.4.6 arms live in the NEW leaf
   # `object-model/module-namespace-exotic.ts`. What stays in god-files (paths
@@ -1303,6 +1311,11 @@ loc-budget-allow:
   # `promise-subclass-cell-read.ts`; the hand-off cannot move, because it is the
   # arm that would otherwise emit the bare `global.get` of the cell.
 func-budget-allow:
+  # 2026-10-06 — slice V10c (see the loc-budget note): `compileDeclarations` +3
+  # (chunk identity-record sharing) and `collectGrowableObjectLiterals` +3 (the
+  # assigned-shape collector call).
+  - src/codegen/declarations.ts::compileDeclarations
+  - src/codegen/declarations/object-shape-widening.ts::collectGrowableObjectLiterals
   # 2026-10-06 — slice V6 (see the loc-budget note): `compileArrayLiteral` +14
   # (the externref widening for a non-string fixed element after a string
   # spread) and `compileDeclarations` +1 (the early TDZ-flag call).
@@ -3681,6 +3694,65 @@ of 126, 0 `illegal cast`** — unchanged.
 Not fixed (base fails identically): the `obj-rest-*` rows in for-of/dstr and
 assignment/dstr (object rest over runtime sources), `array-elem-init-in.js`
 (parse), and three `with` Proxy-env rows.
+
+### 2026-10-06 — Slice V10c
+
+RegExp singles from H10, on `f7fb987b6a`. **3/3 target rows flip**
+(`Symbol.split/coerce-flags-err`, `exec/{success,failure}-lastindex-access`),
+measured base vs branch with `JS2WASM_EVAL_ENGINE=quickjs … run-test262-paths.mts
+--standalone`. Neither root cause was in the RegExp builtins; `exec` already
+read `lastIndex` once (ToLength through the raw slot) and wrote nothing for a
+non-g/y receiver, and `@@split` already threw TypeError on ToString(Symbol).
+
+1. **exec rows — identity lost across module-init chunks.**
+   `r.lastIndex = counter` records the counter's struct type in
+   `fctx.regexpLastIndexIdentityStructTypes` so a later ref→externref coercion
+   passes the original reference instead of the ToPrimitive `$Object` value
+   copy (`materializeStructAsObject`). The original harness makes the top-level
+   script large enough to split into `__module_init_chunk_N` frames; the write
+   compiled in chunk 0 and `assert.sameValue(r.lastIndex, counter)` in chunk 1,
+   which got a fresh frame without the record, so it compared a copy against
+   the original (`SameValue([object Object], [object Object])` false). The
+   chunks now share the outer init frame's record (`declarations.ts`, three
+   lines): chunking is a size split and must not change per-frame semantics.
+2. **coerce-flags-err — assigned literal compiled into the initializer's
+   struct.** `uncoercibleFlags = { flags: Symbol.split }` over `var
+   uncoercibleFlags = { flags: { toString() {…} } }` is lowered against the
+   checker's contextual type, i.e. the first literal's closed struct; the
+   symbol cannot occupy the nested-object field and is dropped for `ref.null`.
+   `Get(rx, "flags")` read null, ToString gave `"null"`, and the splitter
+   construct threw SyntaxError on flags `"nully"`. NEW leaf
+   `declarations/assigned-shape-divergent-objects.ts` is the assignment twin of
+   #5270's redeclaration collector: a module-scoped, unannotated, non-const
+   binding whose object-literal initializer and some `binding = { … }` literal
+   diverge (different data-property names, a shared property with different
+   resolved JS tags, or recursively diverging nested data literals) is pinned
+   to the open `$Object` carrier — `redeclaredObjectIdentityDeclarations` +
+   `redeclaredObjectIdentityLiterals` + `recordOpenObjectConsumerTypes`, the
+   exact marks the sibling uses. Standalone only. Non-data members (methods,
+   accessors, shorthand, spread, computed keys) and `mixed` tags never count as
+   divergence.
+
+**Receipts.** Family `RegExp/prototype/{exec,Symbol.split,Symbol.replace,
+Symbol.match,test,flags}/**` + `String/prototype/{split,match,replace}/**`
+(533 rows, 3 chunks): base 522 → branch 525, **0 lost**, exactly the 3 targets
+gained. Blast-radius scan for the assignment rule (every non-intl test262 file
+with a top-level `var/let x = {` later re-assigned `x = {`, 21 rows): base 6 →
+branch 8, 0 lost; bonus flip
+`Array/prototype/flatMap/array-like-objects-poisoned-length.js`. Pin
+`tests/issue-6651-v10c-regexp.test.ts` (3 rows + 1 inline shape case, 4/4).
+Equivalence gate green (1748 pass, 22 known). Temporal control
+(`Duration/prototype/round/*`, standalone, freshly prewarmed cache after
+`build:compiler-bundle` + `build:runtime-bundle`): **119 pass / 7 fail of 126,
+0 `illegal cast`** — unchanged.
+
+Known gaps (not fixed): the identity record is still written per frame in
+source order, so `assert.sameValue(counter, counter)` for a valueOf-bearing
+literal that is NEVER stored to `lastIndex` still compares two copies (the
+underlying #2358 value-copy materialization); `typeof u.flags` on a widened
+binding still folds from the checker type (`"object"` for the symbol);
+function-local bindings are not covered by the assignment collector (scoped to
+module bindings like its sibling).
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 
