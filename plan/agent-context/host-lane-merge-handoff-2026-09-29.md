@@ -218,3 +218,23 @@ implementer when the gate opens; (3) #6748, #6750 unchanged.
   agent worktree's cwd hook blocks non-ff merges there).
 - **#6876** (react CJS hoist) is filed and spec'd; dispatch waits on the
   spawn gate (box load 60–400 all afternoon from other lanes).
+
+### Close of 2026-10-06
+
+- Merged today: #6527 (part A + cookie), #6528 (#6868), #6534 (#6875 +
+  `__`-export wrapper → hono/redux), #6542 (#6748 Temporal, regime
+  PlainTime 0 → 473/493).
+- **PR #6545 open** — #6876 in-branch `require` hoist (done by the Fable
+  lane; the spawn gate never opened). react now compiles on BOTH lanes and
+  fails the same codegen invariant (`cloneAndReplaceKey`, out-of-range
+  locals after local dedup) → **#6877**, filed with a reduction plan.
+- New gates since this morning that bite every new codegen file (#6797):
+  `check:import-cycles` (a new file inside the codegen SCC needs
+  `--update`), `check:flat-dir-budget` (new `src/codegen` files go in a
+  sub-directory, e.g. `object-model/`), plus the #3518 inventory
+  (`scripts/compiler-boundaries.json`). Budget an extra CI round for them.
+- Regime lane expected after the next npm-compat refresh: clsx, cookie,
+  moment, hono, redux measured; uuid links; react → #6877; acorn/marked/
+  lit/prettier → part C (unchanged).
+- Next, in order: #6877 (react), part C, the ES5 list in #6750, then the S6
+  bar (#6708) re-evaluation on the next nightly that carries #6748.
