@@ -32,6 +32,7 @@ import { closureObservesBindingValue, collectTransitiveCaptureNames } from "../f
 import { valTypesMatch } from "../shared.js";
 import { tryEmitNativeIteratorResultParam } from "../promise-native-iterator-result.js";
 import { materializeHoistedFunctionValueBinding } from "./funcref-as-closure.js";
+import { namesDeclaredInsideClosure } from "./closure-declared-names.js";
 import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
 // (#4437) per-declaration `name` / §15.1.5 `length` carrier
 import { ensureFnMetaSubtype, fnMetaSlot, registerFnMetaFamily } from "../function-instance-meta.js";
@@ -458,6 +459,27 @@ function isDirectRuntimeModuleVariableBinding(declaration: ts.Declaration | unde
   return false;
 }
 
+/**
+ * (#6872) Does a write target `name`'s captured binding? A same-spelled write
+ * that the checker binds to a DIFFERENT declaration (a sibling function's own
+ * `let u`) does not; counting it boxed the capture into one cell that every
+ * loop iteration's closure then shared. Unknown identity on either side stays a
+ * write (the previous, conservative answer).
+ */
+function capturedBindingWriteTest(
+  ctx: CodegenContext,
+  arrow: ts.ArrowFunction | ts.FunctionExpression,
+  name: string,
+): (target: ts.Identifier) => boolean {
+  const capturedDeclaration = referencedBindingDeclaration(ctx, arrow, name, true);
+  return (target) => {
+    if (target.text !== name) return false;
+    if (capturedDeclaration === undefined) return true;
+    const written = ctx.oracle.valueDeclarationOf(target);
+    return written === undefined || written === capturedDeclaration;
+  };
+}
+
 function removeClosureOwnedBlockBindingCollisions(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -465,8 +487,16 @@ function removeClosureOwnedBlockBindingCollisions(
   ownLocals: ReadonlySet<string>,
   referencedNames: Set<string>,
 ): void {
+  // A closure-owned `let u` whose same-named OUTER binding is a block-scoped
+  // local of an already-closed sibling block (`for (…) { let u = …; f = () => u }`
+  // then `g = function () { let u = []; … }`) is no longer in `localMap`, but
+  // the capture planner still resolved the name to that block's slot and boxed
+  // it — the closure then read the sibling's cell (marked's `walkTokens`:
+  // `illegal cast`). Check identity for those names too.
+  let declaredInside: ReadonlySet<string> | undefined;
   for (const name of [...referencedNames]) {
-    if (ownLocals.has(name) || !fctx.localMap.has(name)) continue;
+    if (ownLocals.has(name)) continue;
+    if (!fctx.localMap.has(name) && !(declaredInside ??= namesDeclaredInsideClosure(closure)).has(name)) continue;
     if (!hasReferenceOutsideClosure(ctx, closure, name)) referencedNames.delete(name);
   }
 }
@@ -696,17 +726,18 @@ export function planClosureCaptures(
         if (outerBody) {
           // Collect writes in the outer body, excluding the closure body itself
           const outerWrites = new Set<string>();
+          const writesCapturedBinding = capturedBindingWriteTest(ctx, arrow, name);
           const collectOuterWrites = (node: ts.Node): void => {
             // Skip the closure body itself
             if (node === arrow) return;
             // Check for assignments
             if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-              if (ts.isIdentifier(node.left) && node.left.text === name) {
+              if (ts.isIdentifier(node.left) && writesCapturedBinding(node.left)) {
                 outerWrites.add(name);
               }
             }
             if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
-              if (ts.isIdentifier(node.operand) && node.operand.text === name) {
+              if (ts.isIdentifier(node.operand) && writesCapturedBinding(node.operand)) {
                 outerWrites.add(name);
               }
             }
@@ -716,7 +747,7 @@ export function planClosureCaptures(
               node.operatorToken.kind >= ts.SyntaxKind.PlusEqualsToken &&
               node.operatorToken.kind <= ts.SyntaxKind.CaretEqualsToken
             ) {
-              if (ts.isIdentifier(node.left) && node.left.text === name) {
+              if (ts.isIdentifier(node.left) && writesCapturedBinding(node.left)) {
                 outerWrites.add(name);
               }
             }
