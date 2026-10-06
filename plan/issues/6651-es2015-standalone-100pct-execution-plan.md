@@ -180,6 +180,10 @@ loc-budget-allow:
   # (no function-entry pre-hoist exists there) and re-installs the pre-hoisted
   # slots otherwise. `expressions/assignment.ts` +2: the SetMutableBinding TDZ
   # guard on the boxed-capture write arm. Both paths already listed below.
+  # 2026-10-06 — slice V4: `object-runtime-proxy.ts` +16 (path already listed
+  # below): the deps hand-off to `registerProxyConstructChainNatives` for
+  # `__proxy_construct_newtarget_proto`; the native lives in
+  # `object-runtime-proxy-construct-chain.ts`.
   # 2026-10-06 — slice V1 (trapless Proxy forwarding; record under
   # "2026-10-06 — Slice V1"). `object-runtime-proxy.ts` +2: the import and the
   # one-line call of `installProxyForwardArms`; the arms themselves live in the
@@ -1286,6 +1290,11 @@ func-budget-allow:
   # #1177 by-name slot rescan for a name no reference binds).
   - src/codegen/expressions/assignment.ts::compileAssignment
   - src/codegen/closures/arrow-phases.ts::planClosureCaptures
+  # 2026-10-06 — slice V4: `ensureProxyRuntime` +16 (key already listed below):
+  # handing `registerProxyConstructChainNatives` the deps of the new
+  # `__proxy_construct_newtarget_proto` native (get dispatch, "prototype" key,
+  # objectTest, throwRevoked, the revoked field). The native body itself lives
+  # in `object-runtime-proxy-construct-chain.ts`.
   # 2026-10-06 — slice V1: `ensureProxyRuntime` +1, the one-line call of
   # `installProxyForwardArms` next to `installProxyKeyBagGuards` (key already listed below).
   # 2026-10-06 — slice V0 (see the loc-budget note): the refusal-closure ladder
@@ -3485,6 +3494,59 @@ reproduced failing on base with `.tmp` probes before the fix).
 Equivalence gate green (1748 pass, 22 known). Temporal control
 (`Duration/prototype/round/*`, standalone, prewarmed cache): **119 pass / 7 fail of
 126, 0 `illegal cast`** — unchanged.
+
+### 2026-10-06 — Slice V4
+
+Derived-constructor completion and revoked-proxy construct (H4, 3 rows). Base
+`adbf109200` (harness worktree branch; the lead merges by sha).
+
+**The census location was off for row 1.** The `return null` ReferenceError
+does not come from `expressions/new-super.ts`: a derived constructor with NO
+lexical `super()` takes `class-bodies.ts`'s missing-super lowering, which threw
+the uninitialised-`this` ReferenceError at entry unless the body was a single
+`return <checker-proven primitive>`. `null` is not a primitive by those flags
+(it is typeof "object"), so §10.2.1.3 step 13.c's TypeError was lost. The
+decision moved to the new leaf `classes/missing-super-return.ts`, which reads
+`ctx.oracle.typeFactOf` (primitive or `null` ⇒ TypeError) — one raw-checker
+call fewer. Constructors that DO call `super()` already classify `null`
+correctly in `statements/control-flow.ts` (#5195 Step 11 E); unchanged.
+
+**Row 2/3 are not "handler already null before the read".** `new f()` on a
+trapless proxy forwards to `Construct(target, args, proxy)`, and the target's
+OrdinaryCreateFromConstructor performs `Get(proxy, "prototype")` — the `get`
+trap in these rows revokes the proxy and answers undefined, so
+GetFunctionRealm(proxy) throws (§7.3.22 step 4.a). The driver never performed
+that read: it passed a null prototype and let the target read its own
+`prototype`. New native `__proxy_construct_newtarget_proto` (in
+`object-runtime-proxy-construct-chain.ts`) does `Get(proxy, "prototype")`
+through `__proxy_get_dispatch`; an Object answers itself, a non-Object on a
+now-revoked proxy throws the revoked TypeError, a live proxy answers null
+(the caller keeps its target-prototype fallback). The trapless-forward arm of
+`native-construct.ts` reads `[[ProxyTarget]]` FIRST (the trap may revoke and
+null it) and only consults the native when no prototype was supplied.
+
+**Rows (standalone, QuickJS eval, in-process):** the 3 target rows 0/3 → 3/3.
+
+| family | base pass | branch pass |
+| --- | --- | --- |
+| `language/statements/class/subclass/**` (109) | 93 | 93 (identical non-pass set) |
+| `built-ins/Proxy/revocable/**` (18) | 17 | 17 (identical) |
+| `built-ins/{Proxy,Reflect,Function/internals}/**` minus revocable (454) | 419 | 422 (only the 3 targets moved) |
+
+**Residuals.**
+- A live proxy whose trap answers a non-Object prototype still gets the
+  target's `prototype`, not the realm's %Object.prototype% (§10.1.14 step 4.b).
+- A prototype the trap returns as a CLOSED struct object literal reaches the
+  instance, but the instance does not see that struct's methods (`b.m()` throws
+  where node answers 9; base answered the target's 5). `__object_create` on a
+  closed struct; pinned as a residual comment in the test.
+- A missing-`super()` body returning an Object (`return {}`) still throws the
+  entry ReferenceError instead of returning the object (step 13.a).
+
+Pin: `tests/issue-6651-v4-derived-ctor-completion.test.ts` (5 cases).
+Controls: `node scripts/equivalence-gate.mjs` green; Temporal
+`Duration/prototype/round/*` standalone 119 pass / 7 fail of 126, 0
+`illegal cast`.
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 
