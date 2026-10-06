@@ -32,6 +32,18 @@ import {
 import { assertCodegenRegistrationsComplete } from "./codegen/shared.js";
 import { isFatalCodegenDiagnostic } from "./codegen/context/errors.js";
 import type { WasmModule } from "./ir/types.js";
+import {
+  prepareIrProgramPresentation,
+  beginPreparedPresentationFinalization,
+  completePreparedPresentationFinalization,
+  preparedPresentationWitView,
+  type PreparedPresentationFinalization,
+  type PreparedPresentationFinalizationReceipt,
+  type IrProgramPresentationResult,
+  type IrProgramPresentationGap,
+  type PreparedIrPipelinePresentationResult,
+} from "./compiler/ir-program-presentation.js";
+import { freezePreparedIrValue, PreparedIrProgramInvariantError, type PreparedIrBackendOptions } from "./ir/program.js";
 import { buildHostImportInventory, summarizeHostImportInventory } from "./host-import-policy.js";
 import { buildCapabilityRequirements, validatePlatformCapabilityRequirements } from "./capability-registry.js";
 import { createJavaScriptAdapterManifest } from "./adapter-manifest.js";
@@ -86,12 +98,13 @@ import { profileCount, profilePhase } from "./compile-profile.js";
 import { resolveCompileTargetProfile } from "./target-profile.js";
 import { injectProcessStdinPrelude } from "./process-stdin-prelude.js";
 import { injectIteratorStaticsPrelude } from "./iterator-statics-prelude.js";
+import { applyIntlListFormatPrelude, applyIntlListFormatPreludeToFiles } from "./intl-listformat-prelude.js";
 import { normalizeScriptHtmlLikeComments } from "./compiler/html-like-comments.js";
 import * as irIds from "./compiler/ir-outcome-inventory.js";
 import { buildLinearOptions } from "./compiler/linear-options.js";
 import type { CompileError, CompileOptions, CompileResult } from "./index.js";
 import { optimizeBinaryAsync } from "./optimize.js";
-import { generateWit } from "./wit-generator.js";
+import { generateWit, renderPreparedWit } from "./wit-generator.js";
 import {
   foldGroundCallsInMultiFilesForCompile as foldGroundCallsInMulti,
   foldGroundExportCallsForCompile as foldGroundCalls,
@@ -923,31 +936,18 @@ interface PipelineInput {
   options: CompileOptions;
 }
 
-function isWasmException(e: unknown): boolean {
-  return (
-    typeof WebAssembly !== "undefined" &&
-    !!(WebAssembly as unknown as { Exception?: Function }).Exception &&
-    e instanceof (WebAssembly as unknown as { Exception: Function }).Exception
-  );
-}
+/** Frontend presentation facts only; body generation never consumes this context. */
+export type PipelineOutputContext = Pick<
+  PipelineInput,
+  "errors" | "options" | "entryAst" | "diagnosticAnchor" | "sourcesContent"
+> & {
+  readonly codegenOptions: Pick<CodegenOptions, "link">;
+  readonly preparedStartup?: Extract<IrProgramPresentationResult, { kind: "prepared-presentation" }>["startup"];
+};
 
-/**
- * #1927 — the single, shared front-end pipeline core. Owns everything from ES
- * early-error detection down through binary/WAT/dts/WIT emit. It is SYNCHRONOUS
- * and STOPS before the optional wasm-opt pass — the async entry points apply
- * {@link applyOptimize} over its result. This preserves the asymmetry that
- * `compileSourceSync` (the `eval` host shim's entry) must stay synchronous and
- * ignore `optimize`, while the multi entry points are async.
- *
- * The three entry adapters differ ONLY in how they build the AST(s) and collect
- * the leading TS-diagnostic `errors` (region A); everything below the
- * parse/check split is identical and lives here.
- */
-function runPipeline(input: PipelineInput): CompileResult {
-  const { errors, options, entryAst, multiAst, diagnosticAnchor, userSourceFiles } = input;
-  const targetProfile = resolveCompileTargetProfile(options);
-  const emitWatOutput = options.emitWat !== false;
-
+/** The existing pre-generation validation, shared by both internal routes. */
+function validatePipelineSource(input: PipelineInput): CompileResult | undefined {
+  const { errors, options, entryAst, userSourceFiles } = input;
   // Each validation pass below gates on the errors IT produced, NOT on the whole
   // accumulated `errors` array. This is load-bearing (#1927 regression fix): the
   // pre-collected `errors` may already hold non-fatal TS diagnostics of severity
@@ -1012,6 +1012,37 @@ function runPipeline(input: PipelineInput): CompileResult {
       return failResult(errors);
     }
   }
+
+  return undefined;
+}
+
+function isWasmException(e: unknown): boolean {
+  return (
+    typeof WebAssembly !== "undefined" &&
+    !!(WebAssembly as unknown as { Exception?: Function }).Exception &&
+    e instanceof (WebAssembly as unknown as { Exception: Function }).Exception
+  );
+}
+
+/**
+ * #1927 — the single, shared front-end pipeline core. Owns everything from ES
+ * early-error detection down through binary/WAT/dts/WIT emit. It is SYNCHRONOUS
+ * and STOPS before the optional wasm-opt pass — the async entry points apply
+ * {@link applyOptimize} over its result. This preserves the asymmetry that
+ * `compileSourceSync` (the `eval` host shim's entry) must stay synchronous and
+ * ignore `optimize`, while the multi entry points are async.
+ *
+ * The three entry adapters differ ONLY in how they build the AST(s) and collect
+ * the leading TS-diagnostic `errors` (region A); everything below the
+ * parse/check split is identical and lives here.
+ */
+function runPipeline(input: PipelineInput): CompileResult {
+  const { errors, options, entryAst, multiAst, diagnosticAnchor } = input;
+  const targetProfile = resolveCompileTargetProfile(options);
+  const emitWatOutput = options.emitWat !== false;
+
+  const sourceFailure = validatePipelineSource(input);
+  if (sourceFailure) return sourceFailure;
 
   const emitSourceMap = options.sourceMap === true;
   const useLinear = targetProfile.backend === "linear";
@@ -1105,16 +1136,137 @@ function runPipeline(input: PipelineInput): CompileResult {
   return finalizePipelineModule(input, mod, telemetry, { targetProfile, emitWatOutput, emitSourceMap });
 }
 
+/** Internal productive checkpoint; public entry points keep their existing route. */
+export function runPreparedIrPipelinePresentation(input: PipelineInput): PreparedIrPipelinePresentationResult {
+  const snapshot = { ...input, options: freezePreparedIrValue(input.options) as CompileOptions };
+  const { options, entryAst, multiAst, errors } = snapshot;
+  const diagnostics = multiAst ?? {
+    entryFile: entryAst.sourceFile,
+    sourceFiles: [entryAst.sourceFile],
+    checker: entryAst.checker,
+    diagnostics: entryAst.diagnostics,
+    syntacticDiagnostics: entryAst.syntacticDiagnostics,
+  };
+  if (collectMultiDiagnostics(diagnostics, options, errors))
+    return { kind: "output-failed", errors, artifacts: preparedPipelineArtifacts(failResult(errors)) };
+  const targetProfile = resolveCompileTargetProfile(options);
+  const sourceFailure = validatePipelineSource(snapshot);
+  if (sourceFailure) return { kind: "output-failed", errors, artifacts: preparedPipelineArtifacts(sourceFailure) };
+  const target = options.target === "standalone" ? "standalone" : options.target === "wasi" ? "wasi" : "host";
+  const backendOptions: PreparedIrBackendOptions = {
+    backend: targetProfile.backend,
+    target,
+    sharedExceptionTag: options.sharedExceptionTag === true,
+    utf8Storage: options.utf8Storage === true,
+    sourceMap: options.sourceMap === true,
+    moduleName: options.moduleName ?? "module",
+    ...(targetProfile.backend === "linear" ? { linear: buildLinearOptions(options, undefined) } : {}),
+  };
+  const prepared = prepareIrProgramPresentation({
+    preparation: {
+      sourceFiles: multiAst?.sourceFiles ?? [entryAst.sourceFile],
+      entrySource: entryAst.sourceFile,
+      checker: entryAst.checker,
+      policy: { backend: backendOptions.backend, target },
+      deferTopLevelInit: options.deferTopLevelInit === true,
+    },
+    backendOptions,
+    output: {
+      errors,
+      options,
+      entryAst,
+      diagnosticAnchor: snapshot.diagnosticAnchor,
+      sourcesContent: snapshot.sourcesContent,
+      codegenOptions: Object.freeze({ link: snapshot.codegenOptions.link }),
+    },
+  });
+  if (prepared.kind !== "prepared-presentation") return prepared;
+  const finalization: PreparedMixedFinalization | undefined = prepared.requiresDetachedFinalization
+    ? { token: beginPreparedPresentationFinalization(prepared) }
+    : undefined;
+  const wit: PreparedWitFinalization | undefined = options.wit ? { presentation: prepared } : undefined;
+  const finalized = finalizePipelineModule(
+    { ...prepared.output, preparedStartup: prepared.startup },
+    finalization?.token.outputModule ?? prepared.emission.module,
+    undefined,
+    { targetProfile, emitWatOutput: options.emitWat !== false, emitSourceMap: options.sourceMap === true },
+    finalization,
+    wit,
+  );
+  if (wit?.gaps) return { kind: "presentation-unsupported", gaps: wit.gaps };
+  if (finalized.success && finalization && !finalization.receipt)
+    throw new PreparedIrProgramInvariantError(
+      "invalid-transaction-capability",
+      "mixed prepared output lacks completed finalization evidence",
+    );
+  const artifacts = preparedPipelineArtifacts(finalized);
+  if (!finalized.success) return { kind: "output-failed", errors: finalized.errors, artifacts };
+  return {
+    kind: "artifacts",
+    program: prepared.program,
+    emission: prepared.emission,
+    startup: prepared.startup,
+    artifacts,
+    ...(finalization ? { finalization: finalization.receipt! } : {}),
+  };
+}
+
+/** Preserve produced artifact fields without inventing legacy route telemetry. */
+function preparedPipelineArtifacts(
+  result: CompileResult,
+): Extract<PreparedIrPipelinePresentationResult, { kind: "artifacts" }>["artifacts"] {
+  return {
+    binary: result.binary,
+    wat: result.wat,
+    dts: result.dts,
+    importsHelper: result.importsHelper,
+    success: result.success,
+    errors: result.errors,
+    stringPool: result.stringPool,
+    sourceMap: result.sourceMap,
+    imports: result.imports,
+    runtimeRecGroupFingerprint: result.runtimeRecGroupFingerprint,
+    targetProfile: result.targetProfile,
+    hostImportInventory: result.hostImportInventory,
+    hostImportSummary: result.hostImportSummary,
+    capabilityRequirements: result.capabilityRequirements,
+    capabilityProviderDiagnostics: result.capabilityProviderDiagnostics,
+    cHeader: result.cHeader,
+    wit: result.wit,
+    hasMain: result.hasMain,
+    hasTopLevelStatements: result.hasTopLevelStatements,
+    exportSignatures: result.exportSignatures,
+    exportBoundaryPolicies: result.exportBoundaryPolicies,
+    adapterManifest: result.adapterManifest,
+    explanation: result.explanation,
+  };
+}
+
+/** Private holder; only genuine mixed presentation creates a finalization token. */
+interface PreparedMixedFinalization {
+  readonly token: PreparedPresentationFinalization;
+  receipt?: PreparedPresentationFinalizationReceipt;
+}
+
+/** Only the private prepared entry supplies a genuine presentation here. */
+interface PreparedWitFinalization {
+  readonly presentation: Extract<IrProgramPresentationResult, { kind: "prepared-presentation" }>;
+  text?: string;
+  gaps?: readonly IrProgramPresentationGap[];
+}
+
 /** Shared output contract; generation and its diagnostics finish before entry. */
 function finalizePipelineModule(
-  input: PipelineInput,
+  input: PipelineOutputContext,
   mod: WasmModule,
-  telemetry: Partial<FailureTelemetry>,
+  telemetry: Partial<FailureTelemetry> | undefined,
   output: {
     targetProfile: ReturnType<typeof resolveCompileTargetProfile>;
     emitWatOutput: boolean;
     emitSourceMap: boolean;
   },
+  finalization?: PreparedMixedFinalization,
+  wit?: PreparedWitFinalization,
 ): CompileResult {
   const { errors, options, entryAst, diagnosticAnchor } = input;
   const { targetProfile, emitWatOutput, emitSourceMap } = output;
@@ -1131,6 +1283,7 @@ function finalizePipelineModule(
   // results. Avoids "uninitialized non-defaultable local" and struct.get/set
   // type errors.
   widenNonDefaultableTypes(mod);
+  if (finalization) finalization.receipt = completePreparedPresentationFinalization(finalization.token);
 
   // #4401 — An explicitly selected native-first profile is a
   // semantic-provider contract, not a best-effort hint. Never publish a module
@@ -1165,6 +1318,24 @@ function finalizePipelineModule(
       );
       return failResult(errors, telemetry);
     }
+  }
+
+  // Requested prepared WIT must be complete before any final artifacts are emitted.
+  let preparedCapabilities: ReturnType<typeof buildCapabilityRequirements> | undefined;
+  if (wit) {
+    const view = preparedPresentationWitView(wit.presentation, mod);
+    preparedCapabilities = buildCapabilityRequirements(mod, hostImportInventory, targetEnvironment);
+    const rendered = renderPreparedWit(view, {
+      ...(typeof options.wit === "object" ? options.wit : {}),
+      imports: mod.imports,
+      types: mod.types,
+      capabilities: preparedCapabilities,
+    });
+    if (rendered.kind === "unsupported") {
+      wit.gaps = rendered.gaps;
+      return failResult(errors, telemetry);
+    }
+    wit.text = rendered.text;
   }
 
   // Step 3: Emit binary (with source map collection if enabled).
@@ -1252,7 +1423,8 @@ function finalizePipelineModule(
   const dts = profilePhase("emit-dts", () => generateDts(entryAst, mod));
 
   const hostImportSummary = summarizeHostImportInventory(hostImportInventory);
-  const capabilityRequirements = buildCapabilityRequirements(mod, hostImportInventory, targetEnvironment);
+  const capabilityRequirements =
+    preparedCapabilities ?? buildCapabilityRequirements(mod, hostImportInventory, targetEnvironment);
   const capabilityProviderDiagnostics = validatePlatformCapabilityRequirements(
     capabilityRequirements,
     targetEnvironment,
@@ -1261,7 +1433,14 @@ function finalizePipelineModule(
   // Step 6: Generate WIT from the same frozen capability requirements used by
   // explain output and adapter validation, never from a parallel authority map.
   let witOutput: string | undefined;
-  if (options.wit) {
+  if (wit) {
+    if (wit.text === undefined)
+      throw new PreparedIrProgramInvariantError(
+        "invalid-transaction-capability",
+        "prepared WIT lacks preflighted text",
+      );
+    witOutput = wit.text;
+  } else if (options.wit) {
     const witOpts = typeof options.wit === "object" ? options.wit : undefined;
     witOutput = generateWit(entryAst, {
       ...witOpts,
@@ -1312,7 +1491,7 @@ function finalizePipelineModule(
     cHeader,
     wit: witOutput,
     hasMain: mod.exports.some((e) => e.name === "main" && e.desc.kind === "func"),
-    hasTopLevelStatements: mod.hasTopLevelStatements === true,
+    hasTopLevelStatements: input.preparedStartup?.hasTopLevelStatements ?? mod.hasTopLevelStatements === true,
     exportSignatures: mod.exportSignatures,
     exportBoundaryPolicies,
     adapterManifest,
@@ -1509,7 +1688,9 @@ export function compileSourceSync(
     targetProfile.environment === "none" || targetProfile.environment === "wasi"
       ? injectIteratorStaticsPrelude(stdinInjectedSource)
       : { source: stdinInjectedSource, positionMap: PositionMap.identity(), injected: false };
-  const iterStaticsSource = iterStaticsResult.source;
+  // Step 0a.46: #6839 — Wasm-native `Intl.ListFormat` prelude (host-free targets only).
+  const listFormatResult = applyIntlListFormatPrelude(targetProfile.environment, iterStaticsResult.source, options);
+  const iterStaticsSource = listFormatResult.source;
 
   // Step 0a.5: Rewrite CommonJS `const X = require('Y')` patterns to ESM `import`
   // declarations (#1279). This must run before preprocessImports so the resulting
@@ -1539,10 +1720,11 @@ export function compileSourceSync(
   const { rawWasi: wasiRawImports, memAccessors: wasiMemAccessors } = detectRawWasiImports(cjsRewritten);
   const preprocessed = preprocessImports(cjsRewritten2, { wasi: targetProfile.target === "wasi" });
   let processedSource = preprocessed.source;
-  // Compose imports → eval/super → CJS → Iterator → stdin → define back to the original source.
+  // Compose imports → eval/super → CJS → ListFormat → Iterator → stdin → define back to the original source.
   const positionMap = preprocessed.positionMap
     .compose(evalResult.positionMap)
     .compose(cjsResult.positionMap)
+    .compose(listFormatResult.positionMap)
     .compose(iterStaticsResult.positionMap)
     .compose(stdinResult.positionMap)
     .compose(defineResult.positionMap);
@@ -1760,8 +1942,10 @@ export async function compileMultiSource(
       ]),
     ),
   );
+  // #6839 — per-file Wasm-native `Intl.ListFormat` prelude (host-free targets only).
+  const listFormatFiles = applyIntlListFormatPreludeToFiles(multiTargetProfile.environment, timerShimmedFiles);
   const processedFiles = profilePhase("ground-call-fold", () =>
-    foldGroundCallsInMulti(timerShimmedFiles, entryFile, options.optimize),
+    foldGroundCallsInMulti(listFormatFiles, entryFile, options.optimize),
   );
   profileCount("input-files", Object.keys(processedFiles).length);
 
@@ -1862,7 +2046,11 @@ export async function compileMultiSource(
  * diagnostics into `errors`; returns true when a syntax or hard type error
  * must abort the compile.
  */
-function collectMultiDiagnostics(multiAst: MultiTypedAST, options: CompileOptions, errors: CompileError[]): boolean {
+function collectMultiDiagnostics(
+  multiAst: Pick<MultiTypedAST, "entryFile" | "sourceFiles" | "checker" | "diagnostics" | "syntacticDiagnostics">,
+  options: CompileOptions,
+  errors: CompileError[],
+): boolean {
   // When allowJs is set (e.g. compiling npm packages like lodash-es), only report
   // diagnostics from the entry file — dependency files may have TS errors we can't
   // control (missing globals, JSDoc param issues, etc.). strictJsSyntax is the

@@ -48,9 +48,9 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10268,
-    "fail": 1415,
-    "ce": 21,
+    "pass": 10285,
+    "fail": 1401,
+    "ce": 18,
     "skip": 0,
     "total": 11704,
     "pct": 88,
@@ -66,9 +66,9 @@
       },
       {
         "name": "generators",
-        "pass": 2189,
-        "fail": 296,
-        "ce": 1,
+        "pass": 2193,
+        "fail": 293,
+        "ce": 0,
         "skip": 0,
         "total": 2486,
         "pct": 88
@@ -138,12 +138,12 @@
       },
       {
         "name": "class",
-        "pass": 337,
+        "pass": 339,
         "fail": 69,
-        "ce": 4,
+        "ce": 2,
         "skip": 0,
         "total": 410,
-        "pct": 82
+        "pct": 83
       },
       {
         "name": "Reflect",
@@ -174,12 +174,12 @@
       },
       {
         "name": "computed-property-names",
-        "pass": 83,
-        "fail": 50,
+        "pass": 87,
+        "fail": 46,
         "ce": 0,
         "skip": 0,
         "total": 133,
-        "pct": 62
+        "pct": 65
       },
       {
         "name": "cross-realm",
@@ -201,12 +201,12 @@
       },
       {
         "name": "let",
-        "pass": 61,
-        "fail": 15,
+        "pass": 63,
+        "fail": 13,
         "ce": 0,
         "skip": 0,
         "total": 76,
-        "pct": 80
+        "pct": 83
       },
       {
         "name": "Symbol.match",
@@ -462,12 +462,12 @@
       },
       {
         "name": "const",
-        "pass": 11,
-        "fail": 2,
+        "pass": 13,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 13,
-        "pct": 85
+        "pct": 100
       },
       {
         "name": "error-stack-accessor",
@@ -1063,8 +1063,8 @@
   {
     "edition": "ES2018",
     "pass": 3721,
-    "fail": 1099,
-    "ce": 3,
+    "fail": 1098,
+    "ce": 4,
     "skip": 0,
     "total": 4823,
     "pct": 77,
@@ -1072,8 +1072,8 @@
       {
         "name": "async-iteration",
         "pass": 2779,
-        "fail": 1029,
-        "ce": 2,
+        "fail": 1028,
+        "ce": 3,
         "skip": 0,
         "total": 3810,
         "pct": 73
@@ -2187,8 +2187,8 @@
   {
     "edition": "ES2022",
     "pass": 4432,
-    "fail": 1309,
-    "ce": 51,
+    "fail": 1312,
+    "ce": 48,
     "skip": 0,
     "total": 5792,
     "pct": 77,
@@ -2214,8 +2214,8 @@
       {
         "name": "class-methods-private",
         "pass": 1417,
-        "fail": 289,
-        "ce": 3,
+        "fail": 290,
+        "ce": 2,
         "skip": 0,
         "total": 1709,
         "pct": 83
@@ -2223,8 +2223,8 @@
       {
         "name": "class-static-methods-private",
         "pass": 1259,
-        "fail": 253,
-        "ce": 1,
+        "fail": 254,
+        "ce": 0,
         "skip": 0,
         "total": 1513,
         "pct": 83
@@ -2241,8 +2241,8 @@
       {
         "name": "class-fields-private",
         "pass": 994,
-        "fail": 121,
-        "ce": 18,
+        "fail": 122,
+        "ce": 17,
         "skip": 0,
         "total": 1133,
         "pct": 88
@@ -2466,8 +2466,8 @@
       {
         "name": "class-fields-private-in",
         "pass": 10,
-        "fail": 3,
-        "ce": 6,
+        "fail": 6,
+        "ce": 3,
         "skip": 0,
         "total": 19,
         "pct": 53
@@ -3789,8 +3789,8 @@
   },
   {
     "edition": "ES2027",
-    "pass": 496,
-    "fail": 396,
+    "pass": 497,
+    "fail": 395,
     "ce": 5,
     "skip": 0,
     "total": 897,
@@ -3798,8 +3798,8 @@
     "features": [
       {
         "name": "explicit-resource-management",
-        "pass": 283,
-        "fail": 147,
+        "pass": 284,
+        "fail": 146,
         "ce": 0,
         "skip": 0,
         "total": 430,
@@ -4304,9 +4304,9 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4515,
-    "fail": 786,
-    "ce": 144,
+    "pass": 4528,
+    "fail": 769,
+    "ce": 148,
     "skip": 0,
     "total": 5445,
     "pct": 83

@@ -285,6 +285,7 @@ import {
   registerStringExoticPushKeys,
   stringExoticHasOwnPrologue,
 } from "./string-exotic-own-props.js"; // (#4232/#4491) §10.4.3 own props + own keys
+import { inOwnKeyOrder, registerObjOrderIndexOfKey } from "./object-model/object-own-key-order.js"; // (#6770 S3)
 import { ensureWrapperConstructorCarriers, wrapperConstructorArmInstrs } from "./wrapper-constructor-carrier.js"; // (#4223) runtime `<wrapper>.constructor`
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
 import { backedBoundsGuard, canonicalIndexDigitStep } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
@@ -305,6 +306,8 @@ import {
 import { stringWrapperLengthArm } from "./string-wrapper-dynamic-length.js"; // (#6651 C5)
 import { captureWrapperPrimitiveKey } from "./to-primitive-wrapper-slot.js"; // (#4492 wave-5) __to_primitive's [[PrimitiveValue]] arms
 import { buildToPrimitiveBody } from "../runtime/wasmgc/values/to-primitive-bodies.js";
+import { proxyTrapAbsentTail } from "./object-model/proxy-trap-read.js"; // (#6770 S8)
+import { registerExpressionHelpers } from "./registry/expression-helper-delegates.js";
 import type {
   ToPrimitiveCoreBindings,
   ToPrimitiveMethodLiterals,
@@ -4021,10 +4024,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         else: [
           { op: "local.get", index: 2 },
           { op: "ref.cast", typeIdx: proxyTypeIdx },
-          { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: 3 },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: 2 },
-          { op: "ref.is_null" },
+          ...proxyTrapAbsentTail(ctx, 2), // (#6770 S8) has
           {
             op: "if",
             blockType: { kind: "empty" },
@@ -4251,6 +4251,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         boxSymbolIdx,
         applyClosureIdx,
         defaultHint: stringExtern("default"),
+        defaultHintNative: nativeStringLiteralInstrs(ctx, "default"),
         errors: [
           stringExtern(typeErrorMessage),
           stringExtern(typeErrorMessage),
@@ -4573,7 +4574,11 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   //         12=candIdx 13=bestIdx 14=candSeq 15=bestSeq 16=tmp(ref null $PropEntry)
   {
     const entryRef: ValType = { kind: "ref", typeIdx: propEntryTypeIdx };
-    // Inline: leave on stack the array index (i32) for entry `e` (local idx given
+    // (#6770 S3) The sort key covers the FULL array-index domain [0, 2^32-2]
+    // as an i64 (see object-own-key-order.ts); `__obj_index_of_key`'s i32
+    // answer stops at 2^31-1.
+    const orderIndexIdx = registerObjOrderIndexOfKey(ctx, strFlattenIdx);
+    // Inline: leave on stack the array index (i64) for entry `e` (local idx given
     // by `entryLocal`) — its key parsed as a canonical array index, else -1.
     const entryIndexOf = (entryLocal: number): Instr[] => [
       { op: "local.get", index: entryLocal },
@@ -4582,7 +4587,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       // (#2866) key is anyref; entries reaching here are pre-filtered to string
       // keys (the compaction pass excludes `$Symbol` keys), so this cast is safe.
       { op: "ref.cast", typeIdx: anyStrTypeIdx },
-      { op: "call", funcIdx: objIndexOfKeyIdx },
+      { op: "call", funcIdx: orderIndexIdx },
     ];
     const entrySeqOf = (entryLocal: number): Instr[] => [
       { op: "local.get", index: entryLocal },
@@ -4597,8 +4602,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     const keyLess = (candIdx: number, candSeq: number, bestIdx: number, bestSeq: number): Instr[] => [
       // if candIdx >= 0
       { op: "local.get", index: candIdx },
-      { op: "i32.const", value: 0 },
-      { op: "i32.ge_s" },
+      { op: "i64.const", value: 0n },
+      { op: "i64.ge_s" },
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "i32" } },
@@ -4606,12 +4611,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           // candidate is an integer index
           // if bestIdx >= 0 → candIdx < bestIdx ; else → true (int before string)
           { op: "local.get", index: bestIdx },
-          { op: "i32.const", value: 0 },
-          { op: "i32.ge_s" },
+          { op: "i64.const", value: 0n },
+          { op: "i64.ge_s" },
           {
             op: "if",
             blockType: { kind: "val", type: { kind: "i32" } },
-            then: [{ op: "local.get", index: candIdx }, { op: "local.get", index: bestIdx }, { op: "i32.lt_s" }],
+            then: [{ op: "local.get", index: candIdx }, { op: "local.get", index: bestIdx }, { op: "i64.lt_s" }],
             else: [{ op: "i32.const", value: 1 }],
           },
         ],
@@ -4619,8 +4624,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           // candidate is a string key
           // if bestIdx >= 0 → false (string never precedes int) ; else → candSeq < bestSeq
           { op: "local.get", index: bestIdx },
-          { op: "i32.const", value: 0 },
-          { op: "i32.ge_s" },
+          { op: "i64.const", value: 0n },
+          { op: "i64.ge_s" },
           {
             op: "if",
             blockType: { kind: "val", type: { kind: "i32" } },
@@ -4871,8 +4876,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       { name: "k", type: { kind: "i32" } },
       { name: "cand", type: entryRefNull },
       { name: "bestE", type: entryRefNull },
-      { name: "candIdx", type: { kind: "i32" } },
-      { name: "bestIdx", type: { kind: "i32" } },
+      { name: "candIdx", type: { kind: "i64" } },
+      { name: "bestIdx", type: { kind: "i64" } },
       { name: "candSeq", type: { kind: "i32" } },
       { name: "bestSeq", type: { kind: "i32" } },
       { name: "tmp", type: entryRefNull },
@@ -8675,7 +8680,7 @@ function buildClosedStructEnumerationArms(
   const arms: Instr[] = [];
   for (const entry of entries) {
     const pushFields: Instr[] = [];
-    for (const field of entry.fields) {
+    for (const field of inOwnKeyOrder(entry.fields, (f) => f.name)) {
       const pushName: Instr[] = [
         { op: "local.get", index: vecLocalIdx },
         ...nativeStringLiteralInstrs(ctx, field.name),
@@ -11895,3 +11900,5 @@ export const OBJECT_RUNTIME_HELPER_NAMES: ReadonlySet<string> = new Set([
   // builder (the value arrives already boxed as a `$Symbol` carrier).
   "__new_Symbol",
 ]);
+
+registerExpressionHelpers({ ensureObjVecBuilders, reserveApplyClosure }); // (#6797) late-bound for the expressions/ leaves

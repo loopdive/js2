@@ -1,0 +1,1684 @@
+{
+  "schemaVersion": 1,
+  "kind": "5883-main5f-reader-epoch",
+  "offsetUnit": "utf16-code-units",
+  "beforeCommit": "e0068df255d8a77d1bdb641a88ea339c7dc7c6d0",
+  "incomingCommit": "5f953c8e05919a304d5d3b8e3811e882962a9f33",
+  "composedState": "uncommitted-merge-composition",
+  "mergeParents": ["e0068df255d8a77d1bdb641a88ea339c7dc7c6d0", "5f953c8e05919a304d5d3b8e3811e882962a9f33"],
+  "oldReceipt": {
+    "path": "tests/fixtures/issue-5883-historical-reader-successors.json",
+    "bytes": 149218,
+    "utf16Length": 149081,
+    "sha256": "32c7b8d9dff6071c8f468335c9300a931ae34dae772ea5095c096b9aaa444ff7",
+    "gitBlob": "a847ece9eeb4aa1bc5a587db0b7d25a397c9716b"
+  },
+  "semanticScope": "Historical source authentication only. Current incoming semantics and checkpoint Promise services require separate runtime coverage.",
+  "historicalEvidence": {
+    "path": "tests/fixtures/issue-5883-historical-reader-successors-e0068.ts.txt",
+    "originalPath": "tests/issue-5883-historical-reader-successors.test.ts",
+    "commit": "e0068df255d8a77d1bdb641a88ea339c7dc7c6d0",
+    "bytes": 13581,
+    "utf16Length": 13581,
+    "sha256": "a2590728bcaccb35821443b5c000d0112faa1448bd4dca2ea1e8bc81af0bbc38",
+    "gitBlob": "b2c037c012b08fd1d6fd847faed412ccba795829",
+    "amendedControl": "keeps three already-matching dependency sources raw, with no unnecessary inverse",
+    "observedFailure": "historical-promise successor dependency mismatch: src/codegen/carrier-bag-visibility.ts",
+    "observedFailureScope": "Parent direct helper authentication exited 1; no runtime regression measurement."
+  },
+  "records": [
+    {
+      "path": "src/codegen/builtin-value-read.ts",
+      "role": "operand",
+      "before": {
+        "bytes": 88886,
+        "utf16Length": 88644,
+        "sha256": "7d17c83b51dd4e0a56b75589ba70a8261ee8f9e06d8655cf02c99b73730b040c",
+        "gitBlob": "093ba45bc86eba98141f21da040a1b5833eacbb1"
+      },
+      "after": {
+        "bytes": 89179,
+        "utf16Length": 88937,
+        "sha256": "22390b878b02aa3cb700397d0dad0bb16a7638c39fdb86e7b3e8c051e178be41",
+        "gitBlob": "8b927d3fe222498a8b6180fbd7aa4a77453a6744"
+      },
+      "incoming": {
+        "bytes": 89179,
+        "utf16Length": 88937,
+        "sha256": "22390b878b02aa3cb700397d0dad0bb16a7638c39fdb86e7b3e8c051e178be41",
+        "gitBlob": "8b927d3fe222498a8b6180fbd7aa4a77453a6744"
+      },
+      "equalsIncoming": true,
+      "spans": [
+        {
+          "ordinal": 0,
+          "beforeOffset": 2884,
+          "afterOffset": 2884,
+          "before": "",
+          "after": "import { tryEmitOverriddenProtoMemberRead } from \"./object-model/object-proto-to-locale-string.js\";\n",
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "1877ef68d12168b845c49561144764e8db989251b5da913fa64f066f2d2ae896"
+        },
+        {
+          "ordinal": 1,
+          "beforeOffset": 39015,
+          "afterOffset": 39115,
+          "before": "",
+          "after": "  const overridden =\n    kind === \"method\" ? tryEmitOverriddenProtoMemberRead(ctx, fctx, expr, builtinName, brand) : undefined;\n  if (overridden !== undefined) return overridden; // (#6770 S5)\n",
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "35fdc5814dae363cea5e4e0798087255cbe2ca2080ce12817479e95a14370fc9"
+        }
+      ],
+      "retained": [
+        {
+          "beforeOffset": 0,
+          "afterOffset": 0,
+          "length": 2884,
+          "sha256": "ec3d86c504fad93b051f8bc6d4a8c10dff081ed2a5446699d062c416e76650b8"
+        },
+        {
+          "beforeOffset": 2884,
+          "afterOffset": 2984,
+          "length": 36131,
+          "sha256": "edc1fe5975662ec1c437c1c212362535e40daa714da6cca5ce05cb6057fe0b64"
+        },
+        {
+          "beforeOffset": 39015,
+          "afterOffset": 39308,
+          "length": 49629,
+          "sha256": "c727e54f208e109c85ddbec7cdd68f7296ccd02f4d8456f4624d06dbf3c1f127"
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/carrier-bag-visibility.ts",
+      "role": "dependency",
+      "before": {
+        "bytes": 37562,
+        "utf16Length": 37276,
+        "sha256": "7a0820f193e2ddd2ac32488ebc99aaa7df9b6bf0370c096f36904dfeba3dc201",
+        "gitBlob": "889f0b01fb14fc64ffebce10bfc5909a7407030a"
+      },
+      "after": {
+        "bytes": 39364,
+        "utf16Length": 39076,
+        "sha256": "a270964931213269b84a0bafcff221bbbe1b7c67863b7b739438355cdfcf2e06",
+        "gitBlob": "c1968a6b6b9e7d8d5494a5aea07dec639fc61b71"
+      },
+      "incoming": {
+        "bytes": 39364,
+        "utf16Length": 39076,
+        "sha256": "a270964931213269b84a0bafcff221bbbe1b7c67863b7b739438355cdfcf2e06",
+        "gitBlob": "c1968a6b6b9e7d8d5494a5aea07dec639fc61b71"
+      },
+      "equalsIncoming": true,
+      "spans": [
+        {
+          "ordinal": 0,
+          "beforeOffset": 5721,
+          "afterOffset": 5721,
+          "before": "",
+          "after": "import { fnIntrinsicKeyPhases } from \"./object-model/object-own-key-order.js\"; // (#6770 S3) function key order\nimport { CARRIER_BAG_HAS } from \"./object-model/native-names.js\"; // (#6770) leaf-shared name\n",
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "41f71c1a4ddb8615ddd22e6a7766ad1c2c51f66f65d208a97b7f8bea4a83cc31"
+        },
+        {
+          "ordinal": 1,
+          "beforeOffset": 6913,
+          "afterOffset": 7119,
+          "before": "export const CARRIER_BAG_HAS = \"__carrier_bag_has\";\n",
+          "after": "export { CARRIER_BAG_HAS }; // (#6770) defined in object-model/native-names.ts\n",
+          "beforeSha256": "1e67dc0e55b72f2e6109123fb00dda53e9b9f977265bd1ca27ff31b22c84e5a0",
+          "afterSha256": "1f9cea765e3819e86c7b5d718d74b311f4f779d3de868d067b5340831e38a1f8"
+        },
+        {
+          "ordinal": 2,
+          "beforeOffset": 30111,
+          "afterOffset": 30344,
+          "before": "",
+          "after": "  const PHASE = 12; // (#6770 S3)\n  const IS_FN = 13;\n  const phases = fnIntrinsicKeyPhases(ctx, {\n    phaseLocal: PHASE,\n    fnLocal: IS_FN,\n    entryLocal: E,\n    propEntryTypeIdx,\n  }) ?? {\n    init: [{ op: \"i32.const\", value: 2 } as Instr, { op: \"local.set\", index: PHASE } as Instr],\n    keep: [{ op: \"i32.const\", value: 1 } as Instr],\n    next: [{ op: \"br\", depth: 1 } as Instr],\n  };\n",
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "a0cc0e2f24ebeefb9afd1b859da4f6573f03099b4b684ab7e88e16614856cded"
+        },
+        {
+          "ordinal": 3,
+          "beforeOffset": 32108,
+          "afterOffset": 32732,
+          "before": "",
+          "after": "      { name: \"phase\", type: I32 },\n      { name: \"isFn\", type: I32 },\n",
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "7067b3dd27c428a28a80fe370eaed2e423c04e77b19b891ab01a56d798cb779e"
+        },
+        {
+          "ordinal": 4,
+          "beforeOffset": 33372,
+          "afterOffset": 34067,
+          "before": "      { op: \"i32.const\", value: 0 },\n      { op: \"local.set\", index: I },\n",
+          "after": "      // (#6770 S3) a function's `length`/`name` entries lead — see fnIntrinsicKeyPhases\n      ...phases.init,\n",
+          "beforeSha256": "ca440c6e7984723634c276d076cbb5287ca3d6c4f541249f9d75eabf2768ca8a",
+          "afterSha256": "f6b0ce041a086a5e6511ba23e6f8c76a22dc7054882bd5372da346968021ffaa"
+        },
+        {
+          "ordinal": 5,
+          "beforeOffset": 33627,
+          "afterOffset": 34359,
+          "before": "              { op: \"local.get\", index: I },\n              { op: \"local.get\", index: CAP },\n              { op: \"i32.ge_s\" },\n              { op: \"br_if\", depth: 1 },\n              { op: \"local.get\", index: ARR },\n              { op: \"ref.as_non_null\" },\n              { op: \"local.get\", index: I },\n              { op: \"array.get\", typeIdx: propMapTypeIdx },\n              { op: \"local.tee\", index: E },\n              { op: \"ref.is_null\" },\n              { op: \"br_if\", depth: 1 },\n              // (#4194) skip the #4098 tombstone marker — a deleted declared\n              // field must not reappear as an own key of the bag.\n              ...buildBagMarkerTestInstrs(ctx, { entryLocal: E, bagLocal: BAG, tmpAnyLocal: V }),\n              { op: \"i32.eqz\" },\n              // (#6651 H4) …AND the key-kind screen. Folded into the marker\n              // `if`'s condition rather than added as a `br_if` or an extra\n              // wrapping `if` on purpose: `buildBagKeyDedupeSkip` below bakes\n              // LITERAL branch depths (0=its own if … 4=the key loop), so one\n              // more enclosing block would silently retarget its `br 4` and\n              // turn the de-dup `continue` into something else. Widening this\n              // condition leaves every depth exactly where it was.\n              ...bagKeyKindKeep,\n              { op: \"i32.and\" },\n              {\n                op: \"if\",\n                blockType: { kind: \"empty\" },\n                then: [\n                  { op: \"local.get\", index: E },\n                  { op: \"ref.as_non_null\" },\n                  { op: \"struct.get\", typeIdx: propEntryTypeIdx, fieldIdx: 0 },\n                  { op: \"extern.convert_any\" },\n                  { op: \"local.set\", index: KEY },\n                  // (#5268 review R2-1) §10.1.11 OrdinaryOwnPropertyKeys is a\n                  // key LIST, and a list has no duplicates. The caller has\n                  // already pushed the carrier's STATIC own keys, so a bag\n                  // entry that merely re-describes one of them — which is what\n                  // `Object.defineProperty(o, <existing key>, …)` records,\n                  // because a closed struct field has no attribute slots —\n                  // must not be listed a second time.\n                  //\n                  // Measured before this guard, on this tree AND on\n                  // `origin/main`: `Reflect.defineProperty({a:1,b:2}, \"a\", d)`\n                  // made `Reflect.ownKeys(o)` read `a,b,a` and\n                  // `getOwnPropertyNames(o).length` 3. A second define of the\n                  // same key did NOT grow it again, which is what identifies\n                  // the defect as this MERGE rather than the bag insert (the\n                  // bag itself de-duplicates).\n                  ...buildBagKeyDedupeSkip({\n                    externLengthIdx,\n                    externGetIdxIdx,\n                    strictEqIdx,\n                    vecParam: 1,\n                    keyLocal: KEY,\n                    seenILocal: SEEN_I,\n                    seenNLocal: SEEN_N,\n                    outerIndexLocal: I,\n                  }),\n                  { op: \"local.get\", index: 1 }, // vec\n                  { op: \"local.get\", index: KEY },\n                  { op: \"call\", funcIdx: objVecPushIdx },\n                ],\n              },\n              { op: \"local.get\", index: I },\n              { op: \"i32.const\", value: 1 },\n              { op: \"i32.add\" },\n              { op: \"local.set\", index: I },\n              { op: \"br\", depth: 0 },\n",
+          "after": "              { op: \"i32.const\", value: 0 },\n              { op: \"local.set\", index: I },\n              {\n                op: \"block\",\n                blockType: { kind: \"empty\" },\n                body: [\n                  {\n                    op: \"loop\",\n                    blockType: { kind: \"empty\" },\n                    body: [\n                      { op: \"local.get\", index: I },\n                      { op: \"local.get\", index: CAP },\n                      { op: \"i32.ge_s\" },\n                      { op: \"br_if\", depth: 1 },\n                      { op: \"local.get\", index: ARR },\n                      { op: \"ref.as_non_null\" },\n                      { op: \"local.get\", index: I },\n                      { op: \"array.get\", typeIdx: propMapTypeIdx },\n                      { op: \"local.tee\", index: E },\n                      { op: \"ref.is_null\" },\n                      { op: \"br_if\", depth: 1 },\n                      // (#4194) skip the #4098 tombstone marker — a deleted declared\n                      // field must not reappear as an own key of the bag.\n                      ...buildBagMarkerTestInstrs(ctx, { entryLocal: E, bagLocal: BAG, tmpAnyLocal: V }),\n                      { op: \"i32.eqz\" },\n                      // (#6651 H4) …AND the key-kind screen. Folded into the marker\n                      // `if`'s condition rather than added as a `br_if` or an extra\n                      // wrapping `if` on purpose: `buildBagKeyDedupeSkip` below bakes\n                      // LITERAL branch depths (0=its own if … 4=the key loop), so one\n                      // more enclosing block would silently retarget its `br 4` and\n                      // turn the de-dup `continue` into something else. Widening this\n                      // condition leaves every depth exactly where it was.\n                      ...bagKeyKindKeep,\n                      { op: \"i32.and\" },\n                      ...phases.keep,\n                      { op: \"i32.and\" },\n                      {\n                        op: \"if\",\n                        blockType: { kind: \"empty\" },\n                        then: [\n                          { op: \"local.get\", index: E },\n                          { op: \"ref.as_non_null\" },\n                          { op: \"struct.get\", typeIdx: propEntryTypeIdx, fieldIdx: 0 },\n                          { op: \"extern.convert_any\" },\n                          { op: \"local.set\", index: KEY },\n                          // (#5268 review R2-1) §10.1.11 OrdinaryOwnPropertyKeys is a\n                          // key LIST, and a list has no duplicates. The caller has\n                          // already pushed the carrier's STATIC own keys, so a bag\n                          // entry that merely re-describes one of them — which is what\n                          // `Object.defineProperty(o, <existing key>, …)` records,\n                          // because a closed struct field has no attribute slots —\n                          // must not be listed a second time.\n                          //\n                          // Measured before this guard, on this tree AND on\n                          // `origin/main`: `Reflect.defineProperty({a:1,b:2}, \"a\", d)`\n                          // made `Reflect.ownKeys(o)` read `a,b,a` and\n                          // `getOwnPropertyNames(o).length` 3. A second define of the\n                          // same key did NOT grow it again, which is what identifies\n                          // the defect as this MERGE rather than the bag insert (the\n                          // bag itself de-duplicates).\n                          ...buildBagKeyDedupeSkip({\n                            externLengthIdx,\n                            externGetIdxIdx,\n                            strictEqIdx,\n                            vecParam: 1,\n                            keyLocal: KEY,\n                            seenILocal: SEEN_I,\n                            seenNLocal: SEEN_N,\n                            outerIndexLocal: I,\n                          }),\n                          { op: \"local.get\", index: 1 }, // vec\n                          { op: \"local.get\", index: KEY },\n                          { op: \"call\", funcIdx: objVecPushIdx },\n                        ],\n                      },\n                      { op: \"local.get\", index: I },\n                      { op: \"i32.const\", value: 1 },\n                      { op: \"i32.add\" },\n                      { op: \"local.set\", index: I },\n                      { op: \"br\", depth: 0 },\n                    ],\n                  },\n                ],\n              },\n              ...phases.next,\n",
+          "beforeSha256": "06435bca92cc76838541aec456e886803238de4374635beb56e08897d83051d6",
+          "afterSha256": "0c5ab34ad0ea4b1d39bb3861ef6001f59be187cdeec6473a7967573f866e4576"
+        }
+      ],
+      "retained": [
+        {
+          "beforeOffset": 0,
+          "afterOffset": 0,
+          "length": 5721,
+          "sha256": "e9a03c349f6409dd3f858c6047abafb1eff9392a20f13faa71ae02f38b3f07d7"
+        },
+        {
+          "beforeOffset": 5721,
+          "afterOffset": 5927,
+          "length": 1192,
+          "sha256": "23ac729d79b55680c3cf11647ae4c31a95a45986e243f269577e5114dfb35a7d"
+        },
+        {
+          "beforeOffset": 6965,
+          "afterOffset": 7198,
+          "length": 23146,
+          "sha256": "e110ca74167a9660a720c26f9ade4c33febd660e401bc593a37a2a8e5aed2045"
+        },
+        {
+          "beforeOffset": 30111,
+          "afterOffset": 30735,
+          "length": 1997,
+          "sha256": "8ef19d3043419bcd0dcf4aa77e751def6cc6bec795ca387c37273a4705bad884"
+        },
+        {
+          "beforeOffset": 32108,
+          "afterOffset": 32803,
+          "length": 1264,
+          "sha256": "f0f294fedbe28136cdde12275ff38377f4b7af33a10e737ddfada7658d96b32b"
+        },
+        {
+          "beforeOffset": 33446,
+          "afterOffset": 34178,
+          "length": 181,
+          "sha256": "07ff9614ea7648f27d171cc5cd9d75d8f3ffabf206b4c7b77ad1760f97248ede"
+        },
+        {
+          "beforeOffset": 37177,
+          "afterOffset": 38977,
+          "length": 99,
+          "sha256": "1dfde8ed1881f278f49a3ddff6b39e7c3be465e958e262eba44546643fa38d76"
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/context/create-context.ts",
+      "role": "dependency",
+      "before": {
+        "bytes": 34836,
+        "utf16Length": 34764,
+        "sha256": "a07acec155a4ae6bda04138e18170dff9ecb05636cb5113b966d8eeba0554009",
+        "gitBlob": "0d3842f97e9e2fadaaf6cc642526f4cd4924680a"
+      },
+      "after": {
+        "bytes": 34918,
+        "utf16Length": 34846,
+        "sha256": "7117f72e45938682a489d9a5baa5bf0782a6b2d6835c6c3ec4c92bad4fde2509",
+        "gitBlob": "6f0db20174659128817550c5c58aa972290b361f"
+      },
+      "incoming": {
+        "bytes": 29248,
+        "utf16Length": 29176,
+        "sha256": "495ed748683bd633db7f3815191b6491413ad9899fccf589394baa0d0a9fcca1",
+        "gitBlob": "d7618c6d9bd56f133cd2d3b7cab247f9db6a6161"
+      },
+      "equalsIncoming": false,
+      "spans": [
+        {
+          "ordinal": 0,
+          "beforeOffset": 17776,
+          "afterOffset": 17776,
+          "before": "",
+          "after": "    classInstanceAccessorKeys: new Set(),\n",
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "ce10f36c725cdbd353803bec4d11de015663f7ad338b808e83545d8eba75fcc0"
+        },
+        {
+          "ordinal": 1,
+          "beforeOffset": 20443,
+          "afterOffset": 20485,
+          "before": "",
+          "after": "    classExprAmbiguousNames: new Set(),\n",
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "264f825586433bcf665c038f041b27b135ea78444c90a5bdf91ddca2e16ecc2a"
+        }
+      ],
+      "retained": [
+        {
+          "beforeOffset": 0,
+          "afterOffset": 0,
+          "length": 17776,
+          "sha256": "8f3417a08209e3d4a30b81b170e062556b8f4fb9b1f7a6a24b32376e3ebd0c48"
+        },
+        {
+          "beforeOffset": 17776,
+          "afterOffset": 17818,
+          "length": 2667,
+          "sha256": "b6d3844881d7f70ad3f8aafde136f7f492df470421544e16f3bbf8937c485393"
+        },
+        {
+          "beforeOffset": 20443,
+          "afterOffset": 20525,
+          "length": 14321,
+          "sha256": "78de6cf672bfcb795d66e56c6b562c43c8e5dfe5b787976f7c3537351700a459"
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/context/types.ts",
+      "role": "dependency",
+      "before": {
+        "bytes": 273696,
+        "utf16Length": 272577,
+        "sha256": "ed8ab51deec2f0d104a9f4b3b24fa863fb150ec6338e2e5eb54aa92f179087b6",
+        "gitBlob": "5a2a59febf7a2edf157537e7c807c65aba4e2cb9"
+      },
+      "after": {
+        "bytes": 274246,
+        "utf16Length": 273127,
+        "sha256": "58f3fa0f768168bf654ea7dd4697ee59b25b9676bd60acd7865cb1c59d875c99",
+        "gitBlob": "6aca0c6d4ab64edaefa155e484e5cc509bab436b"
+      },
+      "incoming": {
+        "bytes": 273856,
+        "utf16Length": 272737,
+        "sha256": "09d4aa06e04b463a6979263dccd8ec2e544db725c57ef8a231af23c7f3e950fe",
+        "gitBlob": "a20d10dcee368a72bc9b8c19f5f313a20d6ff97c"
+      },
+      "equalsIncoming": false,
+      "spans": [
+        {
+          "ordinal": 0,
+          "beforeOffset": 54506,
+          "afterOffset": 54506,
+          "before": "",
+          "after": "  /** (#6774 S4) Frame slot holding the `new.target` snapshot arrows capture. */\n  newTargetSnapshotLocal?: number;\n  /** (#6774 S4) A fnctor `new F()` body's `new.target` value: the binding naming `F`. */\n  newTargetValueNode?: ts.Expression;\n",
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "07f8d00dcfc1175c5c1e278ced6f846567b41ecd65612d3483a43296be5826f1"
+        },
+        {
+          "ordinal": 1,
+          "beforeOffset": 115566,
+          "afterOffset": 115810,
+          "before": "",
+          "after": "  /** (#6772 S12) \"ClassName_propName\" of every INSTANCE class accessor, filled before any accessor key is minted. */\n  classInstanceAccessorKeys: Set<string>;\n",
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "dbbe29b14384404021c9971980fa131676c6a5d90682dd94ec08f3978cdd63a0"
+        },
+        {
+          "ordinal": 2,
+          "beforeOffset": 184141,
+          "afterOffset": 184545,
+          "before": "",
+          "after": "  /** (#6772 S7) Names assigned two DIFFERENT class expressions: never put back in `classExprNameMap`. */\n  classExprAmbiguousNames: Set<string>;\n",
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "3ecbbc4e8030fabff06b410fdfc63a7d074cdd56956f41f072625029d99a1fdc"
+        }
+      ],
+      "retained": [
+        {
+          "beforeOffset": 0,
+          "afterOffset": 0,
+          "length": 54506,
+          "sha256": "ecf81373c929de67103ec85da4dc744d409850fb71c260584fa5b0dfaada0bbd"
+        },
+        {
+          "beforeOffset": 54506,
+          "afterOffset": 54750,
+          "length": 61060,
+          "sha256": "c8170b99efa48c2269d2371cfa056947b2a13af0d30c13538190735dd9f27ac6"
+        },
+        {
+          "beforeOffset": 115566,
+          "afterOffset": 115970,
+          "length": 68575,
+          "sha256": "fd5f58db66a57216bb588bfd005c715ed8cad49e4d9597ce7663719d2c0ded9d"
+        },
+        {
+          "beforeOffset": 184141,
+          "afterOffset": 184691,
+          "length": 88436,
+          "sha256": "4a5b994397ebccf94939ba380e3e6323c61efbc714907e5955207c81cdb856b1"
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/object-runtime.ts",
+      "role": "dependency",
+      "before": {
+        "bytes": 551001,
+        "utf16Length": 548348,
+        "sha256": "a4369598ddf305707830d69dd0dd3e4c130e92bab4462dee456b052e26a588e8",
+        "gitBlob": "02a4cbc8a2f2f74813b9cdfa2d8013291366f3b4"
+      },
+      "after": {
+        "bytes": 551621,
+        "utf16Length": 548968,
+        "sha256": "4faf6ce56327a9c46cb7479c7f11a16fc3c8ac219673cb38710b2fc0d66fe937",
+        "gitBlob": "6328ded6b504808974b22782b08a6be61541474f"
+      },
+      "incoming": {
+        "bytes": 551621,
+        "utf16Length": 548968,
+        "sha256": "4faf6ce56327a9c46cb7479c7f11a16fc3c8ac219673cb38710b2fc0d66fe937",
+        "gitBlob": "6328ded6b504808974b22782b08a6be61541474f"
+      },
+      "equalsIncoming": true,
+      "spans": [
+        {
+          "ordinal": 0,
+          "beforeOffset": 14851,
+          "afterOffset": 14851,
+          "before": "",
+          "after": "import { inOwnKeyOrder, registerObjOrderIndexOfKey } from \"./object-model/object-own-key-order.js\"; // (#6770 S3)\n",
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "fe19cb561d3d7dce9b8791c7d3eb32fd6e41e2b5282522a0e3898ffb53343c4b"
+        },
+        {
+          "ordinal": 1,
+          "beforeOffset": 16265,
+          "afterOffset": 16379,
+          "before": "",
+          "after": "import { proxyTrapAbsentTail } from \"./object-model/proxy-trap-read.js\"; // (#6770 S8)\nimport { registerExpressionHelpers } from \"./registry/expression-helper-delegates.js\";\n",
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "c72bb2bf14ccc539d276df15dc9b8881531257ae1baec86b11fdf2f5f6b40dcd"
+        },
+        {
+          "ordinal": 2,
+          "beforeOffset": 188655,
+          "afterOffset": 188943,
+          "before": "          { op: \"struct.get\", typeIdx: proxyTypeIdx, fieldIdx: 3 },\n          { op: \"ref.as_non_null\" },\n          { op: \"struct.get\", typeIdx: proxyTrapsTypeIdx, fieldIdx: 2 },\n          { op: \"ref.is_null\" },\n",
+          "after": "          ...proxyTrapAbsentTail(ctx, 2), // (#6770 S8) has\n",
+          "beforeSha256": "fd1eae4af2237dec2d1ea575393b0596269e4d7daa23941ff836fd26d78e8b94",
+          "afterSha256": "ac05c1bf98595cff2bc38035961ee38f379b297877198f4277106ee285edcb63"
+        },
+        {
+          "ordinal": 3,
+          "beforeOffset": 199120,
+          "afterOffset": 199257,
+          "before": "",
+          "after": "        defaultHintNative: nativeStringLiteralInstrs(ctx, \"default\"),\n",
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "f038b4ae773aea6b7930c75c28cdab9b95d7f46828cf93d80c4c3a64dd241793"
+        },
+        {
+          "ordinal": 4,
+          "beforeOffset": 213431,
+          "afterOffset": 213638,
+          "before": "    // Inline: leave on stack the array index (i32) for entry `e` (local idx given\n",
+          "after": "    // (#6770 S3) The sort key covers the FULL array-index domain [0, 2^32-2]\n    // as an i64 (see object-own-key-order.ts); `__obj_index_of_key`'s i32\n    // answer stops at 2^31-1.\n    const orderIndexIdx = registerObjOrderIndexOfKey(ctx, strFlattenIdx);\n    // Inline: leave on stack the array index (i64) for entry `e` (local idx given\n",
+          "beforeSha256": "b4073f4dbb7c4f3c3fbaeb484486242ccc49b170d93c08c6f03088beef3de1e8",
+          "afterSha256": "5859655f81863e020437b187c916555733d99373710e52ad71a08c01ab563d10"
+        },
+        {
+          "ordinal": 5,
+          "beforeOffset": 214013,
+          "afterOffset": 214478,
+          "before": "      { op: \"call\", funcIdx: objIndexOfKeyIdx },\n",
+          "after": "      { op: \"call\", funcIdx: orderIndexIdx },\n",
+          "beforeSha256": "c8107a1ad41a525fdddaa09564172b56bc658c18facfe15350c9cd7408a5c4db",
+          "afterSha256": "ce1ba188a05dd250756b96c719b7d3085e19242f30718c8cc586f6c9b44bd338"
+        },
+        {
+          "ordinal": 6,
+          "beforeOffset": 214784,
+          "afterOffset": 215246,
+          "before": "      { op: \"i32.const\", value: 0 },\n      { op: \"i32.ge_s\" },\n",
+          "after": "      { op: \"i64.const\", value: 0n },\n      { op: \"i64.ge_s\" },\n",
+          "beforeSha256": "fa16f529eb615632c766b92e3d8392002ec7fa04bf963ac41629d7995aece2b1",
+          "afterSha256": "8a29c4e43baea0a67cbc4c3ed599f7ae9a99ecaf48bdbc401ed63349e1cc8186"
+        },
+        {
+          "ordinal": 7,
+          "beforeOffset": 215121,
+          "afterOffset": 215584,
+          "before": "          { op: \"i32.const\", value: 0 },\n          { op: \"i32.ge_s\" },\n",
+          "after": "          { op: \"i64.const\", value: 0n },\n          { op: \"i64.ge_s\" },\n",
+          "beforeSha256": "a4983381a18f6c891e98e01038490aea9bb96a82c2cd9274e27effe0c29e27e4",
+          "afterSha256": "c79d2bbaff5be30ff7a7edc8d8143bde5cbd0d03dc8a80e6b35c89e49e16d210"
+        },
+        {
+          "ordinal": 8,
+          "beforeOffset": 215289,
+          "afterOffset": 215753,
+          "before": "            then: [{ op: \"local.get\", index: candIdx }, { op: \"local.get\", index: bestIdx }, { op: \"i32.lt_s\" }],\n",
+          "after": "            then: [{ op: \"local.get\", index: candIdx }, { op: \"local.get\", index: bestIdx }, { op: \"i64.lt_s\" }],\n",
+          "beforeSha256": "c41e2f6d8f7361350fa9a9e5685083b8e6c88582c94caf66974c3bbed97f8563",
+          "afterSha256": "4dc6647dd73e711044862439d2b5834a60e95d2a1336873fd179869d978ab7c1"
+        },
+        {
+          "ordinal": 9,
+          "beforeOffset": 215672,
+          "afterOffset": 216136,
+          "before": "          { op: \"i32.const\", value: 0 },\n          { op: \"i32.ge_s\" },\n",
+          "after": "          { op: \"i64.const\", value: 0n },\n          { op: \"i64.ge_s\" },\n",
+          "beforeSha256": "a4983381a18f6c891e98e01038490aea9bb96a82c2cd9274e27effe0c29e27e4",
+          "afterSha256": "c79d2bbaff5be30ff7a7edc8d8143bde5cbd0d03dc8a80e6b35c89e49e16d210"
+        },
+        {
+          "ordinal": 10,
+          "beforeOffset": 226754,
+          "afterOffset": 227219,
+          "before": "      { name: \"candIdx\", type: { kind: \"i32\" } },\n      { name: \"bestIdx\", type: { kind: \"i32\" } },\n",
+          "after": "      { name: \"candIdx\", type: { kind: \"i64\" } },\n      { name: \"bestIdx\", type: { kind: \"i64\" } },\n",
+          "beforeSha256": "ef4f276dd63550e3b75354872211fa2e53db86f1f48c35dbe506849393f9fd0e",
+          "afterSha256": "6be6001d48b4765e25a0d7c719944c8655354a76db204886ecbc6b00469f75ec"
+        },
+        {
+          "ordinal": 11,
+          "beforeOffset": 401773,
+          "afterOffset": 402238,
+          "before": "    for (const field of entry.fields) {\n",
+          "after": "    for (const field of inOwnKeyOrder(entry.fields, (f) => f.name)) {\n",
+          "beforeSha256": "08ce182e0c5d6194f1ddec34594472f86113a1f512797b3164bbbe2482458b36",
+          "afterSha256": "abb5e1aa45277d86f66d3e66b8dc2ed79be14ffe7c092319da37354a460a0182"
+        },
+        {
+          "ordinal": 12,
+          "beforeOffset": 548348,
+          "afterOffset": 548843,
+          "before": "",
+          "after": "\nregisterExpressionHelpers({ ensureObjVecBuilders, reserveApplyClosure }); // (#6797) late-bound for the expressions/ leaves\n",
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "c72bf192da3e543316cf878f906bbd9cf943587717e032a22667c75bdf537e91"
+        }
+      ],
+      "retained": [
+        {
+          "beforeOffset": 0,
+          "afterOffset": 0,
+          "length": 14851,
+          "sha256": "6527dc249d9242af7d20b9284544bb1817d080f1701c7f9d983b66bde6e2777a"
+        },
+        {
+          "beforeOffset": 14851,
+          "afterOffset": 14965,
+          "length": 1414,
+          "sha256": "a0c36a3901454d8fba23196584f83bb00dbb47980d8c3ce80494fa5bb28f333c"
+        },
+        {
+          "beforeOffset": 16265,
+          "afterOffset": 16553,
+          "length": 172390,
+          "sha256": "57cd42c43b726f48e7d2fba9a5851587e3de15d2f68145a713863de1c40ba4c4"
+        },
+        {
+          "beforeOffset": 188866,
+          "afterOffset": 189003,
+          "length": 10254,
+          "sha256": "c43422366981e308960bd6108da825f857e5e0278cea8174e9c400f0514a252e"
+        },
+        {
+          "beforeOffset": 199120,
+          "afterOffset": 199327,
+          "length": 14311,
+          "sha256": "c4b458da2726aeff229b7964b97c99479385e97419a539e45f729ca6b75a7a8a"
+        },
+        {
+          "beforeOffset": 213514,
+          "afterOffset": 213979,
+          "length": 499,
+          "sha256": "48ed0c2e96981c59aa0ebc6054b229c4f1262f0032caf7daa2d594feebffaa78"
+        },
+        {
+          "beforeOffset": 214062,
+          "afterOffset": 214524,
+          "length": 722,
+          "sha256": "891243f925a95869e3623c76c3f56d5ce310a603f5d170b8592b8df6647f66bf"
+        },
+        {
+          "beforeOffset": 214847,
+          "afterOffset": 215310,
+          "length": 274,
+          "sha256": "e14f866e07e37f1d670562f4180a96b4d85c5de6f292df94cc2a3cbf2363e8d4"
+        },
+        {
+          "beforeOffset": 215192,
+          "afterOffset": 215656,
+          "length": 97,
+          "sha256": "38a154195658e697ee05f4d2eb5d58bc95d81f0d46acfc641dc4d8af99db0dd6"
+        },
+        {
+          "beforeOffset": 215403,
+          "afterOffset": 215867,
+          "length": 269,
+          "sha256": "b06a237ab05139f5c9b178aca47b2fc34a1a5ef0f8105b050dbcb8eb8ec7c1fd"
+        },
+        {
+          "beforeOffset": 215743,
+          "afterOffset": 216208,
+          "length": 11011,
+          "sha256": "d21b2d61cba98fc6654e1c2ca3cb42fdfad4e4402b45212ee19d0cb14638e233"
+        },
+        {
+          "beforeOffset": 226854,
+          "afterOffset": 227319,
+          "length": 174919,
+          "sha256": "402fc41069126ab3cbc9a6f6116bb77efa9f8c15fcb7559d2c90919b99277613"
+        },
+        {
+          "beforeOffset": 401813,
+          "afterOffset": 402308,
+          "length": 146535,
+          "sha256": "a3dcdf5ea00e8fb73e037a594c901a941c275501abcb93560d87283ba0a055af"
+        },
+        {
+          "beforeOffset": 548348,
+          "afterOffset": 548968,
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "path": "src/codegen/registry/error-types.ts",
+      "role": "dependency",
+      "before": {
+        "bytes": 49894,
+        "utf16Length": 49722,
+        "sha256": "8d0d6200e7993124f113d180a8961623caf19401527d457c357486675715e3e1",
+        "gitBlob": "bfd294f4c3d7aaa0ea13e385aa16608865eebf20"
+      },
+      "after": {
+        "bytes": 50238,
+        "utf16Length": 50066,
+        "sha256": "1294a85dd527c7dec7de2ae0214e9adf412e807f3d04a8b9763a5b6156922e95",
+        "gitBlob": "12206b102c454cd2dcbfd13321d0938ce37849c4"
+      },
+      "incoming": {
+        "bytes": 50238,
+        "utf16Length": 50066,
+        "sha256": "1294a85dd527c7dec7de2ae0214e9adf412e807f3d04a8b9763a5b6156922e95",
+        "gitBlob": "12206b102c454cd2dcbfd13321d0938ce37849c4"
+      },
+      "equalsIncoming": true,
+      "spans": [
+        {
+          "ordinal": 0,
+          "beforeOffset": 3351,
+          "afterOffset": 3351,
+          "before": "",
+          "after": "import { isCollectionCarrierClass } from \"../classes/standalone-collection-carrier.js\"; // (#6754)\n",
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "fe206e7f2097ef0ac6fd4be75d6d603604bf47f395858c30533257e42e4752a6"
+        },
+        {
+          "ordinal": 1,
+          "beforeOffset": 6278,
+          "afterOffset": 6377,
+          "before": "export type ExternrefBackedOwnFieldBacking = \"error-struct\" | \"plain-object\";\n",
+          "after": "export type ExternrefBackedOwnFieldBacking = \"error-struct\" | \"plain-object\" | \"collection-struct\";\n",
+          "beforeSha256": "5765ce54959e2bf0b19ea29e5218df65ef92942644b33e9336a51b444196ff38",
+          "afterSha256": "9bec3a00bc0f4b9fa51442a70d05d1662c81e40d24f95953b8b477e7c2f43e1c"
+        },
+        {
+          "ordinal": 2,
+          "beforeOffset": 6497,
+          "afterOffset": 6618,
+          "before": "",
+          "after": "  // (#6754) A `$Map`-subtype carrier IS the class struct: the ordinary\n  // struct-field path reads/writes it, so neither side-store arm applies.\n  if (isCollectionCarrierClass(ctx, className)) return \"collection-struct\";\n",
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "0c9ecb9a95a997d8c3e80a14c2c07b1ce3d64d61c5c583e11857cd345fe683e9"
+        }
+      ],
+      "retained": [
+        {
+          "beforeOffset": 0,
+          "afterOffset": 0,
+          "length": 3351,
+          "sha256": "865dc829b7d2ed7549ae33d0bd143d7aae29ef38569100cdb6e11a49ed67aa4d"
+        },
+        {
+          "beforeOffset": 3351,
+          "afterOffset": 3450,
+          "length": 2927,
+          "sha256": "f07affa8a4149ce643f999cf0befd6e31c196b98cd441e12e4096cba98cb4ba1"
+        },
+        {
+          "beforeOffset": 6356,
+          "afterOffset": 6477,
+          "length": 141,
+          "sha256": "fb93369d3ca037052f83d136140c8d9187b8023c0ce847578c3c1642cb8ed918"
+        },
+        {
+          "beforeOffset": 6497,
+          "afterOffset": 6841,
+          "length": 43225,
+          "sha256": "95c7d4bacb364011c3763dfae8ece634e30078c6ff59f796ce8e0bcbb21acea3"
+        }
+      ]
+    },
+    {
+      "path": "src/ir/types.ts",
+      "role": "dependency",
+      "before": {
+        "bytes": 7744,
+        "utf16Length": 7730,
+        "sha256": "d82e92ee276dd9a57bd69d9dee16410d24225a028bd9dca53bc406f69b9623ac",
+        "gitBlob": "f7717d7c70bb57bd73d799a1d26d1825aa0a41e8"
+      },
+      "after": {
+        "bytes": 7756,
+        "utf16Length": 7742,
+        "sha256": "0282ae61c6a43f837a9a3c7b12d879151e67ec155939c541cd9b5ea662979140",
+        "gitBlob": "bdf9d6ace5f7f5530373cea6007a1ad7dfe905d0"
+      },
+      "incoming": {
+        "bytes": 7756,
+        "utf16Length": 7742,
+        "sha256": "0282ae61c6a43f837a9a3c7b12d879151e67ec155939c541cd9b5ea662979140",
+        "gitBlob": "bdf9d6ace5f7f5530373cea6007a1ad7dfe905d0"
+      },
+      "equalsIncoming": true,
+      "spans": [
+        {
+          "ordinal": 0,
+          "beforeOffset": 6451,
+          "afterOffset": 6451,
+          "before": "export type ExportBoundaryKind = TypedArrayKind | \"string\" | \"symbol\" | \"promise\" | \"dynamic\" | \"aggregate\";\n",
+          "after": "export type ExportBoundaryKind = TypedArrayKind | \"boolean\" | \"string\" | \"symbol\" | \"promise\" | \"dynamic\" | \"aggregate\";\n",
+          "beforeSha256": "6b3101c0a893ca2c595014b766e0d091af1ad96ec392e2588117005b28bd8272",
+          "afterSha256": "457fc7a47270edb8cd6c296e51ad347d6c9311695c9f2337a18dd5b715db5167"
+        }
+      ],
+      "retained": [
+        {
+          "beforeOffset": 0,
+          "afterOffset": 0,
+          "length": 6451,
+          "sha256": "95f5a955e7907ca17f3e84dc374c9808ddcffa4232f54f2deaa6ba0d176a70ff"
+        },
+        {
+          "beforeOffset": 6560,
+          "afterOffset": 6572,
+          "length": 1170,
+          "sha256": "9aae73b5c8bef9b3f8fba427007c3be83872d9a8742cb700e970eaeda43e6757"
+        }
+      ]
+    }
+  ],
+  "provenance": [
+    {
+      "commit": "24e9724a8505497b2b5b6bece62996d21d7c1c5d",
+      "parents": ["599abb1b1067a6970119fcb66e03eedbac5f5e4f", "2bfe3eddf84d4d27f471eddb91e441709b7f6eff"],
+      "subject": "Merge origin/main into issue-6774-es2015-expressions-residue ✓",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/context/create-context.ts",
+          "after": {
+            "bytes": 29166,
+            "utf16Length": 29094,
+            "sha256": "928abb8c57d8da5463a0340a956bc65cbf85523861ab1b987e43fd167cb1f62c",
+            "gitBlob": "ae22bae96e74689b4cedd440a6331343a348f22a"
+          },
+          "parents": [
+            {
+              "commit": "599abb1b1067a6970119fcb66e03eedbac5f5e4f",
+              "pin": {
+                "bytes": 29132,
+                "utf16Length": 29060,
+                "sha256": "cb9d8c39fa4b083ddd9f4312766b7596d0115bbb8bf8ecabc6664cd1b4f66123",
+                "gitBlob": "f97ac8bf1572c5d66b6660d51a0891cc38d8bd53"
+              }
+            },
+            {
+              "commit": "2bfe3eddf84d4d27f471eddb91e441709b7f6eff",
+              "pin": {
+                "bytes": 29166,
+                "utf16Length": 29094,
+                "sha256": "928abb8c57d8da5463a0340a956bc65cbf85523861ab1b987e43fd167cb1f62c",
+                "gitBlob": "ae22bae96e74689b4cedd440a6331343a348f22a"
+              }
+            }
+          ]
+        },
+        {
+          "path": "src/codegen/context/types.ts",
+          "after": {
+            "bytes": 273550,
+            "utf16Length": 272431,
+            "sha256": "e373406ff177a3abe0cc4f577c790f084929b2ed238765a533ca7ba745326be9",
+            "gitBlob": "fd023a87c18da23bdde274690c711c62fe9500d8"
+          },
+          "parents": [
+            {
+              "commit": "599abb1b1067a6970119fcb66e03eedbac5f5e4f",
+              "pin": {
+                "bytes": 273566,
+                "utf16Length": 272447,
+                "sha256": "3795982a763b819eec6cad620564a6bd97dbc73ca2bb45887ab67205c57178ea",
+                "gitBlob": "fdc52067d7a8365117f9d817a07d97e34978dcb6"
+              }
+            },
+            {
+              "commit": "2bfe3eddf84d4d27f471eddb91e441709b7f6eff",
+              "pin": {
+                "bytes": 273306,
+                "utf16Length": 272187,
+                "sha256": "34abcc163e8717ccab53171a0f698151873214a18441b7991afbc0f61d0c57f2",
+                "gitBlob": "b6b6e11876f27a104b51c536fec4c3c1e9139717"
+              }
+            }
+          ]
+        },
+        {
+          "path": "src/codegen/object-runtime.ts",
+          "after": {
+            "bytes": 551065,
+            "utf16Length": 548412,
+            "sha256": "9483a0154f12d1881af6f0a14d9bdd7ac19b4e512e8ad5db594c2424b005c202",
+            "gitBlob": "7f67ff0101eeb867eea392c07027d802cfa961c9"
+          },
+          "parents": [
+            {
+              "commit": "599abb1b1067a6970119fcb66e03eedbac5f5e4f",
+              "pin": {
+                "bytes": 551065,
+                "utf16Length": 548412,
+                "sha256": "9483a0154f12d1881af6f0a14d9bdd7ac19b4e512e8ad5db594c2424b005c202",
+                "gitBlob": "7f67ff0101eeb867eea392c07027d802cfa961c9"
+              }
+            },
+            {
+              "commit": "2bfe3eddf84d4d27f471eddb91e441709b7f6eff",
+              "pin": {
+                "bytes": 550995,
+                "utf16Length": 548342,
+                "sha256": "1869f5b1ba83d66353bd941ba291049047b34179143339739a2674243813f450",
+                "gitBlob": "fe286d9252c8454db6a328cb4760efd65afc77a1"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "commit": "299f858587f35ebb1b3152ae48e22113ff16e009",
+      "parents": ["c3e3fab33d9ef4747f2a502ab1a8c46d8b224ea1"],
+      "subject": "feat(ir): preserve Boolean boundaries in prepared program presentation",
+      "sourceChanges": [
+        {
+          "path": "src/ir/types.ts",
+          "after": {
+            "bytes": 7756,
+            "utf16Length": 7742,
+            "sha256": "0282ae61c6a43f837a9a3c7b12d879151e67ec155939c541cd9b5ea662979140",
+            "gitBlob": "bdf9d6ace5f7f5530373cea6007a1ad7dfe905d0"
+          },
+          "parents": [
+            {
+              "commit": "c3e3fab33d9ef4747f2a502ab1a8c46d8b224ea1",
+              "pin": {
+                "bytes": 7744,
+                "utf16Length": 7730,
+                "sha256": "d82e92ee276dd9a57bd69d9dee16410d24225a028bd9dca53bc406f69b9623ac",
+                "gitBlob": "f7717d7c70bb57bd73d799a1d26d1825aa0a41e8"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "commit": "2a5bbcc4b2eb36f978e898f008921ca17d806000",
+      "parents": ["33aee1c8eab845d9bc8772710453398074ae3dbb"],
+      "subject": "fix(#6774 S4): `new.target` is the constructor object on the standalone target ✓",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/context/types.ts",
+          "after": {
+            "bytes": 273566,
+            "utf16Length": 272447,
+            "sha256": "3795982a763b819eec6cad620564a6bd97dbc73ca2bb45887ab67205c57178ea",
+            "gitBlob": "fdc52067d7a8365117f9d817a07d97e34978dcb6"
+          },
+          "parents": [
+            {
+              "commit": "33aee1c8eab845d9bc8772710453398074ae3dbb",
+              "pin": {
+                "bytes": 273322,
+                "utf16Length": 272203,
+                "sha256": "dfa55e64c40e31306865e21fec0b071a445f957d4ced38e8f65877095a28e0b0",
+                "gitBlob": "598fdf5f2e05835c154f57452b024a1f1a99701f"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "commit": "516fc93236503c2ecdee862a02cbfba38c9291d3",
+      "parents": ["e13adf9d1999fd4db4452a2eff85e59ec7570060", "9c6d0b1e6bcfeec689afcddf70bf55f21fb12412"],
+      "subject": "Merge origin/main into issue-6774-es2015-expressions-residue ✓",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/context/types.ts",
+          "after": {
+            "bytes": 273550,
+            "utf16Length": 272431,
+            "sha256": "e373406ff177a3abe0cc4f577c790f084929b2ed238765a533ca7ba745326be9",
+            "gitBlob": "fd023a87c18da23bdde274690c711c62fe9500d8"
+          },
+          "parents": [
+            {
+              "commit": "e13adf9d1999fd4db4452a2eff85e59ec7570060",
+              "pin": {
+                "bytes": 273550,
+                "utf16Length": 272431,
+                "sha256": "e373406ff177a3abe0cc4f577c790f084929b2ed238765a533ca7ba745326be9",
+                "gitBlob": "fd023a87c18da23bdde274690c711c62fe9500d8"
+              }
+            },
+            {
+              "commit": "9c6d0b1e6bcfeec689afcddf70bf55f21fb12412",
+              "pin": {
+                "bytes": 273306,
+                "utf16Length": 272187,
+                "sha256": "34abcc163e8717ccab53171a0f698151873214a18441b7991afbc0f61d0c57f2",
+                "gitBlob": "b6b6e11876f27a104b51c536fec4c3c1e9139717"
+              }
+            }
+          ]
+        },
+        {
+          "path": "src/codegen/object-runtime.ts",
+          "after": {
+            "bytes": 551071,
+            "utf16Length": 548418,
+            "sha256": "fb4edefd379dcb0e8116a18ced68360d79ec8df97fbdc5e04f8b3ac3fb9b0c12",
+            "gitBlob": "3c2ee7107fed44c302d812a8340b7612f7b932fc"
+          },
+          "parents": [
+            {
+              "commit": "e13adf9d1999fd4db4452a2eff85e59ec7570060",
+              "pin": {
+                "bytes": 551065,
+                "utf16Length": 548412,
+                "sha256": "9483a0154f12d1881af6f0a14d9bdd7ac19b4e512e8ad5db594c2424b005c202",
+                "gitBlob": "7f67ff0101eeb867eea392c07027d802cfa961c9"
+              }
+            },
+            {
+              "commit": "9c6d0b1e6bcfeec689afcddf70bf55f21fb12412",
+              "pin": {
+                "bytes": 551001,
+                "utf16Length": 548348,
+                "sha256": "a4369598ddf305707830d69dd0dd3e4c130e92bab4462dee456b052e26a588e8",
+                "gitBlob": "02a4cbc8a2f2f74813b9cdfa2d8013291366f3b4"
+              }
+            }
+          ]
+        },
+        {
+          "path": "src/codegen/registry/error-types.ts",
+          "after": {
+            "bytes": 49894,
+            "utf16Length": 49722,
+            "sha256": "8d0d6200e7993124f113d180a8961623caf19401527d457c357486675715e3e1",
+            "gitBlob": "bfd294f4c3d7aaa0ea13e385aa16608865eebf20"
+          },
+          "parents": [
+            {
+              "commit": "e13adf9d1999fd4db4452a2eff85e59ec7570060",
+              "pin": {
+                "bytes": 49660,
+                "utf16Length": 49488,
+                "sha256": "c5609a5732f33f5815e4500904ba014ab0ecf51d3503fcd1a7c7f279c8f2066a",
+                "gitBlob": "68043480ff2cf1faa923039bd44ed68f4230390f"
+              }
+            },
+            {
+              "commit": "9c6d0b1e6bcfeec689afcddf70bf55f21fb12412",
+              "pin": {
+                "bytes": 49894,
+                "utf16Length": 49722,
+                "sha256": "8d0d6200e7993124f113d180a8961623caf19401527d457c357486675715e3e1",
+                "gitBlob": "bfd294f4c3d7aaa0ea13e385aa16608865eebf20"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "commit": "550b7e35f12c3b8caae8958e8d85b30098e48c7b",
+      "parents": ["c53b9be2c2ff631f08b3bbc178f84dde4ef1bf43", "9c6d0b1e6bcfeec689afcddf70bf55f21fb12412"],
+      "subject": "Merge origin/main into issue-6770-object-reflect-residue (#6770) ✓",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/builtin-value-read.ts",
+          "after": {
+            "bytes": 89166,
+            "utf16Length": 88924,
+            "sha256": "8fdfbca7d057c32375ec970f1c9735c3406303345e8551501a1f79ae9c7ec57d",
+            "gitBlob": "4c904605b11d7f76fdbfbbcbeb94acdad7f73d2f"
+          },
+          "parents": [
+            {
+              "commit": "c53b9be2c2ff631f08b3bbc178f84dde4ef1bf43",
+              "pin": {
+                "bytes": 89166,
+                "utf16Length": 88924,
+                "sha256": "8fdfbca7d057c32375ec970f1c9735c3406303345e8551501a1f79ae9c7ec57d",
+                "gitBlob": "4c904605b11d7f76fdbfbbcbeb94acdad7f73d2f"
+              }
+            },
+            {
+              "commit": "9c6d0b1e6bcfeec689afcddf70bf55f21fb12412",
+              "pin": {
+                "bytes": 88886,
+                "utf16Length": 88644,
+                "sha256": "7d17c83b51dd4e0a56b75589ba70a8261ee8f9e06d8655cf02c99b73730b040c",
+                "gitBlob": "093ba45bc86eba98141f21da040a1b5833eacbb1"
+              }
+            }
+          ]
+        },
+        {
+          "path": "src/codegen/carrier-bag-visibility.ts",
+          "after": {
+            "bytes": 39230,
+            "utf16Length": 38942,
+            "sha256": "fdccb7a6adf1f790bc8149471ae3546f6df68f8965c6e223d4484ed409be4f32",
+            "gitBlob": "cb122c750d6dad27f4cef14f148805b007582ee9"
+          },
+          "parents": [
+            {
+              "commit": "c53b9be2c2ff631f08b3bbc178f84dde4ef1bf43",
+              "pin": {
+                "bytes": 39230,
+                "utf16Length": 38942,
+                "sha256": "fdccb7a6adf1f790bc8149471ae3546f6df68f8965c6e223d4484ed409be4f32",
+                "gitBlob": "cb122c750d6dad27f4cef14f148805b007582ee9"
+              }
+            },
+            {
+              "commit": "9c6d0b1e6bcfeec689afcddf70bf55f21fb12412",
+              "pin": {
+                "bytes": 37562,
+                "utf16Length": 37276,
+                "sha256": "7a0820f193e2ddd2ac32488ebc99aaa7df9b6bf0370c096f36904dfeba3dc201",
+                "gitBlob": "889f0b01fb14fc64ffebce10bfc5909a7407030a"
+              }
+            }
+          ]
+        },
+        {
+          "path": "src/codegen/object-runtime.ts",
+          "after": {
+            "bytes": 551313,
+            "utf16Length": 548660,
+            "sha256": "c75d66458db096d4cf5ddae530e881ad936a7e19dfc4bfc166eaa71a0dfdd2e5",
+            "gitBlob": "23cc2b1a49b4912a8d41a3fa624b50293f4839a8"
+          },
+          "parents": [
+            {
+              "commit": "c53b9be2c2ff631f08b3bbc178f84dde4ef1bf43",
+              "pin": {
+                "bytes": 551307,
+                "utf16Length": 548654,
+                "sha256": "dd8afe45a0cfdf05ade95e8de43c69ffb1c3fbf9d4136236d9590c55be08ec80",
+                "gitBlob": "7626d5d53b3cb89789532cb48e147ec1cafbc1bf"
+              }
+            },
+            {
+              "commit": "9c6d0b1e6bcfeec689afcddf70bf55f21fb12412",
+              "pin": {
+                "bytes": 551001,
+                "utf16Length": 548348,
+                "sha256": "a4369598ddf305707830d69dd0dd3e4c130e92bab4462dee456b052e26a588e8",
+                "gitBlob": "02a4cbc8a2f2f74813b9cdfa2d8013291366f3b4"
+              }
+            }
+          ]
+        },
+        {
+          "path": "src/codegen/registry/error-types.ts",
+          "after": {
+            "bytes": 49894,
+            "utf16Length": 49722,
+            "sha256": "8d0d6200e7993124f113d180a8961623caf19401527d457c357486675715e3e1",
+            "gitBlob": "bfd294f4c3d7aaa0ea13e385aa16608865eebf20"
+          },
+          "parents": [
+            {
+              "commit": "c53b9be2c2ff631f08b3bbc178f84dde4ef1bf43",
+              "pin": {
+                "bytes": 49660,
+                "utf16Length": 49488,
+                "sha256": "c5609a5732f33f5815e4500904ba014ab0ecf51d3503fcd1a7c7f279c8f2066a",
+                "gitBlob": "68043480ff2cf1faa923039bd44ed68f4230390f"
+              }
+            },
+            {
+              "commit": "9c6d0b1e6bcfeec689afcddf70bf55f21fb12412",
+              "pin": {
+                "bytes": 49894,
+                "utf16Length": 49722,
+                "sha256": "8d0d6200e7993124f113d180a8961623caf19401527d457c357486675715e3e1",
+                "gitBlob": "bfd294f4c3d7aaa0ea13e385aa16608865eebf20"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "commit": "695318ea37ffb84587d48933f9acbc1800a4d5db",
+      "parents": ["b78882ab1626b2ba167ac43e0d91f8104218c86b"],
+      "subject": "refactor(#6754): keep the collection carrier out of the codegen import SCC",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/registry/error-types.ts",
+          "after": {
+            "bytes": 50238,
+            "utf16Length": 50066,
+            "sha256": "1294a85dd527c7dec7de2ae0214e9adf412e807f3d04a8b9763a5b6156922e95",
+            "gitBlob": "12206b102c454cd2dcbfd13321d0938ce37849c4"
+          },
+          "parents": [
+            {
+              "commit": "b78882ab1626b2ba167ac43e0d91f8104218c86b",
+              "pin": {
+                "bytes": 50230,
+                "utf16Length": 50058,
+                "sha256": "31d0b93eae79ebe0441842d4da6f1c23aed47d9854af1a92eced1d998710d49a",
+                "gitBlob": "4c0358bd2c2d6ed9522963ecee2c9301ebba64c2"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "commit": "75a513239987c6ce750a91bc14fd876f517b7526",
+      "parents": ["8cd25a4d60a8ec124ed8f24b4bc4bca0a54206ff", "f156b4ba83613f8e576186551ca30e8e31bd38bd"],
+      "subject": "Merge origin/main into issue-6770-object-reflect-residue ✓",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/builtin-value-read.ts",
+          "after": {
+            "bytes": 89179,
+            "utf16Length": 88937,
+            "sha256": "22390b878b02aa3cb700397d0dad0bb16a7638c39fdb86e7b3e8c051e178be41",
+            "gitBlob": "8b927d3fe222498a8b6180fbd7aa4a77453a6744"
+          },
+          "parents": [
+            {
+              "commit": "8cd25a4d60a8ec124ed8f24b4bc4bca0a54206ff",
+              "pin": {
+                "bytes": 89179,
+                "utf16Length": 88937,
+                "sha256": "22390b878b02aa3cb700397d0dad0bb16a7638c39fdb86e7b3e8c051e178be41",
+                "gitBlob": "8b927d3fe222498a8b6180fbd7aa4a77453a6744"
+              }
+            },
+            {
+              "commit": "f156b4ba83613f8e576186551ca30e8e31bd38bd",
+              "pin": {
+                "bytes": 88886,
+                "utf16Length": 88644,
+                "sha256": "7d17c83b51dd4e0a56b75589ba70a8261ee8f9e06d8655cf02c99b73730b040c",
+                "gitBlob": "093ba45bc86eba98141f21da040a1b5833eacbb1"
+              }
+            }
+          ]
+        },
+        {
+          "path": "src/codegen/carrier-bag-visibility.ts",
+          "after": {
+            "bytes": 39364,
+            "utf16Length": 39076,
+            "sha256": "a270964931213269b84a0bafcff221bbbe1b7c67863b7b739438355cdfcf2e06",
+            "gitBlob": "c1968a6b6b9e7d8d5494a5aea07dec639fc61b71"
+          },
+          "parents": [
+            {
+              "commit": "8cd25a4d60a8ec124ed8f24b4bc4bca0a54206ff",
+              "pin": {
+                "bytes": 39364,
+                "utf16Length": 39076,
+                "sha256": "a270964931213269b84a0bafcff221bbbe1b7c67863b7b739438355cdfcf2e06",
+                "gitBlob": "c1968a6b6b9e7d8d5494a5aea07dec639fc61b71"
+              }
+            },
+            {
+              "commit": "f156b4ba83613f8e576186551ca30e8e31bd38bd",
+              "pin": {
+                "bytes": 37562,
+                "utf16Length": 37276,
+                "sha256": "7a0820f193e2ddd2ac32488ebc99aaa7df9b6bf0370c096f36904dfeba3dc201",
+                "gitBlob": "889f0b01fb14fc64ffebce10bfc5909a7407030a"
+              }
+            }
+          ]
+        },
+        {
+          "path": "src/codegen/context/types.ts",
+          "after": {
+            "bytes": 273550,
+            "utf16Length": 272431,
+            "sha256": "e373406ff177a3abe0cc4f577c790f084929b2ed238765a533ca7ba745326be9",
+            "gitBlob": "fd023a87c18da23bdde274690c711c62fe9500d8"
+          },
+          "parents": [
+            {
+              "commit": "8cd25a4d60a8ec124ed8f24b4bc4bca0a54206ff",
+              "pin": {
+                "bytes": 273306,
+                "utf16Length": 272187,
+                "sha256": "34abcc163e8717ccab53171a0f698151873214a18441b7991afbc0f61d0c57f2",
+                "gitBlob": "b6b6e11876f27a104b51c536fec4c3c1e9139717"
+              }
+            },
+            {
+              "commit": "f156b4ba83613f8e576186551ca30e8e31bd38bd",
+              "pin": {
+                "bytes": 273550,
+                "utf16Length": 272431,
+                "sha256": "e373406ff177a3abe0cc4f577c790f084929b2ed238765a533ca7ba745326be9",
+                "gitBlob": "fd023a87c18da23bdde274690c711c62fe9500d8"
+              }
+            }
+          ]
+        },
+        {
+          "path": "src/codegen/object-runtime.ts",
+          "after": {
+            "bytes": 551621,
+            "utf16Length": 548968,
+            "sha256": "4faf6ce56327a9c46cb7479c7f11a16fc3c8ac219673cb38710b2fc0d66fe937",
+            "gitBlob": "6328ded6b504808974b22782b08a6be61541474f"
+          },
+          "parents": [
+            {
+              "commit": "8cd25a4d60a8ec124ed8f24b4bc4bca0a54206ff",
+              "pin": {
+                "bytes": 551339,
+                "utf16Length": 548686,
+                "sha256": "9fab896f50b3b5810c5563be2d593f8f9bbd4420a2f14fbeb0d3dbd999ed2fc2",
+                "gitBlob": "620b858e76131ba1a70cc9bc152a0a9601420072"
+              }
+            },
+            {
+              "commit": "f156b4ba83613f8e576186551ca30e8e31bd38bd",
+              "pin": {
+                "bytes": 551283,
+                "utf16Length": 548630,
+                "sha256": "113368793f940dc8101491dc62a239fd5527405c91044ba6010bffb16f7d3725",
+                "gitBlob": "e2e8b662c2c25608808dda4545a5f72d21a2fcd6"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "commit": "78207793a9ca12743db056b98bdb707c1c392c40",
+      "parents": ["516fc93236503c2ecdee862a02cbfba38c9291d3"],
+      "subject": "refactor(#6774): keep the residue leaves out of the codegen import cycle ✓",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/object-runtime.ts",
+          "after": {
+            "bytes": 551283,
+            "utf16Length": 548630,
+            "sha256": "113368793f940dc8101491dc62a239fd5527405c91044ba6010bffb16f7d3725",
+            "gitBlob": "e2e8b662c2c25608808dda4545a5f72d21a2fcd6"
+          },
+          "parents": [
+            {
+              "commit": "516fc93236503c2ecdee862a02cbfba38c9291d3",
+              "pin": {
+                "bytes": 551071,
+                "utf16Length": 548418,
+                "sha256": "fb4edefd379dcb0e8116a18ced68360d79ec8df97fbdc5e04f8b3ac3fb9b0c12",
+                "gitBlob": "3c2ee7107fed44c302d812a8340b7612f7b932fc"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "commit": "824b686bb8523440f897c6ffc3d0c0d0617f2390",
+      "parents": ["b6324ee6d148e2e175bc469fdba899830bd32582"],
+      "subject": "fix(standalone): own fields on Map/Set subclasses via a $Map-subtype carrier (#6754)",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/registry/error-types.ts",
+          "after": {
+            "bytes": 50230,
+            "utf16Length": 50058,
+            "sha256": "31d0b93eae79ebe0441842d4da6f1c23aed47d9854af1a92eced1d998710d49a",
+            "gitBlob": "4c0358bd2c2d6ed9522963ecee2c9301ebba64c2"
+          },
+          "parents": [
+            {
+              "commit": "b6324ee6d148e2e175bc469fdba899830bd32582",
+              "pin": {
+                "bytes": 49894,
+                "utf16Length": 49722,
+                "sha256": "8d0d6200e7993124f113d180a8961623caf19401527d457c357486675715e3e1",
+                "gitBlob": "bfd294f4c3d7aaa0ea13e385aa16608865eebf20"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "commit": "8a6544f9744ad6ff543b72c759553520177600e6",
+      "parents": ["ef6d5afad9aa2439ce7291fc15da05485d9d36c2"],
+      "subject": "fix(#6772): S7 — a binding assigned two different class expressions resolves dynamically ✓",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/context/create-context.ts",
+          "after": {
+            "bytes": 29206,
+            "utf16Length": 29134,
+            "sha256": "5eb3d65c1f5ce71fe96054b7fd1ffd35ad0ac8ca2224fbe8f18cc39e5420a7b2",
+            "gitBlob": "acf695c3d336cbd093850b706d4a7fb7e94502b6"
+          },
+          "parents": [
+            {
+              "commit": "ef6d5afad9aa2439ce7291fc15da05485d9d36c2",
+              "pin": {
+                "bytes": 29166,
+                "utf16Length": 29094,
+                "sha256": "928abb8c57d8da5463a0340a956bc65cbf85523861ab1b987e43fd167cb1f62c",
+                "gitBlob": "ae22bae96e74689b4cedd440a6331343a348f22a"
+              }
+            }
+          ]
+        },
+        {
+          "path": "src/codegen/context/types.ts",
+          "after": {
+            "bytes": 273696,
+            "utf16Length": 272577,
+            "sha256": "f50168dee382bd7892cb7798c7bca9cafa1529c4f88310ddeaf913f357a9f688",
+            "gitBlob": "57e535ed6f6f1f96c95309cc24be56fbbdc4a42f"
+          },
+          "parents": [
+            {
+              "commit": "ef6d5afad9aa2439ce7291fc15da05485d9d36c2",
+              "pin": {
+                "bytes": 273550,
+                "utf16Length": 272431,
+                "sha256": "e373406ff177a3abe0cc4f577c790f084929b2ed238765a533ca7ba745326be9",
+                "gitBlob": "fd023a87c18da23bdde274690c711c62fe9500d8"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "commit": "9d5df9e79b208374e8584001a76ad3cd3fbf50cb",
+      "parents": ["5b954c36e6c68ee5178a1d71780e8a836ce96746"],
+      "subject": "refactor(promise): relocate extracted owners within the flat-directory budget",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/context/create-context.ts",
+          "after": {
+            "bytes": 34836,
+            "utf16Length": 34764,
+            "sha256": "a07acec155a4ae6bda04138e18170dff9ecb05636cb5113b966d8eeba0554009",
+            "gitBlob": "0d3842f97e9e2fadaaf6cc642526f4cd4924680a"
+          },
+          "parents": [
+            {
+              "commit": "5b954c36e6c68ee5178a1d71780e8a836ce96746",
+              "pin": {
+                "bytes": 34818,
+                "utf16Length": 34746,
+                "sha256": "8d8bed475e6d1bcc1fea16577774f6ae90fe4befed05b17b347e627ae3adff47",
+                "gitBlob": "a8b3c1ff5b1961833331018b2201cdea0afe1f11"
+              }
+            }
+          ]
+        },
+        {
+          "path": "src/codegen/context/types.ts",
+          "after": {
+            "bytes": 273696,
+            "utf16Length": 272577,
+            "sha256": "ed8ab51deec2f0d104a9f4b3b24fa863fb150ec6338e2e5eb54aa92f179087b6",
+            "gitBlob": "5a2a59febf7a2edf157537e7c807c65aba4e2cb9"
+          },
+          "parents": [
+            {
+              "commit": "5b954c36e6c68ee5178a1d71780e8a836ce96746",
+              "pin": {
+                "bytes": 273678,
+                "utf16Length": 272559,
+                "sha256": "8e46de5480fc5b86a8830d5f302d5364d4389e6eca9a0d510b770490adb9a9dd",
+                "gitBlob": "f3781fd60660f3ef549ee424e9228334c4a1f202"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "commit": "a6d62b339fa2a4fae0c4339fbc2ceb965fc5ce39",
+      "parents": ["8ad607dc33fb10b6abf46a42a8ed8cd8d67cc9a6"],
+      "subject": "fix(#6770): S3 — own-key ORDER over the full index domain, String/RegExp/function intrinsics (standalone) ✓",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/carrier-bag-visibility.ts",
+          "after": {
+            "bytes": 39230,
+            "utf16Length": 38942,
+            "sha256": "fdccb7a6adf1f790bc8149471ae3546f6df68f8965c6e223d4484ed409be4f32",
+            "gitBlob": "cb122c750d6dad27f4cef14f148805b007582ee9"
+          },
+          "parents": [
+            {
+              "commit": "8ad607dc33fb10b6abf46a42a8ed8cd8d67cc9a6",
+              "pin": {
+                "bytes": 37562,
+                "utf16Length": 37276,
+                "sha256": "7a0820f193e2ddd2ac32488ebc99aaa7df9b6bf0370c096f36904dfeba3dc201",
+                "gitBlob": "889f0b01fb14fc64ffebce10bfc5909a7407030a"
+              }
+            }
+          ]
+        },
+        {
+          "path": "src/codegen/object-runtime.ts",
+          "after": {
+            "bytes": 551384,
+            "utf16Length": 548731,
+            "sha256": "56c7a567cef805597fb3260bb1c66d7ef2a36fe7716952b0729e1e1198ac20ec",
+            "gitBlob": "02b7e90ed66f6122e8c6dddb2b3cfac4b4938739"
+          },
+          "parents": [
+            {
+              "commit": "8ad607dc33fb10b6abf46a42a8ed8cd8d67cc9a6",
+              "pin": {
+                "bytes": 550995,
+                "utf16Length": 548342,
+                "sha256": "1869f5b1ba83d66353bd941ba291049047b34179143339739a2674243813f450",
+                "gitBlob": "fe286d9252c8454db6a328cb4760efd65afc77a1"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "commit": "c698ec6020768f4eac670d2a6bbb2dcf791f6811",
+      "parents": ["e946127595242f2b186c184ce3c2aa25ddbe7c8a", "9c6d0b1e6bcfeec689afcddf70bf55f21fb12412"],
+      "subject": "fix(promise): cut observable combinator dependency cycles",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/context/create-context.ts",
+          "after": {
+            "bytes": 34818,
+            "utf16Length": 34746,
+            "sha256": "8d8bed475e6d1bcc1fea16577774f6ae90fe4befed05b17b347e627ae3adff47",
+            "gitBlob": "a8b3c1ff5b1961833331018b2201cdea0afe1f11"
+          },
+          "parents": [
+            {
+              "commit": "e946127595242f2b186c184ce3c2aa25ddbe7c8a",
+              "pin": {
+                "bytes": 29166,
+                "utf16Length": 29094,
+                "sha256": "928abb8c57d8da5463a0340a956bc65cbf85523861ab1b987e43fd167cb1f62c",
+                "gitBlob": "ae22bae96e74689b4cedd440a6331343a348f22a"
+              }
+            },
+            {
+              "commit": "9c6d0b1e6bcfeec689afcddf70bf55f21fb12412",
+              "pin": {
+                "bytes": 29166,
+                "utf16Length": 29094,
+                "sha256": "928abb8c57d8da5463a0340a956bc65cbf85523861ab1b987e43fd167cb1f62c",
+                "gitBlob": "ae22bae96e74689b4cedd440a6331343a348f22a"
+              }
+            }
+          ]
+        },
+        {
+          "path": "src/codegen/context/types.ts",
+          "after": {
+            "bytes": 273678,
+            "utf16Length": 272559,
+            "sha256": "8e46de5480fc5b86a8830d5f302d5364d4389e6eca9a0d510b770490adb9a9dd",
+            "gitBlob": "f3781fd60660f3ef549ee424e9228334c4a1f202"
+          },
+          "parents": [
+            {
+              "commit": "e946127595242f2b186c184ce3c2aa25ddbe7c8a",
+              "pin": {
+                "bytes": 273306,
+                "utf16Length": 272187,
+                "sha256": "34abcc163e8717ccab53171a0f698151873214a18441b7991afbc0f61d0c57f2",
+                "gitBlob": "b6b6e11876f27a104b51c536fec4c3c1e9139717"
+              }
+            },
+            {
+              "commit": "9c6d0b1e6bcfeec689afcddf70bf55f21fb12412",
+              "pin": {
+                "bytes": 273306,
+                "utf16Length": 272187,
+                "sha256": "34abcc163e8717ccab53171a0f698151873214a18441b7991afbc0f61d0c57f2",
+                "gitBlob": "b6b6e11876f27a104b51c536fec4c3c1e9139717"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "commit": "d72d21e6bc28f8ff42374116ddde0d795d389e3d",
+      "parents": ["9173486efcab1b2acb327614735bd685cf242440"],
+      "subject": "fix(#6770): S5 — Object.prototype members: __proto__ is own, the {} getPrototypeOf fold, toLocaleString Invoke (standalone) ✓",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/builtin-value-read.ts",
+          "after": {
+            "bytes": 89166,
+            "utf16Length": 88924,
+            "sha256": "8fdfbca7d057c32375ec970f1c9735c3406303345e8551501a1f79ae9c7ec57d",
+            "gitBlob": "4c904605b11d7f76fdbfbbcbeb94acdad7f73d2f"
+          },
+          "parents": [
+            {
+              "commit": "9173486efcab1b2acb327614735bd685cf242440",
+              "pin": {
+                "bytes": 88886,
+                "utf16Length": 88644,
+                "sha256": "7d17c83b51dd4e0a56b75589ba70a8261ee8f9e06d8655cf02c99b73730b040c",
+                "gitBlob": "093ba45bc86eba98141f21da040a1b5833eacbb1"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "commit": "f1466dc8ed00a53252a28d06d23db7349346cb01",
+      "parents": ["fa0182337c1205d4e0c3a27d13d14bd8ea8f00fa"],
+      "subject": "fix(#6770): S8 — Proxy trap lookup per operation (GetMethod), CreateListFromArrayLike for ownKeys, proxy bindings through harness methods (standalone) ✓",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/object-runtime.ts",
+          "after": {
+            "bytes": 551307,
+            "utf16Length": 548654,
+            "sha256": "dd8afe45a0cfdf05ade95e8de43c69ffb1c3fbf9d4136236d9590c55be08ec80",
+            "gitBlob": "7626d5d53b3cb89789532cb48e147ec1cafbc1bf"
+          },
+          "parents": [
+            {
+              "commit": "fa0182337c1205d4e0c3a27d13d14bd8ea8f00fa",
+              "pin": {
+                "bytes": 551384,
+                "utf16Length": 548731,
+                "sha256": "56c7a567cef805597fb3260bb1c66d7ef2a36fe7716952b0729e1e1198ac20ec",
+                "gitBlob": "02b7e90ed66f6122e8c6dddb2b3cfac4b4938739"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "commit": "f554df44c94a0d1dd30c80072d01d1302ad629f6",
+      "parents": ["0d8a85e4fc2260ad335a21eb4e870a4e7f0d4e7d"],
+      "subject": "fix(#6774 S19): loose == ToPrimitives a string-left object operand; a Symbol @@toPrimitive result compares ✓",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/object-runtime.ts",
+          "after": {
+            "bytes": 551065,
+            "utf16Length": 548412,
+            "sha256": "9483a0154f12d1881af6f0a14d9bdd7ac19b4e512e8ad5db594c2424b005c202",
+            "gitBlob": "7f67ff0101eeb867eea392c07027d802cfa961c9"
+          },
+          "parents": [
+            {
+              "commit": "0d8a85e4fc2260ad335a21eb4e870a4e7f0d4e7d",
+              "pin": {
+                "bytes": 550995,
+                "utf16Length": 548342,
+                "sha256": "1869f5b1ba83d66353bd941ba291049047b34179143339739a2674243813f450",
+                "gitBlob": "fe286d9252c8454db6a328cb4760efd65afc77a1"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "commit": "f78a4e57ad61aa4b2fc36fb7003781cead55e973",
+      "parents": ["b71d3b14b077cfe0fd2f0a29a783a81870949163"],
+      "subject": "fix(#6772): S12 — static and instance accessors of one name get distinct function slots ✓",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/context/create-context.ts",
+          "after": {
+            "bytes": 29248,
+            "utf16Length": 29176,
+            "sha256": "495ed748683bd633db7f3815191b6491413ad9899fccf589394baa0d0a9fcca1",
+            "gitBlob": "d7618c6d9bd56f133cd2d3b7cab247f9db6a6161"
+          },
+          "parents": [
+            {
+              "commit": "b71d3b14b077cfe0fd2f0a29a783a81870949163",
+              "pin": {
+                "bytes": 29206,
+                "utf16Length": 29134,
+                "sha256": "5eb3d65c1f5ce71fe96054b7fd1ffd35ad0ac8ca2224fbe8f18cc39e5420a7b2",
+                "gitBlob": "acf695c3d336cbd093850b706d4a7fb7e94502b6"
+              }
+            }
+          ]
+        },
+        {
+          "path": "src/codegen/context/types.ts",
+          "after": {
+            "bytes": 273856,
+            "utf16Length": 272737,
+            "sha256": "09d4aa06e04b463a6979263dccd8ec2e544db725c57ef8a231af23c7f3e950fe",
+            "gitBlob": "a20d10dcee368a72bc9b8c19f5f313a20d6ff97c"
+          },
+          "parents": [
+            {
+              "commit": "b71d3b14b077cfe0fd2f0a29a783a81870949163",
+              "pin": {
+                "bytes": 273696,
+                "utf16Length": 272577,
+                "sha256": "f50168dee382bd7892cb7798c7bca9cafa1529c4f88310ddeaf913f357a9f688",
+                "gitBlob": "57e535ed6f6f1f96c95309cc24be56fbbdc4a42f"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "commit": "fd48e174ead4078f536708e2dc01b1fc5e74e10c",
+      "parents": ["550b7e35f12c3b8caae8958e8d85b30098e48c7b"],
+      "subject": "refactor(#6770): object-model leaves out of the import SCC and out of src/codegen/ root (#6797 gates) ✓",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/builtin-value-read.ts",
+          "after": {
+            "bytes": 89179,
+            "utf16Length": 88937,
+            "sha256": "22390b878b02aa3cb700397d0dad0bb16a7638c39fdb86e7b3e8c051e178be41",
+            "gitBlob": "8b927d3fe222498a8b6180fbd7aa4a77453a6744"
+          },
+          "parents": [
+            {
+              "commit": "550b7e35f12c3b8caae8958e8d85b30098e48c7b",
+              "pin": {
+                "bytes": 89166,
+                "utf16Length": 88924,
+                "sha256": "8fdfbca7d057c32375ec970f1c9735c3406303345e8551501a1f79ae9c7ec57d",
+                "gitBlob": "4c904605b11d7f76fdbfbbcbeb94acdad7f73d2f"
+              }
+            }
+          ]
+        },
+        {
+          "path": "src/codegen/carrier-bag-visibility.ts",
+          "after": {
+            "bytes": 39364,
+            "utf16Length": 39076,
+            "sha256": "a270964931213269b84a0bafcff221bbbe1b7c67863b7b739438355cdfcf2e06",
+            "gitBlob": "c1968a6b6b9e7d8d5494a5aea07dec639fc61b71"
+          },
+          "parents": [
+            {
+              "commit": "550b7e35f12c3b8caae8958e8d85b30098e48c7b",
+              "pin": {
+                "bytes": 39230,
+                "utf16Length": 38942,
+                "sha256": "fdccb7a6adf1f790bc8149471ae3546f6df68f8965c6e223d4484ed409be4f32",
+                "gitBlob": "cb122c750d6dad27f4cef14f148805b007582ee9"
+              }
+            }
+          ]
+        },
+        {
+          "path": "src/codegen/object-runtime.ts",
+          "after": {
+            "bytes": 551339,
+            "utf16Length": 548686,
+            "sha256": "9fab896f50b3b5810c5563be2d593f8f9bbd4420a2f14fbeb0d3dbd999ed2fc2",
+            "gitBlob": "620b858e76131ba1a70cc9bc152a0a9601420072"
+          },
+          "parents": [
+            {
+              "commit": "550b7e35f12c3b8caae8958e8d85b30098e48c7b",
+              "pin": {
+                "bytes": 551313,
+                "utf16Length": 548660,
+                "sha256": "c75d66458db096d4cf5ddae530e881ad936a7e19dfc4bfc166eaa71a0dfdd2e5",
+                "gitBlob": "23cc2b1a49b4912a8d41a3fa624b50293f4839a8"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

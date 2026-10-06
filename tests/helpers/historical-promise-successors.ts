@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { applyFlatLayoutRelocation, flatLayoutDrivePath } from "./flat-layout-relocation.js";
+import { createMain5fEpochProjection, projectMain5fEpochSource } from "./historical-promise-main5f-epoch.js";
 
 export type HistoricalPromiseReader = (path: string) => string;
 export const historicalPromiseFixture = "tests/fixtures/issue-5883-historical-reader-successors.json";
@@ -149,12 +150,18 @@ export function authenticateHistoricalPromiseSuccessors(
       throw Error("historical-promise successor retained authority mismatch");
   }
   // Authenticate actual extracted owners and their dependencies BEFORE reintroducing any old declarations.
+  const epoch = createMain5fEpochProjection(reader);
   for (const dependency of receipt.dependencies) {
     let source: string;
     try {
       source = reader(dependency.path);
     } catch (cause) {
       throw Error("historical-promise successor dependency missing: " + dependency.path, { cause });
+    }
+    try {
+      source = epoch(dependency.path, source);
+    } catch (cause) {
+      throw Error("historical-promise successor dependency mismatch: " + dependency.path, { cause });
     }
     if (!validPin(dependency) || dependency.commit !== historicalPromiseCommit || !matches(source, dependency))
       throw Error("historical-promise successor dependency mismatch: " + dependency.path);
@@ -165,6 +172,11 @@ export function authenticateHistoricalPromiseSuccessors(
       source = reader(row.path);
     } catch (cause) {
       throw Error("historical-promise successor current operand missing: " + row.path, { cause });
+    }
+    try {
+      source = epoch(row.path, source);
+    } catch (cause) {
+      throw Error("historical-promise successor current operand mismatch: " + row.path, { cause });
     }
     if (!matches(source, row.rawAfter))
       throw Error("historical-promise successor current operand mismatch: " + row.path);
@@ -186,7 +198,7 @@ export function projectHistoricalPromiseSource(
         reader("tests/fixtures/issue-5883-flat-layout-relocation.json"),
         reader,
       )
-    : source;
+    : projectMain5fEpochSource(path, source, reader);
 }
 
 function transform(row: HistoricalPromiseRecord, source: string, inverse: boolean): string {
@@ -241,7 +253,8 @@ export function readHistoricalPromiseSuccessor(
   reader: HistoricalPromiseReader = readHistoricalPromiseRaw,
 ): string {
   const source = reader(path);
-  if (!historicalPromisePaths.some((candidate) => candidate === path)) return source;
+  if (!historicalPromisePaths.some((candidate) => candidate === path))
+    return projectMain5fEpochSource(path, source, reader);
   return applyHistoricalPromiseSuccessor(
     path,
     projectHistoricalPromiseSource(path, source, reader),

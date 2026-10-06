@@ -62,6 +62,9 @@ import { compileDescriptorMapAsDynamicObject, staticDescriptorMapKey } from "./d
 import { isDescriptorTranscribableStruct } from "./property-descriptor-shape.js"; // (#4180) #2372 transcription gate
 import { isDirectProxyBinding } from "./proxy-value-provenance.js"; // (#5268 step 2 / review F1+F2)
 import { superWriteMayAddKey } from "./super-write-grown-keys.js"; // (#5350 r2)
+import { inOwnKeyOrder } from "./object-model/object-own-key-order.js"; // (#6770 S3)
+import { typeIsRuntimeKeyedObjectLiteral } from "./object-model/runtime-key-open-object.js"; // (#4526)
+import { _hasRuntimeComputedKey } from "./literals.js"; // (#4526) injected probe
 import {
   descriptorFieldName,
   inheritedTrueDescriptorFlags,
@@ -683,6 +686,22 @@ export function emitNonObjectArgGuard(
  * Emit a null check on the ref stored in `localIdx`.
  * If null, throws TypeError via the exception tag.
  */
+/**
+ * (#6651 U3) Stack `[externref] -> [externref]`: §7.1.18 ToObject's TypeError
+ * when the value is null/undefined, else the value unchanged.
+ */
+function emitToObjectNullishGuard(ctx: CodegenContext, fctx: FunctionContext): void {
+  const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert undefined or null to object", {
+    flush: fctx,
+  });
+  const nullishIdx = ctx.funcMap.get("__extern_is_nullish");
+  const tmp = allocLocal(fctx, `__toobj_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.tee", index: tmp });
+  fctx.body.push(nullishIdx !== undefined ? { op: "call", funcIdx: nullishIdx } : { op: "ref.is_null" });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs });
+  fctx.body.push({ op: "local.get", index: tmp });
+}
+
 function emitObjectArgNullGuard(ctx: CodegenContext, fctx: FunctionContext, localIdx: number): void {
   const message = "TypeError: Object method called on null or undefined";
   addStringConstantGlobal(ctx, message);
@@ -4460,7 +4479,15 @@ export function compileObjectKeysOrValues(
   const NULLISH_FLAGS = ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void;
   const isNullishType = (t: ts.Type): boolean =>
     t.isUnion() ? t.types.every(isNullishType) : (t.flags & NULLISH_FLAGS) !== 0 && (t.flags & ~NULLISH_FLAGS) === 0;
-  if (isNullishType(argType)) {
+  // (#6651 U3) NOT for an evolving `var d;` the checker narrowed to nullish
+  // here: that is TypeScript's control-flow type, which ignores assignments
+  // made inside closures — after `function f(x) { d = x }` + `f({a: 1})` it
+  // still says `undefined` at `Object.keys(d)`, so the fold threw on a live
+  // object (`Proxy/defineProperty/call-parameters` stores the trap's
+  // descriptor that way). Same decline as the #5197 `hasOwnProperty` fold: the
+  // runtime path below, with a ToObject guard for a value that IS nullish.
+  const evolvingNullishArg = (noJsHost(ctx) || ctx.strictNoHostImports) && evolvingVarNullishNarrowed(ctx, arg);
+  if (!evolvingNullishArg && isNullishType(argType)) {
     const t = compileExpression(ctx, fctx, arg);
     if (t) fctx.body.push({ op: "drop" });
     const which = !argType.isUnion() && argType.flags & ts.TypeFlags.Null ? "null" : "undefined";
@@ -4480,7 +4507,11 @@ export function compileObjectKeysOrValues(
   // so enumeration reflects the actual object, matching V8. Keyed on the SAME
   // `externrefAccessorVars` tag the variable sites set, so the representation
   // (externref host object) and the enumeration path stay in lockstep.
-  const argIsHostObjectVar = ts.isIdentifier(arg) && ctx.externrefAccessorVars.has(arg.text);
+  // (#4526) …and likewise a literal with a runtime computed key: it is an
+  // open object whose runtime key the struct field list cannot name.
+  const argIsHostObjectVar =
+    (ts.isIdentifier(arg) && ctx.externrefAccessorVars.has(arg.text)) ||
+    typeIsRuntimeKeyedObjectLiteral(ctx, argType, _hasRuntimeComputedKey);
   // Resolve struct name from the argument type
   const structName = argIsHostObjectVar ? undefined : resolveStructName(ctx, argType);
   if (!structName) {
@@ -4528,6 +4559,7 @@ export function compileObjectKeysOrValues(
     if (argResult.kind !== "externref") {
       coerceType(ctx, fctx, argResult, { kind: "externref" });
     }
+    if (evolvingNullishArg) emitToObjectNullishGuard(ctx, fctx); // (#6651 U3)
     const importName = `__object_${method}`;
     const funcIdx = ensureLateImport(ctx, importName, [{ kind: "externref" }], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
@@ -4659,7 +4691,8 @@ export function compileObjectKeysOrValues(
     return { kind: "externref" };
   }
 
-  const enumUserFields = userFields.filter((e) => {
+  // (#6770 S3) §10.1.11.1 order: integer-index field names first, ascending.
+  const enumUserFields = inOwnKeyOrder(userFields, (e) => e.field.name).filter((e) => {
     if (argVarName) {
       const key = `${argVarKey}:${e.field.name}`; // (#3403) per-declaration key
       const flags = ctx.definedPropertyFlags.get(key);
@@ -4814,6 +4847,8 @@ export function compileObjectKeysOrValues(
         if (fieldKind === "f64") {
           const boxIdx = ctx.funcMap.get("__box_number");
           if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
+        } else if (entry.field.type.kind === "i32" && entry.field.type.symbol === true) {
+          coerceType(ctx, fctx, entry.field.type, { kind: "externref" }); // (#6770 S2) keep the symbol's identity
         } else if (fieldKind === "i32") {
           fctx.body.push({ op: "f64.convert_i32_s" });
           const boxIdx = ctx.funcMap.get("__box_number");

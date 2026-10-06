@@ -212,7 +212,7 @@ export function emitStandaloneSubclassMethodInstall(
   // loop rather than leaving operands stranded on the stack.
   for (const name of methodNames) {
     const fullName = `${subName}_${name}`;
-    const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
+    const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance"));
     if (funcIdx === undefined) break;
     fctx.body.push({ op: "local.get", index: selfLocal });
     if (!emitClassMemberKeyOperand(ctx, fctx, subName, name)) {

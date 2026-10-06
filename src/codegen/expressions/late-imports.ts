@@ -27,6 +27,7 @@ import {
 import { shiftAsyncSideChannelFuncIdxs } from "../async-scheduler.js";
 import { inLiveShiftRange } from "../../emit/resolve-layout.js";
 import { emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
+import { registerExpressionHelpers } from "../registry/expression-helper-delegates.js";
 
 /**
  * #1471: helper names that `addUnionImports` provides Wasm-native
@@ -778,6 +779,7 @@ export function emitUndefined(ctx: CodegenContext, fctx: FunctionContext): void 
     fctx.body.push({ op: "ref.null.extern" });
   }
 }
+registerExpressionHelpers({ emitUndefined }); // (#6797) late-bound for the expressions/ leaves
 
 /**
  * Ensure the __extern_is_undefined host import exists, returning its funcIdx.

@@ -13,6 +13,7 @@
  * every cross-module binding is used only inside function bodies, which run long
  * after module initialization.
  */
+import { NEW_TARGET_LEXICAL_LOCAL, arrowCapturesNewTarget } from "../expressions/new-target-value.js";
 import { ts, forEachChild } from "../../ts-api.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import type { Instr, ValType } from "../../ir/types.js";
@@ -491,7 +492,7 @@ function collectClosureParameterReferences(
  * outer assignment. Declaration identity comes from the checker; ancestry is
  * used only to establish the evaluation ordering within that declaration.
  */
-function closurePrecedesBindingInitializerStore(
+export function closurePrecedesBindingInitializerStore(
   closure: ts.ArrowFunction | ts.FunctionExpression,
   declaration: ts.Declaration | undefined,
 ): boolean {
@@ -586,6 +587,7 @@ export function planClosureCaptures(
   ) {
     referencedNames.add("this");
   }
+  if (arrowCapturesNewTarget(ctx, fctx, arrow)) referencedNames.add(NEW_TARGET_LEXICAL_LOCAL); // (#6774 S4)
 
   // (#3040) Parameter DEFAULT initializers can reference enclosing-scope names
   // that appear NOWHERE in the body — e.g. `f = async function*([x] = iter)`
@@ -757,6 +759,7 @@ export function planClosureCaptures(
     // The ordinary-function lexical-this path materializes a private local
     // without changing the frame's normal `this` binding (see closures.ts).
     if (localIdx === undefined && name === "this") localIdx = fctx.lexicalThisCaptureLocal;
+    if (localIdx === undefined && name === NEW_TARGET_LEXICAL_LOCAL) localIdx = fctx.newTargetSnapshotLocal; // (#6774 S4)
     let tdzFlagIdxFromScan: number | undefined;
     if (localIdx === undefined) {
       // (#3121) A localMap miss can ALSO mean the name was PROMOTED to a

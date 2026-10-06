@@ -21,9 +21,13 @@ import { NATIVE_GENERATOR_PROTO_VIEW } from "./generators-native-protocol.js";
  */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { proxyTrapAbsentTail } from "./object-model/proxy-trap-read.js"; // (#6770 S8)
 import { FUNCTION_FROM_PROTO, PROTO_FROM_FUNCTION } from "./proto-function-value.js"; // (#4637 A1)
 import { BUILTIN_BRAND_TABLE } from "./builtin-brands.js"; // (#5270 step 2)
 import { buildLazyNativeProtoGetInstrs } from "./native-proto.js"; // (#5270 step 2)
+import { fillNativeCarrierGetPrototypeOfArms } from "./object-model/native-carrier-get-prototype.js"; // (#6651 U1)
+import { nativeStringLiteralInstrs } from "./native-string-literals.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { buildIsPrototypeOfBody, type PrototypeChainSeed } from "../runtime/wasmgc/values/prototype-chain-bodies.js";
 import {
   protoLinkAnswerOr,
@@ -86,6 +90,16 @@ export const ARRAY_PROTO_SINGLETON = "__array_proto_singleton";
  */
 export function fillArrayProtoSingleton(ctx: CodegenContext): void {
   if (!ctx.standalone && !ctx.wasi) return;
+  fillNativeCarrierGetPrototypeOfArms(ctx, {
+    protoGet: buildLazyNativeProtoGetInstrs,
+    stringLit: (c, v) => nativeStringLiteralInstrs(c, v),
+    addFunc: (name, typeIdx, locals, body) => {
+      const funcIdx = mintDefinedFunc(ctx);
+      ctx.funcMap.set(name, funcIdx);
+      pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals, body, exported: false });
+      return funcIdx;
+    },
+  }); // (#6651 U1)
   const fn = ctx.mod.functions.find((f) => f.name === ARRAY_PROTO_SINGLETON);
   if (!fn) return;
   const instrs = buildLazyNativeProtoGetInstrs(ctx, BUILTIN_BRAND_TABLE.Array);
@@ -408,10 +422,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
             else: [
               { op: "local.get", index: 1 },
               { op: "ref.cast", typeIdx: proxyTypeIdx },
-              { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: 3 },
-              { op: "ref.as_non_null" },
-              { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: 0 },
-              { op: "ref.is_null" },
+              ...proxyTrapAbsentTail(ctx, 0), // (#6770 S8) get
               {
                 op: "if",
                 blockType: { kind: "val", type: { kind: "externref" } },

@@ -1,7 +1,7 @@
 ---
 id: 6797
 title: "arch: codegen, ir and frontend form one 693-file strongly-connected component (40 % of src, 3,083 circular chains) — add an import-cycle ratchet and cut the 74 ir→codegen edges first"
-status: in-progress
+status: suspended
 sprint: Backlog
 created: 2026-09-30
 updated: 2026-10-02
@@ -222,3 +222,45 @@ decrease); this PR touches no `src/` file.
 - `baseline-summary-sync.yml` installs no `node_modules`, so it banks only
   the flat-dir budget; its existing `check-func-budget --update-on-decrease`
   call already fails there (non-fatally) for the same reason.
+
+## Suspended Work — follow-up PR (2026-10-02, lead handoff)
+
+PR 6430 landed the ratchets **baseline-scoped**, and within four hours that
+scoping parked two unrelated PRs for growth other PRs had landed (6431 for
+5883, 6419 for 6422 — see #6823 item 5). dev-6797 had the change-scoped
+version ready when the shared repository went bare (#6822); the agent cannot
+be resumed until `core.bare` is repaired
+(`plan/agent-context/claude-review-wave-handoff-2026-10-02.md`).
+
+- **Worktree**: `/home/user/js2/.claude/worktrees/agent-adc6ee3039d92814a`,
+  branch `claude/issue-6797-import-cycle-ratchet` at `c60ee5f34d` (17 local
+  commits past its origin ref; 6430 merged from an older head, so this branch
+  can no longer carry the work — create a NEW branch from the current HEAD,
+  e.g. `claude/issue-6797-change-scoped-allowances`, then
+  `git merge origin/main`).
+- **Staged (10 files, 4 also modified unstaged; +530/−132)**:
+  `scripts/check-import-cycles.mjs` and `scripts/check-flat-dir-budget.mjs`
+  become CHANGE-SCOPED like `check:loc-budget` (fail when the metric is
+  higher at HEAD than at the change-set's own base — HEAD^1 of the synthetic
+  merge, merge-base fallback; growth granted by `import-cycles-allow:` /
+  `flat-dir-budget-allow:` entries in the PR's own `plan/issues/*.md`, format
+  `- largestSccSize: 699 # <date> (#N): <why>` / `- src/codegen/foo.ts # <date>
+(#N): <why>`; the committed baselines stay the post-merge low-water mark and
+  no-git fallback), plus GIT*\* hardening (`CLEAN_ENV` for every spawned git);
+  `tests/check-import-cycles.test.ts` and `tests/check-flat-dir-budget.test.ts`
+  (allowance, malformed-entry and GIT*_-stripping cases, their `git init`
+  runs with GIT\__ removed); `.github/workflows/ci.yml` (both steps gain
+  `git fetch --no-tags --depth=200 origin main` for the merge-base fallback,
+  comments rewritten); `baseline-summary-sync.yml` and `test262-sharded.yml`
+  (banking comments: the import-cycle twin needs `typescript`, which only
+  promote-baseline installs); `docs/architecture/codegen-axes.md` (how to
+  verify the layering, allowance syntax); this issue file (plan + Resolution
+  §"Intended growth" updated) and `6808-…md` (+4).
+- **Remaining**: new branch; merge `origin/main` (6430 already contains the
+  baseline-scoped originals — take main's side only where the staged change
+  does not supersede it); gates per the common brief incl.
+  `check:import-cycles` / `check:flat-dir-budget` themselves and both test
+  files; commit `feat(#6797): change-scoped allowances … ✓` with
+  `Model: Claude Opus 5.5 Medium` trailers; push; PR (base main, not draft).
+  Then set `status: done` here; items 2 (#6808) and 4 (godfiles, #6826) stay
+  separate.

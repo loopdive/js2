@@ -43,6 +43,7 @@ import {
 import { definedFuncAt } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 import { emitUndefined } from "../expressions/late-imports.js";
 import { emitConstructReturnSelect } from "../construct-return-value.js"; // (#4464)
+import { emitCtorBareReturnOverride, tryEmitCtorOverrideReturn } from "../classes/ctor-return-override.js"; // (#6772 S2)
 import {
   emitHostTypedArrayCarrierRegistration,
   isHostTypedArrayCarrierName,
@@ -454,7 +455,12 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
   ) {
     const selfIdx = fctx.localMap.get("this")!;
     const structTypeIdx = fctx.returnType.typeIdx;
-    if (!stmt.expression) {
+    if (!stmt.expression && emitCtorBareReturnOverride(ctx, fctx)) {
+      // (#6772 S2) marked class: the register carries the frame's default.
+      fctx.body.push({ op: "local.get", index: selfIdx });
+    } else if (stmt.expression && tryEmitCtorOverrideReturn(ctx, fctx, stmt.expression, selfIdx)) {
+      // (#6772 S2) §10.2.1.3 step 13 through the return-override register.
+    } else if (!stmt.expression) {
       // Bare `return;` → return `this` (the guard-clause idiom). #2018
       // (#5195 Step 11 E) …including in a DERIVED constructor with a nominal
       // struct result, which this arm used to decline outright: the statement

@@ -23,6 +23,7 @@ import {
 import { authenticateEarlierPromiseMain, beforeEarlierPromiseMain } from "./helpers/promise-earlier-main-port.js";
 import { originalB1Source, B1_DONOR_HASHES } from "./helpers/native-delay-combinator-b1-inverse.mjs";
 import { verifyForwardDelayHistorical } from "./helpers/native-delay-combinator-source-receipts.mjs";
+import { applyMain5fEpochSource, authenticateMain5fEpoch } from "./helpers/historical-promise-main5f-epoch.js";
 
 const receipt = authenticateHistoricalPromiseSuccessors();
 function positive(row: HistoricalPromiseRecord) {
@@ -192,16 +193,26 @@ describe("bounded historical Promise reader successors", () => {
     );
     expect(readHistoricalPromiseSuccessor("unowned", () => "explicit input")).toBe("explicit input");
   });
-  it("keeps three already-matching dependency sources raw, with no unnecessary inverse", () => {
-    for (const path of [
-      "src/codegen/closure-classifier.ts",
-      "src/codegen/carrier-bag-visibility.ts",
-      "src/ir/try-table.ts",
-    ]) {
+  it("keeps two unchanged dependencies raw and authenticates the incoming carrier epoch", () => {
+    for (const path of ["src/codegen/closure-classifier.ts", "src/ir/try-table.ts"]) {
       const dependency = receipt.dependencies.find((row) => row.path === path)!;
       expect(historicalPromiseHash(raw(path))).toBe(dependency.sha256);
       expect(readHistoricalPromiseSuccessor(path)).toBe(raw(path));
     }
+    // Original e0068 control and its failed assumption are frozen in the epoch evidence fixture.
+    const path = "src/codegen/carrier-bag-visibility.ts";
+    const dependency = receipt.dependencies.find((row) => row.path === path)!;
+    const epoch = authenticateMain5fEpoch();
+    const row = epoch.records.find((record) => record.path === path)!;
+    const current = raw(path);
+    expect(historicalPromiseHash(current)).toBe(row.after.sha256);
+    expect(historicalPromiseBlob(current)).toBe(row.after.gitBlob);
+    expect(historicalPromiseHash(current)).not.toBe(dependency.sha256);
+    const recovered = applyMain5fEpochSource(path, current, true);
+    expect(historicalPromiseHash(recovered)).toBe(dependency.sha256);
+    expect(historicalPromiseBlob(recovered)).toBe(dependency.gitBlob);
+    expect(readHistoricalPromiseSuccessor(path)).toBe(recovered);
+    expect(applyMain5fEpochSource(path, recovered, false)).toBe(current);
   });
   it("composes successor/export/earlier/B1 and delay inverses without changing original authority", () => {
     const read = (path: string): string =>

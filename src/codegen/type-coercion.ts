@@ -992,6 +992,30 @@ export function buildVecFromExternref(
   });
   const idxLocal = allocLocal(fctx, `__vec_idx_${fctx.locals.length}`, { kind: "i32" });
 
+  // (#2866 slice 3, see the i32 element arm) `$Symbol` carrier → its id, else
+  // a number unbox. (#6770 S2) Shared with the tuple-field arm below.
+  const symbolCarrierOrNumberUnbox = (unbox: number): Instr[] | undefined => {
+    if (!(ctx.standalone || ctx.wasi) || ctx.symbolTypeIdx < 0) return undefined;
+    const symIdx = ctx.symbolTypeIdx;
+    const tmpSym = allocLocal(fctx, `__sym_elem_${fctx.locals.length}`, { kind: "externref" });
+    return [
+      { op: "local.tee", index: tmpSym },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: symIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: tmpSym },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: symIdx },
+          { op: "struct.get", typeIdx: symIdx, fieldIdx: 0 },
+        ],
+        else: [{ op: "local.get", index: tmpSym }, { op: "call", funcIdx: unbox }, { op: "i32.trunc_sat_f64_s" }],
+      },
+    ];
+  };
+
   const buildElemCoerce = (): Instr[] => {
     const et = vecInfo.elemType;
     if (et.kind === "f64" && unboxIdx !== undefined) {
@@ -1041,30 +1065,8 @@ export function buildVecFromExternref(
       // runtime: a `$Symbol` carrier yields its i32 id (`$Symbol.id`), anything
       // else unboxes as a number. Gated on the carrier being registered
       // (standalone/WASI symbol modules); plain numeric modules are byte-identical.
-      if ((ctx.standalone || ctx.wasi) && ctx.symbolTypeIdx >= 0 && et.kind === "i32") {
-        const symIdx = ctx.symbolTypeIdx;
-        const tmpSym = allocLocal(fctx, `__sym_elem_${fctx.locals.length}`, { kind: "externref" });
-        return [
-          { op: "local.tee", index: tmpSym },
-          { op: "any.convert_extern" },
-          { op: "ref.test", typeIdx: symIdx },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } },
-            then: [
-              { op: "local.get", index: tmpSym },
-              { op: "any.convert_extern" },
-              { op: "ref.cast", typeIdx: symIdx },
-              { op: "struct.get", typeIdx: symIdx, fieldIdx: 0 },
-            ],
-            else: [
-              { op: "local.get", index: tmpSym },
-              { op: "call", funcIdx: unboxIdx },
-              { op: "i32.trunc_sat_f64_s" },
-            ],
-          },
-        ];
-      }
+      const symbolElem = et.kind === "i32" ? symbolCarrierOrNumberUnbox(unboxIdx) : undefined;
+      if (symbolElem) return symbolElem;
       return [{ op: "call", funcIdx: unboxIdx }, { op: "i32.trunc_sat_f64_s" }];
     }
     // (#3024) i64 (BigInt) element arrays previously fell through to the empty
@@ -1145,8 +1147,9 @@ export function buildVecFromExternref(
           if (fieldType.kind === "f64" && unboxIdx !== undefined) {
             instrs.push({ op: "call", funcIdx: unboxIdx });
           } else if (fieldType.kind === "i32" && unboxIdx !== undefined) {
-            instrs.push({ op: "call", funcIdx: unboxIdx });
-            instrs.push({ op: "i32.trunc_sat_f64_s" });
+            // (#6770 S2) a `symbol` field keeps its carrier's identity
+            const sym = fieldType.symbol === true ? symbolCarrierOrNumberUnbox(unboxIdx) : undefined;
+            instrs.push(...(sym ?? [{ op: "call", funcIdx: unboxIdx }, { op: "i32.trunc_sat_f64_s" }]));
           }
           // externref fields don't need conversion
         }

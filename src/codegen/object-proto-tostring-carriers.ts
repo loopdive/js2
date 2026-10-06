@@ -51,7 +51,7 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { standaloneRegExpStructTypeIdx } from "./regexp-standalone.js";
 import { OBJECT_PROTO_SYMBOL_TAG_FN, ensureObjectProtoSymbolTagFn } from "./object-proto-symbol-tag.js";
-import { flushLateImportShifts } from "./shared.js";
+import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { allocLocal } from "./context/locals.js";
 import { LINK_BOUNDARY_TO_STRING_TAG } from "./link-boundary-names.js";
 
@@ -137,14 +137,15 @@ function declinedCarrierTypeIdxs(ctx: CodegenContext): number[] {
  * link terminal (link-boundary-tostring.ts), so a linked peer answers its own
  * Date / Map / RegExp instead of declining them.
  */
-export function buildTaggedCarrierArms(ctx: CodegenContext, receiverIndex: number): Instr[] {
+export function buildTaggedCarrierArms(ctx: CodegenContext, receiverIndex: number, demote = false): Instr[] {
   const recvAny = (): Instr[] => [{ op: "local.get", index: receiverIndex }, { op: "any.convert_extern" }];
   const arms: Instr[] = [];
+  const tagOf = (tag: string): string => (demote && STEP14_ONLY_TAGS.has(tag) ? "Object" : tag);
   for (const [typeIdx, tag] of [...exoticCarrierTags(ctx), ...protoTaggedCarriers(ctx)]) {
     arms.push(
       ...recvAny(),
       { op: "ref.test", typeIdx },
-      { op: "if", blockType: { kind: "empty" }, then: returnTag(ctx, tag) },
+      { op: "if", blockType: { kind: "empty" }, then: returnTag(ctx, tagOf(tag)) },
     );
   }
 
@@ -162,7 +163,7 @@ export function buildTaggedCarrierArms(ctx: CodegenContext, receiverIndex: numbe
       { op: "struct.get", typeIdx: ctx.mapTypeIdx, fieldIdx: MAP_LAYOUT.M_KIND },
       { op: "i32.const", value: kind },
       { op: "i32.eq" },
-      { op: "if", blockType: { kind: "empty" }, then: returnTag(ctx, tag) },
+      { op: "if", blockType: { kind: "empty" }, then: returnTag(ctx, tagOf(tag)) },
     ]);
     arms.push(
       ...recvAny(),
@@ -202,9 +203,9 @@ export function buildTaggedCarrierArms(ctx: CodegenContext, receiverIndex: numbe
   return arms;
 }
 
-function buildCarrierArms(ctx: CodegenContext, receiverIndex: number): Instr[] {
+function buildCarrierArms(ctx: CodegenContext, receiverIndex: number, demote: boolean): Instr[] {
   const recvAny = (): Instr[] => [{ op: "local.get", index: receiverIndex }, { op: "any.convert_extern" }];
-  const arms = buildTaggedCarrierArms(ctx, receiverIndex);
+  const arms = buildTaggedCarrierArms(ctx, receiverIndex, demote);
   // Step 13 default for every other object-typed, non-`$Object` carrier. NOT in
   // a linked consumer: the classifier's peer consult (#5406) has already run,
   // and a non-`$Object` carrier the peer declined is one of ITS exotics that no
@@ -265,9 +266,96 @@ export function fillObjectProtoToStringCarrierArms(ctx: CodegenContext): void {
     if (!fn || filled.has(fn)) continue;
     const at = tailStart(fn);
     if (at < 0) continue;
-    fn.body.splice(at, 0, ...buildCarrierArms(ctx, receiverIndex));
+    fn.body.splice(at, 0, ...buildCarrierArms(ctx, receiverIndex, consultsStep14(ctx, name, fn)));
     filled.add(fn);
   }
+}
+
+/**
+ * (#6770 S6) Tags that are NOT a §20.1.3.6 builtinTag (steps 5-13 name only
+ * Array, Arguments, Function, Error, Boolean, Number, String, Date, RegExp):
+ * `[object WeakMap]` / `[object WeakSet]` / `[object Promise]` come from step
+ * 15 finding the prototype's own `@@toStringTag`, which the step-14 consult
+ * reaches for these carriers (measured: a `defineProperty` / `delete` of
+ * `WeakSet.prototype[@@toStringTag]` is observed). In a consumer that ran that
+ * consult, a carrier arm reached AFTER it means the tag was absent or not a
+ * String — so the brand answer is the step-13 default, `Object`
+ * (`symbol-tag-{weakmap,weakset,promise}-builtin.js`). Map / Set are #5116's.
+ */
+const STEP14_ONLY_TAGS: ReadonlySet<string> = new Set(["Promise", "WeakMap", "WeakSet"]);
+
+/** Did this consumer run the step-14 consult before its carrier arms? */
+function consultsStep14(ctx: CodegenContext, name: string, fn: WasmFunction): boolean {
+  const tagIdx = ctx.funcMap.get(OBJECT_PROTO_SYMBOL_TAG_FN);
+  if (tagIdx === undefined) return false;
+  // `__opts_classify`'s one caller, the fold, consults `__opts_symbol_tag` itself.
+  if (name === "__opts_classify") return true;
+  const calls = (body: readonly Instr[]): boolean =>
+    body.some((instr) => {
+      const i = instr as unknown as Record<string, unknown>;
+      if (i.op === "call" && i.funcIdx === tagIdx) return true;
+      return ["then", "else", "body"].some((k) => Array.isArray(i[k]) && calls(i[k] as Instr[]));
+    });
+  return calls(fn.body);
+}
+
+/**
+ * (#6770 S6) A `$Proxy` receiver's builtinTag is settled BEFORE the step-14
+ * `Get(O, @@toStringTag)`: IsArray (step 4) is the one observable builtinTag
+ * step, and a `get` trap that revokes its own proxy (or the target proxy of an
+ * outer one) must not make the later IsArray throw. Array / Function / Object
+ * exactly as the finalize-time `$Proxy` carrier arm answers, then the tag.
+ */
+function emitProxyBuiltinTagFirst(ctx: CodegenContext, fctx: FunctionContext, receiverIndex: number): void {
+  const proxyTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;
+  if (proxyTypeIdx === undefined) return;
+  ensureLateImport(ctx, "__extern_is_array", [EXTERNREF], [{ kind: "i32" }]);
+  flushLateImportShifts(ctx, fctx);
+  const isArrayIdx = ctx.funcMap.get("__extern_is_array");
+  const symbolTagIdx = ctx.funcMap.get(OBJECT_PROTO_SYMBOL_TAG_FN);
+  if (isArrayIdx === undefined || symbolTagIdx === undefined) return;
+  const tagStr = (tag: string): Instr[] => {
+    addStringConstantGlobal(ctx, `[object ${tag}]`);
+    return stringConstantExternrefInstrs(ctx, `[object ${tag}]`);
+  };
+  const builtinLocal = allocLocal(fctx, `__opts_pbuiltin_${fctx.locals.length}`, EXTERNREF);
+  const tagLocal = allocLocal(fctx, `__opts_ptag_${fctx.locals.length}`, EXTERNREF);
+  const recvAny: Instr[] = [{ op: "local.get", index: receiverIndex }, { op: "any.convert_extern" }];
+  fctx.body.push(
+    ...recvAny,
+    { op: "ref.test", typeIdx: proxyTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: receiverIndex },
+        { op: "call", funcIdx: isArrayIdx },
+        {
+          op: "if",
+          blockType: { kind: "val", type: EXTERNREF },
+          then: tagStr("Array"),
+          else: [
+            ...recvAny,
+            { op: "ref.cast", typeIdx: proxyTypeIdx },
+            { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: PROXY_CALLABLE_FIELD },
+            { op: "if", blockType: { kind: "val", type: EXTERNREF }, then: tagStr("Function"), else: tagStr("Object") },
+          ],
+        },
+        { op: "local.set", index: builtinLocal },
+        { op: "local.get", index: receiverIndex },
+        { op: "call", funcIdx: symbolTagIdx },
+        { op: "local.tee", index: tagLocal },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: EXTERNREF },
+          then: [{ op: "local.get", index: builtinLocal }],
+          else: [{ op: "local.get", index: tagLocal }],
+        },
+        { op: "return" },
+      ],
+    },
+  );
 }
 
 /**
@@ -297,6 +385,7 @@ export function emitObjectProtoToStringSymbolTagConsult(
   if (ctx.funcMap.get("__typeof_undefined") === undefined) return;
   if (ensureObjectProtoSymbolTagFn(ctx) === undefined) return;
   flushLateImportShifts(ctx, fctx);
+  emitProxyBuiltinTagFirst(ctx, fctx, receiverIndex);
   const typeofUndefinedIdx = ctx.funcMap.get("__typeof_undefined");
   const symbolTagIdx = ctx.funcMap.get(OBJECT_PROTO_SYMBOL_TAG_FN);
   if (typeofUndefinedIdx === undefined || symbolTagIdx === undefined) return;

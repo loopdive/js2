@@ -10,7 +10,9 @@
 import type { Instr, ValType } from "../ir/types.js";
 import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { undefinedExternInstrs } from "./any-helpers.js";
-import type { CodegenContext } from "./context/types.js";
+import { allocLocal } from "./context/locals.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { pushElemSizeForKind, pushTaDynViewInBoundsLen } from "./dataview-native.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js"; // (#5194 step 4) IsCallable gate
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
@@ -79,6 +81,18 @@ export const NATIVE_HOF_REDUCE: ReadonlySet<string> = new Set(["reduce", "reduce
 /** Method names served by {@link ensureNativeArrayHof} (single source for the
  *  call-site closure-compile gate and the dispatcher arm — #3098). */
 export const NATIVE_HOF_METHODS: ReadonlySet<string> = new Set([...NATIVE_HOF_EACH, ...NATIVE_HOF_REDUCE]);
+
+/** `%TypedArray%.prototype` HOFs whose direct dynamic-view route must snapshot
+ * internal `[[ArrayLength]]`, never an observable own/inherited `"length"`. */
+const TA_INTERNAL_LENGTH_HOF_METHODS: ReadonlySet<string> = new Set([
+  "forEach",
+  "every",
+  "some",
+  "find",
+  "findIndex",
+  "reduce",
+  "reduceRight",
+]);
 
 interface NativeArrayHofOptions {
   helperName?: string;
@@ -574,13 +588,18 @@ export function ensureNativeArrayHof(
  * $__ta_dyn_view` OR'd into every gate (a no-op for any other receiver), and
  * only the method-call dispatchers `__call_m_<m>_*` — where a dyn-view receiver
  * resolves `<m>` to the `%TypedArray%.prototype` member — are re-pointed at it.
- * Finalize-time (the view type is registered late) and only when the module
- * has a dyn view and a gated helper, so every other module keeps its bytes.
+ * Finalize-time (the view type is registered late). The clone retains that
+ * bypass where a generic helper has a HasProperty gate, and also swaps the
+ * direct TypedArray HOFs' one generic length read for the dynamic view's
+ * live internal in-bounds length. Array.prototype's borrowed spelling remains
+ * on the original generic helper, so its observable LengthOfArrayLike and
+ * HasProperty behavior is unchanged.
  */
 export function fillHofTaDynViewPresenceBypass(ctx: CodegenContext): void {
   const dynIdx = ctx.taDynViewTypeIdx;
   const hasIdx = ctx.funcMap.get("__extern_has_idx");
-  if (!ctx.standalone || dynIdx < 0 || hasIdx === undefined) return;
+  const externLengthIdx = ctx.funcMap.get("__extern_length");
+  if (!ctx.standalone || dynIdx < 0 || externLengthIdx === undefined) return;
   type Nested = Instr & { then?: Instr[]; else?: Instr[]; body?: Instr[] };
   const walk = (arr: Instr[], visit: (arr: Instr[], j: number) => number): void => {
     for (let j = 0; j < arr.length; j++) {
@@ -592,7 +611,15 @@ export function fillHofTaDynViewPresenceBypass(ctx: CodegenContext): void {
   const bypass = (arr: Instr[], j: number): number => {
     const ins = arr[j] as { op: string; funcIdx?: number };
     const recv = arr[j - 2] as { op: string; index?: number } | undefined;
-    if (ins.op !== "call" || ins.funcIdx !== hasIdx || recv?.op !== "local.get" || recv.index !== 0) return j;
+    if (
+      hasIdx === undefined ||
+      ins.op !== "call" ||
+      ins.funcIdx !== hasIdx ||
+      recv?.op !== "local.get" ||
+      recv.index !== 0
+    ) {
+      return j;
+    }
     const or: Instr[] = [
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
@@ -602,29 +629,118 @@ export function fillHofTaDynViewPresenceBypass(ctx: CodegenContext): void {
     arr.splice(j + 1, 0, ...or);
     return j + or.length;
   };
-  const reroute = new Map<number, number>();
+  const replaceTypedArrayLengthPrologue = (body: Instr[], name: string, locals: FunctionContext["locals"]): boolean => {
+    const lenLocal = NATIVE_HOF_REDUCE.has(name) ? 4 : 3;
+    const matches: { arr: Instr[]; index: number }[] = [];
+    walk(body, (arr, j) => {
+      const get = arr[j] as { op: string; index?: number } | undefined;
+      const call = arr[j + 1] as { op: string; funcIdx?: number } | undefined;
+      const set = arr[j + 2] as { op: string; index?: number } | undefined;
+      if (
+        get?.op === "local.get" &&
+        get.index === 0 &&
+        call?.op === "call" &&
+        call.funcIdx === externLengthIdx &&
+        set?.op === "local.set" &&
+        set.index === lenLocal
+      ) {
+        matches.push({ arr, index: j });
+      }
+      return j;
+    });
+    // The template has one and only one `len = __extern_length(recv)` prologue.
+    // Refuse to mint/repoint if a future helper shape changes instead of
+    // silently creating an ineffective TypedArray clone.
+    if (matches.length !== 1) return false;
+
+    const params: FunctionContext["params"] = NATIVE_HOF_REDUCE.has(name)
+      ? [
+          { name: "recv", type: { kind: "externref" } },
+          { name: "cb", type: { kind: "externref" } },
+          { name: "initialValue", type: { kind: "externref" } },
+          { name: "hasInitialValue", type: { kind: "i32" } },
+        ]
+      : [
+          { name: "recv", type: { kind: "externref" } },
+          { name: "cb", type: { kind: "externref" } },
+          { name: "thisArg", type: { kind: "externref" } },
+        ];
+    const localMap = new Map<string, number>();
+    params.forEach((param, index) => localMap.set(param.name, index));
+    locals.forEach((local, index) => localMap.set(local.name, params.length + index));
+    const then: Instr[] = [];
+    // `pushTaDynViewInBoundsLen` allocates its own scratch locals. Give it the
+    // clone's real parameter count, cloned local vector, and fresh name map so
+    // every new slot lands after the original helper frame.
+    const fctx = {
+      name: `__hof_ta_${name}`,
+      params,
+      locals,
+      localMap,
+      body: then,
+    } as FunctionContext;
+    const dvLocal = allocLocal(fctx, `__hfta_${name}_view`, { kind: "ref", typeIdx: dynIdx });
+    const kindLocal = allocLocal(fctx, `__hfta_${name}_kind`, { kind: "i32" });
+    const elemSizeLocal = allocLocal(fctx, `__hfta_${name}_elem_size`, { kind: "i32" });
+    then.push(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: dynIdx },
+      { op: "local.set", index: dvLocal },
+      { op: "local.get", index: dvLocal },
+      { op: "struct.get", typeIdx: dynIdx, fieldIdx: 3 },
+      { op: "local.set", index: kindLocal },
+    );
+    pushElemSizeForKind(fctx, kindLocal);
+    then.push({ op: "local.set", index: elemSizeLocal });
+    pushTaDynViewInBoundsLen(ctx, fctx, dvLocal, elemSizeLocal, dynIdx);
+    then.push({ op: "f64.convert_i32_s" });
+
+    const match = matches[0]!;
+    match.arr.splice(
+      match.index,
+      2,
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: dynIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "f64" } },
+        then,
+        else: [
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: externLengthIdx },
+        ],
+      },
+    );
+    return true;
+  };
+  const reroute = new Map<number, { cloneIdx: number; name: string }>();
   for (const name of NATIVE_HOF_METHODS) {
     const funcIdx = ctx.funcMap.get(`__hof_${name}`);
     const fn = funcIdx === undefined ? undefined : definedFuncAt(ctx, funcIdx);
     if (funcIdx === undefined || !fn) continue;
     const body = structuredClone(fn.body) as Instr[];
+    const locals = fn.locals.map((local) => ({ ...local }));
     let sites = 0;
     walk(body, (arr, j) => {
       const next = bypass(arr, j);
       if (next !== j) sites++;
       return next;
     });
-    if (sites === 0) continue; // ungated helper: already visits every index
+    const needsInternalLength = TA_INTERNAL_LENGTH_HOF_METHODS.has(name);
+    if (!needsInternalLength && sites === 0) continue; // ungated generic helper: no TypedArray-only difference
+    if (needsInternalLength && !replaceTypedArrayLengthPrologue(body, name, locals)) continue;
     const cloneIdx = mintDefinedFunc(ctx);
     ctx.funcMap.set(`__hof_ta_${name}`, cloneIdx);
     pushDefinedFunc(ctx, cloneIdx, {
       name: `__hof_ta_${name}`,
       typeIdx: fn.typeIdx,
-      locals: fn.locals.map((l) => ({ ...l })),
+      locals,
       body,
       exported: false,
     });
-    reroute.set(funcIdx, cloneIdx);
+    reroute.set(funcIdx, { cloneIdx, name });
   }
   if (reroute.size === 0) return;
   for (const fn of ctx.mod.functions) {
@@ -632,7 +748,9 @@ export function fillHofTaDynViewPresenceBypass(ctx: CodegenContext): void {
     walk(fn.body, (arr, j) => {
       const ins = arr[j] as { op: string; funcIdx?: number };
       const to = ins.op === "call" && ins.funcIdx !== undefined ? reroute.get(ins.funcIdx) : undefined;
-      if (to !== undefined) (ins as { funcIdx: number }).funcIdx = to;
+      if (to !== undefined && fn.name?.startsWith(`__call_m_${to.name}_`)) {
+        (ins as { funcIdx: number }).funcIdx = to.cloneIdx;
+      }
       return j;
     });
   }

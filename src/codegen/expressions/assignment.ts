@@ -9,7 +9,7 @@ import { emitVecLengthHoleFill } from "../vec-length-hole-fill.js"; // (#6482 r4
 import { isBooleanType, isExternalDeclaredClass, isStringType } from "../../checker/type-mapper.js";
 import { integrityVarKey } from "../widened-var-key.js";
 import { tracesToProxyValue } from "../proxy-value-provenance.js"; // (#6651 F4)
-import { classMemberFuncKey } from "../class-member-keys.js"; // (#5195 Step 9 H) static setter key
+import { classMemberFuncKey, isInstanceAccessorKey, staticReceiverAccessorKey } from "../class-member-keys.js"; // (#5195 Step 9 H / #6772 S12) accessor keys
 import { PROP_FLAG_ACCESSOR, PROP_FLAG_WRITABLE } from "../object-ops.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import {
@@ -72,6 +72,7 @@ import { resolveReceiverStruct } from "../fnctor-escape-gate.js"; // (#2681/#268
 import { presenceSetInstrs, presenceSlotOf } from "../fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { tryEmitFnctorTypedFieldSet } from "../fnctor-typed-reads.js"; // (#4155 Phase 2) struct-typed fnctor receiver
 import { tryEmitTypedThisFieldSet } from "../typed-this.js"; // (#3683 S2) typed-`this` field write
+import { guardThisReceiver } from "../classes/derived-ctor-this-guard.js"; // (#6772 S1b)
 import { reserveMemberSetDispatch } from "../member-set-dispatch.js"; // (#2681/#2686 A3) pre-check set dispatcher
 import { boxNullRefAsUndefined } from "../null-ref-undefined-box.js"; // (#1058)
 import { tryEmitTypedF64MemberSet } from "../member-set-f64.js"; // (#4157 A) typed f64 write twin
@@ -1717,13 +1718,17 @@ function compileDestructuringAssignment(
       if (
         ts.isBinaryExpression(targetExpr) &&
         targetExpr.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        ts.isIdentifier(targetExpr.left)
+        (ts.isIdentifier(targetExpr.left) ||
+          // (#6774 S11) `{ x: holder.y = d }` — a member target with an initializer
+          (ctx.standalone &&
+            (ts.isPropertyAccessExpression(targetExpr.left) || ts.isElementAccessExpression(targetExpr.left))))
       ) {
         defaultExpr = targetExpr.right;
         targetExpr = targetExpr.left;
       }
 
       const fieldIdx = fields.findIndex((f) => f.name === propName);
+
       if (fieldIdx === -1) {
         // The source struct has no matching field → reading `obj[prop]` yields
         // `undefined`. Per §13.15.5.5 the default Initializer fires on undefined,
@@ -1842,6 +1847,7 @@ function compileDestructuringAssignment(
         fctx.body.push({ op: "local.get", index: tmpLocal });
         fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
         fctx.body.push({ op: "local.set", index: tmpElem });
+        if (defaultExpr) emitMemberTargetDefault(ctx, fctx, tmpElem, fieldType, defaultExpr); // (#6774 S11)
         emitAssignToTarget(ctx, fctx, targetExpr, tmpElem, fieldType);
       }
       // else: unsupported target expression in property assignment — skip
@@ -3049,6 +3055,10 @@ export function emitAssignToTarget(
         ],
         else: [],
       });
+    } else if (ctx.standalone) {
+      // (#6774 S21) A non-vec struct receiver (`t()[k]` where `t` returns an
+      // object): the write used to be dropped. PutValue through the generic set.
+      emitDynamicElementSet(ctx, fctx, target, arrType, valueLocal, valueType);
     }
   }
 }
@@ -3773,7 +3783,7 @@ function emitExternrefBackedOwnFieldWrite(
   className: string,
 ): ValType | null | undefined {
   const backing = externrefBackedOwnFieldBacking(ctx, className);
-  if (backing === undefined) return undefined;
+  if (backing === undefined || backing === "collection-struct") return undefined; // (#6754) struct path stores it
   ensureObjectRuntime(ctx);
   const newObjIdx = ctx.funcMap.get("__new_plain_object");
   const externSetIdx = ensureLateImport(
@@ -4185,6 +4195,7 @@ function compilePropertyAssignment(
   target: ts.PropertyAccessExpression,
   value: ts.Expression,
 ): InnerResult {
+  guardThisReceiver(ctx, fctx, target.expression); // (#6772 S1b)
   // A folded direct-eval body lives in the foreign `<eval>.ts` source file.
   // Its `this.#private` assignment is still lexically inside the surrounding
   // static class method, so let the private-accessor path classify it with the
@@ -4650,7 +4661,14 @@ function compilePropertyAssignment(
     // and a static field can never share a name.
     if (ctx.staticAccessorSet.has(fullName)) {
       const setterName = `${clsName}_set_${propName}`;
-      const setterIdx = ctx.funcMap.get(classMemberFuncKey(ctx, setterName, "static"));
+      const setterKey = staticReceiverAccessorKey(
+        ctx,
+        clsName,
+        "set",
+        propName,
+        classMemberFuncKey(ctx, setterName, "static"),
+      );
+      const setterIdx = ctx.funcMap.get(setterKey); // (#6772 S12)
       if (setterIdx !== undefined) {
         return emitSetterCallWithDummy(ctx, fctx, clsName, setterName, setterIdx, value);
       }
@@ -5650,6 +5668,7 @@ function compileElementAssignment(
   target: ts.ElementAccessExpression,
   value: ts.Expression,
 ): InnerResult {
+  guardThisReceiver(ctx, fctx, target.expression); // (#6772 S1b)
   const poisonResult = tryCompileStrictFunctionPoisonAssignment(ctx, fctx, target, value);
   if (poisonResult !== undefined) return poisonResult;
 
@@ -5743,7 +5762,7 @@ function compileElementAssignment(
         const accessorKey = `${resolvedClass}_${key}`;
         if (ctx.classAccessorSet.has(accessorKey)) {
           const setterName = `${resolvedClass}_set_${key}`;
-          const funcIdx = ctx.funcMap.get(setterName);
+          const funcIdx = ctx.funcMap.get(staticReceiverAccessorKey(ctx, resolvedClass, "set", key, setterName)); // (#6772 S12)
           if (funcIdx !== undefined) {
             return emitSetterCallWithDummy(ctx, fctx, resolvedClass, setterName, funcIdx, value);
           }
@@ -5779,7 +5798,7 @@ function compileElementAssignment(
       const key = resolveComputedKeyExpression(ctx, target.argumentExpression);
       if (key !== undefined) {
         const accessorKey = `${className}_${key}`;
-        if (ctx.classAccessorSet.has(accessorKey) && !ctx.staticAccessorSet.has(accessorKey)) {
+        if (isInstanceAccessorKey(ctx, accessorKey)) {
           const setterName = `${className}_set_${key}`;
           const funcIdx = ctx.funcMap.get(setterName);
           if (funcIdx !== undefined) {
@@ -6589,3 +6608,34 @@ export {
   compileExternSetFallback,
   compilePropertyAssignment,
 };
+
+/**
+ * (#6774 S11) §13.15.5.6 step 3 for a member target: replace the read value in
+ * `valueLocal` with the initializer when it is `undefined`. A statically typed
+ * (non-externref) read is never `undefined`, so it needs no test.
+ */
+function emitMemberTargetDefault(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  valueLocal: number,
+  valueType: ValType,
+  defaultExpr: ts.Expression,
+): void {
+  if (valueType.kind !== "externref") return;
+  const undefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  if (undefIdx === undefined) return;
+  flushLateImportShifts(ctx, fctx);
+  fctx.body.push({ op: "local.get", index: valueLocal }, { op: "call", funcIdx: undefIdx });
+  attachDetachedAssignmentBodies(
+    fctx,
+    (body) => ({
+      then: body(() => {
+        const initType = compileExpression(ctx, fctx, defaultExpr, valueType);
+        if (initType && initType.kind !== "externref") coerceType(ctx, fctx, initType, valueType);
+        fctx.body.push({ op: "local.set", index: valueLocal });
+      }),
+      else: [],
+    }),
+    (branches) => fctx.body.push({ op: "if", blockType: { kind: "empty" }, ...branches }),
+  );
+}

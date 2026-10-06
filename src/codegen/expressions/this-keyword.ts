@@ -26,6 +26,8 @@ import { emitCachedResolvedThis, recordResolvedThis } from "../receiver-cse.js";
 import { emitLazyClassObjectGet } from "./extern.js";
 import { compileIdentifier } from "./identifiers.js";
 import { tryEmitObjectLiteralMethodReceiverValue } from "../method-receiver-this.js"; // (#6651 A11)
+import { emitUninitializedThisGuard } from "../classes/derived-ctor-this-guard.js"; // (#6772 S1b)
+import { tryEmitDerivedEffectiveThis } from "../classes/ctor-return-override.js"; // (#6772 S2)
 import { readEnv } from "../../env.js";
 
 export function compileThisKeyword(
@@ -44,6 +46,9 @@ export function compileThisKeyword(
     emitUnboundThis(ctx, fctx, expr);
     return { kind: "externref" };
   }
+  emitUninitializedThisGuard(ctx, fctx, expr); // (#6772 S1b) derived ctor: `this` before super() returns
+  const derivedThis = tryEmitDerivedEffectiveThis(ctx, fctx); // (#6772 S2) the parent's override object
+  if (derivedThis) return derivedThis;
   // A typed-this twin receives its exact runtime receiver in param/local 0.
   // Reuse that value for bare/non-field `this` expressions too, rather than
   // round-tripping through the ambient `__current_this` global. This makes

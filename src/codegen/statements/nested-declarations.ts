@@ -57,7 +57,10 @@ import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "../expres
 import { emitToPropertyKeyOnce } from "../expressions/computed-member-reference.js";
 import { emitLazyProtoGet, emitRegisterDynamicClassParent } from "../expressions/extern.js";
 import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5195 r3-5)
+import { emitStandaloneCommaHeritageEffects } from "../classes/class-heritage-comma.js"; // (#6772 S6)
+import { emitStandaloneHeritagePrototypeGet } from "../classes/class-heritage-runtime-get.js"; // (#6772 S11)
 import { classHierarchyHasDynamicMember, dynamicClassKeyGlobalKey } from "../class-dynamic-keys.js"; // (#5195 Step 1 / F1)
+import { computedKeyHasAssignment } from "../class-member-keys.js"; // (#6772 S5)
 import { isForeignEvalNode } from "../expressions/eval-source.js";
 import { ensureNativeArrayFromIterN } from "../iterator-native.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
@@ -466,9 +469,16 @@ export function emitUnresolvedComputedAccessorNameEffects(
         !ts.isSetAccessorDeclaration(member) &&
         !ts.isMethodDeclaration(member)) ||
       !member.name ||
-      !ts.isComputedPropertyName(member.name) ||
-      resolveComputedKeyExpression(ctx, member.name.expression) !== undefined
+      !ts.isComputedPropertyName(member.name)
     ) {
+      continue;
+    }
+    if (resolveComputedKeyExpression(ctx, member.name.expression) !== undefined) {
+      // (#6772 S5) The name folded, but a write inside the key still runs here.
+      if (computedKeyHasAssignment(member.name.expression)) {
+        const effectType = compileExpression(ctx, fctx, member.name.expression);
+        if (effectType !== null && effectType !== (VOID_RESULT as unknown as ValType)) fctx.body.push({ op: "drop" });
+      }
       continue;
     }
     const keyGlobalIdx =
@@ -538,6 +548,8 @@ export function compileNestedClassDeclaration(
   // only for a heritage shape with no static parent lane — see
   // `class-heritage-check.ts`, whose predicate is the safety property here.
   emitStandaloneHeritageCheck(ctx, fctx, decl, compileExpression);
+  emitStandaloneCommaHeritageEffects(ctx, fctx, decl, compileExpression); // (#6772 S6)
+  emitStandaloneHeritagePrototypeGet(ctx, fctx, decl); // (#6772 S11)
 
   const isDeferred = ctx.deferredClassBodies.has(className);
   // (#4646) "Already fully compiled" used to be `structMap.has(className)` — a

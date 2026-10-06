@@ -10,15 +10,13 @@ import { historicalSource } from "./helpers/ir-ownership-evolution.js";
 import { readBeforeIrSourceContractRelocation } from "./helpers/ir-source-contract-relocation.js";
 import { readBeforeProgramPreAEvolution } from "./helpers/ir-program-pre-a-evolution.js";
 
-import {
-  reconstructRuntimeProgramRelocationSources,
-  runtimeProgramRelocationPairs,
-} from "./helpers/ir-runtime-program-relocation.js";
+import { runtimeProgramRelocationPairs } from "./helpers/ir-runtime-program-relocation.js";
+import { reconstructC1CurrentSources } from "./helpers/ir-c1-current-source.js";
 
 const root = resolve(import.meta.dirname, "..");
 const rawRead = (path: string) => readFileSync(resolve(root, path), "utf8");
 function beforeC1(readLive: (path: string) => string = rawRead): (path: string) => string {
-  const sources = reconstructRuntimeProgramRelocationSources(readLive);
+  const sources = reconstructC1CurrentSources(readLive);
   return (path) => {
     if (runtimeProgramRelocationPairs.some(([donor]) => donor === path)) {
       const source = sources.get(path as Parameters<typeof sources.get>[0]);
