@@ -3055,3 +3055,38 @@ scoped archive814d4c42... becomes
 Require exact deep JSON equality, unchanged embedded payloads and unchanged
 7772 input map. These wrapper-only changes do not alter tested compiler inputs
 or retrospectively replace the authenticated original evidence archives.
+
+Source checkpoint merge committed as112cea8e5a413eee1bec7ed955c14f73fc90bcdc,
+parents8b9e89a5f9009d7a17a8c6410fa2ea2b1d0b3960 and
+4bffef14505f26558556a707931c711105a968af. Parent verified clean working tree,
+all7772 input bytes unchanged after normal fast hooks, and all five archive
+hashes intact. Final caller/C1 archive is
+plan/agent-context/5883-caller-c1-checkpoint-evidence-20261006.json,
+SHA9e6677249434ac1c7bd93abbc9f2d99566bfb1bcc5d82e82217e59e1c7317d8e:
+ten byte-exact records,4889888 decoded bytes,accepted=false. Normal non-force
+push to the existing5883 branch is in progress, not yet verified published.
+
+Prepare only a separate commit-bound full87 runner under E .tmp. Preserve the
+existing6ed040be runner byte-for-byte and authenticate it from the successor.
+Bind HEAD exactly112cea8e; replace the pending-merge requirement with exact
+two-parent verification plus explicit absent MERGE_HEAD (quiet verification
+must exit1 with no signal/spawn error/output, not an arbitrary Git failure).
+Record mergeHead:null and the two merge parents in invocation metadata. Use a
+distinct runner and output-prefix name. Change nothing in the87-file schedule,
+6739 identities/6795 occurrences,7772 map, authorities, controls, deadlines,
+raw/native failure rejection or accepted=false semantics. Parent reads the
+entire successor and verifies its precise diff before any launch. No execution
+is released while source publication checks own the serial slot.
+
+Publication verified: existing PR5883 fork ref now equals
+112cea8e5a413eee1bec7ed955c14f73fc90bcdc after normal typecheck, lint, formatting,
+oracle/coercion ratchets,18 numeric-local tests and issue checks passed. Working
+tree is clean. This is a published checkpoint, not main delivery or acceptance.
+The parent read the entire commit-bound runner and verified its exact six-edit
+diff from the preserved runner: new SHA256
+f3244e0900f3e717570097e9421d7f2b777ba1306573c02a42cd5b54545b4327.
+Release one serial full-candidate attempt with that exact runner/hash, canonical
+Node and original resource controls, after verifying the slot is free. Preserve
+all stage records and stop on the first failure. No automatic retries, baseline
+launch, source edits, next-stage scope expansion or HOLD removal. Full candidate
+success still requires independent review and separate A/B comparison.
