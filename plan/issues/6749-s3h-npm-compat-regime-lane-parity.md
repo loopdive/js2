@@ -122,3 +122,27 @@ a codegen validation bug, filed under part C, not A.
 
 Byte identity (sha256, default `gc` / `--target standalone` / `--target wasi`
 on a crypto + string probe), base vs after: see PR body.
+
+### react, corrected (2026-10-06, later): the host-lane row is vacuous
+
+Disassembly of a minimal `if (flag) { module.exports = require("./a.js") }
+else { module.exports = require("./b.js") }` on the host lane (`wasm-opt -all
+--print`): both branches lower to `global.set $exports (ref.null noextern)` —
+the in-branch `require` call is dropped to the graceful-null default, not
+resolved and not delegated to Node. So on the host lane react's
+`package/index.js` evaluates to `undefined`, `import { version }` reads
+`undefined`, and the driver's sample op (`__pkg ? input.length + 1 : …`) never
+touches react at all. "measured" there means "the driver ran", not "react
+ran". On the regime the same bare `require` read throws ReferenceError
+(`identifiers.ts` "truly undeclared variable" arm), which is the only reason
+the rows differ.
+
+Consequence for parity: re-keying declared-global gates (the earlier plan) is
+NOT the fix — there is no `require` binding on either lane. The honest fix is
+in the CJS rewrite (`src/cjs-rewrite.ts`): hoist relative-literal `require`
+calls that sit inside statement bodies (the `process.env.NODE_ENV` ternary /
+if-else idiom every React-family package uses) into module-scope imports, so
+BOTH lanes compile react for real and the row measures something. That is a
+separate slice with its own byte-identity story (it changes the host lane too,
+deliberately); file it under #6749 part B' and do it before cookie/hono/redux,
+since those rows at least execute their packages.
