@@ -146,3 +146,18 @@ BOTH lanes compile react for real and the row measures something. That is a
 separate slice with its own byte-identity story (it changes the host lane too,
 deliberately); file it under #6749 part B' and do it before cookie/hono/redux,
 since those rows at least execute their packages.
+
+### Part B, first finding (2026-10-06): cookie was the harness, not codegen
+
+`parseCookie(header)` on the regime returns `{a:"1",…,h:"8"}` through
+`buildCompiledImports` + `wrapCompiledExports` (the #6686 adapter entry), but
+`{}` through `wrapExports(instance, { signatures })` — the per-package perf
+functions and the generic lane wrapped exports WITHOUT the compile result's
+`exportBoundaryPolicies`, so a returned regime object reached JS empty and the
+`parsed.a === "1"` checksum read 0. Four shapes probed (null-proto ctor,
+`Object.create(null)`, literal, class instance): all `{}` via the legacy
+wrapper, all correct via the compiled adapter. `npmCompatWrapExports` now uses
+the compiled adapter for native-first results only (host lane keeps the exact
+legacy wrapper). Re-measured, regime lane: **cookie measured** (ratio 0.0089),
+clsx still measured; **hono** still `Wasm 1, Node 9`, **redux** still
+`Wasm NaN, Node 7` — those two are real.
