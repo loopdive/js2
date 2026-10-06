@@ -2,7 +2,7 @@
 
 import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
-import { BFN_ID_FIELD_IDX } from "../builtin-fn-meta.js";
+import { BFN_ID_FIELD_IDX, linkedSignatureGuard } from "../builtin-fn-meta.js"; // (#6651 V0) guard shared with every bfnid site
 import { buildClosureResultBoxing } from "./result-boxing.js";
 import { getArrTypeIdxFromVec } from "../registry/types.js";
 
@@ -128,41 +128,6 @@ export function collectTransferredNativeProtoReceivers(
     });
   }
   return entries;
-}
-
-/**
- * (#6651 U1b) The `bfnid` claim is a MODULE-LOCAL type index, so it is an
- * ownership answer only while no closure of another module can reach this one.
- * A canonically linked module (`canonicalRuntimeRecGroup`: the Temporal
- * provider and its consumer, a linked harness, a package graph) breaks that:
- * the per-(brand, member) meta structs are structurally equal in every module,
- * so a PEER's closure passes the family `ref.test`, and its `bfnid` is the
- * peer's own type index — which can equal one of ours.
- *
- * Measured (`Temporal/Duration/prototype/round/balance-subseconds.js`,
- * standalone, linked provider): the polyfill's `n.toPrecision(o)` reached the
- * consumer through the reverse method-call hop and resolved to the PROVIDER's
- * `Number.prototype.toPrecision` closure, `bfnid` 719 — the consumer's id for
- * `Set.prototype.values` once `Set` is seeded on the realm global. The arm then
- * cast the `(self, this, arg)` funcref to `values`' `(self, this)` type and
- * trapped `illegal cast in __call_fn_method_1`. Unseeded, no local id was 719
- * and the closure fell through to the funcref-type ladder, which dispatches a
- * foreign closure correctly.
- *
- * So a linked module also requires the funcref to have the entry's exact
- * signature. A same-signature collision is then harmless: every arm built
- * from these entries calls THROUGH field 0, i.e. the peer's own function, with
- * the arguments that signature takes. Unlinked modules keep their bytes.
- */
-function linkedSignatureGuard(ctx: CodegenContext, entry: TransferredNativeReceiverEntry, self: Instr[]): Instr[] {
-  if (ctx.mod.canonicalRuntimeRecGroup === undefined) return [];
-  return [
-    ...self,
-    { op: "ref.cast", typeIdx: entry.typeIdx },
-    { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: 0 },
-    { op: "ref.test", typeIdx: entry.funcTypeIdx },
-    { op: "i32.and" },
-  ];
 }
 
 /**

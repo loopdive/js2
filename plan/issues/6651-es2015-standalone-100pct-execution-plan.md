@@ -174,6 +174,12 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-10-06 — slice V5 (captured-binding TDZ; record under "2026-10-06 —
+  # Slice V5"). `index.ts` +3: `preallocateBlockScopedSlots` stops skipping a
+  # block that hoists a function declaration when the frame is `__module_init`
+  # (no function-entry pre-hoist exists there) and re-installs the pre-hoisted
+  # slots otherwise. `expressions/assignment.ts` +2: the SetMutableBinding TDZ
+  # guard on the boxed-capture write arm. Both paths already listed below.
   # 2026-10-06 — slice V1 (trapless Proxy forwarding; record under
   # "2026-10-06 — Slice V1"). `object-runtime-proxy.ts` +2: the import and the
   # one-line call of `installProxyForwardArms`; the arms themselves live in the
@@ -195,6 +201,16 @@ loc-budget-allow:
   #     `emitStandaloneVecBuiltinConstructor`.
   - src/codegen/iterator-native.ts
   - src/codegen/object-runtime.ts
+  # 2026-10-06 — slice V0 (record `### 2026-10-06 — Slice V0`): one guard call
+  # per `bfnid` compare site. `object-runtime.ts` +1 (the import widens, and
+  # one line in `fillBuiltinFnMeta`'s shared `exactMetaArm`); `ta-dyn-mop.ts`
+  # +2 (one call in the refusal-closure ladder plus its `self` thunk). The
+  # guard itself lives in the leaf `builtin-fn-meta.ts`, moved there from
+  # `closures/transferred-native-proto.ts` so the non-SCC callers can reach it
+  # without joining the import-cycle SCC. Both paths are already listed below;
+  # restated here per the stranded-grant rule.
+  - src/codegen/object-runtime.ts
+  - src/codegen/ta-dyn-mop.ts
   # 2026-10-05 — uncovered slice U2 (TypedArray residue; record under
   # "2026-10-05 — Uncovered slice U2"). Every mechanism is a few lines at the
   # site that owns the decision; the shared helper `taDynJoinLengthInstrs` is in
@@ -1265,8 +1281,18 @@ loc-budget-allow:
   # `promise-subclass-cell-read.ts`; the hand-off cannot move, because it is the
   # arm that would otherwise emit the bare `global.get` of the cell.
 func-budget-allow:
+  # 2026-10-06 — slice V5 (see the loc-budget note): `compileAssignment` +2 (the
+  # TDZ guard on the boxed-capture write) and `planClosureCaptures` +2 (skip the
+  # #1177 by-name slot rescan for a name no reference binds).
+  - src/codegen/expressions/assignment.ts::compileAssignment
+  - src/codegen/closures/arrow-phases.ts::planClosureCaptures
   # 2026-10-06 — slice V1: `ensureProxyRuntime` +1, the one-line call of
   # `installProxyForwardArms` next to `installProxyKeyBagGuards` (key already listed below).
+  # 2026-10-06 — slice V0 (see the loc-budget note): the refusal-closure ladder
+  # is a closure inside `fillTaDynViewMopArms`, emitted through
+  # `buildStringKeyArm`, so its +2 (guard call + `self` thunk) counts in both.
+  - src/codegen/ta-dyn-mop.ts::fillTaDynViewMopArms
+  - src/codegen/ta-dyn-mop.ts::buildStringKeyArm
   # 2026-10-05 — uncovered slice U2 (see the loc-budget note): one-line calls
   # of `emitRefElemArraySnapshot` — `emitTaDynCtorConstructInline` +2 (the
   # `$ObjVec` and plain-vec arms) and `compileBuiltinStaticCall` +1 (the static
@@ -3333,6 +3359,132 @@ a subclass instance does not land (it did not on base either).
 - Fast quality gates (the brief's 30-gate loop) exit 0; loc/func also with
   `LOC_GATE_BASE=$(git rev-parse origin/main)`; `check:compiler-boundaries:inventory`
   valid after classifying the new leaf (complete mode exits 1 on base too).
+
+### 2026-10-06 — Slice V0
+
+Routes U1b's four residual `bfnid` sites through its linked-module signature
+guard. Opus lane, harness branch off `origin/main` @ `bba74cfa80`. `src/` was
+copied to `.tmp/base/src` before the first edit, and every "base" number below
+was run by this lane.
+
+**Why.** A `bfnid` is a module-local type index, so in a canonically linked
+module (`canonicalRuntimeRecGroup`) a peer's builtin closure passes the family
+`ref.test` and can carry one of our ids (see U1b). U1b guarded the three
+`transferred-native-proto.ts` arms; four other compare sites stayed exposed.
+
+**Where the guard lives.** `closures/transferred-native-proto.ts` is in the
+import-cycle SCC (697 files) and `apply-closure-variadic-builtin.ts` is not, so
+importing the guard from there would have grown the SCC. It moved to the leaf
+`builtin-fn-meta.ts`, which every site already imports (`BFN_ID_FIELD_IDX`).
+That adds no import edge; `check:import-cycles` stays at 697. Its signature now
+takes `{ typeIdx, funcTypeIdx }` instead of a receiver entry, and a wrapper,
+`linkedMetaSignatureGuard`, looks the signature up from the meta type's closure
+info (`ensureBuiltinFnMetaType` always records it).
+
+**Per site** (all emit nothing unless linked):
+
+| site | what a colliding peer closure did | now (linked) |
+| --- | --- | --- |
+| `char-at-transfer.ts`, transferred `String.prototype.<m>` arm of `__apply_closure` | different signature: `illegal cast` on the self cast. Same signature: ran OUR member body (`call $__proto_method_…`) on the peer closure | guarded, and the arm calls through field 0 (the peer's own function), as U1b's arms do |
+| `apply-closure-variadic-builtin.ts`, `Math.max`/`min`/`String.fromCharCode` identity | already safe: the arm re-tests field 0 against the variadic type and calls through it | guarded (defence in depth: the identity predicate now holds the invariant by itself) |
+| `object-runtime.ts`, `exactMetaArm` (shared by `__builtinfn_get_meta`/`_gopd`/`_delete`/`_push_ownnames`) | answered OUR `name`/`length` for the peer function, and gOPD/delete/own-keys treated it as ours | a different-signature peer declines to the default tail, which is what a non-colliding peer already got |
+| `ta-dyn-mop.ts`, dyn-view [[Get]] refusal-closure filter | a working peer method read back as `undefined` | each id compare is guarded; the cast is to the family type the ladder already tested |
+
+**Rows and controls.**
+
+| control | base | branch |
+| --- | --- | --- |
+| `Temporal/Duration/prototype/round/*.js` (126, standalone, linked provider, in-process, `JS2WASM_TEMPORAL_CACHE`) | 119 / 7, 0 `illegal cast` | 119 / 7, 0 `illegal cast`; same 7 rows, same messages |
+| byte identity, unlinked: playground examples + `benchmarks/suites` + `examples` (32 files) and a seeded 150-row random test262 sample (wrapped with `wrapTest`), each on gc / standalone / wasi | 546 rows (432 binaries, 114 compile errors) | identical JSONL, every sha and every error message |
+| Temporal provider (linked, standalone) | 3,928,602 B | 3,949,153 B (the guards). Re-built after the final refactor: same sha |
+| QuickJS eval adapter (unlinked) | 617,752 B | 617,752 B |
+
+- Pins: `tests/issue-6651-v0-linked-bfnid-sites.test.ts`, 8 tests. The 4
+  linked tests are red on base; the 4 unlinked tests pass on base (invariants:
+  no guard, direct call). U1b's 6 pins still pass.
+- `node scripts/equivalence-gate.mjs`: no new regressions (22 known failures,
+  1748 passing).
+- Every fast `quality` gate exits 0. Loc and func budgets also pass with
+  `LOC_GATE_BASE=origin/main`, given the dated grants in the frontmatter
+  (`object-runtime.ts` +1, `ta-dyn-mop.ts` +2).
+
+**Not verified.**
+
+- No row that reaches a real cross-module collision at sites 1–4 was found;
+  the Temporal control did not trap at these sites on base either. The pins
+  prove the guard is emitted, not that a collision is now answered correctly.
+- `__builtinfn_gopd`/`_delete`/`_push_ownnames` are dead-code-eliminated in
+  every probe tried. They share `exactMetaArm` with `get_meta`, which is pinned.
+- No host linked-harness lane was run. Those modules also carry
+  `canonicalRuntimeRecGroup`, so they get the guards.
+
+**Residuals.**
+
+- A same-signature collision is still wrong at the two metadata-style sites,
+  which read local data, not the peer's function: `exactMetaArm` answers our
+  `name`/`length`, and the dyn-view filter hides a same-signature peer method.
+  A link-unique `bfnid` (or the realm/singleton identity test that
+  `runtime/wasmgc/values/builtin-function-bodies.ts` already uses) is the
+  durable fix.
+- A peer STATIC builtin whose lifted signature equals a local method's
+  `(self, this, args…)` would still be dispatched with a receiver. This also
+  applies to U1b's arms.
+- `runtime/wasmgc/values/builtin-function-bodies.ts` also compares a bfnid,
+  but it already requires realm and singleton `ref.eq` plus the lifted
+  signature, so it is identity-safe and was left alone.
+
+### 2026-10-06 — Slice V5
+
+TDZ for closure-captured block `let`/`const` (H5 of the 2026-10-06 re-census),
+on `10f601e26e`. **4/4 target rows flip** (`{let,const}/block-local-closure-get-
+before-initialization`, `let/block-local-closure-set-before-initialization`,
+`block-scope/leave/outermost-binding-updated-in-catch-block-nested-block-let-
+declaration-unseen-outside-of-block`), measured base vs branch with
+`JS2WASM_EVAL_ENGINE=quickjs … run-test262-paths.mts --standalone`.
+
+**The spec's mechanism (a `$__tdz` sentinel inside the value cell) was not
+needed — the codebase already has a captured-TDZ mechanism**: an i32 flag per
+binding, boxed in a `__ref_cell_i32` when captured (#1177/#1205), checked by
+`emitLocalTdzCheck` in the callee. The rows failed because four places
+bypassed it, none of them a missing state:
+
+1. **Script-scope blocks never allocated their bindings when the block also
+   hoists a function** (`preallocateBlockScopedSlots`, #5271 step 5). In a
+   function that skip is covered by the function-entry pre-hoist; `__module_init`
+   has none, so the block function captured nothing and read its OWN fresh
+   `undefined` local (`{ function k(){ return w } let w = 5; k() }` returned 0,
+   wrong even outside the TDZ). `__module_init` now allocates as for any block;
+   function frames re-install the pre-hoisted slots + flags at block entry.
+2. **The Annex B B.3.3.2 module-scope evaluation stored a capture-less cached
+   closure** (`tryCompileAnnexBModuleBlockFnEvaluation`) — once 1. gave the
+   function captures, its trampoline received null cells. It now uses
+   `emitFuncRefAsClosure` when the function has captures, as the function-scope
+   twin (`emitAnnexBFunctionClosure`) already did.
+3. **A boxed-capture write had no TDZ guard** (`compileAssignment`): §9.1.1.1.5
+   step 2. The guard is `emitPutValueTargetGuard`, gated on a TDZ flag and on
+   `analyzeTdzAccess` ("skip" when provably initialised — no code in the common
+   case). `emitLocalTdzInit` null-guards the flag box: a call the static TDZ
+   analysis turned into an unconditional throw never reaches the box's tee.
+4. **The #1177 by-name `fctx.locals` rescan resurrected a LEFT block's slot**
+   for a closure whose reference to that name binds nothing (`xx` in the
+   catch-block IIFE read the dead `18`; typeof said "undefined"). The rescan now
+   skips a name no reference in the closure binds (`closureReferencesOnlyUnboundName`).
+
+Not fixed (base fails identically, outside the 4 rows): a block function inside
+a **loop** body at script scope (`for (…) { function m(){ return q } …; let q }`)
+— the per-iteration flag reset at block re-entry is still missing.
+
+**Receipts.** Family `language/statements/{let,const}/**` + `language/block-
+scope/**` (426 rows): base 419 → branch 423, **0 lost** (base matches the
+standalone baseline jsonl exactly). Wide net (annexB/language, eval-code/direct,
+statements/block, function-code; 1,369 rows): the first 400 rows (sorted
+`annexB/language/comments` … `annexB/language/eval-code/indirect`) all pass on the branch; the rest was
+still running at commit time (box contention) — see the hand-back. Pin
+`tests/issue-6651-v5-captured-tdz.test.ts` (6 cases; each shape was
+reproduced failing on base with `.tmp` probes before the fix).
+Equivalence gate green (1748 pass, 22 known). Temporal control
+(`Duration/prototype/round/*`, standalone, prewarmed cache): **119 pass / 7 fail of
+126, 0 `illegal cast`** — unchanged.
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 
