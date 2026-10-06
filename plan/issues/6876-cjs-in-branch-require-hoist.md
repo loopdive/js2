@@ -1,7 +1,8 @@
 ---
 id: 6876
 title: "CJS rewrite: hoist `require('<literal>')` inside module-scope control flow (react's `NODE_ENV` idiom) — the host lane drops it to null, the regime throws ReferenceError"
-status: ready
+status: in-progress
+assignee: ttraenkler/fable
 created: 2026-10-06
 updated: 2026-10-06
 priority: high
@@ -13,7 +14,7 @@ area: compiler
 language_feature: commonjs
 goal: architecture
 parent: 6749
-related: [5385, 6749, 6875]
+related: [5385, 6749, 6875, 6877]
 ---
 
 # #6876 — in-branch `require` is neither compiled nor delegated
@@ -57,14 +58,33 @@ resolves to on each lane; a regime failure there is a separate finding.
 
 ## Acceptance
 
-- [ ] `tests/issue-6876-cjs-in-branch-require-hoist.test.ts`: two-file
+- [x] `tests/issue-6876-cjs-in-branch-require-hoist.test.ts`: two-file
       project with the idiom, `compileProject({ allowJs, platform: "node" })`
       under default gc, `semanticProviders: "native-first"`, and
       `--target standalone`; the chosen module's export is observable.
 - [ ] react measures on BOTH npm-compat lanes with Node's checksum
       (`--only react --perf-only --lane js-host` / `js-host-native`). A
       remaining regime failure is recorded verbatim, box left unticked.
-- [ ] Deliberately not byte-identical for programs with the idiom (both lanes
+- [x] Deliberately not byte-identical for programs with the idiom (both lanes
       now compile the module); sha256 identity shown for a program without it
       on default gc / standalone / wasi.
-- [ ] Existing CJS suites, `issue-4396`, `issue-6686` green.
+- [x] Existing CJS suites, `issue-4396`, `issue-6686` green.
+
+## Progress (2026-10-06)
+
+`collectInBranchRequireHoists` in `src/cjs-rewrite.ts`: after the top-level
+statement rewrites, every remaining module-scope statement (NOT top-level
+variable statements — the ones the existing rewrite declines stay declined,
+#1279) is walked without entering functions/classes; each static-literal
+`require` becomes `__cjs_hoisted_require_N` with one `import … from` line per
+distinct specifier prepended to the module prelude. Focused test: the idiom's
+chosen branch is observable on default gc, the regime and standalone. CJS
+suites (`issue-1279`, `4453`, `6479`, `6725`) 121/121; sha256 of a program
+without the idiom identical base vs after on gc / standalone / wasi.
+
+**react now compiles on both lanes — and fails the same codegen invariant on
+both** (`cloneAndReplaceKey` references out-of-range locals after local
+dedup): **#6877**. That is the first time react's own code reached the
+compiler through this harness; the host lane's old "measured" row was the
+driver running without react (see #6749). The react acceptance box stays
+open until #6877.

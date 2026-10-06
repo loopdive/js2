@@ -185,6 +185,24 @@ loc-budget-allow:
   #     the parent's override object (BindThisValue), not the struct;
   #   - `declarations.ts` +2: allocate a self-importing module's TDZ flags
   #     before class bodies compile (a class body may build `ns` first).
+  # 2026-10-06 — slice V9 (parser compatibility, adopts #6836; record under
+  # "2026-10-06 — Slice V9"). `src/compiler.ts` +6: the import, a one-line
+  # comment, the 3-line call of `normalizeForHeadParserCompat` in
+  # `compileSourceSync` and its `.compose(...)` in the pre-parse PositionMap
+  # chain. The recognizer itself is the NEW leaf
+  # `src/compiler/for-head-parser-compat.ts`; the call site cannot move — it is
+  # the single-source pre-parse pipeline that owns every rewrite stage and map.
+  - src/compiler.ts
+  # 2026-10-06 — slice V10a (primitive ToObject prototype reads; record under
+  # "2026-10-06 — Slice V10a"). `array-object-proto.ts` +9: the
+  # `Promise.prototype.catch` body's IsCallable guard skips the resolve-path
+  # thenable predicate for a primitive `this` (the carrier test lives in the
+  # NEW leaf `object-model/primitive-carrier-test.ts`; this is the call site
+  # plus the `ensureSymbolCarrier` reservation it needs before any index is
+  # baked). `property-access-dispatch.ts` +4: the #5269 B-d symbol-read fold
+  # declines when the module writes `Symbol.prototype` / `Object.prototype`.
+  - src/codegen/array-object-proto.ts
+  - src/codegen/property-access-dispatch.ts
   # 2026-10-06 — slice V5 (captured-binding TDZ; record under "2026-10-06 —
   # Slice V5"). `index.ts` +3: `preallocateBlockScopedSlots` stops skipping a
   # block that hoists a function declaration when the frame is `__module_init`
@@ -3681,6 +3699,131 @@ of 126, 0 `illegal cast`** — unchanged.
 Not fixed (base fails identically): the `obj-rest-*` rows in for-of/dstr and
 assignment/dstr (object rest over runtime sources), `array-elem-init-in.js`
 (parse), and three `with` Proxy-env rows.
+
+### 2026-10-06 — Slice V9
+
+Parser compatibility (H9, 2 rows; adopts #6836). Base `559c18a93f` (harness
+worktree branch; the lead merges by sha).
+
+**Root cause.** Both failures are in TypeScript's parser, before any js2wasm code
+runs. `parseForOrForInOrForOfStatement` treats every leading `let` as a
+declaration. So `for (let; ;)` silently becomes an empty `let` list and
+`for (let = 3; ;)` fails with "Variable declaration expected". It also keeps
+the head's NoIn context inside array literals, so `[x = 'x' in {}]` in a
+`for` head gets "',' expected". Neither can be fixed downstream: by the time
+codegen sees them, the AST is already wrong.
+
+**Fix.** A new pre-parse leaf `src/compiler/for-head-parser-compat.ts` makes
+insertion-only edits. `compileSourceSync` calls it after define substitution
+and composes its edits into the #1928 PositionMap chain:
+
+- `for (let …` becomes `for (0, let …`. This needs an explicit Script goal,
+  non-strict code (no `"use strict"` prologue on the script or any enclosing
+  function, not inside a class) and an unescaped `let`, and the next token
+  must not be able to start a binding. It does not use `(let)`, because a
+  parenthesised target loses NamedEvaluation (#6836 hazard 4).
+- `[x = <rhs with in>]` becomes `[x = (<rhs>)]`. The parse must have a TS1005
+  at that `in`, and the element must be exactly `Identifier = RHS`.
+
+Every other program comes back byte-identical. The full admission boundary and
+the residuals are in #6836's "Implementation" section.
+
+**Rows (standalone, QuickJS eval, in-process, chunks ≤200):** both targets went
+from compile_error to pass. Family controls:
+
+| family | base pass | branch pass |
+| --- | --- | --- |
+| `language/statements/for/**` (385) | 384 | 385 (+`head-lhs-let`, 0 lost) |
+| `language/statements/for-in/**` (119) | 116 | 116 (identical non-pass set) |
+| `language/statements/for-of/**` (751) | 715 | 716 (+`dstr/array-elem-init-in`, 0 lost) |
+| `language/statements/let/**` (145) | 143 | 143 (identical) |
+| host (gc) lane, first 200 rows of `statements/for/**` | 194 | 194 (identical) |
+
+Measurement note: creating the new src file made the QuickJS provider key stale,
+so the first base pass got "provider is not built" on 34 eval-dependent rows.
+Those 34 were re-measured on the restored base tree (file-copy swap, provider
+cache HIT at key `320718af46eaa03c`). The table uses those re-measured results.
+
+**Residuals.** Not wired into the multi-source, disk-project or object-output
+entry points. Emitted source maps and function source text show the inserted
+characters, a gap every pre-parse rewriter shares. The inserted `0,` produces
+one downgraded TS2695 warning. Not handled: `for await` heads, A targets that
+are not identifiers, and L followers `++`/`--`/`=>`/template.
+
+Pin: `tests/issue-6651-v9-sloppy-let-parse.test.ts` (35 cases: leaf admission
+both ways, a position-map check, and 4 standalone runtime cases including the
+unresolvable-`let` ReferenceError and `let = function(){}` naming).
+Controls: `node scripts/equivalence-gate.mjs` green (22 known failures, 1748
+passing); Temporal `Duration/prototype/round/*` standalone 119 pass / 7 fail of 126, 0
+`illegal cast`.
+
+### 2026-10-06 — Slice V10a
+
+Primitive ToObject prototype reads (H10, first group; 3 rows). Base
+`58d36ecb0a` (harness worktree branch; the lead merges by sha). **2 of 3 rows
+flip; `put-value-prop-base-primitive` is NOT fixable at this layer — see
+residuals.**
+
+**Row 1 — `types/reference/get-value-prop-base-primitive` (`Symbol().x`).** Two
+stacked causes, both measured with probes. (a) The #5269 B-d arm in
+`property-access-dispatch.ts` folded every non-own read off a symbol to
+`undefined` unconditionally. It now declines when the module writes
+`Symbol.prototype` / `Object.prototype` (`moduleExtendsSymbolProto`, the symbol
+twin of #4483's `moduleExtendsPrimitiveProtos` — the scan is shared,
+parameterised by constructor set), and the read takes a new symbol arm of
+`tryEmitPrimitiveProtoMemberGet` (#4668): box via `__box_symbol`, and in sloppy
+code ToObject via `__new_Symbol` + `linkSymbolWrapperPrototype` (the same
+§10.4.3 strictness split as the number/boolean arm), then `__extern_get`.
+(b) Even boxed, the read answered `undefined`: `__protoidx_brand_off`
+classified a bare `$Symbol` carrier as Object (only the `Object(sym)` wrapper
+was classified Symbol, #6651 H5), so the Symbol companion that the prototype
+write populated was never consulted. One `ref.test $Symbol → SYMBOL_OFF` arm
+beside the bare string/number/boolean arms (#4207) — the site that owns
+"which implicit prototype does this receiver have". A first cut gated B-d on
+`protoNamedDirty` instead (any builtin-proto write disabled the fold); a family
+chunk that happened to run with that cut in place read 187 vs the clean 191, so
+the gate is the narrow Symbol/Object scan (that 4-row figure is from a mixed-
+state run, not a controlled A/B).
+
+**Row 3 — `Promise/prototype/catch/this-value-obj-coercible`.** Not a lookup
+failure: the reflective `catch` body's IsCallable guard reused
+`__promise_has_callable_then`, the RESOLVE-path thenable predicate, which
+answers 0 for every primitive by design (§27.2.1.3.2 step 8 — a primitive
+is never a thenable; widening the predicate would make `resolve(true)` call
+`Boolean.prototype.then`). Invoke(V, "then") ToObjects instead (§7.3.2), so a
+primitive `this` now skips that predicate (new leaf
+`object-model/primitive-carrier-test.ts`: i31 / boxed number / boxed boolean /
+native string / `$Symbol`) and reaches the vararg dispatcher's
+`__extern_method_call` fallback, which walks the wrapper prototype and already
+throws the TypeError for an absent or non-callable `then` (pinned as controls).
+`ensureSymbolCarrier` is reserved at the head of the body, before any index is
+baked, so the `$Symbol` test exists when the harness has not yet minted one.
+
+**Rows (standalone, QuickJS eval, in-process):** targets 0/3 → 2/3.
+
+| family | base pass | branch pass |
+| --- | --- | --- |
+| `types/reference/**` + `Promise/prototype/{catch,then}/**` + `Symbol/prototype/**` + `Number/prototype/**` (321, 2 chunks) | 301 | 303 (only the 2 targets moved; 0 lost) |
+| `built-ins/Symbol/**` minus prototype + `Boolean/prototype/**` + `Promise/prototype/finally/**` + `Object/prototype/toString/**` (159) | 139 | 139 (identical non-pass set) |
+
+**Residuals.**
+- `put-value-prop-base-primitive` needs **mutable [[Prototype]] on builtin
+  prototypes**: `Object.setPrototypeOf(Number.prototype, proxy)` is a silent
+  no-op on a `$NativeProto` today (`getPrototypeOf` still answers
+  `Object.prototype`, measured), and the companion consult chain is hard-wired
+  `brand → Object.prototype` (proto-index-store.ts "Chain depth is 2"). The
+  PutValue side already works for an accessor on the companion (a
+  `Number.prototype` setter fires once with `(0).acc = 5`), and a Proxy in an
+  ordinary `$Object` chain already receives `set` traps — so the missing piece
+  is (1) `__object_setPrototypeOf` on a `$NativeProto` storing the parent on its
+  companion, (2) `getPrototypeOf` reading it back, (3) `__protoidx_get_k` /
+  `__protoidx_set_r` / has walking the companion's parent instead of jumping to
+  the Object companion. Its own slice; not attempted here.
+- A sloppy accessor reached from strict code (or the reverse) gets the wrong
+  `this` on a symbol read — the same read-site strictness proxy #4668 records.
+
+Pin: `tests/issue-6651-v10a-primitive-base.test.ts` (first describe fails on the
+base tree with `undefined|undefined` / `!TypeError`; the controls pass on both).
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 
