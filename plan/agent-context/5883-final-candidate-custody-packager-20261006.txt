@@ -1,0 +1,253 @@
+// Inert preparation. Parent must review and release before use.
+// Usage: canonical-node THIS --parent-released SELF_SHA256 UNIQUE_OUTPUT_BASENAME.json
+// Reads only the pinned attempt and authorities; writes a new B .tmp archive (wx).
+// No child processes, Git operations, compiler imports, tests, or collection.
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { constants, closeSync, fstatSync, lstatSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { gzipSync, gunzipSync } from 'node:zlib';
+
+const E = '/Users/thomas/.codex/worktrees/5883-main4bff-composition/js2';
+const B = '/Users/thomas/.codex/worktrees/5883-repaired-main4bff-b/js2';
+const SELF = B + '/.tmp/avicenna-5883-final-candidate-custody-20261006-01a03e4f.mjs';
+const RUN = '.tmp/laplace-5883-full-candidate-committed112-20261006-4Dt9nJ';
+const RUNNER = '.tmp/laplace-5883-full-candidate-committed112-20261006.mjs';
+const SCHEDULE = '.tmp/laplace-5883-full-candidate-87-file-schedule-20261006.json';
+const MAP = '.tmp/5883-main4bff-v2-parent-map-20261006.json';
+const HEAD = '112cea8e5a413eee1bec7ed955c14f73fc90bcdc';
+const PARENTS = ['8b9e89a5f9009d7a17a8c6410fa2ea2b1d0b3960', '4bffef14505f26558556a707931c711105a968af'];
+const PINS = {
+  [RUNNER]: 'f3244e0900f3e717570097e9421d7f2b777ba1306573c02a42cd5b54545b4327',
+  [SCHEDULE]: '80cf174fa748f138e5ad233cb7601b22ffcbb7dfe3470c7ef9f153d31d370007',
+  [MAP]: '309eacc2b0f9b63d89f4a38a7c82fb2492a6bd296bd968c4732c70b7002c117e',
+};
+// Complete scheduled enumeration. Native report is conditional only on the failed stage.
+const STAGES = [
+  ['canonical', 0, 0], ['compiler-readers', 2, 176], ['text-readers', 5, 992],
+  ['runtime', 28, 505], ['incoming23', 23, 2407], ['repair-controls', 3, 305],
+  ['successor-proof', 1, 73], ['imported-main', 7, 117], ['additional18', 18, 2173],
+  ['helper47', 1, 47],
+];
+const REQUIRED = ['invocation.json', 'raw.log', 'before.json', 'after.json', 'terminal.json'];
+const sha = bytes => createHash('sha256').update(bytes).digest('hex');
+function safeRelative(p) {
+  assert.equal(typeof p, 'string');
+  assert(p.length > 0 && !isAbsolute(p) && !/[\\\x00-\x1f\x7f:]/.test(p), 'Unsafe path: ' + p);
+  assert(p.split('/').every(s => s && s !== '.' && s !== '..'), 'Unsafe segments: ' + p);
+  assert.equal(relative(E, resolve(E, p)), p);
+  return p;
+}
+function directory(p) {
+  assert(isAbsolute(p));
+  const ancestors = [];
+  for (let at = p; ; at = dirname(at)) {
+    ancestors.push(at);
+    if (dirname(at) === at) break;
+  }
+  for (const at of ancestors.reverse()) {
+    const st = lstatSync(at);
+    assert(st.isDirectory() && !st.isSymbolicLink(), 'Non-directory/symlink: ' + at);
+  }
+}
+function readRegular(p) {
+  directory(dirname(p));
+  const st = lstatSync(p);
+  assert(st.isFile() && !st.isSymbolicLink(), 'Non-regular record: ' + p);
+  const fd = openSync(p, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const opened = fstatSync(fd);
+    assert(opened.isFile() && opened.dev === st.dev && opened.ino === st.ino, 'Record replaced: ' + p);
+    const bytes = readFileSync(fd);
+    const after = fstatSync(fd);
+    assert.equal(bytes.length, st.size, 'Length drift: ' + p);
+    assert.equal(after.size, opened.size);
+    assert.equal(after.mtimeMs, opened.mtimeMs);
+    assert.equal(after.ctimeMs, opened.ctimeMs);
+    return bytes;
+  } finally { closeSync(fd); }
+}
+const captured = new Map();
+function capture(p) {
+  safeRelative(p);
+  assert(!captured.has(p), 'Duplicate path: ' + p);
+  const bytes = readRegular(join(E, p));
+  if (Object.hasOwn(PINS, p)) assert.equal(sha(bytes), PINS[p], 'Authority drift: ' + p);
+  captured.set(p, bytes);
+  return bytes;
+}
+const parse = p => JSON.parse(captured.get(p).toString('utf8'));
+function inventory(p, expected) {
+  directory(p);
+  assert.deepEqual(readdirSync(p).sort(), [...expected].sort(), 'Unexplained record/directory inventory: ' + p);
+}
+function stamp(t, label) {
+  assert.equal(t.accepted, false, label);
+  assert.equal(t.candidateOnly, true, label);
+  assert.equal(typeof t.finishedAt, 'string', label);
+  assert(Number.isFinite(Date.parse(t.finishedAt)), 'Missing terminal timestamp: ' + label);
+}
+
+assert.equal(fileURLToPath(import.meta.url), SELF);
+assert.equal(process.argv.length, 5, 'Parent release, reviewed self hash and unique output required');
+assert.equal(process.argv[2], '--parent-released');
+assert.match(process.argv[3], /^[a-f0-9]{64}$/);
+assert.equal(sha(readRegular(SELF)), process.argv[3], 'Packager source drift');
+const outputName = process.argv[4];
+assert.match(outputName, /^[A-Za-z0-9][A-Za-z0-9._-]*\.json$/);
+const output = join(B, '.tmp', outputName);
+directory(dirname(output));
+
+// Root terminal is read first: a live run cannot reach any packaging write.
+capture(RUN + '/terminal.json');
+const rootTerminal = parse(RUN + '/terminal.json');
+stamp(rootTerminal, 'root');
+assert.equal(rootTerminal.expectedStages, 10);
+assert.equal(rootTerminal.scheduledUniquePopulation, 6739);
+assert.equal(rootTerminal.scheduledExecutionOccurrences, 6795);
+const completed = rootTerminal.completedStages;
+assert(Number.isInteger(completed) && completed >= 0 && completed <= 10);
+assert.equal(rootTerminal.allStagesClean, completed === 10, 'Contradictory root terminal');
+const executed = completed === 10 ? 10 : completed + 1;
+inventory(join(E, RUN), ['terminal.json', ...STAGES.slice(0, executed).map(s => s[0])]);
+for (const p of [RUNNER, SCHEDULE, MAP]) capture(p);
+const schedule = parse(SCHEDULE);
+assert.equal(schedule.schema, '5883-full-candidate-inert-87-file-schedule-v1');
+assert.equal(schedule.root, E);
+assert.equal(schedule.accepted, false);
+assert.deepEqual(schedule.stages.map(s => [s.name, s.files.length, s.identityCount]), STAGES);
+assert.deepEqual(schedule.epoch, { map: join(E, MAP), sha256: PINS[MAP], inputCount: 7772 });
+const baseline = parse(MAP);
+assert.equal(Object.keys(baseline).length, 7772);
+assert.equal(Object.keys(schedule.files).length, 87);
+
+const absentRecords = [];
+const outcomes = [];
+for (let i = 0; i < executed; i++) {
+  const [name, fileCount, identityCount] = STAGES[i];
+  const stage = schedule.stages[i];
+  const prefix = RUN + '/' + name;
+  for (const record of REQUIRED) capture(prefix + '/' + record);
+  const terminal = parse(prefix + '/terminal.json');
+  stamp(terminal, name);
+  assert.equal(terminal.stage, name);
+  const clean = i < completed;
+  assert.equal(terminal.stageClean, clean, 'Noncontiguous clean/failed prefix: ' + name);
+  assert(Array.isArray(terminal.instrumentationErrors));
+  for (const k of ['beforeVerified', 'afterVerified']) assert.equal(typeof terminal[k], 'boolean');
+  const derivedClean = terminal.beforeVerified && terminal.afterVerified &&
+    terminal.instrumentationErrors.length === 0 && terminal.code === 0 &&
+    terminal.signal === null && terminal.error === null &&
+    (name === 'canonical' || terminal.summary?.passed === identityCount);
+  assert.equal(derivedClean, clean, 'Contradictory stage terminal: ' + name);
+  const invocation = parse(prefix + '/invocation.json');
+  assert.equal(invocation.accepted, false);
+  assert.equal(invocation.candidateOnly, true);
+  assert.equal(invocation.stage, name);
+  assert.equal(invocation.cwd, E);
+  assert.equal(invocation.head, HEAD);
+  assert.equal(invocation.mergeHead, null);
+  assert.deepEqual(invocation.mergeParents, PARENTS);
+  assert.deepEqual(invocation.runner, { path: join(E, RUNNER), sha256: PINS[RUNNER] });
+  // Runner authenticates itself separately, not through its AUTHORITY object.
+  for (const p of [SCHEDULE, MAP]) assert.equal(invocation.authority[join(E, p)], PINS[p]);
+  assert.deepEqual(invocation.files, stage.files);
+  assert.equal(invocation.expectedTotal, identityCount);
+  assert.deepEqual(invocation.identities, Object.fromEntries(stage.files.map(p => [p, schedule.files[p].identities])));
+  assert.deepEqual(invocation.args, name === 'canonical' ? stage.args : [
+    'node_modules/vitest/vitest.mjs', 'run', ...stage.files,
+    '--testTimeout=35000', '--maxWorkers=1', '--minWorkers=1', '--reporter=dot',
+    '--reporter=json', '--outputFile.json=' + join(E, prefix, 'native-results.json'),
+  ]);
+  assert.deepEqual(invocation.controls, { VITEST_MAX_FORKS: '1', VITEST_FORK_MAX_OLD_SPACE_SIZE: '2048', NODE_OPTIONS: '--max-old-space-size=2048' });
+  for (const record of ['before.json', 'after.json']) {
+    const p = prefix + '/' + record;
+    if (terminal[record === 'before.json' ? 'beforeVerified' : 'afterVerified']) {
+      assert.equal(sha(captured.get(p)), PINS[MAP], 'Verified input-map authority mismatch: ' + p);
+      assert.deepEqual(parse(p), baseline);
+    }
+  }
+  const contents = readdirSync(join(E, prefix));
+  const nativePath = prefix + '/native-results.json';
+  const hasNative = contents.includes('native-results.json');
+  if (name === 'canonical') {
+    assert.equal(hasNative, false, 'Canonical cannot emit a native report');
+    assert.equal(terminal.summary, null);
+    absentRecords.push({ path: nativePath, reason: 'Absent by design: canonical invokes tsc, without a native JSON reporter.' });
+  } else if (hasNative) {
+    capture(nativePath); // Preserve even a malformed/failed native report without rewriting it.
+    if (clean) {
+      const native = parse(nativePath);
+      assert.equal(native.success, true);
+      assert.equal(native.numTotalTests, identityCount);
+      assert.equal(native.numPassedTests, identityCount);
+      assert.deepEqual(native.testResults.map(f => f.name).sort(), stage.files.map(p => join(E, p)).sort());
+      for (const f of native.testResults) {
+        assert.equal(f.status, 'passed');
+        const tuples = f.assertionResults.map(r => {
+          assert.equal(r.status, 'passed');
+          assert.deepEqual(r.failureMessages, []);
+          assert(Array.isArray(r.ancestorTitles) && r.ancestorTitles.every(t => typeof t === 'string'));
+          assert.equal(typeof r.fullName, 'string');
+          assert.equal(typeof r.title, 'string');
+          return JSON.stringify([r.ancestorTitles, r.fullName, r.title]);
+        }).sort();
+        assert.deepEqual(tuples, schedule.files[relative(E, f.name)].identities);
+      }
+      assert.deepEqual(terminal.summary, { files: fileCount, total: identityCount, passed: identityCount, failed: 0, skipped: 0, todo: 0 });
+    }
+  } else {
+    assert.equal(clean, false, 'Clean stage missing native report: ' + name);
+    assert.equal(terminal.summary, null);
+    assert(terminal.instrumentationErrors.length > 0, 'Missing report without recorded failure');
+    absentRecords.push({ path: nativePath, reason: 'Not emitted in the first failed stage; cause is not inferred. Exact child outcome and instrumentation errors are retained in terminal.json.', terminalPath: prefix + '/terminal.json' });
+  }
+  inventory(join(E, prefix), [...REQUIRED, ...(hasNative ? ['native-results.json'] : [])]);
+  outcomes.push({ name, stageClean: clean, nativeReportPresent: hasNative, terminalPath: prefix + '/terminal.json' });
+}
+const unexecutedStages = STAGES.slice(executed).map(([name]) => ({
+  name, state: 'unexecuted', reason: 'Runner stopped at the first failed stage.',
+  scheduledRecords: [...REQUIRED, 'native-results.json'].map(n => RUN + '/' + name + '/' + n),
+}));
+const rows = [...captured].sort(([a], [b]) => a.localeCompare(b)).map(([path, bytes]) => {
+  const gzipBase64 = gzipSync(bytes).toString('base64');
+  const restored = gunzipSync(Buffer.from(gzipBase64, 'base64'));
+  assert(restored.equals(bytes), 'Round-trip bytes mismatch: ' + path);
+  assert.equal(restored.length, bytes.length);
+  assert.equal(sha(restored), sha(bytes));
+  return { source: 'E', tag: path.startsWith(RUN + '/') ? 'run-record' : 'exact-authority', path, bytes: bytes.length, sha256: sha(bytes), gzipBase64 };
+});
+assert.equal(new Set(rows.map(r => r.path)).size, rows.length);
+const archive = {
+  schema: '5883-final-candidate-terminal-custody-v1', accepted: false,
+  scope: 'Terminal candidate custody only. Parent review and separate original-main A/repaired-baseline B comparison remain required.',
+  roots: { E }, sourceCommit: HEAD, mergeParents: PARENTS,
+  attempt: RUN, runner: { path: RUNNER, sha256: PINS[RUNNER] },
+  inputMapAuthority: { path: MAP, sha256: PINS[MAP], inputCount: 7772 },
+  schedule: { path: SCHEDULE, sha256: PINS[SCHEDULE], scheduledStages: STAGES.map(s => s[0]) },
+  rootTerminal, outcomes, absentRecords, unexecutedStages,
+  expectedRecordPaths: rows.map(r => r.path),
+  encoding: 'gzip+base64', fileCount: rows.length,
+  decodedBytes: rows.reduce((n, r) => n + r.bytes, 0), rows,
+  packager: { path: SELF, sha256: process.argv[3] },
+  verification: { allPayloadsRoundTripped: true, exactExecutedPrefix: true, sourceRecordsRechecked: true },
+};
+const encoded = Buffer.from(JSON.stringify(archive, null, 2) + '\n');
+const decodedArchive = JSON.parse(encoded.toString('utf8'));
+assert.deepEqual(decodedArchive, archive);
+for (const row of decodedArchive.rows) {
+  const bytes = gunzipSync(Buffer.from(row.gzipBase64, 'base64'));
+  assert(bytes.equals(captured.get(row.path)));
+  assert.equal(bytes.length, row.bytes);
+  assert.equal(sha(bytes), row.sha256);
+}
+// Recheck exact inventories and all originals immediately before exclusive output creation.
+inventory(join(E, RUN), ['terminal.json', ...STAGES.slice(0, executed).map(s => s[0])]);
+for (const { name, nativeReportPresent } of outcomes) inventory(join(E, RUN, name), [...REQUIRED, ...(nativeReportPresent ? ['native-results.json'] : [])]);
+for (const [p, bytes] of captured) assert(readRegular(join(E, p)).equals(bytes), 'Source drift: ' + p);
+assert.equal(sha(readRegular(SELF)), process.argv[3]);
+directory(dirname(output));
+writeFileSync(output, encoded, { flag: 'wx', mode: 0o600 });
+assert(readRegular(output).equals(encoded), 'Written archive differs');
+console.log(JSON.stringify({ path: output, sha256: sha(encoded), bytes: encoded.length, fileCount: rows.length, decodedBytes: archive.decodedBytes, accepted: false, executedStages: executed, unexecutedStages: unexecutedStages.length }));

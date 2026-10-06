@@ -1,0 +1,17 @@
+diff --git a/src/codegen/expressions/call-identifier.ts b/src/codegen/expressions/call-identifier.ts
+--- a/src/codegen/expressions/call-identifier.ts
++++ b/src/codegen/expressions/call-identifier.ts
+@@ -1432,6 +1432,13 @@
+       // Only proven BigInt operands take this path. Number, Symbol, unknown and
+       // object arguments retain their existing evaluation/coercion branches.
+       const nativeBigIntArg = ctx.standalone && ctx.nativeStrings && isBigIntArg;
++      if (nativeBigIntArg) {
++        // Wide constant lowering consults the ALREADY registered carrier types.
++        // Letting the later i64 -> externref coercion register them is too late:
++        // the literal has already become its low64 i64.const at that point.
++        addUnionImports(ctx);
++        flushLateImportShifts(ctx, fctx);
++      }
+       const argType = compileExpression(
+         ctx,
+         fctx,

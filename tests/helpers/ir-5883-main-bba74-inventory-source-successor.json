@@ -1,0 +1,146 @@
+{
+  "schema": "fixed-pr5883-main-bba74-inventory-source-successor-v1",
+  "coordinateUnit": "utf8-byte",
+  "sourcePath": "scripts/compiler-boundaries.json",
+  "main": "bba74cfa80aac38a3d29ba6b331d70f6bb0f9cb1",
+  "previewTree": "3b37a9a1e7a28e6b1b30fb6c3b25f48768b53844",
+  "checkpoint": "884d2fc58f40a28c391ef5cf238b49582329e55b",
+  "before": {
+    "source": {
+      "bytes": 590105,
+      "sha256": "29f555ed9afe384c0cf7d3bfe45115083eb42d5445d1f6c983f85aaa6424bad9",
+      "gitBlob": "2d69c0400d7d42a5d8d4103ada085a071bb00a37"
+    },
+    "dataSha256": "faae7f2cc8a2e0c15f7ec7966789ea0e8f3a2597120a428d3cce4673d82b1265",
+    "topLevelKeys": [
+      "schema",
+      "description",
+      "sourceRoot",
+      "tsconfig",
+      "requireGitProvenance",
+      "externalAssets",
+      "frontendWrapper",
+      "moduleExtensions",
+      "layers",
+      "allowedEdges",
+      "externalPackages",
+      "activationHistory",
+      "nonModules",
+      "moves",
+      "evidence",
+      "files"
+    ],
+    "movesCount": 15,
+    "movesSha256": "dee1f3da0891e29bfb95534a899b3f5da31dae05c45d3a35be7123115e1466b4",
+    "filesCount": 1841,
+    "filesSha256": "e47ea0d0ca1a99541dcd287186f5f187f7e1f270c0f4fb9b8c42ca37d8386d61",
+    "retainedSha256": "dd91458d637f35a7ad9ac9c3a0663e34fd4e0fa9dc6e4786b3b8fa716e1afa12"
+  },
+  "current": {
+    "source": {
+      "bytes": 590751,
+      "sha256": "491fc3c8e470a5a4c58da8e7d78cd24ab3a2cd18d7ce6bcccf279d927c0ea942",
+      "gitBlob": "109e1bab21c7ffdf936e8d2d2208c22e31ef77dd"
+    },
+    "dataSha256": "2c3a9c757d9068dc2701f269bf3df3bccf645e0046c7b05db4ac723dbc6c0ac7",
+    "topLevelKeys": [
+      "schema",
+      "description",
+      "sourceRoot",
+      "tsconfig",
+      "requireGitProvenance",
+      "externalAssets",
+      "frontendWrapper",
+      "moduleExtensions",
+      "layers",
+      "allowedEdges",
+      "externalPackages",
+      "activationHistory",
+      "nonModules",
+      "moves",
+      "evidence",
+      "files"
+    ],
+    "movesCount": 15,
+    "movesSha256": "dee1f3da0891e29bfb95534a899b3f5da31dae05c45d3a35be7123115e1466b4",
+    "filesCount": 1843,
+    "filesSha256": "a246e8bb1d23b73af9320d9baa55394de0c8ba29e870c92076a234929ab32957",
+    "retainedSha256": "dd91458d637f35a7ad9ac9c3a0663e34fd4e0fa9dc6e4786b3b8fa716e1afa12"
+  },
+  "additions": [
+    {
+      "field": "files",
+      "index": 984,
+      "rows": [
+        {
+          "path": "src/codegen/statements/finally-private-local.ts",
+          "state": "unmigrated",
+          "layer": "mixed-needs-split",
+          "destination": "backend-wasmgc",
+          "owner": "5267",
+          "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+        }
+      ],
+      "previous": {
+        "path": "src/codegen/statements/exceptions.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "backend-wasmgc",
+        "owner": "3518-coordinator",
+        "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      },
+      "next": {
+        "path": "src/codegen/statements/finally-ran-guard.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "backend-wasmgc",
+        "owner": "3518-coordinator",
+        "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      }
+    },
+    {
+      "field": "files",
+      "index": 1652,
+      "rows": [
+        {
+          "path": "src/codegen/classes/externref-class-fields.ts",
+          "state": "unmigrated",
+          "layer": "mixed-needs-split",
+          "destination": "backend-wasmgc",
+          "owner": "3518-coordinator",
+          "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+        }
+      ],
+      "previous": {
+        "path": "src/codegen/error-subclass-proto-chain.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "backend-wasmgc",
+        "owner": "3518-coordinator",
+        "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      },
+      "next": {
+        "path": "src/codegen/class-proto-toplevel-write.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "backend-wasmgc",
+        "owner": "3518-coordinator",
+        "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      }
+    }
+  ],
+  "rawSpans": [
+    {
+      "beforeOffset": 364890,
+      "afterOffset": 364890,
+      "before": "",
+      "after": "    {\n      \"path\": \"src/codegen/statements/finally-private-local.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"5267\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
+    },
+    {
+      "beforeOffset": 544525,
+      "afterOffset": 544843,
+      "before": "",
+      "after": "    {\n      \"path\": \"src/codegen/classes/externref-class-fields.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
+    }
+  ]
+}

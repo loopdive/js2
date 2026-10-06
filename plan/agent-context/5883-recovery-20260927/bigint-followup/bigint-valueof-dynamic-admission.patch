@@ -1,0 +1,26 @@
+diff --git a/src/codegen/expressions/calls.ts b/src/codegen/expressions/calls.ts
+--- a/src/codegen/expressions/calls.ts
++++ b/src/codegen/expressions/calls.ts
+@@ -1346,6 +1347,22 @@ function tryEmitNativeProtoReflectiveCall(
+     return undefined;
+   }
+ 
++  // BigInt valueOf must retain the ACTUAL method value: a MethodSignature is
++  // not proof that an instance property or extracted variable is intrinsic.
++  // Reuse the existing dynamic method dispatcher for that value's call/apply,
++  // rather than synthesizing a singleton or casting to its static wrapper.
++  // Other families retain their current routing, including the separate
++  // Symbol patch. Spread calls stay on the established fallback.
++  if (
++    ifaceName === "BigInt" &&
++    member === "valueOf" &&
++    ts.isPropertyAccessExpression(expr.expression) &&
++    !expr.arguments.some((arg) => ts.isSpreadElement(arg))
++  ) {
++    const dynamic = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, expr.expression, isCall ? "call" : "apply");
++    return dynamic && dynamic !== VOID_RESULT ? dynamic : undefined;
++  }
++
+   let brand = nativeProtoBrandForInterface(ctx, ifaceName);
+   // (#4582) `valueOf` ONLY — the other Number/Boolean members still refuse, and
+   // routing those here would turn today's answers into TypeErrors. Without this

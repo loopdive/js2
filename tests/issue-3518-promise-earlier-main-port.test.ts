@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { describe, expect, it } from "vitest";
+import { setImmediate } from "node:timers/promises";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   applyEarlierPromiseMain,
   applyEarlierPromiseStep,
@@ -16,10 +17,14 @@ import {
   promiseExportBlob,
   promiseExportFixture,
   promiseExportHash,
-  readPromiseExportSource,
+  readHistoricalPromiseExportSource as readPromiseExportSource,
 } from "./helpers/promise-export-main-port.js";
 import { B1_DONOR_HASHES, originalB1Source } from "./helpers/native-delay-combinator-b1-inverse.mjs";
 import { verifyRetainedDeclarations } from "./helpers/native-delay-combinator-source-receipts.mjs";
+
+afterEach(async () => {
+  await setImmediate();
+});
 
 const receipt = authenticateEarlierPromiseMain();
 const read = (path: string): string =>

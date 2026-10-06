@@ -1,0 +1,19 @@
+{
+  "schema": "5883-parent-scoped-successor-proof-approval-v1",
+  "scope": "Authorize full successor validation, not acceptance or merge",
+  "actualSourceMerge": "d81a1e9c330adafebb496a7926240eda8991169f",
+  "upstreamMain": "d0a13fb182e6a4e198ce34bd4ec2c489deeb10b9",
+  "policySha256": "8a8747f2771bd2aa9fa5c01233499f0d587b394d6b0e176e1889dae06900b765",
+  "helperSha256": "ff9e7a0168ebea4d3dd91aa14e5ea1548ec56bc5aa280075914b3b1f75f8904f",
+  "receiptSha256": "a9cae6b07573589385669cf19ac09c80642e9742b7959dcf16482c0f5e182281",
+  "proofArchive": "plan/agent-context/5883-d0a13-actual-merge-proof-20261006.json.txt",
+  "proofArchiveSha256": "ab93f833160cf56b838b8c2608599490958a29aa20947a17c41d907a676edfc3",
+  "scopedTests": 247,
+  "scopedPassed": 247,
+  "preservedIdentities": 174,
+  "newControls": 73,
+  "parentReviewed": ["exact Git source profiles", "complete inverse and reciprocal replay", "all helper and test changes", "all original174 identities", "complete raw output", "native errors and statuses", "six archived streams and scoped before/after hashes"],
+  "fullAcceptance": false,
+  "protectedQueueRelease": false,
+  "legacyRetirement": false
+}

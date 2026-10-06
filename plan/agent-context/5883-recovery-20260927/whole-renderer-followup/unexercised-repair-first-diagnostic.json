@@ -1,0 +1,9 @@
+{
+  "purpose": "A/B graph-delta diagnosis only; raw equality remains false",
+  "valueDifferences": [],
+  "splits": [],
+  "merges": [],
+  "expectedLeavesOnly": false,
+  "originalDefinitions": 52920,
+  "candidateDefinitions": 52920
+}

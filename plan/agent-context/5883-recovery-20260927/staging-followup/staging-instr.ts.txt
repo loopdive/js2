@@ -1,0 +1,183 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+/**
+ * Isolated materialized staging tree. No new ownership arena or executable op.
+ * All body/region/occurrence/edge handles come from EmissionOwnership.
+ *
+ * Pending recipes are deliberately NOT represented yet: a node annotation is
+ * evidence about this physical node, never an executable placeholder, lowering
+ * recipe, or permission to activate. This module has no executable projection.
+ */
+import type { CatchClause, Instr, TryTableCatch } from "../wasm/model/instructions.js";
+import type {
+  BodyEpoch,
+  BodyIdentity,
+  EmissionOccurrence,
+  EmissionRegion,
+  OwnershipEdge,
+  PendingNodeBinding,
+} from "./context/emission-ownership.js";
+
+export type StageContainerOp = "block" | "loop" | "if" | "try" | "try_table";
+export type ExecutableStageLeaf = Exclude<Instr, { op: StageContainerOp }>;
+
+// Explicit replacements, including nested catches; never a shallow Omit of
+// the full Instr union. try_table catch entries are labels, not child bodies.
+export type StageContainerInstruction =
+  | (Readonly<Omit<Extract<Instr, { op: "block" }>, "body">> & { readonly body: StageRegion })
+  | (Readonly<Omit<Extract<Instr, { op: "loop" }>, "body">> & { readonly body: StageRegion })
+  | (Readonly<Omit<Extract<Instr, { op: "if" }>, "then" | "else">> & {
+      readonly then: StageRegion;
+      readonly else?: StageRegion;
+    })
+  | (Readonly<Omit<Extract<Instr, { op: "try" }>, "body" | "catches" | "catchAll">> & {
+      readonly body: StageRegion;
+      readonly catches: readonly StageCatch[];
+      readonly catchAll?: StageRegion;
+    })
+  | (Readonly<Omit<Extract<Instr, { op: "try_table" }>, "body" | "catches">> & {
+      readonly body: StageRegion;
+      readonly catches: readonly Readonly<TryTableCatch>[];
+    });
+
+export interface StageCatch extends Readonly<Omit<CatchClause, "body">> {
+  readonly body: StageRegion;
+}
+export interface StageOccurrence {
+  readonly occurrence: EmissionOccurrence;
+  readonly kind: PendingNodeBinding["kind"];
+}
+export interface StageAdoption {
+  readonly edge: OwnershipEdge;
+  readonly body: BodyEpoch;
+  readonly useSiteIdentity: object;
+}
+export interface StageNodeIdentity {
+  /** Exact staged-node version identity, not an AST or instruction index. */
+  readonly nodeIdentity: object;
+  readonly occurrence?: StageOccurrence;
+  readonly adoptions?: readonly StageAdoption[];
+}
+export type StageLeafNode = StageNodeIdentity & {
+  readonly kind: "leaf";
+  readonly instruction: ExecutableStageLeaf;
+};
+export type StageContainerNode = StageNodeIdentity & {
+  readonly kind: "container";
+  readonly instruction: StageContainerInstruction;
+};
+export type StageNode = StageLeafNode | StageContainerNode;
+
+export interface StageRegion {
+  readonly kind: "stage-region";
+  readonly body: BodyEpoch;
+  readonly region: EmissionRegion;
+  readonly nodes: readonly StageNode[];
+}
+export interface StageBody extends BodyIdentity {
+  readonly body: BodyEpoch;
+  readonly root: StageRegion;
+}
+
+export function isExecutableStageLeaf(instruction: Instr): instruction is ExecutableStageLeaf {
+  switch (instruction.op) {
+    case "block":
+    case "loop":
+    case "if":
+    case "try":
+    case "try_table":
+      return false;
+    default:
+      return true;
+  }
+}
+
+function identityFields(identity: StageNodeIdentity): StageNodeIdentity {
+  return {
+    nodeIdentity: identity.nodeIdentity,
+    occurrence: identity.occurrence && Object.freeze({ ...identity.occurrence }),
+    adoptions: identity.adoptions && Object.freeze(identity.adoptions.map((a) => Object.freeze({ ...a }))),
+  };
+}
+
+/** Own structural collections; do not clone concrete instruction identities. */
+export function stageLeaf(instruction: ExecutableStageLeaf, identity: StageNodeIdentity): StageLeafNode {
+  if (!isExecutableStageLeaf(instruction)) throw new Error("Recursive instruction requires staged children");
+  return Object.freeze({ kind: "leaf", instruction, ...identityFields(identity) });
+}
+
+export function stageContainer(
+  instruction: StageContainerInstruction,
+  identity: StageNodeIdentity,
+): StageContainerNode {
+  const fields = identityFields(identity);
+  switch (instruction.op) {
+    case "block":
+    case "loop":
+    case "if":
+      return Object.freeze({ kind: "container", instruction: Object.freeze({ ...instruction }), ...fields });
+    case "try":
+      return Object.freeze({
+        kind: "container",
+        instruction: Object.freeze({
+          ...instruction,
+          catches: Object.freeze(instruction.catches.map((c) => Object.freeze({ ...c }))),
+        }),
+        ...fields,
+      });
+    case "try_table":
+      return Object.freeze({
+        kind: "container",
+        instruction: Object.freeze({
+          ...instruction,
+          catches: Object.freeze(instruction.catches.map((c) => Object.freeze({ ...c }))),
+        }),
+        ...fields,
+      });
+  }
+}
+
+/** Caller supplies the existing ledger handle; no second id/epoch allocator. */
+export function stageRegion(body: BodyEpoch, region: EmissionRegion, nodes: readonly StageNode[]): StageRegion {
+  return Object.freeze({ kind: "stage-region", body, region, nodes: Object.freeze([...nodes]) });
+}
+
+export type StageChildSlot =
+  | { readonly kind: "body" | "then" | "else" | "catchAll" }
+  | { readonly kind: "catch"; readonly index: number };
+export interface StageChild {
+  readonly slot: StageChildSlot;
+  readonly region: StageRegion;
+  /** Materialized Wasm containers add one label. No pending wrappers exist yet. */
+  readonly labelDepthDelta: 1;
+}
+
+/** Immediate concrete children in lexical order. No callbacks/recipe traversal. */
+export function materializedStageChildren(node: StageNode): readonly StageChild[] {
+  if (node.kind === "leaf") return [];
+  const instruction = node.instruction;
+  switch (instruction.op) {
+    case "block":
+    case "loop":
+    case "try_table":
+      return [{ slot: { kind: "body" }, region: instruction.body, labelDepthDelta: 1 }];
+    case "if":
+      return [
+        { slot: { kind: "then" }, region: instruction.then, labelDepthDelta: 1 },
+        ...(instruction.else
+          ? [{ slot: { kind: "else" as const }, region: instruction.else, labelDepthDelta: 1 as const }]
+          : []),
+      ];
+    case "try":
+      return [
+        { slot: { kind: "body" }, region: instruction.body, labelDepthDelta: 1 },
+        ...instruction.catches.map((c, index) => ({
+          slot: { kind: "catch" as const, index },
+          region: c.body,
+          labelDepthDelta: 1 as const,
+        })),
+        ...(instruction.catchAll
+          ? [{ slot: { kind: "catchAll" as const }, region: instruction.catchAll, labelDepthDelta: 1 as const }]
+          : []),
+      ];
+  }
+}

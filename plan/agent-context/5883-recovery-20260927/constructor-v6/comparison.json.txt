@@ -1,0 +1,410 @@
+{
+  "denominator": 5,
+  "correspondencePassed": 5,
+  "observerValid": 0,
+  "coveragePassed": 0,
+  "overallAccepted": false,
+  "rows": [
+    {
+      "id": "seam-cold",
+      "correspondencePassed": true,
+      "correspondenceFailures": [],
+      "observerValid": false,
+      "failures": [
+        {
+          "label": "B: scoped surviving witnesses",
+          "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ [\n+   'real-scoped-decline: no real capture',\n+   'real-decline-with-rolled-back-ancestor: no real capture'\n+ ]\n- []\n"
+        },
+        {
+          "label": "C: scoped surviving witnesses",
+          "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ [\n+   'real-scoped-decline: no real capture',\n+   'real-decline-with-rolled-back-ancestor: no real capture'\n+ ]\n- []\n"
+        }
+      ],
+      "coveragePassed": false,
+      "coverage": [
+        {
+          "arm": "B",
+          "failures": [
+            "scopedDeclineEvents not observed",
+            "verifiedDeclineRollbacks not observed",
+            "runtime seed reentry unobserved: binaries intentionally uninstrumented"
+          ],
+          "scopedEvidence": {
+            "seedPublications": 3,
+            "committedOutputs": 30,
+            "publishedCompilerReads": 1,
+            "scopedDeclineEvents": 0,
+            "verifiedDeclineRollbacks": 0
+          },
+          "compilationWideDiagnostics": {
+            "seedCalls": 5,
+            "committed": 33,
+            "declined": 0,
+            "reentries": 1,
+            "publishedReentries": 1
+          },
+          "runtimeReentry": {
+            "status": "UNOBSERVED",
+            "instrumentation": "none"
+          },
+          "rollbackProof": {
+            "status": "UNOBSERVED",
+            "reason": "callback outcome is not restoration proof"
+          }
+        },
+        {
+          "arm": "C",
+          "failures": [
+            "scopedDeclineEvents not observed",
+            "verifiedDeclineRollbacks not observed",
+            "runtime seed reentry unobserved: binaries intentionally uninstrumented"
+          ],
+          "scopedEvidence": {
+            "seedPublications": 3,
+            "committedOutputs": 30,
+            "publishedCompilerReads": 1,
+            "scopedDeclineEvents": 0,
+            "verifiedDeclineRollbacks": 0
+          },
+          "compilationWideDiagnostics": {
+            "seedCalls": 5,
+            "committed": 33,
+            "declined": 0,
+            "reentries": 1,
+            "publishedReentries": 1
+          },
+          "runtimeReentry": {
+            "status": "UNOBSERVED",
+            "instrumentation": "none"
+          },
+          "rollbackProof": {
+            "status": "UNOBSERVED",
+            "reason": "callback outcome is not restoration proof"
+          }
+        }
+      ]
+    },
+    {
+      "id": "seam-controlled-reserved",
+      "correspondencePassed": true,
+      "correspondenceFailures": [],
+      "observerValid": false,
+      "failures": [
+        {
+          "label": "B: scoped surviving witnesses",
+          "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ [\n+   'real-scoped-decline: no real capture',\n+   'real-decline-with-rolled-back-ancestor: no real capture'\n+ ]\n- []\n"
+        },
+        {
+          "label": "C: scoped surviving witnesses",
+          "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ [\n+   'real-scoped-decline: no real capture',\n+   'real-decline-with-rolled-back-ancestor: no real capture'\n+ ]\n- []\n"
+        }
+      ],
+      "coveragePassed": false,
+      "coverage": [
+        {
+          "arm": "B",
+          "failures": [
+            "scopedDeclineEvents not observed",
+            "verifiedDeclineRollbacks not observed",
+            "runtime seed reentry unobserved: binaries intentionally uninstrumented"
+          ],
+          "scopedEvidence": {
+            "seedPublications": 3,
+            "committedOutputs": 30,
+            "publishedCompilerReads": 1,
+            "scopedDeclineEvents": 0,
+            "verifiedDeclineRollbacks": 0
+          },
+          "compilationWideDiagnostics": {
+            "seedCalls": 5,
+            "committed": 33,
+            "declined": 0,
+            "reentries": 1,
+            "publishedReentries": 1
+          },
+          "runtimeReentry": {
+            "status": "UNOBSERVED",
+            "instrumentation": "none"
+          },
+          "rollbackProof": {
+            "status": "UNOBSERVED",
+            "reason": "callback outcome is not restoration proof"
+          }
+        },
+        {
+          "arm": "C",
+          "failures": [
+            "scopedDeclineEvents not observed",
+            "verifiedDeclineRollbacks not observed",
+            "runtime seed reentry unobserved: binaries intentionally uninstrumented"
+          ],
+          "scopedEvidence": {
+            "seedPublications": 3,
+            "committedOutputs": 30,
+            "publishedCompilerReads": 1,
+            "scopedDeclineEvents": 0,
+            "verifiedDeclineRollbacks": 0
+          },
+          "compilationWideDiagnostics": {
+            "seedCalls": 5,
+            "committed": 33,
+            "declined": 0,
+            "reentries": 1,
+            "publishedReentries": 1
+          },
+          "runtimeReentry": {
+            "status": "UNOBSERVED",
+            "instrumentation": "none"
+          },
+          "rollbackProof": {
+            "status": "UNOBSERVED",
+            "reason": "callback outcome is not restoration proof"
+          }
+        }
+      ]
+    },
+    {
+      "id": "seam-already-emitted",
+      "correspondencePassed": true,
+      "correspondenceFailures": [],
+      "observerValid": false,
+      "failures": [
+        {
+          "label": "B: scoped surviving witnesses",
+          "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ [\n+   'real-scoped-decline: no real capture',\n+   'real-decline-with-rolled-back-ancestor: no real capture'\n+ ]\n- []\n"
+        },
+        {
+          "label": "C: scoped surviving witnesses",
+          "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ [\n+   'real-scoped-decline: no real capture',\n+   'real-decline-with-rolled-back-ancestor: no real capture'\n+ ]\n- []\n"
+        }
+      ],
+      "coveragePassed": false,
+      "coverage": [
+        {
+          "arm": "B",
+          "failures": [
+            "publishedCompilerReads not observed",
+            "scopedDeclineEvents not observed",
+            "verifiedDeclineRollbacks not observed",
+            "runtime seed reentry unobserved: binaries intentionally uninstrumented"
+          ],
+          "scopedEvidence": {
+            "seedPublications": 2,
+            "committedOutputs": 20,
+            "publishedCompilerReads": 0,
+            "scopedDeclineEvents": 0,
+            "verifiedDeclineRollbacks": 0
+          },
+          "compilationWideDiagnostics": {
+            "seedCalls": 6,
+            "committed": 43,
+            "declined": 0,
+            "reentries": 1,
+            "publishedReentries": 1
+          },
+          "runtimeReentry": {
+            "status": "UNOBSERVED",
+            "instrumentation": "none"
+          },
+          "rollbackProof": {
+            "status": "UNOBSERVED",
+            "reason": "callback outcome is not restoration proof"
+          }
+        },
+        {
+          "arm": "C",
+          "failures": [
+            "publishedCompilerReads not observed",
+            "scopedDeclineEvents not observed",
+            "verifiedDeclineRollbacks not observed",
+            "runtime seed reentry unobserved: binaries intentionally uninstrumented"
+          ],
+          "scopedEvidence": {
+            "seedPublications": 2,
+            "committedOutputs": 20,
+            "publishedCompilerReads": 0,
+            "scopedDeclineEvents": 0,
+            "verifiedDeclineRollbacks": 0
+          },
+          "compilationWideDiagnostics": {
+            "seedCalls": 6,
+            "committed": 43,
+            "declined": 0,
+            "reentries": 1,
+            "publishedReentries": 1
+          },
+          "runtimeReentry": {
+            "status": "UNOBSERVED",
+            "instrumentation": "none"
+          },
+          "rollbackProof": {
+            "status": "UNOBSERVED",
+            "reason": "callback outcome is not restoration proof"
+          }
+        }
+      ]
+    },
+    {
+      "id": "drive-all",
+      "correspondencePassed": true,
+      "correspondenceFailures": [],
+      "observerValid": false,
+      "failures": [
+        {
+          "label": "B: scoped surviving witnesses",
+          "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ [\n+   'real-scoped-decline: no real capture',\n+   'real-decline-with-rolled-back-ancestor: no real capture'\n+ ]\n- []\n"
+        },
+        {
+          "label": "C: scoped surviving witnesses",
+          "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ [\n+   'real-scoped-decline: no real capture',\n+   'real-decline-with-rolled-back-ancestor: no real capture'\n+ ]\n- []\n"
+        }
+      ],
+      "coveragePassed": false,
+      "coverage": [
+        {
+          "arm": "B",
+          "failures": [
+            "publishedCompilerReads not observed",
+            "scopedDeclineEvents not observed",
+            "verifiedDeclineRollbacks not observed",
+            "runtime seed reentry unobserved: binaries intentionally uninstrumented"
+          ],
+          "scopedEvidence": {
+            "seedPublications": 1,
+            "committedOutputs": 10,
+            "publishedCompilerReads": 0,
+            "scopedDeclineEvents": 0,
+            "verifiedDeclineRollbacks": 0
+          },
+          "compilationWideDiagnostics": {
+            "seedCalls": 7,
+            "committed": 53,
+            "declined": 0,
+            "reentries": 1,
+            "publishedReentries": 1
+          },
+          "runtimeReentry": {
+            "status": "UNOBSERVED",
+            "instrumentation": "none"
+          },
+          "rollbackProof": {
+            "status": "UNOBSERVED",
+            "reason": "callback outcome is not restoration proof"
+          }
+        },
+        {
+          "arm": "C",
+          "failures": [
+            "publishedCompilerReads not observed",
+            "scopedDeclineEvents not observed",
+            "verifiedDeclineRollbacks not observed",
+            "runtime seed reentry unobserved: binaries intentionally uninstrumented"
+          ],
+          "scopedEvidence": {
+            "seedPublications": 1,
+            "committedOutputs": 10,
+            "publishedCompilerReads": 0,
+            "scopedDeclineEvents": 0,
+            "verifiedDeclineRollbacks": 0
+          },
+          "compilationWideDiagnostics": {
+            "seedCalls": 7,
+            "committed": 53,
+            "declined": 0,
+            "reentries": 1,
+            "publishedReentries": 1
+          },
+          "runtimeReentry": {
+            "status": "UNOBSERVED",
+            "instrumentation": "none"
+          },
+          "rollbackProof": {
+            "status": "UNOBSERVED",
+            "reason": "callback outcome is not restoration proof"
+          }
+        }
+      ]
+    },
+    {
+      "id": "drive-race",
+      "correspondencePassed": true,
+      "correspondenceFailures": [],
+      "observerValid": false,
+      "failures": [
+        {
+          "label": "B: scoped surviving witnesses",
+          "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ [\n+   'real-scoped-decline: no real capture',\n+   'real-decline-with-rolled-back-ancestor: no real capture'\n+ ]\n- []\n"
+        },
+        {
+          "label": "C: scoped surviving witnesses",
+          "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ [\n+   'real-scoped-decline: no real capture',\n+   'real-decline-with-rolled-back-ancestor: no real capture'\n+ ]\n- []\n"
+        }
+      ],
+      "coveragePassed": false,
+      "coverage": [
+        {
+          "arm": "B",
+          "failures": [
+            "publishedCompilerReads not observed",
+            "scopedDeclineEvents not observed",
+            "verifiedDeclineRollbacks not observed",
+            "runtime seed reentry unobserved: binaries intentionally uninstrumented"
+          ],
+          "scopedEvidence": {
+            "seedPublications": 1,
+            "committedOutputs": 10,
+            "publishedCompilerReads": 0,
+            "scopedDeclineEvents": 0,
+            "verifiedDeclineRollbacks": 0
+          },
+          "compilationWideDiagnostics": {
+            "seedCalls": 7,
+            "committed": 53,
+            "declined": 0,
+            "reentries": 1,
+            "publishedReentries": 1
+          },
+          "runtimeReentry": {
+            "status": "UNOBSERVED",
+            "instrumentation": "none"
+          },
+          "rollbackProof": {
+            "status": "UNOBSERVED",
+            "reason": "callback outcome is not restoration proof"
+          }
+        },
+        {
+          "arm": "C",
+          "failures": [
+            "publishedCompilerReads not observed",
+            "scopedDeclineEvents not observed",
+            "verifiedDeclineRollbacks not observed",
+            "runtime seed reentry unobserved: binaries intentionally uninstrumented"
+          ],
+          "scopedEvidence": {
+            "seedPublications": 1,
+            "committedOutputs": 10,
+            "publishedCompilerReads": 0,
+            "scopedDeclineEvents": 0,
+            "verifiedDeclineRollbacks": 0
+          },
+          "compilationWideDiagnostics": {
+            "seedCalls": 7,
+            "committed": 53,
+            "declined": 0,
+            "reentries": 1,
+            "publishedReentries": 1
+          },
+          "runtimeReentry": {
+            "status": "UNOBSERVED",
+            "instrumentation": "none"
+          },
+          "rollbackProof": {
+            "status": "UNOBSERVED",
+            "reason": "callback outcome is not restoration proof"
+          }
+        }
+      ]
+    }
+  ]
+}

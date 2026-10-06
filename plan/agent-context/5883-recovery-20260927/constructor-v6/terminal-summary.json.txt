@@ -1,0 +1,71 @@
+{
+  "experimentRoot": "/private/tmp/js2-5883-main-6eac-20260927",
+  "archive": "/private/tmp/js2-5883-main-6eac-20260927/.tmp/V6-pair-5OkPw2",
+  "head": "fda4b498696f395889e199756c6b8c27a629387c",
+  "runs": [
+    {
+      "arm": "B",
+      "handle": 79055,
+      "terminal": true,
+      "exit": 1,
+      "tests": 5,
+      "passed": 0,
+      "failed": 5
+    },
+    {
+      "arm": "C",
+      "handle": 25699,
+      "terminal": true,
+      "exit": 1,
+      "tests": 5,
+      "passed": 0,
+      "failed": 5
+    }
+  ],
+  "comparator": {
+    "terminal": true,
+    "exit": 1,
+    "denominator": 5,
+    "correspondencePassed": 5,
+    "observerValid": 0,
+    "coveragePassed": 0,
+    "sha256": "34e01086503df72ec1cbffbef9b861a7cae35faf94126cf9d4ff0f2ff6665f94"
+  },
+  "actuals": {
+    "compileSuccess": 10,
+    "nativeOne": 10,
+    "wasmOne": 10,
+    "zeroImports": 10,
+    "observerErrorRows": 0,
+    "denominator": 10
+  },
+  "contractReceipts": {
+    "outputControlRowsReportedPass": 70,
+    "outputControlDenominator": 70,
+    "seedControlSlotsObserved": 20,
+    "seedControlDenominator": 20,
+    "declineSlotsInconclusive": 20,
+    "declineSlotDenominator": 20,
+    "note": "Comparator stops observer-validity check at contract.failures; control row outcomes are read directly from receipts, not claimed as a completed comparator validation."
+  },
+  "restoration": {
+    "drive": "19e15af978541faf779b4b9b0ce5d45156a00f642fc5b11db0446480d39d5813",
+    "protocol": "d3dcae5d2e13375724ea6053d0c41b5fd0e211d44acf49a8ef08158a8e503e5b",
+    "byteComparedWithOriginal": true,
+    "sharedPinsUnchanged": true,
+    "manualTargetsRemoved": true,
+    "archivedManualBytesVerified": true,
+    "note": "B-to-C apply_patch restored original bytes before C; post-C byte comparison required no additional production edit."
+  },
+  "slotReleased": true,
+  "processList": "sandbox denied; both execution handles and comparator terminal",
+  "limitations": [
+    "No runtime seed reentry proof",
+    "No real scoped decline or rolled-back-ancestor negative captured",
+    "No verified rollback proof",
+    "Compiler read evidence absent in already-emitted and both drive cases",
+    "No independent physical identity proof",
+    "No typecheck performed",
+    "No harness changes/restarts between arms"
+  ]
+}

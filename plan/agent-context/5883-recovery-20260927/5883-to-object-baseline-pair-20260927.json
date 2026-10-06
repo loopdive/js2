@@ -1,0 +1,595 @@
+{
+  "baselineHead": "608be80f6beef338665fdcdb834e7d9b9f20b925",
+  "candidateHead": "18f1bd831312b3f5805f1e176388aac449c2d389",
+  "candidateSubject": "local A/B/C/D integration before early activation and vector prototype providers",
+  "lane": "standalone, nativeStrings true, default optimization, exact same20 sources",
+  "baselineHandle": 38880,
+  "candidateHandle": 33478,
+  "fixtureSha256": "e73543291685e76f60d99fc14391be787bf23b8eb2ef84da05425566e2acd2f2",
+  "total": 20,
+  "baselinePass": 2,
+  "candidatePass": 11,
+  "gains": [
+    "wraps number once and preserves its primitive slot",
+    "wraps negative zero once and preserves its primitive slot",
+    "wraps genuine NaN once and preserves its primitive slot",
+    "wraps boolean false once and preserves its primitive slot",
+    "retains existing Number wrapper identity",
+    "retains existing Boolean wrapper identity",
+    "preserves ordinary object receiver identity",
+    "does not Get or coerce an object receiver at factory creation",
+    "allocates fresh primitive wrappers per factory call and retains each across steps"
+  ],
+  "losses": [],
+  "note": "Absent actual means execution did not return/log; raw logs retain thrown Wasm exceptions. Persist all failures; no acceptance waived.",
+  "rows": [
+    {
+      "name": "wraps number once and preserves its primitive slot",
+      "source": "export function test() { \n    const primitive = 3;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Number.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Number.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Number.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }",
+      "sha256": "c2f931e059257fec5bd162679d1636cadcb4f4d485185e32d87c5d6c629d22bf",
+      "native": 1,
+      "baseline": {
+        "name": "wraps number once and preserves its primitive slot",
+        "source": "export function test() { \n    const primitive = 3;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Number.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Number.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Number.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }",
+        "sha256": "c2f931e059257fec5bd162679d1636cadcb4f4d485185e32d87c5d6c629d22bf",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "candidate": {
+        "name": "wraps number once and preserves its primitive slot",
+        "source": "export function test() { \n    const primitive = 3;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Number.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Number.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Number.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }",
+        "sha256": "c2f931e059257fec5bd162679d1636cadcb4f4d485185e32d87c5d6c629d22bf",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "baselinePass": false,
+      "candidatePass": true
+    },
+    {
+      "name": "wraps negative zero once and preserves its primitive slot",
+      "source": "export function test() { \n    const primitive = -0;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Number.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Number.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Number.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }",
+      "sha256": "8948e5112f682409a400d8def52a4f6fef58f814604fad3e38c1183feae125e1",
+      "native": 1,
+      "baseline": {
+        "name": "wraps negative zero once and preserves its primitive slot",
+        "source": "export function test() { \n    const primitive = -0;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Number.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Number.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Number.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }",
+        "sha256": "8948e5112f682409a400d8def52a4f6fef58f814604fad3e38c1183feae125e1",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "candidate": {
+        "name": "wraps negative zero once and preserves its primitive slot",
+        "source": "export function test() { \n    const primitive = -0;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Number.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Number.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Number.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }",
+        "sha256": "8948e5112f682409a400d8def52a4f6fef58f814604fad3e38c1183feae125e1",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "baselinePass": false,
+      "candidatePass": true
+    },
+    {
+      "name": "wraps genuine NaN once and preserves its primitive slot",
+      "source": "export function test() { \n    const primitive = NaN;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Number.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Number.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Number.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }",
+      "sha256": "ca8e44f48ba504857c1c1d5b1d5baee66031546c18c9589b75f6a4f5e66c25b0",
+      "native": 1,
+      "baseline": {
+        "name": "wraps genuine NaN once and preserves its primitive slot",
+        "source": "export function test() { \n    const primitive = NaN;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Number.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Number.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Number.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }",
+        "sha256": "ca8e44f48ba504857c1c1d5b1d5baee66031546c18c9589b75f6a4f5e66c25b0",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "candidate": {
+        "name": "wraps genuine NaN once and preserves its primitive slot",
+        "source": "export function test() { \n    const primitive = NaN;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Number.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Number.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Number.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }",
+        "sha256": "ca8e44f48ba504857c1c1d5b1d5baee66031546c18c9589b75f6a4f5e66c25b0",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "baselinePass": false,
+      "candidatePass": true
+    },
+    {
+      "name": "wraps boolean false once and preserves its primitive slot",
+      "source": "export function test() { \n    const primitive = false;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Boolean.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Boolean.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Boolean.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }",
+      "sha256": "7778c1e245e1e142437c3444f6f38ec170130b2801517048ce8be70579216075",
+      "native": 1,
+      "baseline": {
+        "name": "wraps boolean false once and preserves its primitive slot",
+        "source": "export function test() { \n    const primitive = false;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Boolean.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Boolean.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Boolean.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }",
+        "sha256": "7778c1e245e1e142437c3444f6f38ec170130b2801517048ce8be70579216075",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "candidate": {
+        "name": "wraps boolean false once and preserves its primitive slot",
+        "source": "export function test() { \n    const primitive = false;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Boolean.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Boolean.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Boolean.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }",
+        "sha256": "7778c1e245e1e142437c3444f6f38ec170130b2801517048ce8be70579216075",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "baselinePass": false,
+      "candidatePass": true
+    },
+    {
+      "name": "wraps bigint once and preserves its primitive slot",
+      "source": "export function test() { \n    const primitive = 7n;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(BigInt.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(BigInt.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(BigInt.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }",
+      "sha256": "745eb42c17db9385bd9878fa09efaea735c6fc830f6c5e7e9175e677661d3e45",
+      "native": 1,
+      "baseline": {
+        "name": "wraps bigint once and preserves its primitive slot",
+        "source": "export function test() { \n    const primitive = 7n;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(BigInt.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(BigInt.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(BigInt.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }",
+        "sha256": "745eb42c17db9385bd9878fa09efaea735c6fc830f6c5e7e9175e677661d3e45",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "candidate": {
+        "name": "wraps bigint once and preserves its primitive slot",
+        "source": "export function test() { \n    const primitive = 7n;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(BigInt.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(BigInt.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(BigInt.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }",
+        "sha256": "745eb42c17db9385bd9878fa09efaea735c6fc830f6c5e7e9175e677661d3e45",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "baselinePass": false,
+      "candidatePass": false
+    },
+    {
+      "name": "wraps wide bigint once and preserves its primitive slot",
+      "source": "export function test() { \n    const primitive = 18446744073709551617n;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(BigInt.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(BigInt.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(BigInt.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }",
+      "sha256": "51295b423b1e2744f01597fc0b3267275b1b2cbaf534afe04383ccfea6006544",
+      "native": 1,
+      "baseline": {
+        "name": "wraps wide bigint once and preserves its primitive slot",
+        "source": "export function test() { \n    const primitive = 18446744073709551617n;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(BigInt.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(BigInt.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(BigInt.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }",
+        "sha256": "51295b423b1e2744f01597fc0b3267275b1b2cbaf534afe04383ccfea6006544",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "candidate": {
+        "name": "wraps wide bigint once and preserves its primitive slot",
+        "source": "export function test() { \n    const primitive = 18446744073709551617n;\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(BigInt.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(BigInt.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(BigInt.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }",
+        "sha256": "51295b423b1e2744f01597fc0b3267275b1b2cbaf534afe04383ccfea6006544",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "baselinePass": false,
+      "candidatePass": false
+    },
+    {
+      "name": "wraps symbol once and preserves its primitive slot",
+      "source": "export function test() { \n    const primitive = Symbol(\"receiver\");\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Symbol.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Symbol.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Symbol.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }",
+      "sha256": "27a98b2f02d440ec1bc3428e12ef5ed8c0764916dbd2befa14a9f01f2cf3d665",
+      "native": 1,
+      "baseline": {
+        "name": "wraps symbol once and preserves its primitive slot",
+        "source": "export function test() { \n    const primitive = Symbol(\"receiver\");\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Symbol.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Symbol.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Symbol.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }",
+        "sha256": "27a98b2f02d440ec1bc3428e12ef5ed8c0764916dbd2befa14a9f01f2cf3d665",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "candidate": {
+        "name": "wraps symbol once and preserves its primitive slot",
+        "source": "export function test() { \n    const primitive = Symbol(\"receiver\");\n    let receiver;\n    let lengths = 0;\n    let indices = 0;\n    Object.defineProperty(Symbol.prototype, \"length\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        lengths++;\n        if (receiver === undefined) receiver = this;\n        return this === receiver && typeof this === \"object\" ? 1 : 0;\n      }\n    });\n    Object.defineProperty(Symbol.prototype, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        indices++;\n        return this === receiver && typeof this === \"object\" &&\n          Object.is(Symbol.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(primitive);\n    if (lengths !== 0 || indices !== 0 || receiver !== undefined) return -1;\n    const first = iterator.next();\n    if (first.done || first.value !== 7 || lengths !== 1 || indices !== 1) return -2;\n    const end = iterator.next();\n    return end.done && end.value === undefined && lengths === 2 && indices === 1 ? 1 : -3;\n   }",
+        "sha256": "27a98b2f02d440ec1bc3428e12ef5ed8c0764916dbd2befa14a9f01f2cf3d665",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "baselinePass": false,
+      "candidatePass": false
+    },
+    {
+      "name": "string primitive yields UTF-16 indexed values, not code points",
+      "source": "export function test() { \n  const iterator = Array.prototype.values.call(\"A\\uD83D\\uDE00\");\n  const a = iterator.next();\n  const hi = iterator.next();\n  const lo = iterator.next();\n  const end = iterator.next();\n  return !a.done && a.value === \"A\" && !hi.done && hi.value === \"\\uD83D\" &&\n    !lo.done && lo.value === \"\\uDE00\" && end.done && end.value === undefined ? 1 : -1;\n }",
+      "sha256": "c0b4cbbeb8cf9f3af2b71430af19a4f1ac26b5381f88cbb6ade9d60639d03371",
+      "native": 1,
+      "baseline": {
+        "name": "string primitive yields UTF-16 indexed values, not code points",
+        "source": "export function test() { \n  const iterator = Array.prototype.values.call(\"A\\uD83D\\uDE00\");\n  const a = iterator.next();\n  const hi = iterator.next();\n  const lo = iterator.next();\n  const end = iterator.next();\n  return !a.done && a.value === \"A\" && !hi.done && hi.value === \"\\uD83D\" &&\n    !lo.done && lo.value === \"\\uDE00\" && end.done && end.value === undefined ? 1 : -1;\n }",
+        "sha256": "c0b4cbbeb8cf9f3af2b71430af19a4f1ac26b5381f88cbb6ade9d60639d03371",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": []
+      },
+      "candidate": {
+        "name": "string primitive yields UTF-16 indexed values, not code points",
+        "source": "export function test() { \n  const iterator = Array.prototype.values.call(\"A\\uD83D\\uDE00\");\n  const a = iterator.next();\n  const hi = iterator.next();\n  const lo = iterator.next();\n  const end = iterator.next();\n  return !a.done && a.value === \"A\" && !hi.done && hi.value === \"\\uD83D\" &&\n    !lo.done && lo.value === \"\\uDE00\" && end.done && end.value === undefined ? 1 : -1;\n }",
+        "sha256": "c0b4cbbeb8cf9f3af2b71430af19a4f1ac26b5381f88cbb6ade9d60639d03371",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": []
+      },
+      "baselinePass": false,
+      "candidatePass": false
+    },
+    {
+      "name": "retains existing Number wrapper identity",
+      "source": "export function test() { \n    const primitive = 3;\n    const source = Object(primitive);\n    let reads = 0;\n    Object.defineProperty(source, \"length\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 1 : 0; }\n    });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        reads += 10;\n        return this === source && Object.is(Number.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 11 ? 1 : -2;\n   }",
+      "sha256": "06a4ab938039f3bd0457599900a9a8da5d7ab4a35dd321f57b2b19d7834aa2ad",
+      "native": 1,
+      "baseline": {
+        "name": "retains existing Number wrapper identity",
+        "source": "export function test() { \n    const primitive = 3;\n    const source = Object(primitive);\n    let reads = 0;\n    Object.defineProperty(source, \"length\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 1 : 0; }\n    });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        reads += 10;\n        return this === source && Object.is(Number.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 11 ? 1 : -2;\n   }",
+        "sha256": "06a4ab938039f3bd0457599900a9a8da5d7ab4a35dd321f57b2b19d7834aa2ad",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": []
+      },
+      "candidate": {
+        "name": "retains existing Number wrapper identity",
+        "source": "export function test() { \n    const primitive = 3;\n    const source = Object(primitive);\n    let reads = 0;\n    Object.defineProperty(source, \"length\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 1 : 0; }\n    });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        reads += 10;\n        return this === source && Object.is(Number.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 11 ? 1 : -2;\n   }",
+        "sha256": "06a4ab938039f3bd0457599900a9a8da5d7ab4a35dd321f57b2b19d7834aa2ad",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "baselinePass": false,
+      "candidatePass": true
+    },
+    {
+      "name": "retains existing Boolean wrapper identity",
+      "source": "export function test() { \n    const primitive = false;\n    const source = Object(primitive);\n    let reads = 0;\n    Object.defineProperty(source, \"length\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 1 : 0; }\n    });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        reads += 10;\n        return this === source && Object.is(Boolean.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 11 ? 1 : -2;\n   }",
+      "sha256": "0704f0a51f50dc7ffdc38a6e844c450855b478a977ee061bc841a6562f16a446",
+      "native": 1,
+      "baseline": {
+        "name": "retains existing Boolean wrapper identity",
+        "source": "export function test() { \n    const primitive = false;\n    const source = Object(primitive);\n    let reads = 0;\n    Object.defineProperty(source, \"length\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 1 : 0; }\n    });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        reads += 10;\n        return this === source && Object.is(Boolean.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 11 ? 1 : -2;\n   }",
+        "sha256": "0704f0a51f50dc7ffdc38a6e844c450855b478a977ee061bc841a6562f16a446",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": []
+      },
+      "candidate": {
+        "name": "retains existing Boolean wrapper identity",
+        "source": "export function test() { \n    const primitive = false;\n    const source = Object(primitive);\n    let reads = 0;\n    Object.defineProperty(source, \"length\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 1 : 0; }\n    });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        reads += 10;\n        return this === source && Object.is(Boolean.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 11 ? 1 : -2;\n   }",
+        "sha256": "0704f0a51f50dc7ffdc38a6e844c450855b478a977ee061bc841a6562f16a446",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "baselinePass": false,
+      "candidatePass": true
+    },
+    {
+      "name": "retains existing BigInt wrapper identity",
+      "source": "export function test() { \n    const primitive = 7n;\n    const source = Object(primitive);\n    let reads = 0;\n    Object.defineProperty(source, \"length\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 1 : 0; }\n    });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        reads += 10;\n        return this === source && Object.is(BigInt.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 11 ? 1 : -2;\n   }",
+      "sha256": "4bc01d8b6df1c1eb6bce3a597754f8c59f514a2deff1eeb8de8941a4f2b6f63c",
+      "native": 1,
+      "baseline": {
+        "name": "retains existing BigInt wrapper identity",
+        "source": "export function test() { \n    const primitive = 7n;\n    const source = Object(primitive);\n    let reads = 0;\n    Object.defineProperty(source, \"length\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 1 : 0; }\n    });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        reads += 10;\n        return this === source && Object.is(BigInt.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 11 ? 1 : -2;\n   }",
+        "sha256": "4bc01d8b6df1c1eb6bce3a597754f8c59f514a2deff1eeb8de8941a4f2b6f63c",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": []
+      },
+      "candidate": {
+        "name": "retains existing BigInt wrapper identity",
+        "source": "export function test() { \n    const primitive = 7n;\n    const source = Object(primitive);\n    let reads = 0;\n    Object.defineProperty(source, \"length\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 1 : 0; }\n    });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        reads += 10;\n        return this === source && Object.is(BigInt.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 11 ? 1 : -2;\n   }",
+        "sha256": "4bc01d8b6df1c1eb6bce3a597754f8c59f514a2deff1eeb8de8941a4f2b6f63c",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "baselinePass": false,
+      "candidatePass": false
+    },
+    {
+      "name": "retains existing Symbol wrapper identity",
+      "source": "export function test() { \n    const primitive = Symbol(\"boxed\");\n    const source = Object(primitive);\n    let reads = 0;\n    Object.defineProperty(source, \"length\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 1 : 0; }\n    });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        reads += 10;\n        return this === source && Object.is(Symbol.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 11 ? 1 : -2;\n   }",
+      "sha256": "56b2330445598bca4a889d0450b3cca081ba50c7dfd116d3edf6624db04cb726",
+      "native": 1,
+      "baseline": {
+        "name": "retains existing Symbol wrapper identity",
+        "source": "export function test() { \n    const primitive = Symbol(\"boxed\");\n    const source = Object(primitive);\n    let reads = 0;\n    Object.defineProperty(source, \"length\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 1 : 0; }\n    });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        reads += 10;\n        return this === source && Object.is(Symbol.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 11 ? 1 : -2;\n   }",
+        "sha256": "56b2330445598bca4a889d0450b3cca081ba50c7dfd116d3edf6624db04cb726",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": []
+      },
+      "candidate": {
+        "name": "retains existing Symbol wrapper identity",
+        "source": "export function test() { \n    const primitive = Symbol(\"boxed\");\n    const source = Object(primitive);\n    let reads = 0;\n    Object.defineProperty(source, \"length\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 1 : 0; }\n    });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () {\n        \"use strict\";\n        reads += 10;\n        return this === source && Object.is(Symbol.prototype.valueOf.call(this), primitive) ? 7 : -9;\n      }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 11 ? 1 : -2;\n   }",
+        "sha256": "56b2330445598bca4a889d0450b3cca081ba50c7dfd116d3edf6624db04cb726",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "baselinePass": false,
+      "candidatePass": false
+    },
+    {
+      "name": "retains a String wrapper target and its explicit proxy receiver",
+      "source": "export function test() { \n  const boxed = Object(\"ab\");\n  let reads = 0;\n  let wrong = 0;\n  const source = new Proxy(boxed, {\n    get: function (target, key, receiver) {\n      if (target !== boxed || receiver !== source) wrong++;\n      if (key === \"length\" || key === \"0\" || key === \"1\") reads++;\n      return Reflect.get(target, key, receiver);\n    }\n  });\n  const iterator = Array.prototype.values.call(source);\n  if (reads !== 0 || wrong !== 0) return -1;\n  const first = iterator.next();\n  const second = iterator.next();\n  return !first.done && first.value === \"a\" && !second.done && second.value === \"b\" &&\n    reads === 4 && wrong === 0 ? 1 : -2;\n }",
+      "sha256": "5ba7cf1c9996c91bd6ddb0e2f0f7dfa77d74f66377cef911c9d59e2eb029d3bd",
+      "native": 1,
+      "baseline": {
+        "name": "retains a String wrapper target and its explicit proxy receiver",
+        "source": "export function test() { \n  const boxed = Object(\"ab\");\n  let reads = 0;\n  let wrong = 0;\n  const source = new Proxy(boxed, {\n    get: function (target, key, receiver) {\n      if (target !== boxed || receiver !== source) wrong++;\n      if (key === \"length\" || key === \"0\" || key === \"1\") reads++;\n      return Reflect.get(target, key, receiver);\n    }\n  });\n  const iterator = Array.prototype.values.call(source);\n  if (reads !== 0 || wrong !== 0) return -1;\n  const first = iterator.next();\n  const second = iterator.next();\n  return !first.done && first.value === \"a\" && !second.done && second.value === \"b\" &&\n    reads === 4 && wrong === 0 ? 1 : -2;\n }",
+        "sha256": "5ba7cf1c9996c91bd6ddb0e2f0f7dfa77d74f66377cef911c9d59e2eb029d3bd",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "candidate": {
+        "name": "retains a String wrapper target and its explicit proxy receiver",
+        "source": "export function test() { \n  const boxed = Object(\"ab\");\n  let reads = 0;\n  let wrong = 0;\n  const source = new Proxy(boxed, {\n    get: function (target, key, receiver) {\n      if (target !== boxed || receiver !== source) wrong++;\n      if (key === \"length\" || key === \"0\" || key === \"1\") reads++;\n      return Reflect.get(target, key, receiver);\n    }\n  });\n  const iterator = Array.prototype.values.call(source);\n  if (reads !== 0 || wrong !== 0) return -1;\n  const first = iterator.next();\n  const second = iterator.next();\n  return !first.done && first.value === \"a\" && !second.done && second.value === \"b\" &&\n    reads === 4 && wrong === 0 ? 1 : -2;\n }",
+        "sha256": "5ba7cf1c9996c91bd6ddb0e2f0f7dfa77d74f66377cef911c9d59e2eb029d3bd",
+        "native": 1,
+        "success": true,
+        "errors": []
+      },
+      "baselinePass": false,
+      "candidatePass": false
+    },
+    {
+      "name": "preserves ordinary object receiver identity",
+      "source": "export function test() { \n    const source = {};\n    let reads = 0;\n    Object.defineProperty(source, \"length\", { configurable: true, value: 1 });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 7 : -9; }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 1 ? 1 : -2;\n   }",
+      "sha256": "8f56ab77934b3e23cb8b3a3fd2022eb85bd52e93ad5c18bfd6e77a7cc3d8d28b",
+      "native": 1,
+      "baseline": {
+        "name": "preserves ordinary object receiver identity",
+        "source": "export function test() { \n    const source = {};\n    let reads = 0;\n    Object.defineProperty(source, \"length\", { configurable: true, value: 1 });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 7 : -9; }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 1 ? 1 : -2;\n   }",
+        "sha256": "8f56ab77934b3e23cb8b3a3fd2022eb85bd52e93ad5c18bfd6e77a7cc3d8d28b",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -1,
+        "imports": []
+      },
+      "candidate": {
+        "name": "preserves ordinary object receiver identity",
+        "source": "export function test() { \n    const source = {};\n    let reads = 0;\n    Object.defineProperty(source, \"length\", { configurable: true, value: 1 });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 7 : -9; }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 1 ? 1 : -2;\n   }",
+        "sha256": "8f56ab77934b3e23cb8b3a3fd2022eb85bd52e93ad5c18bfd6e77a7cc3d8d28b",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "baselinePass": false,
+      "candidatePass": true
+    },
+    {
+      "name": "preserves array receiver identity",
+      "source": "export function test() { \n    const source = [0];\n    let reads = 0;\n    \n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 7 : -9; }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 1 ? 1 : -2;\n   }",
+      "sha256": "44644c5a233bd4a16359c82a4a2e29ffd79020a4e19b8595d96122d71ddd0ee9",
+      "native": 1,
+      "baseline": {
+        "name": "preserves array receiver identity",
+        "source": "export function test() { \n    const source = [0];\n    let reads = 0;\n    \n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 7 : -9; }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 1 ? 1 : -2;\n   }",
+        "sha256": "44644c5a233bd4a16359c82a4a2e29ffd79020a4e19b8595d96122d71ddd0ee9",
+        "native": 1,
+        "success": true,
+        "errors": []
+      },
+      "candidate": {
+        "name": "preserves array receiver identity",
+        "source": "export function test() { \n    const source = [0];\n    let reads = 0;\n    \n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 7 : -9; }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 1 ? 1 : -2;\n   }",
+        "sha256": "44644c5a233bd4a16359c82a4a2e29ffd79020a4e19b8595d96122d71ddd0ee9",
+        "native": 1,
+        "success": true,
+        "errors": []
+      },
+      "baselinePass": false,
+      "candidatePass": false
+    },
+    {
+      "name": "preserves function receiver identity",
+      "source": "export function test() { \n    const source = function () {};\n    let reads = 0;\n    Object.defineProperty(source, \"length\", { configurable: true, value: 1 });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 7 : -9; }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 1 ? 1 : -2;\n   }",
+      "sha256": "45ff5933c473ee5664f4ed6d5d5d93bff36a209c94f057d59aa7311a349de28a",
+      "native": 1,
+      "baseline": {
+        "name": "preserves function receiver identity",
+        "source": "export function test() { \n    const source = function () {};\n    let reads = 0;\n    Object.defineProperty(source, \"length\", { configurable: true, value: 1 });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 7 : -9; }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 1 ? 1 : -2;\n   }",
+        "sha256": "45ff5933c473ee5664f4ed6d5d5d93bff36a209c94f057d59aa7311a349de28a",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "candidate": {
+        "name": "preserves function receiver identity",
+        "source": "export function test() { \n    const source = function () {};\n    let reads = 0;\n    Object.defineProperty(source, \"length\", { configurable: true, value: 1 });\n    Object.defineProperty(source, \"0\", {\n      configurable: true,\n      get: function () { \"use strict\"; reads++; return this === source ? 7 : -9; }\n    });\n    const iterator = Array.prototype.values.call(source);\n    if (reads !== 0) return -1;\n    const first = iterator.next();\n    return !first.done && first.value === 7 && reads === 1 ? 1 : -2;\n   }",
+        "sha256": "45ff5933c473ee5664f4ed6d5d5d93bff36a209c94f057d59aa7311a349de28a",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "baselinePass": false,
+      "candidatePass": false
+    },
+    {
+      "name": "does not Get or coerce an object receiver at factory creation",
+      "source": "export function test() { \n  let reads = 0;\n  let conversions = 0;\n  const reason = {};\n  const source = {\n    get length() { reads++; return 1; },\n    get 0() { reads += 10; return this === source ? 7 : -9; },\n    valueOf: function () { conversions++; throw reason; },\n    toString: function () { conversions++; throw reason; },\n    [Symbol.toPrimitive]: function () { conversions++; throw reason; }\n  };\n  let iterator;\n  try { iterator = Array.prototype.values.call(source); } catch (_) { return -1; }\n  if (reads !== 0 || conversions !== 0) return -2;\n  const first = iterator.next();\n  return !first.done && first.value === 7 && reads === 11 && conversions === 0 ? 1 : -3;\n }",
+      "sha256": "88767d1b770a0bb07810d1e9d2dc4c1fdd4e3deacfb49419f58aea58f5589fdd",
+      "native": 1,
+      "baseline": {
+        "name": "does not Get or coerce an object receiver at factory creation",
+        "source": "export function test() { \n  let reads = 0;\n  let conversions = 0;\n  const reason = {};\n  const source = {\n    get length() { reads++; return 1; },\n    get 0() { reads += 10; return this === source ? 7 : -9; },\n    valueOf: function () { conversions++; throw reason; },\n    toString: function () { conversions++; throw reason; },\n    [Symbol.toPrimitive]: function () { conversions++; throw reason; }\n  };\n  let iterator;\n  try { iterator = Array.prototype.values.call(source); } catch (_) { return -1; }\n  if (reads !== 0 || conversions !== 0) return -2;\n  const first = iterator.next();\n  return !first.done && first.value === 7 && reads === 11 && conversions === 0 ? 1 : -3;\n }",
+        "sha256": "88767d1b770a0bb07810d1e9d2dc4c1fdd4e3deacfb49419f58aea58f5589fdd",
+        "native": 1,
+        "success": true,
+        "errors": [
+          {
+            "message": "Cannot access 'source' before initialization",
+            "line": 7,
+            "column": 44,
+            "severity": "warning"
+          }
+        ],
+        "actual": -2,
+        "imports": []
+      },
+      "candidate": {
+        "name": "does not Get or coerce an object receiver at factory creation",
+        "source": "export function test() { \n  let reads = 0;\n  let conversions = 0;\n  const reason = {};\n  const source = {\n    get length() { reads++; return 1; },\n    get 0() { reads += 10; return this === source ? 7 : -9; },\n    valueOf: function () { conversions++; throw reason; },\n    toString: function () { conversions++; throw reason; },\n    [Symbol.toPrimitive]: function () { conversions++; throw reason; }\n  };\n  let iterator;\n  try { iterator = Array.prototype.values.call(source); } catch (_) { return -1; }\n  if (reads !== 0 || conversions !== 0) return -2;\n  const first = iterator.next();\n  return !first.done && first.value === 7 && reads === 11 && conversions === 0 ? 1 : -3;\n }",
+        "sha256": "88767d1b770a0bb07810d1e9d2dc4c1fdd4e3deacfb49419f58aea58f5589fdd",
+        "native": 1,
+        "success": true,
+        "errors": [
+          {
+            "message": "Cannot access 'source' before initialization",
+            "line": 7,
+            "column": 44,
+            "severity": "warning"
+          }
+        ],
+        "actual": 1,
+        "imports": []
+      },
+      "baselinePass": false,
+      "candidatePass": true
+    },
+    {
+      "name": "allocates fresh primitive wrappers per factory call and retains each across steps",
+      "source": "export function test() { \n  let firstReceiver;\n  let secondReceiver;\n  let current;\n  let lengths = 0;\n  Object.defineProperty(Number.prototype, \"length\", {\n    configurable: true,\n    get: function () {\n      \"use strict\";\n      lengths++;\n      current = this;\n      if (lengths === 1) firstReceiver = this;\n      if (lengths === 2) secondReceiver = this;\n      return 2;\n    }\n  });\n  const getter = function () {\n    \"use strict\";\n    if (this !== current || typeof this !== \"object\") return -9;\n    return this === firstReceiver ? 7 : this === secondReceiver ? 8 : -8;\n  };\n  Object.defineProperty(Number.prototype, \"0\", { configurable: true, get: getter });\n  Object.defineProperty(Number.prototype, \"1\", { configurable: true, get: getter });\n  const values = Array.prototype.values;\n  const first = values.call(3);\n  const second = values.call(3);\n  if (lengths !== 0) return -1;\n  if (first.next().value !== 7 || second.next().value !== 8) return -2;\n  if (firstReceiver === secondReceiver) return -3;\n  const again = first.next();\n  return !again.done && again.value === 7 && current === firstReceiver && lengths === 3 ? 1 : -4;\n }",
+      "sha256": "616e57add40cb33c66b25b987bb161f451d1208f5067c9ef8cc93bd195ec0ead",
+      "native": 1,
+      "baseline": {
+        "name": "allocates fresh primitive wrappers per factory call and retains each across steps",
+        "source": "export function test() { \n  let firstReceiver;\n  let secondReceiver;\n  let current;\n  let lengths = 0;\n  Object.defineProperty(Number.prototype, \"length\", {\n    configurable: true,\n    get: function () {\n      \"use strict\";\n      lengths++;\n      current = this;\n      if (lengths === 1) firstReceiver = this;\n      if (lengths === 2) secondReceiver = this;\n      return 2;\n    }\n  });\n  const getter = function () {\n    \"use strict\";\n    if (this !== current || typeof this !== \"object\") return -9;\n    return this === firstReceiver ? 7 : this === secondReceiver ? 8 : -8;\n  };\n  Object.defineProperty(Number.prototype, \"0\", { configurable: true, get: getter });\n  Object.defineProperty(Number.prototype, \"1\", { configurable: true, get: getter });\n  const values = Array.prototype.values;\n  const first = values.call(3);\n  const second = values.call(3);\n  if (lengths !== 0) return -1;\n  if (first.next().value !== 7 || second.next().value !== 8) return -2;\n  if (firstReceiver === secondReceiver) return -3;\n  const again = first.next();\n  return !again.done && again.value === 7 && current === firstReceiver && lengths === 3 ? 1 : -4;\n }",
+        "sha256": "616e57add40cb33c66b25b987bb161f451d1208f5067c9ef8cc93bd195ec0ead",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": -2,
+        "imports": []
+      },
+      "candidate": {
+        "name": "allocates fresh primitive wrappers per factory call and retains each across steps",
+        "source": "export function test() { \n  let firstReceiver;\n  let secondReceiver;\n  let current;\n  let lengths = 0;\n  Object.defineProperty(Number.prototype, \"length\", {\n    configurable: true,\n    get: function () {\n      \"use strict\";\n      lengths++;\n      current = this;\n      if (lengths === 1) firstReceiver = this;\n      if (lengths === 2) secondReceiver = this;\n      return 2;\n    }\n  });\n  const getter = function () {\n    \"use strict\";\n    if (this !== current || typeof this !== \"object\") return -9;\n    return this === firstReceiver ? 7 : this === secondReceiver ? 8 : -8;\n  };\n  Object.defineProperty(Number.prototype, \"0\", { configurable: true, get: getter });\n  Object.defineProperty(Number.prototype, \"1\", { configurable: true, get: getter });\n  const values = Array.prototype.values;\n  const first = values.call(3);\n  const second = values.call(3);\n  if (lengths !== 0) return -1;\n  if (first.next().value !== 7 || second.next().value !== 8) return -2;\n  if (firstReceiver === secondReceiver) return -3;\n  const again = first.next();\n  return !again.done && again.value === 7 && current === firstReceiver && lengths === 3 ? 1 : -4;\n }",
+        "sha256": "616e57add40cb33c66b25b987bb161f451d1208f5067c9ef8cc93bd195ec0ead",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "baselinePass": false,
+      "candidatePass": true
+    },
+    {
+      "name": "rejects null at factory creation with TypeError",
+      "source": "export function test() { \n    try {\n      Array.prototype.values.call(null);\n      return -1;\n    } catch (error) {\n      return error instanceof TypeError ? 1 : -2;\n    }\n   }",
+      "sha256": "83e5ab35151ae827a4f4f4666eea7c831b85893842dde8652354dc129491a057",
+      "native": 1,
+      "baseline": {
+        "name": "rejects null at factory creation with TypeError",
+        "source": "export function test() { \n    try {\n      Array.prototype.values.call(null);\n      return -1;\n    } catch (error) {\n      return error instanceof TypeError ? 1 : -2;\n    }\n   }",
+        "sha256": "83e5ab35151ae827a4f4f4666eea7c831b85893842dde8652354dc129491a057",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "candidate": {
+        "name": "rejects null at factory creation with TypeError",
+        "source": "export function test() { \n    try {\n      Array.prototype.values.call(null);\n      return -1;\n    } catch (error) {\n      return error instanceof TypeError ? 1 : -2;\n    }\n   }",
+        "sha256": "83e5ab35151ae827a4f4f4666eea7c831b85893842dde8652354dc129491a057",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "baselinePass": true,
+      "candidatePass": true
+    },
+    {
+      "name": "rejects undefined at factory creation with TypeError",
+      "source": "export function test() { \n    try {\n      Array.prototype.values.call(undefined);\n      return -1;\n    } catch (error) {\n      return error instanceof TypeError ? 1 : -2;\n    }\n   }",
+      "sha256": "d58425af15275d2099a0ee677fb3cdb73ca8de8ec97e099e8c674d11fdd38254",
+      "native": 1,
+      "baseline": {
+        "name": "rejects undefined at factory creation with TypeError",
+        "source": "export function test() { \n    try {\n      Array.prototype.values.call(undefined);\n      return -1;\n    } catch (error) {\n      return error instanceof TypeError ? 1 : -2;\n    }\n   }",
+        "sha256": "d58425af15275d2099a0ee677fb3cdb73ca8de8ec97e099e8c674d11fdd38254",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "candidate": {
+        "name": "rejects undefined at factory creation with TypeError",
+        "source": "export function test() { \n    try {\n      Array.prototype.values.call(undefined);\n      return -1;\n    } catch (error) {\n      return error instanceof TypeError ? 1 : -2;\n    }\n   }",
+        "sha256": "d58425af15275d2099a0ee677fb3cdb73ca8de8ec97e099e8c674d11fdd38254",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "actual": 1,
+        "imports": []
+      },
+      "baselinePass": true,
+      "candidatePass": true
+    }
+  ]
+}

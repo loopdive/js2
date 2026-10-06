@@ -1,0 +1,34 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import type { Instr } from "../ir/types.js";
+import { builtinBrandOffsetOf } from "./builtin-brands.js";
+import type { CodegenContext } from "./context/types.js";
+
+/**
+ * Classify an existing [[PrimitiveValue]] slot without registering providers.
+ * Symbol wrappers select Symbol.prototype, including its symbol-keyed entries.
+ * BigIntWide is a subtype of the base BigInt carrier, so testing that base
+ * preserves all limbs without introducing a separate wide-carrier dependency.
+ * Missing carriers emit nothing; this finalizer never mints types or helpers.
+ */
+export function buildReferenceWrapperBrandArms(
+  ctx: Pick<CodegenContext, "symbolTypeIdx" | "nativeBigIntTypeIdx">,
+  slotValue: () => Instr[],
+): Instr[] {
+  const result: Instr[] = [];
+  for (const [typeIdx, brand] of [
+    [ctx.symbolTypeIdx, "Symbol"],
+    [ctx.nativeBigIntTypeIdx, "BigInt"],
+  ] as const) {
+    if (typeIdx < 0) continue;
+    result.push(
+      ...slotValue(),
+      { op: "ref.test", typeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: builtinBrandOffsetOf(brand)! }, { op: "return" }],
+      },
+    );
+  }
+  return result;
+}

@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "kind": "5883-flat-layout-relocation",
+  "beforeCommit": "5b954c36e6c68ee5178a1d71780e8a836ce96746",
+  "afterCommit": null,
+  "afterState": "uncommitted-working-source",
+  "offsetUnit": "utf16-code-units",
+  "records": [
+    {
+      "beforePath": "src/codegen/promise-combinator-observable-protocol.ts",
+      "afterPath": "src/codegen/promises/promise-combinator-observable-protocol.ts",
+      "before": {
+        "sha256": "9919ddffe6e79ff98e3e6c51372f79ead77a7651b78438f8f5bc73bcbfc4892a",
+        "gitBlob": "198632d1d6339d66510242586a1ca76d2065e450"
+      },
+      "after": {
+        "sha256": "f2ced8793d4451b9c3fb64a0eb3484badb170e88dfca6ffc50dc806a4f0b5214",
+        "gitBlob": "885161cbdc5ff40c5d50ae2427eeaf42250f6e4e"
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "before": "import type { FieldDef, Instr, ValType } from \"../ir/types.js\";\nimport { buildTargetTaggedTry } from \"../wasm/physical/exception-control.js\";\nimport type { CodegenContext, FunctionContext } from \"./context/types.js\";\nimport { allocLocal } from \"./context/locals.js\";\nimport { mintDefinedFunc, pushDefinedFunc } from \"./func-space.js\";\nimport type { ensureBuiltinFnMetaType } from \"./builtin-fn-meta.js\";\nimport type { emitBuiltinConstructorIdentity } from \"./builtin-static-globals.js\";\nimport type { ensureStandaloneBuiltinStaticMethodClosure } from \"./builtin-value-read.js\";\nimport type { reserveCarrierBagVisibility } from \"./carrier-bag-visibility.js\";\nimport { buildClosureRefTestArms } from \"./closure-classifier.js\";",
+          "after": "import type { FieldDef, Instr, ValType } from \"../../ir/types.js\";\nimport { buildTargetTaggedTry } from \"../../wasm/physical/exception-control.js\";\nimport type { CodegenContext, FunctionContext } from \"../context/types.js\";\nimport { allocLocal } from \"../context/locals.js\";\nimport { mintDefinedFunc, pushDefinedFunc } from \"../func-space.js\";\nimport type { ensureBuiltinFnMetaType } from \"../builtin-fn-meta.js\";\nimport type { emitBuiltinConstructorIdentity } from \"../builtin-static-globals.js\";\nimport type { ensureStandaloneBuiltinStaticMethodClosure } from \"../builtin-value-read.js\";\nimport type { reserveCarrierBagVisibility } from \"../carrier-bag-visibility.js\";\nimport { buildClosureRefTestArms } from \"../closure-classifier.js\";",
+          "beforeOffset": 486,
+          "afterOffset": 486,
+          "beforeSha256": "10c063fb7e5d940a13e251dfb69cb3be7123c2fd030aec32f097db3803f3b84e",
+          "afterSha256": "943889736fb1adf7ec17bd260a24163448bde04fbd58965f3fe6f68059cfbb9c"
+        },
+        {
+          "ordinal": 1,
+          "before": "import type { promiseProtoThenMayBeReplaced } from \"./promise-dynamic-member-read.js\";\nimport type { aggregateSettleFuncIdx } from \"./promise-species-then.js\";\nimport { closureBagInitInstr } from \"./closures/closure-header-layout.js\";\nimport type { getOrCreateFuncRefWrapperTypes } from \"./closures/funcref-wrapper-types.js\";\nimport type { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from \"./object-runtime.js\";\nimport type { stringConstantExternrefInstrs } from \"./native-strings.js\";\nimport type { emitWasiErrorConstructor } from \"./registry/error-types.js\";\nimport type { addStringConstantGlobal, ensureExnTag } from \"./registry/imports.js\";\nimport type { getArrTypeIdxFromVec } from \"./registry/types.js\";\nimport type {\n  ensureCombinatorFunctions,\n  emitStandalonePromiseCombinator as emitLegacyPromiseCombinator,\n  emitStandalonePromiseCombinatorRuntime as emitLegacyPromiseCombinatorRuntime,\n  NativeCombinator,\n} from \"./promise-combinators.js\";\nimport type {\n  buildPromiseSettleClosureInstrs,\n  ensureAsyncDriveRuntime,\n  ensurePromiseExecutorClosures,\n  PROMISE_STATE_PENDING,\n  PromiseExecutorClosures,\n} from \"./async-scheduler.js\";",
+          "after": "import type { promiseProtoThenMayBeReplaced } from \"../promise-dynamic-member-read.js\";\nimport type { aggregateSettleFuncIdx } from \"../promise-species-then.js\";\nimport { closureBagInitInstr } from \"../closures/closure-header-layout.js\";\nimport type { getOrCreateFuncRefWrapperTypes } from \"../closures/funcref-wrapper-types.js\";\nimport type { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from \"../object-runtime.js\";\nimport type { stringConstantExternrefInstrs } from \"../native-strings.js\";\nimport type { emitWasiErrorConstructor } from \"../registry/error-types.js\";\nimport type { addStringConstantGlobal, ensureExnTag } from \"../registry/imports.js\";\nimport type { getArrTypeIdxFromVec } from \"../registry/types.js\";\nimport type {\n  ensureCombinatorFunctions,\n  emitStandalonePromiseCombinator as emitLegacyPromiseCombinator,\n  emitStandalonePromiseCombinatorRuntime as emitLegacyPromiseCombinatorRuntime,\n  NativeCombinator,\n} from \"../promise-combinators.js\";\nimport type {\n  buildPromiseSettleClosureInstrs,\n  ensureAsyncDriveRuntime,\n  ensurePromiseExecutorClosures,\n  PROMISE_STATE_PENDING,\n  PromiseExecutorClosures,\n} from \"../async-scheduler.js\";",
+          "beforeOffset": 1211,
+          "afterOffset": 1225,
+          "beforeSha256": "771c229cc272c14b79f1b20e094938b8d14ef4e6980732a27626392eed609320",
+          "afterSha256": "a769b695e8d707478770110876101a04b41d765f311c23c89c06dcb971229ecf"
+        }
+      ]
+    },
+    {
+      "beforePath": "src/codegen/promise-observable-combinators.ts",
+      "afterPath": "src/codegen/promises/promise-observable-combinators.ts",
+      "before": {
+        "sha256": "62cc4f889492eeae7c781d6122233f03464fc45da2893a7cb614154731636ccc",
+        "gitBlob": "bf9f56f2a94313ee3e05d7a54d5ece2f4314627f"
+      },
+      "after": {
+        "sha256": "023624dad22b808c96d0ab98d89f92437e4d9266858109d16d613e8bd296eb14",
+        "gitBlob": "8d8d14a621aec5a9ec1db9dfb4d4d7c650ece2c2"
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "before": "import { buildTargetTaggedTry } from \"../wasm/physical/exception-control.js\";\nimport type { FieldDef, Instr, ValType } from \"../ir/types.js\";\nimport type {\n  PROMISE_STATE_PENDING,\n  PromiseExecutorClosures,\n  buildPromiseSettleClosureInstrs,\n  ensureAsyncDriveRuntime,\n  ensurePromiseExecutorClosures,\n} from \"./async-scheduler.js\";\nimport type { ensureBuiltinFnMetaType } from \"./builtin-fn-meta.js\";\nimport type { emitBuiltinConstructorIdentity } from \"./builtin-static-globals.js\";\nimport type { ensureStandaloneBuiltinStaticMethodClosure } from \"./builtin-value-read.js\";\nimport type { reserveCarrierBagVisibility } from \"./carrier-bag-visibility.js\";\nimport { buildClosureRefTestArms } from \"./closure-classifier.js\";\nimport type { promiseProtoThenMayBeReplaced } from \"./promise-dynamic-member-read.js\";\nimport type { aggregateSettleFuncIdx } from \"./promise-species-then.js\";\nimport { closureBagInitInstr } from \"./closures/closure-header-layout.js\";",
+          "after": "import { buildTargetTaggedTry } from \"../../wasm/physical/exception-control.js\";\nimport type { FieldDef, Instr, ValType } from \"../../ir/types.js\";\nimport type {\n  PROMISE_STATE_PENDING,\n  PromiseExecutorClosures,\n  buildPromiseSettleClosureInstrs,\n  ensureAsyncDriveRuntime,\n  ensurePromiseExecutorClosures,\n} from \"../async-scheduler.js\";\nimport type { ensureBuiltinFnMetaType } from \"../builtin-fn-meta.js\";\nimport type { emitBuiltinConstructorIdentity } from \"../builtin-static-globals.js\";\nimport type { ensureStandaloneBuiltinStaticMethodClosure } from \"../builtin-value-read.js\";\nimport type { reserveCarrierBagVisibility } from \"../carrier-bag-visibility.js\";\nimport { buildClosureRefTestArms } from \"../closure-classifier.js\";\nimport type { promiseProtoThenMayBeReplaced } from \"../promise-dynamic-member-read.js\";\nimport type { aggregateSettleFuncIdx } from \"../promise-species-then.js\";\nimport { closureBagInitInstr } from \"../closures/closure-header-layout.js\";",
+          "beforeOffset": 435,
+          "afterOffset": 435,
+          "beforeSha256": "785f5e99c27bcfa6c7d00a066385525fb99ca4c4a93d59dcc931eabfea00f3b3",
+          "afterSha256": "636e8cc0d8aeb9500801541af4e216b22136a7c8dc38ec913cf8a46251081178"
+        },
+        {
+          "ordinal": 1,
+          "before": "import type { getOrCreateFuncRefWrapperTypes } from \"./closures/funcref-wrapper-types.js\";\nimport { allocLocal } from \"./context/locals.js\";\nimport type { CodegenContext, FunctionContext } from \"./context/types.js\";\nimport { mintDefinedFunc, pushDefinedFunc } from \"./func-space.js\";\nimport type { stringConstantExternrefInstrs } from \"./native-strings.js\";\nimport type { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from \"./object-runtime.js\";\nimport type { ensureCombinatorFunctions } from \"./promise-combinators.js\";\nimport { resolveF64VecArg as resolveObservableF64VecArg } from \"./promise-combinator-observable-protocol.js\";\nimport type { emitWasiErrorConstructor } from \"./registry/error-types.js\";\nimport type { ensureExnTag } from \"./registry/imports.js\";\nimport type { addStringConstantGlobal } from \"./registry/imports.js\";",
+          "after": "import type { getOrCreateFuncRefWrapperTypes } from \"../closures/funcref-wrapper-types.js\";\nimport { allocLocal } from \"../context/locals.js\";\nimport type { CodegenContext, FunctionContext } from \"../context/types.js\";\nimport { mintDefinedFunc, pushDefinedFunc } from \"../func-space.js\";\nimport type { stringConstantExternrefInstrs } from \"../native-strings.js\";\nimport type { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from \"../object-runtime.js\";\nimport type { ensureCombinatorFunctions } from \"../promise-combinators.js\";\nimport { resolveF64VecArg as resolveObservableF64VecArg } from \"./promise-combinator-observable-protocol.js\";\nimport type { emitWasiErrorConstructor } from \"../registry/error-types.js\";\nimport type { ensureExnTag } from \"../registry/imports.js\";\nimport type { addStringConstantGlobal } from \"../registry/imports.js\";",
+          "beforeOffset": 1394,
+          "afterOffset": 1409,
+          "beforeSha256": "6307d4bc08ae3c0fd1bd4aa3502b9b0437933176be5da26de980038393021d99",
+          "afterSha256": "29ff18b7457d1e3b81194b9de25b434aa74921ca2711b9a4ca2958240c753bf5"
+        }
+      ]
+    },
+    {
+      "beforePath": "src/codegen/vec-pop-body.ts",
+      "afterPath": "src/codegen/vectors/vec-pop-body.ts",
+      "before": {
+        "sha256": "384b6518cae23e3bf4042c2fd7d343f2c35d7588101a828c02a0994bad367336",
+        "gitBlob": "079334fb8ef69cf02d7f03108d1f9b12580edd38"
+      },
+      "after": {
+        "sha256": "c291ffaed2aada9a660f8ac6df6410409f5472bdbf8abfe2cf000379e365839e",
+        "gitBlob": "d8fb62a3de60ba1738bde584adbe3267c3cdea6f"
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "before": "import type { FuncHandle, Instr, ValType } from \"../ir/types.js\";",
+          "after": "import type { FuncHandle, Instr, ValType } from \"../../ir/types.js\";",
+          "beforeOffset": 84,
+          "afterOffset": 84,
+          "beforeSha256": "58a833292760fce381dd6e24cf9994239a31c2d52a0c10e3a80d0eca69fc7437",
+          "afterSha256": "863bfe7dafce3d6d1a3e35107f48cac3c02c16cdefa149e1f00710c63007a8e5"
+        }
+      ]
+    },
+    {
+      "beforePath": "src/codegen/promise-combinator-drive.ts",
+      "afterPath": "src/codegen/promise-combinator-drive.ts",
+      "before": {
+        "sha256": "3b415c429f7ee5546c169b6a67b511f3048f5e478cee520c62acdfa146fda85d",
+        "gitBlob": "b2d82e4dfbb7fa8bd7389ec7ae629a9c367d1832"
+      },
+      "after": {
+        "sha256": "5851e7a37247d392be748b264d95839c86798c2c15b1615d73ff2f1e93000c3c",
+        "gitBlob": "67785ca324743621452d2d018d9282e0575a6534"
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "before": "import {\n  observableCombinatorReactionFns,\n  emitObservableCombinatorElement,\n  emitObservableCombinatorPreparation,\n  ensureObservableCombinatorRuntime,\n  type CombinatorRuntime,\n  type ObservableCombinatorPreparation,\n  type ObservableCombinatorRuntime,\n  type ObservableElementCarrier,\n} from \"./promise-combinator-observable-protocol.js\";",
+          "after": "import {\n  observableCombinatorReactionFns,\n  emitObservableCombinatorElement,\n  emitObservableCombinatorPreparation,\n  ensureObservableCombinatorRuntime,\n  type CombinatorRuntime,\n  type ObservableCombinatorPreparation,\n  type ObservableCombinatorRuntime,\n  type ObservableElementCarrier,\n} from \"./promises/promise-combinator-observable-protocol.js\";",
+          "beforeOffset": 4778,
+          "afterOffset": 4778,
+          "beforeSha256": "bf34edf8ade047373fee5d340fafff59661681f0296d2244502fc75ca742c2aa",
+          "afterSha256": "c074da56e7bc140479f587c1fee47e27d4dc825892c2540d522262ba54dcf073"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "path": "src/codegen/promises/promise-combinator-observable-protocol.ts",
+      "sha256": "f2ced8793d4451b9c3fb64a0eb3484badb170e88dfca6ffc50dc806a4f0b5214",
+      "gitBlob": "885161cbdc5ff40c5d50ae2427eeaf42250f6e4e"
+    },
+    {
+      "path": "src/codegen/promises/promise-observable-combinators.ts",
+      "sha256": "023624dad22b808c96d0ab98d89f92437e4d9266858109d16d613e8bd296eb14",
+      "gitBlob": "8d8d14a621aec5a9ec1db9dfb4d4d7c650ece2c2"
+    },
+    {
+      "path": "src/codegen/vectors/vec-pop-body.ts",
+      "sha256": "c291ffaed2aada9a660f8ac6df6410409f5472bdbf8abfe2cf000379e365839e",
+      "gitBlob": "d8fb62a3de60ba1738bde584adbe3267c3cdea6f"
+    }
+  ]
+}

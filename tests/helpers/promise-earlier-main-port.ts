@@ -2,7 +2,7 @@
 import {
   promiseExportBlob as blob,
   promiseExportHash as hash,
-  readPromiseExportSource as read,
+  readHistoricalPromiseExportSource as read,
 } from "./promise-export-main-port.js";
 
 export const earlierPromiseFixture = "tests/fixtures/issue-3518-promise-earlier-main-port.json";

@@ -1,3 +1,4 @@
+import { capture5883Main4bffInventoryViewSource } from "./helpers/ir-5883-main-4bff-inventory-views.js";
 import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { createHash } from "node:crypto";
@@ -203,7 +204,9 @@ function profile(raw: string, which: "before" | "current"): Policy {
 }
 
 function independent() {
-  const raw = capturePositionFinallyMainPredecessorPolicySource(read("scripts/compiler-boundaries.json"));
+  const raw = capturePositionFinallyMainPredecessorPolicySource(
+    capture5883Main4bffInventoryViewSource(read("scripts/compiler-boundaries.json"), "union-to-incoming"),
+  );
   const current = profile(raw, "current");
   const bytes = Buffer.from(raw),
     insertion = Buffer.from(expected.insertion);

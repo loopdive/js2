@@ -1,0 +1,64 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import {spawn,execFileSync} from 'node:child_process';
+const root=process.cwd(), manifest=JSON.parse(fs.readFileSync('.tmp/assignment-D/serial-validation-manifest.json'));
+if(root!==manifest.candidate.worktree) throw Error('wrong checkout');
+const baseline=manifest.baseline.worktree, hash=b=>crypto.createHash('sha256').update(b).digest('hex');
+const env={...process.env,VITEST_MAX_FORKS:'1'};
+for(const k of ['GIT_DIR','GIT_WORK_TREE','GIT_INDEX_FILE']) delete env[k];
+const git=(args,cwd=root)=>execFileSync('git',args,{cwd,env,maxBuffer:32*1024*1024});
+const files=['scripts/compiler-boundaries.json','src/codegen/promise-combinators.ts','src/codegen/promise-combinator-observable-protocol.ts','src/codegen/promise-observable-combinators.ts','src/codegen/promise-combinator-drive.ts'];
+const baseTree='f814b9c61b6ee142cca4cfea33457525151da4af';
+function pins(){
+ const head=git(['rev-parse','HEAD']).toString().trim(),mergeHead=git(['rev-parse','MERGE_HEAD']).toString().trim();
+ if(head!==manifest.candidate.head||mergeHead!==manifest.candidate.mergeHead) throw Error('ancestry changed');
+ const staged=hash(git(['diff','--cached',baseTree,'--',...files])),working=hash(git(['diff',baseTree,'--',...files]));
+ if(staged!=='f64a9ad19a8e97f33c12884e41a99a521b8d398832340efa8002a56727917a0a'||working!=='65865dc34ab2a4871dd143d8d50be4da3062cab37b8f801709ec004c44170d79') throw Error('production changed');
+ let fixtures=0;
+ for(const line of fs.readFileSync('.tmp/assignment-D/fixture-hashes.txt','utf8').split('\n')){
+  const m=/^([a-f0-9]{64})  (.+)$/.exec(line); if(!m)continue;
+  if(hash(fs.readFileSync(m[2]))!==m[1])throw Error('fixture changed '+m[2]);fixtures++;
+ }
+ if(fixtures!==141)throw Error('fixture count changed');
+ for(const t of manifest.tests){
+  const expected=t.additive?'9eb5104284a6e5da00d6a02b62f3f711269803fb399f5df4b08bfd5e8d8b9387':t.sha256;
+  if(hash(fs.readFileSync(t.path))!==expected)throw Error('test changed '+t.path);
+  if(!t.additive&&hash(fs.readFileSync(path.join(baseline,t.path)))!==t.sha256)throw Error('baseline test changed '+t.path);
+ }
+ const fixturePaths=fs.readFileSync('.tmp/assignment-D/fixture-hashes.txt','utf8').split('\n').map(line=>/^([a-f0-9]{64})  (.+)$/.exec(line)).filter(Boolean).map(m=>m[2]);
+ const measuredPaths=['src','scripts','package.json','pnpm-lock.yaml','vitest.config.ts','tsconfig.json','tsconfig.ts7.json',...manifest.tests.filter(t=>!t.additive).map(t=>t.path),...fixturePaths];
+ if(git(['rev-parse','HEAD'],baseline).toString().trim()!==manifest.baseline.head||git(['diff','--name-only','--',...measuredPaths],baseline).length||git(['diff','--cached',manifest.baseline.head,'--name-only','--',...measuredPaths],baseline).length)throw Error('measured baseline HEAD/index/worktree changed');
+ return {head,mergeHead,stagedProductionPatchSha256:staged,workingProductionPatchSha256:working,frozenFixtures:fixtures,originalFiles:12,additiveFiles:1};
+}
+
+const broadTests=[{"path":"tests/issue-5197-promise-generic-capability.test.ts","sha256":"4b6b63661b08939b27540ac20f9d2a265c2895aade14d95ba3ce1895a635728e"},{"path":"tests/issue-3518-native-delay-combinator-source-preservation.test.ts","sha256":"b38fcdc108ea10c1f7a8a806c5b62e0b4f28e21a1cd3ae5caf2bc132c88c9f8a"},{"path":"tests/issue-3518-promise-resolution-preservation.test.ts","sha256":"72c10f112b76cbd7beed1812b11182e80eacd0e3fad2bf5822f2385d44382e30"},{"path":"tests/issue-3518-promise-settlement-source-preservation.test.ts","sha256":"ccfba6c0f229f64f9b3d8caf3d97d77450c467410d3705ddfdb34534bd4fd6a1"},{"path":"tests/issue-3518-compiler-boundaries.test.ts","sha256":"baf0698c25b77b6235d901de8cec761c3cef41d9c5f4e3e18a646eab5a4257e2"},{"path":"tests/promise-combinators.test.ts","sha256":"f8d7b9d7234b506893e6154ed2f0dbbcbc0b93d858f68a098ced390dbb493137"},{"path":"tests/issue-2867-string-combinator.test.ts","sha256":"bd39975b73174eb682e3aa07c2175ee8ecabb8828580fe4a5430719ada8a7c85"},{"path":"tests/issue-3134-promise-value-slot-rep.test.ts","sha256":"1726fbf2ceb0958796614db6e6cc9c82a7bbbdda597df7c83e87f2a46fd009be"},{"path":"tests/issue-3220-promise-return-double-wrap.test.ts","sha256":"841e356dacb1b6d0099e98a7ac495a577620ef7a4c65505584ad66cac3753d84"},{"path":"tests/equivalence/promise-chains.test.ts","sha256":"f9dbe35b943acd3f82bd0bad4d40021ef86960b5aa4025c57ae5efd4031c230b"},{"path":"tests/equivalence/ir-slice10-promise.test.ts","sha256":"c811bf98fea35ac940fe9596d9aae0b9a62d6222dd7d9b63aeb48af8a1a4a3a0"}];
+function broadPins(){for(const t of broadTests){for(const cwd of [root,baseline])if(hash(fs.readFileSync(path.join(cwd,t.path)))!==t.sha256)throw Error('broader test changed '+t.path);}return originalPins();}
+const originalPins=pins;pins=broadPins;
+const receiptRoot=path.join(root,'.tmp/assignment-D-broader-20261002');fs.mkdirSync(receiptRoot,{recursive:true});
+async function run(step,executable,args,runtime){
+ const before=pins(),stem=String(step.ordinal).padStart(2,'0')+'-'+step.id;
+ const dest=path.join(receiptRoot,stem),out=dest+'.stdout.raw',err=dest+'.stderr.raw',receipt=dest+'.receipt.json',result=dest+'.json';
+ if([out,err,receipt,result].some(f=>fs.existsSync(f)))throw Error('receipt already exists '+stem);
+ if(runtime)args=args.map(a=>a.startsWith('--outputFile=')?'--outputFile='+result:a);
+ const ofd=fs.openSync(out,'wx'),efd=fs.openSync(err,'wx'),startedAt=new Date().toISOString();
+ const child=spawn(executable,args,{cwd:step.cwd,env,stdio:['ignore',ofd,efd]});
+ console.log(JSON.stringify({event:'launch',id:step.id,ordinal:step.ordinal,pid:child.pid,runnerPid:process.pid,startedAt}));
+ let spawnError=null;child.on('error',e=>spawnError=e.message);
+ const terminal=await new Promise(resolve=>child.on('close',(exitCode,signal)=>resolve({exitCode,signal})));
+ fs.closeSync(ofd);fs.closeSync(efd);
+ let after=null,pinError=null;try{after=pins();}catch(e){pinError=e.message;}
+ let report=null,reportError=null;if(runtime){try{report=JSON.parse(fs.readFileSync(result));}catch(e){reportError=e.message;}}
+ const stream=f=>({file:f,bytes:fs.statSync(f).size,sha256:hash(fs.readFileSync(f))});
+ const r={schema:'assignment-D-measurement-v2',...step,command:[executable,...args].join(' '),startedAt,endedAt:new Date().toISOString(),actualPid:child.pid,runnerPid:process.pid,terminal:true,...terminal,spawnError,pinsBefore:before,pinsAfter:after,pinError,stdout:stream(out),stderr:stream(err),result:runtime?result:null,reportError,counts:report?{tests:report.numTotalTests,passed:report.numPassedTests,failed:report.numFailedTests,pending:report.numPendingTests,suites:report.numTotalTestSuites}:null};
+ fs.writeFileSync(receipt,JSON.stringify(r,null,2)+'\n',{flag:'wx'});
+ console.log(JSON.stringify({event:'terminal',id:step.id,...terminal,counts:r.counts,pinError,reportError}));
+ if(spawnError||pinError||terminal.signal||reportError)throw Error('infrastructure failure; stopped '+step.id);
+ return r;
+}
+
+for(const [index,t] of broadTests.entries()){
+ const name=path.basename(t.path,'.test.ts'),ordinal=index+1,args=['exec','vitest','run','--no-file-parallelism','--maxConcurrency=1','--reporter=default','--reporter=json','--outputFile=PENDING',t.path];
+ const measured=await run({ordinal,id:'candidate-'+name,cwd:root,path:t.path,sourceSha256:t.sha256},'pnpm',args,true);
+ if(measured.exitCode!==0)await run({ordinal,id:'main-'+name,cwd:baseline,path:t.path,sourceSha256:t.sha256},'pnpm',args,true);
+}

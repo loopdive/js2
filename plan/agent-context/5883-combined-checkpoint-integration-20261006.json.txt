@@ -1,0 +1,392 @@
+{
+  "schema": "5883-reviewed-checkpoint-integration-v1",
+  "destination": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-cycle-main9c-20261002",
+  "predecessorHead": "884d2fc58f40a28c391ef5cf238b49582329e55b",
+  "applied": true,
+  "accepted": false,
+  "scope": "Reviewed test/proof repairs and preservation only; full current-main validation and protected queue remain required.",
+  "sourceFiles": [
+    {
+      "path": "tests/helpers/ir-c1-authority-root.ts",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "predecessor": {
+        "bytes": 194,
+        "sha256": "392aac19ed2daac78bafb25369176cb90870cc866f6a6f7c2ac6ae7805f9220e"
+      },
+      "candidate": {
+        "bytes": 194,
+        "sha256": "30c8c5abeb4e55368d5c89e1de8d9c23068a9ce951f212eec1efb1ac5a2a87e0"
+      }
+    },
+    {
+      "path": "tests/helpers/ir-c1-authority.json",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "predecessor": {
+        "bytes": 402517,
+        "sha256": "c0a10ae0c0bfc4d27fc24bea20401edc2cac683254fc1664781889c98f63ed66"
+      },
+      "candidate": {
+        "bytes": 402802,
+        "sha256": "594a3fa1b567adb41f64c67410a3c03fac04c981e7d19f73b8ef78a698f2534e"
+      }
+    },
+    {
+      "path": "tests/issue-3518-c1-current-source.test.ts",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "predecessor": {
+        "bytes": 137373,
+        "sha256": "8a7458a6af77608b8c1acc6b8935e7f8b14e4ca3da23d03e7cca0775e615316a"
+      },
+      "candidate": {
+        "bytes": 137383,
+        "sha256": "187ad911483390e121a6ea37350ccba4ef005085b6b7b62718867f38eba8135b"
+      }
+    },
+    {
+      "path": "tests/issue-3518-compiler-boundaries.test.ts",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "predecessor": {
+        "bytes": 35951,
+        "sha256": "baf0698c25b77b6235d901de8cec761c3cef41d9c5f4e3e18a646eab5a4257e2"
+      },
+      "candidate": {
+        "bytes": 40665,
+        "sha256": "4137ce138a87b4334dcacc4c13afdb5d9aa477ede6d9c4d1575be2169b6dbaae"
+      }
+    },
+    {
+      "path": "tests/issue-3518-program-data-contract-boundary.test.ts",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "predecessor": {
+        "bytes": 32195,
+        "sha256": "1f3785924d4c783b0c3fe7b902ae30e4b0e03341215c299df9fc8af5bbfcf256"
+      },
+      "candidate": {
+        "bytes": 32473,
+        "sha256": "4776bb3aeb1992f3498364701d2ef2e7b9abed401770305f6342f97a25832026"
+      }
+    },
+    {
+      "path": "tests/issue-3518-program-validator-policy-evolution.test.ts",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "predecessor": {
+        "bytes": 49209,
+        "sha256": "e62931f8038e76a012689a70a6a59777a53566f08f7fcad4f48164fec41fd196"
+      },
+      "candidate": {
+        "bytes": 49394,
+        "sha256": "67b1724b5c7f3e541292dcb7ffeb89fed2a84be2648cca43fa859327324b7fc7"
+      }
+    },
+    {
+      "path": "tests/issue-3518-runtime-data-contract-seam.test.ts",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "predecessor": {
+        "bytes": 177799,
+        "sha256": "87e6b3afe75c8765d6f9a8949604177d3743002ac4c9e53669428030cab857ab"
+      },
+      "candidate": {
+        "bytes": 178131,
+        "sha256": "ffb92c46a62b3bb24120d32132592afd815941efa6b8b6677e490e608192193d"
+      }
+    },
+    {
+      "path": "tests/issue-3518-wasmgc-helper-policy-evolution.test.ts",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "predecessor": {
+        "bytes": 71201,
+        "sha256": "41a93e6ff59fbc42283522059edeef3e66e37d8d2280ec5b71da23ed28ad9277"
+      },
+      "candidate": {
+        "bytes": 71382,
+        "sha256": "10e877378d67c429357d259da9136c027b752527a514bd907656db2f3e1385b0"
+      }
+    },
+    {
+      "path": "tests/issue-3525-arraybuffer-isview-main-policy.test.ts",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "predecessor": {
+        "bytes": 35794,
+        "sha256": "0de89db7b1fa9b320bb86cc6717056dad058908c1430352b40194d1d7b96c388"
+      },
+      "candidate": {
+        "bytes": 35959,
+        "sha256": "5a250bafff56c005bfc90f0fd9e70f16a3cc640ee345afc87ba63ff683a84503"
+      }
+    },
+    {
+      "path": "tests/issue-3525-main-inventory-source-successor.test.ts",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "predecessor": {
+        "bytes": 23156,
+        "sha256": "2675f36e19e384cf5bade4ee80484cbf69ace9e8ef5c1aa04889e597bf495c13"
+      },
+      "candidate": {
+        "bytes": 23395,
+        "sha256": "ab3fa29474a9ac503c1cfde501692c61f87b54d07fe5d613e22971571055f717"
+      }
+    },
+    {
+      "path": "tests/issue-3525-presentation-classification-policy.test.ts",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "predecessor": {
+        "bytes": 32070,
+        "sha256": "bfbb2a11df96bab82d8b0d412dc1a0a15c7806bd0dad5a8ce338d80368b04ec4"
+      },
+      "candidate": {
+        "bytes": 32239,
+        "sha256": "9fad4b555c0e4f58ed93ee4a30ddc0842cadfa330ef780184d273a0ef72c2e82"
+      }
+    },
+    {
+      "path": "tests/helpers/ir-5883-inventory-source-successor.json",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "predecessor": null,
+      "candidate": {
+        "bytes": 8642,
+        "sha256": "dae4ccaa122c9b406f136d71a89e613e80d677392cc5ddd9456c90424316bba6"
+      }
+    },
+    {
+      "path": "tests/helpers/ir-5883-inventory-source-successor.ts",
+      "sourceRoot": "/private/tmp/js2-5883-policy-callers-20261006",
+      "predecessor": null,
+      "candidate": {
+        "bytes": 10316,
+        "sha256": "ce5bb485d7df39c56a715b38cab745d2c7e3fde79dd471844a333ca3e155e4dc"
+      }
+    },
+    {
+      "path": "tests/issue-5883-inventory-source-successor.test.ts",
+      "sourceRoot": "/private/tmp/js2-5883-policy-callers-20261006",
+      "predecessor": null,
+      "candidate": {
+        "bytes": 28682,
+        "sha256": "0eb57c6f864fb442541cebc757ea74eb4102a5b02df2b25f38626081c417e11c"
+      }
+    },
+    {
+      "path": "tests/issue-3518-historical-runtime-reconstruction.test.ts",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "predecessor": {
+        "bytes": 58067,
+        "sha256": "7dba8635ec6dde232069a645982497f7586e054866ddc3c03da8c4f7101d63d7"
+      },
+      "candidate": {
+        "bytes": 59534,
+        "sha256": "2c8445d20624bcbedfa12b62b9f0aaae5377ebafaa5a2023bbcc97373a520575"
+      }
+    },
+    {
+      "path": "tests/helpers/ir-5883-main-bba74-inventory-source-successor.json",
+      "sourceRoot": "/private/tmp/js2-5883-policy-callers-20261006",
+      "predecessor": null,
+      "candidate": {
+        "bytes": 5514,
+        "sha256": "18c1fdee2a7d8c56ed9c1dcea6c6fe2624eec568181e4f27fdd3e924b80f1c18"
+      }
+    },
+    {
+      "path": "tests/issue-5883-main-bba74-inventory-source-successor.test.ts",
+      "sourceRoot": "/private/tmp/js2-5883-policy-callers-20261006",
+      "predecessor": null,
+      "candidate": {
+        "bytes": 24157,
+        "sha256": "3278a95bc480ea627fe16e47c4b7af422403a49fcc9fb80adc62978d6ea204d0"
+      }
+    }
+  ],
+  "evidence": [
+    {
+      "path": "plan/agent-context/5883-before-format-current-c1-epoch-20261006.json.txt",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "candidate": {
+        "bytes": 172876,
+        "sha256": "2a19dbcd727c5341b5f6502e379c2823e17e60f030edff155134c175289b58b1"
+      }
+    },
+    {
+      "path": "plan/agent-context/5883-c1-before-instrument-epoch-20261006.json.txt",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "candidate": {
+        "bytes": 123703,
+        "sha256": "0946a6124f6e78eaf5bbe1f48fbe2600884fc78702ec8b38118a5e13f78e35f0"
+      }
+    },
+    {
+      "path": "plan/agent-context/5883-c1-before-probe-budget-20261006.ts.txt",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "candidate": {
+        "bytes": 137373,
+        "sha256": "098e17bb22d56b52d0e11f1a699f30b75a2e2257dce65f9c8e4ab7e9a84dc778"
+      }
+    },
+    {
+      "path": "plan/agent-context/5883-c1-budget-validation-results-20261006.json.txt",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "candidate": {
+        "bytes": 24258,
+        "sha256": "e5807512a9d1d8546e686efe415c61b255387e976a5d82aec9ce030f28011fa1"
+      }
+    },
+    {
+      "path": "plan/agent-context/5883-c1-formatted-validation-20261006.json.txt",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "candidate": {
+        "bytes": 18205,
+        "sha256": "a2f0cd3e77148757142167c6ca379080afa77e2cac78e123fbc66c395ded501e"
+      }
+    },
+    {
+      "path": "plan/agent-context/5883-c1-observations-and-epoch-results-20261006.json.txt",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "candidate": {
+        "bytes": 3047585,
+        "sha256": "136cf1158cc1913d2ecf56ee2cefee576cbd19cc70c59683c1687d760774ec6a"
+      }
+    },
+    {
+      "path": "plan/agent-context/5883-combined-repair-transfer-20261006.json.txt",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "candidate": {
+        "bytes": 12928,
+        "sha256": "7c5b612bd7bb623fb132e9fe4d0aa375fac854567c93b570e443bd194a17f8a1"
+      }
+    },
+    {
+      "path": "plan/agent-context/5883-combined-repair-transfer-v2-20261006.json.txt",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "candidate": {
+        "bytes": 15681,
+        "sha256": "1fc5e4ba5de51567f65a0cef5ea99236271b9ea16a044a9d765963fa6c68c1b9"
+      }
+    },
+    {
+      "path": "plan/agent-context/5883-combined-repair-transfer-v3-20261006.json.txt",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "candidate": {
+        "bytes": 17739,
+        "sha256": "b90d6ac3ceafb4e92acc58d2b7000b488938f55e0c4d6496fa7c4e1a023ac1e4"
+      }
+    },
+    {
+      "path": "plan/agent-context/5883-held-b-boundary-before-selection-20261006.ts.txt",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "candidate": {
+        "bytes": 35951,
+        "sha256": "baf0698c25b77b6235d901de8cec761c3cef41d9c5f4e3e18a646eab5a4257e2"
+      }
+    },
+    {
+      "path": "plan/agent-context/5883-historical-capture-failed-candidate-20261006.json.txt",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "candidate": {
+        "bytes": 991480,
+        "sha256": "1ddbdb0f31ed4d47509efbd2b6ea13bfc3d8fba2941066693b3c9f5edaf40eb0"
+      }
+    },
+    {
+      "path": "plan/agent-context/5883-historical-capture-passed-candidate-20261006.json.txt",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "candidate": {
+        "bytes": 990679,
+        "sha256": "b7a9c1f4407f9fa42e5d35bec2c5b6d4874738bffc969fe0c48765e0221bbae6"
+      }
+    },
+    {
+      "path": "plan/agent-context/5883-historical-reader-before-capture-20261006.ts.txt",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "candidate": {
+        "bytes": 58067,
+        "sha256": "7dba8635ec6dde232069a645982497f7586e054866ddc3c03da8c4f7101d63d7"
+      }
+    },
+    {
+      "path": "plan/agent-context/5883-historical-reader-before-overload-capture-20261006.ts.txt",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "candidate": {
+        "bytes": 59502,
+        "sha256": "dd20bfaf5398b76b616091741b40c4a3c63bd57c86fa145ee70e94d6478f144c"
+      }
+    },
+    {
+      "path": "plan/agent-context/5883-incoming23-failed-attempt-20261006.json.txt",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "candidate": {
+        "bytes": 1102007,
+        "sha256": "197aa8a4bcd7c156dea6201d30b0028edc0d963d67e284da278424c832f485db"
+      }
+    },
+    {
+      "path": "plan/agent-context/5883-policy-callers-before-adaptation-20261006.json.txt",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "candidate": {
+        "bytes": 108167,
+        "sha256": "339f01ee15fc558628949a57cc19d52577ba8707b7b3893df1be6e62cb4c6d36"
+      }
+    },
+    {
+      "path": "plan/agent-context/5883-scoped-validation-attempts-20261006.json.txt",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "candidate": {
+        "bytes": 33457,
+        "sha256": "cd8a69f513c7cf09303fd3f9dcd3b9102fa651622039b2db02693e235babad0d"
+      }
+    },
+    {
+      "path": "plan/agent-context/5883-seven-historical-diagnostics-20261006.json.txt",
+      "sourceRoot": "/private/tmp/js2-5883-held-b-20261006",
+      "candidate": {
+        "bytes": 2006715,
+        "sha256": "dd08ea05b073d1015f10b2f518fa05d70fce114c0558cc27947210b8e9309737"
+      }
+    },
+    {
+      "path": "plan/agent-context/5883-main-bba74-bridge-before-extension-20261006.json.txt",
+      "sourceRoot": "/private/tmp/js2-5883-policy-callers-20261006",
+      "candidate": {
+        "bytes": 13400,
+        "sha256": "c676626c9df2fc1b41a24906613732e5b29a24cb69cf90669f81b80906d6e614"
+      }
+    },
+    {
+      "path": "plan/agent-context/5883-main-bba74-bridge-validation-20261006.json.txt",
+      "sourceRoot": "/private/tmp/js2-5883-policy-callers-20261006",
+      "candidate": {
+        "bytes": 11440,
+        "sha256": "5612074aac56b48fc97a60e5bcb5f74ebafdbec418ae1ae582081939018498d5"
+      }
+    }
+  ],
+  "preservedDestinationInputs": {
+    "tests/issue-3518-native-delay-combinator-source-preservation.test.ts": {
+      "bytes": 18885,
+      "sha256": "2ec6925119fcc55004718bd1525af3b1d5d5cdcd3f8642983b3df6294dc85c82"
+    },
+    "plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md": {
+      "bytes": 1307656,
+      "sha256": "64d15478568209b16580ea309eaefcd82cf13e66f888fd06ff7e804ee9218e61"
+    },
+    "plan/agent-context/5883-main5f-reader-epoch-plan-20261006.md": {
+      "bytes": 36023,
+      "sha256": "5ed59d581f077524db0f7ab6f69168cebfee399db002812ad93a522af2110a5d"
+    },
+    "plan/agent-context/5883-compiler-reader-before-yield-20261006.ts.txt": {
+      "bytes": 18744,
+      "sha256": "036534f9d24152746c58f305dee8c3405f05788b4f48a47296b51cbe1d62f3ae"
+    },
+    "plan/agent-context/5883-validation-completed-attempts-20261006.json.txt": {
+      "bytes": 8877141,
+      "sha256": "64972eb0b0b9ca975d4861ababa2386838e6101e85146ff6efc0afdc16aea2d0"
+    },
+    "plan/agent-context/5883-validation-instrument-v3-exact-20261006.json.txt": {
+      "bytes": 91825,
+      "sha256": "281b3f93dfa11014392d59c3d6186aaae405ef3f46f18be22bc52aa8fa09ff35"
+    }
+  },
+  "sourceCount": 17,
+  "replacements": 12,
+  "additions": 5,
+  "evidenceCount": 20,
+  "recovery": "Eight exact prior writes retained after original owned input-waiting patch child14857 was stopped and wrapper26404 exited1; no tests or other sessions interrupted."
+}

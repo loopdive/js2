@@ -1,0 +1,34 @@
+{
+  "schema": "assignment-D-source-correction-v1",
+  "validation": "NOT_RUN after correction",
+  "head": "32c2da64881923d67f0f53c6019a475db6ee1ecd",
+  "mergeHead": "2bfe3eddf84d4d27f471eddb91e441709b7f6eff",
+  "parentPlanCommitsExcluded": ["373a50e70e", "21811a67ab"],
+  "latestMainNotImported": "e473d92460af75ced29e9666e7e97cdde8df12ca",
+  "productionCorrectedPatchSha256": "65865dc34ab2a4871dd143d8d50be4da3062cab37b8f801709ec004c44170d79",
+  "correctionPatchSha256": "9725e7b2ff9eab9ca8bc193a5e1c183392b9200809a3c35a871c589381a9d262",
+  "sourceSha256": {
+    "src/codegen/promise-combinators.ts": "2d4eec2bf3a6ae4a6be1093314789bc2ad9d5323591021227fb172b1c86e055f",
+    "tests/issue-3518-promise-main-reconcile-20261002.test.ts": "9eb5104284a6e5da00d6a02b62f3f711269803fb399f5df4b08bfd5e8d8b9387"
+  },
+  "changes": [
+    "Only export modifiers restored on CustomCapabilityRuntime, buildCustomCapabilityExecutorInstrs, customCapabilityTypeError, ensureCustomCapabilityRuntime. Removing exactly these four added modifiers reproduces the entire first-subject legacy adapter byte-for-byte.",
+    "Only additive WebAssembly.compile operand changes from result.binary to Uint8Array.from(result.binary); assertions/counts unchanged. Reversing that one expression reproduces archived original test byte-for-byte."
+  ],
+  "historicalFixtures": "141 preserved; historical test sources/config/errors not repaired",
+  "readOnlyChecks": [
+    "correction reverse-applicability exit 0",
+    "scoped correction git diff --check exit 0",
+    "15 archived first-receipt streams decode to exact original byte lengths/SHA256s"
+  ],
+  "status": "four export modifications unstaged over frozen staged source; additive file untracked; merge uncommitted",
+  "noExecution": [
+    "no formatter",
+    "no typecheck rerun",
+    "no runtime test",
+    "no baseline checkout",
+    "no hooks",
+    "no commit",
+    "no push"
+  ]
+}

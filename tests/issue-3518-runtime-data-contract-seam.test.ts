@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { capture5883Main4bffInventoryViewSource } from "./helpers/ir-5883-main-4bff-inventory-views.js";
 import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
 import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
 import { captureSourceMapPositionInventoryPredecessorPolicySource } from "./helpers/ir-source-map-position-inventory-successor.js";
@@ -86,7 +87,11 @@ import {
   receiptRows,
 } from "./helpers/ir-historical-runtime-reconstruction.js";
 
-import { readRuntimeContractReceiptSource } from "./helpers/ir-runtime-contract-evolution.js";
+import {
+  readRuntimeContractReceiptSource,
+  reconstructRuntimeContractReceiptSources,
+  runtimeContractCurrentPaths,
+} from "./helpers/ir-runtime-contract-evolution.js";
 
 import { beforeRuntimePreparationRelocation } from "./helpers/ir-runtime-preparation-relocation.js";
 
@@ -99,6 +104,20 @@ const root = resolve(import.meta.dirname, "..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8");
 const historicalRead = (path: string) =>
   readRuntimeContractReceiptSource(path, beforeRuntimePreparationRelocation(beforeProgramValidatorRelocation(read)));
+function currentHistoricalRead(source: (path: string) => string = read): (path: string) => string {
+  // A complete fresh capture belongs to one proof; other paths retain the composed reader.
+  const beforePreparation = beforeRuntimePreparationRelocation(beforeProgramValidatorRelocation(source));
+  const sources = reconstructRuntimeContractReceiptSources(beforePreparation);
+  if (sources.size !== runtimeContractCurrentPaths.length) throw Error("missing runtime historical population");
+  for (const path of runtimeContractCurrentPaths)
+    if (!sources.has(path)) throw Error("missing required runtime historical source " + path);
+  return (path) => {
+    if (!runtimeContractCurrentPaths.includes(path)) return beforePreparation(path);
+    const text = sources.get(path);
+    if (text === undefined) throw Error("missing required runtime historical source " + path);
+    return text;
+  };
+}
 const hash = (rows: unknown) => createHash("sha256").update(JSON.stringify(rows)).digest("hex");
 
 // Measured from f95d8a0bf318e857d981863b1018a9d776483a46, source-qualified:
@@ -431,7 +450,36 @@ function authenticatedFixture() {
 }
 
 describe("#3518 canonical runtime data-contract seam", () => {
+  it.each(["src/ir/runtime/contracts/manifest.ts", "src/ir/runtime/manifest.ts", "src/ir/intrinsic-support.ts"])(
+    "recaptures changed mandatory %s behind the same seam reader and accepts restoration",
+    (changedPath) => {
+      let changed = false;
+      let mutantReads = 0;
+      const source = (path: string): string => {
+        const text = read(path);
+        if (!changed || path !== changedPath) return text;
+        mutantReads++;
+        return text + "\n// changed mandatory seam source behind the same reader\n";
+      };
+      const first = currentHistoricalRead(source);
+      const paths = [
+        "src/ir/runtime/contracts/manifest.ts",
+        "src/ir/runtime-manifest.ts",
+        "src/ir/intrinsic-support.ts",
+      ];
+      for (const path of paths) acceptedHistoricalDeclarations(path, first);
+      changed = true;
+      expect(() => currentHistoricalRead(source)).toThrow();
+      expect(mutantReads).toBeGreaterThan(0);
+      changed = false;
+      const restored = currentHistoricalRead(source);
+      for (const path of paths) acceptedHistoricalDeclarations(path, restored);
+      for (const path of runtimeContractCurrentPaths) expect(restored(path)).toBe(first(path));
+    },
+  );
+
   it.each(movedReceipts)("checks historical $path receipt after checked extension reconstruction", (receipt) => {
+    const historicalRead = currentHistoricalRead();
     const reconstructed =
       receipt.path === "src/ir/runtime/contracts/intrinsics.ts" ||
       receipt.path === "src/ir/runtime/contracts/manifest.ts"
@@ -463,6 +511,7 @@ describe("#3518 canonical runtime data-contract seam", () => {
   it.each(retainedReceipts)(
     "checks historical retained $path receipt after checked extension reconstruction",
     (receipt) => {
+      const historicalRead = currentHistoricalRead();
       const records = acceptedHistoricalDeclarations(receipt.path, historicalRead),
         rows = receiptRows(records);
       expect(rows).toHaveLength(receipt.declarations);
@@ -2673,7 +2722,10 @@ function fixtureCaptureInput(epoch: (typeof fixtureCaptureEpochs)[number]): stri
                   captureSourceMapPositionInventoryPredecessorPolicySource(
                     capturePositionClassFieldsMainPredecessorPolicySource(
                       capturePositionFinallyMainPredecessorPolicySource(
-                        fixtureCaptureRead("scripts/compiler-boundaries.json"),
+                        capture5883Main4bffInventoryViewSource(
+                          fixtureCaptureRead("scripts/compiler-boundaries.json"),
+                          "union-to-incoming",
+                        ),
                       ),
                     ),
                   ),
@@ -3399,7 +3451,10 @@ function fourStageCaptureInput(epoch: (typeof fourStageCaptureEpochs)[number]): 
                       captureSourceMapPositionInventoryPredecessorPolicySource(
                         capturePositionClassFieldsMainPredecessorPolicySource(
                           capturePositionFinallyMainPredecessorPolicySource(
-                            fixtureCaptureRead("scripts/compiler-boundaries.json"),
+                            capture5883Main4bffInventoryViewSource(
+                              fixtureCaptureRead("scripts/compiler-boundaries.json"),
+                              "union-to-incoming",
+                            ),
                           ),
                         ),
                       ),

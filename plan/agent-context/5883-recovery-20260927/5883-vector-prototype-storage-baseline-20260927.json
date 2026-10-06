@@ -1,0 +1,66 @@
+{
+  "head": "18f1bd831312b3f5805f1e176388aac449c2d389",
+  "uncommittedPatch": "array-length descriptor v2, seven production files",
+  "nativePassed": 8,
+  "compiledPassed": 0,
+  "total": 8,
+  "note": "Initial run used nonexistent result.wasm field and is invalid compiler evidence; this corrected run uses result.binary with identical fixture bodies.",
+  "rows": [
+    {
+      "name": "stores a custom prototype on an ordinary vector without an Array subclass",
+      "source": "export function test() { const a = [1]; const p = { token: 7 };\n     const returned = Object.setPrototypeOf(a, p);\n     return returned === a && Object.getPrototypeOf(a) === p ? 1 : -1; }",
+      "sha256": "ff789dea67eac961e00e7b1f0cd1e7d00609f1a9613efa45b2bb21759ea7fd6e",
+      "native": 1,
+      "actual": -1
+    },
+    {
+      "name": "distinguishes an explicit null prototype from the default Array prototype",
+      "source": "export function test() { const a = [1]; Object.setPrototypeOf(a, null);\n     return Object.getPrototypeOf(a) === null ? 1 : -1; }",
+      "sha256": "ed2850c76361dd4662318c95130c7807d612626633def0fb21e3dc56b3476370",
+      "native": 1,
+      "actual": -1
+    },
+    {
+      "name": "restores Array prototype after an explicit null link",
+      "source": "export function test() { const a = [1]; Object.setPrototypeOf(a, null);\n     if (Object.getPrototypeOf(a) !== null) return -1;\n     Object.setPrototypeOf(a, Array.prototype);\n     return Object.getPrototypeOf(a) === Array.prototype ? 1 : -2; }",
+      "sha256": "5d51ca154baafcdeecb010b2cd072621b435706dfb4309cd32edc59ceebb259b",
+      "native": 1,
+      "actual": -1
+    },
+    {
+      "name": "preserves a callable prototype identity",
+      "source": "export function test() { const a = [1]; function p() {} Object.setPrototypeOf(a, p);\n     return Object.getPrototypeOf(a) === p ? 1 : -1; }",
+      "sha256": "5aec72adc57ad7c3ce9a79ad9a760386caf49d92a86e64aa1b9add2a5168320e",
+      "native": 1,
+      "actual": -1
+    },
+    {
+      "name": "preserves a vector as another vector's prototype",
+      "source": "export function test() { const a = [1]; const p = [7]; Object.setPrototypeOf(a, p);\n     return Object.getPrototypeOf(a) === p ? 1 : -1; }",
+      "sha256": "0538eae2affe62f9d1bed7ac8b0c2128bf029e5b7b3bf98eead69e307b878fff",
+      "native": 1,
+      "actual": -1
+    },
+    {
+      "name": "rejects a prototype cycle and retains the original link",
+      "source": "export function test() { const a = [1]; const p = [2]; Object.setPrototypeOf(a, p);\n     let caught = false;\n     try { Object.setPrototypeOf(p, a); } catch (e) { caught = e instanceof TypeError; }\n     return caught && Object.getPrototypeOf(a) === p && Object.getPrototypeOf(p) === Array.prototype ? 1 : -1; }",
+      "sha256": "6bee78d2c30c5a5876629e38e560f53fb498476dc87bdd0dfbd26fa375a91893",
+      "native": 1,
+      "actual": -1
+    },
+    {
+      "name": "allows the same prototype but rejects a new one after preventExtensions",
+      "source": "export function test() { const a = [1]; const p = { token: 7 }; Object.setPrototypeOf(a, p);\n     Object.preventExtensions(a);\n     if (Object.setPrototypeOf(a, p) !== a) return -1;\n     let caught = false;\n     try { Object.setPrototypeOf(a, null); } catch (e) { caught = e instanceof TypeError; }\n     return caught && Object.getPrototypeOf(a) === p ? 1 : -2; }",
+      "sha256": "fa08aeae8e16c348968d92f22329f40bfb7df87624b1e0813f3dce0c736444a7",
+      "native": 1,
+      "actual": -2
+    },
+    {
+      "name": "uses the custom prototype for live indexed reads with the source as receiver",
+      "source": "export function test() { const a = [, undefined, NaN]; let receiver;\n     const p = Object.create(Array.prototype);\n     Object.defineProperty(p, \"0\", { get: function () { \"use strict\"; receiver = this; return 41; } });\n     Object.setPrototypeOf(a, p);\n     const iterator = Array.prototype.values.call(a);\n     const first = iterator.next(); const second = iterator.next(); const third = iterator.next();\n     return receiver === a && first.value === 41 && !first.done &&\n       second.value === undefined && !second.done && third.value !== third.value && !third.done ? 1 : -1; }",
+      "sha256": "dcc93f5bc10329e92b0aa67a29644f715ad13649952e222a6ea3b2692ab75a77",
+      "native": 1,
+      "actual": -1
+    }
+  ]
+}

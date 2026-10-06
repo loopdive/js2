@@ -1,0 +1,1604 @@
+{
+  "schemaVersion": 1,
+  "kind": "5883-historical-reader-successors",
+  "currentCommit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+  "offsetUnit": "utf16-code-units",
+  "layerOrder": [
+    "raw-current",
+    "flat-drive-only",
+    "later-and-extraction-inverse",
+    "original-export-inverse",
+    "original-earlier-inverse",
+    "existing-B1-and-delay-reconstruction"
+  ],
+  "semanticScope": "Historical source reconstruction only; current aggregate Resolve/replaceable then (9feade6d77) and lazy context services (c698ec6020) remain separately measured behavior, not byte-equivalent initial extraction.",
+  "records": [
+    {
+      "path": "src/codegen/promise-class-receiver-drive.ts",
+      "beforeCommit": "422dbf01a07b58cceefc64846444485eb549d9a5",
+      "afterCommit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "before": {
+        "gitBlob": "026e15e9b77f2c948ebaba6a7c46075423dd51a6",
+        "sha256": "fd31a929bed44833b5de430ef14c6e86129196ce3a0499fbe5f7bc30fc74dfc3"
+      },
+      "after": {
+        "gitBlob": "d40276c0d51f78e7b04c022a438cbb4b46de073b",
+        "sha256": "4453cd752a22179823650d0ead8bd1dd330a1a21f1e22059696e59596b3fb474"
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "before": "import { armConstructIsConstructorGuard } from \"./construct-is-constructor-guard.js\";\nimport { armExternF64ArgTypeGuard, armExternRefArgTypeGuard } from \"./extern-arg-marshal.js\";\nimport { recordStandaloneRuntimeKeyClassMemberRead } from \"./standalone-class-dyn-member.js\";\n\nconst EXTERNREF: ValType = { kind: \"externref\" };\nconst I32: ValType = { kind: \"i32\" };\n",
+          "after": "import { armConstructIsConstructorGuard } from \"./construct-is-constructor-guard.js\";\nimport { armExternF64ArgTypeGuard, armExternRefArgTypeGuard } from \"./extern-arg-marshal.js\";\nimport { recordStandaloneRuntimeKeyClassMemberRead } from \"./standalone-class-dyn-member.js\";\nimport { resolvePromiseSubclassName } from \"./expressions/promise-subclass.js\"; // (#6651 D4)\nimport { noJsHost } from \"./js-errors.js\";\nimport { promiseSubclassResolveFallbackInstrs } from \"./promise-subclass-proto-link.js\";\nimport { shadowsGlobalValueName } from \"./promise-class-receiver-settle.js\";\nimport { demandPromiseDynamicMember } from \"./promise-dynamic-member-read.js\"; // (#6651 D5)\n\nconst EXTERNREF: ValType = { kind: \"externref\" };\nconst I32: ValType = { kind: \"i32\" };\n",
+          "beforeOffset": 5373,
+          "afterOffset": 5373,
+          "beforeSha256": "264792a5842b5a662fa1411a4b476e183e233ffbfd98946b297b7c3e7dca63f7",
+          "afterSha256": "8762827b40675b2e2abb61eb68ee3fa805dd1b8b9779950f187264031c26d93f"
+        },
+        {
+          "ordinal": 1,
+          "before": "\n/**\n * The class `C` names, when the receiver is an identifier bound to a compiled class that does\n * not extend a builtin (a Promise subclass is #5197 G9, not this mechanism).\n */\nfunction resolveCompiledClassReceiver(ctx: CodegenContext, arg: ts.Expression): string | undefined {\n  if (!ts.isIdentifier(arg)) return undefined;\n  const decl = ctx.oracle.valueDeclarationOf(arg);\n  let node: ts.Node | undefined = decl;\n",
+          "after": "\n/**\n * The class `C` names, when the receiver is an identifier bound to a compiled class that does\n * not extend a builtin — or (#6651 D4 / #5197 G9) extends `Promise`, whose `<C>_new` builds the\n * native `$Promise` carrier and so serves NewPromiseCapability(C) through the same construct call.\n */\nexport function resolveCompiledClassReceiver(ctx: CodegenContext, arg: ts.Expression): string | undefined {\n  if (!ts.isIdentifier(arg)) return undefined;\n  const decl = ctx.oracle.valueDeclarationOf(arg);\n  let node: ts.Node | undefined = decl;\n",
+          "beforeOffset": 17595,
+          "afterOffset": 17991,
+          "beforeSha256": "a8a98a424acdb790ff768d1680fc9fad67f81ed3d0b90065354e76ac00351051",
+          "afterSha256": "bee34e825be01afdbea668c9acb25c1c2ab032ce7c50392d40875b02cfd0f6a9"
+        },
+        {
+          "ordinal": 2,
+          "before": "    ctx.anonClassExprNames.get(node as ts.ClassLikeDeclaration) ??\n    (node.name ? (ctx.classExprNameMap.get(node.name.text) ?? node.name.text) : undefined);\n  if (name === undefined || !ctx.classSet.has(name)) return undefined;\n  // Transitively: a user class chain that reaches ANY builtin keeps its own path.\n  const seen = new Set<string>();\n  for (let c: string | undefined = name; c !== undefined && !seen.has(c); c = ctx.classParentMap.get(c)) {\n    seen.add(c);\n",
+          "after": "    ctx.anonClassExprNames.get(node as ts.ClassLikeDeclaration) ??\n    (node.name ? (ctx.classExprNameMap.get(node.name.text) ?? node.name.text) : undefined);\n  if (name === undefined || !ctx.classSet.has(name)) return undefined;\n  if (resolvePromiseSubclassName(ctx, name) !== undefined)\n    return noJsHost(ctx) && !shadowsGlobalValueName(arg) ? name : undefined;\n  // Transitively: a user class chain that reaches ANY other builtin keeps its own path.\n  const seen = new Set<string>();\n  for (let c: string | undefined = name; c !== undefined && !seen.has(c); c = ctx.classParentMap.get(c)) {\n    seen.add(c);\n",
+          "beforeOffset": 18327,
+          "afterOffset": 18849,
+          "beforeSha256": "5bb7c5be1b04935dd46e1143fcbf80c2ec11ce9e87665dbe7398f1bf39c3f1e0",
+          "afterSha256": "9896e2f0744c1b3a749de885f821cb23bed804e0734e1baec9151b9bd505b874"
+        },
+        {
+          "ordinal": 3,
+          "before": "  return name;\n}\n\n/** Arm and reserve the one-argument native construct driver (the `new <value>(x)` prelude). */\nfunction reserveConstructDriver(ctx: CodegenContext, fctx: FunctionContext): number {\n  ensureLateImport(ctx, \"__extern_get\", [EXTERNREF, EXTERNREF], [EXTERNREF]);\n  ensureLateImport(ctx, \"__object_create\", [EXTERNREF], [EXTERNREF]);\n  flushLateImportShifts(ctx, fctx);\n",
+          "after": "  return name;\n}\n\n/**\n * (#5197 r3) D1's admission, shared: `arg` (parens / `as` / `!` peeled) is an ordinary function —\n * a function expression, or an identifier bound to a non-generator, non-async function declaration\n * or to a variable whose initializer is a non-generator function expression.\n */\nexport function isOrdinaryFunctionCtorArg(ctx: CodegenContext, arg: ts.Expression): boolean {\n  const unwrap = (value: ts.Expression): ts.Expression => {\n    let current = value;\n    while (\n      ts.isParenthesizedExpression(current) ||\n      ts.isAsExpression(current) ||\n      ts.isNonNullExpression(current) ||\n      ts.isTypeAssertionExpression(current)\n    ) {\n      current = current.expression;\n    }\n    return current;\n  };\n  const ctorArg = unwrap(arg);\n  const ctorDecl: ts.Node | undefined = ts.isIdentifier(ctorArg) ? ctx.oracle.valueDeclarationOf(ctorArg) : ctorArg;\n  const ctorInit = ctorDecl && ts.isVariableDeclaration(ctorDecl) ? ctorDecl.initializer : undefined;\n  const ctorExpr = ctorInit ? unwrap(ctorInit) : ctorDecl;\n  return (\n    (ctorExpr !== undefined && ts.isFunctionExpression(ctorExpr) && ctorExpr.asteriskToken === undefined) ||\n    (ctorDecl !== undefined &&\n      ts.isFunctionDeclaration(ctorDecl) &&\n      ctorDecl.asteriskToken === undefined &&\n      !(ctorDecl.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false))\n  );\n}\n\n/** Arm and reserve the one-argument native construct driver (the `new <value>(x)` prelude). */\nexport function reserveConstructDriver(ctx: CodegenContext, fctx: FunctionContext): number {\n  ensureLateImport(ctx, \"__extern_get\", [EXTERNREF, EXTERNREF], [EXTERNREF]);\n  ensureLateImport(ctx, \"__object_create\", [EXTERNREF], [EXTERNREF]);\n  flushLateImportShifts(ctx, fctx);\n",
+          "beforeOffset": 18925,
+          "afterOffset": 19589,
+          "beforeSha256": "b09ffba650a808dc74166e53f8f24d8bc42af9ad0e76cc22bb3ff334a0f86334",
+          "afterSha256": "f3970fbc7b4a65257a22d05f82ba08bd73d8e9efb2ddc961f3b9b44cec571117"
+        },
+        {
+          "ordinal": 4,
+          "before": "  method: NativeCombinator,\n  rt: ClassDriveRuntime,\n  L: DriveLocals,\n): void {\n  const capability = ensureCustomCapabilityRuntime(ctx)!;\n  const wrapperRoot = getFuncRefWrapperRootTypeIdx(ctx)!;\n",
+          "after": "  method: NativeCombinator,\n  rt: ClassDriveRuntime,\n  L: DriveLocals,\n  promiseRooted: boolean,\n): void {\n  const capability = ensureCustomCapabilityRuntime(ctx)!;\n  const wrapperRoot = getFuncRefWrapperRootTypeIdx(ctx)!;\n",
+          "beforeOffset": 20255,
+          "afterOffset": 22293,
+          "beforeSha256": "1b83b8934df328e783e137e39a0d452a38e589b8fa9a4e13392025c70c29e17c",
+          "afterSha256": "05a9d763d5c8589b9001981e245ab5944bfb561f27213d924bbc8d78030ebbd3"
+        },
+        {
+          "ordinal": 5,
+          "before": "  );\n\n  // ── GetPromiseResolve(C) — a throwing getter or a non-callable value rejects. ──\n  fctx.body.push(\n    buildTargetTaggedTry(\n      ctx,\n",
+          "after": "  );\n\n  // ── GetPromiseResolve(C) — a throwing getter or a non-callable value rejects. ──\n  // (#6651 D4) A Promise subclass inherits `resolve` from `%Promise%`. Built after every\n  // registration above, so no later late-import shift can strand its baked indices.\n  const resolveFallback = promiseRooted ? (promiseSubclassResolveFallbackInstrs(ctx, fctx, L.resolveFn) ?? []) : [];\n  fctx.body.push(\n    buildTargetTaggedTry(\n      ctx,\n",
+          "beforeOffset": 22545,
+          "afterOffset": 24609,
+          "beforeSha256": "ac1d0ca1de2b15036281223c9aa583aa3ebeee04bcab5a0e3a4721778348abc4",
+          "afterSha256": "49bfc59ffdb82d6c2693d3bb2301aeae95a4abdb24154f29c20226e9e2cf47ce"
+        },
+        {
+          "ordinal": 6,
+          "before": "        ...stringConstantExternrefInstrs(ctx, \"resolve\"),\n        { op: \"call\", funcIdx: fn(\"__extern_get\") },\n        { op: \"local.set\", index: L.resolveFn },\n      ],\n      catchToReject(),\n    ),\n",
+          "after": "        ...stringConstantExternrefInstrs(ctx, \"resolve\"),\n        { op: \"call\", funcIdx: fn(\"__extern_get\") },\n        { op: \"local.set\", index: L.resolveFn },\n        ...resolveFallback,\n      ],\n      catchToReject(),\n    ),\n",
+          "beforeOffset": 22768,
+          "afterOffset": 25124,
+          "beforeSha256": "4c21193cdc4a806e29e138a8121559a60cc4ef1a96c863f02fe1f0497cce5981",
+          "afterSha256": "abf8eb50ffd9370449f7ea2ad3fceebcd882e417f52851fd9b29276e9703e9d2"
+        },
+        {
+          "ordinal": 7,
+          "before": "  const ctorArg = expr.arguments[0];\n  if (ctorArg === undefined || expr.arguments.length > 2) return undefined;\n  const className = resolveCompiledClassReceiver(ctx, ctorArg);\n  if (className === undefined) return undefined;\n\n  const snap = snapshotSpeculative(ctx, fctx);\n  // Registration strictly precedes emission.\n",
+          "after": "  const ctorArg = expr.arguments[0];\n  if (ctorArg === undefined || expr.arguments.length > 2) return undefined;\n  const className = resolveCompiledClassReceiver(ctx, ctorArg);\n  // (#5197 r3 Step 5) …or an ordinary FUNCTION `C` over a non-literal iterable: D1 drains one\n  // through `__combinator_to_vec`, which cannot step an iterator (an expando `@@iterator` reads\n  // as \"not iterable\"); an array literal keeps D1. The drive constructs any `C` via the driver.\n  const iterable = expr.arguments[1];\n  const functionCtor =\n    className === undefined &&\n    (iterable === undefined || !ts.isArrayLiteralExpression(iterable)) &&\n    isOrdinaryFunctionCtorArg(ctx, ctorArg) &&\n    !shadowsGlobalValueName(ctorArg);\n  if (className === undefined && !functionCtor) return undefined;\n\n  const snap = snapshotSpeculative(ctx, fctx);\n  // Registration strictly precedes emission.\n",
+          "beforeOffset": 34463,
+          "afterOffset": 36847,
+          "beforeSha256": "cba55144f781f05c448ffb03b2e9861218f3691e9be12a895fc80fbeaf472b48",
+          "afterSha256": "d0e08b7e20cca34a1e6ac65d21454e785baadacd0a71cc446ba1fff6a40af2ad"
+        },
+        {
+          "ordinal": 8,
+          "before": "  }\n  // `Get(C, \"resolve\")` is a runtime-key read of the class OBJECT: record the demand so the\n  // class's static sidecar is materialised (#5383 S2i).\n  recordStandaloneRuntimeKeyClassMemberRead(ctx, ctx.structMap.get(className));\n\n  const local = (name: string, type: ValType): number => allocLocal(fctx, `__pcd_${name}_${fctx.locals.length}`, type);\n  const L: DriveLocals = {\n",
+          "after": "  }\n  // `Get(C, \"resolve\")` is a runtime-key read of the class OBJECT: record the demand so the\n  // class's static sidecar is materialised (#5383 S2i).\n  if (className !== undefined) recordStandaloneRuntimeKeyClassMemberRead(ctx, ctx.structMap.get(className));\n  // `Invoke(next, \"then\", …)` reads `then` off whatever `C.resolve` answers — a native promise\n  // included (#6651 D5): demand `%Promise.prototype%.then` so that read finds it.\n  demandPromiseDynamicMember(ctx, \"then\", fctx);\n\n  const local = (name: string, type: ValType): number => allocLocal(fctx, `__pcd_${name}_${fctx.locals.length}`, type);\n  const L: DriveLocals = {\n",
+          "beforeOffset": 35660,
+          "afterOffset": 38601,
+          "beforeSha256": "83a841cc23289938f9bcde0abab8a4ad3e5b4c2836eadb11855495af9a93acbe",
+          "afterSha256": "63f49184d419751d5f1c580843ac7897e53d284455e01d789e092cdaad6f1b4c"
+        },
+        {
+          "ordinal": 9,
+          "before": "  };\n  pushExtern(ctorArg, L.ctor);\n  pushExtern(expr.arguments[1], L.arg);\n  emitClassReceiverDrive(ctx, fctx, method, rt, L);\n  return EXTERNREF;\n}\n",
+          "after": "  };\n  pushExtern(ctorArg, L.ctor);\n  pushExtern(expr.arguments[1], L.arg);\n  const promiseRooted = className !== undefined && resolvePromiseSubclassName(ctx, className) !== undefined;\n  emitClassReceiverDrive(ctx, fctx, method, rt, L, promiseRooted);\n  return EXTERNREF;\n}\n",
+          "beforeOffset": 37326,
+          "afterOffset": 40524,
+          "beforeSha256": "68fe5ac91a21904710ae667a6df4823eccc8f12c9f13d69a48297ba706263628",
+          "afterSha256": "4030f666efab990d4332408fdaaba9e06cc41b1d9866f7ac2f13f8d15d08b3a0"
+        }
+      ],
+      "retained": [
+        {
+          "beforeOffset": 0,
+          "afterOffset": 0,
+          "length": 5373,
+          "sha256": "8dbddff12f04682d0924f847ad6037f93090cb64982c21d2de4a9f69871028f7"
+        },
+        {
+          "beforeOffset": 5736,
+          "afterOffset": 6132,
+          "length": 11859,
+          "sha256": "1323b7d4fb1127116f9520cfec25382fdef0439cf0b0155d0c27249e512973ff"
+        },
+        {
+          "beforeOffset": 18016,
+          "afterOffset": 18538,
+          "length": 311,
+          "sha256": "bdad485b745052d4e5ee882b2051be81c5e5d8c5240c0b3fc2e14c543c9f4468"
+        },
+        {
+          "beforeOffset": 18798,
+          "afterOffset": 19462,
+          "length": 127,
+          "sha256": "ee88187beb9225a1b73de84295f600a2711a846a8f935ff8ce9afe01bdb8c5b8"
+        },
+        {
+          "beforeOffset": 19309,
+          "afterOffset": 21347,
+          "length": 946,
+          "sha256": "c08c1d7b48b0caf5423fdf99ef2276c685c58b4d9965993a1a38319a1d1aaffb"
+        },
+        {
+          "beforeOffset": 20452,
+          "afterOffset": 22516,
+          "length": 2093,
+          "sha256": "3fe81853e4cf57c2a294fc28efdea239a1b9f122cd96184dfd170a5db3a0935d"
+        },
+        {
+          "beforeOffset": 22691,
+          "afterOffset": 25047,
+          "length": 77,
+          "sha256": "6323aa3b9dea31c92ea81714ce55cbf4eca8cf4742b9c3a5bcedb1c76d85fcaa"
+        },
+        {
+          "beforeOffset": 22967,
+          "afterOffset": 25351,
+          "length": 11496,
+          "sha256": "0b12a0a82b4d9876ebacbbe51433fcddc5ca7310bc9c2b0c2ce851736a64fe49"
+        },
+        {
+          "beforeOffset": 34783,
+          "afterOffset": 37724,
+          "length": 877,
+          "sha256": "8d24c897d7b20606c6aca51a3ceb1f337b5809199da2609d27b9b13da66061f5"
+        },
+        {
+          "beforeOffset": 36042,
+          "afterOffset": 39240,
+          "length": 1284,
+          "sha256": "87a79aba01cc169f236f3f93687cbfc933d0073df2a329550629a3a6bd428eb2"
+        },
+        {
+          "beforeOffset": 37476,
+          "afterOffset": 40798,
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "rawAfter": {
+        "gitBlob": "d40276c0d51f78e7b04c022a438cbb4b46de073b",
+        "sha256": "4453cd752a22179823650d0ead8bd1dd330a1a21f1e22059696e59596b3fb474"
+      },
+      "initialLayer": "raw"
+    },
+    {
+      "path": "src/codegen/builtin-static-globals.ts",
+      "beforeCommit": "d7de1281129ddff8d3a48902a5dcf81eaee7f8d3",
+      "afterCommit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "before": {
+        "gitBlob": "f32b73a204c21ac2639cc82f573e4e3ca7d5dc51",
+        "sha256": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca"
+      },
+      "after": {
+        "gitBlob": "69a7c73e3a2b8d54e4b1491465fb58906f0de625",
+        "sha256": "ee4d8591389253f0a115934fca5845454249c0903f2fb7fbc561f52ce1e12de0"
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "before": "import { addFuncType } from \"./registry/types.js\";\nimport { stringConstantExternrefInstrs } from \"./native-strings.js\";\nimport { ensureLateImport, flushLateImportShifts } from \"./shared.js\";\n\nconst SUPPORTED_STATIC_PROPS: ReadonlyMap<string, readonly string[]> = new Map([\n  [\"Array\", [\"isArray\"]],\n",
+          "after": "import { addFuncType } from \"./registry/types.js\";\nimport { stringConstantExternrefInstrs } from \"./native-strings.js\";\nimport { ensureLateImport, flushLateImportShifts } from \"./shared.js\";\nimport { noteBuiltinCollectionCarrierReserved } from \"./builtin-collection-dyn-construct.js\";\n\nconst SUPPORTED_STATIC_PROPS: ReadonlyMap<string, readonly string[]> = new Map([\n  [\"Array\", [\"isArray\"]],\n",
+          "beforeOffset": 1339,
+          "afterOffset": 1339,
+          "beforeSha256": "77f9d5437bf17cbd2596899f5555dd9c1109e97342fe9c72be99df5b6a1e78f6",
+          "afterSha256": "f819d9ac85ff8b4db8667cf70ecaf7d862c8004cb89143488c084000d6c75927"
+        },
+        {
+          "ordinal": 1,
+          "before": "    init: [{ op: \"ref.null.extern\" }],\n  });\n  ctx.builtinObjectGlobals.set(key, globalIdx);\n  return globalIdx;\n}\n\n",
+          "after": "    init: [{ op: \"ref.null.extern\" }],\n  });\n  ctx.builtinObjectGlobals.set(key, globalIdx);\n  noteBuiltinCollectionCarrierReserved(ctx, builtinName); // (#6720)\n  return globalIdx;\n}\n\n",
+          "beforeOffset": 10246,
+          "afterOffset": 10340,
+          "beforeSha256": "622a7a5e23fd25513133a625ff8d909c5bc266368fe9dab1e03a639fd55d06bc",
+          "afterSha256": "8e3812a5ad066e2c5e566a259f946081902273082dea67ba1cb281921892fd9c"
+        },
+        {
+          "ordinal": 2,
+          "before": "  fctx.body.push({ op: \"drop\" });\n}\n\nexport function emitBuiltinNamespaceObject(\n  ctx: CodegenContext,\n  fctx: FunctionContext,\n",
+          "after": "  fctx.body.push({ op: \"drop\" });\n}\n\n/**\n * (#6713) Reserve — without materializing — the slot holding the namespace\n * carrier for `builtinName` (the Error family's bare-value carriers, #2907).\n * The namespace twin of `reserveBuiltinConstructorIdentityGlobal`: a site that\n * compares a value against the carrier cannot depend on a read having been\n * compiled first, and a later read reuses this slot.\n */\nexport function reserveBuiltinNamespaceObjectGlobal(ctx: CodegenContext, builtinName: string): number {\n  const existing = ctx.builtinObjectGlobals.get(builtinName);\n  if (existing !== undefined) return existing;\n  const globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;\n  ctx.mod.globals.push({\n    name: `__builtin_${builtinName}`,\n    type: { kind: \"externref\" },\n    mutable: true,\n    init: [{ op: \"ref.null.extern\" }],\n  });\n  ctx.builtinObjectGlobals.set(builtinName, globalIdx);\n  noteBuiltinCollectionCarrierReserved(ctx, builtinName); // (#6775 S10) Error family\n  return globalIdx;\n}\n\nexport function emitBuiltinNamespaceObject(\n  ctx: CodegenContext,\n  fctx: FunctionContext,\n",
+          "beforeOffset": 20536,
+          "afterOffset": 20699,
+          "beforeSha256": "837bff19610de4a3a27b94c93cdbd1fe0ca74826ab3074b3226cc98aad788564",
+          "afterSha256": "6c29a2a8617e0c709808bbfc67818a42ac233ee8da95507c7ec588559e3e5819"
+        },
+        {
+          "ordinal": 3,
+          "before": "  const newObjectIdx = ctx.funcMap.get(\"__new_plain_object\")!;\n  const defineValueIdx = ctx.funcMap.get(\"__defineProperty_value\")!;\n\n  let globalIdx = ctx.builtinObjectGlobals.get(builtinName);\n  if (globalIdx === undefined) {\n    globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;\n    ctx.mod.globals.push({\n      name: `__builtin_${builtinName}`,\n      type: { kind: \"externref\" },\n      mutable: true,\n      init: [{ op: \"ref.null.extern\" }],\n    });\n    ctx.builtinObjectGlobals.set(builtinName, globalIdx);\n  }\n\n  const objLocal = allocLocal(fctx, `__builtin_${builtinName}_obj_${fctx.locals.length}`, { kind: \"externref\" });\n  const initBody: Instr[] = [\n",
+          "after": "  const newObjectIdx = ctx.funcMap.get(\"__new_plain_object\")!;\n  const defineValueIdx = ctx.funcMap.get(\"__defineProperty_value\")!;\n\n  const globalIdx = reserveBuiltinNamespaceObjectGlobal(ctx, builtinName);\n\n  const objLocal = allocLocal(fctx, `__builtin_${builtinName}_obj_${fctx.locals.length}`, { kind: \"externref\" });\n  const initBody: Instr[] = [\n",
+          "beforeOffset": 21392,
+          "afterOffset": 22532,
+          "beforeSha256": "80998e6f8e4b7a72406d31f4fd1b3d514233fccf6a73b28c82e3fffc9bd4e333",
+          "afterSha256": "5113219107224f0db112662d628bac306bb1ace6f8caff95419ce91e25772ff0"
+        }
+      ],
+      "retained": [
+        {
+          "beforeOffset": 0,
+          "afterOffset": 0,
+          "length": 1339,
+          "sha256": "8776c7a8608fcdec0153bdbb7c39c4cae02c1a1978425f4bc19592581753d184"
+        },
+        {
+          "beforeOffset": 1638,
+          "afterOffset": 1732,
+          "length": 8608,
+          "sha256": "6685b0c4a423eac71215ff2643e92fd0552d59e3bc66ef1990321801372cd5f8"
+        },
+        {
+          "beforeOffset": 10362,
+          "afterOffset": 10525,
+          "length": 10174,
+          "sha256": "bb07f1304726e08acae4ded7be228062f3dc0fe6583229bb5c3eb70eb3fa2a96"
+        },
+        {
+          "beforeOffset": 20665,
+          "afterOffset": 21805,
+          "length": 727,
+          "sha256": "3479bc6def970d10bc538caa6a46f06b2b2458a8807dbd031fc46e5a4807fa18"
+        },
+        {
+          "beforeOffset": 22061,
+          "afterOffset": 22885,
+          "length": 2414,
+          "sha256": "fdf5fc1a9761964c2ba1052a17a99f23c167edcbe30f0596e9462777b501ef59"
+        }
+      ],
+      "rawAfter": {
+        "gitBlob": "69a7c73e3a2b8d54e4b1491465fb58906f0de625",
+        "sha256": "ee4d8591389253f0a115934fca5845454249c0903f2fb7fbc561f52ce1e12de0"
+      },
+      "initialLayer": "raw"
+    },
+    {
+      "path": "src/codegen/builtin-value-read.ts",
+      "beforeCommit": "d7de1281129ddff8d3a48902a5dcf81eaee7f8d3",
+      "afterCommit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "before": {
+        "gitBlob": "910ca3728f9901f8be4128c3019ae3d04a7870b4",
+        "sha256": "6fc29aea2b2b83fb4f4b7d654453cc2b4ed9450f52a8e65edb00b3aa457ac806"
+      },
+      "after": {
+        "gitBlob": "093ba45bc86eba98141f21da040a1b5833eacbb1",
+        "sha256": "7d17c83b51dd4e0a56b75589ba70a8261ee8f9e06d8655cf02c99b73730b040c"
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "before": "import { emitExternrefSlotToAnyStr } from \"./native-string-slot-bridge.js\";\nimport { emitNativeReflectTargetGuard } from \"./reflect-target-guard.js\";\nimport { sourceShadowsGlobalName } from \"./source-function-members.js\"; // (#5194 review F2)\n\nexport const BUILTIN_CTOR_NAMES = new Set([\n  \"Object\",\n",
+          "after": "import { emitExternrefSlotToAnyStr } from \"./native-string-slot-bridge.js\";\nimport { emitNativeReflectTargetGuard } from \"./reflect-target-guard.js\";\nimport { sourceShadowsGlobalName } from \"./source-function-members.js\"; // (#5194 review F2)\nimport { sourceWritesRegExpProtoSymbol } from \"./regexp-proto-symbol-writes.js\"; // (#6651 B9)\n\nexport const BUILTIN_CTOR_NAMES = new Set([\n  \"Object\",\n",
+          "beforeOffset": 4400,
+          "afterOffset": 4400,
+          "beforeSha256": "c670173d964e8843bfbb5cd4988cfc18eadff748a1a407e224b7e1a4b87296fc",
+          "afterSha256": "07cab1dfd6b5e0658ecc5e0f03d6544b73466c17b03a07aa8a92f7071ae20d62"
+        },
+        {
+          "ordinal": 1,
+          "before": "  if (!ts.isIdentifier(receiver.expression)) return undefined;\n\n  const builtinName = receiver.expression.text;\n  const isIteratorAlias = key.name.text === \"iterator\" && (builtinName === \"Map\" || builtinName === \"Set\");\n  if (!isIteratorAlias && !BUILTIN_CTOR_NAMES.has(builtinName)) return undefined;\n  if (\n",
+          "after": "  if (!ts.isIdentifier(receiver.expression)) return undefined;\n\n  const builtinName = receiver.expression.text;\n  // (#6651 B9) A replaced member is a runtime value: the dynamic read consults the companion.\n  if (builtinName === \"RegExp\" && sourceWritesRegExpProtoSymbol(expr, key.name.text)) return undefined;\n  const isIteratorAlias = key.name.text === \"iterator\" && (builtinName === \"Map\" || builtinName === \"Set\");\n  if (!isIteratorAlias && !BUILTIN_CTOR_NAMES.has(builtinName)) return undefined;\n  if (\n",
+          "beforeOffset": 42862,
+          "afterOffset": 42957,
+          "beforeSha256": "7cbae08e2ab8aaf37fbae89ed5e2b774bcd4efd17ab141fb8424f0d54b4727aa",
+          "afterSha256": "a181682e41f93732520ac627f94d2d71f40bdbeff859420771ca9a7b7c9bd6c3"
+        }
+      ],
+      "retained": [
+        {
+          "beforeOffset": 0,
+          "afterOffset": 0,
+          "length": 4400,
+          "sha256": "d4c9c9a1a020ae4a120c8f820d04f89d53cb4cd7175ba1fc8649709d69f32c19"
+        },
+        {
+          "beforeOffset": 4700,
+          "afterOffset": 4795,
+          "length": 38162,
+          "sha256": "94e45d26b70f7dfe683dc7c2dfdb7a8221ff8d8e559a81d4096848be04a93b3c"
+        },
+        {
+          "beforeOffset": 43171,
+          "afterOffset": 43465,
+          "length": 45179,
+          "sha256": "a37cad977c335b5e943ecca6afac4727ff06ae28e6f4ba2798134fdef1275af6"
+        }
+      ],
+      "rawAfter": {
+        "gitBlob": "093ba45bc86eba98141f21da040a1b5833eacbb1",
+        "sha256": "7d17c83b51dd4e0a56b75589ba70a8261ee8f9e06d8655cf02c99b73730b040c"
+      },
+      "initialLayer": "raw"
+    },
+    {
+      "path": "src/codegen/async-scheduler.ts",
+      "beforeCommit": "d7de1281129ddff8d3a48902a5dcf81eaee7f8d3",
+      "afterCommit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "before": {
+        "gitBlob": "c21ae077a44011e62bb9519294624e08b41f8ef7",
+        "sha256": "81d99ad21d51faee6105bb38f45588a3bddb0db1304932e3ab255eb04e84ae0c"
+      },
+      "after": {
+        "gitBlob": "c7fbb878db2fcd3a0435abe165df23a5eaec14c8",
+        "sha256": "8314cfd64470e7d2db6474e4d23f8498cb38d63f171189088a2eb67e8ec6bf0c"
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "before": "// call these two. `ensureUnhandledRejectionReporter` is imported by index.ts.\nimport { ensureUnhandledRejectionTracking, buildNoteUnhandledRejection } from \"./unhandled-rejection.js\";\nimport { buildTargetTaggedTry } from \"../ir/try-table.js\";\nimport { canonicalUndefinedExternInstrs } from \"./any-helpers.js\";\nimport {\n  PROMISE_STATE_PENDING,\n",
+          "after": "// call these two. `ensureUnhandledRejectionReporter` is imported by index.ts.\nimport { ensureUnhandledRejectionTracking, buildNoteUnhandledRejection } from \"./unhandled-rejection.js\";\nimport { buildTargetTaggedTry } from \"../ir/try-table.js\";\nimport { tryEmitObservablePromiseFinally } from \"./promise-finally-invoke.js\"; // (#6651 D7)\nimport {\n  emitPromiseThenSpeciesCapability,\n  preparePromiseThenSpecies,\n  promiseResolvePassThroughInstrs,\n  speciesChainedInstrs,\n  speciesForwardAndResultInstrs,\n} from \"./promise-species-then.js\"; // (#5197 r3)\nimport { canonicalUndefinedExternInstrs } from \"./any-helpers.js\";\nimport {\n  PROMISE_STATE_PENDING,\n",
+          "beforeOffset": 3630,
+          "afterOffset": 3630,
+          "beforeSha256": "44cab59ce3fd29b1ce80c24c6f78d4fad871446d04cf23b6c04ca7b193cdcdd6",
+          "afterSha256": "1313cfb43d197e7f2036d9b593d4a73d1058621f5a43148966ceeb17ca84b9ee"
+        },
+        {
+          "ordinal": 1,
+          "before": "  // Plain values still settle synchronously through the fulfil fast path, so\n  // non-thenable behaviour is observably unchanged.\n  ensurePromiseSettleFunctions(ctx);\n  const resolveValueIdx = ctx.funcMap.get(\"__promise_resolve_value\");\n  if (resolveValueIdx === undefined) {\n    // Defensive legacy fallback: direct fulfilled mint (pre-#3125 shape).\n",
+          "after": "  // Plain values still settle synchronously through the fulfil fast path, so\n  // non-thenable behaviour is observably unchanged.\n  ensurePromiseSettleFunctions(ctx);\n  const vLocal = allocLocal(fctx, `__presolve_v_${fctx.locals.length}`, { kind: \"externref\" });\n  // (#5197 r3 Step 1e) PromiseResolve step 1 — `x.constructor` must be `%Promise%`.\n  const passThrough = promiseResolvePassThroughInstrs(ctx, fctx, vLocal);\n  const resolveValueIdx = ctx.funcMap.get(\"__promise_resolve_value\");\n  if (resolveValueIdx === undefined) {\n    // Defensive legacy fallback: direct fulfilled mint (pre-#3125 shape).\n",
+          "beforeOffset": 144380,
+          "afterOffset": 144689,
+          "beforeSha256": "65663b852a81ec1750fb07f0b50db4650a08225a4deec9d5761c6a161f39107b",
+          "afterSha256": "b695921db3273a0cbbf16611f3f254fb921e796330e37ba25ac0ff175a647c01"
+        },
+        {
+          "ordinal": 2,
+          "before": "    fctx.body.push({ op: \"extern.convert_any\" });\n    return;\n  }\n  const vLocal = allocLocal(fctx, `__presolve_v_${fctx.locals.length}`, { kind: \"externref\" });\n  const pLocal = allocLocal(fctx, `__presolve_p_${fctx.locals.length}`, {\n    kind: \"ref\",\n    typeIdx: promiseTypeIdx,\n",
+          "after": "    fctx.body.push({ op: \"extern.convert_any\" });\n    return;\n  }\n  const pLocal = allocLocal(fctx, `__presolve_p_${fctx.locals.length}`, {\n    kind: \"ref\",\n    typeIdx: promiseTypeIdx,\n",
+          "beforeOffset": 145022,
+          "afterOffset": 145586,
+          "beforeSha256": "8515e6b4398a24b478acd436c81e257ed9ed00a8ee1c0f24fe5ab0e0e2afcc35",
+          "afterSha256": "c9e4ff377c28e03463e016b00bd95552b1e7c6e03fb357bbf3ac635582be7699"
+        },
+        {
+          "ordinal": 3,
+          "before": "  fctx.body.push({ op: \"local.get\", index: vLocal });\n  fctx.body.push({ op: \"any.convert_extern\" });\n  fctx.body.push({ op: \"ref.test\", typeIdx: promiseTypeIdx });\n  fctx.body.push({\n    op: \"if\",\n    blockType: { kind: \"val\", type: { kind: \"externref\" } },\n",
+          "after": "  fctx.body.push({ op: \"local.get\", index: vLocal });\n  fctx.body.push({ op: \"any.convert_extern\" });\n  fctx.body.push({ op: \"ref.test\", typeIdx: promiseTypeIdx });\n  if (passThrough) {\n    fctx.body.push({\n      op: \"if\",\n      blockType: { kind: \"val\", type: { kind: \"i32\" } },\n      then: passThrough,\n      else: [{ op: \"i32.const\", value: 0 }],\n    });\n  }\n  fctx.body.push({\n    op: \"if\",\n    blockType: { kind: \"val\", type: { kind: \"externref\" } },\n",
+          "beforeOffset": 145422,
+          "afterOffset": 145890,
+          "beforeSha256": "ba292455f577aec79984f0be1ad297807a5db341dc06c099433f45d56eacfb36",
+          "afterSha256": "4a74d3676eba49017284486cce2eea9d6ec4e50a4f9cf805854d35436c26b98a"
+        },
+        {
+          "ordinal": 4,
+          "before": "  promiseInstrs: Instr[],\n  onFulfilled: StandalonePromiseThenCallback | null,\n  onRejected?: StandalonePromiseThenCallback | null,\n): void {\n  ensurePromiseSettleFunctions(ctx);\n  const state = getOrInitState(ctx as CodegenContextWithScheduler);\n  const promiseTypeIdx = getOrRegisterPromiseType(ctx);\n  const callbackTypeIdx = getOrRegisterPromiseCallbackType(ctx);\n",
+          "after": "  promiseInstrs: Instr[],\n  onFulfilled: StandalonePromiseThenCallback | null,\n  onRejected?: StandalonePromiseThenCallback | null,\n  intrinsic = false, // (#6651 D7) %Promise.prototype.then% itself: never re-dispatches to an own `then`\n): void {\n  ensurePromiseSettleFunctions(ctx);\n  // (#5197 r3 Step 1) §27.2.5.4 steps 3-4, registered before any index is read.\n  const species = preparePromiseThenSpecies(ctx, fctx);\n  const speciesFwd = species && [ensureDynamicThenWrapper(ctx, \"fulfill\"), ensureDynamicThenWrapper(ctx, \"reject\")];\n  const state = getOrInitState(ctx as CodegenContextWithScheduler);\n  const promiseTypeIdx = getOrRegisterPromiseType(ctx);\n  const callbackTypeIdx = getOrRegisterPromiseCallbackType(ctx);\n",
+          "beforeOffset": 149814,
+          "afterOffset": 150479,
+          "beforeSha256": "ba32fee91e2b57f315d38b9e78b43b49cbb08ca2aa58728cf45b14b2940d4c5e",
+          "afterSha256": "2cdeaa42ddcd843f4005016300681b088e6c435e3a06869dd10db6af809186b4"
+        },
+        {
+          "ordinal": 5,
+          "before": "  fctx.body = nativeBody;\n\n  // Chained promise starts pending with no callbacks.\n  fctx.body.push({ op: \"i32.const\", value: PROMISE_STATE_PENDING });\n  fctx.body.push({ op: \"ref.null.extern\" });\n  fctx.body.push({ op: \"ref.null.extern\" });\n  fctx.body.push(closureBagInitInstr());\n  fctx.body.push({ op: \"struct.new\", typeIdx: promiseTypeIdx });\n  fctx.body.push({ op: \"local.set\", index: chainedLocal });\n  fctx.body.push(\n    ...buildDenoPromiseHookCall(\n      ctx,\n",
+          "after": "  fctx.body = nativeBody;\n\n  // Chained promise starts pending with no callbacks.\n  const mintChained: Instr[] = [\n    { op: \"i32.const\", value: PROMISE_STATE_PENDING },\n    { op: \"ref.null.extern\" },\n    { op: \"ref.null.extern\" },\n    closureBagInitInstr(),\n    { op: \"struct.new\", typeIdx: promiseTypeIdx },\n    { op: \"local.set\", index: chainedLocal },\n  ];\n  const sp =\n    species && speciesFwd?.[0] !== undefined && speciesFwd[1] !== undefined\n      ? emitPromiseThenSpeciesCapability(ctx, fctx, species, promiseLocal)\n      : undefined;\n  fctx.body.push(...(sp && species ? speciesChainedInstrs(ctx, species, sp, chainedLocal, mintChained) : mintChained));\n  fctx.body.push(\n    ...buildDenoPromiseHookCall(\n      ctx,\n",
+          "beforeOffset": 153655,
+          "afterOffset": 154679,
+          "beforeSha256": "41f1b1393220060511bbaad0a7d2c08b8dc4eb213b325af6f064d6b8e2933dd2",
+          "afterSha256": "4480e3b3f4fb8ee7ac1fa9eca64b2cd323f165864cf257ec9721dfdeb1f1d6fc"
+        },
+        {
+          "ordinal": 6,
+          "before": "        },\n      ],\n    },\n    { op: \"local.get\", index: chainedLocal },\n    { op: \"extern.convert_any\" },\n  );\n  fctx.savedBodies.pop();\n  fctx.body = outerBody;\n",
+          "after": "        },\n      ],\n    },\n    ...(sp && species && speciesFwd\n      ? speciesForwardAndResultInstrs(ctx, species, sp, chainedLocal, {\n          callbackTypeIdx,\n          capsTypeIdx,\n          dynFulfillIdx: ctx.funcMap.get(\"__then_dyn_fulfill\")!,\n          dynRejectIdx: ctx.funcMap.get(\"__then_dyn_reject\")!,\n        })\n      : ([{ op: \"local.get\", index: chainedLocal }, { op: \"extern.convert_any\" }] satisfies Instr[])),\n  );\n  fctx.savedBodies.pop();\n  fctx.body = outerBody;\n",
+          "beforeOffset": 157594,
+          "afterOffset": 158875,
+          "beforeSha256": "2e1dd1e8dd49b1f3fb8526b1db00455b8feca48ce7ff608d5833e8d61bc70bc6",
+          "afterSha256": "7d2823311783697eb3b3f9771193a9d7cdb1f708685ec0a7d4fdfd5d87de9c9d"
+        },
+        {
+          "ordinal": 7,
+          "before": "  // `ensureObjVecBuilders` → `ensureObjectRuntime` registers the entire\n  // `__boundary_object_*` import family (14 host imports the host-import\n  // ratchet counts against every plain async module).\n  if (ctx.funcMap.get(\"__carrier_bag_has\") === undefined || ctx.funcMap.get(\"__extern_get\") === undefined) {\n    fctx.body.push(...nativeBody);\n    return;\n  }\n",
+          "after": "  // `ensureObjVecBuilders` → `ensureObjectRuntime` registers the entire\n  // `__boundary_object_*` import family (14 host imports the host-import\n  // ratchet counts against every plain async module).\n  if (intrinsic || !ctx.funcMap.has(\"__carrier_bag_has\") || !ctx.funcMap.has(\"__extern_get\")) {\n    fctx.body.push(...nativeBody);\n    return;\n  }\n",
+          "beforeOffset": 158421,
+          "afterOffset": 160022,
+          "beforeSha256": "81d2a804efee95522837543f6ffd7b114459661804e17d253c67606f3d5b7db2",
+          "afterSha256": "b26994c6b5493fd8c072ee4ce2cba19f1671820f17351fa8866a6e56831940c0"
+        },
+        {
+          "ordinal": 8,
+          "before": "  promiseInstrs: Instr[],\n  onFinally: StandalonePromiseThenCallback | null,\n): void {\n  if (onFinally === null) {\n    emitStandalonePromiseThen(ctx, fctx, promiseInstrs, null, null);\n    return;\n",
+          "after": "  promiseInstrs: Instr[],\n  onFinally: StandalonePromiseThenCallback | null,\n): void {\n  // (#6651 D7) §27.2.5.3 step 7: Get `then` first; only an intrinsic `then` on a\n  // native `$Promise` re-enters here for the lowering below (promise-finally-invoke.ts).\n  if (tryEmitObservablePromiseFinally(ctx, fctx, promiseInstrs, onFinally, emitStandalonePromiseFinally)) return;\n  if (onFinally === null) {\n    emitStandalonePromiseThen(ctx, fctx, promiseInstrs, null, null);\n    return;\n",
+          "beforeOffset": 178201,
+          "afterOffset": 179789,
+          "beforeSha256": "40dc812ffeba5872712428751e5dd341841d18d804d9ea97d401ac04c0238720",
+          "afterSha256": "dd956cb63d103ab0ae81955a96d1a100b5527290895858184749e971a3103680"
+        }
+      ],
+      "retained": [
+        {
+          "beforeOffset": 0,
+          "afterOffset": 0,
+          "length": 3630,
+          "sha256": "71b3a7e4fc628ef41db8d0f4f13f62e515135f1f9561cc6628bd988302f397d4"
+        },
+        {
+          "beforeOffset": 3975,
+          "afterOffset": 4284,
+          "length": 140405,
+          "sha256": "c07ee80591b0612b8ab0c785dcdbf278001ea0078efc5468cdb7554ab5e6dc3b"
+        },
+        {
+          "beforeOffset": 144732,
+          "afterOffset": 145296,
+          "length": 290,
+          "sha256": "28e33bdb3a009b7e0d316a238d3ff3cdaea285c69076c83ff5d2a27ff8134ec7"
+        },
+        {
+          "beforeOffset": 145304,
+          "afterOffset": 145772,
+          "length": 118,
+          "sha256": "b018b4abab6d1914d5a31eba92a4a1ddf29eff51fdc3849ee1a84d342161a35c"
+        },
+        {
+          "beforeOffset": 145681,
+          "afterOffset": 146346,
+          "length": 4133,
+          "sha256": "1bb8794d3ebf2d808fdc31f9f1e749768c296037f1e520527dd7be76e42bdefd"
+        },
+        {
+          "beforeOffset": 150182,
+          "afterOffset": 151206,
+          "length": 3473,
+          "sha256": "17e452ee7c0e6d236ea0d1098bb00e3099e7436647030b9e82be65ff746c9ef8"
+        },
+        {
+          "beforeOffset": 154124,
+          "afterOffset": 155405,
+          "length": 3470,
+          "sha256": "3bd97b39722f9cce2ef21dbefb5417cd53fb8484eeaaf957db19b70825f96ec9"
+        },
+        {
+          "beforeOffset": 157757,
+          "afterOffset": 159358,
+          "length": 664,
+          "sha256": "e670efb396c76e47f08935dafa559ca4c6d873e43bd658af08b2ed0cd4e63a32"
+        },
+        {
+          "beforeOffset": 158783,
+          "afterOffset": 160371,
+          "length": 19418,
+          "sha256": "da55a12074a18934ff2edb2c94d1b9e1b0f41e23d8a4d4707b42fa73cd1c4d27"
+        },
+        {
+          "beforeOffset": 178397,
+          "afterOffset": 180271,
+          "length": 13859,
+          "sha256": "57094eed98b32480a775c5c5478fb561b1319f6fed7235bc556aac05759fcb76"
+        }
+      ],
+      "rawAfter": {
+        "gitBlob": "c7fbb878db2fcd3a0435abe165df23a5eaec14c8",
+        "sha256": "8314cfd64470e7d2db6474e4d23f8498cb38d63f171189088a2eb67e8ec6bf0c"
+      },
+      "initialLayer": "raw"
+    },
+    {
+      "path": "src/codegen/promise-custom-combinator.ts",
+      "beforeCommit": "d7de1281129ddff8d3a48902a5dcf81eaee7f8d3",
+      "afterCommit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "before": {
+        "gitBlob": "e23ba2cc3dcec52ba1597a61c289f496581d7d8b",
+        "sha256": "a8aa62f88f50ec943fcca33c6459bc468c00e5116c9dc53f2bccf1383f588234"
+      },
+      "after": {
+        "gitBlob": "01fe134b9cc4ed5cab4980c3cf6acb6d4bb40291",
+        "sha256": "5f8851330c370b2e38c18b3f4bad68763377fb476e4a7de952cae5da33bff677"
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "before": " */\nimport { ts } from \"../ts-api.js\";\nimport type { CodegenContext, FunctionContext } from \"./context/types.js\";\nimport type { Instr, ValType } from \"../ir/types.js\";\nimport { allocLocal } from \"./context/locals.js\";\nimport { mintDefinedFunc, pushDefinedFunc } from \"./func-space.js\";\nimport { ensureBuiltinFnMetaType } from \"./builtin-fn-meta.js\";\n",
+          "after": " */\nimport { ts } from \"../ts-api.js\";\nimport type { CodegenContext, FunctionContext } from \"./context/types.js\";\nimport type { FieldDef, Instr, ValType } from \"../ir/types.js\";\nimport { allocLocal } from \"./context/locals.js\";\nimport { mintDefinedFunc, pushDefinedFunc } from \"./func-space.js\";\nimport { ensureBuiltinFnMetaType } from \"./builtin-fn-meta.js\";\n",
+          "beforeOffset": 2689,
+          "afterOffset": 2689,
+          "beforeSha256": "4233a910e4425ec2e62240f7b4a8972acd10c23c85fbb81b7a4c690fca882f71",
+          "afterSha256": "b166f5c4504c0a3145e40805090a61610ced528c5f8f54fc70e15db871b7a4ae"
+        },
+        {
+          "ordinal": 1,
+          "before": "import { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from \"./object-runtime.js\";\nimport { ensureLateImport, flushLateImportShifts } from \"./expressions/late-imports.js\";\nimport {\n  buildCustomCapabilityExecutorInstrs,\n  customCapabilityTypeError,\n  ensureCombinatorFunctions,\n  ensureCombinatorToVec,\n  ensureCustomCapabilityRuntime,\n  resolveExternrefVecArg,\n  type NativeCombinator,\n} from \"./promise-combinators.js\";\nimport { isStandalonePromiseActive } from \"./async-scheduler.js\";\nimport { buildTargetTaggedTry } from \"../ir/try-table.js\";\n\nconst EXTERNREF: ValType = { kind: \"externref\" };\nconst I32: ValType = { kind: \"i32\" };\nconst F64: ValType = { kind: \"f64\" };\n\n/**\n * How the combinator's iterable argument reached us: either already a\n * canonical externref vec (`vec` — an array-shaped argument, possibly\n",
+          "after": "import { ensureObjVecBuilders, ensureObjectRuntime, reserveApplyClosure } from \"./object-runtime.js\";\nimport { ensureLateImport, flushLateImportShifts } from \"./expressions/late-imports.js\";\nimport {\n  ensureCombinatorFunctions,\n  ensureCombinatorToVec,\n  resolveExternrefVecArg,\n  type NativeCombinator,\n} from \"./promise-combinators.js\";\nimport { isStandalonePromiseActive } from \"./async-scheduler.js\";\nimport { demandPromiseDynamicMember } from \"./promise-dynamic-member-read.js\"; // (#6651 D5)\nimport { buildTargetTaggedTry } from \"../ir/try-table.js\";\n\nconst EXTERNREF: ValType = { kind: \"externref\" };\nconst I32: ValType = { kind: \"i32\" };\nconst F64: ValType = { kind: \"f64\" };\n\n// D1 needs these private capability operations independently of the frozen\n// adapter's original declarations. Both live consumers share the same cache\n// and resource names, so whichever registers first supplies the other.\ninterface CustomCapabilityRuntime {\n  stateTypeIdx: number;\n  executorTypeIdx: number;\n  executorFuncIdx: number;\n  /** (#5197 R3-9) The builtin-fn metadata supertype the executor subtypes. */\n  capMetaTypeIdx: number;\n  /** Index of the `$capability` capture, AFTER the metadata carrier's fields. */\n  capabilityFieldIdx: number;\n}\n\n/**\n * (#5197 R3-9) The ONE place that knows the capability executor's operand\n * order. §27.2.1.5.1 GetCapabilitiesExecutor Functions are anonymous built-in\n * function objects with `length` 2, so the struct subtypes the repository's\n * builtin-fn metadata carrier exactly as `$__promise_settle_cap` does, and the\n * capture is appended AFTER the carrier's fields — never at a hard-coded index.\n */\nfunction buildCustomCapabilityExecutorInstrs(runtime: CustomCapabilityRuntime, stateLocal: number): Instr[] {\n  return [\n    { op: \"ref.func\", funcIdx: runtime.executorFuncIdx },\n    { op: \"i32.const\", value: 2 }, // (#3673) $arity — the executor takes (resolve, reject)\n    closureBagInitInstr(), // (#4241) $bag\n    { op: \"i32.const\", value: 0 }, // `bfnstate` delete-bits\n    { op: \"i32.const\", value: runtime.capMetaTypeIdx }, // `bfnid` metadata anchor\n    { op: \"local.get\", index: stateLocal },\n    { op: \"struct.new\", typeIdx: runtime.executorTypeIdx },\n  ];\n}\n\ntype CtxWithCustomCapability = CodegenContext & { __promiseCustomCapability?: CustomCapabilityRuntime };\n\nfunction customCapabilityTypeError(ctx: CodegenContext): Instr[] {\n  // NewPromiseCapability's executor protocol throws a TypeError before the\n  // combinator touches an empty iterable when either captured slot is not\n  // callable.  Reuse the in-module standalone Error constructor and native\n  // exception tag so this arm never introduces an env import.\n  emitWasiErrorConstructor(ctx, \"TypeError\", 1);\n  const ctorIdx = ctx.funcMap.get(\"__new_TypeError\");\n  if (ctorIdx === undefined) return [{ op: \"unreachable\" }];\n  return [{ op: \"ref.null.extern\" }, { op: \"call\", funcIdx: ctorIdx }, { op: \"throw\", tagIdx: ensureExnTag(ctx) }];\n}\n\n/** Register the two-argument capability executor and its mutable slots once. */\nfunction ensureCustomCapabilityRuntime(ctx: CodegenContext): CustomCapabilityRuntime | null {\n  const cached = (ctx as CtxWithCustomCapability).__promiseCustomCapability;\n  if (cached) return cached;\n\n  const wrapper = getOrCreateFuncRefWrapperTypes(ctx, [EXTERNREF, EXTERNREF], []);\n  if (!wrapper) return null;\n\n  // The capability record stores the two values supplied by C's constructor.\n  // `undefined` is represented by a null externref on this native path. The\n  // selected Test262 cohort intentionally uses undefined for the first call;\n  // a later slice can add a presence bit for explicit null.\n  const stateTypeIdx = ctx.mod.types.length;\n  ctx.mod.types.push({\n    kind: \"struct\",\n    name: \"$__promise_custom_capability\",\n    fields: [\n      { name: \"$resolve\", type: EXTERNREF, mutable: true },\n      { name: \"$reject\", type: EXTERNREF, mutable: true },\n    ],\n  });\n  ctx.structMap.set(\"$__promise_custom_capability\", stateTypeIdx);\n  ctx.typeIdxToStructName.set(stateTypeIdx, \"$__promise_custom_capability\");\n  ctx.structFields.set(\"$__promise_custom_capability\", [\n    { name: \"$resolve\", type: EXTERNREF, mutable: true },\n    { name: \"$reject\", type: EXTERNREF, mutable: true },\n  ]);\n\n  // (#5197 R3-9) §27.2.1.5.1 — a GetCapabilitiesExecutor function is an\n  // anonymous BUILT-IN function object (`name` \"\", `length` 2, own `length`\n  // before own `name`, `%Function.prototype%` as [[Prototype]], extensible, no\n  // own `prototype`). Slice B moved the settle closures onto the repository's\n  // builtin-fn metadata carrier for exactly that reason; this struct now\n  // subtypes the SAME carrier rather than the bare `(externref, externref)->()`\n  // wrapper, so there is one function-object representation, not two. The\n  // inherited closure header still makes it callable by the ordinary\n  // `executor(...)` lowering in a compiled C body.\n  const capMetaTypeIdx = ensureBuiltinFnMetaType(\n    ctx,\n    wrapper.structTypeIdx,\n    wrapper.closureInfo,\n    \"promise:capexec\",\n    \"\",\n    2,\n  );\n  const capMetaFields = (ctx.mod.types[capMetaTypeIdx] as { fields: FieldDef[] }).fields;\n  const capabilityFieldIdx = capMetaFields.length;\n  const executorFields = [\n    // The metadata supertype's fields MUST be redeclared verbatim (closure\n    // header + `bfnstate` + `bfnid`); the capture is appended after them.\n    ...capMetaFields.map((f) => ({ ...f })),\n    { name: \"$capability\", type: { kind: \"ref\" as const, typeIdx: stateTypeIdx }, mutable: false },\n  ];\n  const executorTypeIdx = ctx.mod.types.length;\n  ctx.mod.types.push({\n    kind: \"struct\",\n    name: \"$__promise_custom_capability_executor\",\n    fields: executorFields,\n    superTypeIdx: capMetaTypeIdx,\n  });\n  ctx.structMap.set(\"$__promise_custom_capability_executor\", executorTypeIdx);\n  ctx.typeIdxToStructName.set(executorTypeIdx, \"$__promise_custom_capability_executor\");\n  ctx.structFields.set(\n    \"$__promise_custom_capability_executor\",\n    executorFields.map((f) => ({ ...f })),\n  );\n\n  emitWasiErrorConstructor(ctx, \"TypeError\", 1);\n  const typeErrorIdx = ctx.funcMap.get(\"__new_TypeError\");\n  const exnTag = ensureExnTag(ctx);\n  const executorFuncIdx = mintDefinedFunc(ctx);\n  const stateLocal = 3;\n  // \"this slot already holds a stored value\" — i.e. it is neither null nor\n  // undefined. Leaves the incoming externref consumed and an i32 on the stack.\n  const nullishIdx = ctx.funcMap.get(\"__extern_is_nullish\");\n  const slotIsStoredTail: Instr[] =\n    nullishIdx === undefined\n      ? [{ op: \"ref.is_null\" }, { op: \"i32.eqz\" }]\n      : [{ op: \"call\", funcIdx: nullishIdx }, { op: \"i32.eqz\" }];\n  const body: Instr[] = [\n    // state = self.$capability\n    { op: \"local.get\", index: 0 },\n    { op: \"ref.cast\", typeIdx: executorTypeIdx },\n    { op: \"struct.get\", typeIdx: executorTypeIdx, fieldIdx: capabilityFieldIdx },\n    { op: \"local.set\", index: stateLocal },\n    // A second call is only an error once a non-undefined slot was stored.\n    // (#5197 R3-1) `undefined` is NOT `ref.null.extern` under the #2864\n    // singleton regime: `executor(undefined, undefined)` and the zero-argument\n    // `executor()` (padded by `__apply_closure`) store the canonical\n    // `$AnyValue` undefined singleton, a NON-null externref. Guarding with a\n    // bare `ref.is_null` therefore treated that spec-legal state as \"already\n    // stored\" and made the following `executor(f, g)` throw. Consult the\n    // object runtime's own nullish predicate when it is registered; when it is\n    // not (legacy regime, where undefined IS the null bit pattern) keep the\n    // original `ref.is_null` body byte-for-byte.\n    { op: \"local.get\", index: stateLocal },\n    { op: \"struct.get\", typeIdx: stateTypeIdx, fieldIdx: 0 },\n    ...slotIsStoredTail,\n    { op: \"local.get\", index: stateLocal },\n    { op: \"struct.get\", typeIdx: stateTypeIdx, fieldIdx: 1 },\n    ...slotIsStoredTail,\n    { op: \"i32.or\" },\n    {\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then:\n        typeErrorIdx === undefined\n          ? [{ op: \"unreachable\" }]\n          : [{ op: \"ref.null.extern\" }, { op: \"call\", funcIdx: typeErrorIdx }, { op: \"throw\", tagIdx: exnTag }],\n    },\n    // Capture resolve and reject even when either is undefined. This mirrors\n    // GetCapabilitiesExecutor's sentinel semantics for the selected cohort.\n    { op: \"local.get\", index: stateLocal },\n    { op: \"local.get\", index: 1 },\n    { op: \"struct.set\", typeIdx: stateTypeIdx, fieldIdx: 0 },\n    { op: \"local.get\", index: stateLocal },\n    { op: \"local.get\", index: 2 },\n    { op: \"struct.set\", typeIdx: stateTypeIdx, fieldIdx: 1 },\n  ];\n  const funcTypeIdx = wrapper.liftedFuncTypeIdx;\n  pushDefinedFunc(ctx, executorFuncIdx, {\n    name: \"__promise_custom_capability_executor\",\n    typeIdx: funcTypeIdx,\n    locals: [{ name: \"$capability\", type: { kind: \"ref\", typeIdx: stateTypeIdx } }],\n    body,\n    exported: false,\n  });\n  ctx.funcMap.set(\"__promise_custom_capability_executor\", executorFuncIdx);\n\n  const result: CustomCapabilityRuntime = {\n    stateTypeIdx,\n    executorTypeIdx,\n    executorFuncIdx,\n    capMetaTypeIdx,\n    capabilityFieldIdx,\n  };\n  (ctx as CtxWithCustomCapability).__promiseCustomCapability = result;\n  return result;\n}\n\n/**\n * How the combinator's iterable argument reached us: either already a\n * canonical externref vec (`vec` — an array-shaped argument, possibly\n",
+          "beforeOffset": 3687,
+          "afterOffset": 3697,
+          "beforeSha256": "9fa90d1cace8210511025c50d8312af6b3d0a7780148dfb8929f2c5e9833d1c8",
+          "afterSha256": "2bb3ea8e20ec3aa0b823ead510512c7529923374395b8b198dc162e54de61687"
+        },
+        {
+          "ordinal": 2,
+          "before": "  addStringConstantGlobal(ctx, notIterableMsg);\n  addStringConstantGlobal(ctx, `Promise.${method} resolve is not callable`);\n  addStringConstantGlobal(ctx, \"resolve\");\n\n  const stateLocal = allocLocal(fctx, `__promise_capability_state_${fctx.locals.length}`, {\n    kind: \"ref\",\n",
+          "after": "  addStringConstantGlobal(ctx, notIterableMsg);\n  addStringConstantGlobal(ctx, `Promise.${method} resolve is not callable`);\n  addStringConstantGlobal(ctx, \"resolve\");\n  demandPromiseDynamicMember(ctx, \"then\", fctx); // (#6651 D5) Invoke(next, \"then\") on a native promise\n\n  const stateLocal = allocLocal(fctx, `__promise_capability_state_${fctx.locals.length}`, {\n    kind: \"ref\",\n",
+          "beforeOffset": 38695,
+          "afterOffset": 47257,
+          "beforeSha256": "9f808ffee01e37c44b90938e0d8b01c3a4f36ac4b5395c4156cf1b2dbab1c929",
+          "afterSha256": "fb119367f2a22adf4b61013ed9de3397ae56dfe9e3fdcb62128a08d03a4ea7a9"
+        }
+      ],
+      "retained": [
+        {
+          "beforeOffset": 0,
+          "afterOffset": 0,
+          "length": 2689,
+          "sha256": "5de166b225e5d246a72325e61d126e0d539c82e011c23769419f6e1c6c602dbe"
+        },
+        {
+          "beforeOffset": 3039,
+          "afterOffset": 3049,
+          "length": 648,
+          "sha256": "9118ca417ab472e6e8e0ce556c956399227a0a1db0a0d7f3795a2038186ffa70"
+        },
+        {
+          "beforeOffset": 4527,
+          "afterOffset": 13089,
+          "length": 34168,
+          "sha256": "91267912b7c84c84a233e5c544ce864950e051ac151f3fad8a8e36fdb2618c02"
+        },
+        {
+          "beforeOffset": 38973,
+          "afterOffset": 47639,
+          "length": 8717,
+          "sha256": "6ce96150e3570a328e7d66ab9cabf0cd08862aa907efef84dedc935d9279ad75"
+        }
+      ],
+      "rawAfter": {
+        "gitBlob": "01fe134b9cc4ed5cab4980c3cf6acb6d4bb40291",
+        "sha256": "5f8851330c370b2e38c18b3f4bad68763377fb476e4a7de952cae5da33bff677"
+      },
+      "initialLayer": "raw"
+    },
+    {
+      "path": "src/codegen/promise-combinator-drive.ts",
+      "beforeCommit": "d7de1281129ddff8d3a48902a5dcf81eaee7f8d3",
+      "afterCommit": "5b954c36e6c68ee5178a1d71780e8a836ce96746",
+      "before": {
+        "gitBlob": "c2aad2aad58e3c934838be86d9e0d4d423be3888",
+        "sha256": "798bac3867597742aa3f4e9eb7dfa9511d2f1e876478a4218f6505b1bd3fa972"
+      },
+      "after": {
+        "gitBlob": "b2d82e4dfbb7fa8bd7389ec7ae629a9c367d1832",
+        "sha256": "3b415c429f7ee5546c169b6a67b511f3048f5e478cee520c62acdfa146fda85d"
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "before": "import { ensureNativeIteratorRuntime } from \"./iterator-native.js\";\nimport { compileExpression } from \"./shared.js\";\nimport { PROMISE_STATE_PENDING, ensureAsyncDriveRuntime } from \"./async-scheduler.js\";\nimport {\n  combinatorReactionFns,\n  emitObservableCombinatorElement,\n  emitObservableCombinatorPreparation,\n  ensureCombinatorFunctions,\n  ensureObservableCombinatorRuntime,\n  type CombinatorRuntime,\n  type ObservableCombinatorPreparation,\n  type ObservableCombinatorRuntime,\n  type NativeCombinator,\n  type ObservableElementCarrier,\n} from \"./promise-combinators.js\";\n\nconst EXTERNREF: ValType = { kind: \"externref\" };\nconst I32: ValType = { kind: \"i32\" };\n",
+          "after": "import { ensureNativeIteratorRuntime } from \"./iterator-native.js\";\nimport { compileExpression } from \"./shared.js\";\nimport { PROMISE_STATE_PENDING, ensureAsyncDriveRuntime } from \"./async-scheduler.js\";\nimport { aggregateSettleFuncIdx } from \"./promise-species-then.js\"; // (#5197 r3)\nimport {\n  observableCombinatorReactionFns,\n  emitObservableCombinatorElement,\n  emitObservableCombinatorPreparation,\n  ensureObservableCombinatorRuntime,\n  type CombinatorRuntime,\n  type ObservableCombinatorPreparation,\n  type ObservableCombinatorRuntime,\n  type ObservableElementCarrier,\n} from \"./promise-combinator-observable-protocol.js\";\nimport { ensureCombinatorFunctions, type NativeCombinator } from \"./promise-combinators.js\";\n\nconst EXTERNREF: ValType = { kind: \"externref\" };\nconst I32: ValType = { kind: \"i32\" };\n",
+          "beforeOffset": 4492,
+          "afterOffset": 4492,
+          "beforeSha256": "16057ff9f279af7c300cdeda5ac6e264bf7e6b5e29890b6017e9092ac8d4bf3c",
+          "afterSha256": "fb7f1becbc8c7ba6aeebe2681c08c7f6c74849a8ae690e6bf256be6adf996682"
+        },
+        {
+          "ordinal": 1,
+          "before": "        ...captures,\n        arrTypeIdx: ids.arrTypeIdx,\n        vecTypeIdx: ids.vecTypeIdx,\n        fulfillFuncIdx: rt.fulfillFuncIdx,\n      }),\n      exported: false,\n    });\n",
+          "after": "        ...captures,\n        arrTypeIdx: ids.arrTypeIdx,\n        vecTypeIdx: ids.vecTypeIdx,\n        fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx), // (#5197 r3) Resolve(aggregate)\n      }),\n      exported: false,\n    });\n",
+          "beforeOffset": 8660,
+          "afterOffset": 8810,
+          "beforeSha256": "5e63d1414153bbfdbeb24a2f02c794bdafd204211419fb1c143afdf4326d6b6e",
+          "afterSha256": "c123238f4c59e6b3b6742842dea73f85bea2531c853a59a431c70fcdc1c2b90d"
+        },
+        {
+          "ordinal": 2,
+          "before": "  if (observableProtocol && !observable) return undefined;\n  const drive = method === \"all\" ? ensureDriveAllRuntime(ctx, ids, observable) : undefined;\n  if (method === \"all\" && !drive) return undefined;\n  const reaction = combinatorReactionFns(ctx, ids, method);\n  const tagIdx = ensureExnTag(ctx);\n  if (\n    ctx.funcMap.get(\"__iterator\") === undefined ||\n",
+          "after": "  if (observableProtocol && !observable) return undefined;\n  const drive = method === \"all\" ? ensureDriveAllRuntime(ctx, ids, observable) : undefined;\n  if (method === \"all\" && !drive) return undefined;\n  const reaction = observableCombinatorReactionFns(ids, method);\n  const tagIdx = ensureExnTag(ctx);\n  if (\n    ctx.funcMap.get(\"__iterator\") === undefined ||\n",
+          "beforeOffset": 13436,
+          "afterOffset": 13648,
+          "beforeSha256": "8583a13ab3b7c801f8dee4adfcc20f726e7fb4716e82119f378cdb81c800c225",
+          "afterSha256": "ea25bf2d7631bc3a9280483f53cff060389690e89188d9a4d60a64ba885b9e20"
+        },
+        {
+          "ordinal": 3,
+          "before": "            { op: \"struct.get\", typeIdx: st, fieldIdx: DRIVE_STATE_ARR },\n            { op: \"struct.new\", typeIdx: ids.vecTypeIdx },\n            { op: \"extern.convert_any\" },\n            { op: \"call\", funcIdx: rt.fulfillFuncIdx },\n            { op: \"drop\" },\n          ],\n        },\n",
+          "after": "            { op: \"struct.get\", typeIdx: st, fieldIdx: DRIVE_STATE_ARR },\n            { op: \"struct.new\", typeIdx: ids.vecTypeIdx },\n            { op: \"extern.convert_any\" },\n            { op: \"call\", funcIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) }, // (#5197 r3)\n            { op: \"drop\" },\n          ],\n        },\n",
+          "beforeOffset": 27543,
+          "afterOffset": 27760,
+          "beforeSha256": "1caf8d56c87b5dc4bbf70ac1e00c2b231a41244a1efea18870417c49d87c9d22",
+          "afterSha256": "3373be77c9492bf787d1ff28ce23d72f0a9e8e03205ef321af1c427d4538a2b8"
+        }
+      ],
+      "retained": [
+        {
+          "beforeOffset": 0,
+          "afterOffset": 0,
+          "length": 4492,
+          "sha256": "3853ed5885bd21ea4a88cdd4cb4f57ad8f89d39f27c6dda7c168c0d73b92d216"
+        },
+        {
+          "beforeOffset": 5154,
+          "afterOffset": 5304,
+          "length": 3506,
+          "sha256": "03c3795fd20ceb3322602c2d671214cd902738665985d15d20e8b1a68a0e3016"
+        },
+        {
+          "beforeOffset": 8837,
+          "afterOffset": 9049,
+          "length": 4599,
+          "sha256": "5da958e34010e1f4cc577f9c3496c2d680890462107e6e8e810824b9444af6d8"
+        },
+        {
+          "beforeOffset": 13793,
+          "afterOffset": 14010,
+          "length": 13750,
+          "sha256": "63c146da24ad0ab5f2b864fa88d01feb8fd6601845aef4da70c1ea1f5fd3c138"
+        },
+        {
+          "beforeOffset": 27826,
+          "afterOffset": 28086,
+          "length": 23,
+          "sha256": "4463fd2a3d313857a824394018184ef6bc07df0e77550aa44c18c2c19a1e3c8d"
+        }
+      ],
+      "rawAfter": {
+        "gitBlob": "67785ca324743621452d2d018d9282e0575a6534",
+        "sha256": "5851e7a37247d392be748b264d95839c86798c2c15b1615d73ff2f1e93000c3c"
+      },
+      "initialLayer": "authenticated-flat-drive-inverse-once"
+    },
+    {
+      "path": "src/codegen/promise-combinators.ts",
+      "beforeCommit": "422dbf01a07b58cceefc64846444485eb549d9a5",
+      "afterCommit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "before": {
+        "gitBlob": "b3bb351a185c5b62c11ab5dcbe7069c644ab8f2a",
+        "sha256": "b296ba1c515f722e416cb9bd0c85f54806c387e930a564bfbc6df51dce0ad32a"
+      },
+      "after": {
+        "gitBlob": "ce31c73551a2177661a96ada64f4dd0fd8fb5bfb",
+        "sha256": "2d4eec2bf3a6ae4a6be1093314789bc2ad9d5323591021227fb172b1c86e055f"
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "before": "// registered ONLY when a module compiles one (ensureSettledAnyCombinators) so\n// all/race-only modules stay byte-identical. (#2867 string-combinator slice)\n// String arguments drain through `__combinator_to_vec`'s code-point string arm\n// under native strings. f64-backed `number[]` vecs still fall through to the\n// existing host path except for #5197 R3-2's observable direct-VEC arm, which\n// boxes each slot only as that pipeline element is consumed. Generator-state\n// arguments remain follow-up work.\n//\n// **THE WIDEN HAS LANDED — this module is LIVE on `--target standalone`.**\n// (#2867 S2 correction, 2026-08-15.) This header said \"inert until the widen …\n",
+          "after": "// registered ONLY when a module compiles one (ensureSettledAnyCombinators) so\n// all/race-only modules stay byte-identical. (#2867 string-combinator slice)\n// String arguments drain through `__combinator_to_vec`'s code-point string arm\n// under native strings. f64-backed `number[]` vecs (the Gap-4\n// output-representation escalation) and generator-state arguments still fall\n// through to the existing host path (follow-ups).\n//\n// **THE WIDEN HAS LANDED — this module is LIVE on `--target standalone`.**\n// (#2867 S2 correction, 2026-08-15.) This header said \"inert until the widen …\n",
+          "beforeOffset": 1803,
+          "afterOffset": 1803,
+          "beforeSha256": "68acc886e4d1a25467964f58095585b7902aabb1774fbfd54c9d26faaab8c653",
+          "afterSha256": "912a1cac8c94f0b6d32d0c90841112624d8ecaaa68aa63766817930f4dc7652d"
+        },
+        {
+          "ordinal": 1,
+          "before": "import { addStringConstantGlobal } from \"./registry/imports.js\";\nimport { ensureNativeStringHelpers, stringConstantExternrefInstrs } from \"./native-strings.js\";\nimport { BUILTIN_TYPE_TAGS } from \"./builtin-tags.js\";\nimport { buildClosureRefTestArms } from \"./closure-classifier.js\";\nimport { emitBuiltinConstructorIdentity } from \"./builtin-static-globals.js\";\nimport { ensureStandaloneBuiltinStaticMethodClosure } from \"./builtin-value-read.js\";\nimport { reserveCarrierBagVisibility } from \"./carrier-bag-visibility.js\";\nimport { buildTargetTaggedTry } from \"../ir/try-table.js\";\nimport {\n  buildPromiseSettleClosureInstrs,\n  ensureAsyncDriveRuntime,\n  ensurePromiseExecutorClosures,\n  getOrRegisterPromiseType,\n  PROMISE_STATE_FULFILLED,\n  PROMISE_STATE_PENDING,\n  PROMISE_STATE_REJECTED,\n  isStandalonePromiseActive,\n  type PromiseExecutorClosures,\n} from \"./async-scheduler.js\";\n\nconst EXTERNREF: ValType = { kind: \"externref\" };\n\nexport type AsyncDriveRuntimeT = ReturnType<typeof ensureAsyncDriveRuntime>;\n\n/** The combinators this module lowers natively (#2867 Gap 4 `all`/`race`; #3137 `allSettled`/`any`). */\nexport type NativeCombinator = \"all\" | \"race\" | \"allSettled\" | \"any\";\n",
+          "after": "import { addStringConstantGlobal } from \"./registry/imports.js\";\nimport { ensureNativeStringHelpers, stringConstantExternrefInstrs } from \"./native-strings.js\";\nimport { BUILTIN_TYPE_TAGS } from \"./builtin-tags.js\";\nimport {\n  ensureAsyncDriveRuntime,\n  getOrRegisterPromiseType,\n  PROMISE_STATE_FULFILLED,\n  PROMISE_STATE_PENDING,\n  PROMISE_STATE_REJECTED,\n  isStandalonePromiseActive,\n} from \"./async-scheduler.js\";\nimport { aggregateSettleFuncIdx } from \"./promise-species-then.js\"; // (#5197 r3)\n\nconst EXTERNREF: ValType = { kind: \"externref\" };\n\ntype AsyncDriveRuntimeT = ReturnType<typeof ensureAsyncDriveRuntime>;\n\n/** The combinators this module lowers natively (#2867 Gap 4 `all`/`race`; #3137 `allSettled`/`any`). */\nexport type NativeCombinator = \"all\" | \"race\" | \"allSettled\" | \"any\";\n",
+          "beforeOffset": 5775,
+          "afterOffset": 5696,
+          "beforeSha256": "f5a52a2e6a568e2d8a61cdb1b941db72a2061bdc9b669542a8a54d30c293e9f5",
+          "afterSha256": "cacd24debbc0a5dcec5d51b3e38744ec1c6b5ff3d3a8355516007232e29abc01"
+        },
+        {
+          "ordinal": 2,
+          "before": "  return true;\n}\n\nexport interface CombinatorRuntime {\n  /** `$CombinatorState { resultPromise: ref $Promise, resultsArr: ref $arr_ext, length: i32, remaining (mut) i32 }`. */\n  stateTypeIdx: number;\n  /** `$CombinatorElemCaps { state: ref $CombinatorState, index: i32 }`. */\n",
+          "after": "  return true;\n}\n\ninterface CombinatorRuntime {\n  /** `$CombinatorState { resultPromise: ref $Promise, resultsArr: ref $arr_ext, length: i32, remaining (mut) i32 }`. */\n  stateTypeIdx: number;\n  /** `$CombinatorElemCaps { state: ref $CombinatorState, index: i32 }`. */\n",
+          "beforeOffset": 24889,
+          "afterOffset": 24420,
+          "beforeSha256": "25a16a7b9ef5646a9be9e4fbcb90f10ff2325b5b61714a28e00fdd1d8aa56c1d",
+          "afterSha256": "6df03ae16e3f342bbf72b885e98bd03d5b4e7a8b778da8bad87b3c9e135da0a1"
+        },
+        {
+          "ordinal": 3,
+          "before": "\ntype CtxWithCombinators = CodegenContext & { __promiseCombinators?: CombinatorRuntime };\n\n/**\n * (#5197 R3-2) The closure carrier for `Promise.all`'s per-element resolve\n * function.  The normal combinator runtime uses raw microtask callbacks, but\n * the observable protocol must hand a real, one-argument function object to\n * `nextPromise.then`.  Keep this tiny bridge separate from the legacy\n * subscribe/runtime bodies so sources that do not observe `resolve`/`then`\n * remain byte-identical.\n */\nexport interface ObservableCombinatorRuntime {\n  /** `$__combinator_all_resolve_cap` subtype containing element caps + called bit. */\n  allResolveCapTypeIdx: number;\n  /** First capture after the inherited builtin-function metadata fields. */\n  allResolveElemCapsFieldIdx: number;\n  /** Mutable once-only bit used by §27.2.4.1 resolve-element functions. */\n  allResolveCalledFieldIdx: number;\n  /** Builtin metadata carrier used to make the closure observable as a function. */\n  allResolveMetaTypeIdx: number;\n  /** Target-standard exception tag used around observable Get/Call/Invoke. */\n  exnTagIdx: number;\n  /** Standard one-argument result capability resolve/reject closures. */\n  settleClosures: PromiseExecutorClosures;\n}\n\n// Do not cache defined-function indices here. A later host import can shift\n// them after this runtime has been registered; every observable emit site\n// re-resolves its helper from `ctx.funcMap`, while these type indices remain\n// stable for the lifetime of the module.\n\ntype CtxWithObservableCombinators = CodegenContext & {\n  __promiseObservableCombinators?: ObservableCombinatorRuntime | null;\n};\n\n/** State shared by the literal and direct-vector observable paths. */\nexport interface ObservableCombinatorPreparation {\n  resultLocal: number;\n  ctorLocal: number;\n  resolveLocal: number;\n  abortedLocal: number;\n  /** One result-capability resolve closure, shared by every observable race element. */\n  raceFulfillLocal: number;\n  /** One result-capability reject closure, shared by every observable element. */\n  rejectLocal: number;\n}\n\n/**\n * Register the bounded R3-2 plumbing before an emitter splices any detached\n * argument buffers into a function body.  Every existing native combinator\n * helper deliberately remains untouched: the source-wide observable gate is\n * the sole admission point for this additional machinery.\n */\nexport function ensureObservableCombinatorRuntime(\n  ctx: CodegenContext,\n  ids: CombinatorRuntime,\n): ObservableCombinatorRuntime | null {\n  const cache = ctx as CtxWithObservableCombinators;\n  if (cache.__promiseObservableCombinators !== undefined) return cache.__promiseObservableCombinators;\n\n  // Register the property-read/call substrate before minting our capture type.\n  // `Promise.resolve` must be a reified closure in the unmodified case too: the\n  // observable route always performs the actual Get/Call rather than assuming\n  // the direct native entry point.\n  ensureObjectRuntime(ctx);\n  ensureObjVecBuilders(ctx);\n  // A source that assigns/defines an own Promise `then` has already reserved\n  // its carrier substrate. Make the shared presence predicate available before\n  // observable native-own Invoke arms are emitted.\n  reserveCarrierBagVisibility(ctx);\n  const applyClosureIdx = reserveApplyClosure(ctx);\n  ensureStandaloneBuiltinStaticMethodClosure(ctx, \"Promise\", \"resolve\");\n  const executorClosures = ensurePromiseExecutorClosures(ctx);\n  emitWasiErrorConstructor(ctx, \"TypeError\", 1);\n  addStringConstantGlobal(ctx, \"Promise resolve is not callable\");\n  addStringConstantGlobal(ctx, \"Promise then is not callable\");\n\n  const externGetIdx = ctx.funcMap.get(\"__extern_get\");\n  const newTypeErrorIdx = ctx.funcMap.get(\"__new_TypeError\");\n  if (\n    executorClosures === null ||\n    externGetIdx === undefined ||\n    applyClosureIdx === undefined ||\n    newTypeErrorIdx === undefined\n  ) {\n    cache.__promiseObservableCombinators = null;\n    return null;\n  }\n\n  const wrapper = getOrCreateFuncRefWrapperTypes(ctx, [EXTERNREF], []);\n  if (!wrapper) {\n    cache.__promiseObservableCombinators = null;\n    return null;\n  }\n  const allResolveMetaTypeIdx = ensureBuiltinFnMetaType(\n    ctx,\n    wrapper.structTypeIdx,\n    wrapper.closureInfo,\n    \"promise:all-resolve-element\",\n    \"\",\n    1,\n  );\n  const metaFields = (ctx.mod.types[allResolveMetaTypeIdx] as { fields: FieldDef[] }).fields;\n  const allResolveElemCapsFieldIdx = metaFields.length;\n  const allResolveCalledFieldIdx = allResolveElemCapsFieldIdx + 1;\n  const allResolveCapTypeIdx = ctx.mod.types.length;\n  const allResolveFields: FieldDef[] = [\n    ...metaFields.map((field) => ({ ...field })),\n    { name: \"$elemCaps\", type: { kind: \"ref\", typeIdx: ids.elemCapsTypeIdx }, mutable: false },\n    { name: \"$called\", type: { kind: \"i32\" }, mutable: true },\n  ];\n  ctx.mod.types.push({\n    kind: \"struct\",\n    name: \"$__combinator_all_resolve_cap\",\n    fields: allResolveFields,\n    superTypeIdx: allResolveMetaTypeIdx,\n  });\n  ctx.structMap.set(\"$__combinator_all_resolve_cap\", allResolveCapTypeIdx);\n  ctx.typeIdxToStructName.set(allResolveCapTypeIdx, \"$__combinator_all_resolve_cap\");\n  ctx.structFields.set(\n    \"$__combinator_all_resolve_cap\",\n    allResolveFields.map((field) => ({ ...field })),\n  );\n\n  const allResolveFuncIdx = mintDefinedFunc(ctx);\n  pushDefinedFunc(ctx, allResolveFuncIdx, {\n    name: \"__combinator_all_resolve_element\",\n    typeIdx: wrapper.liftedFuncTypeIdx,\n    locals: [{ name: \"$cap\", type: { kind: \"ref\", typeIdx: allResolveCapTypeIdx } }],\n    body: [\n      { op: \"local.get\", index: 0 },\n      { op: \"ref.cast\", typeIdx: allResolveCapTypeIdx },\n      { op: \"local.set\", index: 2 },\n      { op: \"local.get\", index: 2 },\n      { op: \"struct.get\", typeIdx: allResolveCapTypeIdx, fieldIdx: allResolveCalledFieldIdx },\n      {\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n        then: [],\n        else: [\n          { op: \"local.get\", index: 2 },\n          { op: \"i32.const\", value: 1 },\n          { op: \"struct.set\", typeIdx: allResolveCapTypeIdx, fieldIdx: allResolveCalledFieldIdx },\n          { op: \"local.get\", index: 2 },\n          { op: \"struct.get\", typeIdx: allResolveCapTypeIdx, fieldIdx: allResolveElemCapsFieldIdx },\n          { op: \"extern.convert_any\" },\n          { op: \"local.get\", index: 1 },\n          { op: \"call\", funcIdx: ids.allFulfillFuncIdx },\n          { op: \"drop\" },\n        ],\n      },\n    ],\n    exported: false,\n  });\n  ctx.funcMap.set(\"__combinator_all_resolve_element\", allResolveFuncIdx);\n\n  const result: ObservableCombinatorRuntime = {\n    allResolveCapTypeIdx,\n    allResolveElemCapsFieldIdx,\n    allResolveCalledFieldIdx,\n    allResolveMetaTypeIdx,\n    exnTagIdx: ensureExnTag(ctx),\n    settleClosures: executorClosures,\n  };\n  cache.__promiseObservableCombinators = result;\n  return result;\n}\n\nfunction registerStruct(\n  ctx: CodegenContext,\n  name: string,\n",
+          "after": "\ntype CtxWithCombinators = CodegenContext & { __promiseCombinators?: CombinatorRuntime };\n\nfunction registerStruct(\n  ctx: CodegenContext,\n  name: string,\n",
+          "beforeOffset": 26878,
+          "afterOffset": 26402,
+          "beforeSha256": "7cd8cb6fd4b689f64412fcc0be9e74ddfc7272048b16ee774854f0002fd977a2",
+          "afterSha256": "ef4e26af8d1a60e6e2a03939dfdaa1ce9c7b7e267b20a73b7a54210b1755879d"
+        },
+        {
+          "ordinal": 4,
+          "before": "      stateTypeIdx: ids.stateTypeIdx,\n      arrTypeIdx: ids.arrTypeIdx,\n      vecTypeIdx: ids.vecTypeIdx,\n      fulfillFuncIdx: rt.fulfillFuncIdx,\n    }),\n    exported: false,\n  });\n",
+          "after": "      stateTypeIdx: ids.stateTypeIdx,\n      arrTypeIdx: ids.arrTypeIdx,\n      vecTypeIdx: ids.vecTypeIdx,\n      fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx), // (#5197 r3) Resolve(aggregate)\n    }),\n    exported: false,\n  });\n",
+          "beforeOffset": 37651,
+          "afterOffset": 30439,
+          "beforeSha256": "541990f94449960753571a557b5a5eed57fd85ee9bb5e7d2f738cf1f15e78ae9",
+          "afterSha256": "ad536b814912ebd8063a7c81c4e3be42e8f147c3b3f872f40189a36617ec8053"
+        },
+        {
+          "ordinal": 5,
+          "before": " * functions, and the emitters' ordering contract requires every registration\n * to precede the copy (see the #2919 liveBodies note at the literal call site).\n */\nexport function combinatorReactionFns(\n  ctx: CodegenContext,\n  ids: CombinatorRuntime,\n  method: NativeCombinator,\n",
+          "after": " * functions, and the emitters' ordering contract requires every registration\n * to precede the copy (see the #2919 liveBodies note at the literal call site).\n */\nfunction combinatorReactionFns(\n  ctx: CodegenContext,\n  ids: CombinatorRuntime,\n  method: NativeCombinator,\n",
+          "beforeOffset": 43188,
+          "afterOffset": 36038,
+          "beforeSha256": "e78717a6aaf0dfd3236f96055b01c662c385251fe22a5c090af956b90657fbe7",
+          "afterSha256": "70a6c972bd1efc18853ef07f1e4ec581503f8932ef7e20d60866dd5268639c6c"
+        },
+        {
+          "ordinal": 6,
+          "before": "        { op: \"struct.get\", typeIdx: ids.stateTypeIdx, fieldIdx: 1 },\n        { op: \"struct.new\", typeIdx: ids.vecTypeIdx },\n        { op: \"extern.convert_any\" },\n        { op: \"call\", funcIdx: rt.fulfillFuncIdx },\n        { op: \"drop\" },\n      ],\n    },\n",
+          "after": "        { op: \"struct.get\", typeIdx: ids.stateTypeIdx, fieldIdx: 1 },\n        { op: \"struct.new\", typeIdx: ids.vecTypeIdx },\n        { op: \"extern.convert_any\" },\n        { op: \"call\", funcIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) }, // (#5197 r3)\n        { op: \"drop\" },\n      ],\n    },\n",
+          "beforeOffset": 49867,
+          "afterOffset": 42710,
+          "beforeSha256": "c75063498b9e186a23bf281f00396153a4e24519fd0d479d4aad307822afeb6d",
+          "afterSha256": "7a1b418eeb8424e83d2f92b5a60d6f369f48ef4cba68f317f57f0722523f7a1b"
+        },
+        {
+          "ordinal": 7,
+          "before": "  ];\n}\n\n// ── (#5197 R3-2) Observable Promise.all / Promise.race pipeline ───────────\n\n/** Build `RejectPromise(result, reason)` plus the local abrupt-completion bit. */\nfunction buildObservableRejectInstrs(\n  rt: AsyncDriveRuntimeT,\n  preparation: ObservableCombinatorPreparation,\n  reasonInstrs: readonly Instr[],\n): Instr[] {\n  return [\n    { op: \"local.get\", index: preparation.resultLocal },\n    ...reasonInstrs,\n    { op: \"call\", funcIdx: rt.rejectFuncIdx },\n    { op: \"drop\" },\n    { op: \"i32.const\", value: 1 },\n    { op: \"local.set\", index: preparation.abortedLocal },\n  ];\n}\n\n/** The observable path's `IsCallable` predicate over the shared closure set. */\nfunction buildObservableCallableCheckInstrs(\n  ctx: CodegenContext,\n  valueLocal: number,\n  callableLocal: number,\n  anyLocal: number,\n): Instr[] {\n  return [\n    { op: \"i32.const\", value: 0 },\n    { op: \"local.set\", index: callableLocal },\n    { op: \"local.get\", index: valueLocal },\n    { op: \"ref.is_null\" },\n    {\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [],\n      else: [\n        { op: \"local.get\", index: valueLocal },\n        { op: \"any.convert_extern\" },\n        { op: \"local.set\", index: anyLocal },\n        ...buildClosureRefTestArms(ctx, anyLocal, [\n          { op: \"i32.const\", value: 1 },\n          { op: \"local.set\", index: callableLocal },\n        ]),\n      ],\n    },\n  ];\n}\n\n/** Emit a native TypeError rejection for a non-callable observable method. */\nfunction buildObservableTypeErrorRejectInstrs(\n  ctx: CodegenContext,\n  rt: AsyncDriveRuntimeT,\n  preparation: ObservableCombinatorPreparation,\n  observable: ObservableCombinatorRuntime,\n  message: string,\n): Instr[] {\n  return buildObservableRejectInstrs(rt, preparation, [\n    ...stringConstantExternrefInstrs(ctx, message),\n    { op: \"call\", funcIdx: ctx.funcMap.get(\"__new_TypeError\")! },\n  ]);\n}\n\n/**\n * Set up NewPromiseCapability's native result carrier and the one observable\n * `Get(C, \"resolve\")`.  The get is wrapped in the target-standard EH builder;\n * an abrupt completion rejects the already-created result and prevents any\n * later iterator/pipeline work.  The resolve value is intentionally held in a\n * local so later source writes cannot replace the captured method.\n */\nexport function emitObservableCombinatorPreparation(\n  ctx: CodegenContext,\n  fctx: FunctionContext,\n  ids: CombinatorRuntime,\n  rt: AsyncDriveRuntimeT,\n  observable: ObservableCombinatorRuntime,\n  method: \"all\" | \"race\",\n): ObservableCombinatorPreparation {\n  const resultLocal = allocLocal(fctx, `__comb_observable_result_${fctx.locals.length}`, {\n    kind: \"ref\",\n    typeIdx: ids.promiseTypeIdx,\n  });\n  const ctorLocal = allocLocal(fctx, `__comb_observable_ctor_${fctx.locals.length}`, EXTERNREF);\n  const resolveLocal = allocLocal(fctx, `__comb_observable_resolve_${fctx.locals.length}`, EXTERNREF);\n  const abortedLocal = allocLocal(fctx, `__comb_observable_abrupt_${fctx.locals.length}`, { kind: \"i32\" });\n  const reasonLocal = allocLocal(fctx, `__comb_observable_reason_${fctx.locals.length}`, EXTERNREF);\n  const callableLocal = allocLocal(fctx, `__comb_observable_callable_${fctx.locals.length}`, { kind: \"i32\" });\n  const callableAnyLocal = allocLocal(fctx, `__comb_observable_callable_any_${fctx.locals.length}`, {\n    kind: \"anyref\",\n  });\n  // §27.2.4.3.1 creates the aggregate capability's resolve/reject exactly\n  // once, then passes those same function *objects* to each `then` Invoke.\n  // Keep them in externref locals so a thenable can observe handler identity.\n  const raceFulfillLocal =\n    method === \"race\" ? allocLocal(fctx, `__comb_observable_race_fulfill_${fctx.locals.length}`, EXTERNREF) : -1;\n  const rejectLocal = allocLocal(fctx, `__comb_observable_reject_${fctx.locals.length}`, EXTERNREF);\n  const preparation = { resultLocal, ctorLocal, resolveLocal, abortedLocal, raceFulfillLocal, rejectLocal };\n\n  // New native result promise: `Promise.all` / `race`'s capability promise.\n  fctx.body.push(\n    { op: \"i32.const\", value: PROMISE_STATE_PENDING },\n    { op: \"ref.null.extern\" },\n    { op: \"ref.null.extern\" },\n    closureBagInitInstr(),\n    { op: \"struct.new\", typeIdx: ids.promiseTypeIdx },\n    { op: \"local.set\", index: resultLocal },\n    { op: \"i32.const\", value: 0 },\n    { op: \"local.set\", index: abortedLocal },\n  );\n\n  if (method === \"race\") {\n    fctx.body.push(\n      ...buildPromiseSettleClosureInstrs(observable.settleClosures, ctx.funcMap.get(\"__promise_resolve_cl\")!, [\n        { op: \"local.get\", index: resultLocal },\n      ]),\n      { op: \"extern.convert_any\" },\n      { op: \"local.set\", index: raceFulfillLocal },\n    );\n  }\n  fctx.body.push(\n    ...buildPromiseSettleClosureInstrs(observable.settleClosures, ctx.funcMap.get(\"__promise_reject_cl\")!, [\n      { op: \"local.get\", index: resultLocal },\n    ]),\n    { op: \"extern.convert_any\" },\n    { op: \"local.set\", index: rejectLocal },\n  );\n\n  // `Promise` is the same identity-stable carrier the source-level mutation\n  // writes target.  Do this before iterator draining so a throwing getter wins\n  // over an observable iterator getter, as required by GetPromiseResolve.\n  emitBuiltinConstructorIdentity(ctx, fctx, \"Promise\");\n  fctx.body.push({ op: \"local.set\", index: ctorLocal });\n  fctx.body.push(\n    buildTargetTaggedTry(\n      ctx,\n      { kind: \"empty\" },\n      [\n        { op: \"local.get\", index: ctorLocal },\n        ...stringConstantExternrefInstrs(ctx, \"resolve\"),\n        { op: \"call\", funcIdx: ctx.funcMap.get(\"__extern_get\")! },\n        { op: \"local.set\", index: resolveLocal },\n      ],\n      [\n        {\n          tagIdx: observable.exnTagIdx,\n          body: [\n            { op: \"local.set\", index: reasonLocal },\n            ...buildObservableRejectInstrs(rt, preparation, [{ op: \"local.get\", index: reasonLocal }]),\n          ],\n        },\n      ],\n    ),\n  );\n\n  // IsCallable(promiseResolve). A non-callable resolve is an abrupt completion\n  // converted to a rejected capability, never a synchronous throw from the\n  // direct-call lowering.\n  fctx.body.push(\n    { op: \"local.get\", index: abortedLocal },\n    { op: \"i32.eqz\" },\n    {\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [\n        ...buildObservableCallableCheckInstrs(ctx, resolveLocal, callableLocal, callableAnyLocal),\n        { op: \"local.get\", index: callableLocal },\n        { op: \"i32.eqz\" },\n        {\n          op: \"if\",\n          blockType: { kind: \"empty\" },\n          then: buildObservableTypeErrorRejectInstrs(\n            ctx,\n            rt,\n            preparation,\n            observable,\n            \"Promise resolve is not callable\",\n          ),\n        },\n      ],\n    },\n  );\n  return preparation;\n}\n\n/** Allocate the aggregate state once its (already-evaluated) input count is known. */\nfunction emitObservableCombinatorState(\n  fctx: FunctionContext,\n  ids: CombinatorRuntime,\n  preparation: ObservableCombinatorPreparation,\n  method: \"all\" | \"race\",\n  lengthInstrs: readonly Instr[],\n): { stateLocal: number; arrLocal: number; lengthLocal: number } {\n  const arrLocal = allocLocal(fctx, `__comb_observable_arr_${fctx.locals.length}`, {\n    kind: \"ref\",\n    typeIdx: ids.arrTypeIdx,\n  });\n  const stateLocal = allocLocal(fctx, `__comb_observable_state_${fctx.locals.length}`, {\n    kind: \"ref\",\n    typeIdx: ids.stateTypeIdx,\n  });\n  const lengthLocal = allocLocal(fctx, `__comb_observable_length_${fctx.locals.length}`, { kind: \"i32\" });\n  fctx.body.push(\n    ...lengthInstrs,\n    { op: \"local.set\", index: lengthLocal },\n    { op: \"local.get\", index: lengthLocal },\n    { op: \"array.new_default\", typeIdx: ids.arrTypeIdx },\n    { op: \"local.set\", index: arrLocal },\n    { op: \"local.get\", index: preparation.resultLocal },\n    { op: \"local.get\", index: arrLocal },\n    { op: \"local.get\", index: lengthLocal },\n    // Promise.all's remaining-elements count begins with its completion\n    // sentinel. Each successfully-resolved element increments it immediately\n    // before Invoke(next, \"then\", ...); iteration drops this final unit only\n    // after every Invoke has returned. This prevents an eager thenable from\n    // fulfilling the aggregate before a later abrupt Invoke can reject it.\n    ...(method === \"all\"\n      ? ([{ op: \"i32.const\", value: 1 }] satisfies Instr[])\n      : ([{ op: \"local.get\", index: lengthLocal }] satisfies Instr[])),\n    { op: \"struct.new\", typeIdx: ids.stateTypeIdx },\n    { op: \"local.set\", index: stateLocal },\n  );\n  return { stateLocal, arrLocal, lengthLocal };\n}\n\n/**\n * Drop Promise.all's remaining-elements completion sentinel after its admitted\n * literal/direct-VEC iteration finishes. The final decrement is intentionally\n * absent when an earlier Get/Call/Invoke rejected the aggregate.\n */\nfunction emitObservableAllIterationComplete(\n  fctx: FunctionContext,\n  ids: CombinatorRuntime,\n  rt: AsyncDriveRuntimeT,\n  method: NativeCombinator,\n  preparation: ObservableCombinatorPreparation,\n  state: { stateLocal: number; arrLocal: number; lengthLocal: number },\n): void {\n  if (method !== \"all\") return;\n  const remainingLocal = allocLocal(fctx, `__comb_observable_remaining_${fctx.locals.length}`, { kind: \"i32\" });\n  fctx.body.push(\n    { op: \"local.get\", index: preparation.abortedLocal },\n    { op: \"i32.eqz\" },\n    {\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [\n        { op: \"local.get\", index: state.stateLocal },\n        { op: \"local.get\", index: state.stateLocal },\n        { op: \"struct.get\", typeIdx: ids.stateTypeIdx, fieldIdx: 3 },\n        { op: \"i32.const\", value: 1 },\n        { op: \"i32.sub\" },\n        { op: \"local.tee\", index: remainingLocal },\n        { op: \"struct.set\", typeIdx: ids.stateTypeIdx, fieldIdx: 3 },\n        { op: \"local.get\", index: remainingLocal },\n        { op: \"i32.eqz\" },\n        {\n          op: \"if\",\n          blockType: { kind: \"empty\" },\n          then: [\n            { op: \"local.get\", index: preparation.resultLocal },\n            { op: \"local.get\", index: state.lengthLocal },\n            { op: \"local.get\", index: state.arrLocal },\n            { op: \"struct.new\", typeIdx: ids.vecTypeIdx },\n            { op: \"extern.convert_any\" },\n            { op: \"call\", funcIdx: rt.fulfillFuncIdx },\n            { op: \"drop\" },\n          ],\n        },\n      ],\n    },\n  );\n}\n\n/** Mint the `resolveElement` closure passed to one observable `Promise.all` then call. */\nfunction buildObservableAllResolveClosureInstrs(\n  ctx: CodegenContext,\n  observable: ObservableCombinatorRuntime,\n  elemCapsLocal: number,\n): Instr[] {\n  return [\n    { op: \"ref.func\", funcIdx: ctx.funcMap.get(\"__combinator_all_resolve_element\")! },\n    { op: \"i32.const\", value: 1 },\n    closureBagInitInstr(),\n    { op: \"i32.const\", value: 0 },\n    { op: \"i32.const\", value: observable.allResolveMetaTypeIdx },\n    { op: \"local.get\", index: elemCapsLocal },\n    { op: \"i32.const\", value: 0 },\n    { op: \"struct.new\", typeIdx: observable.allResolveCapTypeIdx },\n    { op: \"extern.convert_any\" },\n  ];\n}\n\n/**\n * (#6651 D2b) The aggregate-state types an observable element pipeline writes.\n * The literal/direct-VEC callers pass none and get `$CombinatorState`; the\n * driven dynamic-iterable `Promise.all` (`promise-combinator-drive.ts`) passes\n * its growable `$CombinatorDriveState` twin, which has the same field order.\n */\nexport interface ObservableElementCarrier {\n  stateTypeIdx: number;\n  elemCapsTypeIdx: number;\n  subscribeFuncIdx: number;\n  buildAllResolveClosure: (elemCapsLocal: number) => Instr[];\n}\n\n/**\n * Append one `Call(resolve, C, [value])` then `Invoke(next, \"then\", …)`\n * pipeline.  This is intentionally emitted at the call site: the captured\n * resolve method and constructor are per-combinator invocation, while the\n * legacy `__combinator_subscribe` helper is source-agnostic.\n */\nexport function emitObservableCombinatorElement(\n  ctx: CodegenContext,\n  fctx: FunctionContext,\n  ids: CombinatorRuntime,\n  rt: AsyncDriveRuntimeT,\n  observable: ObservableCombinatorRuntime,\n  preparation: ObservableCombinatorPreparation,\n  method: \"all\" | \"race\",\n  reaction: { fulfillIdx: number; rejectIdx: number },\n  stateLocal: number,\n  indexInstrs: readonly Instr[],\n  inputInstrs: readonly Instr[],\n  carrier: ObservableElementCarrier = {\n    stateTypeIdx: ids.stateTypeIdx,\n    elemCapsTypeIdx: ids.elemCapsTypeIdx,\n    subscribeFuncIdx: ids.subscribeFuncIdx,\n    buildAllResolveClosure: (elemCapsLocal) => buildObservableAllResolveClosureInstrs(ctx, observable, elemCapsLocal),\n  },\n): void {\n  const inputLocal = allocLocal(fctx, `__comb_observable_input_${fctx.locals.length}`, EXTERNREF);\n  const resolveArgsLocal = allocLocal(fctx, `__comb_observable_resolve_args_${fctx.locals.length}`, EXTERNREF);\n  const thenArgsLocal = allocLocal(fctx, `__comb_observable_then_args_${fctx.locals.length}`, EXTERNREF);\n  const nextLocal = allocLocal(fctx, `__comb_observable_next_${fctx.locals.length}`, EXTERNREF);\n  const errorLocal = allocLocal(fctx, `__comb_observable_error_${fctx.locals.length}`, EXTERNREF);\n  const thenLocal = allocLocal(fctx, `__comb_observable_then_${fctx.locals.length}`, EXTERNREF);\n  const callableLocal = allocLocal(fctx, `__comb_observable_then_callable_${fctx.locals.length}`, { kind: \"i32\" });\n  const callableAnyLocal = allocLocal(fctx, `__comb_observable_then_any_${fctx.locals.length}`, { kind: \"anyref\" });\n  const nextAnyLocal = allocLocal(fctx, `__comb_observable_next_any_${fctx.locals.length}`, { kind: \"anyref\" });\n  const elemCapsLocal =\n    method === \"all\"\n      ? allocLocal(fctx, `__comb_observable_elem_caps_${fctx.locals.length}`, {\n          kind: \"ref\",\n          typeIdx: carrier.elemCapsTypeIdx,\n        })\n      : -1;\n\n  // Literal callers pass a pre-evaluated local; direct-vector callers pass the\n  // current slot. No source argument expression is evaluated here, so an\n  // earlier abrupt pipeline element cannot change argument-list evaluation.\n  fctx.body.push(...inputInstrs, { op: \"local.set\", index: inputLocal });\n\n  const buildRejectFromError = (): Instr[] => [\n    { op: \"local.set\", index: errorLocal },\n    ...buildObservableRejectInstrs(rt, preparation, [{ op: \"local.get\", index: errorLocal }]),\n  ];\n  const buildFulfilHandler = (): Instr[] => {\n    if (method === \"all\") {\n      return [\n        { op: \"local.get\", index: stateLocal },\n        ...indexInstrs,\n        { op: \"struct.new\", typeIdx: carrier.elemCapsTypeIdx },\n        { op: \"local.set\", index: elemCapsLocal },\n        ...carrier.buildAllResolveClosure(elemCapsLocal),\n      ];\n    }\n    return [{ op: \"local.get\", index: preparation.raceFulfillLocal }];\n  };\n  const buildRejectHandler = (): Instr[] => [{ op: \"local.get\", index: preparation.rejectLocal }];\n  const buildThenArgs = (): Instr[] => [\n    { op: \"call\", funcIdx: ctx.funcMap.get(\"__objvec_new\")! },\n    { op: \"local.set\", index: thenArgsLocal },\n    { op: \"local.get\", index: thenArgsLocal },\n    ...buildFulfilHandler(),\n    { op: \"call\", funcIdx: ctx.funcMap.get(\"__objvec_push\")! },\n    { op: \"local.get\", index: thenArgsLocal },\n    ...buildRejectHandler(),\n    { op: \"call\", funcIdx: ctx.funcMap.get(\"__objvec_push\")! },\n  ];\n  const buildLegacySubscribe = (): Instr[] => [\n    { op: \"local.get\", index: nextLocal },\n    { op: \"local.get\", index: stateLocal },\n    { op: \"extern.convert_any\" },\n    ...indexInstrs,\n    { op: \"ref.func\", funcIdx: reaction.fulfillIdx },\n    { op: \"ref.func\", funcIdx: reaction.rejectIdx },\n    { op: \"call\", funcIdx: carrier.subscribeFuncIdx },\n  ];\n  const buildNativeInvoke = (): Instr[] => {\n    const carrierBagHasIdx = ctx.funcMap.get(\"__carrier_bag_has\");\n    if (carrierBagHasIdx === undefined) return buildLegacySubscribe();\n    return [\n      { op: \"local.get\", index: nextLocal },\n      ...stringConstantExternrefInstrs(ctx, \"then\"),\n      { op: \"call\", funcIdx: carrierBagHasIdx },\n      {\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n        then: [\n          buildTargetTaggedTry(\n            ctx,\n            { kind: \"empty\" },\n            [\n              { op: \"local.get\", index: nextLocal },\n              ...stringConstantExternrefInstrs(ctx, \"then\"),\n              { op: \"call\", funcIdx: ctx.funcMap.get(\"__extern_get\")! },\n              { op: \"local.set\", index: thenLocal },\n              ...buildObservableCallableCheckInstrs(ctx, thenLocal, callableLocal, callableAnyLocal),\n              { op: \"local.get\", index: callableLocal },\n              {\n                op: \"if\",\n                blockType: { kind: \"empty\" },\n                then: [\n                  { op: \"local.get\", index: thenLocal },\n                  { op: \"local.get\", index: nextLocal },\n                  { op: \"local.get\", index: thenArgsLocal },\n                  { op: \"call\", funcIdx: ctx.funcMap.get(\"__apply_closure\")! },\n                  { op: \"drop\" },\n                ],\n                else: buildObservableTypeErrorRejectInstrs(\n                  ctx,\n                  rt,\n                  preparation,\n                  observable,\n                  \"Promise then is not callable\",\n                ),\n              },\n            ],\n            [{ tagIdx: observable.exnTagIdx, body: buildRejectFromError() }],\n          ),\n        ],\n        else: buildLegacySubscribe(),\n      },\n    ];\n  };\n  // `Invoke(nextPromise, \"then\", handlers)` performs ONE Get, then calls the\n  // captured value.  Do not route through `__promise_has_callable_then` plus\n  // `__call_m_then_vararg`: that pair gets an accessor once to classify it and\n  // again to dispatch it, which is observably wrong when the getter changes its\n  // answer. `__extern_get` is the runtime's ordinary property read for open\n  // objects, closure bags, and finalized closed-struct field ladders.\n  const buildNonNativeInvoke = (): Instr[] => [\n    buildTargetTaggedTry(\n      ctx,\n      { kind: \"empty\" },\n      [\n        { op: \"local.get\", index: nextLocal },\n        ...stringConstantExternrefInstrs(ctx, \"then\"),\n        { op: \"call\", funcIdx: ctx.funcMap.get(\"__extern_get\")! },\n        { op: \"local.set\", index: thenLocal },\n        ...buildObservableCallableCheckInstrs(ctx, thenLocal, callableLocal, callableAnyLocal),\n        { op: \"local.get\", index: callableLocal },\n        {\n          op: \"if\",\n          blockType: { kind: \"empty\" },\n          then: [\n            { op: \"local.get\", index: thenLocal },\n            { op: \"local.get\", index: nextLocal },\n            { op: \"local.get\", index: thenArgsLocal },\n            { op: \"call\", funcIdx: ctx.funcMap.get(\"__apply_closure\")! },\n            { op: \"drop\" },\n          ],\n          else: buildObservableTypeErrorRejectInstrs(ctx, rt, preparation, observable, \"Promise then is not callable\"),\n        },\n      ],\n      [{ tagIdx: observable.exnTagIdx, body: buildRejectFromError() }],\n    ),\n  ];\n  // §27.2.4.1's remainingElementsCount gains one for this element only after\n  // Call(resolve, C, value) succeeds, and before a synchronously-calling\n  // thenable can invoke the resolve-element closure. The final completion\n  // sentinel remains until the enclosing literal/VEC iteration has finished.\n  const buildAllRemainingIncrement = (): Instr[] =>\n    method === \"all\"\n      ? [\n          { op: \"local.get\", index: stateLocal },\n          { op: \"local.get\", index: stateLocal },\n          { op: \"struct.get\", typeIdx: carrier.stateTypeIdx, fieldIdx: 3 },\n          { op: \"i32.const\", value: 1 },\n          { op: \"i32.add\" },\n          { op: \"struct.set\", typeIdx: carrier.stateTypeIdx, fieldIdx: 3 },\n        ]\n      : [];\n\n  const pipeline: Instr[] = [\n    // Call(promiseResolve, C, «nextValue»).\n    buildTargetTaggedTry(\n      ctx,\n      { kind: \"empty\" },\n      [\n        { op: \"call\", funcIdx: ctx.funcMap.get(\"__objvec_new\")! },\n        { op: \"local.set\", index: resolveArgsLocal },\n        { op: \"local.get\", index: resolveArgsLocal },\n        { op: \"local.get\", index: inputLocal },\n        { op: \"call\", funcIdx: ctx.funcMap.get(\"__objvec_push\")! },\n        ...buildThenArgs(),\n        { op: \"local.get\", index: preparation.resolveLocal },\n        { op: \"local.get\", index: preparation.ctorLocal },\n        { op: \"local.get\", index: resolveArgsLocal },\n        { op: \"call\", funcIdx: ctx.funcMap.get(\"__apply_closure\")! },\n        { op: \"local.set\", index: nextLocal },\n      ],\n      [{ tagIdx: observable.exnTagIdx, body: buildRejectFromError() }],\n    ),\n    // Invoke(nextPromise, \"then\", «fulfill, reject»). A `$Promise` without an\n    // own `then` keeps the tested legacy subscription path; an own slot is\n    // retrieved and called with the native promise as receiver. Other values\n    // use the same one-Get/captured-call Invoke sequence.\n    { op: \"local.get\", index: preparation.abortedLocal },\n    { op: \"i32.eqz\" },\n    {\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [\n        ...buildAllRemainingIncrement(),\n        { op: \"local.get\", index: nextLocal },\n        { op: \"ref.is_null\" },\n        {\n          op: \"if\",\n          blockType: { kind: \"empty\" },\n          then: buildNonNativeInvoke(),\n          else: [\n            { op: \"local.get\", index: nextLocal },\n            { op: \"any.convert_extern\" },\n            { op: \"local.set\", index: nextAnyLocal },\n            { op: \"local.get\", index: nextAnyLocal },\n            { op: \"ref.test\", typeIdx: ids.promiseTypeIdx },\n            {\n              op: \"if\",\n              blockType: { kind: \"empty\" },\n              then: buildNativeInvoke(),\n              else: buildNonNativeInvoke(),\n            },\n          ],\n        },\n      ],\n    },\n  ];\n\n  fctx.body.push(\n    { op: \"local.get\", index: preparation.abortedLocal },\n    { op: \"i32.eqz\" },\n    { op: \"if\", blockType: { kind: \"empty\" }, then: pipeline },\n  );\n}\n\n/**\n * Bounded R3-2 literal route. It shares the old result/reaction substrate but\n * replaces only the per-element normalization shortcut with the observable\n * Get/Call/Invoke protocol. `allSettled`/`any`, custom constructors, and\n * iterator-closing stay on their existing/future slices.\n */\nfunction emitObservableStandalonePromiseCombinatorLiteral(\n  ctx: CodegenContext,\n  fctx: FunctionContext,\n  method: \"all\" | \"race\",\n  elementInstrs: Instr[][],\n  ids: CombinatorRuntime,\n  rt: AsyncDriveRuntimeT,\n  observable: ObservableCombinatorRuntime,\n): ValType {\n  const reaction = combinatorReactionFns(ctx, ids, method);\n  // Argument-list evaluation finishes BEFORE the static call begins. The\n  // buffers above are compile-time staging only; execute every element now and\n  // retain its value before `Get(Promise, \"resolve\")`. In particular,\n  // `Promise.all([first(), second()])` must run both calls even when resolve's\n  // getter subsequently throws.\n  const inputLocals: number[] = [];\n  for (const element of elementInstrs) {\n    const inputLocal = allocLocal(fctx, `__comb_observable_literal_input_${fctx.locals.length}`, EXTERNREF);\n    fctx.body.push(...element, { op: \"local.set\", index: inputLocal });\n    inputLocals.push(inputLocal);\n  }\n  const preparation = emitObservableCombinatorPreparation(ctx, fctx, ids, rt, observable, method);\n  const state = emitObservableCombinatorState(fctx, ids, preparation, method, [\n    { op: \"i32.const\", value: elementInstrs.length },\n  ]);\n  for (let i = 0; i < inputLocals.length; i++) {\n    emitObservableCombinatorElement(\n      ctx,\n      fctx,\n      ids,\n      rt,\n      observable,\n      preparation,\n      method,\n      reaction,\n      state.stateLocal,\n      [{ op: \"i32.const\", value: i }],\n      [{ op: \"local.get\", index: inputLocals[i]! }],\n    );\n  }\n  emitObservableAllIterationComplete(fctx, ids, rt, method, preparation, state);\n  fctx.body.push({ op: \"local.get\", index: preparation.resultLocal }, { op: \"extern.convert_any\" });\n  return EXTERNREF;\n}\n\n/**\n * Emit a native `Promise.all([...])` / `Promise.race([...])`. `elementInstrs` is\n * the pre-compiled list of element expressions (each already coerced to\n",
+          "after": "  ];\n}\n\n/**\n * Emit a native `Promise.all([...])` / `Promise.race([...])`. `elementInstrs` is\n * the pre-compiled list of element expressions (each already coerced to\n",
+          "beforeOffset": 54346,
+          "afterOffset": 47232,
+          "beforeSha256": "93f2fc6742391732478d1ff0fc52d9f918271b63faf68c24d8484a9a947dfd15",
+          "afterSha256": "6d3f6cde519359e3ed81a569a197ee9c5b4b221c141ca4c6300dff77e3d34e82"
+        },
+        {
+          "ordinal": 8,
+          "before": "  fctx: FunctionContext,\n  method: NativeCombinator,\n  elementInstrs: Instr[][],\n  opts?: { observableResolve?: boolean },\n): ValType {\n  const ids = ensureCombinatorFunctions(ctx);\n  const rt = ensureAsyncDriveRuntime(ctx);\n  if (opts?.observableResolve === true && (method === \"all\" || method === \"race\")) {\n    const observable = ensureObservableCombinatorRuntime(ctx, ids);\n    if (observable) {\n      return emitObservableStandalonePromiseCombinatorLiteral(\n        ctx,\n        fctx,\n        method,\n        elementInstrs,\n        ids,\n        ensureAsyncDriveRuntime(ctx),\n        observable,\n      );\n    }\n  }\n  // (#3137) MUST run before any element buffer splices into fctx.body — the\n  // allSettled/any arm lazily registers wrapper functions (see the ordering\n  // note above about ensure* preceding the buffer copy).\n",
+          "after": "  fctx: FunctionContext,\n  method: NativeCombinator,\n  elementInstrs: Instr[][],\n): ValType {\n  const ids = ensureCombinatorFunctions(ctx);\n  const rt = ensureAsyncDriveRuntime(ctx);\n  // (#3137) MUST run before any element buffer splices into fctx.body — the\n  // allSettled/any arm lazily registers wrapper functions (see the ordering\n  // note above about ensure* preceding the buffer copy).\n",
+          "beforeOffset": 78364,
+          "afterOffset": 47556,
+          "beforeSha256": "7558bcd4fe85b9b223d27b20c1d61c21686b816cb452ab506188ec177b853854",
+          "afterSha256": "1dda0ff989052c753f5709e202b2f4af9398d58f3007a355a6b096fa56bbb443"
+        },
+        {
+          "ordinal": 9,
+          "before": "      fctx.body.push({ op: \"local.get\", index: arrLocal });\n      fctx.body.push({ op: \"struct.new\", typeIdx: ids.vecTypeIdx });\n      fctx.body.push({ op: \"extern.convert_any\" });\n      fctx.body.push({ op: \"call\", funcIdx: rt.fulfillFuncIdx });\n      fctx.body.push({ op: \"drop\" });\n    } else if (method === \"any\") {\n      fctx.body.push({ op: \"local.get\", index: resultLocal });\n",
+          "after": "      fctx.body.push({ op: \"local.get\", index: arrLocal });\n      fctx.body.push({ op: \"struct.new\", typeIdx: ids.vecTypeIdx });\n      fctx.body.push({ op: \"extern.convert_any\" });\n      fctx.body.push({ op: \"call\", funcIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) }); // (#5197 r3)\n      fctx.body.push({ op: \"drop\" });\n    } else if (method === \"any\") {\n      fctx.body.push({ op: \"local.get\", index: resultLocal });\n",
+          "beforeOffset": 81247,
+          "afterOffset": 50003,
+          "beforeSha256": "518f765b5e354b8f11a5ea24bf47a8d873b67064575cc5d423c11ddeae8c1df9",
+          "afterSha256": "e9a57f678cd25f973c41349c7e378e0abf57e8ce03634be2cda4bbc4ddd0512b"
+        },
+        {
+          "ordinal": 10,
+          "before": " * (#2919 arm 1) Decide whether a compiled combinator argument is an\n * EXTERNREF-backed array vec — the only shape the runtime-loop combinator can\n * feed to `__combinator_subscribe` without boxing. Returns the vec + backing\n * array type indices, or `null` for anything else (including f64-backed\n * `number[]` vecs, which use the separate observable-only arm below; `any` /\n * externref values, strings, and non-vec structs), which must keep the legacy\n * host fallthrough unchanged.\n */\nexport function resolveExternrefVecArg(\n  ctx: CodegenContext,\n",
+          "after": " * (#2919 arm 1) Decide whether a compiled combinator argument is an\n * EXTERNREF-backed array vec — the only shape the runtime-loop combinator can\n * feed to `__combinator_subscribe` without boxing. Returns the vec + backing\n * array type indices, or `null` for anything else (f64-backed `number[]` vecs\n * — the documented Gap-4 output-representation escalation, see module header —\n * `any`/externref values, strings, non-vec structs), which must keep the host\n * fallthrough unchanged.\n */\nexport function resolveExternrefVecArg(\n  ctx: CodegenContext,\n",
+          "beforeOffset": 82680,
+          "afterOffset": 51479,
+          "beforeSha256": "236e6ebcbe14147e4109bde7b8d770748ee205133a3f0261add62c20d306f9ef",
+          "afterSha256": "f42abf02bbbf95e8519190377879f454f2799f91b5920bca7595494fdca60a3d"
+        },
+        {
+          "ordinal": 11,
+          "before": "  return { vecTypeIdx, arrTypeIdx };\n}\n\n/**\n * Bounded R3-2 admission for a native `number[]` carrier. Unlike the legacy\n * generic path, the observable loop reads and boxes each f64 slot only when\n * its turn reaches `Call(resolve, C, value)`, leaving earlier resolve calls\n * able to mutate a later vector element before it is observed.\n */\nexport function resolveF64VecArg(\n  ctx: CodegenContext,\n  argType: ValType | null,\n): { vecTypeIdx: number; arrTypeIdx: number } | null {\n  if (!argType || (argType.kind !== \"ref\" && argType.kind !== \"ref_null\")) return null;\n  const vecTypeIdx = (argType as { typeIdx?: number }).typeIdx;\n  if (typeof vecTypeIdx !== \"number\" || vecTypeIdx < 0) return null;\n  const structName = ctx.typeIdxToStructName.get(vecTypeIdx);\n  if (!structName || !structName.startsWith(\"__vec_\")) return null;\n  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);\n  if (arrTypeIdx < 0) return null;\n  const arrDef = ctx.mod.types[arrTypeIdx];\n  if (!arrDef || arrDef.kind !== \"array\" || arrDef.element.kind !== \"f64\") return null;\n  return { vecTypeIdx, arrTypeIdx };\n}\n\n/** Observable R3-2 analogue of the pre-existing externref-vector loop. */\nfunction emitObservableStandalonePromiseCombinatorRuntime(\n  ctx: CodegenContext,\n  fctx: FunctionContext,\n  method: \"all\" | \"race\",\n  argVecLocal: number,\n  argVecTypeIdx: number,\n  argArrTypeIdx: number,\n  ids: CombinatorRuntime,\n  rt: AsyncDriveRuntimeT,\n  observable: ObservableCombinatorRuntime,\n  boxF64Elements: boolean,\n): ValType {\n  const reaction = combinatorReactionFns(ctx, ids, method);\n  const preparation = emitObservableCombinatorPreparation(ctx, fctx, ids, rt, observable, method);\n  const boxNumberIdx = boxF64Elements ? ctx.funcMap.get(\"__box_number\") : undefined;\n  if (boxF64Elements && boxNumberIdx === undefined) {\n    throw new Error(\"observable f64 Promise combinator requires __box_number\");\n  }\n  const state = emitObservableCombinatorState(fctx, ids, preparation, method, [\n    { op: \"local.get\", index: argVecLocal },\n    { op: \"ref.as_non_null\" },\n    { op: \"struct.get\", typeIdx: argVecTypeIdx, fieldIdx: 0 },\n  ]);\n  const iLocal = allocLocal(fctx, `__comb_observable_i_${fctx.locals.length}`, { kind: \"i32\" });\n\n  fctx.body.push(\n    { op: \"i32.const\", value: 0 },\n    { op: \"local.set\", index: iLocal },\n    {\n      op: \"block\",\n      blockType: { kind: \"empty\" },\n      body: [\n        {\n          op: \"loop\",\n          blockType: { kind: \"empty\" },\n          body: [\n            { op: \"local.get\", index: iLocal },\n            { op: \"local.get\", index: state.lengthLocal },\n            { op: \"i32.ge_s\" },\n            { op: \"br_if\", depth: 1 },\n            { op: \"local.get\", index: preparation.abortedLocal },\n            { op: \"br_if\", depth: 1 },\n            // `emitObservableCombinatorElement` needs to append nested\n            // instructions to the loop, so its body is patched below rather\n            // than built as an opaque detached array.\n          ],\n        },\n      ],\n    },\n  );\n\n  // Replace the just-emitted loop body with the element pipeline while it is\n  // still live in fctx.body. This avoids a second runtime implementation and\n  // keeps every late-index shifter able to walk the nested instructions.\n  const outerBlock = fctx.body[fctx.body.length - 1] as Extract<Instr, { op: \"block\" }>;\n  const loop = outerBlock.body[0] as Extract<Instr, { op: \"loop\" }>;\n  const loopBody = loop.body;\n  const savedBody = fctx.body;\n  fctx.body = loopBody;\n  fctx.savedBodies.push(savedBody);\n  try {\n    emitObservableCombinatorElement(\n      ctx,\n      fctx,\n      ids,\n      rt,\n      observable,\n      preparation,\n      method,\n      reaction,\n      state.stateLocal,\n      [{ op: \"local.get\", index: iLocal }],\n      [\n        { op: \"local.get\", index: argVecLocal },\n        { op: \"ref.as_non_null\" },\n        { op: \"struct.get\", typeIdx: argVecTypeIdx, fieldIdx: 1 },\n        { op: \"local.get\", index: iLocal },\n        { op: \"array.get\", typeIdx: argArrTypeIdx },\n        ...(boxF64Elements ? ([{ op: \"call\", funcIdx: boxNumberIdx! }] satisfies Instr[]) : []),\n      ],\n    );\n    loopBody.push(\n      { op: \"local.get\", index: iLocal },\n      { op: \"i32.const\", value: 1 },\n      { op: \"i32.add\" },\n      { op: \"local.set\", index: iLocal },\n      { op: \"br\", depth: 0 },\n    );\n  } finally {\n    fctx.savedBodies.pop();\n    fctx.body = savedBody;\n  }\n  emitObservableAllIterationComplete(fctx, ids, rt, method, preparation, state);\n  fctx.body.push({ op: \"local.get\", index: preparation.resultLocal }, { op: \"extern.convert_any\" });\n  return EXTERNREF;\n}\n\n/**\n * (#2919 arm 1) Emit a native `Promise.all(arrVar)` / `Promise.race(arrVar)`\n * over an ARRAY-TYPED (non-literal) argument: the runtime-count analogue of the\n",
+          "after": "  return { vecTypeIdx, arrTypeIdx };\n}\n\n/**\n * (#2919 arm 1) Emit a native `Promise.all(arrVar)` / `Promise.race(arrVar)`\n * over an ARRAY-TYPED (non-literal) argument: the runtime-count analogue of the\n",
+          "beforeOffset": 84115,
+          "afterOffset": 52917,
+          "beforeSha256": "aeba8c4f8a922afde19890c88c5fbe49c8de03f9793dd26bb33c221bba300e8c",
+          "afterSha256": "6232dbafbce17c9aefaa13e3ea9d367e10a3f9b647b3d51dfa289dbb0951bb12"
+        },
+        {
+          "ordinal": 12,
+          "before": "  argVecLocal: number,\n  argVecTypeIdx: number,\n  argArrTypeIdx: number,\n  opts?: {\n    notIterLocal?: number;\n    rejectReason?: Instr[];\n    observableResolve?: boolean;\n    /** R3-2 direct `number[]` arm: box each f64 slot at consumption time. */\n    boxF64Elements?: boolean;\n  },\n): ValType {\n  const ids = ensureCombinatorFunctions(ctx);\n  const rt = ensureAsyncDriveRuntime(ctx);\n  if (opts?.observableResolve === true && (method === \"all\" || method === \"race\")) {\n    const observable = ensureObservableCombinatorRuntime(ctx, ids);\n    if (observable) {\n      return emitObservableStandalonePromiseCombinatorRuntime(\n        ctx,\n        fctx,\n        method,\n        argVecLocal,\n        argVecTypeIdx,\n        argArrTypeIdx,\n        ids,\n        ensureAsyncDriveRuntime(ctx),\n        observable,\n        opts.boxF64Elements === true,\n      );\n    }\n  }\n  // (#3137) Lazily registers the allSettled/any wrappers; must precede all\n  // emission below (registration-before-bake, same contract as the literal arm).\n  const reaction = combinatorReactionFns(ctx, ids, method);\n",
+          "after": "  argVecLocal: number,\n  argVecTypeIdx: number,\n  argArrTypeIdx: number,\n  opts?: { notIterLocal: number; rejectReason: Instr[] },\n): ValType {\n  const ids = ensureCombinatorFunctions(ctx);\n  const rt = ensureAsyncDriveRuntime(ctx);\n  // (#3137) Lazily registers the allSettled/any wrappers; must precede all\n  // emission below (registration-before-bake, same contract as the literal arm).\n  const reaction = combinatorReactionFns(ctx, ids, method);\n",
+          "beforeOffset": 90501,
+          "afterOffset": 54749,
+          "beforeSha256": "a0c5396b3c98c536ef4d4776a91d4831359c1dd1b34524f3e670a82b395f60d5",
+          "afterSha256": "a8641c9c4c2df174b5165733a732563b88651981bd88dd356b15938ad41bb300"
+        },
+        {
+          "ordinal": 13,
+          "before": "      subscribeFuncIdx: ids.subscribeFuncIdx,\n      fulfillReactionFuncIdx: reaction.fulfillIdx,\n      rejectReactionFuncIdx: reaction.rejectIdx,\n      fulfillFuncIdx: rt.fulfillFuncIdx,\n      rejectFuncIdx: rt.rejectFuncIdx,\n      bagInit: combinatorBagInit(),\n      emptyResult:\n",
+          "after": "      subscribeFuncIdx: ids.subscribeFuncIdx,\n      fulfillReactionFuncIdx: reaction.fulfillIdx,\n      rejectReactionFuncIdx: reaction.rejectIdx,\n      fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx), // (#5197 r3) all/allSettled empty aggregate\n      rejectFuncIdx: rt.rejectFuncIdx,\n      bagInit: combinatorBagInit(),\n      emptyResult:\n",
+          "beforeOffset": 92452,
+          "afterOffset": 56070,
+          "beforeSha256": "dd4a96ca3156880aa65e52bb48c56d7b95696c1a807ec5eced11b3f5f902d63d",
+          "afterSha256": "e5b7c2de10e15ffeedd731bda18d1ec7c80ad610b256c15a1acf86e90c27cd21"
+        },
+        {
+          "ordinal": 14,
+          "before": "            : { kind: \"pending\" },\n    },\n    { argVecLocal, resultLocal, arrLocal, stateLocal, nLocal, iLocal },\n    // (#5197 R3-2) `opts` gained observable-only flags; the legacy vector body\n    // only ever understood the (#2922) not-iterable rejection pair, so narrow\n    // back to exactly that pair here rather than widening its contract.\n    opts?.notIterLocal !== undefined && opts.rejectReason !== undefined\n      ? { notIterLocal: opts.notIterLocal, rejectReason: opts.rejectReason }\n      : undefined,\n  );\n  fctx.body.push(...body);\n  return EXTERNREF;\n",
+          "after": "            : { kind: \"pending\" },\n    },\n    { argVecLocal, resultLocal, arrLocal, stateLocal, nLocal, iLocal },\n    opts,\n  );\n  fctx.body.push(...body);\n  return EXTERNREF;\n",
+          "beforeOffset": 92942,
+          "afterOffset": 56634,
+          "beforeSha256": "dc074d9a9dcf284a89832e018daedabb1879792ca44f211c3d329d693a05ef1e",
+          "afterSha256": "95b61387c89081d506d17dacd26603470860c06ea762daa9bb0f0e69e9bf26d3"
+        }
+      ],
+      "retained": [
+        {
+          "beforeOffset": 0,
+          "afterOffset": 0,
+          "length": 1803,
+          "sha256": "a0ba6aa9cda7a6651912ae56d619423b760e06e7db99249d00b3e6b3c5f5303d"
+        },
+        {
+          "beforeOffset": 2470,
+          "afterOffset": 2391,
+          "length": 3305,
+          "sha256": "fb1390559c4080b4f389e830e8a2d726e15482f44f6436743c61ad2efb3ac9d4"
+        },
+        {
+          "beforeOffset": 6963,
+          "afterOffset": 6494,
+          "length": 17926,
+          "sha256": "d8ca9bddbf3f1c01c5902e8d781afc3b61d52e85f705924c05b43d8c0a27941e"
+        },
+        {
+          "beforeOffset": 25165,
+          "afterOffset": 24689,
+          "length": 1713,
+          "sha256": "d0a8fef33b31f73e93062716b9b480f7d063289354427dd49c0e49196566f26f"
+        },
+        {
+          "beforeOffset": 33769,
+          "afterOffset": 26557,
+          "length": 3882,
+          "sha256": "a1d7ee35e80dce823f3ac28c514b03005311c1921ec1819c79e0ae188df18c52"
+        },
+        {
+          "beforeOffset": 37833,
+          "afterOffset": 30683,
+          "length": 5355,
+          "sha256": "b194de1fa4efbbf53c5a7db889f0ae8a3845a4122cf918e9b289a5ca19c660a8"
+        },
+        {
+          "beforeOffset": 43467,
+          "afterOffset": 36310,
+          "length": 6400,
+          "sha256": "22ab829fb2e8646139828a4ab7ac5817f2e47d770690632ace0be581cb8cb332"
+        },
+        {
+          "beforeOffset": 50122,
+          "afterOffset": 43008,
+          "length": 4224,
+          "sha256": "4c04275e81b67f104b3cf4eec56971163a5fdab3c6c73773b98c1b6d1ce2839c"
+        },
+        {
+          "beforeOffset": 78207,
+          "afterOffset": 47399,
+          "length": 157,
+          "sha256": "6171848214def6c7dd491d14d4303d3c3fa9b23e8e23395965dd685490474303"
+        },
+        {
+          "beforeOffset": 79195,
+          "afterOffset": 47951,
+          "length": 2052,
+          "sha256": "eb81f620249017a827b1cdcdbab2743fc35c3f2992c8487ea81b0805b9496b8e"
+        },
+        {
+          "beforeOffset": 81630,
+          "afterOffset": 50429,
+          "length": 1050,
+          "sha256": "fdedff3c38c0c8ef0b4008810da7c45accf85505f8e6ab6ae6d7f39a985da660"
+        },
+        {
+          "beforeOffset": 83234,
+          "afterOffset": 52036,
+          "length": 881,
+          "sha256": "d19f813a871188a7a1d20f67c26c9d9e05da7b051ddcd61262fad9b20a7bb238"
+        },
+        {
+          "beforeOffset": 88872,
+          "afterOffset": 53120,
+          "length": 1629,
+          "sha256": "5a777b0abd25905224725a4881b321c904abdafcd3298845802381e95c5e2cb1"
+        },
+        {
+          "beforeOffset": 91582,
+          "afterOffset": 55200,
+          "length": 870,
+          "sha256": "ff6f992c5a719bff3116f01785f6afd5781760b5ae854473d98661e9aacf3dd9"
+        },
+        {
+          "beforeOffset": 92733,
+          "afterOffset": 56425,
+          "length": 209,
+          "sha256": "f86dc4ba5ed6aec3f1073ee481a6814bf0efa437b7842b6e256c07e641c6c63c"
+        },
+        {
+          "beforeOffset": 93508,
+          "afterOffset": 56810,
+          "length": 16530,
+          "sha256": "6ba839fa83d75e0a50efbbea87d16a7d18938db76a2d48e7518b78338292b24c"
+        }
+      ],
+      "rawAfter": {
+        "gitBlob": "ce31c73551a2177661a96ada64f4dd0fd8fb5bfb",
+        "sha256": "2d4eec2bf3a6ae4a6be1093314789bc2ad9d5323591021227fb172b1c86e055f"
+      },
+      "initialLayer": "raw"
+    }
+  ],
+  "dependencies": [
+    {
+      "path": "src/codegen/builtin-fn-meta.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "a898c6e57391ad2f6aee3bd694462eab721e4808",
+      "sha256": "61a65b087cd30897debcc79e60640656bba990ef4452dc67fd6631d9cf0c1755",
+      "role": "current-owner-dependency"
+    },
+    {
+      "path": "src/codegen/carrier-bag-visibility.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "889f0b01fb14fc64ffebce10bfc5909a7407030a",
+      "sha256": "7a0820f193e2ddd2ac32488ebc99aaa7df9b6bf0370c096f36904dfeba3dc201",
+      "role": "current-owner-dependency"
+    },
+    {
+      "path": "src/codegen/closure-classifier.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "274164a7d5a5128740437646951e70c4371c4287",
+      "sha256": "0d2b70770eb0aef9d2791fd75d6a006b0a1873e7e510caf62c5809512b386693",
+      "role": "current-owner-dependency"
+    },
+    {
+      "path": "src/codegen/closures/closure-header-layout.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "de1107866a03246568e3784619bc5a8070c2a088",
+      "sha256": "c69e76972d430773cffb530455962cba4ff4f95f55e995b900b89cb2255f468c",
+      "role": "current-owner-dependency"
+    },
+    {
+      "path": "src/codegen/closures/funcref-wrapper-types.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "8e3e594064bdf7241f0bcb1513bb8c241c256292",
+      "sha256": "aa5d69ad2ee3412b1095bc25eec54224d8533c6bbc8ffc245258acf33823e99d",
+      "role": "current-owner-dependency"
+    },
+    {
+      "path": "src/codegen/context/create-context.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "0d3842f97e9e2fadaaf6cc642526f4cd4924680a",
+      "sha256": "a07acec155a4ae6bda04138e18170dff9ecb05636cb5113b966d8eeba0554009",
+      "role": "current-owner-dependency"
+    },
+    {
+      "path": "src/codegen/context/locals.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "523503990951fd21880ed52efb96e7f6e80a79f1",
+      "sha256": "8dc360977cba2185c3935a864552986d8bfb3fde95dcf35ec65a53559fe7f04f",
+      "role": "current-owner-dependency"
+    },
+    {
+      "path": "src/codegen/context/types.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "5a2a59febf7a2edf157537e7c807c65aba4e2cb9",
+      "sha256": "ed8ab51deec2f0d104a9f4b3b24fa863fb150ec6338e2e5eb54aa92f179087b6",
+      "role": "current-owner-dependency"
+    },
+    {
+      "path": "src/codegen/func-space.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "37cd2bb7d55ceb9d81093e42ace34add30034e43",
+      "sha256": "c67696c78c9223230307fdd655c4de1dbafe3227fb38aae39425ea4ea93c1527",
+      "role": "current-owner-dependency"
+    },
+    {
+      "path": "src/codegen/native-strings.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "69a0fa02d2d13376795b36c33b3b350494373372",
+      "sha256": "b904de7dfcaf3cb1d7575218338a9c900a31160be4508de75818de194dd07c94",
+      "role": "current-owner-dependency"
+    },
+    {
+      "path": "src/codegen/object-runtime.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "02a4cbc8a2f2f74813b9cdfa2d8013291366f3b4",
+      "sha256": "a4369598ddf305707830d69dd0dd3e4c130e92bab4462dee456b052e26a588e8",
+      "role": "current-owner-dependency"
+    },
+    {
+      "path": "src/codegen/promise-dynamic-member-read.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "3b454f1de69e720f7f5f1fd76a7655ef54fe6c62",
+      "sha256": "3dc4873d2a6cff0ab8760168420e1e8cf06e129ebeaf3d21bd05364c3a45a02c",
+      "role": "current-owner-dependency"
+    },
+    {
+      "path": "src/codegen/promise-species-then.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "58a343b7e06c6e50cd8c712ce4da39a5126b7b7b",
+      "sha256": "788eba493c376ab509fe7ab80ea86dfdbe6b0cb00534086615194c70796232e2",
+      "role": "current-owner-dependency"
+    },
+    {
+      "path": "src/codegen/promises/promise-combinator-observable-protocol.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "885161cbdc5ff40c5d50ae2427eeaf42250f6e4e",
+      "sha256": "f2ced8793d4451b9c3fb64a0eb3484badb170e88dfca6ffc50dc806a4f0b5214",
+      "role": "current-owner-dependency"
+    },
+    {
+      "path": "src/codegen/promises/promise-observable-combinators.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "8d8d14a621aec5a9ec1db9dfb4d4d7c650ece2c2",
+      "sha256": "023624dad22b808c96d0ab98d89f92437e4d9266858109d16d613e8bd296eb14",
+      "role": "current-owner-dependency"
+    },
+    {
+      "path": "src/codegen/registry/error-types.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "bfd294f4c3d7aaa0ea13e385aa16608865eebf20",
+      "sha256": "8d0d6200e7993124f113d180a8961623caf19401527d457c357486675715e3e1",
+      "role": "current-owner-dependency"
+    },
+    {
+      "path": "src/codegen/registry/imports.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "33d0986744a2b5614926beb07a920603714f9a31",
+      "sha256": "3feb3ccddfc9ce1320b78818196ac4507a64745cbae0e7933a2babbd60c63bcb",
+      "role": "current-owner-dependency"
+    },
+    {
+      "path": "src/codegen/registry/types.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "8383b4d14affd0137ef43bda17c03dccb07772bf",
+      "sha256": "cc08e7b3e4bf83744f8a5ced6b741f5f19566ba1d93869edcdebabf0e5b493d7",
+      "role": "current-owner-dependency"
+    },
+    {
+      "path": "src/ir/try-table.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "43b388b03b1c0383426521156ebc73b1589d2b3e",
+      "sha256": "60c4f8f6a4c4ce046b874638392d3892d4c434d77aac462c5e7c4703a9d914b9",
+      "role": "current-owner-dependency"
+    },
+    {
+      "path": "src/ir/types.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "f7717d7c70bb57bd73d799a1d26d1825aa0a41e8",
+      "sha256": "d82e92ee276dd9a57bd69d9dee16410d24225a028bd9dca53bc406f69b9623ac",
+      "role": "current-owner-dependency"
+    },
+    {
+      "path": "src/wasm/physical/exception-control.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "c30132c749463a330b4da964e00cfedbd3ace482",
+      "sha256": "f2c2912f7007c22e0683a9bc2c968ca47f2a57c7cfd8b609d6b61cd490d1cf42",
+      "role": "current-owner-dependency"
+    },
+    {
+      "path": "tests/fixtures/issue-3518-promise-export-main-port.json",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "e3bf3a26e498818dd2bb09cf8e978a3a3a1124fd",
+      "sha256": "5a227bc727181737e46bb2d9b857b305805abf930ff8ba7cf563fb3f3faec63e",
+      "role": "immutable-original-authority"
+    },
+    {
+      "path": "tests/fixtures/issue-3518-promise-earlier-main-port.json",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "3fb777c41945a3f56644b2d9c6ffad94a1ed9381",
+      "sha256": "b0059718ae87d8b132aa846e2f1b81769d38dae22b703cdfd6f729d5f02e1548",
+      "role": "immutable-original-authority"
+    },
+    {
+      "path": "tests/helpers/native-delay-combinator-b1-inverse.mjs",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "ee6303e3e6ff63976fc817e2722c4573b465eff9",
+      "sha256": "2db08ac6dfb265df815f57a31f275dac1fa9887a740eb5b5ddd351afee8d575c",
+      "role": "immutable-original-authority"
+    },
+    {
+      "path": "tests/helpers/native-delay-combinator-source-receipts.mjs",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "09fa37d7d3b8e3aff64a20adbfa3e60940c44290",
+      "sha256": "5516c9edfc627cc331bfdcbcea0d651d7d07fcd9ff623c571292ae1b6c26f6fe",
+      "role": "immutable-original-authority"
+    },
+    {
+      "path": "tests/fixtures/issue-5883-flat-layout-relocation.json",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "1bea8775f60632ddfbfee2af3f87aee1cf0f3bc4",
+      "sha256": "a6515f071bcebda24b0a05c432c6766d76ebc31a4beb4de5bbd3124c3ee8bbad",
+      "role": "existing-relocation-authority"
+    },
+    {
+      "path": "src/codegen/vectors/vec-pop-body.ts",
+      "commit": "5c63aae46653370f5a2169dd08947d5c69b568e8",
+      "gitBlob": "d8fb62a3de60ba1738bde584adbe3267c3cdea6f",
+      "sha256": "c291ffaed2aada9a660f8ac6df6410409f5472bdbf8abfe2cf000379e365839e",
+      "role": "existing-relocation-authority"
+    }
+  ],
+  "provenance": [
+    {
+      "commit": "fcefaa11230c65e500bf4b5f0702fd54e292d5cd",
+      "parents": ["5eac37f29bc0352aabba7e12210bdc1deba0ca81"],
+      "subject": "feat(#6651): cluster D slice D4 — class X extends Promise in standalone (#5197 G9) ✓",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/promise-class-receiver-drive.ts",
+          "before": {
+            "gitBlob": "026e15e9b77f2c948ebaba6a7c46075423dd51a6",
+            "sha256": "fd31a929bed44833b5de430ef14c6e86129196ce3a0499fbe5f7bc30fc74dfc3"
+          },
+          "after": {
+            "gitBlob": "266d8e85738eeef60ccb27df8ed015157a3f3020",
+            "sha256": "8584f1e409999a3ceaa6846c39be0dd5797246b93f2f83756da4af009d0f4fb9"
+          }
+        }
+      ]
+    },
+    {
+      "commit": "266a6652aaf289ed071c1710fb66763b499a310d",
+      "parents": ["373c06a3890c82c54320d9a9b6741cbec91b2934"],
+      "subject": "fix(#6651): cluster D slice D5 — a native $Promise has a readable then (#5197 R3-7) ✓",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/promise-class-receiver-drive.ts",
+          "before": {
+            "gitBlob": "266d8e85738eeef60ccb27df8ed015157a3f3020",
+            "sha256": "8584f1e409999a3ceaa6846c39be0dd5797246b93f2f83756da4af009d0f4fb9"
+          },
+          "after": {
+            "gitBlob": "f8191ea33937c839bc617c1d3f510c2ddf5d51da",
+            "sha256": "fc58a4106d91ac7d48dcf7e07f68b0f1231ad53a8a562543ed4a55c0506a9838"
+          }
+        },
+        {
+          "path": "src/codegen/promise-combinators.ts",
+          "before": {
+            "gitBlob": "b3bb351a185c5b62c11ab5dcbe7069c644ab8f2a",
+            "sha256": "b296ba1c515f722e416cb9bd0c85f54806c387e930a564bfbc6df51dce0ad32a"
+          },
+          "after": {
+            "gitBlob": "91c9c8eb0d1b49522b1abf8b14ecb596038985a4",
+            "sha256": "777f8872b9dfd59511385d76cabe665bbf4e0c5f18481ca0529bdb5b0e9b7d14"
+          }
+        },
+        {
+          "path": "src/codegen/promise-custom-combinator.ts",
+          "before": {
+            "gitBlob": "e23ba2cc3dcec52ba1597a61c289f496581d7d8b",
+            "sha256": "a8aa62f88f50ec943fcca33c6459bc468c00e5116c9dc53f2bccf1383f588234"
+          },
+          "after": {
+            "gitBlob": "e557b19a2ab2e711f5cf5ea4655c7851ab3e9d08",
+            "sha256": "cbb2fc343b9fb317e09b73cb6a76ddb9ce4fade782f2b488e4e8e1e6130ed460"
+          }
+        }
+      ]
+    },
+    {
+      "commit": "942abf64d998cc5da5506a9e1e329dfb0dd9c9c8",
+      "parents": ["466d6886025c7d76c475858f8192238a24de884b"],
+      "subject": "fix(#5197): a function C in Promise.<m>.call(C, ...) constructs through the driver ✓",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/promise-class-receiver-drive.ts",
+          "before": {
+            "gitBlob": "f8191ea33937c839bc617c1d3f510c2ddf5d51da",
+            "sha256": "fc58a4106d91ac7d48dcf7e07f68b0f1231ad53a8a562543ed4a55c0506a9838"
+          },
+          "after": {
+            "gitBlob": "d40276c0d51f78e7b04c022a438cbb4b46de073b",
+            "sha256": "4453cd752a22179823650d0ead8bd1dd330a1a21f1e22059696e59596b3fb474"
+          }
+        }
+      ]
+    },
+    {
+      "commit": "f0728e77c76140247d188d693c7a2fae06ae0097",
+      "parents": ["e16ace7ca09da0e5150e0be34b27e7891a37afe8"],
+      "subject": "fix(#6720): standalone constructs a Map/Set carrier held in a value",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/builtin-static-globals.ts",
+          "before": {
+            "gitBlob": "f32b73a204c21ac2639cc82f573e4e3ca7d5dc51",
+            "sha256": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca"
+          },
+          "after": {
+            "gitBlob": "3a5e8c505a0faafa9f7f46f5a15a6ff2b27361ff",
+            "sha256": "9e4f9df5c81ce3272be766eec761d15bd7d09f6a751ada8a6e341026b4ddb65f"
+          }
+        }
+      ]
+    },
+    {
+      "commit": "7283f26fd9bbcef77ce74a556654910efe314a26",
+      "parents": ["2e23e49fb1d7ee1a6b86ab16c3e85aee1d95c143"],
+      "subject": "fix(#6713): standalone RegExp / Error carriers callable and constructible through a variable",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/builtin-static-globals.ts",
+          "before": {
+            "gitBlob": "f32b73a204c21ac2639cc82f573e4e3ca7d5dc51",
+            "sha256": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca"
+          },
+          "after": {
+            "gitBlob": "bddfdf46d3336125d068e2c7b9f56cd18ba7442c",
+            "sha256": "e4f00a4e1baef961916442ee91f02acb7dbfba5670f259270ccf8bad4d64b8c5"
+          }
+        }
+      ]
+    },
+    {
+      "commit": "f3239487450f8947dc5d3e9676b9fbd93e66e205",
+      "parents": ["a1e60a57d0681d47c41c565f41768ff2a7d14164"],
+      "subject": "fix(#6775): S6–S11 ArrayBuffer/DataView/Date/NativeError/generator gaps in standalone ✓",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/builtin-static-globals.ts",
+          "before": {
+            "gitBlob": "f1b5f4311bfc342a00f44442d52f1a10a55d8a43",
+            "sha256": "8cd56a48eef0942b1816debb5dc3c13c26211cf92aa95ec11ef3d38db133e0c0"
+          },
+          "after": {
+            "gitBlob": "69a7c73e3a2b8d54e4b1491465fb58906f0de625",
+            "sha256": "ee4d8591389253f0a115934fca5845454249c0903f2fb7fbc561f52ce1e12de0"
+          }
+        }
+      ]
+    },
+    {
+      "commit": "0afbe0b9338c069f72360e1ae4bb7c5baf941716",
+      "parents": ["94f13ee82d8dd1d1058f09b7b3be7b36b3f6bf6d"],
+      "subject": "fix(#6651): cluster B slice B9 — a replaced RegExp.prototype[@@match|@@search] is observable ✓",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/builtin-value-read.ts",
+          "before": {
+            "gitBlob": "c0847b049c326e6f396556fa79686f636478920a",
+            "sha256": "d0dc3069772de5d7ef32407e2d3d9b03a41305b9491a8a102b9523e0ee3927e6"
+          },
+          "after": {
+            "gitBlob": "50d3a1b0acc9cca6a912f953bf4fc682ee5a16f3",
+            "sha256": "89bc2fe784d53f1ac0c470be685a4d85a4392caa48c685d55a2dd1acf530d73a"
+          }
+        }
+      ]
+    },
+    {
+      "commit": "937afecabddcec09394a6379a46866a17fde6be1",
+      "parents": ["ba81673704ad22da693d38123c51c938aa39a6b7"],
+      "subject": "fix(#6651): slice D7 — Promise.prototype.finally Invokes the receiver's then (standalone) ✓",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/async-scheduler.ts",
+          "before": {
+            "gitBlob": "c21ae077a44011e62bb9519294624e08b41f8ef7",
+            "sha256": "81d99ad21d51faee6105bb38f45588a3bddb0db1304932e3ab255eb04e84ae0c"
+          },
+          "after": {
+            "gitBlob": "77fe70ddc52a53e6a8bb499af88f63743788f3b0",
+            "sha256": "c89d3e20c12705d6d2fce664886714b981c666a81dc265d30ae307744aa954bf"
+          }
+        }
+      ]
+    },
+    {
+      "commit": "1b0ee6d2662b544de984732c8cecc2da8ef3e464",
+      "parents": ["5e8a2b4adddb6ed8248102cc5fa9e30c9318637c"],
+      "subject": "fix(#5197): then performs SpeciesConstructor + NewPromiseCapability; PromiseResolve constructor check ✓",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/async-scheduler.ts",
+          "before": {
+            "gitBlob": "77fe70ddc52a53e6a8bb499af88f63743788f3b0",
+            "sha256": "c89d3e20c12705d6d2fce664886714b981c666a81dc265d30ae307744aa954bf"
+          },
+          "after": {
+            "gitBlob": "c7fbb878db2fcd3a0435abe165df23a5eaec14c8",
+            "sha256": "8314cfd64470e7d2db6474e4d23f8498cb38d63f171189088a2eb67e8ec6bf0c"
+          }
+        }
+      ]
+    },
+    {
+      "commit": "61d206221baa9e007d1da44233bce925952ebb03",
+      "parents": ["42807efe4f1456864b762a07c2814ea518b3ba79"],
+      "subject": "fix(ir): restore live Promise source preservation across main protocols",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/promise-combinator-drive.ts",
+          "before": {
+            "gitBlob": "c2aad2aad58e3c934838be86d9e0d4d423be3888",
+            "sha256": "798bac3867597742aa3f4e9eb7dfa9511d2f1e876478a4218f6505b1bd3fa972"
+          },
+          "after": {
+            "gitBlob": "6a2ac4a89b41d53c33d41b202b3c5b27ede39a8e",
+            "sha256": "d43d721bcea7dcb18ef8048c34a744a2e5f503e3d48e63551d1c5eacbda11731"
+          }
+        },
+        {
+          "path": "src/codegen/promise-combinator-observable-protocol.ts",
+          "before": null,
+          "after": {
+            "gitBlob": "ed4c12fcefac9cb67cad95ce277b02b225a759d0",
+            "sha256": "e2191dc8951ac1e7ff2297788acdaf96de34dd570f22cfb24feca2005ebb8d68"
+          }
+        },
+        {
+          "path": "src/codegen/promise-combinators.ts",
+          "before": {
+            "gitBlob": "64511b85773bacb6f0e32b5c6770f69fd3eee9ee",
+            "sha256": "f428fbde2ac63f35d2308a183cf9937a11af2e625fa63ac79b71fd9afa03ca92"
+          },
+          "after": {
+            "gitBlob": "55f7951d0a64076e68cc42eb0dfb8469a320a1fa",
+            "sha256": "4c14d929347b28e46cd5b6fe050d14f40baec1313881506db9619fbf59c7aa1a"
+          }
+        },
+        {
+          "path": "src/codegen/promise-custom-combinator.ts",
+          "before": {
+            "gitBlob": "e23ba2cc3dcec52ba1597a61c289f496581d7d8b",
+            "sha256": "a8aa62f88f50ec943fcca33c6459bc468c00e5116c9dc53f2bccf1383f588234"
+          },
+          "after": {
+            "gitBlob": "0e129f6dd368976a41ba3c95bdf7d8ade55c6013",
+            "sha256": "84e0abaf1a8d891e4c1724a4880cb7a821fd1a8d7761b4bc0d1109598f2e278e"
+          }
+        },
+        {
+          "path": "src/codegen/promise-observable-combinators.ts",
+          "before": {
+            "gitBlob": "27ee97f64de65b21d520fc5a0de34129bf488429",
+            "sha256": "f4e28bb2f503ee6ce2ffec888cf018f0709d394a297efc74a3e75bf876d9d115"
+          },
+          "after": {
+            "gitBlob": "b248cfb00831d270862636b48caf627e5dae8578",
+            "sha256": "5386387b00a83eecb5d73bc46b66889e3b9432aae09081fa8fe9603cc0a1e830"
+          }
+        }
+      ]
+    },
+    {
+      "commit": "9feade6d771a1b61d5e42b15954addfd25b64314",
+      "parents": ["32c2da64881923d67f0f53c6019a475db6ee1ecd", "2bfe3eddf84d4d27f471eddb91e441709b7f6eff"],
+      "subject": "fix(promise): reconcile extracted owners with pinned main",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/async-scheduler.ts",
+          "before": {
+            "gitBlob": "c21ae077a44011e62bb9519294624e08b41f8ef7",
+            "sha256": "81d99ad21d51faee6105bb38f45588a3bddb0db1304932e3ab255eb04e84ae0c"
+          },
+          "after": {
+            "gitBlob": "c7fbb878db2fcd3a0435abe165df23a5eaec14c8",
+            "sha256": "8314cfd64470e7d2db6474e4d23f8498cb38d63f171189088a2eb67e8ec6bf0c"
+          }
+        },
+        {
+          "path": "src/codegen/builtin-static-globals.ts",
+          "before": {
+            "gitBlob": "f32b73a204c21ac2639cc82f573e4e3ca7d5dc51",
+            "sha256": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca"
+          },
+          "after": {
+            "gitBlob": "f1b5f4311bfc342a00f44442d52f1a10a55d8a43",
+            "sha256": "8cd56a48eef0942b1816debb5dc3c13c26211cf92aa95ec11ef3d38db133e0c0"
+          }
+        },
+        {
+          "path": "src/codegen/builtin-value-read.ts",
+          "before": {
+            "gitBlob": "c0847b049c326e6f396556fa79686f636478920a",
+            "sha256": "d0dc3069772de5d7ef32407e2d3d9b03a41305b9491a8a102b9523e0ee3927e6"
+          },
+          "after": {
+            "gitBlob": "093ba45bc86eba98141f21da040a1b5833eacbb1",
+            "sha256": "7d17c83b51dd4e0a56b75589ba70a8261ee8f9e06d8655cf02c99b73730b040c"
+          }
+        },
+        {
+          "path": "src/codegen/context/create-context.ts",
+          "before": {
+            "gitBlob": "f97ac8bf1572c5d66b6660d51a0891cc38d8bd53",
+            "sha256": "cb9d8c39fa4b083ddd9f4312766b7596d0115bbb8bf8ecabc6664cd1b4f66123"
+          },
+          "after": {
+            "gitBlob": "ae22bae96e74689b4cedd440a6331343a348f22a",
+            "sha256": "928abb8c57d8da5463a0340a956bc65cbf85523861ab1b987e43fd167cb1f62c"
+          }
+        },
+        {
+          "path": "src/codegen/context/types.ts",
+          "before": {
+            "gitBlob": "cb7d4cb3ee2fd9e580b12d2c000a3d0f0dd0f9f8",
+            "sha256": "c9a1aa65106f098b7012a45814479b3773fa9d94272be395dcd5dc3aa5a554e3"
+          },
+          "after": {
+            "gitBlob": "b6b6e11876f27a104b51c536fec4c3c1e9139717",
+            "sha256": "34abcc163e8717ccab53171a0f698151873214a18441b7991afbc0f61d0c57f2"
+          }
+        },
+        {
+          "path": "src/codegen/promise-class-receiver-drive.ts",
+          "before": null,
+          "after": {
+            "gitBlob": "d40276c0d51f78e7b04c022a438cbb4b46de073b",
+            "sha256": "4453cd752a22179823650d0ead8bd1dd330a1a21f1e22059696e59596b3fb474"
+          }
+        },
+        {
+          "path": "src/codegen/promise-combinator-drive.ts",
+          "before": {
+            "gitBlob": "6a2ac4a89b41d53c33d41b202b3c5b27ede39a8e",
+            "sha256": "d43d721bcea7dcb18ef8048c34a744a2e5f503e3d48e63551d1c5eacbda11731"
+          },
+          "after": {
+            "gitBlob": "b2d82e4dfbb7fa8bd7389ec7ae629a9c367d1832",
+            "sha256": "3b415c429f7ee5546c169b6a67b511f3048f5e478cee520c62acdfa146fda85d"
+          }
+        },
+        {
+          "path": "src/codegen/promise-combinator-observable-protocol.ts",
+          "before": {
+            "gitBlob": "ed4c12fcefac9cb67cad95ce277b02b225a759d0",
+            "sha256": "e2191dc8951ac1e7ff2297788acdaf96de34dd570f22cfb24feca2005ebb8d68"
+          },
+          "after": {
+            "gitBlob": "f03733870e244055636db78be8c5b90b82b58918",
+            "sha256": "8378f83d0f0370ed73526f9bd1e1d1b9601a13f22dc2e53fd2debd89ee63663d"
+          }
+        },
+        {
+          "path": "src/codegen/promise-combinators.ts",
+          "before": {
+            "gitBlob": "55f7951d0a64076e68cc42eb0dfb8469a320a1fa",
+            "sha256": "4c14d929347b28e46cd5b6fe050d14f40baec1313881506db9619fbf59c7aa1a"
+          },
+          "after": {
+            "gitBlob": "ce31c73551a2177661a96ada64f4dd0fd8fb5bfb",
+            "sha256": "2d4eec2bf3a6ae4a6be1093314789bc2ad9d5323591021227fb172b1c86e055f"
+          }
+        },
+        {
+          "path": "src/codegen/promise-custom-combinator.ts",
+          "before": {
+            "gitBlob": "0e129f6dd368976a41ba3c95bdf7d8ade55c6013",
+            "sha256": "84e0abaf1a8d891e4c1724a4880cb7a821fd1a8d7761b4bc0d1109598f2e278e"
+          },
+          "after": {
+            "gitBlob": "01fe134b9cc4ed5cab4980c3cf6acb6d4bb40291",
+            "sha256": "5f8851330c370b2e38c18b3f4bad68763377fb476e4a7de952cae5da33bff677"
+          }
+        },
+        {
+          "path": "src/codegen/promise-observable-combinators.ts",
+          "before": {
+            "gitBlob": "b248cfb00831d270862636b48caf627e5dae8578",
+            "sha256": "5386387b00a83eecb5d73bc46b66889e3b9432aae09081fa8fe9603cc0a1e830"
+          },
+          "after": {
+            "gitBlob": "f2ee76db921c2265ceaf2d55b9ab268fea62e7ef",
+            "sha256": "67efff338305af52f62ab7d543083c8ae1988771dc0b30d54fc4e042a21cc3ac"
+          }
+        }
+      ]
+    },
+    {
+      "commit": "c698ec6020768f4eac670d2a6bbb2dcf791f6811",
+      "parents": ["e946127595242f2b186c184ce3c2aa25ddbe7c8a", "9c6d0b1e6bcfeec689afcddf70bf55f21fb12412"],
+      "subject": "fix(promise): cut observable combinator dependency cycles",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/context/create-context.ts",
+          "before": {
+            "gitBlob": "ae22bae96e74689b4cedd440a6331343a348f22a",
+            "sha256": "928abb8c57d8da5463a0340a956bc65cbf85523861ab1b987e43fd167cb1f62c"
+          },
+          "after": {
+            "gitBlob": "a8b3c1ff5b1961833331018b2201cdea0afe1f11",
+            "sha256": "8d8bed475e6d1bcc1fea16577774f6ae90fe4befed05b17b347e627ae3adff47"
+          }
+        },
+        {
+          "path": "src/codegen/context/types.ts",
+          "before": {
+            "gitBlob": "b6b6e11876f27a104b51c536fec4c3c1e9139717",
+            "sha256": "34abcc163e8717ccab53171a0f698151873214a18441b7991afbc0f61d0c57f2"
+          },
+          "after": {
+            "gitBlob": "f3781fd60660f3ef549ee424e9228334c4a1f202",
+            "sha256": "8e46de5480fc5b86a8830d5f302d5364d4389e6eca9a0d510b770490adb9a9dd"
+          }
+        },
+        {
+          "path": "src/codegen/promise-combinator-observable-protocol.ts",
+          "before": {
+            "gitBlob": "f03733870e244055636db78be8c5b90b82b58918",
+            "sha256": "8378f83d0f0370ed73526f9bd1e1d1b9601a13f22dc2e53fd2debd89ee63663d"
+          },
+          "after": {
+            "gitBlob": "198632d1d6339d66510242586a1ca76d2065e450",
+            "sha256": "9919ddffe6e79ff98e3e6c51372f79ead77a7651b78438f8f5bc73bcbfc4892a"
+          }
+        },
+        {
+          "path": "src/codegen/promise-observable-combinators.ts",
+          "before": {
+            "gitBlob": "f2ee76db921c2265ceaf2d55b9ab268fea62e7ef",
+            "sha256": "67efff338305af52f62ab7d543083c8ae1988771dc0b30d54fc4e042a21cc3ac"
+          },
+          "after": {
+            "gitBlob": "bf9f56f2a94313ee3e05d7a54d5ece2f4314627f",
+            "sha256": "62cc4f889492eeae7c781d6122233f03464fc45da2893a7cb614154731636ccc"
+          }
+        }
+      ]
+    },
+    {
+      "commit": "9d5df9e79b208374e8584001a76ad3cd3fbf50cb",
+      "parents": ["5b954c36e6c68ee5178a1d71780e8a836ce96746"],
+      "subject": "refactor(promise): relocate extracted owners within the flat-directory budget",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/context/create-context.ts",
+          "before": {
+            "gitBlob": "a8b3c1ff5b1961833331018b2201cdea0afe1f11",
+            "sha256": "8d8bed475e6d1bcc1fea16577774f6ae90fe4befed05b17b347e627ae3adff47"
+          },
+          "after": {
+            "gitBlob": "0d3842f97e9e2fadaaf6cc642526f4cd4924680a",
+            "sha256": "a07acec155a4ae6bda04138e18170dff9ecb05636cb5113b966d8eeba0554009"
+          }
+        },
+        {
+          "path": "src/codegen/context/types.ts",
+          "before": {
+            "gitBlob": "f3781fd60660f3ef549ee424e9228334c4a1f202",
+            "sha256": "8e46de5480fc5b86a8830d5f302d5364d4389e6eca9a0d510b770490adb9a9dd"
+          },
+          "after": {
+            "gitBlob": "5a2a59febf7a2edf157537e7c807c65aba4e2cb9",
+            "sha256": "ed8ab51deec2f0d104a9f4b3b24fa863fb150ec6338e2e5eb54aa92f179087b6"
+          }
+        },
+        {
+          "path": "src/codegen/promise-combinator-drive.ts",
+          "before": {
+            "gitBlob": "b2d82e4dfbb7fa8bd7389ec7ae629a9c367d1832",
+            "sha256": "3b415c429f7ee5546c169b6a67b511f3048f5e478cee520c62acdfa146fda85d"
+          },
+          "after": {
+            "gitBlob": "67785ca324743621452d2d018d9282e0575a6534",
+            "sha256": "5851e7a37247d392be748b264d95839c86798c2c15b1615d73ff2f1e93000c3c"
+          }
+        },
+        {
+          "path": "src/codegen/promises/promise-combinator-observable-protocol.ts",
+          "before": null,
+          "after": {
+            "gitBlob": "885161cbdc5ff40c5d50ae2427eeaf42250f6e4e",
+            "sha256": "f2ced8793d4451b9c3fb64a0eb3484badb170e88dfca6ffc50dc806a4f0b5214"
+          }
+        },
+        {
+          "path": "src/codegen/promises/promise-observable-combinators.ts",
+          "before": null,
+          "after": {
+            "gitBlob": "8d8d14a621aec5a9ec1db9dfb4d4d7c650ece2c2",
+            "sha256": "023624dad22b808c96d0ab98d89f92437e4d9266858109d16d613e8bd296eb14"
+          }
+        }
+      ]
+    },
+    {
+      "commit": "e81a329a8fc64f10dc215955837285665b9e2c71",
+      "parents": ["efa303c4a1e1dd99e1892cbe8e9e7eafc8a5bef5"],
+      "subject": "fix(#5197): Promise.all resolves its aggregate through Resolve (Get(array, \"then\")) ✓",
+      "sourceChanges": [
+        {
+          "path": "src/codegen/promise-combinators.ts",
+          "before": {
+            "gitBlob": "91c9c8eb0d1b49522b1abf8b14ecb596038985a4",
+            "sha256": "777f8872b9dfd59511385d76cabe665bbf4e0c5f18481ca0529bdb5b0e9b7d14"
+          },
+          "after": {
+            "gitBlob": "d4e2631ce2c72550d5f32c7928a7b7a449249c1a",
+            "sha256": "187eba2f8428935fcd862a7024b8390c38d4e88363a79e7a24a117029d93825a"
+          }
+        }
+      ]
+    }
+  ]
+}

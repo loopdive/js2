@@ -1,0 +1,216 @@
+diff --git a/scripts/compiler-boundaries.json b/scripts/compiler-boundaries.json
+index 725323e24c..7c71e5042a 100644
+--- a/scripts/compiler-boundaries.json
++++ b/scripts/compiler-boundaries.json
+@@ -7920,6 +7920,14 @@
+       "owner": "3518-coordinator",
+       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+     },
++    {
++      "path": "src/codegen/promise-combinator-observable-protocol.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Separate context-driven observable protocol registration and emission from allocator-owned resources and canonical native bodies; retain the legacy adapter until full IR equivalence."
++    },
+     {
+       "path": "src/codegen/promise-custom-combinator.ts",
+       "state": "unmigrated",
+@@ -7928,6 +7936,14 @@
+       "owner": "3518-coordinator",
+       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+     },
++    {
++      "path": "src/codegen/promise-observable-combinators.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Separate AST/context-driven observable combinator lowering, allocator-owned live aggregate resources, and canonical native body construction."
++    },
+     {
+       "path": "src/codegen/promise-executor.ts",
+       "state": "unmigrated",
+@@ -9896,6 +9912,14 @@
+       "owner": "3518-coordinator",
+       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+     },
++    {
++      "path": "src/codegen/vec-pop-body.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Closed pop instruction builder separated from allocation; still uses backend physical types and handles, not a migrated semantic IR producer."
++    },
+     {
+       "path": "src/codegen/vec-props.ts",
+       "state": "unmigrated",
+@@ -13242,6 +13266,166 @@
+       "destination": "backend-wasmgc",
+       "owner": "3518-coordinator",
+       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
++    },
++    {
++      "path": "src/codegen/anonymous-field-definition.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Separate checker-derived callable identity and logical field policy from physical layout publication."
++    },
++    {
++      "path": "src/codegen/bigint-field-carrier.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Separate semantic field storage policy from pre-emission provider registration and legacy context."
++    },
++    {
++      "path": "src/codegen/bigint-proto-valueof.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Separate dependency registration and physical resource ownership from generated BigInt valueOf runtime bodies."
++    },
++    {
++      "path": "src/codegen/class-field-storage.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Separate source class storage/default policy from physical field publication and singleton preparation."
++    },
++    {
++      "path": "src/codegen/class-reference-default.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Move read-only default instruction construction off legacy context and aggregate field contracts."
++    },
++    {
++      "path": "src/codegen/context/emission-ownership.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "ir-program",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Validate ownership contracts and migrate metadata out of the legacy compiler before activating the program layer."
++    },
++    {
++      "path": "src/codegen/expressions/member-override-facts.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "frontend-ts",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Replace the legacy TypeScript facade dependency before activating the frontend boundary."
++    },
++    {
++      "path": "src/codegen/finalize-native-reader-entry.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Separate compilation finalization scheduling from generated reader and Reflect runtime filling."
++    },
++    {
++      "path": "src/codegen/iterator-live-array.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Separate live iterator semantics from payload layout, dependency registration and runtime body emission."
++    },
++    {
++      "path": "src/codegen/iterator-protocol-get.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Separate protocol Get semantics from provider registration, prototype seeding and runtime instruction emission."
++    },
++    {
++      "path": "src/codegen/iterator-receiver-to-object.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Separate wrapper provider registration and physical handles from generated runtime ToObject dispatch."
++    },
++    {
++      "path": "src/codegen/native-proto-demand.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "ir-program",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Migrate and verify the ownership dependency before activating program metadata or provider demand."
++    },
++    {
++      "path": "src/codegen/object-literal-field-spread.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Separate field presence/default semantics from physical source layouts, coercion and instruction construction."
++    },
++    {
++      "path": "src/codegen/promise-vector-iterator.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Separate iterator protocol semantics from provider registration and generated acquisition/step/close bodies."
++    },
++    {
++      "path": "src/codegen/reference-storage-operand.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Separate oracle-proven source operand preparation from provider registration and expression emission."
++    },
++    {
++      "path": "src/codegen/reference-wrapper-brand.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Move read-only wrapper classification emission off legacy context and aggregate IR type contracts."
++    },
++    {
++      "path": "src/codegen/staging-census.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Separate ownership verification contracts from the materialized physical instruction tree census."
++    },
++    {
++      "path": "src/codegen/staging-edit.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Separate ownership transactions from physical staging snapshots and tree mutation."
++    },
++    {
++      "path": "src/codegen/staging-instr.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Separate emission-ownership contracts from materialized Wasm instruction staging."
++    },
++    {
++      "path": "src/codegen/string-conversion-argument.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "backend-wasmgc",
++      "owner": "3518-coordinator",
++      "nextBoundary": "Separate source BigInt classification from carrier registration and String operand emission."
+     }
+   ]
+ }

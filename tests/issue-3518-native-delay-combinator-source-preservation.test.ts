@@ -2,11 +2,13 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
+import { afterEach, describe, expect, it } from "vitest";
 import ts from "typescript";
 import { B1_FACTORY_PATH } from "./helpers/native-delay-combinator-b1-inverse.mjs";
 import { beforePromiseExportMain } from "./helpers/promise-export-main-port.js";
 import { beforeEarlierPromiseMain } from "./helpers/promise-earlier-main-port.js";
+import { readHistoricalPromiseSuccessor } from "./helpers/historical-promise-successors.js";
 import {
   allAdapterPath,
   combinatorPath,
@@ -28,9 +30,14 @@ import {
   verifyRetainedDeclarations,
 } from "./helpers/native-delay-combinator-source-receipts.mjs";
 
+afterEach(async () => {
+  await yieldToEventLoop();
+});
+
 const root = resolve(import.meta.dirname, ".."),
   rawRead = readerAt(root),
-  read = (path: string): string => beforeEarlierPromiseMain(path, beforePromiseExportMain(path, rawRead(path)));
+  read = (path: string): string =>
+    beforeEarlierPromiseMain(path, beforePromiseExportMain(path, readHistoricalPromiseSuccessor(path, rawRead)));
 const verifyCurrent = (reader: (path: string) => string) => verifyForwardDelayHistorical(reader).historical;
 describe("eight historical combinator bodies reconstructed from mandatory live owners", () => {
   it("retains the eight-donor denominator and separately accounts for delay/vector/dispatch", () => {

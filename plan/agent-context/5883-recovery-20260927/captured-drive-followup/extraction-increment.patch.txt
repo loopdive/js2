@@ -1,0 +1,449 @@
+diff --git a/src/codegen/promise-combinator-drive.ts b/src/codegen/promise-combinator-drive.ts
+index fcc0a07162..ee61edf8ad 100644
+--- a/src/codegen/promise-combinator-drive.ts
++++ b/src/codegen/promise-combinator-drive.ts
+@@ -305,17 +305,72 @@ export function emitStandalonePromiseCombinatorDrive(
+   // The namespace arm alone admits original externref/f64 vectors. Its local
+   // is the original carrier converted to externref, with arg0 already evaluated.
+   const captured = options?.iteratorProtocol === "captured-source-vector";
+-  const unavailable = (): undefined => {
+-    if (captured)
+-      throw new Error("captured-source-vector Promise drive requires the complete iterator/observable runtime");
+-    return undefined;
+-  };
+   if (options && (!captured || !observableProtocol || (method !== "all" && method !== "race"))) {
+     throw new Error("captured-source-vector is restricted to admitted observable Promise.all/race vectors");
+   }
+   // `allSettled` / `any` keep the legacy drain (their reaction bodies are
+   // index-array based; no measured row needs them driven yet).
+   if (method !== "all" && method !== "race") return undefined;
++  const resources = prepareImmediateDriveResources(ctx, fctx, method, observableProtocol, captured);
++  if (!resources) return undefined;
++  const frame = emitAttachedDriveFrame(ctx, fctx, resources, arg0, options);
++  emitImmediateDriveLoopTail(ctx, fctx, resources, frame);
++  // Preserve the late async preparation and remaining-local checkpoint AFTER
++  // loop attachment; do not reuse or refresh the earlier numeric rt snapshot.
++  if (resources.drive) emitDriveAllComplete(ctx, fctx, resources.ids, resources.drive, frame.prep, frame.L);
++  fctx.body.push({ op: "local.get", index: frame.prep.resultLocal }, { op: "extern.convert_any" });
++  immediateResourceOwners.delete(resources);
++  return EXTERNREF;
++}
++
++/** Immediate emission only: not canonical provider readiness or pending data. */
++type ImmediateDriveResources = {
++  readonly ids: CombinatorRuntime;
++  readonly rt: ReturnType<typeof ensureAsyncDriveRuntime>;
++  readonly observable: ObservableCombinatorRuntime | null;
++  readonly reaction: { fulfillIdx: number; rejectIdx: number };
++  readonly tagIdx: number;
++  readonly acquireName: string;
++  readonly stepName: string;
++  readonly closeName: string;
++  readonly captured: boolean;
++} & (
++  | { readonly method: "all"; readonly drive: DriveAllRuntime }
++  | { readonly method: "race"; readonly drive: undefined }
++);
++
++interface AttachedDriveFrame {
++  readonly L: DriveLocals;
++  readonly prep: ObservableCombinatorPreparation;
++}
++const immediateResourceOwners = new WeakMap<
++  ImmediateDriveResources,
++  {
++    ctx: CodegenContext;
++    fctx: FunctionContext;
++  }
++>();
++const attachedFrameOwners = new WeakMap<
++  AttachedDriveFrame,
++  {
++    resources: ImmediateDriveResources;
++    body: Instr[];
++  }
++>();
++
++/** Original ordered registration sequence; no source admission or readiness claim. */
++function prepareImmediateDriveResources(
++  ctx: CodegenContext,
++  fctx: FunctionContext,
++  method: "all" | "race",
++  observableProtocol: boolean,
++  captured: boolean,
++): ImmediateDriveResources | undefined {
++  const unavailable = (): undefined => {
++    if (captured)
++      throw new Error("captured-source-vector Promise drive requires the complete iterator/observable runtime");
++    return undefined;
++  };
+   // Registration strictly precedes emission (the #2919 bake-before-land rule).
+   if (captured) ensurePromiseVectorIteratorRuntime(ctx, fctx);
+   else ensureNativeIteratorRuntime(ctx);
+@@ -346,6 +401,37 @@ export function emitStandalonePromiseCombinatorDrive(
+   }
+   if (captured) flushLateImportShifts(ctx, fctx);
+ 
++  const common = { ids, rt, observable, reaction, tagIdx, acquireName, stepName, closeName, captured };
++  const resources: ImmediateDriveResources = drive
++    ? { ...common, method: "all", drive }
++    : { ...common, method: "race", drive: undefined };
++  immediateResourceOwners.set(resources, { ctx, fctx });
++  return resources;
++}
++
++function assertImmediateDriveOwner(
++  ctx: CodegenContext,
++  fctx: FunctionContext,
++  resources: ImmediateDriveResources,
++): void {
++  const owner = immediateResourceOwners.get(resources);
++  if (!owner || owner.ctx !== ctx || owner.fctx !== fctx) throw new Error("Foreign immediate drive resources");
++}
++
++/**
++ * EFFECTFUL and ATTACHED: allocates locals, emits capability/resolve prologue,
++ * and retains constructor seeding at its historical position and shift roots.
++ * Legacy source evaluation remains here; captured input is already evaluated.
++ */
++function emitAttachedDriveFrame(
++  ctx: CodegenContext,
++  fctx: FunctionContext,
++  resources: ImmediateDriveResources,
++  arg0: ts.Expression,
++  options?: { evaluatedVecLocal: number; iteratorProtocol: "captured-source-vector" },
++): AttachedDriveFrame {
++  assertImmediateDriveOwner(ctx, fctx, resources);
++  const { ids, rt, observable, drive, method, captured } = resources;
+   // Argument evaluation completes before the builtin runs.
+   if (captured) fctx.body.push({ op: "local.get", index: options!.evaluatedVecLocal });
+   else compileExpression(ctx, fctx, arg0, EXTERNREF);
+@@ -370,6 +456,30 @@ export function emitStandalonePromiseCombinatorDrive(
+     ? emitObservableCombinatorPreparation(ctx, fctx, ids, rt, observable, method)
+     : emitPlainPreparation(fctx, ids);
+   if (captured) flushLateImportShifts(ctx, fctx);
++  const result = { L, prep };
++  attachedFrameOwners.set(result, { resources, body: fctx.body });
++  return result;
++}
++
++/**
++ * Attached loop segment; no provider registration. Local allocation and fixed
++ * short-string global materialization stay at their old element checkpoints.
++ * Not a detached/pending renderer. Completion's late ensure remains outside.
++ */
++function emitImmediateDriveLoopTail(
++  ctx: CodegenContext,
++  fctx: FunctionContext,
++  resources: ImmediateDriveResources,
++  frame: AttachedDriveFrame,
++): void {
++  assertImmediateDriveOwner(ctx, fctx, resources);
++  const owner = attachedFrameOwners.get(frame);
++  if (!owner || owner.resources !== resources || owner.body !== fctx.body)
++    throw new Error("Foreign or consumed immediate drive frame");
++  attachedFrameOwners.delete(frame);
++  const { ids, rt, observable, drive, method, captured, reaction, tagIdx, acquireName, stepName, closeName } =
++    resources;
++  const { L, prep } = frame;
+   const rejectWith = (reason: Instr[]): Instr[] => [
+     { op: "local.get", index: prep.resultLocal },
+     ...reason,
+@@ -515,10 +625,6 @@ export function emitStandalonePromiseCombinatorDrive(
+     blockType: { kind: "empty" },
+     body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+   });
+-
+-  if (drive) emitDriveAllComplete(ctx, fctx, ids, drive, prep, L);
+-  fctx.body.push({ op: "local.get", index: prep.resultLocal }, { op: "extern.convert_any" });
+-  return EXTERNREF;
+ }
+ 
+ /** The non-observable prologue: just the capability promise and the abort flag. */
+@@ -697,8 +803,21 @@ function emitDriveAllComplete(
+   L: DriveLocals,
+ ): void {
+   const rt = ensureAsyncDriveRuntime(ctx);
+-  const st = drive.stateTypeIdx;
+   const remainingLocal = allocLocal(fctx, `__comb_drive_remaining_${fctx.locals.length}`, I32);
++  emitPreparedDriveAllComplete(fctx, ids, drive, prep, L, rt.fulfillFuncIdx, remainingLocal);
++}
++
++/** Registration-free completion segment; scratch was assigned at the old checkpoint. */
++function emitPreparedDriveAllComplete(
++  fctx: FunctionContext,
++  ids: CombinatorRuntime,
++  drive: DriveAllRuntime,
++  prep: ObservableCombinatorPreparation,
++  L: DriveLocals,
++  fulfillFuncIdx: number,
++  remainingLocal: number,
++): void {
++  const st = drive.stateTypeIdx;
+   fctx.body.push(
+     { op: "local.get", index: prep.abortedLocal },
+     { op: "i32.eqz" },
+@@ -726,7 +845,7 @@ function emitDriveAllComplete(
+             { op: "struct.get", typeIdx: st, fieldIdx: DRIVE_STATE_ARR },
+             { op: "struct.new", typeIdx: ids.vecTypeIdx },
+             { op: "extern.convert_any" },
+-            { op: "call", funcIdx: rt.fulfillFuncIdx },
++            { op: "call", funcIdx: fulfillFuncIdx },
+             { op: "drop" },
+           ],
+         },
+diff --git a/tests/issue-5883-captured-drive-extraction.test.ts b/tests/issue-5883-captured-drive-extraction.test.ts
+new file mode 100644
+index 0000000000..7bffa08e03
+--- /dev/null
++++ b/tests/issue-5883-captured-drive-extraction.test.ts
+@@ -0,0 +1,249 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++import { afterEach, expect, it, vi } from "vitest";
++import type { ts } from "../src/ts-api.js";
++import type { Instr } from "../src/ir/types.js";
++import type { CodegenContext, FunctionContext } from "../src/codegen/context/types.js";
++import * as vector from "../src/codegen/promise-vector-iterator.js";
++import * as iterator from "../src/codegen/iterator-native.js";
++import * as combinators from "../src/codegen/promise-combinators.js";
++import * as scheduler from "../src/codegen/async-scheduler.js";
++import * as glue from "../src/codegen/array-object-proto.js";
++import * as nativeProto from "../src/codegen/native-proto.js";
++import * as observable from "../src/codegen/promise-combinator-observable-protocol.js";
++import * as imports from "../src/codegen/registry/imports.js";
++import * as shared from "../src/codegen/shared.js";
++import { emitStandalonePromiseCombinatorDrive } from "../src/codegen/promise-combinator-drive.js";
++import { selectNativeStringLiteral } from "../src/runtime/wasmgc/values/string-literal-bodies.js";
++
++afterEach(() => vi.restoreAllMocks());
++
++function setup() {
++  const order: string[] = [];
++  const ctx = {
++    standalone: false,
++    wasi: false,
++    funcMap: new Map([
++      ["__promise_vector_iterator_acquire", 101],
++      ["__promise_vector_iterator_step", 102],
++      ["__promise_vector_iterator_close_throw", 103],
++      ["__iterator", 111],
++      ["__iterator_next", 112],
++      ["__iterator_return", 113],
++    ]),
++  } as unknown as CodegenContext;
++  const fctx = { params: [], locals: [], localMap: new Map(), body: [], savedBodies: [] } as unknown as FunctionContext;
++  const ids = {
++    promiseTypeIdx: 1,
++    arrTypeIdx: 2,
++    vecTypeIdx: 3,
++    stateTypeIdx: 4,
++    raceFulfillFuncIdx: 21,
++    rejectFuncIdx: 22,
++  } as ReturnType<typeof combinators.ensureCombinatorFunctions>;
++  const rt = { fulfillFuncIdx: 21, rejectFuncIdx: 22 } as ReturnType<typeof scheduler.ensureAsyncDriveRuntime>;
++  const obs = { exnTagIdx: 8 } as observable.ObservableCombinatorRuntime;
++  vi.spyOn(vector, "ensurePromiseVectorIteratorRuntime").mockImplementation(() => {
++    order.push("vector");
++  });
++  vi.spyOn(iterator, "ensureNativeIteratorRuntime").mockImplementation(() => {
++    order.push("legacy-iterator");
++  });
++  vi.spyOn(combinators, "ensureCombinatorFunctions").mockImplementation(() => {
++    order.push("combinators");
++    return ids;
++  });
++  vi.spyOn(scheduler, "ensureAsyncDriveRuntime").mockImplementation(() => {
++    order.push("async");
++    return rt;
++  });
++  vi.spyOn(glue, "ensurePromiseNativeProtoGlue").mockImplementation(() => {
++    order.push("glue");
++    return 5;
++  });
++  vi.spyOn(nativeProto, "ensureNativeProtoCompanionSeeder").mockImplementation(() => {
++    order.push("seeder");
++    return "__seed_Promise";
++  });
++  vi.spyOn(observable, "ensureObservableCombinatorRuntime").mockImplementation(() => {
++    order.push("observable");
++    return obs;
++  });
++  vi.spyOn(imports, "ensureExnTag").mockImplementation(() => {
++    order.push("tag");
++    return 8;
++  });
++  vi.spyOn(shared, "flushLateImportShifts").mockImplementation(() => {
++    order.push("flush");
++  });
++  vi.spyOn(shared, "compileExpression").mockImplementation(() => {
++    order.push("compile-argument");
++    fctx.body.push({ op: "ref.null.extern" });
++    return { kind: "externref" };
++  });
++  const prologue = vi.spyOn(observable, "emitObservableCombinatorPreparation").mockImplementation(() => {
++    order.push("attached-prologue");
++    expect(fctx.locals).toHaveLength(7);
++    expect(fctx.body.at(-1)).toEqual({ op: "local.set", index: 0 });
++    // These are stub role numbers, not a claim to validate the real allocator.
++    return {
++      resultLocal: 10,
++      ctorLocal: 11,
++      resolveLocal: 12,
++      abortedLocal: 13,
++      raceFulfillLocal: 14,
++      rejectLocal: 15,
++    };
++  });
++  const element = vi.spyOn(observable, "emitObservableCombinatorElement").mockImplementation(() => {
++    order.push("element");
++    expect(fctx.savedBodies).toHaveLength(1);
++  });
++  const emit = (captured = true) =>
++    emitStandalonePromiseCombinatorDrive(
++      ctx,
++      fctx,
++      "race",
++      {} as ts.Expression,
++      true,
++      captured ? { evaluatedVecLocal: 99, iteratorProtocol: "captured-source-vector" } : undefined,
++    );
++  return { ctx, fctx, order, prologue, element, emit };
++}
++
++function calls(body: Instr[]): number[] {
++  const result: number[] = [];
++  const visit = (value: unknown): void => {
++    if (Array.isArray(value)) {
++      for (const item of value) visit(item);
++      return;
++    }
++    if (!value || typeof value !== "object") return;
++    const record = value as Record<string, unknown>;
++    if (record.op === "call") result.push(record.funcIdx as number);
++    for (const [key, child] of Object.entries(record)) if (key !== "op") visit(child);
++  };
++  visit(body);
++  return result;
++}
++
++it("keeps captured race preparation order and attached input exactly once", () => {
++  const { fctx, order, emit } = setup();
++  expect(emit()).toEqual({ kind: "externref" });
++  expect(order).toEqual([
++    "vector",
++    "combinators",
++    "async",
++    "glue",
++    "seeder",
++    "observable",
++    "tag",
++    "flush",
++    "attached-prologue",
++    "flush",
++    "element",
++  ]);
++  expect(fctx.body[0]).toEqual({ op: "local.get", index: 99 });
++  expect(fctx.locals.map((local) => local.name)).toEqual([
++    "__comb_drive_arg_0",
++    "__comb_drive_iter_1",
++    "__comb_drive_done_2",
++    "__comb_drive_value_3",
++    "__comb_drive_index_4",
++    "__comb_drive_state_5",
++    "__comb_drive_exn_6",
++  ]);
++  expect(fctx.savedBodies).toEqual([]);
++  expect(fctx.body.slice(-2)).toEqual([{ op: "local.get", index: 10 }, { op: "extern.convert_any" }]);
++});
++
++it("retains old checkpoint map reads and does not refresh the historical rejection snapshot", () => {
++  const { ctx, fctx, prologue, element, emit } = setup();
++  prologue.mockImplementation(() => {
++    ctx.funcMap.set("__promise_vector_iterator_acquire", 201);
++    ctx.funcMap.set("__promise_vector_iterator_step", 202);
++    ctx.funcMap.set("__promise_reject", 999);
++    return {
++      resultLocal: 10,
++      ctorLocal: 11,
++      resolveLocal: 12,
++      abortedLocal: 13,
++      raceFulfillLocal: 14,
++      rejectLocal: 15,
++    };
++  });
++  element.mockImplementation(() => {
++    ctx.funcMap.set("__promise_vector_iterator_close_throw", 303);
++  });
++  emit();
++  const actual = calls(fctx.body);
++  expect(actual).toContain(201);
++  expect(actual).toContain(202);
++  expect(actual).toContain(303);
++  expect(actual).toContain(22);
++  expect(actual).not.toContain(999);
++});
++
++it("omitted options preserve the legacy iterator and argument route without captured flushes", () => {
++  const { order, fctx, emit } = setup();
++  emit(false);
++  expect(order).toEqual([
++    "legacy-iterator",
++    "combinators",
++    "async",
++    "observable",
++    "tag",
++    "compile-argument",
++    "attached-prologue",
++    "element",
++  ]);
++  expect(calls(fctx.body)).toContain(111);
++  expect(calls(fctx.body)).toContain(112);
++  expect(calls(fctx.body)).toContain(113);
++});
++
++it("a preparation failure remains before input or frame emission", () => {
++  const { ctx, fctx, order, emit } = setup();
++  ctx.funcMap.delete("__promise_vector_iterator_acquire");
++  expect(emit).toThrow("requires the complete iterator/observable runtime");
++  expect(fctx.locals).toEqual([]);
++  expect(fctx.body).toEqual([]);
++  expect(order).not.toContain("attached-prologue");
++});
++
++it("throwing element construction restores the attached body stack", () => {
++  const { fctx, element, emit } = setup();
++  const body = fctx.body;
++  element.mockImplementation(() => {
++    throw new Error("element construction failed");
++  });
++  expect(emit).toThrow("element construction failed");
++  expect(fctx.body).toBe(body);
++  expect(fctx.savedBodies).toEqual([]);
++});
++
++it("legacy allSettled remains an early no-op for this drive", () => {
++  const { ctx, fctx, order } = setup();
++  expect(emitStandalonePromiseCombinatorDrive(ctx, fctx, "allSettled", {} as ts.Expression, true)).toBeUndefined();
++  expect(order).toEqual([]);
++  expect(fctx.body).toEqual([]);
++});
++
++it("invalid captured options fail before registration", () => {
++  const { ctx, fctx, order } = setup();
++  expect(() =>
++    emitStandalonePromiseCombinatorDrive(ctx, fctx, "race", {} as ts.Expression, false, {
++      evaluatedVecLocal: 99,
++      iteratorProtocol: "captured-source-vector",
++    }),
++  ).toThrow("restricted");
++  expect(order).toEqual([]);
++});
++
++for (const value of ["then", "Promise then is not callable"]) {
++  it("captured element fixed string stays on global materialization: " + value, () => {
++    for (const utf8 of [false, true]) {
++      expect(selectNativeStringLiteral(utf8, true, value).kind).toBe("global");
++      expect(selectNativeStringLiteral(utf8, true, value, "ascii").kind).toBe("global");
++    }
++  });
++}

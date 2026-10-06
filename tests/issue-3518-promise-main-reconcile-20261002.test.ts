@@ -1,0 +1,98 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+// Additive controls for the October 2 Promise main/extracted-owner composition.
+// Historical fixtures and their validators remain independent and unchanged.
+import { describe, expect, it } from "vitest";
+import { compile } from "../src/index.js";
+
+async function run(source: string): Promise<Record<string, () => number>> {
+  const result = await compile(`declare function __drain_microtasks(): void;\n${source}`, {
+    target: "standalone",
+    nativeStrings: true,
+    fileName: "issue-3518-promise-main-reconcile-20261002.ts",
+    deferTopLevelInit: true,
+  });
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  if (!result.success) throw new Error("Promise reconciliation control failed to compile");
+  const module = await WebAssembly.compile(Uint8Array.from(result.binary));
+  expect(WebAssembly.Module.imports(module), "composition must remain host-free").toEqual([]);
+  const instance = await WebAssembly.instantiate(module, {});
+  const exports = instance.exports as Record<string, () => number>;
+  expect(typeof exports.__module_init).toBe("function");
+  exports.__module_init!();
+  return exports;
+}
+
+const iterator = `
+function makeIter(items: any): any {
+  const iter: any = {};
+  iter[Symbol.iterator] = function (): any {
+    let index = 0;
+    return { next: function (): any {
+      if (index === items.length) return { done: true };
+      return { done: false, value: items[index++] };
+    } };
+  };
+  return iter;
+}
+`;
+
+describe("October 2 extracted Promise aggregate Resolve", () => {
+  for (const shape of ["literal", "f64-vector", "iterator"] as const) {
+    for (const empty of [true, false]) {
+      it(`${shape}, empty=${empty}: rejects with the poisoned aggregate-array then getter`, async () => {
+        const values = empty ? "[]" : "[1, 2]";
+        const setup = shape === "f64-vector" ? `const input: number[] = ${values};` : "";
+        const argument = shape === "literal" ? values : shape === "f64-vector" ? "input" : `makeIter(${values})`;
+        const exports = await run(`${iterator}
+let getters = 0;
+export function getterCount(): number { return getters; }
+export function test(): number {
+  let result = 0;
+  Object.defineProperty(Array.prototype, "then", { configurable: true, get: function (): any {
+    getters++; throw 42;
+  } });
+  ${setup}
+  Promise.all(${argument}).then(function (): void { result = -1; },
+    function (reason: any): void { result = reason === 42 ? 42 : -2; });
+  __drain_microtasks();
+  delete (Array.prototype as any).then;
+  return result;
+}`);
+        expect(exports.test!()).toBe(42);
+        expect(exports.getterCount!()).toBe(1);
+      });
+    }
+  }
+});
+
+describe("October 2 extracted Promise prototype then Invoke", () => {
+  for (const shape of ["vector", "iterator"] as const) {
+    it(`${shape}: invokes the prototype override once on each native element`, async () => {
+      const argument = shape === "vector" ? "input" : "makeIter(input)";
+      const exports = await run(`${iterator}
+const original: any = Promise.prototype.then;
+let calls = 0;
+let receivers = 0;
+export function elementCalls(): number { return calls; }
+export function receiverBits(): number { return receivers; }
+export function test(): number {
+  const first = Promise.resolve(5);
+  const second = Promise.resolve(6);
+  const input = [first, second];
+  (Promise.prototype as any).then = function (this: any, fulfill: any, reject: any): any {
+    if (this === first) { calls++; receivers |= 1; }
+    if (this === second) { calls++; receivers |= 2; }
+    return original.call(this, fulfill, reject);
+  };
+  let result = -1;
+  Promise.all(${argument}).then(function (values: any): void { result = values[0] + values[1]; });
+  __drain_microtasks();
+  (Promise.prototype as any).then = original;
+  return result;
+}`);
+      expect(exports.test!()).toBe(11);
+      expect(exports.elementCalls!()).toBe(2);
+      expect(exports.receiverBits!()).toBe(3);
+    });
+  }
+});

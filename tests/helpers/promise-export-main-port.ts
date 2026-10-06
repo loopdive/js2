@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readBeforeFlatLayoutDrive } from "./flat-layout-relocation.js";
+import { readHistoricalPromiseSuccessor } from "./historical-promise-successors.js";
 
 export const promiseExportPrior = "d7de1281129ddff8d3a48902a5dcf81eaee7f8d3";
 export const promiseExportMain = "422dbf01a07b58cceefc64846444485eb549d9a5";
@@ -8,8 +9,8 @@ export const promiseExportBase = "bb41a01224b8173818f4e4cde86f1fdf1905d8aa";
 export const promiseExportPath = "src/codegen/promise-combinators.ts";
 export const promiseExportFixture = "tests/fixtures/issue-3518-promise-export-main-port.json";
 const receiptHash = "5a227bc727181737e46bb2d9b857b305805abf930ff8ba7cf563fb3f3faec63e";
-export const readPromiseExportSource = (path: string): string =>
-  readFileSync(new URL("../../" + path, import.meta.url), "utf8");
+export const readPromiseExportSource = readBeforeFlatLayoutDrive;
+export const readHistoricalPromiseExportSource = readHistoricalPromiseSuccessor;
 export const promiseExportHash = (source: string): string => createHash("sha256").update(source).digest("hex");
 export const promiseExportBlob = (source: string): string =>
   createHash("sha1")
@@ -48,8 +49,8 @@ interface Receipt {
 
 /** Authenticate the incoming export and the actual class-drive implementation that consumes it. */
 export function authenticatePromiseExportMain(
-  text = readPromiseExportSource(promiseExportFixture),
-  reader = readPromiseExportSource,
+  text = readHistoricalPromiseExportSource(promiseExportFixture),
+  reader = readHistoricalPromiseExportSource,
 ): Receipt {
   if (promiseExportHash(text) !== receiptHash) throw Error("promise-export receipt mismatch");
   const receipt = JSON.parse(text) as Receipt;
@@ -118,8 +119,8 @@ export function applyPromiseExportMain(
   path: string,
   source: string,
   inverse: boolean,
-  text = readPromiseExportSource(promiseExportFixture),
-  reader = readPromiseExportSource,
+  text = readHistoricalPromiseExportSource(promiseExportFixture),
+  reader = readHistoricalPromiseExportSource,
 ): string {
   const { record } = authenticatePromiseExportMain(text, reader);
   if (path !== record.path) throw Error("unrecorded promise-export source");

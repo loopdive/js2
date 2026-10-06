@@ -1,0 +1,486 @@
+{
+  "lane": "standalone nativeStrings",
+  "records": [
+    {
+      "name": "Promise",
+      "reserved": false,
+      "occurrence": 1,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 128,
+      "functionCount": 323,
+      "typeCount": 146,
+      "globalCount": 164,
+      "localCount": 2,
+      "moduleSha256": "4c7fece6582aece4e808bf0f1ac721e88d1e9a3c968d1d96eaa4379f2f477aea",
+      "callerSha256": "c62c658df1a80d902d97f4811777bbb4d9fc802729b35cfb8496f7e6a9d386de",
+      "orderedFuncMapSha256": "f702e537256227ad679646200e4921a56a6faea76d78f75fbf0c0f3e9536c6c8",
+      "constructorMapSha256": "adb741bf07db0d0e55c8d62a28e1be9c5872a9c7b744450ccb747df713691e1e",
+      "structMapSha256": "523126e539d3851c9eb8eb82d8f6131ad03d896fffadc35811970527f9893960",
+      "structFieldsSha256": "fd612b750ad211d88eb7c3ef17782dba4c69af4a92f5818feaa3bd8720f7b019",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Promise",
+      "reserved": false,
+      "occurrence": 2,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 128,
+      "functionCount": 323,
+      "typeCount": 146,
+      "globalCount": 164,
+      "localCount": 4,
+      "moduleSha256": "4c7fece6582aece4e808bf0f1ac721e88d1e9a3c968d1d96eaa4379f2f477aea",
+      "callerSha256": "7c4e46bdb225d347e1d9837520c0650c46fa8f213cba6b9bdabfeb27ff93bf6e",
+      "orderedFuncMapSha256": "f702e537256227ad679646200e4921a56a6faea76d78f75fbf0c0f3e9536c6c8",
+      "constructorMapSha256": "adb741bf07db0d0e55c8d62a28e1be9c5872a9c7b744450ccb747df713691e1e",
+      "structMapSha256": "523126e539d3851c9eb8eb82d8f6131ad03d896fffadc35811970527f9893960",
+      "structFieldsSha256": "fd612b750ad211d88eb7c3ef17782dba4c69af4a92f5818feaa3bd8720f7b019",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Promise",
+      "reserved": true,
+      "occurrence": 1,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 0,
+      "functionCount": 323,
+      "typeCount": 146,
+      "globalCount": 164,
+      "localCount": 2,
+      "moduleSha256": "555d8e2c73a98aa53d5f58ac74e678999719db98bdc139ba6bbc3c46188c5c72",
+      "callerSha256": "3cc4e8c08a85cda122257bff561e651b91a23581e977cc1d18c466557a30cb4e",
+      "orderedFuncMapSha256": "f702e537256227ad679646200e4921a56a6faea76d78f75fbf0c0f3e9536c6c8",
+      "constructorMapSha256": "53106c4d3d68d1c914e40d379525739fd050c26da5aa3c86f78c6ad32644a5c7",
+      "structMapSha256": "523126e539d3851c9eb8eb82d8f6131ad03d896fffadc35811970527f9893960",
+      "structFieldsSha256": "fd612b750ad211d88eb7c3ef17782dba4c69af4a92f5818feaa3bd8720f7b019",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Promise",
+      "reserved": true,
+      "occurrence": 2,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 0,
+      "functionCount": 323,
+      "typeCount": 146,
+      "globalCount": 164,
+      "localCount": 4,
+      "moduleSha256": "555d8e2c73a98aa53d5f58ac74e678999719db98bdc139ba6bbc3c46188c5c72",
+      "callerSha256": "8478564179343d774db5bf04b58b61f8d095ab8d00ae5032084dc1e69d29385e",
+      "orderedFuncMapSha256": "f702e537256227ad679646200e4921a56a6faea76d78f75fbf0c0f3e9536c6c8",
+      "constructorMapSha256": "53106c4d3d68d1c914e40d379525739fd050c26da5aa3c86f78c6ad32644a5c7",
+      "structMapSha256": "523126e539d3851c9eb8eb82d8f6131ad03d896fffadc35811970527f9893960",
+      "structFieldsSha256": "fd612b750ad211d88eb7c3ef17782dba4c69af4a92f5818feaa3bd8720f7b019",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Object",
+      "reserved": false,
+      "occurrence": 1,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 128,
+      "functionCount": 299,
+      "typeCount": 121,
+      "globalCount": 133,
+      "localCount": 2,
+      "moduleSha256": "d79478a2eae893df0d7f5a9d7b631b58f588d9ec95297a14193dc6bc875a4009",
+      "callerSha256": "5c8ef9a23b56a6ab8f58e275b56c5048e6c6f9d378ba6c567c2e3dd6f9e54f5e",
+      "orderedFuncMapSha256": "66cc16a0f7afeab7c050c2bbbb1180323a1dd59e2ac676add62a616f818139e3",
+      "constructorMapSha256": "d1a60a8e1b2c21923456679819b763586ac607d87fa82a94aba912c76eec4947",
+      "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+      "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Object",
+      "reserved": false,
+      "occurrence": 2,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 128,
+      "functionCount": 299,
+      "typeCount": 121,
+      "globalCount": 133,
+      "localCount": 4,
+      "moduleSha256": "d79478a2eae893df0d7f5a9d7b631b58f588d9ec95297a14193dc6bc875a4009",
+      "callerSha256": "34a04c38403b259d2e40c74e03ee838e505e7b3a37092f357831548267a6f4ce",
+      "orderedFuncMapSha256": "66cc16a0f7afeab7c050c2bbbb1180323a1dd59e2ac676add62a616f818139e3",
+      "constructorMapSha256": "d1a60a8e1b2c21923456679819b763586ac607d87fa82a94aba912c76eec4947",
+      "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+      "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Object",
+      "reserved": true,
+      "occurrence": 1,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 0,
+      "functionCount": 299,
+      "typeCount": 121,
+      "globalCount": 133,
+      "localCount": 2,
+      "moduleSha256": "9b85d9e0000d8d722caca497364eab96aa314e09508cf29c460364756b1ea26d",
+      "callerSha256": "fed38ad15d50c0f29d6dda30140de327319c6ddfe4103d86967b4ae3c5b107e1",
+      "orderedFuncMapSha256": "66cc16a0f7afeab7c050c2bbbb1180323a1dd59e2ac676add62a616f818139e3",
+      "constructorMapSha256": "1d1eafefac19becb0278a58083984a0c912fda89f5d047afdd01a69d9937a2ca",
+      "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+      "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Object",
+      "reserved": true,
+      "occurrence": 2,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 0,
+      "functionCount": 299,
+      "typeCount": 121,
+      "globalCount": 133,
+      "localCount": 4,
+      "moduleSha256": "9b85d9e0000d8d722caca497364eab96aa314e09508cf29c460364756b1ea26d",
+      "callerSha256": "7aa0b7363dbe6f7759669b6b674c2b09d175b39ce31bab655f59f18e19b9e189",
+      "orderedFuncMapSha256": "66cc16a0f7afeab7c050c2bbbb1180323a1dd59e2ac676add62a616f818139e3",
+      "constructorMapSha256": "1d1eafefac19becb0278a58083984a0c912fda89f5d047afdd01a69d9937a2ca",
+      "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+      "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Array",
+      "reserved": false,
+      "occurrence": 1,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 128,
+      "functionCount": 300,
+      "typeCount": 124,
+      "globalCount": 134,
+      "localCount": 2,
+      "moduleSha256": "580c733536772e6f81f2acfee61d9ed902793f44185f2bd0bd1d910e2224d6da",
+      "callerSha256": "c01124865d168315832ed7242404fdc598c6fdb9ae49b114a8cc142886883944",
+      "orderedFuncMapSha256": "af925925a1cc9ea6a5429bb21e666b1b301c1f07e04a4356e344ecc7b2efba37",
+      "constructorMapSha256": "d549b29a4cd82556654edb8971fcdec31f1cf7b72daf10aaddf6ced23b41af77",
+      "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+      "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Array",
+      "reserved": false,
+      "occurrence": 2,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 128,
+      "functionCount": 300,
+      "typeCount": 124,
+      "globalCount": 134,
+      "localCount": 4,
+      "moduleSha256": "580c733536772e6f81f2acfee61d9ed902793f44185f2bd0bd1d910e2224d6da",
+      "callerSha256": "fdd874e3a16626f3aea4f1a500aff2c410b6eee8fb07ca6c6255d7d1267d0f05",
+      "orderedFuncMapSha256": "af925925a1cc9ea6a5429bb21e666b1b301c1f07e04a4356e344ecc7b2efba37",
+      "constructorMapSha256": "d549b29a4cd82556654edb8971fcdec31f1cf7b72daf10aaddf6ced23b41af77",
+      "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+      "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Array",
+      "reserved": true,
+      "occurrence": 1,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 0,
+      "functionCount": 300,
+      "typeCount": 124,
+      "globalCount": 134,
+      "localCount": 2,
+      "moduleSha256": "0290595831cae0ae8200956c3b0c1980fb831af84e182c560c16017ad2b3fa6d",
+      "callerSha256": "6fd9e7fa6d215a36f467e394ec6a6af4a64f50e1b4ed784b4054869ace5aa453",
+      "orderedFuncMapSha256": "af925925a1cc9ea6a5429bb21e666b1b301c1f07e04a4356e344ecc7b2efba37",
+      "constructorMapSha256": "8aa53f2bc38c0b54f284f0e86e16b50583a824d9b914a4b1d91c6ac4b701dbdd",
+      "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+      "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Array",
+      "reserved": true,
+      "occurrence": 2,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 0,
+      "functionCount": 300,
+      "typeCount": 124,
+      "globalCount": 134,
+      "localCount": 4,
+      "moduleSha256": "0290595831cae0ae8200956c3b0c1980fb831af84e182c560c16017ad2b3fa6d",
+      "callerSha256": "dd72d03f4063c9cc8acda73e7d7c8476e398e1a4ee9b5e6c5a836c9cfe54908f",
+      "orderedFuncMapSha256": "af925925a1cc9ea6a5429bb21e666b1b301c1f07e04a4356e344ecc7b2efba37",
+      "constructorMapSha256": "8aa53f2bc38c0b54f284f0e86e16b50583a824d9b914a4b1d91c6ac4b701dbdd",
+      "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+      "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Number",
+      "reserved": false,
+      "occurrence": 1,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 128,
+      "functionCount": 305,
+      "typeCount": 133,
+      "globalCount": 155,
+      "localCount": 2,
+      "moduleSha256": "aaa6ade630c46d710f7017392fb5800a72f7d336d89e06d17d6022562d506ebe",
+      "callerSha256": "605b465c4253d45fc0da90b22d1bf29d8a75a3dfb1af6897c2213c4f2f7c1f0c",
+      "orderedFuncMapSha256": "3829fbac905533304d77387b24d1b5007ea272dd15c6a1b28db74435d50ee6d7",
+      "constructorMapSha256": "6ce4b063494dd30ba8cd08d22edf8a50f9c3f9727c32d5abda37f6d445b88e2f",
+      "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+      "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Number",
+      "reserved": false,
+      "occurrence": 2,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 128,
+      "functionCount": 305,
+      "typeCount": 133,
+      "globalCount": 155,
+      "localCount": 4,
+      "moduleSha256": "aaa6ade630c46d710f7017392fb5800a72f7d336d89e06d17d6022562d506ebe",
+      "callerSha256": "e3a37e4f1b6ca1ba66ad9b0835a9cd4d29b8d80b28e5ecf7e63628c73394cc51",
+      "orderedFuncMapSha256": "3829fbac905533304d77387b24d1b5007ea272dd15c6a1b28db74435d50ee6d7",
+      "constructorMapSha256": "6ce4b063494dd30ba8cd08d22edf8a50f9c3f9727c32d5abda37f6d445b88e2f",
+      "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+      "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Number",
+      "reserved": true,
+      "occurrence": 1,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 0,
+      "functionCount": 305,
+      "typeCount": 133,
+      "globalCount": 155,
+      "localCount": 2,
+      "moduleSha256": "6a5370ed774657206a1029bc4b3b51ec09c9e93b6c054cb22fccfc048806ac5d",
+      "callerSha256": "8c4a0095e8c82b88253a6c6174a977b57462c78c0fac9a106ef0f3df03d4f1df",
+      "orderedFuncMapSha256": "3829fbac905533304d77387b24d1b5007ea272dd15c6a1b28db74435d50ee6d7",
+      "constructorMapSha256": "0aea70bef9362a19aa65fdb426aca9b77486f9352ab2a97fd990035907ba4d1a",
+      "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+      "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Number",
+      "reserved": true,
+      "occurrence": 2,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 0,
+      "functionCount": 305,
+      "typeCount": 133,
+      "globalCount": 155,
+      "localCount": 4,
+      "moduleSha256": "6a5370ed774657206a1029bc4b3b51ec09c9e93b6c054cb22fccfc048806ac5d",
+      "callerSha256": "91d93c50382a710ef01dec08e2a469ea2e2b09779bc8823a4ed14e7899987d47",
+      "orderedFuncMapSha256": "3829fbac905533304d77387b24d1b5007ea272dd15c6a1b28db74435d50ee6d7",
+      "constructorMapSha256": "0aea70bef9362a19aa65fdb426aca9b77486f9352ab2a97fd990035907ba4d1a",
+      "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+      "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Symbol",
+      "reserved": false,
+      "occurrence": 1,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 128,
+      "functionCount": 303,
+      "typeCount": 127,
+      "globalCount": 159,
+      "localCount": 2,
+      "moduleSha256": "807485d2894f9fabc7e629942d6e35756b46c89692343d0a6e4804f3a74bca0a",
+      "callerSha256": "4466bafd3a345d85adef07cf6c462d8cb3134c069f0b87675d54e3d901e85610",
+      "orderedFuncMapSha256": "3038530e3a7ab4232b66a7fd13c427fc27421bb7baf46b87644573309c6b0a4d",
+      "constructorMapSha256": "e6b43474e6f152fc6720f76a9ae0b54ca93790022dfe6a9155e6a27d1cd191cb",
+      "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+      "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Symbol",
+      "reserved": false,
+      "occurrence": 2,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 128,
+      "functionCount": 303,
+      "typeCount": 127,
+      "globalCount": 159,
+      "localCount": 4,
+      "moduleSha256": "807485d2894f9fabc7e629942d6e35756b46c89692343d0a6e4804f3a74bca0a",
+      "callerSha256": "051b981b3275f43dd63dc4addedcdb0a0a74303d50a5300176ab88d63ab47416",
+      "orderedFuncMapSha256": "3038530e3a7ab4232b66a7fd13c427fc27421bb7baf46b87644573309c6b0a4d",
+      "constructorMapSha256": "e6b43474e6f152fc6720f76a9ae0b54ca93790022dfe6a9155e6a27d1cd191cb",
+      "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+      "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Symbol",
+      "reserved": true,
+      "occurrence": 1,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 0,
+      "functionCount": 303,
+      "typeCount": 127,
+      "globalCount": 159,
+      "localCount": 2,
+      "moduleSha256": "567d9c2ad87d9e07562435c936232a8d6021f16936e3478873f1ac01bf539f5d",
+      "callerSha256": "205323c67bd0e2b91c2e2f1d884288cd4ee0e1620080a890e311df6065e26718",
+      "orderedFuncMapSha256": "3038530e3a7ab4232b66a7fd13c427fc27421bb7baf46b87644573309c6b0a4d",
+      "constructorMapSha256": "1821fe128687eafcd5cf3dc05c44551926a2c82103796997d61be660ac6471fa",
+      "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+      "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Symbol",
+      "reserved": true,
+      "occurrence": 2,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 0,
+      "functionCount": 303,
+      "typeCount": 127,
+      "globalCount": 159,
+      "localCount": 4,
+      "moduleSha256": "567d9c2ad87d9e07562435c936232a8d6021f16936e3478873f1ac01bf539f5d",
+      "callerSha256": "0bc64987fc0d7461bde77df361a652f16da46bb416fa997d71b3810449dc6a51",
+      "orderedFuncMapSha256": "3038530e3a7ab4232b66a7fd13c427fc27421bb7baf46b87644573309c6b0a4d",
+      "constructorMapSha256": "1821fe128687eafcd5cf3dc05c44551926a2c82103796997d61be660ac6471fa",
+      "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+      "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Int8Array",
+      "reserved": false,
+      "occurrence": 1,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 128,
+      "functionCount": 300,
+      "typeCount": 121,
+      "globalCount": 137,
+      "localCount": 2,
+      "moduleSha256": "35b7f92b2056975d1758c3eca4eb057d35335a9e3bed35f04f596d4b417c3a28",
+      "callerSha256": "f435b09820002f7c47ddb22d4dbd836cab4c0117c82dd0b9a1ba0a2499ce9776",
+      "orderedFuncMapSha256": "2c2aea938a0b5f6c8691cc12ab2572a30fb69b68d2fce1933ce5dbfda0c71652",
+      "constructorMapSha256": "44441ed775c1cc844509b00892698e971a0362ae0431fe5479d1ae5d99d4233c",
+      "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+      "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Int8Array",
+      "reserved": false,
+      "occurrence": 2,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 128,
+      "functionCount": 300,
+      "typeCount": 121,
+      "globalCount": 137,
+      "localCount": 4,
+      "moduleSha256": "35b7f92b2056975d1758c3eca4eb057d35335a9e3bed35f04f596d4b417c3a28",
+      "callerSha256": "5d65df0728a14d9d08f51ffe6cbcc77f73169455c814aca7c4ac4d9102c279a0",
+      "orderedFuncMapSha256": "2c2aea938a0b5f6c8691cc12ab2572a30fb69b68d2fce1933ce5dbfda0c71652",
+      "constructorMapSha256": "44441ed775c1cc844509b00892698e971a0362ae0431fe5479d1ae5d99d4233c",
+      "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+      "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Int8Array",
+      "reserved": true,
+      "occurrence": 1,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 0,
+      "functionCount": 300,
+      "typeCount": 121,
+      "globalCount": 137,
+      "localCount": 2,
+      "moduleSha256": "b25616122202607e381e6d8559f6f480ec63f11cbfed7e122df1bb90bf109283",
+      "callerSha256": "b0ce5e8683361e675ba7372517d9bc94911f88c48a44793f62ae539cb5b824ba",
+      "orderedFuncMapSha256": "2c2aea938a0b5f6c8691cc12ab2572a30fb69b68d2fce1933ce5dbfda0c71652",
+      "constructorMapSha256": "6224c0bc80dbc7dc4c8d6d4ef5bba24d5bb85cfb1e02330a42e5acf36d3a6176",
+      "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+      "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "Int8Array",
+      "reserved": true,
+      "occurrence": 2,
+      "resultType": {
+        "kind": "externref"
+      },
+      "globalIndex": 0,
+      "functionCount": 300,
+      "typeCount": 121,
+      "globalCount": 137,
+      "localCount": 4,
+      "moduleSha256": "b25616122202607e381e6d8559f6f480ec63f11cbfed7e122df1bb90bf109283",
+      "callerSha256": "376955e162a78493f82cb39e6f916521eeebb90b1070d38feff0af9ddfd46938",
+      "orderedFuncMapSha256": "2c2aea938a0b5f6c8691cc12ab2572a30fb69b68d2fce1933ce5dbfda0c71652",
+      "constructorMapSha256": "6224c0bc80dbc7dc4c8d6d4ef5bba24d5bb85cfb1e02330a42e5acf36d3a6176",
+      "structMapSha256": "a5a0e61a845c8fb34dd0ec567ae15b3aeec014bc8a3bb97077dc67a363bf9b6d",
+      "structFieldsSha256": "ef4895f05f5ed407ecfed6a59d5ddfd65e29f163bf61eee4e47e5f0db7b581f1",
+      "liveBodiesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    }
+  ],
+  "scope": "Actual immediate constructor emission, cold/reserved and repeated; not runtime or delayed-retention proof"
+}

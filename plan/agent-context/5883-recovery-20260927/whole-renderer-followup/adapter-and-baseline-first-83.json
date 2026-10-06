@@ -1,0 +1,832 @@
+{
+  "numTotalTestSuites": 10,
+  "numPassedTestSuites": 10,
+  "numFailedTestSuites": 0,
+  "numPendingTestSuites": 0,
+  "numTotalTests": 83,
+  "numPassedTests": 83,
+  "numFailedTests": 0,
+  "numPendingTests": 0,
+  "numTodoTests": 0,
+  "snapshot": {
+    "added": 0,
+    "failure": false,
+    "filesAdded": 0,
+    "filesRemoved": 0,
+    "filesRemovedList": [],
+    "filesUnmatched": 0,
+    "filesUpdated": 0,
+    "matched": 0,
+    "total": 0,
+    "unchecked": 0,
+    "uncheckedKeysByFile": [],
+    "unmatched": 0,
+    "updated": 0,
+    "didUpdate": false
+  },
+  "startTime": 1790495361828,
+  "success": true,
+  "testResults": [
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": [],
+          "fullName": "all: 0 roots preserve ordered values, freshen only match leaves",
+          "status": "passed",
+          "title": "all: 0 roots preserve ordered values, freshen only match leaves",
+          "duration": 6.488415999999688,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "race: 0 roots preserve ordered values, freshen only match leaves",
+          "status": "passed",
+          "title": "race: 0 roots preserve ordered values, freshen only match leaves",
+          "duration": 0.8707500000000437,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "all: 1 roots preserve ordered values, freshen only match leaves",
+          "status": "passed",
+          "title": "all: 1 roots preserve ordered values, freshen only match leaves",
+          "duration": 0.7460420000002159,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "race: 1 roots preserve ordered values, freshen only match leaves",
+          "status": "passed",
+          "title": "race: 1 roots preserve ordered values, freshen only match leaves",
+          "duration": 0.4559999999996762,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "all: 3 roots preserve ordered values, freshen only match leaves",
+          "status": "passed",
+          "title": "all: 3 roots preserve ordered values, freshen only match leaves",
+          "duration": 0.6590420000002268,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "race: 3 roots preserve ordered values, freshen only match leaves",
+          "status": "passed",
+          "title": "race: 3 roots preserve ordered values, freshen only match leaves",
+          "duration": 0.37495899999976245,
+          "failureMessages": [],
+          "meta": {}
+        }
+      ],
+      "startTime": 1790495376758,
+      "endTime": 1790495376767.659,
+      "status": "passed",
+      "message": "",
+      "name": "/private/tmp/js2-5883-main-6eac-20260927/tests/issue-5883-captured-match-leaves.test.ts"
+    },
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": ["immediate materialized constructor transfer"],
+          "fullName": "immediate materialized constructor transfer constructs once in legacy order and retains the actual seeded subtree",
+          "status": "passed",
+          "title": "constructs once in legacy order and retains the actual seeded subtree",
+          "duration": 2.4484999999999673,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["immediate materialized constructor transfer"],
+          "fullName": "immediate materialized constructor transfer does no registration or local allocation after seed completion",
+          "status": "passed",
+          "title": "does no registration or local allocation after seed completion",
+          "duration": 0.6473750000000109,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["immediate materialized constructor transfer"],
+          "fullName": "immediate materialized constructor transfer preserves borrowed outer membership on success",
+          "status": "passed",
+          "title": "preserves borrowed outer membership on success",
+          "duration": 0.1605000000000132,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["immediate materialized constructor transfer"],
+          "fullName": "immediate materialized constructor transfer restores body and owned memberships on throw (borrowed=false)",
+          "status": "passed",
+          "title": "restores body and owned memberships on throw (borrowed=false)",
+          "duration": 0.17745800000000145,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["immediate materialized constructor transfer"],
+          "fullName": "immediate materialized constructor transfer restores body and owned memberships on throw (borrowed=true)",
+          "status": "passed",
+          "title": "restores body and owned memberships on throw (borrowed=true)",
+          "duration": 0.1989590000000021,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["immediate materialized constructor transfer"],
+          "fullName": "immediate materialized constructor transfer materializes a fresh fragment and local for each immediate read",
+          "status": "passed",
+          "title": "materializes a fresh fragment and local for each immediate read",
+          "duration": 0.42883399999999483,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["immediate materialized constructor transfer"],
+          "fullName": "immediate materialized constructor transfer preserves outer roots through actual nested constructor preparation",
+          "status": "passed",
+          "title": "preserves outer roots through actual nested constructor preparation",
+          "duration": 0.3321250000000191,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["immediate materialized constructor transfer"],
+          "fullName": "immediate materialized constructor transfer preserves nonempty destination and original error identity on seed throw",
+          "status": "passed",
+          "title": "preserves nonempty destination and original error identity on seed throw",
+          "duration": 0.12074999999998681,
+          "failureMessages": [],
+          "meta": {}
+        }
+      ],
+      "startTime": 1790495373545,
+      "endTime": 1790495373549.429,
+      "status": "passed",
+      "message": "",
+      "name": "/private/tmp/js2-5883-main-6eac-20260927/tests/issue-5883-constructor-prepared.test.ts"
+    },
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": [],
+          "fullName": "real adapter preserves the seed error and cleans owned roots (borrowed=false)",
+          "status": "passed",
+          "title": "real adapter preserves the seed error and cleans owned roots (borrowed=false)",
+          "duration": 2.605665999999985,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "real adapter preserves the seed error and cleans owned roots (borrowed=true)",
+          "status": "passed",
+          "title": "real adapter preserves the seed error and cleans owned roots (borrowed=true)",
+          "duration": 0.4587919999999883,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "real finish invalid-local error survives constructor cleanup by identity",
+          "status": "passed",
+          "title": "real finish invalid-local error survives constructor cleanup by identity",
+          "duration": 1.0977499999999907,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "real finish lost-root error survives constructor cleanup by identity",
+          "status": "passed",
+          "title": "real finish lost-root error survives constructor cleanup by identity",
+          "duration": 0.5573750000000075,
+          "failureMessages": [],
+          "meta": {}
+        }
+      ],
+      "startTime": 1790495373718,
+      "endTime": 1790495373722.5574,
+      "status": "passed",
+      "message": "",
+      "name": "/private/tmp/js2-5883-main-6eac-20260927/tests/issue-5883-constructor-region-real.test.ts"
+    },
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": [],
+          "fullName": "returns the owner's child after one real constructor construction",
+          "status": "passed",
+          "title": "returns the owner's child after one real constructor construction",
+          "duration": 2.893957999999998,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "aborts owner emission on seed failure without replacing the error",
+          "status": "passed",
+          "title": "aborts owner emission on seed failure without replacing the error",
+          "duration": 0.3483329999999967,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "aborts owner emission on finish failure without replacing the error",
+          "status": "passed",
+          "title": "aborts owner emission on finish failure without replacing the error",
+          "duration": 0.23837499999999068,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": [],
+          "fullName": "does not construct or abort an emission when owner entry rejects",
+          "status": "passed",
+          "title": "does not construct or abort an emission when owner entry rejects",
+          "duration": 0.2574159999999779,
+          "failureMessages": [],
+          "meta": {}
+        }
+      ],
+      "startTime": 1790495373890,
+      "endTime": 1790495373894.2573,
+      "status": "passed",
+      "message": "",
+      "name": "/private/tmp/js2-5883-main-6eac-20260927/tests/issue-5883-constructor-region.test.ts"
+    },
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": ["R real import walkers (authored instrument, not renderer equivalence)"],
+          "fullName": "R real import walkers (authored instrument, not renderer equivalence) actual deferred function batch shifts retained child once, aliases=false",
+          "status": "passed",
+          "title": "actual deferred function batch shifts retained child once, aliases=false",
+          "duration": 11.78662500000064,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R real import walkers (authored instrument, not renderer equivalence)"],
+          "fullName": "R real import walkers (authored instrument, not renderer equivalence) actual deferred function batch shifts retained child once, aliases=true",
+          "status": "passed",
+          "title": "actual deferred function batch shifts retained child once, aliases=true",
+          "duration": 2.0973329999997077,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R real import walkers (authored instrument, not renderer equivalence)"],
+          "fullName": "R real import walkers (authored instrument, not renderer equivalence) actual string-global insertion shifts retained child once, aliases=false",
+          "status": "passed",
+          "title": "actual string-global insertion shifts retained child once, aliases=false",
+          "duration": 2.181957999999213,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R real import walkers (authored instrument, not renderer equivalence)"],
+          "fullName": "R real import walkers (authored instrument, not renderer equivalence) actual string-global insertion shifts retained child once, aliases=true",
+          "status": "passed",
+          "title": "actual string-global insertion shifts retained child once, aliases=true",
+          "duration": 3.6486670000012964,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R real import walkers (authored instrument, not renderer equivalence)"],
+          "fullName": "R real import walkers (authored instrument, not renderer equivalence) actual function shift after authorization rejects without refresh/rollback",
+          "status": "passed",
+          "title": "actual function shift after authorization rejects without refresh/rollback",
+          "duration": 2.5152090000010503,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R real import walkers (authored instrument, not renderer equivalence)"],
+          "fullName": "R real import walkers (authored instrument, not renderer equivalence) actual global shift after authorization rejects without refresh/rollback",
+          "status": "passed",
+          "title": "actual global shift after authorization rejects without refresh/rollback",
+          "duration": 1.3200419999993755,
+          "failureMessages": [],
+          "meta": {}
+        }
+      ],
+      "startTime": 1790495373215,
+      "endTime": 1790495373238.32,
+      "status": "passed",
+      "message": "",
+      "name": "/private/tmp/js2-5883-main-6eac-20260927/tests/issue-5883-staging-bindings-real-shifts.test.ts"
+    },
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children transfers original child identity once for all, source index zero",
+          "status": "passed",
+          "title": "transfers original child identity once for all, source index zero",
+          "duration": 2.7357920000000036,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children transfers original child identity once for race, source index zero",
+          "status": "passed",
+          "title": "transfers original child identity once for race, source index zero",
+          "duration": 0.6117920000000083,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children allocates only through the existing allocator and captures nested seed locals",
+          "status": "passed",
+          "title": "allocates only through the existing allocator and captures nested seed locals",
+          "duration": 0.6701249999999845,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children refuses duplicate frame claim without changing retained roots",
+          "status": "passed",
+          "title": "refuses duplicate frame claim without changing retained roots",
+          "duration": 0.2427500000000009,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children refuses foreign ctx/frame and forged child construction before cursor mutation",
+          "status": "passed",
+          "title": "refuses foreign ctx/frame and forged child construction before cursor mutation",
+          "duration": 0.4380419999999958,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children requires all children settled before authorization",
+          "status": "passed",
+          "title": "requires all children settled before authorization",
+          "duration": 0.3449579999999912,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children restores nested cursors in LIFO order and revokes aborted children",
+          "status": "passed",
+          "title": "restores nested cursors in LIFO order and revokes aborted children",
+          "duration": 0.5671669999999835,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children contained seed rollback completes before child admission",
+          "status": "passed",
+          "title": "contained seed rollback completes before child admission",
+          "duration": 0.3324580000000026,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children rejects same-count declaration replacement after retention",
+          "status": "passed",
+          "title": "rejects same-count declaration replacement after retention",
+          "duration": 0.4465419999999938,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children rejects type drift before transfer",
+          "status": "passed",
+          "title": "rejects type drift before transfer",
+          "duration": 0.23520800000000008,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children rejects params drift before transfer",
+          "status": "passed",
+          "title": "rejects params drift before transfer",
+          "duration": 0.7734999999999843,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children rejects locals drift before transfer",
+          "status": "passed",
+          "title": "rejects locals drift before transfer",
+          "duration": 0.21195899999997891,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children rejects destination drift before transfer",
+          "status": "passed",
+          "title": "rejects destination drift before transfer",
+          "duration": 0.24049999999999727,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children rejects append drift before transfer",
+          "status": "passed",
+          "title": "rejects append drift before transfer",
+          "duration": 0.1754590000000178,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children refuses missing placement without consuming valid output",
+          "status": "passed",
+          "title": "refuses missing placement without consuming valid output",
+          "duration": 0.24645900000001575,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children refuses duplicate placement without consuming valid output",
+          "status": "passed",
+          "title": "refuses duplicate placement without consuming valid output",
+          "duration": 0.1595000000000084,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children refuses wrong-start placement without consuming valid output",
+          "status": "passed",
+          "title": "refuses wrong-start placement without consuming valid output",
+          "duration": 0.2501670000000047,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children refuses foreign-array placement without consuming valid output",
+          "status": "passed",
+          "title": "refuses foreign-array placement without consuming valid output",
+          "duration": 0.36375000000001023,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children refuses forged-child placement without consuming valid output",
+          "status": "passed",
+          "title": "refuses forged-child placement without consuming valid output",
+          "duration": 0.4966660000000047,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children rejects copied authorization but permits the untouched authorized output",
+          "status": "passed",
+          "title": "rejects copied authorization but permits the untouched authorized output",
+          "duration": 0.27649999999999864,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children rejects duplicate physical instruction placement",
+          "status": "passed",
+          "title": "rejects duplicate physical instruction placement",
+          "duration": 0.2579159999999945,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children permits actual child insertion under a real container, without adding a synthetic label",
+          "status": "passed",
+          "title": "permits actual child insertion under a real container, without adding a synthetic label",
+          "duration": 0.1130409999999813,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children rejects changed retained local operands",
+          "status": "passed",
+          "title": "rejects changed retained local operands",
+          "duration": 0.25208299999999895,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children ordinary pre-authorization function/global shifts preserve exact materialized identities",
+          "status": "passed",
+          "title": "ordinary pre-authorization function/global shifts preserve exact materialized identities",
+          "duration": 0.12808300000000372,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children render failure revokes authorization and preserves borrowed roots without pretending rollback",
+          "status": "passed",
+          "title": "render failure revokes authorization and preserves borrowed roots without pretending rollback",
+          "duration": 0.1905410000000245,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children does not reject an existing legacy destination DAG solely for its aliases",
+          "status": "passed",
+          "title": "does not reject an existing legacy destination DAG solely for its aliases",
+          "duration": 0.1109170000000006,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children rejects unrelated ctx/frame pairing before retaining any roots",
+          "status": "passed",
+          "title": "rejects unrelated ctx/frame pairing before retaining any roots",
+          "duration": 0.11879099999998743,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children rejects a frame removed from the actual context before transfer",
+          "status": "passed",
+          "title": "rejects a frame removed from the actual context before transfer",
+          "duration": 0.13024999999998954,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children closes preparation and issues authorization once",
+          "status": "passed",
+          "title": "closes preparation and issues authorization once",
+          "duration": 0.3157500000000084,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children walks catches and rejects a cyclic output without consuming the authorization",
+          "status": "passed",
+          "title": "walks catches and rejects a cyclic output without consuming the authorization",
+          "duration": 0.1915000000000191,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children rejects output aliasing the already existing destination",
+          "status": "passed",
+          "title": "rejects output aliasing the already existing destination",
+          "duration": 0.26866700000002197,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children post-authorization scalar changes refuse transfer instead of silently refreshing",
+          "status": "passed",
+          "title": "post-authorization scalar changes refuse transfer instead of silently refreshing",
+          "duration": 0.22491700000000492,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children rejects absent/noninteger source -1 before root registration",
+          "status": "passed",
+          "title": "rejects absent/noninteger source -1 before root registration",
+          "duration": 0.1069169999999815,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children rejects absent/noninteger source 0.5 before root registration",
+          "status": "passed",
+          "title": "rejects absent/noninteger source 0.5 before root registration",
+          "duration": 0.11020899999999756,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children rejects absent/noninteger source 1 before root registration",
+          "status": "passed",
+          "title": "rejects absent/noninteger source 1 before root registration",
+          "duration": 0.10212500000000091,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children rejects a non-externref source declaration",
+          "status": "passed",
+          "title": "rejects a non-externref source declaration",
+          "duration": 0.11983399999999733,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children rejects shared empty nested arrays independently of instruction aliases",
+          "status": "passed",
+          "title": "rejects shared empty nested arrays independently of instruction aliases",
+          "duration": 0.17220899999998096,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R synchronous bindings and retained children"],
+          "fullName": "R synchronous bindings and retained children a lost retained root rejects authorization before closing preparation",
+          "status": "passed",
+          "title": "a lost retained root rejects authorization before closing preparation",
+          "duration": 0.14245900000000233,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R lexical adapter review corrections (source-only until next grant)"],
+          "fullName": "R lexical adapter review corrections (source-only until next grant) accepts unchanged structured operands and preserves executable identities",
+          "status": "passed",
+          "title": "accepts unchanged structured operands and preserves executable identities",
+          "duration": 0.28683300000000145,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R lexical adapter review corrections (source-only until next grant)"],
+          "fullName": "R lexical adapter review corrections (source-only until next grant) rejects changed block data before transfer, then accepts restoration",
+          "status": "passed",
+          "title": "rejects changed block data before transfer, then accepts restoration",
+          "duration": 0.2761660000000177,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R lexical adapter review corrections (source-only until next grant)"],
+          "fullName": "R lexical adapter review corrections (source-only until next grant) rejects changed nested-type data before transfer, then accepts restoration",
+          "status": "passed",
+          "title": "rejects changed nested-type data before transfer, then accepts restoration",
+          "duration": 0.23162500000000819,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R lexical adapter review corrections (source-only until next grant)"],
+          "fullName": "R lexical adapter review corrections (source-only until next grant) rejects changed catch-tag data before transfer, then accepts restoration",
+          "status": "passed",
+          "title": "rejects changed catch-tag data before transfer, then accepts restoration",
+          "duration": 0.21800000000001774,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R lexical adapter review corrections (source-only until next grant)"],
+          "fullName": "R lexical adapter review corrections (source-only until next grant) rejects changed table-tag data before transfer, then accepts restoration",
+          "status": "passed",
+          "title": "rejects changed table-tag data before transfer, then accepts restoration",
+          "duration": 0.2351250000000107,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R lexical adapter review corrections (source-only until next grant)"],
+          "fullName": "R lexical adapter review corrections (source-only until next grant) rejects changed table-kind data before transfer, then accepts restoration",
+          "status": "passed",
+          "title": "rejects changed table-kind data before transfer, then accepts restoration",
+          "duration": 0.24404200000000742,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R lexical adapter review corrections (source-only until next grant)"],
+          "fullName": "R lexical adapter review corrections (source-only until next grant) rejects changed table-depth data before transfer, then accepts restoration",
+          "status": "passed",
+          "title": "rejects changed table-depth data before transfer, then accepts restoration",
+          "duration": 0.22220900000002075,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R lexical adapter review corrections (source-only until next grant)"],
+          "fullName": "R lexical adapter review corrections (source-only until next grant) rejects changed branch-target data before transfer, then accepts restoration",
+          "status": "passed",
+          "title": "rejects changed branch-target data before transfer, then accepts restoration",
+          "duration": 1.163499999999999,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R lexical adapter review corrections (source-only until next grant)"],
+          "fullName": "R lexical adapter review corrections (source-only until next grant) accepts an unchanged f64 scalar NaN",
+          "status": "passed",
+          "title": "accepts an unchanged f64 scalar NaN",
+          "duration": 0.12179199999999923,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R lexical adapter review corrections (source-only until next grant)"],
+          "fullName": "R lexical adapter review corrections (source-only until next grant) accepts an unchanged f64 scalar -0",
+          "status": "passed",
+          "title": "accepts an unchanged f64 scalar -0",
+          "duration": 0.06641700000000128,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R lexical adapter review corrections (source-only until next grant)"],
+          "fullName": "R lexical adapter review corrections (source-only until next grant) rejects negative-to-positive-zero drift and accepts restored negative zero",
+          "status": "passed",
+          "title": "rejects negative-to-positive-zero drift and accepts restored negative zero",
+          "duration": 0.19933299999999576,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R lexical adapter review corrections (source-only until next grant)"],
+          "fullName": "R lexical adapter review corrections (source-only until next grant) outer abort revokes retained descendant, preserving sibling and borrowed root",
+          "status": "passed",
+          "title": "outer abort revokes retained descendant, preserving sibling and borrowed root",
+          "duration": 0.26779099999998834,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R lexical adapter review corrections (source-only until next grant)"],
+          "fullName": "R lexical adapter review corrections (source-only until next grant) outer abort revokes unentered descendant, preserving sibling and borrowed root",
+          "status": "passed",
+          "title": "outer abort revokes unentered descendant, preserving sibling and borrowed root",
+          "duration": 0.18795900000000643,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R lexical adapter review corrections (source-only until next grant)"],
+          "fullName": "R lexical adapter review corrections (source-only until next grant) outer abort revokes grandchildren even after their parent has finished",
+          "status": "passed",
+          "title": "outer abort revokes grandchildren even after their parent has finished",
+          "duration": 0.1807500000000175,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R lexical adapter review corrections (source-only until next grant)"],
+          "fullName": "R lexical adapter review corrections (source-only until next grant) does not reuse failed-region bindings after actual caller-owned rollback and slot reuse",
+          "status": "passed",
+          "title": "does not reuse failed-region bindings after actual caller-owned rollback and slot reuse",
+          "duration": 0.3022499999999866,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R lexical adapter review corrections (source-only until next grant)"],
+          "fullName": "R lexical adapter review corrections (source-only until next grant) frame abort restores replaced cursor with borrowed destination=false and no open child",
+          "status": "passed",
+          "title": "frame abort restores replaced cursor with borrowed destination=false and no open child",
+          "duration": 0.3002920000000131,
+          "failureMessages": [],
+          "meta": {}
+        },
+        {
+          "ancestorTitles": ["R lexical adapter review corrections (source-only until next grant)"],
+          "fullName": "R lexical adapter review corrections (source-only until next grant) frame abort restores replaced cursor with borrowed destination=true and no open child",
+          "status": "passed",
+          "title": "frame abort restores replaced cursor with borrowed destination=true and no open child",
+          "duration": 0.23862499999998477,
+          "failureMessages": [],
+          "meta": {}
+        }
+      ],
+      "startTime": 1790495362166,
+      "endTime": 1790495362184.3022,
+      "status": "passed",
+      "message": "",
+      "name": "/private/tmp/js2-5883-main-6eac-20260927/tests/issue-5883-staging-bindings.test.ts"
+    }
+  ]
+}

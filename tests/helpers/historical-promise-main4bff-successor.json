@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "kind": "5883-main4bff-reader-successor",
+  "offsetUnit": "utf16-code-units",
+  "predecessorCommit": "8b9e89a5f9009d7a17a8c6410fa2ea2b1d0b3960",
+  "incomingCommit": "4bffef14505f26558556a707931c711105a968af",
+  "candidateState": "pending-merge",
+  "candidateParents": ["8b9e89a5f9009d7a17a8c6410fa2ea2b1d0b3960", "4bffef14505f26558556a707931c711105a968af"],
+  "oldMain5fReceipt": {
+    "path": "tests/fixtures/issue-5883-main5f-reader-epoch.json",
+    "sha256": "c33cc1682761adb29ea8f1ca83b6682d265ab3533f6f4383e976734fc3479bcd"
+  },
+  "records": [
+    {
+      "path": "src/codegen/context/types.ts",
+      "before": {
+        "bytes": 274246,
+        "utf16Length": 273127,
+        "sha256": "58f3fa0f768168bf654ea7dd4697ee59b25b9676bd60acd7865cb1c59d875c99",
+        "gitBlob": "6aca0c6d4ab64edaefa155e484e5cc509bab436b"
+      },
+      "after": {
+        "bytes": 274362,
+        "utf16Length": 273243,
+        "sha256": "38399c87933f2812ad3f36b1e5a7199216d725da7560be33815982358da22b20",
+        "gitBlob": "ecde9095f807d9652130e3bb50a34ff6888826a4"
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "beforeOffset": 49941,
+          "afterOffset": 49941,
+          "before": "",
+          "after": "  /** (#6417) A `boolean` host callback: an i32 return boxes via `__box_boolean`. */\n  hostBooleanReturn?: boolean;\n",
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "b0a8f1e27b762d71f132668a42bf5dc3fadf69193fb89a263958a02804344a93"
+        }
+      ],
+      "retained": [
+        {
+          "beforeOffset": 0,
+          "afterOffset": 0,
+          "length": 49941,
+          "sha256": "377a45d77f91c750f4d18ef43b07bf56f79c7138a1b81eeb58f41564ee612f22"
+        },
+        {
+          "beforeOffset": 49941,
+          "afterOffset": 50057,
+          "length": 223186,
+          "sha256": "99b6f0e7d6420f9136ac995363012476c9a9db7a06f012a0b9271c1ee9dcbab4"
+        }
+      ],
+      "provenance": {
+        "producerCommit": "192b3688090824a1c48a87ccbd3d9a0b9bb568aa",
+        "producerParent": "42d289a96f2c757e4286a57e97f0bfe743b29868",
+        "producerBefore": {
+          "bytes": 273856,
+          "utf16Length": 272737,
+          "sha256": "09d4aa06e04b463a6979263dccd8ec2e544db725c57ef8a231af23c7f3e950fe",
+          "gitBlob": "a20d10dcee368a72bc9b8c19f5f313a20d6ff97c"
+        },
+        "producerAfter": {
+          "bytes": 273972,
+          "utf16Length": 272853,
+          "sha256": "0c91818221f70f77cb3cd5264ad61ab1e17f4cbda801140d1298ef9d463add29",
+          "gitBlob": "f55af51f5c104677aa020335f95214605b1f6a54"
+        },
+        "incoming": {
+          "bytes": 273972,
+          "utf16Length": 272853,
+          "sha256": "0c91818221f70f77cb3cd5264ad61ab1e17f4cbda801140d1298ef9d463add29",
+          "gitBlob": "f55af51f5c104677aa020335f95214605b1f6a54"
+        }
+      }
+    },
+    {
+      "path": "src/codegen/object-runtime.ts",
+      "before": {
+        "bytes": 551621,
+        "utf16Length": 548968,
+        "sha256": "4faf6ce56327a9c46cb7479c7f11a16fc3c8ac219673cb38710b2fc0d66fe937",
+        "gitBlob": "6328ded6b504808974b22782b08a6be61541474f"
+      },
+      "after": {
+        "bytes": 551964,
+        "utf16Length": 549311,
+        "sha256": "4e9d437a7ef699388b47e6d9e60adfaf4ada104c9ac02abff6ac9c5d322f461b",
+        "gitBlob": "cccfbe1bc1270fbf1419893f332664edf6255378"
+      },
+      "spans": [
+        {
+          "ordinal": 0,
+          "beforeOffset": 16553,
+          "afterOffset": 16553,
+          "before": "",
+          "after": "import { ensureStandaloneTaSubclassParentCtor } from \"./dataview-native.js\"; // (#6651 V3) faithful TA subclass parent\n",
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "6e8e33b760730f917b90060735d169d7e25acbdf7b4015f70207239c1b333468"
+        },
+        {
+          "ordinal": 1,
+          "beforeOffset": 34342,
+          "afterOffset": 34461,
+          "before": "",
+          "after": "  // (#6651 V3) number-element TypedArray parents construct for real.\n  const faithful = ensureStandaloneTaSubclassParentCtor(ctx, importName.slice(\"__new_\".length), argCount);\n  if (faithful !== undefined) return faithful;\n",
+          "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "afterSha256": "765ca19e3cfb0fb4cce4b15cbda93982459e668704752c1249919adc1bfedcaf"
+        }
+      ],
+      "retained": [
+        {
+          "beforeOffset": 0,
+          "afterOffset": 0,
+          "length": 16553,
+          "sha256": "04ef3b1c74018ae1eea1ae62675ce6ca1d8c5c97097e5f13e14074db0928815a"
+        },
+        {
+          "beforeOffset": 16553,
+          "afterOffset": 16672,
+          "length": 17789,
+          "sha256": "45130fa03f5ce6a1e994c7a313d6d531423bdfef822693ea6e19c233c8252841"
+        },
+        {
+          "beforeOffset": 34342,
+          "afterOffset": 34685,
+          "length": 514626,
+          "sha256": "e373484b3313f80cf24e970e5e0f7cc40a56c0d528232f4e1ef062cba1837718"
+        }
+      ],
+      "provenance": {
+        "producerCommit": "1a1b50cb40bd984850e5f49daf350479ae728ad4",
+        "producerParent": "d1f1fbdebcc7ca387fd2ec272e31862d8e92b315",
+        "producerBefore": {
+          "bytes": 551621,
+          "utf16Length": 548968,
+          "sha256": "4faf6ce56327a9c46cb7479c7f11a16fc3c8ac219673cb38710b2fc0d66fe937",
+          "gitBlob": "6328ded6b504808974b22782b08a6be61541474f"
+        },
+        "producerAfter": {
+          "bytes": 551964,
+          "utf16Length": 549311,
+          "sha256": "4e9d437a7ef699388b47e6d9e60adfaf4ada104c9ac02abff6ac9c5d322f461b",
+          "gitBlob": "cccfbe1bc1270fbf1419893f332664edf6255378"
+        },
+        "incoming": {
+          "bytes": 551964,
+          "utf16Length": 549311,
+          "sha256": "4e9d437a7ef699388b47e6d9e60adfaf4ada104c9ac02abff6ac9c5d322f461b",
+          "gitBlob": "cccfbe1bc1270fbf1419893f332664edf6255378"
+        }
+      }
+    }
+  ]
+}

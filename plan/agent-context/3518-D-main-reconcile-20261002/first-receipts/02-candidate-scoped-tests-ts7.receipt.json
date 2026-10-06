@@ -1,0 +1,58 @@
+{
+  "schema": "assignment-D-first-check-receipt-v1",
+  "ordinal": 2,
+  "id": "candidate-scoped-tests-ts7",
+  "command": "node node_modules/typescript7/lib/tsc.js --noEmit -p .tmp/assignment-D/tsconfig.tests.json",
+  "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+  "grant": "parent explicit steps 1–5 only after A release/C terminal",
+  "startedAt": "2026-10-02T04:09:35.861Z",
+  "endedAt": "2026-10-02T04:09:53.744Z",
+  "runnerPid": 61429,
+  "childPid": 61526,
+  "terminal": true,
+  "exitCode": 1,
+  "signal": null,
+  "spawnError": null,
+  "node": {
+    "version": "v22.23.2",
+    "executable": "/Users/thomas/.nvm/versions/node/v22.23.2/bin/node"
+  },
+  "dependencies": {
+    "link": "/Users/thomas/Code/js2/node_modules",
+    "ts7EntrypointSha256": "cbdfbf11c26ed00dfc073155e316a42d6d6d8a387be61006b82fa9aa93ac572e",
+    "prettierEntrypointSha256": "ac5523cd57e7e9d8eac71caef7e022a8a8489bcdc19ca8a778b7e728ec103b93"
+  },
+  "removedGitEnvironment": [],
+  "compilerControlEnvironment": {},
+  "pinsBefore": {
+    "head": "32c2da64881923d67f0f53c6019a475db6ee1ecd",
+    "mergeHead": "2bfe3eddf84d4d27f471eddb91e441709b7f6eff",
+    "branch": "codex/5883-main-reconcile-20261002",
+    "productionPatchSha256": "f64a9ad19a8e97f33c12884e41a99a521b8d398832340efa8002a56727917a0a",
+    "frozenFixtures": 141,
+    "selectedTestFiles": 13,
+    "additiveControls": 8
+  },
+  "pinsAfter": {
+    "head": "32c2da64881923d67f0f53c6019a475db6ee1ecd",
+    "mergeHead": "2bfe3eddf84d4d27f471eddb91e441709b7f6eff",
+    "branch": "codex/5883-main-reconcile-20261002",
+    "productionPatchSha256": "f64a9ad19a8e97f33c12884e41a99a521b8d398832340efa8002a56727917a0a",
+    "frozenFixtures": 141,
+    "selectedTestFiles": 13,
+    "additiveControls": 8
+  },
+  "pinError": null,
+  "stdout": {
+    "file": ".tmp/assignment-D-first-steps1-5-20261002/02-candidate-scoped-tests-ts7.stdout.raw",
+    "bytes": 9734,
+    "sha256": "232183f5377fb3c39bb7c6ce5a7189b027a68e3fdd423a034de52d67187920c6"
+  },
+  "stderr": {
+    "file": ".tmp/assignment-D-first-steps1-5-20261002/02-candidate-scoped-tests-ts7.stderr.raw",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "boundarySummary": null,
+  "additiveExecution": "NOT_RUN; only additive test static typecheck/format check are in this grant"
+}

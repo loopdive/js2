@@ -86,19 +86,22 @@ loc-budget-allow:
   # conditions from elsewhere.
   - src/codegen/promise-combinators.ts
   - src/codegen/expressions/call-namespace-static.ts
-  # 2026-09-03 (r3 plan, steps R3-1..R3-10): every r3 step extends a mechanism
-  # that already lives in one of these files, and the plan forbids forking a
-  # second protocol beside it. Expected growth per step is stated in the step
-  # itself; the totals are roughly:
-  #   promise-combinators   ~+420 (R3-2 generic element pipeline + resolve-element
-  #                          builtin-fn closures, R3-3 `.call(C, iter)` widening,
-  #                          R3-4 interleaved iterator drive, R3-1/R3-9 executor)
+  # 2026-09-03 (r3 plan, steps R3-1..R3-10): each later slice extends its
+  # existing owner unless a landed source-preservation receipt freezes that
+  # file. Expected growth per step is stated in the step itself; the totals are
+  # roughly:
+  #   promise-combinators   R3-3 `.call(C, iter)` widening, R3-4 interleaved
+  #                          iterator drive, R3-1/R3-9 executor
+  #   promise-observable-combinators ~+1,020 (R3-2 bounded direct-VEC
+  #                          Get/Call/Invoke pipeline, one-Get then dispatch,
+  #                          sentinel settlement, and resolve-element
+  #                          builtin-fn closures; isolated by #5759's receipt)
   #   async-scheduler        ~+150 (R3-5 own-`then` capture in Resolve, R3-6
   #                          SpeciesConstructor read in `then`, R3-8 boolean box)
   #   call-namespace-static  ~+120 (R3-2 observable Get(C,"resolve") gate,
   #                          R3-3 admission widening — the gate IS the dispatch)
   #   closed-method-dispatch ~+60  (R3-5 bag-`then` arms in the two fills)
-  #   calls.ts               ~+30  (R3-2 f64-vec boxing arm in the dynamic path)
+  #   calls.ts               future unrelated call lowering work
   #   array-object-proto     ~+40  (R3-7 `p.then` value read → proto closure)
   #   property-access-dispatch ~+30 (R3-7, if the read site is there instead)
   - src/codegen/closed-method-dispatch.ts
@@ -119,6 +122,12 @@ loc-budget-allow:
   # generic builtin static patches.
   - src/codegen/declarations.ts
   - src/codegen/builtin-write-keeps.ts
+  # 2026-09-13 (#5759 integration): #5759's source-preservation receipt keeps
+  # the legacy combinator adapter's full bridge surface immutable. The new R3-2
+  # observable pipeline therefore lives in a dedicated codegen module reached
+  # directly from the static-call dispatcher; it does not add declarations or
+  # imports to src/codegen/promise-combinators.ts or weaken that ledger.
+  - src/codegen/promises/promise-observable-combinators.ts
 func-budget-allow:
   # 2026-09-30 (r3 plan): wiring inside the existing decision ladders — the
   # species hook + capability-mode tail in emitStandalonePromiseThen (already
@@ -205,6 +214,56 @@ pr: 5292
 
 # #5197 — promise r2: cluster and fix the residual promise-bucket failures
 
+## October 2 landing dependency plan
+
+The current implementation dispatch and acceptance order is recorded in issue
+#3518, section "October 2 implementation dispatch: existing landing blockers".
+Sol 6.1 medium workers complete the existing binding, comparison-instrument and
+managed-construction prerequisites in isolated worktrees; the integration owner
+keeps plan/issue ownership and PR shepherding. This does not expand Promise
+admission or retire the old compiler. PR #5883's conflict with current main must
+be composed without discarding either side before another checkpoint is pushed.
+The original Promise fixtures, V2 diagnostic failure and constructor V3 subject
+remain frozen; validation of storage/binding alone does not prove Promise
+iteration, rollback, full semantic services or end-to-end IR equivalence.
+
+## 2026-09-27: original vector acceptance replay and repair plan
+
+The exact twelve September 15 sources replayed against published `dc1a9f02ba`
+(production repair `61d206221b`): four pass and eight fail. All twelve native
+reference checks pass. The immutable JSONL receipt is consumed directly by
+`tests/issue-5197-observable-vector-original-review.test.ts`, with its SHA-256
+and twelve-case denominator enforced. Original sources and expectations remain
+unchanged; historical wrong answers are never accepted as expected results.
+
+An experiment routed already-admitted observable all/race vector values through
+the existing iterator drive, using the already-evaluated vector local. It also
+passed only four of twelve. `iterator-native.ts::buildVecFamilyArms` copies
+numeric carriers into fresh externref vectors, so this route cannot provide
+live source-array reads. Shrink/regrow results differed between the two wrong
+implementations; the complete values remain recorded rather than conflated.
+The unsuccessful production patch was preserved, then removed. The byte-frozen
+legacy adapter remains untouched.
+
+The next prerequisite is a real live vector iterator: retain the original
+carrier, read current length and semantic indexed values on each step, honor
+holes/prototypes and iterator overrides, and latch completion. Reuse the
+existing drive's growable aggregate storage and stable per-element closures
+only after that dependency is proven. Do not substitute raw reads, copying,
+changed expectations or an optimistic fixed-length claim.
+
+`plan/agent-context/5883-original-vector-pair-20260927.json` preserves both
+complete logs, all 24 rows, the exact replay runner with hash, and the removed
+experimental patch. The runner remains an uncommitted diagnostic in `tests/`
+until its semantic failures are repaired; the JSON contains its full source
+so the failing acceptance checks are reviewable and recoverable now.
+
+Acceptance requires the original twelve, original protocol controls, dynamic
+drive controls, synchronous/deferred completion, inherited/hole reads, growth,
+shrink/regrowth, overridden iteration and abrupt-completion order. A passing
+twelve-case replay alone cannot remove the hold. No gate/fixture weakening or
+old-compiler retirement is authorized by this repair.
+
 ## 2026-09-13 plan refinement: retain the original resolve assignment
 
 The R3-2 candidate's ten focused controls pass, but the unchanged original
@@ -261,8 +320,8 @@ import counts are overlapping symptoms, not independent gain claims.
 
 The next implementation owns R3-2 only: verify current call admission, reproduce
 original observable `resolve`/`then` rows and intrinsic positive controls, then
-implement the documented per-element pipeline in the existing combinator
-lowering. Re-derive source locations and carrier assumptions from current main.
+implement the documented per-element pipeline behind the bounded observable
+dispatcher route. Re-derive source locations and carrier assumptions from current main.
 Record an exact current path manifest and paired standalone measurements;
 retain all previously passing Promise controls and run relevant equivalence
 and host controls. R3-3 custom constructors and R3-4 iterator closing remain
@@ -313,6 +372,40 @@ already run. Native Node rejects the marker from
 `{ then(ok) { ok(1); throw marker; } }`; the focused standalone control covers
 that rejection and the corresponding successful one-element result vector.
 
+### #5759 integration boundary (2026-09-13)
+
+The one captured fresh-main merge exposed #5759's source-preservation receipt:
+it fixes both the full declaration order and bridge receipt of
+`src/codegen/promise-combinators.ts`. The observable route must therefore not
+extend that legacy adapter. Its helpers and f64 vector recognizer belong in
+`src/codegen/promise-observable-combinators.ts`; the static-call dispatcher
+calls its two narrow literal/direct-vector entry points only when the existing
+observable admission gate is true. The legacy emitter remains byte-stable and
+continues to delegate its vector body to #5759's
+`buildNativePromiseCombinatorVectorBody`. Do not weaken or rewrite #5759's
+receipt/test to admit this work.
+
+At the one captured fresh-main integration on
+`7adc0a6e897556cee50a7024d24a47a0fb1c8052`, canonical TS7 passed and the
+fresh compiler bundle / linked QuickJS provider canary completed before the
+runtime rows. The focused standalone suite passed **13/13** in 39.94 seconds
+(single fork): module-scope write retention; user-binding and import-rewriter
+negative guards; literal evaluation/Get order; captured resolve / receiver /
+one-argument Call; both callback-arity probes; one captured `then`; abrupt
+Call rejection; the remaining-elements sentinel; successful full-vector
+settlement; per-slot f64 boxing; and race handler identity. Its durable log is
+`.tmp/5197-focused.o4Wpk3` in the implementation worktree.
+
+The isolated standalone Test262 positive control
+`built-ins/Promise/all/S25.4.4.1_A2.2_T1.js` and unchanged official acceptance
+row `built-ins/Promise/all/invoke-resolve.js` both returned `ROW pass`
+(**2/2**, 7.85 s and 7.36 s respectively; durable logs
+`.tmp/5197-test262-control.wOFwwa` and
+`.tmp/5197-test262-original.WI7qya`). The latter is one measured official
+conformance gain over its prior `callCount` 0-versus-3 failure. It does not
+close the full 23-row R3-2 cohort or the documented direct-VEC limitations.
+### Earlier integrated implementation evidence (retained historical snapshot)
+
 Current bounded evidence on the e002 baseline is a 10/10 focused standalone
 protocol suite (54.62 s, single fork): literal evaluation/Get order, one
 captured resolve and call receiver/arity, contrasting and original-order
@@ -323,6 +416,16 @@ The unchanged official `all/invoke-resolve.js` previously failed with
 harness diagnostic is still required before claiming it fixed. A filtered WAT
 compile registered the observable resolve-cap type, which proves route
 registration but not the exact callback execution path.
+
+### September 22 merge reconciliation
+
+Main's D2 integration contains the earlier observable implementation inside
+`promise-combinators.ts`; PR5883's separate-module integration preserves a
+different snapshot. Both historical evidence records above are retained, but
+neither validates this merge. The intrinsic observable dispatcher now uses
+`promise-observable-combinators.ts` consistently; upstream's custom-constructor
+D1 route and the legacy combinator implementation remain intact. No retirement,
+full R3-2 completion, or current-main conformance claim follows from this merge.
 
 ## Problem
 
@@ -2784,3 +2887,69 @@ count 613, expected 612): step 4 had imported `BFN_STATE_FIELD_IDX` from
 `closure-layouts` into `resolution-bodies.ts`; the index is now a local
 constant (the layout `buildPromiseSettleClosureValue` already asserts), which
 keeps main's edge count.
+
+### 2026-10-06 committed112 full-candidate evidence checkpoint
+
+The full candidate attempt at source commit112cea8e5a413eee1bec7ed955c14f73fc90bcdc
+completed all10 stages successfully at2026-10-06T20:40:37.448Z. Parent independently
+checked6795 passing executions covering6739 unique identities across87 files,
+including the scheduled56-case repeat; no failures, skips or todos. Complete raw
+channels were clean and all7772 before/after input maps matched the frozen
+309eacc2 authority. Current source hashes were also checked after completion.
+Root terminal SHA25610bde4889cdd2202e105ff4dc447b87ce5c74bafc12a346e503ad1a4040da6c9.
+
+Evidence is retained in
+`plan/agent-context/5883-final-candidate-terminal-custody-20261006.json`:
+63 byte-preserved payloads,25747854 decoded bytes. Repository-formatted wrapper
+SHA256137a06e414059938aa2ef2faf2d6865ba8b79d34cb2abbcc62d911e32787a8f7;
+original wrapper483c0d68fa8d490286daee7cafb2cf52bffff74227a5625de6fe270280febb06
+is retained in the repaired-baseline worktree. Parent verified deep JSON equality
+after formatting and independently decoded every payload against its original.
+Exact packager source is retained as
+`plan/agent-context/5883-final-candidate-custody-packager-20261006.txt`, SHA256
+59d8d260efc0128fb044bdb35565e33490bfc133fedfe0d2c1f203f3a707cb0e.
+
+This checkpoint preserves candidate evidence only: accepted=false. Original-main
+A and narrowly repaired B comparison are still required; keep HOLD and legacy
+code. Original-main69-file identity collection was separately released with the
+existing reviewed runner, with no automatic retry or repaired-baseline launch.
+
+### 2026-10-06 preserved baseline failures and repaired population checkpoint
+
+Original A69 and initial B69 collections both failed two suites before their
+tests registered. Their complete raw/native records remain preserved:5166 and
+5168 available skipped identities respectively,zero executed tests. Neither
+partial count was treated as a complete denominator or an execution result.
+
+The six-file test-only baseline repair authenticates seven physical4bff source
+inputs,46 inverse spans and53 retained intervals,then verifies exact forward
+replay to captured bytes. Existing fixtures,assertions and explicit mutants
+remain unchanged. The first focused run passed102 controls but failed91/416
+affected tests; the two raw-reader call sites were then repaired. The next run
+passed102+416 tests with identical identity multisets and7740 unchanged inputs.
+Both runs and their child records are retained,not replaced by the green result.
+Their optional historical execution pair was NOT RUN.
+
+`plan/agent-context/5883-focused-baseline-repair-custody-20261006.json` preserves
+49 exact payloads,116758564 decoded bytes,including the nested28-payload original
+collection archive and all six repair postimages. SHA256
+957e31c43cc0f7a2e6c17feb8c5914bda445022193e27c18b2ea51e90f7921cc.
+Both original and corrected packager sources are retained as adjacent.txt files;
+the original rejected a legitimate @scope fixture path before creating output.
+Only that safe-path character and the new script filename changed in v2.
+
+Repaired B69 collection CSH6zT completed exit0:69 files,5408 skipped identities,
+zero executed tests,unchanged A7735/B7740 maps. Terminal SHA256
+83c285e682ffe2d4773a57fb716e6aea3d91270809d81c91011d4bee4d6c9a37.
+Exact comparison retains all5166 previously visible originals and restores240
+missing originals. B/E share5406 identities; B adds two main-profile controls,
+E adds16 separate controls. Equal counts were not substituted for identity proof.
+The complete15-record collection custody is retained in
+`plan/agent-context/5883-repaired-b69-collection-custody-20261006.json`, SHA256
+5f3add7c8a77b058a9fa6f896f457f0e52f5b2240995a6e3a40bf405bb82f283.
+Parent independently decoded each record and verified its exact original bytes.
+
+This is an evidence-only checkpoint: production/test inputs in E remain the
+validated112 source epoch,unchanged since446's evidence publication. Full B
+execution and exact shared-case comparison remain pending. accepted=false;
+keep HOLD and legacy code. No claim of a merge,physical acceptance or retirement.

@@ -1,0 +1,181 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import type {
+  BodyEpoch,
+  EmissionOccurrence,
+  EmissionRegion,
+  OwnershipEdge,
+  RetainedAdoption,
+  RetainedBodyManifest,
+  RetainedOccurrence,
+} from "./context/emission-ownership.js";
+import {
+  isExecutableStageLeaf,
+  materializedStageChildren,
+  type StageBody,
+  type StageChildSlot,
+  type StageNode,
+  type StageRegion,
+} from "./staging-instr.js";
+
+export type StageParent =
+  | { readonly kind: "body"; readonly body: BodyEpoch }
+  | { readonly kind: "node"; readonly nodeIdentity: object; readonly slot: StageChildSlot };
+export interface StagePlacement {
+  readonly region: EmissionRegion;
+  readonly parent: StageParent;
+  /** Exact physical sibling order, which the ledger's region set cannot prove. */
+  readonly nodeIdentities: readonly object[];
+}
+export interface StageVisit {
+  readonly node: StageNode;
+  readonly region: EmissionRegion;
+  readonly index: number;
+  readonly labelDepth: number;
+}
+export interface StageCensus {
+  readonly manifest: RetainedBodyManifest;
+  readonly layout: readonly StagePlacement[];
+  /** Preorder; siblings, then/else, try body/catches/catchAll stay lexical. */
+  readonly visits: readonly StageVisit[];
+}
+
+/**
+ * Independent census of actual retained materialized nodes, NOT ledger edges.
+ * No EmissionOwnership instance is accepted: the caller subsequently supplies
+ * manifest to completeBodyEpoch / sealWithManifest, never raw seal fallback.
+ *
+ * Reject physical aliases/cycles, repeated handles, wrong-body regions and
+ * repeated node/witness/use-site identities. This is a tree check, not a
+ * deduplicating relocation walk. Detached regions not in this root are absent.
+ * It does not authenticate source root selection, binding equivalence, payload
+ * semantics, pending recipes, or structural equality to an unprovided tree.
+ */
+export function inspectStageBody(body: StageBody): StageCensus {
+  const regions: EmissionRegion[] = [];
+  const occurrences: RetainedOccurrence[] = [];
+  const adoptions: RetainedAdoption[] = [];
+  const layout: StagePlacement[] = [];
+  const visits: StageVisit[] = [];
+  const physicalRegions = new Set<StageRegion>();
+  const regionHandles = new Set<EmissionRegion>();
+  const arrays = new Set<readonly StageNode[]>();
+  const physicalNodes = new Set<StageNode>();
+  const nodeIdentities = new Set<object>();
+  const instructions = new Set<object>();
+  const occurrenceHandles = new Set<EmissionOccurrence>();
+  const adoptionEdges = new Set<OwnershipEdge>();
+  const useSites = new Set<object>();
+  type Work =
+    | { kind: "region"; region: StageRegion; parent: StageParent; depth: number }
+    | { kind: "node"; node: StageNode; region: StageRegion; index: number; depth: number };
+  const work: Work[] = [{ kind: "region", region: body.root, parent: { kind: "body", body: body.body }, depth: 0 }];
+  while (work.length) {
+    const next = work.pop()!;
+    const region = next.region;
+    if (next.kind === "region") {
+      if (region.body !== body.body) throw new Error("Stage region belongs to a different body epoch");
+      if (physicalRegions.has(region)) throw new Error("Stage region cycle or multiple physical parents");
+      if (regionHandles.has(region.region)) throw new Error("Stage region handle has multiple physical versions");
+      if (arrays.has(region.nodes)) throw new Error("Stage node array has multiple physical parents");
+      physicalRegions.add(region);
+      regionHandles.add(region.region);
+      arrays.add(region.nodes);
+      regions.push(region.region);
+      layout.push(
+        Object.freeze({
+          region: region.region,
+          parent: Object.freeze(next.parent),
+          nodeIdentities: Object.freeze(region.nodes.map((node) => node.nodeIdentity)),
+        }),
+      );
+      for (let index = region.nodes.length - 1; index >= 0; index--) {
+        work.push({ kind: "node", node: region.nodes[index]!, region, index, depth: next.depth });
+      }
+      continue;
+    }
+    const node = next.node;
+    if (physicalNodes.has(node) || nodeIdentities.has(node.nodeIdentity)) {
+      throw new Error("Stage node identity has multiple physical positions");
+    }
+    if (instructions.has(node.instruction)) throw new Error("Concrete instruction has multiple physical positions");
+    if (node.kind === "leaf" && !isExecutableStageLeaf(node.instruction)) {
+      throw new Error("Recursive instruction hidden in a staged leaf");
+    }
+    physicalNodes.add(node);
+    nodeIdentities.add(node.nodeIdentity);
+    instructions.add(node.instruction);
+    visits.push(Object.freeze({ node, region: region.region, index: next.index, labelDepth: next.depth }));
+    if (node.occurrence) {
+      if (occurrenceHandles.has(node.occurrence.occurrence)) throw new Error("Occurrence has multiple physical nodes");
+      occurrenceHandles.add(node.occurrence.occurrence);
+      occurrences.push(
+        Object.freeze({
+          ...node.occurrence,
+          owner: region.region,
+          nodeIdentity: node.nodeIdentity,
+        }),
+      );
+    }
+    for (const adoption of node.adoptions ?? []) {
+      if (adoptionEdges.has(adoption.edge) || useSites.has(adoption.useSiteIdentity)) {
+        throw new Error("Adoption edge or use site has multiple physical positions");
+      }
+      adoptionEdges.add(adoption.edge);
+      useSites.add(adoption.useSiteIdentity);
+      adoptions.push(Object.freeze({ ...adoption, owner: region.region }));
+    }
+    const children = materializedStageChildren(node);
+    for (let i = children.length - 1; i >= 0; i--) {
+      const child = children[i]!;
+      work.push({
+        kind: "region",
+        region: child.region,
+        parent: { kind: "node", nodeIdentity: node.nodeIdentity, slot: Object.freeze({ ...child.slot }) },
+        depth: next.depth + child.labelDepthDelta,
+      });
+    }
+  }
+  return Object.freeze({
+    manifest: Object.freeze({
+      body: body.body,
+      bodyIdentity: body.bodyIdentity,
+      bindingEnvironment: body.bindingEnvironment,
+      regions: Object.freeze(regions),
+      occurrences: Object.freeze(occurrences),
+      adoptions: Object.freeze(adoptions),
+    }),
+    layout: Object.freeze(layout),
+    visits: Object.freeze(visits),
+  });
+}
+
+function sameSlot(a: StageChildSlot, b: StageChildSlot): boolean {
+  return a.kind === b.kind && (a.kind !== "catch" || (b.kind === "catch" && a.index === b.index));
+}
+function sameParent(a: StageParent, b: StageParent): boolean {
+  if (a.kind === "body") return b.kind === "body" && a.body === b.body;
+  return b.kind === "node" && a.nodeIdentity === b.nodeIdentity && sameSlot(a.slot, b.slot);
+}
+
+/**
+ * Check an independently retained/expected physical layout, including sibling
+ * order and parent slot. Passing a layout freshly echoed from the same tree is
+ * not independent evidence. Intentional edits require an explicit new layout.
+ * Does not claim the ledger checked these invariants or infer source semantics.
+ */
+export function assertStageLayout(actual: StageCensus, expected: readonly StagePlacement[]): void {
+  if (actual.layout.length !== expected.length) throw new Error("Stage layout region count mismatch");
+  for (let i = 0; i < actual.layout.length; i++) {
+    const a = actual.layout[i]!;
+    const b = expected[i]!;
+    if (a.region !== b.region || !sameParent(a.parent, b.parent)) {
+      throw new Error("Stage layout parent or region order mismatch");
+    }
+    if (
+      a.nodeIdentities.length !== b.nodeIdentities.length ||
+      a.nodeIdentities.some((node, index) => node !== b.nodeIdentities[index])
+    ) {
+      throw new Error("Stage layout node order mismatch");
+    }
+  }
+}

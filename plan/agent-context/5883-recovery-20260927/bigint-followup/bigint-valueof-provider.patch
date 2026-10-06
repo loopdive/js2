@@ -1,0 +1,137 @@
+diff --git a/src/codegen/array-object-proto.ts b/src/codegen/array-object-proto.ts
+index 8b4a48c292..9d1313c717 100644
+--- a/src/codegen/array-object-proto.ts
++++ b/src/codegen/array-object-proto.ts
+@@ -134,6 +134,7 @@ import {
+   emitErrorStackSetterBody,
+ } from "./error-stack-accessor.js";
+ import { emitSymbolProtoValueOfBody } from "./symbol-proto-valueof.js";
++import { emitBigIntProtoValueOfBody } from "./bigint-proto-valueof.js";
+ import { emitSymbolProtoToStringBody } from "./symbol-proto-tostring.js"; // (#4776)
+ import { emitNumberProtoFormatBody } from "./number-proto-format.js";
+ import { emitDateProtoToPrimitiveBody } from "./date-proto-to-primitive.js"; // (#5156)
+@@ -2649,6 +2650,7 @@ function makeGlue(
+       (name === "Error" && member === ERROR_STACK_GETTER_MEMBER ? emitErrorStackGetterBody(c, fctx) : null) ??
+       (name === "Error" && member === ERROR_STACK_SETTER_MEMBER ? emitErrorStackSetterBody(c, fctx, brand) : null) ??
+       (name === "Symbol" && member === "valueOf" ? emitSymbolProtoValueOfBody(c, fctx) : null) ??
++      (name === "BigInt" && member === "valueOf" ? emitBigIntProtoValueOfBody(c, fctx) : null) ??
+       // (#5269 B-c) §20.4.3.3 `Symbol.prototype.toString` — SymbolDescriptiveString
+       // of `thisSymbolValue(this)`. Placed with the `valueOf` arm (and BEFORE the
+       // wrapper-brand arms, which do not list Symbol) so the reflective read
+diff --git a/src/codegen/bigint-proto-valueof.ts b/src/codegen/bigint-proto-valueof.ts
+new file mode 100644
+--- /dev/null
++++ b/src/codegen/bigint-proto-valueof.ts
+@@ -0,0 +1,112 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++/** Native BigInt.prototype.valueOf: preserve the complete primitive carrier. */
++import type { ValType } from "../ir/types.js";
++import type { CodegenContext, FunctionContext } from "./context/types.js";
++import { allocLocal } from "./context/locals.js";
++import { buildThrowJsErrorInstrs } from "./js-errors.js";
++import { ensureObjectRuntime, FLAG_INTERNAL, WRAPPER_PRIMITIVE_KEY } from "./object-runtime.js";
++import { addUnionImportsViaRegistry } from "./shared.js";
++import { stringConstantExternrefInstrs } from "./native-strings.js";
++
++/**
++ * Emit the standalone `BigInt.prototype.valueOf` closure body.
++ *
++ * The value read can precede the first BigInt expression in source order, so
++ * the native carrier is demanded here rather than relying on a later boxing
++ * site. The `$Object` arm recognizes the internal `[[PrimitiveValue]]` slot
++ * used by native primitive wrappers, while the flag and carrier checks keep a
++ * user property with the same spelling from being mistaken for that slot.
++ */
++export function emitBigIntProtoValueOfBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
++  if (!ctx.standalone) return null;
++
++  addUnionImportsViaRegistry(ctx);
++  ensureObjectRuntime(ctx);
++  // Register throw dependencies before capturing type/function handles.
++  const wrongReceiver = buildThrowJsErrorInstrs(
++    ctx,
++    "TypeError",
++    "BigInt.prototype.valueOf called on incompatible receiver",
++    {
++      forceInModuleCtor: true,
++    },
++  );
++  const bigIntTypeIdx = ctx.nativeBigIntTypeIdx;
++  if (bigIntTypeIdx < 0) throw new Error("Missing native BigInt carrier for valueOf");
++  const objectTypes = ctx.objectRuntimeTypes;
++  const objFindIdx = ctx.funcMap.get("__obj_find");
++  if (!objectTypes || objFindIdx === undefined) return null;
++
++  const { objectTypeIdx, propEntryTypeIdx } = objectTypes;
++  const entry = allocLocal(fctx, `__bigvo_entry_${fctx.locals.length}`, {
++    kind: "ref_null",
++    typeIdx: propEntryTypeIdx,
++  });
++  const slot = allocLocal(fctx, `__bigvo_slot_${fctx.locals.length}`, { kind: "anyref" });
++
++  // $BigIntWide is a subtype of $BigInt. Return the full externref without
++  // reading its low i64 field or applying __to_bigint; wide limbs stay intact.
++  fctx.body.push(
++    { op: "local.get", index: 1 },
++    { op: "any.convert_extern" },
++    { op: "ref.test", typeIdx: bigIntTypeIdx },
++    {
++      op: "if",
++      blockType: { kind: "empty" },
++      then: [{ op: "local.get", index: 1 }, { op: "return" }],
++    },
++  );
++
++  // BigInt wrapper receiver: recover the internal [[PrimitiveValue]] slot and
++  // require both the internal flag and the native BigInt carrier brand.
++  fctx.body.push(
++    { op: "local.get", index: 1 },
++    { op: "any.convert_extern" },
++    { op: "ref.test", typeIdx: objectTypeIdx },
++    {
++      op: "if",
++      blockType: { kind: "empty" },
++      then: [
++        { op: "local.get", index: 1 },
++        { op: "any.convert_extern" },
++        { op: "ref.cast", typeIdx: objectTypeIdx },
++        ...stringConstantExternrefInstrs(ctx, WRAPPER_PRIMITIVE_KEY),
++        { op: "call", funcIdx: objFindIdx },
++        { op: "local.tee", index: entry },
++        { op: "ref.is_null" },
++        { op: "i32.eqz" },
++        {
++          op: "if",
++          blockType: { kind: "empty" },
++          then: [
++            { op: "local.get", index: entry },
++            { op: "ref.as_non_null" },
++            { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
++            { op: "i32.const", value: FLAG_INTERNAL },
++            { op: "i32.and" },
++            {
++              op: "if",
++              blockType: { kind: "empty" },
++              then: [
++                { op: "local.get", index: entry },
++                { op: "ref.as_non_null" },
++                { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
++                { op: "local.set", index: slot },
++                { op: "local.get", index: slot },
++                { op: "ref.test", typeIdx: bigIntTypeIdx },
++                {
++                  op: "if",
++                  blockType: { kind: "empty" },
++                  then: [{ op: "local.get", index: slot }, { op: "extern.convert_any" }, { op: "return" }],
++                },
++              ],
++            },
++          ],
++        },
++      ],
++    },
++  );
++
++  fctx.body.push(...wrongReceiver);
++  return { kind: "externref" };
++}

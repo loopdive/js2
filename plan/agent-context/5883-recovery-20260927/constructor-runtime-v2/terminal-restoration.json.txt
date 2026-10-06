@@ -1,0 +1,30 @@
+{
+  "handle": 83232,
+  "terminal": true,
+  "exitCode": 1,
+  "testDenominator": 1,
+  "passed": 0,
+  "failed": 1,
+  "compilerInvocations": 1,
+  "compileSuccess": true,
+  "compileErrors": [],
+  "firstFailure": "constructor allocation/publication/seed sequence not proved",
+  "boundary": "surviving graph prerequisite; before native execution, original Wasm instantiation, derivative instrumentation or runtime",
+  "nativeExecuted": false,
+  "originalWasmExecuted": false,
+  "instrumentedDerivativeEmitted": false,
+  "runtimeProof": "UNOBSERVED",
+  "rollbackProof": "UNOBSERVED",
+  "reruns": 0,
+  "harnessSHA256": "b67d6081bf47bdde9f855c82ba72d336c3fa61181a6cfd27915e60a6eaeb3b6b",
+  "sourceSHA256": "a122d333957f9aa8498bcbb86c889f372ef0dd0da281bb6f4fddbf61daa5ecb5",
+  "artifacts": "/private/tmp/js2-5883-main-6eac-20260927/.tmp/runtime-cycle-v2-nO4Rbp",
+  "restoration": {
+    "all17PinsMatch": true,
+    "headMatches": true,
+    "newTestRemovedViaApplyPatch": true,
+    "archiveHarnessVerified": true,
+    "productionFilesChanged": false
+  },
+  "slotReleased": true
+}

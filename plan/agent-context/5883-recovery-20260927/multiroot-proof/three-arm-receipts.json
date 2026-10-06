@@ -1,0 +1,674 @@
+{
+  "sourceWorktree": "/private/tmp/js2-5883-main-6eac-20260927",
+  "pinnedHead": "fda4b498696f395889e199756c6b8c27a629387c",
+  "arms": {
+    "A": {
+      "report": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0
+      },
+      "receipts": {
+        "all": {
+          "arm": "A",
+          "method": "all",
+          "sourceHash": "18a330bc14ac14548c227e6ee534a0ca56b12546a4ac17343b85589496a98a52",
+          "basis": {
+            "src/codegen/promise-combinator-drive.ts": "4533f252a35fbebaa4feb9582d29cdd84a289040b33cd179dda64a5b6ab011f7",
+            "src/codegen/promise-combinator-observable-protocol.ts": "cd9f65ea77c9418874bdd69f9666e27c25259ed93f35656b41f2ad3357afa8ac",
+            "src/codegen/closure-classifier.ts": "0d2b70770eb0aef9d2791fd75d6a006b0a1873e7e510caf62c5809512b386693",
+            "src/codegen/function-bind-apply.ts": "ab53da957dbf780a698fc8581c32e13d6f1320dcdac080e156e9074138bee7b8",
+            "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+            "src/codegen/builtin-constructor-prepared.ts": "99253578d5687537bce6f82ed644f2a9fcb90ff6d3b4c314218dfae78f5aa2ef",
+            "src/codegen/staging-bindings.ts": "a956217f8a9910919137a211362262b8e94f7f22ef58b04227217204c269bc08",
+            "tests/issue-5883-real-multiroot-observer-v2.test.ts": "4b9f647c88cfa64b5bb6d57cf784eb9591cac8b15c9bec4de6fb90ba57916e7f"
+          },
+          "hits": [
+            {
+              "method": "all",
+              "arg": "input",
+              "observable": true,
+              "captured": true,
+              "entryBoundTypeIdx": 139,
+              "entryBindProvider": 2097435,
+              "resolveLocals": {
+                "any": [["__comb_observable_callable_any_29", 29]],
+                "callable": [["__comb_observable_callable_28", 28]]
+              },
+              "boundTypeIdx": 139,
+              "observation": {
+                "arms": [
+                  {
+                    "typeIdx": 65,
+                    "leafIds": [0, 1],
+                    "leafValues": [
+                      {
+                        "op": "i32.const",
+                        "value": 1
+                      },
+                      {
+                        "op": "local.set",
+                        "index": 28
+                      }
+                    ]
+                  },
+                  {
+                    "typeIdx": 139,
+                    "leafIds": [0, 1],
+                    "leafValues": [
+                      {
+                        "op": "i32.const",
+                        "value": 1
+                      },
+                      {
+                        "op": "local.set",
+                        "index": 28
+                      }
+                    ]
+                  }
+                ],
+                "rootCount": 2,
+                "distinctRoots": 2,
+                "uniqueLeaves": 2
+              }
+            }
+          ],
+          "observerErrors": [],
+          "compileError": null,
+          "success": true,
+          "errors": [],
+          "binaryHash": "5d46b0f0d6bf46fe5eba1d61a9b09b56956d707b9261b0af0f3c9aa5518aca75",
+          "nativeActual": 12,
+          "nativeError": null,
+          "actual": 12,
+          "runtimeError": null,
+          "imports": [],
+          "boundary": "actual exported-drive return, before compiler finalization; not an internal allocation-interval proof"
+        },
+        "race": {
+          "arm": "A",
+          "method": "race",
+          "sourceHash": "dad8f38fc66ee0a7cfcff0fbe3ba88b9630b2643b8338433cfd9624962bc4912",
+          "basis": {
+            "src/codegen/promise-combinator-drive.ts": "4533f252a35fbebaa4feb9582d29cdd84a289040b33cd179dda64a5b6ab011f7",
+            "src/codegen/promise-combinator-observable-protocol.ts": "cd9f65ea77c9418874bdd69f9666e27c25259ed93f35656b41f2ad3357afa8ac",
+            "src/codegen/closure-classifier.ts": "0d2b70770eb0aef9d2791fd75d6a006b0a1873e7e510caf62c5809512b386693",
+            "src/codegen/function-bind-apply.ts": "ab53da957dbf780a698fc8581c32e13d6f1320dcdac080e156e9074138bee7b8",
+            "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+            "src/codegen/builtin-constructor-prepared.ts": "99253578d5687537bce6f82ed644f2a9fcb90ff6d3b4c314218dfae78f5aa2ef",
+            "src/codegen/staging-bindings.ts": "a956217f8a9910919137a211362262b8e94f7f22ef58b04227217204c269bc08",
+            "tests/issue-5883-real-multiroot-observer-v2.test.ts": "4b9f647c88cfa64b5bb6d57cf784eb9591cac8b15c9bec4de6fb90ba57916e7f"
+          },
+          "hits": [
+            {
+              "method": "race",
+              "arg": "input",
+              "observable": true,
+              "captured": true,
+              "entryBoundTypeIdx": 139,
+              "entryBindProvider": 2097435,
+              "resolveLocals": {
+                "any": [["__comb_observable_callable_any_29", 29]],
+                "callable": [["__comb_observable_callable_28", 28]]
+              },
+              "boundTypeIdx": 139,
+              "observation": {
+                "arms": [
+                  {
+                    "typeIdx": 65,
+                    "leafIds": [0, 1],
+                    "leafValues": [
+                      {
+                        "op": "i32.const",
+                        "value": 1
+                      },
+                      {
+                        "op": "local.set",
+                        "index": 28
+                      }
+                    ]
+                  },
+                  {
+                    "typeIdx": 139,
+                    "leafIds": [0, 1],
+                    "leafValues": [
+                      {
+                        "op": "i32.const",
+                        "value": 1
+                      },
+                      {
+                        "op": "local.set",
+                        "index": 28
+                      }
+                    ]
+                  }
+                ],
+                "rootCount": 2,
+                "distinctRoots": 2,
+                "uniqueLeaves": 2
+              }
+            }
+          ],
+          "observerErrors": [],
+          "compileError": null,
+          "success": true,
+          "errors": [],
+          "binaryHash": "742d5f2ab32a615f6e6a08b5111d79b965b3c3273c6e0bf451b8c561e4f650b7",
+          "nativeActual": 1,
+          "nativeError": null,
+          "actual": 1,
+          "runtimeError": null,
+          "imports": [],
+          "boundary": "actual exported-drive return, before compiler finalization; not an internal allocation-interval proof"
+        }
+      },
+      "artifacts": {
+        "all.entry-0-after.json": {
+          "bytes": 4140237,
+          "sha256": "f0b602276d608a6cf54949f541bb701faa6d6cca869cc46e63e4e4e55141352c"
+        },
+        "all.entry-0-before.json": {
+          "bytes": 3007683,
+          "sha256": "4bf8efcc18d41ac19e04c43ce6c576796bde7b3600da9b5f2fd4ed56276e907c"
+        },
+        "all.native.js": {
+          "bytes": 474,
+          "sha256": "7d07720162e5404133d88c902fde94eeb66d1a403078aeb114ecd7bdce898c7f"
+        },
+        "all.receipt.json": {
+          "bytes": 2790,
+          "sha256": "bba0f92e86dae73c12035fb964ded656693c3e698b0b6143a7418cb5161a5c55"
+        },
+        "all.source.ts": {
+          "bytes": 554,
+          "sha256": "18a330bc14ac14548c227e6ee534a0ca56b12546a4ac17343b85589496a98a52"
+        },
+        "all.wasm": {
+          "bytes": 295227,
+          "sha256": "5d46b0f0d6bf46fe5eba1d61a9b09b56956d707b9261b0af0f3c9aa5518aca75"
+        },
+        "all.wat": {
+          "bytes": 2898721,
+          "sha256": "2458c344816f6cfadc4887adbbf7992c1834cda549e8280a1ea1ed6aea680852"
+        },
+        "race.entry-0-after.json": {
+          "bytes": 4118164,
+          "sha256": "411955237690bb26c4916e81481d5cab0f7c095dea9d77143dfaac6e342da93f"
+        },
+        "race.entry-0-before.json": {
+          "bytes": 3007683,
+          "sha256": "4bf8efcc18d41ac19e04c43ce6c576796bde7b3600da9b5f2fd4ed56276e907c"
+        },
+        "race.native.js": {
+          "bytes": 456,
+          "sha256": "041d8531476b9fd7b9e195bcbe7ae542c68acdba6c0f8a3e48f34163cbbfe5c6"
+        },
+        "race.receipt.json": {
+          "bytes": 2790,
+          "sha256": "7abf41ae64c255d39d6a941241500b83b5678f675797763b796a8d4c71a1763c"
+        },
+        "race.source.ts": {
+          "bytes": 536,
+          "sha256": "dad8f38fc66ee0a7cfcff0fbe3ba88b9630b2643b8338433cfd9624962bc4912"
+        },
+        "race.wasm": {
+          "bytes": 292465,
+          "sha256": "742d5f2ab32a615f6e6a08b5111d79b965b3c3273c6e0bf451b8c561e4f650b7"
+        },
+        "race.wat": {
+          "bytes": 2865254,
+          "sha256": "5530d205e1ed4282bebc012b63d99f95b228241e14b6df2d1488fa33eb3e36a9"
+        }
+      }
+    },
+    "B": {
+      "report": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0
+      },
+      "receipts": {
+        "all": {
+          "arm": "B",
+          "method": "all",
+          "sourceHash": "18a330bc14ac14548c227e6ee534a0ca56b12546a4ac17343b85589496a98a52",
+          "basis": {
+            "src/codegen/promise-combinator-drive.ts": "3947caa71cd1596971f8f1854d172f58f4a4300be012077413e123f4a843b6a2",
+            "src/codegen/promise-combinator-observable-protocol.ts": "df689ab42016063cff886421d406fcd92f88661c5d15d7fda001c0784fcfe87b",
+            "src/codegen/closure-classifier.ts": "0d2b70770eb0aef9d2791fd75d6a006b0a1873e7e510caf62c5809512b386693",
+            "src/codegen/function-bind-apply.ts": "ab53da957dbf780a698fc8581c32e13d6f1320dcdac080e156e9074138bee7b8",
+            "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+            "src/codegen/builtin-constructor-prepared.ts": "99253578d5687537bce6f82ed644f2a9fcb90ff6d3b4c314218dfae78f5aa2ef",
+            "src/codegen/staging-bindings.ts": "a956217f8a9910919137a211362262b8e94f7f22ef58b04227217204c269bc08",
+            "tests/issue-5883-real-multiroot-observer-v2.test.ts": "4b9f647c88cfa64b5bb6d57cf784eb9591cac8b15c9bec4de6fb90ba57916e7f"
+          },
+          "hits": [
+            {
+              "method": "all",
+              "arg": "input",
+              "observable": true,
+              "captured": true,
+              "entryBoundTypeIdx": 139,
+              "entryBindProvider": 2097435,
+              "resolveLocals": {
+                "any": [["__comb_observable_callable_any_29", 29]],
+                "callable": [["__comb_observable_callable_28", 28]]
+              },
+              "boundTypeIdx": 139,
+              "observation": {
+                "arms": [
+                  {
+                    "typeIdx": 65,
+                    "leafIds": [0, 1],
+                    "leafValues": [
+                      {
+                        "op": "i32.const",
+                        "value": 1
+                      },
+                      {
+                        "op": "local.set",
+                        "index": 28
+                      }
+                    ]
+                  },
+                  {
+                    "typeIdx": 139,
+                    "leafIds": [2, 3],
+                    "leafValues": [
+                      {
+                        "op": "i32.const",
+                        "value": 1
+                      },
+                      {
+                        "op": "local.set",
+                        "index": 28
+                      }
+                    ]
+                  }
+                ],
+                "rootCount": 2,
+                "distinctRoots": 2,
+                "uniqueLeaves": 4
+              }
+            }
+          ],
+          "observerErrors": [],
+          "compileError": null,
+          "success": true,
+          "errors": [],
+          "binaryHash": "5d46b0f0d6bf46fe5eba1d61a9b09b56956d707b9261b0af0f3c9aa5518aca75",
+          "nativeActual": 12,
+          "nativeError": null,
+          "actual": 12,
+          "runtimeError": null,
+          "imports": [],
+          "boundary": "actual exported-drive return, before compiler finalization; not an internal allocation-interval proof"
+        },
+        "race": {
+          "arm": "B",
+          "method": "race",
+          "sourceHash": "dad8f38fc66ee0a7cfcff0fbe3ba88b9630b2643b8338433cfd9624962bc4912",
+          "basis": {
+            "src/codegen/promise-combinator-drive.ts": "3947caa71cd1596971f8f1854d172f58f4a4300be012077413e123f4a843b6a2",
+            "src/codegen/promise-combinator-observable-protocol.ts": "df689ab42016063cff886421d406fcd92f88661c5d15d7fda001c0784fcfe87b",
+            "src/codegen/closure-classifier.ts": "0d2b70770eb0aef9d2791fd75d6a006b0a1873e7e510caf62c5809512b386693",
+            "src/codegen/function-bind-apply.ts": "ab53da957dbf780a698fc8581c32e13d6f1320dcdac080e156e9074138bee7b8",
+            "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+            "src/codegen/builtin-constructor-prepared.ts": "99253578d5687537bce6f82ed644f2a9fcb90ff6d3b4c314218dfae78f5aa2ef",
+            "src/codegen/staging-bindings.ts": "a956217f8a9910919137a211362262b8e94f7f22ef58b04227217204c269bc08",
+            "tests/issue-5883-real-multiroot-observer-v2.test.ts": "4b9f647c88cfa64b5bb6d57cf784eb9591cac8b15c9bec4de6fb90ba57916e7f"
+          },
+          "hits": [
+            {
+              "method": "race",
+              "arg": "input",
+              "observable": true,
+              "captured": true,
+              "entryBoundTypeIdx": 139,
+              "entryBindProvider": 2097435,
+              "resolveLocals": {
+                "any": [["__comb_observable_callable_any_29", 29]],
+                "callable": [["__comb_observable_callable_28", 28]]
+              },
+              "boundTypeIdx": 139,
+              "observation": {
+                "arms": [
+                  {
+                    "typeIdx": 65,
+                    "leafIds": [0, 1],
+                    "leafValues": [
+                      {
+                        "op": "i32.const",
+                        "value": 1
+                      },
+                      {
+                        "op": "local.set",
+                        "index": 28
+                      }
+                    ]
+                  },
+                  {
+                    "typeIdx": 139,
+                    "leafIds": [2, 3],
+                    "leafValues": [
+                      {
+                        "op": "i32.const",
+                        "value": 1
+                      },
+                      {
+                        "op": "local.set",
+                        "index": 28
+                      }
+                    ]
+                  }
+                ],
+                "rootCount": 2,
+                "distinctRoots": 2,
+                "uniqueLeaves": 4
+              }
+            }
+          ],
+          "observerErrors": [],
+          "compileError": null,
+          "success": true,
+          "errors": [],
+          "binaryHash": "742d5f2ab32a615f6e6a08b5111d79b965b3c3273c6e0bf451b8c561e4f650b7",
+          "nativeActual": 1,
+          "nativeError": null,
+          "actual": 1,
+          "runtimeError": null,
+          "imports": [],
+          "boundary": "actual exported-drive return, before compiler finalization; not an internal allocation-interval proof"
+        }
+      },
+      "artifacts": {
+        "all.entry-0-after.json": {
+          "bytes": 4140354,
+          "sha256": "4ff9534da8ce47aba70e647ad7997cc415e14b1afc9179d1b9d5db32ac9c17a3"
+        },
+        "all.entry-0-before.json": {
+          "bytes": 3007683,
+          "sha256": "4bf8efcc18d41ac19e04c43ce6c576796bde7b3600da9b5f2fd4ed56276e907c"
+        },
+        "all.native.js": {
+          "bytes": 474,
+          "sha256": "7d07720162e5404133d88c902fde94eeb66d1a403078aeb114ecd7bdce898c7f"
+        },
+        "all.receipt.json": {
+          "bytes": 2790,
+          "sha256": "eaf092e42eae0609bb36aa27415fb4e4c5169749b2b57b90b9a412e1de0e9175"
+        },
+        "all.source.ts": {
+          "bytes": 554,
+          "sha256": "18a330bc14ac14548c227e6ee534a0ca56b12546a4ac17343b85589496a98a52"
+        },
+        "all.wasm": {
+          "bytes": 295227,
+          "sha256": "5d46b0f0d6bf46fe5eba1d61a9b09b56956d707b9261b0af0f3c9aa5518aca75"
+        },
+        "all.wat": {
+          "bytes": 2898721,
+          "sha256": "2458c344816f6cfadc4887adbbf7992c1834cda549e8280a1ea1ed6aea680852"
+        },
+        "race.entry-0-after.json": {
+          "bytes": 4118281,
+          "sha256": "2ab6c8fffc88a88521924fc26dd296f79627551698f5f71157de37db7044ff5c"
+        },
+        "race.entry-0-before.json": {
+          "bytes": 3007683,
+          "sha256": "4bf8efcc18d41ac19e04c43ce6c576796bde7b3600da9b5f2fd4ed56276e907c"
+        },
+        "race.native.js": {
+          "bytes": 456,
+          "sha256": "041d8531476b9fd7b9e195bcbe7ae542c68acdba6c0f8a3e48f34163cbbfe5c6"
+        },
+        "race.receipt.json": {
+          "bytes": 2790,
+          "sha256": "db5df2436503b63538ed30845e1a47990c89c29a6a883a9461f09128522c1def"
+        },
+        "race.source.ts": {
+          "bytes": 536,
+          "sha256": "dad8f38fc66ee0a7cfcff0fbe3ba88b9630b2643b8338433cfd9624962bc4912"
+        },
+        "race.wasm": {
+          "bytes": 292465,
+          "sha256": "742d5f2ab32a615f6e6a08b5111d79b965b3c3273c6e0bf451b8c561e4f650b7"
+        },
+        "race.wat": {
+          "bytes": 2865254,
+          "sha256": "5530d205e1ed4282bebc012b63d99f95b228241e14b6df2d1488fa33eb3e36a9"
+        }
+      }
+    },
+    "C": {
+      "report": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0
+      },
+      "receipts": {
+        "all": {
+          "arm": "C",
+          "method": "all",
+          "sourceHash": "18a330bc14ac14548c227e6ee534a0ca56b12546a4ac17343b85589496a98a52",
+          "basis": {
+            "src/codegen/promise-combinator-drive.ts": "19e15af978541faf779b4b9b0ce5d45156a00f642fc5b11db0446480d39d5813",
+            "src/codegen/promise-combinator-observable-protocol.ts": "d3dcae5d2e13375724ea6053d0c41b5fd0e211d44acf49a8ef08158a8e503e5b",
+            "src/codegen/closure-classifier.ts": "0d2b70770eb0aef9d2791fd75d6a006b0a1873e7e510caf62c5809512b386693",
+            "src/codegen/function-bind-apply.ts": "ab53da957dbf780a698fc8581c32e13d6f1320dcdac080e156e9074138bee7b8",
+            "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+            "src/codegen/builtin-constructor-prepared.ts": "99253578d5687537bce6f82ed644f2a9fcb90ff6d3b4c314218dfae78f5aa2ef",
+            "src/codegen/staging-bindings.ts": "a956217f8a9910919137a211362262b8e94f7f22ef58b04227217204c269bc08",
+            "tests/issue-5883-real-multiroot-observer-v2.test.ts": "4b9f647c88cfa64b5bb6d57cf784eb9591cac8b15c9bec4de6fb90ba57916e7f"
+          },
+          "hits": [
+            {
+              "method": "all",
+              "arg": "input",
+              "observable": true,
+              "captured": true,
+              "entryBoundTypeIdx": 139,
+              "entryBindProvider": 2097435,
+              "resolveLocals": {
+                "any": [["__comb_observable_callable_any_29", 29]],
+                "callable": [["__comb_observable_callable_28", 28]]
+              },
+              "boundTypeIdx": 139,
+              "observation": {
+                "arms": [
+                  {
+                    "typeIdx": 65,
+                    "leafIds": [0, 1],
+                    "leafValues": [
+                      {
+                        "op": "i32.const",
+                        "value": 1
+                      },
+                      {
+                        "op": "local.set",
+                        "index": 28
+                      }
+                    ]
+                  },
+                  {
+                    "typeIdx": 139,
+                    "leafIds": [2, 3],
+                    "leafValues": [
+                      {
+                        "op": "i32.const",
+                        "value": 1
+                      },
+                      {
+                        "op": "local.set",
+                        "index": 28
+                      }
+                    ]
+                  }
+                ],
+                "rootCount": 2,
+                "distinctRoots": 2,
+                "uniqueLeaves": 4
+              }
+            }
+          ],
+          "observerErrors": [],
+          "compileError": null,
+          "success": true,
+          "errors": [],
+          "binaryHash": "5d46b0f0d6bf46fe5eba1d61a9b09b56956d707b9261b0af0f3c9aa5518aca75",
+          "nativeActual": 12,
+          "nativeError": null,
+          "actual": 12,
+          "runtimeError": null,
+          "imports": [],
+          "boundary": "actual exported-drive return, before compiler finalization; not an internal allocation-interval proof"
+        },
+        "race": {
+          "arm": "C",
+          "method": "race",
+          "sourceHash": "dad8f38fc66ee0a7cfcff0fbe3ba88b9630b2643b8338433cfd9624962bc4912",
+          "basis": {
+            "src/codegen/promise-combinator-drive.ts": "19e15af978541faf779b4b9b0ce5d45156a00f642fc5b11db0446480d39d5813",
+            "src/codegen/promise-combinator-observable-protocol.ts": "d3dcae5d2e13375724ea6053d0c41b5fd0e211d44acf49a8ef08158a8e503e5b",
+            "src/codegen/closure-classifier.ts": "0d2b70770eb0aef9d2791fd75d6a006b0a1873e7e510caf62c5809512b386693",
+            "src/codegen/function-bind-apply.ts": "ab53da957dbf780a698fc8581c32e13d6f1320dcdac080e156e9074138bee7b8",
+            "src/codegen/builtin-static-globals.ts": "fdcf9f1b5f18c18b256dd52f5084c9f28cc867a3f891dd9976b6dda6287cd5ca",
+            "src/codegen/builtin-constructor-prepared.ts": "99253578d5687537bce6f82ed644f2a9fcb90ff6d3b4c314218dfae78f5aa2ef",
+            "src/codegen/staging-bindings.ts": "a956217f8a9910919137a211362262b8e94f7f22ef58b04227217204c269bc08",
+            "tests/issue-5883-real-multiroot-observer-v2.test.ts": "4b9f647c88cfa64b5bb6d57cf784eb9591cac8b15c9bec4de6fb90ba57916e7f"
+          },
+          "hits": [
+            {
+              "method": "race",
+              "arg": "input",
+              "observable": true,
+              "captured": true,
+              "entryBoundTypeIdx": 139,
+              "entryBindProvider": 2097435,
+              "resolveLocals": {
+                "any": [["__comb_observable_callable_any_29", 29]],
+                "callable": [["__comb_observable_callable_28", 28]]
+              },
+              "boundTypeIdx": 139,
+              "observation": {
+                "arms": [
+                  {
+                    "typeIdx": 65,
+                    "leafIds": [0, 1],
+                    "leafValues": [
+                      {
+                        "op": "i32.const",
+                        "value": 1
+                      },
+                      {
+                        "op": "local.set",
+                        "index": 28
+                      }
+                    ]
+                  },
+                  {
+                    "typeIdx": 139,
+                    "leafIds": [2, 3],
+                    "leafValues": [
+                      {
+                        "op": "i32.const",
+                        "value": 1
+                      },
+                      {
+                        "op": "local.set",
+                        "index": 28
+                      }
+                    ]
+                  }
+                ],
+                "rootCount": 2,
+                "distinctRoots": 2,
+                "uniqueLeaves": 4
+              }
+            }
+          ],
+          "observerErrors": [],
+          "compileError": null,
+          "success": true,
+          "errors": [],
+          "binaryHash": "742d5f2ab32a615f6e6a08b5111d79b965b3c3273c6e0bf451b8c561e4f650b7",
+          "nativeActual": 1,
+          "nativeError": null,
+          "actual": 1,
+          "runtimeError": null,
+          "imports": [],
+          "boundary": "actual exported-drive return, before compiler finalization; not an internal allocation-interval proof"
+        }
+      },
+      "artifacts": {
+        "all.entry-0-after.json": {
+          "bytes": 4140354,
+          "sha256": "4ff9534da8ce47aba70e647ad7997cc415e14b1afc9179d1b9d5db32ac9c17a3"
+        },
+        "all.entry-0-before.json": {
+          "bytes": 3007683,
+          "sha256": "4bf8efcc18d41ac19e04c43ce6c576796bde7b3600da9b5f2fd4ed56276e907c"
+        },
+        "all.native.js": {
+          "bytes": 474,
+          "sha256": "7d07720162e5404133d88c902fde94eeb66d1a403078aeb114ecd7bdce898c7f"
+        },
+        "all.receipt.json": {
+          "bytes": 2790,
+          "sha256": "0f75dc8eac85628d0d2220102bc547a7de2bed239fd8aef0768620559b54f7ff"
+        },
+        "all.source.ts": {
+          "bytes": 554,
+          "sha256": "18a330bc14ac14548c227e6ee534a0ca56b12546a4ac17343b85589496a98a52"
+        },
+        "all.wasm": {
+          "bytes": 295227,
+          "sha256": "5d46b0f0d6bf46fe5eba1d61a9b09b56956d707b9261b0af0f3c9aa5518aca75"
+        },
+        "all.wat": {
+          "bytes": 2898721,
+          "sha256": "2458c344816f6cfadc4887adbbf7992c1834cda549e8280a1ea1ed6aea680852"
+        },
+        "race.entry-0-after.json": {
+          "bytes": 4118281,
+          "sha256": "2ab6c8fffc88a88521924fc26dd296f79627551698f5f71157de37db7044ff5c"
+        },
+        "race.entry-0-before.json": {
+          "bytes": 3007683,
+          "sha256": "4bf8efcc18d41ac19e04c43ce6c576796bde7b3600da9b5f2fd4ed56276e907c"
+        },
+        "race.native.js": {
+          "bytes": 456,
+          "sha256": "041d8531476b9fd7b9e195bcbe7ae542c68acdba6c0f8a3e48f34163cbbfe5c6"
+        },
+        "race.receipt.json": {
+          "bytes": 2790,
+          "sha256": "2235304466db80a33f5e8e8ec1fdddddbe52c742fc6d36631c8a37d5f43b889a"
+        },
+        "race.source.ts": {
+          "bytes": 536,
+          "sha256": "dad8f38fc66ee0a7cfcff0fbe3ba88b9630b2643b8338433cfd9624962bc4912"
+        },
+        "race.wasm": {
+          "bytes": 292465,
+          "sha256": "742d5f2ab32a615f6e6a08b5111d79b965b3c3273c6e0bf451b8c561e4f650b7"
+        },
+        "race.wat": {
+          "bytes": 2865254,
+          "sha256": "5530d205e1ed4282bebc012b63d99f95b228241e14b6df2d1488fa33eb3e36a9"
+        }
+      }
+    }
+  },
+  "comparator": {
+    "path": ".tmp/5883-compare-real-multiroot-v3.mjs",
+    "sha256": "d02d735c0070301aba7f324dc65056e9c427f4a6c91c71670f4224cb6225ba78",
+    "exitCode": 0,
+    "rawLog": "{\"kind\":\"AB-raw-identity-delta\",\"rootCount\":2,\"callableLocal\":28,\"splits\":[{\"oldId\":52327,\"newIds\":[52327,52334],\"oldNode\":{\"id\":52327,\"kind\":\"object\",\"entries\":[[\"op\",\"i32.const\"],[\"value\",1]]},\"newNodes\":[{\"id\":52327,\"kind\":\"object\",\"entries\":[[\"op\",\"i32.const\"],[\"value\",1]]},{\"id\":52334,\"kind\":\"object\",\"entries\":[[\"op\",\"i32.const\"],[\"value\",1]]}]},{\"oldId\":52328,\"newIds\":[52328,52335],\"oldNode\":{\"id\":52328,\"kind\":\"object\",\"entries\":[[\"op\",\"local.set\"],[\"index\",28]]},\"newNodes\":[{\"id\":52328,\"kind\":\"object\",\"entries\":[[\"op\",\"local.set\"],[\"index\",28]]},{\"id\":52335,\"kind\":\"object\",\"entries\":[[\"op\",\"local.set\"],[\"index\",28]]}]}],\"merges\":[]}\n{\"kind\":\"AB-raw-identity-delta\",\"rootCount\":2,\"callableLocal\":28,\"splits\":[{\"oldId\":52137,\"newIds\":[52137,52144],\"oldNode\":{\"id\":52137,\"kind\":\"object\",\"entries\":[[\"op\",\"i32.const\"],[\"value\",1]]},\"newNodes\":[{\"id\":52137,\"kind\":\"object\",\"entries\":[[\"op\",\"i32.const\"],[\"value\",1]]},{\"id\":52144,\"kind\":\"object\",\"entries\":[[\"op\",\"i32.const\"],[\"value\",1]]}]},{\"oldId\":52138,\"newIds\":[52138,52145],\"oldNode\":{\"id\":52138,\"kind\":\"object\",\"entries\":[[\"op\",\"local.set\"],[\"index\",28]]},\"newNodes\":[{\"id\":52138,\"kind\":\"object\",\"entries\":[[\"op\",\"local.set\"],[\"index\",28]]},{\"id\":52145,\"kind\":\"object\",\"entries\":[[\"op\",\"local.set\"],[\"index\",28]]}]}],\"merges\":[]}\n{\n  \"denominator\": 2,\n  \"ABCPassed\": 2,\n  \"rows\": [\n    {\n      \"method\": \"all\",\n      \"roots\": 2,\n      \"AB\": {\n        \"splits\": [\n          {\n            \"oldId\": 52327,\n            \"newIds\": [\n              52327,\n              52334\n            ],\n            \"oldNode\": {\n              \"id\": 52327,\n              \"kind\": \"object\",\n              \"entries\": [\n                [\n                  \"op\",\n                  \"i32.const\"\n                ],\n                [\n                  \"value\",\n                  1\n                ]\n              ]\n            },\n            \"newNodes\": [\n              {\n                \"id\": 52327,\n                \"kind\": \"object\",\n                \"entries\": [\n                  [\n                    \"op\",\n                    \"i32.const\"\n                  ],\n                  [\n                    \"value\",\n                    1\n                  ]\n                ]\n              },\n              {\n                \"id\": 52334,\n                \"kind\": \"object\",\n                \"entries\": [\n                  [\n                    \"op\",\n                    \"i32.const\"\n                  ],\n                  [\n                    \"value\",\n                    1\n                  ]\n                ]\n              }\n            ]\n          },\n          {\n            \"oldId\": 52328,\n            \"newIds\": [\n              52328,\n              52335\n            ],\n            \"oldNode\": {\n              \"id\": 52328,\n              \"kind\": \"object\",\n              \"entries\": [\n                [\n                  \"op\",\n                  \"local.set\"\n                ],\n                [\n                  \"index\",\n                  28\n                ]\n              ]\n            },\n            \"newNodes\": [\n              {\n                \"id\": 52328,\n                \"kind\": \"object\",\n                \"entries\": [\n                  [\n                    \"op\",\n                    \"local.set\"\n                  ],\n                  [\n                    \"index\",\n                    28\n                  ]\n                ]\n              },\n              {\n                \"id\": 52335,\n                \"kind\": \"object\",\n                \"entries\": [\n                  [\n                    \"op\",\n                    \"local.set\"\n                  ],\n                  [\n                    \"index\",\n                    28\n                  ]\n                ]\n              }\n            ]\n          }\n        ],\n        \"merges\": [],\n        \"expectedLeavesOnly\": true,\n        \"expandedValuesEqual\": true\n      },\n      \"BC\": {\n        \"rawGraphsEqual\": true,\n        \"watEqual\": true,\n        \"binaryEqual\": true,\n        \"receiptsEqualExceptVerifiedProvenance\": true\n      }\n    },\n    {\n      \"method\": \"race\",\n      \"roots\": 2,\n      \"AB\": {\n        \"splits\": [\n          {\n            \"oldId\": 52137,\n            \"newIds\": [\n              52137,\n              52144\n            ],\n            \"oldNode\": {\n              \"id\": 52137,\n              \"kind\": \"object\",\n              \"entries\": [\n                [\n                  \"op\",\n                  \"i32.const\"\n                ],\n                [\n                  \"value\",\n                  1\n                ]\n              ]\n            },\n            \"newNodes\": [\n              {\n                \"id\": 52137,\n                \"kind\": \"object\",\n                \"entries\": [\n                  [\n                    \"op\",\n                    \"i32.const\"\n                  ],\n                  [\n                    \"value\",\n                    1\n                  ]\n                ]\n              },\n              {\n                \"id\": 52144,\n                \"kind\": \"object\",\n                \"entries\": [\n                  [\n                    \"op\",\n                    \"i32.const\"\n                  ],\n                  [\n                    \"value\",\n                    1\n                  ]\n                ]\n              }\n            ]\n          },\n          {\n            \"oldId\": 52138,\n            \"newIds\": [\n              52138,\n              52145\n            ],\n            \"oldNode\": {\n              \"id\": 52138,\n              \"kind\": \"object\",\n              \"entries\": [\n                [\n                  \"op\",\n                  \"local.set\"\n                ],\n                [\n                  \"index\",\n                  28\n                ]\n              ]\n            },\n            \"newNodes\": [\n              {\n                \"id\": 52138,\n                \"kind\": \"object\",\n                \"entries\": [\n                  [\n                    \"op\",\n                    \"local.set\"\n                  ],\n                  [\n                    \"index\",\n                    28\n                  ]\n                ]\n              },\n              {\n                \"id\": 52145,\n                \"kind\": \"object\",\n                \"entries\": [\n                  [\n                    \"op\",\n                    \"local.set\"\n                  ],\n                  [\n                    \"index\",\n                    28\n                  ]\n                ]\n              }\n            ]\n          }\n        ],\n        \"merges\": [],\n        \"expectedLeavesOnly\": true,\n        \"expandedValuesEqual\": true\n      },\n      \"BC\": {\n        \"rawGraphsEqual\": true,\n        \"watEqual\": true,\n        \"binaryEqual\": true,\n        \"receiptsEqualExceptVerifiedProvenance\": true\n      }\n    }\n  ]\n}\n"
+  },
+  "limits": [
+    "Selected real drive-entry state, not an internal allocation-interval proof.",
+    "Pinned source experiment, not acceptance on new upstream main.",
+    "No provider closure, P activation or legacy retirement."
+  ]
+}

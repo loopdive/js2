@@ -1,0 +1,55 @@
+
+ RUN  v3.2.4 /Users/thomas/Code/js2/.codex-worktrees/codex-5753-generator-floor-repair-20260927
+
+ × tests/issue-5748-vector-storage-copy-wasm.test.ts > dormant raw vector copy on actual Wasm > translates only exact source-token identity and preserves every other externref 10ms
+   → WebAssembly objects are opaque
+ ✓ tests/issue-5748-vector-storage-copy-wasm.test.ts > dormant raw vector copy on actual Wasm > normalizes A to B and B back to A through the same-binary foreign copy function 2ms
+ ✓ tests/issue-5748-vector-storage-copy-wasm.test.ts > dormant raw vector copy on actual Wasm > uses memmove for overlap +0 -> 1 0ms
+ ✓ tests/issue-5748-vector-storage-copy-wasm.test.ts > dormant raw vector copy on actual Wasm > uses memmove for overlap 1 -> +0 1ms
+ ✓ tests/issue-5748-vector-storage-copy-wasm.test.ts > dormant raw vector copy on actual Wasm > uses memmove for overlap +0 -> +0 0ms
+ ✓ tests/issue-5748-vector-storage-copy-wasm.test.ts > dormant raw vector copy on actual Wasm > rejects inconsistent alias domains even with count=0 without writes 1ms
+ ✓ tests/issue-5748-vector-storage-copy-wasm.test.ts > dormant raw vector copy on actual Wasm > rejects inconsistent alias domains even with count=2 without writes 0ms
+ ✓ tests/issue-5748-vector-storage-copy-wasm.test.ts > dormant raw vector copy on actual Wasm > preflights invalid ranges (-1,0,1) before any destination mutation 0ms
+ ✓ tests/issue-5748-vector-storage-copy-wasm.test.ts > dormant raw vector copy on actual Wasm > preflights invalid ranges (0,-1,1) before any destination mutation 1ms
+ ✓ tests/issue-5748-vector-storage-copy-wasm.test.ts > dormant raw vector copy on actual Wasm > preflights invalid ranges (4,0,0) before any destination mutation 1ms
+ ✓ tests/issue-5748-vector-storage-copy-wasm.test.ts > dormant raw vector copy on actual Wasm > preflights invalid ranges (0,4,0) before any destination mutation 1ms
+ ✓ tests/issue-5748-vector-storage-copy-wasm.test.ts > dormant raw vector copy on actual Wasm > preflights invalid ranges (2,0,2) before any destination mutation 1ms
+ ✓ tests/issue-5748-vector-storage-copy-wasm.test.ts > dormant raw vector copy on actual Wasm > preflights invalid ranges (0,2,2) before any destination mutation 0ms
+ ✓ tests/issue-5748-vector-storage-copy-wasm.test.ts > dormant raw vector copy on actual Wasm > preflights invalid ranges (0,0,-1) before any destination mutation 0ms
+ ✓ tests/issue-5748-vector-storage-copy-wasm.test.ts > dormant raw vector copy on actual Wasm > preflights invalid ranges (1,1,2147483647) before any destination mutation 0ms
+ ✓ tests/issue-5748-vector-storage-copy-wasm.test.ts > dormant raw vector copy on actual Wasm > accepts zero-length copies exactly at both ends 0ms
+ × tests/issue-5748-vector-storage-copy-wasm.test.ts > Hume supplemental equal-domain raw-copy controls > copies holes between distinct arrays with equal tokens without changing source or outside slots 1ms
+   → WebAssembly objects are opaque
+ ✓ tests/issue-5748-vector-storage-copy-wasm.test.ts > Hume supplemental equal-domain raw-copy controls > accepts exact-end zero-count copying on the equal-token branch without changing either array 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-5748-vector-storage-copy-wasm.test.ts > dormant raw vector copy on actual Wasm > translates only exact source-token identity and preserves every other externref
+TypeError: WebAssembly objects are opaque
+ ❯ tests/issue-5748-vector-storage-copy-wasm.test.ts:111:26
+    109|     const srcToken = api.token(),
+    110|       dstToken = other.token();
+    111|     expect(srcToken).not.toBe(dstToken);
+       |                          ^
+    112|     let observations = 0;
+    113|     const proxy = new Proxy(
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/issue-5748-vector-storage-copy-wasm.test.ts > Hume supplemental equal-domain raw-copy controls > copies holes between distinct arrays with equal tokens without changing source or outside slots
+TypeError: WebAssembly objects are opaque
+ ❯ tests/issue-5748-vector-storage-copy-wasm.test.ts:215:21
+    213|     const src = array(api, values);
+    214|     const dst = api.array(values.length + 2, "outside");
+    215|     expect(src).not.toBe(dst);
+       |                     ^
+    216|     expect(emptyStruct).not.toBe(token);
+    217| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 16 passed (18)
+   Start at  11:39:51
+   Duration  509ms (transform 137ms, setup 0ms, collect 164ms, tests 21ms, environment 0ms, prepare 58ms)

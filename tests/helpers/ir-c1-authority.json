@@ -192,9 +192,9 @@
     {
       "path": "tests/issue-3518-program-data-contract-boundary.test.ts",
       "pin": {
-        "bytes": 33018,
-        "sha256": "00d3c5359f0480eca0735d1de500d178f9492bb9b294d87974dc1eb48cdb948f",
-        "gitBlob": "152099585da2b6a6815062ffa854b32dcfdd2bde"
+        "bytes": 33305,
+        "sha256": "9dbe4154e48c6fd4ee38c821a7ae2f4cc2e0c680e962f2b69caca9015e0a90d8",
+        "gitBlob": "31dbca01db408d1e871e93f3ead9f86da57c4789"
       }
     },
     {
@@ -240,25 +240,25 @@
     {
       "path": "tests/issue-3518-runtime-program-policy-evolution.test.ts",
       "pin": {
-        "bytes": 28405,
-        "sha256": "514c7b79c38009fc502bab317b6eea64b112174d8bfd29d27b0e01f9cdae46c8",
-        "gitBlob": "5fabc23d33f48ca47104355be79dfbe8d9947e6d"
+        "bytes": 28904,
+        "sha256": "8d31875e83e487d4798b9603e2a69ad5f22d71c8f34257c0827827b1aa6edb48",
+        "gitBlob": "19ee581d6b2d47ef6eeccd490f549cded7addf4c"
       }
     },
     {
       "path": "tests/issue-3518-well-known-symbol-policy-evolution.test.ts",
       "pin": {
-        "bytes": 29317,
-        "sha256": "96c027fbfa2bb5268dffa59a23124776229806172aa08594ffa6e638eabdddb5",
-        "gitBlob": "d7e3379c8fa5f3b4fbf27afd14bd6bc7e2222445"
+        "bytes": 29604,
+        "sha256": "cc7dade4830d38ca06619d011cc355be50e71efadc45eafabf6f05a3686c7cfc",
+        "gitBlob": "c194c9a183d42507092ef44975028a8cf93cb75d"
       }
     },
     {
       "path": "tests/issue-3518-number-prerequisite-policy-evolution.test.ts",
       "pin": {
-        "bytes": 111635,
-        "sha256": "9b39eea0b6d5c962ec075e7c7df4f22584b8c80e6d4de8d66fabdced61fe6b4e",
-        "gitBlob": "1caf033084ec2765e7eef4b36dbb924b94bcda8e"
+        "bytes": 112645,
+        "sha256": "9026f55032ed4fbfe4501a6f996a3df8c29fa96ff92a7bf47b113876ad0ab569",
+        "gitBlob": "05e3ccff601e07b4d9d2dc442f297a42c0330a83"
       }
     }
   ],
@@ -394,74 +394,74 @@
         "gitBlob": "7e22a6829277d6475df4714de8d48ad2e76e3ada"
       },
       "afterPin": {
-        "bytes": 33018,
-        "sha256": "00d3c5359f0480eca0735d1de500d178f9492bb9b294d87974dc1eb48cdb948f",
-        "gitBlob": "152099585da2b6a6815062ffa854b32dcfdd2bde"
+        "bytes": 33305,
+        "sha256": "9dbe4154e48c6fd4ee38c821a7ae2f4cc2e0c680e962f2b69caca9015e0a90d8",
+        "gitBlob": "31dbca01db408d1e871e93f3ead9f86da57c4789"
       },
       "spans": [
         {
           "beforeOffset": 84,
           "afterOffset": 84,
           "before": "",
-          "after": "import { capturePositionFinallyMainPredecessorPolicySource } from \"./helpers/ir-position-finally-main-successor.js\";\nimport { capturePositionClassFieldsMainPredecessorPolicySource } from \"./helpers/ir-position-class-fields-main-successor.js\";\nimport { captureSourceMapPositionInventoryPredecessorPolicySource } from \"./helpers/ir-source-map-position-inventory-successor.js\";\nimport { captureMainInventoryPredecessorPolicy } from \"./helpers/ir-main-inventory-source-successor.js\";\nimport {\n  captureArrayBufferIsViewMainPredecessorPolicy,\n  capturePresentationClassificationPredecessorPolicy,\n  captureLoweringAnalysisPredecessorPolicy,\n  captureWasmGcHelperPredecessorPolicy,\n} from \"./helpers/ir-runtime-program-policy-evolution.js\";\nimport { captureProgramValidatorPredecessorPolicy } from \"./helpers/ir-runtime-program-policy-evolution.js\";\nimport {\n  beforeSourceMapProgramValidatorRelocation,\n  captureSourceMapSchemaSourceEpoch,\n} from \"./helpers/ir-program-validator-relocation.js\";\n"
+          "after": "import { capture5883Main4bffInventoryViewSource } from \"./helpers/ir-5883-main-4bff-inventory-views.js\";\nimport { capturePositionFinallyMainPredecessorPolicySource } from \"./helpers/ir-position-finally-main-successor.js\";\nimport { capturePositionClassFieldsMainPredecessorPolicySource } from \"./helpers/ir-position-class-fields-main-successor.js\";\nimport { captureSourceMapPositionInventoryPredecessorPolicySource } from \"./helpers/ir-source-map-position-inventory-successor.js\";\nimport { captureMainInventoryPredecessorPolicy } from \"./helpers/ir-main-inventory-source-successor.js\";\nimport {\n  captureArrayBufferIsViewMainPredecessorPolicy,\n  capturePresentationClassificationPredecessorPolicy,\n  captureLoweringAnalysisPredecessorPolicy,\n  captureWasmGcHelperPredecessorPolicy,\n} from \"./helpers/ir-runtime-program-policy-evolution.js\";\nimport { captureProgramValidatorPredecessorPolicy } from \"./helpers/ir-runtime-program-policy-evolution.js\";\nimport {\n  beforeSourceMapProgramValidatorRelocation,\n  captureSourceMapSchemaSourceEpoch,\n} from \"./helpers/ir-program-validator-relocation.js\";\n"
         },
         {
           "beforeOffset": 1053,
-          "afterOffset": 2043,
+          "afterOffset": 2148,
           "before": "import {\n  reconstructRuntimeProgramRelocationSources,\n  runtimeProgramRelocationPairs,\n} from \"./helpers/ir-runtime-program-relocation.js\";\n",
           "after": "import { runtimeProgramRelocationPairs } from \"./helpers/ir-runtime-program-relocation.js\";\nimport { beforeCanonicalInstructionsSource, reconstructC1CurrentSources } from \"./helpers/ir-c1-current-source.js\";\n"
         },
         {
           "beforeOffset": 1299,
-          "afterOffset": 2356,
+          "afterOffset": 2461,
           "before": "",
           "after": "  captureNestedStackificationPredecessorPolicy,\n  captureCanonical489dPredecessorPolicy,\n  beforeCanonical3c6InventoryPolicy,\n"
         },
         {
           "beforeOffset": 1576,
-          "afterOffset": 2759,
+          "afterOffset": 2864,
           "before": "",
           "after": "  beforeCurrentMainInventoryPolicy,\n"
         },
         {
           "beforeOffset": 4999,
-          "afterOffset": 6218,
+          "afterOffset": 6323,
           "before": "          JSON.parse(readFileSync(resolve(repository, \"scripts/compiler-boundaries.json\"), \"utf8\")),\n",
-          "after": "          beforeCurrentMainInventoryPolicy(\n            beforeCanonical3c6InventoryPolicy(\n              captureCanonical489dPredecessorPolicy(\n                captureNestedStackificationPredecessorPolicy(\n                  captureProgramValidatorPredecessorPolicy(\n                    captureWasmGcHelperPredecessorPolicy(\n                      captureLoweringAnalysisPredecessorPolicy(\n                        capturePresentationClassificationPredecessorPolicy(\n                          captureArrayBufferIsViewMainPredecessorPolicy(\n                            captureMainInventoryPredecessorPolicy(\n                              JSON.parse(\n                                captureSourceMapPositionInventoryPredecessorPolicySource(\n                                  capturePositionClassFieldsMainPredecessorPolicySource(\n                                    capturePositionFinallyMainPredecessorPolicySource(\n                                      readFileSync(resolve(repository, \"scripts/compiler-boundaries.json\"), \"utf8\"),\n                                    ),\n                                  ),\n                                ),\n                              ),\n                            ),\n                          ),\n                        ),\n                      ),\n                    ),\n                  ),\n                ),\n              ),\n            ),\n          ),\n"
+          "after": "          beforeCurrentMainInventoryPolicy(\n            beforeCanonical3c6InventoryPolicy(\n              captureCanonical489dPredecessorPolicy(\n                captureNestedStackificationPredecessorPolicy(\n                  captureProgramValidatorPredecessorPolicy(\n                    captureWasmGcHelperPredecessorPolicy(\n                      captureLoweringAnalysisPredecessorPolicy(\n                        capturePresentationClassificationPredecessorPolicy(\n                          captureArrayBufferIsViewMainPredecessorPolicy(\n                            captureMainInventoryPredecessorPolicy(\n                              JSON.parse(\n                                captureSourceMapPositionInventoryPredecessorPolicySource(\n                                  capturePositionClassFieldsMainPredecessorPolicySource(\n                                    capturePositionFinallyMainPredecessorPolicySource(\n                                      capture5883Main4bffInventoryViewSource(\n                                        readFileSync(resolve(repository, \"scripts/compiler-boundaries.json\"), \"utf8\"),\n                                        \"union-to-incoming\",\n                                      ),\n                                    ),\n                                  ),\n                                ),\n                              ),\n                            ),\n                          ),\n                        ),\n                      ),\n                    ),\n                  ),\n                ),\n              ),\n            ),\n          ),\n"
         },
         {
           "beforeOffset": 6958,
-          "afterOffset": 9469,
+          "afterOffset": 9756,
           "before": "  const initialRuntimeSources = reconstructRuntimeContractReceiptSources(beforeRuntimePreparationRelocation(rawRead));\n",
           "after": "  assertSourceMapValidatorComponent(rawRead);\n  const sourceEpoch = captureSourceMapSchemaSourceEpoch(rawRead);\n  const sourceEpochPaths: readonly string[] = [\n    \"src/compiler/define-substitution.ts\",\n    \"src/ir/core/async-plan.ts\",\n    \"src/ir/core/nodes.ts\",\n    \"src/ir/program-codec.ts\",\n    \"src/ir/program-prepare-ir.ts\",\n    \"src/ir/program/input-contracts.ts\",\n    \"src/ir/program/input.ts\",\n    \"src/ir/program/prepared-contracts.ts\",\n    \"src/ir/program/validation.ts\",\n    \"src/position-map.ts\",\n    \"src/shared/contracts/ir-unit-inventory.ts\",\n  ];\n  const historicalDependencyRead = (path: string): string => {\n    const actual = rawRead(path);\n    const source = sourceEpochPaths.includes(path) ? sourceEpoch.before(path, actual) : actual;\n    return path === \"src/wasm/model/instructions.ts\" ? beforeCanonicalInstructionsSource(source) : source;\n  };\n  const initialRuntimeSources = reconstructRuntimeContractReceiptSources(\n    beforeRuntimePreparationRelocation(beforeProgramValidatorRelocation(rawRead)),\n  );\n"
         },
         {
           "beforeOffset": 7460,
-          "afterOffset": 10883,
+          "afterOffset": 11170,
           "before": "  const initialC1ProgramSources: ReadonlyMap<string, string> = reconstructRuntimeProgramRelocationSources(rawRead);\n",
           "after": "  const initialC1ProgramSources: ReadonlyMap<string, string> = reconstructC1CurrentSources(rawRead);\n"
         },
         {
           "beforeOffset": 7637,
-          "afterOffset": 11045,
+          "afterOffset": 11332,
           "before": "    if (!runtimeProgramRelocationPairs.some(([donor]) => donor === path)) return rawRead(path);\n",
           "after": "    if (!runtimeProgramRelocationPairs.some(([donor]) => donor === path)) return historicalDependencyRead(path);\n"
         },
         {
           "beforeOffset": 8159,
-          "afterOffset": 11584,
+          "afterOffset": 11871,
           "before": "  const initialCoreTypeSources = reconstructProgramCoreTypeEvolution(rawRead);\n",
           "after": "  const initialCoreTypeSources = reconstructProgramCoreTypeEvolution(historicalDependencyRead);\n"
         },
         {
           "beforeOffset": 8911,
-          "afterOffset": 12353,
+          "afterOffset": 12640,
           "before": "    } else source = rawRead(path);\n",
           "after": "    } else source = historicalDependencyRead(path);\n"
         },
         {
           "beforeOffset": 28535,
-          "afterOffset": 31994,
+          "afterOffset": 32281,
           "before": "",
           "after": "\n// Fresh whole component authentication precedes each explicit source-epoch bridge.\nfunction assertSourceMapValidatorComponent(readLive: (path: string) => string): void {\n  const path = \"tests/helpers/ir-program-validator-relocation.ts\";\n  const text = readLive(path);\n  if (typeof text !== \"string\" || text.length === 0)\n    throw new Error(\"program validator relocation: nonempty primitive text required: \" + path);\n  if (\n    Buffer.byteLength(text) !== 46642 ||\n    createHash(\"sha256\").update(text).digest(\"hex\") !==\n      \"6e32ca208775e8eeae765bf3345cdd3cb1e0f40a1784f684afd9c4dff3a4cfe0\"\n  )\n    throw new Error(\"program validator relocation: complete source pin mismatch: \" + path);\n}\nfunction beforeProgramValidatorRelocation(readLive: (path: string) => string): (path: string) => string {\n  if (typeof readLive !== \"function\") throw new Error(\"program validator relocation: physical reader required\");\n  assertSourceMapValidatorComponent(readLive);\n  return beforeSourceMapProgramValidatorRelocation(readLive);\n}\n"
         }
@@ -688,56 +688,56 @@
         "gitBlob": "27cdb3a1209d874b401e7de30b0bd7e731bdff6c"
       },
       "afterPin": {
-        "bytes": 28405,
-        "sha256": "514c7b79c38009fc502bab317b6eea64b112174d8bfd29d27b0e01f9cdae46c8",
-        "gitBlob": "5fabc23d33f48ca47104355be79dfbe8d9947e6d"
+        "bytes": 28904,
+        "sha256": "8d31875e83e487d4798b9603e2a69ad5f22d71c8f34257c0827827b1aa6edb48",
+        "gitBlob": "19ee581d6b2d47ef6eeccd490f549cded7addf4c"
       },
       "spans": [
         {
           "beforeOffset": 84,
           "afterOffset": 84,
           "before": "",
-          "after": "import { capturePositionFinallyMainPredecessorPolicySource } from \"./helpers/ir-position-finally-main-successor.js\";\nimport { capturePositionClassFieldsMainPredecessorPolicySource } from \"./helpers/ir-position-class-fields-main-successor.js\";\nimport { captureSourceMapPositionInventoryPredecessorPolicySource } from \"./helpers/ir-source-map-position-inventory-successor.js\";\nimport { captureMainInventoryPredecessorPolicySource } from \"./helpers/ir-main-inventory-source-successor.js\";\nimport {\n  captureArrayBufferIsViewMainPredecessorPolicy,\n  captureArrayBufferIsViewMainPredecessorPolicySource,\n  captureLoweringAnalysisPredecessorPolicySource,\n  capturePresentationClassificationPredecessorPolicy,\n  capturePresentationClassificationPredecessorPolicySource,\n  captureLoweringAnalysisPredecessorPolicy,\n  captureWasmGcHelperPredecessorPolicy,\n  captureWasmGcHelperPredecessorPolicySource,\n} from \"./helpers/ir-runtime-program-policy-evolution.js\";\nimport {\n  captureProgramValidatorPredecessorPolicy,\n  captureProgramValidatorPredecessorPolicySource,\n} from \"./helpers/ir-runtime-program-policy-evolution.js\";\n"
+          "after": "import { capture5883Main4bffInventoryViewSource } from \"./helpers/ir-5883-main-4bff-inventory-views.js\";\nimport { capturePositionFinallyMainPredecessorPolicySource } from \"./helpers/ir-position-finally-main-successor.js\";\nimport { capturePositionClassFieldsMainPredecessorPolicySource } from \"./helpers/ir-position-class-fields-main-successor.js\";\nimport { captureSourceMapPositionInventoryPredecessorPolicySource } from \"./helpers/ir-source-map-position-inventory-successor.js\";\nimport { captureMainInventoryPredecessorPolicySource } from \"./helpers/ir-main-inventory-source-successor.js\";\nimport {\n  captureArrayBufferIsViewMainPredecessorPolicy,\n  captureArrayBufferIsViewMainPredecessorPolicySource,\n  captureLoweringAnalysisPredecessorPolicySource,\n  capturePresentationClassificationPredecessorPolicy,\n  capturePresentationClassificationPredecessorPolicySource,\n  captureLoweringAnalysisPredecessorPolicy,\n  captureWasmGcHelperPredecessorPolicy,\n  captureWasmGcHelperPredecessorPolicySource,\n} from \"./helpers/ir-runtime-program-policy-evolution.js\";\nimport {\n  captureProgramValidatorPredecessorPolicy,\n  captureProgramValidatorPredecessorPolicySource,\n} from \"./helpers/ir-runtime-program-policy-evolution.js\";\n"
         },
         {
           "beforeOffset": 286,
-          "afterOffset": 1400,
+          "afterOffset": 1505,
           "before": "",
           "after": "  captureNestedStackificationPredecessorPolicy,\n  captureNestedStackificationPredecessorPolicySource,\n  captureCanonical489dPredecessorPolicy,\n  beforeCanonical3c6InventoryPolicy,\n  captureCanonical489dPredecessorPolicySource,\n  beforeCanonical3c6InventoryPolicySource,\n"
         },
         {
           "beforeOffset": 983,
-          "afterOffset": 2367,
+          "afterOffset": 2472,
           "before": "",
           "after": "  beforeCurrentMainInventoryPolicy,\n  beforeCurrentMainInventoryPolicySource,\n"
         },
         {
           "beforeOffset": 1351,
-          "afterOffset": 2813,
+          "afterOffset": 2918,
           "before": "",
           "after": "import { c1HistoricalArtifactPath, type C1HistoricalLogicalPath } from \"./helpers/ir-c1-historical-authority.js\";\n\n"
         },
         {
           "beforeOffset": 1452,
-          "afterOffset": 3029,
+          "afterOffset": 3134,
           "before": "",
           "after": "const historicalPolicyOperandPaths: readonly string[] = [\n  \"tests/issue-3518-runtime-program-relocation.test.ts\",\n  \"tests/issue-3518-program-data-contract-seam.test.ts\",\n  \"tests/issue-3518-program-ownership-runtime-seam.test.ts\",\n  \"tests/issue-3518-program-pre-a-evolution.test.ts\",\n  \"tests/issue-3518-program-initial-graph-evolution.test.ts\",\n  \"tests/helpers/ir-runtime-program-policy-evolution.ts\",\n];\nconst historicalPolicyPhysicalPath = (path: string): string =>\n  historicalPolicyOperandPaths.includes(path) ? c1HistoricalArtifactPath(path as C1HistoricalLogicalPath) : path;\n// Raw physical operand reads let the original mutation assertions inspect corruption before the guard rejects it.\nconst readHistoricalPolicyOperand = (path: string): string => read(historicalPolicyPhysicalPath(path));\n"
         },
         {
           "beforeOffset": 1979,
-          "afterOffset": 4362,
+          "afterOffset": 4467,
           "before": "            beforeGeneratorInventoryPolicy(JSON.parse(read(\"scripts/compiler-boundaries.json\"))),\n",
-          "after": "            beforeGeneratorInventoryPolicy(\n              beforeCurrentMainInventoryPolicy(\n                beforeCanonical3c6InventoryPolicy(\n                  captureCanonical489dPredecessorPolicy(\n                    captureNestedStackificationPredecessorPolicy(\n                      captureProgramValidatorPredecessorPolicy(\n                        captureWasmGcHelperPredecessorPolicy(\n                          captureLoweringAnalysisPredecessorPolicy(\n                            capturePresentationClassificationPredecessorPolicy(\n                              captureArrayBufferIsViewMainPredecessorPolicy(\n                                JSON.parse(\n                                  captureMainInventoryPredecessorPolicySource(\n                                    captureSourceMapPositionInventoryPredecessorPolicySource(\n                                      capturePositionClassFieldsMainPredecessorPolicySource(\n                                        capturePositionFinallyMainPredecessorPolicySource(\n                                          read(\"scripts/compiler-boundaries.json\"),\n                                        ),\n                                      ),\n                                    ),\n                                  ),\n                                ),\n                              ),\n                            ),\n                          ),\n                        ),\n                      ),\n                    ),\n                  ),\n                ),\n              ),\n            ),\n"
+          "after": "            beforeGeneratorInventoryPolicy(\n              beforeCurrentMainInventoryPolicy(\n                beforeCanonical3c6InventoryPolicy(\n                  captureCanonical489dPredecessorPolicy(\n                    captureNestedStackificationPredecessorPolicy(\n                      captureProgramValidatorPredecessorPolicy(\n                        captureWasmGcHelperPredecessorPolicy(\n                          captureLoweringAnalysisPredecessorPolicy(\n                            capturePresentationClassificationPredecessorPolicy(\n                              captureArrayBufferIsViewMainPredecessorPolicy(\n                                JSON.parse(\n                                  captureMainInventoryPredecessorPolicySource(\n                                    captureSourceMapPositionInventoryPredecessorPolicySource(\n                                      capturePositionClassFieldsMainPredecessorPolicySource(\n                                        capturePositionFinallyMainPredecessorPolicySource(\n                                          capture5883Main4bffInventoryViewSource(\n                                            read(\"scripts/compiler-boundaries.json\"),\n                                            \"union-to-incoming\",\n                                          ),\n                                        ),\n                                      ),\n                                    ),\n                                  ),\n                                ),\n                              ),\n                            ),\n                          ),\n                        ),\n                      ),\n                    ),\n                  ),\n                ),\n              ),\n            ),\n"
         },
         {
           "beforeOffset": 4343,
-          "afterOffset": 8165,
+          "afterOffset": 8464,
           "before": "                beforeGeneratorInventoryPolicySource(read(\"scripts/compiler-boundaries.json\")),\n",
-          "after": "                beforeGeneratorInventoryPolicySource(\n                  beforeCurrentMainInventoryPolicySource(\n                    beforeCanonical3c6InventoryPolicySource(\n                      captureCanonical489dPredecessorPolicySource(\n                        captureNestedStackificationPredecessorPolicySource(\n                          captureProgramValidatorPredecessorPolicySource(\n                            captureWasmGcHelperPredecessorPolicySource(\n                              captureLoweringAnalysisPredecessorPolicySource(\n                                capturePresentationClassificationPredecessorPolicySource(\n                                  captureArrayBufferIsViewMainPredecessorPolicySource(\n                                    captureMainInventoryPredecessorPolicySource(\n                                      captureSourceMapPositionInventoryPredecessorPolicySource(\n                                        capturePositionClassFieldsMainPredecessorPolicySource(\n                                          capturePositionFinallyMainPredecessorPolicySource(\n                                            read(\"scripts/compiler-boundaries.json\"),\n                                          ),\n                                        ),\n                                      ),\n                                    ),\n                                  ),\n                                ),\n                              ),\n                            ),\n                          ),\n                        ),\n                      ),\n                    ),\n                  ),\n                ),\n"
+          "after": "                beforeGeneratorInventoryPolicySource(\n                  beforeCurrentMainInventoryPolicySource(\n                    beforeCanonical3c6InventoryPolicySource(\n                      captureCanonical489dPredecessorPolicySource(\n                        captureNestedStackificationPredecessorPolicySource(\n                          captureProgramValidatorPredecessorPolicySource(\n                            captureWasmGcHelperPredecessorPolicySource(\n                              captureLoweringAnalysisPredecessorPolicySource(\n                                capturePresentationClassificationPredecessorPolicySource(\n                                  captureArrayBufferIsViewMainPredecessorPolicySource(\n                                    captureMainInventoryPredecessorPolicySource(\n                                      captureSourceMapPositionInventoryPredecessorPolicySource(\n                                        capturePositionClassFieldsMainPredecessorPolicySource(\n                                          capturePositionFinallyMainPredecessorPolicySource(\n                                            capture5883Main4bffInventoryViewSource(\n                                              read(\"scripts/compiler-boundaries.json\"),\n                                              \"union-to-incoming\",\n                                            ),\n                                          ),\n                                        ),\n                                      ),\n                                    ),\n                                  ),\n                                ),\n                              ),\n                            ),\n                          ),\n                        ),\n                      ),\n                    ),\n                  ),\n                ),\n"
         },
         {
           "beforeOffset": 5624,
-          "afterOffset": 10966,
+          "afterOffset": 11465,
           "before": "",
           "after": "    const read = readHistoricalPolicyOperand;\n"
         }
@@ -751,56 +751,56 @@
         "gitBlob": "65873b916d8cfd49804377d0e5045f2e77ee5fe9"
       },
       "afterPin": {
-        "bytes": 29317,
-        "sha256": "96c027fbfa2bb5268dffa59a23124776229806172aa08594ffa6e638eabdddb5",
-        "gitBlob": "d7e3379c8fa5f3b4fbf27afd14bd6bc7e2222445"
+        "bytes": 29604,
+        "sha256": "cc7dade4830d38ca06619d011cc355be50e71efadc45eafabf6f05a3686c7cfc",
+        "gitBlob": "c194c9a183d42507092ef44975028a8cf93cb75d"
       },
       "spans": [
         {
           "beforeOffset": 84,
           "afterOffset": 84,
           "before": "",
-          "after": "import { capturePositionFinallyMainPredecessorPolicySource } from \"./helpers/ir-position-finally-main-successor.js\";\nimport { capturePositionClassFieldsMainPredecessorPolicySource } from \"./helpers/ir-position-class-fields-main-successor.js\";\nimport { captureSourceMapPositionInventoryPredecessorPolicySource } from \"./helpers/ir-source-map-position-inventory-successor.js\";\nimport { captureMainInventoryPredecessorPolicySource } from \"./helpers/ir-main-inventory-source-successor.js\";\nimport {\n  captureArrayBufferIsViewMainPredecessorPolicySource,\n  capturePresentationClassificationPredecessorPolicySource,\n  captureLoweringAnalysisPredecessorPolicySource,\n  captureWasmGcHelperPredecessorPolicySource,\n} from \"./helpers/ir-runtime-program-policy-evolution.js\";\nimport { captureProgramValidatorPredecessorPolicySource } from \"./helpers/ir-runtime-program-policy-evolution.js\";\n"
+          "after": "import { capture5883Main4bffInventoryViewSource } from \"./helpers/ir-5883-main-4bff-inventory-views.js\";\nimport { capturePositionFinallyMainPredecessorPolicySource } from \"./helpers/ir-position-finally-main-successor.js\";\nimport { capturePositionClassFieldsMainPredecessorPolicySource } from \"./helpers/ir-position-class-fields-main-successor.js\";\nimport { captureSourceMapPositionInventoryPredecessorPolicySource } from \"./helpers/ir-source-map-position-inventory-successor.js\";\nimport { captureMainInventoryPredecessorPolicySource } from \"./helpers/ir-main-inventory-source-successor.js\";\nimport {\n  captureArrayBufferIsViewMainPredecessorPolicySource,\n  capturePresentationClassificationPredecessorPolicySource,\n  captureLoweringAnalysisPredecessorPolicySource,\n  captureWasmGcHelperPredecessorPolicySource,\n} from \"./helpers/ir-runtime-program-policy-evolution.js\";\nimport { captureProgramValidatorPredecessorPolicySource } from \"./helpers/ir-runtime-program-policy-evolution.js\";\n"
         },
         {
           "beforeOffset": 286,
-          "afterOffset": 1166,
+          "afterOffset": 1271,
           "before": "",
           "after": "  captureNestedStackificationPredecessorPolicySource,\n  captureCanonical489dPredecessorPolicySource,\n  captureCanonical3c6PredecessorPolicySource,\n"
         },
         {
           "beforeOffset": 400,
-          "afterOffset": 1427,
+          "afterOffset": 1532,
           "before": "  beforeGeneratorInventoryPolicySource,\n  beforeHostCarrierInventoryPolicySource,\n  beforeDynamicCodeInventoryPolicySource,\n  beforeRuntimePreparationPolicySource,\n",
           "after": "  captureGeneratorPredecessorPolicySource,\n  captureHostCarrierPredecessorPolicySource,\n  captureDynamicCodePredecessorPolicySource,\n  captureRuntimePreparationPredecessorPolicySource,\n"
         },
         {
           "beforeOffset": 879,
-          "afterOffset": 1927,
+          "afterOffset": 2032,
           "before": "",
           "after": "  captureCurrentMainInventoryPredecessorPolicySource,\n"
         },
         {
           "beforeOffset": 1169,
-          "afterOffset": 2271,
+          "afterOffset": 2376,
           "before": "",
           "after": "import { c1HistoricalArtifactPath, type C1HistoricalLogicalPath } from \"./helpers/ir-c1-historical-authority.js\";\n\n"
         },
         {
           "beforeOffset": 1270,
-          "afterOffset": 2487,
+          "afterOffset": 2592,
           "before": "",
           "after": "const historicalPolicyOperandPaths: readonly string[] = [\n  \"tests/issue-3518-runtime-program-relocation.test.ts\",\n  \"tests/issue-3518-program-data-contract-seam.test.ts\",\n  \"tests/issue-3518-program-ownership-runtime-seam.test.ts\",\n  \"tests/issue-3518-program-pre-a-evolution.test.ts\",\n  \"tests/issue-3518-program-initial-graph-evolution.test.ts\",\n  \"tests/helpers/ir-runtime-program-policy-evolution.ts\",\n];\nconst historicalPolicyPhysicalPath = (path: string): string =>\n  historicalPolicyOperandPaths.includes(path) ? c1HistoricalArtifactPath(path as C1HistoricalLogicalPath) : path;\n// Raw physical operand reads let the original mutation assertions inspect corruption before the guard rejects it.\nconst readHistoricalPolicyOperand = (path: string): string => read(historicalPolicyPhysicalPath(path));\n"
         },
         {
           "beforeOffset": 1568,
-          "afterOffset": 3591,
+          "afterOffset": 3696,
           "before": "    beforeRuntimePreparationPolicySource(\n      beforeDynamicCodeInventoryPolicySource(\n        beforeHostCarrierInventoryPolicySource(\n          beforeGeneratorInventoryPolicySource(read(\"scripts/compiler-boundaries.json\")),\n",
-          "after": "    captureRuntimePreparationPredecessorPolicySource(\n      captureDynamicCodePredecessorPolicySource(\n        captureHostCarrierPredecessorPolicySource(\n          captureGeneratorPredecessorPolicySource(\n            captureCurrentMainInventoryPredecessorPolicySource(\n              captureCanonical3c6PredecessorPolicySource(\n                captureCanonical489dPredecessorPolicySource(\n                  captureNestedStackificationPredecessorPolicySource(\n                    captureProgramValidatorPredecessorPolicySource(\n                      captureWasmGcHelperPredecessorPolicySource(\n                        captureLoweringAnalysisPredecessorPolicySource(\n                          capturePresentationClassificationPredecessorPolicySource(\n                            captureArrayBufferIsViewMainPredecessorPolicySource(\n                              captureMainInventoryPredecessorPolicySource(\n                                captureSourceMapPositionInventoryPredecessorPolicySource(\n                                  capturePositionClassFieldsMainPredecessorPolicySource(\n                                    capturePositionFinallyMainPredecessorPolicySource(\n                                      read(\"scripts/compiler-boundaries.json\"),\n                                    ),\n                                  ),\n                                ),\n                              ),\n                            ),\n                          ),\n                        ),\n                      ),\n                    ),\n                  ),\n                ),\n              ),\n            ),\n          ),\n"
+          "after": "    captureRuntimePreparationPredecessorPolicySource(\n      captureDynamicCodePredecessorPolicySource(\n        captureHostCarrierPredecessorPolicySource(\n          captureGeneratorPredecessorPolicySource(\n            captureCurrentMainInventoryPredecessorPolicySource(\n              captureCanonical3c6PredecessorPolicySource(\n                captureCanonical489dPredecessorPolicySource(\n                  captureNestedStackificationPredecessorPolicySource(\n                    captureProgramValidatorPredecessorPolicySource(\n                      captureWasmGcHelperPredecessorPolicySource(\n                        captureLoweringAnalysisPredecessorPolicySource(\n                          capturePresentationClassificationPredecessorPolicySource(\n                            captureArrayBufferIsViewMainPredecessorPolicySource(\n                              captureMainInventoryPredecessorPolicySource(\n                                captureSourceMapPositionInventoryPredecessorPolicySource(\n                                  capturePositionClassFieldsMainPredecessorPolicySource(\n                                    capturePositionFinallyMainPredecessorPolicySource(\n                                      capture5883Main4bffInventoryViewSource(\n                                        read(\"scripts/compiler-boundaries.json\"),\n                                        \"union-to-incoming\",\n                                      ),\n                                    ),\n                                  ),\n                                ),\n                              ),\n                            ),\n                          ),\n                        ),\n                      ),\n                    ),\n                  ),\n                ),\n              ),\n            ),\n          ),\n"
         },
         {
           "beforeOffset": 5907,
-          "afterOffset": 9318,
+          "afterOffset": 9605,
           "before": "",
           "after": "    const read = readHistoricalPolicyOperand;\n"
         }
@@ -814,164 +814,164 @@
         "gitBlob": "924eadef80e2aa3936c895f3d39d42973e1537b5"
       },
       "afterPin": {
-        "bytes": 111635,
-        "sha256": "9b39eea0b6d5c962ec075e7c7df4f22584b8c80e6d4de8d66fabdced61fe6b4e",
-        "gitBlob": "1caf033084ec2765e7eef4b36dbb924b94bcda8e"
+        "bytes": 112645,
+        "sha256": "9026f55032ed4fbfe4501a6f996a3df8c29fa96ff92a7bf47b113876ad0ab569",
+        "gitBlob": "05e3ccff601e07b4d9d2dc442f297a42c0330a83"
       },
       "spans": [
         {
           "beforeOffset": 84,
           "afterOffset": 84,
           "before": "",
-          "after": "import { capturePositionFinallyMainPredecessorPolicySource } from \"./helpers/ir-position-finally-main-successor.js\";\nimport { capturePositionClassFieldsMainPredecessorPolicySource } from \"./helpers/ir-position-class-fields-main-successor.js\";\nimport { captureSourceMapPositionInventoryPredecessorPolicySource } from \"./helpers/ir-source-map-position-inventory-successor.js\";\nimport { captureMainInventoryPredecessorPolicySource } from \"./helpers/ir-main-inventory-source-successor.js\";\nimport {\n  captureArrayBufferIsViewMainPredecessorPolicySource,\n  capturePresentationClassificationPredecessorPolicySource,\n  captureLoweringAnalysisPredecessorPolicySource,\n  captureWasmGcHelperPredecessorPolicySource,\n} from \"./helpers/ir-runtime-program-policy-evolution.js\";\nimport { captureProgramValidatorPredecessorPolicySource } from \"./helpers/ir-runtime-program-policy-evolution.js\";\n"
+          "after": "import { capture5883Main4bffInventoryViewSource } from \"./helpers/ir-5883-main-4bff-inventory-views.js\";\nimport { capturePositionFinallyMainPredecessorPolicySource } from \"./helpers/ir-position-finally-main-successor.js\";\nimport { capturePositionClassFieldsMainPredecessorPolicySource } from \"./helpers/ir-position-class-fields-main-successor.js\";\nimport { captureSourceMapPositionInventoryPredecessorPolicySource } from \"./helpers/ir-source-map-position-inventory-successor.js\";\nimport { captureMainInventoryPredecessorPolicySource } from \"./helpers/ir-main-inventory-source-successor.js\";\nimport {\n  captureArrayBufferIsViewMainPredecessorPolicySource,\n  capturePresentationClassificationPredecessorPolicySource,\n  captureLoweringAnalysisPredecessorPolicySource,\n  captureWasmGcHelperPredecessorPolicySource,\n} from \"./helpers/ir-runtime-program-policy-evolution.js\";\nimport { captureProgramValidatorPredecessorPolicySource } from \"./helpers/ir-runtime-program-policy-evolution.js\";\n"
         },
         {
           "beforeOffset": 290,
-          "afterOffset": 1170,
+          "afterOffset": 1275,
           "before": "",
           "after": "  captureNestedStackificationPredecessorPolicySource,\n  captureGeneratorPredecessorPolicySource,\n  captureHostCarrierPredecessorPolicySource,\n  captureDynamicCodePredecessorPolicySource,\n  captureRuntimePreparationPredecessorPolicySource,\n  captureCanonical489dPredecessorPolicySource,\n  captureCanonical3c6PredecessorPolicySource,\n"
         },
         {
           "beforeOffset": 1553,
-          "afterOffset": 2765,
+          "afterOffset": 2870,
           "before": "",
           "after": "  captureCurrentMainInventoryPredecessorPolicySource,\n"
         },
         {
           "beforeOffset": 2768,
-          "afterOffset": 4034,
+          "afterOffset": 4139,
           "before": "",
           "after": "import { c1HistoricalArtifactPath, type C1HistoricalLogicalPath } from \"./helpers/ir-c1-historical-authority.js\";\n\n"
         },
         {
           "beforeOffset": 2869,
-          "afterOffset": 4250,
+          "afterOffset": 4355,
           "before": "",
           "after": "const historicalPolicyOperandPaths: readonly string[] = [\n  \"tests/issue-3518-runtime-program-relocation.test.ts\",\n  \"tests/issue-3518-program-data-contract-seam.test.ts\",\n  \"tests/issue-3518-program-ownership-runtime-seam.test.ts\",\n  \"tests/issue-3518-program-pre-a-evolution.test.ts\",\n  \"tests/issue-3518-program-initial-graph-evolution.test.ts\",\n  \"tests/helpers/ir-runtime-program-policy-evolution.ts\",\n];\nconst historicalPolicyPhysicalPath = (path: string): string =>\n  historicalPolicyOperandPaths.includes(path) ? c1HistoricalArtifactPath(path as C1HistoricalLogicalPath) : path;\n// Raw physical operand reads let the original mutation assertions inspect corruption before the guard rejects it.\nconst readHistoricalPolicyOperand = (path: string): string => read(historicalPolicyPhysicalPath(path));\n"
         },
         {
           "beforeOffset": 3212,
-          "afterOffset": 5399,
+          "afterOffset": 5504,
           "before": "  beforeRuntimePreparationPolicySource(\n    beforeDynamicCodeInventoryPolicySource(\n      beforeHostCarrierInventoryPolicySource(\n        beforeGeneratorInventoryPolicySource(read(\"scripts/compiler-boundaries.json\")),\n",
-          "after": "  captureRuntimePreparationPredecessorPolicySource(\n    captureDynamicCodePredecessorPolicySource(\n      captureHostCarrierPredecessorPolicySource(\n        captureGeneratorPredecessorPolicySource(\n          captureCurrentMainInventoryPredecessorPolicySource(\n            captureCanonical3c6PredecessorPolicySource(\n              captureCanonical489dPredecessorPolicySource(\n                captureNestedStackificationPredecessorPolicySource(\n                  captureProgramValidatorPredecessorPolicySource(\n                    captureWasmGcHelperPredecessorPolicySource(\n                      captureLoweringAnalysisPredecessorPolicySource(\n                        capturePresentationClassificationPredecessorPolicySource(\n                          captureArrayBufferIsViewMainPredecessorPolicySource(\n                            captureMainInventoryPredecessorPolicySource(\n                              captureSourceMapPositionInventoryPredecessorPolicySource(\n                                capturePositionClassFieldsMainPredecessorPolicySource(\n                                  capturePositionFinallyMainPredecessorPolicySource(\n                                    read(\"scripts/compiler-boundaries.json\"),\n                                  ),\n                                ),\n                              ),\n                            ),\n                          ),\n                        ),\n                      ),\n                    ),\n                  ),\n                ),\n              ),\n            ),\n          ),\n        ),\n"
+          "after": "  captureRuntimePreparationPredecessorPolicySource(\n    captureDynamicCodePredecessorPolicySource(\n      captureHostCarrierPredecessorPolicySource(\n        captureGeneratorPredecessorPolicySource(\n          captureCurrentMainInventoryPredecessorPolicySource(\n            captureCanonical3c6PredecessorPolicySource(\n              captureCanonical489dPredecessorPolicySource(\n                captureNestedStackificationPredecessorPolicySource(\n                  captureProgramValidatorPredecessorPolicySource(\n                    captureWasmGcHelperPredecessorPolicySource(\n                      captureLoweringAnalysisPredecessorPolicySource(\n                        capturePresentationClassificationPredecessorPolicySource(\n                          captureArrayBufferIsViewMainPredecessorPolicySource(\n                            captureMainInventoryPredecessorPolicySource(\n                              captureSourceMapPositionInventoryPredecessorPolicySource(\n                                capturePositionClassFieldsMainPredecessorPolicySource(\n                                  capturePositionFinallyMainPredecessorPolicySource(\n                                    capture5883Main4bffInventoryViewSource(\n                                      read(\"scripts/compiler-boundaries.json\"),\n                                      \"union-to-incoming\",\n                                    ),\n                                  ),\n                                ),\n                              ),\n                            ),\n                          ),\n                        ),\n                      ),\n                    ),\n                  ),\n                ),\n              ),\n            ),\n          ),\n        ),\n"
         },
         {
           "beforeOffset": 8103,
-          "afterOffset": 11622,
+          "afterOffset": 11903,
           "before": "",
           "after": "    const read = readHistoricalPolicyOperand;\n"
         },
         {
           "beforeOffset": 32724,
-          "afterOffset": 36289,
+          "afterOffset": 36570,
           "before": "",
           "after": "      const read = readHistoricalPolicyOperand;\n"
         },
         {
           "beforeOffset": 32970,
-          "afterOffset": 36583,
+          "afterOffset": 36864,
           "before": "        const exactPath = new URL(`../${path}`, import.meta.url).pathname;\n",
           "after": "        const exactPath = new URL(`../${historicalPolicyPhysicalPath(path)}`, import.meta.url).pathname;\n"
         },
         {
           "beforeOffset": 33502,
-          "afterOffset": 37145,
+          "afterOffset": 37426,
           "before": "        const exactPath = new URL(`../${path}`, import.meta.url).pathname;\n",
           "after": "        const exactPath = new URL(`../${historicalPolicyPhysicalPath(path)}`, import.meta.url).pathname;\n"
         },
         {
           "beforeOffset": 37940,
-          "afterOffset": 41613,
+          "afterOffset": 41894,
           "before": "    beforeDynamicCodeInventoryPolicySource(\n      beforeHostCarrierInventoryPolicySource(\n        beforeGeneratorInventoryPolicySource(read(\"scripts/compiler-boundaries.json\")),\n",
-          "after": "    captureDynamicCodePredecessorPolicySource(\n      captureHostCarrierPredecessorPolicySource(\n        captureGeneratorPredecessorPolicySource(\n          captureCurrentMainInventoryPredecessorPolicySource(\n            captureCanonical3c6PredecessorPolicySource(\n              captureCanonical489dPredecessorPolicySource(\n                captureNestedStackificationPredecessorPolicySource(\n                  captureProgramValidatorPredecessorPolicySource(\n                    captureWasmGcHelperPredecessorPolicySource(\n                      captureLoweringAnalysisPredecessorPolicySource(\n                        capturePresentationClassificationPredecessorPolicySource(\n                          captureArrayBufferIsViewMainPredecessorPolicySource(\n                            captureMainInventoryPredecessorPolicySource(\n                              captureSourceMapPositionInventoryPredecessorPolicySource(\n                                capturePositionClassFieldsMainPredecessorPolicySource(\n                                  capturePositionFinallyMainPredecessorPolicySource(\n                                    read(\"scripts/compiler-boundaries.json\"),\n                                  ),\n                                ),\n                              ),\n                            ),\n                          ),\n                        ),\n                      ),\n                    ),\n                  ),\n                ),\n              ),\n            ),\n          ),\n        ),\n"
+          "after": "    captureDynamicCodePredecessorPolicySource(\n      captureHostCarrierPredecessorPolicySource(\n        captureGeneratorPredecessorPolicySource(\n          captureCurrentMainInventoryPredecessorPolicySource(\n            captureCanonical3c6PredecessorPolicySource(\n              captureCanonical489dPredecessorPolicySource(\n                captureNestedStackificationPredecessorPolicySource(\n                  captureProgramValidatorPredecessorPolicySource(\n                    captureWasmGcHelperPredecessorPolicySource(\n                      captureLoweringAnalysisPredecessorPolicySource(\n                        capturePresentationClassificationPredecessorPolicySource(\n                          captureArrayBufferIsViewMainPredecessorPolicySource(\n                            captureMainInventoryPredecessorPolicySource(\n                              captureSourceMapPositionInventoryPredecessorPolicySource(\n                                capturePositionClassFieldsMainPredecessorPolicySource(\n                                  capturePositionFinallyMainPredecessorPolicySource(\n                                    capture5883Main4bffInventoryViewSource(\n                                      read(\"scripts/compiler-boundaries.json\"),\n                                      \"union-to-incoming\",\n                                    ),\n                                  ),\n                                ),\n                              ),\n                            ),\n                          ),\n                        ),\n                      ),\n                    ),\n                  ),\n                ),\n              ),\n            ),\n          ),\n        ),\n"
         },
         {
           "beforeOffset": 39507,
-          "afterOffset": 44500,
+          "afterOffset": 44957,
           "before": "",
           "after": "    const read = readHistoricalPolicyOperand;\n"
         },
         {
           "beforeOffset": 50386,
-          "afterOffset": 55425,
+          "afterOffset": 55882,
           "before": "",
           "after": "      const read = readHistoricalPolicyOperand;\n"
         },
         {
           "beforeOffset": 50472,
-          "afterOffset": 55559,
+          "afterOffset": 56016,
           "before": "        exact = new URL(`../${pin}`, import.meta.url).pathname;\n",
           "after": "        exact = new URL(`../${historicalPolicyPhysicalPath(pin)}`, import.meta.url).pathname;\n"
         },
         {
           "beforeOffset": 54497,
-          "afterOffset": 59614,
+          "afterOffset": 60071,
           "before": "    beforeHostCarrierInventoryPolicySource(\n      beforeGeneratorInventoryPolicySource(read(\"scripts/compiler-boundaries.json\")),\n",
-          "after": "    captureHostCarrierPredecessorPolicySource(\n      captureGeneratorPredecessorPolicySource(\n        captureCurrentMainInventoryPredecessorPolicySource(\n          captureCanonical3c6PredecessorPolicySource(\n            captureCanonical489dPredecessorPolicySource(\n              captureNestedStackificationPredecessorPolicySource(\n                captureProgramValidatorPredecessorPolicySource(\n                  captureWasmGcHelperPredecessorPolicySource(\n                    captureLoweringAnalysisPredecessorPolicySource(\n                      capturePresentationClassificationPredecessorPolicySource(\n                        captureArrayBufferIsViewMainPredecessorPolicySource(\n                          captureMainInventoryPredecessorPolicySource(\n                            captureSourceMapPositionInventoryPredecessorPolicySource(\n                              capturePositionClassFieldsMainPredecessorPolicySource(\n                                capturePositionFinallyMainPredecessorPolicySource(\n                                  read(\"scripts/compiler-boundaries.json\"),\n                                ),\n                              ),\n                            ),\n                          ),\n                        ),\n                      ),\n                    ),\n                  ),\n                ),\n              ),\n            ),\n          ),\n        ),\n      ),\n"
+          "after": "    captureHostCarrierPredecessorPolicySource(\n      captureGeneratorPredecessorPolicySource(\n        captureCurrentMainInventoryPredecessorPolicySource(\n          captureCanonical3c6PredecessorPolicySource(\n            captureCanonical489dPredecessorPolicySource(\n              captureNestedStackificationPredecessorPolicySource(\n                captureProgramValidatorPredecessorPolicySource(\n                  captureWasmGcHelperPredecessorPolicySource(\n                    captureLoweringAnalysisPredecessorPolicySource(\n                      capturePresentationClassificationPredecessorPolicySource(\n                        captureArrayBufferIsViewMainPredecessorPolicySource(\n                          captureMainInventoryPredecessorPolicySource(\n                            captureSourceMapPositionInventoryPredecessorPolicySource(\n                              capturePositionClassFieldsMainPredecessorPolicySource(\n                                capturePositionFinallyMainPredecessorPolicySource(\n                                  capture5883Main4bffInventoryViewSource(\n                                    read(\"scripts/compiler-boundaries.json\"),\n                                    \"union-to-incoming\",\n                                  ),\n                                ),\n                              ),\n                            ),\n                          ),\n                        ),\n                      ),\n                    ),\n                  ),\n                ),\n              ),\n            ),\n          ),\n        ),\n      ),\n"
         },
         {
           "beforeOffset": 56567,
-          "afterOffset": 62945,
+          "afterOffset": 63572,
           "before": "",
           "after": "    const read = readHistoricalPolicyOperand;\n"
         },
         {
           "beforeOffset": 73138,
-          "afterOffset": 79562,
+          "afterOffset": 80189,
           "before": "",
           "after": "    const read = readHistoricalPolicyOperand;\n"
         },
         {
           "beforeOffset": 73217,
-          "afterOffset": 79687,
+          "afterOffset": 80314,
           "before": "      exact = new URL(`../${path}`, import.meta.url).pathname;\n",
           "after": "      exact = new URL(`../${historicalPolicyPhysicalPath(path)}`, import.meta.url).pathname;\n"
         },
         {
           "beforeOffset": 74247,
-          "afterOffset": 80747,
+          "afterOffset": 81374,
           "before": "  const hostRaw = (): string => beforeGeneratorInventoryPolicySource(read(\"scripts/compiler-boundaries.json\"));\n",
-          "after": "  const hostRaw = (): string =>\n    captureGeneratorPredecessorPolicySource(\n      captureCurrentMainInventoryPredecessorPolicySource(\n        captureCanonical3c6PredecessorPolicySource(\n          captureCanonical489dPredecessorPolicySource(\n            captureNestedStackificationPredecessorPolicySource(\n              captureProgramValidatorPredecessorPolicySource(\n                captureWasmGcHelperPredecessorPolicySource(\n                  captureLoweringAnalysisPredecessorPolicySource(\n                    capturePresentationClassificationPredecessorPolicySource(\n                      captureArrayBufferIsViewMainPredecessorPolicySource(\n                        captureMainInventoryPredecessorPolicySource(\n                          captureSourceMapPositionInventoryPredecessorPolicySource(\n                            capturePositionClassFieldsMainPredecessorPolicySource(\n                              capturePositionFinallyMainPredecessorPolicySource(\n                                read(\"scripts/compiler-boundaries.json\"),\n                              ),\n                            ),\n                          ),\n                        ),\n                      ),\n                    ),\n                  ),\n                ),\n              ),\n            ),\n          ),\n        ),\n      ),\n    );\n"
+          "after": "  const hostRaw = (): string =>\n    captureGeneratorPredecessorPolicySource(\n      captureCurrentMainInventoryPredecessorPolicySource(\n        captureCanonical3c6PredecessorPolicySource(\n          captureCanonical489dPredecessorPolicySource(\n            captureNestedStackificationPredecessorPolicySource(\n              captureProgramValidatorPredecessorPolicySource(\n                captureWasmGcHelperPredecessorPolicySource(\n                  captureLoweringAnalysisPredecessorPolicySource(\n                    capturePresentationClassificationPredecessorPolicySource(\n                      captureArrayBufferIsViewMainPredecessorPolicySource(\n                        captureMainInventoryPredecessorPolicySource(\n                          captureSourceMapPositionInventoryPredecessorPolicySource(\n                            capturePositionClassFieldsMainPredecessorPolicySource(\n                              capturePositionFinallyMainPredecessorPolicySource(\n                                capture5883Main4bffInventoryViewSource(\n                                  read(\"scripts/compiler-boundaries.json\"),\n                                  \"union-to-incoming\",\n                                ),\n                              ),\n                            ),\n                          ),\n                        ),\n                      ),\n                    ),\n                  ),\n                ),\n              ),\n            ),\n          ),\n        ),\n      ),\n    );\n"
         },
         {
           "beforeOffset": 76033,
-          "afterOffset": 83739,
+          "afterOffset": 84530,
           "before": "",
           "after": "    const read = readHistoricalPolicyOperand;\n"
         },
         {
           "beforeOffset": 86899,
-          "afterOffset": 94651,
+          "afterOffset": 95442,
           "before": "",
           "after": "    const read = readHistoricalPolicyOperand;\n"
         },
         {
           "beforeOffset": 86980,
-          "afterOffset": 94778,
+          "afterOffset": 95569,
           "before": "      exact = new URL(`../${path}`, import.meta.url).pathname;\n",
           "after": "      exact = new URL(`../${historicalPolicyPhysicalPath(path)}`, import.meta.url).pathname;\n"
         },
         {
           "beforeOffset": 88024,
-          "afterOffset": 95852,
+          "afterOffset": 96643,
           "before": "  const generatorRaw = (): string => read(\"scripts/compiler-boundaries.json\");\n",
-          "after": "  const generatorRaw = (): string =>\n    captureCurrentMainInventoryPredecessorPolicySource(\n      captureCanonical3c6PredecessorPolicySource(\n        captureCanonical489dPredecessorPolicySource(\n          captureNestedStackificationPredecessorPolicySource(\n            captureProgramValidatorPredecessorPolicySource(\n              captureWasmGcHelperPredecessorPolicySource(\n                captureLoweringAnalysisPredecessorPolicySource(\n                  capturePresentationClassificationPredecessorPolicySource(\n                    captureArrayBufferIsViewMainPredecessorPolicySource(\n                      captureMainInventoryPredecessorPolicySource(\n                        captureSourceMapPositionInventoryPredecessorPolicySource(\n                          capturePositionClassFieldsMainPredecessorPolicySource(\n                            capturePositionFinallyMainPredecessorPolicySource(read(\"scripts/compiler-boundaries.json\")),\n                          ),\n                        ),\n                      ),\n                    ),\n                  ),\n                ),\n              ),\n            ),\n          ),\n        ),\n      ),\n    );\n"
+          "after": "  const generatorRaw = (): string =>\n    captureCurrentMainInventoryPredecessorPolicySource(\n      captureCanonical3c6PredecessorPolicySource(\n        captureCanonical489dPredecessorPolicySource(\n          captureNestedStackificationPredecessorPolicySource(\n            captureProgramValidatorPredecessorPolicySource(\n              captureWasmGcHelperPredecessorPolicySource(\n                captureLoweringAnalysisPredecessorPolicySource(\n                  capturePresentationClassificationPredecessorPolicySource(\n                    captureArrayBufferIsViewMainPredecessorPolicySource(\n                      captureMainInventoryPredecessorPolicySource(\n                        captureSourceMapPositionInventoryPredecessorPolicySource(\n                          capturePositionClassFieldsMainPredecessorPolicySource(\n                            capturePositionFinallyMainPredecessorPolicySource(\n                              capture5883Main4bffInventoryViewSource(\n                                read(\"scripts/compiler-boundaries.json\"),\n                                \"union-to-incoming\",\n                              ),\n                            ),\n                          ),\n                        ),\n                      ),\n                    ),\n                  ),\n                ),\n              ),\n            ),\n          ),\n        ),\n      ),\n    );\n"
         },
         {
           "beforeOffset": 89784,
-          "afterOffset": 98689,
+          "afterOffset": 99699,
           "before": "",
           "after": "    const read = readHistoricalPolicyOperand;\n"
         },
         {
           "beforeOffset": 101637,
-          "afterOffset": 110588,
+          "afterOffset": 111598,
           "before": "",
           "after": "    const read = readHistoricalPolicyOperand;\n"
         },
         {
           "beforeOffset": 101728,
-          "afterOffset": 110725,
+          "afterOffset": 111735,
           "before": "      exact = new URL(`../${path}`, import.meta.url).pathname;\n",
           "after": "      exact = new URL(`../${historicalPolicyPhysicalPath(path)}`, import.meta.url).pathname;\n"
         }

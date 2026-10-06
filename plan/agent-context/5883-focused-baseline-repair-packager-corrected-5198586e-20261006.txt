@@ -1,0 +1,312 @@
+// INERT preparation. Parent review/release required; no tests or subprocesses.
+// Usage: node THIS_FILE --parent-released REVIEWED_SCRIPT_SHA256 UNIQUE_NAME.json
+// The only runtime write is a new exclusive B/.tmp JSON file, after verification.
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import {createHash} from 'node:crypto';
+import {gzipSync, gunzipSync} from 'node:zlib';
+import {join, relative, resolve} from 'node:path';
+import {fileURLToPath} from 'node:url';
+
+const ROOT = '/Users/thomas/.codex/worktrees/5883-repaired-main4bff-b/js2';
+const SELF = '.tmp/avicenna-5883-focused-repair-custody-v2-20261006-ea62d907.mjs';
+const sha = bytes => createHash('sha256').update(bytes).digest('hex');
+const runs = [
+  {name: 'first', dir: '.tmp/5883-baseline-promise-focused-20261006-3bWJ6h',
+    runner: 'b866bda928f06d2bd3fabf1f3e3cc7a4306a3c4b8222fe7886bc37ed93f99dfd',
+    child: '.tmp/delay-combinator-preservation-MSmWPh'},
+  {name: 'v2', dir: '.tmp/5883-baseline-promise-focused-v2-20261006-CzL1Nu',
+    runner: 'c005d94ecdff8ac993d1a60fc0c7373e9f79b3393a5efd9e9f726d7305cfe96f',
+    child: '.tmp/delay-combinator-preservation-EDZCeL'},
+];
+const pins = {
+  'tests/helpers/promise-export-main-port.ts': '3f240ccfd4da19145993f201e7bf598e23dd2ac9ccf5ea24d9a254ae4b0b179b',
+  'tests/helpers/baseline-4bff-promise-port-projection.ts': '992583b59997f0cc6420142d927aa20045bec3734f6b6911d76772f8523adbd4',
+  'tests/helpers/baseline-4bff-promise-port-projection.json': 'f82ec8a702e1149900cde8b2d3e351e601d923ecb3ea75232ba3c4fff419e240',
+  'tests/issue-5883-baseline-4bff-promise-port-projection.test.ts': '9124a847f84a2d9b739673f875f6d6115ef382b778ba22aa2f2b8893ef7f56cc',
+  'tests/issue-3518-delay-combinator-layout-ownership.test.ts': '8cf089c397d26cb8ed9d1c6bb24f859b279eac2282502a767263276c10e94743',
+  'tests/issue-3518-native-delay-combinator-source-preservation.test.ts': 'cac6bbdbc54c06cae86a8e65a734243856dee623a6ec9ba7a25dd4ca1511e71e',
+};
+const firstPins = {...pins,
+  'tests/issue-3518-delay-combinator-layout-ownership.test.ts': '71393c872cc35a7cffb051676ba576d69ff56632f4251c3c493188797de42348',
+  'tests/issue-3518-native-delay-combinator-source-preservation.test.ts': 'b38fcdc108ea10c1f7a8a806c5b62e0b4f28e21a1cd3ae5caf2bc132c88c9f8a',
+};
+const prior = [
+  ['.tmp/avicenna-5883-ab69-20261006-b7f42c19-custody.json', 'b64ad23508b7db149ba36d3fd34655e2e63e871f8d3d465af508f774ed542a22'],
+  ['.tmp/avicenna-5883-ab69-20261006-b7f42c19-source-provenance.json', '3f96126d878b3593cda166fcfbb97c97fdec5a12c54eaad28b10a6ff1414da65'],
+  ['.tmp/avicenna-5883-ab69-20261006-b7f42c19-parent-proposal.json', '4654a89e893cd0fc7b8f92f324153f5c601dfee19e5d20e25777f2bad10931da'],
+];
+const stages = ['controls', 'affected'];
+const suiteFiles = {
+  controls: ['tests/issue-5883-baseline-4bff-promise-port-projection.test.ts'],
+  affected: ['tests/issue-3518-promise-earlier-main-port.test.ts',
+    'tests/issue-3518-promise-export-main-port.test.ts',
+    'tests/issue-3518-delay-combinator-layout-ownership.test.ts',
+    'tests/issue-3518-native-delay-combinator-source-preservation.test.ts'],
+};
+const childFiles = ['candidate-started.json', 'candidate-progress.jsonl', 'candidate.log',
+  'candidate.json', 'candidate-terminal.json', 'verdict.json'];
+const captured = new Map();
+const inventories = new Map();
+const rows = [];
+const rowKeys = new Set();
+function safe(p) {
+  assert(typeof p === 'string' && p.length > 0 && !p.includes('\\') && !p.includes('\0'), 'unsafe path');
+  assert(p.split('/').every(s => /^[A-Za-z0-9_@.-]+$/.test(s) && s !== '.' && s !== '..'), p);
+  assert.equal(relative(ROOT, resolve(ROOT, p)), p, p);
+  return p;
+}
+function checked(p, directory = false) {
+  safe(p);
+  let current = ROOT;
+  // Reject symlinks in the trusted root too, not just the relative leaf.
+  let prefix = '/';
+  for (const component of ROOT.split('/').filter(Boolean)) {
+    prefix = join(prefix, component);
+    const s = fs.lstatSync(prefix);
+    assert(!s.isSymbolicLink() && s.isDirectory(), prefix);
+  }
+  const parts = p.split('/');
+  for (let i = 0; i < parts.length; i++) {
+    current = join(current, parts[i]);
+    const s = fs.lstatSync(current);
+    assert(!s.isSymbolicLink(), current);
+    assert(i < parts.length - 1 || directory ? s.isDirectory() : s.isFile(), current);
+  }
+  return current;
+}
+function raw(p) {
+  const filename = checked(p);
+  const fd = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const before = fs.fstatSync(fd, {bigint: true});
+    assert(before.isFile(), p);
+    const bytes = fs.readFileSync(fd);
+    const after = fs.fstatSync(fd, {bigint: true});
+    const leaf = fs.lstatSync(filename, {bigint: true});
+    for (const key of ['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs']) {
+      assert.equal(before[key], after[key], `changing input ${p}`);
+      assert.equal(after[key], leaf[key], `replaced input ${p}`);
+    }
+    assert.equal(BigInt(bytes.length), after.size);
+    return bytes;
+  } finally { fs.closeSync(fd); }
+}
+function capture(p, expected) {
+  if (!captured.has(p)) captured.set(p, raw(p));
+  const bytes = captured.get(p);
+  if (expected) assert.equal(sha(bytes), expected, p);
+  return bytes;
+}
+const json = p => JSON.parse(capture(p).toString('utf8'));
+function inventory(dir) {
+  const names = fs.readdirSync(checked(dir, true)).sort();
+  for (const name of names) checked(`${dir}/${name}`); // No subdirectories or symlinks.
+  if (inventories.has(dir)) assert.deepEqual(names, inventories.get(dir), `inventory changed: ${dir}`);
+  else inventories.set(dir, names);
+  return names;
+}
+function add(p, role, expected) {
+  safe(p);
+  assert(!rowKeys.has(p.toLowerCase()), `duplicate path: ${p}`);
+  rowKeys.add(p.toLowerCase());
+  const bytes = capture(p, expected);
+  const gzipBase64 = gzipSync(bytes, {level: 9}).toString('base64');
+  assert(gunzipSync(Buffer.from(gzipBase64, 'base64')).equals(bytes), p);
+  rows.push({path: p, role, bytes: bytes.length, sha256: sha(bytes), gzipBase64});
+}
+function timestamp(value) { assert(typeof value === 'string' && Number.isFinite(Date.parse(value)), 'missing terminal timestamp'); }
+function terminalStatus(t, timeKey) {
+  timestamp(t[timeKey]);
+  assert(t.code === null || Number.isInteger(t.code), 'missing exit code');
+  assert(t.signal === null || typeof t.signal === 'string', 'missing signal');
+  assert(t.code !== null || t.signal || t.error, 'no terminal outcome');
+}
+const identities = r => r.testResults.flatMap(s => s.assertionResults.map(a =>
+  JSON.stringify([s.name, a.ancestorTitles, a.fullName, a.title]))).sort();
+function packRun(run, originalNatives) {
+  const root = json(`${run.dir}/terminal.json`);
+  assert.equal(root.accepted, false);
+  timestamp(root.finishedAt);
+  assert(Array.isArray(root.results) && root.results.length >= 1 && root.results.length <= 2);
+  assert.deepEqual(root.unexecuted, stages.slice(root.results.length));
+  if (root.results.length < 2) assert.equal(root.results.at(-1).clean, false, 'unexplained short prefix');
+  const names = inventory(run.dir);
+  const expected = ['runner.mjs', 'before-map.json', 'after-map.json', 'terminal.json'];
+  const stageRecords = [];
+  const natives = {};
+  capture(`${run.dir}/runner.mjs`, run.runner);
+  const before = json(`${run.dir}/before-map.json`);
+  const after = json(`${run.dir}/after-map.json`);
+  assert.equal(Object.keys(before).length, 7740);
+  for (const map of [before, after]) for (const [p, h] of Object.entries(map)) {
+    safe(p); assert(/^[0-9a-f]{64}$/.test(h), p);
+  }
+  const epoch = run.name === 'first' ? firstPins : pins;
+  for (const [p, h] of Object.entries(epoch)) assert.equal(before[p], h, `wrong source epoch ${p}`);
+  for (let i = 0; i < root.results.length; i++) {
+    const stage = stages[i];
+    const t = json(`${run.dir}/${stage}.terminal.json`);
+    assert.deepEqual(t, root.results[i]);
+    assert.equal(t.stage, stage);
+    assert.equal(t.accepted, false);
+    assert.equal(typeof t.clean, 'boolean');
+    assert.equal(typeof t.sameInputs, 'boolean');
+    terminalStatus(t, 'finishedAt');
+    if (i < root.results.length - 1) assert.equal(t.clean, true, 'executed after failure');
+    for (const suffix of ['invocation.json', 'stdout', 'stderr', 'terminal.json']) expected.push(`${stage}.${suffix}`);
+    const invocation = json(`${run.dir}/${stage}.invocation.json`);
+    assert.equal(invocation.cwd, ROOT);
+    assert.equal(invocation.node, '/Users/thomas/.nvm/versions/node/v22.23.2/bin/node');
+    assert.deepEqual(invocation.controls, {NODE_OPTIONS: '--max-old-space-size=2048',
+      VITEST_MAX_FORKS: '1', VITEST_FORK_MAX_OLD_SPACE_SIZE: '2048'});
+    assert.deepEqual(invocation.args, ['node_modules/vitest/vitest.mjs', 'run', ...suiteFiles[stage],
+      '--testTimeout=35000', '--maxWorkers=1', '--minWorkers=1', '--reporter=dot', '--reporter=json',
+      `--outputFile.json=${ROOT}/${run.dir}/${stage}.native.json`]);
+    timestamp(invocation.startedAt);
+    assert(Date.parse(invocation.startedAt) <= Date.parse(t.finishedAt));
+    assert(Date.parse(t.finishedAt) <= Date.parse(root.finishedAt));
+    const nativeName = `${stage}.native.json`;
+    let native = null;
+    let missingNativeReason = null;
+    if (names.includes(nativeName)) {
+      expected.push(nativeName);
+      native = json(`${run.dir}/${nativeName}`);
+      assert(native && Array.isArray(native.testResults), nativeName);
+      assert.deepEqual(t.counts, {total: native.numTotalTests, passed: native.numPassedTests,
+        failed: native.numFailedTests, pending: native.numPendingTests, todo: native.numTodoTests,
+        files: native.testResults.length});
+    } else {
+      assert.equal(t.counts, null);
+      assert.equal(t.clean, false);
+      missingNativeReason = 'Terminal failed stage emitted no native report; counts are null in its original terminal.';
+    }
+    if (run.name === 'v2') {
+      assert(originalNatives[stage], 'v2 requires original identity operand');
+      const same = native !== null && JSON.stringify(identities(native)) === JSON.stringify(identities(originalNatives[stage]));
+      assert.equal(t.sameIdentities, same);
+    }
+    const counts = t.counts;
+    const clean = t.code === 0 && !t.signal && !t.error && native?.success === true &&
+      counts.failed === 0 && counts.pending === 0 && counts.todo === 0 && counts.total === counts.passed &&
+      counts.files === (stage === 'controls' ? 1 : 4) &&
+      (stage !== 'controls' || counts.total === 102) &&
+      (run.name !== 'v2' || counts.total === (stage === 'controls' ? 102 : 416)) &&
+      t.sameInputs && (run.name !== 'v2' || t.sameIdentities);
+    assert.equal(t.clean, clean, 'contradictory clean flag');
+    natives[stage] = native;
+    stageRecords.push({stage, terminal: t, nativePath: native ? `${run.dir}/${nativeName}` : null, missingNativeReason});
+  }
+  assert.deepEqual(names, expected.sort(), 'unexplained records, holes, or live stage');
+  if ('completedStages' in root) assert.equal(root.completedStages, root.results.length);
+  if ('allStagesClean' in root) assert.equal(root.allStagesClean, root.results.length === 2 && root.results.every(t => t.clean));
+  for (const name of names) add(`${run.dir}/${name}`, `focused-${run.name}`);
+  return {natives, record: {name: run.name, dir: run.dir, terminal: root, executed: stageRecords,
+    unexecuted: root.unexecuted.map(stage => ({stage, status: 'UNEXECUTED', reason: 'Runner stopped after first failed stage.'})),
+    recordedSourcePins: epoch, mapsByteIdentical: capture(`${run.dir}/before-map.json`).equals(capture(`${run.dir}/after-map.json`)),
+    currentPostimagesApply: run.name === 'v2', accepted: false}};
+}
+function packChild(run) {
+  assert.deepEqual(inventory(run.child), [...childFiles].sort());
+  const started = json(`${run.child}/candidate-started.json`);
+  const terminal = json(`${run.child}/candidate-terminal.json`);
+  const verdict = json(`${run.child}/verdict.json`);
+  terminalStatus(terminal, 'completedAt');
+  for (const key of Object.keys(started)) assert.deepEqual(terminal[key], started[key]);
+  assert.equal(started.root, ROOT);
+  assert.equal(started.arm, 'candidate'); // Child arm label, NOT E/candidate-tree provenance.
+  timestamp(started.startedAt);
+  assert(Date.parse(started.startedAt) <= Date.parse(terminal.completedAt));
+  const affectedStart = json(`${run.dir}/affected.invocation.json`).startedAt;
+  const affectedEnd = json(`${run.dir}/affected.terminal.json`).finishedAt;
+  assert(Date.parse(affectedStart) <= Date.parse(started.startedAt));
+  assert(Date.parse(terminal.completedAt) <= Date.parse(affectedEnd));
+  const stdout = capture(`${run.dir}/affected.stdout`).toString('utf8');
+  assert(stdout.includes(`delay/combinator child candidate: pid=${started.pid}; progress=${ROOT}/${run.child}`));
+  assert(stdout.includes(`evidence ${ROOT}/${run.child}; physical acceptance NOT CERTIFIED`));
+  assert.equal(verdict.historicalPair, 'NOT_RUN');
+  assert.equal(verdict.physicalAcceptanceCertified, false);
+  assert.equal(verdict.retirementCertified, false);
+  assert.equal(verdict.artifacts, 11);
+  assert.equal(verdict.executionsPerRoot, 19);
+  for (const name of childFiles) add(`${run.child}/${name}`, `child-${run.name}`);
+  return {dir: run.child, focusedRun: run.dir, root: ROOT, terminal, verdict,
+    historicalPairExecuted: false, physicalAcceptanceCertified: false, accepted: false};
+}
+
+assert.equal(process.argv.length, 5, 'Explicit parent release, reviewed SHA256 and unique output name required.');
+assert.equal(process.argv[2], '--parent-released');
+assert(/^[0-9a-f]{64}$/.test(process.argv[3]));
+assert.equal(fileURLToPath(import.meta.url), `${ROOT}/${SELF}`);
+assert.equal(sha(raw(SELF)), process.argv[3], 'script differs from parent-reviewed bytes');
+const outputName = process.argv[4];
+assert(/^[A-Za-z0-9][A-Za-z0-9_-]{15,120}\.json$/.test(outputName), 'unsafe output name');
+const outputPath = `.tmp/${outputName}`;
+checked('.tmp', true);
+assert(!fs.existsSync(`${ROOT}/${outputPath}`), 'output already exists');
+// Check BOTH root terminals before reading other evidence. No archive for live runs.
+for (const run of runs) { timestamp(json(`${run.dir}/terminal.json`).finishedAt); }
+const first = packRun(runs[0], {});
+const second = packRun(runs[1], first.natives);
+const children = runs.map(packChild);
+for (const [p, h] of prior) add(p, 'original-preparation-artifact', h);
+const nested = json(prior[0][0]);
+assert.equal(nested.accepted, false);
+assert.equal(nested.complete, false);
+assert.equal(nested.rows.length, 28);
+let nestedBytes = 0;
+const nestedKeys = new Set();
+for (const row of nested.rows) {
+  safe(row.path);
+  const key = JSON.stringify([row.source, row.path.toLowerCase()]);
+  assert(!nestedKeys.has(key)); nestedKeys.add(key);
+  const decoded = gunzipSync(Buffer.from(row.gzipBase64, 'base64'));
+  assert.equal(decoded.length, row.bytes);
+  assert.equal(sha(decoded), row.sha256);
+  assert.equal(row.source, 'B');
+  assert(decoded.equals(raw(row.path)), `nested original differs: ${row.path}`);
+  nestedBytes += decoded.length;
+}
+assert.equal(nestedBytes, 20766102);
+for (const [p, h] of Object.entries(pins)) add(p, 'reviewed-v2-postimage-not-first-run-source', h);
+const archive = {
+  schema: '5883-focused-baseline-reader-custody-v1', accepted: false,
+  completeBaselinePopulationEstablished: false, baselineCandidateEqualityEstablished: false,
+  physicalAcceptanceCertified: false, historicalPairExecuted: false,
+  scope: 'Terminal focused baseline runs and preparation custody only; no acceptance, landing, or HOLD removal.',
+  sourceRoot: ROOT, packager: {path: SELF, sha256: process.argv[3]},
+  runs: [first.record, second.record], children,
+  priorArchive: {path: prior[0][0], sha256: prior[0][1], payloads: 28, decodedBytes: nestedBytes,
+    preservedAsOriginalBytes: true, accepted: false, complete: false},
+  distinctions: [
+    'Original A5166/B5168 rows were skipped collection identities, not executed passes; both collections failed two suites.',
+    '5166 retained identities shared across 67 collected suites is only a partial identity comparison, not execution equality.',
+    'E adds 6 compiler-boundaries, 5 historical-runtime-reconstruction, 3 runtime-data-contract-seam and 2 finally-main identities.',
+    'B adds two separately named main-profile corruption controls; these are NOT E current-union controls.',
+    'Missing original populations: E216+24; candidate population across 69 common files5422 is not an accepted repaired denominator.',
+    'Child candidate labels refer to physical B; 11 artifacts/19 executions do not mean a historical pair ran.',
+    'Six current postimages describe v2 only; first-run historical pins remain in its original runner/maps.',
+  ],
+  inventories: Object.fromEntries(inventories), encoding: 'gzip/base64 original raw bytes',
+  fileCount: rows.length, decodedBytes: rows.reduce((n, r) => n + r.bytes, 0), rows,
+};
+const serialized = Buffer.from(JSON.stringify(archive, null, 2) + '\n');
+// Independent round trip from the serialized archive, compared to original AND fresh bytes.
+const reread = JSON.parse(serialized.toString('utf8'));
+assert.equal(reread.accepted, false);
+assert.equal(reread.rows.length, captured.size);
+for (const row of reread.rows) {
+  const decoded = gunzipSync(Buffer.from(row.gzipBase64, 'base64'));
+  assert.equal(decoded.length, row.bytes);
+  assert.equal(sha(decoded), row.sha256);
+  assert(decoded.equals(captured.get(row.path)), row.path);
+  assert(decoded.equals(raw(row.path)), `source changed: ${row.path}`);
+}
+for (const dir of inventories.keys()) inventory(dir);
+assert.equal(sha(raw(SELF)), process.argv[3]);
+checked('.tmp', true);
+// Exclusive creation never replaces evidence; no cleanup/deletion on any failure.
+fs.writeFileSync(`${ROOT}/${outputPath}`, serialized, {flag: 'wx', mode: 0o600});
+assert(raw(outputPath).equals(serialized), 'output read-back differs');
+console.log(JSON.stringify({path: outputPath, sha256: sha(serialized), bytes: serialized.length,
+  fileCount: rows.length, accepted: false, historicalPairExecuted: false}));

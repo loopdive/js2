@@ -1,0 +1,1031 @@
+diff --git a/src/codegen/context/types.ts b/src/codegen/context/types.ts
+index cb7d4cb3ee..2c239f3802 100644
+--- a/src/codegen/context/types.ts
++++ b/src/codegen/context/types.ts
+@@ -2304,7 +2304,12 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
+   vecPropHelpersReserved?: boolean;
+   /**
+    * (#3537) Type index of the `$VecPropEntry` linked-list node
+-   * `{ next: (ref null $VecPropEntry); key: eqref; bag: externref }`.
++   * `{ next: (ref null $VecPropEntry); key: eqref; bag: externref;
++   *    protoPresent: i32; protoValue: externref }`.
++   * Fields 0–2 retain their original ABI. Fields 3–4 are mutable, initialized
++   * only by the shared entry ensure. Presence 0 selects the carrier default;
++   * presence 1 selects the exact raw prototype (including explicit null).
++   * Bag owns properties/integrity, never vector [[Prototype]]. No second map.
+    */
+   vecPropEntryTypeIdx?: number;
+   /** (#3537) Global index of `$__vec_prop_head` (`(mut ref null $VecPropEntry)`). */
+diff --git a/src/codegen/vec-props.ts b/src/codegen/vec-props.ts
+index 7526aa6051..705bf9cda6 100644
+--- a/src/codegen/vec-props.ts
++++ b/src/codegen/vec-props.ts
+@@ -1,6 +1,8 @@
+ // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+ /**
+  * (#3537) Array ($Vec) expando own-property side table for `--target standalone`.
++ * The identity entry additionally owns raw vector [[Prototype]] metadata.
++ * The bag remains own-property/integrity storage; its $proto is not a vector link.
+  *
+  * ## The gap
+  * A real array is a `__vec_<kind>` struct subtyping `$__vec_base` — NOT a
+@@ -45,7 +47,6 @@
+  * property path and none of this is emitted — host output stays byte-identical.
+  */
+ import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
+-import { undefinedExternInstrs } from "./any-helpers.js";
+ import {
+   buildClosurePropGetMissArm,
+   buildClosurePropMethodCallElseArm,
+@@ -56,8 +57,8 @@ import { buildBuiltinFnSetRefusalArm } from "./carrier-bag-visibility.js"; // (#
+ import type { CodegenContext } from "./context/types.js";
+ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+ import { nativeStringLiteralInstrs } from "./native-strings.js";
+-import { protoIndexRecvGetMissInstrs } from "./proto-index-store.js"; // (#4176) inherited proto-named consult
+ import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
++import { reserveVecProtoHelpers, VEC_PROTO_GET_MISS } from "./vec-proto-link.js";
+ 
+ /** Reserved helper names. */
+ const IS_VEC_PROP_CARRIER = "__is_vec_prop_carrier";
+@@ -79,12 +80,19 @@ const VEC_BAG_ENSURE = "__vec_bag_ensure";
+  * property. `array-nonindex-key.ts` owns that distinction.
+  */
+ export const VEC_PROP_GET = "__vec_prop_get";
++export const VEC_PROP_GET_R = "__vec_prop_get_r";
+ export const VEC_PROP_SET = "__vec_prop_set";
++/** Private, trusted metadata APIs; public validation belongs to prototype policy. */
++export const VEC_PROTO_LOOKUP = "__vec_proto_lookup";
++export const VEC_PROTO_STORE = "__vec_proto_store";
++const VEC_ENTRY_ENSURE = "__vec_entry_ensure";
+ 
+ /** $VecPropEntry field indices. */
+ const F_NEXT = 0;
+ const F_KEY = 1;
+ const F_BAG = 2;
++const F_PROTO_PRESENT = 3;
++const F_PROTO_VALUE = 4;
+ 
+ /**
+  * `__extern_get`'s non-object receiver arm: vec carrier → side-table read;
+@@ -98,7 +106,7 @@ export function buildVecOrClosurePropGetMissArm(
+ ): Instr[] {
+   const closureArm = buildClosurePropGetMissArm(ctx, getMiss, explicitReceiverLocal);
+   const isVecIdx = ctx.funcMap.get(IS_VEC_PROP_CARRIER);
+-  const vecGetIdx = ctx.funcMap.get(VEC_PROP_GET);
++  const vecGetIdx = ctx.funcMap.get(VEC_PROP_GET_R);
+   if (isVecIdx === undefined || vecGetIdx === undefined) return closureArm;
+   return [
+     { op: "local.get", index: 0 }, // obj
+@@ -109,6 +117,7 @@ export function buildVecOrClosurePropGetMissArm(
+       then: [
+         { op: "local.get", index: 0 }, // obj
+         { op: "local.get", index: 1 }, // key
++        { op: "local.get", index: explicitReceiverLocal ?? 0 },
+         { op: "call", funcIdx: vecGetIdx },
+         { op: "return" },
+       ],
+@@ -223,7 +232,7 @@ export function reserveVecPropHelpers(ctx: CodegenContext): void {
+   // at finalize.
+   ctx.vecPropBaseTypeIdx = getOrRegisterVecBaseType(ctx);
+ 
+-  // --- $VecPropEntry struct: { next: (ref null self); key: eqref; bag: externref } ---
++  // Single identity owner: own-property bag plus raw prototype metadata.
+   const entryTypeIdx = ctx.mod.types.length;
+   const entryFields: FieldDef[] = [
+     // next — immutable; a prepend creates a NEW head whose next = old head.
+@@ -232,6 +241,8 @@ export function reserveVecPropHelpers(ctx: CodegenContext): void {
+     { name: "key", type: { kind: "eqref" }, mutable: false },
+     // bag — the per-array own-property `$Object`, wrapped to externref.
+     { name: "bag", type: { kind: "externref" }, mutable: false },
++    { name: "protoPresent", type: { kind: "i32" }, mutable: true },
++    { name: "protoValue", type: { kind: "externref" }, mutable: true },
+   ];
+   ctx.mod.types.push({ kind: "struct", name: "$VecPropEntry", fields: entryFields });
+   ctx.vecPropEntryTypeIdx = entryTypeIdx;
+@@ -268,10 +279,15 @@ export function reserveVecPropHelpers(ctx: CodegenContext): void {
+   reserve(IS_VEC_PROP_CARRIER, [externref], [{ kind: "i32" }]);
+   reserve(VEC_BAG_LOOKUP, [externref], [externref]);
+   reserve(VEC_BAG_ENSURE, [externref], [externref]);
++  reserve(VEC_ENTRY_ENSURE, [externref], [{ kind: "ref_null", typeIdx: entryTypeIdx }]);
++  reserve(VEC_PROTO_LOOKUP, [externref], [{ kind: "i32" }, externref]);
++  reserve(VEC_PROTO_STORE, [externref, externref], []);
+   reserve(VEC_PROP_GET, [externref, externref], [externref]);
++  reserve(VEC_PROP_GET_R, [externref, externref, externref], [externref]);
+   reserve(VEC_PROP_SET, [externref, externref, externref], []);
+ 
+   ctx.vecPropHelpersReserved = true;
++  reserveVecProtoHelpers(ctx);
+ }
+ 
+ /**
+@@ -279,13 +295,17 @@ export function reserveVecPropHelpers(ctx: CodegenContext): void {
+  * `__extern_get`/`__extern_set`/`__new_plain_object` are in `funcMap`. No-op
+  * when never reserved (gc/host mode). Mirrors `fillClosurePropHelpers`.
+  */
++const filledVecProps = new WeakSet<CodegenContext>();
++
+ export function fillVecPropHelpers(ctx: CodegenContext): void {
+-  if (!ctx.vecPropHelpersReserved) return;
++  if (!ctx.vecPropHelpersReserved || filledVecProps.has(ctx)) return;
+ 
+   const entryTypeIdx = ctx.vecPropEntryTypeIdx;
+   const headGlobalIdx = ctx.vecPropHeadGlobalIdx;
+   const vecBaseTypeIdx = ctx.vecPropBaseTypeIdx;
+-  if (entryTypeIdx === undefined || headGlobalIdx === undefined || vecBaseTypeIdx === undefined) return;
++  if (entryTypeIdx === undefined || headGlobalIdx === undefined || vecBaseTypeIdx === undefined) {
++    throw new Error("reserved vec storage is missing its type/global layout");
++  }
+ 
+   const isVecIdx = ctx.funcMap.get(IS_VEC_PROP_CARRIER);
+   const bagLookupIdx = ctx.funcMap.get(VEC_BAG_LOOKUP);
+@@ -296,24 +316,20 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
+   const reflectGetReceiverIdx = ctx.funcMap.get("__reflect_get_receiver");
+   const toPropertyKeyIdx = ctx.funcMap.get("__to_property_key");
+   const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object");
++  if (newPlainObjectIdx === undefined) throw new Error("vec entry storage requires __new_plain_object");
+   const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
+   const setOwnIdx = ctx.funcMap.get("__extern_set_own");
+   const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
+ 
+   const setBody = (name: string, locals: { name: string; type: ValType }[], body: Instr[]): void => {
+     const idx = ctx.funcMap.get(name);
+-    if (idx === undefined) return;
++    if (idx === undefined) throw new Error(`vec storage helper not reserved: ${name}`);
+     const fn = definedFuncAt(ctx, idx);
+-    if (!fn) return;
++    if (!fn) throw new Error(`vec storage helper body missing: ${name}`);
+     fn.locals = locals;
+     fn.body = body;
+   };
+ 
+-  // The undefined-read sentinel, matching `__extern_get`'s `getMiss()` factory
+-  // (fresh arrays — shared Instr objects get double-remapped by finalize walks;
+-  // see reference_shared_instr_object_dce_double_remap).
+-  const getMiss = (): Instr[] => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
+-
+   // ── __is_vec_prop_carrier(externref value) -> i32 ──
+   // One `ref.test $__vec_base` — every concrete `__vec_<kind>` array struct
+   // subtypes the shared base (#2186), unlike the per-subtype closure chain.
+@@ -353,7 +369,7 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
+       },
+     ],
+   });
+-  const narrowRecvToEq: Instr[] = [
++  const narrowRecvToEq = (): Instr[] => [
+     { op: "local.get", index: 0 },
+     { op: "any.convert_extern" },
+     // recv is guarded by __is_vec_prop_carrier at every call site, and a vec is
+@@ -372,22 +388,33 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
+       { op: "struct.get", typeIdx: entryTypeIdx, fieldIdx: F_BAG },
+       { op: "return" },
+     ];
+-    setBody(VEC_BAG_LOOKUP, walkLocals, [...narrowRecvToEq, walkLoop(onHit), { op: "ref.null.extern" }]);
++    setBody(VEC_BAG_LOOKUP, walkLocals, [...narrowRecvToEq(), walkLoop(onHit), { op: "ref.null.extern" }]);
+   }
+ 
++  // One invocation-local walk returns presence and payload together. No allocation
++  // on an absent read; explicit null is (1, null), never confused with (0, null).
++  setBody(VEC_PROTO_LOOKUP, walkLocals, [
++    ...narrowRecvToEq(),
++    walkLoop([
++      { op: "local.get", index: 2 },
++      { op: "struct.get", typeIdx: entryTypeIdx, fieldIdx: F_PROTO_PRESENT },
++      { op: "local.get", index: 2 },
++      { op: "struct.get", typeIdx: entryTypeIdx, fieldIdx: F_PROTO_VALUE },
++      { op: "return" },
++    ]),
++    { op: "i32.const", value: 0 },
++    { op: "ref.null.extern" },
++  ]);
++
+   // ── __vec_bag_ensure(externref recv) -> externref ── (miss → allocate+prepend)
+   if (newPlainObjectIdx !== undefined) {
+     const ensureLocals: { name: string; type: ValType }[] = [
+       ...walkLocals,
+       { name: "__bag", type: { kind: "externref" } },
+     ];
+-    const onHit: Instr[] = [
+-      { op: "local.get", index: 2 },
+-      { op: "struct.get", typeIdx: entryTypeIdx, fieldIdx: F_BAG },
+-      { op: "return" },
+-    ];
+-    setBody(VEC_BAG_ENSURE, ensureLocals, [
+-      ...narrowRecvToEq,
++    const onHit: Instr[] = [{ op: "local.get", index: 2 }, { op: "return" }];
++    setBody(VEC_ENTRY_ENSURE, ensureLocals, [
++      ...narrowRecvToEq(),
+       walkLoop(onHit),
+       // miss: bag = __new_plain_object()
+       { op: "call", funcIdx: newPlainObjectIdx },
+@@ -396,19 +423,43 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
+       { op: "global.get", index: headGlobalIdx }, // next
+       { op: "local.get", index: 1 }, // key (recvEq)
+       { op: "local.get", index: 3 }, // bag
++      { op: "i32.const", value: 0 }, // implicit/default prototype
++      { op: "ref.null.extern" }, // raw prototype payload
+       { op: "struct.new", typeIdx: entryTypeIdx },
++      { op: "local.tee", index: 2 },
+       { op: "global.set", index: headGlobalIdx },
+-      { op: "local.get", index: 3 }, // return bag
++      { op: "local.get", index: 2 }, // return entry
+     ]);
++    setBody(
++      VEC_BAG_ENSURE,
++      [],
++      [
++        { op: "local.get", index: 0 },
++        { op: "call", funcIdx: ctx.funcMap.get(VEC_ENTRY_ENSURE)! },
++        { op: "struct.get", typeIdx: entryTypeIdx, fieldIdx: F_BAG },
++      ],
++    );
++    setBody(
++      VEC_PROTO_STORE,
++      [{ name: "__entry", type: { kind: "ref_null", typeIdx: entryTypeIdx } }],
++      [
++        { op: "local.get", index: 0 },
++        { op: "call", funcIdx: ctx.funcMap.get(VEC_ENTRY_ENSURE)! },
++        { op: "local.set", index: 2 },
++        { op: "local.get", index: 2 },
++        { op: "local.get", index: 1 },
++        { op: "struct.set", typeIdx: entryTypeIdx, fieldIdx: F_PROTO_VALUE },
++        { op: "local.get", index: 2 },
++        { op: "i32.const", value: 1 },
++        { op: "struct.set", typeIdx: entryTypeIdx, fieldIdx: F_PROTO_PRESENT },
++      ],
++    );
+   }
+ 
+-  // ── __vec_prop_get(externref obj, externref key) -> externref ──
+-  // (#4176) The final miss consults the proto-property companions RECEIVER-
+-  // AWARE (`__protoidx_get_r`: vec ⇒ Array.prototype's companion, then
+-  // Object.prototype's) — `Array.prototype.enumerable = true; arrObj.enumerable`
+-  // is the §8.10.5 inherited-descriptor-field idiom. The builder returns
+-  // `undefined` unless the store was reserved, so a flag-clear module keeps
+-  // this body byte-identical.
++  // ── __vec_prop_get_r(target, key, receiver) -> externref ──
++  // Only an own miss delegates to actual-prototype semantic Get. Intrinsic
++  // companion lookup belongs to the parent's default-prototype dispatch, not
++  // this storage owner: explicit null/custom links must not reveal phantom tails.
+   if (isVecIdx !== undefined && bagLookupIdx !== undefined && externGetIdx !== undefined) {
+     // A vec's bag represents only the receiver's OWN named properties.  The
+     // presence of an unrelated entry must not terminate the inherited lookup:
+@@ -417,30 +468,23 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
+     // while `[].every` still worked.  This is the vec twin of #4563's callable
+     // carrier fix.  Test own presence rather than the loaded value so an own
+     // property whose value is `undefined` still shadows Array.prototype.
+-    const bagRead: Instr[] =
+-      reflectGetReceiverIdx !== undefined
+-        ? [
+-            { op: "local.get", index: 2 }, // bag (target)
+-            { op: "local.get", index: 1 }, // key
+-            { op: "local.get", index: 0 }, // receiver = the vec itself
+-            { op: "call", funcIdx: reflectGetReceiverIdx },
+-          ]
+-        : [
+-            { op: "local.get", index: 2 }, // bag
+-            { op: "local.get", index: 1 }, // key
+-            { op: "call", funcIdx: externGetIdx },
+-          ];
+-    const bagOwnGuardedRead: Instr[] =
+-      hasOwnIdx === undefined
+-        ? [...bagRead, { op: "return" }]
+-        : [
+-            { op: "local.get", index: 2 }, // bag
+-            { op: "local.get", index: 1 }, // key
+-            { op: "call", funcIdx: hasOwnIdx },
+-            { op: "if", blockType: { kind: "empty" }, then: [...bagRead, { op: "return" }] },
+-          ];
++    if (reflectGetReceiverIdx === undefined || hasOwnIdx === undefined) {
++      throw new Error("vec receiver Get requires own-presence and explicit-receiver helpers");
++    }
++    const bagRead: Instr[] = [
++      { op: "local.get", index: 3 }, // bag (target)
++      { op: "local.get", index: 1 }, // key
++      { op: "local.get", index: 2 }, // original Receiver
++      { op: "call", funcIdx: reflectGetReceiverIdx },
++    ];
++    const bagOwnGuardedRead: Instr[] = [
++      { op: "local.get", index: 3 },
++      { op: "local.get", index: 1 },
++      { op: "call", funcIdx: hasOwnIdx },
++      { op: "if", blockType: { kind: "empty" }, then: [...bagRead, { op: "return" }] },
++    ];
+     setBody(
+-      VEC_PROP_GET,
++      VEC_PROP_GET_R,
+       [{ name: "__bag", type: { kind: "externref" } }],
+       [
+         // The guarded bag path probes and then reads the same key. Normalize
+@@ -462,7 +506,7 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
+           then: [
+             { op: "local.get", index: 0 },
+             { op: "call", funcIdx: bagLookupIdx },
+-            { op: "local.tee", index: 2 }, // bag
++            { op: "local.tee", index: 3 }, // bag
+             { op: "ref.is_null" },
+             { op: "i32.eqz" },
+             {
+@@ -472,12 +516,26 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
+             },
+           ],
+         },
+-        ...(protoIndexRecvGetMissInstrs(ctx, 0, 1) ?? getMiss()),
++        { op: "local.get", index: 0 },
++        { op: "local.get", index: 1 },
++        { op: "local.get", index: 2 },
++        { op: "call", funcIdx: ctx.funcMap.get(VEC_PROTO_GET_MISS)! },
+       ],
+     );
+   } else {
+-    setBody(VEC_PROP_GET, [], [...getMiss()]);
++    throw new Error("vec receiver Get dependencies were not reserved");
+   }
++  // Preserve the legacy two-argument ABI exactly; only its core gains Receiver.
++  setBody(
++    VEC_PROP_GET,
++    [],
++    [
++      { op: "local.get", index: 0 },
++      { op: "local.get", index: 1 },
++      { op: "local.get", index: 0 },
++      { op: "call", funcIdx: ctx.funcMap.get(VEC_PROP_GET_R)! },
++    ],
++  );
+ 
+   // ── __vec_prop_set(externref obj, externref key, externref value) -> () ──
+   // Refuses `"length"` (the real vec length must never be shadowed by the
+@@ -619,4 +677,5 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
+       setBody(VEC_PROP_SET, [], []);
+     }
+   }
++  filledVecProps.add(ctx);
+ }
+diff --git a/src/codegen/vec-proto-link.ts b/src/codegen/vec-proto-link.ts
+index 06051f7545..33954b9318 100644
+--- a/src/codegen/vec-proto-link.ts
++++ b/src/codegen/vec-proto-link.ts
+@@ -1,67 +1,13 @@
+ // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+ /**
+- * (#2917) Prototype identity for standalone `class X extends Array` instances.
++ * Vector prototype identity lives in the existing VecPropEntry, separately from
++ * the own-property bag. Presence distinguishes the carrier default from explicit
++ * null; stored prototype values are never converted into bags or callable views.
+  *
+- * ## The gap (measured on fb7607cd9e, `.tmp/mine.mts`)
+- *
+- * An `extends Array` instance is a plain `$__vec_externref` — the same carrier
+- * as `[]` — so nothing on it says "J". The #5383 S2b method install copies the
+- * methods and `constructor` onto the instance's #3537 expando bag, which makes
+- * `x.m()` and `x.constructor` work through a dynamic receiver, but every
+- * question about the PROTOTYPE still answered as if `x` were a plain array:
+- *
+- * | through an `any` receiver                        | node | before |
+- * | ------------------------------------------------ | ---- | ------ |
+- * | `id(new J(1)) instanceof J`                      | true | false  |
+- * | `id(new K(1)) instanceof J` (`K extends J`)      | true | false  |
+- * | `Object.getPrototypeOf(id(new J(1))) === J.prototype` | true | false |
+- * | `Object.setPrototypeOf(x, J.prototype)` on a vec | links | no-op |
+- * | `Object.getPrototypeOf(J.prototype) === Array.prototype` | true | false (folded to null) |
+- *
+- * ## The link (design B: a hidden slot on the existing bag)
+- *
+- * The bag is a `$Object`, so it already has a `$proto` field that nothing
+- * reads: every consumer of the bag reads it OWN-only (`__vec_prop_get` guards
+- * with `__hasOwnProperty`; `Object.keys`/`hasOwnProperty` enumerate own keys).
+- * The construction site stores `C.prototype` there, and three natives learn
+- * to honour it:
+- *
+- *  - `__getPrototypeOf(vec)` answers the link when present (else the
+- *    unchanged native `Array.prototype` answer);
+- *  - `__object_setPrototypeOf(vec, P)` writes it (an `$Object` `P`), or clears
+- *    it (anything else — the vec then answers `Array.prototype` again);
+- *  - `__vec_proto_instanceof(v, C.prototype)` walks it, then the ordinary
+- *    `$Object.$proto` chain, with `ref.eq` — OrdinaryHasInstance over the
+- *    only chain a vec can carry, so `K extends J` works with no per-class list.
+- *
+- * `C.prototype.$proto` cannot hold `Array.prototype` (a `$NativeProto`, not an
+- * `$Object`), so the `J.prototype → Array.prototype` edge is answered where it
+- * is asked instead: a `__getPrototypeOf` arm per Array-rooted class, and the
+- * static `Object.getPrototypeOf(J.prototype)` fold.
+- *
+- * ## Why not design A (a `$__vec_externref` subtype with a proto field)
+- *
+- * It would need every vec producer/consumer that `ref.test`s the concrete vec
+- * type to accept the subtype, and the bag is already per-instance state with
+- * an identity-keyed lookup — the link needs no new carrier.
+- *
+- * ## Array.prototype in a vec-typed slot
+- *
+- * TypeScript types `Array.prototype` as `any[]`, so a slot of that type (a
+- * `var p = Array.prototype`, an inferred function return) coerces the
+- * `$NativeProto` externref into a vec — and the materializer built a FRESH
+- * copy every time, so `f() === f()` was false. {@link wrapArrayProtoVecAlias}
+- * makes that coercion answer one module-wide vec per target vec type instead.
+- * This is identity WITHIN vec slots only: the alias vec and the `$NativeProto`
+- * are still two values, so a comparison across the representations
+- * (`p === Array.prototype` where one side stays externref) stays false.
+- *
+- * ## Byte-neutrality
+- *
+- * Standalone/WASI only. The construction install fires only for an
+- * externref-backed class whose builtin root is `Array` and whose prototype is a
+- * real `$Object`; the finalize arms only when such an install happened; the
+- * alias wrap only when the module has already materialised `Array.prototype`.
++ * This storage slice requires parent-provided default-only and trap-free cycle
++ * helpers plus semantic Get/Has dispatch. It is not standalone activation of the
++ * full prototype contract. Array.prototype alias materialization remains an
++ * identity bridge only, never a normalization step for arbitrary stored links.
+  */
+ import type { ts } from "../ts-api.js";
+ import type { Instr, ValType, WasmFunction } from "../ir/types.js";
+@@ -73,16 +19,26 @@ import { buildLazyNativeProtoGetInstrs } from "./native-proto.js";
+ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+ import { addFuncType } from "./registry/types.js";
+ import { rollbackSpeculative, snapshotSpeculative } from "./context/speculative.js";
+-import { allocLocal } from "./context/locals.js";
++import { undefinedExternInstrs } from "./any-helpers.js";
++import { VEC_PROTO_LOOKUP, VEC_PROTO_STORE } from "./vec-props.js";
+ import { coerceType, compileExpression, flushLateImportShifts } from "./shared.js";
+ 
+ const IS_VEC = "__is_vec_prop_carrier";
+ const BAG_LOOKUP = "__vec_bag_lookup";
+-const BAG_ENSURE = "__vec_bag_ensure";
++export const VEC_ACTUAL_PROTO = "__vec_actual_proto";
++export const VEC_PROTO_STATUS = "__vec_proto_status";
++export const VEC_PROTO_TRY_SET = "__vec_proto_try_set";
++export const VEC_PROTO_GET_MISS = "__vec_proto_get_miss";
++export const VEC_PROTO_HAS_MISS = "__vec_proto_has_miss";
++/** Parent-owned providers. No fallback may substitute observable GetPrototypeOf
++ * for the default-only provider or the trap-free ordinary cycle predicate. */
++export const VEC_DEFAULT_PROTO = "__vec_default_proto"; // (value) -> raw prototype
++export const ORDINARY_PROTO_CYCLE_OK = "__ordinary_proto_cycle_ok"; // (target, proposed) -> i32
+ const VEC_PROTO_INSTANCEOF = "__vec_proto_instanceof";
+ /** `$Object.flags` bit for an explicitly null prototype (object-runtime.ts). */
+ const OBJ_FLAG_NULL_PROTO = 0x80;
+ const EXTERNREF: ValType = { kind: "externref" };
++const EQ_HEAP_TYPE = -19;
+ 
+ interface LinkState {
+   /** Classes whose construction installed the link. */
+@@ -119,12 +75,12 @@ function linkApplies(ctx: CodegenContext, className: string): boolean {
+     arrayRootClass(ctx, className) !== undefined &&
+     standaloneClassProtoObjectApplies(ctx, className) &&
+     ctx.objectRuntimeTypes !== undefined &&
+-    ctx.funcMap.has(BAG_ENSURE)
++    ctx.funcMap.has(VEC_PROTO_STORE)
+   );
+ }
+ 
+ /**
+- * At construction, after `super(...)`: `bag(self).$proto = Sub.prototype`.
++ * At construction, after `super(...)`: trusted raw metadata install.
+  * Emits nothing unless {@link linkApplies}.
+  */
+ export function emitVecProtoLinkInstall(
+@@ -134,27 +90,12 @@ export function emitVecProtoLinkInstall(
+   subName: string,
+ ): void {
+   if (!linkApplies(ctx, subName)) return;
+-  const objectTypeIdx = ctx.objectRuntimeTypes!.objectTypeIdx;
+   // The finalize arms embed the `Array.prototype` singleton read; register its
+   // glue, global and string constants NOW, in the ordinary compile regime.
+   const arrayBrand = ensureArrayNativeProtoGlue(ctx);
+   if (arrayBrand === undefined || buildLazyNativeProtoGetInstrs(ctx, arrayBrand) === null) return;
+   const snap = snapshotSpeculative(ctx, fctx);
+-  // The bag goes through a TYPED local: `fixups.ts`'s struct.set receiver
+-  // repair walks back over net-zero instructions and would re-cast the vec
+-  // itself if the receiver were `local.get <externref>; call; cast`.
+-  const bagLocal = allocLocal(fctx, `__vec_link_bag_${fctx.locals.length}`, {
+-    kind: "ref_null",
+-    typeIdx: objectTypeIdx,
+-  });
+-  fctx.body.push(
+-    { op: "local.get", index: selfLocal },
+-    { op: "call", funcIdx: ctx.funcMap.get(BAG_ENSURE)! },
+-    { op: "any.convert_extern" },
+-    { op: "ref.cast", typeIdx: objectTypeIdx },
+-    { op: "local.set", index: bagLocal },
+-    { op: "local.get", index: bagLocal },
+-  );
++  fctx.body.push({ op: "local.get", index: selfLocal });
+   if (!emitLazyProtoGet(ctx, fctx, subName)) {
+     rollbackSpeculative(ctx, fctx, snap);
+     return;
+@@ -162,11 +103,7 @@ export function emitVecProtoLinkInstall(
+   // The prototype builder can register late imports; `fctx.body` (holding the
+   // `call` above) is shift-repaired by the flush.
+   flushLateImportShifts(ctx, fctx);
+-  fctx.body.push(
+-    { op: "any.convert_extern" },
+-    { op: "ref.cast_null", typeIdx: objectTypeIdx },
+-    { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 0 },
+-  );
++  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(VEC_PROTO_STORE)! });
+   linkState(ctx).linked.add(subName);
+ }
+ 
+@@ -294,36 +231,51 @@ export function wrapArrayProtoVecAlias(
+   ];
+ }
+ 
+-// ── Finalize ──────────────────────────────────────────────────────────────────
+-
+-/**
+- * Fill `__vec_proto_instanceof` (when reserved) and, when any construction
+- * installed a link, prepend the vec arms to `__getPrototypeOf` and
+- * `__object_setPrototypeOf`. Runs in the same finalize window as
+- * `fillStandaloneClassInstanceProtoArm`.
+- */
+-export function fillVecProtoLinkArms(ctx: CodegenContext): void {
+-  if (!(ctx.standalone || ctx.wasi)) return;
+-  const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
+-  const isVecIdx = ctx.funcMap.get(IS_VEC);
+-  const lookupIdx = ctx.funcMap.get(BAG_LOOKUP);
+-  const ensureIdx = ctx.funcMap.get(BAG_ENSURE);
+-  if (objectTypeIdx === undefined || isVecIdx === undefined || lookupIdx === undefined || ensureIdx === undefined) {
+-    return;
++/** Parent default-only provider uses this identity test to give Array.prototype
++ * aliases their own parent, not Array.prototype itself. It never rewrites a
++ * stored prototype. Call after alias materialization sites have been collected. */
++export function buildArrayProtoVecAliasTest(ctx: CodegenContext, valueLocal: number): Instr[] {
++  const body: Instr[] = [{ op: "i32.const", value: 0 }];
++  for (const [typeIdx, globalIdx] of linkState(ctx).aliasGlobals) {
++    body.push(
++      { op: "local.get", index: valueLocal },
++      { op: "any.convert_extern" },
++      { op: "ref.test", typeIdx },
++      {
++        op: "if",
++        blockType: { kind: "val", type: { kind: "i32" } },
++        then: [
++          { op: "local.get", index: valueLocal },
++          { op: "any.convert_extern" },
++          { op: "ref.cast", typeIdx },
++          { op: "global.get", index: globalIdx },
++          { op: "ref.eq" },
++        ],
++        else: [{ op: "i32.const", value: 0 }],
++      },
++      { op: "i32.or" },
++    );
+   }
+-  const deps = { objectTypeIdx, isVecIdx, lookupIdx, ensureIdx };
+-  fillInstanceofHelper(ctx, deps);
+-  const state = stateByCtx.get(ctx);
+-  if (!state || state.linked.size === 0) return;
+-  prependGetPrototypeOfArm(ctx, deps, state);
+-  prependSetPrototypeOfArm(ctx, deps);
++  return body;
+ }
+ 
+-interface LinkDeps {
+-  objectTypeIdx: number;
+-  isVecIdx: number;
+-  lookupIdx: number;
+-  ensureIdx: number;
++// ── Reservation and finalize ──────────────────────────────────────────────────
++
++/** Reserve before recursive runtime construction; providers are parent-owned.
++ * All names resolve through funcMap at fill time, not stale captured indices. */
++export function reserveVecProtoHelpers(ctx: CodegenContext): void {
++  const reserve = (name: string, params: ValType[], results: ValType[]): void => {
++    if (ctx.funcMap.has(name)) return;
++    const typeIdx = addFuncType(ctx, params, results, `$${name}_type`);
++    const idx = mintDefinedFunc(ctx);
++    pushDefinedFunc(ctx, idx, { name, typeIdx, locals: [], body: [{ op: "unreachable" }], exported: false });
++    ctx.funcMap.set(name, idx);
++  };
++  reserve(VEC_ACTUAL_PROTO, [EXTERNREF], [EXTERNREF]);
++  reserve(VEC_PROTO_STATUS, [EXTERNREF, EXTERNREF], [{ kind: "i32" }]);
++  reserve(VEC_PROTO_TRY_SET, [EXTERNREF, EXTERNREF], [{ kind: "i32" }]);
++  reserve(VEC_PROTO_GET_MISS, [EXTERNREF, EXTERNREF, EXTERNREF], [EXTERNREF]);
++  reserve(VEC_PROTO_HAS_MISS, [EXTERNREF, EXTERNREF], [{ kind: "i32" }]);
+ }
+ 
+ function namedFunction(ctx: CodegenContext, name: string): WasmFunction | undefined {
+@@ -331,136 +283,225 @@ function namedFunction(ctx: CodegenContext, name: string): WasmFunction | undefi
+   return idx === undefined ? undefined : definedFuncAt(ctx, idx);
+ }
+ 
+-/** `bag(vec).$proto` into `protoLocal` (null when the vec has no bag). Stack-neutral. */
+-function loadVecLink(deps: LinkDeps, vecParam: number, bagLocal: number, protoLocal: number): Instr[] {
+-  const { objectTypeIdx } = deps;
+-  return [
+-    { op: "ref.null", typeIdx: objectTypeIdx },
+-    { op: "local.set", index: protoLocal },
+-    { op: "local.get", index: vecParam },
+-    { op: "call", funcIdx: deps.lookupIdx },
+-    { op: "local.tee", index: bagLocal },
+-    { op: "ref.is_null" },
+-    { op: "i32.eqz" },
+-    {
+-      op: "if",
+-      blockType: { kind: "empty" },
+-      then: [
+-        { op: "local.get", index: bagLocal },
+-        { op: "any.convert_extern" },
+-        { op: "ref.cast", typeIdx: objectTypeIdx },
+-        { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
+-        { op: "local.set", index: protoLocal },
+-      ],
+-    },
+-  ];
+-}
++const filled = new WeakSet<CodegenContext>();
+ 
+-// params: 0 = value, 1 = C.prototype. locals: 2 any, 3 bag, 4 p, 5 target.
+-function fillInstanceofHelper(ctx: CodegenContext, deps: LinkDeps): void {
+-  const fn = namedFunction(ctx, VEC_PROTO_INSTANCEOF);
+-  if (!fn) return;
+-  const { objectTypeIdx } = deps;
+-  const objRefNull: ValType = { kind: "ref_null", typeIdx: objectTypeIdx };
+-  fn.locals = [
+-    { name: "__any", type: { kind: "anyref" } },
+-    { name: "__bag", type: EXTERNREF },
+-    { name: "__p", type: objRefNull },
+-    { name: "__target", type: objRefNull },
+-  ];
+-  fn.body = [
+-    // target = C.prototype as $Object, else false
+-    { op: "local.get", index: 1 },
+-    { op: "any.convert_extern" },
+-    { op: "local.tee", index: 2 },
+-    { op: "ref.test", typeIdx: objectTypeIdx },
+-    { op: "i32.eqz" },
+-    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+-    { op: "local.get", index: 2 },
+-    { op: "ref.cast", typeIdx: objectTypeIdx },
+-    { op: "local.set", index: 5 },
+-    // p = vec ? bag.$proto : ($Object ? $proto : return false)
++/** Requires parent providers and both pipeline hooks; storage alone is NOT
++ * production activation. Missing integration fails compilation, never fabricates
++ * a null default, an extensibility success, or an empty semantic miss. */
++export function fillVecProtoLinkArms(ctx: CodegenContext): void {
++  if (!(ctx.standalone || ctx.wasi) || !ctx.vecPropHelpersReserved || filled.has(ctx)) return;
++  const requireFunc = (name: string): number => {
++    const idx = ctx.funcMap.get(name);
++    if (idx === undefined) throw new Error(`vector prototype integration requires ${name}`);
++    return idx;
++  };
++  const lookup = requireFunc(VEC_PROTO_LOOKUP);
++  const store = requireFunc(VEC_PROTO_STORE);
++  const defaultProto = requireFunc(VEC_DEFAULT_PROTO);
++  const cycleOK = requireFunc(ORDINARY_PROTO_CYCLE_OK);
++  const bagLookup = requireFunc(BAG_LOOKUP);
++  const isVec = requireFunc(IS_VEC);
++  const get = requireFunc("__reflect_get_receiver");
++  const has = requireFunc("__extern_has");
++  const getProto = requireFunc("__getPrototypeOf");
++  const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
++  if (objectTypeIdx === undefined) throw new Error("vector prototype integration requires Object layout");
++  const actual = requireFunc(VEC_ACTUAL_PROTO);
++  const status = requireFunc(VEC_PROTO_STATUS);
++  const trySet = requireFunc(VEC_PROTO_TRY_SET);
++  const setBody = (name: string, locals: { name: string; type: ValType }[], body: Instr[]): void => {
++    const fn = namedFunction(ctx, name);
++    if (!fn) throw new Error(`vector prototype helper was not reserved: ${name}`);
++    fn.locals = locals;
++    fn.body = body;
++  };
++  // lookup pushes present then payload; consume the payload first.
++  setBody(
++    VEC_ACTUAL_PROTO,
++    [{ name: "__proto", type: EXTERNREF }],
++    [
++      { op: "local.get", index: 0 },
++      { op: "call", funcIdx: lookup },
++      { op: "local.set", index: 1 },
++      { op: "if", blockType: { kind: "empty" }, then: [{ op: "local.get", index: 1 }, { op: "return" }] },
++      { op: "local.get", index: 0 },
++      { op: "call", funcIdx: defaultProto },
++    ],
++  );
++  setBody(
++    VEC_PROTO_STATUS,
++    [{ name: "__bag", type: EXTERNREF }],
++    [
++      // Identity precedes extensibility, including explicit null on both sides.
++      { op: "local.get", index: 0 },
++      { op: "call", funcIdx: actual },
++      { op: "any.convert_extern" },
++      { op: "ref.cast_null", typeIdx: EQ_HEAP_TYPE },
++      { op: "local.get", index: 1 },
++      { op: "any.convert_extern" },
++      { op: "ref.cast_null", typeIdx: EQ_HEAP_TYPE },
++      { op: "ref.eq" },
++      { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
++      { op: "local.get", index: 0 },
++      { op: "call", funcIdx: bagLookup },
++      { op: "local.tee", index: 2 },
++      { op: "ref.is_null" },
++      { op: "i32.eqz" },
++      {
++        op: "if",
++        blockType: { kind: "empty" },
++        then: [
++          { op: "local.get", index: 2 },
++          { op: "any.convert_extern" },
++          { op: "ref.cast", typeIdx: objectTypeIdx },
++          { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
++          { op: "i32.const", value: 0x01 },
++          { op: "i32.and" },
++          { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
++        ],
++      },
++      // Parent shares this trap-free predicate with ordinary Object setters.
++      { op: "local.get", index: 0 },
++      { op: "local.get", index: 1 },
++      { op: "call", funcIdx: cycleOK },
++    ],
++  );
++  setBody(
++    VEC_PROTO_TRY_SET,
++    [],
++    [
++      { op: "local.get", index: 0 },
++      { op: "local.get", index: 1 },
++      { op: "call", funcIdx: status },
++      { op: "i32.eqz" },
++      { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
++      { op: "local.get", index: 0 },
++      { op: "local.get", index: 1 },
++      { op: "call", funcIdx: store },
++      { op: "i32.const", value: 1 },
++    ],
++  );
++  const undef = undefinedExternInstrs(ctx);
++  if (!undef) throw new Error("vector prototype Get requires reserved undefined value");
++  setBody(
++    VEC_PROTO_GET_MISS,
++    [{ name: "__proto", type: EXTERNREF }],
++    [
++      { op: "local.get", index: 0 },
++      { op: "call", funcIdx: actual },
++      { op: "local.tee", index: 3 },
++      { op: "ref.is_null" },
++      { op: "if", blockType: { kind: "empty" }, then: [...undef, { op: "return" }] },
++      { op: "local.get", index: 3 },
++      { op: "local.get", index: 1 },
++      { op: "local.get", index: 2 },
++      { op: "call", funcIdx: get },
++    ],
++  );
++  setBody(
++    VEC_PROTO_HAS_MISS,
++    [{ name: "__proto", type: EXTERNREF }],
++    [
++      { op: "local.get", index: 0 },
++      { op: "call", funcIdx: actual },
++      { op: "local.tee", index: 2 },
++      { op: "ref.is_null" },
++      { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
++      { op: "local.get", index: 2 },
++      { op: "local.get", index: 1 },
++      { op: "call", funcIdx: has },
++    ],
++  );
++  // Observable traversal uses semantic GetPrototypeOf, unlike cycle validation.
++  const instanceOf = namedFunction(ctx, VEC_PROTO_INSTANCEOF);
++  if (instanceOf) {
++    const isObject = requireFunc("__typeof_object");
++    const isFunction = requireFunc("__typeof_function");
++    instanceOf.locals = [{ name: "__cursor", type: EXTERNREF }];
++    instanceOf.body = [
++      { op: "local.get", index: 0 },
++      { op: "ref.is_null" },
++      { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
++      { op: "local.get", index: 0 },
++      { op: "call", funcIdx: isObject },
++      { op: "local.get", index: 0 },
++      { op: "call", funcIdx: isFunction },
++      { op: "i32.or" },
++      { op: "i32.eqz" },
++      { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
++      { op: "local.get", index: 0 },
++      { op: "call", funcIdx: getProto },
++      { op: "local.set", index: 2 },
++      {
++        op: "loop",
++        blockType: { kind: "empty" },
++        body: [
++          { op: "local.get", index: 2 },
++          { op: "ref.is_null" },
++          { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
++          { op: "local.get", index: 2 },
++          { op: "any.convert_extern" },
++          { op: "ref.cast_null", typeIdx: EQ_HEAP_TYPE },
++          { op: "local.get", index: 1 },
++          { op: "any.convert_extern" },
++          { op: "ref.cast_null", typeIdx: EQ_HEAP_TYPE },
++          { op: "ref.eq" },
++          { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
++          { op: "local.get", index: 2 },
++          { op: "call", funcIdx: getProto },
++          { op: "local.set", index: 2 },
++          { op: "br", depth: 0 },
++        ],
++      },
++      { op: "i32.const", value: 0 },
++    ];
++  }
++  prependGetPrototypeOfArm(ctx, objectTypeIdx, isVec, actual, linkState(ctx));
++  const writer = namedFunction(ctx, "__object_setPrototypeOf");
++  if (!writer) throw new Error("vector prototype integration requires writer");
++  writer.body.unshift(
+     { op: "local.get", index: 0 },
+-    { op: "call", funcIdx: deps.isVecIdx },
++    { op: "call", funcIdx: isVec },
+     {
+       op: "if",
+       blockType: { kind: "empty" },
+-      then: loadVecLink(deps, 0, 3, 4),
+-      else: [
++      then: [
+         { op: "local.get", index: 0 },
+-        { op: "any.convert_extern" },
+-        { op: "local.tee", index: 2 },
+-        { op: "ref.test", typeIdx: objectTypeIdx },
+-        { op: "i32.eqz" },
+-        { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+-        { op: "local.get", index: 2 },
+-        { op: "ref.cast", typeIdx: objectTypeIdx },
+-        { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
+-        { op: "local.set", index: 4 },
+-      ],
+-    },
+-    // Walk the `$proto` chain. `__object_setPrototypeOf` refuses cycles, so
+-    // the chain is finite.
+-    {
+-      op: "loop",
+-      blockType: { kind: "empty" },
+-      body: [
+-        { op: "local.get", index: 4 },
+-        { op: "ref.is_null" },
+-        { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+-        { op: "local.get", index: 4 },
+-        { op: "local.get", index: 5 },
+-        { op: "ref.eq" },
+-        { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
+-        { op: "local.get", index: 4 },
+-        { op: "ref.as_non_null" },
+-        { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
+-        { op: "local.set", index: 4 },
+-        { op: "br", depth: 0 },
++        { op: "local.get", index: 1 },
++        { op: "call", funcIdx: trySet },
++        { op: "drop" },
++        { op: "local.get", index: 0 },
++        { op: "return" },
+       ],
+     },
+-    { op: "i32.const", value: 0 },
+-  ];
++  );
++  // Parent must add matching VEC_PROTO_STATUS to the public status dispatcher.
++  filled.add(ctx);
+ }
+ 
+-/**
+- * `__getPrototypeOf` arms: (1) a vec with a link answers it; (2) the
+- * unmodified prototype of a class that directly `extends Array` answers
+- * `Array.prototype`. Both only RETURN on a hit; a miss falls through to the
+- * unchanged body.
+- */
+-function prependGetPrototypeOfArm(ctx: CodegenContext, deps: LinkDeps, state: LinkState): void {
++/** Metadata is generic; linked-class tracking only supplies the legacy implicit
++ * class-root edge. Explicit null metadata returns immediately, never falls back. */
++function prependGetPrototypeOfArm(
++  ctx: CodegenContext,
++  objectTypeIdx: number,
++  isVec: number,
++  actual: number,
++  state: LinkState,
++): void {
+   const fn = namedFunction(ctx, "__getPrototypeOf");
+-  if (!fn?.body) return;
+-  const { objectTypeIdx } = deps;
+-  const arrayBrand = ctx.builtinBrandMap?.get("Array");
+-  if (arrayBrand === undefined) return;
+-  // __getPrototypeOf has exactly one param; appended locals never renumber.
+-  const bagLocal = 1 + fn.locals.length;
+-  const protoLocal = bagLocal + 1;
+-  fn.locals.push(
+-    { name: "__vec_link_bag", type: EXTERNREF },
+-    { name: "__vec_link_proto", type: { kind: "ref_null", typeIdx: objectTypeIdx } },
+-  );
++  if (!fn?.body) throw new Error("vector prototype integration requires GetPrototypeOf");
++  const protoLocal = 1 + fn.locals.length;
++  fn.locals.push({ name: "__class_root_proto", type: { kind: "ref_null", typeIdx: objectTypeIdx } });
+   const arm: Instr[] = [
+     { op: "local.get", index: 0 },
+-    { op: "call", funcIdx: deps.isVecIdx },
++    { op: "call", funcIdx: isVec },
+     {
+       op: "if",
+       blockType: { kind: "empty" },
+-      then: [
+-        ...loadVecLink(deps, 0, bagLocal, protoLocal),
+-        { op: "local.get", index: protoLocal },
+-        { op: "ref.is_null" },
+-        { op: "i32.eqz" },
+-        {
+-          op: "if",
+-          blockType: { kind: "empty" },
+-          then: [{ op: "local.get", index: protoLocal }, { op: "extern.convert_any" }, { op: "return" }],
+-        },
+-      ],
++      then: [{ op: "local.get", index: 0 }, { op: "call", funcIdx: actual }, { op: "return" }],
+     },
+   ];
++  const arrayBrand = ctx.builtinBrandMap?.get("Array");
+   const roots = new Set<string>();
+   for (const name of state.linked) {
+     const root = arrayRootClass(ctx, name);
+@@ -468,10 +509,8 @@ function prependGetPrototypeOfArm(ctx: CodegenContext, deps: LinkDeps, state: Li
+   }
+   for (const root of [...roots].sort()) {
+     const protoGlobal = ctx.protoGlobals.get(root);
+-    const arrayProto = buildLazyNativeProtoGetInstrs(ctx, arrayBrand);
++    const arrayProto = arrayBrand === undefined ? null : buildLazyNativeProtoGetInstrs(ctx, arrayBrand);
+     if (protoGlobal === undefined || !arrayProto) continue;
+-    // value is this class's prototype `$Object`, still with its original
+-    // (implicit) [[Prototype]] — neither re-linked nor made null-prototype.
+     arm.push(
+       { op: "local.get", index: 0 },
+       { op: "any.convert_extern" },
+@@ -507,74 +546,3 @@ function prependGetPrototypeOfArm(ctx: CodegenContext, deps: LinkDeps, state: Li
+   }
+   fn.body.unshift(...arm);
+ }
+-
+-/**
+- * `__object_setPrototypeOf(vec, P)`: an `$Object` `P` becomes the link; any
+- * other `P` clears it. Returns the vec, as the native does for every receiver.
+- */
+-function prependSetPrototypeOfArm(ctx: CodegenContext, deps: LinkDeps): void {
+-  const fn = namedFunction(ctx, "__object_setPrototypeOf");
+-  if (!fn?.body) return;
+-  const { objectTypeIdx } = deps;
+-  // two params (obj, proto); appended locals never renumber. The bag is held
+-  // TYPED so the struct.set receiver is never an externref producer (see the
+-  // install's note on `fixups.ts`).
+-  const bagLocal = 2 + fn.locals.length;
+-  const objLocal = bagLocal + 1;
+-  fn.locals.push(
+-    { name: "__vec_link_bag", type: EXTERNREF },
+-    { name: "__vec_link_obj", type: { kind: "ref_null", typeIdx: objectTypeIdx } },
+-  );
+-  const arm: Instr[] = [
+-    { op: "local.get", index: 0 },
+-    { op: "call", funcIdx: deps.isVecIdx },
+-    {
+-      op: "if",
+-      blockType: { kind: "empty" },
+-      then: [
+-        { op: "local.get", index: 1 },
+-        { op: "any.convert_extern" },
+-        { op: "ref.test", typeIdx: objectTypeIdx },
+-        {
+-          op: "if",
+-          blockType: { kind: "empty" },
+-          then: [
+-            { op: "local.get", index: 0 },
+-            { op: "call", funcIdx: deps.ensureIdx },
+-            { op: "any.convert_extern" },
+-            { op: "ref.cast", typeIdx: objectTypeIdx },
+-            { op: "local.set", index: objLocal },
+-            { op: "local.get", index: objLocal },
+-            { op: "local.get", index: 1 },
+-            { op: "any.convert_extern" },
+-            { op: "ref.cast", typeIdx: objectTypeIdx },
+-            { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 0 },
+-          ],
+-          else: [
+-            { op: "local.get", index: 0 },
+-            { op: "call", funcIdx: deps.lookupIdx },
+-            { op: "local.tee", index: bagLocal },
+-            { op: "ref.is_null" },
+-            { op: "i32.eqz" },
+-            {
+-              op: "if",
+-              blockType: { kind: "empty" },
+-              then: [
+-                { op: "local.get", index: bagLocal },
+-                { op: "any.convert_extern" },
+-                { op: "ref.cast", typeIdx: objectTypeIdx },
+-                { op: "local.set", index: objLocal },
+-                { op: "local.get", index: objLocal },
+-                { op: "ref.null", typeIdx: objectTypeIdx },
+-                { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 0 },
+-              ],
+-            },
+-          ],
+-        },
+-        { op: "local.get", index: 0 },
+-        { op: "return" },
+-      ],
+-    },
+-  ];
+-  fn.body.unshift(...arm);
+-}

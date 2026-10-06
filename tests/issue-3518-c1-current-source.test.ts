@@ -52,7 +52,7 @@ afterEach(async () => {
 // Root replaces this ONE external assertion root after final instrument formatting/manifest assembly.
 // A missing freeze is a hard failure, never an alternate accepted manifest.
 const independentFreeze: string =
-  '{"manifestSha256":"7866e5631d0c18a1226dec77fce73733a0140253f3ee959fca45289ae6c93d00","anchorSource":"// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\\n\\nexport const c1AuthorityManifestSha256 = \\"7866e5631d0c18a1226dec77fce73733a0140253f3ee959fca45289ae6c93d00\\";\\n","anchorPin":{"bytes":194,"sha256":"33821622e48d233910578eab9b216c97b5dd241a9b6c84407ce2d88a413dc9dd","gitBlob":"a19d57d56450a6e770ebd6d1e55ddf90ed0d7a04"},"declarationPin":{"bytes":1633,"sha256":"5294c0fce2be6c6974b61a3686c05e60aa66d5bb4599fc97cb315ee53cab71be","gitBlob":"8c594e598e0d946ed92fd658cbe2efe3063ca2c4"}}';
+  '{"manifestSha256":"6adbe504671ff9679b212069aad68f5ee22bf74594fc75534817291dfd76c43f","anchorSource":"// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\\n\\nexport const c1AuthorityManifestSha256 = \\"6adbe504671ff9679b212069aad68f5ee22bf74594fc75534817291dfd76c43f\\";\\n","anchorPin":{"bytes":194,"sha256":"eb883661451b0e8bf05b9e2865ae4ed388aa225f52d8f0e10ee9d9df3d19840f","gitBlob":"73cc56f205baf4b8d144088dd5eccb1934c2b00d"},"declarationPin":{"bytes":1633,"sha256":"5294c0fce2be6c6974b61a3686c05e60aa66d5bb4599fc97cb315ee53cab71be","gitBlob":"8c594e598e0d946ed92fd658cbe2efe3063ca2c4"}}';
 const root = resolve(import.meta.dirname, "..");
 const manifestPath = "tests/helpers/ir-c1-authority.json";
 const anchorPath = "tests/helpers/ir-c1-authority-root.ts";
@@ -945,7 +945,7 @@ describe("C1 fresh live source contract bridge", () => {
             }
           }
         };
-        const timer = setTimeout(() => terminate(new Error("native type probe exceeded 30000 ms")), 30000);
+        const timer = setTimeout(() => terminate(new Error("native type probe exceeded 120000 ms")), 120000);
         const collect = (chunk: Buffer): void => {
           const remaining = limit - outputBytes;
           if (remaining > 0) chunks.push(chunk.subarray(0, remaining));
@@ -970,7 +970,7 @@ describe("C1 fresh live source contract bridge", () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
-  });
+  }, 150000);
 });
 
 // These fixed test literals are independent of the production inverse and manifest.

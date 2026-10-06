@@ -1,6 +1,12 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { resolve } from "node:path";
+import {
+  capture5883Main4bffInventoryView,
+  capture5883Main4bffInventoryViewSource,
+  inventory4bffViewsReceiptPath,
+} from "./helpers/ir-5883-main-4bff-inventory-views.js";
 import { describe, expect, it } from "vitest";
 import {
   capturePositionFinallyMainPredecessorPolicy,
@@ -281,7 +287,7 @@ function profile(raw: string, which: "before" | "current"): Policy {
 }
 
 function independent() {
-  const raw = read("scripts/compiler-boundaries.json");
+  const raw = capture5883Main4bffInventoryViewSource(read("scripts/compiler-boundaries.json"), "union-to-incoming");
   const current = profile(raw, "current");
   const bytes = Buffer.from(raw),
     insertion = Buffer.from(expected.insertion);
@@ -609,57 +615,148 @@ describe("delivered finally main row position inventory independent proof", () =
       expect(touched).toBe(0);
       healthy();
     });
+  for (const mode of ["raw newline", "semantic row"] as const)
+    it(`rejects physical current-union ${mode} at the named projection before historical calls and restores exact bytes`, () => {
+      const witness = healthy();
+      // Fresh actual union; independent literals, not receipt-derived expectations.
+      const physical = read("scripts/compiler-boundaries.json");
+      expect(Buffer.byteLength(physical)).toBe(592524);
+      expect(sha(physical)).toBe("62dac966e6f945ba268a3ad76ee6b1e5215629234ab63e6f8ace744d8ecbfe22");
+      expect(blob(physical)).toBe("6514db6e1bed887cb3dc3dc36d030cb889d91abd");
+      const data = JSON.parse(physical) as Policy;
+      expect(data.files).toHaveLength(1849);
+      expect(sha(JSON.stringify(data))).toBe("1f76b106119f8cfa563f1cbc2674651a6407f38b8a16e47804a5995f3513b7c1");
+      expect(sha(JSON.stringify(data.files))).toBe("3433dcc3c41d8f6d90bf9590c3f4cdd424fcd3dbe53c6dc475743345c8e3d0e5");
+      const stagingRoot = resolve(import.meta.dirname, "..", ".tmp");
+      mkdirSync(stagingRoot, { recursive: true });
+      const staging = mkdtempSync(resolve(stagingRoot, "6866-finally-union-592524-"));
+      const stagedPolicy = resolve(staging, "policy.json");
+      const original = Buffer.from(physical);
+      try {
+        writeFileSync(stagedPolicy, original);
+        expect(readFileSync(stagedPolicy)).toEqual(original);
+        const projectionTrace: string[] = [];
+        const historicalTrace: string[] = [];
+        let historicalCalls = 0;
+        const projectionAuthority = (path: string): string => {
+          projectionTrace.push(path);
+          return read(path);
+        };
+        const historicalAuthority = (path: string): string => {
+          historicalTrace.push(path);
+          return read(path);
+        };
+        const capture = () => {
+          // No cached projection: each attempt reads the staged physical bytes
+          // and the fixed view receipt again before reaching historical code.
+          const raw = readFileSync(stagedPolicy, "utf8");
+          if (mode === "raw newline") {
+            const projected = capture5883Main4bffInventoryViewSource(raw, "union-to-incoming", projectionAuthority);
+            historicalCalls++;
+            return capturePositionFinallyMainPredecessorPolicySource(projected, historicalAuthority);
+          }
+          const projected = capture5883Main4bffInventoryView(JSON.parse(raw), "union-to-incoming", projectionAuthority);
+          historicalCalls++;
+          return capturePositionFinallyMainPredecessorPolicy(projected, historicalAuthority);
+        };
+        const expectedResult = mode === "raw newline" ? witness.beforeRaw : witness.before;
+        expect(capture()).toEqual(expectedResult);
+        expect(historicalCalls).toBe(1);
+        expect(projectionTrace).toEqual([inventory4bffViewsReceiptPath]);
+        expect(historicalTrace).toEqual([positionFinallyMainSuccessorReceiptPath]);
+        historicalCalls = 0;
+        try {
+          if (mode === "raw newline") writeFileSync(stagedPolicy, Buffer.concat([original, Buffer.from("\n")]));
+          else {
+            const mutant = JSON.parse(readFileSync(stagedPolicy, "utf8")) as Policy;
+            const index = mutant.files.findIndex((row) => row.path === expected.row.path);
+            expect(index).toBeGreaterThanOrEqual(0);
+            mutant.files[index]!.owner = "physically-read-mutant";
+            writeFileSync(stagedPolicy, JSON.stringify(mutant));
+          }
+          expect(readFileSync(stagedPolicy)).not.toEqual(original);
+          expect(capture).toThrow(
+            mode === "raw newline"
+              ? "5883 4bff inventory views: complete raw source profile mismatch"
+              : "5883 4bff inventory views: complete policy profile mismatch",
+          );
+          expect(historicalCalls).toBe(0);
+          expect(historicalTrace).toEqual([positionFinallyMainSuccessorReceiptPath]);
+          expect(projectionTrace).toEqual([inventory4bffViewsReceiptPath, inventory4bffViewsReceiptPath]);
+        } finally {
+          writeFileSync(stagedPolicy, original);
+        }
+        expect(readFileSync(stagedPolicy)).toEqual(original);
+        expect(capture()).toEqual(expectedResult);
+        expect(historicalCalls).toBe(1);
+        expect(historicalTrace).toEqual([
+          positionFinallyMainSuccessorReceiptPath,
+          positionFinallyMainSuccessorReceiptPath,
+        ]);
+        expect(projectionTrace).toEqual([
+          inventory4bffViewsReceiptPath,
+          inventory4bffViewsReceiptPath,
+          inventory4bffViewsReceiptPath,
+        ]);
+      } finally {
+        rmSync(staging, { recursive: true, force: true });
+      }
+      healthy();
+    });
   for (const target of ["current policy", "outer authority"] as const)
     it(`rejects physical ${target} corruption after healthy capture and restores exact bytes`, () => {
       const witness = healthy();
-      const path =
-        target === "current policy" ? "scripts/compiler-boundaries.json" : positionFinallyMainSuccessorReceiptPath;
-      const url = new URL(`../${path}`, import.meta.url);
-      const original = readFileSync(url);
-      let reads = 0;
-      const authority = (path: string): string => {
-        reads++;
-        return read(path);
-      };
-      expect(
-        capturePositionFinallyMainPredecessorPolicySource(read("scripts/compiler-boundaries.json"), authority),
-      ).toBe(witness.beforeRaw);
+      // Historical589117 physical fixture, NOT admission of the current union.
+      // healthy() freshly authenticates/projects actual union before staging.
+      const stagingRoot = resolve(import.meta.dirname, "..", ".tmp");
+      mkdirSync(stagingRoot, { recursive: true });
+      const staging = mkdtempSync(resolve(stagingRoot, "6866-finally-589117-"));
+      const stagedPolicy = resolve(staging, "policy.json");
       try {
-        writeFileSync(url, Buffer.concat([original, Buffer.from("\n")]));
-        expect(readFileSync(url)).not.toEqual(original);
-        if (target === "current policy") {
-          expect(() =>
-            capturePositionFinallyMainPredecessorPolicySource(read("scripts/compiler-boundaries.json"), authority),
-          ).toThrow(/complete raw source profile mismatch/);
-          // Preserve valid JSON while refusing the semantic current profile too.
-          const mutant = JSON.parse(read("scripts/compiler-boundaries.json")) as Policy;
-          mutant.files[expected.index]!.owner = "physically-read-mutant";
-          writeFileSync(url, JSON.stringify(mutant));
-          expect(() =>
-            capturePositionFinallyMainPredecessorPolicy(
-              JSON.parse(read("scripts/compiler-boundaries.json")),
-              authority,
-            ),
-          ).toThrow(/complete policy profile mismatch/);
-        } else {
-          expect(() =>
-            capturePositionFinallyMainPredecessorPolicySource(read("scripts/compiler-boundaries.json"), authority),
-          ).toThrow(/fixed receipt pin mismatch/);
-          expect(() =>
-            capturePositionFinallyMainPredecessorPolicy(
-              JSON.parse(read("scripts/compiler-boundaries.json")),
-              authority,
-            ),
-          ).toThrow(/fixed receipt pin mismatch/);
+        writeFileSync(stagedPolicy, Buffer.from(witness.raw));
+        const readOperand = () => readFileSync(stagedPolicy, "utf8");
+        const url =
+          target === "current policy"
+            ? stagedPolicy
+            : new URL(`../${positionFinallyMainSuccessorReceiptPath}`, import.meta.url);
+        const original = readFileSync(url);
+        let reads = 0;
+        const authority = (path: string): string => {
+          reads++;
+          return read(path);
+        };
+        expect(capturePositionFinallyMainPredecessorPolicySource(readOperand(), authority)).toBe(witness.beforeRaw);
+        try {
+          writeFileSync(url, Buffer.concat([original, Buffer.from("\n")]));
+          expect(readFileSync(url)).not.toEqual(original);
+          if (target === "current policy") {
+            expect(() => capturePositionFinallyMainPredecessorPolicySource(readOperand(), authority)).toThrow(
+              /complete raw source profile mismatch/,
+            );
+            // Preserve valid JSON while refusing the semantic current profile too.
+            const mutant = JSON.parse(readOperand()) as Policy;
+            mutant.files[expected.index]!.owner = "physically-read-mutant";
+            writeFileSync(url, JSON.stringify(mutant));
+            expect(() => capturePositionFinallyMainPredecessorPolicy(JSON.parse(readOperand()), authority)).toThrow(
+              /complete policy profile mismatch/,
+            );
+          } else {
+            expect(() => capturePositionFinallyMainPredecessorPolicySource(readOperand(), authority)).toThrow(
+              /fixed receipt pin mismatch/,
+            );
+            expect(() => capturePositionFinallyMainPredecessorPolicy(JSON.parse(readOperand()), authority)).toThrow(
+              /fixed receipt pin mismatch/,
+            );
+          }
+        } finally {
+          writeFileSync(url, original);
         }
+        expect(readFileSync(url)).toEqual(original);
+        expect(capturePositionFinallyMainPredecessorPolicySource(readOperand(), authority)).toBe(witness.beforeRaw);
+        expect(reads).toBe(4);
+        healthy();
       } finally {
-        writeFileSync(url, original);
+        rmSync(staging, { recursive: true, force: true });
       }
-      expect(readFileSync(url)).toEqual(original);
-      expect(
-        capturePositionFinallyMainPredecessorPolicySource(read("scripts/compiler-boundaries.json"), authority),
-      ).toBe(witness.beforeRaw);
-      expect(reads).toBe(4);
-      healthy();
     });
 });

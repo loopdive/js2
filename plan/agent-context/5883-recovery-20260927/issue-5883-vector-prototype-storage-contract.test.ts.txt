@@ -1,0 +1,184 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { createHash } from "node:crypto";
+import { runInNewContext } from "node:vm";
+import ts from "typescript";
+import { describe, expect, it } from "vitest";
+import { compile } from "../src/index.js";
+import { createCodegenContext } from "../src/codegen/context/create-context.js";
+import { createEmptyModule, type Instr, type ValType } from "../src/ir/types.js";
+import { addFuncType } from "../src/codegen/registry/types.js";
+import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../src/codegen/func-space.js";
+import {
+  reserveVecPropHelpers,
+  fillVecPropHelpers,
+  VEC_PROTO_LOOKUP,
+  VEC_PROTO_STORE,
+  VEC_PROP_GET,
+  VEC_PROP_GET_R,
+} from "../src/codegen/vec-props.js";
+import { fillVecProtoLinkArms, VEC_DEFAULT_PROTO } from "../src/codegen/vec-proto-link.js";
+
+// Structural fixtures only: these placeholder dependencies are never executed
+// and do NOT purport to implement default, cycle, or semantic Get policy.
+function storageFixture() {
+  const ctx = createCodegenContext(createEmptyModule(), ts.createProgram([], {}).getTypeChecker(), {
+    standalone: true,
+  });
+  reserveVecPropHelpers(ctx);
+  const ext: ValType = { kind: "externref" };
+  for (const [name, params, results] of [
+    ["__new_plain_object", [], [ext]],
+    ["__extern_get", [ext, ext], [ext]],
+    ["__hasOwnProperty", [ext, ext], [{ kind: "i32" }]],
+    ["__reflect_get_receiver", [ext, ext, ext], [ext]],
+  ] as [string, ValType[], ValType[]][]) {
+    const typeIdx = addFuncType(ctx, params, results);
+    const idx = mintDefinedFunc(ctx);
+    pushDefinedFunc(ctx, idx, { name, typeIdx, locals: [], body: [{ op: "unreachable" }], exported: false });
+    ctx.funcMap.set(name, idx);
+  }
+  fillVecPropHelpers(ctx);
+  return ctx;
+}
+
+function instructions(value: unknown): Instr[] {
+  if (!value || typeof value !== "object") return [];
+  if (Array.isArray(value)) return value.flatMap(instructions);
+  const obj = value as Record<string, unknown>;
+  return [
+    ...(typeof obj.op === "string" ? [obj as unknown as Instr] : []),
+    ...Object.values(obj).flatMap(instructions),
+  ];
+}
+
+describe("vector prototype storage emitter contract (not runtime acceptance)", () => {
+  it("reserves one five-field identity owner and initializes it in exactly one allocator", () => {
+    const ctx = storageFixture();
+    const type = ctx.mod.types[ctx.vecPropEntryTypeIdx!];
+    expect(type.kind).toBe("struct");
+    if (type.kind !== "struct") throw new Error("entry is not a struct");
+    expect(type.fields.map((f) => f.name)).toEqual(["next", "key", "bag", "protoPresent", "protoValue"]);
+    expect(type.fields.map((f) => f.mutable)).toEqual([false, false, false, true, true]);
+    const alloc = instructions(ctx.mod.functions).filter(
+      (i) => i.op === "struct.new" && i.typeIdx === ctx.vecPropEntryTypeIdx,
+    );
+    expect(alloc).toHaveLength(1);
+    const fn = definedFuncAt(ctx, ctx.funcMap.get("__vec_entry_ensure")!)!;
+    const pos = fn.body.findIndex((i) => i.op === "struct.new" && i.typeIdx === ctx.vecPropEntryTypeIdx);
+    expect(fn.body.slice(pos - 2, pos)).toEqual([{ op: "i32.const", value: 0 }, { op: "ref.null.extern" }]);
+    const count = ctx.mod.types.length;
+    reserveVecPropHelpers(ctx);
+    expect(ctx.mod.types).toHaveLength(count);
+  });
+
+  it("lookup never allocates; store preserves raw payload and sets explicit presence", () => {
+    const ctx = storageFixture();
+    const lookup = instructions(definedFuncAt(ctx, ctx.funcMap.get(VEC_PROTO_LOOKUP)!)!.body);
+    expect(lookup.some((i) => i.op === "call" || i.op === "struct.new" || i.op === "struct.set")).toBe(false);
+    const body = definedFuncAt(ctx, ctx.funcMap.get(VEC_PROTO_STORE)!)!.body;
+    expect(body.slice(3)).toEqual([
+      { op: "local.get", index: 2 },
+      { op: "local.get", index: 1 },
+      { op: "struct.set", typeIdx: ctx.vecPropEntryTypeIdx, fieldIdx: 4 },
+      { op: "local.get", index: 2 },
+      { op: "i32.const", value: 1 },
+      { op: "struct.set", typeIdx: ctx.vecPropEntryTypeIdx, fieldIdx: 3 },
+    ]);
+  });
+
+  it("legacy Get delegates with target as Receiver; core own Get uses original Receiver", () => {
+    const ctx = storageFixture();
+    expect(definedFuncAt(ctx, ctx.funcMap.get(VEC_PROP_GET)!)!.body).toEqual([
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: 1 },
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: ctx.funcMap.get(VEC_PROP_GET_R) },
+    ]);
+    const core = instructions(definedFuncAt(ctx, ctx.funcMap.get(VEC_PROP_GET_R)!)!.body);
+    const call = core.findIndex((i) => i.op === "call" && i.funcIdx === ctx.funcMap.get("__reflect_get_receiver"));
+    expect(core.slice(call - 3, call)).toEqual([
+      { op: "local.get", index: 3 },
+      { op: "local.get", index: 1 },
+      { op: "local.get", index: 2 },
+    ]);
+  });
+
+  it("does not silently activate without the parent default-only provider", () => {
+    const ctx = storageFixture();
+    expect(() => fillVecProtoLinkArms(ctx)).toThrow(VEC_DEFAULT_PROTO);
+  });
+});
+
+// These are integration acceptance cases, intentionally not skipped when the
+// parent dependencies are absent. Source-only authoring: no passing claim.
+for (const [name, body] of [
+  [
+    "explicit null and restoration",
+    `const a = [1]; Object.setPrototypeOf(a, null);
+    if (Object.getPrototypeOf(a) !== null) return -1;
+    Object.setPrototypeOf(a, Array.prototype); return Object.getPrototypeOf(a) === Array.prototype ? 1 : -2;`,
+  ],
+  [
+    "callable raw identity",
+    `const a = [1]; function p() {} Object.setPrototypeOf(a, p);
+    return Object.getPrototypeOf(a) === p ? 1 : -1;`,
+  ],
+  [
+    "vector raw identity",
+    `const a = [1]; const p = [2]; Object.setPrototypeOf(a, p);
+    return Object.getPrototypeOf(a) === p ? 1 : -1;`,
+  ],
+  [
+    "bag keys and integrity survive metadata",
+    `const a = [1]; a.extra = 7; const p = {};
+    Object.setPrototypeOf(a, p); Object.preventExtensions(a); Object.setPrototypeOf(a, p);
+    let refused = false; try { Object.setPrototypeOf(a, null); } catch(e) { refused = e instanceof TypeError; }
+    return refused && Object.getPrototypeOf(a) === p && Object.keys(a).join(',') === '0,extra' && a.extra === 7 ? 1 : -1;`,
+  ],
+  [
+    "own undefined and explicit Receiver",
+    `const a = []; const p = { x: 41 }; Object.setPrototypeOf(a, p);
+    Object.defineProperty(a, 'x', {value: undefined});
+    Object.defineProperty(a, 'y', {get: function() { return this.token; }});
+    return a.x === undefined && Reflect.get(a, 'y', {token: 73}) === 73 ? 1 : -1;`,
+  ],
+  [
+    "mixed cycle refusal",
+    `const a = []; const p = {}; Object.setPrototypeOf(a, p);
+    let refused = false; try { Object.setPrototypeOf(p, a); } catch(e) { refused = e instanceof TypeError; }
+    return refused && Object.getPrototypeOf(a) === p && Object.getPrototypeOf(p) === Object.prototype ? 1 : -1;`,
+  ],
+] as const) {
+  it(`vector prototype integration: ${name}`, async () => {
+    const source = `export function test() { ${body} }`;
+    const receipt = { name, source, sha256: createHash("sha256").update(source).digest("hex") };
+    let boundary = "native";
+    try {
+      const native = runInNewContext(`"use strict"; (function() { ${body} })()`, {}, { timeout: 5000 });
+      console.log(JSON.stringify({ ...receipt, native }));
+      expect(native).toBe(1);
+      boundary = "compile";
+      const result = await compile(source, {
+        target: "standalone",
+        nativeStrings: true,
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+      });
+      console.log(JSON.stringify({ ...receipt, success: result.success, errors: result.errors }));
+      expect(result.success).toBe(true);
+      boundary = "validate/import";
+      const module = new WebAssembly.Module(result.binary);
+      const imports = WebAssembly.Module.imports(module);
+      console.log(JSON.stringify({ ...receipt, imports }));
+      expect(imports).toEqual([]);
+      boundary = "instantiate/runtime";
+      const instance = new WebAssembly.Instance(module, {});
+      const actual = (instance.exports.test as () => number)();
+      console.log(JSON.stringify({ ...receipt, actual, native }));
+      expect(actual).toBe(native);
+    } catch (error) {
+      console.log(JSON.stringify({ ...receipt, boundary, error: String(error) }));
+      throw error;
+    }
+  });
+}

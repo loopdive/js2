@@ -1,0 +1,125 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { createHash } from "node:crypto";
+import { runInNewContext } from "node:vm";
+import { expect, it } from "vitest";
+import { compile } from "../src/index.js";
+
+// Additive coverage; original fixtures and their expectations remain frozen.
+const cases: [string, string][] = [];
+for (const [label, receiver, expected] of [
+  ["primitive", "7n", "7"],
+  ["narrow wrapper", "Object(7n)", "7"],
+  ["wide primitive", "18446744073709551617n", "18446744073709551617"],
+  // Keep this control even if static Object(wide) narrows before valueOf.
+  ["wide wrapper", "Object(18446744073709551617n)", "18446744073709551617"],
+] as const) {
+  for (const extracted of [false, true]) {
+    for (const invocation of ["call", "apply"]) {
+      const method = extracted ? "method" : "BigInt.prototype.valueOf";
+      const call = invocation === "call" ? `${method}.call(receiver)` : `${method}.apply(receiver, [])`;
+      cases.push([
+        `${label}: ${extracted ? "extracted" : "direct"} ${invocation}`,
+        `
+        const receiver = ${receiver};
+        ${extracted ? "const method = BigInt.prototype.valueOf;" : ""}
+        const value = ${call};
+        if (typeof value !== "bigint") return -1;
+        return String(value) === "${expected}" ? 1 : -2;
+      `,
+      ]);
+    }
+  }
+}
+cases.push([
+  "wide runtime ToObject wrapper retains all limbs",
+  `
+  let wrapper;
+  Object.defineProperty(BigInt.prototype, "length", {
+    configurable: true, get: function () { "use strict"; wrapper = this; return 0; }
+  });
+  const iterator = Array.prototype.values.call(18446744073709551617n);
+  iterator.next();
+  if (typeof wrapper !== "object") return -1;
+  const method = BigInt.prototype.valueOf;
+  const value = method.call(wrapper);
+  return typeof value === "bigint" && String(value) === "18446744073709551617" ? 1 : -2;
+`,
+]);
+for (const expression of [
+  "null",
+  "undefined",
+  "7",
+  '"7"',
+  "true",
+  'Symbol("wrong")',
+  "{}",
+  "Object(7)",
+  '({ "[[PrimitiveValue]]": 7n })',
+  "BigInt.prototype",
+]) {
+  cases.push([
+    `rejects incompatible ${expression}`,
+    `
+    const method = BigInt.prototype.valueOf;
+    let rejected = 0;
+    try { BigInt.prototype.valueOf.call(${expression}); } catch (e) { if (e instanceof TypeError) rejected++; }
+    try { method.apply(${expression}, []); } catch (e) { if (e instanceof TypeError) rejected++; }
+    return rejected === 2 ? 1 : -1;
+  `,
+  ]);
+}
+cases.push([
+  "prototype override is observed and prior extraction retained",
+  `
+  const saved = BigInt.prototype.valueOf;
+  BigInt.prototype.valueOf = function () { return 19n; };
+  const direct = BigInt.prototype.valueOf.call(Object(7n));
+  const extracted = saved.call(Object(7n));
+  return direct === 19n && extracted === 7n ? 1 : -1;
+`,
+]);
+cases.push([
+  "local BigInt spelling does not select intrinsic",
+  `
+  const BigInt = { prototype: { valueOf: function () { "use strict"; return this.answer; } } };
+  return BigInt.prototype.valueOf.call({answer: 23}) === 23 ? 1 : -1;
+`,
+]);
+cases.push([
+  "reassigned extracted method uses current value",
+  `
+  let method = BigInt.prototype.valueOf;
+  method = function () { return 29n; };
+  return method.call(Object(7n)) === 29n ? 1 : -1;
+`,
+]);
+cases.push([
+  "wide primitive formatting control without valueOf",
+  `
+  return String(18446744073709551617n) === "18446744073709551617" ? 1 : -1;
+`,
+]);
+for (const [name, body] of cases) {
+  it(name, async () => {
+    const source = `export function test() { ${body} }`;
+    const sha256 = createHash("sha256").update(source).digest("hex");
+    const native = runInNewContext(`(function () { ${body} })()`, {}, { timeout: 5000 });
+    const result = await compile(source, {
+      fileName: "5883-bigint-valueof.js",
+      allowJs: true,
+      skipSemanticDiagnostics: true,
+      target: "standalone",
+      nativeStrings: true,
+    });
+    console.log(JSON.stringify({ name, source, sha256, native, success: result.success, errors: result.errors }));
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const module = new WebAssembly.Module(result.binary);
+    const imports = WebAssembly.Module.imports(module);
+    expect(imports).toEqual([]);
+    const instance = new WebAssembly.Instance(module, {});
+    const actual = (instance.exports.test as () => number)();
+    console.log(JSON.stringify({ name, source, sha256, native, actual, imports }));
+    expect(native).toBe(1);
+    expect(actual).toBe(1);
+  });
+}

@@ -1,0 +1,27 @@
+{
+  "extends": "../../tsconfig.ts7.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "../..",
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "allowJs": true
+  },
+  "include": [
+    "../../tests/issue-6651-d5-promise-dynamic-then.test.ts",
+    "../../tests/issue-5197-r3-promise.test.ts",
+    "../../tests/issue-5197-promise-observable-combinator-r3-2.test.ts",
+    "../../tests/issue-3518-promise-getter-capture.test.ts",
+    "../../tests/issue-6651-promise-combinator-drive.test.ts",
+    "../../tests/issue-6651-promise-custom-combinator.test.ts",
+    "../../tests/issue-6651-d3-class-receiver-combinator.test.ts",
+    "../../tests/issue-6651-d4-promise-subclass.test.ts",
+    "../../tests/issue-2918-promise-then-funcidx-shift.test.ts",
+    "../../tests/issue-3518-native-delay-combinator-body-ownership.test.ts",
+    "../../tests/issue-3518-promise-earlier-main-port.test.ts",
+    "../../tests/issue-3518-promise-export-main-port.test.ts",
+    "../../tests/issue-3518-promise-main-reconcile-20261002.test.ts"
+  ],
+  "exclude": ["../../node_modules", "../../dist", "../../website"]
+}

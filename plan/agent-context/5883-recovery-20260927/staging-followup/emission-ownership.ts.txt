@@ -1,0 +1,618 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+/**
+ * Context-local, metadata-only source-emission ownership arena.
+ *
+ * Not wired to CodegenContext, speculative compilation, IR or activation.
+ * Instantiate once per future compilation context; never key state by AST.
+ * Numeric ids here are arena metadata, NOT function/type/global/local indices.
+ *
+ * A completed provisional body is an immutable, unpublished candidate. Retain
+ * its exact graph BEFORE rolling back the probe that constructed it if later
+ * reuse is possible. Rollback cancels live edges/publications, not that retained
+ * candidate. Reuse requires a new publication/adoption edge to its exact epoch.
+ * This contract requires the future body owner to retain the corresponding
+ * instruction arena too; a function registry entry is not such evidence.
+ */
+
+declare const ownershipHandle: unique symbol;
+type Handle<Kind extends string> = Readonly<{ kind: Kind; id: number; [ownershipHandle]: true }>;
+export type EmissionTransaction = Handle<"transaction">;
+export type BodyEpoch = Handle<"body">;
+export type EmissionRegion = Handle<"region">;
+export type EmissionOccurrence = Handle<"occurrence">;
+export type OwnershipEdge = Handle<"edge">;
+export type SourcePublication = Handle<"publication">;
+export type CompletedBody = Handle<"completed-body">;
+export type EmissionOwner = BodyEpoch | EmissionRegion;
+type Node = EmissionOwner | EmissionOccurrence;
+
+/** Opaque staged-body and capture/frame version identities, not Wasm indices. */
+export interface BodyIdentity {
+  readonly bodyIdentity: object;
+  readonly bindingEnvironment: object;
+}
+export interface RetainedOccurrence {
+  readonly occurrence: EmissionOccurrence;
+  readonly owner: EmissionOwner;
+  readonly nodeIdentity: object;
+  readonly kind: "required-drive" | "protocol-choice" | "seed-edge";
+}
+export type PendingNodeBinding = Pick<RetainedOccurrence, "nodeIdentity" | "kind">;
+export interface RetainedAdoption {
+  readonly edge: OwnershipEdge;
+  readonly owner: EmissionOwner;
+  readonly body: BodyEpoch;
+  readonly useSiteIdentity: object;
+}
+/** Independently supplied staging census, never reconstructed from this ledger. */
+export interface RetainedBodyManifest extends BodyIdentity {
+  readonly body: BodyEpoch;
+  readonly regions: readonly EmissionRegion[];
+  readonly occurrences: readonly RetainedOccurrence[];
+  readonly adoptions: readonly RetainedAdoption[];
+}
+export interface SelectedBodyManifest {
+  readonly publications: readonly Readonly<{ publication: SourcePublication; receipt: CompletedBody }>[];
+  readonly bodies: readonly RetainedBodyManifest[];
+}
+export interface VerifiedSourceOwnership {
+  readonly ownership: SealedSourceOwnership;
+  readonly manifests: readonly RetainedBodyManifest[];
+  /** Only these witnesses may request activation; choices/seeds do not. */
+  readonly requiredOccurrences: readonly EmissionOccurrence[];
+}
+
+/** AST identity is opaque provenance only; repeated visits always mint ids. */
+export interface EmissionProvenance {
+  readonly sourceId: string;
+  readonly unitId: string;
+  readonly ast?: object;
+  readonly label?: string;
+}
+
+export interface SelectedOccurrence {
+  readonly occurrence: EmissionOccurrence;
+  readonly body: BodyEpoch;
+  readonly provenance: EmissionProvenance;
+}
+
+export interface SealedSourceOwnership {
+  readonly publications: readonly Readonly<{
+    publication: SourcePublication;
+    kind: "function" | "module-init";
+    body: BodyEpoch;
+    provenance: EmissionProvenance;
+  }>[];
+  readonly bodies: readonly BodyEpoch[];
+  readonly regions: readonly EmissionRegion[];
+  readonly occurrences: readonly SelectedOccurrence[];
+  /** Arena-only bodies are NOT roots or activation demand. */
+  readonly unselectedBodies: readonly BodyEpoch[];
+  readonly discardedBodies: readonly BodyEpoch[];
+}
+
+interface NodeRecord {
+  readonly body: BodyEpoch;
+  readonly provenance: EmissionProvenance;
+}
+interface EdgeRecord {
+  readonly from: EmissionOwner;
+  readonly to: Node;
+  active: boolean;
+  readonly useSiteIdentity?: object;
+}
+interface BodyRecord {
+  state: "provisional" | "retained" | "discarded";
+  readonly creationScopes: readonly EmissionTransaction[];
+  readonly identity?: BodyIdentity;
+  construction: "unstarted" | "building" | "complete" | "failed";
+  receipt?: CompletedBody;
+  manifest?: RetainedBodyManifest;
+  // Sticky audit taint: a caller-frame write is not body-owned even when that
+  // caller later rolls back, or commits its undo entries into a content frame.
+  // Do not journal/clear this flag. An adapter must rebuild a correctly scoped
+  // epoch rather than turn recovered chronology into a completion receipt.
+  unscopedContent: boolean;
+  /** Frozen body-local edges, including outbound adoptions, not publications. */
+  retained?: ReadonlyMap<EmissionOwner, readonly Node[]>;
+}
+interface TransactionFrame {
+  readonly token: EmissionTransaction;
+  readonly undo: (() => void)[];
+  domain: "caller" | "content" | "unbound-content";
+  body?: BodyEpoch;
+  construction?: boolean;
+}
+
+/** All mutable state is private to this instance; no compiler context import. */
+export class EmissionOwnership {
+  private nextId = 0;
+  private readonly nodes = new Map<Node, NodeRecord>();
+  private readonly bodies = new Map<BodyEpoch, BodyRecord>();
+  private readonly edges = new Map<OwnershipEdge, EdgeRecord>();
+  private readonly memberships = new Map<EmissionOccurrence, OwnershipEdge>();
+  private readonly pendingBindings = new Map<EmissionOccurrence, PendingNodeBinding>();
+  private readonly pendingNodes = new Set<object>();
+  private readonly completions = new Map<CompletedBody, BodyEpoch>();
+  private readonly publications = new Map<
+    SourcePublication,
+    {
+      kind: "function" | "module-init";
+      provenance: EmissionProvenance;
+    }
+  >();
+  private readonly roots = new Map<SourcePublication, BodyEpoch>();
+  private readonly transactions: TransactionFrame[] = [];
+  private sealed?: SealedSourceOwnership;
+  private verified?: VerifiedSourceOwnership;
+
+  private collecting(): void {
+    if (this.sealed) throw new Error("Source ownership is sealed");
+  }
+
+  private handle<K extends string>(kind: K): Handle<K> {
+    return Object.freeze({ kind, id: this.nextId++ }) as Handle<K>;
+  }
+
+  private node(node: Node): NodeRecord {
+    const record = this.nodes.get(node);
+    if (!record) throw new Error("Unknown or foreign emission node");
+    return record;
+  }
+
+  private body(body: BodyEpoch): BodyRecord {
+    const record = this.bodies.get(body);
+    if (!record) throw new Error("Unknown or foreign body epoch");
+    return record;
+  }
+
+  private editable(owner: EmissionOwner): BodyEpoch {
+    this.collecting();
+    const body = this.node(owner).body;
+    if (this.body(body).state !== "provisional") throw new Error("Body epoch is not editable");
+    return body;
+  }
+
+  private contentWrite(owner: EmissionOwner): BodyEpoch {
+    const body = this.editable(owner);
+    const frame = this.transactions[this.transactions.length - 1];
+    if (frame?.domain === "unbound-content") throw new Error("Bind the content transaction before emission");
+    if (frame?.domain === "content" && frame.body !== body) throw new Error("Wrong body transaction domain");
+    return body;
+  }
+
+  private journal(undo: () => void, body?: BodyEpoch): void {
+    const frame = this.transactions[this.transactions.length - 1];
+    if (frame?.domain === "unbound-content") throw new Error("Bind the content transaction before emission");
+    if (frame?.domain === "content" && frame.body !== body) throw new Error("Wrong body transaction domain");
+    frame?.undo.push(undo);
+  }
+
+  /** Legacy caller/publication scope; NOT an authenticated body construction. */
+  beginTransaction(): EmissionTransaction {
+    this.collecting();
+    const token = this.handle("transaction");
+    this.transactions.push({ token, undo: [], domain: "caller" });
+    return token;
+  }
+
+  /** First same-body scope owns construction; nested scopes are local probes. */
+  beginContentTransaction(body?: BodyEpoch): EmissionTransaction {
+    this.collecting();
+    const token = this.handle("transaction");
+    this.transactions.push({ token, undo: [], domain: "unbound-content" });
+    if (body !== undefined) {
+      try {
+        this.bindContentTransaction(token, body);
+      } catch (error) {
+        this.transactions.pop();
+        throw error;
+      }
+    }
+    return token;
+  }
+
+  /** Authenticates a construction token that was opened BEFORE its epoch. */
+  bindContentTransaction(token: EmissionTransaction, body: BodyEpoch): void {
+    const frame = this.top(token);
+    if (frame.domain !== "unbound-content") throw new Error("Content transaction is already bound");
+    this.editable(body);
+    const record = this.body(body);
+    if (record.construction === "failed") throw new Error("Body construction failed; create a new epoch");
+    frame.domain = "content";
+    frame.body = body;
+    frame.construction = record.construction === "unstarted";
+    if (frame.construction) record.construction = "building";
+  }
+
+  private top(token: EmissionTransaction): TransactionFrame {
+    this.collecting();
+    const frame = this.transactions[this.transactions.length - 1];
+    if (!frame || frame.token !== token) throw new Error("Transactions must close once in LIFO order");
+    return frame;
+  }
+
+  /** Inner commit merges the undo log, never publishes or activates anything. */
+  commitTransaction(token: EmissionTransaction): void {
+    const frame = this.top(token);
+    if (frame.domain === "unbound-content") throw new Error("Cannot commit unbound content transaction");
+    this.transactions.pop();
+    // Detached C settles into C, never into an unrelated open P probe.
+    const parent =
+      frame.domain === "content"
+        ? [...this.transactions].reverse().find((f) => f.domain === "content" && f.body === frame.body)
+        : this.transactions[this.transactions.length - 1];
+    if (parent) for (const undo of frame.undo) parent.undo.push(undo);
+    if (frame.construction) this.body(frame.body!).construction = "complete";
+  }
+
+  rollbackTransaction(token: EmissionTransaction): void {
+    const frame = this.top(token);
+    this.transactions.pop();
+    for (let i = frame.undo.length - 1; i >= 0; i--) frame.undo[i]!();
+    if (frame.construction) this.body(frame.body!).construction = "failed";
+  }
+
+  /** Definitions remain arena candidates after rollback, never implicit roots. */
+  createBodyEpoch(provenance: EmissionProvenance, identity?: BodyIdentity): BodyEpoch {
+    this.collecting();
+    const body = this.handle("body");
+    this.nodes.set(body, { body, provenance: Object.freeze({ ...provenance }) });
+    const record: BodyRecord = {
+      state: "provisional",
+      creationScopes: this.transactions.map((frame) => frame.token),
+      identity: identity && Object.freeze({ ...identity }),
+      construction: "unstarted",
+      unscopedContent: false,
+    };
+    this.bodies.set(body, record);
+    // An unfinished candidate has no reusable instruction-arena receipt.
+    // Completed candidates survive, but never inherit a publication root.
+    // Definitions are metadata even before an unbound token is authenticated.
+    this.transactions[this.transactions.length - 1]?.undo.push(() => {
+      if (record.state === "provisional") record.state = "discarded";
+    });
+    return body;
+  }
+
+  /** Detached region: attachment is separate so movement need not cancel it. */
+  createRegion(body: BodyEpoch): EmissionRegion {
+    this.contentWrite(body);
+    const region = this.handle("region");
+    this.nodes.set(region, { body, provenance: this.node(body).provenance });
+    return region;
+  }
+
+  private link(from: EmissionOwner, to: Node, useSiteIdentity?: object): OwnershipEdge {
+    const body = this.contentWrite(from);
+    this.node(to);
+    const edge = this.handle("edge");
+    const record: EdgeRecord = { from, to, active: true, useSiteIdentity };
+    this.journal(() => {
+      record.active = false;
+    }, body);
+    if (this.transactions[this.transactions.length - 1]?.domain !== "content") this.body(body).unscopedContent = true;
+    this.edges.set(edge, record);
+    return edge;
+  }
+
+  attachRegion(owner: EmissionOwner, region: EmissionRegion): OwnershipEdge {
+    const body = this.contentWrite(owner);
+    if (this.node(region).body !== body) throw new Error("Cross-body region attachment requires a new epoch");
+    // Only containment edges participate. Recursive body adoption remains legal.
+    const pending: EmissionOwner[] = [region];
+    const seen = new Set<EmissionOwner>();
+    while (pending.length) {
+      const cursor = pending.pop()!;
+      if (cursor === owner) throw new Error("Region containment cycle");
+      if (seen.has(cursor)) continue;
+      seen.add(cursor);
+      for (const edge of this.edges.values()) {
+        if (edge.active && edge.from === cursor && edge.to.kind === "region") pending.push(edge.to);
+      }
+    }
+    if ([...this.edges.values()].some((e) => e.active && e.to === region)) {
+      throw new Error("Region already has an owner; detach before moving");
+    }
+    return this.link(owner, region);
+  }
+
+  recordOccurrence(
+    owner: EmissionOwner,
+    provenance: EmissionProvenance,
+    binding?: PendingNodeBinding,
+  ): EmissionOccurrence {
+    const body = this.contentWrite(owner);
+    if (binding && this.pendingNodes.has(binding.nodeIdentity))
+      throw new Error("Pending node already has an occurrence");
+    const occurrence = this.handle("occurrence");
+    this.nodes.set(occurrence, { body, provenance: Object.freeze({ ...provenance }) });
+    this.memberships.set(occurrence, this.link(owner, occurrence));
+    if (binding) {
+      this.pendingBindings.set(occurrence, Object.freeze({ ...binding }));
+      this.pendingNodes.add(binding.nodeIdentity);
+    }
+    return occurrence;
+  }
+
+  /** Stable membership, available to staging movement/removal validation. */
+  occurrenceMembership(occurrence: EmissionOccurrence): OwnershipEdge {
+    this.node(occurrence);
+    const edge = this.memberships.get(occurrence);
+    if (!edge) throw new Error("Unknown occurrence membership");
+    return edge;
+  }
+
+  removeOccurrence(occurrence: EmissionOccurrence): void {
+    this.detachEdge(this.occurrenceMembership(occurrence));
+  }
+
+  /** Adopt exactly this candidate, never a function name or registry entry. */
+  adoptBody(owner: EmissionOwner, body: BodyEpoch, useSiteIdentity?: object): OwnershipEdge {
+    this.contentWrite(owner);
+    if (this.body(body).state === "discarded") throw new Error("Cannot adopt a discarded body epoch");
+    if (useSiteIdentity && [...this.edges.values()].some((e) => e.active && e.useSiteIdentity === useSiteIdentity)) {
+      throw new Error("Use site already has an adoption target");
+    }
+    return this.link(owner, body, useSiteIdentity);
+  }
+
+  detachEdge(edge: OwnershipEdge): void {
+    this.collecting();
+    const record = this.edges.get(edge);
+    if (!record) throw new Error("Unknown or foreign ownership edge");
+    const body = this.contentWrite(record.from);
+    if (!record.active) throw new Error("Ownership edge is already detached");
+    this.journal(() => {
+      record.active = true;
+    }, body);
+    if (this.transactions[this.transactions.length - 1]?.domain !== "content") this.body(body).unscopedContent = true;
+    record.active = false;
+  }
+
+  /**
+   * Freeze a completed provisional instruction arena for possible reuse.
+   * This is NOT transaction commit or publication. Intentionally survives an
+   * enclosing probe rollback. Call only once the candidate's internal scopes
+   * are settled; later edits/replacements must use a NEW epoch.
+   */
+  retainBodyEpoch(body: BodyEpoch): void {
+    this.editable(body);
+    if (this.transactions.some((f) => f.domain === "unbound-content" || (f.domain === "content" && f.body === body))) {
+      throw new Error("Close internal body transactions before retaining its epoch");
+    }
+    if (this.body(body).construction === "failed") throw new Error("Cannot retain failed body construction");
+    const current = this.transactions[this.transactions.length - 1]?.token;
+    // Compatibility-only conservative caller guard for the original 21 cases.
+    // It does NOT authenticate completion; adapters must use completeBodyEpoch.
+    if (this.body(body).construction !== "complete" && current && !this.body(body).creationScopes.includes(current)) {
+      throw new Error("Close internal body transactions before retaining its epoch");
+    }
+    const outgoing = new Map<EmissionOwner, Node[]>();
+    for (const edge of this.edges.values()) {
+      if (!edge.active || this.node(edge.from).body !== body) continue;
+      const children = outgoing.get(edge.from) ?? [];
+      children.push(edge.to);
+      outgoing.set(edge.from, children);
+    }
+    this.body(body).retained = new Map([...outgoing].map(([owner, children]) => [owner, Object.freeze(children)]));
+    this.body(body).state = "retained";
+  }
+
+  /** Checks both directions of a staging-supplied body census. */
+  private validateBodyManifest(manifest: RetainedBodyManifest): void {
+    const record = this.body(manifest.body);
+    if (
+      !record.identity ||
+      record.identity.bodyIdentity !== manifest.bodyIdentity ||
+      record.identity.bindingEnvironment !== manifest.bindingEnvironment
+    ) {
+      throw new Error("Stale body or binding-environment identity");
+    }
+    const seen = new Set<EmissionOwner>();
+    const regions = new Set<EmissionRegion>();
+    const occurrences = new Map<EmissionOccurrence, EmissionOwner>();
+    const adoptions = new Map<OwnershipEdge, EdgeRecord>();
+    const pending: EmissionOwner[] = [manifest.body];
+    while (pending.length) {
+      const owner = pending.pop()!;
+      if (seen.has(owner)) continue;
+      seen.add(owner);
+      for (const [id, edge] of this.edges) {
+        if (!edge.active || edge.from !== owner) continue;
+        if (edge.to.kind === "region") {
+          regions.add(edge.to);
+          pending.push(edge.to);
+        } else if (edge.to.kind === "occurrence") occurrences.set(edge.to, owner);
+        else adoptions.set(id, edge);
+      }
+    }
+    if (
+      manifest.regions.length !== regions.size ||
+      new Set(manifest.regions).size !== regions.size ||
+      manifest.regions.some((r) => !regions.has(r))
+    )
+      throw new Error("Retained region census mismatch");
+    if (manifest.occurrences.length !== occurrences.size) throw new Error("Pending node census mismatch");
+    const seenOccurrences = new Set<EmissionOccurrence>();
+    for (const item of manifest.occurrences) {
+      const binding = this.pendingBindings.get(item.occurrence);
+      if (
+        seenOccurrences.has(item.occurrence) ||
+        occurrences.get(item.occurrence) !== item.owner ||
+        !binding ||
+        binding.nodeIdentity !== item.nodeIdentity ||
+        binding.kind !== item.kind
+      ) {
+        throw new Error("Pending node census mismatch");
+      }
+      seenOccurrences.add(item.occurrence);
+    }
+    if (manifest.adoptions.length !== adoptions.size) throw new Error("Adoption census mismatch");
+    const seenEdges = new Set<OwnershipEdge>();
+    for (const item of manifest.adoptions) {
+      const edge = adoptions.get(item.edge);
+      if (
+        seenEdges.has(item.edge) ||
+        !edge ||
+        edge.from !== item.owner ||
+        edge.to !== item.body ||
+        edge.useSiteIdentity !== item.useSiteIdentity ||
+        !edge.useSiteIdentity
+      )
+        throw new Error("Adoption census mismatch");
+      seenEdges.add(item.edge);
+    }
+  }
+
+  /** Authenticated adapter entry; legacy retainBodyEpoch alone cannot mint it. */
+  completeBodyEpoch(body: BodyEpoch, manifest: RetainedBodyManifest): CompletedBody {
+    this.editable(body);
+    if (manifest.body !== body) throw new Error("Wrong body completion manifest");
+    const record = this.body(body);
+    if (record.construction !== "complete" || record.unscopedContent) {
+      throw new Error("Completion requires settled explicit body-owned construction");
+    }
+    if (this.transactions.some((f) => f.domain === "unbound-content" || (f.domain === "content" && f.body === body))) {
+      throw new Error("Close internal body transactions before completion");
+    }
+    this.validateBodyManifest(manifest);
+    this.retainBodyEpoch(body);
+    const receipt = this.handle("completed-body");
+    record.receipt = receipt;
+    record.manifest = Object.freeze({
+      body,
+      bodyIdentity: manifest.bodyIdentity,
+      bindingEnvironment: manifest.bindingEnvironment,
+      regions: Object.freeze([...manifest.regions]),
+      occurrences: Object.freeze(manifest.occurrences.map((o) => Object.freeze({ ...o }))),
+      adoptions: Object.freeze(manifest.adoptions.map((a) => Object.freeze({ ...a }))),
+    });
+    this.completions.set(receipt, body);
+    return receipt;
+  }
+
+  /** Explicit ordinary-owner discard. A selected edge to it makes seal fail. */
+  discardBodyEpoch(body: BodyEpoch): void {
+    this.collecting();
+    const record = this.body(body);
+    if (record.state === "discarded") throw new Error("Body epoch is already discarded");
+    const previous = record.state;
+    this.journal(() => {
+      record.state = previous;
+    }, body);
+    record.state = "discarded";
+  }
+
+  createPublication(kind: "function" | "module-init", provenance: EmissionProvenance): SourcePublication {
+    this.collecting();
+    const publication = this.handle("publication");
+    this.publications.set(publication, { kind, provenance: Object.freeze({ ...provenance }) });
+    return publication;
+  }
+
+  /** Ordinary published functions are roots BEFORE DCE, even if never called. */
+  publishBody(publication: SourcePublication, body: BodyEpoch): void {
+    this.collecting();
+    if (!this.publications.has(publication)) throw new Error("Unknown or foreign source publication");
+    if (this.body(body).state === "discarded") throw new Error("Cannot publish a discarded body epoch");
+    const previous = this.roots.get(publication);
+    this.journal(() => {
+      if (previous) this.roots.set(publication, previous);
+      else this.roots.delete(publication);
+    });
+    this.roots.set(publication, body);
+  }
+
+  unpublishBody(publication: SourcePublication): void {
+    this.collecting();
+    if (!this.publications.has(publication)) throw new Error("Unknown or foreign source publication");
+    const previous = this.roots.get(publication);
+    this.journal(() => {
+      if (previous) this.roots.set(publication, previous);
+    });
+    this.roots.delete(publication);
+  }
+
+  private computeSourceOwnership(): SealedSourceOwnership {
+    if (this.transactions.length !== 0) throw new Error("Cannot seal with open emission transactions");
+    const seen = new Set<Node>();
+    const bodies: BodyEpoch[] = [];
+    const regions: EmissionRegion[] = [];
+    const occurrences: SelectedOccurrence[] = [];
+    const pending: Node[] = [...this.roots.values()];
+    while (pending.length > 0) {
+      const node = pending.pop()!;
+      if (seen.has(node)) continue;
+      seen.add(node);
+      const record = this.node(node);
+      const body = this.body(record.body);
+      if (body.state !== "retained" || !body.retained) {
+        throw new Error("Selected ownership reaches an unfinished or discarded body epoch");
+      }
+      if (node.kind === "occurrence") {
+        occurrences.push(Object.freeze({ occurrence: node, body: record.body, provenance: record.provenance }));
+      } else {
+        if (node.kind === "body") bodies.push(node);
+        else regions.push(node);
+        for (const child of body.retained.get(node) ?? []) pending.push(child);
+      }
+    }
+    return Object.freeze({
+      publications: Object.freeze(
+        [...this.roots].map(([publication, body]) =>
+          Object.freeze({
+            publication,
+            body,
+            ...this.publications.get(publication)!,
+          }),
+        ),
+      ),
+      bodies: Object.freeze(bodies),
+      regions: Object.freeze(regions),
+      occurrences: Object.freeze(occurrences),
+      unselectedBodies: Object.freeze(
+        [...this.bodies].filter(([id, r]) => !seen.has(id) && r.state !== "discarded").map(([id]) => id),
+      ),
+      discardedBodies: Object.freeze([...this.bodies].filter(([, r]) => r.state === "discarded").map(([id]) => id)),
+    });
+  }
+
+  /** Raw ledger snapshot for metadata inspection/tests, NOT adapter approval. */
+  sealSourcePublication(): SealedSourceOwnership {
+    return (this.sealed ??= this.computeSourceOwnership());
+  }
+
+  /** Mandatory future adapter barrier. Failure never caches partial approval. */
+  sealWithManifest(manifest: SelectedBodyManifest): VerifiedSourceOwnership {
+    const ownership = this.sealed ?? this.computeSourceOwnership();
+    if (manifest.publications.length !== ownership.publications.length)
+      throw new Error("Selected root census mismatch");
+    const rootSlots = new Set<SourcePublication>();
+    for (const item of manifest.publications) {
+      const body = this.completions.get(item.receipt);
+      if (rootSlots.has(item.publication) || !body || this.roots.get(item.publication) !== body) {
+        throw new Error("Selected root census mismatch");
+      }
+      rootSlots.add(item.publication);
+    }
+    if (manifest.bodies.length !== ownership.bodies.length) throw new Error("Selected body census mismatch");
+    const selected = new Set(ownership.bodies);
+    for (const item of manifest.bodies) {
+      if (!selected.delete(item.body) || !this.body(item.body).receipt)
+        throw new Error("Selected body has no authenticated receipt");
+      this.validateBodyManifest(item);
+    }
+    if (this.verified) return this.verified;
+    const manifests = ownership.bodies.map((body) => this.body(body).manifest!);
+    this.verified = Object.freeze({
+      ownership,
+      manifests: Object.freeze(manifests),
+      requiredOccurrences: Object.freeze(
+        manifests.flatMap((m) => m.occurrences.filter((o) => o.kind === "required-drive").map((o) => o.occurrence)),
+      ),
+    });
+    this.sealed = ownership;
+    return this.verified;
+  }
+}

@@ -76,18 +76,18 @@ import { ensureExnTag } from "./registry/imports.js";
 import { ensureNativeIteratorRuntime } from "./iterator-native.js";
 import { compileExpression } from "./shared.js";
 import { PROMISE_STATE_PENDING, ensureAsyncDriveRuntime } from "./async-scheduler.js";
+import { aggregateSettleFuncIdx } from "./promise-species-then.js"; // (#5197 r3)
 import {
-  combinatorReactionFns,
+  observableCombinatorReactionFns,
   emitObservableCombinatorElement,
   emitObservableCombinatorPreparation,
-  ensureCombinatorFunctions,
   ensureObservableCombinatorRuntime,
   type CombinatorRuntime,
   type ObservableCombinatorPreparation,
   type ObservableCombinatorRuntime,
-  type NativeCombinator,
   type ObservableElementCarrier,
-} from "./promise-combinators.js";
+} from "./promises/promise-combinator-observable-protocol.js";
+import { ensureCombinatorFunctions, type NativeCombinator } from "./promise-combinators.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -182,7 +182,7 @@ function ensureDriveAllRuntime(
         ...captures,
         arrTypeIdx: ids.arrTypeIdx,
         vecTypeIdx: ids.vecTypeIdx,
-        fulfillFuncIdx: rt.fulfillFuncIdx,
+        fulfillFuncIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx), // (#5197 r3) Resolve(aggregate)
       }),
       exported: false,
     });
@@ -308,7 +308,7 @@ export function emitStandalonePromiseCombinatorDrive(
   if (observableProtocol && !observable) return undefined;
   const drive = method === "all" ? ensureDriveAllRuntime(ctx, ids, observable) : undefined;
   if (method === "all" && !drive) return undefined;
-  const reaction = combinatorReactionFns(ctx, ids, method);
+  const reaction = observableCombinatorReactionFns(ids, method);
   const tagIdx = ensureExnTag(ctx);
   if (
     ctx.funcMap.get("__iterator") === undefined ||
@@ -681,7 +681,7 @@ function emitDriveAllComplete(
             { op: "struct.get", typeIdx: st, fieldIdx: DRIVE_STATE_ARR },
             { op: "struct.new", typeIdx: ids.vecTypeIdx },
             { op: "extern.convert_any" },
-            { op: "call", funcIdx: rt.fulfillFuncIdx },
+            { op: "call", funcIdx: aggregateSettleFuncIdx(ctx, rt.fulfillFuncIdx) }, // (#5197 r3)
             { op: "drop" },
           ],
         },

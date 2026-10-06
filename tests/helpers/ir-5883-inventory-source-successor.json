@@ -1,0 +1,209 @@
+{
+  "schema": "fixed-pr5883-inventory-source-successor-v1",
+  "coordinateUnit": "utf8-byte",
+  "sourcePath": "scripts/compiler-boundaries.json",
+  "baseMain": "6128dd8244b65028ea89a48eb7259efebd3c8fba",
+  "checkpoint": "884d2fc58f40a28c391ef5cf238b49582329e55b",
+  "before": {
+    "source": {
+      "bytes": 588351,
+      "sha256": "4b442f641a2a99fd4abffc5ef85271858f4a3ae2337fcde8c380fba076a22d05",
+      "gitBlob": "c5da824f89dded25e85e7e315825d2d61d97f906"
+    },
+    "dataSha256": "56532a3cda4a9a8ec083fc0ebb7d38300fe754dd8f7cc4d49c20784ae77f05e0",
+    "topLevelKeys": [
+      "schema",
+      "description",
+      "sourceRoot",
+      "tsconfig",
+      "requireGitProvenance",
+      "externalAssets",
+      "frontendWrapper",
+      "moduleExtensions",
+      "layers",
+      "allowedEdges",
+      "externalPackages",
+      "activationHistory",
+      "nonModules",
+      "moves",
+      "evidence",
+      "files"
+    ],
+    "movesCount": 12,
+    "movesSha256": "050fb62b7369179b0b3bd81193ec9bc275a77db1ebb45ac5fdef1a136ab037f2",
+    "filesCount": 1837,
+    "filesSha256": "fdd1e7da8bc2decab20f41771aa30b724a3ecda1929f590f286e2f530171be9c",
+    "retainedSha256": "dd91458d637f35a7ad9ac9c3a0663e34fd4e0fa9dc6e4786b3b8fa716e1afa12"
+  },
+  "current": {
+    "source": {
+      "bytes": 590105,
+      "sha256": "29f555ed9afe384c0cf7d3bfe45115083eb42d5445d1f6c983f85aaa6424bad9",
+      "gitBlob": "2d69c0400d7d42a5d8d4103ada085a071bb00a37"
+    },
+    "dataSha256": "faae7f2cc8a2e0c15f7ec7966789ea0e8f3a2597120a428d3cce4673d82b1265",
+    "topLevelKeys": [
+      "schema",
+      "description",
+      "sourceRoot",
+      "tsconfig",
+      "requireGitProvenance",
+      "externalAssets",
+      "frontendWrapper",
+      "moduleExtensions",
+      "layers",
+      "allowedEdges",
+      "externalPackages",
+      "activationHistory",
+      "nonModules",
+      "moves",
+      "evidence",
+      "files"
+    ],
+    "movesCount": 15,
+    "movesSha256": "dee1f3da0891e29bfb95534a899b3f5da31dae05c45d3a35be7123115e1466b4",
+    "filesCount": 1841,
+    "filesSha256": "e47ea0d0ca1a99541dcd287186f5f187f7e1f270c0f4fb9b8c42ca37d8386d61",
+    "retainedSha256": "dd91458d637f35a7ad9ac9c3a0663e34fd4e0fa9dc6e4786b3b8fa716e1afa12"
+  },
+  "additions": [
+    {
+      "field": "moves",
+      "index": 0,
+      "rows": [
+        {
+          "from": "src/codegen/promise-combinator-observable-protocol.ts",
+          "to": "src/codegen/promises/promise-combinator-observable-protocol.ts"
+        },
+        {
+          "from": "src/codegen/promise-observable-combinators.ts",
+          "to": "src/codegen/promises/promise-observable-combinators.ts"
+        },
+        {
+          "from": "src/codegen/vec-pop-body.ts",
+          "to": "src/codegen/vectors/vec-pop-body.ts"
+        }
+      ],
+      "previous": null,
+      "next": {
+        "from": "src/ir/nested-stackification.ts",
+        "to": "src/ir/analysis/nested-stackification.ts"
+      }
+    },
+    {
+      "field": "files",
+      "index": 52,
+      "rows": [
+        {
+          "path": "src/runtime/wasmgc/values/vector-storage-copy-body.ts",
+          "state": "clean",
+          "layer": "native-runtime"
+        }
+      ],
+      "previous": {
+        "path": "src/runtime/wasmgc/values/vector-grow-store.ts",
+        "state": "clean",
+        "layer": "native-runtime"
+      },
+      "next": {
+        "path": "src/shared/contracts/ir-preparation-failure.ts",
+        "state": "clean",
+        "layer": "foundation"
+      }
+    },
+    {
+      "field": "files",
+      "index": 869,
+      "rows": [
+        {
+          "path": "src/codegen/promises/promise-combinator-observable-protocol.ts",
+          "state": "unmigrated",
+          "layer": "mixed-needs-split",
+          "destination": "backend-wasmgc",
+          "owner": "3518-coordinator",
+          "nextBoundary": "Separate context-driven observable protocol registration and emission from allocator-owned resources and canonical native bodies; retain the legacy adapter until full IR equivalence."
+        },
+        {
+          "path": "src/codegen/promises/promise-observable-combinators.ts",
+          "state": "unmigrated",
+          "layer": "mixed-needs-split",
+          "destination": "backend-wasmgc",
+          "owner": "3518-coordinator",
+          "nextBoundary": "Separate AST/context-driven observable combinator lowering, allocator-owned live aggregate resources, and canonical native body construction."
+        }
+      ],
+      "previous": {
+        "path": "src/codegen/promise-combinators.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "backend-wasmgc",
+        "owner": "3518-coordinator",
+        "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      },
+      "next": {
+        "path": "src/codegen/promise-executor.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "backend-wasmgc",
+        "owner": "3518-coordinator",
+        "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      }
+    },
+    {
+      "field": "files",
+      "index": 1104,
+      "rows": [
+        {
+          "path": "src/codegen/vectors/vec-pop-body.ts",
+          "state": "unmigrated",
+          "layer": "mixed-needs-split",
+          "destination": "backend-wasmgc",
+          "owner": "3518-coordinator",
+          "nextBoundary": "Closed pop instruction builder separated from allocation; still uses backend physical types and handles, not a migrated semantic IR producer."
+        }
+      ],
+      "previous": {
+        "path": "src/codegen/vec-props-key-source.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "backend-wasmgc",
+        "owner": "3518-coordinator",
+        "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      },
+      "next": {
+        "path": "src/codegen/vec-props.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "backend-wasmgc",
+        "owner": "3518-coordinator",
+        "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      }
+    }
+  ],
+  "rawSpans": [
+    {
+      "beforeOffset": 68319,
+      "afterOffset": 68319,
+      "before": "",
+      "after": "    {\n      \"from\": \"src/codegen/promise-combinator-observable-protocol.ts\",\n      \"to\": \"src/codegen/promises/promise-combinator-observable-protocol.ts\"\n    },\n    {\n      \"from\": \"src/codegen/promise-observable-combinators.ts\",\n      \"to\": \"src/codegen/promises/promise-observable-combinators.ts\"\n    },\n    {\n      \"from\": \"src/codegen/vec-pop-body.ts\",\n      \"to\": \"src/codegen/vectors/vec-pop-body.ts\"\n    },\n"
+    },
+    {
+      "beforeOffset": 78933,
+      "afterOffset": 79347,
+      "before": "",
+      "after": "    {\n      \"path\": \"src/runtime/wasmgc/values/vector-storage-copy-body.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"native-runtime\"\n    },\n"
+    },
+    {
+      "beforeOffset": 326831,
+      "afterOffset": 327385,
+      "before": "",
+      "after": "    {\n      \"path\": \"src/codegen/promises/promise-combinator-observable-protocol.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate context-driven observable protocol registration and emission from allocator-owned resources and canonical native bodies; retain the legacy adapter until full IR equivalence.\"\n    },\n    {\n      \"path\": \"src/codegen/promises/promise-observable-combinators.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven observable combinator lowering, allocator-owned live aggregate resources, and canonical native body construction.\"\n    },\n"
+    },
+    {
+      "beforeOffset": 401719,
+      "afterOffset": 403102,
+      "before": "",
+      "after": "    {\n      \"path\": \"src/codegen/vectors/vec-pop-body.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Closed pop instruction builder separated from allocation; still uses backend physical types and handles, not a migrated semantic IR producer.\"\n    },\n"
+    }
+  ]
+}

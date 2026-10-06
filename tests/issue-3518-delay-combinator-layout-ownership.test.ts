@@ -20,13 +20,12 @@ import { ensureLateImport, flushLateImportShifts } from "../src/codegen/expressi
 import { verifyForwardDelayHistorical, verifyHistorical } from "./helpers/native-delay-combinator-source-receipts.mjs";
 import { beforePromiseExportMain } from "./helpers/promise-export-main-port.js";
 import { beforeEarlierPromiseMain } from "./helpers/promise-earlier-main-port.js";
+import { readHistoricalPromiseSuccessor } from "./helpers/historical-promise-successors.js";
 
 void compile;
+const rawRead = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const read = (path: string): string =>
-  beforeEarlierPromiseMain(
-    path,
-    beforePromiseExportMain(path, readFileSync(new URL(`../${path}`, import.meta.url), "utf8")),
-  );
+  beforeEarlierPromiseMain(path, beforePromiseExportMain(path, readHistoricalPromiseSuccessor(path, rawRead)));
 import {
   B1_DONOR_HASHES as hashes,
   B1_INVERSE_ROWS as inverseRows,

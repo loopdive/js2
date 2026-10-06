@@ -1,0 +1,44 @@
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import assert from "node:assert/strict";
+import { isDeepStrictEqual } from "node:util";
+const paths = {
+  A: ".tmp/main-fa6b-runtime-baseline.json",
+  B: ".tmp/R-B-runtime136-first.json",
+  C: ".tmp/R-C-runtime136-plus10-first.json",
+};
+const hash = bytes => createHash("sha256").update(bytes).digest("hex");
+const reports = Object.fromEntries(Object.entries(paths).map(([arm,path]) => [arm, JSON.parse(readFileSync(path))]));
+const flatten = report => report.testResults.flatMap(suite => suite.assertionResults.map(test => ({
+  key: suite.name.split("/").pop() + ":" + test.fullName,
+  file: suite.name.split("/").pop(), name: test.fullName,
+  status: test.status, failureMessages: test.failureMessages,
+})));
+const records = Object.fromEntries(Object.entries(reports).map(([arm,report]) => [arm, flatten(report)]));
+assert.equal(records.A.length, 136); assert.equal(records.B.length, 136); assert.equal(records.C.length, 146);
+const maps = Object.fromEntries(Object.entries(records).map(([arm,rows]) => {
+  const map = new Map(rows.map(row => [row.key,row])); assert.equal(map.size, rows.length, "unique case keys"); return [arm,map];
+}));
+assert.deepEqual([...maps.A.keys()].sort(), [...maps.B.keys()].sort());
+for (const key of maps.A.keys()) assert(maps.C.has(key), "C preserves original case");
+const added = records.C.filter(row => !maps.A.has(row.key));
+assert.equal(added.length, 10);
+assert(added.every(row => row.file === "issue-5883-whole-captured-drive-render.test.ts"));
+const rows = records.A.map(a => {
+  const b = maps.B.get(a.key), c = maps.C.get(a.key);
+  return { key: a.key, A: a, B: b, C: c, exactAB: isDeepStrictEqual(a,b), exactBC: isDeepStrictEqual(b,c) };
+});
+const totals = {};
+for (const arm of ["A","B","C"]) {
+  const original = records[arm].filter(row => maps.A.has(row.key));
+  totals[arm] = { original: original.length, passed: original.filter(r => r.status === "passed").length,
+    failed: original.filter(r => r.status === "failed").length,
+    nullFailureMessageCases: original.filter(r => r.failureMessages?.some(x => x === null)).length };
+}
+const equal = rows.every(row => row.exactAB && row.exactBC);
+const sources = [...new Set(records.A.map(r => r.file))].map(file => ({ file, currentHash: hash(readFileSync("tests/" + file)) }));
+console.log(JSON.stringify({ denominator: 136, exactAB: rows.filter(r=>r.exactAB).length,
+  exactBC: rows.filter(r=>r.exactBC).length, totals, added,
+  reports: Object.entries(paths).map(([arm,path])=>({arm,path,sha256:hash(readFileSync(path))})), sources,
+  limitation: "Exact status and reported failure arrays only; null messages do not prove exception-value equality. A is the preserved original report, B/C are fresh runs.", rows }, null, 2));
+if (!equal || !added.every(row => row.status === "passed")) process.exitCode = 1;

@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { getNullablePrimitiveInfo, isBigIntType } from "../checker/type-mapper.js";
+import type { ValType } from "../ir/types.js";
+import type { ts } from "../ts-api.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { addUnionImportsViaRegistry, flushLateImportShifts } from "./shared.js";
+
+/** Logical field intent, not a second registry of physical layouts. */
+export interface ClosedDataFieldStoragePlan {
+  readonly type: ValType;
+  readonly nativeBigIntReference: boolean;
+}
+
+/** Pure: choose storage BEFORE layout hashing/publication; never mint helpers. */
+export function resolveClosedDataFieldStorage(
+  ctx: CodegenContext,
+  semanticType: ts.Type,
+  scalarMapping: ValType,
+  explicitNativeOverride?: ValType | null,
+): ClosedDataFieldStoragePlan {
+  if (explicitNativeOverride) return { type: explicitNativeOverride, nativeBigIntReference: false };
+  const nativeBigInt =
+    ctx.standalone &&
+    ctx.nativeStrings &&
+    (isBigIntType(semanticType) || getNullablePrimitiveInfo(semanticType)?.primitiveKind === "bigint");
+  const widen = nativeBigInt && scalarMapping.kind === "i64" && scalarMapping.bigint === true;
+  return {
+    type: widen ? { kind: "externref" } : scalarMapping,
+    nativeBigIntReference: nativeBigInt && (widen || scalarMapping.kind === "externref"),
+  };
+}
+
+/**
+ * Before the caller's ONE compileExpression(rhs, storage). No RHS evaluation,
+ * runtime conversion, cached numeric handle, or reconstruction from low64.
+ * A supplied plan must describe the logical source field, not a dedup cache's
+ * same-shaped externref field. Dynamic/Reflect callers instead prove the RHS.
+ */
+export function prepareClosedFieldValue(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  rhs: ts.Expression,
+  storage: ValType,
+  semanticPlan?: ClosedDataFieldStoragePlan,
+): void {
+  if (!ctx.standalone || !ctx.nativeStrings || (storage.kind !== "externref" && storage.kind !== "anyref")) return;
+  if (!semanticPlan?.nativeBigIntReference && ctx.oracle.staticJsTypeOf(rhs) !== "bigint") return;
+  addUnionImportsViaRegistry(ctx);
+  flushLateImportShifts(ctx, fctx);
+}

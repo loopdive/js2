@@ -1,0 +1,264 @@
+// Parent-reviewed execution only; this file does not choose or generate an epoch.
+// CLI: node THIS --slot-verified-free SELF_SHA COMMIT MANIFEST_ABSOLUTE_PATH MANIFEST_SHA
+// Append --canonical-only for an independently pinned diagnostic, not a full epoch.
+// Manifest schema 5883-explicit-successor-validation-v1:
+// { schema, scope: 'full' | 'canonical-only', head, cwd, node, nodeHash, pins, delta, evidencePins, assertions,
+//   additionalProofFiles, importedMainTests, proofAuthority, controlReports }
+// pins: complete captureEpochPins() plus the two original v4 extension paths.
+// delta: exact {path,status,beforeSha256,afterSha256} changes from original7752.
+// evidencePins: every recursive regular file in retained attempt directories below,
+// plus all parent-selected immutable proof/identity receipts (relative D paths).
+// assertions: path -> sorted/multiplicity-preserving JSON strings encoding
+// [ancestorTitles, fullName, title], explicitly reviewed BEFORE execution.
+// proofAuthority: {path,sha256}, an immutable parent approval of the completed
+// third-addition proof, also in evidencePins. No implicit approval from HEAD.
+// additionalProofFiles: explicit nonempty list, including the new d0a13 controls.
+// controlReports: each repairs file and historical-runtime file ->
+// {path,sha256,nativeFile,stream?}. path is a pinned native JSON or lossless
+// archive; stream selects exactly one files[] row with bytes/sha256/gzipBase64.
+// nativeFile is the original absolute report filename (B/C/D provenance retained).
+// Canonical-only requires all input/evidence pins and delta, but does not require
+// assertions, controlReports, test selections or proofAuthority. Any documents
+// present in either pin map remain bound; no suffix-based exclusions are applied.
+// No tests are filtered by name. No deadline, fixture or expected result changes.
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, openSync, closeSync, lstatSync, readdirSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { gunzipSync } from 'node:zlib';
+import { resolve, relative, isAbsolute } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const ROOT = '/Users/thomas/Code/js2/.codex-worktrees/codex-5883-cycle-main9c-20261002';
+const SELF = fileURLToPath(import.meta.url);
+const CHECKPOINT = '3a5dac945396882d9247eaab770ddff2a1816416';
+const MAIN = 'd0a13fb182e6a4e198ce34bd4ec2c489deeb10b9';
+const OLD = '884d2fc58f40a28c391ef5cf238b49582329e55b';
+const sha = bytes => createHash('sha256').update(bytes).digest('hex');
+const must = (ok, message) => { if (!ok) throw new Error(message); };
+const equal = (a, b, label) => must(JSON.stringify(a) === JSON.stringify(b), label);
+const hashPattern = /^[a-f0-9]{64}$/;
+const pathOK = p => typeof p === 'string' && p !== '' && !isAbsolute(p) && relative(ROOT, resolve(ROOT, p)) === p && !p.startsWith('../');
+function auth(path, hash) {
+  must(hashPattern.test(hash) && lstatSync(path).isFile(), 'Missing hash/regular authority: ' + path);
+  const bytes = readFileSync(path);
+  must(sha(bytes) === hash, 'Authority drift: ' + path);
+  return bytes;
+}
+const [slot, selfHash, commit, manifestPath, manifestHash, ...extra] = process.argv.slice(2);
+const canonicalOnly = extra.length === 1 && extra[0] === '--canonical-only';
+must(slot === '--slot-verified-free' && (extra.length === 0 || canonicalOnly) && /^[a-f0-9]{40}$/.test(commit ?? '') && isAbsolute(manifestPath ?? ''), 'Explicit slot/self/commit/absolute-manifest/hash required');
+auth(SELF, selfHash);
+must(process.cwd() === ROOT, 'Run from explicit D worktree');
+must(!Object.keys(process.env).some(k => k.startsWith('GIT_')), 'Inherited Git overrides are not permitted');
+const helpers = {
+  '.tmp/5883-validation-v3-lib.mjs': 'db2c9c4984801899ae972f86bf8b4de28ab7c44f8d6a1b0bea246b8712c9c526',
+  '.tmp/5883-validation-v2-lib.mjs': '5b880ccab30e80241c6c9809f3482ba9f1393514c9f73e280b0312ae08ee2d3d',
+};
+for (const [p, h] of Object.entries(helpers)) auth(p, h);
+const lib = await import(pathToFileURL(ROOT + '/.tmp/5883-validation-v3-lib.mjs').href);
+const { captureEpochPins, hashPaths, sameMap, currentHead, executionControls, acceptedPopulation, stagePlan, validateSelections, validateReport, assertionIdentity, fileIdentity, verifySuccessorRows } = lib;
+const manifest = JSON.parse(auth(manifestPath, manifestHash));
+must(manifest.schema === '5883-explicit-successor-validation-v1' && manifest.head === commit && manifest.cwd === ROOT, 'Wrong successor authority');
+must(manifest.scope === (canonicalOnly ? 'canonical-only' : 'full'), 'Explicit scope must match invocation');
+const git = args => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 20000000 });
+must(currentHead() === commit, 'Approved commit differs from HEAD');
+for (const ancestor of [CHECKPOINT, MAIN]) git(['merge-base', '--is-ancestor', ancestor, commit]);
+const domain = ['src', 'tests', 'scripts', 'package.json', 'pnpm-lock.yaml', 'tsconfig.json', 'tsconfig.ts7.json', 'vitest.config.ts'];
+const committed = git(['ls-tree', '-r', '-z', commit, '--', ...domain]).split('\0').filter(Boolean).map(row => {
+  const [meta, path] = row.split('\t');
+  const [mode, type, blob] = meta.split(' ');
+  must(type === 'blob' && ['100644', '100755'].includes(mode), 'Nonregular committed input: ' + path);
+  return { path, blob };
+});
+const extension = ['.tmp/5883-validation-v4-continuation-20261006.mjs', 'plan/agent-context/5883-compiler-reader-before-yield-20261006.ts.txt'];
+const originalDir = '.tmp/5883-main5f-final-v4-permission-incoming23-20261006';
+const baseline = JSON.parse(auth(originalDir + '/after.json', 'e0976f4965503ddb33e4089c6e7de7a71bc51411e75e19f11cec15637b66e124'));
+must(Object.keys(baseline).length === 7752, 'Original7752 authority mismatch');
+for (const map of [manifest.pins, manifest.evidencePins]) {
+  must(map && !Array.isArray(map) && typeof map === 'object', 'Missing complete pin map');
+  for (const [p, h] of Object.entries(map)) must(pathOK(p) && hashPattern.test(h), 'Malformed input pin: ' + p);
+}
+verifySuccessorRows(baseline, manifest.pins, manifest.delta);
+// The source/script domain may change explicitly; frozen instrumentation may not.
+for (const [p, h] of Object.entries(baseline)) {
+  if (!domain.some(d => p === d || p.startsWith(d + '/'))) must(manifest.pins[p] === h, 'Historical instrument changed: ' + p);
+}
+const retainedDirs = [
+  '.tmp/5883-main5f-final-v3-canonical-20261006',
+  '.tmp/5883-main5f-final-v3-text-readers-20261006',
+  '.tmp/5883-main5f-final-v3-compiler-readers-20261006',
+  '.tmp/5883-main5f-final-v3-compiler-readers-retry1-20261006',
+  '.tmp/5883-main5f-final-v4-canonical-20261006',
+  '.tmp/5883-main5f-final-v4-compiler-readers-20261006',
+  '.tmp/5883-main5f-final-v4-text-readers-20261006',
+  '.tmp/5883-main5f-final-v4-runtime-20261006',
+  '.tmp/5883-main5f-final-v4-permission-runtime-20261006', originalDir,
+];
+function inventory(path) {
+  const stat = lstatSync(path);
+  if (stat.isFile()) return [path];
+  must(stat.isDirectory(), 'Nonregular evidence: ' + path);
+  return readdirSync(path).sort().flatMap(name => inventory(path + '/' + name));
+}
+const retained = retainedDirs.flatMap(inventory).sort();
+must(retained.length > 0 && retained.every(p => Object.hasOwn(manifest.evidencePins, p)), 'Original attempt evidence omitted');
+function buildStages() {
+if (canonicalOnly) return [stagePlan({ originalRuntime: [], freshRuntime: [] })[0]];
+const proof = manifest.proofAuthority;
+must(proof && pathOK(proof.path) && manifest.evidencePins[proof.path] === proof.sha256, 'Explicit pinned successor-proof approval required');
+auth(proof.path, proof.sha256);
+
+const population = acceptedPopulation(); // Decode/authenticate old archive bytes, not paths alone.
+const originalStages = stagePlan(population);
+validateSelections(originalStages, population);
+const mainTests = [
+  'tests/issue-2527-runtime-provider-abi.test.ts',
+  'tests/issue-3525-source-map-specialization-origins.test.ts',
+  'tests/issue-5267-finally-reentry.test.ts',
+  'tests/issue-6651-u1b-seeds-linked-bfnid.test.ts',
+  'tests/issue-6651-v1-proxy-forward.test.ts',
+  'tests/issue-6844-error-subclass-field-initializers.test.ts',
+  'tests/issue-6868-template-literal-string-types.test.ts',
+];
+equal(manifest.importedMainTests, mainTests, 'Explicit seven-main-test inventory changed');
+const added = manifest.additionalProofFiles;
+must(Array.isArray(added) && added.length > 0 && added.every(p => pathOK(p) && /^tests\/.*\.test\.ts$/.test(p)), 'Explicit new successor controls required');
+const repairs = ['tests/issue-3518-compiler-boundaries.test.ts', 'tests/issue-5883-inventory-source-successor.test.ts', 'tests/issue-5883-main-bba74-inventory-source-successor.test.ts'];
+const stages = ['canonical', 'compiler-readers', 'text-readers', 'runtime', 'incoming23'].map(name => originalStages.find(s => s.name === name));
+stages.push({ name: 'repair-controls', files: repairs }, { name: 'successor-proof', files: added }, { name: 'imported-main', files: mainTests });
+const selected = stages.flatMap(s => s.files ?? []);
+const repeats = selected.filter((p, i) => selected.indexOf(p) !== i);
+equal(repeats, ['tests/issue-5883-flat-layout-relocation.test.ts'], 'Unexpected repeated file selection');
+const changedTests = git(['diff', '--no-renames', '--name-only', '--diff-filter=AM', OLD, commit, '--', 'tests']).split('\n').filter(p => /\.test\.ts$/.test(p));
+must(changedTests.every(p => selected.includes(p)), 'New/changed test missing from explicit cohorts: ' + changedTests.filter(p => !selected.includes(p)).join(', '));
+equal(Object.keys(manifest.assertions).sort(), [...new Set(selected)].sort(), 'Exact identity authority file set mismatch');
+for (const [p, ids] of Object.entries(manifest.assertions)) {
+  must(Array.isArray(ids) && ids.length > 0, 'Empty identity authority: ' + p);
+  for (const id of ids) {
+    const tuple = JSON.parse(id);
+    must(Array.isArray(tuple) && tuple.length === 3, 'Invalid identity tuple');
+    equal(assertionIdentity({ ancestorTitles: tuple[0], fullName: tuple[1], title: tuple[2] }), id, 'Noncanonical identity encoding');
+  }
+}
+function contains(before, after, label) {
+  const remaining = [...after];
+  for (const id of before) {
+    const at = remaining.indexOf(id);
+    must(at >= 0, 'Lost preserved identity/multiplicity: ' + label + ': ' + id);
+    remaining.splice(at, 1);
+  }
+}
+for (const set of [population.compilerIdentities, population.textIdentities, population.runtimeIdentities]) {
+  for (const [p, expected] of Object.entries(set)) {
+    const ids = [...manifest.assertions[p]].sort();
+    must(ids.length === expected.count && sha(JSON.stringify(ids)) === expected.sha256, 'Original exact176/992/330 population changed: ' + p);
+  }
+}
+for (const [path, hash, count] of [
+  [originalDir + '/native-results.json', 'b68ff29e2bbeff77ff1c073f85b1327d8867acdd4f170e855f6c87000333fe59', 2399],
+  ['.tmp/5883-main5f-final-v4-permission-runtime-20261006/native-results.json', '873a4693e0c8865f08ec7d55dfbf6eb4130962ba0ac7cc2cd548d15b0fe71887', 505],
+]) {
+  const report = JSON.parse(auth(path, hash));
+  must(report.numTotalTests === count, 'Original report population mismatch');
+  for (const row of report.testResults) {
+    const p = fileIdentity(row.name);
+    contains(row.assertionResults.map(assertionIdentity), manifest.assertions[p], p);
+  }
+}
+for (const [p, count] of [
+  [repairs[0], 131], [repairs[1], 97], [repairs[2], 77],
+  ['tests/issue-3518-historical-runtime-reconstruction.test.ts', 635],
+  ['tests/issue-3518-c1-current-source.test.ts', 343],
+]) must(manifest.assertions[p].length === count, 'Required repaired control count changed: ' + p);
+for (const p of [...repairs, 'tests/issue-3518-historical-runtime-reconstruction.test.ts']) {
+  const source = manifest.controlReports?.[p];
+  must(source && pathOK(source.path) && manifest.evidencePins[source.path] === source.sha256 && isAbsolute(source.nativeFile ?? ''), 'Missing preserved control identity authority: ' + p);
+  let bytes = auth(source.path, source.sha256);
+  if (source.stream !== undefined) {
+    const archive = JSON.parse(bytes);
+    const rows = archive.files.filter(row => row.path === source.stream);
+    must(rows.length === 1, 'Missing/duplicate control report stream');
+    const row = rows[0];
+    bytes = gunzipSync(Buffer.from(row.gzipBase64, 'base64'));
+    must(bytes.length === row.bytes && sha(bytes) === row.sha256, 'Decoded control report mismatch');
+  }
+  const report = JSON.parse(bytes);
+  const rows = report.testResults.filter(row => row.name === source.nativeFile);
+  must(rows.length === 1 && source.nativeFile.endsWith('/' + p), 'Wrong preserved control file identity');
+  // Historical selected-only reports still contain skipped identities. Preserve
+  // those names too; this is identity evidence, never retrospective acceptance.
+  equal(rows[0].assertionResults.map(assertionIdentity).sort(), [...manifest.assertions[p]].sort(), 'Preserved new-control identities changed: ' + p);
+}
+for (const [name, total] of [['runtime', 505], ['incoming23', 2403]]) {
+  const stage = stages.find(s => s.name === name);
+  must(stage.files.reduce((n, p) => n + manifest.assertions[p].length, 0) === total, 'Original cohort plus reviewed additions mismatch: ' + name);
+}
+return stages;
+}
+const stages = buildStages();
+const controls = { VITEST_MAX_FORKS: '1', VITEST_FORK_MAX_OLD_SPACE_SIZE: '2048', NODE_OPTIONS: '--max-old-space-size=2048' };
+executionControls();
+must(process.env.NODE_OPTIONS === controls.NODE_OPTIONS && process.execArgv.length === 0, 'Parent must itself start with fixed2048MB and no execution overrides');
+const env = { ...process.env, ...controls };
+function capture() { return { ...captureEpochPins(), ...hashPaths(extension) }; }
+function verify(pins) {
+  auth(SELF, selfHash);
+  auth(manifestPath, manifestHash);
+  must(currentHead() === commit, 'Approved HEAD changed');
+  must(process.execPath === manifest.node && sha(readFileSync(process.execPath)) === manifest.nodeHash, 'Node authority drift');
+  sameMap(pins, manifest.pins, 'Complete successor input drift');
+  sameMap(hashPaths(Object.keys(manifest.evidencePins)), manifest.evidencePins, 'Preserved evidence drift');
+  equal(retainedDirs.flatMap(inventory).sort(), retained, 'Retained output inventory drift');
+  equal(lib.listDomain(true), committed.map(r => r.path).sort(), 'Uncommitted or missing source/script input');
+  for (const { path, blob } of committed) {
+    const bytes = readFileSync(path);
+    const actual = createHash('sha1').update(Buffer.from(`blob ${bytes.length}\0`)).update(bytes).digest('hex');
+    must(actual === blob, 'Working input differs from approved commit: ' + path);
+  }
+}
+verify(capture());
+const run = mkdtempSync(ROOT + '/.tmp/5883-explicit-successor-20261006-');
+for (const stage of stages) {
+  const out = run + '/' + stage.name;
+  mkdirSync(out);
+  const save = (name, value) => writeFileSync(out + '/' + name, JSON.stringify(value, null, 2) + '\n', { flag: 'wx' });
+  const args = stage.args ?? ['node_modules/vitest/vitest.mjs', 'run', ...stage.files, '--reporter=dot', '--reporter=json', '--outputFile.json=' + out + '/native-results.json'];
+  const authority = { scope: manifest.scope, head: commit, manifestPath, manifestHash, self: SELF, selfHash, controls, cwd: ROOT, node: manifest.node, nodeHash: manifest.nodeHash, accepted: false, rawChannelReviewRequired: true };
+  save('invocation.json', { ...authority, stage: stage.name, args, assertions: stage.files ? Object.fromEntries(stage.files.map(p => [p, manifest.assertions[p]])) : null, startedAt: new Date().toISOString() });
+  let result, fd, summary;
+  const errors = [];
+  try {
+    const before = capture();
+    save('before.json', before);
+    verify(before);
+    fd = openSync(out + '/raw.log', 'wx');
+    result = spawnSync(process.execPath, args, { env, stdio: ['ignore', fd, fd] });
+    closeSync(fd); fd = undefined;
+    must(lib.childPassed(result), 'Child exit/signal/spawn error');
+    if (stage.files) {
+      const report = JSON.parse(readFileSync(out + '/native-results.json'));
+      for (const key of ['errors', 'unhandledErrors', 'unhandledRejections', 'runtimeErrors']) {
+        if (Object.hasOwn(report, key)) must(Array.isArray(report[key]) && report[key].length === 0, 'Native error channel: ' + key);
+      }
+      for (const key of ['numUnhandledErrors', 'numRuntimeErrors', 'numRuntimeErrorTestSuites']) {
+        if (Object.hasOwn(report, key)) must(report[key] === 0, 'Native error count: ' + key);
+      }
+      const identities = Object.fromEntries(stage.files.map(p => [p, { count: manifest.assertions[p].length, sha256: sha(JSON.stringify([...manifest.assertions[p]].sort())) }]));
+      summary = validateReport(report, stage.files, identities);
+    }
+    const raw = readFileSync(out + '/raw.log', 'utf8').replace(/\x1b\[[0-9;]*m/g, '');
+    must(!/\[vitest-worker\]|Timeout calling onTaskUpdate|Unhandled (?:Error|Rejection|Exception)|Vitest caught \d+ unhandled/i.test(raw), 'Raw unhandled/RPC channel requires rejection');
+  } catch (error) { errors.push(String(error.stack ?? error)); }
+  finally {
+    if (fd !== undefined) closeSync(fd);
+    try { const after = capture(); save('after.json', after); verify(after); }
+    catch (error) { errors.push('After capture/verification: ' + String(error.stack ?? error)); }
+  }
+  save('terminal.json', { ...authority, stage: stage.name, code: result?.status ?? null, signal: result?.signal ?? null, error: result?.error?.message ?? null, instrumentationErrors: errors, summary, finishedAt: new Date().toISOString() });
+  console.log(JSON.stringify({ out, code: result?.status ?? null, errors, summary, accepted: false }));
+  must(result && lib.childPassed(result) && errors.length === 0, 'Stopped; retain and review: ' + out);
+}
+verify(capture());
+console.log(canonicalOnly
+  ? 'Canonical diagnostic terminal only. All test cohorts and the successor proof remain PENDING; NOT full-epoch acceptance.'
+  : 'All stages terminal, NOT acceptance. Parent must review full raw/native records, the explicit identity/input authority and retained original failures. No protected-queue delivery claim.');

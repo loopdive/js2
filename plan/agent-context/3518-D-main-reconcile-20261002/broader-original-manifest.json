@@ -1,0 +1,162 @@
+{
+  "schema": "assignment-D-broader-original-files-v1",
+  "status": "MEASURED",
+  "sourceCountMethod": "Source AST only, no Vitest collection or test imports; fixtures count eight from explicit recipe (1+1+2+2+2), imported donor/retained arrays measured literally.",
+  "sourceDeclaredTotal": 401,
+  "files": [
+    {
+      "path": "tests/issue-5197-promise-generic-capability.test.ts",
+      "sha256": "4b6b63661b08939b27540ac20f9d2a265c2895aade14d95ba3ce1895a635728e",
+      "exactMainSha256": "4b6b63661b08939b27540ac20f9d2a265c2895aade14d95ba3ce1895a635728e",
+      "sourceDeclared": 10,
+      "observed": {
+        "collected": 10,
+        "passed": 2,
+        "failed": 0,
+        "pending": 8
+      },
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/01-candidate-issue-5197-promise-generic-capability.json tests/issue-5197-promise-generic-capability.test.ts",
+      "baselineOnFailure": "same full file and flags on exact2bfe; performed for every failing candidate file"
+    },
+    {
+      "path": "tests/issue-3518-native-delay-combinator-source-preservation.test.ts",
+      "sha256": "b38fcdc108ea10c1f7a8a806c5b62e0b4f28e21a1cd3ae5caf2bc132c88c9f8a",
+      "exactMainSha256": "b38fcdc108ea10c1f7a8a806c5b62e0b4f28e21a1cd3ae5caf2bc132c88c9f8a",
+      "sourceDeclared": 145,
+      "observed": {
+        "collected": 145,
+        "passed": 64,
+        "failed": 81,
+        "pending": 0
+      },
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/02-candidate-issue-3518-native-delay-combinator-source-preservation.json tests/issue-3518-native-delay-combinator-source-preservation.test.ts",
+      "baselineOnFailure": "same full file and flags on exact2bfe; performed for every failing candidate file"
+    },
+    {
+      "path": "tests/issue-3518-promise-resolution-preservation.test.ts",
+      "sha256": "72c10f112b76cbd7beed1812b11182e80eacd0e3fad2bf5822f2385d44382e30",
+      "exactMainSha256": "72c10f112b76cbd7beed1812b11182e80eacd0e3fad2bf5822f2385d44382e30",
+      "sourceDeclared": 52,
+      "observed": {
+        "collected": 52,
+        "passed": 22,
+        "failed": 30,
+        "pending": 0
+      },
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/03-candidate-issue-3518-promise-resolution-preservation.json tests/issue-3518-promise-resolution-preservation.test.ts",
+      "baselineOnFailure": "same full file and flags on exact2bfe; performed for every failing candidate file"
+    },
+    {
+      "path": "tests/issue-3518-promise-settlement-source-preservation.test.ts",
+      "sha256": "ccfba6c0f229f64f9b3d8caf3d97d77450c467410d3705ddfdb34534bd4fd6a1",
+      "exactMainSha256": "ccfba6c0f229f64f9b3d8caf3d97d77450c467410d3705ddfdb34534bd4fd6a1",
+      "sourceDeclared": 19,
+      "observed": {
+        "collected": 19,
+        "passed": 19,
+        "failed": 0,
+        "pending": 0
+      },
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/04-candidate-issue-3518-promise-settlement-source-preservation.json tests/issue-3518-promise-settlement-source-preservation.test.ts",
+      "baselineOnFailure": "same full file and flags on exact2bfe; performed for every failing candidate file"
+    },
+    {
+      "path": "tests/issue-3518-compiler-boundaries.test.ts",
+      "sha256": "baf0698c25b77b6235d901de8cec761c3cef41d9c5f4e3e18a646eab5a4257e2",
+      "exactMainSha256": "baf0698c25b77b6235d901de8cec761c3cef41d9c5f4e3e18a646eab5a4257e2",
+      "sourceDeclared": 125,
+      "observed": {
+        "collected": 125,
+        "passed": 125,
+        "failed": 0,
+        "pending": 0
+      },
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/05-candidate-issue-3518-compiler-boundaries.json tests/issue-3518-compiler-boundaries.test.ts",
+      "baselineOnFailure": "same full file and flags on exact2bfe; performed for every failing candidate file"
+    },
+    {
+      "path": "tests/promise-combinators.test.ts",
+      "sha256": "f8d7b9d7234b506893e6154ed2f0dbbcbc0b93d858f68a098ced390dbb493137",
+      "exactMainSha256": "f8d7b9d7234b506893e6154ed2f0dbbcbc0b93d858f68a098ced390dbb493137",
+      "sourceDeclared": 8,
+      "observed": {
+        "collected": 8,
+        "passed": 6,
+        "failed": 2,
+        "pending": 0
+      },
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/06-candidate-promise-combinators.json tests/promise-combinators.test.ts",
+      "baselineOnFailure": "same full file and flags on exact2bfe; performed for every failing candidate file"
+    },
+    {
+      "path": "tests/issue-2867-string-combinator.test.ts",
+      "sha256": "bd39975b73174eb682e3aa07c2175ee8ecabb8828580fe4a5430719ada8a7c85",
+      "exactMainSha256": "bd39975b73174eb682e3aa07c2175ee8ecabb8828580fe4a5430719ada8a7c85",
+      "sourceDeclared": 12,
+      "observed": {
+        "collected": 12,
+        "passed": 12,
+        "failed": 0,
+        "pending": 0
+      },
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/07-candidate-issue-2867-string-combinator.json tests/issue-2867-string-combinator.test.ts",
+      "baselineOnFailure": "same full file and flags on exact2bfe; performed for every failing candidate file"
+    },
+    {
+      "path": "tests/issue-3134-promise-value-slot-rep.test.ts",
+      "sha256": "1726fbf2ceb0958796614db6e6cc9c82a7bbbdda597df7c83e87f2a46fd009be",
+      "exactMainSha256": "1726fbf2ceb0958796614db6e6cc9c82a7bbbdda597df7c83e87f2a46fd009be",
+      "sourceDeclared": 5,
+      "observed": {
+        "collected": 5,
+        "passed": 5,
+        "failed": 0,
+        "pending": 0
+      },
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/08-candidate-issue-3134-promise-value-slot-rep.json tests/issue-3134-promise-value-slot-rep.test.ts",
+      "baselineOnFailure": "same full file and flags on exact2bfe; performed for every failing candidate file"
+    },
+    {
+      "path": "tests/issue-3220-promise-return-double-wrap.test.ts",
+      "sha256": "841e356dacb1b6d0099e98a7ac495a577620ef7a4c65505584ad66cac3753d84",
+      "exactMainSha256": "841e356dacb1b6d0099e98a7ac495a577620ef7a4c65505584ad66cac3753d84",
+      "sourceDeclared": 6,
+      "observed": {
+        "collected": 6,
+        "passed": 6,
+        "failed": 0,
+        "pending": 0
+      },
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/09-candidate-issue-3220-promise-return-double-wrap.json tests/issue-3220-promise-return-double-wrap.test.ts",
+      "baselineOnFailure": "same full file and flags on exact2bfe; performed for every failing candidate file"
+    },
+    {
+      "path": "tests/equivalence/promise-chains.test.ts",
+      "sha256": "f9dbe35b943acd3f82bd0bad4d40021ef86960b5aa4025c57ae5efd4031c230b",
+      "exactMainSha256": "f9dbe35b943acd3f82bd0bad4d40021ef86960b5aa4025c57ae5efd4031c230b",
+      "sourceDeclared": 8,
+      "observed": {
+        "collected": 8,
+        "passed": 8,
+        "failed": 0,
+        "pending": 0
+      },
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/10-candidate-promise-chains.json tests/equivalence/promise-chains.test.ts",
+      "baselineOnFailure": "same full file and flags on exact2bfe; performed for every failing candidate file"
+    },
+    {
+      "path": "tests/equivalence/ir-slice10-promise.test.ts",
+      "sha256": "c811bf98fea35ac940fe9596d9aae0b9a62d6222dd7d9b63aeb48af8a1a4a3a0",
+      "exactMainSha256": "c811bf98fea35ac940fe9596d9aae0b9a62d6222dd7d9b63aeb48af8a1a4a3a0",
+      "sourceDeclared": 11,
+      "observed": {
+        "collected": 11,
+        "passed": 11,
+        "failed": 0,
+        "pending": 0
+      },
+      "command": "VITEST_MAX_FORKS=1 pnpm exec vitest run --no-file-parallelism --maxConcurrency=1 --reporter=default --reporter=json --outputFile=/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002/.tmp/assignment-D-broader-20261002/11-candidate-ir-slice10-promise.json tests/equivalence/ir-slice10-promise.test.ts",
+      "baselineOnFailure": "same full file and flags on exact2bfe; performed for every failing candidate file"
+    }
+  ]
+}

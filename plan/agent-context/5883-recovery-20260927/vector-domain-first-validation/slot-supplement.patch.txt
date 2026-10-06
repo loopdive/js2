@@ -1,0 +1,68 @@
+diff --git a/tests/issue-5748-vector-domain-service-slots.test.ts b/tests/issue-5748-vector-domain-service-slots.test.ts
+new file mode 100644
+--- /dev/null
++++ b/tests/issue-5748-vector-domain-service-slots.test.ts
+@@ -0,0 +1,63 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++
++import { expect, it } from "vitest";
++import { createEmptyModule } from "../src/ir/types.js";
++import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
++import { planVectorDomains } from "../src/ir/program/vector-domain-plan.js";
++import {
++  reserveVectorDomains, fillVectorDomainServices, vectorDomainPhysicalRoles,
++  type VectorDomainFunctionFill,
++} from "../src/backend/wasmgc/resources/native-vector-domains.js";
++
++it("supplemental: every ServicesV1 initializer uses its own exact reservation handles in ABI order", () => {
++  const module = createEmptyModule();
++  const tx = new PhysicalModuleReservations(module);
++  const backing = tx.reserveType("backing", {
++    kind: "array", name: "backing", element: { kind: "externref" }, mutable: true,
++  });
++  const carrier = tx.reserveType("carrier", {
++    kind: "struct", name: "carrier", fields: [
++      { name: "length", type: { kind: "i32" }, mutable: true },
++      { name: "data", type: { kind: "ref", typeIdx: backing.typeIndex }, mutable: true },
++    ],
++  });
++  const plan = planVectorDomains("slot-control", [
++    { allocationRole: "ordinary", layoutBinding: carrier.key, semanticKind: 1, storageKind: 1 },
++    { allocationRole: "pack", layoutBinding: carrier.key, semanticKind: 4, storageKind: 1 },
++  ]);
++  const pack = reserveVectorDomains(tx, plan, plan.allocations.map((allocation) => ({
++    allocationRole: allocation.allocationRole, layoutBinding: carrier.key, carrier, backing,
++  })));
++  const roles = vectorDomainPhysicalRoles(tx, pack);
++  const expectedNames = [
++    "rawLength", "rawOwnPresent", "rawLoadPresent", "rawStorePresent", "rawMarkAbsent",
++    "hasOwn", "has", "get", "set", "getOwnDescriptor", "defineOwn", "deleteOwn",
++    "ownKeys", "getPrototype", "setPrototype", "isExtensible", "preventExtensions",
++  ];
++  const fills = pack.rows.flatMap((row) => [row.validator, ...row.operations.map((entry) => entry.function)])
++    .map((target): VectorDomainFunctionFill => ({ target, locals: [], body: [{ op: "unreachable" }] }));
++  tx.freezeReservations();
++  fillVectorDomainServices(tx, pack, fills);
++
++  expect(pack.rows).toHaveLength(2);
++  const allHandles = pack.rows.flatMap((row) => row.operations.map((entry) => entry.function.handle));
++  expect(new Set(allHandles).size).toBe(34);
++  for (const row of pack.rows) {
++    expect(row.operations.map((entry) => entry.operation)).toEqual(expectedNames);
++    const handles = row.operations.map((entry) => entry.function.handle);
++    expect(handles).not.toContain(row.validator.handle);
++    // Complete instruction equality rejects swapped, missing, extra and foreign-row slots.
++    expect(row.services.object.init).toEqual([
++      ...handles.map((funcIdx) => ({ op: "ref.func", funcIdx })),
++      { op: "struct.new", typeIdx: roles.servicesType.typeIndex },
++    ]);
++    tx.assertCompletedReservation(row.services);
++    for (const entry of row.operations) tx.assertCompletedReservation(entry.function);
++    // Domain points at this row's service global, not another shape-compatible row.
++    expect(row.domain.object.init.slice(-2)).toEqual([
++      { op: "global.get", index: tx.physicalIndex(row.services) },
++      { op: "struct.new", typeIdx: roles.domainType.typeIndex },
++    ]);
++  }
++  tx.seal();
++});

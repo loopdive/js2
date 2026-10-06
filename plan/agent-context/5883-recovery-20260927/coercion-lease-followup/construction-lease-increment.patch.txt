@@ -1,0 +1,908 @@
+diff --git a/src/codegen/context/emission-ownership.ts b/src/codegen/context/emission-ownership.ts
+index 924668d7bb..f02cb2abb8 100644
+--- a/src/codegen/context/emission-ownership.ts
++++ b/src/codegen/context/emission-ownership.ts
+@@ -17,6 +17,7 @@
+ declare const ownershipHandle: unique symbol;
+ type Handle<Kind extends string> = Readonly<{ kind: Kind; id: number; [ownershipHandle]: true }>;
+ export type EmissionTransaction = Handle<"transaction">;
++export type ConstructionLease = Handle<"construction-lease">;
+ export type BodyEpoch = Handle<"body">;
+ export type EmissionRegion = Handle<"region">;
+ export type EmissionOccurrence = Handle<"occurrence">;
+@@ -108,6 +109,8 @@ interface BodyRecord {
+   construction: "unstarted" | "building" | "complete" | "failed";
+   receipt?: CompletedBody;
+   manifest?: RetainedBodyManifest;
++  /** Exclusive authority, retained after revocation to reject stale reuse. */
++  lease?: { readonly handle: ConstructionLease; readonly token: EmissionTransaction; active: boolean };
+   // Sticky audit taint: a caller-frame write is not body-owned even when that
+   // caller later rolls back, or commits its undo entries into a content frame.
+   // Do not journal/clear this flag. An adapter must rebuild a correctly scoped
+@@ -173,11 +176,70 @@ export class EmissionOwnership {
+     return body;
+   }
+ 
+-  private contentWrite(owner: EmissionOwner): BodyEpoch {
++  private authorize(body: BodyEpoch, lease?: ConstructionLease): void {
++    const record = this.body(body);
++    if (!record.lease) {
++      if (lease !== undefined) throw new Error("Unknown or foreign construction lease");
++      return; // Original unclaimed API behavior.
++    }
++    if (!record.lease.active) {
++      throw new Error(
++        record.construction === "failed"
++          ? "Construction lease revoked for failed body construction"
++          : "Construction lease is revoked",
++      );
++    }
++    if (record.lease.handle !== lease) throw new Error("Claimed body requires its construction lease");
++  }
++
++  /** Claim only the exact currently open construction owner, without closing it. */
++  claimBodyConstruction(body: BodyEpoch, token: EmissionTransaction, identity: BodyIdentity): ConstructionLease {
++    this.editable(body);
++    const frame = this.top(token);
++    const record = this.body(body);
++    if (
++      frame.domain !== "content" ||
++      frame.body !== body ||
++      !frame.construction ||
++      record.construction !== "building"
++    ) {
++      throw new Error("Token is not this body's construction owner");
++    }
++    if (
++      !record.identity ||
++      record.identity.bodyIdentity !== identity.bodyIdentity ||
++      record.identity.bindingEnvironment !== identity.bindingEnvironment
++    ) {
++      throw new Error("Stale body or binding-environment identity");
++    }
++    if (record.lease) throw new Error("Body construction already claimed");
++    if (record.unscopedContent) throw new Error("Cannot claim unscoped body content");
++    const handle = this.handle("construction-lease");
++    record.lease = { handle, token, active: true };
++    return handle;
++  }
++
++  /** Check the editor's exact expected scope before it opens a child/edit. */
++  assertConstructionScope(body: BodyEpoch, token: EmissionTransaction, lease: ConstructionLease): void {
++    this.authorize(body, lease);
++    this.editable(body);
++    const frame = this.top(token);
++    if (frame.domain !== "content" || frame.body !== body) throw new Error("Wrong construction lease scope");
++  }
++
++  private authorizeFrame(frame: TransactionFrame, lease?: ConstructionLease): void {
++    if (frame.body !== undefined) this.authorize(frame.body, lease);
++    else if (lease !== undefined) throw new Error("Construction lease cannot close an unbound/caller scope");
++  }
++
++  private contentWrite(owner: EmissionOwner, lease?: ConstructionLease): BodyEpoch {
++    this.authorize(this.node(owner).body, lease);
+     const body = this.editable(owner);
+     const frame = this.transactions[this.transactions.length - 1];
+     if (frame?.domain === "unbound-content") throw new Error("Bind the content transaction before emission");
+     if (frame?.domain === "content" && frame.body !== body) throw new Error("Wrong body transaction domain");
++    if (this.body(body).lease && frame?.domain !== "content")
++      throw new Error("Claimed body requires a body-owned scope");
+     return body;
+   }
+ 
+@@ -197,13 +259,17 @@ export class EmissionOwnership {
+   }
+ 
+   /** First same-body scope owns construction; nested scopes are local probes. */
+-  beginContentTransaction(body?: BodyEpoch): EmissionTransaction {
++  beginContentTransaction(body?: BodyEpoch, lease?: ConstructionLease): EmissionTransaction {
+     this.collecting();
++    // Claimed rejections must not mint a token or alter the stack. Preserve the
++    // old unclaimed begin/bind path, including its existing failure behavior.
++    if (body === undefined && lease !== undefined) throw new Error("Construction lease requires a bound body");
++    if (body !== undefined && (lease !== undefined || this.bodies.get(body)?.lease)) this.contentWrite(body, lease);
+     const token = this.handle("transaction");
+     this.transactions.push({ token, undo: [], domain: "unbound-content" });
+     if (body !== undefined) {
+       try {
+-        this.bindContentTransaction(token, body);
++        this.bindContentTransaction(token, body, lease);
+       } catch (error) {
+         this.transactions.pop();
+         throw error;
+@@ -213,11 +279,17 @@ export class EmissionOwnership {
+   }
+ 
+   /** Authenticates a construction token that was opened BEFORE its epoch. */
+-  bindContentTransaction(token: EmissionTransaction, body: BodyEpoch): void {
++  bindContentTransaction(token: EmissionTransaction, body: BodyEpoch, lease?: ConstructionLease): void {
+     const frame = this.top(token);
+     if (frame.domain !== "unbound-content") throw new Error("Content transaction is already bound");
++    this.authorize(body, lease);
+     this.editable(body);
+     const record = this.body(body);
++    if (record.lease) {
++      const parent = this.transactions[this.transactions.length - 2];
++      if (parent?.domain !== "content" || parent.body !== body)
++        throw new Error("Claimed scope requires its body-owned parent");
++    }
+     if (record.construction === "failed") throw new Error("Body construction failed; create a new epoch");
+     frame.domain = "content";
+     frame.body = body;
+@@ -233,9 +305,17 @@ export class EmissionOwnership {
+   }
+ 
+   /** Inner commit merges the undo log, never publishes or activates anything. */
+-  commitTransaction(token: EmissionTransaction): void {
++  commitTransaction(token: EmissionTransaction, lease?: ConstructionLease): void {
+     const frame = this.top(token);
++    this.authorizeFrame(frame, lease);
+     if (frame.domain === "unbound-content") throw new Error("Cannot commit unbound content transaction");
++    if (frame.construction && frame.body && this.body(frame.body).lease) {
++      throw new Error("Use completeConstruction for a claimed construction scope");
++    }
++    this.commitFrame(frame);
++  }
++
++  private commitFrame(frame: TransactionFrame): void {
+     this.transactions.pop();
+     // Detached C settles into C, never into an unrelated open P probe.
+     const parent =
+@@ -246,11 +326,16 @@ export class EmissionOwnership {
+     if (frame.construction) this.body(frame.body!).construction = "complete";
+   }
+ 
+-  rollbackTransaction(token: EmissionTransaction): void {
++  rollbackTransaction(token: EmissionTransaction, lease?: ConstructionLease): void {
+     const frame = this.top(token);
++    this.authorizeFrame(frame, lease);
+     this.transactions.pop();
+     for (let i = frame.undo.length - 1; i >= 0; i--) frame.undo[i]!();
+-    if (frame.construction) this.body(frame.body!).construction = "failed";
++    if (frame.construction) {
++      const record = this.body(frame.body!);
++      record.construction = "failed";
++      if (record.lease) record.lease.active = false;
++    }
+   }
+ 
+   /** Definitions remain arena candidates after rollback, never implicit roots. */
+@@ -276,15 +361,15 @@ export class EmissionOwnership {
+   }
+ 
+   /** Detached region: attachment is separate so movement need not cancel it. */
+-  createRegion(body: BodyEpoch): EmissionRegion {
+-    this.contentWrite(body);
++  createRegion(body: BodyEpoch, lease?: ConstructionLease): EmissionRegion {
++    this.contentWrite(body, lease);
+     const region = this.handle("region");
+     this.nodes.set(region, { body, provenance: this.node(body).provenance });
+     return region;
+   }
+ 
+-  private link(from: EmissionOwner, to: Node, useSiteIdentity?: object): OwnershipEdge {
+-    const body = this.contentWrite(from);
++  private link(from: EmissionOwner, to: Node, useSiteIdentity?: object, lease?: ConstructionLease): OwnershipEdge {
++    const body = this.contentWrite(from, lease);
+     this.node(to);
+     const edge = this.handle("edge");
+     const record: EdgeRecord = { from, to, active: true, useSiteIdentity };
+@@ -296,8 +381,8 @@ export class EmissionOwnership {
+     return edge;
+   }
+ 
+-  attachRegion(owner: EmissionOwner, region: EmissionRegion): OwnershipEdge {
+-    const body = this.contentWrite(owner);
++  attachRegion(owner: EmissionOwner, region: EmissionRegion, lease?: ConstructionLease): OwnershipEdge {
++    const body = this.contentWrite(owner, lease);
+     if (this.node(region).body !== body) throw new Error("Cross-body region attachment requires a new epoch");
+     // Only containment edges participate. Recursive body adoption remains legal.
+     const pending: EmissionOwner[] = [region];
+@@ -314,20 +399,21 @@ export class EmissionOwnership {
+     if ([...this.edges.values()].some((e) => e.active && e.to === region)) {
+       throw new Error("Region already has an owner; detach before moving");
+     }
+-    return this.link(owner, region);
++    return this.link(owner, region, undefined, lease);
+   }
+ 
+   recordOccurrence(
+     owner: EmissionOwner,
+     provenance: EmissionProvenance,
+     binding?: PendingNodeBinding,
++    lease?: ConstructionLease,
+   ): EmissionOccurrence {
+-    const body = this.contentWrite(owner);
++    const body = this.contentWrite(owner, lease);
+     if (binding && this.pendingNodes.has(binding.nodeIdentity))
+       throw new Error("Pending node already has an occurrence");
+     const occurrence = this.handle("occurrence");
+     this.nodes.set(occurrence, { body, provenance: Object.freeze({ ...provenance }) });
+-    this.memberships.set(occurrence, this.link(owner, occurrence));
++    this.memberships.set(occurrence, this.link(owner, occurrence, undefined, lease));
+     if (binding) {
+       this.pendingBindings.set(occurrence, Object.freeze({ ...binding }));
+       this.pendingNodes.add(binding.nodeIdentity);
+@@ -343,25 +429,25 @@ export class EmissionOwnership {
+     return edge;
+   }
+ 
+-  removeOccurrence(occurrence: EmissionOccurrence): void {
+-    this.detachEdge(this.occurrenceMembership(occurrence));
++  removeOccurrence(occurrence: EmissionOccurrence, lease?: ConstructionLease): void {
++    this.detachEdge(this.occurrenceMembership(occurrence), lease);
+   }
+ 
+   /** Adopt exactly this candidate, never a function name or registry entry. */
+-  adoptBody(owner: EmissionOwner, body: BodyEpoch, useSiteIdentity?: object): OwnershipEdge {
+-    this.contentWrite(owner);
++  adoptBody(owner: EmissionOwner, body: BodyEpoch, useSiteIdentity?: object, lease?: ConstructionLease): OwnershipEdge {
++    this.contentWrite(owner, lease);
+     if (this.body(body).state === "discarded") throw new Error("Cannot adopt a discarded body epoch");
+     if (useSiteIdentity && [...this.edges.values()].some((e) => e.active && e.useSiteIdentity === useSiteIdentity)) {
+       throw new Error("Use site already has an adoption target");
+     }
+-    return this.link(owner, body, useSiteIdentity);
++    return this.link(owner, body, useSiteIdentity, lease);
+   }
+ 
+-  detachEdge(edge: OwnershipEdge): void {
++  detachEdge(edge: OwnershipEdge, lease?: ConstructionLease): void {
+     this.collecting();
+     const record = this.edges.get(edge);
+     if (!record) throw new Error("Unknown or foreign ownership edge");
+-    const body = this.contentWrite(record.from);
++    const body = this.contentWrite(record.from, lease);
+     if (!record.active) throw new Error("Ownership edge is already detached");
+     this.journal(() => {
+       record.active = true;
+@@ -376,7 +462,8 @@ export class EmissionOwnership {
+    * enclosing probe rollback. Call only once the candidate's internal scopes
+    * are settled; later edits/replacements must use a NEW epoch.
+    */
+-  retainBodyEpoch(body: BodyEpoch): void {
++  retainBodyEpoch(body: BodyEpoch, lease?: ConstructionLease): void {
++    this.authorize(body, lease);
+     this.editable(body);
+     if (this.transactions.some((f) => f.domain === "unbound-content" || (f.domain === "content" && f.body === body))) {
+       throw new Error("Close internal body transactions before retaining its epoch");
+@@ -466,7 +553,8 @@ export class EmissionOwnership {
+   }
+ 
+   /** Authenticated adapter entry; legacy retainBodyEpoch alone cannot mint it. */
+-  completeBodyEpoch(body: BodyEpoch, manifest: RetainedBodyManifest): CompletedBody {
++  completeBodyEpoch(body: BodyEpoch, manifest: RetainedBodyManifest, lease?: ConstructionLease): CompletedBody {
++    this.authorize(body, lease);
+     this.editable(body);
+     if (manifest.body !== body) throw new Error("Wrong body completion manifest");
+     const record = this.body(body);
+@@ -477,7 +565,7 @@ export class EmissionOwnership {
+       throw new Error("Close internal body transactions before completion");
+     }
+     this.validateBodyManifest(manifest);
+-    this.retainBodyEpoch(body);
++    this.retainBodyEpoch(body, lease);
+     const receipt = this.handle("completed-body");
+     record.receipt = receipt;
+     record.manifest = Object.freeze({
+@@ -489,13 +577,37 @@ export class EmissionOwnership {
+       adoptions: Object.freeze(manifest.adoptions.map((a) => Object.freeze({ ...a }))),
+     });
+     this.completions.set(receipt, body);
++    if (record.lease) record.lease.active = false;
+     return receipt;
+   }
+ 
++  /** Authenticate BEFORE closing the claimed construction; terminal success revokes its lease. */
++  completeConstruction(
++    body: BodyEpoch,
++    token: EmissionTransaction,
++    manifest: RetainedBodyManifest,
++    lease: ConstructionLease,
++  ): CompletedBody {
++    this.assertConstructionScope(body, token, lease);
++    const frame = this.top(token);
++    const record = this.body(body);
++    if (!frame.construction || record.lease?.token !== token) throw new Error("Not the claimed construction owner");
++    if (record.construction !== "building" || record.unscopedContent) throw new Error("Invalid claimed construction");
++    if (manifest.body !== body) throw new Error("Wrong body completion manifest");
++    if (this.transactions.some((f) => f.domain === "unbound-content" || (f !== frame && f.body === body))) {
++      throw new Error("Close internal body transactions before completion");
++    }
++    this.validateBodyManifest(manifest);
++    this.commitFrame(frame);
++    return this.completeBodyEpoch(body, manifest, lease);
++  }
++
+   /** Explicit ordinary-owner discard. A selected edge to it makes seal fail. */
+-  discardBodyEpoch(body: BodyEpoch): void {
++  discardBodyEpoch(body: BodyEpoch, lease?: ConstructionLease): void {
+     this.collecting();
++    this.authorize(body, lease);
+     const record = this.body(body);
++    if (record.lease) this.contentWrite(body, lease);
+     if (record.state === "discarded") throw new Error("Body epoch is already discarded");
+     const previous = record.state;
+     this.journal(() => {
+diff --git a/src/codegen/staging-edit.ts b/src/codegen/staging-edit.ts
+index e89ce5fc1d..a9928be118 100644
+--- a/src/codegen/staging-edit.ts
++++ b/src/codegen/staging-edit.ts
+@@ -6,6 +6,7 @@
+  */
+ import type {
+   CompletedBody,
++  ConstructionLease,
+   EmissionOwnership,
+   EmissionRegion,
+   EmissionTransaction,
+@@ -135,15 +136,15 @@ function replaceSequence(body: StageBody, target: EmissionRegion, nodes: readonl
+ }
+ 
+ /**
+- * Transfer exclusive close authority for an OPEN construction token to this
+- * editor. The adapter must route all subsequent body edits/token closes here.
+- * Current ledger API cannot enforce that discipline against external callers.
++ * Claim exclusive authority for the exact OPEN body construction token.
++ * The arena refuses raw mutation/closure of the claimed body without its lease.
+  * Expected layout must be supplied independently, not echoed from this class.
+  */
+ export class StagingBodyEditor {
+   private current: PhysicalVersion;
+   private readonly frames: EditFrame[];
+   private closed = false;
++  readonly #lease: ConstructionLease;
+ 
+   constructor(
+     private readonly ownership: EmissionOwnership,
+@@ -155,6 +156,7 @@ export class StagingBodyEditor {
+     assertStageLayout(inspectStageBody(body), copy);
+     this.current = Object.freeze({ body: Object.freeze({ ...body }), expected: copy });
+     this.frames = [{ token: constructionToken, before: this.current }];
++    this.#lease = ownership.claimBodyConstruction(body.body, constructionToken, body);
+   }
+ 
+   snapshot(): StageBody {
+@@ -166,6 +168,11 @@ export class StagingBodyEditor {
+ 
+   private editable(): void {
+     if (this.closed) throw new Error("Staging editor is closed");
++    this.ownership.assertConstructionScope(
++      this.current.body.body,
++      this.frames[this.frames.length - 1]!.token,
++      this.#lease,
++    );
+     assertStageLayout(inspectStageBody(this.current.body), this.current.expected);
+   }
+   private top(token: EmissionTransaction): EditFrame {
+@@ -176,19 +183,19 @@ export class StagingBodyEditor {
+   }
+   beginEdit(): EmissionTransaction {
+     this.editable();
+-    const token = this.ownership.beginContentTransaction(this.current.body.body);
++    const token = this.ownership.beginContentTransaction(this.current.body.body, this.#lease);
+     this.frames.push({ token, before: this.current });
+     return token;
+   }
+   commitEdit(token: EmissionTransaction): void {
+     this.top(token);
+     if (this.frames.length === 1) throw new Error("Use complete for the construction scope");
+-    this.ownership.commitTransaction(token);
++    this.ownership.commitTransaction(token, this.#lease);
+     this.frames.pop(); // Parent's saved physical version still owns rollback.
+   }
+   rollbackEdit(token: EmissionTransaction): void {
+     const frame = this.top(token);
+-    this.ownership.rollbackTransaction(token);
++    this.ownership.rollbackTransaction(token, this.#lease);
+     this.current = frame.before;
+     this.frames.pop();
+     if (this.frames.length === 0) this.closed = true;
+@@ -206,17 +213,17 @@ export class StagingBodyEditor {
+       .map((visit) => visit.node)
+       .filter((node) => node.nodeIdentity !== nodeIdentity);
+     const next = this.prepareSequence(location.region, nodes);
+-    const token = this.ownership.beginContentTransaction(this.current.body.body);
++    const token = this.ownership.beginContentTransaction(this.current.body.body, this.#lease);
+     try {
+-      if (location.node.occurrence) this.ownership.removeOccurrence(location.node.occurrence.occurrence);
+-      for (const adoption of location.node.adoptions ?? []) this.ownership.detachEdge(adoption.edge);
++      if (location.node.occurrence) this.ownership.removeOccurrence(location.node.occurrence.occurrence, this.#lease);
++      for (const adoption of location.node.adoptions ?? []) this.ownership.detachEdge(adoption.edge, this.#lease);
+     } catch (error) {
+-      this.ownership.rollbackTransaction(token);
++      this.ownership.rollbackTransaction(token, this.#lease);
+       throw error;
+     }
+     // Both roots and journal data are prepared before closing the local scope.
+     // No source callbacks or fallible preparation between commit and install.
+-    this.ownership.commitTransaction(token);
++    this.ownership.commitTransaction(token, this.#lease);
+     this.current = next;
+   }
+ 
+@@ -234,8 +241,8 @@ export class StagingBodyEditor {
+       region,
+       order.map((id) => byIdentity.get(id)!),
+     );
+-    const token = this.ownership.beginContentTransaction(this.current.body.body);
+-    this.ownership.commitTransaction(token); // Membership unchanged; paired physical scope remains rollbackable.
++    const token = this.ownership.beginContentTransaction(this.current.body.body, this.#lease);
++    this.ownership.commitTransaction(token, this.#lease); // Membership unchanged; paired physical scope remains rollbackable.
+     this.current = next;
+   }
+ 
+@@ -255,11 +262,16 @@ export class StagingBodyEditor {
+     if (this.frames.length !== 1) throw new Error("Close nested editor scopes before completion");
+     const census = inspectStageBody(this.current.body);
+     assertStageLayout(census, this.current.expected);
+-    this.ownership.commitTransaction(this.frames[0]!.token);
++    // Arena validation precedes scope closure; failure leaves this editor open
++    // at its original scope rather than committing an unrelated/wrong body.
++    const receipt = this.ownership.completeConstruction(
++      this.current.body.body,
++      this.frames[0]!.token,
++      census.manifest,
++      this.#lease,
++    );
+     this.frames.pop();
+     this.closed = true;
+-    // A mismatch is an integration defect. No raw seal, retry, or receipt stub.
+-    const receipt = this.ownership.completeBodyEpoch(this.current.body.body, census.manifest);
+     return Object.freeze({ body: this.current.body, receipt });
+   }
+ }
+diff --git a/tests/issue-5883-staging-edit.test.ts b/tests/issue-5883-staging-edit.test.ts
+index e86f1ddd6c..d8367830f8 100644
+--- a/tests/issue-5883-staging-edit.test.ts
++++ b/tests/issue-5883-staging-edit.test.ts
+@@ -4,11 +4,11 @@ import { describe, expect, it } from "vitest";
+ import { EmissionOwnership, type BodyEpoch } from "../src/codegen/context/emission-ownership.js";
+ import { StagingBodyEditor } from "../src/codegen/staging-edit.js";
+ import { inspectStageBody, type StagePlacement } from "../src/codegen/staging-census.js";
+-import { stageContainer, stageLeaf, stageRegion } from "../src/codegen/staging-instr.js";
++import { stageContainer, stageLeaf, stageRegion, type StageAdoption } from "../src/codegen/staging-instr.js";
+ 
+ const provenance = (unitId: string) => ({ sourceId: "editor.ts", unitId });
+ const empty = { kind: "empty" as const };
+-function setup(graph = new EmissionOwnership(), adopted?: BodyEpoch) {
++function setup(graph = new EmissionOwnership(), adopted?: BodyEpoch, malformedAdoptions?: readonly StageAdoption[]) {
+   const identity = { bodyIdentity: {}, bindingEnvironment: {} };
+   const body = graph.createBodyEpoch(provenance("body"), identity);
+   const token = graph.beginContentTransaction(body);
+@@ -27,6 +27,7 @@ function setup(graph = new EmissionOwnership(), adopted?: BodyEpoch) {
+     const edge = graph.adoptBody(root, adopted, useSiteIdentity);
+     x = stageLeaf(x.instruction, { ...x, adoptions: [{ edge, body: adopted, useSiteIdentity }] });
+   }
++  if (malformedAdoptions) x = stageLeaf(x.instruction, { ...x, adoptions: malformedAdoptions });
+   const staged = { body, ...identity, root: stageRegion(body, root, [x, y]) };
+   // Expected physical layout is assembled from the intended construction, not
+   // from inspectStageBody's result or the ledger's retained edge enumeration.
+@@ -273,23 +274,23 @@ describe("paired immutable staging edits", () => {
+   });
+ 
+   it("ledger-step failure rolls back earlier occurrence removal without installing the physical version", () => {
+-    const f = setup();
+-    const foreign = setup();
++    const foreign = new EmissionOwnership();
++    const foreignBody = foreign.createBodyEpoch(provenance("foreign"));
++    const foreignRegion = foreign.createRegion(foreignBody);
+     const useSiteIdentity = {};
+-    const edge = foreign.graph.adoptBody(foreign.root, foreign.body, useSiteIdentity);
++    const edge = foreign.adoptBody(foreignRegion, foreignBody, useSiteIdentity);
+     // Deliberate malformed adapter input. The one-body physical census cannot
+     // authenticate a foreign edge; ledger mutation must refuse it atomically.
+-    const bad = stageLeaf(f.x.instruction, { ...f.x, adoptions: [{ edge, body: foreign.body, useSiteIdentity }] });
+-    const staged = { ...f.staged, root: stageRegion(f.body, f.root, [bad, f.y]) };
+-    // Transfer the still-open token instead of using the original test editor.
+-    const editor = new StagingBodyEditor(f.graph, staged, f.token, f.expected);
++    // Supply fault data BEFORE the one exclusive editor claim; do not create
++    // a second editor over an already claimed token to arrange the fixture.
++    const f = setup(undefined, undefined, [{ edge, body: foreignBody, useSiteIdentity }]);
++    const editor = f.editor;
+     const before = editor.snapshot();
+-    expect(() => editor.removeLeaf(bad.nodeIdentity)).toThrow("foreign");
++    expect(() => editor.removeLeaf(f.x.nodeIdentity)).toThrow("foreign");
+     expect(editor.snapshot()).toBe(before);
+     // A missing undo would instead report an already-detached occurrence here.
+-    expect(() => editor.removeLeaf(bad.nodeIdentity)).toThrow("foreign");
++    expect(() => editor.removeLeaf(f.x.nodeIdentity)).toThrow("foreign");
+     expect(editor.snapshot()).toBe(before);
+     editor.rollbackEdit(f.token);
+-    foreign.editor.rollbackEdit(foreign.token);
+   });
+ });
+diff --git a/tests/issue-5883-construction-lease.test.ts b/tests/issue-5883-construction-lease.test.ts
+new file mode 100644
+index 0000000000..1e8878324e
+--- /dev/null
++++ b/tests/issue-5883-construction-lease.test.ts
+@@ -0,0 +1,387 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++// Construction-lease adversarial controls. Source-only; not executed.
++import { describe, expect, it } from "vitest";
++import { EmissionOwnership, type ConstructionLease } from "../src/codegen/context/emission-ownership.js";
++import { StagingBodyEditor } from "../src/codegen/staging-edit.js";
++import { inspectStageBody, type StagePlacement } from "../src/codegen/staging-census.js";
++import { stageLeaf, stageRegion } from "../src/codegen/staging-instr.js";
++
++const provenance = (unitId: string) => ({ sourceId: "lease.ts", unitId });
++function candidate(graph = new EmissionOwnership()) {
++  const identity = { bodyIdentity: {}, bindingEnvironment: {} };
++  const body = graph.createBodyEpoch(provenance("body"), identity);
++  const token = graph.beginContentTransaction(body);
++  const root = graph.createRegion(body);
++  const edge = graph.attachRegion(body, root);
++  const spare = graph.createRegion(body);
++  const nodeIdentity = {};
++  const kind = "protocol-choice" as const;
++  const occurrence = graph.recordOccurrence(root, provenance("node"), { nodeIdentity, kind });
++  const node = stageLeaf({ op: "local.get", index: 0 }, { nodeIdentity, occurrence: { occurrence, kind } });
++  const staged = { body, ...identity, root: stageRegion(body, root, [node]) };
++  const manifest = inspectStageBody(staged).manifest;
++  const expected: StagePlacement[] = [{ region: root, parent: { kind: "body", body }, nodeIdentities: [nodeIdentity] }];
++  return {
++    graph,
++    identity,
++    body,
++    token,
++    root,
++    edge,
++    spare,
++    occurrence,
++    nodeIdentity,
++    node,
++    staged,
++    manifest,
++    expected,
++  };
++}
++type Candidate = ReturnType<typeof candidate>;
++const claim = (c: Candidate) => c.graph.claimBodyConstruction(c.body, c.token, c.identity);
++const editor = (c: Candidate) => new StagingBodyEditor(c.graph, c.staged, c.token, c.expected);
++function complete(c: Candidate, lease: ConstructionLease) {
++  return c.graph.completeConstruction(c.body, c.token, c.manifest, lease);
++}
++
++/** Publication sentinels observe the shared id allocator without changing body content. */
++function rejectsWithoutAllocation(graph: EmissionOwnership, action: () => unknown, message?: string) {
++  const before = graph.createPublication("function", provenance("before"));
++  if (message) expect(action).toThrow(message);
++  else expect(action).toThrow();
++  const after = graph.createPublication("function", provenance("after"));
++  expect(after.id).toBe(before.id + 1);
++}
++
++describe("arena-owned construction lease", () => {
++  it("rejects the wrong body's top token before committing or mutating either construction", () => {
++    const graph = new EmissionOwnership();
++    const a = candidate(graph),
++      b = candidate(graph);
++    rejectsWithoutAllocation(
++      graph,
++      () => new StagingBodyEditor(graph, a.staged, b.token, a.expected),
++      "construction owner",
++    );
++    const bl = claim(b);
++    graph.assertConstructionScope(b.body, b.token, bl);
++    complete(b, bl);
++    const al = claim(a);
++    graph.assertConstructionScope(a.body, a.token, al);
++    complete(a, al); // Both original manifests still authenticate exactly.
++  });
++
++  it("rejects cross-arena tokens and bodies without consuming either arena's scope", () => {
++    const a = candidate(),
++      b = candidate();
++    rejectsWithoutAllocation(a.graph, () => a.graph.claimBodyConstruction(a.body, b.token, a.identity), "LIFO");
++    rejectsWithoutAllocation(a.graph, () => a.graph.claimBodyConstruction(b.body, a.token, b.identity), "foreign");
++    complete(a, claim(a));
++    complete(b, claim(b));
++  });
++
++  it("a structural copy of the token cannot claim its original scope", () => {
++    const c = candidate();
++    rejectsWithoutAllocation(c.graph, () => c.graph.claimBodyConstruction(c.body, { ...c.token }, c.identity), "LIFO");
++    complete(c, claim(c));
++  });
++
++  it.each(["commit", "rollback"] as const)("rejects a stale token after unclaimed %s", (exit) => {
++    const c = candidate();
++    if (exit === "commit") c.graph.commitTransaction(c.token);
++    else c.graph.rollbackTransaction(c.token);
++    rejectsWithoutAllocation(c.graph, () => editor(c), "LIFO");
++    if (exit === "commit") c.graph.completeBodyEpoch(c.body, c.manifest);
++    else expect(() => c.graph.retainBodyEpoch(c.body)).toThrow("failed");
++  });
++
++  it.each(["caller", "unbound", "nested"] as const)("rejects a %s token as construction owner", (kind) => {
++    const c = candidate();
++    const wrong =
++      kind === "caller"
++        ? c.graph.beginTransaction()
++        : c.graph.beginContentTransaction(kind === "nested" ? c.body : undefined);
++    rejectsWithoutAllocation(
++      c.graph,
++      () => new StagingBodyEditor(c.graph, c.staged, wrong, c.expected),
++      "construction owner",
++    );
++    c.graph.rollbackTransaction(wrong);
++    complete(c, claim(c));
++  });
++
++  it.each(["bodyIdentity", "bindingEnvironment"] as const)("rejects stale %s before claiming", (field) => {
++    const c = candidate();
++    rejectsWithoutAllocation(
++      c.graph,
++      () => new StagingBodyEditor(c.graph, { ...c.staged, [field]: {} }, c.token, c.expected),
++      "Stale",
++    );
++    editor(c).complete();
++  });
++
++  it("rejects duplicate editor claims while the first editor remains usable", () => {
++    const c = candidate();
++    const first = editor(c);
++    const before = first.snapshot();
++    rejectsWithoutAllocation(c.graph, () => editor(c), "already claimed");
++    expect(first.snapshot()).toBe(before);
++    first.removeLeaf(c.nodeIdentity);
++    expect(inspectStageBody(first.complete().body).manifest.occurrences).toEqual([]);
++  });
++
++  it("a bad physical preflight does not consume the construction claim", () => {
++    const c = candidate();
++    rejectsWithoutAllocation(c.graph, () => new StagingBodyEditor(c.graph, c.staged, c.token, []), "region count");
++    editor(c).complete();
++  });
++
++  const rawWrites = [
++    "create-region",
++    "attach-region",
++    "record-occurrence",
++    "remove-occurrence",
++    "adopt-body",
++    "detach-edge",
++    "begin-content",
++    "commit",
++    "rollback",
++    "retain",
++    "complete",
++    "discard",
++  ] as const;
++  it.each(rawWrites)(
++    "rejects claimed raw %s before allocation, stack change, membership or state change",
++    (operation) => {
++      const c = candidate();
++      const lease = claim(c);
++      const membership = c.graph.occurrenceMembership(c.occurrence);
++      function act() {
++        switch (operation) {
++          case "create-region":
++            return c.graph.createRegion(c.body);
++          case "attach-region":
++            return c.graph.attachRegion(c.root, c.spare);
++          case "record-occurrence":
++            return c.graph.recordOccurrence(c.root, provenance("bad"), { nodeIdentity: {}, kind: "seed-edge" });
++          case "remove-occurrence":
++            return c.graph.removeOccurrence(c.occurrence);
++          case "adopt-body":
++            return c.graph.adoptBody(c.root, c.body, {});
++          case "detach-edge":
++            return c.graph.detachEdge(c.edge);
++          case "begin-content":
++            return c.graph.beginContentTransaction(c.body);
++          case "commit":
++            return c.graph.commitTransaction(c.token);
++          case "rollback":
++            return c.graph.rollbackTransaction(c.token);
++          case "retain":
++            return c.graph.retainBodyEpoch(c.body);
++          case "complete":
++            return c.graph.completeBodyEpoch(c.body, c.manifest);
++          case "discard":
++            return c.graph.discardBodyEpoch(c.body);
++        }
++      }
++      rejectsWithoutAllocation(c.graph, act, "requires its construction lease");
++      c.graph.assertConstructionScope(c.body, c.token, lease);
++      expect(c.graph.occurrenceMembership(c.occurrence)).toBe(membership);
++      const receipt = complete(c, lease);
++      const publication = c.graph.createPublication("function", provenance("root"));
++      c.graph.publishBody(publication, c.body);
++      const result = c.graph.sealWithManifest({ publications: [{ publication, receipt }], bodies: [c.manifest] });
++      expect(result.ownership.bodies).toEqual([c.body]);
++      expect(result.ownership.regions).toEqual([c.root]);
++      expect(result.ownership.occurrences.map((o) => o.occurrence)).toEqual([c.occurrence]);
++      expect(result.manifests[0]?.adoptions).toEqual([]);
++    },
++  );
++
++  it("raw binding of an unbound frame cannot enter a claimed body", () => {
++    const c = candidate(),
++      lease = claim(c);
++    const unbound = c.graph.beginContentTransaction();
++    rejectsWithoutAllocation(
++      c.graph,
++      () => c.graph.bindContentTransaction(unbound, c.body),
++      "requires its construction lease",
++    );
++    // Failed binding left the frame genuinely unbound, not a hidden child.
++    expect(() => c.graph.commitTransaction(unbound)).toThrow("unbound");
++    c.graph.rollbackTransaction(unbound);
++    c.graph.assertConstructionScope(c.body, c.token, lease);
++    complete(c, lease);
++  });
++
++  it("a raw caller-frame write is rejected without tainting a claimed construction", () => {
++    const c = candidate(),
++      lease = claim(c);
++    const caller = c.graph.beginTransaction();
++    rejectsWithoutAllocation(c.graph, () => c.graph.removeOccurrence(c.occurrence), "requires its construction lease");
++    c.graph.rollbackTransaction(caller);
++    complete(c, lease); // Sticky unscoped-content taint was not changed on refusal.
++  });
++
++  it("a copied or cross-arena lease is not authority", () => {
++    const a = candidate(),
++      b = candidate();
++    const al = claim(a),
++      bl = claim(b);
++    for (const wrong of [{ ...al }, bl]) {
++      rejectsWithoutAllocation(
++        a.graph,
++        () => a.graph.beginContentTransaction(a.body, wrong),
++        "requires its construction lease",
++      );
++      rejectsWithoutAllocation(
++        a.graph,
++        () => a.graph.removeOccurrence(a.occurrence, wrong),
++        "requires its construction lease",
++      );
++      rejectsWithoutAllocation(
++        a.graph,
++        () => a.graph.rollbackTransaction(a.token, wrong),
++        "requires its construction lease",
++      );
++    }
++    complete(a, al);
++    complete(b, bl);
++  });
++
++  it("a lease cannot operate on another claimed body or its top frame", () => {
++    const graph = new EmissionOwnership();
++    const a = candidate(graph),
++      al = claim(a);
++    const b = candidate(graph),
++      bl = claim(b);
++    rejectsWithoutAllocation(graph, () => graph.rollbackTransaction(b.token, al), "requires its construction lease");
++    rejectsWithoutAllocation(graph, () => graph.beginContentTransaction(a.body, al), "Wrong body transaction domain");
++    rejectsWithoutAllocation(
++      graph,
++      () => graph.completeConstruction(a.body, b.token, a.manifest, al),
++      "Wrong construction lease scope",
++    );
++    graph.assertConstructionScope(b.body, b.token, bl);
++    complete(b, bl);
++    complete(a, al);
++  });
++
++  it("a lease cannot be used against an unclaimed body or caller frame", () => {
++    const a = candidate(),
++      al = claim(a);
++    const b = candidate();
++    rejectsWithoutAllocation(b.graph, () => b.graph.createRegion(b.body, al), "foreign");
++    const caller = a.graph.beginTransaction();
++    rejectsWithoutAllocation(a.graph, () => a.graph.beginContentTransaction(a.body, al), "body-owned scope");
++    rejectsWithoutAllocation(a.graph, () => a.graph.removeOccurrence(a.occurrence, al), "body-owned scope");
++    rejectsWithoutAllocation(a.graph, () => a.graph.rollbackTransaction(caller, al), "unbound/caller");
++    a.graph.rollbackTransaction(caller);
++    complete(a, al);
++    b.graph.commitTransaction(b.token);
++    b.graph.completeBodyEpoch(b.body, b.manifest);
++  });
++
++  it("nested rollback retains the lease and restores exact membership", () => {
++    const c = candidate(),
++      lease = claim(c);
++    const membership = c.graph.occurrenceMembership(c.occurrence);
++    const child = c.graph.beginContentTransaction(c.body, lease);
++    c.graph.removeOccurrence(c.occurrence, lease);
++    rejectsWithoutAllocation(c.graph, () => c.graph.rollbackTransaction(child), "requires its construction lease");
++    c.graph.rollbackTransaction(child, lease);
++    c.graph.assertConstructionScope(c.body, c.token, lease);
++    expect(c.graph.occurrenceMembership(c.occurrence)).toBe(membership);
++    const later = c.graph.beginContentTransaction(c.body, lease);
++    c.graph.commitTransaction(later, lease);
++    complete(c, lease);
++  });
++
++  it("even the valid lease cannot commit a construction without authenticated completion", () => {
++    const c = candidate(),
++      lease = claim(c);
++    rejectsWithoutAllocation(c.graph, () => c.graph.commitTransaction(c.token, lease), "completeConstruction");
++    c.graph.assertConstructionScope(c.body, c.token, lease);
++    complete(c, lease);
++  });
++
++  it("authorized nested writes and discard roll back without revoking the construction lease", () => {
++    const c = candidate(),
++      lease = claim(c);
++    const child = c.graph.beginContentTransaction(c.body, lease);
++    const region = c.graph.createRegion(c.body, lease);
++    c.graph.attachRegion(c.root, region, lease);
++    c.graph.recordOccurrence(region, provenance("child"), { nodeIdentity: {}, kind: "seed-edge" }, lease);
++    c.graph.adoptBody(region, c.body, {}, lease);
++    c.graph.discardBodyEpoch(c.body, lease);
++    c.graph.rollbackTransaction(child, lease);
++    c.graph.assertConstructionScope(c.body, c.token, lease);
++    complete(c, lease); // Exact pre-child manifest; no child membership survived.
++  });
++
++  it.each(["identity", "occurrence", "body"] as const)("bad %s manifest cannot close the construction", (kind) => {
++    const c = candidate(),
++      lease = claim(c);
++    const other = candidate();
++    const bad =
++      kind === "identity"
++        ? { ...c.manifest, bindingEnvironment: {} }
++        : kind === "occurrence"
++          ? { ...c.manifest, occurrences: [] }
++          : other.manifest;
++    rejectsWithoutAllocation(c.graph, () => c.graph.completeConstruction(c.body, c.token, bad, lease));
++    c.graph.assertConstructionScope(c.body, c.token, lease);
++    complete(c, lease);
++    other.graph.rollbackTransaction(other.token);
++  });
++
++  it("completion and construction abort both revoke authority permanently", () => {
++    for (const terminal of ["complete", "abort"] as const) {
++      const c = candidate(),
++        lease = claim(c);
++      if (terminal === "complete") complete(c, lease);
++      else c.graph.rollbackTransaction(c.token, lease);
++      rejectsWithoutAllocation(c.graph, () => c.graph.createRegion(c.body, lease), "revoked");
++      rejectsWithoutAllocation(c.graph, () => c.graph.beginContentTransaction(c.body, lease), "revoked");
++      rejectsWithoutAllocation(c.graph, () => c.graph.discardBodyEpoch(c.body), "revoked");
++      rejectsWithoutAllocation(c.graph, () => c.graph.assertConstructionScope(c.body, c.token, lease), "revoked");
++    }
++  });
++
++  it("an editor's exact scope is checked before any physical or ledger edit", () => {
++    const c = candidate();
++    const owned = editor(c);
++    const before = owned.snapshot();
++    const caller = c.graph.beginTransaction();
++    rejectsWithoutAllocation(c.graph, () => owned.removeLeaf(c.nodeIdentity), "LIFO");
++    rejectsWithoutAllocation(c.graph, () => owned.beginEdit(), "LIFO");
++    expect(owned.snapshot()).toBe(before);
++    c.graph.rollbackTransaction(caller);
++    owned.removeLeaf(c.nodeIdentity);
++    owned.complete();
++  });
++
++  it("an exposed editor child token does not grant raw close authority", () => {
++    const c = candidate();
++    const owned = editor(c);
++    const before = owned.snapshot();
++    const child = owned.beginEdit();
++    owned.removeLeaf(c.nodeIdentity);
++    rejectsWithoutAllocation(c.graph, () => c.graph.commitTransaction(child), "requires its construction lease");
++    rejectsWithoutAllocation(c.graph, () => c.graph.rollbackTransaction(child), "requires its construction lease");
++    owned.rollbackEdit(child);
++    expect(owned.snapshot()).toBe(before);
++    expect(inspectStageBody(owned.complete().body).manifest.occurrences.map((o) => o.occurrence)).toEqual([
++      c.occurrence,
++    ]);
++  });
++
++  it("preserves ordinary unclaimed nested transaction and completion behavior", () => {
++    const c = candidate();
++    const child = c.graph.beginContentTransaction(c.body);
++    c.graph.removeOccurrence(c.occurrence);
++    c.graph.rollbackTransaction(child);
++    c.graph.commitTransaction(c.token);
++    c.graph.completeBodyEpoch(c.body, c.manifest);
++  });
++});

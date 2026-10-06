@@ -1,0 +1,8 @@
+tests/issue-5883-whole-captured-drive-render.test.ts(74,94): error TS2322: Type '0' is not assignable to type '1 | 2 | 3 | 4 | boolean | undefined'.
+tests/issue-5883-whole-captured-drive-render.test.ts(79,46): error TS2345: Argument of type 'Uint8Array<ArrayBufferLike>' is not assignable to parameter of type 'BufferSource'.
+  Type 'Uint8Array<ArrayBufferLike>' is not assignable to type 'ArrayBufferView<ArrayBuffer>'.
+    Types of property 'buffer' are incompatible.
+      Type 'ArrayBufferLike' is not assignable to type 'ArrayBuffer'.
+        Type 'SharedArrayBuffer' is not assignable to type 'ArrayBuffer'.
+          Types of property '[Symbol.toStringTag]' are incompatible.
+            Type '"SharedArrayBuffer"' is not assignable to type '"ArrayBuffer"'.

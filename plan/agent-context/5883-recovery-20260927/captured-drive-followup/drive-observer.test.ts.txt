@@ -1,0 +1,202 @@
+// Source-only observer. Copy unchanged into tests/ in EACH full source tree.
+// No provider/prologue/element mocks, context construction, or ready flags.
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { runInNewContext } from "node:vm";
+import { expect, it, vi } from "vitest";
+// Initialize the real compiler graph, including its shared dispatch bindings.
+import { compile } from "../src/index.js";
+import { ts } from "../src/ts-api.js";
+import * as drive from "../src/codegen/promise-combinator-drive.js";
+import type { CodegenContext, FunctionContext } from "../src/codegen/context/types.js";
+
+const sha = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
+const modes = ["captured-observable", "legacy-observable", "legacy-plain"] as const;
+type Mode = (typeof modes)[number];
+
+// Ordered graph encoding preserves undefined, numeric edge cases, Map/Set
+// insertion order, and shared instruction identity. It never invokes getters.
+// Unsupported values FAIL observation instead of silently disappearing.
+function encode(root: unknown): string {
+  const seen = new Map<object, number>();
+  function visit(value: unknown): unknown {
+    if (value === undefined) return { atom: "undefined" };
+    if (typeof value === "bigint") return { bigint: String(value) };
+    if (typeof value === "number" && (!Number.isFinite(value) || Object.is(value, -0)))
+      return { number: Object.is(value, -0) ? "-0" : String(value) };
+    if (typeof value === "function" || typeof value === "symbol")
+      throw new Error(`Unsupported snapshot value: ${typeof value}`);
+    if (value === null || typeof value !== "object") return value;
+    const previous = seen.get(value);
+    if (previous !== undefined) return { ref: previous };
+    const id = seen.size;
+    seen.set(value, id);
+    if (value instanceof Map) return { id, map: [...value].map(([k, v]) => [visit(k), visit(v)]) };
+    if (value instanceof Set) return { id, set: [...value].map(visit) };
+    if (ArrayBuffer.isView(value))
+      return { id, view: value.constructor.name, bytes: [...new Uint8Array(value.buffer, value.byteOffset, value.byteLength)] };
+    if (value instanceof ArrayBuffer) return { id, buffer: [...new Uint8Array(value)] };
+    const entries = Reflect.ownKeys(value).map((key) => {
+      if (typeof key !== "string") throw new Error("Symbol snapshot key");
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+      if (!("value" in descriptor)) throw new Error(`Accessor snapshot key: ${key}`);
+      return [key, visit(descriptor.value)];
+    });
+    return { id, kind: Array.isArray(value) ? "array" : "object", entries };
+  }
+  return JSON.stringify(visit(root));
+}
+
+function snapshot(ctx: CodegenContext, fctx: FunctionContext): string {
+  return encode({
+    module: ctx.mod,
+    functions: ctx.funcMap,
+    structs: ctx.structMap,
+    fields: ctx.structFields,
+    typeNames: ctx.typeIdxToStructName,
+    stringGlobals: ctx.stringGlobalMap,
+    nativeStringGlobals: ctx.nativeStrLiteralGlobals,
+    nativeStringHelpers: ctx.nativeStrHelpers,
+    numImportFuncs: ctx.numImportFuncs,
+    numImportGlobals: ctx.numImportGlobals,
+    // A selected physical caller view, NOT serialization of AST/checker state.
+    caller: {
+      name: fctx.name, params: fctx.params, locals: fctx.locals,
+      localMap: fctx.localMap, body: fctx.body, savedBodies: fctx.savedBodies,
+      returnType: fctx.returnType, blockDepth: fctx.blockDepth,
+      breakStack: fctx.breakStack, continueStack: fctx.continueStack,
+      labelMap: fctx.labelMap,
+    },
+    sourceDerivedFlags: {
+      standalone: ctx.standalone, nativeStrings: ctx.nativeStrings,
+      protoNamedDirty: ctx.protoNamedDirty, protoMemberDirty: ctx.protoMemberDirty,
+      protoNamedWrittenMembers: ctx.protoNamedWrittenMembers,
+    },
+  });
+}
+
+function sourceFor(method: "all" | "race", mode: Mode): string {
+  const iterable = mode === "captured-observable"
+    ? "const input: any[] = [1, 2];"
+    : `const input: any = {};
+  input[Symbol.iterator] = function(): any {
+    let index = 0;
+    return {next: function(): any { index++; return {done: index > 2, value: index}; }};
+  };`;
+  const override = mode === "legacy-plain" ? "" : `
+  (Promise as any).resolve = function(value: any): any {
+    return {then: function(ok: any): void { ok(value); }};
+  };`;
+  return `declare function __drain_microtasks(): void;
+export function test(): number {
+  let answer = -100;
+  ${iterable}
+  ${override}
+  const aggregate = Promise.${method}(input).then(function(value: any): void {
+    answer = ${method === "all" ? "value[0] * 10 + value[1]" : "value"};
+  }, function(): void { answer = -200; });
+  __drain_microtasks();
+  return answer;
+}`;
+}
+
+for (const method of ["all", "race"] as const) {
+  for (const mode of modes) {
+    it(`real drive observer ${method}/${mode}`, async () => {
+      const destination = process.env.DRIVE_OBSERVER_OUTPUT;
+      if (!destination) throw new Error("Set DRIVE_OBSERVER_OUTPUT to a fresh per-run artifact directory");
+      mkdirSync(destination, { recursive: true });
+      const id = `${method}-${mode}`;
+      const save = (suffix: string, value: string | Uint8Array) =>
+        writeFileSync(resolve(destination, `${id}.${suffix}`), value, { flag: "wx" });
+      const source = sourceFor(method, mode);
+      save("source.ts", source);
+      const observerErrors: string[] = [];
+      const hits: Array<{ method: string; observable: boolean; captured: boolean; argText: string; local: number | null; result?: string; error?: string }> = [];
+      const original = drive.emitStandalonePromiseCombinatorDrive;
+      const observe = (label: string, ctx: CodegenContext, fctx: FunctionContext) => {
+        try { save(`${label}.json`, snapshot(ctx, fctx)); }
+        catch (error) { observerErrors.push(`${label}: ${String(error)}`); }
+      };
+      // Pass through EXACTLY ONCE with original argument identities. The spy
+      // only records; all real emitter dependencies remain installed unchanged.
+      const spy = vi.spyOn(drive, "emitStandalonePromiseCombinatorDrive").mockImplementation((...args) => {
+        const [ctx, fctx, actualMethod, arg, observable, options] = args;
+        const ordinal = hits.length;
+        const hit: (typeof hits)[number] = {
+          method: actualMethod, observable,
+          captured: options?.iteratorProtocol === "captured-source-vector",
+          argText: arg.getText(), local: options?.evaluatedVecLocal ?? null,
+        };
+        hits.push(hit);
+        observe(`entry-${ordinal}-before`, ctx, fctx);
+        try {
+          const result = original(...args);
+          hit.result = encode(result);
+          return result;
+        } catch (error) {
+          hit.error = String(error);
+          throw error;
+        } finally {
+          observe(`entry-${ordinal}-after`, ctx, fctx);
+        }
+      });
+      const options = { fileName: `5883-observer-${id}.ts`, target: "standalone" as const, nativeStrings: true, optimize: 0 as const, emitWat: true };
+      let result: Awaited<ReturnType<typeof compile>> | undefined;
+      let compileError: string | null = null;
+      try { result = await compile(source, options); }
+      catch (error) { compileError = String(error); }
+      finally { spy.mockRestore(); }
+
+      // Independent native semantics, fresh realm per case: replace ONLY the
+      // explicit drain with awaiting the aggregate; Promise mutation stays local.
+      const nativeSource = source.replace("export function test()", "async function test()")
+        .replace("__drain_microtasks();", "await aggregate;") + "\ntest();";
+      const nativeJS = ts.transpileModule(nativeSource, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
+      save("native.js", nativeJS);
+      let nativeActual: unknown;
+      let nativeError: string | null = null;
+      try { nativeActual = await runInNewContext(nativeJS, {}, { timeout: 5000 }); }
+      catch (error) { nativeError = String(error); }
+
+      let actual: unknown;
+      let runtimeError: string | null = null;
+      let imports: WebAssembly.ModuleImportDescriptor[] | null = null;
+      if (result) {
+        save("wat", result.wat);
+        save("wasm", result.binary);
+        if (result.success) {
+          try {
+            const module = await WebAssembly.compile(result.binary);
+            imports = WebAssembly.Module.imports(module);
+            const instance = await WebAssembly.instantiate(module, {});
+            actual = (instance.exports.test as () => number)();
+          } catch (error) { runtimeError = String(error); }
+        }
+      }
+      // Always retain raw outcomes BEFORE expectations. No normalization.
+      save("receipt.json", JSON.stringify({
+        id, sourceHash: sha(source), options, hits, observerErrors,
+        driveHash: sha(readFileSync(resolve("src/codegen/promise-combinator-drive.ts"))),
+        protocolHash: sha(readFileSync(resolve("src/codegen/promise-combinator-observable-protocol.ts"))),
+        observerHash: sha(readFileSync(resolve("tests/issue-5883-real-drive-observer.test.ts"))),
+        success: result?.success, errors: result?.errors, compileError,
+        binaryHash: result ? sha(result.binary) : null,
+        nativeActual: encode(nativeActual), nativeError, actual: encode(actual), runtimeError, imports,
+        internalInterval: "UNKNOWN: only full exported-entry before/after is observed",
+      }, null, 2));
+      expect(observerErrors).toEqual([]);
+      expect(hits).toHaveLength(1);
+      expect(hits[0]).toMatchObject({ method, observable: mode !== "legacy-plain", captured: mode === "captured-observable", argText: "input" });
+      expect(hits[0].result).toBe(encode({ kind: "externref" }));
+      expect(compileError).toBeNull();
+      expect(result?.success, JSON.stringify(result?.errors)).toBe(true);
+      expect(nativeError).toBeNull();
+      expect(nativeActual).toBe(method === "all" ? 12 : 1);
+      expect(imports).toEqual([]);
+      expect(runtimeError).toBeNull();
+      expect(actual).toBe(nativeActual);
+    }, 120000);
+  }
+}

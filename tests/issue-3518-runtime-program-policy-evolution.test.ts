@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { capture5883Main4bffInventoryViewSource } from "./helpers/ir-5883-main-4bff-inventory-views.js";
 import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
 import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
 import { captureSourceMapPositionInventoryPredecessorPolicySource } from "./helpers/ir-source-map-position-inventory-successor.js";
@@ -98,7 +99,10 @@ function actual(): Policy {
                                     captureSourceMapPositionInventoryPredecessorPolicySource(
                                       capturePositionClassFieldsMainPredecessorPolicySource(
                                         capturePositionFinallyMainPredecessorPolicySource(
-                                          read("scripts/compiler-boundaries.json"),
+                                          capture5883Main4bffInventoryViewSource(
+                                            read("scripts/compiler-boundaries.json"),
+                                            "union-to-incoming",
+                                          ),
                                         ),
                                       ),
                                     ),
@@ -185,7 +189,10 @@ describe("C1 exact policy inverse and reciprocal B proof", () => {
                                       captureSourceMapPositionInventoryPredecessorPolicySource(
                                         capturePositionClassFieldsMainPredecessorPolicySource(
                                           capturePositionFinallyMainPredecessorPolicySource(
-                                            read("scripts/compiler-boundaries.json"),
+                                            capture5883Main4bffInventoryViewSource(
+                                              read("scripts/compiler-boundaries.json"),
+                                              "union-to-incoming",
+                                            ),
                                           ),
                                         ),
                                       ),

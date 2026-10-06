@@ -1,0 +1,122 @@
+{
+  "schema": "assignment-D-first-check-receipt-v1",
+  "ordinal": 5,
+  "id": "candidate-full-boundaries",
+  "command": "node scripts/check-compiler-boundaries.mjs",
+  "cwd": "/Users/thomas/Code/js2/.codex-worktrees/codex-5883-main-reconcile-20261002",
+  "grant": "parent explicit steps 1–5 only after A release/C terminal",
+  "startedAt": "2026-10-02T04:10:36.761Z",
+  "endedAt": "2026-10-02T04:10:42.676Z",
+  "runnerPid": 64929,
+  "childPid": 64957,
+  "terminal": true,
+  "exitCode": 1,
+  "signal": null,
+  "spawnError": null,
+  "node": {
+    "version": "v22.23.2",
+    "executable": "/Users/thomas/.nvm/versions/node/v22.23.2/bin/node"
+  },
+  "dependencies": {
+    "link": "/Users/thomas/Code/js2/node_modules",
+    "ts7EntrypointSha256": "cbdfbf11c26ed00dfc073155e316a42d6d6d8a387be61006b82fa9aa93ac572e",
+    "prettierEntrypointSha256": "ac5523cd57e7e9d8eac71caef7e022a8a8489bcdc19ca8a778b7e728ec103b93"
+  },
+  "removedGitEnvironment": [],
+  "compilerControlEnvironment": {},
+  "pinsBefore": {
+    "head": "32c2da64881923d67f0f53c6019a475db6ee1ecd",
+    "mergeHead": "2bfe3eddf84d4d27f471eddb91e441709b7f6eff",
+    "branch": "codex/5883-main-reconcile-20261002",
+    "productionPatchSha256": "f64a9ad19a8e97f33c12884e41a99a521b8d398832340efa8002a56727917a0a",
+    "frozenFixtures": 141,
+    "selectedTestFiles": 13,
+    "additiveControls": 8
+  },
+  "pinsAfter": {
+    "head": "32c2da64881923d67f0f53c6019a475db6ee1ecd",
+    "mergeHead": "2bfe3eddf84d4d27f471eddb91e441709b7f6eff",
+    "branch": "codex/5883-main-reconcile-20261002",
+    "productionPatchSha256": "f64a9ad19a8e97f33c12884e41a99a521b8d398832340efa8002a56727917a0a",
+    "frozenFixtures": 141,
+    "selectedTestFiles": 13,
+    "additiveControls": 8
+  },
+  "pinError": null,
+  "stdout": {
+    "file": ".tmp/assignment-D-first-steps1-5-20261002/05-candidate-full-boundaries.stdout.raw",
+    "bytes": 10274170,
+    "sha256": "0baeb9cf8eaba9e49946d71b9ddf43ce0e25cfad26c024cc8c24aebc019990b2"
+  },
+  "stderr": {
+    "file": ".tmp/assignment-D-first-steps1-5-20261002/05-candidate-full-boundaries.stderr.raw",
+    "bytes": 85,
+    "sha256": "0db109391ebba28e05c3d748ba26964d453338801285fc953381e6b7f1ec8961"
+  },
+  "boundarySummary": {
+    "mode": "complete",
+    "status": "inventory-valid-architecture-incomplete",
+    "counts": {
+      "total": 1783,
+      "tracked": 1783,
+      "untracked": 0,
+      "excludedNonModules": 2,
+      "byState": {
+        "unmigrated": 1481,
+        "clean": 297,
+        "compatibility-adapter": 5
+      },
+      "byLayer": {
+        "mixed-needs-split": 1395,
+        "backend-wasmgc": 57,
+        "frontend-ts": 6,
+        "legacy-linear": 24,
+        "wasm-emit": 9,
+        "ir-analysis": 11,
+        "ir-core": 29,
+        "ir-passes": 1,
+        "ir-program": 44,
+        "ir-runtime": 19,
+        "legacy-host": 55,
+        "runtime-contracts": 10,
+        "native-runtime": 106,
+        "foundation": 9,
+        "wasm-model": 3,
+        "wasm-physical": 5
+      },
+      "edgesBySyntax": {
+        "import": 13163,
+        "import-type": 202,
+        "export-from": 335,
+        "require": 4,
+        "dynamic-import": 10,
+        "export-star": 29
+      },
+      "edgesByType": {
+        "typeOnly": 3627,
+        "runtime": 10116
+      },
+      "resolvedEdgesBySyntax": {
+        "import": 13163,
+        "import-type": 202,
+        "export-from": 335,
+        "require": 4,
+        "dynamic-import": 6,
+        "export-star": 29
+      },
+      "resolvedEdgesByType": {
+        "typeOnly": 3627,
+        "runtime": 10112
+      }
+    },
+    "inventoryValid": true,
+    "architectureComplete": false,
+    "resolvedEdgeCount": 13739,
+    "unknownEdges": 4,
+    "unresolvedEdges": 0,
+    "forbiddenEdges": 13050,
+    "debt": 1486,
+    "errors": []
+  },
+  "additiveExecution": "NOT_RUN; only additive test static typecheck/format check are in this grant"
+}

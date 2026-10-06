@@ -1,0 +1,328 @@
+{
+  "baseline": "608be80f6beef338665fdcdb834e7d9b9f20b925",
+  "candidate": "18f1bd831312b3f5805f1e176388aac449c2d389 plus current uncommitted integration; recovery patch11ba93965347ce6c270b020ffb9d8637510cb228d3e6d50c92f4085b7ddf360b",
+  "lane": "compile standalone nativeStrings:true allowJs:true skipSemanticDiagnostics:true, Node vm native reference; identical12sources",
+  "baselineProcess": {
+    "id": 29789,
+    "exit": 1
+  },
+  "candidateProcess": {
+    "id": 84876,
+    "exit": 1
+  },
+  "count": 12,
+  "baselinePass": 7,
+  "candidatePass": 7,
+  "pairs": [
+    {
+      "name": "BigInt SameValue without method",
+      "source": "export function test() { try { const p=7n; return Object.is(p,p) && !Object.is(p,8n) ? 1 : -1; } catch(error) { return -90; } }",
+      "sha256": "4edb050973b9a3c7c2ede4a7ca7f856f00f0c619dc63e14e105842e05c07f6e9",
+      "baseline": {
+        "name": "BigInt SameValue without method",
+        "source": "export function test() { try { const p=7n; return Object.is(p,p) && !Object.is(p,8n) ? 1 : -1; } catch(error) { return -90; } }",
+        "sha256": "4edb050973b9a3c7c2ede4a7ca7f856f00f0c619dc63e14e105842e05c07f6e9",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      },
+      "candidate": {
+        "name": "BigInt SameValue without method",
+        "source": "export function test() { try { const p=7n; return Object.is(p,p) && !Object.is(p,8n) ? 1 : -1; } catch(error) { return -90; } }",
+        "sha256": "4edb050973b9a3c7c2ede4a7ca7f856f00f0c619dc63e14e105842e05c07f6e9",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      }
+    },
+    {
+      "name": "Symbol SameValue without method",
+      "source": "export function test() { try { const p=Symbol(\"same\"); const q=Symbol(\"same\"); return Object.is(p,p) && !Object.is(p,q) ? 1 : -1; } catch(error) { return -90; } }",
+      "sha256": "f8353ad6738b2b2309ff5858110ea9fdd50b1a2fb6b187d989e731b04c33fa07",
+      "baseline": {
+        "name": "Symbol SameValue without method",
+        "source": "export function test() { try { const p=Symbol(\"same\"); const q=Symbol(\"same\"); return Object.is(p,p) && !Object.is(p,q) ? 1 : -1; } catch(error) { return -90; } }",
+        "sha256": "f8353ad6738b2b2309ff5858110ea9fdd50b1a2fb6b187d989e731b04c33fa07",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      },
+      "candidate": {
+        "name": "Symbol SameValue without method",
+        "source": "export function test() { try { const p=Symbol(\"same\"); const q=Symbol(\"same\"); return Object.is(p,p) && !Object.is(p,q) ? 1 : -1; } catch(error) { return -90; } }",
+        "sha256": "f8353ad6738b2b2309ff5858110ea9fdd50b1a2fb6b187d989e731b04c33fa07",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      }
+    },
+    {
+      "name": "BigInt extracted SameValue without method",
+      "source": "export function test() { try { const p=7n; const same=Object.is; return same(p,p) && !same(p,8n) ? 1 : -1; } catch(error) { return -90; } }",
+      "sha256": "1729ca068853ed77b3b968450675e5308d522e89b45520dd48d330cabd2f1df4",
+      "baseline": {
+        "name": "BigInt extracted SameValue without method",
+        "source": "export function test() { try { const p=7n; const same=Object.is; return same(p,p) && !same(p,8n) ? 1 : -1; } catch(error) { return -90; } }",
+        "sha256": "1729ca068853ed77b3b968450675e5308d522e89b45520dd48d330cabd2f1df4",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      },
+      "candidate": {
+        "name": "BigInt extracted SameValue without method",
+        "source": "export function test() { try { const p=7n; const same=Object.is; return same(p,p) && !same(p,8n) ? 1 : -1; } catch(error) { return -90; } }",
+        "sha256": "1729ca068853ed77b3b968450675e5308d522e89b45520dd48d330cabd2f1df4",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      }
+    },
+    {
+      "name": "Symbol extracted SameValue without method",
+      "source": "export function test() { try { const p=Symbol(\"same\"); const q=Symbol(\"same\"); const same=Object.is; return same(p,p) && !same(p,q) ? 1 : -1; } catch(error) { return -90; } }",
+      "sha256": "1dc6d853aae5810ac6f251ef8f5be3620d0fa6f6dba245a8e85d7590b6a5e5e8",
+      "baseline": {
+        "name": "Symbol extracted SameValue without method",
+        "source": "export function test() { try { const p=Symbol(\"same\"); const q=Symbol(\"same\"); const same=Object.is; return same(p,p) && !same(p,q) ? 1 : -1; } catch(error) { return -90; } }",
+        "sha256": "1dc6d853aae5810ac6f251ef8f5be3620d0fa6f6dba245a8e85d7590b6a5e5e8",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      },
+      "candidate": {
+        "name": "Symbol extracted SameValue without method",
+        "source": "export function test() { try { const p=Symbol(\"same\"); const q=Symbol(\"same\"); const same=Object.is; return same(p,p) && !same(p,q) ? 1 : -1; } catch(error) { return -90; } }",
+        "sha256": "1dc6d853aae5810ac6f251ef8f5be3620d0fa6f6dba245a8e85d7590b6a5e5e8",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      }
+    },
+    {
+      "name": "BigInt direct method primitive arithmetic",
+      "source": "export function test() { try { const p=7n; const v=BigInt.prototype.valueOf.call(p); if(typeof v!==\"bigint\")return -1; return v+2n===9n && v-p===0n ? 1 : -2; } catch(error) { return -90; } }",
+      "sha256": "2017f8b5234c9f32422562b16bad4c7acc34a3e7850a94c7a89cf41069743e43",
+      "baseline": {
+        "name": "BigInt direct method primitive arithmetic",
+        "source": "export function test() { try { const p=7n; const v=BigInt.prototype.valueOf.call(p); if(typeof v!==\"bigint\")return -1; return v+2n===9n && v-p===0n ? 1 : -2; } catch(error) { return -90; } }",
+        "sha256": "2017f8b5234c9f32422562b16bad4c7acc34a3e7850a94c7a89cf41069743e43",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -2,
+        "failure": "AssertionError: expected -2 to be 1 // Object.is equality"
+      },
+      "candidate": {
+        "name": "BigInt direct method primitive arithmetic",
+        "source": "export function test() { try { const p=7n; const v=BigInt.prototype.valueOf.call(p); if(typeof v!==\"bigint\")return -1; return v+2n===9n && v-p===0n ? 1 : -2; } catch(error) { return -90; } }",
+        "sha256": "2017f8b5234c9f32422562b16bad4c7acc34a3e7850a94c7a89cf41069743e43",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -2,
+        "failure": "AssertionError: expected -2 to be 1 // Object.is equality"
+      }
+    },
+    {
+      "name": "BigInt direct method wrapper arithmetic",
+      "source": "export function test() { try { const p=7n; const v=BigInt.prototype.valueOf.call(Object(p)); if(typeof v!==\"bigint\")return -1; return v+2n===9n && v-p===0n ? 1 : -2; } catch(error) { return -90; } }",
+      "sha256": "65347d707328ad2ff61af1c83045829f6f07310d2267f9dac68c2d6fd857db34",
+      "baseline": {
+        "name": "BigInt direct method wrapper arithmetic",
+        "source": "export function test() { try { const p=7n; const v=BigInt.prototype.valueOf.call(Object(p)); if(typeof v!==\"bigint\")return -1; return v+2n===9n && v-p===0n ? 1 : -2; } catch(error) { return -90; } }",
+        "sha256": "65347d707328ad2ff61af1c83045829f6f07310d2267f9dac68c2d6fd857db34",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -2,
+        "failure": "AssertionError: expected -2 to be 1 // Object.is equality"
+      },
+      "candidate": {
+        "name": "BigInt direct method wrapper arithmetic",
+        "source": "export function test() { try { const p=7n; const v=BigInt.prototype.valueOf.call(Object(p)); if(typeof v!==\"bigint\")return -1; return v+2n===9n && v-p===0n ? 1 : -2; } catch(error) { return -90; } }",
+        "sha256": "65347d707328ad2ff61af1c83045829f6f07310d2267f9dac68c2d6fd857db34",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -2,
+        "failure": "AssertionError: expected -2 to be 1 // Object.is equality"
+      }
+    },
+    {
+      "name": "BigInt extracted method wrapper arithmetic",
+      "source": "export function test() { try { const p=7n; const method=BigInt.prototype.valueOf; const v=method.call(Object(p)); if(typeof v!==\"bigint\")return -1; return v+2n===9n && v-p===0n ? 1 : -2; } catch(error) { return -90; } }",
+      "sha256": "7a6f33af3c6ee23718248b8bb2d76d4737256097c73af922826a903aeaaba958",
+      "baseline": {
+        "name": "BigInt extracted method wrapper arithmetic",
+        "source": "export function test() { try { const p=7n; const method=BigInt.prototype.valueOf; const v=method.call(Object(p)); if(typeof v!==\"bigint\")return -1; return v+2n===9n && v-p===0n ? 1 : -2; } catch(error) { return -90; } }",
+        "sha256": "7a6f33af3c6ee23718248b8bb2d76d4737256097c73af922826a903aeaaba958",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -90,
+        "failure": "AssertionError: expected -90 to be 1 // Object.is equality"
+      },
+      "candidate": {
+        "name": "BigInt extracted method wrapper arithmetic",
+        "source": "export function test() { try { const p=7n; const method=BigInt.prototype.valueOf; const v=method.call(Object(p)); if(typeof v!==\"bigint\")return -1; return v+2n===9n && v-p===0n ? 1 : -2; } catch(error) { return -90; } }",
+        "sha256": "7a6f33af3c6ee23718248b8bb2d76d4737256097c73af922826a903aeaaba958",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -90,
+        "failure": "AssertionError: expected -90 to be 1 // Object.is equality"
+      }
+    },
+    {
+      "name": "Symbol direct method primitive key identity",
+      "source": "export function test() { try { const p=Symbol(\"probe\"); const q=Symbol(\"probe\"); const o={}; o[p]=17; o[q]=23; const v=Symbol.prototype.valueOf.call(p); if(typeof v!==\"symbol\")return -1; return v===p && v!==q && o[v]===17 ? 1 : -2; } catch(error) { return -90; } }",
+      "sha256": "f3368c50779faf0d16d88dfb3ab8a5a08629eaf92e9223ff2954a675a030beb7",
+      "baseline": {
+        "name": "Symbol direct method primitive key identity",
+        "source": "export function test() { try { const p=Symbol(\"probe\"); const q=Symbol(\"probe\"); const o={}; o[p]=17; o[q]=23; const v=Symbol.prototype.valueOf.call(p); if(typeof v!==\"symbol\")return -1; return v===p && v!==q && o[v]===17 ? 1 : -2; } catch(error) { return -90; } }",
+        "sha256": "f3368c50779faf0d16d88dfb3ab8a5a08629eaf92e9223ff2954a675a030beb7",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -2,
+        "failure": "AssertionError: expected -2 to be 1 // Object.is equality"
+      },
+      "candidate": {
+        "name": "Symbol direct method primitive key identity",
+        "source": "export function test() { try { const p=Symbol(\"probe\"); const q=Symbol(\"probe\"); const o={}; o[p]=17; o[q]=23; const v=Symbol.prototype.valueOf.call(p); if(typeof v!==\"symbol\")return -1; return v===p && v!==q && o[v]===17 ? 1 : -2; } catch(error) { return -90; } }",
+        "sha256": "f3368c50779faf0d16d88dfb3ab8a5a08629eaf92e9223ff2954a675a030beb7",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -2,
+        "failure": "AssertionError: expected -2 to be 1 // Object.is equality"
+      }
+    },
+    {
+      "name": "Symbol direct method wrapper key identity",
+      "source": "export function test() { try { const p=Symbol(\"probe\"); const q=Symbol(\"probe\"); const o={}; o[p]=17; o[q]=23; const v=Symbol.prototype.valueOf.call(Object(p)); if(typeof v!==\"symbol\")return -1; return v===p && v!==q && o[v]===17 ? 1 : -2; } catch(error) { return -90; } }",
+      "sha256": "82eb0838e98847b29cfdcb12b07adec4dc71b581f19379314772a82029a2e6eb",
+      "baseline": {
+        "name": "Symbol direct method wrapper key identity",
+        "source": "export function test() { try { const p=Symbol(\"probe\"); const q=Symbol(\"probe\"); const o={}; o[p]=17; o[q]=23; const v=Symbol.prototype.valueOf.call(Object(p)); if(typeof v!==\"symbol\")return -1; return v===p && v!==q && o[v]===17 ? 1 : -2; } catch(error) { return -90; } }",
+        "sha256": "82eb0838e98847b29cfdcb12b07adec4dc71b581f19379314772a82029a2e6eb",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -2,
+        "failure": "AssertionError: expected -2 to be 1 // Object.is equality"
+      },
+      "candidate": {
+        "name": "Symbol direct method wrapper key identity",
+        "source": "export function test() { try { const p=Symbol(\"probe\"); const q=Symbol(\"probe\"); const o={}; o[p]=17; o[q]=23; const v=Symbol.prototype.valueOf.call(Object(p)); if(typeof v!==\"symbol\")return -1; return v===p && v!==q && o[v]===17 ? 1 : -2; } catch(error) { return -90; } }",
+        "sha256": "82eb0838e98847b29cfdcb12b07adec4dc71b581f19379314772a82029a2e6eb",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": -2,
+        "failure": "AssertionError: expected -2 to be 1 // Object.is equality"
+      }
+    },
+    {
+      "name": "Symbol extracted method wrapper key identity",
+      "source": "export function test() { try { const p=Symbol(\"probe\"); const q=Symbol(\"probe\"); const o={}; o[p]=17; o[q]=23; const method=Symbol.prototype.valueOf; const v=method.call(Object(p)); if(typeof v!==\"symbol\")return -1; return v===p && v!==q && o[v]===17 ? 1 : -2; } catch(error) { return -90; } }",
+      "sha256": "e9e242272fdadc05e2cf896a692d7cacf548c0df9cd5707abcea5580dded525c",
+      "baseline": {
+        "name": "Symbol extracted method wrapper key identity",
+        "source": "export function test() { try { const p=Symbol(\"probe\"); const q=Symbol(\"probe\"); const o={}; o[p]=17; o[q]=23; const method=Symbol.prototype.valueOf; const v=method.call(Object(p)); if(typeof v!==\"symbol\")return -1; return v===p && v!==q && o[v]===17 ? 1 : -2; } catch(error) { return -90; } }",
+        "sha256": "e9e242272fdadc05e2cf896a692d7cacf548c0df9cd5707abcea5580dded525c",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      },
+      "candidate": {
+        "name": "Symbol extracted method wrapper key identity",
+        "source": "export function test() { try { const p=Symbol(\"probe\"); const q=Symbol(\"probe\"); const o={}; o[p]=17; o[q]=23; const method=Symbol.prototype.valueOf; const v=method.call(Object(p)); if(typeof v!==\"symbol\")return -1; return v===p && v!==q && o[v]===17 ? 1 : -2; } catch(error) { return -90; } }",
+        "sha256": "e9e242272fdadc05e2cf896a692d7cacf548c0df9cd5707abcea5580dded525c",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      }
+    },
+    {
+      "name": "Symbol key identity without method",
+      "source": "export function test() { try { const p=Symbol(\"probe\"); const q=Symbol(\"probe\"); const o={}; o[p]=17; o[q]=23; return p!==q && o[p]===17 && o[q]===23 ? 1 : -1; } catch(error) { return -90; } }",
+      "sha256": "f9cd1af4060e8b4617e452901318184ef226fa3488d429debfbcf39916aa528f",
+      "baseline": {
+        "name": "Symbol key identity without method",
+        "source": "export function test() { try { const p=Symbol(\"probe\"); const q=Symbol(\"probe\"); const o={}; o[p]=17; o[q]=23; return p!==q && o[p]===17 && o[q]===23 ? 1 : -1; } catch(error) { return -90; } }",
+        "sha256": "f9cd1af4060e8b4617e452901318184ef226fa3488d429debfbcf39916aa528f",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      },
+      "candidate": {
+        "name": "Symbol key identity without method",
+        "source": "export function test() { try { const p=Symbol(\"probe\"); const q=Symbol(\"probe\"); const o={}; o[p]=17; o[q]=23; return p!==q && o[p]===17 && o[q]===23 ? 1 : -1; } catch(error) { return -90; } }",
+        "sha256": "f9cd1af4060e8b4617e452901318184ef226fa3488d429debfbcf39916aa528f",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      }
+    },
+    {
+      "name": "BigInt arithmetic without method",
+      "source": "export function test() { try { const p=7n; return p+2n===9n && p-7n===0n ? 1 : -1; } catch(error) { return -90; } }",
+      "sha256": "4ba581e8fcf899c0c5e01a90f10ff558ef2de72c3583de773dc2430a28ba6c4f",
+      "baseline": {
+        "name": "BigInt arithmetic without method",
+        "source": "export function test() { try { const p=7n; return p+2n===9n && p-7n===0n ? 1 : -1; } catch(error) { return -90; } }",
+        "sha256": "4ba581e8fcf899c0c5e01a90f10ff558ef2de72c3583de773dc2430a28ba6c4f",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      },
+      "candidate": {
+        "name": "BigInt arithmetic without method",
+        "source": "export function test() { try { const p=7n; return p+2n===9n && p-7n===0n ? 1 : -1; } catch(error) { return -90; } }",
+        "sha256": "4ba581e8fcf899c0c5e01a90f10ff558ef2de72c3583de773dc2430a28ba6c4f",
+        "native": 1,
+        "success": true,
+        "errors": [],
+        "imports": [],
+        "actual": 1
+      }
+    }
+  ]
+}

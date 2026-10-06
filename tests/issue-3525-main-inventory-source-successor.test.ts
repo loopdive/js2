@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { capture5883Main4bffInventoryViewSource } from "./helpers/ir-5883-main-4bff-inventory-views.js";
 import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
 import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
 import { captureSourceMapPositionInventoryPredecessorPolicySource } from "./helpers/ir-source-map-position-inventory-successor.js";
@@ -310,7 +311,9 @@ function healthy() {
   expect(sha(helper)).toBe("41012f3d03e1521eb217c94996c542ae84b3de1410b2cf6c6744319c5da64b86");
   const current = captureSourceMapPositionInventoryPredecessorPolicySource(
       capturePositionClassFieldsMainPredecessorPolicySource(
-        capturePositionFinallyMainPredecessorPolicySource(read(sourcePath)),
+        capturePositionFinallyMainPredecessorPolicySource(
+          capture5883Main4bffInventoryViewSource(read(sourcePath), "union-to-incoming"),
+        ),
       ),
     ),
     before = independentRawBefore(current),
@@ -526,7 +529,9 @@ describe("main inventory successor legacy semantic compatibility", () => {
     const input = JSON.parse(
       captureSourceMapPositionInventoryPredecessorPolicySource(
         capturePositionClassFieldsMainPredecessorPolicySource(
-          capturePositionFinallyMainPredecessorPolicySource(read(sourcePath)),
+          capturePositionFinallyMainPredecessorPolicySource(
+            capture5883Main4bffInventoryViewSource(read(sourcePath), "union-to-incoming"),
+          ),
         ),
       ),
     ) as Policy;
