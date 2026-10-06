@@ -1641,7 +1641,8 @@ function compileExpressionInner(
   }
 
   if (ts.isDeleteExpression(expr)) {
-    return compileDeleteExpression(ctx, fctx, expr);
+    const result = compileDeleteExpression(ctx, fctx, expr);
+    return result !== null && result !== VOID_RESULT && result.kind === "i32" ? { ...result, boolean: true } : result;
   }
 
   if (ts.isArrowFunction(expr) || ts.isFunctionExpression(expr)) {
