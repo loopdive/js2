@@ -2214,6 +2214,16 @@
       "layer": "backend-wasmgc"
     },
     {
+      "path": "src/runtime/wasmgc/promise/reaction-order-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/promise/rejection-event-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/runtime/wasmgc/promise/resolution-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
@@ -3129,6 +3139,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/array/array-fill-proto-value.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate context-bound Array.fill argument coercion and prototype-call emission from reusable native body construction."
+    },
+    {
       "path": "src/codegen/array-filter-length-set.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -3697,6 +3715,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/expressions/builtin-native-dyn-construct.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate context-bound Array and Promise dynamic construction, late imports and builtin identity reservation from native construction bodies."
+    },
+    {
       "path": "src/codegen/builtin-nonwritable-write.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -4161,12 +4187,28 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/object-model/closed-carrier-prototype-status.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "native-runtime",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Place the allocation-free closed-carrier prototype-status body in its canonical native runtime owner and replace the legacy instruction-type import."
+    },
+    {
       "path": "src/codegen/closed-method-dispatch.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/object-model/closed-object-prototype-edges.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate codegen-context prototype edge registration and physical function/global allocation from native prototype bodies."
     },
     {
       "path": "src/codegen/closed-struct-extern-set.ts",
@@ -7209,12 +7251,28 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/object-model/linked-realm-property-read.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate linked-realm late-import reservation and context-owned function filling from its native read body."
+    },
+    {
       "path": "src/codegen/literals.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/array/live-array-iterator-value.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate codegen-context iterator kind and layout selection from the receiver-backed native iterator value body."
     },
     {
       "path": "src/codegen/map-runtime.ts",
@@ -8265,6 +8323,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/closures/ordinary-new-target.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST lexical-target detection and context/local/global registration from ordinary construction target frame instructions."
+    },
+    {
       "path": "src/codegen/ordinary-to-primitive-probe.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -8553,6 +8619,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/registry/promise-handler-boundary.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate context-owned Promise handling boundary export and physical function registration from native handling instructions."
+    },
+    {
       "path": "src/codegen/promise-native-iterator-result.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -8719,6 +8793,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/closures/promoted-capture-value.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate context-bound promoted capture lookup and ref-cell type selection from native capture-value instructions."
     },
     {
       "path": "src/codegen/closures/proxy-trap-closure-return.ts",
@@ -9057,6 +9139,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/closures/rest-only-apply.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate closure/context dispatch, receiver state and exception registration from full-vector rest-call bodies."
+    },
+    {
       "path": "src/codegen/ret-unbox-abi.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -9175,6 +9265,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/declarations/shared-script-var-access.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate context-owned Script binding/global-environment registration and final instruction rewriting from explicit native binding resources."
     },
     {
       "path": "src/codegen/shared.ts",
@@ -13314,6 +13412,11 @@
       "layer": "native-runtime"
     },
     {
+      "path": "src/runtime/wasmgc/promise/resolving-pair-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/runtime/wasmgc/promise/settlement-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
@@ -13467,6 +13570,11 @@
     },
     {
       "path": "src/wasm/physical/type-layout.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/wasm/physical/allocation-owner.ts",
       "state": "clean",
       "layer": "wasm-physical"
     },
@@ -14237,6 +14345,22 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/registry/microtask-drain-boundary.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate scheduler-context and physical export registration from the canonical native microtask drain body."
+    },
+    {
+      "path": "src/codegen/registry/microtask-notification.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate context-owned late notification import and index shifting from native scheduling instructions."
     },
     {
       "path": "src/codegen/missing-super-replay.ts",
@@ -15211,6 +15335,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/registry/promise-rejection-dispatch.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Place context-dependent rejection dispatcher resolution and import/defined-function identity checks behind explicit backend resources."
     },
     {
       "path": "src/codegen/promise-species-then.ts",

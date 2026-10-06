@@ -1,3 +1,4 @@
+import { captureDenoPostPositionMainPredecessorPolicySource } from "./helpers/ir-deno-post-position-main-successor.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
 import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
@@ -171,7 +172,9 @@ const policy = () => {
                                 captureSourceMapPositionInventoryPredecessorPolicySource(
                                   capturePositionClassFieldsMainPredecessorPolicySource(
                                     capturePositionFinallyMainPredecessorPolicySource(
-                                      readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"),
+                                      captureDenoPostPositionMainPredecessorPolicySource(
+                                        readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"),
+                                      ),
                                     ),
                                   ),
                                 ),

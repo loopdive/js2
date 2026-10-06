@@ -1,6 +1,8 @@
+import { captureDenoPostPositionMainPredecessorPolicySource } from "./helpers/ir-deno-post-position-main-successor.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   capturePositionFinallyMainPredecessorPolicy,
@@ -281,7 +283,7 @@ function profile(raw: string, which: "before" | "current"): Policy {
 }
 
 function independent() {
-  const raw = read("scripts/compiler-boundaries.json");
+  const raw = captureDenoPostPositionMainPredecessorPolicySource(read("scripts/compiler-boundaries.json"));
   const current = profile(raw, "current");
   const bytes = Buffer.from(raw),
     insertion = Buffer.from(expected.insertion);
@@ -612,54 +614,54 @@ describe("delivered finally main row position inventory independent proof", () =
   for (const target of ["current policy", "outer authority"] as const)
     it(`rejects physical ${target} corruption after healthy capture and restores exact bytes`, () => {
       const witness = healthy();
-      const path =
-        target === "current policy" ? "scripts/compiler-boundaries.json" : positionFinallyMainSuccessorReceiptPath;
-      const url = new URL(`../${path}`, import.meta.url);
-      const original = readFileSync(url);
-      let reads = 0;
-      const authority = (path: string): string => {
-        reads++;
-        return read(path);
-      };
-      expect(
-        capturePositionFinallyMainPredecessorPolicySource(read("scripts/compiler-boundaries.json"), authority),
-      ).toBe(witness.beforeRaw);
+      const stagingRoot = resolve(import.meta.dirname, "..", ".tmp");
+      mkdirSync(stagingRoot, { recursive: true });
+      const staging = mkdtempSync(resolve(stagingRoot, "6866-finally-1840-"));
+      const stagedPolicy = resolve(staging, "policy.json");
       try {
-        writeFileSync(url, Buffer.concat([original, Buffer.from("\n")]));
-        expect(readFileSync(url)).not.toEqual(original);
-        if (target === "current policy") {
-          expect(() =>
-            capturePositionFinallyMainPredecessorPolicySource(read("scripts/compiler-boundaries.json"), authority),
-          ).toThrow(/complete raw source profile mismatch/);
-          // Preserve valid JSON while refusing the semantic current profile too.
-          const mutant = JSON.parse(read("scripts/compiler-boundaries.json")) as Policy;
-          mutant.files[expected.index]!.owner = "physically-read-mutant";
-          writeFileSync(url, JSON.stringify(mutant));
-          expect(() =>
-            capturePositionFinallyMainPredecessorPolicy(
-              JSON.parse(read("scripts/compiler-boundaries.json")),
-              authority,
-            ),
-          ).toThrow(/complete policy profile mismatch/);
-        } else {
-          expect(() =>
-            capturePositionFinallyMainPredecessorPolicySource(read("scripts/compiler-boundaries.json"), authority),
-          ).toThrow(/fixed receipt pin mismatch/);
-          expect(() =>
-            capturePositionFinallyMainPredecessorPolicy(
-              JSON.parse(read("scripts/compiler-boundaries.json")),
-              authority,
-            ),
-          ).toThrow(/fixed receipt pin mismatch/);
+        writeFileSync(stagedPolicy, witness.raw);
+        const readOperand = () => readFileSync(stagedPolicy, "utf8");
+        profile(readOperand(), "current");
+        const path = target === "current policy" ? stagedPolicy : positionFinallyMainSuccessorReceiptPath;
+        const url = target === "current policy" ? path : new URL(`../${path}`, import.meta.url);
+        const original = readFileSync(url);
+        let reads = 0;
+        const authority = (path: string): string => {
+          reads++;
+          return read(path);
+        };
+        expect(capturePositionFinallyMainPredecessorPolicySource(readOperand(), authority)).toBe(witness.beforeRaw);
+        try {
+          writeFileSync(url, Buffer.concat([original, Buffer.from("\n")]));
+          expect(readFileSync(url)).not.toEqual(original);
+          if (target === "current policy") {
+            expect(() => capturePositionFinallyMainPredecessorPolicySource(readOperand(), authority)).toThrow(
+              /complete raw source profile mismatch/,
+            );
+            // Preserve valid JSON while refusing the semantic current profile too.
+            const mutant = JSON.parse(readOperand()) as Policy;
+            mutant.files[expected.index]!.owner = "physically-read-mutant";
+            writeFileSync(url, JSON.stringify(mutant));
+            expect(() => capturePositionFinallyMainPredecessorPolicy(JSON.parse(readOperand()), authority)).toThrow(
+              /complete policy profile mismatch/,
+            );
+          } else {
+            expect(() => capturePositionFinallyMainPredecessorPolicySource(readOperand(), authority)).toThrow(
+              /fixed receipt pin mismatch/,
+            );
+            expect(() => capturePositionFinallyMainPredecessorPolicy(JSON.parse(readOperand()), authority)).toThrow(
+              /fixed receipt pin mismatch/,
+            );
+          }
+        } finally {
+          writeFileSync(url, original);
         }
+        expect(readFileSync(url)).toEqual(original);
+        expect(capturePositionFinallyMainPredecessorPolicySource(readOperand(), authority)).toBe(witness.beforeRaw);
+        expect(reads).toBe(4);
       } finally {
-        writeFileSync(url, original);
+        rmSync(staging, { recursive: true, force: true });
       }
-      expect(readFileSync(url)).toEqual(original);
-      expect(
-        capturePositionFinallyMainPredecessorPolicySource(read("scripts/compiler-boundaries.json"), authority),
-      ).toBe(witness.beforeRaw);
-      expect(reads).toBe(4);
       healthy();
     });
 });

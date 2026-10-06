@@ -1,3 +1,4 @@
+import { captureDenoPostPositionMainPredecessorPolicySource } from "./helpers/ir-deno-post-position-main-successor.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
 import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
@@ -310,7 +311,9 @@ function healthy() {
   expect(sha(helper)).toBe("41012f3d03e1521eb217c94996c542ae84b3de1410b2cf6c6744319c5da64b86");
   const current = captureSourceMapPositionInventoryPredecessorPolicySource(
       capturePositionClassFieldsMainPredecessorPolicySource(
-        capturePositionFinallyMainPredecessorPolicySource(read(sourcePath)),
+        capturePositionFinallyMainPredecessorPolicySource(
+          captureDenoPostPositionMainPredecessorPolicySource(read(sourcePath)),
+        ),
       ),
     ),
     before = independentRawBefore(current),
@@ -526,7 +529,9 @@ describe("main inventory successor legacy semantic compatibility", () => {
     const input = JSON.parse(
       captureSourceMapPositionInventoryPredecessorPolicySource(
         capturePositionClassFieldsMainPredecessorPolicySource(
-          capturePositionFinallyMainPredecessorPolicySource(read(sourcePath)),
+          capturePositionFinallyMainPredecessorPolicySource(
+            captureDenoPostPositionMainPredecessorPolicySource(read(sourcePath)),
+          ),
         ),
       ),
     ) as Policy;
