@@ -2913,3 +2913,43 @@ This checkpoint preserves candidate evidence only: accepted=false. Original-main
 A and narrowly repaired B comparison are still required; keep HOLD and legacy
 code. Original-main69-file identity collection was separately released with the
 existing reviewed runner, with no automatic retry or repaired-baseline launch.
+
+### 2026-10-06 preserved baseline failures and repaired population checkpoint
+
+Original A69 and initial B69 collections both failed two suites before their
+tests registered. Their complete raw/native records remain preserved:5166 and
+5168 available skipped identities respectively,zero executed tests. Neither
+partial count was treated as a complete denominator or an execution result.
+
+The six-file test-only baseline repair authenticates seven physical4bff source
+inputs,46 inverse spans and53 retained intervals,then verifies exact forward
+replay to captured bytes. Existing fixtures,assertions and explicit mutants
+remain unchanged. The first focused run passed102 controls but failed91/416
+affected tests; the two raw-reader call sites were then repaired. The next run
+passed102+416 tests with identical identity multisets and7740 unchanged inputs.
+Both runs and their child records are retained,not replaced by the green result.
+Their optional historical execution pair was NOT RUN.
+
+`plan/agent-context/5883-focused-baseline-repair-custody-20261006.json` preserves
+49 exact payloads,116758564 decoded bytes,including the nested28-payload original
+collection archive and all six repair postimages. SHA256
+957e31c43cc0f7a2e6c17feb8c5914bda445022193e27c18b2ea51e90f7921cc.
+Both original and corrected packager sources are retained as adjacent.txt files;
+the original rejected a legitimate @scope fixture path before creating output.
+Only that safe-path character and the new script filename changed in v2.
+
+Repaired B69 collection CSH6zT completed exit0:69 files,5408 skipped identities,
+zero executed tests,unchanged A7735/B7740 maps. Terminal SHA256
+83c285e682ffe2d4773a57fb716e6aea3d91270809d81c91011d4bee4d6c9a37.
+Exact comparison retains all5166 previously visible originals and restores240
+missing originals. B/E share5406 identities; B adds two main-profile controls,
+E adds16 separate controls. Equal counts were not substituted for identity proof.
+The complete15-record collection custody is retained in
+`plan/agent-context/5883-repaired-b69-collection-custody-20261006.json`, SHA256
+5f3add7c8a77b058a9fa6f896f457f0e52f5b2240995a6e3a40bf405bb82f283.
+Parent independently decoded each record and verified its exact original bytes.
+
+This is an evidence-only checkpoint: production/test inputs in E remain the
+validated112 source epoch,unchanged since446's evidence publication. Full B
+execution and exact shared-case comparison remain pending. accepted=false;
+keep HOLD and legacy code. No claim of a merge,physical acceptance or retirement.
