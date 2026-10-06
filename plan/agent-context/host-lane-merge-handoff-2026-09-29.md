@@ -206,7 +206,7 @@ implementer when the gate opens; (3) #6748, #6750 unchanged.
   context; ES5's 62 are small independent gaps listed in the issue.
 - Next, in order: land #6534; dispatch #6748 (lifts ES2026); #6651 PR-C tail;
   the ES5 list; part C; react hoist; then re-evaluate the S6 bar.
-- **PR #6542 (#6748) open** — regime Temporal lane 0 → 473/493 on
+- **PR #6542 (#6748) MERGED (evening)** — regime Temporal lane 0 → 473/493 on
   `PlainTime/` (standalone 485, host 374): the provider init throw now
   renders; the regime provider gets the module-scoped `Intl` shim; the
   provider–consumer link uses matching boundary/peer pairs (`new`, reads,
