@@ -3166,3 +3166,63 @@ reports. Failed terminal prefixes retain explicit missing reports and unexecuted
 stages; a live run without its root terminal cannot produce an archive. Source
 syntax check passed independently. This is source review only: packaging has
 not run and no terminal candidate result or baseline equality is claimed.
+
+### Full candidate terminal and original-baseline collection release
+
+The unchanged committed112 run4Dt9nJ finished at2026-10-06T20:40:37.448Z,
+owner session58685 exit0. Parent independently verified all10 stage terminals,
+all6795 passing executions/6739 unique identities across87 files, exact native
+identity multisets, clean complete raw channels and all7772 before/after maps.
+Current physical7772 input hashes and HEAD112cea8e also match the frozen epoch.
+Root terminal SHA25610bde4889cdd2202e105ff4dc447b87ce5c74bafc12a346e503ad1a4040da6c9.
+Additional18 passed2173/2173; helper47 passed47/47. This is candidate-only success,
+not original/repaired baseline equality and not permission to remove HOLD.
+
+Reviewed packager produced B `.tmp/5883-final-candidate-terminal-custody-20261006-reviewed.json`,
+SHA256483c0d68fa8d490286daee7cafb2cf52bffff74227a5625de6fe270280febb06:
+63 payloads,25747854 decoded bytes,10934029 archive bytes,accepted=false.
+Parent independently decoded and compared every payload to its original.
+
+Release exactly one original-main A69 identity collection with the already
+reviewed runner32668aca, canonical Node and original1-worker/2048 controls,
+after confirming the owned heavy slot is free. Preserve every original failure,
+native row, raw channel and input map. This is zero-test-execution collection,
+not a test pass or an assumed denominator. No automatic retry, B launch,
+baseline edits or candidate changes. Parent reviews A's terminal before the
+separately gated B collection. Publication of the new archive remains pending.
+
+Original A69 collection fU4AKt/session93042 exited1 at20:44:55Z. All5166 available
+native identities were skipped (zero executions); two suites failed collection:
+earlier-main port rejects builtin-static-globals.ts and export-main port rejects
+promise-class-receiver-drive.ts. Both failed suites have zero assertion rows,
+so5166 is explicitly incomplete, not an accepted denominator. Preserve A intact.
+Parent reviewed stderr, all artifact hashes, retained native identity rows and
+unchanged A7735/B7737 before/after maps. A terminal SHA256
+61a4652613b0a6609afe355915fc044cdb5f759ada95641d40d1e03b3f2b3931.
+
+Release exactly one B69 collection with the same reviewed32668aca runner and
+explicit reviewed-A terminal path/hash, unchanged resource controls and no
+automatic retry or test execution. Preserve any B collection failures too.
+This release does not authorize expanding baseline repairs or changing E/A.
+
+B69 collection mZrzNm/session72820 exited1 at20:48:17.243Z with5168 skipped
+identities and the same two zero-assertion collection failures. Parent verified
+all recorded artifact hashes, native skipped rows and unchanged A/B before/after
+maps. Terminal SHA2561c7f76d0413e4868ee5cab80cb2a2ca425d3a9c88a325e4d601f074ec3056a99.
+Both original collection attempts remain immutable; no retry was released.
+
+Next preparation is a bounded source-provenance audit, not baseline mutation.
+For the two failing earlier/export suites, enumerate every physical source read,
+compare pinned4bff source with the immutable original receipt expectations, and
+identify exact producing Git deltas for each mismatch. Assess a standalone
+test-only initial-read projection derived from actual baseline bytes, with
+authenticated inverse spans and reciprocal replay. Preserve every original
+fixture, assertion, registration and explicit mutant operand; never substitute a
+historical whole-file read or import candidate-only implementation dependencies.
+Do not copy E's broad successor machinery without proving baseline applicability.
+Return exact required paths, source hashes, provenance and proposed disjoint
+write set so the parent can finish the implementation specification. Meanwhile
+preserve both collection attempts in a byte-exact gzip/base64 custody archive
+under B .tmp, including their reviewed runner and maps. No source edits, tests,
+new collection attempt, dependency installation or Git writes are authorized by
+this preparation task. Parent owns final repair spec and release.
