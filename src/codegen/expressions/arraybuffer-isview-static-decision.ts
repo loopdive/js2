@@ -29,10 +29,20 @@ export function arrayBufferIsViewStaticDecision(
     metadata.classExternrefBackedSet.has(className) &&
     metadata.classBuiltinParentMap.get(className) === "DataView" &&
     metadata.classParentMap.get(className) === "DataView";
+  // (#6651 V3) A TypedArray subclass instance is constructed by its parent's
+  // [[Construct]] (object-runtime.ts) — a runtime test, as for DataView.
+  const builtinParent = className === undefined ? undefined : metadata.classBuiltinParentMap.get(className);
+  const needsTypedArraySubclassTest =
+    metadata.standalone &&
+    className !== undefined &&
+    metadata.classExternrefBackedSet.has(className) &&
+    builtinParent !== undefined &&
+    typedArrayNames.has(builtinParent);
   const isResolvableNonView =
     !isAnyOrUnknown &&
     !isView &&
     !needsDataViewSubclassTest &&
+    !needsTypedArraySubclassTest &&
     argSym !== "BigInt64Array" &&
     argSym !== "BigUint64Array" &&
     !rawType.isUnion();
