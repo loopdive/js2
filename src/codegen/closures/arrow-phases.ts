@@ -1307,7 +1307,10 @@ export function emitClosureConstruction(
     const entryBody = fctx.activationEntryBody;
     if (!entryBody) continue;
     const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.type);
-    const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, { kind: "ref", typeIdx: refCellTypeIdx });
+    const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}@cell:${fctx.params.length + fctx.locals.length}`, {
+      kind: "ref",
+      typeIdx: refCellTypeIdx,
+    });
     entryBody.push(
       { op: "local.get", index: cap.localIdx },
       { op: "struct.new", typeIdx: refCellTypeIdx },
@@ -1342,7 +1345,10 @@ export function emitClosureConstruction(
         fctx.body.push({ op: "local.get", index: cap.localIdx });
         fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
         // Also box the outer local so subsequent reads/writes go through the ref cell
-        const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, { kind: "ref_null", typeIdx: refCellTypeIdx });
+        const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}@cell:${fctx.params.length + fctx.locals.length}`, {
+          kind: "ref_null",
+          typeIdx: refCellTypeIdx,
+        });
         // Duplicate: we need the ref cell for the closure struct AND for the outer local
         fctx.body.push({ op: "local.tee", index: boxedLocalIdx });
         // Re-register the original name to point to the boxed local

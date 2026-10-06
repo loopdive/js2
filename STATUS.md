@@ -18,13 +18,13 @@ prose anywhere in the repo.
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 39,279 / 48,232 (81.4 %)
+**test262 conformance**: 39,285 / 48,232 (81.5 %)
 
 <!-- AUTO:conformance-end -->
 
 <!-- AUTO:conformance-standalone-start -->
 
-**standalone (host-free) test262 conformance**: 41,912 / 48,232 (86.9 %)
+**standalone (host-free) test262 conformance**: 41,924 / 48,232 (86.9 %)
 
 <!-- AUTO:conformance-standalone-end -->
 
@@ -40,11 +40,11 @@ Per-area pass rates, JS-host (`gc`) lane. The area rows cover all 48,735 test fi
 
 | Area          |   Pass |  Total |   Rate |
 | ------------- | -----: | -----: | -----: |
-| `language/`   | 19,830 | 23,724 | 83.6 % |
-| `built-ins/`  | 18,814 | 23,809 | 79.0 % |
+| `language/`   | 19,835 | 23,724 | 83.6 % |
+| `built-ins/`  | 18,815 | 23,809 | 79.0 % |
 | `annexB/`     |    855 |  1,086 | 78.7 % |
 | `harness/`    |    104 |    116 | 89.7 % |
-| **All areas** | 39,603 | 48,735 | 81.3 % |
+| **All areas** | 39,609 | 48,735 | 81.3 % |
 
 Selected built-ins:
 
