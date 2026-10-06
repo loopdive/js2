@@ -519,6 +519,8 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
         }
         const tmpVal = allocLocal(fctx, `__box_tmp_${fctx.locals.length}`, boxed.valType);
         fctx.body.push({ op: "local.set", index: tmpVal });
+        // (#6651 V5) §9.1.1.1.5 step 2: a captured binding written in its TDZ throws (RHS already evaluated).
+        if (fctx.tdzFlagLocals?.has(name)) emitPutValueTargetGuard(ctx, fctx, expr.left, false);
         // A cell minted inside a conditional arm is null on every path that
         // skipped it, and the guard below would then DROP this write. Mint it
         // from the pre-box slot first.
