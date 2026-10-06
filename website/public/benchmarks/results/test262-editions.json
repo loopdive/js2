@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1398,
-    "fail": 608,
+    "pass": 1400,
+    "fail": 606,
     "ce": 11,
     "skip": 18,
     "total": 2035,
@@ -1516,17 +1516,17 @@
     "features": [
       {
         "name": "BigInt",
-        "pass": 842,
-        "fail": 205,
+        "pass": 844,
+        "fail": 203,
         "ce": 1,
         "skip": 0,
         "total": 1048,
-        "pct": 80
+        "pct": 81
       },
       {
         "name": "TypedArray",
-        "pass": 557,
-        "fail": 151,
+        "pass": 559,
+        "fail": 149,
         "ce": 0,
         "skip": 0,
         "total": 708,
@@ -1633,12 +1633,12 @@
       },
       {
         "name": "Symbol.species",
-        "pass": 41,
-        "fail": 12,
+        "pass": 42,
+        "fail": 11,
         "ce": 0,
         "skip": 0,
         "total": 53,
-        "pct": 77
+        "pct": 79
       },
       {
         "name": "optional-chaining",
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4531,
-    "fail": 768,
+    "pass": 4536,
+    "fail": 763,
     "ce": 146,
     "skip": 0,
     "total": 5445,

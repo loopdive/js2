@@ -1,14 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { capture5883Main4bffInventoryViewSource } from "./helpers/ir-5883-main-4bff-inventory-views.js";
+import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
+import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
+import { captureSourceMapPositionInventoryPredecessorPolicySource } from "./helpers/ir-source-map-position-inventory-successor.js";
 // Independent test-only policy-source proof, not compiler or runtime acceptance.
 import { createHash } from "node:crypto";
 import { readFileSync, renameSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { captureArrayBufferIsViewMainPredecessorPolicy } from "./helpers/ir-runtime-program-policy-evolution.js";
-import {
-  capture5883InventoryPredecessorPolicy,
-  capture5883InventoryPredecessorPolicySource,
-} from "./helpers/ir-5883-inventory-source-successor.js";
 import {
   captureMainInventoryPredecessorPolicy,
   captureMainInventoryPredecessorPolicySource,
@@ -309,7 +309,13 @@ function healthy() {
   expect(sha(receipt)).toBe("06a6fcd2df50e87b1cd14d684db90e31e221bb9f001f52f2e5158720a93f50ef");
   expect(Buffer.byteLength(helper)).toBe(20834);
   expect(sha(helper)).toBe("41012f3d03e1521eb217c94996c542ae84b3de1410b2cf6c6744319c5da64b86");
-  const current = capture5883InventoryPredecessorPolicySource(read(sourcePath)),
+  const current = captureSourceMapPositionInventoryPredecessorPolicySource(
+      capturePositionClassFieldsMainPredecessorPolicySource(
+        capturePositionFinallyMainPredecessorPolicySource(
+          capture5883Main4bffInventoryViewSource(read(sourcePath), "union-to-incoming"),
+        ),
+      ),
+    ),
     before = independentRawBefore(current),
     input = JSON.parse(current) as Policy;
   const sourceAuthority = authorityReader(),
@@ -520,7 +526,15 @@ describe("fixed main inventory source successor independent proof", () => {
 
 describe("main inventory successor legacy semantic compatibility", () => {
   it("passes authentic semantic bridge output to the unchanged isView consumer with ordinary nested records", () => {
-    const input = capture5883InventoryPredecessorPolicy(JSON.parse(read(sourcePath))) as Policy;
+    const input = JSON.parse(
+      captureSourceMapPositionInventoryPredecessorPolicySource(
+        capturePositionClassFieldsMainPredecessorPolicySource(
+          capturePositionFinallyMainPredecessorPolicySource(
+            capture5883Main4bffInventoryViewSource(read(sourcePath), "union-to-incoming"),
+          ),
+        ),
+      ),
+    ) as Policy;
     const bridge = captureMainInventoryPredecessorPolicy(input) as Policy;
     profile(bridge, "before");
     const pending: unknown[] = [bridge];

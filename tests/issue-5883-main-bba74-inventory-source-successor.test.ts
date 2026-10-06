@@ -2,6 +2,7 @@
 // Fixed witnesses authored from Git tree 3b37a9a1 and blobs 109e1bab21 / 2d69c0400d.
 // On an old checkout only, forward replay supplies a preview fixture, NOT merged-main execution evidence.
 // Runtime acquisition is physical source + fixed witnesses; there is no Git fallback.
+import { capture5883Main4bffInventoryViewSource } from "./helpers/ir-5883-main-4bff-inventory-views.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { setImmediate } from "node:timers/promises";
@@ -230,7 +231,9 @@ function forward(raw: string): string {
   return bytes.toString("utf8");
 }
 function witness() {
-  const physical = capture5883InventoryBba74PolicySource(read("scripts/compiler-boundaries.json"));
+  const physical = capture5883InventoryBba74PolicySource(
+    capture5883Main4bffInventoryViewSource(read("scripts/compiler-boundaries.json"), "union-to-d"),
+  );
   const pin = sourcePin(physical);
   let current: string, checkpoint: string;
   if (JSON.stringify(pin) === JSON.stringify(expected.current.source)) {

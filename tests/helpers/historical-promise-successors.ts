@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { applyFlatLayoutRelocation, flatLayoutDrivePath } from "./flat-layout-relocation.js";
 import { createMain5fEpochProjection, projectMain5fEpochSource } from "./historical-promise-main5f-epoch.js";
+import { projectMain4bffSuccessorSource } from "./historical-promise-main4bff-successor.js";
 
 export type HistoricalPromiseReader = (path: string) => string;
 export const historicalPromiseFixture = "tests/fixtures/issue-5883-historical-reader-successors.json";
@@ -159,7 +160,7 @@ export function authenticateHistoricalPromiseSuccessors(
       throw Error("historical-promise successor dependency missing: " + dependency.path, { cause });
     }
     try {
-      source = epoch(dependency.path, source);
+      source = epoch(dependency.path, projectMain4bffSuccessorSource(dependency.path, source, reader));
     } catch (cause) {
       throw Error("historical-promise successor dependency mismatch: " + dependency.path, { cause });
     }
@@ -174,7 +175,7 @@ export function authenticateHistoricalPromiseSuccessors(
       throw Error("historical-promise successor current operand missing: " + row.path, { cause });
     }
     try {
-      source = epoch(row.path, source);
+      source = epoch(row.path, projectMain4bffSuccessorSource(row.path, source, reader));
     } catch (cause) {
       throw Error("historical-promise successor current operand mismatch: " + row.path, { cause });
     }
@@ -198,7 +199,7 @@ export function projectHistoricalPromiseSource(
         reader("tests/fixtures/issue-5883-flat-layout-relocation.json"),
         reader,
       )
-    : projectMain5fEpochSource(path, source, reader);
+    : projectMain5fEpochSource(path, projectMain4bffSuccessorSource(path, source, reader), reader);
 }
 
 function transform(row: HistoricalPromiseRecord, source: string, inverse: boolean): string {
@@ -254,7 +255,7 @@ export function readHistoricalPromiseSuccessor(
 ): string {
   const source = reader(path);
   if (!historicalPromisePaths.some((candidate) => candidate === path))
-    return projectMain5fEpochSource(path, source, reader);
+    return projectMain5fEpochSource(path, projectMain4bffSuccessorSource(path, source, reader), reader);
   return applyHistoricalPromiseSuccessor(
     path,
     projectHistoricalPromiseSource(path, source, reader),

@@ -1,4 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { capture5883Main4bffInventoryViewSource } from "./helpers/ir-5883-main-4bff-inventory-views.js";
+import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
+import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
+import { captureSourceMapPositionInventoryPredecessorPolicySource } from "./helpers/ir-source-map-position-inventory-successor.js";
+import { captureMainInventoryPredecessorPolicySource } from "./helpers/ir-main-inventory-source-successor.js";
 import {
   captureArrayBufferIsViewMainPredecessorPolicySource,
   capturePresentationClassificationPredecessorPolicySource,
@@ -111,7 +116,20 @@ const raw = (): string =>
                     captureWasmGcHelperPredecessorPolicySource(
                       captureLoweringAnalysisPredecessorPolicySource(
                         capturePresentationClassificationPredecessorPolicySource(
-                          captureArrayBufferIsViewMainPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                          captureArrayBufferIsViewMainPredecessorPolicySource(
+                            captureMainInventoryPredecessorPolicySource(
+                              captureSourceMapPositionInventoryPredecessorPolicySource(
+                                capturePositionClassFieldsMainPredecessorPolicySource(
+                                  capturePositionFinallyMainPredecessorPolicySource(
+                                    capture5883Main4bffInventoryViewSource(
+                                      read("scripts/compiler-boundaries.json"),
+                                      "union-to-incoming",
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -943,7 +961,20 @@ describe("C2a exact runtime preparation policy successor", () => {
                     captureWasmGcHelperPredecessorPolicySource(
                       captureLoweringAnalysisPredecessorPolicySource(
                         capturePresentationClassificationPredecessorPolicySource(
-                          captureArrayBufferIsViewMainPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                          captureArrayBufferIsViewMainPredecessorPolicySource(
+                            captureMainInventoryPredecessorPolicySource(
+                              captureSourceMapPositionInventoryPredecessorPolicySource(
+                                capturePositionClassFieldsMainPredecessorPolicySource(
+                                  capturePositionFinallyMainPredecessorPolicySource(
+                                    capture5883Main4bffInventoryViewSource(
+                                      read("scripts/compiler-boundaries.json"),
+                                      "union-to-incoming",
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -1351,7 +1382,20 @@ describe("dynamic-code inventory successor preserves the C2a policy proof", () =
                   captureWasmGcHelperPredecessorPolicySource(
                     captureLoweringAnalysisPredecessorPolicySource(
                       capturePresentationClassificationPredecessorPolicySource(
-                        captureArrayBufferIsViewMainPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                        captureArrayBufferIsViewMainPredecessorPolicySource(
+                          captureMainInventoryPredecessorPolicySource(
+                            captureSourceMapPositionInventoryPredecessorPolicySource(
+                              capturePositionClassFieldsMainPredecessorPolicySource(
+                                capturePositionFinallyMainPredecessorPolicySource(
+                                  capture5883Main4bffInventoryViewSource(
+                                    read("scripts/compiler-boundaries.json"),
+                                    "union-to-incoming",
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -1883,7 +1927,20 @@ describe("host-carrier current-main inventory successor", () => {
                 captureWasmGcHelperPredecessorPolicySource(
                   captureLoweringAnalysisPredecessorPolicySource(
                     capturePresentationClassificationPredecessorPolicySource(
-                      captureArrayBufferIsViewMainPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                      captureArrayBufferIsViewMainPredecessorPolicySource(
+                        captureMainInventoryPredecessorPolicySource(
+                          captureSourceMapPositionInventoryPredecessorPolicySource(
+                            capturePositionClassFieldsMainPredecessorPolicySource(
+                              capturePositionFinallyMainPredecessorPolicySource(
+                                capture5883Main4bffInventoryViewSource(
+                                  read("scripts/compiler-boundaries.json"),
+                                  "union-to-incoming",
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -2244,7 +2301,20 @@ describe("generator eager-refusal current-main inventory successor", () => {
               captureWasmGcHelperPredecessorPolicySource(
                 captureLoweringAnalysisPredecessorPolicySource(
                   capturePresentationClassificationPredecessorPolicySource(
-                    captureArrayBufferIsViewMainPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                    captureArrayBufferIsViewMainPredecessorPolicySource(
+                      captureMainInventoryPredecessorPolicySource(
+                        captureSourceMapPositionInventoryPredecessorPolicySource(
+                          capturePositionClassFieldsMainPredecessorPolicySource(
+                            capturePositionFinallyMainPredecessorPolicySource(
+                              capture5883Main4bffInventoryViewSource(
+                                read("scripts/compiler-boundaries.json"),
+                                "union-to-incoming",
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),

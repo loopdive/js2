@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 // Independent fixed-blob witnesses; no implementation output supplies expected values.
+import { capture5883Main4bffInventoryViewSource } from "./helpers/ir-5883-main-4bff-inventory-views.js";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, renameSync, mkdtempSync, rmdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -259,7 +260,9 @@ function profile(policy: Policy, which: "before" | "current") {
   ).toBe(pin.retainedSha256);
 }
 function independent() {
-  const current = capture5883InventoryCheckpointPolicySource(read(sourcePath)),
+  const current = capture5883InventoryCheckpointPolicySource(
+      capture5883Main4bffInventoryViewSource(read(sourcePath), "union-to-d"),
+    ),
     input = JSON.parse(current) as Policy;
   expect(sourcePin(current)).toEqual(expected.current.source);
   profile(input, "current");

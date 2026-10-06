@@ -1,0 +1,447 @@
+{
+  "schema": "fixed-5883-main-4bff-inventory-views-v1",
+  "coordinateUnit": "utf8-byte",
+  "provenance": {
+    "d": "8b9e89a5f9009d7a17a8c6410fa2ea2b1d0b3960",
+    "main": "4bffef14505f26558556a707931c711105a968af",
+    "incomingBlob": "e775a64483ace95ca46b0d65221cff9cf84c4500"
+  },
+  "profiles": {
+    "union": {
+      "bytes": 592524,
+      "sha256": "62dac966e6f945ba268a3ad76ee6b1e5215629234ab63e6f8ace744d8ecbfe22",
+      "gitBlob": "6514db6e1bed887cb3dc3dc36d030cb889d91abd",
+      "dataSha256": "1f76b106119f8cfa563f1cbc2674651a6407f38b8a16e47804a5995f3513b7c1",
+      "filesSha256": "3433dcc3c41d8f6d90bf9590c3f4cdd424fcd3dbe53c6dc475743345c8e3d0e5",
+      "fileCount": 1849
+    },
+    "d": {
+      "bytes": 591084,
+      "sha256": "8a8747f2771bd2aa9fa5c01233499f0d587b394d6b0e176e1889dae06900b765",
+      "gitBlob": "82e2c378a744f23c2ac3256ee8ceea16fe48a27e",
+      "dataSha256": "4a199b3a38331d81420879afbb49e0312ba60539ed8a927de10951c2e51af680",
+      "filesSha256": "32b10e52c025d69cef49b754d0c32c301cdb2ab51faf5b36a24d0f2393406d6a",
+      "fileCount": 1844
+    },
+    "main": {
+      "bytes": 590770,
+      "sha256": "b606727c951331096a458b46ef344e8042018089b04e0e1fa587d7045fad3d13",
+      "gitBlob": "126b9da52886d6c153271005953d87816189f19f",
+      "dataSha256": "4e5ff60c7e6357c7fddfc3e96997107b20eea9e3b5f04a8e076c8ed45c64be99",
+      "filesSha256": "a4e41dd90b18f9df122e6ba96d80bd00da465cc2c3393ff7e822657eb12c6a61",
+      "fileCount": 1845
+    },
+    "incoming": {
+      "bytes": 589117,
+      "sha256": "58ae19c3c96ecbb3ebe43ec81cfb1d244a0c15e80c7da6000becb58d44834857",
+      "gitBlob": "e775a64483ace95ca46b0d65221cff9cf84c4500",
+      "dataSha256": "fbda107633bdaef0fbfe9775f02503c850b7ccbd21ae5872ed2b14f5c0698368",
+      "filesSha256": "b1482d905e51a1b9836b6fa218e3ecf6dc66bb6241347400e0479e9872ce4f92",
+      "fileCount": 1840
+    }
+  },
+  "views": {
+    "union-to-d": {
+      "from": "union",
+      "to": "d",
+      "removals": [
+        {
+          "field": "files",
+          "index": 86,
+          "row": {
+            "path": "src/ir/program/source-map-position.ts",
+            "state": "clean",
+            "layer": "ir-program"
+          }
+        },
+        {
+          "field": "files",
+          "index": 1049,
+          "row": {
+            "path": "src/codegen/array/ta-iter-detach.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "field": "files",
+          "index": 1769,
+          "row": {
+            "path": "src/codegen/expressions/callable-property-omittable-param.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "field": "files",
+          "index": 1770,
+          "row": {
+            "path": "src/codegen/closures/host-boolean-callback.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "field": "files",
+          "index": 1771,
+          "row": {
+            "path": "src/codegen/expressions/typeof-import-binding.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        }
+      ],
+      "spans": [
+        {
+          "sourceOffset": 83299,
+          "source": "    {\n      \"path\": \"src/ir/program/source-map-position.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"ir-program\"\n    },\n",
+          "target": "",
+          "targetOffset": 83299
+        },
+        {
+          "sourceOffset": 385469,
+          "source": "    {\n      \"path\": \"src/codegen/array/ta-iter-detach.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n",
+          "target": "",
+          "targetOffset": 385349
+        },
+        {
+          "sourceOffset": 578758,
+          "source": "    {\n      \"path\": \"src/codegen/expressions/callable-property-omittable-param.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n",
+          "target": "",
+          "targetOffset": 578320
+        },
+        {
+          "sourceOffset": 579101,
+          "source": "    {\n      \"path\": \"src/codegen/closures/host-boolean-callback.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n",
+          "target": "",
+          "targetOffset": 578320
+        },
+        {
+          "sourceOffset": 579429,
+          "source": "    {\n      \"path\": \"src/codegen/expressions/typeof-import-binding.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n",
+          "target": "",
+          "targetOffset": 578320
+        }
+      ]
+    },
+    "union-to-incoming": {
+      "from": "union",
+      "to": "incoming",
+      "removals": [
+        {
+          "field": "moves",
+          "index": 0,
+          "row": {
+            "from": "src/codegen/promise-combinator-observable-protocol.ts",
+            "to": "src/codegen/promises/promise-combinator-observable-protocol.ts"
+          }
+        },
+        {
+          "field": "moves",
+          "index": 1,
+          "row": {
+            "from": "src/codegen/promise-observable-combinators.ts",
+            "to": "src/codegen/promises/promise-observable-combinators.ts"
+          }
+        },
+        {
+          "field": "moves",
+          "index": 2,
+          "row": {
+            "from": "src/codegen/vec-pop-body.ts",
+            "to": "src/codegen/vectors/vec-pop-body.ts"
+          }
+        },
+        {
+          "field": "files",
+          "index": 52,
+          "row": {
+            "path": "src/runtime/wasmgc/values/vector-storage-copy-body.ts",
+            "state": "clean",
+            "layer": "native-runtime"
+          }
+        },
+        {
+          "field": "files",
+          "index": 870,
+          "row": {
+            "path": "src/codegen/promises/promise-combinator-observable-protocol.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate context-driven observable protocol registration and emission from allocator-owned resources and canonical native bodies; retain the legacy adapter until full IR equivalence."
+          }
+        },
+        {
+          "field": "files",
+          "index": 871,
+          "row": {
+            "path": "src/codegen/promises/promise-observable-combinators.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven observable combinator lowering, allocator-owned live aggregate resources, and canonical native body construction."
+          }
+        },
+        {
+          "field": "files",
+          "index": 891,
+          "row": {
+            "path": "src/codegen/object-model/proxy-forward-carriers.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "field": "files",
+          "index": 1049,
+          "row": {
+            "path": "src/codegen/array/ta-iter-detach.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "field": "files",
+          "index": 1108,
+          "row": {
+            "path": "src/codegen/vectors/vec-pop-body.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Closed pop instruction builder separated from allocation; still uses backend physical types and handles, not a migrated semantic IR producer."
+          }
+        },
+        {
+          "field": "files",
+          "index": 1769,
+          "row": {
+            "path": "src/codegen/expressions/callable-property-omittable-param.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "field": "files",
+          "index": 1770,
+          "row": {
+            "path": "src/codegen/closures/host-boolean-callback.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "field": "files",
+          "index": 1771,
+          "row": {
+            "path": "src/codegen/expressions/typeof-import-binding.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        }
+      ],
+      "spans": [
+        {
+          "sourceOffset": 68319,
+          "source": "    {\n      \"from\": \"src/codegen/promise-combinator-observable-protocol.ts\",\n      \"to\": \"src/codegen/promises/promise-combinator-observable-protocol.ts\"\n    },\n",
+          "target": "",
+          "targetOffset": 68319
+        },
+        {
+          "sourceOffset": 68480,
+          "source": "    {\n      \"from\": \"src/codegen/promise-observable-combinators.ts\",\n      \"to\": \"src/codegen/promises/promise-observable-combinators.ts\"\n    },\n",
+          "target": "",
+          "targetOffset": 68319
+        },
+        {
+          "sourceOffset": 68625,
+          "source": "    {\n      \"from\": \"src/codegen/vec-pop-body.ts\",\n      \"to\": \"src/codegen/vectors/vec-pop-body.ts\"\n    },\n",
+          "target": "",
+          "targetOffset": 68319
+        },
+        {
+          "sourceOffset": 79347,
+          "source": "    {\n      \"path\": \"src/runtime/wasmgc/values/vector-storage-copy-body.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"native-runtime\"\n    },\n",
+          "target": "",
+          "targetOffset": 78933
+        },
+        {
+          "sourceOffset": 327505,
+          "source": "    {\n      \"path\": \"src/codegen/promises/promise-combinator-observable-protocol.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate context-driven observable protocol registration and emission from allocator-owned resources and canonical native bodies; retain the legacy adapter until full IR equivalence.\"\n    },\n",
+          "target": "",
+          "targetOffset": 326951
+        },
+        {
+          "sourceOffset": 327944,
+          "source": "    {\n      \"path\": \"src/codegen/promises/promise-observable-combinators.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven observable combinator lowering, allocator-owned live aggregate resources, and canonical native body construction.\"\n    },\n",
+          "target": "",
+          "targetOffset": 326951
+        },
+        {
+          "sourceOffset": 334849,
+          "source": "    {\n      \"path\": \"src/codegen/object-model/proxy-forward-carriers.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n",
+          "target": "",
+          "targetOffset": 333466
+        },
+        {
+          "sourceOffset": 385469,
+          "source": "    {\n      \"path\": \"src/codegen/array/ta-iter-detach.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n",
+          "target": "",
+          "targetOffset": 383753
+        },
+        {
+          "sourceOffset": 404191,
+          "source": "    {\n      \"path\": \"src/codegen/vectors/vec-pop-body.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Closed pop instruction builder separated from allocation; still uses backend physical types and handles, not a migrated semantic IR producer.\"\n    },\n",
+          "target": "",
+          "targetOffset": 402157
+        },
+        {
+          "sourceOffset": 578758,
+          "source": "    {\n      \"path\": \"src/codegen/expressions/callable-property-omittable-param.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n",
+          "target": "",
+          "targetOffset": 576353
+        },
+        {
+          "sourceOffset": 579101,
+          "source": "    {\n      \"path\": \"src/codegen/closures/host-boolean-callback.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n",
+          "target": "",
+          "targetOffset": 576353
+        },
+        {
+          "sourceOffset": 579429,
+          "source": "    {\n      \"path\": \"src/codegen/expressions/typeof-import-binding.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n",
+          "target": "",
+          "targetOffset": 576353
+        }
+      ]
+    },
+    "main-to-incoming": {
+      "from": "main",
+      "to": "incoming",
+      "removals": [
+        {
+          "field": "files",
+          "index": 888,
+          "row": {
+            "path": "src/codegen/object-model/proxy-forward-carriers.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "field": "files",
+          "index": 1046,
+          "row": {
+            "path": "src/codegen/array/ta-iter-detach.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "field": "files",
+          "index": 1765,
+          "row": {
+            "path": "src/codegen/expressions/callable-property-omittable-param.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "field": "files",
+          "index": 1766,
+          "row": {
+            "path": "src/codegen/closures/host-boolean-callback.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "field": "files",
+          "index": 1767,
+          "row": {
+            "path": "src/codegen/expressions/typeof-import-binding.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        }
+      ],
+      "spans": [
+        {
+          "sourceOffset": 333466,
+          "source": "    {\n      \"path\": \"src/codegen/object-model/proxy-forward-carriers.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n",
+          "target": "",
+          "targetOffset": 333466
+        },
+        {
+          "sourceOffset": 384086,
+          "source": "    {\n      \"path\": \"src/codegen/array/ta-iter-detach.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n",
+          "target": "",
+          "targetOffset": 383753
+        },
+        {
+          "sourceOffset": 577004,
+          "source": "    {\n      \"path\": \"src/codegen/expressions/callable-property-omittable-param.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n",
+          "target": "",
+          "targetOffset": 576353
+        },
+        {
+          "sourceOffset": 577347,
+          "source": "    {\n      \"path\": \"src/codegen/closures/host-boolean-callback.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n",
+          "target": "",
+          "targetOffset": 576353
+        },
+        {
+          "sourceOffset": 577675,
+          "source": "    {\n      \"path\": \"src/codegen/expressions/typeof-import-binding.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n",
+          "target": "",
+          "targetOffset": 576353
+        }
+      ]
+    }
+  }
+}

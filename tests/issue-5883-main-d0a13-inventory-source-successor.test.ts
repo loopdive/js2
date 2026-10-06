@@ -2,6 +2,7 @@
 // Independent fixed witnesses authored from authenticated actual merge d81a1e9c and both policy blobs.
 // Old-checkout forward replay is fixture evidence ONLY, never actual merged-main execution evidence.
 // Runtime reads physical files and fixed receipts; no Git fallback.
+import { capture5883Main4bffInventoryViewSource } from "./helpers/ir-5883-main-4bff-inventory-views.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { setImmediate } from "node:timers/promises";
@@ -211,7 +212,7 @@ function witness() {
   expect(bba74.before).toEqual(old.current);
   expect(old.current.source).toEqual(checkpointPin);
   expect(old.before.source).toEqual(predecessorPin);
-  const physical = read("scripts/compiler-boundaries.json"),
+  const physical = capture5883Main4bffInventoryViewSource(read("scripts/compiler-boundaries.json"), "union-to-d"),
     pin = sourcePin(physical);
   let current: string;
   if (JSON.stringify(pin) === JSON.stringify(expected.current.source)) current = physical;

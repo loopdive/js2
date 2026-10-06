@@ -308,6 +308,7 @@ import { captureWrapperPrimitiveKey } from "./to-primitive-wrapper-slot.js"; // 
 import { buildToPrimitiveBody } from "../runtime/wasmgc/values/to-primitive-bodies.js";
 import { proxyTrapAbsentTail } from "./object-model/proxy-trap-read.js"; // (#6770 S8)
 import { registerExpressionHelpers } from "./registry/expression-helper-delegates.js";
+import { ensureStandaloneTaSubclassParentCtor } from "./dataview-native.js"; // (#6651 V3) faithful TA subclass parent
 import type {
   ToPrimitiveCoreBindings,
   ToPrimitiveMethodLiterals,
@@ -704,6 +705,9 @@ export function emitStandaloneVecBuiltinConstructor(
   const key = `${importName}@${argCount}`;
   const existing = ctx.funcMap.get(key);
   if (existing !== undefined) return existing;
+  // (#6651 V3) number-element TypedArray parents construct for real.
+  const faithful = ensureStandaloneTaSubclassParentCtor(ctx, importName.slice("__new_".length), argCount);
+  if (faithful !== undefined) return faithful;
 
   // A single shared externref-element vec type backs every one of these parents:
   // the element kind is irrelevant to the identity-only `instanceof` result, and

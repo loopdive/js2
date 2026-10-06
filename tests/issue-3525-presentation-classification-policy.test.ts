@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { capture5883InventoryPredecessorPolicySource } from "./helpers/ir-5883-inventory-source-successor.js";
+import { capture5883Main4bffInventoryViewSource } from "./helpers/ir-5883-main-4bff-inventory-views.js";
+import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
+import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
+import { captureSourceMapPositionInventoryPredecessorPolicySource } from "./helpers/ir-source-map-position-inventory-successor.js";
 import { captureMainInventoryPredecessorPolicySource } from "./helpers/ir-main-inventory-source-successor.js";
 import { createHash } from "node:crypto";
 import {
@@ -135,7 +138,16 @@ const physicalFaultAuthorities = [receiptPath, helperPath, expected.predecessorR
 const raw = () =>
   captureArrayBufferIsViewMainPredecessorPolicySource(
     captureMainInventoryPredecessorPolicySource(
-      capture5883InventoryPredecessorPolicySource(readFileSync(physical("scripts/compiler-boundaries.json"), "utf8")),
+      captureSourceMapPositionInventoryPredecessorPolicySource(
+        capturePositionClassFieldsMainPredecessorPolicySource(
+          capturePositionFinallyMainPredecessorPolicySource(
+            capture5883Main4bffInventoryViewSource(
+              readFileSync(physical("scripts/compiler-boundaries.json"), "utf8"),
+              "union-to-incoming",
+            ),
+          ),
+        ),
+      ),
     ),
   );
 const policy = () => JSON.parse(raw()) as Policy;

@@ -810,9 +810,12 @@ function acceptedCallablePositive(source: SourceReader = currentHistoricalRead()
     acceptedHistoricalDeclarations(path, source);
 }
 
-function mutation(path: string, edit: (text: string) => string): SourceReader {
+function mutation(
+  path: string,
+  edit: (text: string) => string,
+  historical: SourceReader = currentHistoricalRead(),
+): SourceReader {
   // One fresh raw capture belongs to this proof; no successful view survives it.
-  const historical = currentHistoricalRead();
   // A broken positive may never make mutation controls look green.
   acceptedCallablePositive(historical);
   const before = historical(path),
@@ -826,19 +829,28 @@ function declarationMutation(
   name: string,
   change: "missing" | "renamed" | "duplicate" | "reorder",
   ordinal = 0,
+  source?: SourceReader,
 ): SourceReader {
-  const rows = currentDeclarations(path, read);
+  const rows = currentDeclarations(path, source ?? read);
   const at = rows.findIndex((row) => row.name === name && row.ordinal === ordinal);
   expect(at).toBeGreaterThanOrEqual(0);
   const { node, file } = rows[at]!;
-  return mutation(path, (text) => {
-    if (change === "missing") return text.slice(0, node.getFullStart()) + text.slice(node.end);
-    if (change === "duplicate") return text + "\n" + node.getFullText(file);
-    if (change === "renamed")
-      return text.slice(0, node.getStart()) + node.getText(file).replace(name, "Renamed" + name) + text.slice(node.end);
-    const next = rows[at + 1]!.node;
-    return text.slice(0, node.getFullStart()) + next.getFullText(file) + node.getFullText(file) + text.slice(next.end);
-  });
+  return mutation(
+    path,
+    (text) => {
+      if (change === "missing") return text.slice(0, node.getFullStart()) + text.slice(node.end);
+      if (change === "duplicate") return text + "\n" + node.getFullText(file);
+      if (change === "renamed")
+        return (
+          text.slice(0, node.getStart()) + node.getText(file).replace(name, "Renamed" + name) + text.slice(node.end)
+        );
+      const next = rows[at + 1]!.node;
+      return (
+        text.slice(0, node.getFullStart()) + next.getFullText(file) + node.getFullText(file) + text.slice(next.end)
+      );
+    },
+    source,
+  );
 }
 
 describe("historical runtime receipts after checked extension reconstruction from mandatory live sources", () => {
@@ -962,8 +974,9 @@ describe("historical runtime receipts after checked extension reconstruction fro
     [attachment, "if (!previous) preparedManifestByPlan.delete(input.plan);", "", "src/ir/async-plan.ts"],
     ["src/ir/intrinsics.ts", "= canonicalIntrinsicDefinitions;", "= {} as never;", "src/ir/intrinsics.ts"],
   ])("rejects changed initializer/body/private field/documentation in %s", (path, before, after, historical) => {
-    acceptedHistoricalDeclarations(historical!, read);
-    const changed = mutation(path!, (text) => text.replace(before!, after!));
+    const source = currentHistoricalRead();
+    acceptedHistoricalDeclarations(historical!, source);
+    const changed = mutation(path!, (text) => text.replace(before!, after!), source);
     expect(() => acceptedHistoricalDeclarations(historical!, changed)).toThrow();
   });
 
@@ -1013,8 +1026,9 @@ describe("historical runtime receipts after checked extension reconstruction fro
     [manifest, "ALL_TARGETS", "src/ir/runtime-manifest.ts"],
     [attachment, "preparedManifestByPlan", "src/ir/async-plan.ts"],
   ])("rejects reordered canonical declarations from %s", (path, name, historical) => {
-    acceptedHistoricalDeclarations(historical!, read);
-    const changed = declarationMutation(path!, name!, "reorder");
+    const source = currentHistoricalRead();
+    acceptedHistoricalDeclarations(historical!, source);
+    const changed = declarationMutation(path!, name!, "reorder", 0, source);
     expect(() => acceptedHistoricalDeclarations(historical!, changed)).toThrow(/current declaration order/);
   });
 
@@ -1040,6 +1054,36 @@ describe("historical runtime receipts after checked extension reconstruction fro
 });
 
 describe("fresh per-proof historical runtime captures", () => {
+  it("recaptures mandatory manifest input for scoped mutation and declaration proofs after restoration", () => {
+    let changed = false;
+    let mutantReads = 0;
+    const source: SourceReader = (path) => {
+      const text = rawRead(path);
+      if (!changed || path !== manifest) return text;
+      mutantReads++;
+      return text + "\n// changed mandatory manifest behind the same reader\n";
+    };
+    const first = currentHistoricalRead(source);
+    acceptedCallablePositive(first);
+    const body = mutation(
+      manifest,
+      (text) => text.replace('this.#state = "building";', 'this.#state = "failed";'),
+      first,
+    );
+    expect(() => acceptedHistoricalDeclarations("src/ir/runtime-manifest.ts", body)).toThrow();
+    const reordered = declarationMutation(manifest, "ALL_TARGETS", "reorder", 0, first);
+    expect(() => acceptedHistoricalDeclarations("src/ir/runtime-manifest.ts", reordered)).toThrow(
+      /current declaration order/,
+    );
+    changed = true;
+    expect(() => currentHistoricalRead(source)).toThrow();
+    expect(mutantReads).toBeGreaterThan(0);
+    changed = false;
+    const restored = currentHistoricalRead(source);
+    acceptedCallablePositive(restored);
+    for (const path of runtimeContractCurrentPaths) expect(restored(path)).toBe(first(path));
+  });
+
   it("preserves every runtime source across independent healthy captures", () => {
     const first = currentHistoricalRead();
     acceptedCallablePositive(first);

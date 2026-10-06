@@ -52,7 +52,7 @@ afterEach(async () => {
 // Root replaces this ONE external assertion root after final instrument formatting/manifest assembly.
 // A missing freeze is a hard failure, never an alternate accepted manifest.
 const independentFreeze: string =
-  '{"manifestSha256":"594a3fa1b567adb41f64c67410a3c03fac04c981e7d19f73b8ef78a698f2534e","anchorSource":"// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\\n\\nexport const c1AuthorityManifestSha256 = \\"594a3fa1b567adb41f64c67410a3c03fac04c981e7d19f73b8ef78a698f2534e\\";\\n","anchorPin":{"bytes":194,"sha256":"30c8c5abeb4e55368d5c89e1de8d9c23068a9ce951f212eec1efb1ac5a2a87e0","gitBlob":"544fa97922c480dff8b7f4adf24e33acaeb571f3"},"declarationPin":{"bytes":1633,"sha256":"5294c0fce2be6c6974b61a3686c05e60aa66d5bb4599fc97cb315ee53cab71be","gitBlob":"8c594e598e0d946ed92fd658cbe2efe3063ca2c4"}}';
+  '{"manifestSha256":"6adbe504671ff9679b212069aad68f5ee22bf74594fc75534817291dfd76c43f","anchorSource":"// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\\n\\nexport const c1AuthorityManifestSha256 = \\"6adbe504671ff9679b212069aad68f5ee22bf74594fc75534817291dfd76c43f\\";\\n","anchorPin":{"bytes":194,"sha256":"eb883661451b0e8bf05b9e2865ae4ed388aa225f52d8f0e10ee9d9df3d19840f","gitBlob":"73cc56f205baf4b8d144088dd5eccb1934c2b00d"},"declarationPin":{"bytes":1633,"sha256":"5294c0fce2be6c6974b61a3686c05e60aa66d5bb4599fc97cb315ee53cab71be","gitBlob":"8c594e598e0d946ed92fd658cbe2efe3063ca2c4"}}';
 const root = resolve(import.meta.dirname, "..");
 const manifestPath = "tests/helpers/ir-c1-authority.json";
 const anchorPath = "tests/helpers/ir-c1-authority-root.ts";

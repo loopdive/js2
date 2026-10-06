@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
+import { readMain4bffSuccessorSource } from "./helpers/historical-promise-main4bff-successor.js";
 import {
   applyMain5fEpochSource,
   authenticateMain5fEpoch,
@@ -25,7 +26,7 @@ const receiptText = raw(main5fEpochFixture);
 const receipt = authenticateMain5fEpoch(receiptText);
 const oldReceiptText = raw(historicalPromiseFixture);
 function positive(row: Main5fEpochRecord) {
-  const current = raw(row.path);
+  const current = readMain4bffSuccessorSource(row.path, raw);
   expect(main5fEpochHash(current)).toBe(row.after.sha256);
   expect(main5fEpochBlob(current)).toBe(row.after.gitBlob);
   const prior = applyMain5fEpochSource(row.path, current, true, receiptText);
