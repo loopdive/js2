@@ -2711,3 +2711,74 @@ baseline B comparison: no candidate-only result may establish equivalence.
 Return source authority hashes, exact schedule and any uncertainty for parent
 review. No tests/builds, new source patches, staging, commits or pushes are
 authorized by this preparation. The parent remains integration owner.
+
+Parent independently verified schedule
+`.tmp/laplace-5883-full-candidate-87-file-schedule-20261006.json`, SHA256
+80cf174fa748f138e5ad233cb7601b22ffcbb7dfe3470c7ef9f153d31d370007.
+All28 authority hashes,87 physical source pins and every native identity tuple
+match. Original4515 identities are retained with exactly four measured freshness
+additions; additional18 supplies2173 and helper47 supplies47, yielding6739
+native identities and6795 executions with the original flat-layout56 repeated.
+Parent checked original invocation file lists and preserved runner selections.
+
+Approve stage placement: canonical, compiler176, text992, runtime505,
+incoming2407, repair305, successor73, imported117, additional2173, helper47.
+Release Laplace to prepare a new runner in E .tmp only, not execute it. Reuse
+the reviewed scoped runner's source-domain capture, fixed canonical Node and
+resource checks, exact HEAD/MERGE_HEAD checks, authority-before-import checks,
+full raw Error/FAIL/RPC/worker/unhandled rejection and exact native identity
+validation. Authenticate this schedule, all its authorities and7772 input map;
+retain original stage ordering, multiplicities, deadlines and no-retry policy.
+Create distinct per-stage invocation/before/raw/native/after/terminal records;
+canonical has no native test report. Always retain terminal/after evidence on
+failure and stop before later stages. Require an explicit parent-supplied runner
+hash and free-slot release. No overall acceptance, A/B equality or delivery
+claim can be emitted by this candidate runner. Parent reviews its full source
+before launch; current2972 execution remains untouched and owns the test slot.
+
+Parent read the complete179-line prepared runner
+`.tmp/laplace-5883-full-candidate-20261006.mjs`, SHA256
+6ed040be3c97dce0167bdfc44ff1c61cb43d28537585d76d523bd088fe60dbbe.
+Independent canonical-Node syntax check passed. Parent verified that all7772
+input paths satisfy its regular-file guard and both existing C1 budgets match
+its checks; existing native snapshot fields match the strict report validation.
+The runner remains unlaunched. Preserve it unchanged pending the2972 terminal
+review and explicit free-slot release. Its stage and overall records retain
+accepted=false even if every candidate stage finishes cleanly; original-main A,
+narrow baseline B, exact common results and protected-queue delivery remain
+separate requirements. No candidate-only success authorizes legacy retirement.
+
+### Narrow baseline B: ordinary acquisition patch preparation
+
+Recovered the prior A/B audit from the issue and E's existing phase-two,
+additional-seven, views and C1 verification records. These are E implementation
+records, not B postimages. Original A remains the exact4bff Git tree, unmodified
+and not yet executed. B production source must remain byte-identical to A.
+
+Release Laplace to prepare, under E .tmp only, a patch against the exact4bff
+Git blobs for the17 ordinary callers/24 physical inventory reads already
+enumerated above. Introduce the explicit main-to-incoming view immediately
+around each physical read inside its existing finally predecessor call. Retain
+the finally/class-fields/source-map chain, non-h2 condition, all registration
+and assertion bodies, tables, fixtures, mutations, error expectations, trace
+checks and timeout bytes. Do not copy E caller postimages or timing repairs.
+Each changed file must have a full Git preimage and hash plus a reviewable
+before/after diff proving that only the import and acquisition wrapper changed.
+
+The existing fixed helper b11f32e62f3866aa6213b6ec5f0faeaa091d241af2509c49e9bece08abce86fd
+and receipt2b11315b63f58739bb17506a16ab6290ff7fc276c85b506ce8c0d73e8cfec136
+may be proposed as exact additive test support, called only with main-to-incoming
+in these B callers. Independently reverify that profile against Git:590770-byte
+main b606727c951331096a458b46ef344e8042018089b04e0e1fa587d7045fad3d13 to
+589117-byte incoming58ae19c3c96ecbb3ebe43ec81cfb1d244a0c15e80c7da6000becb58d44834857.
+Candidate output is not an authority for either endpoint. No production inventory
+replacement, old fixture repinning, dynamic epoch inference or cached projection.
+
+Exclude C1, the three6866 successor tests and additive controls from this first
+patch; they require separately reviewed treatment. In particular B must retain
+its original30000ms C1 probe and no added150000ms case budget, and finally's
+historical physical negative must retain its original rejection owner/four-read
+trace. Stop and report any ordinary caller that cannot meet acquisition-only
+constraints. Return an unapplied patch, exact scope/preimages and verification
+record. No A/B worktree creation, source application, compiler/tests, commit or
+push is released. The running E2972 inputs and full-run runner stay frozen.
