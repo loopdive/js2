@@ -117,9 +117,8 @@ export function buildRestOnlyApply(
               { op: "local.set", index: previous },
               ...installableReceiverInstrs(ctx, 1),
               { op: "global.set", index: receiver },
-              buildStandardTryTable(
-                { kind: "empty" },
-                [
+              ((): Instr => {
+                const protectedCall: Instr[] = [
                   ...callee,
                   { op: "local.get", index: argcLocal },
                   { op: "local.get", index: arr },
@@ -131,21 +130,26 @@ export function buildRestOnlyApply(
                   { op: "call_ref", typeIdx: info.funcTypeIdx },
                   ...buildClosureResultBoxing(ctx, info.returnType, ctx.funcMap.get("__box_number")),
                   { op: "local.set", index: result },
-                ],
-                [
-                  {
-                    kind: "catch",
-                    tagIdx: ensureExnTag(ctx),
-                    payloadType: { kind: "externref" },
-                    body: [
-                      { op: "local.set", index: error },
-                      ...restore,
-                      { op: "local.get", index: error },
-                      { op: "throw", tagIdx: ensureExnTag(ctx) },
-                    ],
-                  },
-                ],
-              ),
+                ];
+                const tagIdx = ensureExnTag(ctx);
+                const taggedRestore: Instr[] = [
+                  { op: "local.set", index: error },
+                  ...restore,
+                  { op: "local.get", index: error },
+                  { op: "throw", tagIdx: ensureExnTag(ctx) },
+                ];
+                if (ctx.standalone || ctx.wasi)
+                  return buildStandardTryTable({ kind: "empty" }, protectedCall, [
+                    { kind: "catch", tagIdx, payloadType: { kind: "externref" }, body: taggedRestore },
+                  ]);
+                return {
+                  op: "try",
+                  blockType: { kind: "empty" },
+                  body: protectedCall,
+                  catches: [{ tagIdx, body: taggedRestore }],
+                  catchAll: [...restore, { op: "rethrow", depth: 0 }],
+                };
+              })(),
               ...restore,
               { op: "i32.const", value: -1 },
               { op: "global.set", index: argcGlobal },
