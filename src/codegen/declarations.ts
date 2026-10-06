@@ -211,6 +211,7 @@ import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { mintUntypedRegExpReceiverMembers } from "./regexp-untyped-receiver.js";
 import {
   prepareModuleTdzGlobals,
+  prepareSelfImportingModuleTdzGlobals,
   registerModuleGlobal,
   registerModulePatternTdzGlobal,
   registerModuleTdzGlobal,
@@ -5862,6 +5863,7 @@ export function compileDeclarations(
     forEachChild(node, compileAnonymousClassBodiesInNode);
   }
 
+  prepareSelfImportingModuleTdzGlobals(ctx, sourceFile); // (#6651 V6) a class body may build `ns` first
   compileClassesFromStatements(sourceFile.statements);
 
   // Compile away TDZ tracking for definite-assignment top-level let/const

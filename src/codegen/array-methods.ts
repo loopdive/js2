@@ -2321,7 +2321,7 @@ export function compileArrayMethodCall(
   }
 
   const keyListOk = receiverIsExternref && !skipDynViewWrap && methodName !== "join"; // (#6770 S5)
-  const keyListCall = withOwnKeyListReceiverAsVec(ctx, fctx, receiverExpr, keyListOk, () =>
+  const keyListCall = withOwnKeyListReceiverAsVec(ctx, fctx, receiverExpr, keyListOk, methodName, () =>
     compileArrayMethodCall(ctx, fctx, propAccess, callExpr, receiverType, methodName, expectedType, true),
   );
   if (keyListCall !== undefined) return keyListCall;

@@ -18,6 +18,7 @@ import {
   updateLocalType,
 } from "../expressions/helpers.js";
 import { emitAssignToTarget } from "../expressions/assignment.js";
+import { emitForOfArrayIteratorDeletedGuard } from "../expressions/proto-override.js";
 import { emitConstIdentifierUpdateGuard, tryEmitForOfIdentifierWrite } from "../expressions/identifier-assignment.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
 import { nativeGeneratorInfoForForOfSubject, tryCompileNativeGeneratorForOf } from "../generators-native.js";
@@ -2006,6 +2007,7 @@ function compileForOfArray(
   const vecLocal = preVec ? preVec.vecLocal : allocLocal(fctx, `__forof_vec_${fctx.locals.length}`, vecType);
   if (!preVec) {
     fctx.body.push({ op: "local.set", index: vecLocal });
+    if (!iterableOverride) emitForOfArrayIteratorDeletedGuard(ctx, fctx, stmt.expression); // (#6651 V7)
   }
 
   // #2065: Array iterators re-read the live length each step (§23.1.5.1), so a
