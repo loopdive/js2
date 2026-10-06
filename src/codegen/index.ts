@@ -1,3 +1,8 @@
+import {
+  emitGlobalEnvironmentKey,
+  emitGlobalEnvironmentObject,
+  ensureGlobalEnvironmentOperation,
+} from "./global-environment.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { unshiftExternGetNativeStringReceiverArm } from "./object-model/extern-get-string-receiver.js"; // (#6875)
 import { ts, forEachChild } from "../ts-api.js";
@@ -47,6 +52,7 @@ import { fillRuntimeEvalConstructDriver } from "./runtime-eval-construct.js"; //
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js"; // (#3116)
 import { detectArrayReduceFusion } from "./array-reduce-fusion.js";
 import { finalizeModuleValueCaches } from "./module-value-caches.js"; // (#4150/#4157)
+import { fillLinkedRealmPropertyRead } from "./object-model/linked-realm-property-read.js";
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
 import {
   isBigIntType,
@@ -190,6 +196,10 @@ import { finalizeStandaloneLinkReversePeer } from "./standalone-link-reverse-pee
 import { importStandaloneLinkErrorCtorCells } from "./standalone-link-error-ctor-cells.js"; // (#6723 D4)
 import { fillLinkBoundaryToStringTagTerminal } from "./link-boundary-tostring.js"; // (#5406)
 import { eliminateDeadLayoutAndPlanProgramAbi } from "./program-abi-finalization.js";
+import {
+  prepareSharedScriptVarAccess,
+  finalizeSharedScriptVarAccess,
+} from "./declarations/shared-script-var-access.js";
 import { sweepAfterInline, verifyFunctionSweep } from "./function-reachability-sweep.js"; // (#6768)
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
@@ -295,6 +305,7 @@ import type { NodeBuiltinImport } from "../import-resolver.js";
 import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
+import { fillClosedObjectPrototypeEdges } from "./object-model/closed-object-prototype-edges.js";
 import { fillClassProtoLookupArm } from "./class-proto-lookup.js"; // (#5195 Step 1.7)
 import { classArmClaimInstrs, classArmTagCondition } from "./class-arm-tag-guard.js"; // (#4618 / #6608) nominal `__tag` arm guard
 import { fillClassPrototypeReadArm } from "./standalone-class-prototype-read.js"; // (#6457)
@@ -759,6 +770,27 @@ import * as omNativeStrings from "./native-strings.js";
 import * as omObjectRuntime from "./object-runtime.js";
 import * as omRegistryImports from "./registry/imports.js";
 import { installObjectModelPorts } from "./object-model/ports.js";
+
+const nativeLeafServices = {
+  get nextModuleGlobalIdx() {
+    return nextModuleGlobalIdx;
+  },
+  get canonicalUndefinedExternInstrs() {
+    return canonicalUndefinedExternInstrs;
+  },
+  get emitGlobalEnvironmentKey() {
+    return emitGlobalEnvironmentKey;
+  },
+  get emitGlobalEnvironmentObject() {
+    return emitGlobalEnvironmentObject;
+  },
+  get ensureGlobalEnvironmentOperation() {
+    return ensureGlobalEnvironmentOperation;
+  },
+  get localGlobalIdx() {
+    return localGlobalIdx;
+  },
+} as const;
 
 installObjectModelPorts(() => ({
   addStringConstantGlobal: omRegistryImports.addStringConstantGlobal,
@@ -6446,6 +6478,7 @@ export function generateModule(
     // reserved typed ladders now, over the final closure registry and before
     // any consumer helper snapshots that registry. The fill only replaces
     // reserved bodies/locals; it registers no module state.
+    prepareSharedScriptVarAccess(ctx, nativeLeafServices);
     fillDeferredCallablePropertyDispatches(ctx);
 
     // Emit the declared-arity classifier before filling `__apply_closure`.
@@ -6687,7 +6720,8 @@ export function generateModule(
     // soundness rests on. Later fills (`fillDynamicForinVecArms`, the
     // `ta-dyn-mop` arm) unshift in front of it, so running after them makes the
     // extraction fail and the pass decline wholesale. DEFAULT ON since the flip.
-    inlineExternGetCallSites(ctx);
+    // A graph-local cache must not bypass the foreign ownership check installed below.
+    if (!ctx.standaloneGlobalThisImport?.owns) inlineExternGetCallSites(ctx);
     inlineFlatStrCallSites(ctx); // (#4157) flatten/equals site fast paths — rationale in flat-str-ic.ts
 
     // (#4157) Inline the member-WRITE dispatchers' first arm at the call
@@ -6899,6 +6933,7 @@ export function generateModule(
     fillStandaloneClassInstanceProtoArm(ctx);
     fillVecProtoLinkArms(ctx); // (#2917)
     fillDynamicProtoHelpers(ctx);
+    fillClosedObjectPrototypeEdges(ctx, nativeLeafServices);
 
     // A separately compiled runtime-eval provider can invoke caller-owned AOT
     // functions through the canonical carrier and must also read their own
@@ -6910,6 +6945,7 @@ export function generateModule(
     // point for the same reason: the marker type index exists only once a
     // boundary site has minted it.
     fillRuntimeEvalIntrinsicFunctionOwnProps(ctx);
+    fillLinkedRealmPropertyRead(ctx);
 
     // (#2358 #10) Fill the reserved `__array_to_primitive_string` body now that
     // `__extern_length`/`__extern_get_idx` (filled just above) and the native
@@ -7105,6 +7141,7 @@ export function generateModule(
     // window. See `plan/issues/4645-superlinear-compile-time-large-modules.md`.
     reportModuleScale("before-finalize", mod);
     validateFinalStructHierarchies(ctx);
+    finalizeSharedScriptVarAccess(ctx);
     profilePhase("finalize/dead-layout", () => eliminateDeadLayoutAndPlanProgramAbi(ctx)); // #1899 authoritative remap, then #3520 retained ABI
 
     // Repair struct.get/struct.set type mismatches (externref → struct ref conversion)
@@ -11376,7 +11413,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // soundness rests on. Later fills (`fillDynamicForinVecArms`, the
     // `ta-dyn-mop` arm) unshift in front of it, so running after them makes the
     // extraction fail and the pass decline wholesale. DEFAULT ON since the flip.
-    profilePhase("inline-extern-get-call-sites", () => inlineExternGetCallSites(ctx));
+    if (!ctx.standaloneGlobalThisImport?.owns) {
+      profilePhase("inline-extern-get-call-sites", () => inlineExternGetCallSites(ctx));
+    }
 
     // (#4157) Inline the member-WRITE dispatchers' first arm at the call
     // sites — multi-source parity with the generateModule call above (same
@@ -11493,8 +11532,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-class-instance-proto-arm", () => fillStandaloneClassInstanceProtoArm(ctx));
     profilePhase("fill-vec-proto-link-arms", () => fillVecProtoLinkArms(ctx)); // (#2917)
     profilePhase("fill-dynamic-proto-helpers", () => fillDynamicProtoHelpers(ctx));
+    profilePhase("fill-closed-object-prototype-edges", () => fillClosedObjectPrototypeEdges(ctx, nativeLeafServices));
     profilePhase("fill-runtime-eval-callable-get-arm", () => fillRuntimeEvalCallablePropertyGetArm(ctx));
     profilePhase("fill-runtime-eval-intrinsic-own-props", () => fillRuntimeEvalIntrinsicFunctionOwnProps(ctx));
+    profilePhase("fill-linked-realm-property-read", () => fillLinkedRealmPropertyRead(ctx));
     // Emit __vec_get / __vec_len exports for runtime iterator fallback.
     profilePhase("emit-vec-access-exports", () => emitVecAccessExports(ctx));
 

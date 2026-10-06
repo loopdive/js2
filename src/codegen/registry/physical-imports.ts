@@ -78,7 +78,9 @@ export function addImport(ctx: CodegenContext, module: string, name: string, des
  * {@link reserveLinkedExnTag} exists to make that window practically empty.
  */
 function peerExnTagNamespace(ctx: CodegenContext): string | undefined {
-  if (!ctx.standalone || ctx.exportsConsumedByWasm === true) return undefined;
+  if (!ctx.standalone) return undefined;
+  if (ctx.standaloneGlobalThisImport?.exceptionTag !== undefined) return ctx.standaloneGlobalThisImport.module;
+  if (ctx.exportsConsumedByWasm === true) return undefined;
   const namespaces = [...ctx.linkedNamespaces].filter((name) => name.startsWith("js2wasm:npm:")).sort();
   return namespaces[0];
 }
@@ -107,7 +109,8 @@ export function ensureExnTag(ctx: CodegenContext): number {
   const peer = ctx.indexSpaceFrozen ? undefined : peerExnTagNamespace(ctx);
   if (peer !== undefined) {
     const absolute = ctx.mod.imports.filter((imp) => imp.desc.kind === "tag").length;
-    if (addImport(ctx, peer, "__exn_tag", { kind: "tag", typeIdx }) !== undefined) {
+    const name = ctx.standaloneGlobalThisImport?.exceptionTag ?? "__exn_tag";
+    if (addImport(ctx, peer, name, { kind: "tag", typeIdx }) !== undefined) {
       ctx.exnTagIdx = absolute;
       ctx.exnTagImported = true;
       return ctx.exnTagIdx;

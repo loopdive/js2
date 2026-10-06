@@ -1,3 +1,4 @@
+import { captureDenoPostPositionMainPredecessorPolicySource } from "./helpers/ir-deno-post-position-main-successor.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
 import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
@@ -2673,7 +2674,9 @@ function fixtureCaptureInput(epoch: (typeof fixtureCaptureEpochs)[number]): stri
                   captureSourceMapPositionInventoryPredecessorPolicySource(
                     capturePositionClassFieldsMainPredecessorPolicySource(
                       capturePositionFinallyMainPredecessorPolicySource(
-                        fixtureCaptureRead("scripts/compiler-boundaries.json"),
+                        captureDenoPostPositionMainPredecessorPolicySource(
+                          fixtureCaptureRead("scripts/compiler-boundaries.json"),
+                        ),
                       ),
                     ),
                   ),
@@ -3399,7 +3402,9 @@ function fourStageCaptureInput(epoch: (typeof fourStageCaptureEpochs)[number]): 
                       captureSourceMapPositionInventoryPredecessorPolicySource(
                         capturePositionClassFieldsMainPredecessorPolicySource(
                           capturePositionFinallyMainPredecessorPolicySource(
-                            fixtureCaptureRead("scripts/compiler-boundaries.json"),
+                            captureDenoPostPositionMainPredecessorPolicySource(
+                              fixtureCaptureRead("scripts/compiler-boundaries.json"),
+                            ),
                           ),
                         ),
                       ),
