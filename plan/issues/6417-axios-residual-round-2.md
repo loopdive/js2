@@ -145,3 +145,36 @@ Mechanisms for A–E (one PR, five small leaf changes):
   TS result is `boolean` declares an `externref` result; `return` operands are
   branded `boolean` (`FunctionContext.hostBooleanReturn`) so `coerceType` boxes
   through `__box_boolean`; an expression body boxes the same way.
+
+## Resolution (2026-10-05)
+
+A–E landed in one PR; axios **212 → 219/231** (buildURL 15→19, fromDataURI
+11→12, transformResponse 5→6, isX 11→12). F and G are filed with plans as
+#6873 and #6874; H–K remain as listed above.
+
+A/B at one HEAD (`42d289a96f` base vs the fix, same scratch copies, run one
+at a time), per test file:
+
+| suite | base | fix |
+|---|---|---|
+| axios | 212/231 | **219/231** |
+| prettier | 75/151 | 75/151 |
+| hono | 294/324 | 294/324 |
+| redux | 76/82 | 76/82 |
+| lodash | 60/62 | 60/62 |
+| jest | 336/356 | 336/356 |
+| marked | 18/30 | 18/30 |
+| uuid | 75/75 | 75/75 |
+| clsx | 32/32 | 32/32 |
+| cookie | 63740/63740 | 63740/63740 |
+| moment | 10/10 | 10/10 |
+
+No per-file line differs outside axios. Scoped test262 slices
+(`expressions/typeof`, `module-code/instn-*`, `expressions/call`,
+`expressions/instanceof`; plus host-lane `expressions/addition`,
+`String/prototype/split`, `Date/prototype/toJSON`,
+`Object/prototype/toString`): standalone 134/289 → 134/289 and host 225/281 →
+225/281, identical non-pass sets.
+
+Regression test: `tests/issue-6417-axios-residual-mechanisms.test.ts` —
+9 failed / 4 passed on the parent, 13/13 with the fix.
