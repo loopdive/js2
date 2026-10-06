@@ -15,10 +15,13 @@ task_type: bugfix
 area: codegen
 language_feature: delete-operator
 related: [4231, 6651]
+pr: 6548
 loc-budget-allow:
   - src/codegen/expressions.ts
+  - src/codegen/numeric-property-analysis.ts
 func-budget-allow:
   - src/codegen/expressions.ts::compileExpressionInner
+  - src/codegen/numeric-property-analysis.ts::makeProver
 ---
 
 # Preserve the Boolean result brand of delete expressions
@@ -411,3 +414,214 @@ No dependency/provider/bundle/ignored receipt or shared baseline is committed.
 Upstream server main independently read as410; no owned-branch duplicate PR
 exists at this snapshot. The forthcoming draft preserves this unfinished
 dispatch checkpoint before any separately approved local-inference phase.
+
+## Published draft and approved phase II (2026-10-07)
+
+ONE upstream draft6548 was created/attached and independently read OPEN/draft,
+base main/headf79b9a96c80140416adb88408569c13b0f68f611, author ttraenkler.
+Normal commit45041 completed0/close0/bothEOF; receiptc1b41ddc retains only
+the3 owned paths, Thomas author/committer, Sol6.1 High/Codex/✓ attribution.
+Fast precommit lint-staged and both exact size gates passed; actual slow-gate
+reds were recorded separately, not suppressed as tests. Committed issue graph
+integrity passed4775/4775. Normal push51621 completed0/close0/bothEOF;
+receipt1726ee80, actual fork head exactf79 and commonb40 unchanged. Normal
+pre-push18/18 numeric-local parity also passed. No force/upstream tracking/
+signing/config override was used. The draft's pinned issue URL was independently
+verified from the published upstream Git object; no ready/merge claim exists.
+
+Astra phaseII plan513–654/ebfd80a0 fully read and root-approved AFTER retaining
+that draft. Own additional production scope is ONLY existing
+`src/codegen/numeric-property-analysis.ts` isBooleanish immediately after
+unwrap: structurally recognize DeleteExpression as Boolean. Existing isNumeric
+Boolean arithmetic admission remains unchanged; no IR, allocator, declaration,
+coercion, cache, context or proof change is authorized. Exact preimage641473df
+was read; no concrete competing hunk identified. Preserve every peer edit.
+
+Existing numeric analysis intentionally accepts Boolean as numeric evidence,
+but its separate Booleanish veto lacked delete. The grounded local publication
+could therefore force actual:any into f64 before the dispatch metadata reached
+its consumer. This single structural fact withdraws unsafe numeric inference
+through existing property/parameter/return/local readers; their blast radius
+requires separately counted real controls, not an assertion of invisibility.
+Normal completion of delete is Boolean; unary-plus/arithmetic over its result
+must remain legitimately numeric, and strict abrupt completion is unchanged.
+
+The existing24 body/helper/options remain frozen9c86f318. First run the exact
+candidate24 and retain every verdict/opaque failure. Then add separately counted
+real inference, wrapped/mixed-write/numeric arithmetic/shadowed-slot, property/
+ordinary-return identity controls and unchanged3765 suites. Matched normal
+source-keyed official8 and exact predicate-line removal/restoration follow;
+never reuse old f47/410 bundles/providers as fresh proof. One selected retained
+control1 compile may verify its corrected carrier, with no new generic probe
+family. No predicted24PASS or full-census gain is banked by this application.
+
+## Phase-II measurements and canonical-main integration (2026-10-07)
+
+The published-checkpoint candidate at f79/c522 actually completed the frozen24
+as19PASS/5FAIL (receipt a4cc8d26, `.tmp/6878-focused-phase2-candidate.rZsalo`).
+Its seven gains versus dispatch-only12/12 were standalone controls1,2,3,4,5,6,8;
+no earlier pass was lost. This is the old source epoch, not current-main proof.
+
+Normal non-autostashing merge of reviewed upstream116f04da completed0/close0/
+bothEOF, producing2953fe1f3a4b9493a7550044cfe691f4951542cc with parentsf79+116f.
+Merge receipt68259691 is `.tmp/6878-main-merge.9R5WHe/receipt.json`.
+Thomas author/committer, Codex/Sol6.1 High/✓ and normal hooks were retained;
+LOC_GATE_BASE was explicitly116f. Package/lock/workspace bytes are unchanged.
+The dirty predicate line, frozen test and own issue ledger remained byte-exact,
+as did common Git configb40. No stash/reset/force/public checkpoint rewrite.
+The canonical imported/promise/new.target work is main's own landed intent;
+the production diff versus116f still contains only the reviewed delete dispatch
+and Booleanish line. The source set now includes1870 physical Git source files.
+
+The unchanged24 then actually completed19PASS/5FAIL on this merged source,
+SHA9ba37e0a5cba06b037d706dc4db606875c3a500c4900edea9b1a160bf34aa81f.
+SAME50903 child25786 exited1/close1/bothEOF/errors:[], observer0 and unchanged
+inputs. Receiptc99e698b is
+`.tmp/6878-focused-phase2-currentmain-candidate.7H5L7g/receipt.json`.
+All24 identities/statuses match the oldf79 candidate. Remaining host reds are
+successful member/computed delete, bare with-identifier and pre-RHS capture;
+standalone pre-RHS capture also remains red. JSON failureMessages are opaque
+null values; no payload/sentinel/first-loss interpretation is invented.
+
+The subsequent separately counted regression group uses the real TypeScript
+checker and existing analysis (six structural rows with positive Boolean type
+evidence and genuine-number controls), plus three new unchanged helper/runtime
+bodies in both profiles. The original twelve bodies/helper/options remain
+unchanged. Results, removal/restoration and original packets are still pending;
+no issue completion, ready PR or full-census credit follows from19/24.
+
+Candidate regression run SAME87363 actually completed36 collected,28PASS/8FAIL,
+child40538 exit1/close1/bothEOF/errors:[]; source/private pins unchanged.
+Receiptba87a4db is `.tmp/6878-focused-phase2-currentmain-candidate.hEMSjt/receipt.json`.
+The frozen24 still has exactly19/5. Separately counted additions are6/6 real
+checker/analysis passes and3/6 runtime passes. Property-write identity fails
+in both profiles; ordinary return plus parameter identity fails in standalone
+and passes in host. Numeric arithmetic passes in both profiles. All three new
+reds are opaque null JSON failures, not identified payloads/first assertions.
+They are not called candidate regressions before matched predicate-removal
+results exist. No test body/assertion is pruned or weakened for these outcomes.
+The first textual frozen-body check accidentally used a pre-format archive and
+returned false; the subsequent exact HEAD9c controls+run text comparison is
+true. Both observations remain in the execution transcript.
+
+Unchanged neighboring suites completed18/18 numeric-local passes
+(`.tmp/6878-focused-phase2-currentmain-candidate.aCZt8Z/receipt.json`,8300e155)
+and4/4 linked-parameter passes (YH67Aj,2f872523), each own independent process,
+normal exits0/close0/bothEOF and unchanged1870/9ba/private inputs.
+Five normal merged-source build commands completed0/EOF at BXlT63 (a25f1d0e),
+then fresh strict ABI3/current default-QuickJS admission62d6c508 selected
+compiler4515bb6ed6dd1a02/coreff3d90489ba7761a63b21f07/adapter92d7912c21460b62.
+The source-independent own QuickJS artifact was a legitimate normal cache hit,
+not a borrowed artifact. The unchanged official8 completed8PASS, exact8 unique
+canonical rows/registered/callbacks and one durable completion, exclusions/
+skip/compile_timeout0. Receipt7b96cfb2 at `.tmp/6878-eight.IAWTOg` retains actual
+runner+validator exits0/EOF and default engine announcement.13 remains the
+eligible variant maximum; actual variant calls remain UNKNOWN. No census credit.
+
+Separate native control10 diagnostic26254 stopped1 before compile because
+common config changed. Own preserved bytes independently prove ONLY a97-byte
+normal branch stanza append, codex/5269-current-main-integration-sol61,
+upstream/refs/heads/main: deleting that unique insertion reconstructs111908/b40
+byte-exact. Root independently admitted ONLY112005/30498348; own effective
+.husky and Thomas identity were unchanged. Receiptc8e14f95 retains private
+current bytes and this exact classification. No shared config was rewritten.
+The failed diagnostic remains0 compile/native/render executions, not success.
+
+Separately named metadata-admitted native diagnostic20882 completed0/EOF.
+Actual tag/native prepare/native char/init exports were all present; one init
+and exactly one renderer call at its catch produced `Error: Control result: 102`.
+Receipt0d15975d at `.tmp/6878-control10-render-currentmain-metadata-admitted`
+preserves exact body/helper/options/source9ba. Boolean assertion101 did not fail;
+the outer-binding undefined assertion102 is its actual first failed sentinel.
+This native-first diagnostic is not the official auto/QuickJS route, has no
+canonical credit and does not authorize a hoist/reference-capture repair.
+
+The full approved Astra current-main attribution appendix656–765 was read.
+Removal changed ONLY the structural Booleanish line, retaining the dispatch
+and all merged main changes. Removed source1870/5310b1a1342f7acac71bc9ef578580baae8a8bc96164e231f942aa734a5318ff
+completed36 collected15PASS/21FAIL, child84497 exit1/close1/bothEOF/errors:[],
+unchanged inputs (vnvFtF/receipt.json,74f6e277). Splits are original24=12/12,
+added12=3/9. Actual row join against candidate28/8 shows13 recovered rows:
+seven original standalone, five real-analysis and standalone arithmetic. No
+candidate pass is lost. The three new runtime reds are F/F, not status
+regressions; their first effects remain UNKNOWN. Removal neighboring suites,
+normal builds/original8 and exact restoration are still pending at this entry.
+
+## Completed phase-II contrast and next checkpoint epoch
+
+The removed arm's numeric18 and linked4 completed18/18 and4/4 with actual
+exit0/close0/bothEOF, receipts36b9806b (KvAWqQ) and569bdba3 (c2MwsT).
+Its five normal source-keyed build commands completed0/EOF at OZwVHG
+(c04e0b7b), followed by fresh default-QuickJS/core ABI3 admissione6168f97:
+compiler032997197974b7bf, coree0262d626efdf4db57f4be5a and adapterc993164600b97466.
+The unchanged official8 completed8PASS, runner+validator0/EOF, one durable
+completion and zero exclusions/skips/timeouts (vkHE0R,5c04af81).
+
+Byte-exact restoration returned numericde964d92 and source1870/9ba37e0a.
+The same36 completed28PASS/8FAIL with actual child16688 exit1/close1/bothEOF,
+unchanged inputs (MgsLsX,9fcd8ed5). Exact fullName identity and failureMessages
+joins match all36 candidate rows; no restoration mismatch. The thirteen gains
+versus removal comprise seven original standalone controls, five real-analysis
+rows and standalone arithmetic; no prior pass was lost. The five original and
+three added runtime reds remain unwaived, with opaque null reports except the
+separately rendered native control10 first sentinel102. They do not justify a
+new production hunk in this task.
+
+Restoration numeric18 and linked4 also completed18PASS/4PASS, independently
+settled0/close0/bothEOF (RHY4dA,6e5a64f4; K7PdrJ,7012d960). Normal restored
+five completed all0/close0/bothEOF/errors:[] at OLhRZK (adca3179); an initial
+relative admission argument was rejected before execution, and the required
+absolute owned path then admitted unchanged source/providers (32db0899).
+Fresh maintained selection returned candidate compiler4515bb6ed6dd1a02,
+coreff3d90489ba7761a63b21f07 and adapter92d7912c21460b62. Own keyed caches
+were normal hits, not copied peer outputs. Official8 completed8PASS at DbCLDx
+(2a12f4a5), actual runner21727 and validator21935 both0/close0/bothEOF;
+registered/canonical/started/settled floors8, one durable completion, exclusions/
+skip/compile_timeout0. All three arms' official8 verdicts are identical. Actual
+variant invocations are UNKNOWN;13 is only the eligible maximum. These are
+bounded measurements, not full11778 census credit or issue completion.
+
+After the contrast settled, fresh upstream main was ab86c902, beyond the
+previous report-only21bcc. Its landed6867 optional-field/tuple-rest changes
+touch calls, coercion, struct registration, index and module records, plus one
+new source module; none touches this issue's two production hunks/test/ledger.
+Normal non-autostashing merge completed0/close0/bothEOF, HEAD72329d4b with
+parents2953+ab86, preserving dirty source/test/MD and common304 byte-exact.
+Receiptb964da3c is `.tmp/6878-post-contrast-merge.lbixRf/receipt.json`.
+An observer preflight first compared the owned branch rather than its integrated
+main and rejected before any Git child; its original script remains archived.
+The corrected comparison uses116f→ab86, without weakening the overlap guard.
+
+The new source membership is1871 and ordered SHA256 is
+209dff5309c4884c53cba7b362534fcd4c7ba829f2cb62dce4dad7b19738e3dc.
+All physical source Git blob identities match HEAD except the exact dirty
+Booleanish line; versus ab86, source changes remain only delete dispatch+veto.
+Epoch582fa0df at `.tmp/6878-post-contrast-epoch.si0cbr/receipt.json` retains
+the full inventory and bounded main/owned diffs. Old2953/1870 contrast and
+providers are not relabelled as this new source epoch. Normal mechanical gates,
+unfinished draft checkpoint publication, then fresh final-HEAD source-keyed
+build/admission and current36 evidence precede a separately authorized frozen
+11778-original census. No ready/merge claim while the eight focused reds remain.
+
+Normal72329 mechanical assessment P9MSvM completed typecheck/lint/changed-file
+Prettier all0/close0/bothEOF. The actual budget terminals were1, not waived:
+numeric-property-analysis1684>1683 (+1) and its makeProver301>300 (+1).
+This issue grants only those measured file/function keys for the single
+DeleteExpression Booleanish veto, in addition to the existing dispatch grants.
+No shared baseline/inventory/schema or unrelated budget is changed. The normal
+ratchets must pass after this local frontmatter grant; semantic reds remain real.
+
+The normal remaining mechanical assessment actually completed at Axj7gv,
+receipt96ed2abc: LOC/function/inventory/import-cycles/flat-directory/coercion/
+oracle/dead-exports/issue-integrity/spec-coverage/IDs-against-main/IDs-against-
+open-PRs all12 terminals0/close0/bothEOF/errors:[], unchanged source1871/209d.
+Dead-exports is a preservation-only pass: graph OPEN, strict modeled closure
+FAIL and retirement/deletion NOT CERTIFIED; moved-runtime unknown nonliteral
+imports at optimize412/platform151 remain explicit, not full-closure proof.
+The unchanged normal changed-root gate actually ran the sole owned file,
+36 collected28PASS/8FAIL, child32525 exit1/close1/bothEOF. Its eight names are
+the same five original and three added runtime reds; no expected-failure/skip/
+body/profile/oracle change masks them. The full checkpoint remains draft and
+in-progress. Initial receipt67dcffe3 retains the two measured budget failures;
+subsequent grants do not rewrite that history. Fresh final-HEAD mechanical,
+current-candidate36 and normal providers are still required before census seal.

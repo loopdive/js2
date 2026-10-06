@@ -1148,6 +1148,7 @@ function makeProver(
   const isBooleanish = (expr: ts.Expression, depth: number): boolean => {
     if (depth > MAX_DEPTH) return false;
     const value = unwrap(expr);
+    if (ts.isDeleteExpression(value)) return true;
     if (value.kind === ts.SyntaxKind.TrueKeyword || value.kind === ts.SyntaxKind.FalseKeyword) return true;
     if (ts.isPrefixUnaryExpression(value) && value.operator === ts.SyntaxKind.ExclamationToken) return true;
     if (ts.isBinaryExpression(value)) {

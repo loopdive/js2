@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { analyzeNumericPropertyNames } from "../src/codegen/numeric-property-analysis.js";
+import { ts } from "../src/ts-api.js";
 
 const controls = [
   [
@@ -159,6 +161,128 @@ async function run(body: string, target: "host" | "standalone"): Promise<unknown
 
 describe.each(["host", "standalone"] as const)("#6878 delete Boolean completion (%s)", (target) => {
   it.each(controls)("%s", async (_name, body) => {
+    expect(await run(body, target)).toBe(1);
+  });
+});
+
+// These are additional phase-II controls, not replacements for the frozen twelve bodies above.
+function analyze(source: string) {
+  const fileName = "issue-6878-carrier-analysis.ts";
+  const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const options: ts.CompilerOptions = { noLib: true, noEmit: true };
+  const host = ts.createCompilerHost(options);
+  const getSourceFile = host.getSourceFile.bind(host);
+  host.getSourceFile = (name, languageVersion, onError, shouldCreateNewSourceFile) =>
+    name === fileName ? sourceFile : getSourceFile(name, languageVersion, onError, shouldCreateNewSourceFile);
+  const checker = ts.createProgram([fileName], options, host).getTypeChecker();
+  const declarations: ts.VariableDeclaration[] = [];
+  let deletes = 0;
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "actual") {
+      declarations.push(node);
+    }
+    if (ts.isDeleteExpression(node)) {
+      deletes++;
+      expect(checker.getTypeAtLocation(node).flags & ts.TypeFlags.BooleanLike).not.toBe(0);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  expect(deletes).toBeGreaterThan(0);
+  const verdicts = analyzeNumericPropertyNames(
+    {
+      oracle: {
+        typeFactOf: (node) => {
+          const flags = checker.getTypeAtLocation(node).flags;
+          return {
+            kind: flags & ts.TypeFlags.NumberLike ? "number" : flags & ts.TypeFlags.BooleanLike ? "boolean" : "any",
+          };
+        },
+      },
+    },
+    [sourceFile],
+  );
+  return { declarations, verdicts };
+}
+
+describe("#6878 phase-II real carrier analysis", () => {
+  it.each(["delete obj.p", "(delete obj.p)", "(delete obj.p) as any"])(
+    "withholds a numeric local for %s",
+    (initializer) => {
+      const { declarations, verdicts } = analyze(
+        `function test(obj: any) { var actual: any = ${initializer}; return actual; }`,
+      );
+      expect(declarations).toHaveLength(1);
+      expect(verdicts.isNumericLocal(declarations[0]!, "actual")).toBe(false);
+    },
+  );
+
+  it("withholds a mixed number/delete local", () => {
+    const { declarations, verdicts } = analyze(
+      "function test(obj: any) { var actual: any = 7; actual = delete obj.p; return actual; }",
+    );
+    expect(declarations).toHaveLength(1);
+    expect(verdicts.isNumericLocal(declarations[0]!, "actual")).toBe(false);
+  });
+
+  it("retains the genuine number produced by unary plus over delete", () => {
+    const { declarations, verdicts } = analyze(
+      "function test(obj: any) { var actual = +(delete obj.p); return actual; }",
+    );
+    expect(declarations).toHaveLength(1);
+    expect(verdicts.isNumericLocal(declarations[0]!, "actual")).toBe(true);
+  });
+
+  it("keeps same-spelled numeric and delete locals in separate function frames", () => {
+    const { declarations, verdicts } = analyze(`
+      function numeric() { var actual = 7; return actual; }
+      function boolean(obj: any) { var actual: any = delete obj.p; return actual; }
+    `);
+    expect(declarations).toHaveLength(2);
+    expect(declarations.map((node) => verdicts.isNumericLocal(node, "actual"))).toEqual([true, false]);
+  });
+});
+
+const adjacentControls = [
+  [
+    "property-write delete preserves strict Boolean identity",
+    `
+    var obj: any = { p: 17 };
+    var holder: any = { result: 23 };
+    holder.result = delete obj.p;
+    if (!booleanResult(holder.result, true)) return 131;
+    if ("p" in obj) return 132;
+  `,
+  ],
+  [
+    "ordinary return and parameter keep delete Boolean identity",
+    `
+    function remove(value: any): any { return delete value.p; }
+    function identity(value: any): any { return value; }
+    var obj: any = { p: 17 };
+    var actual: any = identity(remove(obj));
+    if (!booleanResult(actual, true)) return 141;
+    if ("p" in obj) return 142;
+  `,
+  ],
+  [
+    "successful and refused delete still support numeric arithmetic",
+    `
+    var obj: any = { p: 17 };
+    Object.defineProperty(obj, "fixed", { value: 23, configurable: false });
+    var yes: any = delete obj.p;
+    var no: any = delete obj.fixed;
+    if (!booleanResult(yes, true) || !booleanResult(no, false)) return 151;
+    var one = +yes;
+    var zero = +no;
+    if (one !== 1 || zero !== 0 || typeof one !== "number" || typeof zero !== "number") return 152;
+    if (yes + 0 !== 1 || no + 0 !== 0 || obj.fixed !== 23 || !("fixed" in obj)) return 153;
+  `,
+  ],
+] as const;
+
+describe.each(["host", "standalone"] as const)("#6878 phase-II adjacent runtime (%s)", (target) => {
+  it.each(adjacentControls)("%s", async (_name, body) => {
     expect(await run(body, target)).toBe(1);
   });
 });
