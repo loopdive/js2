@@ -291,6 +291,10 @@ export function* buildPrototypeBrandOffsetDefinition(d: PrototypeBrandOffsetReso
   body.push(...testArm(remaining.boxNumberTypeIdx >= 0 ? remaining.boxNumberTypeIdx : undefined, NUMBER_OFF));
   body.push(...testArm(I31_HEAP_TYPE, NUMBER_OFF));
   body.push(...testArm(remaining.anyStringTypeIdx >= 0 ? remaining.anyStringTypeIdx : undefined, STRING_OFF));
+  // (#6651 V10a) …and the bare `$Symbol` carrier (`__box_symbol`): §6.2.4.8
+  // GetValue ToObject(symbol) starts the walk at %Symbol.prototype%, so
+  // `Symbol.prototype.x = v; Symbol().x` reads the Symbol companion.
+  body.push(...testArm(remaining.symbolTypeIdx >= 0 ? remaining.symbolTypeIdx : undefined, SYMBOL_OFF));
   body.push(...testArm(remaining.errorTypeIdx >= 0 ? remaining.errorTypeIdx : undefined, ERROR_OFF));
   // `__is_closure_prop_carrier` also answers true for `new F()` instances (they
   // need its expando bag), so they must be claimed as Object BEFORE its
