@@ -97,6 +97,8 @@ import { zeroArgPadInstrs } from "./zero-arg-method-pad.js";
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js";
 import { ABRUPT_FIELD, MODE_FIELD } from "./frame-core.js";
 import { walkChildren } from "./walk-instructions.js";
+import { buildTaIterDetachPrologue, taIterVecTypeIdx } from "./array/ta-iter-detach.js"; // (#6651 V3)
+import { buildThrowJsErrorInstrs } from "./js-errors.js"; // (#6651 V3)
 import { fillForOfIteratorStep } from "./forof-iterator-step.js"; // (#6651 G4)
 import { buildRuntimeEvalValueUnwrap } from "./runtime-eval-boundary.js"; // (#6651 A9)
 import { RUNTIME_EVAL_IMPORT_MODULE } from "./expressions/runtime-eval-provider.js"; // (#6651 A9)
@@ -2025,6 +2027,7 @@ export function prependIterRecPrototypeArm(ctx: CodegenContext): void {
  */
 export function fillAnyIterNext(ctx: CodegenContext): void {
   prependIterRecIdentityArm(ctx);
+  prependTaIterDetachArm(ctx); // (#6651 V3)
   if (!ctx.anyIterNextPending) return;
   const selfIdx = ctx.funcMap.get("__any_iter_next");
   const iterNextIdx = ctx.funcMap.get("__iterator_next");
@@ -2081,6 +2084,33 @@ export function fillAnyIterNext(ctx: CodegenContext): void {
           { op: "call", funcIdx: genNextIdx },
         ] satisfies Instr[])),
   ];
+}
+
+/**
+ * (#6651 V3) Prepend the detached-view check (array/ta-iter-detach.ts) to
+ * `__iterator_next`, once, when a dynamic-view iterator helper minted a
+ * `$__ta_iter_vec`. Every other module keeps its bytes.
+ */
+const taIterDetachArmed = new WeakSet<CodegenContext>();
+function prependTaIterDetachArm(ctx: CodegenContext): void {
+  const taIdx = taIterVecTypeIdx(ctx);
+  const iterRecTypeIdx = ctx.structMap.get("__IterRec");
+  const nextIdx = ctx.funcMap.get("__iterator_next");
+  const dynIdx = ctx.taDynViewTypeIdx;
+  if (taIdx === undefined || iterRecTypeIdx === undefined || nextIdx === undefined || dynIdx < 0) return;
+  if (taIterDetachArmed.has(ctx)) return;
+  const dynDef = ctx.mod.types[dynIdx];
+  const bufType = dynDef?.kind === "struct" ? dynDef.fields[1]?.type : undefined;
+  const fn = definedFuncAt(ctx, nextIdx);
+  if (!fn || bufType === undefined || bufType.kind !== "ref_null") return;
+  taIterDetachArmed.add(ctx);
+  const throwInstrs = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    "TypeError: Cannot perform operation on a detached ArrayBuffer",
+    { forceInModuleCtor: true },
+  );
+  fn.body = [...buildTaIterDetachPrologue(iterRecTypeIdx, taIdx, dynIdx, bufType.typeIdx, throwInstrs), ...fn.body];
 }
 
 export function ensureNativeArrayFromIterN(ctx: CodegenContext): number {
