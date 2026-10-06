@@ -1,3 +1,4 @@
+import { undefinedExternInstrs } from "./any-helpers.js";
 import { initializeNativeGeneratorFunctionValue } from "./generators-factory-prototype.js";
 import { snapshotArrowNewTarget } from "./expressions/new-target-value.js";
 import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
@@ -218,6 +219,11 @@ import {
   emitClosureConstruction,
   closurePrecedesBindingInitializerStore,
 } from "./closures/arrow-phases.js"; // (#3278) arrow/fn-expr closure phase helpers
+import {
+  initializeOrdinaryNewTarget,
+  ORDINARY_NEW_TARGET,
+  arrowReadsLexicalNewTarget,
+} from "./closures/ordinary-new-target.js";
 import {
   collectDirectEvalActivationBindingNames,
   collectDirectEvalBindingNames,
@@ -2205,11 +2211,13 @@ export function computeClosureWrapperSig(
   const sig = yieldKeyedGenerator ? undefined : ctx.checker.getSignatureFromDeclaration(arrow);
   let closureReturnType: ValType | null = null;
   let checkerReturnWasNever = false;
+  let checkerReturnWasUndefined = false;
   if (isGenerator || yieldKeyedGenerator) {
     closureReturnType = { kind: "externref" };
   } else if (sig) {
     let retType = ctx.checker.getReturnTypeOfSignature(sig);
     checkerReturnWasNever = (retType.flags & ts.TypeFlags.Never) !== 0;
+    checkerReturnWasUndefined = (retType.flags & ts.TypeFlags.Undefined) !== 0;
     if (isAsync) {
       retType = unwrapPromiseType(retType, ctx.checker);
     }
@@ -2256,13 +2264,25 @@ export function computeClosureWrapperSig(
   if (closureReturnType === null && checkerReturnWasNever && !ts.isFunctionDeclaration(arrow)) {
     closureReturnType = inferExplicitClosureReturnType(ctx, arrow);
   }
+  // `undefined` is a value, not a void callback contract. In particular the
+  // checker can infer it for a getter of an initially-undefined binding that
+  // another retained closure later writes. Dropping the getter's result then
+  // hides those writes forever. Preserve the runtime value on the open carrier.
+  if (
+    closureReturnType === null &&
+    !ts.isFunctionDeclaration(arrow) &&
+    checkerReturnWasUndefined &&
+    unboundClosureReturnsAValue(arrow)
+  ) {
+    closureReturnType = { kind: "externref" };
+  }
   if (closureReturnType !== null && !ts.isFunctionDeclaration(arrow)) {
     const ctxType = ctx.checker.getContextualType(arrow);
     if (ctxType) {
       const ctxCallSigs = ctxType.getCallSignatures?.();
       if (ctxCallSigs && ctxCallSigs.length > 0) {
         const ctxRetType = ctx.checker.getReturnTypeOfSignature(ctxCallSigs[0]!);
-        if (isVoidType(ctxRetType) && !isAssignedToSymbolIterator(arrow)) {
+        if ((ctxRetType.flags & ts.TypeFlags.Void) !== 0 && !isAssignedToSymbolIterator(arrow)) {
           closureReturnType = null;
         }
       }
@@ -2861,6 +2881,7 @@ export function compileLiftedClosureBody(
   for (let i = 0; i < liftedFctx.params.length; i++) {
     liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
   }
+  if (!ts.isArrowFunction(arrow)) initializeOrdinaryNewTarget(ctx, liftedFctx, undefinedExternInstrs);
   // (#3683 S2/S3) Typed-`this` TWIN prologue. Runs FIRST so `typedThisLocalIdx`
   // is live for every subsequent statement. Since S3 this emits NO instructions
   // at all — the receiver arrives as param 0 — see typed-this.ts.
@@ -3711,7 +3732,10 @@ export function compileArrowAsClosure(
   // 2. Analyze captured variables (referenced/written free vars, outer-write +
   //    TDZ-flag boxing) and the self-recursive binding — see planClosureCaptures.
   const reachesDirectEval = functionMayReachDirectEval(arrow, ctx.oracle);
-  const additionalCaptureNames = planAdditionalWithEnvironmentCaptureNames(fctx, reachesDirectEval);
+  const additionalCaptureNames = new Set(planAdditionalWithEnvironmentCaptureNames(fctx, reachesDirectEval));
+  if (ts.isArrowFunction(arrow) && fctx.localMap.has(ORDINARY_NEW_TARGET) && arrowReadsLexicalNewTarget(arrow)) {
+    additionalCaptureNames.add(ORDINARY_NEW_TARGET);
+  }
   // Ordinary function frames do not bind `this` in localMap: their receiver
   // is resolved through __current_this at each source read.  An arrow must
   // snapshot that value at creation, however. Keep the snapshot in a private

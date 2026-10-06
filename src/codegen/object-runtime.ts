@@ -1,3 +1,6 @@
+import { installableReceiverInstrs } from "./helpers/undefined-receiver.js";
+import { buildClosureResultBoxing } from "./closures/result-boxing.js";
+import { classifyClosureDispatchRest } from "./closures/closure-dispatch-rest.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { buildOwnPropertyBody, buildPropertyIsEnumerableBody } from "../runtime/wasmgc/values/own-property-bodies.js";
 import {
@@ -63,6 +66,7 @@ import { buildObjectGetBody } from "../runtime/wasmgc/values/object-get-bodies.j
  * `ensureLateImport` for these names.
  */
 import { buildVariadicBuiltinApplyArm } from "./apply-closure-variadic-builtin.js"; // (#6701)
+import { buildRestOnlyApply } from "./closures/rest-only-apply.js";
 import {
   buildObjectPropertyKeyPrefix,
   prependObjectKeyCoercion,
@@ -132,6 +136,7 @@ import {
 } from "./closures/transferred-native-proto.js";
 import type { TransferredNativeReceiverEntry } from "./closures/transferred-native-proto.js";
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { reserveLinkedRealmPropertyRead } from "./object-model/linked-realm-property-read.js";
 import { reserveAccessorGetDriver, reserveAccessorSetDriver } from "./accessor-driver.js";
 import { registerDescriptorHasOwn } from "./carrier-bag-hasown.js"; // (#4055) descriptor-scoped HasProperty over the #3468 bag
 import { buildNonObjectDeleteArms, reserveCarrierBagDelete } from "./carrier-bag-delete.js"; // (#4010 S2) OrdinaryDelete over the carrier bags
@@ -270,7 +275,7 @@ import {
   protoLinkSetWalkArm,
   withProtoLinkNull,
 } from "./object-runtime-proxy-chain.js"; // (#6766) a Proxy as [[Prototype]]
-import { ensureArgcGlobal } from "./statements/nested-declarations.js";
+import { ensureArgcGlobal, ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { buildLazyNativeProtoGetInstrs, flushPendingNativeProtoSeeders, getBuiltinBrand } from "./native-proto.js";
 import { applyUndefinedInstrs } from "./apply-closure-args.js";
 import {
@@ -314,6 +319,24 @@ import type {
   ToPrimitiveMethodLiterals,
   ToPrimitiveSymbolBindings,
 } from "../runtime/wasmgc/values/to-primitive-method-bodies.js";
+
+const restOnlyApplyServices = {
+  get classifyClosureDispatchRest() {
+    return classifyClosureDispatchRest;
+  },
+  get buildClosureResultBoxing() {
+    return buildClosureResultBoxing;
+  },
+  get ensureCurrentThisGlobal() {
+    return ensureCurrentThisGlobal;
+  },
+  get installableReceiverInstrs() {
+    return installableReceiverInstrs;
+  },
+  get ensureExnTag() {
+    return ensureExnTag;
+  },
+} as const;
 export { fillProxyDispatch } from "./object-runtime-proxy.js";
 
 /** Initial `$PropMap` capacity. Must be a power of two (mask = cap - 1).
@@ -2011,6 +2034,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // body bakes its `call`. The driver body is filled in finalize once
     // `__call_fn_method_0` exists (fillAccessorDrivers). Routing through funcMap
     // keeps the late-import shifter in sync (#329/#1899).
+    reserveLinkedRealmPropertyRead(ctx);
     const callAccessorGetIdx = reserveAccessorGetDriver(ctx);
     // (#2106 S1) Under the `undefinedSingleton` regime a MISSING property read
     // answers the extern-wrapped tag-1 `$undefined` singleton — the value JS
@@ -6359,6 +6383,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
 
   const variadicNativeApply = reserveVariadicNativeApplyState(ctx, locals);
   const variadicBuiltinArm = buildVariadicBuiltinApplyArm(ctx, locals, 3, argcGlobalIdx);
+  const restOnlyApply = buildRestOnlyApply(ctx, locals, 3, argcGlobalIdx, restOnlyApplyServices);
 
   // (#3673) Read the in-module $ObjVec argument carrier directly, avoiding a
   // dynamic `__extern_get_idx` per argument. Non-$ObjVec args keep the generic
@@ -6530,6 +6555,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     { op: "global.set", index: argcGlobalIdx },
     ...buildVariadicNativeApplyDispatch(ctx, variadicNativeApply, objVecTypeIdx, objVecArrTypeIdx),
     ...variadicBuiltinArm, // (#6701) Math.max/min, String.fromCharCode values
+    ...restOnlyApply,
     ...widen,
     // A compiled closure above the module's TOP dispatcher arity must fail
     // loudly rather than falling through to the undefined sentinel (#1058).

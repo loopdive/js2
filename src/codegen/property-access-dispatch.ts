@@ -3975,9 +3975,11 @@ export function tryNamespaceConstantAndSymbolReads(
     // `undefined`, matching `Symbol().description === undefined`.
     if (usesNativeSymbolProvider(ctx)) {
       ensureNativeSymbolBoundaryBridge(ctx);
-      const recvType = compileExpression(ctx, fctx, expr.expression, { kind: "i32" });
+      // A narrowed any receiver still occupies the boxed symbol plane.
+      const symbolId: ValType = { kind: "i32", symbol: true };
+      const recvType = compileExpression(ctx, fctx, expr.expression, symbolId);
       if (recvType && recvType.kind !== "i32") {
-        coerceType(ctx, fctx, recvType, { kind: "i32" });
+        coerceType(ctx, fctx, recvType, symbolId);
       }
       emitSymbolDescLoad(ctx, fctx);
       // Result is `ref_null $AnyString` — a native string (or null⇒undefined).
