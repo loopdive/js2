@@ -3576,3 +3576,35 @@ Full-B preparation may now pin E HEADb9bb743c0b instead of446,with the recorded
 evidence-only transition and unchanged source/input-map authorities. No other
 HEAD relaxation is allowed. Execution still waits for publication completion
 and a fresh shared-host capacity check. No legacy retirement or HOLD release.
+
+E publication18537 completed exit0; remote b9bb743c0b was independently verified.
+Full-B runner is frozen at
+a0246dd47f49f3f4a668cb5f7d57a13c13aec7a5d591856dc3ba2e2178409c89,
+schedule576197158c495756e58c2e288dd3fb2fbfb6d236c4e996e3667b0e8e40678dce.
+Parent read complete source and independently checked all79 authority byte pins
+and all70 per-file native identity multisets (5510 executions scheduled).
+No full-B execution released yet: fresh process inspection found the other
+team's original-test runner PID10903 and Vitest10967/11005 live. Preserve their
+work; confirm capacity before starting. This is a live resource wait,not a
+baseline failure or acceptance blocker requiring a changed test denominator.
+
+Fresh process inspection confirmed the peer runner and compiler/test children
+had exited, with no replacement heavy test process present. Parent released
+the frozen full-B runner above: session65386, output
+`.tmp/erdos-5883-full-b-execution-20261006-01a03e4f-run-JVPkM7`.
+Preflight began; terminal results remain pending. Do not restart the run or
+mutate its A/B/E inputs. Preserve any first failure and all unexecuted stages.
+
+Routing remains parent-written issue plans, Sol6.1 medium implementation, and
+parent-owned acceptance/integration. Erdos is preparing a read-only comparison
+proposal while the single heavy execution slot is occupied. The terminal
+comparison must distinguish5406 shared cases,2 B-only main-profile controls,
+102 separate B projection controls,16 E-only cases in common files and1317
+cases in E-only files. No aggregate green result substitutes for exact native
+identity/status comparison or permits legacy retirement.
+
+Independent read-only ownership audit at21:37:36Z found PR6341 actively managed
+by its existing owner at f4a03caea2cfd108b9396c49ee6fc7e8a6ff0afc, with unfinished
+CI and no verified main delivery. Its closed-struct setter already checks bag
+flags0x04 before struct.set; the contrary source-absence claim is stale.
+Do not adopt that lane or count owner-reported tests as this lane's validation.
