@@ -3012,3 +3012,21 @@ not equivalence acceptance: keep HOLD and retain the full87 and separate A/B
 requirements above. A failure releases only a newly documented bounded repair
 after preserving the original failure. No new PR, scope expansion, automatic
 test retry, legacy retirement or blanket staging is authorized by this dispatch.
+
+Laplace's read-only publication preflight confirms the7772-input309eacc2 epoch
+and identifies39 owned unstaged/untracked paths:29 existing test/support files,
+six new test/support files and the four reviewed custody archives. Ten existing
+paths retain unmerged index entries despite resolved working-tree content.
+Preserve the71 already-staged paths:69 match incoming4bff exactly; the other two
+are the reviewed compiler-boundaries inventory and context/types composition.
+Before staging, regenerate and inspect the explicit path list; never infer
+ownership from a broad directory or stage all. No unexplained paths were found
+in this preflight, which is not authority for later unseen edits.
+
+PR5883's checked remote head remains64849f95d2a0482820bafdd90bb0852184baeab1,
+an ancestor of E HEAD. Publication targets fork repository ttraenkler/js2,
+existing branch codex/5197-promise-observable-r3-2-20260913, by non-force push;
+recheck that remote before writing. Normal hooks remain mandatory. In particular,
+lint-staged may rewrite test/support or archive JSON with Prettier: compare all
+input and archive hashes after hooks, and stop for review if frozen bytes change.
+Keep ignored .tmp/dependencies and the separate docs worktree out of staging.
