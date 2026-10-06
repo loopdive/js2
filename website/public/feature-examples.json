@@ -12952,7 +12952,7 @@
         "language/statements/variable",
         "language/block-scope"
       ],
-      "passCount": 570,
+      "passCount": 571,
       "totalCount": 604,
       "tests": [
         {
@@ -15965,7 +15965,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 399,
+          "pass": 400,
           "total": 430
         },
         {
@@ -73685,7 +73685,7 @@
         "language/expressions/async-generator",
         "language/statements/async-generator"
       ],
-      "passCount": 2781,
+      "passCount": 2785,
       "totalCount": 3812,
       "tests": [
         {
