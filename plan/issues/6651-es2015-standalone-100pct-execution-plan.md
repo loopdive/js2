@@ -174,6 +174,10 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-10-06 — slice V1 (trapless Proxy forwarding; record under
+  # "2026-10-06 — Slice V1"). `object-runtime-proxy.ts` +2: the import and the
+  # one-line call of `installProxyForwardArms`; the arms themselves live in the
+  # NEW leaf `object-model/proxy-forward-carriers.ts` (path already listed below).
   # 2026-10-05 — uncovered slice U2 (TypedArray residue; record under
   # "2026-10-05 — Uncovered slice U2"). Every mechanism is a few lines at the
   # site that owns the decision; the shared helper `taDynJoinLengthInstrs` is in
@@ -1244,6 +1248,8 @@ loc-budget-allow:
   # `promise-subclass-cell-read.ts`; the hand-off cannot move, because it is the
   # arm that would otherwise emit the bare `global.get` of the cell.
 func-budget-allow:
+  # 2026-10-06 — slice V1: `ensureProxyRuntime` +1, the one-line call of
+  # `installProxyForwardArms` next to `installProxyKeyBagGuards` (key already listed below).
   # 2026-10-05 — uncovered slice U2 (see the loc-budget note): one-line calls
   # of `emitRefElemArraySnapshot` — `emitTaDynCtorConstructInline` +2 (the
   # `$ObjVec` and plain-vec arms) and `compileBuiltinStaticCall` +1 (the static
@@ -1777,6 +1783,11 @@ func-budget-allow:
   # deps it builds, and passing each rebuilt function's own `locals`.
   - src/codegen/iterator-native.ts::buildIteratorNextBody
 coercion-sites-allow:
+# 2026-10-06 — slice V1: `object-model/proxy-forward-carriers.ts` is a NEW file
+# (baseline 0); its one `__is_truthy` is §20.1.3.4 step 4's ToBoolean of the
+# descriptor's `enumerable` field — a CALL to the engine's existing helper, the
+# same one every proxy front guard in `object-runtime-proxy.ts` uses.
+  - src/codegen/object-model/proxy-forward-carriers.ts
 # 2026-09-26 — lane TA1: `to-locale-string-element.ts` is a NEW file, so its
 # baseline is 0 and every textual mention of a native name counts as growth
 # (the gate is a name scan, and most of these 8 occurrences are in the module
@@ -2839,6 +2850,107 @@ With the guard in place, the seed list change is exactly U1's
 - A durable fix is a link-unique bfnid, or a guard at every site.
 - Transferred `Number.prototype.toFixed` (`o.p = Number.prototype.toFixed;
   o.p.call(2.5, 1)`) throws on base and branch alike, linked or not.
+
+### 2026-10-06 — Slice V1
+
+Trapless Proxy forwarding over a Proxy / native-carrier target (H2 of the
+2026-10-06 re-census on `bdf3056722`). Branch `issue-6651-v1-proxy-forward` off
+`origin/main` @ `d1f1fbdebc`. Claims read 2026-10-06 (`claim-issue.mjs --check`,
+`origin/issue-assignments`): #5140 RESERVED, nobody working (rows adopted);
+#3031 CLAIMED by `fable-3031` (not flagged stale by the tool, so its two
+`apply/*` rows are excluded); #3371 CLAIMED (its three `construct/*` CEs are
+untouched — no NewTarget code was edited); #6766 CLAIMED (its rows are not
+targets).
+
+**The census diagnosis did not hold on current main.** p05 passes on `d1f1fbdebc`:
+a trapless forward already re-enters the dispatch through the `ref.test $Proxy`
+front guards of `__extern_get/_set/_has/…`. The 16 rows fail on things the
+forward reaches *after* the hop, and most of those are not Proxy defects (see
+Residuals). Four mechanisms were Proxy-specific and are fixed:
+
+1. **HasOwnProperty / propertyIsEnumerable had no `$Proxy` arm** (§20.1.3.2,
+   §20.1.2.13, §20.1.3.4). `Object.prototype.hasOwnProperty.call(p, k)` walked
+   the carrier's empty table and answered false; every `verifyProperty` on a
+   proxy failed at "should be an own property". Both now run
+   `__proxy_gopd_dispatch` and test the descriptor (absent → false;
+   `propertyIsEnumerable` reads its `enumerable`).
+2. **Trap keys were not ToPropertyKey'd.** `p[10]` handed the boxed number to the
+   dispatch, so a `get` trap saw `typeof key === "number"` and a trapless forward
+   to a String wrapper missed the String-exotic index arm (string keys only).
+   Every keyed dispatch (`get/set/set_receiver/has/delete/gopd/define`) now
+   canonicalizes param 1 with the runtime's own `__to_property_key`.
+3. **String-wrapper `length` through `__extern_get`** — C5's demand-gated arm is
+   now also demanded by a module that names `Proxy` (the forwarded `[[Get]]`
+   lands there).
+4. **`Object.defineProperty(proxy, k, {get/set…})`** took the inline accessor
+   store and wrote the getter onto the `$Proxy` carrier: neither the trap nor
+   the target's `[[DefineOwnProperty]]` ran. A provable-proxy receiver now takes
+   the descriptor runtime route for accessor literals too (object-ops.ts).
+
+Arms 1–3 live in the new leaf `object-model/proxy-forward-carriers.ts`
+(injected deps; string helpers via `ports.ts`, no SCC value import) and are
+gated on `ctx.standalone && ctx.proxyDirty`; arm 4 is inside the existing
+`ctx.standalone` provable-proxy branch.
+
+**Rows (standalone, `--isolate`, QuickJS, 41 `trap-is-*-target-is-proxy` +
+gOPD rows):** base 19 pass / 22 non-pass, branch 24 / 17, **0 lost**.
+
+| row | base | branch |
+| --- | --- | --- |
+| `get/trap-is-null-target-is-proxy` | fail | **pass** |
+| `getOwnPropertyDescriptor/trap-is-undefined` | fail | **pass** |
+| `getOwnPropertyDescriptor/trap-is-undefined-target-is-proxy` | fail | **pass** |
+| `defineProperty/trap-is-undefined-target-is-proxy` | fail | **pass** |
+| `defineProperty/trap-is-null-target-is-proxy` (#6766's row, side effect) | fail | **pass** |
+
+**Controls.**
+- In-process neighbourhood, 830 rows (every test262 file naming `Proxy` outside
+  intl402/staging, every non-Temporal row including `proxyTrapsHelper` /
+  `testAtomics` / `wellKnownIntrinsicObjects`, all of `built-ins/{Proxy,Reflect}/**`,
+  and an 80-row non-Proxy control sample): every branch row run; base run on
+  every row that is non-pass on branch (plus 500 rows run on both). **0
+  pass → non-pass**, 0 status changes among non-pass rows. The control sample:
+  77 byte-identical, 3 differ only through the per-tree QuickJS adapter that an
+  `eval` row links (adapter key hashes the compiler source); all 3 pass on both.
+  20 rows first read "provider is not built" after a bundle rebuild; rebuilt
+  and re-run on both trees.
+- `website/playground/examples` + `benchmarks/suites`, gc and standalone (34
+  compiles): byte-identical.
+- `node scripts/equivalence-gate.mjs`: 1748 pass, 22 failing = the 22 known; no
+  new failures.
+- Temporal (`Duration/prototype/round`, 126 rows, in-process, linked standalone
+  provider built fresh per tree — the two providers are byte-identical):
+  119 pass / 7 fail on both trees, the same 7 paths, 0 `illegal cast` on
+  either. (`temporalHelpers.js` names `Proxy`, so these consumer modules DO get
+  the V1 arms.)
+- Pin suite `tests/issue-6651-v1-proxy-forward.test.ts`: 3 RED-on-base probes
+  fail on a base-source tree (20/63, 16/31, 0/3) and pass on the branch; the
+  guard probe passes on both.
+
+**Residuals (not Proxy defects — each fails without any Proxy).**
+- gOPD `trap-is-null-target-is-proxy`, `result-type-is-not-object-nor-undefined-realm`:
+  a function EXPRESSION that falls off the end after a ref-typed `return` answers
+  `ref.null`, not `undefined` (#4641's residual list), so the trap result
+  `null` cannot be told from "no descriptor". A §10.5.5 step-9 null guard was
+  written and withdrawn: it turned `function(t,k){ if (k === "foo") return d; }`
+  into a TypeError.
+- String-wrapper expandos: `s = new String("str"); s[4] = 1; s[4]` reads
+  `undefined` with no proxy (static String-object index lowering), and
+  `Reflect.set(s, "0" | "length", v)` answers true → `set/trap-is-null`,
+  `defineProperty/trap-is-missing`.
+- RegExp carrier through the dynamic MOP: `Reflect.get(/x/, Symbol.match)`,
+  `Reflect.has(/x/, "ignoreCase")`, `Symbol.replace in /x/` all miss
+  `%RegExp.prototype%` (B10's demand list covers four methods only) →
+  `get/trap-is-missing`, `has/trap-is-missing`, `set/trap-is-missing` (plus a
+  strict write to a getter-only property through a trapless proxy does not
+  throw — `__extern_set_strict` intercepts only the trap-PRESENT arm).
+- Function carriers: `hasOwnProperty.call(function(){}, "prototype")` is false,
+  `Reflect.set(fn, "prototype", null)` does not store → `gOPD/trap-is-missing`,
+  `set/trap-is-undefined`.
+- `Object.setPrototypeOf([], Number.prototype)` is a no-op on the vec carrier
+  → `setPrototypeOf/trap-is-undefined`.
+- #3031's `apply/*` (illegal cast / null deref in the apply forward) and #3371's
+  `construct/*` CEs are untouched.
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 
