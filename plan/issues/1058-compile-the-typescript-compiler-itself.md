@@ -2014,6 +2014,36 @@ location, intact harness, exact subject SHAs and the original comparison lane.
 No compiler/test jobs or source edits were authorized by this review. Keep HOLD
 and retain176-case plus broader gates when preparing the next integration.
 
+### Fresh queue supersession audit (2026-10-07)
+
+Read-only Sol6.1 medium audit compared PR5753 head
+11b39957841119c75b9703b8bad0cdcecf80f226 with main
+21bcc2655d44839b3f3913760bced17bc5bc8e20:62 PR-only and1751 main-only commits,
+common ancestor4418cd8510877c0fd5a3aab8a543934167e95c8c. GitHub reports
+OPEN/HOLD and conflicting. Exact-head quality success does not prove this
+unbuilt current-main composition or clear its standalone acceptance blocker.
+
+No wholesale supersession is demonstrated:42 branch-added production modules
+are absent at their paths on main, and no branch-only nonmerge commit has an
+exact patch-ID counterpart there. The higher-order signature modules, class-field
+provenance, packed function-prototype call route and retained class-delete work
+remain distinct. A main comment mentioning a composition is not implementation.
+
+The September28 author handoff explicitly stopped implementation and published
+a separate unintegrated branch at72e5055fdbb8011c95d26c06fff92c979184c850.
+Its then-recorded27 conflicts are historical, not today's measured count.
+Reconcile that handoff with the PR branch before any resumed integration; do not
+discard either branch's work. Main now owns IrClosureLowering in closure-layouts
+and re-exports it through backend handles; do not restore PR-local ownership.
+Main's separate Error-stack setter change likewise requires fresh attribution.
+
+Keep original176 fixtures and the4418/a10 failure evidence above. The154/176 vs
+38/176 result (129 losses/13 gains) is historical, not a new run on21bcc265.
+Next implementation requires an isolated reviewed composition, fresh original-
+fixture reproduction, exact preservation of all tests and broad protected gates.
+Do not close as delivered or superseded, unhold, or adopt a dormant repair on
+the strength of this source-only audit. The5883 frozen comparison is unchanged.
+
 ## Stewardship angle
 
 "js2wasm compiles 60% of test262" is a percentage. "js2wasm compiles the TypeScript compiler itself" is a story. Landing even Tier 3 is the single strongest artifact for conversations with potential maintainers or funders — it demonstrates the compiler has enough depth to handle production TypeScript, not just hand-picked benchmark inputs. The gap between "a toy subset compiles" and "the real compiler compiles" is exactly what separates a proof-of-concept from a usable tool.

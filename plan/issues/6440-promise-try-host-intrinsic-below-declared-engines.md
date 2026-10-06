@@ -75,3 +75,38 @@ mismatch implicit:
 ## Dispatch
 
 **sonnet** — runtime-only, fully specified (exact spec steps, install site, realm plumbing, test shape), no codegen or ordering hazards; the only judgement call (option 1) is already made above.
+
+## Queue audit and current-main adaptation boundary (2026-10-07)
+
+Read-only Sol6.1 medium audit found PR5911 still at
+938342a4db14397e15a7c3c8e33229141f55e751, OPEN/non-draft/HOLD and CONFLICTING.
+No review threads or explicit ownership release were found. September CI and the
+historical35585/35692 floor result are not fresh validation. At inspected main
+21bcc2655d44839b3f3913760bced17bc5bc8e20, the polyfill and its five-case test file
+are absent; the constructor-registration test still capability-skips Promise.try,
+and the engine floor remains Node>=20. Neither the PR head nor its implementation
+commit66a8c32273 is an ancestor of that main. Do not close as superseded.
+
+Parent inspected current compatibility-adapter.ts. The old plan's constructor
+list `[Promise, options?.globalSandbox?.Promise]` is stale: main already resolves
+one Promise target through injected dependency, then sandbox, then ambient. Its
+runtime caller supplies a snapshotted sandbox and thenable mirror. Preserve that
+existing selection and snapshot boundary; do not restore dual-realm installation
+or pass the original unsnapshotted option through a new runtime field.
+
+Before a coding release, reconcile the existing PR owner's local/active work and
+specify the current-realm integration against a freshly pinned main. The narrow
+implementation should use the existing selected Promise constructor inside the
+enabled compatibility installer, preserve an existing intrinsic and disabled
+compatibility behavior, and retain the five original missing-intrinsic regression
+cases. Add explicit injected/sandbox/ambient selection and nonselected-realm
+nonmutation controls, snapshot/accessor-count coverage, and repeated-installation
+coverage. Keep the constructor-registration Promise.try case unskipped only once
+the actual missing-intrinsic path is demonstrated. Preserve native-first behavior,
+standalone lowering, keyed-combinator installation and thenable mirroring.
+
+Re-read the exact Promise.try/NewPromiseCapability algorithms before changing
+polyfill semantics. Do not raise the Node floor, alter conformance gates, increase
+budgets merely to pass, or claim old CI as acceptance. Parent writes the final
+implementation plan; Sol6.1 medium implements in an isolated worktree after
+ownership and scope checks. No source implementation is released by this audit.
