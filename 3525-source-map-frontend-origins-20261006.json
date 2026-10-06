@@ -2,10 +2,11 @@
   "id": "3525",
   "slice": "source-map-frontend-origins-20261006",
   "assignee": "ttraenkler/codex-3525-source-map-frontend-origins-20261006",
-  "requested_by": "ttraenkler/codex-3525-source-map-frontend-origins-20261006",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3525-source-map-frontend-origins-20261006",
   "claimed_at": "2026-10-06T02:05:18Z",
-  "updated_at": "2026-10-06T02:05:18Z",
-  "write_id": "36935-p30bo0do"
+  "updated_at": "2026-10-06T05:59:55Z",
+  "write_id": "37442-a0sbo3im",
+  "released_at": "2026-10-06T05:59:55Z"
 }
