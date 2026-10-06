@@ -2457,3 +2457,78 @@ in a separate inert lossless archive in E .tmp, with full commands, raw streams,
 native results where present, exits and input maps. No active-run capture, source
 edits, native test execution, commits or publication. Parent owns issue updates,
 patch review, test release, integration and protected-queue landing.
+
+Parent independently decoded and byte-compared all12 rows/5801533 bytes of E
+`.tmp/5883-old68-failed-collections-evidence-20261006.json`, SHA256
+cd5269ae32003d55d6856f4a7bdc761c116344d95eddbfae7affed3e810717b4.
+Both attempts remain failures; absent preflight native/command records are
+explicitly absent, never fabricated. Package accepted=false.
+
+Parent reviewed the independent additional18 collection runner E
+`.tmp/5883-additional18-collection-20261006.mjs`, SHA256
+1b73cf374c6c4c2be831e3cb87dad711283b072a9346aec1bb8a133c6dd15157.
+It retains the existing pinned86 plan, exact18-file list,7769-input map3a81552e,
+Node identity, impossible a^ selection, complete native/raw/exit evidence and
+before/after checks. The old68 failure and missing660 identities are explicitly
+retained as the overall result. This stage may collect independent identities
+before the context repair, without retrying or waiving the failed old68 stage.
+Execution release is conditional on the parent's owned pre-push checks finishing
+and a fresh process/resource check. No source patch may be applied during it.
+
+### Parent review: complete the two-path successor before applying
+
+The first proposed context-only patch is preserved unapplied in E
+`.tmp/laplace-5883-main4bff-context-successor-20261006.apply_patch.txt`, SHA256
+c84cadf855847a37ae14d1eb3705ead2b49a7ca5e5fdccb9c57e1e204e23494a.
+Parent read the entire patch and checked the complete historical receipt's
+dependency/operand path set against the candidate-versus8b9 source diff. Exactly
+TWO of those paths changed: context/types.ts and object-runtime.ts. Therefore a
+context-only repair is incomplete; the latter would fail its unchanged main5f
+endpoint check after the former is repaired. This is source-proven, not a newly
+executed failure, and does not replace the preserved original raw failure.
+
+object-runtime.ts gained an import of ensureStandaloneTaSubclassParentCtor plus
+a three-line faithful TypedArray-parent dispatch before the existing fallback.
+Producer commit1a1b50cb40bd984850e5f49daf350479ae728ad4, parent
+d1f1fbdebcc7ca387fd2ec272e31862d8e92b315. Keep both production changes. Revise the
+additive successor helper/receipt to cover these exact two paths, each with
+complete predecessor/current pins, exact insertion spans, retained partitions,
+producer provenance and reciprocal replay. Do not broaden into all source files
+or accept arbitrary historical epochs. Preserve the v1 patch/preimages/report;
+produce distinct v2 artifacts and keep source frozen during additional18.
+
+The existing approved composition/acquisition-only edits remain the boundary;
+all old fixtures, main5f inverse functions, assertions, explicit mutants and
+their failure ownership stay unchanged. Extend new controls to both changed
+paths and prove the entire existing historical dependency/operand closure
+matches after this new layer and the unchanged existing transformations.
+This is necessary source review before native tests, not permission to infer
+execution success. The next native acceptance still includes all four affected
+old files and the new controls under original deadlines and full identity checks.
+
+Independent additional18 collection completed exit0 in E
+`.tmp/5883-independent-additional18-identity-collection-20261006-OCMO17`.
+Parent reviewed raw output and independently verified all2173 native identities
+are unselected across exactly18 files, no failed suites, and all7769 before/after
+input pins equal3a81552e. Native SHA256
+c72dd9f0d67ee3b375e3debaf3f4bc4464ef18ce175570fe5611ae251ccdac42;
+identities da070687f6848f69558933cda6386cd68c6224ff34c90d7c3602768efefd93f8;
+terminal11ba0440bbfe572fffd2522641718d53c0a6278f17ba2707186890e7e3fe1b89.
+Zero tests executed; old68 still failed with660 missing identities. No overall
+collection or implementation acceptance. Source freeze for this run is released;
+the v2 repair still requires parent review before application. The intended86
+population is4519+2173=6692 unique cases before additive successor controls,
+with the original56 repeated execution separately preserved.
+
+Parent independently counted the pending23-file execution stage from the
+original manifest and measured additional18 identities:2972 cases, comprising
+2287 ordinary-caller cases,343 C1 and342 successor cases. None has executed in
+this stage. The context/object-runtime repair's immediate old-test blast radius
+is exactly936 cases:216 earlier-main,24 export-main,420 historical-reader and
+276 main5f-reader-epoch. Preserve each original identity multiset and native
+duplicate multiplicity; collect the new additive controls independently before
+combining their measured count with936. These numbers are scheduling authorities,
+not pass counts. Darwin may prepare the bounded runner in E .tmp while Laplace
+prepares v2, but execution and changed-source input maps require parent review.
+Retain35000ms native timeout, one worker/2048MB, all raw errors and complete
+before/after maps; no retries or unselected cases in the actual execution stage.
