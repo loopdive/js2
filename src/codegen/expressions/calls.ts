@@ -108,6 +108,7 @@ import {
   runtimeParameters,
 } from "../closures.js";
 import { registerRestDeclarationWrapperShapes } from "../closures/funcref-wrapper-types.js"; // (#5334)
+import { appendDynamicTupleRestArgument, dynamicCandidateTupleRest } from "../closures/tuple-rest-carrier.js"; // (#6867)
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import {
@@ -5291,6 +5292,9 @@ function buildInlineDynamicDispatch(
       }
     }
 
+    const tupleRest = restVec === undefined ? dynamicCandidateTupleRest(ctx, funcTypeDef, cand.info) : null; // (#6867)
+    if (tupleRest !== null) fixedCount = cand.info.paramTypes.length - 1;
+
     const callBody: Instr[] = [];
 
     appendDynamicCandidateArgcSetup(ctx, fctx, callBody, fixedCount, argLocals, arity);
@@ -5419,6 +5423,8 @@ function buildInlineDynamicDispatch(
       callBody.push({ op: "array.new_fixed", typeIdx: restVec.arrTypeIdx, length: restCount });
       callBody.push({ op: "struct.new", typeIdx: restVec.vecTypeIdx });
     }
+    const undefinedPad = (body: Instr[]) => pushDynamicUndefinedExternref(body, undefinedIdx, undefinedSingletonPad);
+    if (tupleRest) appendDynamicTupleRestArgument(callBody, tupleRest, fixedCount, argLocals, plan, undefinedPad);
 
     // Extract funcref from field 0 and call_ref.
     callBody.push({ op: "local.get", index: anyLocal });
@@ -5453,7 +5459,7 @@ function buildInlineDynamicDispatch(
     // struct type — its funcref signature alone is indistinguishable from a
     // genuine vec-param closure's, and the positional arm for that signature
     // stays in the chain below for those.
-    const structGuardIdx = restVec !== undefined ? cand.structTypeIdx : rootStructIdx;
+    const structGuardIdx = restVec !== undefined || tupleRest !== null ? cand.structTypeIdx : rootStructIdx;
     const testCond: Instr[] = [
       { op: "local.get", index: anyLocal },
       { op: "ref.test", typeIdx: structGuardIdx },

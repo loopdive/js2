@@ -614,6 +614,7 @@ import type { ModuleInitMode } from "./declarations.js";
 import { prepareModuleTdzGlobals } from "./module-global-registration.js";
 import { hoistedVarPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
 import { inferParamTypeFromCallSites } from "./declarations/param-return-inference.js";
+import { optionalFieldFlag } from "./object-model/struct-optional-widen.js"; // (#6867)
 import {
   destructureParamArray,
   destructureParamObject,
@@ -13688,7 +13689,7 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
     if (wasmType.kind === "externref" && callSigs.length > 0 && (prop.name === "valueOf" || prop.name === "toString")) {
       wasmType = { kind: "eqref" };
     }
-    fields.push({ name: prop.name, type: wasmType, mutable: true });
+    fields.push({ name: prop.name, type: wasmType, mutable: true, ...optionalFieldFlag(prop) });
     if (callSigs.length > 0) {
       const sig = callSigs[0]!;
       // Include arity AND return-type signature in the hash key. Two object
