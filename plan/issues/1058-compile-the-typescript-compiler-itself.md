@@ -1987,6 +1987,34 @@ after source evidence and current-main supersession checks. This prepares the
 existing queue's next blocker; it does not open new migration scope or authorize
 legacy retirement. Preserve original fixtures and every failure row.
 
+Read-only review returned concrete source findings, not new execution results.
+The class fixture actually asserts that C does NOT own instance field foo; its
+failure-message text must not be mistaken for the opposite expectation. The
+candidate's array-object-proto reification reaches object-proto-has-own and
+runtime ownership dispatch. Existing class-repair evidence shows the exact
+fixture changes from folded false to native reification, but does not isolate
+which candidate change selected it. Available main77f00492c7abe920368dc748d9127df33460fa32
+has objectOwnPredicateCallKeepsFold in expressions/calls.ts; this is a potential
+supersession of that exposure, not a measured current-main pass or full repair.
+
+The generator fixture tests names id, empty string and [test262]. Candidate
+closures.ts broadens generator-method recognition while generators-native.ts
+still rejects unresolved computed keys, exposing host fallback before the name
+assertions. Available main retains gated isNativeGeneratorMethodClosure. The
+separate dormant repair's14/22 additive controls are not this original fixture
+and cannot establish recovery. For Error, reification exposes the nullish guard
+after new Ctor("msg"), but the exact original constructor route remains unproved.
+The separate22-case construction matrix likewise does not isolate that route.
+
+All three remain demonstrated losses only for the recorded4418/a10 subjects.
+Do not port dormant repairs or call them current-main regressions without fresh
+same-fixture evidence. Original b363 corpus blobs were recovered read-only from
+Git (class2495bytes, generator946, Error2290); old pair symlinks are dangling
+and were not modified. Any next run needs an independently verified b363 corpus
+location, intact harness, exact subject SHAs and the original comparison lane.
+No compiler/test jobs or source edits were authorized by this review. Keep HOLD
+and retain176-case plus broader gates when preparing the next integration.
+
 ## Stewardship angle
 
 "js2wasm compiles 60% of test262" is a percentage. "js2wasm compiles the TypeScript compiler itself" is a story. Landing even Tier 3 is the single strongest artifact for conversations with potential maintainers or funders — it demonstrates the compiler has enough depth to handle production TypeScript, not just hand-picked benchmark inputs. The gap between "a toy subset compiles" and "the real compiler compiles" is exactly what separates a proof-of-concept from a usable tool.

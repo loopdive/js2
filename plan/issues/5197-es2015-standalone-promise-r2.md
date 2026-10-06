@@ -2612,3 +2612,102 @@ Parent reviewed old68 recollection runner264facf75a29de41a3d06135de140df63ce624e
 against its immutable predecessor and releases that collection now: exact4519
 identities, no passing execution credit, unchanged7772 inputs and original
 resource controls. Preserve every original failed attempt; no automatic retries.
+
+The prepared23 runner still pins the pre-repair7769 epoch and requires both
+collection stages at one common input map. Preserve that property: after old68
+terminates, prepare an explicit additional18 recollection against7772/309eacc2,
+not a mixed-epoch acceptance exception. Compare all2173 identities to the prior
+additional18 collection exactly, with no inferred additions or passing execution
+credit. The separately collected47 new controls remain outside those86 files.
+This is input-epoch validation for the existing checkpoint, not repeated test
+execution or a new migration scope.
+
+Darwin may prepare the distinct additional18 runner and revise the23 runner to
+use the reviewed two-change/three-add descriptor and7772 map, preserving original
+collection plans/fixtures/identity multisets and2972 expected executions. Remove
+obsolete process telemetry and reject raw Error/FAIL/ERR_WORKER signatures as in
+the reviewed983 runner. Preserve prior runner bytes. No actual23 execution until
+both collection stages have terminal clean results on309eacc2 and parent has
+reviewed the runner and exact authority descriptor. Never edit an active runner.
+
+Old68 recollection terminated exit0 in E
+`.tmp/laplace-5883-old68-v2-recollection-20261006-l9hajy`:4519 identities across
+68 files, all unselected. Parent independently verified every identity multiset
+against the immutable4515 manifest plus four recorded freshness additions, every
+artifact hash, clean raw channels and unchanged7772 map309eacc2. Native SHA256
+dd99b7ab6fda25db2889c8c47549111f0796ee3f8c906e3dc8821454ea4a89c9;
+identities e77e729cc2248695b9d7101d500088eeffcde76d483fad01885ebc6b212acdd8.
+All660 previously uncollected identities are recovered and already included in
+the separate983 passing execution. The original failures remain preserved.
+Collection itself adds zero passing execution credit; additional18 recollection
+and23-file execution remain pending at this epoch.
+
+Parallel evidence custody: Laplace may package only the terminal OCMO17
+additional18 collection, XVNXuN helper collection, kzRWTm983 execution and
+l9hajy old68 recollection into a new inert lossless archive under E .tmp.
+Include every regular evidence file plus the four exact runner sources, final
+parent map/descriptors and v2 patch/preimages/closure/verification/format-delta/
+preformat archive. Pin the already recorded hashes, reject drift/duplicates/
+symlinks, use explicit scope tags and accepted=false, and decode every payload
+against its original. Do not capture the active/new additional18 or23 attempts,
+overwrite originals, or change source. Parent verifies before publication.
+
+Parent reviewed additional18 runner and caught a copied68-file guard before
+launch. Corrected runner7d5cc478687b0b986b87385d02ee633faf160d0b0123bf11ebe80e4b59850797
+requires exactly18 files matching the preserved2173 identity source. Release
+that explicit recollection on7772/309eacc2 now; no source mutation or passing
+execution credit. The23 runner f1c5549c006fe5a59eef34b9e18e4de724920a736724a3447b07f3bb59fe01f3
+is prepared but remains unreleased until final review and both common-epoch
+collection receipts are independently verified.
+
+Additional18 recollection completed exit0 in E
+`.tmp/5883-additional18-v2-recollection-20261006-dDNbv5`. Parent independently
+verified all2173 identities equal the original OCMO17 identities, all unselected,
+clean raw channels and exact7772 before/after map309eacc2. Native SHA256
+b068f44902dcdf41c4ba9c6044897d3cf7a032835bdc725a67cdbba9fb354b60;
+terminal4a8e1fd2239df6aa0ac03b0d0da5a0bac199670d0a030eb4fe8f4c86cf351cd1.
+The full86 collection now has6692 identities at one input epoch; separate new
+helper47 makes6739 across87 files. None of these collection counts is a pass
+count. Parent read the complete23 runner f1c5549c and releases its2972-case
+all-selected execution only with the common-epoch parent authority pinning
+both complete collection records. Original C1 probe/case budgets120000/150000,
+ordinary35000ms deadline and1worker/2048MB stay unchanged. Preserve raw errors,
+all identities and full maps; no retry, source changes or overall acceptance.
+
+Parent independently verified the completed four-terminal custody archive
+`.tmp/laplace-5883-four-terminal-custody-20261006.json`: SHA256
+b1830470ddffb2ea62e62b4f1cfb167347b4d35eae8c0e313a1500cf673fabed,
+46 distinct regular files,13531830 decoded bytes and41 recorded pins. Every
+decoded payload equals its original source bytes; accepted remains false.
+The archive excludes the newer dDNbv5 collection and live N4b2EF execution.
+Release Laplace to publish only this exact archive under E plan/agent-context,
+using apply_patch and verifying the resulting bytes. No source/index/commit/
+push changes, no test launch and no rewriting the earlier evidence archives.
+Darwin continues the existing2972-case execution without restart. The parent
+owns plan and issue decisions, independent result review and integration;
+Sol6.1 medium agents implement bounded assignments. No broad migration scope
+or legacy retirement is released by this evidence-packaging step.
+
+### Full candidate execution schedule: preparation-only assignment
+
+The2972 run is confirmed live as runner PID48415 with Vitest child48488.
+While it runs, release Laplace to prepare an inert schedule under E .tmp,
+not an executable launch or source change. Derive the complete87-file identity
+multiset from the same-epoch old68 and additional18 native collections plus
+the47 helper identities. Independently reconcile this to the preserved original
+4515-identity manifest, four freshness additions and measured added files.
+Keep the original56-case repeated stage as a separate execution occurrence;
+do not deduplicate it. Report exact file/identity membership per proposed stage,
+the unique and execution totals, and every original stage's preserved mapping.
+Every identity needs measured native provenance, not a static inferred count.
+
+The schedule must cover the whole candidate at7772/309eacc2, including cases
+already passing in scoped runs; those runs are evidence, not permission to
+omit cases from the final complete schedule. Preserve all fixtures, assertions,
+original deadlines and C1 budgets, one worker/2048MB, full raw error rejection,
+zero skipped/failed/todo, before/after input maps and explicit terminal records.
+Separate candidate validation from the still-required original-main A and narrow
+baseline B comparison: no candidate-only result may establish equivalence.
+Return source authority hashes, exact schedule and any uncertainty for parent
+review. No tests/builds, new source patches, staging, commits or pushes are
+authorized by this preparation. The parent remains integration owner.
