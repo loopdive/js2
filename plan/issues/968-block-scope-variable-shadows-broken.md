@@ -2,6 +2,7 @@
 id: 968
 title: "Block scope variable shadows broken by #954 dedup locals (25 tests)"
 status: in-review
+pr: 6540
 created: 2026-04-05
 updated: 2026-10-06
 completed: 2026-04-14
@@ -108,7 +109,7 @@ checks do not substitute for native execution.
   restoration returns the repair, with raw binary/source/profile receipts.
 - [x] Native inspection shows distinct parameter/block pointer locals and the
   correct undefined/null write destinations; all five case14 assertions pass.
-- [ ] Normal formatting/type/lint/scoped hooks/proof gates pass without waivers.
+- [x] Normal formatting/type/lint/scoped hooks/proof gates pass without waivers.
 - [ ] Composition with Phase A preserves its unchanged normative floor.
 
 Source preparation only is currently admitted. Census and Phase A occupy the
@@ -296,3 +297,26 @@ source/runtime/private graph/corpus/hooks/config sentinels remained unchanged.
 Normal commit/push hooks still run during publication; no skip flags are used.
 Authenticated contributor ttraenkler matches the maintained CLA exemption
 allowlist; no human acceptance checkbox or signature is fabricated.
+
+### Publication
+
+Normal commit observer18922 completed0/EOF: Thomas-authored and committed
+`a1c99454ed226336da7a58cffc7c8b915c83fdbf`, parent6998, exact three owned paths,
+Codex coauthor, configured `Model: Codex GPT-6.1 Sol High` and checklist mark.
+Normal lint-staged, LOC/function gates, the actually selected changed-root
+sixteen-test module and oracle ratchet all passed. Commit receipt is SHA256
+`2ee4746a9bb38d5e9001095f76c0b3a725ff5b706ce8c460c3bcc40117260273`.
+Normal fork push observer75284 completed0/EOF with actual remote branch
+readbacka1c994, receipt
+`c6d1ab22e786d2c6658d753a4a6d188d798813e9dd24ff24b69df268c666dd56`.
+Its type/lint/changed-format/oracle/coercion/issue guards passed; all18 numeric
+local parity tests passed. No hook skip, force push, upstream-tracking stanza
+or signing-config override was used. The common config, effective hooks and
+full source/runtime/private graph/corpus sentinels remain unchanged; the own
+HEAD transition to the three-path commit is explicit, not a source repin.
+
+Upstream PR [6540](https://github.com/loopdive/js2/pull/6540) was opened as a
+separate non-draft against canonical loopdive/js2 main using Description/CLA
+sections and the normal maintainer exemption. Current CI is a separate live
+gate, not inferred green from local results. No GitHub issue was created,
+no full-census score is claimed and the17 native diagnostic failures remain.
