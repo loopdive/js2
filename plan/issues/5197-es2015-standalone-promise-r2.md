@@ -3226,3 +3226,80 @@ preserve both collection attempts in a byte-exact gzip/base64 custody archive
 under B .tmp, including their reviewed runner and maps. No source edits, tests,
 new collection attempt, dependency installation or Git writes are authorized by
 this preparation task. Parent owns final repair spec and release.
+
+### Baseline promise-port reader repair: parent implementation specification
+
+Checkpoint097dbf7880 is published on PR5748; normal push checks passed and the
+remote ref was independently verified. Candidate evidence checkpoint446808ce4d
+is on PR5883. Neither checkpoint is a merge or acceptance decision.
+
+Parent independently verified the failed A/B collection custody archive
+`.tmp/avicenna-5883-ab69-20261006-b7f42c19-custody.json` in B: SHA256
+b64ad23508b7db149ba36d3fd34655e2e63e871f8d3d465af508f774ed542a22,
+28 exact original payloads,20766102 decoded bytes,accepted=false,complete=false.
+The source audit is3f96126d878b3593cda166fcfbb97c97fdec5a12c54eaad28b10a6ff1414da65;
+parent independently checked all ten current/historical source endpoint hashes.
+Seven differ; three already match. The available5166 original identities are
+retained in67 collected suites. B adds two main-profile controls distinct from
+E's16 additional controls. The missing two suites contain240 scheduled E cases;
+no complete repaired-baseline population or equality has been established.
+
+Implement only in isolated B worktree
+`/Users/thomas/.codex/worktrees/5883-repaired-main4bff-b/js2`, branch
+`codex/5883-repaired-main4bff-b-20261006`, pinned4bff with its existing25 repairs
+preserved. Sole implementer is Avicenna, explicitly gpt-6.1-sol,medium effort.
+Parent retains specification, independent review, execution release and landing.
+Allowed writes are exactly:
+
+- `tests/helpers/promise-export-main-port.ts`: import plus physical initial-read delegation only.
+- New `tests/helpers/baseline-4bff-promise-port-projection.ts`.
+- New `tests/helpers/baseline-4bff-promise-port-projection.json`.
+- New `tests/issue-5883-baseline-4bff-promise-port-projection.test.ts`.
+
+The new helper projects only builtin-static-globals,builtin-value-read,
+carrier-bag-visibility,async-scheduler,promise-custom-combinator,
+promise-class-receiver-drive and promise-combinators under src/codegen.
+Dependency endpoints must equal the immutable earlier/export receipt pins;
+combinators must equal export-after b296ba1c, not an earlier donor. Retain the
+existing export inverse, three earlier inverses and B1 inverse unchanged.
+
+Use actual freshly read physical B bytes as the operand. Authenticate whole
+input byte length,SHA256 and Git blob before projection. Derive narrowly bounded
+inverse spans from verified endpoint Git diffs, recording exact provenance,
+coordinate units, ordered nonoverlapping spans and every retained complementary
+interval. Producing nonmerge commits are provenance, NOT a presumed linear
+chain: where branches diverge, authenticate the endpoint diff independently and
+record first-parent integrations. Never reconstruct by returning a historical
+whole-file payload. Copy retained intervals from the actual captured input,
+check their pins, verify the projected endpoint and replay the forward spans to
+the byte-identical captured input. Fail closed on unknown source epochs.
+
+Pin the new receipt bytes independently in the helper; validate exact allowlist,
+schema, spans, lengths and hashes without import cycles. No mutable cache may
+hide a later physical edit. Unlisted reads pass through byte-exactly. Preserve
+all explicit text/custom-reader parameters and mutant operands: no projection
+inside existing authenticate/apply/transform functions. No existing fixtures,
+assertions, test registration, production source or candidate dependencies change.
+
+Add controls for all seven healthy projections and reciprocal replay, unlisted
+pass-through, source drift within spans and retained gaps, receipt corruption,
+missing/duplicate/shifted spans, wrong endpoints and forward replay corruption.
+Prove fresh acquisition detects physical drift after a healthy read and accepts
+restoration using an isolated temporary fixture root, not shared production
+files. Exercise existing explicit custom-reader/receipt mutants unchanged.
+Do not introduce a bypassable receipt-hash option merely to test deeper checks.
+
+The layout-ownership and native-delay-source-preservation suites also import
+the shared transforms. Their explicit source operands remain raw and must NOT
+be silently normalized. Include them in the next scoped blast-radius run and
+preserve any later failure as evidence requiring its own bounded diagnosis.
+
+This dispatch authorizes source implementation and source-only verification,
+not execution of compiler/tests/collections or Git mutations. Return exact diff,
+new file hashes, provenance and control inventory for parent review. Parent then
+releases focused controls plus the four affected suites in the single heavy
+slot, retaining raw/native/terminal results. Only after that review create a new
+B input-map epoch and collection runner; never overwrite either failed attempt
+or its7737 map. Original A and validated E remain frozen. Acceptance continues
+to require original identity preservation and exact repaired-B/E comparison,
+with additive controls separately identified; no automatic HOLD removal.
