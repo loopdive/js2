@@ -161,3 +161,15 @@ the compiled adapter for native-first results only (host lane keeps the exact
 legacy wrapper). Re-measured, regime lane: **cookie measured** (ratio 0.0089),
 clsx still measured; **hono** still `Wasm 1, Node 9`, **redux** still
 `Wasm NaN, Node 7` — those two are real.
+
+### Part B, second finding (2026-10-06): hono is a codegen gap shared with standalone → #6875
+
+hono's `input.length` (untyped driver param) is `undefined`: an `externref`
+parameter's member read goes through `__extern_get`, which has no
+native-string RECEIVER arm (the `$AnyString` test near its top is on the key).
+Reduced and reproduced under plain `--target standalone`
+(`len(JSON.parse('"abcd"')) == 4` → 0), so it is pre-existing, not a regime
+regression; filed as #6875 with the arm to add. redux (`Wasm NaN, Node 7`)
+not yet bisected — same lane recipe; `Number(input)` alone is fine in
+isolation, so look at the reducer's default parameter / `action.amount` read
+on a dynamic object next.
