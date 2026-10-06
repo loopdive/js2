@@ -1,4 +1,4 @@
-[Resource from github at repo://loopdive/js2/sha/1255c536b4c275a2dbe4c4605bf5cb5775584efa/contents/CLAUDE.md] # js2wasm
+# js2wasm
 
 TypeScript-to-WebAssembly compiler using WasmGC.
 

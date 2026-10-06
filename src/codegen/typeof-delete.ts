@@ -66,6 +66,7 @@ import { classIdentityFromExpression, hasClassStaticMethod } from "./class-stati
 import { identifierHasExplicitHostAmbientValueDeclaration } from "./expressions/identifier-module-storage.js";
 import { maybeRecordArrayProtoIteratorTombstone } from "./expressions/proto-override.js";
 import { isStandaloneUnavailableTimerGlobal } from "./standalone-timers.js";
+import { strictThisMayBePrimitive } from "./expressions/bool-to-locale-string.js"; // (#6771 S6)
 
 // (#2726 group (b), partial) The only value properties of the global object with
 // `[[Configurable]]: false` (ECMA-262 §19.1). `delete <bareIdentifier>` of any of
@@ -1969,6 +1970,8 @@ export function compileTypeofExpression(
     if (!forceRuntimeTypeof && typeofFoldUnsoundForJsParam(ctx, bareTdz)) {
       forceRuntimeTypeof = true;
     }
+    // (#6771 S6) Strict `this` typed as a primitive WRAPPER may be the primitive.
+    if (!forceRuntimeTypeof && strictThisMayBePrimitive(ctx, bareTdz, tsType)) forceRuntimeTypeof = true;
     // (#4491) Read before the binding's own `var x = <init>` statement runs —
     // the hoisted binding still holds `undefined` (see readPrecedesVarInitializer).
     if (!forceRuntimeTypeof && readPrecedesVarInitializer(ctx, fctx, bareTdz)) {

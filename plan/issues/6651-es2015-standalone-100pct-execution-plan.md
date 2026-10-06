@@ -2123,7 +2123,8 @@ base:
 That set targets the remaining 9 non-design rows (create-proxy ×5,
 invalid-len ×3, copyWithin delete-proxy-target) plus the unclaimed ES2015 row
 `copyWithin/return-abrupt-from-has-start.js`. None of those rows was measured
-on it.
+on it. **(2026-10-01: re-applied and measured as #6771 S1 — all of them pass
+on `issue-6771-array-residue`, see the #6771 pointer at the end of this file.)**
 
 #### Residuals (10 rows)
 
@@ -2545,3 +2546,23 @@ no `super` involved), and `super/call-proto-not-ctor.js` by class objects having
 no runtime [[Prototype]] (`Object.setPrototypeOf(C, f)` is a silent no-op;
 `super()` is inlined from the compile-time parent) — both representation
 questions, neither built.
+
+### 2026-10-01 — #6771 `built-ins/Array/**` residue — pointer
+
+Branch `issue-6771-array-residue` (record: "2026-10-01 — implementation
+record (Opus)" in `plan/issues/6771-es2015-standalone-array-residue.md`).
+The 34-row ES2015 standalone Array bucket goes **0 → 30** on a tree merged
+with `origin/main` @ `a895598841` (`--isolate`, base re-measured 0/34). S1 is
+the H6 second set above, re-applied and now measured: all 11 of its rows pass
+(create-proxy ×5, invalid-len ×3, concat length limit, copyWithin ×2), with
+two additions the rows needed (copyWithin on plain array-likes; a Proxy
+trap's fall-off `undefined` no longer returns `0`). The other 19 rows come
+from the array-like trio's exotic arms, `Array(n)` holes, flat/flatMap
+species, `@@unscopables`, the Boolean `toString` override, `Array.from.call`
+constructor identity, and ArraySetLength's double conversion. Residuals:
+the `Reflect.defineProperty` false channel and lazy trap lookup are #6770
+S4/S8 (with #6770's branch merged one more row passes), `source-array-
+boundary` is #2727, and `define-own-prop-length-coercion-order.js` turned out
+to be a checker defect — in a script, a top-level `var length` merges with
+lib.dom's `declare var length: number` and is typed `number` (10 test262
+files declare such a var).

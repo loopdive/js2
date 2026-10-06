@@ -164,6 +164,18 @@ export interface NativeProtoBuiltinGlue {
    */
   symbolTag?: string;
   /**
+   * (#6771 S5) Well-known-symbol-keyed own DATA properties whose value is built
+   * by an instruction recipe (`Array.prototype[@@unscopables]`, §23.1.3.41).
+   * Seeded into the brand companion like `symbolTag`, with the given descriptor
+   * word, and reported own by `__nproto_hasown` alongside the `@@<id>` members.
+   * `value` runs inside the seeder; `undefined` skips the entry.
+   */
+  symbolDataProps?: ReadonlyArray<{
+    readonly id: number;
+    readonly flags: number;
+    readonly value: (ctx: CodegenContext, seedFctx: FunctionContext) => Instr[] | undefined;
+  }>;
+  /**
    * (#5156) String-keyed own DATA properties whose value is a plain string
    * constant — `Error.prototype.name` / `.message` and the NativeError
    * equivalents (§20.5.3.2/.3). They cannot join `memberCsv`: every consumer of
@@ -577,13 +589,16 @@ export function seededNativeProtoSymbolMembersByBrand(ctx: CodegenContext): Read
   const out = new Map<number, readonly number[]>();
   for (const [brand, seederName] of nativeProtoSeederRegistry(ctx)) {
     if (ctx.funcMap.get(seederName) === undefined) continue;
+    const glue = getNativeProtoBuiltinGlue(ctx, brand);
     const members =
-      getNativeProtoBuiltinGlue(ctx, brand)
-        ?.memberCsv.split(",")
+      glue?.memberCsv
+        .split(",")
         .map((member) => member.trim())
         .filter((member) => member.startsWith("@@"))
         .map((member) => nativeProtoMemberSymbolId(member))
         .filter((id): id is number => id !== undefined) ?? [];
+    // (#6771 S5) Symbol-keyed data props are own companion entries too.
+    for (const { id } of glue?.symbolDataProps ?? []) members.push(id);
     if (members.length > 0) out.set(brand, members);
   }
   return out;
@@ -619,6 +634,36 @@ export function seededNativeProtoSymbolMembersByBrand(ctx: CodegenContext): Read
  * table is strictly better than none (the missing member reads `undefined`,
  * exactly as today).
  */
+/**
+ * (#6771 S5) Seed `glue.symbolDataProps` into the companion (param 0 of the
+ * seeder). The value recipe runs FIRST — it may register natives — and the
+ * symbol box / define natives are resolved by name after it. Returns the count
+ * installed.
+ */
+function seedSymbolDataProps(
+  ctx: CodegenContext,
+  seedFctx: FunctionContext,
+  glue: NativeProtoBuiltinGlue,
+  defineValueIdx: number,
+): number {
+  let installed = 0;
+  for (const prop of glue.symbolDataProps ?? []) {
+    ensureSymbolCarrier(ctx);
+    const value = prop.value(ctx, seedFctx);
+    const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+    const defineIdx = ctx.funcMap.get("__defineProperty_value") ?? defineValueIdx;
+    if (value === undefined || boxSymbolIdx === undefined) continue;
+    seedFctx.body.push(
+      ...buildPrototypeSeedReceiver(),
+      ...buildPrototypeSeedSymbolKey(prop.id, boxSymbolIdx),
+      ...value,
+      ...buildPrototypeSeedDataTail(defineIdx, prop.flags),
+    );
+    installed++;
+  }
+  return installed;
+}
+
 export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: number): string | undefined {
   if (!ctx.standalone) return undefined;
   const registry = nativeProtoSeederRegistry(ctx);
@@ -802,6 +847,7 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
       installed++;
     }
   }
+  installed += seedSymbolDataProps(ctx, seedFctx, glue, defineValueIdx);
 
   if (installed === 0) {
     registry.delete(brand);

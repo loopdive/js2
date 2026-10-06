@@ -484,6 +484,12 @@ Two design points that are easy to get wrong:
   indefinitely on a flaky API — silently, because a skipped push looks exactly
   like a no-op one. The gate still _reports_ that it could not see, via a
   `::warning::` and an explicit `queue=UNKNOWN` in the verdict line.
+- **A gate that did not RUN is not an unknown reading — callers fail CLOSED
+  (#6799).** The script handles its own unknowns and exits `0` (proceed) or
+  `10` (defer). Any other exit is a crash or a missing script, and the calling
+  step fails with an `::error::` and writes `decision=error`; the push step runs
+  only on `decision == 'proceed'`. Until #6799 the callers wrote `proceed` on
+  any non-zero exit, so a broken gate pushed as if it had approved.
 - **Read freshness from the artifact, never from `git log`.** Every promote job
   here is `fetch-depth: 1`, where `git log -1 --format=%ct -- <path>` returns
   **empty rather than erroring**. Empty parses as "unknown age", which fails
@@ -494,7 +500,7 @@ Two design points that are easy to get wrong:
 **Better still: do not push to `main` at all — promote through a PR.** The gate
 above is damage control, and it is damage control with two deliberate holes: the
 staleness floor _overrides_ the queue check once the artifact is old enough, and
-a malfunctioning gate fails open. Both are the right call for a direct push, and
+an unreadable queue fails open. Both are the right call for a direct push, and
 both mean that on a busy day the deferrals accumulate until something forces a
 push into a live merge group anyway. Routing the artifact through a PR removes
 the class instead of bounding it: `main` then only ever advances via the queue,

@@ -31,6 +31,7 @@ import { stringConstantExternrefInstrs } from "./native-strings.js"; // (#2025)
 import { emitWasiErrorConstructor } from "./registry/error-types.js"; // (#2025)
 import { widenClosureReturnForPreInitVar } from "./declarations/hoisted-var-preinit-read.js"; // (#4206)
 import { widenClosureReturnForDynamicModuleBinding } from "./declarations/heterogeneous-scalar-var-widening.js";
+import { widenProxyTrapMixedReturn } from "./closures/proxy-trap-closure-return.js"; // (#6771 S1)
 import { popBody, pushBody } from "./context/bodies.js";
 import { recordClosureBody } from "./context/body-route-audit.js";
 import { reportError } from "./context/errors.js";
@@ -2213,10 +2214,15 @@ export function computeClosureWrapperSig(
       // externref — the runtime value is a HOST plain object; a struct-typed
       // return null-drops it on the failed ref.test (see
       // resolveWasmTypeForClosureReturn).
-      const resolvedReturn = widenClosureReturnForDynamicModuleBinding(
+      const resolvedReturn = widenProxyTrapMixedReturn(
         ctx,
         arrow,
-        widenClosureReturnForPreInitVar(ctx, arrow, resolveWasmTypeForClosureReturn(ctx, retType)),
+        retType,
+        widenClosureReturnForDynamicModuleBinding(
+          ctx,
+          arrow,
+          widenClosureReturnForPreInitVar(ctx, arrow, resolveWasmTypeForClosureReturn(ctx, retType)),
+        ),
       );
       // (#4707) Proxy/host-object bindings retain their externref carrier when
       // returned from a closure, despite TypeScript's structural return type.

@@ -256,6 +256,14 @@ jobs:
         # plan/log/3090-phase0-legacy-delete-list.md.
         run: pnpm run check:dead-exports
 
+      - name: Orphaned-script ratchet (#6799)
+        if: steps.npm_compat.outputs.only != 'true'
+        # Fails when a top-level scripts/ file is referenced by nothing that
+        # runs or documents it (package.json, root configs, .github/, .husky/,
+        # .claude/, docs/, plan/method/, other scripts/) and is not already in
+        # scripts/orphaned-scripts-baseline.json. Wire it up, delete it, or
+        # document it; bank a deletion with `-- --update-on-decrease`.
+        run: pnpm run check:orphaned-scripts
       - name: No tracked file matches .gitignore (#6796)
         if: steps.npm_compat.outputs.only != 'true'
         # `git ls-files | git check-ignore --stdin --no-index` must be empty

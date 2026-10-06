@@ -73,7 +73,14 @@ tags only `sprint/N` (+ `sprint-N/begin`); see `CLAUDE.md` and
 
    ```bash
    git show vX.Y.Z      # the release: vX.Y.Z commit + the bumped package.jsons
+   git log -2 --stat    # + a `chore(benchmarks): refresh for vX.Y.Z` commit, if any
    ```
+
+   After tagging, the script runs `pnpm run refresh:benchmarks` and commits any
+   changed tracked file under `benchmarks/results/` on top of the tag, so the
+   numbers ship in the reviewed release PR (`--skip-benchmarks` opts out). This
+   replaced a `.husky/pre-push` side effect that committed them, unreviewed and
+   bypassing hooks, when the tag was pushed (#6799).
 
 3. **Push the BRANCH and open a `release: vX.Y.Z` PR — do NOT push the tag yet.**
 

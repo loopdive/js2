@@ -149,10 +149,10 @@ jobs:
       # Read-only throughout: the push to `main` goes over SSH with the deploy
       # key, not with GITHUB_TOKEN (which the ruleset rejects, GH013).
       # `pull-requests: read` is for the queue gate's `repository.mergeQueue`
-      # GraphQL query — without it that read fails, and while the gate is
-      # designed to fail OPEN (a broken gate must never freeze the baseline),
-      # failing open here would silently cost the merge-group protection this
-      # job exists to respect.
+      # GraphQL query — without it that read fails, and the gate resolves an
+      # unreadable queue to "proceed" (so a flaky API cannot freeze the
+      # baseline), which here would silently cost the merge-group protection
+      # this job exists to respect.
       contents: read
       actions: read
       pull-requests: read
@@ -244,20 +244,25 @@ jobs:
             --stale-after-hours 6 \
             --reason "differential test baseline refresh" \
             ${FORCE_ARG} || RC=$?
-          if [ "$RC" -eq 10 ]; then
-            echo "decision=defer" >> "$GITHUB_OUTPUT"
-          else
-            # 0 = proceed. Anything else is a gate malfunction, and a broken
-            # gate must never freeze the baseline — fail OPEN, loudly.
-            [ "$RC" -eq 0 ] || echo "::warning title=main-push-queue-gate::gate exited ${RC}; failing open"
-            echo "decision=proceed" >> "$GITHUB_OUTPUT"
-          fi
+          # (#6799) FAIL CLOSED: 0 = proceed, 10 = defer, anything else is a
+          # broken gate and must not be pushed past. The gate already turns an
+          # unreadable queue/age into "proceed" itself, so this cannot freeze
+          # the baseline on a flaky API; the next push to main retries.
+          case "$RC" in
+            0) echo "decision=proceed" >> "$GITHUB_OUTPUT" ;;
+            10) echo "decision=defer" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "decision=error" >> "$GITHUB_OUTPUT"
+              echo "::error title=main-push-queue-gate::gate exited ${RC}; refusing to push main (fail closed, #6799)"
+              exit 1
+              ;;
+          esac
 
       - name: Promote the refreshed baseline
         # A deferred refresh is not a failure: the next push to `main`
         # re-measures and retries, and the gate's 6h staleness floor bounds how
         # long a permanently busy queue can hold the baseline back.
-        if: steps.refresh.outputs.changed == 'true' && steps.queue_gate.outputs.decision != 'defer'
+        if: steps.refresh.outputs.changed == 'true' && steps.queue_gate.outputs.decision == 'proceed'
         env:
           MAIN_DEPLOY_KEY: ${{ secrets.MAIN_DEPLOY_KEY }}
           SOURCE_SHA: ${{ github.sha }}

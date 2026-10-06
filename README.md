@@ -363,7 +363,7 @@ Loopdive develops `js2wasm` with an **Automated Agile Team** model. The goal is 
 
 The workflow is not hidden behind a consultancy. It is **in this repository**:
 
-- `plan/issues/` — architect-written implementation specs for every open and completed work item
+- `plan/issues/` — one file per open and completed work item: the problem, acceptance criteria and status, plus an architect-written implementation plan for the harder ones (about one in five carries one)
 - `plan/log/dependency-graph.md` — current priorities and what's blocked on what
 - `plan/issues/sprints/` — sprint plans and retrospectives
 - `.claude/agents/` — agent role definitions (product owner, architect, tech lead, developer, senior developer)

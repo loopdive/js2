@@ -19,6 +19,8 @@ import { canonicalUndefinedExternInstrs, ensureAnyFromExternHelper, undefinedExt
 import { anyValueElemFromExternInstrs } from "./anyvalue-elem-materialize.js"; // (#2717)
 import { ensureAnyToStringHelper, stringConstantExternrefInstrs } from "./native-strings.js";
 import { buildThrowJsErrorInstrs } from "./expressions/helpers.js";
+import { arrayLikeLengthLimitGuard } from "./proxy-array-like.js"; // (#6651 H6)
+import { prepareVecF64UndefElem, vecF64ElemFromExternInstrs } from "./array/vec-elem-fidelity.js"; // (#6771 S8)
 import { ensureWrapperStringValueHelper } from "./object-runtime.js";
 import { ensureNativeArrayFromIterN } from "./iterator-native.js";
 import { markNoBrandSiblingShapes } from "./shape-brand.js";
@@ -964,6 +966,8 @@ export function buildVecFromExternref(
       [{ kind: "externref" }],
     );
   }
+  const lengthGuard = arrayLikeLengthLimitGuard(ctx, fctx); // (#6651 H6) before the flush
+  prepareVecF64UndefElem(ctx, vecInfo.elemType); // (#6771 S8) before the flush
   flushLateImportShifts(ctx, fctx);
   const lenIdx = ctx.funcMap.get("__extern_length");
   const getIdx = ctx.funcMap.get("__extern_get");
@@ -991,7 +995,7 @@ export function buildVecFromExternref(
   const buildElemCoerce = (): Instr[] => {
     const et = vecInfo.elemType;
     if (et.kind === "f64" && unboxIdx !== undefined) {
-      return [{ op: "call", funcIdx: unboxIdx }];
+      return vecF64ElemFromExternInstrs(ctx, fctx, unboxIdx); // (#6771 S8) undefined → UNDEF_F64_BITS
     }
     // i8/i16 are PACKED array element kinds (Uint8Array, Int8Array, Uint16Array,
     // …). Their value-position representation is i32: a packed `array.set`
@@ -1175,6 +1179,7 @@ export function buildVecFromExternref(
     ...matInstrs,
     { op: "local.get", index: matLocal },
     { op: "call", funcIdx: lenIdx },
+    ...lengthGuard,
     { op: "i32.trunc_sat_f64_s" },
     { op: "local.set", index: lenLocal },
     { op: "local.get", index: lenLocal },

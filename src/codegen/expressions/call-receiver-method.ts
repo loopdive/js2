@@ -25,6 +25,7 @@ import {
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, resolveArrayInfo, tryCompileDynViewSpeciesMethodCall } from "../array-methods.js";
 import { compileArrayConcatNativeSpec } from "../array-concat-spec.js";
+import { reserveBoolMethodString } from "./bool-to-locale-string.js"; // (#6771 S6)
 import { inheritedBuiltinReceiverType } from "../builtin-subclass-receiver.js"; // (#6651 C5)
 import { isWiredTypedArrayViewName } from "../array-object-proto.js";
 import { ensureWrapperProtoDynamicMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
@@ -3760,6 +3761,14 @@ export function compileReceiverMethodCall(
   // Boolean method calls: bool.toString(), bool.valueOf()
   if (isBooleanType(receiverType)) {
     const method = propAccess.name.text;
+    // (#6771 S6) An overridden `Boolean.prototype.toString`/`.toLocaleString`
+    // is Invoked on the primitive (bool-to-locale-string.ts); else the fold.
+    if (expr.arguments.length === 0 && reserveBoolMethodString(ctx, fctx, expr, method) !== undefined) {
+      const recvType = compileExpression(ctx, fctx, propAccess.expression, { kind: "i32" });
+      if (recvType && recvType.kind !== "i32") coerceType(ctx, fctx, recvType, { kind: "i32" });
+      fctx.body.push({ op: "call", funcIdx: reserveBoolMethodString(ctx, fctx, expr, method)! });
+      return { kind: "externref" };
+    }
     if (method === "toString") {
       compileExpression(ctx, fctx, propAccess.expression);
       return emitBoolToString(ctx, fctx);

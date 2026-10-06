@@ -155,6 +155,7 @@ import { tryCompileFnctorInstanceGetPrototypeOf } from "../fnctor-instance-proto
 import { recordStandaloneRuntimeKeyClassMemberRead } from "../standalone-class-dyn-member.js"; // (#6617)
 import { isStandaloneArraySubclass } from "../array-subclass-receiver.js"; // (#2917)
 import { emitArrayRootedProtoParent } from "../vec-proto-link.js"; // (#2917)
+import { arrayCtorThisCallSeen } from "../array/array-ctor-this.js"; // (#6771 S7)
 import {
   BUILTIN_CLASS_NAMES,
   compileCallExpression,
@@ -895,7 +896,9 @@ export function compileBuiltinStaticCall(
     // The runtime predicate answers correctly for a live proxy too (it unwraps
     // to the target), so routing here is strictly closer to the spec.
     const mayBeProxy = ctx.standalone && tracesToProxyValue(ctx, expr.arguments[0]!);
-    if (argWasmType.kind === "externref" || isErasedTsType || isErasedCarrier || mayBeProxy) {
+    // (#6771 S7) …or `Construct(C)` from a constructor-`this` `Array.from`/`of`.
+    const mayBeConstructed = arrayCtorThisCallSeen(ctx) && argWasmType.kind !== "i32" && argWasmType.kind !== "f64";
+    if (argWasmType.kind === "externref" || isErasedTsType || isErasedCarrier || mayBeProxy || mayBeConstructed) {
       const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
       if (!retainArrayIsArrayExternrefCandidate(fctx, argType)) return { kind: "i32" };
       emitArrayIsArrayExternrefPredicate(ctx, fctx);

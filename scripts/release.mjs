@@ -24,7 +24,12 @@
 //      @loopdive/js2 dependency to V (no per-package commit/tag).
 //   3. Make ONE commit `release: vV` with both package.jsons (+ lockfile if it
 //      changed) and ONE annotated tag `vV` pointing at it.
-//   4. It does NOT push — pushing the tag before the PR merges would fire
+//   4. Refresh the landing-page benchmarks and, if they changed, commit them
+//      as `chore(benchmarks): refresh for vV` on top of the tagged commit, so
+//      the data is reviewed in the release PR (#6799). `--skip-benchmarks`
+//      opts out. This used to be a `.husky/pre-push` side effect of pushing
+//      the tag.
+//   5. It does NOT push — pushing the tag before the PR merges would fire
 //      publish-npm.yml on un-reviewed code. See docs/releasing.md.
 
 import { execFileSync } from "node:child_process";
@@ -364,18 +369,62 @@ function writeReleaseNotes(target, tag, previousVersion) {
     mkdirSync(notesDir, { recursive: true });
     writeFileSync(notesPath, body);
     git(["add", notesPath]);
-    git(["commit", "--amend", "--no-edit", "--no-verify"]);
+    // Hooks run here like on every other commit (#6799: never bypass them).
+    git(["commit", "--amend", "--no-edit"]);
     git(["tag", "-f", "-a", tag, "-m", tag]); // re-point the tag at the amended commit
     return `docs/release-notes/${tag}.md`;
   } catch {
+    // Unstage the notes so a later commit cannot sweep them in by accident.
+    try {
+      git(["reset", "-q", "--", notesPath]);
+    } catch {}
     return null;
   }
 }
 
+// Landing-page benchmarks are refreshed as part of the release (#6799). This
+// used to live in `.husky/pre-push`: pushing a `v*` tag re-ran the benchmarks
+// and committed the result with the hook-bypass flag — AFTER the tag, so the
+// data never travelled with the tag it described, and the commit was not even
+// part of the push that created it. Now it is an ordinary, hook-checked commit
+// on the release branch, reviewed in the release PR. Only TRACKED files under
+// benchmarks/results/ that the refresh actually changed are committed (the
+// hook's hard-coded list had drifted onto paths that no longer exist).
+//
+// Best-effort, like the notes: the release commit and tag are already made, so
+// a benchmark failure is reported and never fails the release.
+const BENCHMARK_RESULTS_DIR = "benchmarks/results";
+
+function refreshReleaseBenchmarks(tag) {
+  console.log(`Refreshing landing-page benchmarks for ${tag} (skip with --skip-benchmarks) ...`);
+  try {
+    execFileSync("pnpm", ["run", "refresh:benchmarks"], { cwd: repoRoot, stdio: "inherit" });
+  } catch {
+    console.warn(
+      `warning: benchmark refresh failed — ${tag} and its release commit are unaffected. ` +
+        `Any partial output is left in ${BENCHMARK_RESULTS_DIR}/ (\`git checkout -- ${BENCHMARK_RESULTS_DIR}\` discards it).`,
+    );
+    return null;
+  }
+  const changed = git(["diff", "--name-only", "--", BENCHMARK_RESULTS_DIR]).split("\n").filter(Boolean);
+  if (changed.length === 0) return [];
+  try {
+    git(["add", "--", ...changed]);
+    // Path-limited commit: only the benchmark files, whatever else is staged.
+    git(["commit", "-m", `chore(benchmarks): refresh for ${tag}`, "--", ...changed], { stdio: "inherit" });
+  } catch {
+    console.warn(`warning: committing the refreshed benchmarks failed (see hook output above); they are left staged.`);
+    return null;
+  }
+  return changed;
+}
+
 function main() {
-  const arg = process.argv[2];
+  const args = process.argv.slice(2);
+  const skipBenchmarks = args.includes("--skip-benchmarks");
+  const arg = args.find((a) => !a.startsWith("--"));
   if (!arg) {
-    fail("usage: node scripts/release.mjs <x.y.z | patch | minor | major>");
+    fail("usage: node scripts/release.mjs <x.y.z | patch | minor | major> [--skip-benchmarks]");
   }
 
   // Refuse to run on a dirty tree — the release commit must contain ONLY the
@@ -465,6 +514,13 @@ function main() {
   const notesPath = writeReleaseNotes(target, tag, currentRoot);
   if (notesPath) console.log(`Release notes drafted: ${notesPath}\n`);
 
+  const benchmarks = skipBenchmarks ? null : refreshReleaseBenchmarks(tag);
+  if (benchmarks?.length) {
+    console.log(`Committed refreshed benchmarks on top of ${tag} (${benchmarks.length} file(s)).\n`);
+  } else if (benchmarks) {
+    console.log("Benchmarks unchanged — nothing to commit.\n");
+  }
+
   const upstream = upstreamRemote();
   console.log("NEXT STEPS:");
   console.log(`  1) Push the BRANCH normally and open a 'release: ${tag}' PR — do NOT push the tag yet.`);
@@ -475,7 +531,7 @@ function main() {
   console.log(`       git fetch ${upstream.name} main`);
   console.log(`       git merge-base --is-ancestor ${tag}^{commit} FETCH_HEAD && echo IN-MAIN`);
   console.log(`  4) Then push the tag to trigger publish:`);
-  console.log(`       git push --no-verify ${upstream.name} refs/tags/${tag}:refs/tags/${tag}`);
+  console.log(`       git push ${upstream.name} refs/tags/${tag}:refs/tags/${tag}`);
   console.log(`       git ls-remote --tags ${upstream.name} refs/tags/${tag}   # verify it LANDED`);
   console.log(`     publish-npm.yml's verify-version job confirms the tag, manifests,`);
   console.log(`     and proxy dependency all match before publishing. See docs/releasing.md.`);

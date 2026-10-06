@@ -19,6 +19,7 @@ import {
 } from "./destructuring-unresolved.js";
 import { emitBoundsCheckedArrayGet, resolveArrayInfo } from "../array-methods.js";
 import { emitArraySetLengthValidation } from "../array-length-define.js"; // (#4222) §10.4.2.4 step 3
+import { emitArraySetLengthCoercionEffects, emitArraySetLengthNumber } from "../array/array-set-length-coercion.js"; // (#6771 S10a)
 import { emitHoleToUndefined, holeSentinelInstrs } from "../array-holes.js";
 import { emitF64GapFillInstrs } from "../vec-f64-hole-gap.js"; // (#4491 T8)
 import { emitF64HoleToUndef, f64HolesActive } from "../vec-f64-hole-presence.js"; // (#4491 T11)
@@ -4289,7 +4290,7 @@ function compilePropertyAssignment(
   // raise. Emitting the throw here is what gives standalone the strict-mode
   // TypeError without building that bridge.
   if (!ts.isPrivateIdentifier(target.name)) {
-    const nonWritable = tryEmitNonWritablePropertyWrite(ctx, fctx, target, value, target.name.text);
+    const nonWritable = tryEmitNonWritablePropertyWrite(ctx, fctx, target, value, target.name.text, objType);
     if (nonWritable !== undefined) return nonWritable;
   }
 
@@ -4869,7 +4870,7 @@ function compilePropertyAssignment(
       // so wrappers and strings get their valueOf/parse, then validate.
       let lenValKind = valType.kind;
       if (lenValKind !== "i32" && lenValKind !== "f64") {
-        coerceType(ctx, fctx, valType, { kind: "f64" });
+        emitArraySetLengthNumber(ctx, fctx, valType); // (#6771 S10a) ToUint32(v), then ToNumber(v)
         lenValKind = "f64";
       }
       // Convert f64 to i32 if needed
@@ -5572,6 +5573,7 @@ function tryEmitNonWritablePropertyWrite(
   target: ts.PropertyAccessExpression,
   value: ts.Expression,
   propName: string,
+  objType: ts.Type,
 ): InnerResult | undefined {
   if (!isNonWritableDataProperty(ctx, target.expression, propName)) return undefined;
 
@@ -5579,6 +5581,8 @@ function tryEmitNonWritablePropertyWrite(
   // must still happen even though the store never lands.
   const rhsType = compileExpression(ctx, fctx, value);
   if (rhsType === null) return null;
+  // (#6771 S10a) An array's `length`: ArraySetLength converts (twice) BEFORE its step-12 writable check.
+  if (propName === "length" && resolveArrayInfo(ctx, objType)) emitArraySetLengthCoercionEffects(ctx, fctx, rhsType);
 
   if (isStrictContext(target, ctx.inferModuleStrictArguments)) {
     fctx.body.push({ op: "drop" });
