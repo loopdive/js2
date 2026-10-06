@@ -48,18 +48,18 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11543,
-    "fail": 145,
-    "ce": 16,
+    "pass": 11547,
+    "fail": 143,
+    "ce": 14,
     "skip": 0,
     "total": 11704,
     "pct": 99,
     "features": [
       {
         "name": "destructuring-binding",
-        "pass": 4152,
+        "pass": 4153,
         "fail": 0,
-        "ce": 1,
+        "ce": 0,
         "skip": 0,
         "total": 4153,
         "pct": 100
@@ -102,12 +102,12 @@
       },
       {
         "name": "Symbol",
-        "pass": 592,
-        "fail": 17,
+        "pass": 594,
+        "fail": 15,
         "ce": 0,
         "skip": 0,
         "total": 609,
-        "pct": 97
+        "pct": 98
       },
       {
         "name": "arrow-function",
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4599,
+    "pass": 4601,
     "fail": 187,
-    "ce": 135,
+    "ce": 133,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4496,
+        "pass": 4498,
         "fail": 106,
-        "ce": 9,
+        "ce": 7,
         "skip": 0,
         "total": 4611,
         "pct": 98
