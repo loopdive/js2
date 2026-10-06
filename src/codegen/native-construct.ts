@@ -67,11 +67,12 @@ import { addFuncType } from "./registry/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { constructIsConstructorGuard } from "./construct-is-constructor-guard.js"; // (#6612 / #5383 S25)
+import { proxyNewTargetProtoInstrs } from "./object-runtime-proxy-construct-chain.js"; // (#6651 V4)
 import {
   builtinCollectionConstructArm,
   fillBuiltinCollectionDynConstruct,
 } from "./builtin-collection-dyn-construct.js"; // (#6720)
-import { standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js"; // (#5383 S2f R12)
+import { constructBoundaryPairs } from "./standalone-link-boundary.js"; // (#5383 S2f R12, #6748)
 import { arrayCtorThisCallSeen, objectConstructArm } from "./array/array-ctor-this.js"; // (#6771 S7)
 import { buildOrdinaryConstructCall, unwrapRuntimeEvalCarrierCallee } from "./construct-under-application.js"; // (#6738)
 import { CLASS_CONSTRUCT_DISPATCH, ensureStandaloneClassConstructDispatch } from "./standalone-class-construct.js"; // (#5383 S2g)
@@ -373,11 +374,10 @@ function fillArgvConstructDriver(ctx: CodegenContext): void {
   }
 
   // (#5383 S2f R12 twin) A class the PROVIDER owns, reached across the link.
-  const boundaryCallableKindIdx =
-    ctx.funcMap.get("__boundary_object_callable_kind") ?? standaloneLinkBoundaryPeerIndex(ctx, "callableKind");
-  const boundaryConstructIdx =
-    ctx.funcMap.get("__boundary_object_construct") ?? standaloneLinkBoundaryPeerIndex(ctx, "construct");
-  if (boundaryCallableKindIdx !== undefined && boundaryConstructIdx !== undefined) {
+  // (#6748) Each family as a coherent pair, peer first.
+  for (const { callableKind: boundaryCallableKindIdx, construct: boundaryConstructIdx } of constructBoundaryPairs(
+    ctx,
+  )) {
     body.push(
       { op: "local.get", index: 0 },
       { op: "call", funcIdx: boundaryCallableKindIdx },
@@ -502,10 +502,7 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
     // reaches this already-correct arm instead of falling into the ordinary
     // tail, where `Object.create(<foreign>.prototype)` and a module-local
     // closure dispatch cannot see the peer's constructor at all.
-    const boundaryCallableKindIdx =
-      ctx.funcMap.get("__boundary_object_callable_kind") ?? standaloneLinkBoundaryPeerIndex(ctx, "callableKind");
-    const boundaryConstructIdx =
-      ctx.funcMap.get("__boundary_object_construct") ?? standaloneLinkBoundaryPeerIndex(ctx, "construct");
+    const boundaryPairs = constructBoundaryPairs(ctx); // (#6748) coherent pairs, peer first
     const protoKeyInstrs = ctx.nativeConstructProtoKey.get(arity);
     if (externGetIdx === undefined || objectCreateIdx === undefined || protoKeyInstrs === undefined) {
       driver.body = [{ op: "ref.null.extern" }];
@@ -637,7 +634,7 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
                 { op: "ref.cast", typeIdx: proxyTypeIdx },
                 { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: 1 },
                 { op: "extern.convert_any" },
-                { op: "local.get", index: 1 },
+                ...proxyNewTargetProtoInstrs(ctx.funcMap.get("__proxy_construct_newtarget_proto")),
                 ...Array.from({ length: arity }, (_, arg) => ({
                   op: "local.get" as const,
                   index: arg + 2,
@@ -677,12 +674,10 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
       );
     }
 
-    const canBoundaryConstruct =
-      boundaryCallableKindIdx !== undefined &&
-      boundaryConstructIdx !== undefined &&
-      objVecNewIdx !== undefined &&
-      objVecPushIdx !== undefined;
-    if (canBoundaryConstruct) {
+    const canBoundaryConstruct = objVecNewIdx !== undefined && objVecPushIdx !== undefined;
+    for (const { callableKind: boundaryCallableKindIdx, construct: boundaryConstructIdx } of canBoundaryConstruct
+      ? boundaryPairs
+      : []) {
       body.push(
         { op: "local.get", index: 0 },
         { op: "call", funcIdx: boundaryCallableKindIdx },

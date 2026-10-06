@@ -1,7 +1,7 @@
 {
   "generated": "2026-10-06",
   "threshold": 1500,
-  "totalCeiling": 1005779,
+  "totalCeiling": 1006072,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -15,7 +15,7 @@
     "src/codegen/binary-ops-typed-dispatch.ts": 1601,
     "src/codegen/binary-ops.ts": 3554,
     "src/codegen/builtin-value-read.ts": 1844,
-    "src/codegen/class-bodies.ts": 4649,
+    "src/codegen/class-bodies.ts": 4638,
     "src/codegen/closed-method-dispatch.ts": 2163,
     "src/codegen/closure-exports.ts": 2223,
     "src/codegen/closures.ts": 4932,
@@ -63,8 +63,8 @@
     "src/codegen/object-ops.ts": 5596,
     "src/codegen/object-runtime-descriptors.ts": 2948,
     "src/codegen/object-runtime-enumeration.ts": 1629,
-    "src/codegen/object-runtime-proxy.ts": 2712,
-    "src/codegen/object-runtime.ts": 11909,
+    "src/codegen/object-runtime-proxy.ts": 2728,
+    "src/codegen/object-runtime.ts": 11908,
     "src/codegen/program-abi-session.ts": 3585,
     "src/codegen/promise-combinators.ts": 2609,
     "src/codegen/property-access-dispatch.ts": 5569,

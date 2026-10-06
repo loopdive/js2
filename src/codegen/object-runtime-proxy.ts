@@ -1563,7 +1563,23 @@ export function ensureProxyRuntime(
       ],
     );
 
-    registerProxyConstructChainNatives(registerNative, proxyTypeIdx, F_PTARGET, constructDispatchIdx);
+    const getDispatchIdx = ctx.funcMap.get("__proxy_get_dispatch");
+    if (getDispatchIdx !== undefined) addStringConstantGlobal(ctx, "prototype");
+    registerProxyConstructChainNatives(
+      registerNative,
+      proxyTypeIdx,
+      F_PTARGET,
+      constructDispatchIdx,
+      getDispatchIdx === undefined
+        ? undefined
+        : {
+            getDispatchIdx,
+            protoKeyInstrs: () => stringConstantExternrefInstrs(ctx, "prototype"),
+            objectTest,
+            throwRevoked,
+            fieldRevoked: F_REVOKED,
+          }, // (#6651 V4) GetPrototypeFromConstructor(proxy newTarget)
+    );
   }
 
   // ── __proxy_create(target, handler) -> externref ──────────────────────────
