@@ -3774,3 +3774,19 @@ merely because JSON serialization changes whitespace. Existing compiler-boundari
 current-policy reads stay unprojected. This retains all original failure detectors
 and adds current-physical coverage; neither substitutes for the other.
 Sol6.1 medium is checking the exact acquisition seams before final coding release.
+
+That source audit confirmed acquisition-only preservation is feasible: wrap the
+initial inventory reads at inventory-view fixture465, finally witness290 and
+finally historical staging622 before existing profile assertions. Leave the
+staged reread652 and historical calls654/658 untouched. The new independent
+physical controls exercise new admission on every reread; all old assertions,
+identities and trace arrays remain intact. This is source feasibility, not test
+execution or permission to mutate the still-running frozen epoch.
+
+Reviewed comparator and packager source copies are now tracked handoff artifacts:
+`plan/agent-context/5883-exact-terminal-be-comparator-20261006.txt` (63d830bd)
+and `plan/agent-context/5883-full-b-terminal-custody-packager-20261006.txt`
+(04edccb7). They are byte-identical source records, not fresh executions or
+portable launch paths; original pinned paths and explicit parent terminal hashes
+remain required. Publication of this documentation checkpoint waits for the
+normal push gates to obtain the heavy slot after B terminates.

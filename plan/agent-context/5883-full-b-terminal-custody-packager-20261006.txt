@@ -1,0 +1,293 @@
+// INERT: parent reviews this source and supplies BOTH terminal and child-inventory pins.
+// node THIS --parent-reviewed B_TERMINAL_SHA256 CHILD_INVENTORY_REL CHILD_INVENTORY_SHA256 OUTPUT_BASENAME.json
+// No subprocesses, Git, tests, source changes, recursive B.tmp search, or acceptance.
+// Parent child inventory (new docs .tmp JSON, not authored by this packager):
+// {schema:"5883-full-B-reviewed-children-v1",accepted:false,run:RUN,
+//  terminalSHA256:CLI_HASH,children:[{kind:"delay"|"safe-pass",stage:"...",
+//  directory:".tmp/...",records:{"filename":{bytes:N,sha256:"..."} OR
+//  {missing:true,reason:"parent-inspected absence",absentByDesign:false}}}],unresolved:[{stage,reason}]}
+// Only delay candidate.stderr.log may use absentByDesign:true: its writer
+// creates that file on the first stderr chunk, not on child launch.
+// Each directory must be named by that stage's preserved raw output. Exact finite
+// file inventories below; missing files remain explicit, never invented payloads.
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import {createHash} from 'node:crypto';
+import {gzipSync, gunzipSync} from 'node:zlib';
+import {join, resolve, relative, isAbsolute} from 'node:path';
+import {fileURLToPath} from 'node:url';
+
+const DOCS = '/Users/thomas/Code/js2/.codex-worktrees/codex-5748-main7443-integration-20260927';
+const B = '/Users/thomas/.codex/worktrees/5883-repaired-main4bff-b/js2';
+const RUN = '.tmp/erdos-5883-full-b-execution-20261006-01a03e4f-run-JVPkM7';
+const SELF = '.tmp/avicenna-5883-full-b-terminal-custody-20261006-6bf492d8.mjs';
+const RUNNER_SHA = 'a0246dd47f49f3f4a668cb5f7d57a13c13aec7a5d591856dc3ba2e2178409c89';
+const SCHEDULE_SHA = '576197158c495756e58c2e288dd3fb2fbfb6d236c4e996e3667b0e8e40678dce';
+const STAGES = ['canonical','compiler-readers','text-readers','runtime','incoming23',
+  'repair-controls','imported-main','additional18','baseline-projection-controls102'];
+const MAPS = ['before-A.json','before-B.json','before-E.json','after-A.json','after-B.json','after-E.json'];
+const CHILD_FILES = {
+  delay: ['candidate-started.json','candidate-progress.jsonl','candidate.log','candidate.stderr.log',
+    'candidate.json','candidate-terminal.json','verdict.json'],
+  'safe-pass': ['helper.mjs','module.wasm','canonical-program.txt','module.wat','physical-functions.txt',
+    'source-input.json','runner.mts','stdout','stderr','terminal.json'],
+};
+const sha = b => createHash('sha256').update(b).digest('hex');
+const hashString = h => assert(typeof h === 'string' && /^[a-f0-9]{64}$/.test(h), 'full SHA256 required');
+function safe(p) {
+  assert(typeof p === 'string' && p.length > 0 && !isAbsolute(p) && !p.includes('\\') && !p.includes('\0'), 'unsafe relative path');
+  assert(p.split('/').every(s => /^[A-Za-z0-9_@.-]+$/.test(s) && s !== '.' && s !== '..'), p);
+  return p;
+}
+function checked(root, p, directory = false) {
+  safe(p); assert.equal(relative(root, resolve(root,p)),p);
+  const absolute = join(root,p), components = absolute.split('/').filter(Boolean);
+  let current = '/';
+  for (let i=0;i<components.length;i++) {
+    current = join(current,components[i]); const stat=fs.lstatSync(current);
+    assert(!stat.isSymbolicLink(),current);
+    assert(i<components.length-1 || directory ? stat.isDirectory() : stat.isFile(),current);
+  }
+  return absolute;
+}
+function raw(root,p) {
+  const filename=checked(root,p), fd=fs.openSync(filename,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
+  try {
+    const a=fs.fstatSync(fd,{bigint:true}), b=fs.readFileSync(fd), z=fs.fstatSync(fd,{bigint:true});
+    const leaf=fs.lstatSync(filename,{bigint:true});
+    for(const key of ['dev','ino','size','mtimeNs','ctimeNs']) {
+      assert.equal(a[key],z[key],`changing input ${p}`); assert.equal(z[key],leaf[key],`replaced input ${p}`);
+    }
+    assert.equal(BigInt(b.length),z.size); return b;
+  } finally {fs.closeSync(fd);}
+}
+const captured=new Map(), rows=[], keys=new Set(), directorySnapshots=[];
+function capture(root,p) {
+  const key=join(root,safe(p));
+  if(!captured.has(key)) captured.set(key,{root,path:p,bytes:raw(root,p)});
+  return captured.get(key).bytes;
+}
+function pinned(root,p,pin) {
+  hashString(pin.sha256); assert(Number.isSafeInteger(pin.bytes)&&pin.bytes>=0);
+  const b=capture(root,p); assert.equal(b.length,pin.bytes,p); assert.equal(sha(b),pin.sha256,p); return b;
+}
+const readJSON=(root,p)=>JSON.parse(capture(root,p).toString('utf8'));
+const runBytes=p=>capture(DOCS,`${RUN}/${safe(p)}`);
+const runJSON=p=>readJSON(DOCS,`${RUN}/${safe(p)}`);
+function add(root,p,archivePath,role) {
+  safe(archivePath);assert(!keys.has(archivePath.toLowerCase()),'duplicate archive path');keys.add(archivePath.toLowerCase());
+  const b=capture(root,p), gzipBase64=gzipSync(b,{level:9}).toString('base64');
+  assert(gunzipSync(Buffer.from(gzipBase64,'base64')).equals(b),p);
+  rows.push({path:archivePath,sourceRoot:root,sourcePath:p,role,bytes:b.length,sha256:sha(b),gzipBase64});
+}
+// Only enumerate the one frozen run directory; at most one stage level.
+function runInventory() {
+  const result=[], dirs=[];
+  for(const n of fs.readdirSync(checked(DOCS,RUN,true)).sort()) {
+    safe(n);const p=`${RUN}/${n}`,s=fs.lstatSync(join(DOCS,p));assert(!s.isSymbolicLink(),p);
+    if(s.isDirectory()) {
+      assert(STAGES.includes(n),'unexpected run directory');dirs.push(n);
+      for(const child of fs.readdirSync(checked(DOCS,p,true)).sort()) {
+        checked(DOCS,`${p}/${child}`);result.push(`${n}/${safe(child)}`);
+      }
+    } else {checked(DOCS,p);result.push(n);}
+  }
+  return {files:result.sort(),dirs:dirs.sort()};
+}
+function timestamp(t) {assert(typeof t==='string'&&Number.isFinite(Date.parse(t)),'missing terminal timestamp');}
+function bool(t,k) {assert.equal(typeof t[k],'boolean',k);}
+function artifactPins(artifacts,prefix) {
+  assert(artifacts && typeof artifacts==='object'&&!Array.isArray(artifacts));
+  for(const [name,pin] of Object.entries(artifacts)) {
+    safe(name);const rel=prefix?`${prefix}/${name}`:name;
+    assert.equal(pin.path,join(DOCS,RUN,rel),rel);
+    pinned(DOCS,`${RUN}/${rel}`,pin);
+  }
+}
+
+assert.equal(process.argv.length,7,'Explicit parent-reviewed terminal and child-inventory SHA256 arguments required');
+assert.equal(process.argv[2],'--parent-reviewed');
+const terminalSHA=process.argv[3],childManifestPath=safe(process.argv[4]),childManifestSHA=process.argv[5],outputName=process.argv[6];
+hashString(terminalSHA);hashString(childManifestSHA);
+assert.equal(fileURLToPath(import.meta.url),join(DOCS,SELF));
+assert(/^\.tmp\/[A-Za-z0-9_@.-]+\.json$/.test(childManifestPath));
+assert(/^[A-Za-z0-9][A-Za-z0-9_-]{15,120}\.json$/.test(outputName));
+const output=`.tmp/${outputName}`;checked(DOCS,'.tmp',true);
+assert(!fs.existsSync(join(DOCS,output)),'output already exists');
+// Refuse the live run BEFORE any inventory walk, gzip, or output creation.
+const terminalBytes=runBytes('terminal.json');assert.equal(sha(terminalBytes),terminalSHA,'parent terminal pin mismatch');
+const terminal=JSON.parse(terminalBytes);timestamp(terminal.finishedAt);timestamp(terminal.startedAt);
+assert.equal(terminal.accepted,false);assert.equal(terminal.arm,'B');assert.equal(terminal.collectionOnly,false);
+const inventory=runInventory();
+artifactPins(terminal.artifacts,'');
+assert.deepEqual(inventory.files,[...Object.keys(terminal.artifacts),'terminal.json'].sort(),'unlisted, missing, or changing run evidence');
+assert.equal(sha(runBytes('runner.mjs')),RUNNER_SHA);assert.equal(sha(runBytes('schedule.json')),SCHEDULE_SHA);
+const schedule=runJSON('schedule.json');assert.deepEqual(schedule.stages.map(s=>s.name),STAGES);
+assert.equal(schedule.roots.B,B);assert.equal(schedule.accepted,false);
+const attempted=terminal.attemptedStages;
+assert(Array.isArray(attempted)&&attempted.length<=STAGES.length);
+assert.deepEqual(attempted,STAGES.slice(0,attempted.length),'not a contiguous stage prefix');
+assert.deepEqual(terminal.unexecutedStages,STAGES.slice(attempted.length));
+assert.deepEqual(inventory.dirs,[...attempted].sort(),'incomplete/unexplained stage directory');
+const rootAllowed=['invocation.json','runner.mjs','schedule.json',...MAPS,
+  'reviewed-map-A.json','reviewed-map-B.json','reviewed-map-E.json','terminal.json'];
+for(const name of inventory.files.filter(p=>!p.includes('/')))assert(rootAllowed.includes(name),'unknown root record');
+for(const name of ['invocation.json','runner.mjs','schedule.json',...MAPS,'terminal.json'])assert(inventory.files.includes(name),name);
+const rootInvocation=runJSON('invocation.json');assert.equal(rootInvocation.accepted,false);assert.equal(rootInvocation.arm,'B');
+assert.equal(rootInvocation.cwd,B);assert.equal(rootInvocation.scheduleHash,SCHEDULE_SHA);
+for(const arm of ['A','B','E']) {
+  const p=`reviewed-map-${arm}.json`;
+  if(terminal.preflightVerified)assert(inventory.files.includes(p),p);
+  if(inventory.files.includes(p))pinned(DOCS,`${RUN}/${p}`,schedule.maps[arm]);
+}
+const outcomes=[], nativeMissing=[];
+for(let i=0;i<attempted.length;i++) {
+  const name=attempted[i], prefix=`${name}/`, t=runJSON(prefix+'terminal.json');
+  assert.equal(t.stage,name);assert.equal(t.accepted,false);assert.equal(t.arm,'B');timestamp(t.finishedAt);
+  for(const k of ['stageClean','beforeVerified','afterVerified'])bool(t,k);
+  assert(Array.isArray(t.errors));
+  if(i<attempted.length-1)assert.equal(t.stageClean,true,'execution after first failure');
+  artifactPins(t.artifacts,name);
+  const files=inventory.files.filter(p=>p.startsWith(prefix)).map(p=>p.slice(prefix.length)).sort();
+  assert.deepEqual(files,[...Object.keys(t.artifacts),'terminal.json'].sort(),'stage inventory disagreement');
+  for(const [p,pin] of Object.entries(t.artifacts))assert.deepEqual(pin,terminal.artifacts[prefix+p]);
+  const required=['invocation.json',...MAPS,'stdout.log','stderr.log','child-exit.json','native-retention.json','terminal.json'];
+  for(const p of required)assert(files.includes(p),`missing emitted stage record ${prefix+p}`);
+  const allowed=[...required,'native-results.json','retained-native-identities.json'];
+  for(const p of files)assert(allowed.includes(p),'unknown stage record');
+  const invocation=runJSON(prefix+'invocation.json'),stage=schedule.stages[i];
+  assert.equal(invocation.stage,name);assert.deepEqual(invocation.files,stage.files);
+  assert.equal(invocation.expectedTotal,stage.identityCount);assert.equal(invocation.cwd,B);
+  assert.equal(invocation.runner.sha256,RUNNER_SHA);assert.equal(invocation.schedule.sha256,SCHEDULE_SHA);
+  const child=runJSON(prefix+'child-exit.json');bool(child,'launched');
+  assert.deepEqual(t.child,{code:child.code,signal:child.signal,error:child.error});
+  const retention=runJSON(prefix+'native-retention.json');assert.deepEqual(retention,t.native);bool(retention,'available');
+  if(retention.available) {
+    assert.notEqual(name,'canonical');pinned(DOCS,`${RUN}/${prefix}native-results.json`,retention);
+    // Malformed native bytes are still custody evidence. The runner can fail
+    // before emitting retained identities; never fabricate or discard them.
+    if(!files.includes('retained-native-identities.json'))assert(!t.stageClean&&t.errors.length>0);
+  } else {
+    assert(!files.includes('native-results.json'));assert(!files.includes('retained-native-identities.json'));
+    assert(typeof retention.reason==='string'&&retention.reason.length>0);
+    if(name==='canonical')assert.equal(retention.reason,'canonical-has-no-native-report-by-design');
+    else assert.equal(t.stageClean,false);
+    nativeMissing.push({stage:name,reason:retention.reason});
+  }
+  if(t.stageClean) {
+    assert(t.beforeVerified&&t.afterVerified&&t.errors.length===0);
+    assert.equal(child.launched,true);assert.equal(child.code,0);assert.equal(child.signal,null);assert.equal(child.error,null);
+    if(name!=='canonical')assert.equal(t.summary?.passed,stage.identityCount);
+  }
+  outcomes.push(t);
+}
+assert.deepEqual(terminal.stageOutcomes,outcomes.map(t=>({stage:t.stage,stageClean:t.stageClean})));
+assert.equal(terminal.completedStages,outcomes.filter(t=>t.stageClean).length);
+for(const k of ['preflightVerified','rootBeforeVerified','rootAfterVerified','allStagesClean'])bool(terminal,k);
+assert(Array.isArray(terminal.errors));
+if(!terminal.preflightVerified)assert.equal(attempted.length,0);
+if(attempted.length>0)assert.equal(terminal.preflightVerified,true);
+if(attempted.length<STAGES.length&&outcomes.at(-1)?.stageClean)assert(terminal.errors.length>0,'unexplained early stop');
+assert.equal(terminal.allStagesClean,terminal.preflightVerified&&terminal.rootBeforeVerified&&terminal.rootAfterVerified&&
+  terminal.errors.length===0&&outcomes.length===STAGES.length&&outcomes.every(t=>t.stageClean));
+for(const p of inventory.files)add(DOCS,`${RUN}/${p}`,`run/${p}`,'original-run-record');
+
+// Discover ONLY explicit child references in already authenticated raw stage
+// channels. Native failure text is retained wholesale, not used as path authority.
+const references=new Map();
+function reference(kind,stage,absolute) {
+  assert(absolute.startsWith(B+'/'));const directory=safe(absolute.slice(B.length+1));
+  const pattern=kind==='delay'?/^\.tmp\/delay-combinator-preservation-[A-Za-z0-9]+$/:
+    /^\.tmp\/source-map-safe-passes\/helper-[A-Za-z0-9]+$/;
+  assert(pattern.test(directory),'unreviewed child path family');
+  const key=directory.toLowerCase();
+  const item={kind,stage,directory};
+  if(references.has(key))assert.deepEqual(references.get(key),item);else references.set(key,item);
+}
+for(const stage of attempted)for(const channel of ['stdout.log','stderr.log']) {
+  const text=runBytes(`${stage}/${channel}`).toString('utf8').replace(/\x1b\[[0-9;]*m/g,'');
+  for(const line of text.split('\n')) {
+    if(line.includes('delay/combinator child ')) {
+      const m=line.match(/delay\/combinator child candidate: pid=\d+; progress=(\S+)/);
+      assert(m,'unreviewed child arm or malformed child reference');reference('delay',stage,m[1]);
+    }
+    if(line.includes('SAFE_PASS_ARTIFACT')) {
+      const suffix=line.slice(line.indexOf('SAFE_PASS_ARTIFACT')+'SAFE_PASS_ARTIFACT'.length).trim();
+      const record=JSON.parse(suffix);reference('safe-pass',stage,record.folder);
+    }
+  }
+}
+const manifestBytes=capture(DOCS,childManifestPath);assert.equal(sha(manifestBytes),childManifestSHA);
+const children=JSON.parse(manifestBytes);
+assert.equal(children.schema,'5883-full-B-reviewed-children-v1');assert.equal(children.accepted,false);
+assert.equal(children.run,RUN);assert.equal(children.terminalSHA256,terminalSHA);
+assert(Array.isArray(children.children)&&Array.isArray(children.unresolved));
+const manifested=new Set(),childOutcomes=[],missingChildren=[],absentByDesign=[];
+for(const child of children.children) {
+  const key=safe(child.directory).toLowerCase();assert(!manifested.has(key));manifested.add(key);
+  assert.deepEqual({kind:child.kind,stage:child.stage,directory:child.directory},references.get(key),'child not bound to this run output');
+  assert.deepEqual(Object.keys(child.records).sort(),[...CHILD_FILES[child.kind]].sort());
+  const present=Object.entries(child.records).filter(([,p])=>p.missing!==true).map(([p])=>p).sort();
+  let names=[];
+  try {names=fs.readdirSync(checked(B,child.directory,true)).sort();}
+  catch(e) {if(e.code!=='ENOENT')throw e;assert.equal(present.length,0,'missing reviewed child directory');}
+  assert.deepEqual(names,present,'child inventory changed or contains unexplained files');
+  directorySnapshots.push({directory:child.directory,names});
+  for(const [name,pin] of Object.entries(child.records)) {
+    safe(name);assert(!name.includes('/'));const p=`${child.directory}/${name}`;
+    if(pin.missing===true) {
+      assert(typeof pin.reason==='string'&&pin.reason.length>0);assert(!fs.existsSync(join(B,p)));
+      const absent={stage:child.stage,path:p,reason:pin.reason};
+      if(pin.absentByDesign===true) {
+        assert(child.kind==='delay'&&name==='candidate.stderr.log','unexplained by-design absence');
+        absentByDesign.push(absent);
+      } else missingChildren.push(absent);
+      continue;
+    }
+    pinned(B,p,pin);add(B,p,`children/${p.slice(5)}`,'parent-reviewed-child-record');
+  }
+  childOutcomes.push({kind:child.kind,stage:child.stage,directory:child.directory,records:child.records});
+}
+assert.deepEqual([...manifested].sort(),[...references.keys()].sort(),'referenced child evidence silently omitted');
+for(const item of children.unresolved) {
+  assert(attempted.includes(item.stage)&&typeof item.reason==='string'&&item.reason.length>0);
+}
+// Failing producers may abort BEFORE logging a directory. Explicit parent
+// accounting is required; absence of a marker cannot mean no child evidence.
+for(const t of outcomes)if(!t.stageClean&&['compiler-readers','incoming23'].includes(t.stage))
+  assert(children.unresolved.some(r=>r.stage===t.stage),'parent must account for possibly unreported child outputs');
+add(DOCS,childManifestPath,'authority/parent-reviewed-child-inventory.json','parent-child-inventory');
+const archive={
+  schema:'5883-full-B-terminal-custody-v1',accepted:false,collectionOnly:false,
+  scope:'Exact terminal B run and explicitly reviewed child custody; not equality, conformance, HOLD release, delivery or compiler retirement.',
+  sourceDirectory:join(DOCS,RUN),terminalSHA256:terminalSHA,runnerSHA256:RUNNER_SHA,scheduleSHA256:SCHEDULE_SHA,
+  proposedPublicationPath:'plan/agent-context/5883-full-b-terminal-custody-20261006.json',
+  rootTerminal:terminal,stageTerminals:outcomes,unexecutedStages:terminal.unexecutedStages,missingNativeReports:nativeMissing,
+  childInventorySHA256:childManifestSHA,childEvidence:childOutcomes,missingChildRecords:missingChildren,childRecordsAbsentByDesign:absentByDesign,
+  unresolvedChildEvidence:children.unresolved,childCustodyComplete:missingChildren.length===0&&children.unresolved.length===0,
+  childDiscoveryScope:'Only delay/combinator child and SAFE_PASS_ARTIFACT references in authenticated executed-stage raw channels; no filesystem discovery.',
+  historicalFailures:'Original A/B collections and first focused failures remain in their previously published archives; not rerun or relabeled here.',
+  encoding:'gzip/base64 original bytes',fileCount:rows.length,decodedBytes:rows.reduce((n,r)=>n+r.bytes,0),rows,
+};
+const outputBytes=Buffer.from(JSON.stringify(archive,null,2)+'\n');
+const roundTrip=JSON.parse(outputBytes);
+assert.equal(roundTrip.accepted,false);assert.equal(roundTrip.rows.length,captured.size);
+for(const row of roundTrip.rows) {
+  const decoded=gunzipSync(Buffer.from(row.gzipBase64,'base64'));
+  assert.equal(decoded.length,row.bytes);assert.equal(sha(decoded),row.sha256);
+  assert(decoded.equals(captured.get(join(row.sourceRoot,row.sourcePath)).bytes));
+  assert(decoded.equals(raw(row.sourceRoot,row.sourcePath)),`source changed: ${row.sourcePath}`);
+}
+assert.deepEqual(runInventory(),inventory);
+for(const item of directorySnapshots) {
+  let actual=[];
+  try {actual=fs.readdirSync(checked(B,item.directory,true)).sort();}
+  catch(e) {if(e.code!=='ENOENT')throw e;}
+  assert.deepEqual(actual,item.names,'child inventory changed before output');
+}
+assert.equal(sha(raw(DOCS,`${RUN}/terminal.json`)),terminalSHA);
+checked(DOCS,'.tmp',true);
+fs.writeFileSync(join(DOCS,output),outputBytes,{flag:'wx',mode:0o600});
+assert(raw(DOCS,output).equals(outputBytes),'output read-back mismatch');
+console.log(JSON.stringify({path:join(DOCS,output),sha256:sha(outputBytes),bytes:outputBytes.length,
+  fileCount:rows.length,accepted:false,childCustodyComplete:archive.childCustodyComplete}));

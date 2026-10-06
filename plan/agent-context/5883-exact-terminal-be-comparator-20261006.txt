@@ -1,0 +1,476 @@
+// INERT PREPARATION: parent reviews this source and invokes only after B terminal.
+// No child processes, Git, tests, compiler, dynamic imports, or filesystem writes.
+// Future invocation: canonical-node THIS --self-sha256 SELF_SHA --b-terminal-sha256 PARENT_B_SHA
+// Output is a complete JSON report on stdout. Parent owns capture/review.
+// Self-check PROPOSAL ONLY (not run here): missing report -> incomplete/unknown;
+// preserve a duplicate tuple's two copies, reject a lost/extra copy; preserve
+// failures before gates; equal failures -> outcome equality, cleanliness false;
+// change one E repeated flat-layout occurrence -> reject before unique folding.
+import { createHash } from 'node:crypto';
+import { lstatSync, readFileSync, readdirSync } from 'node:fs';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { gunzipSync } from 'node:zlib';
+import { isDeepStrictEqual } from 'node:util';
+
+const SELF = '/Users/thomas/Code/js2/.codex-worktrees/codex-5748-main7443-integration-20260927/.tmp/erdos-5883-exact-terminal-be-comparator-20261006-01a03e4f.mjs';
+const DOCS = '/Users/thomas/Code/js2/.codex-worktrees/codex-5748-main7443-integration-20260927';
+const B_RUN = DOCS+'/.tmp/erdos-5883-full-b-execution-20261006-01a03e4f-run-JVPkM7';
+const B_RUNNER = DOCS+'/.tmp/erdos-5883-full-b-execution-20261006-01a03e4f.mjs';
+const B_RUNNER_SHA = 'a0246dd47f49f3f4a668cb5f7d57a13c13aec7a5d591856dc3ba2e2178409c89';
+const B_SCHEDULE = DOCS+'/.tmp/erdos-5883-full-b-execution-20261006-01a03e4f-schedule.json';
+const B_SCHEDULE_SHA = '576197158c495756e58c2e288dd3fb2fbfb6d236c4e996e3667b0e8e40678dce';
+const E_ROOT = '/Users/thomas/.codex/worktrees/5883-main4bff-composition/js2';
+const E_RUN = E_ROOT+'/.tmp/laplace-5883-full-candidate-committed112-20261006-4Dt9nJ';
+const E_TERMINAL_SHA = '10bde4889cdd2202e105ff4dc447b87ce5c74bafc12a346e503ad1a4040da6c9';
+const E_CUSTODY = E_ROOT+'/plan/agent-context/5883-final-candidate-terminal-custody-20261006.json';
+const E_CUSTODY_SHA = '137a06e414059938aa2ef2faf2d6865ba8b79d34cb2abbcc62d911e32787a8f7';
+const E_CUSTODY_BYTES = 10934017;
+const SOURCE_E = '112cea8e5a413eee1bec7ed955c14f73fc90bcdc';
+const E_EVIDENCE_HEAD = 'b9bb743c0b3cbc0370807b2f85a9a6bff4d21b33';
+const B_HEAD = '4bffef14505f26558556a707931c711105a968af';
+const CONTROLS = {NODE_OPTIONS:'--max-old-space-size=2048',VITEST_MAX_FORKS:'1',VITEST_FORK_MAX_OLD_SPACE_SIZE:'2048'};
+const EXPECTED_B = [['canonical',0,0],['compiler-readers',2,176],['text-readers',2,240],['runtime',17,351],['incoming23',23,2399],['repair-controls',1,125],['imported-main',7,117],['additional18',17,2000],['baseline-projection-controls102',1,102]];
+const EXPECTED_E = [['canonical',0,0],['compiler-readers',2,176],['text-readers',5,992],['runtime',28,505],['incoming23',23,2407],['repair-controls',3,305],['successor-proof',1,73],['imported-main',7,117],['additional18',18,2173],['helper47',1,47]];
+const FLAT = 'tests/issue-5883-flat-layout-relocation.test.ts';
+const PROJECTION = 'tests/issue-5883-baseline-4bff-promise-port-projection.test.ts';
+const rawError = /\[vitest-worker\]|onTaskUpdate|Unhandled (?:Error|Rejection|Exception)|Vitest caught \d+ unhandled|Error:|FAIL\b|ERR_WORKER|\bRPC\b/i;
+const sha = b => createHash('sha256').update(b).digest('hex');
+const digestRE = /^[a-f0-9]{64}$/;
+const report = {
+  schema:'5883-exact-terminal-BE-comparator-v1', accepted:false,
+  executionPerformed:false, filesystemWrites:false,
+  provenance:{B:{run:B_RUN,sourceHead:B_HEAD,repairedInputCount:7740},E:{run:E_RUN,validatedSourceHead:SOURCE_E,evidenceOnlyHead:E_EVIDENCE_HEAD,inputCount:7772}},
+  authentication:{comparator:false,B:false,E:false,authorities:false},
+  completeness:{B:'unknown',E:'unknown'},
+  identityEquality:{BToAuthority:null,EToAuthority:null,exactPartition:null,sharedMultiset:null},
+  outcomeEquality:{shared:null,differences:[]},
+  evidenceCleanliness:{B:null,E:null,all:null},
+  expectedPartition:{shared:5406,BOnlyCommon:2,BProjection:102,EOnlyCommon:16,EOnlyFiles:1317,EOnlyFileCount:18,BTotal:5510,EUnique:6739,EExecutions:6795},
+  partition:null, stageEvidence:{B:[],E:[]}, errors:[], evidence:[],
+  historicalEvidence:{freshAExecution:false,originalFailedAUnmodified:true,focusedFailuresUnmodified:true},
+  limitation:'Artifact comparison only. Unknown is not equality. Equal failures are not clean evidence. No conformance, acceptance, HOLD release, retirement, merge, or delivery authority.'
+};
+function error(phase,message,details=null) {report.errors.push({phase,message:String(message),details});}
+function requireThat(ok,message) {if(!ok) throw new Error(message);}
+function equal(a,b,message) {requireThat(isDeepStrictEqual(a,b),message);}
+function attempt(phase,fn) {try{return fn();}catch(e){error(phase,e?.message??e);return undefined;}}
+function cleanSince(index,prefix) {return !report.errors.slice(index).some(e=>e.phase.startsWith(prefix));}
+function safeAbsolute(p) {
+  requireThat(typeof p==='string'&&isAbsolute(p)&&resolve(p)===p&&!p.includes('\0')&&!p.includes('\\'),'Unsafe absolute artifact path');
+  // Check directory ancestors too: an apparently regular leaf behind a symlink
+  // is not acceptable custody. Do not open package dependency trees.
+  for(let q=p;;q=dirname(q)){requireThat(!lstatSync(q).isSymbolicLink(),'Symlink artifact component: '+q);if(dirname(q)===q)break;}
+  requireThat(lstatSync(p).isFile(),'Artifact is not a regular file: '+p);
+}
+function safeRelative(root,p) {
+  requireThat(typeof p==='string'&&p.length>0&&!isAbsolute(p)&&!p.includes('\0')&&!p.includes('\\'),'Unsafe relative path');
+  requireThat(!p.split('/').some(c=>!c||c==='.'||c==='..'),'Unsafe relative component');
+  requireThat(relative(root,resolve(root,p))===p,'Artifact escaped root');
+  return resolve(root,p);
+}
+const cache=new Map();
+function bytes(p,expected=null,retain=false) {
+  let entry=cache.get(p);
+  if(!entry) {
+    try {
+      safeAbsolute(p);
+      const b=readFileSync(p);
+      entry={b,record:{path:p,bytes:b.length,sha256:sha(b),retained:false,pinChecks:[]}};
+    } catch(e) {
+      entry={b:null,record:{path:p,unavailable:true,reason:String(e.message??e),retained:false,pinChecks:[]}};
+    }
+    cache.set(p,entry);report.evidence.push(entry.record);
+  }
+  if(retain&&!entry.record.retained&&entry.b) {
+    entry.record.retained=true;entry.record.originalBytesBase64=entry.b.toString('base64');
+  }
+  requireThat(entry.b!==null,'Missing/unreadable artifact '+p+': '+entry.record.reason);
+  if(expected) {
+    const ok=digestRE.test(expected.sha256??'')&&entry.record.sha256===expected.sha256&&(expected.bytes===undefined||entry.record.bytes===expected.bytes);
+    entry.record.pinChecks.push({expected,matched:ok});
+    requireThat(ok,'Artifact pin mismatch: '+p);
+  }
+  return entry.b;
+}
+function parsed(p,expected=null,retain=false) {return JSON.parse(bytes(p,expected,retain));}
+function enumerate(root) {
+  const paths=[];
+  function walk(d) {
+    requireThat(!lstatSync(d).isSymbolicLink()&&lstatSync(d).isDirectory(),'Unsafe directory: '+d);
+    for(const n of readdirSync(d)) {
+      const p=safeRelative(d,n),st=lstatSync(p);
+      requireThat(!st.isSymbolicLink(),'Symlink run record: '+p);
+      if(st.isDirectory())walk(p);else {requireThat(st.isFile(),'Non-file run record: '+p);paths.push(relative(root,p));}
+    }
+  }
+  walk(root);return paths.sort();
+}
+function inventory(root,records,phase) {
+  requireThat(records&&typeof records==='object'&&!Array.isArray(records),'Missing terminal artifact inventory');
+  // Continue after any failed record, retaining every other listed record.
+  for(const [p,r] of Object.entries(records))attempt(phase,()=>{
+    const full=safeRelative(root,p);requireThat(r.path===full,'Terminal inventory path mismatch');
+    bytes(full,{bytes:r.bytes,sha256:r.sha256},true);
+  });
+}
+function tuple(r) {
+  requireThat(r&&Array.isArray(r.ancestorTitles)&&r.ancestorTitles.every(x=>typeof x==='string')&&typeof r.fullName==='string'&&typeof r.title==='string','Malformed native assertion identity');
+  return JSON.stringify([r.ancestorTitles,r.fullName,r.title]);
+}
+function fileKey(root,name) {
+  requireThat(typeof name==='string'&&isAbsolute(name)&&resolve(name)===name,'Malformed native file name');
+  const p=relative(root,name);requireThat(p.startsWith('tests/')&&p.endsWith('.test.ts'),'Non-test native file');
+  requireThat(safeRelative(root,p)===name,'Native file root mismatch');return p;
+}
+function caseKey(p,id) {return JSON.stringify([p,id]);}
+function counts(rows) {
+  const result=new Map();
+  for(const x of rows)result.set(x,(result.get(x)||0)+1);
+  return result;
+}
+function expand(m) {return [...m].sort(([a],[b])=>a<b?-1:a>b?1:0).flatMap(([key,count])=>Array(count).fill(key));}
+function partition(b,e) {
+  const bm=counts(b),em=counts(e),shared=[],bo=[],eo=[];
+  for(const key of [...new Set([...bm.keys(),...em.keys()])].sort()){
+    const n=Math.min(bm.get(key)||0,em.get(key)||0);
+    shared.push(...Array(n).fill(key));bo.push(...Array((bm.get(key)||0)-n).fill(key));eo.push(...Array((em.get(key)||0)-n).fill(key));
+  }
+  return {shared,BOnly:bo,EOnly:eo};
+}
+function rowsFromNative(native,root,stage,phase) {
+  requireThat(native&&Array.isArray(native.testResults),'Missing/malformed native testResults');
+  const rows=[],files=new Map(),errorsBefore=report.errors.length;
+  for(const f of native.testResults)attempt(phase,()=>{
+    const p=fileKey(root,f.name);requireThat(!files.has(p),'Duplicate native file row: '+p);
+    requireThat(Array.isArray(f.assertionResults),'Missing native assertionResults: '+p);
+    const assertions=[];
+    // One malformed assertion must not discard its siblings or original bytes.
+    for(const r of f.assertionResults)attempt(phase,()=>{
+      const id=tuple(r);assertions.push({id,original:r});rows.push({path:p,id,key:caseKey(p,id),original:r});
+    });
+    files.set(p,{original:f,assertions});
+  });
+  equal([...files.keys()].sort(),[...stage.files].sort(),'Extra/missing native files in '+stage.name);
+  requireThat(report.errors.length===errorsBefore,'Malformed/duplicate native rows in '+stage.name);
+  return {rows,files};
+}
+function evaluateNative(native,indexed,stage,phase) {
+  // Called only AFTER byte retention and complete row extraction.
+  requireThat(native.success===true,'Native report not successful');
+  requireThat(native.numTotalTests===stage.identityCount&&native.numPassedTests===stage.identityCount,'Native total/pass count mismatch');
+  for(const k of ['numFailedTests','numPendingTests','numTodoTests','numFailedTestSuites','numPendingTestSuites'])requireThat(native[k]===0,'Nonzero/missing native channel '+k);
+  for(const k of ['errors','unhandledErrors','unhandledRejections','runtimeErrors'])if(k in native)equal(native[k],[],'Native errors '+k);
+  for(const k of ['numUnhandledErrors','numRuntimeErrors','numRuntimeErrorTestSuites'])if(k in native)requireThat(native[k]===0,'Native errors '+k);
+  for(const [p,f] of indexed.files)attempt(phase,()=>{
+    requireThat(f.original.status==='passed'&&f.original.message==='','Failed/error file '+p);
+    requireThat(f.assertions.length>0,'Empty native file '+p);
+    for(const r of f.assertions){requireThat(r.original.status==='passed','Nonpassing case '+caseKey(p,r.id));equal(r.original.failureMessages,[],'Case failureMessages '+caseKey(p,r.id));}
+  });
+  const snap=native.snapshot;requireThat(snap&&snap.failure===false&&snap.didUpdate===false,'Snapshot failure/update');
+  for(const k of ['unmatched','unchecked','added','updated','filesRemoved'])requireThat(snap[k]===0,'Snapshot channel '+k);
+}
+function stageArgs(stage,out) {
+  return stage.name==='canonical'?stage.args:['node_modules/vitest/vitest.mjs','run',...stage.files,'--testTimeout=35000','--maxWorkers=1','--minWorkers=1','--reporter=dot','--reporter=json','--outputFile.json='+out+'/native-results.json'];
+}
+function outcome(r) {
+  requireThat(typeof r.status==='string'&&Array.isArray(r.failureMessages)&&r.failureMessages.every(x=>typeof x==='string'),'Malformed outcome');
+  return JSON.stringify([r.status,r.failureMessages]);
+}
+let schedule,eSchedule,baselines,expectedB,expectedE,bTerminal,eTerminal,eArchive;
+const stages={B:[],E:[]},uniqueRows={B:[],E:[]};
+function loadAuthorities() {
+  bytes(B_RUNNER,{sha256:B_RUNNER_SHA});
+  schedule=parsed(B_SCHEDULE,{sha256:B_SCHEDULE_SHA});
+  requireThat(schedule.schema==='5883-full-B-inert-70-file-schedule-v1'&&schedule.accepted===false,'Wrong B schedule');
+  equal(schedule.stages.map(s=>[s.name,s.files.length,s.identityCount]),EXPECTED_B,'B stage schedule drift');
+  requireThat(schedule.EValidatedSourceHead===SOURCE_E&&schedule.state.B.head===B_HEAD&&schedule.state.E.head===E_EVIDENCE_HEAD,'Source/HEAD authority drift');
+  equal(schedule.EEvidenceOnlyTransition.allowedChanges,[
+    ['A','plan/agent-context/5883-focused-baseline-repair-custody-20261006.json'],
+    ['A','plan/agent-context/5883-focused-baseline-repair-packager-corrected-5198586e-20261006.txt'],
+    ['A','plan/agent-context/5883-focused-baseline-repair-packager-original-01fbee33-20261006.txt'],
+    ['A','plan/agent-context/5883-repaired-b69-collection-custody-20261006.json'],
+    ['M','plan/issues/5197-es2015-standalone-promise-r2.md']
+  ],'Evidence-only transition drift');
+  requireThat(schedule.EEvidenceOnlyTransition.from==='446808ce4d5182523dfe1801d76f3530f96e5d83'&&schedule.EEvidenceOnlyTransition.to===E_EVIDENCE_HEAD&&schedule.EEvidenceOnlyTransition.parentExplicitUpdate===true,'E transition authority drift');
+  requireThat(Object.keys(schedule.authorities).length===79,'Authority inventory drift');
+  for(const [p,r] of Object.entries(schedule.authorities))attempt('authority',()=>bytes(p,r));
+  baselines={};
+  for(const arm of ['A','B','E'])attempt('authority',()=>{
+    const pin=schedule.maps[arm];baselines[arm]=parsed(pin.path,pin);
+    requireThat(Object.keys(baselines[arm]).length===({A:7735,B:7740,E:7772})[arm],'Reviewed map count drift '+arm);
+  });
+  requireThat(schedule.maps.B.sha256==='9cfb35d9302654ed62fb05d71eaa0ce6ac0e756ef9f0be56b8aee14ea0880820'&&schedule.maps.E.sha256==='309eacc2b0f9b63d89f4a38a7c82fb2492a6bd296bd968c4732c70b7002c117e','Reviewed B/E maps changed');
+  eSchedule=parsed(schedule.candidateSchedule.path,schedule.candidateSchedule);
+  equal(eSchedule.stages.map(s=>[s.name,s.files.length,s.identityCount]),EXPECTED_E,'E stage schedule drift');
+  equal(eSchedule.epoch,{map:schedule.maps.E.path,sha256:schedule.maps.E.sha256,inputCount:7772},'E map/source binding drift');
+  expectedB={};expectedE={};
+  for(const [p,f] of Object.entries(schedule.files))attempt('authority',()=>{
+    const n=f.nativeProvenance;const row=parsed(n.path,{sha256:n.sha256}).testResults[n.testResultsIndex];
+    requireThat(fileKey(schedule.roots.B,row.name)===p,'B authority native path mismatch');
+    const ids=row.assertionResults.map(tuple).sort();
+    requireThat(ids.length===f.count&&sha(JSON.stringify(ids))===f.identityMultisetSHA256,'B identity authority mismatch '+p);
+    requireThat(baselines.B[p]===f.source.sha256,'B source pin mismatch '+p);
+    expectedB[p]=ids;
+  });
+  for(const [p,f] of Object.entries(eSchedule.files))attempt('authority',()=>{
+    const n=f.nativeProvenance;const row=parsed(n.path,{sha256:n.sha256}).testResults[n.testResultsIndex];
+    requireThat(fileKey(E_ROOT,row.name)===p,'E authority native path mismatch');
+    const ids=row.assertionResults.map(tuple).sort();equal(ids,f.identities,'E literal identity authority mismatch '+p);
+    requireThat(ids.length===f.count&&sha(JSON.stringify(ids))===f.identityMultisetSHA256,'E identity authority mismatch '+p);
+    requireThat(baselines.E[p]===f.source.sha256,'E source pin mismatch '+p);
+    expectedE[p]=ids;
+  });
+}
+function loadEArchive() {
+  eArchive=parsed(E_CUSTODY,{sha256:E_CUSTODY_SHA,bytes:E_CUSTODY_BYTES});
+  requireThat(eArchive.schema==='5883-final-candidate-terminal-custody-v1'&&eArchive.accepted===false&&eArchive.sourceCommit===SOURCE_E,'Wrong E custody');
+  requireThat(eArchive.encoding==='gzip+base64'&&eArchive.fileCount===63&&eArchive.rows.length===63,'E custody inventory drift');
+  requireThat(eArchive.attempt===relative(E_ROOT,E_RUN),'Wrong E run authority');
+  equal(eArchive.inputMapAuthority,{path:relative(E_ROOT,schedule.maps.E.path),sha256:schedule.maps.E.sha256,inputCount:7772},'E custody map drift');
+  equal(eArchive.schedule.scheduledStages,eSchedule.stages.map(s=>s.name),'E custody stages drift');
+  const seen=new Set();let decoded=0;
+  for(const r of eArchive.rows)attempt('E.authentication',()=>{
+    const p=safeRelative(E_ROOT,r.path);requireThat(r.source==='E'&&!seen.has(r.path),'Duplicate/wrong E custody row');
+    seen.add(r.path);
+    requireThat(typeof r.gzipBase64==='string'&&/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(r.gzipBase64),'Malformed gzip/base64 custody');
+    const b=gunzipSync(Buffer.from(r.gzipBase64,'base64'),{maxOutputLength:Math.max(r.bytes,1)});
+    requireThat(b.length===r.bytes&&sha(b)===r.sha256,'Decoded E custody pin mismatch '+r.path);
+    decoded+=b.length;
+    const live=bytes(p,{sha256:r.sha256,bytes:r.bytes},p.startsWith(E_RUN+'/'));
+    requireThat(live.equals(b),'Live E evidence differs from custody '+r.path);
+  });
+  equal([...seen].sort(),[...eArchive.expectedRecordPaths].sort(),'E custody expected inventory mismatch');
+  requireThat(decoded===eArchive.decodedBytes&&decoded===25747854,'E custody decoded byte count drift');
+  const expected=enumerate(E_RUN);
+  const pinned=[...seen].map(p=>resolve(E_ROOT,p)).filter(p=>p.startsWith(E_RUN+'/')).map(p=>relative(E_RUN,p)).sort();
+  equal(expected,pinned,'E full run inventory extra/missing records');
+  eTerminal=parsed(E_RUN+'/terminal.json',{sha256:E_TERMINAL_SHA},true);
+  equal(eTerminal,eArchive.rootTerminal,'E root terminal differs from custody');
+}
+function retainBInventory(parentHash) {
+  // Retain original bytes even if the supplied hash does not match. Never adopt
+  // the observed hash as the authority, and never mark that evidence trustworthy.
+  const raw=attempt('B.authentication',()=>bytes(B_RUN+'/terminal.json',null,true));
+  if(!raw)return;
+  attempt('B.authentication',()=>bytes(B_RUN+'/terminal.json',{sha256:parentHash},true));
+  bTerminal=attempt('B.authentication',()=>JSON.parse(raw));
+  if(!bTerminal)return;
+  attempt('B.authentication',()=>inventory(B_RUN,bTerminal.artifacts,'B.authentication'));
+  attempt('B.authentication',()=>{
+    equal(enumerate(B_RUN),[...Object.keys(bTerminal.artifacts),'terminal.json'].sort(),'B full run inventory extra/missing records');
+    bytes(B_RUN+'/runner.mjs',{sha256:B_RUNNER_SHA},true);
+    bytes(B_RUN+'/schedule.json',{sha256:B_SCHEDULE_SHA},true);
+    for(const arm of ['A','B','E'])bytes(B_RUN+'/reviewed-map-'+arm+'.json',schedule.maps[arm],true);
+  });
+}
+function readStages(arm,selection,root,run,expected) {
+  for(const stage of selection) {
+    const out=resolve(run,stage.name),phase=arm+'.completeness',start=report.errors.length;
+    const state={name:stage.name,nativeRequired:stage.name!=='canonical',available:false,identityExact:false,clean:false,rows:[]};
+    report.stageEvidence[arm].push(state);stages[arm].push(state);
+    // Capture each expected channel independently; a missing terminal or bad
+    // invocation never suppresses available native/raw failure evidence.
+    state.terminal=attempt(phase,()=>parsed(out+'/terminal.json',null,true));
+    state.invocation=attempt(phase,()=>parsed(out+'/invocation.json',null,true));
+    if(arm==='B'){
+      state.child=attempt(phase,()=>parsed(out+'/child-exit.json',null,true));
+      if(state.terminal)attempt('B.authentication',()=>{
+        inventory(out,state.terminal.artifacts,'B.authentication');
+        equal(enumerate(out),[...Object.keys(state.terminal.artifacts),'terminal.json'].sort(),'B stage inventory extra/missing records '+stage.name);
+      });
+    }
+    const names=arm==='B'?['stdout.log','stderr.log']:['raw.log'];
+    state.raw=names.map(name=>({name,text:attempt(phase,()=>bytes(out+'/'+name,null,true).toString('utf8'))}));
+    state.maps={};
+    for(const side of ['before','after'])for(const mapArm of arm==='B'?['A','B','E']:['E']){
+      const name=arm==='B'?side+'-'+mapArm+'.json':side+'.json';
+      state.maps[side+'-'+mapArm]=attempt(phase,()=>parsed(out+'/'+name,null,true));
+    }
+    if(state.nativeRequired) {
+      state.native=attempt(phase,()=>parsed(out+'/native-results.json',null,true));
+      const indexed=state.native?attempt(phase,()=>rowsFromNative(state.native,root,stage,phase)):undefined;
+      if(indexed){state.indexed=indexed;state.rows=indexed.rows;state.available=cleanSince(start,phase);}
+      const identityStart=report.errors.length;
+      if(indexed)for(const [p,f] of indexed.files)attempt(arm+'.identity',()=>equal(f.assertions.map(r=>r.id).sort(),expected[p],'Native identity multiset mismatch '+stage.name+'/'+p));
+      state.identityExact=!!indexed&&cleanSince(identityStart,arm+'.identity');
+    } else {state.available=cleanSince(start,phase);state.identityExact=true;}
+  }
+}
+function evaluateStages(arm,selection,root,run,expectedRunnerHash) {
+  // ALL B/E stage bytes/native/raw records have already been captured.
+  for(let i=0;i<selection.length;i++){
+    const stage=selection[i],s=stages[arm][i],phase=arm+'.cleanliness',start=report.errors.length,out=resolve(run,stage.name);
+    attempt(phase,()=>{
+      requireThat(s.available,'Incomplete stage '+stage.name);
+      const inv=s.invocation,t=s.terminal;
+      requireThat(inv.accepted===false&&inv.cwd===root&&inv.stage===stage.name,'Wrong stage invocation provenance');
+      equal(inv.files,stage.files,'Stage invocation selected files mismatch');
+      equal(inv.args,stageArgs(stage,out),'Stage args/resource controls mismatch');
+      equal(inv.controls,CONTROLS,'Stage resource controls mismatch');
+      requireThat(inv.runner.sha256===expectedRunnerHash,'Stage runner hash mismatch');
+      if(arm==='B'){
+        equal(inv.state,schedule.state,'B source/evidence HEAD pin mismatch');
+        equal(inv.maps,schedule.maps,'B invocation reviewed maps mismatch');
+        requireThat(inv.arm==='B','Non-B arm');
+        equal(inv.node,schedule.node,'B canonical Node mismatch');
+        requireThat(inv.schedule.sha256===B_SCHEDULE_SHA,'B invocation schedule mismatch');
+        equal(inv.expectedIdentities,Object.fromEntries(stage.files.map(p=>[p,expectedB[p]])),'B invocation identity authority mismatch');
+        const child=s.child;
+        requireThat(child.launched===true&&child.code===0&&child.signal===null&&child.error===null,'B child failure');
+        requireThat(t.child.code===0&&t.child.signal===null&&t.child.error===null,'B terminal child failure');
+        equal(t.errors,[],'B stage errors');
+      }else{
+        requireThat(inv.head===SOURCE_E&&inv.node===schedule.node.path&&inv.nodeHash===schedule.node.sha256,'E validated source/Node mismatch');
+        requireThat(inv.mergeHead===null,'E merge in progress');
+        equal(inv.mergeParents,['8b9e89a5f9009d7a17a8c6410fa2ea2b1d0b3960',B_HEAD],'E validated merge parents mismatch');
+        equal(inv.identities,Object.fromEntries(stage.files.map(p=>[p,expectedE[p]])),'E invocation identity authority mismatch');
+        requireThat(t.code===0&&t.signal===null&&t.error===null,'E child failure');
+        equal(t.instrumentationErrors,[],'E instrumentation errors');
+      }
+      requireThat(t.accepted===false&&t.stage===stage.name&&t.beforeVerified===true&&t.afterVerified===true&&t.stageClean===true,'Stage terminal not clean');
+    });
+    for(const [key,map] of Object.entries(s.maps))attempt(phase,()=>{
+      const a=key.split('-').at(-1);requireThat(map!==undefined,'Missing stage map '+key);
+      equal(map,baselines[a],'Stage physical map drift '+stage.name+'/'+key);
+    });
+    for(const raw of s.raw)attempt(phase,()=>{
+      requireThat(typeof raw.text==='string','Missing raw channel '+raw.name);
+      requireThat(!rawError.test(raw.text.replace(/\x1b\[[0-9;]*m/g,'')),'Raw worker/RPC/error/FAIL/unhandled channel '+raw.name);
+    });
+    if(s.nativeRequired)attempt(phase,()=>{requireThat(s.indexed,'Missing complete native rows');evaluateNative(s.native,s.indexed,stage,phase);});
+    s.clean=s.available&&s.identityExact&&cleanSince(start,phase);
+    // Rows remain available for identity/outcome diagnosis regardless of clean.
+  }
+}
+function rootGates() {
+  attempt('B.cleanliness',()=>{
+    requireThat(bTerminal&&bTerminal.accepted===false&&bTerminal.arm==='B'&&bTerminal.collectionOnly===false,'Wrong/missing B root terminal');
+    requireThat(bTerminal.preflightVerified===true&&bTerminal.rootBeforeVerified===true&&bTerminal.rootAfterVerified===true&&bTerminal.allStagesClean===true&&bTerminal.completedStages===9,'B root incomplete/failed');
+    equal(bTerminal.errors,[],'B root errors');equal(bTerminal.attemptedStages,schedule.stages.map(s=>s.name),'B attempted stages mismatch');
+    equal(bTerminal.unexecutedStages,[],'B unexecuted stages');
+    equal(bTerminal.stageOutcomes,schedule.stages.map(s=>({stage:s.name,stageClean:true})),'B root stage outcomes');
+    requireThat(bTerminal.scheduledFiles===70&&bTerminal.scheduledExecutionOccurrences===5510&&bTerminal.sharedBEIdentities===5406&&bTerminal.separateControls===102,'B root denominators');
+    for(const arm of ['A','B','E'])for(const side of ['before','after'])equal(parsed(B_RUN+'/'+side+'-'+arm+'.json',null,true),baselines[arm],'B root physical drift '+side+'/'+arm);
+  });
+  attempt('E.cleanliness',()=>{
+    requireThat(eTerminal&&eTerminal.accepted===false&&eTerminal.candidateOnly===true&&eTerminal.allStagesClean===true&&eTerminal.completedStages===10&&eTerminal.expectedStages===10,'E root incomplete/failed');
+    requireThat(eTerminal.scheduledUniquePopulation===6739&&eTerminal.scheduledExecutionOccurrences===6795,'E root denominator mismatch');
+  });
+}
+function foldUnique(arm) {
+  const seen=new Map();
+  for(const stage of stages[arm])for(const row of stage.rows){
+    if(!seen.has(row.path))seen.set(row.path,{stage:stage.name,rows:stage.rows.filter(r=>r.path===row.path)});
+    // File repetition is checked once per second file occurrence, not per case.
+  }
+  if(arm==='E'){
+    const first=stages.E.find(s=>s.name==='text-readers'),second=stages.E.find(s=>s.name==='runtime');
+    const a=first.rows.filter(r=>r.path===FLAT),b=second.rows.filter(r=>r.path===FLAT);
+    requireThat(a.length===56&&b.length===56,'Declared flat-layout repetition missing/changed');
+    equal(a.map(r=>r.id).sort(),b.map(r=>r.id).sort(),'Repeated flat-layout identity mismatch');
+    equal(a.map(r=>JSON.stringify([r.id,outcome(r.original)])).sort(),b.map(r=>JSON.stringify([r.id,outcome(r.original)])).sort(),'Repeated flat-layout outcome mismatch');
+    requireThat(first.clean&&second.clean,'Both repeated flat-layout stage occurrences must independently pass');
+  }
+  // Only the declared repetition may be folded. Duplicate tuples within a file
+  // are preserved; they are not removed by Set.
+  const selections=(arm==='B'?schedule:eSchedule).stages.flatMap(s=>s.files);
+  const duplicates=selections.filter((p,i)=>selections.indexOf(p)!==i);
+  equal(duplicates,arm==='E'?[FLAT]:[],'Undeclared repeated file occurrence');
+  const rows=[...seen.values()].flatMap(f=>f.rows);
+  requireThat(rows.length===(arm==='B'?5510:6739),'Unique population incomplete');
+  uniqueRows[arm]=rows;
+}
+function exactComparison() {
+  const keys=d=>Object.entries(d).flatMap(([p,ids])=>ids.map(id=>caseKey(p,id))).sort();
+  const authority=partition(keys(expectedB),keys(expectedE));
+  const actual=partition(uniqueRows.B.map(r=>r.key),uniqueRows.E.map(r=>r.key));
+  const split=part=>({
+    shared:part.shared,
+    BOnlyCommon:part.BOnly.filter(k=>JSON.parse(k)[0]!==PROJECTION),
+    BProjection:part.BOnly.filter(k=>JSON.parse(k)[0]===PROJECTION),
+    EOnlyCommon:part.EOnly.filter(k=>Object.hasOwn(expectedB,JSON.parse(k)[0])),
+    EOnlyFiles:part.EOnly.filter(k=>!Object.hasOwn(expectedB,JSON.parse(k)[0]))
+  });
+  const wanted=split(authority),got=split(actual);
+  equal(Object.values(wanted).map(a=>a.length),[5406,2,102,16,1317],'Frozen authority partition count mismatch');
+  // Independently bind the literal common-file delta inventory in the B schedule.
+  const declaredBO=schedule.comparison.rows.flatMap(r=>r.BOnly.map(id=>caseKey(r.path,id))).sort();
+  const declaredEO=schedule.comparison.rows.flatMap(r=>r.EOnly.map(id=>caseKey(r.path,id))).sort();
+  equal(wanted.BOnlyCommon,declaredBO,'B-only exact partition authority mismatch');
+  equal(wanted.EOnlyCommon,declaredEO,'E-only common exact partition authority mismatch');
+  equal([...new Set(wanted.EOnlyFiles.map(k=>JSON.parse(k)[0]))].sort(),schedule.absentCandidateOnlyFiles,'E-only file partition mismatch');
+  equal(wanted.BProjection,expectedB[PROJECTION].map(id=>caseKey(PROJECTION,id)).sort(),'102-control exact partition mismatch');
+  report.partition={expected:wanted,observed:got,counts:Object.fromEntries(Object.entries(got).map(([k,v])=>[k,v.length]))};
+  equal(got,wanted,'Observed exact partition differs from frozen authority');
+  report.identityEquality.exactPartition=true;
+  const sharedKeys=new Set(wanted.shared),wantedCounts=counts(wanted.shared);
+  const select=rows=>rows.filter(r=>sharedKeys.has(r.key));
+  const b=select(uniqueRows.B),e=select(uniqueRows.E);
+  // All shared case copies are comparable only when multiplicities agree.
+  equal(expand(counts(b.map(r=>r.key))),expand(wantedCounts),'B shared multiset mismatch');
+  equal(expand(counts(e.map(r=>r.key))),expand(wantedCounts),'E shared multiset mismatch');
+  report.identityEquality.sharedMultiset=true;
+  const results=rows=>{
+    const m=new Map();
+    for(const r of rows){if(!m.has(r.key))m.set(r.key,[]);m.get(r.key).push(outcome(r.original));}
+    for(const v of m.values())v.sort();return m;
+  };
+  const bm=results(b),em=results(e);
+  for(const key of [...sharedKeys].sort()){
+    if(JSON.stringify(bm.get(key))!==JSON.stringify(em.get(key)))report.outcomeEquality.differences.push({key,B:bm.get(key),E:em.get(key)});
+  }
+  report.outcomeEquality.shared=report.outcomeEquality.differences.length===0;
+}
+function main(){
+  requireThat(fileURLToPath(import.meta.url)===SELF,'Wrong comparator path');
+  requireThat(process.argv.length===6&&process.argv[2]==='--self-sha256'&&process.argv[4]==='--b-terminal-sha256','Exact explicit self/B terminal hash arguments required');
+  const selfHash=process.argv[3],parentHash=process.argv[5];
+  requireThat(digestRE.test(selfHash)&&digestRE.test(parentHash),'Full explicit SHA256 required; no trust-on-first-use');
+  bytes(SELF,{sha256:selfHash});report.authentication.comparator=true;
+  report.provenance.B.parentSuppliedTerminalSHA256=parentHash;
+  const authorityStart=report.errors.length;attempt('authority',loadAuthorities);
+  report.authentication.authorities=!!expectedB&&!!expectedE&&cleanSince(authorityStart,'authority');
+  // Even authority failure must retain original B terminal/inventory where safe.
+  attempt('B.authentication',()=>retainBInventory(parentHash));
+  if(!schedule||!eSchedule||!baselines||!expectedB||!expectedE)return;
+  const eStart=report.errors.length;attempt('E.authentication',loadEArchive);
+  report.authentication.B=!!bTerminal&&!report.errors.some(e=>e.phase==='B.authentication');
+  report.authentication.E=!!eTerminal&&cleanSince(eStart,'E.authentication');
+  readStages('B',schedule.stages,schedule.roots.B,B_RUN,expectedB);
+  readStages('E',eSchedule.stages,E_ROOT,E_RUN,expectedE);
+  // Native evidence is retained for BOTH arms before any pass-first evaluation.
+  evaluateStages('B',schedule.stages,schedule.roots.B,B_RUN,B_RUNNER_SHA);
+  evaluateStages('E',eSchedule.stages,E_ROOT,E_RUN,schedule.mechanismReference.sha256);
+  rootGates();
+  // Stage inventories can add authentication failures after initial root checks.
+  report.authentication.B=!!bTerminal&&!report.errors.some(e=>e.phase==='B.authentication');
+  report.authentication.E=!!eTerminal&&!report.errors.some(e=>e.phase==='E.authentication');
+  for(const arm of ['B','E']){
+    const allPresent=stages[arm].length===(arm==='B'?9:10)&&stages[arm].every(s=>s.available);
+    const terminalPresent=arm==='B'?!!bTerminal:!!eTerminal;
+    report.completeness[arm]=allPresent&&terminalPresent?'complete':'incomplete';
+    const trusted=report.authentication[arm]&&report.authentication.authorities;
+    report.identityEquality[arm+'ToAuthority']=trusted&&allPresent?stages[arm].every(s=>s.identityExact):null;
+    report.evidenceCleanliness[arm]=trusted&&allPresent&&stages[arm].every(s=>s.clean)&&!report.errors.some(e=>e.phase===arm+'.cleanliness');
+  }
+  attempt('B.identity',()=>foldUnique('B'));
+  // Use populated rows as the explicit folding completion indicator.
+  attempt('E.identity',()=>foldUnique('E'));
+  if(report.authentication.B&&report.authentication.E&&report.authentication.authorities&&report.completeness.B==='complete'&&report.completeness.E==='complete'&&uniqueRows.B.length===5510&&uniqueRows.E.length===6739){
+    const start=report.errors.length;attempt('comparison.identity',exactComparison);
+    if(!cleanSince(start,'comparison.identity')){
+      report.identityEquality.exactPartition=false;
+      if(report.identityEquality.sharedMultiset!==true)report.identityEquality.sharedMultiset=false;
+      report.outcomeEquality.shared=null;
+    }
+  }
+  report.evidenceCleanliness.all=report.evidenceCleanliness.B===true&&report.evidenceCleanliness.E===true;
+}
+attempt('preflight',main);
+if(report.errors.some(e=>e.phase==='preflight'))report.evidenceCleanliness.all=false;
+// Remove internal Maps from the JSON projection; original native bytes and
+// assertion objects, including all failures, remain in retained evidence/rows.
+for(const arm of ['B','E'])for(const s of report.stageEvidence[arm])delete s.indexed;
+console.log(JSON.stringify(report,null,2));
+if(report.evidenceCleanliness.all!==true||report.identityEquality.exactPartition!==true||report.identityEquality.sharedMultiset!==true||report.outcomeEquality.shared!==true)process.exitCode=1;
