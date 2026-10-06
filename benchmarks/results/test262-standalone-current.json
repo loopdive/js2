@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-10-06T19:11:40.438Z",
-  "baseline_generated_at": "2026-10-06T19:11:40.438Z",
-  "baseline_sha": "f0cd83343261454de1cf8d525cc2e45f2a45d280",
+  "timestamp": "2026-10-06T20:06:50.241Z",
+  "baseline_generated_at": "2026-10-06T20:06:50.242Z",
+  "baseline_sha": "edea6f6e606ce875a7db49030351489f35adc9da",
   "oracle_version": 14,
   "mode": {
     "target": "standalone",
@@ -11,24 +11,24 @@
   },
   "summary": {
     "total": 48232,
-    "pass": 41943,
+    "pass": 41942,
     "fail": 4387,
-    "compile_error": 1864,
+    "compile_error": 1865,
     "compile_timeout": 20,
     "skip": 18,
-    "compilable": 46330,
-    "host_free_pass": 41943,
+    "compilable": 46329,
+    "host_free_pass": 41942,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
-        "pass": 40902,
+        "pass": 40901,
         "fail": 4358,
-        "compile_error": 1848,
+        "compile_error": 1849,
         "compile_timeout": 20,
         "skip": 18,
-        "compilable": 45260,
-        "host_free_pass": 40902,
+        "compilable": 45259,
+        "host_free_pass": 40901,
         "stale": 0,
         "label": "ECMAScript current standard"
       },
@@ -58,25 +58,25 @@
       },
       "official": {
         "total": 48232,
-        "pass": 41943,
+        "pass": 41942,
         "fail": 4387,
-        "compile_error": 1864,
+        "compile_error": 1865,
         "compile_timeout": 20,
         "skip": 18,
-        "compilable": 46330,
-        "host_free_pass": 41943,
+        "compilable": 46329,
+        "host_free_pass": 41942,
         "stale": 0,
         "label": "standard + annex_b (default)"
       },
       "full": {
         "total": 48735,
-        "pass": 42179,
+        "pass": 42178,
         "fail": 4403,
-        "compile_error": 2019,
+        "compile_error": 2020,
         "compile_timeout": 20,
         "skip": 114,
-        "compilable": 46582,
-        "host_free_pass": 42179,
+        "compilable": 46581,
+        "host_free_pass": 42178,
         "stale": 0,
         "label": "standard + annex_b + proposals"
       }
@@ -84,35 +84,35 @@
   },
   "official_summary": {
     "total": 48232,
-    "pass": 41943,
+    "pass": 41942,
     "fail": 4387,
-    "compile_error": 1864,
+    "compile_error": 1865,
     "compile_timeout": 20,
     "skip": 18,
-    "compilable": 46330,
-    "host_free_pass": 41943,
+    "compilable": 46329,
+    "host_free_pass": 41942,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
-    "pass": 42179,
+    "pass": 42178,
     "fail": 4403,
-    "compile_error": 2019,
+    "compile_error": 2020,
     "compile_timeout": 20,
     "skip": 114,
-    "compilable": 46582,
-    "host_free_pass": 42179,
+    "compilable": 46581,
+    "host_free_pass": 42178,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
-    "pass": 39579,
+    "pass": 39578,
     "fail": 4295,
-    "compile_error": 1809,
+    "compile_error": 1810,
     "compile_timeout": 20,
     "skip": 18,
-    "compilable": 43874,
-    "host_free_pass": 39579,
+    "compilable": 43873,
+    "host_free_pass": 39578,
     "stale": 0
   },
   "scope_summaries": {
@@ -140,13 +140,13 @@
     },
     "standard": {
       "total": 47146,
-      "pass": 40902,
+      "pass": 40901,
       "fail": 4358,
-      "compile_error": 1848,
+      "compile_error": 1849,
       "compile_timeout": 20,
       "skip": 18,
-      "compilable": 45260,
-      "host_free_pass": 40902,
+      "compilable": 45259,
+      "host_free_pass": 40901,
       "stale": 0
     }
   },
@@ -781,13 +781,13 @@
     {
       "name": "built-ins/Temporal",
       "path": "built-ins/Temporal",
-      "pass": 4494,
+      "pass": 4493,
       "fail": 101,
       "compile_error": 0,
-      "compile_timeout": 8,
+      "compile_timeout": 9,
       "skip": 0,
       "total": 4603,
-      "host_free_pass": 4494
+      "host_free_pass": 4493
     },
     {
       "name": "built-ins/ThrowTypeError",
@@ -805,8 +805,8 @@
       "path": "built-ins/TypedArray",
       "pass": 1086,
       "fail": 349,
-      "compile_error": 10,
-      "compile_timeout": 1,
+      "compile_error": 11,
+      "compile_timeout": 0,
       "skip": 0,
       "total": 1446,
       "host_free_pass": 1086
@@ -1205,7 +1205,7 @@
     "negative_test_fail": 4,
     "null_deref": 8,
     "oob": 7,
-    "other": 1199,
+    "other": 1200,
     "promise_error": 41,
     "range_error": 27,
     "runtime_error": 342,
@@ -1221,8 +1221,8 @@
   },
   "root_cause_map": {
     "target": "standalone",
-    "total_non_pass_non_skip": 6442,
-    "classified": 6442,
+    "total_non_pass_non_skip": 6443,
+    "classified": 6443,
     "unclassified_threshold": null,
     "has_edition_breakdown": true,
     "buckets": [
@@ -1253,10 +1253,10 @@
         },
         "sample_files": [
           "test/language/expressions/dynamic-import/syntax/valid/top-level-import-defer-script-code-valid.js",
-          "test/language/expressions/dynamic-import/catch/nested-async-gen-await-import-source-source-text-module.js",
           "test/language/expressions/dynamic-import/syntax/valid/nested-if-import-source-script-code-valid.js",
-          "test/language/expressions/dynamic-import/catch/nested-if-import-catch-import-source-specifier-tostring.js",
-          "test/language/expressions/dynamic-import/syntax/valid/nested-async-gen-await-import-defer-script-code-valid.js"
+          "test/language/expressions/dynamic-import/catch/nested-async-gen-await-import-source-source-text-module.js",
+          "test/language/expressions/dynamic-import/syntax/valid/nested-async-gen-await-import-defer-script-code-valid.js",
+          "test/language/expressions/dynamic-import/catch/nested-if-import-catch-import-source-specifier-tostring.js"
         ],
         "sample_signatures": [
           "other:L#:## SyntaxError: import.defer(...) is not supported (Stage # proposal — import-defer / source-phase-imports); L#:## 'import.meta' is only allowed in a module",
@@ -1272,14 +1272,14 @@
           "#661"
         ],
         "label": "Temporal proposal/polyfill gap",
-        "count": 109,
+        "count": 110,
         "statuses": {
           "pass": 0,
           "fail": 101,
           "compile_error": 0,
-          "compile_timeout": 8,
+          "compile_timeout": 9,
           "skip": 0,
-          "total": 109,
+          "total": 110,
           "host_free_pass": 0
         },
         "error_categories": {
@@ -1289,7 +1289,7 @@
           "unreachable": 5
         },
         "by_edition": {
-          "ES2026": 109
+          "ES2026": 110
         },
         "sample_files": [
           "test/built-ins/Temporal/Duration/prototype/subtract/precision-no-floating-point-loss.js",
@@ -1462,15 +1462,15 @@
           "test/built-ins/JSON/stringify/replacer-function-result-undefined.js",
           "test/built-ins/JSON/parse/reviver-context-source-object-literal.js",
           "test/built-ins/JSON/stringify/replacer-array-duplicates.js",
-          "test/built-ins/JSON/parse/reviver-context-source-primitive-literal.js",
-          "test/built-ins/JSON/stringify/value-bigint-replacer.js"
+          "test/built-ins/JSON/stringify/value-bigint-replacer.js",
+          "test/built-ins/JSON/parse/reviver-context-source-primitive-literal.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected SameValue(«\"null\"», «undefined») to be true",
           "type_error:TypeError: Cannot convert undefined or null to object",
           "assertion_fail:Test262Error: Expected SameValue(«\"{\\\"key\\\":null}\"», «\"{\\\"key\\\":true}\"») to be true",
-          "assertion_fail:Test262Error: Expected SameValue(«#», «null») to be true",
-          "assertion_fail:Test262Error: Expected SameValue(«\"null\"», «\"\\\"bigint\\\"\"») to be true"
+          "assertion_fail:Test262Error: Expected SameValue(«\"null\"», «\"\\\"bigint\\\"\"») to be true",
+          "assertion_fail:Test262Error: Expected SameValue(«#», «null») to be true"
         ]
       },
       {
@@ -1788,15 +1788,15 @@
         "sample_files": [
           "test/language/statements/class/async-gen-method/yield-star-async-next.js",
           "test/language/statements/async-generator/yield-star-return-missing-value-is-awaited.js",
-          "test/language/statements/for-of/head-using-fresh-binding-per-iteration.js",
           "test/language/statements/async-generator/generator-created-after-decl-inst.js",
+          "test/language/statements/for-of/head-using-fresh-binding-per-iteration.js",
           "test/language/expressions/class/elements/async-gen-private-method-static/yield-star-async-next.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::__create_async_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_done, env::__gen_result_value, env::__gen_return, env::__gen_set_return, env::__gen_yield_star, env::__gen_y",
           "host_import_leak:standalone target emitted host imports: env::__gen_result_done, env::__gen_result_value_f64, env::__gen_return (##)",
-          "assertion_fail:Test262Error: `f[#]()` returns `obj1` Expected SameValue(«null», «[object Object]») to be true",
           "host_import_leak:standalone target emitted host imports: env::__get_async_generator_prototype (##)",
+          "assertion_fail:Test262Error: `f[#]()` returns `obj1` Expected SameValue(«null», «[object Object]») to be true",
           "host_import_leak:standalone target emitted host imports: env::__gen_result_done, env::__gen_result_value (##)"
         ]
       },
@@ -1965,8 +1965,8 @@
         "statuses": {
           "pass": 0,
           "fail": 1170,
-          "compile_error": 186,
-          "compile_timeout": 12,
+          "compile_error": 187,
+          "compile_timeout": 11,
           "skip": 0,
           "total": 1368,
           "host_free_pass": 0
@@ -1977,7 +1977,7 @@
           "host_import_leak": 179,
           "type_error": 156,
           "oob": 5,
-          "other": 10,
+          "other": 11,
           "null_deref": 2,
           "wasm_compile": 1
         },
