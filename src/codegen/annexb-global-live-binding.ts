@@ -42,7 +42,7 @@
 import type { Instr } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import { annexBDeclaringRange, enclosingVarScope, hasInterveningLexicalBinder } from "./annexb-cancel.js";
-import { emitCachedFuncClosureAccess } from "./closures.js";
+import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "./closures.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
 import { localGlobalIdx, nextModuleGlobalIdx } from "./registry/imports.js";
@@ -266,7 +266,11 @@ export function tryCompileAnnexBModuleBlockFnEvaluation(
   }
 
   // benvRec.GetBindingValue(F) → fobj ; genvRec.SetMutableBinding(F, fobj).
-  const closureType = emitCachedFuncClosureAccess(ctx, fctx, name, fnIdx);
+  const captures = ctx.nestedFuncCaptures.get(name);
+  const closureType =
+    captures && captures.length > 0
+      ? emitFuncRefAsClosure(ctx, fctx, name, fnIdx)
+      : emitCachedFuncClosureAccess(ctx, fctx, name, fnIdx);
   if (closureType === null) return true; // no safe closure — leave the binding untouched
   if (closureType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
   if (ctx.runtimeEvalGlobalFunctionBindings) emitRuntimeEvalAotCallableAdapter(ctx, fctx);

@@ -174,6 +174,12 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-10-06 — slice V5 (captured-binding TDZ; record under "2026-10-06 —
+  # Slice V5"). `index.ts` +3: `preallocateBlockScopedSlots` stops skipping a
+  # block that hoists a function declaration when the frame is `__module_init`
+  # (no function-entry pre-hoist exists there) and re-installs the pre-hoisted
+  # slots otherwise. `expressions/assignment.ts` +2: the SetMutableBinding TDZ
+  # guard on the boxed-capture write arm. Both paths already listed below.
   # 2026-10-06 — slice V1 (trapless Proxy forwarding; record under
   # "2026-10-06 — Slice V1"). `object-runtime-proxy.ts` +2: the import and the
   # one-line call of `installProxyForwardArms`; the arms themselves live in the
@@ -1248,6 +1254,11 @@ loc-budget-allow:
   # `promise-subclass-cell-read.ts`; the hand-off cannot move, because it is the
   # arm that would otherwise emit the bare `global.get` of the cell.
 func-budget-allow:
+  # 2026-10-06 — slice V5 (see the loc-budget note): `compileAssignment` +2 (the
+  # TDZ guard on the boxed-capture write) and `planClosureCaptures` +2 (skip the
+  # #1177 by-name slot rescan for a name no reference binds).
+  - src/codegen/expressions/assignment.ts::compileAssignment
+  - src/codegen/closures/arrow-phases.ts::planClosureCaptures
   # 2026-10-06 — slice V1: `ensureProxyRuntime` +1, the one-line call of
   # `installProxyForwardArms` next to `installProxyKeyBagGuards` (key already listed below).
   # 2026-10-05 — uncovered slice U2 (see the loc-budget note): one-line calls
@@ -3234,6 +3245,59 @@ gOPD rows):** base 19 pass / 22 non-pass, branch 24 / 17, **0 lost**.
   → `setPrototypeOf/trap-is-undefined`.
 - #3031's `apply/*` (illegal cast / null deref in the apply forward) and #3371's
   `construct/*` CEs are untouched.
+
+### 2026-10-06 — Slice V5
+
+TDZ for closure-captured block `let`/`const` (H5 of the 2026-10-06 re-census),
+on `10f601e26e`. **4/4 target rows flip** (`{let,const}/block-local-closure-get-
+before-initialization`, `let/block-local-closure-set-before-initialization`,
+`block-scope/leave/outermost-binding-updated-in-catch-block-nested-block-let-
+declaration-unseen-outside-of-block`), measured base vs branch with
+`JS2WASM_EVAL_ENGINE=quickjs … run-test262-paths.mts --standalone`.
+
+**The spec's mechanism (a `$__tdz` sentinel inside the value cell) was not
+needed — the codebase already has a captured-TDZ mechanism**: an i32 flag per
+binding, boxed in a `__ref_cell_i32` when captured (#1177/#1205), checked by
+`emitLocalTdzCheck` in the callee. The rows failed because four places
+bypassed it, none of them a missing state:
+
+1. **Script-scope blocks never allocated their bindings when the block also
+   hoists a function** (`preallocateBlockScopedSlots`, #5271 step 5). In a
+   function that skip is covered by the function-entry pre-hoist; `__module_init`
+   has none, so the block function captured nothing and read its OWN fresh
+   `undefined` local (`{ function k(){ return w } let w = 5; k() }` returned 0,
+   wrong even outside the TDZ). `__module_init` now allocates as for any block;
+   function frames re-install the pre-hoisted slots + flags at block entry.
+2. **The Annex B B.3.3.2 module-scope evaluation stored a capture-less cached
+   closure** (`tryCompileAnnexBModuleBlockFnEvaluation`) — once 1. gave the
+   function captures, its trampoline received null cells. It now uses
+   `emitFuncRefAsClosure` when the function has captures, as the function-scope
+   twin (`emitAnnexBFunctionClosure`) already did.
+3. **A boxed-capture write had no TDZ guard** (`compileAssignment`): §9.1.1.1.5
+   step 2. The guard is `emitPutValueTargetGuard`, gated on a TDZ flag and on
+   `analyzeTdzAccess` ("skip" when provably initialised — no code in the common
+   case). `emitLocalTdzInit` null-guards the flag box: a call the static TDZ
+   analysis turned into an unconditional throw never reaches the box's tee.
+4. **The #1177 by-name `fctx.locals` rescan resurrected a LEFT block's slot**
+   for a closure whose reference to that name binds nothing (`xx` in the
+   catch-block IIFE read the dead `18`; typeof said "undefined"). The rescan now
+   skips a name no reference in the closure binds (`closureReferencesOnlyUnboundName`).
+
+Not fixed (base fails identically, outside the 4 rows): a block function inside
+a **loop** body at script scope (`for (…) { function m(){ return q } …; let q }`)
+— the per-iteration flag reset at block re-entry is still missing.
+
+**Receipts.** Family `language/statements/{let,const}/**` + `language/block-
+scope/**` (426 rows): base 419 → branch 423, **0 lost** (base matches the
+standalone baseline jsonl exactly). Wide net (annexB/language, eval-code/direct,
+statements/block, function-code; 1,369 rows): the first 400 rows (sorted
+`annexB/language/comments` … `annexB/language/eval-code/indirect`) all pass on the branch; the rest was
+still running at commit time (box contention) — see the hand-back. Pin
+`tests/issue-6651-v5-captured-tdz.test.ts` (6 cases; each shape was
+reproduced failing on base with `.tmp` probes before the fix).
+Equivalence gate green (1748 pass, 22 known). Temporal control
+(`Duration/prototype/round/*`, standalone, prewarmed cache): **119 pass / 7 fail of
+126, 0 `illegal cast`** — unchanged.
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 
