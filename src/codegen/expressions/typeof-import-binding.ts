@@ -10,8 +10,8 @@
  * `import buildURL, { encode } from '../../../lib/helpers/buildURL.js'`.
  * Resolve through the alias before deciding.
  */
-import { ts } from "../ts-api.js";
-import type { CodegenContext } from "./context/types.js";
+import { ts } from "../../ts-api.js";
+import type { CodegenContext } from "../context/types.js";
 
 export function typeofOperandIsDeclared(
   ctx: CodegenContext,

@@ -7,7 +7,7 @@ import { ts } from "../ts-api.js";
 import { chainRootIsGrowable, isNumericIndexExpression, runtimeAccessorDescriptorKey } from "./property-access.js";
 import { emitHostEqualityFromStack } from "./coercion-engine.js";
 import { resolveWidenedVarKey } from "./widened-var-key.js";
-import { typeofOperandIsDeclared } from "./typeof-import-binding.js"; // (#6417)
+import { typeofOperandIsDeclared } from "./expressions/typeof-import-binding.js"; // (#6417)
 import { isBooleanType, isStringType, isSymbolType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { reportError } from "./context/errors.js";

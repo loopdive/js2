@@ -23,8 +23,21 @@
  */
 import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
-import { parameterMayBeOmitted } from "../declarations.js";
 import { nativeTypeOfDeclaration } from "../native-type-annotations.js";
+
+/**
+ * `parameterMayBeOmitted` (declarations.ts), restated here so this leaf does
+ * not import declarations.ts and join the codegen import cycle (#6797).
+ */
+function parameterMayBeOmitted(param: ts.ParameterDeclaration): boolean {
+  const jsdocType = ts.getJSDocType(param);
+  return (
+    param.initializer === undefined &&
+    (param.questionToken !== undefined ||
+      (jsdocType !== undefined && ts.isJSDocOptionalType(jsdocType)) ||
+      ts.getJSDocParameterTags(param).some((tag) => tag.isBracketed === true))
+  );
+}
 
 export function storedClosureWidensOmittableParam(ctx: CodegenContext, sym: ts.Symbol | undefined): boolean {
   const decl = sym?.valueDeclaration;

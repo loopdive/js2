@@ -14,9 +14,9 @@
  * Host lane only: on standalone/WASI the callback bridge is native and the i32
  * never crosses a JS boundary.
  */
-import { ts } from "../ts-api.js";
-import type { ValType } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import { ts } from "../../ts-api.js";
+import type { ValType } from "../../ir/types.js";
+import type { CodegenContext } from "../context/types.js";
 
 /** The boolean-branded i32 `coerceType` boxes through `__box_boolean`. */
 export const BOOLEAN_I32: ValType = { kind: "i32", boolean: true };

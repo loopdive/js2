@@ -16,7 +16,7 @@ area: compiler
 goal: correctness
 loc-budget-allow:
   # 2026-10-05 (#6417): one-line call sites into the new leaf modules
-  # host-boolean-callback.ts, typeof-import-binding.ts and
+  # closures/host-boolean-callback.ts, expressions/typeof-import-binding.ts and
   # expressions/callable-property-omittable-param.ts; the mechanisms live there.
   - src/codegen/closures.ts
   - src/codegen/context/types.ts
@@ -128,7 +128,7 @@ two-file fixture:
 
 Mechanisms for A–E (one PR, five small leaf changes):
 
-- **A** `src/codegen/typeof-import-binding.ts::typeofOperandIsDeclared` resolves an
+- **A** `src/codegen/expressions/typeof-import-binding.ts::typeofOperandIsDeclared` resolves an
   `Alias` symbol through `ctx.oracle.aliasedValueDeclarationOf`; both
   `compileTypeofExpression` and `compileTypeofComparison` use it in place of
   `!!sym?.valueDeclaration`.
@@ -141,7 +141,7 @@ Mechanisms for A–E (one PR, five small leaf changes):
 - **D** `src/runtime/date-host-method.ts::hostArgsWithDates` marshals Date
   carrier ARGUMENTS of `__extern_method_call` as their host Date view (the
   receiver keeps `tryCallWasmDateHostMethod`).
-- **E** `src/codegen/host-boolean-callback.ts`: host lane only, a callback whose
+- **E** `src/codegen/closures/host-boolean-callback.ts`: host lane only, a callback whose
   TS result is `boolean` declares an `externref` result; `return` operands are
   branded `boolean` (`FunctionContext.hostBooleanReturn`) so `coerceType` boxes
   through `__box_boolean`; an expression body boxes the same way.

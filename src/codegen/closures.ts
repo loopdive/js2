@@ -47,7 +47,7 @@ import {
   hostFacingCallbackReturnType,
   resolveCallbackMakerName,
 } from "./callback-ctor-bridge.js"; // (#4394) bridge [[Construct]] parity · (#5375) host-facing result type
-import { BOOLEAN_I32, callbackBodyBoxesBoolean, hostBooleanCallbackResult } from "./host-boolean-callback.js";
+import { BOOLEAN_I32, callbackBodyBoxesBoolean, hostBooleanCallbackResult } from "./closures/host-boolean-callback.js";
 import { registerStandaloneDomCallbackDirectClosure } from "./standalone-dom-callback-authority.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
