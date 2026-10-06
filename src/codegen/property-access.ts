@@ -176,6 +176,7 @@ import {
   isWiredTypedArrayViewName,
   emitNativeGlobalThisObject,
   emitGeneratorPrototypeSingleton,
+  demandArrayProtoDynamicCompanion, // (#6651 V10b)
 } from "./array-object-proto.js";
 import { isBuiltinSubtype, isBuiltinTypeName } from "./builtin-tags.js";
 import {
@@ -6574,6 +6575,21 @@ export function compileElementAccessBody(
     // `toString() { return 0; }`) still reach the vec element, while ordinary
     // names use the expando/prototype lookup (`S15.4_A1.1_T9`). Constant
     // numeric-looking names have already taken the dedicated bag route above.
+    // (#6651 V10b) Standalone `<vec>[Symbol.iterator]` is an inherited (or, on
+    // `arguments`, own) PROPERTY read, never an index: `Symbol.iterator` lowers
+    // to its i32 well-known id, so `arguments[Symbol.iterator]` read element 1.
+    if (
+      noJsHost(ctx) &&
+      isSymbolIteratorKey(expr.argumentExpression) &&
+      elementAccessTypedArrayName(ctx, expr.expression) === undefined &&
+      !isRegexMatchVec
+    ) {
+      demandArrayProtoDynamicCompanion(ctx);
+      const dynamic = emitDynamicVecElementGet(ctx, fctx, objType, expr.argumentExpression, (e, h) =>
+        compileExpression(ctx, fctx, e, h),
+      );
+      if (dynamic) return dynamic;
+    }
     if (
       elementAccessTypedArrayName(ctx, expr.expression) === undefined &&
       !(ts.isIdentifier(expr.expression) && expr.expression.text === "arguments") &&

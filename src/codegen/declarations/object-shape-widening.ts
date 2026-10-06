@@ -23,6 +23,7 @@ import {
   bindingUsesOnlyIrPlannedOpenObjectOperations,
 } from "./dynamic-with-shape.js";
 import { collectRedeclarationWidenedModuleVarNames } from "./redeclared-var-widening.js";
+import { collectAssignedShapeDivergentObjects } from "./assigned-shape-divergent-objects.js"; // (#6651 V10c)
 import { sourceContainsWithStatement } from "../source-scan-predicates.js"; // (#5313)
 import {
   isReflectiveWriterCallArg,
@@ -1276,6 +1277,9 @@ export function collectGrowableObjectLiterals(
   collectRepeatedOrdinaryToPrimitiveObjects(ctx, checker, sourceFile);
   collectRedeclaredObjectIdentityLiterals(ctx, checker, sourceFile);
   collectRedeclaredShapeDivergentObjects(ctx, checker, sourceFile); // (#5270 step 3, cluster M)
+  collectAssignedShapeDivergentObjects(ctx, sourceFile, isModuleScopedDeclaration, (d) =>
+    recordOpenObjectConsumerTypes(ctx, checker, d, (d.name as ts.Identifier).text),
+  );
   collectRedeclaredWithTargetObjects(ctx, checker, sourceFile);
   // Emergency rollback for the closed-outer-table refinement below. Keeping
   // this narrow switch makes the performance claim directly A/B measurable:

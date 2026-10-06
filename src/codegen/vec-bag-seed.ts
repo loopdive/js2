@@ -434,6 +434,29 @@ export interface VecDeleteDeps {
  * is the same explicit split as the seed's accessor exclusion: decide the case,
  * do not pattern-match the neighbouring arm.
  */
+/**
+ * (#6651 V10b) `d.parseIndex`, but a `$Symbol` key answers -1 (never an array
+ * index) instead of trapping in `parseIndex`'s string cast — `delete vec[sym]`
+ * raised `illegal cast`. Verbatim `d.parseIndex` with no `$Symbol` carrier.
+ */
+function parseIndexUnlessSymbol(ctx: CodegenContext, d: VecDeleteDeps, keyLocal: number, idxLocal: number): Instr[] {
+  if (ctx.symbolTypeIdx < 0) return d.parseIndex(keyLocal, idxLocal);
+  return [
+    { op: "local.get", index: keyLocal },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: ctx.symbolTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "i32.const", value: -1 },
+        { op: "local.set", index: idxLocal },
+      ],
+      else: d.parseIndex(keyLocal, idxLocal),
+    },
+  ];
+}
+
 export function buildVecDeletePrologue(ctx: CodegenContext, fn: WasmFunction, d: VecDeleteDeps): void {
   const base = 2 + fn.locals.length;
   const anyLocal = base;
@@ -532,7 +555,7 @@ export function buildVecDeletePrologue(ctx: CodegenContext, fn: WasmFunction, d:
         // `configurable` gate above, so a sealed/frozen arguments object still
         // refuses. `[]` for any module with no branded arguments object.
         ...buildArgumentsLengthDeleteArm(ctx, 0, keyLocal),
-        ...d.parseIndex(keyLocal, indexLocal),
+        ...parseIndexUnlessSymbol(ctx, d, keyLocal, indexLocal),
         { op: "local.get", index: indexLocal },
         { op: "i32.const", value: 0 },
         { op: "i32.lt_s" },
