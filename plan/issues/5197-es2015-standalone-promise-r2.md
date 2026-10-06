@@ -3399,3 +3399,69 @@ native result,terminal and verdict. Refuse symlinks and unexplained inventory
 changes. The scoped pass permits preparation of a new B69 collection epoch,
 not a full baseline execution or equality claim. Parent review and publication
 of the source/evidence checkpoint remain pending.
+
+### 2026-10-06 queue-drain ownership and blocker refresh
+
+Read-only Sol6.1/medium sidecar verified PR5784 head
+`5aa3d8f85743bbedad1c6872b9dfd1918f97dacd`. Parent independently refreshed
+GitHub: OPEN,CONFLICTING/DIRTY,HOLD,no auto-merge request. No ownership transfer,
+conflict repair, source edit, test run or queue action was performed.
+
+At that head, src/codegen/index.ts4949-4952 keeps the standalone externref
+sharedVecIdx open in finalizeLeafStructTypes, introduced by5086736c37bd96f34e6dd69fdee4ac1fad18dfcf.
+Presence of this hunk is not evidence that the whole PR is ready. The sidecar
+found green quality/smoke/eight equivalence shards, but the Test262 verdict log
+said no js-host shard artifacts were available to diff; that green verdict is
+not a fresh conformance comparison.
+
+Merge-group run34303910910 at mergedSHA01cdf5927cf102bbe2489feb3acd41e7876f2441
+records28 regressions and5 improvements across48735 tests. This verifies the
+historical park, not those failures at the current head. Retain that evidence
+and the acquisition repair's narrower limitations above. Runtime v8x PR2 now
+identifies draft compiler PR6468 as its companion; no current paired-artifact
+certification for5784 was established by this audit.
+
+The source-head issue still assigns ttraenkler/codex-v8x-js2wasm and records a
+September10 user-requested pause; later October4 publication demonstrates
+continued involvement but not current repair activity or release of ownership.
+Next integration work requires ownership coordination, preservation of the
+current source intent while resolving conflicts, then fresh nonempty required
+evidence for the resulting merge candidate. Do not adopt or clear HOLD from an
+old handoff, the vector hunk alone, or a stub-green Test262 result.
+
+Publication note: the first push of these results stopped at the oracle ratchet.
+Adding this handoff to4376 activated that old issue's existing index.ts checker
+allowance,excluding the removal side of the already reviewed initializer query
+relocation. This new handoff is therefore recorded here instead;4376 is restored
+to its pre-note bytes. No allowance,ratchet,baseline or compiler source changes
+are introduced. Normal publication checks must pass on the corrected change-set.
+
+### Repaired B69 collection epoch: parent preparation specification
+
+Prepare,do not execute,a B-only successor to reviewed runner32668aca. Keep its
+69 common files,18 absent candidate-only files,native identity retention before
+success checks,raw error rejection,zero-execution pattern,resource controls and
+before/after A+B physical map checks unchanged. Original A remains7735 inputs;
+new B is7740,exactly the six reviewed changes beyond old7737. Use CzL1Nu's
+after-map as the reviewed new B map after independently confirming its equality
+to before-map and all physical hashes. Freeze six source pins and both focused
+terminals (first failed,current successful) in an additional epoch authority.
+Keep the old integration verification/old map as historical authorities; never
+rewrite their counts or historical assertions as if they described the new epoch.
+
+The prior A terminal is61a46526 and binds old runner32668aca,not this new runner's
+self hash. Authenticate its exact original bytes and its recorded old runner
+hash explicitly; do not rerun A or rewrite its failed outcome. The new runner
+must refuse any arm except B, require its own self hash and a parent execution
+release, and produce a fresh distinct directory with every partial/error record
+retained. Do not assume a repaired denominator or relabel skipped collection
+identities as passes. Keep accepted=false and require separate parent review
+before any test execution or further repair. New102 controls are outside the
+original69 common files and must remain separately accounted,not substituted.
+
+Erdos,gpt-6.1-sol/medium,may prepare only uniquely named files under the docs
+worktree.tmp directory on codex/5748-main7443-integration-20260927. A,B,E and
+all tracked files are read-only for this task. Avicenna separately owns the
+custody packager in B.tmp. No tests,compiler,collections,Git mutations or source
+edits. Return complete runner/delta,epoch authority and source-only checks for
+parent review. No execution before the publication push releases the heavy slot.
