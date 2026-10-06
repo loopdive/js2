@@ -2,10 +2,11 @@
   "id": "3525",
   "slice": "source-map-data-tests-20261006",
   "assignee": "ttraenkler/codex-3525-source-map-data-tests-20261006",
-  "requested_by": "ttraenkler/codex-3525-source-map-data-tests-20261006",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3525-source-map-data-tests-20261006",
   "claimed_at": "2026-10-05T22:48:27Z",
-  "updated_at": "2026-10-05T22:48:27Z",
-  "write_id": "43603-6u54shkz"
+  "updated_at": "2026-10-06T05:59:39Z",
+  "write_id": "37066-j7bi2ubu",
+  "released_at": "2026-10-06T05:59:39Z"
 }
