@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { Instr } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
-import { demandStringWrapperDynamicLength, stringWrapperLengthArm } from "./string-wrapper-dynamic-length.js";
+import type { Instr } from "../../ir/types.js";
+import type { CodegenContext } from "../context/types.js";
+import { demandStringWrapperDynamicLength, stringWrapperLengthArm } from "../string-wrapper-dynamic-length.js";
 
 /**
  * (#6875) Prepend a native-string RECEIVER arm onto the finalized

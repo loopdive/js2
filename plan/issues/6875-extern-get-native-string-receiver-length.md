@@ -24,7 +24,7 @@ coercion-sites-allow:
   # 2026-10-06 (#6875): the arm classifies the KEY with the same three helpers
   # the string-exotic wrapper arm and the vec numeric-key arm already use
   # (canonical-numeric-string test, boxed-number unbox); no new ToNumber matrix.
-  - src/codegen/extern-get-string-receiver.ts
+  - src/codegen/object-model/extern-get-string-receiver.ts
 func-budget-allow:
   # 2026-10-06 (#6875): +1 line each, the finalize call in both module builders.
   - src/codegen/index.ts::generateModule
