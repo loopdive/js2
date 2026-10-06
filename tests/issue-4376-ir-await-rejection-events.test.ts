@@ -1,5 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { expect, it } from "vitest";
+import {
+  buildPromiseRejectionEvent,
+  buildPromiseReactionHandled,
+} from "../src/runtime/wasmgc/promise/rejection-event-bodies.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { IrFunctionBuilder } from "../src/ir/builder.js";
 import { WasmGcEmitter } from "../src/ir/backend/wasmgc-emitter.js";
@@ -30,7 +34,7 @@ it.each([
   const fn = builder.finish();
   if (operation === "async.throw") {
     for (const block of fn.blocks)
-      block.instrs = block.instrs.map((instruction) =>
+      (block as { instrs: typeof block.instrs }).instrs = block.instrs.map((instruction) =>
         instruction.kind === "await"
           ? {
               kind: "async.throw",
@@ -51,6 +55,7 @@ it.each([
     resolvePromiseType: () => 0,
     nativePromiseCarrierActive: () => true,
     resolvePromiseRejectionDispatcher: () => (enabled ? 0 : undefined),
+    ...(enabled ? { buildPromiseRejectionEvent, buildPromiseReactionHandled } : {}),
   };
   const lowered = lowerIrFunctionBody(
     fn,
@@ -104,7 +109,7 @@ it.each([
     { name: "rejected", desc: { kind: "func", index: 2 } },
   );
   const events: unknown[][] = [];
-  const wasm = new WebAssembly.Instance(new WebAssembly.Module(emitBinary(module)), {
+  const wasm = new WebAssembly.Instance(new WebAssembly.Module(new Uint8Array(emitBinary(module))), {
     events: { record: (...args: unknown[]) => events.push(args) },
   });
   const e = wasm.exports as unknown as { consume(value: unknown): unknown; rejected(value: unknown): unknown };

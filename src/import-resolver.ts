@@ -829,16 +829,27 @@ function buildPreprocessPositionMap(
  * will fire fully once #1382 lands.
  */
 const TIMER_SHIM_FNS = ["setTimeout", "setInterval", "clearTimeout", "clearInterval"] as const;
+/**
+ * (#4526) Node's check-phase timers. A bare `setImmediate(cb)` call is lowered
+ * like the `setTimeout` wrapper: a zero-delay macrotask on the same
+ * callback-aware timeout capability (extra arguments are not forwarded, as for
+ * the setTimeout wrapper). Without it the raw ambient lookup reports
+ * `setImmediate is not defined` even on a Node host.
+ */
+const IMMEDIATE_SHIM_FNS = ["setImmediate", "clearImmediate"] as const;
 
 /** #6479 — every token that can make {@link injectTimerShimOnly} emit anything. */
-const TIMER_SURFACE_RE = /setTimeout|setInterval|clearTimeout|clearInterval|queueMicrotask/;
+const TIMER_SURFACE_RE = /setTimeout|setInterval|clearTimeout|clearInterval|queueMicrotask|setImmediate|clearImmediate/;
 
 function detectTimerCallSites(sf: ts.SourceFile): Set<string> {
   const found = new Set<string>();
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
       const name = node.expression.text;
-      if ((TIMER_SHIM_FNS as readonly string[]).includes(name)) {
+      if (
+        (TIMER_SHIM_FNS as readonly string[]).includes(name) ||
+        (IMMEDIATE_SHIM_FNS as readonly string[]).includes(name)
+      ) {
         found.add(name);
       }
     }
@@ -872,6 +883,18 @@ function buildTimerShim(used: Set<string>, definedNames: Set<string>): string {
       lines.push(`function ${name}(cb: () => void, ms: number): number { return ${hostName}(cb, ms); }`);
     }
   }
+  // (#4526) Immediates reuse the timeout capability; declare it at most once.
+  const declareOnce = (declaration: string): void => {
+    if (!lines.includes(declaration)) lines.push(declaration);
+  };
+  if (used.has("setImmediate") && !definedNames.has("setImmediate")) {
+    declareOnce("declare function __timer_set_timeout(cb: any, ms: any): any;");
+    lines.push("function setImmediate(cb: () => void): any { return __timer_set_timeout(cb, 0); }");
+  }
+  if (used.has("clearImmediate") && !definedNames.has("clearImmediate")) {
+    declareOnce("declare function __timer_clear_timeout(h: any): void;");
+    lines.push("function clearImmediate(h: any): void { __timer_clear_timeout(h); }");
+  }
   if (lines.length === 0) return "";
   return `// #1501 timer host-import shim (auto-injected)\n${lines.join("\n")}\n`;
 }
@@ -895,11 +918,10 @@ export function injectTimerShimOnly(source: string, opts?: { host?: boolean; pre
   //     is an *identifier* whose text is one of TIMER_SHIM_FNS, so the source
   //     must contain that exact token;
   //   - `queueUsed` is `source.includes("queueMicrotask")` outright.
-  // `setImmediate` is deliberately absent: this pass never shims it (it is not
-  // in TIMER_SHIM_FNS), so a file mentioning only `setImmediate` returns the
-  // source unchanged either way. Member forms (`globalThis.setTimeout(…)`) are
-  // not matched by the scan at all, but they do contain the token, so they
-  // still take the parse path and get the same (identity) result.
+  //   - (#4526) the same holds for `setImmediate`/`clearImmediate`.
+  // Member forms (`globalThis.setTimeout(…)`) are not matched by the scan at
+  // all, but they do contain the token, so they still take the parse path and
+  // get the same (identity) result.
   if (opts?.prefilter !== false && !TIMER_SURFACE_RE.test(source)) return source;
   const sf = ts.createSourceFile("__timer_shim__.ts", source, ts.ScriptTarget.Latest, true);
   const used = detectTimerCallSites(sf);
@@ -943,6 +965,8 @@ const TIMER_FUNCTION_ROLES: Readonly<Record<string, string>> = {
   setInterval: "set-interval",
   clearTimeout: "clear-timeout",
   clearInterval: "clear-interval",
+  setImmediate: "set-immediate",
+  clearImmediate: "clear-immediate",
 };
 
 export function preprocessImports(source: string, opts?: { wasi?: boolean }): PreprocessResult {

@@ -30,9 +30,9 @@ import { allocLocal } from "./context/locals.js";
 import { addFuncType, getOrRegisterArrayType } from "./registry/types.js";
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
-import { exportPromiseHandlerBoundary } from "./promise-handler-boundary.js";
-import { exportOneMicrotaskDrain } from "./microtask-drain-boundary.js";
-import { registerMicrotaskNotification } from "./microtask-notification.js";
+import { exportPromiseHandlerBoundary } from "./registry/promise-handler-boundary.js";
+import { exportOneMicrotaskDrain } from "./registry/microtask-drain-boundary.js";
+import { registerMicrotaskNotification } from "./registry/microtask-notification.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stable handles never shift
 // (#3125) Thenable-assimilation helpers use the physical wrapper registry and
@@ -62,7 +62,7 @@ import {
   buildPromiseRejectionEvent,
   buildPromiseReactionHandled,
 } from "../runtime/wasmgc/promise/rejection-event-bodies.js";
-import { promiseRejectionDispatcher } from "./promise-rejection-dispatch.js";
+import { promiseRejectionDispatcher } from "./registry/promise-rejection-dispatch.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { tryEmitObservablePromiseFinally } from "./promise-finally-invoke.js"; // (#6651 D7)
 import {
@@ -107,6 +107,19 @@ import {
   buildDrainBody,
   type PreparedNativeMicrotaskReservations,
 } from "../runtime/wasmgc/async/microtask-queue-bodies.js";
+
+/** Bind native rejection emission without resolving the dispatcher eagerly. */
+export function createPromiseRejectionEmissionBindings(ctx: CodegenContext): {
+  resolvePromiseRejectionDispatcher: () => ReturnType<typeof promiseRejectionDispatcher>;
+  buildPromiseRejectionEvent: typeof buildPromiseRejectionEvent;
+  buildPromiseReactionHandled: typeof buildPromiseReactionHandled;
+} {
+  return {
+    resolvePromiseRejectionDispatcher: () => promiseRejectionDispatcher(ctx),
+    buildPromiseRejectionEvent,
+    buildPromiseReactionHandled,
+  };
+}
 
 const DENO_PROMISE_HOOK_DISPATCH = "__v8x_dispatch_promise_hook";
 

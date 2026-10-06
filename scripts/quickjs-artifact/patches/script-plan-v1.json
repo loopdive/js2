@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "upstreamCommit": "954dc53628e36891f93c359aa60895c2ae3dac6b",
+  "patchSha256": "dd547932d244f7c0f8da28a383fc51d40339acd64df3b7432acc702799c8ffde",
+  "capabilityVersion": 1,
+  "files": {
+    "quickjs.c": {
+      "preimageSha256": "05b6158c96c2d0fd2ceb1090307d7e6a9659c5d286382d64d2fbb7da94f92766",
+      "postimageSha256": "5a7f33e3eb5daa6d3ba8f6ef1c2fe74e7de5f657f3e819eefe996fdc723c22db"
+    },
+    "quickjs.h": {
+      "preimageSha256": "686bd55ccdd5e2195a4920d790e4c324473ce54385d49debcfb2c618ff2a7cbc",
+      "postimageSha256": "aed890483f6a66dfd1f07914023696aa263a56f3becfafcfee83a6de02e67ba6"
+    }
+  }
+}

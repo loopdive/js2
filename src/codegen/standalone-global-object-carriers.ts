@@ -89,6 +89,28 @@ const STANDALONE_GLOBAL_CONSTRUCTOR_NAMES = [
  */
 const STANDALONE_GLOBAL_EVAL_SAFE_CONSTRUCTOR_NAMES = ["Symbol", "ArrayBuffer", "DataView", "Promise"] as const;
 
+/**
+ * (#6651 U1) Names from the gated list that are ALSO seeded in a runtime-eval
+ * module. None is `%Function%` or reachable from its carrier, and each already
+ * resolves to its `__builtin_ctor_<Name>` singleton through a bare read; the
+ * gate only left `$262.createRealm().global.<Name>` `undefined` in every
+ * test262 module (all are eval modules), hiding the `proto-from-ctor-realm`
+ * rows behind an early TypeError (lane S1, 2026-09-26: 23 rows unblocked, 0
+ * status changes). Appended after the four above, so a non-eval module's seed
+ * order — and bytes — are unchanged.
+ */
+const STANDALONE_GLOBAL_EVAL_MODULE_EXTRA_NAMES = [
+  "String",
+  "Boolean",
+  "Number",
+  "Date",
+  "RegExp",
+  "Map",
+  "Set",
+  "WeakMap",
+  "WeakSet",
+] as const;
+
 export function appendStandaloneGlobalConstructorSeeds(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -118,7 +140,7 @@ export function appendStandaloneGlobalConstructorSeeds(
   // during module init.
   const evalModule = (ctx.runtimeEvalBoundaryPlan?.sites.length ?? 0) > 0 && !isRuntimeEvalProviderAbsent(ctx);
   const names: readonly string[] = evalModule
-    ? STANDALONE_GLOBAL_EVAL_SAFE_CONSTRUCTOR_NAMES
+    ? [...STANDALONE_GLOBAL_EVAL_SAFE_CONSTRUCTOR_NAMES, ...STANDALONE_GLOBAL_EVAL_MODULE_EXTRA_NAMES]
     : [...STANDALONE_GLOBAL_CONSTRUCTOR_NAMES, ...STANDALONE_GLOBAL_EVAL_SAFE_CONSTRUCTOR_NAMES];
   for (const name of names) {
     fctx.body.push({ op: "local.get", index: objectLocal });

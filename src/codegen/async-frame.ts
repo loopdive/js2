@@ -1485,6 +1485,23 @@ function collectDerivedPatternParams(decl: ts.FunctionLikeDeclaration, fctx: Fun
     if (type === undefined) continue;
     out.push({ name, type, entryLocalIdx: idx });
   }
+  // (#6859) An ASSIGNED identifier param rides the frame like a derived
+  // binding. Its param field is an immutable snapshot taken at activation, so
+  // `x ||= d; await p; use(x)` read the pre-assignment value after the resume,
+  // and a nested closure's `resolve = r` (hono `createPool`) never reached it at
+  // all. As a spill it is stored at every suspend and restored at every resume,
+  // and one a nested function also references gets the shared cell.
+  if (decl.body !== undefined && decl.asteriskToken === undefined) {
+    const { assigned } = collectNestedRefsAndAssigns(decl.body);
+    for (const parameter of decl.parameters) {
+      if (!ts.isIdentifier(parameter.name)) continue;
+      const name = parameter.name.text;
+      if (!assigned.has(name)) continue;
+      const idx = fctx.localMap.get(name);
+      if (idx === undefined || idx >= fctx.params.length || fctx.boxedCaptures?.has(name)) continue;
+      out.push({ name, type: fctx.params[idx]!.type, entryLocalIdx: idx });
+    }
+  }
   return out;
 }
 

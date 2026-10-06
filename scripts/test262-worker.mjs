@@ -28,11 +28,12 @@ import * as runtimeBundle from "./runtime-bundle.mjs";
 import { buildImports, _resetIteratorRuntimeIntrinsicsForRealmIsolation } from "./runtime-bundle.mjs";
 import { poisonRecycleReason } from "./test262-poison-error.mjs";
 import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "./negative-verdict.mjs";
-import { hasPinnedNamespaceSelfModuleImport } from "./test262-fixture-graph.mjs";
+import { hasPinnedEntryValueSelfImport, hasPinnedNamespaceSelfModuleImport } from "./test262-fixture-graph.mjs";
 // (#3613) ONE renderer, shared with tests/test262-runner.ts. The worker's
 // behaviour is unchanged — these bodies moved here verbatim; it is the LOCAL
 // runner that was missing the tryNativeExnRender step.
 import { safeStringifyThrown, tryNativeExnRender } from "./lib/wasm-exn-render.mjs";
+import { startNativeEvalBoundaryObservation, NATIVE_EVAL_OBSERVATION_FIELD } from "./lib/native-eval-boundary-observation.mjs";
 import { SANDBOX_GLOBAL_NAMES, applySandboxGlobalFunctionAttributes } from "./test262-sandbox-globals.mjs";
 import {
   restoreOwnKeyOrder,
@@ -1249,6 +1250,16 @@ function hasValidatedSelfNamespaceGraph({ selfModuleGraph, originalHarness, entr
   );
 }
 
+function hasValidatedEntrySelfImportGraph({ requiresEntrySelfImportGraph, originalHarness, entryFile, fixtureFiles, source }) {
+  return (
+    requiresEntrySelfImportGraph === true &&
+    originalHarness === true &&
+    isFixtureFileRecord(fixtureFiles) &&
+    Object.keys(fixtureFiles).length === 0 &&
+    hasPinnedEntryValueSelfImport(entryFile, source)
+  );
+}
+
 // #3506 — the 5 resolution-phase paths in this slice import Test262's
 // `ensure-linking-error_FIXTURE.js`, whose deliberate self-import of an
 // unexported binding is reported by TypeScript as TS2459. Requiring that
@@ -1554,9 +1565,8 @@ async function doCompile(
     }
 
     // Preserve the literal FYI entry as its own Module and link the pinned
-    // fixture sources beside it. Like the project runner's #2932 path, the
-    // graph deliberately omits deferTopLevelInit: compileMulti synthesizes
-    // one init schedule for the entire graph, including circular exports.
+    // fixture sources beside it. The existing deferOpt wires runtime exports
+    // before the graph's single initializer, including circular/self imports.
     return compileMultipleSources({ ...fixtureFiles, [entryFile]: source }, entryFile, {
       // #3506 — every virtual root is a real pinned `.js` file. With
       // `allowJs:false`, TypeScript excludes the graph before syntax checking
@@ -1749,17 +1759,36 @@ async function doCompile(
  * import the one implementation in scripts/lib/wasm-exn-render.mjs.
  */
 
-function extractWasmExceptionMessage(err, instance) {
+let currentNativeEvalBoundaryObservation = null;
+
+function extractWasmExceptionMessage(err, instance, observation = currentNativeEvalBoundaryObservation?.reader("negative-match")) {
+  observation?.("consumer-instance", Boolean(instance));
   if (err instanceof WebAssembly.Exception) {
+    observation?.("exception-kind", "wasm");
     let payload = null;
     if (instance) {
+      let extractionStage = "tag-read";
       try {
-        const tag = instance.exports.__exn_tag ?? instance.exports.__tag;
-        if (tag) payload = err.getArg(tag, 0);
-      } catch {}
+        const exnTag = instance.exports.__exn_tag;
+        const tag = exnTag ?? instance.exports.__tag;
+        observation?.("consumer-tag", tag ? (exnTag != null ? "__exn_tag" : "__tag") : "no-tag");
+        if (tag) {
+          extractionStage = "getArg";
+          payload = err.getArg(tag, 0);
+          observation?.("extraction", "success");
+          observation?.("payload-category", payload === null ? "null" : typeof payload);
+        }
+      } catch {
+        observation?.("extraction", extractionStage === "getArg" ? "failed" : "tag-read-failed");
+      }
+    } else {
+      observation?.("consumer-tag", "no-instance");
     }
     if (payload instanceof Error) {
-      return payload.message ?? safeStringifyThrown(payload);
+      const text = payload.message ?? safeStringifyThrown(payload);
+      observation?.("text-route", "payload-Error");
+      observation?.("reader-text", text);
+      return text;
     }
     if (payload != null) {
       // (#2962) A host-opaque GC payload renders through the module's own
@@ -1768,27 +1797,50 @@ function extractWasmExceptionMessage(err, instance) {
       const t = typeof payload;
       if (t === "object" || t === "function") {
         const native = tryNativeExnRender(instance, payload);
+        observation?.("consumer-native", native);
         // (#6723 D4) The consumer renders a PROVIDER-minted `Test262Error`
         // (a provider fnctor instance) as the generic "[object Object]": its
         // `toString` lives on the provider's prototype. Treat that answer as
         // "not mine" when a linked peer can do better.
-        if (native != null && (native !== "[object Object]" || currentLinkedPeers.length === 0)) return native;
+        if (native != null && (native !== "[object Object]" || currentLinkedPeers.length === 0)) {
+          observation?.("text-route", "consumer-native");
+          observation?.("reader-text", native);
+          return native;
+        }
         // (#6723) A STANDALONE linked row: the payload may be minted by the
         // harness provider (a `Test262Error` thrown by `assert.*`), whose GC
         // layout only the provider's own `__exn_render_*` exports can read.
         let generic = native;
+        let peerOrdinal = 0;
         for (const peer of currentLinkedPeers) {
           const viaPeer = tryNativeExnRender({ exports: peer }, payload);
-          if (viaPeer != null && viaPeer !== "[object Object]") return viaPeer;
+          observation?.("linked-peer-ordinal", ++peerOrdinal);
+          observation?.("linked-peer-native", viaPeer);
+          if (viaPeer != null && viaPeer !== "[object Object]") {
+            observation?.("text-route", "linked-peer-native");
+            observation?.("reader-text", viaPeer);
+            return viaPeer;
+          }
           generic ??= viaPeer;
         }
-        if (generic != null) return generic;
+        if (generic != null) {
+          observation?.("text-route", "generic-native");
+          observation?.("reader-text", generic);
+          return generic;
+        }
       }
-      return safeStringifyThrown(payload);
+      const text = safeStringifyThrown(payload);
+      observation?.("text-route", "payload-safe-stringification");
+      observation?.("reader-text", text);
+      return text;
     }
-    return instance ? "TypeError (null/undefined access)" : "wasm exception during module init";
+    const text = instance ? "TypeError (null/undefined access)" : "wasm exception during module init";
+    observation?.("text-route", "wasm-nullish-label");
+    observation?.("reader-text", text);
+    return text;
   }
   if (err instanceof Error) {
+    observation?.("exception-kind", "host-Error");
     let info = err.message ?? String(err);
     const stack = err.stack ?? "";
     if (/illegal cast|null|unreachable|out of bounds/.test(info)) {
@@ -1811,9 +1863,15 @@ function extractWasmExceptionMessage(err, instance) {
         info += "]";
       }
     }
+    observation?.("text-route", "host-Error");
+    observation?.("reader-text", info);
     return info;
   }
-  return safeStringifyThrown(err);
+  observation?.("exception-kind", "non-wasm");
+  const text = safeStringifyThrown(err);
+  observation?.("text-route", "non-wasm-fallback");
+  observation?.("reader-text", text);
+  return text;
 }
 
 /**
@@ -2057,6 +2115,7 @@ async function buildInvalidBinaryError(source, sourceMapUrl, result, target) {
 }
 
 process.on("message", async (msg) => {
+  currentNativeEvalBoundaryObservation = startNativeEvalBoundaryObservation(msg.source);
   runtimeIntrinsicCanarySnapshot = null;
   currentLinkedFallback = false;
   currentLinkedFallbackReason = undefined;
@@ -2079,7 +2138,16 @@ process.on("message", async (msg) => {
     fixtureFiles: msg.fixtureFiles,
     source,
   });
-  const fixtureGraph = staticFixtureGraph || selfNamespaceGraph;
+  // The new protocol field requests an empty entry graph; the source and
+  // canonical key, rather than a caller-supplied boolean, prove admission.
+  const entrySelfImportGraph = hasValidatedEntrySelfImportGraph({
+    requiresEntrySelfImportGraph: msg.requiresEntrySelfImportGraph,
+    originalHarness,
+    entryFile: msg.entryFile,
+    fixtureFiles: msg.fixtureFiles,
+    source,
+  });
+  const fixtureGraph = staticFixtureGraph || selfNamespaceGraph || entrySelfImportGraph;
   const compileStart = performance.now();
 
   // #3492/#3509/#3494 — Dynamic fixture discovery is transport metadata, not
@@ -2485,7 +2553,7 @@ process.on("message", async (msg) => {
       sendResult({
         id,
         status: "fail",
-        error: extractWasmExceptionMessage(err, null),
+        error: extractWasmExceptionMessage(err, null, currentNativeEvalBoundaryObservation?.reader("instantiate")),
         isException: true,
         instantiateError: true,
         compileMs,
@@ -2527,7 +2595,7 @@ process.on("message", async (msg) => {
         sendResult({
           id,
           status: "fail",
-          error: extractWasmExceptionMessage(initErr, instance),
+          error: extractWasmExceptionMessage(initErr, instance, currentNativeEvalBoundaryObservation?.reader("deferred-module-init")),
           isException: true,
           compileMs,
           execMs,
@@ -2595,7 +2663,7 @@ process.on("message", async (msg) => {
           // "not observed", so it re-buckets as an honest failure.
           const noMarkerError =
             standaloneDrainError != null
-              ? `async continuation threw before completion: ${extractWasmExceptionMessage(standaloneDrainError, instance)}`
+              ? `async continuation threw before completion: ${extractWasmExceptionMessage(standaloneDrainError, instance, currentNativeEvalBoundaryObservation?.reader("async-drain"))}`
               : "async completion marker not observed";
           sendResult({
             id,
@@ -2738,7 +2806,7 @@ process.on("message", async (msg) => {
         return;
       }
 
-      let errInfo = extractWasmExceptionMessage(execErr, instance);
+      let errInfo = extractWasmExceptionMessage(execErr, instance, currentNativeEvalBoundaryObservation?.reader("exported-test"));
 
       // Annotate with source location via source map
       const byteOffset = extractWasmByteOffset(execErr);
@@ -2773,7 +2841,7 @@ process.on("message", async (msg) => {
       sendResult({
         id,
         status: "fail",
-        error: extractWasmExceptionMessage(outerErr, instance ?? null),
+        error: extractWasmExceptionMessage(outerErr, instance ?? null, currentNativeEvalBoundaryObservation?.reader("outer-wasm")),
         isException: true,
         compileMs,
         execMs: performance.now() - execStart,
@@ -3268,6 +3336,9 @@ function noteLinkedFallback(reason) {
 }
 
 function sendResult(payload, forceRecycleReason) {
+  const observation = currentNativeEvalBoundaryObservation?.snapshot();
+  currentNativeEvalBoundaryObservation = null;
+  if (observation) payload = { ...payload, [NATIVE_EVAL_OBSERVATION_FIELD]: observation };
   if (currentLinkedFallback && payload && typeof payload === "object")
     payload = { ...payload, linkedFallback: true, linkedFallbackReason: currentLinkedFallbackReason };
   const cleanup = postCompileCleanup();

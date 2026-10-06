@@ -1,10 +1,11 @@
 ---
 id: 6449
 title: "hono `getSignedCookie` answers `false` for a VALID signature — the eight remaining `cookie.test.ts` parse rows, now that signing itself is correct"
-status: ready
+status: done
 sprint: current
 created: 2026-09-13
-updated: 2026-09-13
+updated: 2026-10-05
+completed: 2026-10-05
 priority: high
 horizon: m
 feasibility: medium
@@ -84,3 +85,23 @@ Instrument the catch (or run the body without it) before assuming.
 Model: **opus**. The swallowing `catch` means the symptom carries no
 information, so the work is in getting the real error out before anything can
 be diagnosed.
+
+## Resolution
+
+AC1 (measured, not inferred): `verifySignature` itself was correct and threw
+nothing — instrumenting its `catch` showed only the native lane's genuine
+`InvalidCharacterError` rows. The `false` came from the CALLER, `parseSigned`:
+its `for (const [key, value] of Object.entries(…))` loop holds guard-clause
+`continue`s and an `await`, which the async CFG for-of region rejected, so the
+function ran on the synchronous pass-through and `isVerified` bound the
+Promise (coerced to `false`). Fixed by
+[#6847](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6847-async-for-of-continue-guard-and-destructured-binding)
+(continue guards, for-of-only bodies, destructured-head TDZ flags across a
+suspension); permanent repro `tests/issue-6847-async-for-of-continue-destructuring.test.ts`
+(the `continueGuards` row is `parseSigned`'s loop, wrong-signature rows
+included). hono `cookie.test.ts` 27/35 → 35/35, including the two rows that
+legitimately expect `false` (AC2 — they answer `false` because verification
+returns `false`). AC5: hono `crypto.test.ts` is a separate defect
+([#6450](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6450-node-crypto-createhash-null-provider),
+then [#6863](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6863-async-two-awaits-in-one-statement)).
+

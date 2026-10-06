@@ -1,32 +1,126 @@
+import { captureDenoPostPositionMainPredecessorPolicySource } from "./helpers/ir-deno-post-position-main-successor.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
+import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
+import { captureSourceMapPositionInventoryPredecessorPolicySource } from "./helpers/ir-source-map-position-inventory-successor.js";
+import { captureMainInventoryPredecessorPolicySource } from "./helpers/ir-main-inventory-source-successor.js";
+import {
+  captureArrayBufferIsViewMainPredecessorPolicy,
+  captureArrayBufferIsViewMainPredecessorPolicySource,
+  captureLoweringAnalysisPredecessorPolicySource,
+  capturePresentationClassificationPredecessorPolicy,
+  capturePresentationClassificationPredecessorPolicySource,
+  captureLoweringAnalysisPredecessorPolicy,
+  captureWasmGcHelperPredecessorPolicy,
+  captureWasmGcHelperPredecessorPolicySource,
+} from "./helpers/ir-runtime-program-policy-evolution.js";
+import {
+  captureProgramValidatorPredecessorPolicy,
+  captureProgramValidatorPredecessorPolicySource,
+} from "./helpers/ir-runtime-program-policy-evolution.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { setImmediate } from "node:timers/promises";
+import { afterEach, describe, expect, it } from "vitest";
 import {
+  captureNestedStackificationPredecessorPolicy,
+  captureNestedStackificationPredecessorPolicySource,
+  captureCanonical489dPredecessorPolicy,
+  beforeCanonical3c6InventoryPolicy,
+  captureCanonical489dPredecessorPolicySource,
+  beforeCanonical3c6InventoryPolicySource,
   authenticateIrRuntimeProgramPolicy,
   authenticateIrRuntimeProgramPolicyEvolution,
   beforeIrRuntimeProgramPolicy,
   beforeWellKnownSymbolPolicy,
+  beforeGeneratorInventoryPolicy,
+  beforeHostCarrierInventoryPolicy,
+  beforeDynamicCodeInventoryPolicy,
+  beforeGeneratorInventoryPolicySource,
+  beforeHostCarrierInventoryPolicySource,
+  beforeDynamicCodeInventoryPolicySource,
+  beforeRuntimePreparationPolicy,
   beforeNumberPrerequisitePolicy,
+  beforeRuntimePreparationPolicySource,
   beforeNumberPrerequisitePolicySource,
   beforeWellKnownSymbolPolicySource,
   irRuntimeProgramPolicyReceiptPath,
   type MutableIrRuntimeProgramPolicy as Policy,
   type IrRuntimeProgramPolicyReceipt as Receipt,
+  beforeCurrentMainInventoryPolicy,
+  beforeCurrentMainInventoryPolicySource,
 } from "./helpers/ir-runtime-program-policy-evolution.js";
 import {
   authenticateIrValidationPolicy,
   beforeIrValidationPolicyActivations,
   historicalIrValidationPolicyView,
 } from "./helpers/ir-validation-policy-evolution.js";
+afterEach(async () => {
+  // Yield between synchronous source proofs so Vitest can process task-update RPCs.
+  await setImmediate();
+});
+import { c1HistoricalArtifactPath, type C1HistoricalLogicalPath } from "./helpers/ir-c1-historical-authority.js";
+
 const read = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const historicalPolicyOperandPaths: readonly string[] = [
+  "tests/issue-3518-runtime-program-relocation.test.ts",
+  "tests/issue-3518-program-data-contract-seam.test.ts",
+  "tests/issue-3518-program-ownership-runtime-seam.test.ts",
+  "tests/issue-3518-program-pre-a-evolution.test.ts",
+  "tests/issue-3518-program-initial-graph-evolution.test.ts",
+  "tests/helpers/ir-runtime-program-policy-evolution.ts",
+];
+const historicalPolicyPhysicalPath = (path: string): string =>
+  historicalPolicyOperandPaths.includes(path) ? c1HistoricalArtifactPath(path as C1HistoricalLogicalPath) : path;
+// Raw physical operand reads let the original mutation assertions inspect corruption before the guard rejects it.
+const readHistoricalPolicyOperand = (path: string): string => read(historicalPolicyPhysicalPath(path));
 const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
 const digest = (value: unknown): string => sha(JSON.stringify(value));
 const receiptText = read(irRuntimeProgramPolicyReceiptPath);
 const receipt = authenticateIrRuntimeProgramPolicyEvolution(receiptText);
 function actual(): Policy {
   const policy = beforeWellKnownSymbolPolicy(
-    beforeNumberPrerequisitePolicy(JSON.parse(read("scripts/compiler-boundaries.json"))),
+    beforeNumberPrerequisitePolicy(
+      beforeRuntimePreparationPolicy(
+        beforeDynamicCodeInventoryPolicy(
+          beforeHostCarrierInventoryPolicy(
+            beforeGeneratorInventoryPolicy(
+              beforeCurrentMainInventoryPolicy(
+                beforeCanonical3c6InventoryPolicy(
+                  captureCanonical489dPredecessorPolicy(
+                    captureNestedStackificationPredecessorPolicy(
+                      captureProgramValidatorPredecessorPolicy(
+                        captureWasmGcHelperPredecessorPolicy(
+                          captureLoweringAnalysisPredecessorPolicy(
+                            capturePresentationClassificationPredecessorPolicy(
+                              captureArrayBufferIsViewMainPredecessorPolicy(
+                                JSON.parse(
+                                  captureMainInventoryPredecessorPolicySource(
+                                    captureSourceMapPositionInventoryPredecessorPolicySource(
+                                      capturePositionClassFieldsMainPredecessorPolicySource(
+                                        capturePositionFinallyMainPredecessorPolicySource(
+                                          captureDenoPostPositionMainPredecessorPolicySource(
+                                            read("scripts/compiler-boundaries.json"),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
   ) as Policy;
   authenticateIrRuntimeProgramPolicy(policy);
   return policy;
@@ -76,7 +170,45 @@ function replay(before: Policy): Policy {
 describe("C1 exact policy inverse and reciprocal B proof", () => {
   it("authenticates WKS-derived C1 raw and complete ordered data with independently fixed populations", () => {
     const raw = beforeWellKnownSymbolPolicySource(
-        beforeNumberPrerequisitePolicySource(read("scripts/compiler-boundaries.json")),
+        beforeNumberPrerequisitePolicySource(
+          beforeRuntimePreparationPolicySource(
+            beforeDynamicCodeInventoryPolicySource(
+              beforeHostCarrierInventoryPolicySource(
+                beforeGeneratorInventoryPolicySource(
+                  beforeCurrentMainInventoryPolicySource(
+                    beforeCanonical3c6InventoryPolicySource(
+                      captureCanonical489dPredecessorPolicySource(
+                        captureNestedStackificationPredecessorPolicySource(
+                          captureProgramValidatorPredecessorPolicySource(
+                            captureWasmGcHelperPredecessorPolicySource(
+                              captureLoweringAnalysisPredecessorPolicySource(
+                                capturePresentationClassificationPredecessorPolicySource(
+                                  captureArrayBufferIsViewMainPredecessorPolicySource(
+                                    captureMainInventoryPredecessorPolicySource(
+                                      captureSourceMapPositionInventoryPredecessorPolicySource(
+                                        capturePositionClassFieldsMainPredecessorPolicySource(
+                                          capturePositionFinallyMainPredecessorPolicySource(
+                                            captureDenoPostPositionMainPredecessorPolicySource(
+                                              read("scripts/compiler-boundaries.json"),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
       p = actual();
     expect(Buffer.byteLength(raw)).toBe(565188);
@@ -109,6 +241,7 @@ describe("C1 exact policy inverse and reciprocal B proof", () => {
     ]);
   });
   it("pins all eighteen unchanged B authority, C1 source proof and reader inputs", () => {
+    const read = readHistoricalPolicyOperand;
     expect(receipt.provenance.immutableInputs).toHaveLength(18);
     for (const pin of receipt.provenance.immutableInputs) {
       const text = read(pin.path);

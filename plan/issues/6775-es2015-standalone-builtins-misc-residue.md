@@ -610,8 +610,9 @@ Branch `issue-6775-es2015-builtins-misc-residue`, merged with `origin/main` @ `a
 Measured with `npx tsx scripts/run-test262-paths.mts <list> --isolate --standalone`, QuickJS
 eval provider rebuilt after every `src/` change (`scripts/build-quickjs-eval-provider.mjs`).
 
-**Rows: base 0/70 → branch 38/70** (run `.tmp/6775/chunk-fin-00.log`, 2026-10-01). The plan's ≥42
-target is not met; every remaining row is listed below with its mechanism.
+**Rows: base 0/70 → branch 37/70** (final run on `a6f393ec`, merged with `origin/main` @ `db906b60`,
+`.tmp/6775/chunk-rr-*.log`). The plan's ≥42 target is not met; every remaining row is listed below
+with its mechanism. (38 before the regression fix below dropped S16's `Function.prototype.name` seed.)
 
 | step | commit | rows gained | what changed |
 | --- | --- | ---: | --- |
@@ -623,7 +624,7 @@ target is not met; every remaining row is listed below with its mechanism.
 | S10 | `f3239487` | 1 | Error-family arms in the identity construct helper; `new C(msg)` for a ctor held in a value |
 | S11 | `f3239487` | 1 | `<target> = yield` statement arm in the native generator planner (works inside try/finally) |
 | S14 | `1b0d2e35` | 1 | `C[Symbol.species]` for `class C extends <species owner>` (new leaf `class-builtin-species-read.ts`) |
-| S16 | `1b0d2e35` | 4 | %Function.prototype% own `name`/`length`; seeder resolves `@@<name>` keys; `@@hasInstance` {c:F}; own-`prototype` getter honoured by @@hasInstance |
+| S16 | `1b0d2e35` | 3 | seeder resolves `@@<name>` keys; `@@hasInstance` {c:F}; own-`prototype` getter honoured by @@hasInstance (the own `name`/`length` seed was reverted — see Controls) |
 | S18 | `1b0d2e35` | 1 | direct `Function.prototype.toString.call(x)` → native §20.2.3.5 body |
 
 Pins: `tests/issue-6775-builtins-misc-residue.test.ts`, 23 cases, all pass on the branch
@@ -649,12 +650,27 @@ TypedArray/prototype/slice, TypedArrayConstructors/ctors/buffer-arg) plus every 
   `Temporal/*/prototype/toJSON/*` ("Temporal is not defined": no Temporal provider in this local
   environment) and `arrow-function/.../arrowparameters-bindingidentifier-no-yield.js`. All 57 fail
   identically on base sources (`.tmp/6775/runbase.sh`, `base-0003.log`) → **0 regressions**.
-- Chunks 01 + 02 (1,190 rows): lost to a container restart, re-running (result appended when done).
+- Chunks 01 + 02 (1,190 rows, re-run after a container restart): 17 non-pass. 13 Temporal `toJSON`
+  rows (same environment cause, identical on base). **4 real regressions** (pass on base, fail on
+  branch), fixed in `fix(#6775): control regressions …`:
+  - `Error/prototype/stack/setter-{no-argument,non-string-value}` passed on base vacuously
+    (`new nativeErrors[i](msg)` was `undefined`, so `set.call(undefined)` threw). S10 made the error
+    real and exposed the setter's missing step 3 ("v is not a String → TypeError"); added.
+  - `GeneratorFunction/instance-{name,length}`: S16 seeded %Function.prototype%'s own `name` ""/
+    `length` 0 into the companion, which every callable's miss walks to, so a provider-created
+    generator function read ""/0. Seed dropped; `Function/prototype/name` returns to the residuals.
+- Final re-run on `a6f393ec` (merged tree): the 70 targets + 615 controls of the directories the fix
+  touched (Error, NativeErrors, Function, GeneratorFunction, AsyncFunction, AsyncGeneratorFunction,
+  plus the `nativeFunctionMatcher` users): 33 non-pass, all target rows → **0 control regressions**.
+- ES5: the ES5 rows of every touched directory are inside the control set (filtered with
+  `classifyEdition` ≤ 2015); no ES5 row regressed. The plan's separate 938-row ES5 pin file
+  (RegExp-heavy) was not re-run as such: RegExp code is untouched by this change-set.
 
-### Residuals (32 rows) — first failing assertion and mechanism
+### Residuals (33 rows) — first failing assertion and mechanism
 
 | rows | mechanism / owner |
 | --- | --- |
+| `Function/prototype/name` | own `name`/`length` on %Function.prototype% cannot live in the companion (every callable's miss walks there and shadows provider-owned functions); needs a receiver-is-the-prototype-itself arm |
 | `Error/prototype/stack/getter-subclass` | dynamic heritage `class extends nativeErrors[i]` — instance is not `$Error_struct` (#6772) |
 | `Error/prototype/stack/getter-foreign-new-target`, `Date/subclassing`, `ArrayBuffer/prototype-from-newtarget` | constructed carrier has no prototype slot (`$Error_struct`, `$__Date`, byte vec); needs a `constructProto` field per carrier — follow-up |
 | `Function/prototype/bind/instance-construct-newtarget-{boundtarget,boundtarget-bound,self-new,self-reflect}` | S15 not done: `new.target` is an i32 class-id, not a value; bound [[Construct]] does not thread NewTarget (design in S15, L-sized) |

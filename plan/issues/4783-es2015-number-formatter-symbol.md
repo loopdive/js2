@@ -1,7 +1,8 @@
 ---
 id: 4783
 title: "ES2015 Number formatter Symbol-argument coercion"
-status: review
+status: done
+completed: 2026-08-27
 created: 2026-08-27
 updated: 2026-08-27
 priority: medium

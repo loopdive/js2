@@ -1,12 +1,16 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
-import { localGlobalIdx } from "../registry/imports.js";
 import { refCellValueType } from "../registry/types.js";
 import { valTypesMatch } from "../shared.js";
 
 /** Read an immutable capture's value, not a promoted sibling's mutable cell. */
-export function promotedCaptureValueInstrs(ctx: CodegenContext, name: string, expected: ValType | undefined): Instr[] {
+export function promotedCaptureValueInstrs(
+  ctx: CodegenContext,
+  name: string,
+  expected: ValType | undefined,
+  localGlobalIdx: typeof import("../registry/imports.js").localGlobalIdx,
+): Instr[] {
   const globalIdx = ctx.capturedGlobals.get(name);
   if (globalIdx === undefined) throw new Error(`Missing promoted capture global: ${name}`);
   const instructions: Instr[] = [{ op: "global.get", index: globalIdx }];

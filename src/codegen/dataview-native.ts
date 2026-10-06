@@ -6346,6 +6346,7 @@ function emitTaDynCtorConstructInline(
         fctx.body.push({ op: "local.get", index: srcVecLocal });
         fctx.body.push({ op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 1 });
         fctx.body.push({ op: "local.set", index: srcDataLocal });
+        emitRefElemArraySnapshot(ctx, fctx, objVecArrTypeIdx, srcDataLocal, dstNLocal); // (#6651 U2)
         emitAllocViewFromN();
         emitCopyLoop((iLocal) => {
           emitTaExternrefElementToF64(ctx, fctx, () => {
@@ -6410,6 +6411,7 @@ function emitTaDynCtorConstructInline(
       fctx.body.push({ op: "local.get", index: srcVecLocal });
       fctx.body.push({ op: "struct.get", typeIdx: vIdx, fieldIdx: 1 });
       fctx.body.push({ op: "local.set", index: srcDataLocal });
+      emitRefElemArraySnapshot(ctx, fctx, srcArrIdx, srcDataLocal, dstNLocal); // (#6651 U2) IteratorToList first
       if (carrierKey === "i8_byte" || carrierKey === "i16_byte") {
         // (#5349 r3) §23.2.5.1.2 step 5: a content-type mismatch between the
         // source TypedArray and the destination is a TypeError. This carrier is
@@ -9884,4 +9886,38 @@ export function emitResizableAbExports(ctx: CodegenContext): void {
     } as any);
     mod.exports.push({ name: "__rab_resize", desc: { kind: "func", index: funcIdx } });
   }
+}
+
+/**
+ * (#6651 U2) §23.2.2.1 step 5 / §23.2.5.1 step 6.a: an iterable source is
+ * drained (IteratorToList) BEFORE the first element's ToNumber. For a source whose elements are
+ * references, that ToNumber can run user code (`valueOf`) that truncates the
+ * source in place (`values.length = 0` clears the backing slots), so the copy
+ * loop must read a snapshot. Primitive-element sources cannot observe the
+ * difference and keep their exact bytes.
+ */
+export function emitRefElemArraySnapshot(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  srcArrIdx: number,
+  srcDataLocal: number,
+  lenLocal: number,
+): void {
+  const arrDef = ctx.mod.types[srcArrIdx];
+  if (!arrDef || arrDef.kind !== "array") return;
+  const elem = arrDef.element;
+  if (elem.kind !== "externref" && elem.kind !== "ref_null") return;
+  const copy = allocLocal(fctx, `__tafrom_snap_${fctx.locals.length}`, { kind: "ref", typeIdx: srcArrIdx });
+  fctx.body.push(
+    { op: "local.get", index: lenLocal },
+    { op: "array.new_default", typeIdx: srcArrIdx },
+    { op: "local.tee", index: copy },
+    { op: "i32.const", value: 0 },
+    { op: "local.get", index: srcDataLocal },
+    { op: "i32.const", value: 0 },
+    { op: "local.get", index: lenLocal },
+    { op: "array.copy", dstTypeIdx: srcArrIdx, srcTypeIdx: srcArrIdx },
+    { op: "local.get", index: copy },
+    { op: "local.set", index: srcDataLocal },
+  );
 }

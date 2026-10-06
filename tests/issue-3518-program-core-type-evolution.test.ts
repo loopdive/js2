@@ -20,10 +20,12 @@ import {
   type ProgramCoreTypeReceipt,
 } from "./helpers/ir-program-core-type-evolution.js";
 
+import { beforeCanonicalInstructionsSource } from "./helpers/ir-c1-current-source.js";
+
 function actual(path: string): string {
   const text = readProgramCoreTypeActual(path);
   if (typeof text !== "string") throw new Error(`missing healthy input: ${path}`);
-  return text;
+  return path === "src/wasm/model/instructions.ts" ? beforeCanonicalInstructionsSource(text) : text;
 }
 const receiptText = actual(programCoreTypeReceiptPath);
 const receipt = authenticateProgramCoreTypeEvolution(receiptText);
@@ -61,7 +63,7 @@ function rejects(code: string, run: () => unknown): void {
   expect((error as ProgramCoreTypeEvolutionError).code).toBe(code);
 }
 function positive(): string {
-  const output = reconstructProgramCoreTypeEvolution();
+  const output = reconstructProgramCoreTypeEvolution(actual);
   expect([...output.keys()]).toEqual([programCoreTypePath]);
   expect(output.size).toBe(1);
   const original = output.get(programCoreTypePath)!;
@@ -164,7 +166,7 @@ describe("authenticated initial program core-type evolution", () => {
     expect(receipt.originalDeclarations).toHaveLength(29);
     assertProgramCoreTypeRoles(current, receipt, "current");
     assertProgramCoreTypeRoles(original, receipt, "original");
-    verifyProgramCoreTypeReciprocal(current, original);
+    verifyProgramCoreTypeReciprocal(current, original, actual);
     const parsed = ts.createSourceFile(programCoreTypePath, original, ts.ScriptTarget.Latest, true);
     expect(parsed.statements.filter(ts.isImportDeclaration)).toHaveLength(5);
     expect(original).toContain("export interface IrVecLayoutRef");
@@ -210,7 +212,7 @@ describe("authenticated initial program core-type evolution", () => {
   });
   it("reads mapped paths afresh and keeps unknown paths raw", () => {
     const original = positive();
-    expect(readBeforeProgramCoreTypeEvolution(programCoreTypePath)).toBe(original);
+    expect(readBeforeProgramCoreTypeEvolution(programCoreTypePath, actual)).toBe(original);
     const rawPath = programCoreTypeInputPaths[6]!,
       raw = actual(rawPath) + "\n// raw unknown-path mutant\n";
     expect(readBeforeProgramCoreTypeEvolution(rawPath, changed(rawPath, raw))).toBe(raw);
@@ -220,14 +222,14 @@ describe("authenticated initial program core-type evolution", () => {
     );
   });
   it("returned map mutations cannot become a successful current input or cached output", () => {
-    const output = reconstructProgramCoreTypeEvolution() as Map<string, string>,
+    const output = reconstructProgramCoreTypeEvolution(actual) as Map<string, string>,
       original = output.get(programCoreTypePath)!;
     output.set(programCoreTypePath, original + "\n// injected later\n");
     expect(positive()).toBe(original);
     rejects("pin", () =>
       reconstructProgramCoreTypeEvolution(changed(programCoreTypePath, output.get(programCoreTypePath))),
     );
-    rejects("pin", () => verifyProgramCoreTypeReciprocal(current, output.get(programCoreTypePath)!));
+    rejects("pin", () => verifyProgramCoreTypeReciprocal(current, output.get(programCoreTypePath)!, actual));
   });
   it("rejects swapped same-offset replay contents and historical body mutants", () => {
     const original = positive(),
@@ -248,14 +250,14 @@ describe("authenticated initial program core-type evolution", () => {
     const reversed = replay(true);
     expect(Buffer.byteLength(reversed)).toBe(Buffer.byteLength(current));
     expect(reversed).not.toBe(current);
-    rejects("pin", () => verifyProgramCoreTypeReciprocal(reversed, original));
+    rejects("pin", () => verifyProgramCoreTypeReciprocal(reversed, original, actual));
     const mutant = replaceOnce(
       original,
       "return tagRefinementEquals(a.tag, b.tag)",
       "return tagRefinementEquals(b.tag, a.tag)",
     );
     expect(mutant).not.toBe(original);
-    rejects("pin", () => verifyProgramCoreTypeReciprocal(current, mutant));
+    rejects("pin", () => verifyProgramCoreTypeReciprocal(current, mutant, actual));
   });
 });
 

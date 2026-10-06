@@ -98,15 +98,17 @@ import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js";
 import { ABRUPT_FIELD, MODE_FIELD } from "./frame-core.js";
 import { walkChildren } from "./walk-instructions.js";
 import { fillForOfIteratorStep } from "./forof-iterator-step.js"; // (#6651 G4)
-import { buildLiveArrayIteratorValue } from "./live-array-iterator-value.js";
+import { buildLiveArrayIteratorValue } from "./array/live-array-iterator-value.js";
 import { buildRuntimeEvalValueUnwrap } from "./runtime-eval-boundary.js"; // (#6651 A9)
 import { RUNTIME_EVAL_IMPORT_MODULE } from "./expressions/runtime-eval-provider.js"; // (#6651 A9)
+import { registerExpressionHelpers } from "./registry/expression-helper-delegates.js";
 
 /** Slice-1 IterRec kind tag for a canonical externref `$Vec`. (#6651 IT3 exports it: `ta-dyn-proto-methods.ts` `struct.new`s a record, and a bare `3` there would desync on a renumber.) */
 export const ITER_KIND_VEC = 3;
 /** Live array-like records, using the same cursor and receiver slots as VEC. */
 export const ITER_KIND_ARRAY_KEYS = 11;
 export const ITER_KIND_ARRAY_ENTRIES = 12;
+const liveArrayIteratorServices = { ITER_KIND_ARRAY_KEYS, ITER_KIND_ARRAY_ENTRIES } as const;
 
 /**
  * (#2038) IterRec kind tag for a USER iterator: a general `{next()}`-protocol
@@ -5294,7 +5296,7 @@ function buildIteratorNextBody(
                       { op: "i32.const", value: 1 },
                       { op: "i32.add" },
                       { op: "struct.set", typeIdx: iterRecTypeIdx, fieldIdx: 2 },
-                      ...buildLiveArrayIteratorValue(strictCtx!, iterRecTypeIdx, liveGetIdx),
+                      ...buildLiveArrayIteratorValue(strictCtx!, iterRecTypeIdx, liveGetIdx, liveArrayIteratorServices),
                     ],
                     else: [
                       { op: "local.get", index: 1 },
@@ -6402,3 +6404,5 @@ function buildIteratorRestVecTail(iterRecTypeIdx: number, vecTypeIdx: number, ar
     { op: "extern.convert_any" },
   ];
 }
+
+registerExpressionHelpers({ ensureNativeArrayFromIterN }); // (#6797) late-bound for the expressions/ leaves

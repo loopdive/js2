@@ -330,6 +330,7 @@ export function reifyCurrentDirectEvalBindings(ctx: CodegenContext, fctx: Functi
   if (!fctx.directEvalActivationBindings) fctx.directEvalActivationBindings = new Map();
 
   for (const name of names) {
+    if (name.startsWith("__js2_")) continue; // (#6774 S5) compiler-synthetic captures ([[HomeObject]]) are not eval bindings
     const localIdx = fctx.localMap.get(name);
     if (localIdx === undefined) continue;
     const existingMetadata = fctx.boxedCaptures.get(name);

@@ -97,6 +97,36 @@ function mintedMethodsByBrand(ctx: CodegenContext): Map<number, string[]> {
 }
 
 /**
+ * (#6770 S5) An UNSEEDED brand's minted intrinsic must not shadow a source
+ * write of the same member: `Boolean.prototype.toString = f` lands in the
+ * companion, but a static `Boolean.prototype.toString` read elsewhere minted
+ * the intrinsic closure, and this arm answered it ahead of the companion —
+ * `true.toString()` / `Reflect.get(Boolean.prototype, "toString")` then ran
+ * the intrinsic. Consult the companion first, only for a member the source
+ * writes on SOME prototype (`protoNamedWrittenMembers`), so every other module
+ * keeps its bytes.
+ */
+function unseededOverrideConsultInstrs(ctx: CodegenContext, member: string, protoGetIdx: number | undefined): Instr[] {
+  const hasIdx = ctx.funcMap.get("__protoidx_has_r");
+  if (protoGetIdx === undefined || hasIdx === undefined || !ctx.protoNamedWrittenMembers.has(member)) return [];
+  return [
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: hasIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: protoGetIdx },
+        { op: "return" },
+      ],
+    },
+  ];
+}
+
+/**
  * Prepend the inherited-builtin-method value arm onto `__extern_get`.
  *
  * MUST run before `unshiftExternGetProtoCacheArm` (which has to stay last) and
@@ -177,7 +207,12 @@ export function unshiftExternGetProtoMethodArm(ctx: CodegenContext): void {
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: [...pushBuiltinFnSingletonValueInstrs(ctx, closure), { op: "extern.convert_any" }, { op: "return" }],
+          then: [
+            ...unseededOverrideConsultInstrs(ctx, member, protoGetIdx),
+            ...pushBuiltinFnSingletonValueInstrs(ctx, closure),
+            { op: "extern.convert_any" },
+            { op: "return" },
+          ],
         },
       );
     }

@@ -2,11 +2,12 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
+import { arrayThenObservable } from "../../src/codegen/promise-species-then.js";
 import ts from "typescript";
 import { expect } from "vitest";
 import { createBuiltinFunctionMetadataType } from "../../src/runtime/wasmgc/values/closure-layouts.js";
 import { buildTargetTaggedTry } from "../../src/wasm/physical/exception-control.js";
-import { promiseRejectionDispatcher } from "../../src/codegen/promise-rejection-dispatch.js";
+import { promiseRejectionDispatcher } from "../../src/codegen/registry/promise-rejection-dispatch.js";
 import {
   buildPromiseResolveValueBody as buildResolutionBody,
   buildNativePromiseResolveValueBody,
@@ -207,6 +208,10 @@ export function classifierFixture(source: string, variant: "full" | "empty" | "n
   const full = variant === "full";
   const calls: string[] = [];
   const ctx = {
+    standalone: true,
+    protoIndexDirty: false,
+    protoNamedWrittenMembers: new Set<string>(),
+    vecTypeMap: new Map<string, number>(),
     promiseThenableReserved: variant !== "unreserved",
     funcMap: new Map([
       ["__promise_has_callable_then", 40],
@@ -228,6 +233,7 @@ export function classifierFixture(source: string, variant: "full" | "empty" | "n
   };
   const roots = full ? [10, 11] : [];
   const bindings = {
+    arrayThenObservable,
     buildPromisePeelValue,
     buildPromiseThenableClassifier,
     buildPromiseThenableLookup,
@@ -406,6 +412,10 @@ export function verifyActualLookupFill(source: string): void {
     openObject: { typeIdx: 13, externGetFuncIdx: 43, thenStringInstrs: [{ op: "global.get", index: 60 }] },
   };
   const ctx = {
+    standalone: true,
+    protoIndexDirty: false,
+    protoNamedWrittenMembers: new Set<string>(),
+    vecTypeMap: new Map<string, number>(),
     promiseThenableReserved: true,
     anyValueTypeIdx: -1,
     funcMap: new Map([
@@ -422,6 +432,7 @@ export function verifyActualLookupFill(source: string): void {
   expect(funcs.get(44)).toBe(lookup);
   expect(lookup.body).toEqual([{ op: "unreachable" }]);
   evaluate(newClosed + "\n" + source, ["fillPromiseThenableHelpers", "finalizePromiseThenableLookup"], {
+    arrayThenObservable,
     buildPromisePeelValue,
     buildPromiseThenableClassifier,
     buildPromiseThenableLookup,
@@ -437,6 +448,103 @@ export function verifyActualLookupFill(source: string): void {
   expect(plain({ locals: predicate.locals, body: predicate.body })).toEqual(
     plain(buildPromiseThenableClassifier(inventory)),
   );
+}
+
+export function requireArrayThenBinding(source: string): void {
+  const file = ts.createSourceFile("driver.ts", source, ts.ScriptTarget.Latest, true);
+  const owners = file.statements.filter(ts.isImportDeclaration).filter((node) => {
+    const bindings = node.importClause?.namedBindings;
+    return (
+      bindings &&
+      ts.isNamedImports(bindings) &&
+      bindings.elements.some((entry) => entry.name.text === "arrayThenObservable")
+    );
+  });
+  expect(owners).toHaveLength(1);
+  const owner = owners[0]!;
+  expect((owner.moduleSpecifier as ts.StringLiteral).text).toBe("./promise-species-then.js");
+  expect(owner.importClause!.isTypeOnly).toBe(false);
+  const bindings = owner.importClause!.namedBindings as ts.NamedImports;
+  const entry = bindings.elements.find((entry) => entry.name.text === "arrayThenObservable")!;
+  expect(entry.isTypeOnly).toBe(false);
+  expect(entry.propertyName).toBeUndefined();
+}
+export function verifyArrayThenFinalization(
+  standalone: boolean,
+  dirty: boolean,
+  named: boolean,
+  getter: boolean,
+): void {
+  requireArrayThenBinding(newClosed);
+  const predicate = { locals: [], body: [] };
+  const vectorMap = new Map([
+    ["second", 22],
+    ["duplicate", 22],
+  ]);
+  const ctx = {
+    standalone,
+    protoIndexDirty: dirty,
+    protoNamedWrittenMembers: new Set(named ? ["then"] : []),
+    vecTypeMap: vectorMap,
+    promiseThenableReserved: true,
+    anyValueTypeIdx: -1,
+    funcMap: new Map([
+      ["__promise_has_callable_then", 40],
+      ["__promise_peel_value", 41],
+      ...(getter ? [["__extern_get", 43] as [string, number]] : []),
+    ]),
+    structMap: new Map(),
+    structAccessorClosure: new Map(),
+    objectRuntimeTypes: { objectTypeIdx: 23 },
+  };
+  const observable = standalone && (dirty || named);
+  let captures = 0;
+  evaluate(newClosed, ["fillPromiseThenableHelpers"], {
+    arrayThenObservable,
+    buildPromisePeelValue,
+    definedFuncAt: () => predicate,
+    collectMethodEntries: () => {
+      vectorMap.set("lateFirst", 21);
+      return [];
+    },
+    collectFieldEntries: () => [],
+    collectClosureBaseWrapperTypeIdxs: () => [24],
+    stringConstantExternrefInstrs: () => [{ op: "global.get", index: 60 }],
+    finalizePromiseThenableLookup: (
+      actualCtx: unknown,
+      actualPredicate: unknown,
+      inventory: PromiseThenableInventory,
+    ) => {
+      captures++;
+      expect(actualCtx).toBe(ctx);
+      expect(actualPredicate).toBe(predicate);
+      expect(plain(inventory.vecTypeIdxs)).toEqual(observable ? [21, 22] : []);
+      const result = plain(buildPromiseThenableLookup(inventory));
+      const tests = result.body.filter((instruction: { op: string }) => instruction.op === "ref.test");
+      expect(tests).toEqual(
+        getter ? [...(observable ? [21, 22] : []), 23].map((typeIdx) => ({ op: "ref.test", typeIdx })) : [],
+      );
+      for (const typeIdx of getter ? [...(observable ? [21, 22] : []), 23] : []) {
+        const index = result.body.findIndex(
+          (instruction: { op: string; typeIdx?: number }) =>
+            instruction.op === "ref.test" && instruction.typeIdx === typeIdx,
+        );
+        const arm = result.body[index + 1].then;
+        expect(arm.slice(0, 4)).toEqual([
+          { op: "local.get", index: 1 },
+          { op: "global.get", index: 60 },
+          { op: "call", funcIdx: 43 },
+          { op: "local.tee", index: 4 },
+        ]);
+        expect(arm[8]).toEqual({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "i32.const", value: 1 }, { op: "local.get", index: 4 }, { op: "return" }],
+        });
+      }
+    },
+  }).fillPromiseThenableHelpers(ctx);
+  expect(captures).toBe(1);
 }
 
 // Hand-authored instruction oracle. Expected instructions never call the builder,

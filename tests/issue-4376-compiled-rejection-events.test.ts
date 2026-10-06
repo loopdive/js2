@@ -2,7 +2,7 @@
 import { expect, it } from "vitest";
 import { compile, compileMulti } from "../src/index.js";
 import { buildPromiseRejectionEvent } from "../src/runtime/wasmgc/promise/rejection-event-bodies.js";
-import { promiseRejectionDispatcher } from "../src/codegen/promise-rejection-dispatch.js";
+import { promiseRejectionDispatcher } from "../src/codegen/registry/promise-rejection-dispatch.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
 
 it.each([

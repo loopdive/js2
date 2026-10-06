@@ -1,3 +1,4 @@
+import { ensureExnTag } from "./registry/imports.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * #3981 — Wasm-native ordinary [[Construct]] for a first-class function VALUE
@@ -72,10 +73,11 @@ import {
   fillBuiltinCollectionDynConstruct,
 } from "./builtin-collection-dyn-construct.js"; // (#6720)
 import { standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js"; // (#5383 S2f R12)
+import { arrayCtorThisCallSeen, objectConstructArm } from "./array/array-ctor-this.js"; // (#6771 S7)
 import { buildOrdinaryConstructCall, unwrapRuntimeEvalCarrierCallee } from "./construct-under-application.js"; // (#6738)
 import { CLASS_CONSTRUCT_DISPATCH, ensureStandaloneClassConstructDispatch } from "./standalone-class-construct.js"; // (#5383 S2g)
 import { RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A, RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B } from "./runtime-eval-boundary.js";
-import { ordinaryConstructTargetFrame } from "./ordinary-new-target.js";
+import { ordinaryConstructTargetFrame } from "./closures/ordinary-new-target.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -431,6 +433,7 @@ function fillArgvConstructDriver(ctx: CodegenContext): void {
       ],
       driverLocals,
       4,
+      ensureExnTag,
     ),
     { op: "local.set", index: resultLocal },
   );
@@ -714,6 +717,7 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
       );
     }
     body.push(...builtinCollectionConstructArm(ctx, arity, resultLocal)); // (#6720) Map/Set carrier VALUE
+    if (arity === 0 && arrayCtorThisCallSeen(ctx)) body.push(...objectConstructArm(ctx)); // (#6771 S7) Construct(Object)
     // (#6612 / #5383 S25) §13.3.5.1 EvaluateNew step 5 — IsConstructor. Every
     // arm above answers for a callee that HAS [[Construct]]; the ordinary tail
     // below runs §10.2.2 unconditionally, so a callee that is callable but NOT
@@ -805,7 +809,7 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
         : []),
       ...(underApplied ? [{ name: "__ctor_declared_arity", type: I32 }] : []),
     ];
-    const ordinaryTargetCall = ordinaryConstructTargetFrame(ctx, ordinaryCall, driverLocals, arity + 2);
+    const ordinaryTargetCall = ordinaryConstructTargetFrame(ctx, ordinaryCall, driverLocals, arity + 2, ensureExnTag);
     if (canApplyRuntimeMarker) {
       const markerBrandsMatch: Instr[] = [
         { op: "local.get", index: 0 },

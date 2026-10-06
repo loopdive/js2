@@ -231,11 +231,15 @@ const PROBES: { name: string; source: string; expect: number }[] = [
  * `null` again here — the trap is removed, the silent no-op is the pre-existing
  * #5316 gap. Node answers `5`. Pinned at the value MEASURED here so the residual
  * is visible rather than forgotten; raise it to node parity in a follow-up.
+ *
+ * (#6770) At node parity now — measured `5` on the #6770 S1–S7 tree (the inline
+ * literal under `Object.preventExtensions` and the `Reflect.defineProperty`
+ * target both ride the open `$Object` there), so the pin asserts node's value.
  */
 const RESIDUAL_PROBES: { name: string; source: string; expect: number | null }[] = [
   {
     name: "vd Reflect.defineProperty accessor over the existing key (node: 5)",
-    expect: null,
+    expect: 5,
     source: `
       const s: any = Object.preventExtensions({ existing: null });
       const r: any = Reflect.defineProperty(s, "existing", { get: function (): any { return 5; } });

@@ -38,6 +38,8 @@ import {
   changeLookupSignature,
   verifyLookupReservation,
   verifyActualLookupFill,
+  requireArrayThenBinding,
+  verifyArrayThenFinalization,
   verifyIndependentLookupBody,
   expectedCaptureDelta,
   expectedLookupReservation,
@@ -207,4 +209,32 @@ describe("Promise resolution exact-base body preservation", () => {
               }
             },
           );
+});
+
+describe("actual array-then preservation instrument dependencies", () => {
+  it("authenticates the live import before missing/type-only/owner/symbol mutants and restoration", () => {
+    requireArrayThenBinding(newClosed);
+    const binding = 'import { arrayThenObservable } from "./promise-species-then.js";';
+    for (const replacement of [
+      "",
+      binding.replace("import {", "import type {"),
+      binding.replace("./promise-species-then.js", "./unrelated.js"),
+      binding.replace("arrayThenObservable }", "unrelated as arrayThenObservable }"),
+      binding.replace("{ arrayThenObservable", "{ type arrayThenObservable"),
+    ]) {
+      expect(() => requireArrayThenBinding(replaceOnce(newClosed, binding, replacement))).toThrow();
+      requireArrayThenBinding(newClosed);
+    }
+  });
+  it.each([
+    [false, true, false],
+    [true, false, false],
+    [true, true, false],
+    [true, false, true],
+  ])(
+    "observes actual predicate mode %j dirty %j named %j with late sorted distinct vectors",
+    (standalone, dirty, named) => {
+      for (const getter of [false, true]) verifyArrayThenFinalization(standalone!, dirty!, named!, getter);
+    },
+  );
 });

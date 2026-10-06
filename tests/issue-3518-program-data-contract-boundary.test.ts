@@ -1,5 +1,22 @@
+import { captureDenoPostPositionMainPredecessorPolicySource } from "./helpers/ir-deno-post-position-main-successor.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
+import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
+import { captureSourceMapPositionInventoryPredecessorPolicySource } from "./helpers/ir-source-map-position-inventory-successor.js";
+import { captureMainInventoryPredecessorPolicy } from "./helpers/ir-main-inventory-source-successor.js";
+import {
+  captureArrayBufferIsViewMainPredecessorPolicy,
+  capturePresentationClassificationPredecessorPolicy,
+  captureLoweringAnalysisPredecessorPolicy,
+  captureWasmGcHelperPredecessorPolicy,
+} from "./helpers/ir-runtime-program-policy-evolution.js";
+import { captureProgramValidatorPredecessorPolicy } from "./helpers/ir-runtime-program-policy-evolution.js";
+import {
+  beforeSourceMapProgramValidatorRelocation,
+  captureSourceMapSchemaSourceEpoch,
+} from "./helpers/ir-program-validator-relocation.js";
 
+import { beforeRuntimePreparationRelocation } from "./helpers/ir-runtime-preparation-relocation.js";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -17,16 +34,22 @@ import {
   reconstructProgramInitialGraph,
 } from "./helpers/ir-program-initial-graph-evolution.js";
 import { programCoreTypePath, reconstructProgramCoreTypeEvolution } from "./helpers/ir-program-core-type-evolution.js";
-import {
-  reconstructRuntimeProgramRelocationSources,
-  runtimeProgramRelocationPairs,
-} from "./helpers/ir-runtime-program-relocation.js";
+import { runtimeProgramRelocationPairs } from "./helpers/ir-runtime-program-relocation.js";
+import { beforeCanonicalInstructionsSource, reconstructC1CurrentSources } from "./helpers/ir-c1-current-source.js";
 import { historicalIrValidationPolicyView } from "./helpers/ir-validation-policy-evolution.js";
 import {
+  captureNestedStackificationPredecessorPolicy,
+  captureCanonical489dPredecessorPolicy,
+  beforeCanonical3c6InventoryPolicy,
+  beforeGeneratorInventoryPolicy,
+  beforeHostCarrierInventoryPolicy,
+  beforeDynamicCodeInventoryPolicy,
+  beforeRuntimePreparationPolicy,
   authenticateNumberPrerequisitePolicy,
   beforeNumberPrerequisitePolicy,
   beforeWellKnownSymbolPolicy,
   beforeIrRuntimeProgramPolicy,
+  beforeCurrentMainInventoryPolicy,
 } from "./helpers/ir-runtime-program-policy-evolution.js";
 
 const repository = resolve(import.meta.dirname, "..");
@@ -131,7 +154,45 @@ const newModules = [
   ...groups["ir-runtime"],
 ];
 const policy = () => {
-  const actual = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
+  const actual = beforeRuntimePreparationPolicy(
+    beforeDynamicCodeInventoryPolicy(
+      beforeHostCarrierInventoryPolicy(
+        beforeGeneratorInventoryPolicy(
+          beforeCurrentMainInventoryPolicy(
+            beforeCanonical3c6InventoryPolicy(
+              captureCanonical489dPredecessorPolicy(
+                captureNestedStackificationPredecessorPolicy(
+                  captureProgramValidatorPredecessorPolicy(
+                    captureWasmGcHelperPredecessorPolicy(
+                      captureLoweringAnalysisPredecessorPolicy(
+                        capturePresentationClassificationPredecessorPolicy(
+                          captureArrayBufferIsViewMainPredecessorPolicy(
+                            captureMainInventoryPredecessorPolicy(
+                              JSON.parse(
+                                captureSourceMapPositionInventoryPredecessorPolicySource(
+                                  capturePositionClassFieldsMainPredecessorPolicySource(
+                                    capturePositionFinallyMainPredecessorPolicySource(
+                                      captureDenoPostPositionMainPredecessorPolicySource(
+                                        readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
   // Authenticate the whole current policy before any bounded historical view.
   authenticateNumberPrerequisitePolicy(actual);
   return actual;
@@ -174,7 +235,29 @@ function fixture(includeOwnership = false) {
   // Fresh complete live inputs are authenticated once for this initial copy.
   // The maps are never used by run/append/put or after mutant injection.
   const rawRead = liveSourceReader(repository);
-  const initialRuntimeSources = reconstructRuntimeContractReceiptSources(rawRead);
+  assertSourceMapValidatorComponent(rawRead);
+  const sourceEpoch = captureSourceMapSchemaSourceEpoch(rawRead);
+  const sourceEpochPaths: readonly string[] = [
+    "src/compiler/define-substitution.ts",
+    "src/ir/core/async-plan.ts",
+    "src/ir/core/nodes.ts",
+    "src/ir/program-codec.ts",
+    "src/ir/program-prepare-ir.ts",
+    "src/ir/program/input-contracts.ts",
+    "src/ir/program/input.ts",
+    "src/ir/program/prepared-contracts.ts",
+    "src/ir/program/validation.ts",
+    "src/position-map.ts",
+    "src/shared/contracts/ir-unit-inventory.ts",
+  ];
+  const historicalDependencyRead = (path: string): string => {
+    const actual = rawRead(path);
+    const source = sourceEpochPaths.includes(path) ? sourceEpoch.before(path, actual) : actual;
+    return path === "src/wasm/model/instructions.ts" ? beforeCanonicalInstructionsSource(source) : source;
+  };
+  const initialRuntimeSources = reconstructRuntimeContractReceiptSources(
+    beforeRuntimePreparationRelocation(beforeProgramValidatorRelocation(rawRead)),
+  );
   const historicalRuntimeRead = (path: string): string => {
     if (!runtimeContractCurrentPaths.includes(path)) return rawRead(path);
     const source = initialRuntimeSources.get(path);
@@ -182,9 +265,9 @@ function fixture(includeOwnership = false) {
     return source;
   };
   const initialIntrinsic = historicalIntrinsicSource(historicalRuntimeRead);
-  const initialC1ProgramSources: ReadonlyMap<string, string> = reconstructRuntimeProgramRelocationSources(rawRead);
+  const initialC1ProgramSources: ReadonlyMap<string, string> = reconstructC1CurrentSources(rawRead);
   const initialPreCProgramRead = (path: string): string => {
-    if (!runtimeProgramRelocationPairs.some(([donor]) => donor === path)) return rawRead(path);
+    if (!runtimeProgramRelocationPairs.some(([donor]) => donor === path)) return historicalDependencyRead(path);
     const source = initialC1ProgramSources.get(path);
     if (source === undefined) throw new Error(`missing authenticated pre-C program source ${path}`);
     return source;
@@ -192,7 +275,7 @@ function fixture(includeOwnership = false) {
   const initialProgramSources = reconstructProgramInitialGraph(initialPreCProgramRead);
   // Each inverse authenticates raw current inputs independently. This source
   // selection applies only to the initial copy, never to later fixture mutants.
-  const initialCoreTypeSources = reconstructProgramCoreTypeEvolution(rawRead);
+  const initialCoreTypeSources = reconstructProgramCoreTypeEvolution(historicalDependencyRead);
   for (const path of includeOwnership ? [...clean, ...ownershipModules] : clean) {
     let source: string;
     if (path === "src/ir/runtime/contracts/intrinsics.ts") source = initialIntrinsic;
@@ -204,7 +287,7 @@ function fixture(includeOwnership = false) {
       const projected = initialProgramSources.get(path);
       if (projected === undefined) throw new Error(`missing authenticated initial program source ${path}`);
       source = projected;
-    } else source = rawRead(path);
+    } else source = historicalDependencyRead(path);
     put(path, source);
   }
   put(
@@ -651,3 +734,22 @@ describe("complete canonical program-data dependency boundary", () => {
     ).toBe(true);
   });
 });
+
+// Fresh whole component authentication precedes each explicit source-epoch bridge.
+function assertSourceMapValidatorComponent(readLive: (path: string) => string): void {
+  const path = "tests/helpers/ir-program-validator-relocation.ts";
+  const text = readLive(path);
+  if (typeof text !== "string" || text.length === 0)
+    throw new Error("program validator relocation: nonempty primitive text required: " + path);
+  if (
+    Buffer.byteLength(text) !== 46642 ||
+    createHash("sha256").update(text).digest("hex") !==
+      "6e32ca208775e8eeae765bf3345cdd3cb1e0f40a1784f684afd9c4dff3a4cfe0"
+  )
+    throw new Error("program validator relocation: complete source pin mismatch: " + path);
+}
+function beforeProgramValidatorRelocation(readLive: (path: string) => string): (path: string) => string {
+  if (typeof readLive !== "function") throw new Error("program validator relocation: physical reader required");
+  assertSourceMapValidatorComponent(readLive);
+  return beforeSourceMapProgramValidatorRelocation(readLive);
+}

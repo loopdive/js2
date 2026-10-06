@@ -96,6 +96,25 @@ export function wasmDateHostView(
   return hostDate;
 }
 
+/**
+ * (#6417) Marshal the arguments of a dynamic host method call, handing a
+ * compiled Date carrier over as its host Date view (`toHostDate`) instead of
+ * the generic struct facade `wrap` builds. The facade is an ordinary object to
+ * the host, so `Object.prototype.toString.call(date)` answered
+ * `[object Object]` and axios' `kindOf`-based `isDate` was false.
+ */
+export function hostArgsWithDates<E>(
+  args: readonly unknown[] | undefined,
+  exports: E,
+  wrap: (value: any) => any,
+  toHostDate: (value: any, exports: E) => unknown,
+): any[] {
+  return (args ?? []).map((value) => {
+    const hostDate = toHostDate(value, exports);
+    return hostDate instanceof Date ? hostDate : wrap(value);
+  });
+}
+
 /** Invoke a native Date method for the compiler-owned WasmGC Date carrier. */
 export function tryCallWasmDateHostMethod(
   obj: unknown,

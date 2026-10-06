@@ -63,6 +63,7 @@ import {
 } from "./array-object-proto.js";
 import { emitLazyNativeProtoGet, getBuiltinBrand, getNativeProtoBuiltinGlue } from "./native-proto.js";
 import { resolveStandaloneProtoMemberValueClosure } from "./native-proto-value-read.js";
+import { tryEmitOverriddenProtoMemberRead } from "./object-model/object-proto-to-locale-string.js";
 import { emitBuiltinProtoConstructorValue } from "./builtin-proto-constructor.js";
 import {
   BUILTIN_STATIC_METHOD_ARITY,
@@ -868,6 +869,9 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
   const resolved = resolveStandaloneProtoMemberValueClosure(ctx, brand, builtinName, member);
   if (!resolved) return undefined;
   const { closure, kind } = resolved;
+  const overridden =
+    kind === "method" ? tryEmitOverriddenProtoMemberRead(ctx, fctx, expr, builtinName, brand) : undefined;
+  if (overridden !== undefined) return overridden; // (#6770 S5)
 
   if (kind === "getter") {
     // (#2885 Site 3) A plain read of `<Builtin>.prototype.<getter>` must INVOKE

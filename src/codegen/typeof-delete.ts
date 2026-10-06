@@ -7,6 +7,7 @@ import { ts } from "../ts-api.js";
 import { chainRootIsGrowable, isNumericIndexExpression, runtimeAccessorDescriptorKey } from "./property-access.js";
 import { emitHostEqualityFromStack } from "./coercion-engine.js";
 import { resolveWidenedVarKey } from "./widened-var-key.js";
+import { typeofOperandIsDeclared } from "./expressions/typeof-import-binding.js"; // (#6417)
 import { isBooleanType, isStringType, isSymbolType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { reportError } from "./context/errors.js";
@@ -62,10 +63,13 @@ import { isStandaloneUnavailableConstructorGlobal } from "./standalone-unavailab
 import { ensureFunctionNativeProtoGlue } from "./array-object-proto.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import * as tf from "./typeof-static-folds.js";
+import { strictWrapperThisTypeofIsDynamic } from "./object-model/object-proto-to-locale-string.js";
 import { classIdentityFromExpression, hasClassStaticMethod } from "./class-static-metadata.js";
 import { identifierHasExplicitHostAmbientValueDeclaration } from "./expressions/identifier-module-storage.js";
 import { maybeRecordArrayProtoIteratorTombstone } from "./expressions/proto-override.js";
 import { isStandaloneUnavailableTimerGlobal } from "./standalone-timers.js";
+import { isReturnOverrideMemberRead } from "./classes/ctor-return-override.js"; // (#6772 S2)
+import { strictThisMayBePrimitive } from "./expressions/bool-to-locale-string.js"; // (#6771 S6)
 
 // (#2726 group (b), partial) The only value properties of the global object with
 // `[[Configurable]]: false` (ECMA-262 §19.1). `delete <bareIdentifier>` of any of
@@ -1694,18 +1698,6 @@ function hoistedFnTypeof(ctx: CodegenContext, fctx: FunctionContext, ident: ts.I
     : null;
 }
 
-/** Import aliases have runtime bindings even though their TS symbol lacks valueDeclaration. */
-function importedIdentifierHasRuntimeBinding(ctx: CodegenContext, ident: ts.Identifier): boolean {
-  const declaration = ctx.oracle.valueDeclarationOf(ident);
-  if (declaration === undefined) return false;
-  if (ts.isImportClause(declaration)) return !declaration.isTypeOnly;
-  if (ts.isNamespaceImport(declaration)) return !declaration.parent.isTypeOnly;
-  if (ts.isImportSpecifier(declaration)) {
-    return !declaration.isTypeOnly && !declaration.parent.parent.isTypeOnly;
-  }
-  return false;
-}
-
 function stringWrapperIndexNeedsRuntimeTypeof(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1848,7 +1840,7 @@ export function compileTypeofExpression(
         }
       }
       const sym = ctx.checker.getSymbolAtLocation(ident);
-      const hasValueDecl = !!sym?.valueDeclaration || importedIdentifierHasRuntimeBinding(ctx, ident);
+      const hasValueDecl = typeofOperandIsDeclared(ctx, ident, sym);
       // (#3436) In standalone / WASI mode `structuredClone` is deliberately NOT
       // provided — its host import is skipped in extern-declarations, so the
       // global genuinely does not exist and `typeof structuredClone` must be
@@ -1925,6 +1917,7 @@ export function compileTypeofExpression(
   if (operand.kind === ts.SyntaxKind.ThisKeyword && fctx.directEvalSloppyThisFallback !== undefined) {
     forceRuntimeTypeof = true;
   }
+  if (strictWrapperThisTypeofIsDynamic(ctx, operand, tsType)) forceRuntimeTypeof = true; // (#6770 S5)
   {
     let bareTdz: ts.Expression = operand;
     while (
@@ -1956,6 +1949,7 @@ export function compileTypeofExpression(
     if (ts.isIdentifier(bareTdz) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, bareTdz)) {
       forceRuntimeTypeof = true;
     }
+    if (isReturnOverrideMemberRead(ctx, bareTdz)) forceRuntimeTypeof = true; // (#6772 S2)
     // (#4428) Same disagreement one level down: `typeof x[0]` on an array whose
     // element representation was widened must read the value, not the type.
     if (elementReadOfRebindWidenedArray(ctx, bareTdz) || stringWrapperIndexNeedsRuntimeTypeof(ctx, fctx, bareTdz)) {
@@ -1981,6 +1975,8 @@ export function compileTypeofExpression(
     if (!forceRuntimeTypeof && typeofFoldUnsoundForJsParam(ctx, bareTdz)) {
       forceRuntimeTypeof = true;
     }
+    // (#6771 S6) Strict `this` typed as a primitive WRAPPER may be the primitive.
+    if (!forceRuntimeTypeof && strictThisMayBePrimitive(ctx, bareTdz, tsType)) forceRuntimeTypeof = true;
     // (#4491) Read before the binding's own `var x = <init>` statement runs —
     // the hoisted binding still holds `undefined` (see readPrecedesVarInitializer).
     if (!forceRuntimeTypeof && readPrecedesVarInitializer(ctx, fctx, bareTdz)) {
@@ -2271,7 +2267,7 @@ export function compileTypeofComparison(
         }
       }
       const sym = ctx.checker.getSymbolAtLocation(ident);
-      if (!sym?.valueDeclaration && !importedIdentifierHasRuntimeBinding(ctx, ident)) {
+      if (!typeofOperandIsDeclared(ctx, ident, sym)) {
         const annexB = emitAnnexBTypeofFlagBranch(ctx, fctx, ident.text);
         if (annexB) {
           const actual = annexB;
@@ -2339,6 +2335,7 @@ export function compileTypeofComparison(
   if (staticTypeof !== null && runtimeEvalMayRebindIdentifier(ctx, fctx, operand)) {
     staticTypeof = null;
   }
+  if (strictWrapperThisTypeofIsDynamic(ctx, operand, tsType)) staticTypeof = null; // (#6770 S5)
   if (
     staticTypeof !== null &&
     ts.isIdentifier(guardOperand) &&
@@ -2350,6 +2347,8 @@ export function compileTypeofComparison(
   if (staticTypeof !== null && ts.isIdentifier(operand) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, operand)) {
     staticTypeof = null;
   }
+  // (#6772 S2) the receiver may be a constructor's foreign override object.
+  if (staticTypeof !== null && isReturnOverrideMemberRead(ctx, operand)) staticTypeof = null;
   // (#5360) Same guard as compileTypeofExpression — a parameter's `undefined`/
   // `null` type inferred from its own default initializer is not a fact about
   // the argument a JS caller passed.

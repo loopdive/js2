@@ -49,7 +49,9 @@ Compile it:
 js2wasm add.ts -o .
 ```
 
-You should now see four files alongside `add.ts`:
+You should now see four files in the current directory (output goes to `-o
+<dir>`, or to the current working directory without it — never next to the
+input file):
 
 | File | Purpose |
 |------|---------|
@@ -129,7 +131,7 @@ The flags you reach for most often:
 
 | Flag | What it does |
 |------|--------------|
-| `-o, --out <dir>` | Output directory (default: same dir as the input file). |
+| `-o, --out <dir>` | Output directory (default: the current working directory, not the input's directory). |
 | `-O, --optimize` | Run Binaryen `wasm-opt` (default `-O3`). Smaller, faster. |
 | `-O1` .. `-O4` | Pick the optimizer level explicitly. |
 | `--target wasi` | Emit WASI imports (`fd_write`, `proc_exit`) instead of JS host glue. |

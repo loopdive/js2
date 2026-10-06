@@ -206,6 +206,31 @@ function nativeProtoHasInstanceOwnArm(
   ];
 }
 
+function unseededObjectProtoAccessorArm(
+  ctx: CodegenContext,
+  seeded: ReadonlyMap<number, readonly string[]>,
+  protoTypeIdx: number,
+  anyLocal: number,
+  keyLocal: number,
+  equalsIdx: number,
+): Instr[] {
+  const brand = getBuiltinBrand(ctx, "Object");
+  if (brand === undefined || seeded.has(brand)) return [];
+  return [
+    { op: "local.get", index: anyLocal },
+    { op: "ref.cast", typeIdx: protoTypeIdx },
+    { op: "struct.get", typeIdx: protoTypeIdx, fieldIdx: NP_BRAND },
+    { op: "i32.const", value: brand },
+    { op: "i32.eq" },
+    { op: "local.get", index: keyLocal },
+    { op: "ref.as_non_null" },
+    ...nativeStringLiteralInstrs(ctx, "__proto__"),
+    { op: "call", funcIdx: equalsIdx },
+    { op: "i32.and" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
+  ];
+}
+
 /**
  * Register `__nproto_hasown(obj externref, key externref) -> i32`: 1 when
  * `key` names a present OWN property of a BUILTIN prototype object `obj`, 0
@@ -428,6 +453,10 @@ export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefin
             ]),
           } as Instr,
         ])),
+    // (#6770 S5) Annex B `Object.prototype.__proto__` is an own accessor. An
+    // UNSEEDED companion cannot have lost it (a delete arms the seeder), so
+    // its presence is the static fact the seeded ladder above otherwise asks.
+    ...unseededObjectProtoAccessorArm(ctx, seededOwnMembers, protoTypeIdx, L_ANY, L_KEY, equalsIdx),
     // ES5 §15.x.4.1 — `constructor` is an own property of every builtin proto.
     { op: "local.get", index: L_KEY },
     { op: "ref.as_non_null" },

@@ -84,7 +84,8 @@ import { bindingMayReceiveHostCallable } from "../analysis/mixed-assignment-carr
 import { ensureStandaloneBuiltinStaticMethodClosure } from "../builtin-value-read.js";
 import { localBindingShadowsCapturingFunction } from "../function-declaration-observation.js";
 import { genericIdentityReturnParamIndex, genericStructFactoryCall } from "../generic-struct-factory.js";
-import { isUnaliasedNodeFsImportBinding } from "../node-fs-binding-identity.js";
+import { isUnaliasedNodeFsImportBinding, standaloneDependencyNodeFsThrowMessage } from "../node-fs-binding-identity.js";
+import { compileDiscardedArgument } from "./inline-iife-arguments.js";
 import {
   canEmitAssertedStructExtension,
   canStructurallyProjectRef,
@@ -131,6 +132,7 @@ import { prepareStandaloneEvalAliasCall } from "./eval-alias.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { buildUnmatchedClosureHostCall, reserveUnmatchedClosureHostCall } from "./unmatched-closure-host-call.js"; // (#1058)
 import { withDeclarationBoundCallee } from "./declaration-bound-callee.js"; // (#1058)
+import { tryCompileNodeBuiltinMemberCall } from "../host-method-args.js"; // (#6450)
 import { isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
 import { paramUndefinedTypeIsDefaultArtifact } from "../destructuring-params.js";
 import {
@@ -784,6 +786,12 @@ function compileBoundIdentifierCall(
     (expr.expression.text === "readFileSync" || expr.expression.text === "writeFileSync")
   ) {
     const fnName = expr.expression.text;
+    const fsThrowMessage = standaloneDependencyNodeFsThrowMessage(ctx, expr, fnName); // #6840
+    if (fsThrowMessage !== undefined) {
+      for (const arg of expr.arguments) compileDiscardedArgument(ctx, fctx, arg);
+      fctx.body.push(...buildThrowJsErrorInstrs(ctx, "Error", fsThrowMessage, { flush: fctx }));
+      return fnName === "writeFileSync" ? VOID_RESULT : { kind: "externref" };
+    }
     if (!ctx.allowFs) {
       const { line, character } = expr.getSourceFile().getLineAndCharacterOfPosition(expr.getStart());
       ctx.errors.push({
@@ -1805,6 +1813,9 @@ function compileBoundIdentifierCall(
     // identifiers and assignment targets, so a BindingElement's by-name hit is
     // always some OTHER binding's info.
     const calleeBindingDecl = ctx.oracle.valueDeclarationOf(expr.expression);
+    // (#6450) Before the bare-name ladder below can mis-claim a node-builtin import.
+    const nodeBuiltinMemberCall = tryCompileNodeBuiltinMemberCall(ctx, fctx, expr, funcName, calleeBindingDecl);
+    if (nodeBuiltinMemberCall !== undefined) return nodeBuiltinMemberCall;
     const propertyCallableAlias = tryCompileImmutablePropertyCallableAlias(ctx, fctx, expr);
     if (propertyCallableAlias !== null) return propertyCallableAlias;
     const calleeBindingMayReceiveHostCallable =

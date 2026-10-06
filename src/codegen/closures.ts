@@ -1,4 +1,6 @@
+import { undefinedExternInstrs } from "./any-helpers.js";
 import { initializeNativeGeneratorFunctionValue } from "./generators-factory-prototype.js";
+import { snapshotArrowNewTarget } from "./expressions/new-target-value.js";
 import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
@@ -22,6 +24,8 @@ import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/ty
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2867 Gap 1) native-$Promise carrier gate
 import { emitEagerAsyncPromiseWrap, parkedAsyncClosureWrapsPromise } from "./async-eager-promise.js"; // (#4630)
 import { widenAsyncThenableResult } from "./async-thenable-return.js"; // (#5371)
+import { restPatternParamSlot } from "./resolved-rest-param.js"; // (#6774 S7)
+import { hoistParameterEvalVars } from "./expressions/eval-param-scope-hoist.js"; // (#6774 S7)
 import { applyNullableElemParamOverride } from "./array-hof-nullable-elem-param.js"; // (#6602) nullable vec element at the HOF callback boundary
 import { definedFuncAt, funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { pushProgramAbiNestedCallable, pushProgramAbiTypedThisTwin } from "./program-abi-source-callable-planning.js";
@@ -31,6 +35,7 @@ import { stringConstantExternrefInstrs } from "./native-strings.js"; // (#2025)
 import { emitWasiErrorConstructor } from "./registry/error-types.js"; // (#2025)
 import { widenClosureReturnForPreInitVar } from "./declarations/hoisted-var-preinit-read.js"; // (#4206)
 import { widenClosureReturnForDynamicModuleBinding } from "./declarations/heterogeneous-scalar-var-widening.js";
+import { widenProxyTrapMixedReturn } from "./closures/proxy-trap-closure-return.js"; // (#6771 S1)
 import { popBody, pushBody } from "./context/bodies.js";
 import { recordClosureBody } from "./context/body-route-audit.js";
 import { reportError } from "./context/errors.js";
@@ -43,6 +48,7 @@ import {
   hostFacingCallbackReturnType,
   resolveCallbackMakerName,
 } from "./callback-ctor-bridge.js"; // (#4394) bridge [[Construct]] parity · (#5375) host-facing result type
+import { BOOLEAN_I32, callbackBodyBoxesBoolean, hostBooleanCallbackResult } from "./closures/host-boolean-callback.js";
 import { registerStandaloneDomCallbackDirectClosure } from "./standalone-dom-callback-authority.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
@@ -211,8 +217,13 @@ import {
   mintClosureStructTypes,
   emitClosureParamDestructuring,
   emitClosureConstruction,
+  closurePrecedesBindingInitializerStore,
 } from "./closures/arrow-phases.js"; // (#3278) arrow/fn-expr closure phase helpers
-import { initializeOrdinaryNewTarget, ORDINARY_NEW_TARGET, arrowReadsLexicalNewTarget } from "./ordinary-new-target.js";
+import {
+  initializeOrdinaryNewTarget,
+  ORDINARY_NEW_TARGET,
+  arrowReadsLexicalNewTarget,
+} from "./closures/ordinary-new-target.js";
 import {
   collectDirectEvalActivationBindingNames,
   collectDirectEvalBindingNames,
@@ -2138,6 +2149,8 @@ export function computeClosureWrapperSig(
     if (hasBindingPattern && wasmType.kind !== "externref") {
       wasmType = { kind: "externref" };
     }
+    // (#6774 S7) `(...[a]) => …` packs its extras like `(...a)`: the rest vec.
+    wasmType = restPatternParamSlot(ctx, p, wasmType);
     if (ctx.forceExternrefCallbackParams && isVecOrArrayRefType(ctx, wasmType)) {
       wasmType = { kind: "externref" };
     }
@@ -2216,10 +2229,15 @@ export function computeClosureWrapperSig(
       // externref — the runtime value is a HOST plain object; a struct-typed
       // return null-drops it on the failed ref.test (see
       // resolveWasmTypeForClosureReturn).
-      const resolvedReturn = widenClosureReturnForDynamicModuleBinding(
+      const resolvedReturn = widenProxyTrapMixedReturn(
         ctx,
         arrow,
-        widenClosureReturnForPreInitVar(ctx, arrow, resolveWasmTypeForClosureReturn(ctx, retType)),
+        retType,
+        widenClosureReturnForDynamicModuleBinding(
+          ctx,
+          arrow,
+          widenClosureReturnForPreInitVar(ctx, arrow, resolveWasmTypeForClosureReturn(ctx, retType)),
+        ),
       );
       // (#4707) Proxy/host-object bindings retain their externref carrier when
       // returned from a closure, despite TypeScript's structural return type.
@@ -2471,6 +2489,17 @@ export function methodBodyRefsShadowedOuterLocal(method: ts.FunctionLikeDeclarat
  */
 export function genBodyReferencesSuper(node: ts.Node): boolean {
   if (node.kind === ts.SyntaxKind.SuperKeyword) return true;
+  // (#6774 S5) A direct `eval("…super…")` is spliced into this frame and reads its [[HomeObject]].
+  if (
+    ts.isCallExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "eval" &&
+    node.arguments[0] !== undefined &&
+    ts.isStringLiteralLike(node.arguments[0]) &&
+    /\bsuper\b/.test(node.arguments[0].text)
+  ) {
+    return true;
+  }
   if (
     ts.isFunctionExpression(node) ||
     ts.isFunctionDeclaration(node) ||
@@ -2852,7 +2881,7 @@ export function compileLiftedClosureBody(
   for (let i = 0; i < liftedFctx.params.length; i++) {
     liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
   }
-  if (!ts.isArrowFunction(arrow)) initializeOrdinaryNewTarget(ctx, liftedFctx);
+  if (!ts.isArrowFunction(arrow)) initializeOrdinaryNewTarget(ctx, liftedFctx, undefinedExternInstrs);
   // (#3683 S2/S3) Typed-`this` TWIN prologue. Runs FIRST so `typedThisLocalIdx`
   // is live for every subsequent statement. Since S3 this emits NO instructions
   // at all — the receiver arrives as param 0 — see typed-this.ts.
@@ -3091,6 +3120,7 @@ export function compileLiftedClosureBody(
     emitLiftedClosureArgumentsObject(ctx, liftedFctx, arrow, body, arrowParams, reachesDirectEval);
   }
 
+  hoistParameterEvalVars(ctx, liftedFctx, arrow); // (#6774 S7)
   // Emit default-value initialization for simple params with defaults
   emitArrowParamDefaults(ctx, liftedFctx, arrow, 1 /* skip __self */);
 
@@ -3718,10 +3748,11 @@ export function compileArrowAsClosure(
   ) {
     const thisLocal = fctx.lexicalThisCaptureLocal ?? allocLocal(fctx, "__arrow_lexical_this", { kind: "externref" });
     fctx.lexicalThisCaptureLocal = thisLocal;
-    const thisNode = findOwnThisReference(body) ?? ts.factory.createThis();
+    const thisNode = findOwnThisReference(body) ?? syntheticThisIn(arrow);
     compileExpression(ctx, fctx, thisNode, { kind: "externref" });
     fctx.body.push({ op: "local.set", index: thisLocal });
   }
+  snapshotArrowNewTarget(ctx, fctx, arrow); // (#6774 S4) lexical `new.target`
   const { captures, selfBindingName } = planClosureCaptures(ctx, fctx, arrow, body, additionalCaptureNames);
   // Object-literal method closures need a stable [[HomeObject]] for `super`.
   // Capture the freshly allocated object itself, rather than using
@@ -4369,7 +4400,12 @@ export function compileArrowAsCallback(
     // (#2128) forceMutableCaptures: a sibling accessor in the same object
     // literal writes this local — capture via the shared ref cell even if
     // this callback (e.g. the getter) only reads it.
-    const isMutable = writtenInCallback.has(name) || (options?.forceMutableCaptures?.has(name) ?? false);
+    // (#4526) …or the binding is initialized AFTER this callback is built
+    // (`const off = subscribe(() => off())`): a by-value capture is the TDZ hole.
+    const isMutable =
+      writtenInCallback.has(name) ||
+      (options?.forceMutableCaptures?.has(name) ?? false) ||
+      closurePrecedesBindingInitializerStore(arrow, bindingDeclaration);
     const alreadyBoxed = !!fctx.boxedCaptures?.has(name);
     captures.push({ name, type, localIdx, mutable: isMutable, alreadyBoxed });
   }
@@ -4437,6 +4473,7 @@ export function compileArrowAsCallback(
   // return type instead of crashing the whole compile — the body still coerces
   // its actual return value via the normal path.
   let cbReturnType: ValType | null = null;
+  let hostBooleanResult = false;
   try {
     const sig = ctx.checker.getSignatureFromDeclaration(arrow);
     if (sig) {
@@ -4446,6 +4483,8 @@ export function compileArrowAsCallback(
         // object-literal return types lower to externref (host plain objects).
         // (#5375) A host-invoked accessor/method returns references as externref.
         cbReturnType = hostFacingCallbackReturnType(resolveWasmTypeForClosureReturn(ctx, retType), needsThis);
+        hostBooleanResult = hostBooleanCallbackResult(ctx, retType, cbReturnType); // (#6417)
+        if (hostBooleanResult) cbReturnType = { kind: "externref" };
       }
     }
   } catch {
@@ -4477,6 +4516,7 @@ export function compileArrowAsCallback(
     locals: [],
     localMap: new Map(),
     returnType: cbReturnType,
+    hostBooleanReturn: hostBooleanResult || undefined,
     body: [],
     blockDepth: 0,
     breakStack: [],
@@ -4637,7 +4677,9 @@ export function compileArrowAsCallback(
       // Expression result is the return value — already on stack
       exprBodyHasReturnValue = true;
       // Coerce expression type to declared return type if needed
-      if (exprType.kind !== cbReturnType.kind) {
+      if (callbackBodyBoxesBoolean(ctx, exprType, cbReturnType, hostBooleanResult, body)) {
+        coerceType(ctx, cbFctx, BOOLEAN_I32, cbReturnType); // (#6417) `true`, not `1`
+      } else if (exprType.kind !== cbReturnType.kind) {
         const instrs = coercionInstrs(ctx, exprType, cbReturnType, cbFctx);
         if (instrs.length > 0) {
           cbFctx.body.push(...instrs);
@@ -4901,3 +4943,14 @@ function closureBodyUsesArguments(node: ts.Node): boolean {
 // Register compileArrowAsClosure in the shared module so other modules
 // can call it without a direct import cycle.
 registerCompileArrowAsClosure(compileArrowAsClosure);
+
+/**
+ * (#6774 S16) A synthetic `this` parented to `arrow`, so the unbound-`this`
+ * strictness test (`isStrictContext`) sees the arrow's real context instead of
+ * a parentless node (which it reads as sloppy → the global object).
+ */
+function syntheticThisIn(arrow: ts.Node): ts.Expression {
+  const node = ts.factory.createThis();
+  (node as unknown as { parent: ts.Node }).parent = arrow;
+  return node;
+}

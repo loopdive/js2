@@ -41,7 +41,7 @@ import { emitThrowTypeError } from "./js-errors.js";
 import { compileExpression } from "./shared.js";
 
 /** The class this callee denotes, when it is a class of THIS program. */
-function sourceClassForCallee(ctx: CodegenContext, callee: ts.Expression): ts.ClassLikeDeclaration | undefined {
+export function sourceClassForCallee(ctx: CodegenContext, callee: ts.Expression): ts.ClassLikeDeclaration | undefined {
   if (ts.isClassExpression(callee)) return callee;
   if (!ts.isIdentifier(callee)) return undefined;
   const declaration = ctx.oracle.valueDeclarationOf(callee);

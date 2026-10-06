@@ -3,7 +3,7 @@ id: 4376
 title: "Spike v8x as a rusty_v8-compatible js2wasm backend for a compiler-free Deno runtime"
 status: in-progress
 created: 2026-08-12
-updated: 2026-10-01
+updated: 2026-10-06
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -54,8 +54,8 @@ loc-budget-allow:
   - src/checker/usage-inference.ts
   - src/codegen/map-runtime.ts
   - src/codegen/apply-closure-variadic-builtin.ts
-  - src/codegen/ordinary-new-target.ts
-  - src/codegen/rest-only-apply.ts
+  - src/codegen/closures/ordinary-new-target.ts
+  - src/codegen/closures/rest-only-apply.ts
   - src/codegen/object-runtime-prototype.ts
   - src/codegen/closures/arrow-phases.ts
   - src/codegen/native-construct.ts
@@ -229,6 +229,104 @@ files:
   - tests/issue-4376-deno-primordials-runtime.test.ts
   - plan/issues/3731-generatemultimodule-missing-fill-drivers.md
   - plan/agent-context/v8x-js2wasm-deno-handover-2026-08-12.md
+  # 2026-10-06: retained PR6341 implementation, main composition and finite proof successors.
+  - plan/log/ir6341-main-composition-20261006.md
+  - scripts/compiler-boundaries.json
+  - src/backend/wasmgc/resources/native-promises.ts
+  - src/codegen/array-object-proto.ts
+  - src/codegen/array-proto-iterator-value.ts
+  - src/codegen/async-frame.ts
+  - src/codegen/async-scheduler.ts
+  - src/codegen/async-value-sink-unwrap.ts
+  - src/codegen/builtin-ctor-value-invoke.ts
+  - src/codegen/class-bodies.ts
+  - src/codegen/closed-struct-extern-set.ts
+  - src/codegen/closures.ts
+  - src/codegen/closures/arrow-phases.ts
+  - src/codegen/closures/funcref-as-closure.ts
+  - src/codegen/closures/promoted-capture-value.ts
+  - src/codegen/context/create-context.ts
+  - src/codegen/context/types.ts
+  - src/codegen/declarations/module-var-undefined-seed.ts
+  - src/codegen/expressions.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/function-body.ts
+  - src/codegen/iterator-native.ts
+  - src/codegen/mixed-return-widening.ts
+  - src/codegen/native-construct.ts
+  - src/codegen/object-builtin-effects.ts
+  - src/codegen/object-runtime-prototype.ts
+  - src/codegen/object-runtime.ts
+  - src/codegen/promise-combinator-drive.ts
+  - src/codegen/promise-combinators.ts
+  - src/codegen/promise-executor.ts
+  - src/codegen/promise-finally-invoke.ts
+  - src/codegen/promise-species-then.ts
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/property-access-exact-shapes.ts
+  - src/codegen/property-access.ts
+  - src/codegen/registry/physical-imports.ts
+  - src/codegen/string-element-read.ts
+  - src/codegen/typeof-delete.ts
+  - src/compiler.ts
+  - src/index.ts
+  - src/ir/backend/lower-contracts.ts
+  - src/ir/backend/wasmgc-emitter.ts
+  - src/ir/integration.ts
+  - src/ir/lower-generic.ts
+  - src/runtime/wasmgc/async/microtask-queue-bodies.ts
+  - src/runtime/wasmgc/async/native-await.ts
+  - src/runtime/wasmgc/promise/combinator-bodies.ts
+  - src/runtime/wasmgc/promise/delay-bodies.ts
+  - src/runtime/wasmgc/promise/reaction-order-bodies.ts
+  - src/runtime/wasmgc/promise/rejection-event-bodies.ts
+  - src/runtime/wasmgc/promise/resolution-bodies.ts
+  - src/runtime/wasmgc/promise/resolving-pair-bodies.ts
+  - src/runtime/wasmgc/promise/settlement-bodies.ts
+  - src/wasm/physical/allocation-owner.ts
+  - tests/helpers/ir-c1-authority-root.ts
+  - tests/helpers/ir-c1-authority.json
+  - tests/helpers/ir-deno-callback-inventory-successor.json
+  - tests/helpers/ir-deno-callback-inventory-successor.ts
+  - tests/helpers/promise-resolution-receipts.ts
+  - tests/issue-3518-c1-current-source.test.ts
+  - tests/issue-3518-canonical-3c6-inventory-successor.test.ts
+  - tests/issue-3518-canonical-489d-inventory-successor.test.ts
+  - tests/issue-3518-current-main-inventory-successor.test.ts
+  - tests/issue-3518-lowering-analysis-preservation.test.ts
+  - tests/issue-3518-nested-stackification-policy-evolution.test.ts
+  - tests/issue-3518-number-prerequisite-policy-evolution.test.ts
+  - tests/issue-3518-program-data-contract-boundary.test.ts
+  - tests/issue-3518-program-validator-policy-evolution.test.ts
+  - tests/issue-3518-promise-resolution-preservation.test.ts
+  - tests/issue-3518-promise-settlement-body-ownership.test.ts
+  - tests/issue-3518-runtime-data-contract-seam.test.ts
+  - tests/issue-3518-runtime-program-policy-evolution.test.ts
+  - tests/issue-3518-semantic-provider-boundary.test.ts
+  - tests/issue-3518-validation-policy-evolution.test.ts
+  - tests/issue-3518-wasmgc-helper-policy-evolution.test.ts
+  - tests/issue-3518-well-known-symbol-policy-evolution.test.ts
+  - tests/issue-3525-arraybuffer-isview-main-policy.test.ts
+  - tests/issue-3525-main-inventory-source-successor.test.ts
+  - tests/issue-3525-presentation-classification-policy.test.ts
+  - tests/issue-4376-deno-callback-inventory-successor.test.ts
+  - tests/issue-4376-ir-await-rejection-events.test.ts
+  - tests/issue-4376-promoted-capture-value.test.ts
+  - tests/issue-4376-super-method-abrupt-completion.test.ts
+  - src/codegen/array/array-fill-proto-value.ts
+  - src/codegen/array/live-array-iterator-value.ts
+  - src/codegen/closures/ordinary-new-target.ts
+  - src/codegen/closures/rest-only-apply.ts
+  - src/codegen/declarations/shared-script-var-access.ts
+  - src/codegen/expressions/builtin-native-dyn-construct.ts
+  - src/codegen/object-model/closed-carrier-prototype-status.ts
+  - src/codegen/object-model/closed-object-prototype-edges.ts
+  - src/codegen/object-model/linked-realm-property-read.ts
+  - src/codegen/registry/microtask-drain-boundary.ts
+  - src/codegen/registry/microtask-notification.ts
+  - src/codegen/registry/promise-handler-boundary.ts
+  - src/codegen/registry/promise-rejection-dispatch.ts
 ---
 # #4376 — v8x + js2wasm as an engine-free Deno substrate
 
@@ -2898,3 +2996,1114 @@ identity. The eight-file regression run reports 73/73: 71 ordinary successes
 and two retained expected failures for general Script bindings. This does not
 credit a new native Deno artifact or full deno_core conformance. Persistent
 lexical cells, declaration preflight and completion values remain required.
+
+
+## PR6341 actual-main composition plan — frozen 2026-10-06
+
+This is a preservation refresh of existing PR6341, not a new Deno implementation or source-map migration. Root owns claim `4376:6341-main-composition-20261006`, the merge, publication and existing protected queue. The Deno owner explicitly released preservation-sensitive conflict review and the nine named integration files; the primary dirty lexical checkpoint and downstream draft6468 remain untouched. Handoff evidence is `.tmp/ir-coordination/deno-source-map-release-20261006.md` in the separate unmapped-emission worktree.
+
+The isolated composition worktree is `worktrees/codex-6341-main-composition-20261006`, branch `codex/6341-main-composition-20261006`. Stage2/ours is the actual PR head `60f99e83450ea7eac7d6fe21a5ec2d4436cce6c5`; stage3/theirs is actual main merge input `abb3471c46bb9e7129b28812fe16313c857cda69`. The GitHub cached baseRefOid `1a160821…` is not the current main input and must not be used to reconstruct this integration. Root has already performed a three-way no-commit merge. Only three source files have unmerged stages; the many other staged main changes are not this worker's edits and must not be reverted or reimplemented.
+
+The measured unmerged blob identities are:
+
+| File | stage1 common ancestor | stage2 PR | stage3 actual main |
+| --- | --- | --- | --- |
+| src/codegen/class-bodies.ts | 02835b0fd474b75099c5707c1492588788c34618 | e9ffa45866aefa1be14be7ab143225e9ce7b3413 | c2a87c3e70289890e60e2812a6f7a22130472231 |
+| src/codegen/expressions.ts | bc1d31eef4980cbdea092784176603a45241bcf8 | 27829617101c78504a06a468d6fb1db7c82cc8b2 | 91f0f1b25c0fcd463d55183f2c8990e3894e435a |
+| src/compiler.ts | 4739028d9cc79afc9041d91b612049d9056d9838 | fa6b7b43639423acb14f731ecc012c8deae15bbf | d8ba85463e1708842063109dcc4da4cb8e0bdb41 |
+
+### Implementation scope and conflict resolutions
+
+Source worker owns only resolution of these three files and preservation verification of the already merged dependent code. Root owns the issue/claim authority, tests scope expansion, Git index, commit/push and PR. Do not use whole-file ours/theirs checkout, reformat unrelated declarations, update expected answers, amend baseline files or move the shared lowerer contracts. Additional source changes require a concrete composition defect and a root scope grant.
+
+**1. `src/codegen/class-bodies.ts`, `collectClassDeclaration`, current conflict around1100.** Keep main's helper-based branch:
+
+```ts
+if (isRuntimeCollectionStructHeritage(ctx, parentStructTypeIdx, parentClassName)) {
+  parentStructTypeIdx = undefined;
+}
+parentFields = parentStructTypeIdx === undefined ? [] : (ctx.structFields.get(parentClassName) ?? []);
+```
+
+The PR added a native collection/name/mapTypeIdx test to prevent a prewarmed runtime `$Map` carrier becoming a user-class nominal parent. Main's `src/codegen/classes/standalone-collection-carrier.ts:69` now owns that same check with actual type identity, an explicit defined-index guard and `!ctx.classSet.has(parentClassName)`. It preserves real compiled classes and is not limited to the old builtin-spelling/nativeStrings predicate. Keeping both old and new predicates would unnecessarily reintroduce the older classification. Main additionally prevents inheriting runtime carrier fields after clearing the parent index; retain that correction.
+
+Preserve the surrounding alias resolution, circular-inheritance guard, `classParentMap` registration, unresolved-heritage tracking and `prepareCollectionSubclassHeritage` carrier/refusal logic. Relevant writers are structMap/structFields/classSet publication and collection carrier registration. Local consumers use parentFields to suppress duplicate own fields, compose final fields and tag offsets, and parentStructTypeIdx to set the actual Wasm supertype. The subtype must retain an exact mutable-field prefix; clearing only the index while copying stale parentFields is not equivalent. No change to classParentMap identity or collection allocation/dispatch is needed.
+
+**2. `src/codegen/expressions.ts`, `compileExpressionInner` new.target arm, current conflict around1682.** Retain the PR's captured ordinary target first, then main's standalone object-value fallback:
+
+```ts
+const ordinaryTarget = fctx.localMap.get(ORDINARY_NEW_TARGET);
+if (ordinaryTarget !== undefined) {
+  fctx.body.push({ op: "local.get", index: ordinaryTarget });
+  return { kind: "externref" };
+}
+if (ctx.standalone) return compileNewTargetValue(ctx, fctx);
+```
+
+Leave the subsequent existing non-standalone constructor/class-ID/undefined behavior intact. A local index0 is valid: the condition must remain `!== undefined`, not a truthy test. Preserve both imports. Do not move the standalone fallback above the ordinary binding, remove the ordinary branch or replace a target with a truthiness/class-ID approximation.
+
+The two paths own distinct real data. PR's `ordinary-new-target.ts` creates/looks up the pending construction-target global by name to survive late global-index shifts; `ordinaryConstructTargetFrame` publishes the actual dynamic callable and restores prior state after success or thrown completion. `initializeOrdinaryNewTarget` consumes/resets it before parameter defaults in `function-body.ts:485` and non-arrow lifted bodies in `closures.ts:2878`. Closure construction adds `ORDINARY_NEW_TARGET` to captures for actual lexical-arrow reads (`closures.ts:3730`). Main's `expressions/new-target-value.ts` handles class constructor objects, synthesized fnctor constructor `newTargetValueNode`, and `NEW_TARGET_LEXICAL_LOCAL`; `new-super.ts:2801` supplies the synthesized constructor identity. Main's `snapshotArrowNewTarget`, `closures/arrow-phases.ts` capture planning and `newTargetSnapshotLocal` are already auto-merged and remain intact.
+
+Do not combine those private bindings, change snapshot timing or rework their producers during conflict resolution. In a dynamic ordinary callback, its captured actual target is authoritative even though main can also allocate a lexical snapshot; in a class/synthesized constructor lacking that ordinary binding, main's object-valued path must still execute. Run both families' native value tests: merely validating a Wasm module cannot distinguish the two source semantics.
+
+**3. `src/compiler.ts`, conflict around978, retain main's extracted pipeline.** Take the `PipelineOutputContext` declaration from stage3 at this location. Remove the obsolete stage2 `isWasmException`/runPipeline documentation/function opener from the conflict: the auto-merged file already contains the actual `isWasmException` around1090 and complete `runPipeline` around1110. Retaining the old opener would nest/misstructure main's extracted validator and duplicate functions.
+
+Transplant the PR's exact public rejection into the retained `runPipeline`, immediately after destructuring input and before target-profile resolution or generation:
+
+```ts
+if (options.standaloneScriptVarBindings && multiAst) {
+  throw new Error(
+    "standaloneScriptVarBindings requires independent single-source Scripts, not a flattened module graph",
+  );
+}
+```
+
+Preserve the thrown error and text; do not silently return a compile diagnostic, disable Script binding transport or reject ordinary multi-source builds. Existing buildCodegenOptions restrictions around850 remain separate and unchanged. The private prepared presentation entry is new on main and has its own preparation/eligibility guards; do not add new eligibility, route changes or a Script feature there as part of this public conflict transplant. If a genuine private prepared fixture using these Deno-only options exposes an admission defect, retain the failure and have root assign that separate integration scope rather than relaxing guards.
+
+Retain main's `validatePipelineSource`, public `runPipeline`→`finalizePipelineModule`, private `runPreparedIrPipelinePresentation`, source diagnostic handling and presentation finalization contract. Its early-error/safe/hardened passes must still gate on their **new** diagnostics rather than all preexisting TypeScript errors. Public compilation keeps its ordinary route and the private Prepared source-map guard stays unchanged. One final `isWasmException` implementation must remain, and both generation and emission catches must rethrow original WebAssembly exception identities.
+
+The PR's allocation-owner injection has already auto-merged into `finalizePipelineModule` around1356. Keep `stampAllocationOwners(mod, options.standaloneAllocationOwnerExport)` after optional C-ABI transformation and **before** `widenNonDefaultableTypes(mod)` and main's `completePreparedPresentationFinalization(token)`. Preserve its source-anchored `Allocation provenance:` diagnostic/failure return and telemetry. Do not move stamping after binary emission, stamp a copied module, or call it twice. Main's completion receipt must continue to observe all preceding finalization work; any genuine prepared-ownership refusal remains meaningful, not a reason to loosen its validator.
+
+### Preservation census beyond the three textual conflicts
+
+These files auto-merged and are review/test operands, not additional edits by default:
+
+- `src/ir/backend/lower-contracts.ts` retains optional `resolvePromiseRejectionDispatcher`; `src/ir/integration.ts:8157` supplies `promiseRejectionDispatcher(ctx)`. Keep all current-main IR source-origin, prepared program and backend legality changes around them.
+- `src/ir/backend/wasmgc-emitter.ts:354` constructs five-field native Promise records; `async-scheduler.ts:438` is the canonical layout owner: state0, value1, callbacks2, bag3, handled4. Constructors must initialize bag and handled appropriately; allocation/read/mutation sites must keep slot4 as persistent handling state. The stale four-field explanatory comment in integration is not evidence of a four-field ABI; use the actual layout and native tests.
+- `src/ir/lower-generic.ts:3439` async.throw emits the rejection dispatcher event when provided; await handling around3516 retains handled notification, carrier/exception identity and no-dispatcher behavior. Do not replace optional-dispatcher semantics with an unconditional helper import.
+- `async-scheduler.ts` settlement/executor/thenable resource registration has deliberate helper ordering and recursion controls; preserve registration before lookup and current runtime/body ownership separation. Preserve `async-frame.ts` generated Promise ownership and microtask scheduling, the compiler/context options, and all callback construction/receiver/exception/rest-vector producers.
+- `src/wasm/physical/allocation-owner.ts` and its finalizer call preserve actual allocation owners after layout changes. Do not delete instrumentation to obtain clean bytes or bypass native guards. The source-map projector and emitter tasks are in other worktrees and are not part of this merge.
+
+Main's ES2015 class heritage/field carriers, `new.target` object values, pipeline presentation/ABI receipts, declaration/type preservation and current runtime-owner changes must all remain. Inspect the final three-file diff against **both** stage2 and stage3, not only against one parent. The root's actual merge commit will supply main ancestry; no independent fetch, GitHub poll or new PR is necessary.
+
+### Decisive native tests and gates before publication
+
+Run the exact eleven released regression files, retaining their original assertions and reporting each file's numerator/denominator:
+
+```
+tests/issue-4376-callback-new-target.test.ts
+tests/issue-4376-ir-await-rejection-events.test.ts
+tests/issue-4376-compiled-rejection-events.test.ts
+tests/issue-4376-promise-handler-state.test.ts
+tests/issue-4376-pending-reaction-order.test.ts
+tests/issue-4376-single-microtask-drain.test.ts
+tests/issue-4376-allocation-owner.test.ts
+tests/issue-3518-native-promise-resources.test.ts
+tests/issue-3518-promise-resolution-preservation.test.ts
+tests/issue-3518-promise-settlement-body-ownership.test.ts
+tests/issue-3518-promise-settlement-source-preservation.test.ts
+```
+
+The callback file has decisive dynamic constructor identity, escaping lexical arrow, ordinary nested-call clearing, throw restoration, parameter-default timing, runtime-sized constructor argv, rest/non-rest order and receiver/throw identity controls. The IR await test explicitly crosses await/async.throw with dispatcher enabled/disabled; keep all four cells. The Promise ownership/source tests distinguish real preservation from broad structural acceptance.
+
+Add the existing directly intersecting native controls to the scoped run:
+
+- `tests/issue-4376-prewarmed-collection-subclass.test.ts` and `tests/issue-6754-standalone-map-subclass-fields.test.ts`: first-use versus prewarmed Map type, field carrier/layout, clean unsupported-shape refusals and host-lane behavior.
+- `tests/issue-6774-expressions-residue.test.ts` and `tests/issue-6774-r2-expressions-residue.test.ts`: preserve main's function/class/arrow new.target value tests, including a_fn_value, a_cls_chain_value and a_arrow_iife_and_closure. Do not drop non-conflict cells within these small files to disguise an integration regression.
+- `tests/issue-6772-class-residue.test.ts`: surrounding derived-constructor/heritage behavior remains meaningful after the parent-layout resolution.
+- `tests/issue-4376-persistent-script-environment.test.ts`, `tests/issue-4376-shared-exception-tag.test.ts`, `tests/issue-1927.test.ts`: preserve flattened-module rejection, source-independent Script storage, exact exception identity and existing pipeline diagnostic behavior. Retain any already-declared expected failures and report them separately from native success.
+- `tests/issue-3525-prepared-pipeline-presentation.test.ts`, `tests/issue-3525-prepared-mixed-presentation.test.ts`, `tests/issue-3525-prepared-pipeline-boolean-presentation.test.ts`, `tests/issue-3525-prepared-wit-presentation.test.ts`: preserve main's split generation/finalization, source-free/private admission and receipt behavior. No Prepared guard relaxation for these tests.
+
+Use explicit `/Users/thomas/.nvm/versions/node/v25.9.0/bin` PATH and actual native Wasm. The repository Vitest config overwrites fork execArgv, so if the engine requires `--experimental-wasm-exnref`, pass it to the **fork** together with the measured heap budget (the issue's earlier successful native runs used4096MiB); a flag supplied only to the launcher is not sufficient proof. Root/test runner selects the existing supported Vitest CLI execArgv override or a temporary ignored runner configuration; do not edit shared test configuration. Preserve the actual command, runtime version, parent revisions, logs and row denominators. If a case fails, compare its original PR/main inputs using the same runtime/harness before attributing it; no baseline refresh, skipped row or test expectation change is authorized.
+
+Before root marks the existing PR ready for its protected queue: no conflict markers, exactly one public runPipeline/isWasmException declaration, resolved import/type check and formatting/lint; standard required hook gates, import cycles, line/function budgets, compiler boundary inventory, host-import/IR-preservation and core/dead-export controls appropriate to actual changed inputs; production `pnpm run build`; the native suites above with genuine exported values and actual import objects; and final diff review showing every preservation invariant survives. Metadata/authority conflicts discovered by actual gates belong to root as measured finite successors, not a speculative broad reseal in this source resolution.
+
+This refresh does not publish a new Deno artifact, run the full431-test deno_core population, make general Script execution complete, retire old compiler paths or close the public source-map gaps. Root owns existing PR6341 update/queue actions and must preserve the released owner's dirty primary and draft6468.
+
+
+### Regression provenance correction at specification freeze
+
+The independent test audit initially flagged that the current eleven regression files equal the PR60f99 bytes and four issue3518 files differ from main. Root then verified the decisive three-way fact: for **all four existing3518 files, merge-base1a160821→actual-mainabb347 has no diff**. Thus their current PR changes are intentional branch changes, not conflict-free loss of newly added main tests. The seven named4376 regression files are absent from main and are PR additions. Do not automatically edit any of those eleven tests or duplicate historical suites because file lengths differ.
+
+Root reports the Promise-resolution test retains all original titles plus a layout negative; source-preservation retains titles; native-resource count/title changes25/26→26/27 reflect the intended resolving pair. Independent review of the deliberate Deno body-ownership assertion/helper delta remains required before interpreting its green run as preservation. Check the actual before/after guard bodies and helper/receipt operand stage, not title/count equality alone. Preserve that audit and its eventual conclusion at `.tmp/pr6341-independent/audit.json` and snapshots. A detected weakening requires a concrete owner-scoped repair, not a blanket four-test transplant. This remaining test audit does not block implementing the three source conflict resolutions above; final publication still requires its closure and the actual native results.
+
+
+## PR6341 measured inventory prerequisite — 18 rows and one type-only repair
+
+### Evidence and scope
+
+The retained inventory report is `.tmp/pr6341-integration/boundaries-inventory-original.log` (10,731,173 bytes including its diagnostic trailer). Its actual JSON counts are **1,855 tracked/discovered modules**, 1,837 policy rows, 18 unclassified modules, and two declared/excluded nonmodules. A separate git-ls-files count1,861 is not this checker's module denominator. The original report also contains4 unclean-active-layer errors,31 unclassified-target errors,10 parse errors from unresolved merge markers, and27 forbidden-transitive-path errors. Preserve all those rows; do not describe the baseline as only18 failures. Source conflict resolution and the classifications address different causes, and the final real gate must show their complete result.
+
+The policy source is still the exact 4b442f64 epoch (588,351 bytes; SHA256 `4b442f641a2a99fd4abffc5ef85271858f4a3ae2337fcde8c380fba076a22d05`; 1,837 files). Root identifies the same missing inventory in the earlier PR quality failure36985438337. This is a bounded registration prerequisite for existing PR6341. It does not change layer rules, roots, eligibility, tests' expected semantics or public source-map/private Prepared guards.
+
+Source worker initially owns the three conflicts. Root has now **explicitly granted the fourth file `src/wasm/physical/allocation-owner.ts` solely for the type-only repair below**. Architect writes no source. Root separately grants metadata/proof/test ownership; no worker may silently expand from18 rows to unrelated module migrations or overwrite peers' policies.
+
+### Exact classifications
+
+For the following14 codegen paths, add one row per table entry with this exact shape:
+
+```json
+{"path":"<path>","state":"unmigrated","layer":"mixed-needs-split","destination":"<destination>","owner":"3518-coordinator","nextBoundary":"<nextBoundary>"}
+```
+
+| path | destination | nextBoundary |
+| --- | --- | --- |
+| src/codegen/array-fill-proto-value.ts | backend-wasmgc | Separate context-bound Array.fill argument coercion and prototype-call emission from reusable native body construction. |
+| src/codegen/builtin-native-dyn-construct.ts | backend-wasmgc | Separate context-bound Array and Promise dynamic construction, late imports and builtin identity reservation from native construction bodies. |
+| src/codegen/closed-carrier-prototype-status.ts | native-runtime | Place the allocation-free closed-carrier prototype-status body in its canonical native runtime owner and replace the legacy instruction-type import. |
+| src/codegen/closed-object-prototype-edges.ts | backend-wasmgc | Separate codegen-context prototype edge registration and physical function/global allocation from native prototype bodies. |
+| src/codegen/closures/promoted-capture-value.ts | backend-wasmgc | Separate context-bound promoted capture lookup and ref-cell type selection from native capture-value instructions. |
+| src/codegen/linked-realm-property-read.ts | backend-wasmgc | Separate linked-realm late-import reservation and context-owned function filling from its native read body. |
+| src/codegen/live-array-iterator-value.ts | backend-wasmgc | Separate codegen-context iterator kind and layout selection from the receiver-backed native iterator value body. |
+| src/codegen/microtask-drain-boundary.ts | backend-wasmgc | Separate scheduler-context and physical export registration from the canonical native microtask drain body. |
+| src/codegen/microtask-notification.ts | backend-wasmgc | Separate context-owned late notification import and index shifting from native scheduling instructions. |
+| src/codegen/ordinary-new-target.ts | backend-wasmgc | Separate AST lexical-target detection and context/local/global registration from ordinary construction target frame instructions. |
+| src/codegen/promise-handler-boundary.ts | backend-wasmgc | Separate context-owned Promise handling boundary export and physical function registration from native handling instructions. |
+| src/codegen/promise-rejection-dispatch.ts | backend-wasmgc | Place context-dependent rejection dispatcher resolution and import/defined-function identity checks behind explicit backend resources. |
+| src/codegen/rest-only-apply.ts | backend-wasmgc | Separate closure/context dispatch, receiver state and exception registration from full-vector rest-call bodies. |
+| src/codegen/shared-script-var-access.ts | backend-wasmgc | Separate context-owned Script binding/global-environment registration and final instruction rewriting from explicit native binding resources. |
+
+These are actual codegen/context modules outside canonical active roots, not newly certified clean implementations. Even the small `closed-carrier-prototype-status` body still imports the migration-debt `ir/types` facade and is outside native-runtime roots; its precise future destination is native-runtime rather than inventing a backend context dependency it does not have. No relocation of those14 files is needed for this preservation refresh.
+
+Add the following three rows as-is:
+
+```json
+{"path":"src/runtime/wasmgc/promise/reaction-order-bodies.ts","state":"clean","layer":"native-runtime"}
+{"path":"src/runtime/wasmgc/promise/rejection-event-bodies.ts","state":"clean","layer":"native-runtime"}
+{"path":"src/runtime/wasmgc/promise/resolving-pair-bodies.ts","state":"clean","layer":"native-runtime"}
+```
+
+All three are inside the existing active `src/runtime/wasmgc` root. Reaction-order and rejection-event bodies import only canonical Wasm-model types. Resolving-pair imports canonical Instr, the type-only `PromiseSettleClosureResources` from existing clean resolution-bodies, and the rejection-event body value. Existing native-runtime edges permit same-layer, wasm-model and wasm-physical dependencies. The resolution↔resolving-pair relation includes an erased reverse type edge, not a newly introduced runtime cycle. Do not suppress any actual cycle guard; verify it with the ordinary source gate.
+
+After the authorized type-only repair, add:
+
+```json
+{"path":"src/wasm/physical/allocation-owner.ts","state":"clean","layer":"wasm-physical"}
+```
+
+The active physical root already covers this file. Preserve minModules5, native-runtime minModules99, all entries, roots, activationHistory, allowedEdges, existing files/order and nonModules. No activation record is required to register new files inside an already active directory. Insert these18 exact rows at stable measured positions alongside their corresponding populations; the raw successor receipt must record those actual positions. Final expected inventory size is1,855, not1,861. No row is removed, reclassified or silently normalized.
+
+### Authorized canonical type dependency for allocation-owner
+
+Metadata alone cannot make the current file clean: line2 imports `FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule` from `../../ir/types.js`, whose policy row is unmigrated/mixed-needs-split. `check-compiler-boundaries.mjs:550–557` enforces type-only edges too. A clean row without a source repair would still fail; a debt row within this active root would fail unclean-active-layer. Do not add an edge exemption or misclassify the facade.
+
+Use existing canonical owners only:
+
+```ts
+import type { Instr, ValType } from "../model/instructions.js";
+import type { FieldDef, StructTypeDef, WasmFunction } from "../model/module-records.js";
+import type { PhysicalModuleStorage } from "./module-reservations.js";
+```
+
+Retain the runtime import `indexPhysicalTypes` unchanged. Replace only the parameter type with:
+
+```ts
+mod: Pick<PhysicalModuleStorage, "types" | "imports" | "functions" | "globals" | "elements" | "exports">
+```
+
+This is the exact observed mutation/read surface: type-table indexing/struct fields/type additions; import counting; function bodies/locals and predicate append; global initializers/token insertion; element offsets; export descriptor shifts and predicate export. No other WasmModule field is used. `PhysicalModuleStorage` already declares all six arrays with canonical mutable element types, including an assignable exports array, and full WasmModule callers remain structurally compatible. Do not introduce a new module facade, cast, wrapper copy, optional property, readonly mutation escape, generic contract or allocation algorithm change.
+
+Freeze before/after text and prove the function's runtime body and existing runtime imports byte-identical apart from import/type syntax. Independently transpile with the same TypeScript options and compare emitted JavaScript (exclude source-map/file-location-only metadata if produced); no runtime dependency on module-reservations may appear. Typecheck actual compiler/finalizer and direct allocation tests against the narrower parameter. Preserve all native cases in `tests/issue-4376-allocation-owner.test.ts`, especially cross-instance foreign handles, inherited fields, captured closures, native carriers, constant initializers and index/descriptor ownership. Maintain the earlier eleven-file Deno/Promise regression population. No test weakening or full-WasmModule clone is permitted.
+
+### Finite current-policy proof and actual reader channels
+
+Create a new test-only fixed18-row inverse component, receipt and independent test:
+
+- `tests/helpers/ir-deno-callback-inventory-successor.ts`
+- `tests/helpers/ir-deno-callback-inventory-successor.json`
+- `tests/issue-4376-deno-callback-inventory-successor.test.ts`
+
+Its public raw/semantic functions are `captureDenoCallbackInventoryPredecessorPolicySource(raw, readAuthority?)` and `captureDenoCallbackInventoryPredecessorPolicy(value, readAuthority?)`. They accept only the actual newly measured1,855-row policy and return the exact4b442f64/1,837 predecessor. Root supplies independently reviewed current pins **after** row formatting/freezing. Snapshot exact before/current raw bytes/SHA/blob, semantic whole-data/files profiles, exact18 rows/index/neighbors, UTF-8 source spans, and unchanged non-files fields. Prove raw inverse/replay, semantic remove/reinsert, and exact raw/semantic agreement. Never add current-or-old hash alternatives, change a historical receipt's current pin or silently drop unknown rows.
+
+Preserve the existing `ir-main-inventory-source-successor.{ts,json}` eleven-row/eight-span proof from1,837→1,826. Preserve the still older `ir-runtime-program-policy-main-inventory-20261002.json` four-row epoch and all later/earlier policy algorithms, receipt pins, helper prefixes, historical artifacts and declarations. The new chain is actual1,855 → new Deno18 inverse → exact1,837 → existing eleven-row inverse → existing historical chain. The source-map projection component's separate one-row proof is not installed in this worktree by this plan.
+
+Read-only census identifies these17 candidate actual-policy reader test files (paths all under tests): canonical-3c6-inventory-successor, canonical-489d-inventory-successor, current-main-inventory-successor, lowering-analysis-preservation, nested-stackification-policy-evolution, number-prerequisite-policy-evolution, program-data-contract-boundary, program-validator-policy-evolution, runtime-data-contract-seam, runtime-program-policy-evolution, semantic-provider-boundary, validation-policy-evolution, wasmgc-helper-policy-evolution, well-known-symbol-policy-evolution (each prefix `issue-3518-` and suffix `.test.ts`), plus `issue-3525-arraybuffer-isview-main-policy.test.ts`, `issue-3525-main-inventory-source-successor.test.ts`, `issue-3525-presentation-classification-policy.test.ts`.
+
+This census is an implementation dependency list, not a claim of17 newly caused failures. Capture actual baseline rows; some readers already omit the existing eleven-row outer inverse and can fail on current4b442f64 before this registration. For every actually impacted initial healthy capture, apply the new Deno inverse to the actual raw/data operand before the existing eleven-row inverse, then retain the original downstream chain. If a reader already lacks that delivered eleven-row step, explicitly record the pre-existing failure and add that proof step as a measured prerequisite. Do not rename/omit original assertions or count a new early epoch failure as a later intended semantic/receipt guard.
+
+Keep historical mutation injection **after** authenticated initial projection, using the exact historical declaration/operand bytes, and preserve paired healthy controls. Keep separate fresh-current mutation controls on raw1,855 data before the new inverse. Never wrap an entire mutating reader so a healthy authority replaces supplied corruption. The existing eleven-row helper's own independent proof receives authenticated1,837 input only for fixture initialization; keep its old eight spans/eleven rows and complete helper/receipt pins unchanged. The new independent test validates all18 real row additions, retained field/order preservation, raw/semantic reciprocity and typed/primitive failures using independently fixed expected rows/spans rather than inspecting the production receipt for expected values.
+
+New proof controls must include healthy→corrupted→restored full policy and fresh receipt; boxed/accessor operands rejected without coercion; deleted/duplicate/renamed/reordered newly classified row; altered retained row or non-files rules; wrong current source formatting; malformed/missing authority and old1,837 source presented as current. Assert exact raw and semantic authority read counts separately; actual native inventory after registration is a required independent control. Preserve original logs/full denominators, and test the true current constructor input before any body/dependency mutation so a stale healthy prerequisite cannot falsely credit the later guard.
+
+### Exact C1 intersections and eventual6866 composition
+
+Of the17 candidate readers, only four are currently in C1 `currentInstruments` **and** have existing instrumentEdits recipes: `issue-3518-number-prerequisite-policy-evolution.test.ts`, `issue-3518-program-data-contract-boundary.test.ts`, `issue-3518-runtime-program-policy-evolution.test.ts`, and `issue-3518-well-known-symbol-policy-evolution.test.ts`. For each actually edited one, root replaces its measured live pin and composes its existing immutable-before→final-live recipe with exact whole-file inverse/replay. Preserve original artifacts/before pins and all non-target fields; do not append duplicate recipes or widen allowed hashes. Then update the actual manifest anchor and the independent external observation scalar under root review. No update to the historical runtime-program policy implementation is necessary merely to add the outer adapter, and unedited current instruments require no successor.
+
+If composition imports the separately delivered6865 initial-graph/C1 correction, retain that exact peer recipe rather than resetting the manifest to an older checkpoint. Authority/source pin changes beyond the four measured reader intersections require an actual reader finding, not a blanket reseal. The18 production additions do not become new historical C1 population members merely because they now have classification rows.
+
+Prioritize Deno6341 delivery. When the independent canonical `src/ir/program/source-map-position.ts` component later composes, its net inventory becomes1,856. Root must derive its one-row epoch from the **then delivered1,855 predecessor**, preserving all18 Deno rows, and apply that new outer inverse before this Deno inverse. If its unpublished proof was initially built on4b442f64/1,837, rebase its new proof to the measured delivered predecessor; do not shrink policy to1,838, accept both epochs at one boundary or rewrite this delivered18-row history. No projector source behavior change is implied by this policy composition.
+
+Before existing PR6341 publication, run normal and inventory boundary gates on the final source+rows, require zero unclassified/unclean/forbidden errors and exactly1,855 actual module rows, retain the full report, run the new independent proof/affected readers plus measured C1 authority successor gates, and repeat the allocation-owner native/type/JavaScript-preservation controls. The three conflict resolutions and earlier native regressions/production build remain required. Strict retirement and public IR source-map gaps stay open. No hook or quality-baseline bypass, Deno primary/draft6468 edit, new PR, or eligibility relaxation is authorized.
+
+
+## 2026-10-06 measured flat-directory and import-cycle prerequisites (architect freeze)
+
+This amendment supersedes the preceding sentence that no relocation of the fourteen new codegen modules is needed. It does not supersede their implementation, their honest mixed classification, the immutable policy predecessor or the preservation requirements. Root measured codegen's flat population at842 against the unchanged829 ceiling. Exactly thirteen new top-level leaves account for the increase; `closures/promoted-capture-value.ts` is already nested. Root separately measured the import-cycle gate at largest SCC705 versus697, codegen→IR297 versus295, IR→codegen75 versus74 and IR→runtime10 versus9. Directory relocation fixes only the flat population. Neither baseline may be increased, reseeded or bypassed.
+
+### Independent failure attribution and release order
+
+Root's actual old-PR native baseline has195 rows,189 pass and6 fail. The candidate's same195 names/statuses/full normalized diagnostics agree. Those six Promise instrument failures are pre-existing on60f99e83450ea7eac7d6fe21a5ec2d4436cce6c5: four resolution VM failures referencing `arrayThenObservable`, plus two settlement-body preservation failures (retained declaration digest and the once-only inverse missing `closureBagInit`). They require explicit instrument/root-cause correction with healthy controls and original receipts; they are not fixed by moving modules. Fresh main's natural232-row population is193 pass/39 fail and is not the candidate's denominator.
+
+The class6772 population is a true composition regression: main passes51/51 using the same test blob, candidate passes50/51; the failed result47 instead of63 omits the fifth16-point `super(super.method())` clause. Root must fix and verify that actual compiler composition before publication, retaining both main and Deno callback/new.target controls. Do not remove the clause, change63, treat it as an old-PR instrument failure, or grant green from the other fifty cases. This appendix grants no implementation direction based merely on that error signature.
+
+Order: preserve full before snapshots and attribution; root releases the13-file path transport; independently repair the class composition and six authenticated instrument problems under their explicit scopes; release each dependency-cut group below after its caller/dependency mapping is reviewed; freeze final actual source/policy/test bytes; build the one final unpublished inventory proof and measured authority successors; run normal gates and complete native populations. A green path-only checkpoint is not publication approval while the cycle or semantic gates remain red.
+
+### T1: exact thirteen-path transport, no implementation edits
+
+All destinations below already exist as directories. Old paths are `src/codegen/<basename>.ts`; no compatibility forwarding module remains at an old path, since that would retain the flat count and duplicate module identity.
+
+| basename | final path |
+| --- | --- |
+| array-fill-proto-value | src/codegen/array/array-fill-proto-value.ts |
+| builtin-native-dyn-construct | src/codegen/expressions/builtin-native-dyn-construct.ts |
+| closed-carrier-prototype-status | src/codegen/object-model/closed-carrier-prototype-status.ts |
+| closed-object-prototype-edges | src/codegen/object-model/closed-object-prototype-edges.ts |
+| linked-realm-property-read | src/codegen/object-model/linked-realm-property-read.ts |
+| live-array-iterator-value | src/codegen/array/live-array-iterator-value.ts |
+| microtask-drain-boundary | src/codegen/registry/microtask-drain-boundary.ts |
+| microtask-notification | src/codegen/registry/microtask-notification.ts |
+| ordinary-new-target | src/codegen/closures/ordinary-new-target.ts |
+| promise-handler-boundary | src/codegen/registry/promise-handler-boundary.ts |
+| promise-rejection-dispatch | src/codegen/registry/promise-rejection-dispatch.ts |
+| rest-only-apply | src/codegen/closures/rest-only-apply.ts |
+| shared-script-var-access | src/codegen/declarations/shared-script-var-access.ts |
+
+Array builders belong with array leaves; dynamic constructor dispatch with expression leaves; object/prototype and linked-realm access with object-model; physical export/import registration and dispatcher lookup with registry; ordinary construction activation/rest-call state with closures; Script declaration access with declarations. This is organization of existing context-bound codegen, not clean-backend certification. `closures/promoted-capture-value.ts` remains in place.
+
+Rebase each moved module's static relative import/export specifier against its old resolved target, then apply the finite old→new target mapping. Preserve `.js` specifiers, imported/exported names, type-only flags, order, all declaration/body bytes, module-level state, default parameters, diagnostics, telemetry strings and initialization order. Census found no `import.meta`, dynamic import, require or dirname dependency in these13 modules. Still assert this before editing; an unexpected occurrence is a changed prerequisite, not license for a broad text replacement. In particular preserve the single `accessPlans` WeakMap in shared-script-var-access and the ordinary new.target global name. Retain the profiling labels `fill-closed-object-prototype-edges` and `fill-linked-realm-property-read` in index.ts unchanged.
+
+The actual production importer set is twelve files: `src/codegen/{async-scheduler,iterator-native,array-object-proto,object-runtime,closures,expressions,object-runtime-prototype,index,function-body,native-construct}.ts`, `src/codegen/expressions/new-super.ts`, and `src/ir/integration.ts`. There are nineteen static import declarations targeting the moved leaves: async-scheduler4, index3, object-runtime2, expressions2, and one each in the remaining eight files. Recount from the final AST; do not count index's two profiling labels as imports. Importers may change only these specifier literals in T1. This narrow grant includes importer literals in the already frozen conflict files without reopening their implementations.
+
+Three direct test imports need the same literal transport: `tests/helpers/promise-resolution-receipts.ts`, `tests/issue-3518-promise-settlement-body-ownership.test.ts`, and `tests/issue-4376-compiled-rejection-events.test.ts`, all importing the dispatcher. Preserve every assertion and fixture. Other Promise tests consume those helper functions and source declarations indirectly. `requireBindings` in settlement-body-ownership authenticates the scheduler's actual canonical settlement import and forwarded export lists, and its mutators change supplied source operands; T1 does not change that canonical native import, list or guard. Existing resolution donor JSON/SHA, settlement declaration receipts, semantic inverse edits and historical source text stay immutable. Whole-current-file hashes/read inventories change only where actual paths/specifiers change; a whole-file successor must reverse only those exact literal edits before applying an existing historical declaration adapter. Never replace a mutated operand with a separately reread healthy file.
+
+T1 proof: retain all13 old whole-file byte/SHA snapshots; a bijective old/new path manifest; exact import-literal spans; all19 importer edits and3 test-import edits. Authenticate source pins, reverse the bounded literal edits and require byte equality for each old module/importer; replay forward and require final equality. Resolve both ASTs' type/value imports to the same mapped target identities and symbol names. Transpile with identical TS options, normalize only authenticated module-specifier changes and source-location metadata, and compare JavaScript bodies/exports. Confirm13 old files absent,13 new files present exactly once, no old-path source/test imports, and flat842−13=829. Do not normalize arbitrary strings or use function-only equality to miss module state.
+
+### T2: actual eight-node SCC cuts, separate from path-only proof
+
+The gate graph's eight new giant-SCC members and their complete outgoing dependencies into that SCC were independently read using `buildGraph` from the actual gate implementation. The following table is the finite service seam. Dependencies not listed are presently outside the giant SCC and need no speculative conversion.
+
+| moved/current leaf | SCC services to supply from its actual existing producer |
+| --- | --- |
+| array/array-fill-proto-value | `clampRelative`, `requireObjectCoercible`, `resolveSliceDeps` from array-slice-native; producer array-object-proto |
+| expressions/builtin-native-dyn-construct | `emitStandaloneArrayConstructor`, `emitStandalonePromiseFromExecutorValue`, `isStandalonePromiseActive`, `reserveBuiltinConstructorIdentityGlobal`; producer expressions/new-super |
+| object-model/closed-object-prototype-edges | `nextModuleGlobalIdx`, `canonicalUndefinedExternInstrs`; producer index |
+| closures/promoted-capture-value | `localGlobalIdx`; producer closures/funcref-as-closure at its call around310 |
+| array/live-array-iterator-value | `ITER_KIND_ARRAY_KEYS`, `ITER_KIND_ARRAY_ENTRIES` from iterator-native; producer iterator-native |
+| closures/ordinary-new-target | `undefinedExternInstrs`, `ensureExnTag`; initialization producers function-body/closures, construction-frame producer native-construct |
+| closures/rest-only-apply | `classifyClosureDispatchRest`, `buildClosureResultBoxing`, `ensureCurrentThisGlobal`, `installableReceiverInstrs`, `ensureExnTag`; producer object-runtime |
+| declarations/shared-script-var-access | `emitGlobalEnvironmentKey`, `emitGlobalEnvironmentObject`, `ensureGlobalEnvironmentOperation`, `localGlobalIdx`; producer index |
+
+Use an explicit final dependency parameter per affected exported operation, typed with erased `typeof` imports of exactly these existing functions (numeric readonly fields for the iterator constants). Destructure the parameter into the existing local function names at entry; retain every original call, argument, branch and invocation time. `isArrayFillVariadicMember`, lexical AST detection and exports that do not consume a service retain their signatures. For ordinary new.target split the dependency shape by operation: initialization needs only undefined-value emission, construction frames only exception-tag registration. For shared Script vars, only operations actually reading those services gain the parameter; its WeakMap and prepare/finalize sequencing stay unchanged. Pass the original canonical function objects; do not compute their results eagerly, copy mutable ctx state, replace handles with positional indexes, cache an allocated global or use optional callbacks that silently skip behavior.
+
+Each producer may define one module-scope readonly dependency object containing function references (no ctx capture), or pass primitive constants/direct functions where only one dependency exists. No per-instruction closure/object allocation, lookup registry, dynamic import, additional Wasm call, or missing-registration fallback is needed. Additional producer imports must resolve to the exact existing owners. Measure their edges too: a cut is not established if a new producer import creates another forbidden cross-directory edge. Existing `registry/expression-helper-delegates.ts` demonstrates the reason these leaves must not import back into owners, but this plan does not expand that mutable registration framework.
+
+Replace the two value imports of `buildStandardTryTable` in ordinary-new-target/rest-only-apply with the canonical `wasm/physical/exception-control.js` owner at their new relative paths. Actual `ir/try-table.ts` only re-exports that same function: this preserves function identity and eliminates both measured extra codegen→IR edges. This canonical retarget is an explicitly bounded exception to T1's same-resolved-file rule; prove the old export identity and unchanged callee implementation. Do not replace a real runtime dependency with `import type` merely to change the graph.
+
+Expected structural result after all eight seams: none of these eight leaves reaches the existing giant SCC through a value import, so their introduction does not increase its697 ceiling. Assert the actual graph and all baseline dimensions rather than assuming eight arithmetic subtractions prove it. The nested promoted-capture leaf now has explicit additional source ownership under this separately root-authorized scope; it was not part of T1.
+
+### T3: dispatcher and native-reaction resource injection — required distinct gate work
+
+Actual extra edges are integration.ts→codegen/promise-rejection-dispatch.ts at line79 and lower-generic.ts→runtime/wasmgc/promise/rejection-event-bodies.ts at lines86–89. The former serves `resolvePromiseRejectionDispatcher` around8158; the latter builds async.throw event0 around3455 and await handling around3515. Moving the files leaves both edges intact. Merely moving the latter import into an IR emitter also leaves the IR→runtime count10 and is not a fix. A new backend facade would add an IR→backend edge against that separate25 ceiling; do not assume it is free.
+
+The existing context-owned native Promise provider is async-scheduler.ts, already value-imported by integration for `getOrRegisterPromiseType`/`isStandalonePromiseActive`. Extend that existing producer with an explicit typed emission-binding factory. It returns the live dispatcher resolver and canonical native rejection-event/reaction-handled builders; the resolver closes over ctx once at function/resource binding construction and calls the existing authenticated dispatcher lookup only when requested. It must not resolve/mint a dispatcher or run a native builder at factory creation. This is real resource construction, not a bare re-export to conceal an edge. Integration consumes this one binding object and installs its methods into the existing lower resolver; it removes its direct codegen dispatcher import. Preserve `resolvePromiseRejectionDispatcher` and its opt-out/error contract exactly.
+
+Before source release, freeze the finite lower-resolver extension and census actual native direct-lowering tests/callers. Required behavior: event0 with a present dispatcher and handled/rejected event1 use the supplied canonical builders, preserving field4, mark-before-dispatch, event order, scratch locals, argument identities and optional extern conversion. A missing callback when a present dispatcher requires it must be a loud contract refusal, never silent opt-out. The ordinary no-dispatch await case must still emit the exact three-instruction handled marker (receiver conversion/cast if extern, i32.const1, struct.set field4), including with old direct resolvers; do not introduce an unconditional new resolver requirement or drop the handled write. The async.throw no-dispatch case remains byte-inert beyond its pre-existing promise construction. The no-dispatch marker can remain explicit in the already Wasm-specific await arm; it is precisely the current canonical builder's undefined-dispatch branch, not a generalized second Promise implementation. Compare its exact recursive Instr tree with that canonical branch in independent controls.
+
+The exact binding names are `createPromiseRejectionEmissionBindings(ctx)` in async-scheduler, and `resolvePromiseRejectionDispatcher`, `buildPromiseRejectionEvent`, `buildPromiseReactionHandled` in the returned object. Preserve the existing first method in `IrLowerResolver`; add the latter two as optional methods typed with the canonical builders' exact argument/return domains through erased imports: `(dispatch: FuncHandle | undefined, event: 0 | 1 | 2 | 3, promise: readonly Instr[], value: readonly Instr[]) => Instr[]` and `(dispatch: FuncHandle | undefined, typeIdx: TypeHandle, local: number, carrier?: "gc" | "extern") => Instr[]`. Optionality preserves ordinary direct resolvers; only a present dispatcher activates the two required-method checks. Integration spreads/assigns these exact three bindings into its resolver in place of its old dispatcher closure. Do not overwrite unrelated resolver properties or resolve the dispatcher during the spread. The factory's two builder values are the canonical imported functions themselves; only its dispatcher callback captures ctx. Compare present-dispatch callback argument lists and thrown errors independently, including invalid physical dispatcher and unsupported async signature before any emission.
+
+The factory and resolver adapter must not allocate callbacks per IR instruction or per event. Native builder references are module singletons; one ctx-bound dispatcher callback is created at the same resolver lifetime as the existing callback. Preserve the actual call count/timing of dispatcher authentication. Generic lowering consumes only erased types and injected functions; no value edge to native-runtime remains. No new module, activation rule, representation schema, generated-Wasm dispatch or optional widening is needed. Root must review this extension and its direct-resolver compatibility controls as a distinct source release; T1/T2 implementation must not invent it while repairing imports.
+
+### Ownership, metadata and preservation closure
+
+Disjoint source groups after T1 freeze: A owns array fill/dynamic construction/iterator leaves plus array-object-proto, expressions/new-super, iterator-native; B owns ordinary-new-target/promoted-capture leaves plus closures/funcref-as-closure, function-body, closures, native-construct; C owns closed-prototype/rest-apply/shared-Script leaves plus object-runtime. Root alone integrates C's two index call sites and all shared index imports. D owns dispatcher/native-binding changes in async-scheduler, integration, lower-contracts and lower-generic after its concrete contract review. The class composition owner retains class-bodies; tests/metadata have separate explicit owners. Do not concurrently give two workers the same producer; route the promoted-capture producer to B and any index collision through root.
+
+Metadata owner must use retained `.tmp/pr6341-inventory/policy-before.json` and the frozen current draft/profile during the independent17-reader baseline's temporary policy replacement. Do not read that temporary1,837 file as the current1,855 candidate. For T1/T2/T3 there are still exactly18 newly classified modules: change only the13 path strings in their existing new rows. Their state/layer/destination/owner/nextBoundary fields remain the preceding exact profiles; nesting does not cure context ownership. The three native Promise rows, nested promoted-capture row and clean allocation-owner row remain unchanged. Preserve all1,837 predecessor rows, non-files fields, allowed edges, activation roots/history and order. If later work actually changes module count or classification, stop and measure/review that distinct delta rather than silently certifying18.
+
+Update only the new unpublished Deno inventory proof's actual current values: `tests/helpers/ir-deno-callback-inventory-successor.{ts,json}` and `tests/issue-4376-deno-callback-inventory-successor.test.ts`, plus `scripts/compiler-boundaries.json`. Its fixed before policy remains exact4b442f64/1,837. Recompute current raw/semantic profiles,18 row positions/neighbors and bounded spans after final formatting; independently reverse to that same predecessor and replay to exact final1,855. Preserve the prior top-level-path proof/logs as ignored evidence, not as a second accepted current epoch. Root's proposed metadata receipt base must be actual merge inputabb3471c46bb9e7129b28812fe16313c857cda69, not a cached GitHub comparison base or another lane's revision.
+
+The17 reader adapters consume unchanged proof API names; do not edit them merely because current row paths changed. The known four C1 current-instrument/existing-recipe intersections remain only the actually changed number-prerequisite, program-data-contract-boundary, runtime-program-policy-evolution and well-known-symbol readers. These path moves do not themselves authorize refreshing their pins again. Check direct imports/source-file inventories for every actually edited test helper against the current manifest before composing any extra finite successor. Retain all historical artifacts/before pins, all old mutation rows and exact outside-span bytes. Promise donor/declaration authorities do not acquire replacement historical hashes to accommodate service injection: inverse only measured new parameter/destructure/call arguments at exact declarations, then run the unchanged old guards; separately mutate the fresh live binding graph before inverse and require healthy→bad→restored controls.
+
+Required final checks use Node25 and the ordinary scripts: check:flat-dir-budget, check:import-cycles (also retain verbose graph), check:compiler-boundaries and inventory, check:loc-budget, check:func-budget, check:coercion-sites, check:oracle-ratchet, production build/typecheck and normal changed-root hooks. Retain the eleven Deno/Promise regression files and class6772's entire51-row population; retain all other already captured native rows with real row-by-row attribution. Source transport requires paired same-input binary/WAT/runtime comparisons; service injection additionally compares mutable ctx/local/global/function/counter effects and exact canonical callback arguments/order. Measure warmed compiler time on the same genuine source fixture population before/after with a fixed engine and repeated samples; report overhead rather than waive it because Wasm bytes match. No request-only eligibility, private Prepared guard weakening, baseline allowance, retirement claim or loss of main/old-PR assertions is authorized.
+
+
+## 2026-10-06 concrete class composition repair: retain abrupt super-method completion
+
+### Authenticated native diagnosis
+
+This is the one class regression previously separated from the six old-PR Promise instrument failures. No tracked compiler/test/metadata file was changed to diagnose it. Root authorized `.tmp/class-composition-probe/root` as an isolated ignored probe root. All1,857 copied src files match the candidate's `.tmp/pr6341-independent/candidate/before.json` source vector. For the21 source paths temporarily mutated by the policy-reader baseline, copying used only `.tmp/pr6341-inventory/original17-source-copies/src`, never the live fault targets. Source custody and all four held candidate pins are in `source-custody.json`; `after-custody.json` confirms all1,857 copied sources unchanged after probes. Actual policy was neither read nor needed. Main compilation used the separate immutable `/private/tmp/js2-ir6341-main-20261006` root atabb3471c46bb9e7129b28812fe16313c857cda69.
+
+The actual Node executable was `/Users/thomas/.nvm/versions/node/v25.9.0/bin/node`, with `--experimental-wasm-exnref --max-old-space-size=4096 --import tsx`. `probe.mjs` imports each root's genuine public compile entry, uses the original runProbe options (standalone/probe.js/allowJs/skipSemanticDiagnostics/deferTopLevelInit), compiles and instantiates the actual WebAssembly module with `{}`, calls `__module_init` and `readResult`, and independently evaluates the source in Node. Every reported native module compiled successfully with zero diagnostics, compiler imports[] and actual WebAssembly.Module.imports[]. No interpreter replacement, host runtime import, producer stub or modified compiler was involved.
+
+The unchanged original six-clause body, extracted from `tests/issue-6772-class-residue.test.ts` around78 and wrapped exactly like runProbe, has source SHA256 `45ab0d29e9a9218e0a9ac398561200355dd5c21a0b3fa913e6f1c10b73ecd181`: Node63, main63, composed47. The original assertion, source body and test file remain unchanged. Evidence is under `.tmp/class-composition-probe/{main,candidate}/original-results.json`, with original process stdout, actual binaries and WAT retained.
+
+A diagnostic variant preserves all six class declarations and replaces only the fifth clause's reporting. It distinguishes no throw1024 from a caught error mask: ReferenceError1, TypeError2, Error4, typeof-object8, typeof-string16, name-ReferenceError32. Node45 and main45 identify an object ReferenceError with the expected name; composed1024 identifies successful completion with **no exception**, not a wrong error class. See each lane's `diagnostic/results.json` and `diagnostic-fixtures.json`. Extracting just the fifth class is an essential countercontrol: Node16 but both main0 and composed0. Thus the isolated shape already had a latent defect on main; the composition newly exposes that same mechanism in the original six-clause population. Do not claim the isolated shape regressed only in the PR.
+
+Actual original-fixture WAT is decisive: main's `__anonClass_C_4_init` contains the ReferenceError construction and `throw 0`; the candidate's corresponding function instead supplies a default operand, runs the parent's init and returns its receiver. The bounded excerpts are `{main,candidate}/fifth-init.wat`. Other method/constructor dispatchers need not be guessed from the error signature.
+
+### Cause and exact implementation
+
+The Deno change in `class-bodies.ts` around2587 correctly supplies `enclosingClassName: className` to every constructor context. Retain it, including anonymous/underscore-containing names and the separate host Promise constructor site around4014. Main's prior display-name parsing accidentally lost the synthetic anonymous-class identity in the original six-clause fixture, so its super-method fallback happened to preserve the throw. Reverting the explicit identity would reintroduce Deno constructor bugs and leave the isolated latent defect.
+
+The actual causal chain is:
+
+1. `compileSuperMethodCallCore` in `src/codegen/expressions/new-super.ts` around1302 calls `emitUninitializedThisGuard`, which emits the proven unconditional GetThisBinding ReferenceError but discards the boolean classification result.
+2. It continues compiling unreachable method lookup. With the now-correct class identity, parent Base is found but method is absent. The collection helper declines for this ordinary class; the host-only external method helper declines for standalone. The function reports missing method and returns null around1386.
+3. `compileExpressionBody` in `src/codegen/expressions.ts` around1012 treats null as failed speculative emission. Its existing `rollbackSpeculative` erases the throw and diagnostic and emits a default argument. Parent construction then completes normally. Neither collection admission nor native construction caused the missing throw.
+
+**Source owner edits only `src/codegen/expressions/new-super.ts`, function `compileSuperMethodCallCore`.** Replace its initial void guard call with the existing boolean-returning primitive:
+
+```ts
+if (emitSuperUninitializedThisCheck(ctx, fctx, expr.expression)) return VOID_RESULT;
+```
+
+The module already imports both that primitive and VOID_RESULT; reuse them. Remove the now-unused `emitUninitializedThisGuard` named import if this was its sole local use; retain the canonical guard-module dependency and every other import. This is an abrupt-completion result, not a fabricated value or a relaxed speculative guard. The existing expression wrapper specifically preserves VOID_RESULT; if a surrounding expression requires a type it may append its established unreachable default after the throw, without rolling back the throw. No global changes to null semantics, speculation, error stickiness, class resolution, collections, constructor drivers, allocator behavior or source-map guards are warranted.
+
+The boolean primitive already applies standalone and derived-constructor classification. Its `always` branch emits the error and returns true; `runtime` emits the conditional flag check and returns false; `never` emits nothing and returns false. Consequently only the statically terminating case exits early. Runtime-initialization checks and ordinary method lookup continue unchanged. Do not change `classifyUninitializedThisAccess`, suppress an exception merely because a method is missing, treat every `super` use as uninitialized, or evaluate key/method-call arguments after a proven abrupt GetThisBinding completion.
+
+Both literal property calls and already-resolved computed-literal super calls use this shared core. Preserve existing computed-key sequencing at its caller; this patch does not broaden dynamic-key lowering. The earlier T1 move owns only import literals in this same file, while this source owner owns the single core-function behavioral change. Serialize these two writes or have root compose them; no simultaneous file ownership. The four held class-bodies/expressions/compiler/allocation-owner implementations need no change for this repair. Root releases source only after the active policy-reader custody window closes.
+
+### Independent acceptance and bounded fanout
+
+Keep the entire original51-row `tests/issue-6772-class-residue.test.ts` population and all old source bodies/assertions. The original six-clause row must become63. A separately owned new `tests/issue-4376-super-method-abrupt-completion.test.ts` can carry the isolated shape and identity/order controls without editing historical assertions. Capture its original candidate result before source release. Required independent cases:
+
+- Exact isolated `super(super.method())` with missing parent method: catch a real native ReferenceError (instanceof/name/object identity checks) and preserve bit16. This is an honestly labeled latent-main correction through the same mechanism.
+- The six-clause diagnostic reporting preserved as a separate witness: mask45, not1024, with original main/candidate baselines retained.
+- Side-effect order: a base constructor increments a counter, a super-method argument increments another, and a parent prototype getter increments a third. Access before super must throw before any of those effects; assert all counters remain zero. Do not infer ordering from the error name alone.
+- Healthy resolved super method after successful super returns the parent method's value, with one parent invocation and arguments evaluated once. A loop-based runtime initialization case and an arrow created before super but invoked afterward remain healthy using existing class6772/5350 coverage; do not replace their old guards with unconditional throws.
+- Preserve ordinary/base constructors, the original second-super and nested-super rows, anonymous and underscore-containing class identities, and the existing Deno callback/new.target plus Promise-constructor regression populations.
+
+Use actual standalone compilation and WebAssembly.instantiate with no imports for these controls. Preserve original public compile options/default routing. After the one-function patch, require all51 original class cases, the independent new controls and the existing Deno callback/native construction controls to pass; retain row-level failure attribution for the six still-open original Promise instrument failures. Production type/build and normal changed-root source gates remain required. The ordinary main/PR artifact equality checks apply to unaffected healthy fixtures; the formerly wrong class body's throw/bytes must change and must be compared semantically against Node rather than pinned to the bad binary.
+
+No tracked source/test/authority was modified by this architect task, no graph or policy gate was run during physical mutations, and no baseline, historical receipt, private Prepared guard or migration-retirement condition is waived.
+
+
+## 2026-10-06 six pre-existing Promise preservation guards: finite instrument repair
+
+### Frozen scope and attribution
+
+These six failures reproduce with identical names/statuses/full normalized diagnostics in oldPR60f99e83450ea7eac7d6fe21a5ec2d4436cce6c5 and the composed candidate's195-row shared population (189 pass/6 fail). They are not the separately repaired class regression. Keep the original failure rows in `.tmp/pr6341-six-guard-spec/original-six-failures.json` and all original baseline artifacts. Root reports the class repair complete108/108; this task neither changes nor reruns it.
+
+Four failures are the resolution suite's `fills the registered lookup object before live omitted/wrong-fill mutations` and `classifier finalization full`, `empty`, `no-any`. All stop before their intended assertions with `ReferenceError: arrayThenObservable is not defined`. Two failures are settlement-body-ownership's immutable retained-declaration checks for `emitStandalonePromiseResolve` and `emitStandalonePromiseThen`. Actual source extraction shows both current declarations equal oldPR byte-for-byte; no new production corruption is indicated by these six failures.
+
+Architect wrote no source/tests/metadata/Git state. Read-only extraction and inverse/replay analysis is retained under `.tmp/pr6341-six-guard-spec`. Current input pins after T1's dispatcher import transport are:
+
+| file | bytes | SHA256 |
+| --- | ---: | --- |
+| tests/helpers/promise-resolution-receipts.ts | 30960 | 392b1192aa978ebe14073b087c5e0eedac18a8570f3a60f4587aaad95381d467 |
+| tests/issue-3518-promise-resolution-preservation.test.ts | 10144 | 9f04e99b8b0cbfb0a527d1a3f5b181dda8a5a657b5a0fa4d1f4fa2e376904c9e |
+| tests/issue-3518-promise-settlement-body-ownership.test.ts | 47194 | d7ef0d7f54c186cdd6b0fdfb800e31bc32d50278bb640ae0995c776edc16dd4d |
+| tests/fixtures/issue-3518-promise-resolution-donors.json | 39148 | da7c7a907726732488dec5e80a8a06c8bb0ed88c644fea32e0da15abef70a646 |
+
+These are measured before values, not proposed future pins. Preserve the donor JSON byte-for-byte. Production reader/input pins are in `input-pins.json`. The only direct consumers found for the resolution helper are these two issue3518 tests. No matching C1 current instrument/recipe/authority path was found for these three test files; do not reseal C1 merely because the tests were repaired. Recheck actual direct-reader intersections if a later peer introduces one.
+
+### G1: bind the actual array-then predicate and retain the healthy prerequisites
+
+**Owner G1: `tests/helpers/promise-resolution-receipts.ts` and `tests/issue-3518-promise-resolution-preservation.test.ts` only.** The producer `src/codegen/closed-method-dispatch.ts` imports the real `arrayThenObservable` from `./promise-species-then.js` and uses it around2160 when collecting `vecTypeIdxs`. The predicate's actual implementation around509 is:
+
+```ts
+return ctx.standalone === true && (ctx.protoIndexDirty || ctx.protoNamedWrittenMembers.has("then"));
+```
+
+`classifierFixture` around204 and `verifyActualLookupFill` around391 extract/evaluate `fillPromiseThenableHelpers` in a VM but omitted this dependency. Import `arrayThenObservable` from the actual production module in the test helper and supply that exact function reference in both VM binding dictionaries. Do not use `() => false`, a reimplemented getter, a function extracted from a stale donor, or a closure that changes the predicate's result. Preserve the old donor evaluation and its existing declared dependencies; the new binding does not alter its source.
+
+Make the predicate's consumed context fields explicit in each healthy fixture: `standalone`, `protoIndexDirty`, `protoNamedWrittenMembers` and `vecTypeMap`. For the existing historical-equality populations use a genuine non-observable configuration (standalone true, dirty false, an empty written-member Set, and an empty vector Map). This retains their intended no-new-array-arm semantics without depending on missing fields or undefined mode flags. Preserve full/empty/no-any/unreserved variants, the reserved lookup object's identity, signature104, all earlier inventory rows, actual-object writes, locals/body assertions and read ordering. No expected results or historical donor bodies change to accommodate the missing binding.
+
+Before counting an omitted/wrong-fill mutant, run the healthy VM fixture to completion and verify its exact current object effects. Existing negative tests must then mutate the same authenticated source operand, not a newly read healthy replacement. In particular the old fill mutants cannot claim coverage merely because a shared missing global made every invocation throw.
+
+Add finite positive predicate controls separate from the old historical comparison: (a) standalone false with dirty true, (b) standalone true with both observability inputs false, (c) dirty true, (d) named `then` written with dirty false. For true cases supply a Map whose values include two distinct vector handles in reverse order and one duplicate; assert exactly the two sorted distinct vector rows at the actual finalization point. Include late Map insertion before finalization so early capture cannot pass. For no extern getter, assert the canonical builder's documented suppression of vector Get arms; for an actual getter and open-object resource, assert the independent expected ref.test/extern-get arm order and original captured-value identity. Expected arms must not be synthesized by calling the builder under test. Preserve `verifyIndependentLookupBody`'s existing hand-written oracle and its old mutants.
+
+Authenticate the dependency connection independently: parse the live production driver's import declaration and require the exact non-type named binding `arrayThenObservable` from `./promise-species-then.js`, with no alias replacement. Use the actual imported function object in the VM. Add missing/type-only/substituted-owner-or-symbol import controls plus healthy restoration; these controls validate production dependency identity, not merely a same-spelled VM variable. Do not change the production import or predicate. Native witnesses below establish that the real producer is exercised beyond this instrument fixture.
+
+### G2: two explicit source epochs, thirteen bounded edits, original hashes unchanged
+
+**Owner G2: `tests/issue-3518-promise-settlement-body-ownership.test.ts` only.** The original retained hashes are pinned to `e3de0f3ff7d7828c66b3fea7946f08e593bf77d8`, not fresh main. Its complete async-scheduler source is215633 bytes/SHA256 `7220f0474d3d3c7009876d4d463f2b8c8182d49793f5957570fb0a27da1dfd4f`. Read-only Git extraction independently reproduces both literal retained hashes. Permanent tests must remain self-contained and not require historical Git objects.
+
+| declaration | current/oldPR | fresh main after Deno inverse | immutable original donor |
+| --- | --- | --- | --- |
+| emitStandalonePromiseResolve | 3130 / 4f3eb6c40cf52784c1cdc006821f0dc0019492cef46b561144a1c43889615275 | 3042 / f648618c442bc2a21867e63a5fb21eeaf490aa1b7a6aae390772c36130308f40 | 2684 / 5c0aa24ffc4cd304ffa515da77ce819b2e433d4aeedfb910f821dc5fff3bc510 |
+| emitStandalonePromiseThen | 12021 / ce2db569273715caed0ab25dfb77cb5e7fdc7dfcb5a4925a22d8f06916886a82 | 11871 / 3d3c6c54230fa80e5baf9fde0d74b2dd46c53f5e74272ea9204aa9ebb1012b08 | 10947 / 6496dc53cdf1956ea2cfb7a6553915755dcbb2acfb5846f74c08851d6044ccfc |
+
+Numbers are UTF-8 bytes; hashes are SHA256 of the complete `getText()` declaration. Do not confuse TypeScript UTF-16 source positions with UTF-8 offsets. The existing Resolve Deno inverse is already correct: it produces exact fresh-main f648..., so replacing the expected original5c0... with f648... would erase the unaccounted species/constructor transformation.
+
+Keep `undoDenoRetainedDelta` for the Deno epoch, and add a narrowly named declaration adapter such as `undoDeliveredPromiseSpeciesDelta` for the already delivered main→original epoch, invoked only for these two names. Preserve existing retained rows and hashes, canonical headers, layout checks, all other inverse cases and mutation titles. Use exact once-only spans with fixed surrounding context or a fixed bounded recipe; no regex/global replacement, whole-function substitution or allow-list of current hashes. A separate healthy control must assert both full intermediate main pins, both final original pins and full reverse/forward reconstruction, including unchanged outside-span bytes.
+
+The exact13-edit recipe is `.tmp/pr6341-six-guard-spec/exact-declaration-stages.json` (6949 bytes/SHA256 `67b0453d92b56eb64e8e259af48b8ff6ef0a3e2bb5015fe3c246038a9556344f`). It contains independently extracted before/after literal text and actual UTF-8 offsets, with complete inverse/replay verified in each direction. Transfer only its finite literal edits/pins into the test instrument; this ignored evidence file is not a runtime authority dependency. The stages are:
+
+1. **Resolve current→main:2 edits.** Remove exactly the handled-field i32.const0 statement after the closure-bag initializer in the legacy direct mint, and exactly the handled-field0 array item in the pending adoption mint. Existing behavior is already correct; retain it.
+2. **Resolve main→original:3 edits.** Remove the early vLocal allocation plus the constructor-check comment/passThrough binding; restore the original vLocal declaration immediately before pLocal; remove only the exact conditional passThrough i32 guard between ref.test and the original if. These account for delivered `promiseResolvePassThroughInstrs`, not a change to current production semantics. Complete output must match2684/5c0... exactly.
+3. **Then current→main:3 edits.** Remove the actual reaction-handled call after switching into nativeBody; remove the handled-field0 **array element inside mintChained**, not a nonexistent standalone `fctx.body.push` pair; restore the exact old FIFO comment. Exclude Then from the common sequential-push inverse branch that currently stops early. Move its intrinsic-parameter and own-then-condition inverses out of this stage because those already exist in fresh main. Complete output must match11871/3d3... exactly.
+4. **Then main→original:5 edits.** Remove the intrinsic parameter; remove species/speciesFwd preparation; reverse the exact mintChained+sp/speciesChained selection block to the original six sequential pushes; reverse only the speciesForwardAndResultInstrs result block to original local.get/extern.convert_any; restore the original own-then availability condition. Complete output must match10947/6496... exactly. This is the delivered species/own-then epoch, not a new Promise behavior change.
+
+For reproducibility, the13 stage-relative byte spans `(beforeOffset,beforeBytes → afterOffset,afterBytes)` are: Resolve Deno `(1432,51→1432,0),(2650,37→2599,0)`; Resolve species `(768,257→768,0),(1565,0→1308,96),(1968,197→1807,0)`; Then Deno `(4320,113→4320,0),(4666,35→4553,0),(7868,159→7720,157)`; Then species `(223,105→223,0),(375,255→270,0),(4376,582→4016,325),(8517,400→7900,80),(9843,96→8906,109)`. These are full fixed literal replacements, not permission to delete arbitrary ranges of those lengths.
+
+### Required mutation staging and independent production witnesses
+
+Retain every original assertion and mutation. Correct the Then mutation row that was falsely satisfied by the unrelated missing-push failure: first normalize the healthy Then declaration through both stages and require the original hash, then inject its existing `promiseLocal + 1` mutant and require the intended exact reaction-call refusal. Apply the same healthy-first discipline to the other explicitly accounted Deno mutations. Do not add an unconditional whole-current hash check before every mutant that makes all old semantic/span controls fail at a new earlier prerequisite. Whole-current/intermediate pins belong in separately labeled healthy authority/replay controls; mutated input must actually exercise its designated bounded span or final immutable-declaration guard.
+
+Add targeted bad/missing/duplicate/shifted-span controls for both epochs; mutation of field4's initializer value, a wrong receiver or native function argument, extra/missing/moved handled writes, species argument changes, wrong constructor-check position, and unrelated unchanged-region edits must refuse. Assert replacements are exactly once, ordered/nonoverlapping and complete; reverse and replay both complete declarations. A mutant inside an adapted span must fail that span's exact-match guard; a mutant outside all spans must survive the span transforms and fail the unchanged original whole-declaration hash. For each, restore healthy input and demonstrate success. Preserve the original declaration population, headers, modifiers, callable layout/marker assertions and donor receipts. Do not use an arbitrary new whole-body inverse that happens to return the expected text.
+
+The real native source controls already exist in `tests/issue-5197-r3-promise.test.ts`: p1 reads constructor exactly once and preserves thrown getter identity; p2 species constructor throws and restored species works; p3 Promise.resolve respects changed constructor and retains intrinsic identity; p5 observes installed Array.prototype.then on Promise.all's aggregate; p17 propagates a poisoned array-then getter by object identity. Preserve their original source/options/expected values and run the actual file as a native witness (its full original population, rather than relabeling VM fixtures as source coverage). Also retain `tests/issue-5197-own-then-indirection.test.ts`, `tests/issue-6651-d7-promise-finally-invoke.test.ts`, the two repaired issue3518 suites and all already required eleven Deno/Promise regression files. These source tests compile standalone and check actual Wasm imports/instantiation/draining; no fake getter substitutes for real array-then or species semantics. Any failure newly observed there needs its own measured attribution; these instrument repairs do not certify unrun cases.
+
+G1 and G2 can implement concurrently because their files are disjoint. An independent tester may own one new `tests/issue-4376-promise-preservation-instrument-controls.test.ts` for actual-import/epoch corruption/healthy restoration checks; if it needs private adapter access, follow the existing AST declaration extraction pattern and independently fixed literal receipts, without importing a test module to duplicate registrations or exporting production internals. Root integrates final actual pins only after all owners freeze. No compiler source change, historical fixture update, broad policy/C1 reseal, baseline waiver, private-guard weakening, eligibility adjustment or retirement claim is part of these six repairs.
+
+
+## Final PR6341 inventory transport and bounded C1 instrument successor (2026-10-06)
+
+This amendment implements the metadata consequence of the already frozen T1/T2/T3 source composition. It does not authorize source edits, alter the eighteen classifications, relax activation or allowed edges, change historical authority, or grant IR retirement. The exact base is `abb3471c46bb9e7129b28812fe16313c857cda69`; the earlier draft's `f02ded0...` was already corrected in the installed unpublished proof. Use the installed proof as the preparation input, not that stale draft provenance.
+
+### Measured inputs and source intersection
+
+Architect read-only evidence is `.tmp/pr6341-final-epoch-spec/{review.json,policy-candidate.json,receipt-candidate.json,reciprocal-review.json}`. These candidate files are ignored review operands, not an installed policy or published authority. All 21 current source pins still equal `.tmp/pr6341-cycle-cut/freeze.json`. The complete measured source-path union is 68: 55 paths in the tracked diff from the actual merge input plus the 13 transported destinations (also checked against the final cycle freeze). None intersects the current C1 manifest's source path population/LinearOptions closure or `ir-runtime-program-relocation.json` source population. All twelve current instrument pins presently equal the existing manifest. Therefore no production-source epoch adapter, C1 source-pin replacement, or source inverse is required for this change.
+
+Specifically, `src/ir/backend/lower-contracts.ts` is 14587 bytes, SHA256 `f174986c105638ca8d06c07d784bf021cd53758b3639589b03ec3bcc63846a8b`. It is read by `issue-3518-lowering-cycle.test.ts` (including every import being type-only) and `issue-3518-lowering-relocation-coverage.test.ts` (the five-path pushRaw domain). The wasmgc-helper policy receipt references its unchanged **classification row as a neighbor**, not its source hash. Preserve that neighbor literally. Do not turn this source dependency into an invented C1 source pin or modify an old receipt. Root confirms no separate lower-contracts pin failure was observed.
+
+### M1: thirteen path-only replacements in the eighteen unpublished rows
+
+Owner scope: `scripts/compiler-boundaries.json`, `tests/helpers/ir-deno-callback-inventory-successor.{json,ts}`, and `tests/issue-4376-deno-callback-inventory-successor.test.ts`. No source or other policy row may change. At each zero-based files index below replace only the listed row's `path`; preserve its position, state, layer, destination, owner, and nextBoundary. Canonical placement and injected context services do not establish clean-layer migration for these codegen implementations.
+
+| Index | Old path | Final path |
+| --- | --- | --- |
+| 195 | `src/codegen/array-fill-proto-value.ts` | `src/codegen/array/array-fill-proto-value.ts` |
+| 267 | `src/codegen/builtin-native-dyn-construct.ts` | `src/codegen/expressions/builtin-native-dyn-construct.ts` |
+| 326 | `src/codegen/closed-carrier-prototype-status.ts` | `src/codegen/object-model/closed-carrier-prototype-status.ts` |
+| 328 | `src/codegen/closed-object-prototype-edges.ts` | `src/codegen/object-model/closed-object-prototype-edges.ts` |
+| 708 | `src/codegen/linked-realm-property-read.ts` | `src/codegen/object-model/linked-realm-property-read.ts` |
+| 710 | `src/codegen/live-array-iterator-value.ts` | `src/codegen/array/live-array-iterator-value.ts` |
+| 841 | `src/codegen/ordinary-new-target.ts` | `src/codegen/closures/ordinary-new-target.ts` |
+| 878 | `src/codegen/promise-handler-boundary.ts` | `src/codegen/registry/promise-handler-boundary.ts` |
+| 941 | `src/codegen/rest-only-apply.ts` | `src/codegen/closures/rest-only-apply.ts` |
+| 957 | `src/codegen/shared-script-var-access.ts` | `src/codegen/declarations/shared-script-var-access.ts` |
+| 1657 | `src/codegen/microtask-drain-boundary.ts` | `src/codegen/registry/microtask-drain-boundary.ts` |
+| 1658 | `src/codegen/microtask-notification.ts` | `src/codegen/registry/microtask-notification.ts` |
+| 1785 | `src/codegen/promise-rejection-dispatch.ts` | `src/codegen/registry/promise-rejection-dispatch.ts` |
+
+The five other new rows remain exact: native-runtime clean rows at indices 47 (`reaction-order-bodies.ts`), 48 (`rejection-event-bodies.ts`), and 1498 (`resolving-pair-bodies.ts`); wasm-physical clean `allocation-owner.ts` at 1522; and unmigrated/mixed-needs-split `closures/promoted-capture-value.ts` at 898. All fourteen codegen rows retain their reviewed debt profiles; no row is removed to make a gate green. No sorting/reordering is necessary or authorized.
+
+The physically prepared candidate is **594018 bytes**, SHA256 `59752f826a8a2298966e4bbae6ec29e15a168f7e45fb58379dbb923ccd2f2694`, Git blob `dfd1b16089d1d66982e0eef5d79b50f74fd6d869`; 1855 rows. Its compact JSON data hash is `07d3bc5470d5864ae6f1e7d199eed523b382119aace6366db92804a7c7c63380`, files hash `f30f8e6a86c56fc16e6c9ad768d52930b70f73beef57feffae69ad932d5bf78c`. These are measured candidate pins, to be independently verified against installed bytes after release. The previous unpublished 1855-row input is 593888 bytes / `0ae3c7c3748a15ccb7580eec388d806a5999250faa726db7d682b9412acbed15`. Its copy stays in ignored custody evidence, not in an allowed-hash set.
+
+Keep the immutable predecessor at **588351 bytes / `4b442f641a2a99fd4abffc5ef85271858f4a3ae2337fcde8c380fba076a22d05` / blob `c5da824f89dded25e85e7e315825d2d61d97f906` / 1837 rows**. Removing the same eighteen inserted rows from the candidate must reproduce every predecessor row in order, and all non-files fields must be deeply equal. In particular, allowedEdges, layers, activationHistory, nonModules, evidence, moves, externalPackages, requireGitProvenance, and top-level key order remain untouched.
+
+Rebuild the existing fixed eighteen-row receipt directly from the unchanged predecessor to the final candidate, not as a generalized relocation registry. Preserve all eighteen `index` values and `beforeOffset` values. Replace mapped paths in inserted row text, compute each `afterOffset` from actual preceding UTF-8 insertions, and refresh `previous`/`next` from the final array (including newly renamed adjacent inserted rows). Keep eighteen empty-before insertion spans. The ignored prepared receipt is 27453 bytes / SHA256 `b35c6b605ea4fd36f7c5cb2a4b46aff8eee49de4cfb675aa78a0d1dc5934e7d9`; both its complete raw inverse and forward replay were independently checked exact. No tracked installation has occurred. If formatting changes its bytes, measure that final serialization and review it rather than accepting this pin blindly.
+
+In the helper update only the fixed current profile, exact eighteen row/neighborhood records, and complete receipt byte/hash literal to match the final receipt. Leave `captureData`, `authenticate`, `beforeSemantic`, `beforeRaw`, profile checks and exported API behavior intact. Do not add old-flat/current-path alternatives, accept partial profiles, cache successful authority, or relax descriptor checks. Retain the independent test's actual extra blob checks and non-files-rule mutation added after its original draft: installed test has **31 passing case identities**, not the older draft population. Recalculate its independent final profile, eighteen insertion strings/coordinates, exact receipt pin and complete formatted helper pin from physical bytes. Preserve all 31 cases, getters/coercion/holes/boxed/physical corruption controls and exact fresh read counts. Add one bounded test iterating the explicit thirteen mapping rows: assert exactly one final path at its fixed index, zero old-path rows and real final source presence/old source absence; substitute each old path in a copy of the final policy and require refusal between healthy captures. Assert loop population thirteen. The manifest proof is a policy proof; the final native/compiler gates provide source behavior evidence.
+
+### M2: seventeen readers, twenty-four exact operand sites
+
+Owner scope is the exact seventeen existing tests below. The preserved original files live in `.tmp/pr6341-inventory/original-readers`; implementation candidates and AST operand census are in `adapter-drafts` and `adapter-channel-proposal.json`. Treat them as reviewable deltas, not permission to overwrite later peer edits. Add the outer fixed eighteen-row inverse at actual current policy capture, then compose the already delivered eleven-row main-inventory inverse where the historical reader lacks it. This is **19 raw + 5 semantic sites = 24**, not a wholesale rewrite of read helpers.
+
+In the table, **add11** means `existingConsumer(main11(deno18(actualOperand)))`; **existing11** means insert only `deno18` immediately inside the already present `main11`; **independent11** means remove Deno18 and leave the test's independent eleven-row fixture/replay intact. Raw uses `captureDenoCallbackInventoryPredecessorPolicySource` and `captureMainInventoryPredecessorPolicySource`; semantic uses the corresponding functions without `Source`. Preserve each operand's original raw/parsed distinction and original downstream call.
+
+| Test (under tests/) | Original line sites | Raw / semantic | Composition |
+| --- | --- | --- | --- |
+| `issue-3518-canonical-3c6-inventory-successor.test.ts` | 1430 | 1 / 0 | add11 |
+| `issue-3518-canonical-489d-inventory-successor.test.ts` | 368 | 1 / 0 | add11 |
+| `issue-3518-current-main-inventory-successor.test.ts` | 52 | 1 / 0 | add11 |
+| `issue-3518-lowering-analysis-preservation.test.ts` | 737 | 1 / 0 | add11 |
+| `issue-3518-nested-stackification-policy-evolution.test.ts` | 340 | 1 / 0 | add11 |
+| `issue-3518-number-prerequisite-policy-evolution.test.ts` | 114, 946, 1354, 1886, 2247 | 5 / 0 | add11 |
+| `issue-3518-program-data-contract-boundary.test.ts` | 167 | 0 / 1 | existing11 |
+| `issue-3518-program-validator-policy-evolution.test.ts` | 713 | 1 / 0 | existing11 |
+| `issue-3518-runtime-data-contract-seam.test.ts` | 2669, 3387 | 2 / 0 | existing11 |
+| `issue-3518-runtime-program-policy-evolution.test.ts` | 92, 170 | 1 / 1 | add11 |
+| `issue-3518-semantic-provider-boundary.test.ts` | 428 | 0 / 1 | add11 |
+| `issue-3518-validation-policy-evolution.test.ts` | 68 | 0 / 1 | add11 |
+| `issue-3518-wasmgc-helper-policy-evolution.test.ts` | 1073 | 1 / 0 | existing11 |
+| `issue-3518-well-known-symbol-policy-evolution.test.ts` | 72 | 1 / 0 | add11 |
+| `issue-3525-arraybuffer-isview-main-policy.test.ts` | 162 | 1 / 0 | existing11 |
+| `issue-3525-main-inventory-source-successor.test.ts` | 308, 519 | 1 / 1 | independent11 |
+| `issue-3525-presentation-classification-policy.test.ts` | 136 | 1 / 0 | existing11 |
+
+Stage every old semantic/source mutation **after** authentic current capture has reached its historical operand. Do not wrap an already historical mutant through the new current-only adapter, replace a supplied mutant with healthy disk text, normalize a physical-current corruption before authenticating it, or count an earlier fixed-pin failure as the intended later guard. Keep the dedicated raw-current/authority corruptions in the new proof. Imports and capture wrappers are the only changes in these initial adapters; old receipt literals, expected old rows, assertions, case registrations, and physical fault restoration remain intact. Preserve original case identity and status rows from `original17-baseline-cases.json`: 2433 original cases, 889 pass / 1544 fail at the missing eleven-row prerequisite, with full diagnostic evidence retained. A new failure after this prerequisite is removed must be attributed to its actual operand/guard, not called a regression from an unexecuted old assertion.
+
+There is one **known separate actual-fixture dependency**: the two semantic-provider healthy fixture failures diagnosed in issue6866. The authentic canonical closure there requires the exact additional 31 source modules (174→205, 977 edges), preserving historical 106/174 populations and all original guards. Its implementation is being independently frozen in the other worktree. Root must compose that single-test fixture patch with this test's Deno18→main11 wrapper; do not overwrite it with the stale draft, project actual source back in time, or report the seventeen-reader cohort fully green without those two healthy paths. The source-map-position component's one-row policy successor is not part of this 1855-row PR epoch; do not import its policy, helper, C1 seal, or unrelated test transport. Only reuse the approved actual-source fixture repair with explicit before/after custody and retained case names.
+
+### M3: root-owned finite C1 reseal, four current instruments only
+
+Current manifest is **402517 bytes / SHA256 `c0a10ae0c0bfc4d27fc24bea20401edc2cac683254fc1664781889c98f63ed66`**. The exact intersection with the seventeen adapters is:
+
+- `tests/issue-3518-program-data-contract-boundary.test.ts`
+- `tests/issue-3518-runtime-program-policy-evolution.test.ts`
+- `tests/issue-3518-well-known-symbol-policy-evolution.test.ts`
+- `tests/issue-3518-number-prerequisite-policy-evolution.test.ts`
+
+Root owns the successor preparation/installation after final formatting and reader freeze. Rebuild only these four existing `instrumentEdits` recipes from their original immutable `beforePin` operands to their final formatted adapters. Recover original bytes by applying the current valid full inverse, then verify the original pins; never label current pre-adapter bytes as historical. Keep all `beforePin` records unchanged. Update only their four `afterPin` records, four span arrays, and four matching `currentInstruments[].pin` records. The other eight instrument pins and six recipes remain byte/data exact; population remains twelve instruments, ten recipes, seven historical artifacts and eleven immutable authorities.
+
+Each rebuilt recipe must satisfy the actual `validateInstrumentEdits` contract: strictly increasing, nonoverlapping UTF-8 before/after offsets, in-bounds spans, unequal before/after texts, and correct original/final complete pins. Coalesce adjacent edits where necessary; a zero-length duplicate offset is not acceptable in C1 instrument recipes even though the separate insertion-only policy receipt allows consecutive insertions at one predecessor offset. Independently run full inverse and replay for **all ten** recipes, not just the four changed ones. Deep-restore the permitted four pin/recipe records into the candidate manifest and require exact equality with every other original manifest field. Preserve schema/base literals, all historical artifacts/immutable receipts, population, declarations, LinearOptions closure/resolver topology, and original mutation tests.
+
+Do not modify `ir-c1-current-source.ts`, `ir-c1-historical-authority.ts`, the runtime-program relocation receipt, or any source-model frozen tables: no measured source intersection justifies it. No new helper is appended to the fixed twelve-instrument population. The new eighteen-row helper is bound by its independent complete-helper proof and receipt authentication, not falsely represented as an old C1 instrument.
+
+Only after the reviewed candidate manifest is complete, root updates `tests/helpers/ir-c1-authority-root.ts`'s manifest SHA scalar and the external `independentFreeze` string in `tests/issue-3518-c1-current-source.test.ts`. Inside that external record change only manifestSha256, anchorSource, anchorPin; preserve declarationPin. Prove all bytes outside the one designated string and the one anchor scalar unchanged. Do not copy the other worktree's `51ae...` manifest or the separate unmapped-emission model/initial-graph successor: those are different integration inputs. Candidate hashes must come from final measured bytes, never from future-pin placeholders or widened accepted lists.
+
+### Release order, gates and custody
+
+1. Root completes the in-flight final native 26-file source/test/config snapshot before releasing any metadata/test writer. Architecture planning and this issue append do not mutate those inputs. Final production build is reported complete; its effect evidence remains root-owned.
+2. Metadata writer performs M1, verifies the finite policy/receipt/helper reciprocal proof and all retained 31 independent cases plus the one thirteen-path control. Run actual Node25 `scripts/check-compiler-boundaries.mjs --mode inventory` after the metadata is installed; retain the exact denominator and errors array. Expected classification remains 1855; six declared nonmodules and raw discovery counts remain separately measured. Run the normal `check:compiler-boundaries` mode too. No budget or graph baseline update.
+3. Install the reviewed M2 deltas and root-compose the independently frozen semantic fixture repair. Collect the original 2433 names before running the seventeen readers, plus explicitly enumerated additional fixture/proof cases. Preserve every original assertion and intended diagnostic. Physical-fault tests must be serialized with native compilation and other source readers, with byte custody for every touched source/authority before and after.
+4. Freeze final reader files; prepare M3 in ignored candidates, independently inspect all ten inverse/replays and unchanged-field proof, then root installs the finite manifest/anchor/external freeze. Run `tests/issue-3518-c1-current-source.test.ts` and the seventeen readers with Node25, using the frozen full list (not a guessed glob). Check exact original case identities and original 889 passes retained. Do not promote missing/transitively unexecuted cases or earlier healthy guard failures to success. No generic assertion-floor reduction.
+5. Root keeps the final 26-file native preservation result, production build, dead-export preservation result, source LOC/function budget, oracle/coercion checks, flat-dir gate (829 baseline), and import-cycle gate (unchanged baseline) tied to the same frozen source. Rerun source gates only if subsequent inputs actually change; test/metadata gates and required changed-root hooks still run normally. Include the lowering-cycle/relocation source contracts in the scoped source evidence, without changing their assertions or resealing lower-contracts. No published claim that an OPEN graph/retirement gate is closed.
+
+Implementation ownership is disjoint from the two independently frozen PR6341 API tests and the other worktree's ongoing semantic fixture writer. The architect changed only this issue and ignored candidate evidence. Root handles all integration, final authority mutations, Git operations and the existing PR6341; no new PR or shared source dispatch is implied.
+
+
+## T2 corrective amendment: preserve live service bindings across module initialization (2026-10-06)
+
+The final native 26-file run is terminal **553/560**, with all 7382 custody inputs exact. Preserve its raw results at `.tmp/pr6341-independent/final-native/results.json`; extracted exact seven names/diagnostics are in `.tmp/pr6341-t2-live-binding-spec/original-seven.json`. The earlier six Promise instrument failures and original class regression are fixed; these seven are a separate new T2 regression and may not be reclassified as those historical failures. Five actual `issue-4376-callback-new-target.test.ts` failures explicitly report `Codegen error: ensureExnTag is not a function`; the two `issue-6774-expressions-residue.test.ts` rows stop at their compile-success assertion. Keep both their original diagnostic texts, without inventing a deeper recorded stack for the latter.
+
+### Causal defect and exact correction
+
+T2 moved cycle-heavy imports out of leaves correctly, but four producer-side singleton objects now snapshot imported function values while the large compiler module cycle is initializing. This differs from the old call-time access to an imported binding. The failing path is `object-runtime.ts::restOnlyApplyServices` (~322) → `buildRestOnlyApply` (~6373) → its destructured `ensureExnTag`. The production binding is imported from `registry/imports.ts`, which imports/re-exports the actual function in `registry/physical-imports.ts`. `buildRestOnlyApply` calls it to build exception handling after an admitted full-vector rest closure. A module-initialization snapshot can retain an unresolved re-export even though the live imported function is valid when compilation later starts. Do not substitute a dummy function, move exception registration, omit the call, or treat a TypeScript pass as evidence for initialization order. The precise correction must be confirmed by restoring the original seven actual native cases.
+
+**Source ownership: exactly these four producer files, object initializers only.** The service API/callee implementation, call sites, canonical import targets, source eligibility and T3 lowering are unchanged. Convert every imported-function shorthand property in the following singleton objects into a read-only accessor returning that same live imported binding:
+
+| File / object | Exact imported-function properties | Count |
+| --- | --- | --- |
+| `src/codegen/array-object-proto.ts::arrayFillServices` (~182) | clampRelative, requireObjectCoercible, resolveSliceDeps | 3 |
+| `src/codegen/expressions/new-super.ts::builtinNativeConstructServices` (~226) | emitStandaloneArrayConstructor, emitStandalonePromiseFromExecutorValue, isStandalonePromiseActive, reserveBuiltinConstructorIdentityGlobal | 4 |
+| `src/codegen/index.ts::nativeLeafServices` (~772) | nextModuleGlobalIdx, canonicalUndefinedExternInstrs, emitGlobalEnvironmentKey, emitGlobalEnvironmentObject, ensureGlobalEnvironmentOperation, localGlobalIdx | 6 |
+| `src/codegen/object-runtime.ts::restOnlyApplyServices` (~322) | classifyClosureDispatchRest, buildClosureResultBoxing, ensureCurrentThisGlobal, installableReceiverInstrs, ensureExnTag | 5 |
+
+For example, the exact pattern is `get ensureExnTag() { return ensureExnTag; }` within the existing `as const` object. This returns the canonical function object; it is not `(...args) => ensureExnTag(...args)`, which would substitute service identity and add a wrapper call to every invocation. Apply the same pattern to the complete fixed eighteen-property population, not merely the first function that failed in this entry order. No fallback, optional service, memoization, mutable singleton cache, registration API, or dynamically importing resolver is needed.
+
+All four service objects and their eighteen accessor functions still allocate once per module evaluation. There are no per-instruction/per-call service objects or callback allocations, and no generated-Wasm dynamic dispatch. Existing leaves destructure the service at invocation, giving the same canonical callable reference available from the actual producer import at that time; the accessor itself is a side-effect-free binding read. Keep all existing `typeof import(...)` parameter contracts and all call argument order. Do not add a new graph edge or revert the physical try-table imports.
+
+**Inspected exclusions:** `iterator-native.ts::liveArrayIteratorServices` (~111) has two same-module numeric constants initialized immediately above the object (11 and 12); it has no imported-function capture and stays unchanged. `promotedCaptureValueInstrs` receives `localGlobalIdx` directly at the producer call. `initializeOrdinaryNewTarget` and `ordinaryConstructTargetFrame` likewise receive their functions at invocation. `async-scheduler.ts::createPromiseRejectionEmissionBindings` (~112) creates its object when the resolver is constructed, not at module evaluation, and already defers dispatcher lookup; leave it unchanged. Thus the repair is four initializers / eighteen properties, not a new service architecture.
+
+The exact four pre-edit pins are:
+
+- `src/codegen/array-object-proto.ts`: 209040 bytes / `dcb0663660781a068f0ad995f78d380eb81249db352da105f4c0e0cc3a045544`.
+- `src/codegen/expressions/new-super.ts`: 418654 bytes / `3755392b4c574e46fb801a3a40f2af504f1c5f405a5de859cb20ddf394f61d76`.
+- `src/codegen/index.ts`: 772546 bytes / `1547b46009f41a04d4d474ced0ecb52be3703701c347652f1c520ebc34c6ce24`.
+- `src/codegen/object-runtime.ts`: 552378 bytes / `339d6a3b989d632b12b9765264fd59853a4194cefeed980ee9354aad2bb55d5e`.
+
+### Decisive validation and preserved controls
+
+The existing nine-case callback test is a genuine standalone/Deno public compiler path: `compile(source, {target:"standalone", platform:"deno", hostBridge:"off"})`, then native `WebAssembly.Module`/`WebAssembly.Instance` with `{}`, followed by exported `run()`. Preserve that harness and all expected values. Five failed names are:
+
+- rejects construction in a dynamic rest callback without entering the host
+- preserves new.target through a runtime-sized constructor argument vector
+- keeps non-rest array formals out of the full-vector rest shortcut (reversed=false)
+- keeps non-rest array formals out of the full-vector rest shortcut (reversed=true)
+- preserves receivers and thrown identity in full-vector rest calls
+
+The two expression failures are the unchanged `S7 rest_binding_pattern_closures` and `S7 rest_binding_pattern_params` cases. Run these seven first under the same Node25/Vitest path, then both full original files (**9+21=30 cases**). Preserve the four previously passing callback controls: actual dynamic-constructor identity, escaping-arrow lexical target, construction-state clearing after throw, and target binding before parameter defaults. No source fixture simplification, host stub, interpreter substitution or removed assertion is permitted.
+
+For a causal A/B, retain the frozen pre-correction failure rows; compare candidate native values against the same 30 actual source cases, and require all formerly passing cases retained. The source inverse is finite: replace only the eighteen getter spans with the exact original shorthand spans and require each complete four-file pre-pin. This makes unrelated source changes detectable. If root requests a kill-switch replay, perform that bounded inverse only in an ignored isolated source copy, not by faulting live source while metadata/native work runs.
+
+A focused independent binding check may extract the four actual object initializers using TypeScript AST into an ignored diagnostic module, importing the same real canonical production namespaces. Read every property and assert strict identity with its actual canonical imported function, `typeof === "function"`, and repeated reads return the same function identity. Verify the production initializers are accessor declarations (no call expression or allocating wrapper in their return) and all eighteen properties are exercised. This is supporting source/identity evidence, not a substitute for the native public compiler cases. Do not expose a new production export solely for the test. If a cold import-order control is used, start a fresh process, actually import `src/index` and the canonical source modules through the supported Node25 loader, then compile the original native fixture; do not model the cycle with fabricated undefined functions.
+
+Retain final native 560-case population and exact names when rerunning the frozen cohort after this correction; all original 553 passes must remain, all seven failures must become genuine native passes. Retain relevant existing T2 dynamic Array/Promise construction, array fill, linked prototype/shared Script variable, iterator and promoted-capture native controls. No blanket performance waiver: compare the existing source-preservation and representative compile-timing evidence on the same inputs, and require identical Wasm bytes for previously passing unchanged fixtures. Added work is at most eighteen trivial property reads across the existing invocation sites, not a per-instruction allocation; measure representative compile timing rather than treating that estimate as a pass. Exception tag allocation and generated imports/body instructions must retain their original order and identity.
+
+Run ordinary strict TS, format/lint, build and actual unchanged-baseline import-cycle/flat-directory gates. Because these initializers add source lines and accessor bodies, run actual LOC/function gates against the real merge input; no implicit budget grant is issued here. Preserve the original class fix in `new-super.ts`; do not copy a whole older file. Refresh the four final source pins in the integration freeze after reviewed source completion; keep the original 21-row freeze as before evidence. Source-path membership, compiler-boundary classification rows and policy path transport are unchanged. The metadata worker can continue its authorized 21-file scope, but physical source-fault tests remain held until root releases custody. This correction does not add any C1 source intersection or change the four-instrument reseal plan above.
+
+The architect modified only this appendix and ignored diagnostic evidence; root releases the four-file correction to the existing Sol source owner. Production source, tests, policy and C1 authority were not edited by the architect.
+
+
+## Fresh delivered-main 6844 row composition, fixed outer successor (2026-10-06)
+
+Publication preflight found actual delivered main `cdc0255882d45181072342d9fd57f291aca93092`, after merge input `abb3471c46bb9e7129b28812fe16313c857cda69`. PR6524 delivered issue6844's externref-backed class field initializers. PR6521 is still not an ancestor; do not use its prepared source as main. Neither existing branch policy proof may be published pretending its synthetic merge omits the new main row. Root preserves both prepared branches; it creates the position component's fresh composition worktree from exact cdc and integrates the Deno branch through a checked checkpoint and real main merge. This appendix authorizes metadata implementation after that source composition, not a source overwrite by the metadata owner.
+
+### Exact new main input and two candidate policies
+
+Read-only evidence is `.tmp/pr6341-main6844-spec/review.json` and the two ignored `*-combined-policy.json` files in the PR6341 worktree. The actual abb→cdc policy diff is **one 328-byte insertion**, with all other raw bytes identical. The row is:
+
+```json
+{"path":"src/codegen/classes/externref-class-fields.ts","state":"unmigrated","layer":"mixed-needs-split","destination":"backend-wasmgc","owner":"3518-coordinator","nextBoundary":"Separate AST/context-driven generation, physical resources and generated native runtime."}
+```
+
+It sits between `src/codegen/error-subclass-proto-chain.ts` and `src/codegen/class-proto-toplevel-write.ts`; both full neighbor rows are unchanged. Original main is 1837 rows / 588351 bytes / SHA256 `4b442f641a2a99fd4abffc5ef85271858f4a3ae2337fcde8c380fba076a22d05` / blob `c5da824f89dded25e85e7e315825d2d61d97f906`. Delivered cdc policy is 1838 rows / 588679 bytes / SHA256 `e91199cafc1788a5e976e29553b0c093a28c53fd7e2dcc3d806c8559c3f9547e` / blob `6066caa751c06e8726076ee622311f509bdd5f77`. Its added row index is 1647 and raw before/after insertion offset is 542771. Preserve the exact indented insertion and trailing comma/newline from actual main; do not serialize the whole policy or sort rows.
+
+| Lane | Own frozen policy (the output of new outer inverse) | Combined current candidate | Added-main row index / UTF-8 offset |
+| --- | --- | --- | --- |
+| PR6341 | 1855 rows; 594018 bytes; `59752f826a8a2298966e4bbae6ec29e15a168f7e45fb58379dbb923ccd2f2694` | 1856 rows; 594346 bytes; `4ee416b75193d78ec696ac0d21e9328cee842602f6926cf3223e6de0dc703f7a`; blob `e70ee1b32f53de5d5935aa0ac52987959effc64a` | 1664 / 548059 |
+| Position component6866 | 1838 rows; 588471 bytes; `a2e9c7243c13ae37b293f02ae19eba03f072db30195ce0479f0926488fa3de98` | 1839 rows; 588799 bytes; `3d497f1ec140ecd7056155e6e0a993801e126b93304af1a581820d779a979122`; blob `9c248ee6471ee50973d5da74ba2d7d06e9eee92f` | 1648 / 542891 |
+
+These candidate bytes were constructed and inverse-checked in ignored evidence; they are not an installed merge result. After the actual merge, independently verify the final policy equals the corresponding candidate. If it differs, stop at the measured difference rather than changing a pin to whatever happened to merge. Deno compact data/files hashes are `5f5afeb67c06edff1727dedda43820f8a66b92f8b3351b9e5a81d264822396c7` / `fb880095aab466a486a6b34d17c2f9587a89fa11c87d77f68bc25b938bf187e9`; position hashes are `8c91785b4302f8f9b88641f325643e374484b54909c3bbc086c0456b5a6bdc9a` / `7ede92f695b2c32bbc8cb5dea5e59a3e2f89a24bf37852f757866601ad01a62a`.
+
+### Finite implementation, separate ownership per worktree
+
+Add a **new outer one-row proof**, preserving each existing own-step helper and receipt byte-for-byte. Use distinct files to avoid sibling lane authority collisions:
+
+- PR6341: `tests/helpers/ir-deno-class-fields-main-successor.{ts,json}`, `tests/issue-4376-class-fields-main-inventory-successor.test.ts`. Export `captureDenoClassFieldsMainPredecessorPolicySource` and `captureDenoClassFieldsMainPredecessorPolicy` (raw string / descriptor-validated data channels).
+- Position component: `tests/helpers/ir-position-class-fields-main-successor.{ts,json}`, `tests/issue-6866-class-fields-main-inventory-successor.test.ts`. Export corresponding `capturePositionClassFieldsMainPredecessorPolicySource` and `capturePositionClassFieldsMainPredecessorPolicy`.
+
+Each helper has exactly one admitted current profile and one output profile from the table, and exactly one known main row/index/neighborhood and raw span. It freshly authenticates its own independently pinned complete receipt on each operation, using the already reviewed fixed-successor descriptor-first patterns. Validate primitive raw input and plain owned dense data before coercion/getters; retain raw/data/files/full-before/full-current hashes, exact top-level keys, every non-files field, detached output, complete one-span inverse and forward replay. No generic row finder/remover, glob, optional historical success, mutable registration, accepted-hash union, or cached proof. Keep current raw corruption distinct from historical operand mutation.
+
+The new receipt also binds the exact **delivered-main lineage witness** above (abb/cdc identities, old/main complete pins, the main index/offset and identical 328-byte insertion). Independently prove that applying that insertion at 542771 to the complete original1837 text returned by the unchanged own step yields the exact delivered cdc raw pin. Thus the outer row is demonstrated to be delivered main, not merely a convenient row omitted from a candidate. No old artifact is rewritten or added as fictional current source; no network/Git lookup is needed inside the production test helper.
+
+The Deno own eighteen-span receipt remains 27453 bytes / `b35c6b605ea4fd36f7c5cb2a4b46aff8eee49de4cfb675aa78a0d1dc5934e7d9`. The position own one-span receipt remains 2437 bytes / `b2afd57a2583d7a103b07ce1bcc577475023ee29f54ee433f115a6fcf43572b0`. Retain their helper bytes and complete independent expected profiles/spans. The common eleven-row `ir-main-inventory-source-successor` and every earlier authority remain unchanged.
+
+For each lane's existing seventeen historical readers, wrap the **actual current operand** immediately inside the own-step inverse: `older(main11(ownStep(newMainRow(actual))))`, omitting only stages the particular independent historical proof deliberately constructs itself. The earlier exact 24-site census (19 raw, 5 semantic) governs; do not run a broad text replacement over mutation operands. The same four C1 reader files intersect. Preserve current source-reader fixture fixes, all old names, all receipts and intended guard diagnostics.
+
+Adapt the own-step independent proof at its healthy current capture only: Deno `healthy()` currently ~737; position `independent()` currently ~117. Feed the freshly authenticated outer inverse result into all unchanged own-step profiles, original inverse/replay, authority trace and historical mutation controls. Add separate new outer tests over **actual combined raw/data**; do not make own-step tests silently accept a second epoch. Preserve Deno's 32 original proof cases and position's 23 original proof cases.
+
+**Important physical-fault staging:** Deno's original physically-corrupted-full-policy case (~985) currently writes actual policy and invokes the own-step helper directly. Simply wrapping that faulted read in the new outer inverse would fail at the wrong guard; directly passing the combined profile to the old helper would fail even without the mutation. Preserve its old assertions and authority read counts by first obtaining the authentic own1855 operand through healthy outer capture, placing those exact full bytes in an isolated temporary policy file, then performing the same physical corruption/read/restore against that old-step operand. The own helper must see and reject the actual mutated file bytes. Preserve the original case identity; document its authentic own-step epoch. New outer proof separately performs corruption of the actual combined policy/authority after a genuine healthy capture, checks its precise failure and fresh read count, restores exact bytes, then proves healthy again. Do not project a corrupted actual current policy into a healthy old copy. Other historical semantic/raw mutants remain downstream of healthy capture, never passed through the current-only outer inverse.
+
+The new independent proof must cover at least: exact combined→own→1837→delivered-main lineage/replay; unchanged1837 rows/non-files; missing/duplicate/renamed/moved/changed-profile main row; mutation of a retained own row; wrong-lane own-only/delivered-main-only inputs; raw prefix/tail/whitespace changes; malformed/boxed/missing fresh receipt; descriptor getter/coercion/sparse refusal; real physical current-policy and authority corruption followed by restoration. Record actual case denominators after collection; no invented future count or replacing old cases. Bind the new formatted helper completely in the independent proof.
+
+### Actual source composition and C1 boundaries
+
+Delivered cdc changes only two compiler source files: `class-bodies.ts` and new `classes/externref-class-fields.ts`. The new leaf is 5377 bytes / SHA256 `684aef792a744e765fbedef53131fe10b5438dcad9329cd86d148d79632ac51f`. Delivered `class-bodies.ts` is 231067 bytes / `bbe97df68729bde304d434bd76f592a6352861b0b47e6d33f8ef4051a3de9eb0`; use it as the main-side donor, not as the required composed Deno file hash. Its actual additions are the canonical leaf/type import, native string helper import, `emitExternrefFields` injecting existing operations, and once-only initialization routing for externref-backed non-collection classes. Preserve Deno callback/class state and the true before-super fix in composition. Never replace the whole composed class file with main. The position worktree starts on cdc and already owns this delivered source. The delivered five-case `issue-6844-error-subclass-field-initializers.test.ts` is 4988 bytes / `8dcc4c011175023c3d968b436fe39954a50c777f22799fb386d08b504b1cce53`; retain it unchanged and run its actual JS-host controls together with the Deno/class native preservation gates after source merge. No metadata helper may stand in for that source composition.
+
+Neither new main compiler path belongs to the measured C1 source population/LinearOptions closure. Recompute the explicit intersection after merge; do not invent a new model/source seal. Only four existing reader instrument pins/recipes change again: data-contract-boundary, runtime-program-policy-evolution, well-known-symbol-policy-evolution, number-prerequisite-policy-evolution. Start from each lane's own current manifest: Deno now 405616 bytes / `085828915a6b2e531fcc283168bb371552df2fb025658f70065eb20d64a128df`; position 405820 bytes / `51ae067a17aeaad95417c8fbb3b7443c2a0952cd35a568934e55cec1755328f0`. Do not copy the other lane's manifest.
+
+Root reseals only four current pins and their four existing recipes after final reader formatting, proving every unchanged immutable beforePin and all ten full inverse/replays. Keep seven artifacts, eleven immutable authorities, twelve instruments, ten recipes, all remaining fields and original declarations exact. Update anchor and external independentFreeze's manifest/anchor fields last with outside-scalar bytes exact; no source helper or old authority edits. The main eleven-row receipt, own eighteen/one-span receipts and prior full helper profiles stay immutable. New helper/proof tests are separately authenticated, not appended to a historical fixed instrument population.
+
+### Release and validation order
+
+1. Root completes the in-flight frozen native cohort before any source merge or physical source/policy fault. Preserve its exact inputs/results. Make the normal checked local Deno checkpoint, merge exact cdc, and resolve actual source/metadata conflicts with both old-main and Deno behavior preserved. For position, transport only its exact own component/adapters/approved fixture delta into the new cdc composition worktree; retain the old worktree as custody evidence.
+2. Per-worktree Sol metadata owner installs only the combined policy/new fixed outer proof, 17 operand-site adapters and own-proof capture/fault-stage adaptations. Source remains root-owned. The candidate policy must match the measured table; no original1837 row/rule/activation change. Run new proof plus retained own-step 32/23 cases and exact real compiler-boundary inventory/normal mode. Counts are Deno1856 / position1839 classified modules, not the prior1855/1838. Do not confuse classified modules with raw discovered files/nonmodules.
+3. Root prepares/reviews the four-instrument C1 successor, installs the anchor/scalar last, runs the C1 test and all17 readers with original names/statuses preserved and current fixture repair present. Actual source/policy-fault tests are serialized with native compilation and custody checked. Do not claim the new merge ready from old epoch results.
+4. Run delivered6844's five real tests and the relevant final source/native preservation gates after Deno class composition. Normal changed-root hooks, budgets, import-cycle/flat-dir gates and production build use the actual fresh main as appropriate; no copied LOC baseline, allowed-edge expansion or retirement credit. Source-map public producer gaps/private Prepared guard and PR6521 remain separate.
+
+This is a finite delivered-main prerequisite. The two lane-specific outer proofs deliberately do not claim to authenticate a future combined Deno+position merge. Re-ground that actual integration if/when both land; do not pre-authorize unseen rows or pin unions now. Architect wrote only these issue appendices and ignored candidate evidence; metadata implementation and publication are root-released work.
+
+
+## PR6341 actual semantic fixture closure: three native Promise owners (2026-10-06)
+
+The in-flight full run's healthy fixture failure is a test population defect, not permission to alter production imports. Preserve `.tmp/pr6341-current-main-full-validation/first-healthy-failures.json` and the eventual complete run unchanged. The 205-module fixture omits three actual Deno native owners, producing six unresolved imports and sixteen transitive failures before the intended semantic guards. Do not count those early failures as successful negative tests.
+
+**Measured safely:** ignored `.tmp/pr6341-three-runtime-closure-spec/` in the OLD `codex-6341-main-composition-20261006` worktree contains `custody.json`, `review.json`, `eleven-edges.json`, `negative-review.json`, and real CLI stdout/stderr. All 208 frozen source files and the actual `check-compiler-boundaries.mjs` were independently hash/length checked against the current full run's `before-custody.json`; no current production file was read or faulted. The checker has no local script imports. An initial over-broad script-tree preflight stopped on the legitimately different LOC baseline before fixture construction; no result from that aborted attempt is credited. The completed bounded probes use the actual Node25 CLI with unchanged fixture rules and copied authentic production source.
+
+### Only test file to modify after full-run terminal custody
+
+`tests/issue-3518-semantic-provider-boundary.test.ts`; preserve all **353 case identities** and original historical receipts/assertions. No policy/receipt/C1/helper/production source changes. This file is not one of the four C1 current instruments.
+
+Keep `priorLiveFixtureGroups`/`priorLiveRequired` (174), `groups`/`required` (106), and the exact 31 `sourceMapValidatorFixtureAdditions` unchanged. Retain the current composed 205 population as an explicit intermediate (for example `validatorLiveFixtureGroups`/`validatorLiveRequired`). Add a separate explicit `denoNativeFixtureAdditions` tuple containing only:
+
+- `src/runtime/wasmgc/promise/reaction-order-bodies.ts`
+- `src/runtime/wasmgc/promise/rejection-event-bodies.ts`
+- `src/runtime/wasmgc/promise/resolving-pair-bodies.ts`
+
+Compose final `liveFixtureGroups["native-runtime"]` from its existing 48 entries plus these three, preserving order and all other groups. `fixture()` continues to derive local clean rows, local layer minima/activation entries, and authentic file copies from those groups. Native runtime is 51; full copied population is **208**. Assert additions are three unique disjoint paths, final minus three equals the exact previous205 groups, and previous205 minus31 equals original174. Do not rename the 31-module validator domain to an unexplained 34, auto-discover an accepted expectation, or change a production activation rule.
+
+### Exact report populations and unchanged original guards
+
+`assertLiveFixtureClosure` must still require real CLI status0, graphComplete/inventoryValid, zero errors/unknown/unresolved/forbidden/transitive edges, and each module hash equal to actual source. Measured complete population: **208 modules / 988 resolved edges / 480 type-only / 508 runtime**, all twelve layer populations unchanged except native-runtime48→51.
+
+Preserve prior counts as induced subgraphs of the actual complete report: edges with both endpoints in the original205 set remain exactly **977 / 476 type / 501 runtime**. Within that subgraph preserve original174's **783 / 404 / 379**, then the exact previously identified nodes→ir-unit-inventory type edge removal yields the unchanged historical **782 / 403 / 379** assertion. Preserve the 31-module validator increment **194 / 72 / 122** against prior174. The additional three-module edge complement is exactly **11 / 4 type / 7 runtime**; assert its explicit endpoint/type population from `eleven-edges.json`, not merely a lower bound.
+
+Those eleven edges are six runtime incoming references: native-await→rejection-event; combinator-bodies→rejection-event; resolution-bodies→rejection-event and resolving-pair; settlement-bodies→reaction-order and rejection-event. The new owners add three type-only imports to wasm/model/instructions, resolving-pair's type-only import to resolution-bodies, and resolving-pair's runtime import to rejection-event. No additional dependency remains unresolved. Do not change any actual production import to type-only to shrink this graph.
+
+Retain the input→validation runtime-edge assertion and both existing bypass mutations. Adjust only their exact measured totals for the authentic208 closure: removing the import gives **987 / 480 / 507**, type-only spelling gives **988 / 481 / 507**. Both real CLI runs exit0/errors[] and omit that runtime edge, so the stronger healthy-closure assertion must still reject both, followed by exact source restore and healthy208/988 pass. Keep the old205/977 baseline assertions separately; do not replace historical counts wholesale.
+
+The original formatter negative was measured against the complete closure: healthy208/988 pass; adding its original `@forbidden` backend dependency gives exit1, **209 modules / 989 edges / 481 type / 508 runtime**, with the intended frontend-ts→backend-wasmgc forbidden-clean-edge plus migration-debt and transitive refusal; restore returns healthy208/988. Preserve the original assertions and healthy-first order. All208 ignored source pins were restored exactly after these probes.
+
+### Acceptance boundary
+
+Root waits for the current full2841 run to terminate and checks custody before implementing this one-file delta. Retain that run's original failure rows. First run the three existing affected cases (complete closure; input-validator bypass; formatter/backend negative) with their actual CLI and source fixtures, then the complete unchanged353-case file. No new case aliases, assertion floor reduction, original mutation removal, or full2841 rerun is necessary solely for this unbound test fixture correction when all other tested inputs remain exact. Any further unexpected closure/guard failure is reported at its actual stage; this amendment authorizes only the measured three owners and eleven edges. No retirement or source-map producer coverage credit follows.
+
+
+## Current-main full authority cohort terminal — fixture correction release (2026-10-06)
+
+The single actual current-root20-file cohort terminated exit1 with2838/2841 passed, exactly three known semantic healthy-fixture failures, zero pending/skipped. All2433 original registration identities and duplicate ordinals remain present (2431 pass/two original fixture failures); the added validator-removal witness shares the missing healthy fixture prerequisite. The complete C1current-source343, original own32 and new outer32 cases pass. Preserve full results, errors and original-case-attribution in `.tmp/pr6341-current-main-full-validation`; this is not a whole-suite green claim.
+
+After-body custody matches all7755 declared inputs in SHA256, bytes, mode, inode and device, including every1858 source file, with no source addition. Actual termination and custody now satisfy the previously conditional release: edit only the existing semantic-provider test fixture according to the208-module/988-edge plan; preserve all353 case identities/assertions, run original three failing cases first and then the entire353-case file. No production, policy or C1 change or repeated2841 body follows from this fixture correction. Native565/565 remains attributed to its separate frozen run. Delivery of existingPR6341 remains pending predecessor composition, applicable checks, normal signed commit/push and exact protected admission.
+
+
+## Fresh-main source-only composition after the Deno proof freeze (2026-10-06)
+
+### Measured scope and release condition
+
+This appendix is the finite source plan for existing PR6341, not a policy/C1 refresh or a new architecture. It uses the quiescent current Deno tree `codex-6341-current-main-composition-20261006`, the cached old-main object `cdc0255882d45181072342d9fd57f291aca93092`, and cached main `bba74cfa80aac38a3d29ba6b331d70f6bb0f9cb1`. Root authenticated that main; this static task read cached objects with `GIT_NO_LAZY_FETCH=1` and made no new delivery or ancestry claim. PR6535 being ready/auto-armed is not delivery. Root must authenticate actual main ancestry and contents, including the actually delivered source-position owner/row, before releasing a fresh regular integration worktree or any downstream metadata composition. If that actual main changes these operands, remeasure the changed intersection before implementation. Never restore an older source/policy/C1 snapshot over delivered main.
+
+**Correction of the proposed conflict premise:** `.tmp/current-main-transplant/report.json` has **141 total rows, 81 source rows**, not 141 source rows. Of those source rows, 68 are existing files and 13 are retained deletions. Every one of the 81 current outcomes is byte-exact to its recorded transplant result. The exact intersection between those 81 paths (or all141 paths) and the five cdc→bba source paths below is **empty**. All four existing live Deno source files below equal cdc byte-for-byte; the new finally leaf is absent in both. In particular, there is no Deno-owned `exceptions.ts` textual conflict to resolve. The Deno typed-service and physical-cycle cuts are in other files and must remain whole. Do not manufacture an exceptions service object or retarget its unchanged `ir/try-table.js` import as part of this update.
+
+The frozen current source inventory is 1858 files. Ignored `.tmp/pr6341-bba-source-composition-plan/` contains `source-pins.json`, `transplant-source-audit.json`, all1858 source and5522 test-file pins in `preserved-source-test-pins.json`, the literal cdc/prepared/bba operands, five ignored candidate sources, and `exceptions-reciprocal.json`. These are planning operands, not installed sources or compiler/test success evidence. All five candidate sources equal actual bba blobs.
+
+| Source | Current Deno = cdc bytes / SHA256 | Required bba bytes / SHA256 |
+| --- | --- | --- |
+| `src/checker/oracle.ts` | 27313 / `67cbf9b425bba984f9e464c1047dc276736923332a58aaa829f164cd88aba370` | 27343 / `83aa8ba5ee5550eb4113425e19647d8dde6da169ee59cd3da19e350b227fd911` |
+| `src/checker/type-mapper.ts` | 27354 / `7211764a0103f75ddb69a77ee262b216386c625c9821e64b9628e4cfe4a4bdf9` | 27321 / `5816dcbd6fa6c5ce07ae9af769f094aa9ed4cda5692c87173d6f4b04dff48295` |
+| `src/codegen/statements/exceptions.ts` | 39684 / `d6746e9d53db210a3aaf0d45a77013d01811f4b01777ea382b66cd7be637451f` | 39769 / `134f950290b797d53ef9cd72ce9f4d50537ec2a56b7f06788340b721671fe6f2` |
+| `src/codegen/statements/finally-private-local.ts` | absent | 517 / `60d0da5027c4f525bdd138f33b6788635966968add54b9ee8d41ef87f6240086` |
+| `src/ir/passes/monomorphize.ts` | 36127 / `9d04e4f0598fda871e64cba20651fa67ec20d7ed692856b499374334b77351af` | 37589 / `beac92656855188abf73937042194d19985decd2935391dd26138a41af86b0e5` |
+
+### Exact exceptions and allocator composition
+
+The smallest three-way result for `exceptions.ts` is exactly bba because ours equals the common cdc operand. The saved reciprocal has two fixed UTF-8 byte spans; offsets are zero-based and measured against complete pinned files:
+
+1. Insert the literal 71-byte `import { allocFinallyPrivateLocal } from "./finally-private-local.js";` plus newline at before/after offset1442, immediately after the existing createFinallyRanGuard import (new line25).
+2. At before offset21653 replace the 49-byte `createFinallyRanGuard(fctx, tagIdx, stmt, allocLocal)` with the 63-byte `createFinallyRanGuard(fctx, tagIdx, stmt, allocFinallyPrivateLocal)`; its after offset is21724 (new line436).
+
+Apply in descending before-offset order, verify the complete39769-byte candidate hash above, reverse in descending after-offset order, and require the entire39684-byte original. That exact +85-byte change already succeeded as ignored static construction. No row search, fuzzy context fallback, normalized token match, or guessed current operand is an acceptable replacement for those complete-file preconditions. Copying the whole authenticated fresh exceptions blob is also equivalent here because the measured Deno/common-base equality is exact.
+
+Install the delivered517-byte `finally-private-local.ts` alongside that caller. Its function accepts the existing allocator signature, allocates `params.length + locals.length`, appends a local named `finally@private$${index}` with the supplied type, and returns that index. It has only erased type dependencies on the IR ValType and FunctionContext declarations. It does not add a registry, closure, context capture, service fallback or dynamic binding. This private name deliberately does not begin `__`, so existing `deduplicateLocals` (which merges only `__` names) cannot alias the guard with a source temporary. It does not enter `localMap` or the temporary free list. Existing rollback truncates the local vector; the delivered tests cover remapping, rollback, parameter collision, closure reads and direct eval. Leave `context/locals.ts`, `finally-ran-guard.ts`, catch temporaries and ordinary allocLocal calls byte-exact. The guard's existing async no-op remains; this change does not claim to fix await-rejection semantics.
+
+`oracle.ts` and `type-mapper.ts` take their exact delivered StringLike changes. `monomorphize.ts` takes its exact delivered specializationSite and recursive allocation-fork changes, including the early malformed-return check before minting clone allocation facts. Preserve generated owner retargeting, actual donor/cause, parent-first nested allocation order, alias handling and unchanged/no-map semantic controls together. Do not hand-port only the simple instruction map or only the new helper declaration. No Deno hunk exists in these three files.
+
+### Preservation and ownership
+
+Root is the single integration owner. After verified predecessor delivery, create/reuse an explicitly released fresh regular worktree, carry the existing Deno vector and its reviewed metadata as historical operands, and assign one Sol6.1 Medium source implementer the five sources above plus exact inheritance of the three delivered tests `issue-5267-finally-reentry.test.ts`, `issue-6868-template-literal-string-types.test.ts`, and `issue-3525-source-map-specialization-origins.test.ts`. Their saved bba pins are respectively26428/e9a7983a0c5b5437430a4e560ac765bd9c0e65cb9573e45e20c9247ed87c76d2,2202/95995b38e7c2ccd4d296adc2fe47b3b2f3c65812968a72c864566184227802fa,25316/2194021ab05c768491f1c1ffec05fa68653550dc13625af8cc2c06effc883820. Normally fresh main already supplies them; the task is to retain their exact delivered contents. Do not add duplicate regressions or rewrite their assertions. A separate Sol6.1 Medium read-only validator may inspect this source vector, collect selected tests and read source-bound instruments without concurrent source writes. Serialize actual source execution with any physical source-fault bodies.
+
+Require every unaffected source and test byte to match the saved vector or the explicitly authenticated subsequent-main delta. In particular preserve the entire original81-row Deno source outcome, including deleted old leaf locations; the18 live-binding getters in array-object-proto/new-super/index/object-runtime; canonical services and two physical exception-control imports in relocated ordinary-new-target/rest-only-apply; class-bodies' enclosingClassName propagation; new-super's proven abrupt GetThisBinding return via VOID_RESULT; ordinary classes, super sequencing and actual ReferenceError behavior; and T3 async dispatcher/runtime-builder injection. None is in the five-path write set. No separate6772 claim changes, stale whole-file copies, restored deleted aliases or compiler routing changes follow. The normal legacy/public compilation path stays supported until full parity, with no retirement credit from this composition.
+
+A source-reader owner has **no automatic tracked edit** in this release. Static search found one relevant old receipt: `tests/issue-3518-typed-async-preparation.test.ts:54` expects22 declarations/digest `ae9b7b3d2efe29a83b8cafa983c8aa96d3b267d30a7b5db6b1b52f38c475a0e5`. The complete test is unchanged between live Deno and bba (12888 bytes / `e223f825591af1d1c980088a06d2f6d47b2416abffea3446584b815576ed1686`). Using its exact TypeScript AST extraction rule, cached cdc already has22 / `8f4e85e1308cb1bb6ae27380195252ac615672b6242a2d75d74252e98f696d15`, and bba has24 / `333d8d183461a65f11f403367327313681374be4816dcbdcd3db5907643e11f2` (new specializationSite/forkSpecializationAllocations). `declarations.json` preserves that static measurement; no test body was executed here. Preserve and report the original assertion if selected: it is pre-existing source-receipt debt, not proof of a new Deno regression. Do not repin22→24 or replace the historical digest to conceal it. Any requested reader repair requires a separately bounded, reviewed finite source successor from the real historical declaration operand, retaining its original receipt and a whole inverse; that historical source closure is not established by this appendix. This restriction does not block independent review of the five exact source blobs.
+
+Policy path readers also mention exceptions/finally-ran-guard as classification neighbors. Those are policy DATA operands, not evidence that either source body is C1-authorized. Do not refresh their receipts, install guessed row unions, rebase historical C1 recipes, or copy the old prepared C1 metadata into new main. The subsequent actual source-position delivery and delivered finally row must be composed by root's separately released exact authority plan. This appendix supplies no new C1 source-intersection claim for that future vector.
+
+### Bounded acceptance on the eventual released source vector
+
+Run meaningful source checks after all five files and the authentic predecessor are present, preserving complete registration identities and actual diagnostics. Existing saved passes remain evidence for their measured old source epoch; they are not a substitute for these affected controls and do not authorize a default full2841 repeat.
+
+- Run the complete delivered `issue-5267-finally-reentry.test.ts`: actual native default/standalone execution, all exit modes, nested/repeated entries, exception identity, host exception route, loop depths, private-slot dedup/rollback and direct-eval/parameter collision controls. Retain `issue-1858-finally-else-break.test.ts` and `issue-2061-finally-clone-depth.test.ts` as bounded existing branch-depth controls. Keep their real imports and native instantiation; a compile-success assertion alone is insufficient.
+- Run all three delivered template-literal cases with standalone, native-first and default options, retaining length5, mapped length3 and concatenation `ab-cd!`. Include `issue-4607-typeof-string-carrier.test.ts` to protect the adjacent existing string-carrier behavior. No host stub or alternative route may substitute for the requested compiler path.
+- Run the complete delivered specialization-origins suite and existing `issue-3520-monomorphize-identity.test.ts` and `issue-3520-monomorph-program-abi.test.ts`. Preserve genuine frontend sourceMap capture separately from productive DATA-builder clone cases. The ABI test deliberately injects contract-shaped clones; report it as that seam, never as naturally observed frontend specialization. Require mapped/unmapped and legacy-site controls, unchanged canonical semantic bytes/counters, generated instruction and terminator owner retargeting, distinct nested allocation identities, preserved original registry rows, unresolved/stale failures, and malformed-return rejection before registry mutation. Run `issue-3525-source-map-safe-passes.test.ts` for its actual source/no-map pass invariants. No success here implies completed public physical source-map rendering or byte-offset coverage.
+- Recheck the original T2 nine callback/new.target plus21 expressions-residue cases (30 total), then the existing seven super-method abrupt-completion controls,51 ordinary-class residue cases and five main error-subclass initialization cases. Preserve the exact six-clause original63 and diagnostic45/ReferenceError assertions and all previously healthy rows. Add the existing four IR await/async.throw rejection-event controls and38 compiled rejection-event cases to cover the unchanged Deno dispatcher on the newly composed compiler; their values/carrier identity/imports must be real. This bounded135-case Deno subset is drawn from the frozen565 population, not a redefinition of it. The remaining frozen430 old cases are retained as historical evidence unless an actual changed dependency/failure requires expanding the run.
+- Capture emitted bytes/import lists for the unchanged healthy selected fixtures where the prior harness already supports comparison. Require byte equality only when semantics and compilation inputs are unchanged; the formerly incorrect finally/private-local or monomorph origin/allocation cases must use the corrected semantic/identity expectations, not pin wrong old output. Compare sourceMap-off/default controls and actual instance results. Keep timing held until root releases a separate stable-vector measurement window; no inferred performance pass.
+- Run normal strict TypeScript, build, formatting/lint and actual changed-root import-cycle, flat-directory, LOC/function and inventory gates against the real predecessor. Added finally leaf has no runtime outgoing dependency and source-only typed imports do not excuse a failing actual gate. A newly observed source graph or receipt failure is classified and recorded before broadening scope. Do not change old budgets, source assertions or identity floors to obtain a pass.
+
+Preserve the complete prior evidence chain: original seven T2 failures (five actual ensureExnTag-not-a-function diagnostics plus two compile-success assertions), their repaired30 and560 evidence, the separately frozen565/565 result with all original560 identities retained, and the frozen207 guard record without changing its population. Preserve original2433 metadata registration identities/duplicate ordinals and the actual2841 run's2838 passes/three original fixture failures. The observed one-file repair is independently terminal:3/3 focused then353/353, unchanged353 identities/ordinals,7755 input restoration exact with only the authorized semantic-provider test changed, all1858 sources/policy/helpers/C1 exact. Its composed2488+353=2841 unique observed passes is not a second whole-cohort run. Keep those original failures and the exact353 repair recipe; no automatic replay of unrelated long physical fault bodies follows merely from these five delivered source paths. Conversely, new source inputs must never be silently attached to old custody receipts.
+
+Architect output is append-only issue text plus ignored static evidence. No source, test, policy, C1, Git state, claims, network state, benchmark or test body was modified/executed by this task. Final delivery remains root-owned and conditional on real predecessor admission, source composition, applicable authority checks and normal protected PR admission.
+
+
+## Delivered 431 main: finite Deno source conflict composition (2026-10-06)
+
+### New source epoch, preserving the earlier plan
+
+Root has now authenticated `431aa4ed7a7be13c922332ab14a85ff05de1ac44` as main and verified the source-position PR6535 head46d9 and merge18d811 as ancestors,33/34 delivered files byte-exact, and all1840 owned policy rows retained alongside four unrelated main rows. This is root's recorded delivery authentication, not a new GitHub query by this architect. The prior “wait for actual source-position delivery” condition is satisfied for this named epoch; final assembly still requires root's fresh ancestry/content and authority check at release. Do not commit the old prepared Deno tree's pending cdc merge or substitute its policy/C1 state for current main.
+
+Use the completed independent inventory, without replacing or silently relabeling its earlier10f6 checkpoint: `.tmp/pr6341-new-main-overlap-10f6/final-inventory.json`, SHA256 `f88d14b31020194ef8f79fed82118e6f344938631a54a5b074f8127fa8fb07ad`; final-boundary-review SHA256 `5f599f87654a96816e803a22dcf86b902b98cbb3ab8b1a54ee95f36623d17df8`. Its exact cdc→431 population is24 source paths, intersecting the81 Deno source outcomes in exactly **three**: closures.ts, context/types.ts and typeof-delete.ts. The source-position projector is the24th new-main source path beyond the earlier23-path10f6 inventory; it is not a fourth Deno overlap. All81 old Deno outcomes remain pinned before composition (68 files/13 deletions).
+
+The earlier five-source bba plan remains intact. Limited cached431 reads prove all five ignored candidates still equal current431 byte-for-byte; in particular exceptions.ts still has the exact two-span +85-byte finally change, and finally-private-local.ts remains517/60d0da5027c4f525bdd138f33b6788635966968add54b9ee8d41ef87f6240086. Preserve that complete prior appendix, its operands and its controls. The other current-main sources, including the delivered19589-byte source-map-position.ts (`7d01bc176fa419d8249078ee68328daa8e6d8831992f723d40a3407e57a2f1b9`), remain exact current-main inputs. This appendix adds only the three-overlap composition and one existing main leaf extension; it neither invents a broader Deno conflict nor retires a compiler path.
+
+### Reader/mutator boundary and semantic conflict
+
+`compileTypeofExpression` and `compileTypeofComparison` are separate code-generation ladders. Each reads checker/oracle declaration facts and may emit an unresolvable-name constant; fixing one ladder cannot fix the other. Their cdc conflict lines are1842 and2269. Deno's expressions are `!!sym?.valueDeclaration || importedIdentifierHasRuntimeBinding(ctx, ident)` and its logical negation; main's are `typeofOperandIsDeclared(ctx, ident, sym)` and its negation. Main adds one static import for that existing leaf. Deno adds a12-line local runtime-import-syntax predicate. These are real same-line semantic conflicts, not interchangeable spellings.
+
+The oracle APIs deliberately answer different questions. `valueDeclarationOf` returns the local symbol's valueDeclaration or first declaration (oracle.ts:432–450); import aliases therefore expose their ImportClause, NamespaceImport or ImportSpecifier syntax. `aliasedValueDeclarationOf` follows the checker alias and returns the target valueDeclaration or first declaration (452 onward). It catches lookup failure and answers undefined. Main's1032-byte `expressions/typeof-import-binding.ts` first accepts a symbol's valueDeclaration, otherwise requires Alias and a non-undefined target declaration. Deno accepts the three local runtime import forms even when no target declaration is available and explicitly rejects their type-only forms. Neither predicate reads an import's runtime value, updates the binding, registers a host import, emits instructions or owns source-map authority. Oracle caching is the existing owner behavior; introduce no new cache or symbol registry.
+
+| Observed binding facts | Deno local predicate plus old valueDeclaration arm | Current main predicate | Required composition |
+| --- | --- | --- | --- |
+| Ordinary symbol with valueDeclaration, no import syntax | declared | declared | unchanged main fallback |
+| Named/default runtime import with a target declaration | declared | declared | declared |
+| Runtime namespace import | declared from local syntax | depends on available target declaration | declared from local syntax |
+| Recognized runtime import with unavailable alias target | declared from local syntax | undeclared when target lookup is undefined | declared binding; preserve real downstream resolution/diagnostic behavior |
+| Explicit type-only ImportClause/NamespaceImport/ImportSpecifier with a resolved value target | erased by Deno syntax rule | may be declared through target resolution | erased; target existence cannot restore a removed local binding |
+| Other alias with a target declaration, outside the three Deno import forms | no new Deno admission | declared | retain main's alias-target fallback |
+| Truly absent symbol/declaration | undeclared | undeclared | undeclared |
+
+These are predicate-domain implications of the inspected code, not newly executed fixture results. A runtime import's declaration does not prove successful linking; do not turn an unresolved module/export into a successful program, fabricate an undefined imported value or swallow checker/lowering errors. Conversely, missing target metadata is not permission to fold an existing runtime binding to undeclared. This plan covers the exact three import forms already handled by Deno; it does not introduce new import-equals/re-export erasure rules or general alias support. Re-exports consumed through these local imports must retain their actual live values through the normal resolver.
+
+### Smallest exact source composition
+
+Use the existing main leaf as the one shared predicate. Before its current `if (sym?.valueDeclaration) return true;`, obtain `const declaration = ctx.oracle.valueDeclarationOf(ident);`. When that declaration is present, decide the same three syntax forms with Deno's exact checks, in this order: ImportClause returns `!declaration.isTypeOnly`; NamespaceImport returns `!declaration.parent.isTypeOnly`; ImportSpecifier returns `!declaration.isTypeOnly && !declaration.parent.parent.isTypeOnly`. For every other declaration, continue through main's entire unchanged valueDeclaration / Alias / aliasedValueDeclarationOf fallback. Syntax returns must precede that fallback so a type-only alias to a real function cannot be re-admitted. Do not combine the existing predicates with an unconditional OR.
+
+Keep main's two call sites and its import in typeof-delete.ts. Remove the now-duplicated Deno local predicate from that file after transporting its complete domain into the leaf. This yields an exact-current-main typeof-delete.ts, with the preserved Deno semantics centralized in the existing main leaf. No call-site traversal, resolver API, code-emission ordering, ambient-global unavailable checks, with-scope/Annex-B handling, eval binding fallback, return type or operator semantics change. In particular the nearby unavailable-host checks and undeclared-name comparison branches stay whole.
+
+closures.ts and context/types.ts have **disjoint** base spans. Merge both sides literally rather than choosing either whole file. In closures retain Deno's initializeOrdinaryNewTarget typed-service call, lexical arrow new.target capture, and the undefined-valued getter carrier/explicit contextual-Void distinction. Retain main's host-boolean-callback import, callback result normalization, FunctionContext flag initialization, and Boolean-specific expression boxing branch. In context/types retain both Deno standalone realm interface expansions (exceptionTag/owns/get, microtask notification and Script-var binding controls) and main's optional hostBooleanReturn field in FunctionContext. The latter is consumed by main's delivered callback/control-flow code; do not drop its producers or consumers while importing Deno's context file. All other main callback, optional-formal, Date host-method and prototype argument fixes remain actual431 bytes.
+
+Ignored `.tmp/pr6341-431a-source-composition-plan/candidate-review.json` records a concrete static candidate; none was installed:
+
+| Candidate path | Bytes / SHA256 | Static construction |
+| --- | --- | --- |
+| `src/codegen/closures.ts` | 236920 / `04ee166d90dc0ecadea690e7ace2a3f325a701efe990bac2eefd0ccb614056b8` | all8 Deno and5 main base spans disjoint; exact literal union |
+| `src/codegen/context/types.ts` | 274352 / `e1b3037944d8ef5197819fd1e23a086fe75761625dd3a150e7ff35e4502e4f41` | both Deno spans plus the1 main span, disjoint |
+| `src/codegen/typeof-delete.ts` | 126616 / `f72eb98de3061cc1ddca639ca75380913e6100b00883e77ca71969435e44dd8f` | exactly431 caller/import body; local duplicate removed |
+| `src/codegen/expressions/typeof-import-binding.ts` | 1572 / `4a28c54896c1d7a0ff9508411b85a6f05c9dc36cdb97f3bba337043060aeebb4` | one540-byte insertion at UTF-8 offset837 of1032/`f42d2b49835fdcd98038448a0c67f065093f331b0a6d85260324198e0f35ce0b` main leaf |
+
+The saved reciprocal records fully replay/invert five closures spans, one context span and four typeof-delete spans against the actual prepared files; removing the leaf insertion recovers the complete actual main leaf. These exact bytes are review operands, not runtime acceptance. An implementer may adjust formatting/comments if normal gates require it, while retaining the precise domain and recording final pins. Preserve the original candidate operands and all main/Deno source pins so a new implementation delta remains reviewable.
+
+### Ownership and genuine acceptance
+
+Root alone owns fresh regular-worktree integration and actual predecessor admission. One Sol6.1 Medium source owner gets exactly the four paths in the candidate table; the earlier five-source transport remains the separately specified exact-main inheritance. Another Sol6.1 Medium test owner may write only a new `tests/issue-4376-imported-typeof-composition.test.ts` for the missing boundary controls below. It must leave the existing Deno and main tests byte-exact, read the source owner's frozen vector, and coordinate execution with root; parallel file preparation does not authorize concurrent physical fault mutation. Root separately owns policy/C1/current-reader composition derived from the actual431 policy and delivered position component. No metadata or old receipts are rewritten in this source task.
+
+Required smallest source controls, keeping their public/native harnesses and original expected values:
+
+1. Run both existing `issue-4376-imported-typeof.test.ts` gc/standalone rows unchanged. They cover default and renamed runtime imports, callable, namespace, bound undefined, missing name, erased type-only Shape, mutable object→undefined import, direct/materialized and comparison forms, and the module-initializer guard; both must still return42 using the real result.importObject/instance binding. Do not replace imported declarations with same-file variables.
+2. Run the complete13-row delivered `issue-6417-axios-residual-mechanisms.test.ts` unchanged. Its imported-function materialized result must be `function`, comparison `true`, absent global property `undefined`; expression/block host boolean validators must return `ok`, the false validator must still throw. Retain all optional-formal, Date/object-tag and prototype toString controls as well: they share the actual compiled package and establish that preserving the other main source bodies had a real effect. Keep its allowJs/experimentalIR/gc/web compileProject path, real WebAssembly instantiation, compiled imports and export wrappers. Neither this suite's property-absence control nor its JS package fixture replaces Deno's bare missing identifier and native standalone controls.
+3. The new finite gc/standalone composition witness should exercise explicit `import type` of a real callable/default value/namespace and inline `import { type callable as Erased, callable as Live }`, using actual modules with skipSemanticDiagnostics as in the old test. Require both materialized typeof and equality/inequality forms to report erased names as undefined while Live still calls the real function and reports function. Include a runtime namespace and renamed live export through an actual re-export module; perform a real owner update and observe the changed imported value through both typeof forms. Preserve bare missing-name behavior. These missing controls distinguish syntax-first composition from a superficially passing OR of the old predicates; the old type-only interface alone does not prove a value-bearing alias remains erased. Do not add success expectations for malformed/unlinkable modules. For unavailable-target predicate coverage, use an actual checker/oracle source diagnostic witness and retain the resulting compile refusal; any supporting isolated predicate check must use its real declaration/symbol facts, not a forged successful compiled module. Record the actual collected population; this plan does not invent a new pass count.
+4. Re-run all9 existing callback-new-target rows and the unchanged persistent-script-environment suite to cover the disjoint closures/context combination: ordinary vs lexical new.target, thrown construction-state restoration, full-vector rest callbacks, escaping reads of live shared state, original-realm getter exceptions, foreign typed-slot refusal and the opt-in-inactive control. Do not recopy an older new-super/object-runtime/index/array-object-proto file: the18 live-binding getters and physical exception-control dependency cuts stay whole. Retain the earlier bounded class/super/finally/template/monomorph source controls as already specified; new source-dependent failures may justify further named cases, not an automatic complete old-corpus replay.
+
+Freeze the final sources before execution; check real imports/results, preserve every old registration identity/assertion and retain all failures at their observed stage. A disjoint source merge is not behavioral proof. Normal source TypeScript/build, format/lint, actual import-cycle/flat-directory and changed-root budget gates remain required without weakened baselines. There is no fresh runtime, timing or compiler-equivalence result in this static appendix.
+
+Historical565/565 native evidence and the actual2841 metadata run's2838 passes/three fixture failures keep their original epochs and custody. Preserve the separately observed3/3 plus353/353 fixture repair and2488+353=2841 unique observed composition, not a fictitious whole rerun. The new13 main cases and missing-domain controls must be measured on the final composed vector rather than borrowed from old565, and the unchanged metadata proof does not automatically authenticate new source or policy. Keep all original T2 failures, the207 guard freeze, class ReferenceError evidence and prior source-map limitations. Legacy/public compilation stays available; no retirement, broad row acceptance or performance claim follows.
+
+This architect reused the independent final inventory and inspected only relevant cached immutable source/test blobs plus the old prepared source. Only this appendix and ignored `.tmp/pr6341-431a-source-composition-plan` evidence were written. No source/test/policy/C1, Git state, claims or network changes and no test/timing runs occurred.
+
+
+### Root's concrete fresh-worktree release
+
+Root has created `worktrees/codex-6341-post-6535-main-composition-20261006`, branch of the same name, at HEAD60f99 with the active merge input exactly431aa4ed. The existing4376:6341-main-composition claim was updated and effect-verified for that root-owned integration branch; the old prepared worktree/merge input remain preserved. Raw Git conflicts are compiler.ts, class-bodies.ts, expressions.ts and typeof-delete.ts, saved by root under `.tmp/post-6535-main-composition/original-conflicts`. The first three already have reviewed resolutions in the old81-outcome Deno vector. They are not three additional cdc→431 semantic intersections; keep the old resolutions while using the three-way prepared/cdc/431 operands above.
+
+For this concrete release root assigns **one Sol6.1 Medium source owner** the81 prepared source outcomes, existing main typeof-import-binding.ts leaf and existing `tests/issue-4376-imported-typeof.test.ts`. This supersedes the proposed separate new-test-file lane above: retain the original two rows and every original assertion byte-for-byte, appending the bounded missing-domain witnesses in that already assigned test file if needed. Only the measured three overlapping source files plus leaf require new composition logic; the other prepared source outcomes retain their exact reviewed contents/deletions, and unowned main files retain431. Root owns other tests, policy/C1 and final assembly. This source implementation may proceed now; the separate replay-helper typing PR6538 has no runtime-JavaScript change and is not a source-composition dependency. Its eventual strict-typecheck improvement remains separately attributed. No new implementation or extra worktree action was performed by the architect.
+
+
+## Post-source-position Deno metadata and C1 composition (2026-10-06)
+
+### Source checkpoint qualification and scope
+
+Root reports a real40/40 source checkpoint (4 imported-typeof controls,13 axios controls,9 callback controls,14 persistent-Script controls) and source TS7 exit0. The subsequently added fifth imported-typeof witness uses a real unresolved ImportSpecifier with TypeScript diagnostic2307, no resolved alias target, and the syntax-first predicate returning true. Actual compileMulti calls with both typeof-only use and a missing-function call return success in the existing external-host behavior. **Withdraw the earlier proposed compile-refusal expectation for that witness.** Preserve the failed test-attempt reports and genuine checker/predicate witness without inventing a malformed-import refusal, requiring fixture hunting, or expanding this task into a module-linking repair. This corrects the earlier plan premise, not the compiler result. The final five-control run, formatted source pins and complete final source-vector reconciliation are still pending the source owner/root freeze;40/40 is that actual checkpoint, not a prospective41-case claim.
+
+This appendix owns metadata planning only. Root is the sole4376 integration/authority owner in `codex-6341-post-6535-main-composition-20261006`. Source-position PR6535 is actually delivered and its claim completed; its previous wait condition is released. Replay-helper typing PR6538 is separately owned and not a runtime-source prerequisite. The source worker remains owner of the81 source outcomes, typeof-import-binding leaf and imported-typeof test. No changing source body was read as a final authority here. The measured policy data and delivered test-authority files below are stable predecessor operands, while any final source/declaration/closure hash acceptance remains **pending root's source freeze**.
+
+### Exact four policy operands
+
+Current main policy is1844 rows,590452 bytes, SHA256 `31dbefa4d9ed8b3d429932c96d936315b08d0d1457080e9cabbb7aa7f5ffe584`, blob `13d33314077927422c0cd8ee3d6e985941f50371`. Old prepared Deno policy is1856 rows,594346 bytes, SHA256 `4ee416b75193d78ec696ac0d21e9328cee842602f6926cf3223e6de0dc703f7a`, blob `e70ee1b32f53de5d5935aa0ac52987959effc64a`. Their shared rows are deeply equal in the same relative order; every non-files field is equal. Exactly18 Deno rows are absent on main, and exactly6 main rows are absent from old Deno. There is no changed classification row or allowed-edge/layer repair to invent.
+
+An ignored exact composition inserts those18 original Deno row objects, in their preserved relative order/neighbor locations, into actual main. Candidate: **1862 rows,596119 bytes, SHA256 `99b1c972702656d37aa70a993953b367efba19f3907eb76aed83864c1b77442e`, blob `9e8d4f0cac4690e7ccb1daf2e5cf85dd5339b0f4`**. Compact data hash `098ac5f16c3568e524c69fd8df087808f08b743f63db26fe9603824f09a4988c`; files hash `eb22b758ec730e77ffe380a09ad7bd6e2558324cc563079aa665a8077745ac11`. All four operands retain non-files hash `3a4788461bc5c6757c931554be0ec6218711f00814f580d9bb70d26a5929c1ce`. Actual raw formatting is preserved, including compact arrays outside files; a whole-file JSON pretty-print is not equivalent.
+
+The18 rows are exactly those in the preserved Deno successor: reaction-order/rejection-event/resolving-pair native bodies and physical allocation-owner, plus the14 existing mixed/debt rows at the already approved canonical Deno paths. Preserve the13 earlier relocations and their old-path absence. Keep every current-main row, including the clean source-map-position projector, finally-private-local owner5267, and these four later main leaves: object-model/proxy-forward-carriers, expressions/callable-property-omittable-param, closures/host-boolean-callback and expressions/typeof-import-binding. Those four carry their actual main mixed-needs-split/owner3518-coordinator/backend-wasmgc profile. Source implementation changes do not license declaring any of them clean.
+
+`.tmp/post-6535-metadata-plan/policy-profiles.json`, `policy-projections.json` and four saved policy operands establish three exact data/raw relationships:
+
+| Exact subtraction from the one1862-row candidate | Exact output | Purpose |
+| --- | --- | --- |
+|18 Deno rows,16 coalesced raw insertion spans | actual431 main1844/590452/31dbefa4… | lineage proof that all main bytes survive |
+|18 Deno rows plus the4 later main leaves,18 coalesced raw spans | delivered position predecessor1840/589117/`58ae19c3c96ecbb3ebe43ec81cfb1d244a0c15e80c7da6000becb58d44834857` | input accepted by existing position-finally successor |
+|6 main-only rows (position,finally,the4 later leaves),4 coalesced raw spans | exact old Deno1856/594346/4ee416b7… | input accepted by existing Deno class-fields successor |
+
+These are fixed named transformations of one complete measured current profile, not a general row-union acceptance algorithm. Neighbor/index records and literal full raw spans are already in ignored evidence. Source membership is not newly certified by this static candidate: root must reconcile the18 real paths/deletions and entire source inventory after the source freeze, then install the reviewed policy once. Never copy old1856 policy over main1844 or accept both arbitrary policy hashes as current.
+
+### One bounded outer successor, immutable inner authorities
+
+Add only `tests/helpers/ir-deno-post-position-main-successor.ts`, its fixed JSON receipt of the same stem, and `tests/issue-4376-post-position-main-inventory-successor.test.ts`. The helper has two explicitly named predecessor routes, each with raw and semantic entry points:
+
+- `captureDenoPostPositionMainPredecessorPolicySource` / `captureDenoPostPositionMainPredecessorPolicy`: current1862 → exact position1840.
+- `captureDenoPostPositionDenoPredecessorPolicySource` / `captureDenoPostPositionDenoPredecessorPolicy`: current1862 → exact old Deno1856.
+
+There is no public target-profile argument, registry, inferred epoch, automatic row search, cached authentication or permissive fallback. Both routes accept only the fixed1862 complete current profile and use independently pinned fixed predecessor/receipt constants. The receipt binds both full predecessors and the actual1844 main lineage proof, exact row objects/neighborhoods, non-files data, raw spans and reverse replay. A private finite implementation may share the existing descriptor capture/hash/span arithmetic; it must not introduce a reusable successor framework or weaken a guard. Do not derive expected authority from the supplied receipt, caller hash or current file under test. The independent new proof freezes complete formatted helper/receipt pins and independently asserts the measured operands.
+
+Preserve the existing raw-primitive/semantic-descriptor-first refusal order: no getters, coercion, holes, boxed primitives, nonplain structures or input mutation. Authenticate actual receipt bytes afresh on every API call before accepting a profile; missing/corrupt/wrong-reader authorities must fail after a healthy warm capture and recover only after exact restoration. Validate entire current and predecessor raw pins, parsed profiles, ordered keys/rows/non-files fields, in-bounds exact UTF-8 spans, whole inverse and whole replay. Preserve the actual historical main/deno before pins; a future main profile requires a new measured release, not relaxed acceptance.
+
+Transplant the old Deno18 and Deno class-fields helper/receipt files **byte-exact** from the prepared worktree. Leave all delivered position own1, class-fields and finally helper/receipt bodies byte-exact. Keep their existing independent negative controls and fixed read counts. They are not rewritten to recognize1862. The two output chains are:
+
+`1862 → new main route1840 → existing finally1839 → existing position-class-fields1838 → existing position-own1837 → existing main11/historical consumers`.
+
+`1862 → new Deno route1856 → existing Deno-class-fields1855 → existing Deno18 successor1837 → existing main11/historical consumers`.
+
+Both end at the same1837/588351/4b442f64… operand. The second route exists for preserving the actual Deno32+32 proof populations and physical controls, not for replacing main's delivered initial-reader chain. No duplicate class-fields adapter or alternate unverified policy family is added.
+
+###17 initial readers,24 sites; preserve fault boundaries
+
+A static TypeScript AST census of the delivered main tests finds exactly17 initial-reader files and24 actual raw calls to `capturePositionFinallyMainPredecessorPolicySource`. The older Deno19-raw/5-semantic census describes its historical epoch; main already captures raw before JSON.parse at those five sites. Preserve main's current raw/semantic downstream ordering. At each of the24 actual initial operands, add only the new main-route wrapper immediately inside the existing finally wrapper. Keep the existing finally/class-fields/own/main11 chain and old mutations/assertions whole. Do not wrap inner already-historical mutants, replace them with healthy disk data, or normalize physical corruption before its intended authentication.
+
+| Reader under tests/ | Current finally-call lines | Site count |
+| --- | --- | --- |
+| issue-3518-canonical-3c6-inventory-successor.test.ts |1438 |1 |
+| issue-3518-canonical-489d-inventory-successor.test.ts |376 |1 |
+| issue-3518-current-main-inventory-successor.test.ts |60 |1 |
+| issue-3518-lowering-analysis-preservation.test.ts |744 |1 |
+| issue-3518-nested-stackification-policy-evolution.test.ts |348 |1 |
+| issue-3518-number-prerequisite-policy-evolution.test.ts |122,964,1382,1924,2295 |5 |
+| issue-3518-program-data-contract-boundary.test.ts |173 |1 |
+| issue-3518-program-validator-policy-evolution.test.ts |718 |1 |
+| issue-3518-runtime-data-contract-seam.test.ts |2675,3401 |2 |
+| issue-3518-runtime-program-policy-evolution.test.ts |100,187 |2 |
+| issue-3518-semantic-provider-boundary.test.ts |490 |1 |
+| issue-3518-validation-policy-evolution.test.ts |76 |1 |
+| issue-3518-wasmgc-helper-policy-evolution.test.ts |1078 |1 |
+| issue-3518-well-known-symbol-policy-evolution.test.ts |79 |1 |
+| issue-3525-arraybuffer-isview-main-policy.test.ts |168 |1 |
+| issue-3525-main-inventory-source-successor.test.ts |313,529 |2 |
+| issue-3525-presentation-classification-policy.test.ts |142 |1 |
+
+The separate five successor proof files also need their initial healthy operand adapted. Use the main route for existing6866 position own/class/finally proofs and the Deno route for existing4376 Deno own/class proofs. Keep exact old policy targets, all32+32 Deno registrations (confirmed in the raw old2841 result), and delivered23+31+39 position registrations. In physical policy-fault cases, stage the genuinely authenticated output bytes in a dedicated ignored physical file, verify its complete historical pin, then let the old test mutate/read that actual file with its original inner helper. Preserve every original fault and expected inner error/read count; preparation reads occur before the original counted fault interval. Never fault a fabricated JS object while calling it a physical file test, never pass a corrupted historical operand through the new current-only wrapper, and never count a new outer-pin failure as the old intended guard. Existing receipt faults still target their real unchanged receipt paths. The new proof alone supplies current1862 physical-policy and new-authority faults, serialized under root custody.
+
+There is one separately established fixture transport inside the17 readers: the semantic-provider test. Main is72568/`7610923c8bbec55eabd2b2a5ffd002b3a70c32aadbb8608d6737f917bfb77335`; old repaired Deno is76418/`a6b980d86619b5ae2cd6929904d091848460279b716c375d39a320f57e4c2c26`. The saved diff separates capture-wrapper differences from the three native-owner additions and11 exact edges. Preserve main's capture chain and port only that already reviewed fixture body: keep the205-validator population/977 edges and add three owners/four type-only plus seven runtime edges to208/988. Preserve all original353 identities, validator-removal witness, formatter/backend negative and all original floor/assertion logic. This is not permission to assert a stale graph matches current source: after source freeze run the actual fixture and retain any newly observed dependency difference at its real stage. Do not copy the entire old Deno test over main or repin an unexplained new closure.
+
+### Root-only C1 reseal from the actual delivered authority
+
+Actual main C1 is409047 bytes/SHA256 `7866e5631d0c18a1226dec77fce73733a0140253f3ee959fca45289ae6c93d00`; old Deno C1 is407235/`923c016361ae48b6e1941c4a4cdb3eec279dabf64acf1cc31cf2df12f92bd33e`. Static independent inversion/replay of all10 recipes in each manifest succeeds and recovers identical complete historical before operands for the corresponding paths. Schema, historical/current base literals, seven artifacts, eleven immutable authorities, population and all LinearOptions data are equal. Only four current instruments/recipes differ between these two predecessor epochs. These facts and recovered immutable bytes are saved in `c1-predecessor-audit.json` and `historical-operands/`; they authorize no new final seal by themselves.
+
+The exact four C1 self-intersections with the17 adapters remain:
+
+- tests/issue-3518-program-data-contract-boundary.test.ts (current33018/00d3c535…;11 recipe spans).
+- tests/issue-3518-runtime-program-policy-evolution.test.ts (28405/514c7b79…;8 spans).
+- tests/issue-3518-well-known-symbol-policy-evolution.test.ts (29317/96c027fb…;8 spans).
+- tests/issue-3518-number-prerequisite-policy-evolution.test.ts (111635/9b39eea0…;26 spans).
+
+These are before-edit measurements, not required final span counts. After final reader formatting, root rebuilds each of those four recipes from the **same immutable historical beforePin** to the exact final reader, updates only its afterPin/span array and matching currentInstruments pin, and proves full inverse/replay for all10. Preserve all8 other instrument pins,6 other recipes, all7 artifacts/11 immutable authorities, population12 instruments/10 recipes, every beforePin and all semantic profiles. Coalesce adjacent edits where needed to satisfy strictly increasing nonoverlapping UTF-8 offsets; do not carry an intermediate main/Deno edit as if it were a historical original. Root restores the four permitted records in the candidate and requires every other manifest field to equal actual main. No old407235 manifest install and no blind union of recipes.
+
+The structured path-set intersection of the declared C1 LinearOptions sourcePath, bindings, closureInputs and resolver fields with the81 Deno source paths plus the new typeof leaf is empty. This is a **static membership observation**, not final source-pin acceptance. Root must verify the actual final declaration/closure/source hashes after source freeze; until then no replacement declarationPin/raw-source hash is invented or installed. If the final intersection remains empty and all actual existing pins match, preserve LinearOptions and all source-bound declarations verbatim. A newly measured mismatch requires a separate explicit finite source receipt review; it is not solved by widening policy or rehashing whatever happens to be present.
+
+Only root may prepare/install the final C1 manifest, change the single manifest-SHA scalar in ir-c1-authority-root.ts and update the single external independentFreeze string in issue-3518-c1-current-source.test.ts. Within that string change only manifestSha256, anchorSource and anchorPin; declarationPin remains unchanged unless separately authorized by an actual source-intersection proof. Prove all anchor bytes outside its one scalar and all test bytes outside that one string exact. Do not change ir-c1-current-source.ts, ir-c1-historical-authority.ts or add the new helper to the fixed12-instrument population. Bind the new helper via its own complete independent proof/receipt, not a fabricated C1 historical instrument.
+
+### Finite implementation order and actual validation
+
+1. Root receives source freeze and independent complete source-vector review, reconciles the18 Deno rows and13 deletions against actual paths, and releases metadata installation/custody. No source read during active writes is accepted as the final declaration inventory. Preserve the old53k-corpus linkage/custody and frozen native/metadata source operands; do not recreate their success on a different source epoch by renaming reports.
+2. One Sol6.1 Medium metadata owner implements only the measured policy candidate, the one new fixed helper/receipt/proof,17 initial-reader adapters and five preserved-proof capture/staging adjustments. Transplant old Deno helper/receipt bodies byte-exact. That owner composes the already reviewed semantic fixture delta in its one reader. Root owns the issue and C1 files; no simultaneous edits there. An independent validator may inspect the frozen candidate/recipes without changing files or executing physical faults while the source owner is active.
+3. After final formatting, root alone constructs the C1 candidate from delivered main and requests independent static review of all10 inverse/replays,12 current pins, field-level preservation, anchor scalar and external string. Only then install and release actual checks; rejected current/stale/foreign operands never become a fallback accepted vector.
+4. Run the complete **new outer proof** with independently pinned positive raw/semantic captures on both routes, exact-main18-row lineage, all six/22 row index/profile/neighbor controls, duplicate/missing/reordered/foreign/non-files/whitespace/span faults, stale1856/1844/1840 rejection as current, malicious descriptors/boxed inputs and warm physical receipt/policy corruption plus exact restoration. Collect its actual new case population; no numeric pass count is specified in advance. Preserve all five existing full successor-proof populations (32+32+23+31+39=157 identities), C1 current-source343, and the complete semantic-provider353 after the three previously failing healthy/negative fixtures are reached. These are planned execution floors, not new pass claims.
+5. For the other initial readers, preserve/reconcile all2433 original identities/duplicate ordinals by collection. A bounded current capture audit must exercise all24 genuine initial sites and compare their exact historical outputs with the frozen old operands, then run selected existing healthy and post-capture negative cases covering each changed reader's actual mutation boundary. Record the literal selected names before execution; avoid a new synthetic success-only test that bypasses the reader body. Byte-exact inner bodies and proven historical input equality justify keeping unrelated old fault results as old-epoch evidence. A changed inner body, output mismatch or new diagnostic expands that specific affected population; it does not justify silently skipping it. There is no default full2841 or entire original fault-corpus repeat just to re-observe unchanged inner assertions.
+6. Run the actual current inventory/architecture and normal source/type/build/format/lint/budget delivery gates against the frozen final source and policy, plus the separately released native source controls. Keep all physical authority/source mutations serialized with compilation, exact before/after bytes/modes/inodes/devices and declared corpus inputs. No timing retry, scheduler/cache architecture, blanket waiver or legacy/public retirement is authorized.
+
+Keep the original2433 attribution and actual2841 run (2838 passed/three failures) unchanged. Preserve the observed one-file3/3 then353/353 correction, original353 identities,7755 input restoration and the composed2488+353=2841 unique observations. Likewise565/565 native and207 guarded cases retain their frozen epochs. New proof execution must say what current inputs it used; old passes are neither erased nor promoted to new source-current proof without execution. Root carries existing PR6341 through the normal signed/protected admission after these finite checks; this appendix is not a new issue or a completion/retirement claim.
+
+Architect outputs are only this appendix and ignored `.tmp/post-6535-metadata-plan/` profiles, fixed projection records, predecessor C1 audit, reader census and immutable operand copies. No source/test/policy/C1/Git/network/claims installation or test/gate/timing run was performed here.
+
+
+### Received source freeze; module and file domains remain distinct
+
+Root has now supplied `.tmp/post-6535-source/freeze.json`, SHA256 `ddf172f453ef009404ce0b1667f9021379788d13b233b14945b0e32331e094d0`, and `.tmp/post-6535-main-composition/source-domain-qualification.json`. The source-vector domain is1862 TypeScript/module files; the all-src-files domain is1864 because it additionally includes `src/ir/backend/README.md` and `src/ir/dialect/README.md`. Correspondingly, main has1844 module-policy rows/1846 all-src files and old Deno1856 module rows/1858 all-src files. These denominators are not interchangeable, and no README policy row is added.
+
+The architect compared the saved1862-row candidate path set against the frozen1862-module vector: exact equality, no missing or extra module. The saved C1 LinearOptions closure-input byte/SHA pins were compared only with the frozen vector, not with changing source bodies; see `frozen-source-domain-review.json` for the actual comparison count/results. No new declaration pin was invented or extracted. Root's independent full source review and actual final C1 declaration/closure acceptance remain the release conditions; the source freeze is now available for that review. This is static reconciliation, not additional source/test pass evidence.
+
+
+### Post-source-position source composition and native terminal (2026-10-06)
+
+Root received independent approval of the frozen source composition against authenticated main431aa4ed7a7be13c922332ab14a85ff05de1ac44. All1795 unowned main files remain byte-exact;82 owned outcomes are69 files and13 authenticated move-deletions, preserving both disjoint closure/context edits and the syntax-first existing typeof-import-binding leaf before its unchanged alias-target fallback. All13 removed raw files match positively authenticated originalPR60f99 preimages and relocated destinations/exports. Module domain is1862 TypeScript source files; two unchanged README files make1864 total src files. Original imported-typeof test2167-byte prefix is exact; final five-case test7344 bytes SHA256 bc4878d7f3716f4580c805e027d427a2f33f3255d3d0f072f6d84fb859b34b9f. Recorded41 distinct focused controls passed; sourceTS7, source/test formatting and lint passed. The diagnostic/refusal attempts and corrected external-host qualification above remain retained.
+
+The broader actual Node25.9.0 serial body collected and executed793 cases, all793 passed, terminalexit0. All565 original native registration and executed fullName identities match exactly;228 distinct delivered main controls comprise finally70, template literals3, specialization17, source capture34 and source projection104. This is a freshly measured body, separate from all historical565/2841/353/2935 evidence. All1925 declared inputs (1862 source modules, two READMEs,61 selected tests/transitive helpers/fixtures/config/package/build script inputs) match complete bytes/hashes after execution. The initial ignored receipt assembler used incompatible name separators and exited1; its error is retained, and the corrected actual ancestorTitles/title comparison verifies all565 original identities without rerunning the body.
+
+Normal production build completed allthree package stages with terminalexit0: Vite, declaration pruning and test262 CLI build. The same1925-input vector is exact before/after build. This vector does not claim runtime corpus, installed-library or hook coverage outside its declared domain, and these ordinary correctness/build results do not claim performance or complete IR/legacy parity. Evidence is frozen in .tmp/post-6535-native-validation; independent static approval in .tmp/post-6535-source-independent. Old prepared worktrees and all earlier failures/fixtures remain intact. Root now releases bounded metadata installation/review; current-policy/C1 proof and normal exact-head publication of existingPR6341 are still pending.
+
+
+### Current metadata collection, process failure and scoped retry (2026-10-06)
+
+Independent review approved the corrected29 metadata paths and root's four-file policy/C1 installation. All24 real initial capture sites are adapted; the hidden array-index descriptor and two initial-capture/physical-staging findings were corrected before installation. Root installed exact1862-row policy596119 bytes SHA99b1c972702656d37aa70a993953b367efba19f3907eb76aed83864c1b77442e and C1 authority411855 bytes SHA9bc6ea2485d9706a8cdfe7bc180ecc2d17a7ec465563b0d0d709fe0bdab37426. Twelve actual source closure pins and LinearOptions declaration1633/5294c0fce2be6c6974b61a3686c05e60aa66d5bb4599fc97cb315ee53cab71be remain exact.
+
+Actual24-file collection exited0 with3162 registrations. Current17 readers retain all2434 saved actual identities exactly, with no additions/removals. Historical2433 attribution remains intact: the extra already-present identity is semantic-provider “rejects bypass of the actual input-to-source-map-validator dependency”, duplicateOrdinal0; it is not newly introduced by this composition. Five complete oldproofs contribute157, C1 contributes343 and the new outer proof228. The complete semantic-provider353 remains part of the17 reader population.
+
+The authorized ordinary eight-file serial body ran all1081 assertion rows:1081 passed, zero failed/pending. However the actual process exited1 after Vitest reported an unhandled [vitest-worker]: Timeout calling “onTaskUpdate”. Despite JSON reporter success:true, this is a FAILED ordinary run and cannot justify admission. Preserve exact stderr, command, result and process-failure.json under .tmp/post-6535-metadata-validation. All7790 declared custody paths, including1862 source modules, two READMEs and33 installedmetadata files, are restored in bytes/modes/inodes/devices with zero additions. Corpus scope is the pinned clean linked Git head/tree/path-set, not a hash of every53933 test/harness file or an executed corpus result; the measured corpus Gittracked pathset56970 and testtracked53889/testJS53869 have distinct domains.
+
+Root authorized one failure-isolation rerun of the SAMEeight COMPLETE test files in eight sequential fresh ordinary Node25 Vitest processes, under the same pool/reporters/heap/timeout/assertions. No setting increase, suppression, fixture/test/source change or repeated full3162 body is authorized. Every actual process must exit0 without unhandled errors, preserve the exact1081 identity union and restore custody; another failure is retained and requires root's scoped diagnosis rather than an automatic repeated retry. This rerun is ACTIVE, with zero new pass credit at this record, in .tmp/post-6535-metadata-isolated-rerun.
+
+The separately frozen original186-case/17-file reader selection maps all24 initial sites to real healthy and post-capture negatives, including both sourcePath reads and lowering application controls. Its bounded parameter/physical-target omissions are explicit. No selected body has run; it and repository gates remain held until the physical retry is terminal and all files are restored. ExistingPR6341 is freshly verified OPEN/ready/base main/exactremote60f99, noautoMerge/noqueueentry; preserve its delivery vehicle, no duplicatePR. Full IR/legacy equivalence, performance and retirement remain open.
+
+
+### Prepared delivery preservation audit (2026-10-06)
+
+A scoped read-only audit partitions the old141-path prepared vector into81 source outcomes and60 non-source paths. Twentyfour original metadata/root paths are intentionally superseded by the approved current29+four authority files;33 safe remaining paths match complete prepared bytes, the import-test2167-byte prefix remains, and the issue's append-only current plans supersede its older prepared snapshot. The sole missing historical delivery file plan/log/ir6341-main-composition-20261006.md was transported with its complete4321-byte SHA8a30eead54e90471da7329dbeb4b1d36e8d7b350570a3bd6b87822faee65db62 prefix intact, followed by an explicit current qualification. All36 safe comparisons had identical authenticcdc/431 main operands, with no unrelated delta requiring a merge. Evidence .tmp/post-6535-prepared-delivery-inventory. No native test, source or current authority edit occurred; the active physical retry inputscope excludes plan/issues andplan/log.
+
+
+### Isolated retry attribution correction and runner diagnosis (2026-10-06)
+
+Root read the actual per-file command records rather than inferring success from passing assertion rows. The first isolated new-outer228 process again exited1 with the unhandled Vitest onTaskUpdate timeout; all228 assertions passed, but the file is not qualified. The next six complete files (32+32+23+31+39+343=500 assertions) exited0 with no unhandled error and exact custody. The final semantic-provider353 process is still active at this entry. An earlier agent progress message incorrectly called seven processes successful; the immutable command/review/stderr records already contained the failure and remain unchanged. This correction supersedes that progress message. No further retry or timeout/reporter/assertion weakening is authorized.
+
+Root assigned independent read-only diagnosis of the failing outer proof and installed runner RPC implementation. The selected186 reader body and admission remain held until physical mutation ends and custody is restored. The current native793/build evidence remains separately scoped, with no promotion of either failed1081 or228 process to a passing ordinary run.
+
+
+## Outer proof worker RPC progress: complete-case cooperative yield (2026-10-06)
+
+### Terminal evidence and causal boundary
+
+The isolated retry is now terminal. Its exact eight-file union remains1081 identities: the outer228 assertions all passed but their process exited1 with the same unhandled `[vitest-worker]: Timeout calling "onTaskUpdate"`; the other seven complete files contributed853 assertions with actual exit0 and no unhandled errors. The final semantic-provider353 is included in those853, superseding the earlier entry that still marked it active. All7790 custody paths are restored, with zero changed or added inputs. Both the combined1081 process failure and isolated228 process failure remain failed evidence; JSON `success:true` and passed assertion counts never override actual exit1. Commands, complete results, stderr, progress correction and custody remain under `.tmp/post-6535-metadata-validation/` and `.tmp/post-6535-metadata-isolated-rerun/`.
+
+Independent read-only diagnosis inspected the installed Vitest3.2.4 implementation. Its worker RPC timeout is60000ms (`dist/chunks/index.B521nVV-.js`, RPCDEFAULT_TIMEOUT); the worker's `resolveTestRunner` forwards `onTaskUpdate` through RPC (`index.CwejwG0H`), and `@vitest/runner`'s `sendTasksUpdate` queues that returned promise without awaiting it, tracking pending updates until `finishSendTasksUpdate`. Update batching uses a100ms timer. Fork reply dispatch is a Node `process` message listener (`utils.CAioKnHs`); Birpc resolves a received reply and removes its pending timeout. These are installed-code observations, not proposed dependency changes.
+
+All228 existing outer callbacks are synchronous. Their complete independent inverses, semantic profiles, fresh authority reads and negative assertions run through repeated `healthy()` calls. The existing runner's promise/microtask sequencing does not itself guarantee a turn for Node message delivery between such callbacks. Recorded isolated durations are361786.49ms for the file and361769.50ms summed across its228 cases, with individual cases1394–3377ms; the combined attempt shows360059.94ms versus360044.29ms. The tiny differences support sustained worker event-loop starvation, but these durations are neither an event-loop trace nor a performance measurement. In particular the failure stack proves that the worker's RPC timeout expired; it does **not** prove when the parent received an update, completed its asynchronous reporter work or sent the acknowledgement. Parent acknowledgement timing remains unobserved. The narrower, code-backed hypothesis is that this proof's synchronous case chain deprives worker reply handling of timely macrotask opportunities; do not claim a traced parent defect or a universally proved cause.
+
+### Single-file implementation and unchanged proof authority
+
+After root releases the active186-case reader body and its exact physical restoration, root or one explicitly assigned Sol6.1 Medium implementer may edit only `tests/issue-4376-post-position-main-inventory-successor.test.ts`. Root remains the sole integration owner. The pre-edit file is86995 bytes, SHA256 `423973e39bcb81f22df2feaa8e822c50d601874b33a773bd47fec5a24d9177a5`; its complete copy and static operand manifest are in `.tmp/post-6535-rpc-spec/outer-proof-before.ts` and `before.json`. Agents are not alone in this worktree and must preserve concurrent owned changes.
+
+Import `setImmediate` from `node:timers/promises`, add `afterEach` to the existing Vitest import, and register one suite-local hook inside the existing `describe("fixed post-position main and Deno predecessor routes", ...)`:
+
+```ts
+afterEach(async () => {
+  await setImmediate();
+});
+```
+
+Add a short comment explaining that the yield allows runner RPC replies between complete synchronous proof cases. This is an awaited event-loop turn, not an arbitrary delay or a changed timeout. Do not use `Promise.resolve()`, `queueMicrotask` or `process.nextTick`: those do not provide the intended macrotask boundary. Do not introduce a yield inside `healthy`, capture/projection helpers, a test callback, a mutation/restoration interval, or an assertion sequence. Keep the existing callbacks synchronous and byte-exact, including their try/finally restoration and post-restoration `healthy()` calls. The hook follows each callback after its body and synchronous finally have completed; it neither replaces restoration nor catches or clears assertion failures. A failed restoration still fails the run.
+
+Preserve all228 full names, duplicate ordinals, registration order, routes and assertions, every independent pin/profile/inverse/replay, exact read-path/count checks, malicious descriptor non-observation, warm receipt faults and actual policy faults. Preserve the helper79234-byte SHA `ecdd9ad0e6732e5b2664017241f1c1466329177d126bbfc518062e9c5b5fb14a` and receipt72255-byte SHA `500e54c202e92cbf0164974840e90f2f00db49994a0cb8523600fc45779d15c0` exactly. No authentication caching, reduced repetition or reused healthy capture is authorized. The new outer proof is not one of C1's12 current instruments; this import/hook change supplies no reason to reseal the authority manifest, anchor, external freeze string or any immutable authority.
+
+No source, shared helper, policy, package/dependency, Vitest configuration, reporter, pool, heap, timeout or environment-setting change follows. No skip/filter, assertion deletion, ignored unhandled error, RPC interception, dependency patch or broad scheduling abstraction is authorized. If the file-local correction fails, retain its diagnostics and return to scoped diagnosis instead of enlarging this write set or retrying unchanged inputs.
+
+### Acceptance after the actual correction
+
+1. Review the final diff against the complete saved preimage. Removing only the added timer import, the `afterEach` import token and the hook/comment must reconstruct all original bytes. Run the normal applicable file formatting/type/lint checks, and collect the full file to compare exact228 registration identities and duplicate ordinals against the failed attempt. A hook does not add a test identity. No original callback or assertion may move or change.
+2. Freeze the corrected proof as the sole intended difference in the7790-path custody vector. Keep the previous failed vectors intact; do not overwrite their receipts or call the changed test file an unexplained restoration mismatch. Recheck the fixed helper/receipt and unchanged policy/C1 inputs. Root serializes physical execution with the reader body and all other source/policy readers or writers.
+3. Execute the complete228-case file once after the genuine reviewed change, with the recorded ordinary Node25.9.0 Vitest command: fork pool, min/max one fork, no file parallelism, verbose plus JSON reporters, VITEST_MAX_FORKS1 and VITEST_FORK_MAX_OLD_SPACE_SIZE4096. Only the output destination changes. Capture the actual process exit/signal, full stdout/stderr and all assertion rows. Acceptance requires actual exit0, no unhandled errors, exactly the same228 identities all passed with zero failed/pending/todo, and exact restored custody against the corrected freeze. Reporter success alone remains insufficient.
+4. The two preserved failing attempts versus this one-property scheduling correction provide bounded attribution if that acceptance passes. Report that the cooperative yield resolves this reproduced ordinary-process failure under the recorded settings; parent acknowledgement timing remains unmeasured. Do not infer a compiler speedup, throughput guarantee, dependency defect or successful full1081 rerun. The seven unchanged files'853 actual successful rows remain separately scoped evidence; root may compose their exact identity union with a qualified corrected228 while stating that the observations came from separate processes and test-file epochs. No duplicate853/793 body is required merely because this local hook changed.
+5. A process failure, identity mismatch, changed assertion, unhandled error or custody difference leaves the outer proof unqualified and blocks its admission. Preserve the new failure without automatic retry. Root's normal exact-head publication checks and existingPR6341 delivery remain required; this test-runner correction does not retire legacy compilation, complete IR parity or settle performance.
+
+This appendix and ignored static operand copies are the architect's only writes. No test/probe/gate, dependency mutation, Git/claim/network operation or source/test/policy installation was performed by the architect. Implementation and actual acceptance are pending root's physical-custody release.
+
+
+### Terminal isolated cohort, source custody and normal gates (2026-10-06)
+
+All eight isolated processes are terminal. Seven complete files qualify853 actual cases (157 retained successor-proof,343 C1,353 semantic-provider), with actual exit0 and no unhandled errors. The new outer228 file remains a process failure despite all228 passing assertions. The exact1081 identity/duplicate-ordinal union and every7790-path custody vector are restored; neither failing combined1081 nor isolated228 attempt is relabeled. The separate progress-message correction is preserved in .tmp/post-6535-metadata-isolated-rerun/progress-correction.json and pinned handoff/freeze.
+
+Root independently rechecked all1925 original native/build inputs after restoration, including website/playground/examples/js/async.ts omitted from the broader7790 domain: complete bytes/hash/mode exact, zero changes. The793 native cases and three-stage production build therefore retain their explicitly scoped frozen-input evidence. No additional execution credit or corpus claim follows from this custody check.
+
+The twelve ordinary repository gates each exited0 with explicit Node25.9 and LOC_GATE_BASE431aa4ed7a7be13c922332ab14a85ff05de1ac44: IR dialect, kind neutrality, JsTag seam, IR layering, import cycles, flat-directory budget, compiler-boundary inventory, dead exports, LOC budget, function budget, coercion sites and oracle ratchet. Exact commands/raw outputs are in .tmp/post-6535-publication-gates/results.json. These checks do not settle complete architecture/IR coverage, performance or legacy retirement. Normal commit/push hooks still remain mandatory.
+
+Root released only the frozen186-case existing-reader selection across17 literal files after physical restoration and gate termination. That actual process is active under its original parameters, with source/test/policy writes held until terminal/restored custody. The scoped RPC correction above is specified but not yet implemented or executed.
+
+
+## Fresh main6998: finite TypedArray and replay-helper composition (2026-10-06)
+
+### Authenticated input and preservation of the pending checkpoint
+
+Root reports a successful refs-only refresh to main/FETCH_HEAD `6998bf0b290c065249e01861ffdbec2dd268662a`, while this worktree still has the uncommitted merge of `431aa4ed7a7be13c922332ab14a85ff05de1ac44`. The architect read those immutable Git objects and frozen ignored operands only; active reader tests retained physical source/policy custody. Do not abort, reset, replace MERGE_HEAD or discard the assembled431 proof to disguise the newer main. After the active186 reader body is terminal/restored and the scoped RPC correction is reviewed and actually qualified, root first records the reviewed431 composition in the normal signed checkpoint, then performs an ordinary merge of freshly authenticated6998. That local checkpoint is not publication or completed admission. Source/metadata implementation starts only after root releases physical custody; previous tests, fixes, failures and receipts remain attributable to their actual input epochs.
+
+The exact431→6998 change has21 paths: seven source paths, one policy file, one new native test file, the replay helper, two existing issue records and nine benchmark result files. The delivered replay-helper change belongs to PR6538 / issue6837, “Modular IR analysis and optimization pipeline with measured performance parity”; retain its exact delivered type corrections. The source and new native test belong to issue6651, “ES2015 standalone → 100%: cluster execution plan from the 2026-09-20 census”. Transport the complete main issue and benchmark changes through the normal merge, without regenerating reports or crediting their recorded results as new Deno execution. No new issue, duplicate PR or competing source lane is required.
+
+### Seven source paths, exactly two Deno intersections
+
+`.tmp/post-6535-fresh-main-6998-plan/source-intersection.json` compares all seven immutable main deltas with the frozen1862-module source vector. Only `src/codegen/iterator-native.ts` and `src/codegen/object-runtime.ts` differ between frozen Deno and main431. Their saved `prepared/` operands match the full frozen byte/SHA profiles. Static three-way composition into ignored files reports no conflicts and yields iterator-native287238 bytes / SHA256 `940df6c4fdd85311ef2ef8f32611f11ae7e0041076d9d3547b2702e3d51932d4`, and object-runtime552957 / `d68c792c2884b767abe934632d5be50c9e6bdd4e6512c097d74fcceec8a4715e`. These are measured candidate bytes, not installed/compiler-tested results. `source-static-merge.json` and the complete three operands preserve the derivation.
+
+Retain main6998's exact full blobs for `array-methods.ts` (497385 bytes), `dataview-native.ts` (450407), `expressions/arraybuffer-isview-static-decision.ts` (2165), `ta-dyn-proto-methods.ts` (50894), and new `array/ta-iter-detach.ts` (5359,133 lines). The first four were exact main431 in the frozen Deno vector, so they need no invented Deno port. The new leaf has only type imports. All other existing frozen source paths, including every authenticated deletion, remain unchanged. The composed domain becomes1863 modules and1865 total src files including the two unchanged READMEs; neither README becomes a policy row. The ignored `expected-source-vector.json` records this exact static seven-path successor.
+
+In iterator-native retain Deno's live receiver normalization, userIter receiver slot, live keys/entries kinds, current-length/indexed-read dispatch, cursor-before-Get semantics, one-way exhaustion and rest-draining path. Retain all main additions: the two imports, `prependTaIterDetachArm` immediately after `prependIterRecIdentityArm` and before the anyIterNextPending early return, and the entire guarded once-per-context finalization body. Main's dynamic TypedArray helpers now put a branded canonical-vec subtype carrying the dynamic view in IterRec.vec, with userIter null. Deno's canonical branch remains selected for that null receiver and can consume its canonical prefix; Deno's live receiver records instead have vec null, so main's subtype `ref.test` does not claim them. Main's guard retains the exhausted-cursor check and real in-module TypeError construction. These inspected field/branch relationships justify literal disjoint composition; they still require native controls after installation. Do not merge the two representations, redirect ordinary live iterators to snapshots or move the finalizer ordering.
+
+In object-runtime retain every Deno live service getter, `buildRestOnlyApply` reservation/dispatch, linked-realm reader reservation and canonical relocated imports. Main's new `ensureStandaloneTaSubclassParentCtor` import and call inside `emitStandaloneVecBuiltinConstructor` are disjoint. Keep the call after the existing cache lookup and before identity-only fallback; it delegates number-element TypedArray parents to the delivered constructor, while its undefined result preserves the prior fallback. Preserve all main dataview-native savedBodies handling, externref view materialization/writeback, receiver validation and arity behavior without speculative cleanup. Existing Deno callback/new.target and ordinary-class behavior remains required. The import-cycle and actual initialization checks must assess the resulting graph; static lack of text conflicts does not prove initialization safety.
+
+### One exact policy row; evolve the existing outer proof
+
+The entire main policy delta is one318-byte insertion at old-main UTF-8 offset384119. Inserting those same bytes into the frozen Deno policy at offset388452 yields the ignored `candidate-policy.json`; its exact row is `src/codegen/array/ta-iter-detach.ts`, unmigrated / mixed-needs-split / backend-wasmgc / owner3518-coordinator with the delivered generic nextBoundary. Its main row index is1046; composed index1059. `policy-one-row-evolution.json` pins its actual previous/next neighbors and literal bytes. No row reorder, normalization, other-field change or broader policy regeneration is necessary.
+
+| Operand | Rows | Bytes | SHA256 |
+| --- | ---: | ---: | --- |
+| Delivered main6998 |1845|590770|`b606727c951331096a458b46ef344e8042018089b04e0e1fa587d7045fad3d13`|
+| Composed Deno plus main6998 |1863|596437|`a93b6e37ab492e3b3cb591e1f10a394291580bd1aea17b2b01062244e977a966`|
+
+Both retain the exact non-files digest `3a4788461bc5c6757c931554be0ec6218711f00814f580d9bb70d26a5929c1ce`. Full source/Git-blob/semantic/files profiles are in `policy-profiles.json`. The existing outer helper can retain all four public capture APIs and its complete capture/authenticate/profile/inverse/replay algorithms. Update only its fixed expected literal and receipt pin, its own receipt JSON and the independent outer proof literals required for this new operand. The three direct projections remain:
+
+- mainLineage: current1863→exact delivered-main1845, removing the same18 Deno-only rows at their current indices;16 raw insertion spans in the independently built candidate.
+- mainPredecessor: current1863→unchanged historical oldPosition1840, removing23 rows (the earlier22 plus the TypedArray row);19 raw spans.
+- denoPredecessor: current1863→unchanged historical oldDeno1856, removing7 rows (the earlier6 plus the TypedArray row);5 raw spans.
+
+`policy-projections.json` statically verifies every semantic inverse, complete raw inverse and complete forward replay from immutable before operands. A different valid minimal span segmentation may be used only with the same whole-file proofs. Do not merely increment counts or rehash arbitrary current input: both historical target blobs remain exact, and the lineage target must be the authenticated6998 blob. Refresh affected indices/neighbors/offsets from these complete operands. Every retained row and every non-files byte must survive. Do not append another large helper chain, introduce a fourth public route, admit both current epochs through a fallback, or alter the immutable inner authorities. All24 existing initial capture sites and their17 reader adapters continue to receive the same historical raw/semantic outputs; their code need not change.
+
+Retain the independent proof's full controls and the complete-case RPC yield. Add the new row's two historical-route row/previous/next negative controls and reject the former1862 composed operand as current, alongside stale main and historical operands. Its raw previous-current operand can be reconstructed by reversing the one fixed318-byte insertion, with the complete old596119-byte profile checked. All raw/semantic inverse, fresh-read count/path, malicious descriptor non-observation and physical receipt/policy restoration controls remain mandatory. Current row indices above1059 move, so index-derived test titles can change even when their logical control is retained. Record an explicit old→new mapping keyed by route, row path and neighbor role, and separately list added current-epoch controls; never relabel the historical228 registrations/results as the new population or silently drop an old fault. If stable old titles are retained, they are historical labels only; assertions must use actual new coordinates. Collect and report the real new population, without guessing a count in advance.
+
+### C1 and delivered replay-helper boundary
+
+The static structured-path intersection of the installed-candidate C1 manifest with the seven changed sources plus `tests/helpers/ir-whole-program-replay.ts` is empty; see `c1-intersection.json`. This checks exact path-valued fields throughout the manifest, including LinearOptions source/bindings/closure inputs, population declarations and current instruments, rather than treating source path mentions inside policy strings as authority. Its12 current instruments,10 edit recipes,12 closure inputs and LinearOptions declaration therefore have no new source member or edited instrument in this finite change. Keep the current C1 manifest, anchor and external freeze string byte-exact; no automatic reseal follows an outer-helper data update. Reconfirm those existing pins against the final installed source and instrument bytes. Any actual mismatch must be classified before a separately bounded receipt edit, not patched by blind rehashing.
+
+The delivered replay-helper changes are type annotations/casts around the existing emitted Uint8Array, native Tag-capable import map and instantiate call; preserve all runtime statements and the exact main delivery. It is outside the fixed C1 instrument population. Existing historical proof helpers/receipts and all17 reader source bodies also remain exact. Thus this plan's intended metadata write set is only policy plus the existing outer helper, its receipt and independent test; root should refuse incidental C1/reader churn. Preserve the independently measured d97 delivery authentication and test attribution rather than reopening that type-fix task.
+
+### Bounded actual acceptance and publication
+
+After normal merge/install and independent static review, one explicitly released Sol6.1 Medium implementer or root owns this finite source/outer-metadata successor. Other agents preserve that ownership. Freeze the new source/test/policy vector and keep all physical source/authority mutations serialized. Verify all unaffected frozen bytes, the two exact composed sources, five exact new-main source blobs, all13 retained move-deletions, the complete new module/policy path-set equality and unchanged C1 pins. Keep the original431 native793/build, original failed combined1081/isolated228, successful other853, reader186 and RPC-correction results attached to their original epochs.
+
+Run all four delivered `issue-6651-v3-typedarray-residue.test.ts` cases unchanged against the composition: detached keys TypeError/value3, externref-backed set/write-through value7, genuine TypedArray subclass value15, and undetached values/entries control3. Their existing eval import stubs are explicit fail-if-called controls; this is not new eval-engine execution. Include the existing Deno live-array iteration controls, callback/new.target/rest-only controls and ordinary-class/super controls that reach the two composed files, with names selected from the frozen native population before execution. Preserve actual native instantiation, exception identity and healthy default paths; do not substitute compilation-only success. Use the existing replay-helper-focused controls for its delivered type fix where already measured/current or genuinely affected, without inventing unrelated code changes. Any interaction failure expands only the affected control set after diagnosis.
+
+Execute the complete revised outer proof once on its corrected final profiles, preserving the same ordinary RPC settings and requiring actual exit0/no unhandled error, complete collected/executed identity accounting and exact final custody. Audit all24 real reader capture outputs against their unchanged historical operands. Their unchanged inner algorithms/inputs and the unchanged C1 authority justify retaining prior complete inner fault/C1 evidence with honest old-epoch attribution; do not automatically replay853 long fault cases or793 native cases. A mismatch, changed source-bound assumption or new diagnostic expands the specific affected proof before admission. Run the applicable current normal inventory, architecture, source/type/build/format/lint/budget gates against the merged6998 source vector, since new source/imports invalidate reuse of earlier whole-tree gate results as exact-current evidence.
+
+Root then verifies the fresh main ancestry, actual existingPR6341 head and the reviewed final content before normal signed/protected publication. Another main change is first measured by its actual path/authority intersection; it does not authorize stale overwrite or unbounded proof regeneration. This appendix claims no executed successor tests, compiler speedup, full IR equivalence, legacy retirement or completed Deno runtime. Architect writes are this append and ignored static operand/candidate/projection records only; no live source/test/policy write, test/gate execution, Git-state mutation, network action or new claim was performed.
+
+
+### Mandatory431 checkpoint amendment: formatting, genuine hole control and two C1 recipes (2026-10-06)
+
+Root's actual metadata checks found seven Prettier failures and one Biome error, preserved in `.tmp/post-6535-rpc-correction/metadata-format.stderr` and `metadata-lint.stderr`. The latter is `lint/performance/noDelete` on the outer proof's `if (kind === "hole") delete mutant.files[1]`; the11 reported explicit-any warnings are not authorization to weaken a gate or broaden the repair. The full228 RPC acceptance run remains held until these concrete failures are fixed and independently reviewed. This amendment is a separately bounded correction to the pending431 checkpoint, before the main6998 merge above.
+
+Permit exactly one additional semantic-equivalent statement change in the outer proof: `if (kind === "hole") Reflect.deleteProperty(mutant.files, "1");`. Here `mutant.files` is the ordinary array produced by `structuredClone(current)`, and index1 is an existing configurable ordinary own property; both deletion forms remove that property without changing array length. Preserve the conditional, evaluation target, all subsequent capture/assertion operations and both main/Deno malicious-hole cases. In particular retain rejection before authority IO with zero reads and zero sentinel observations. Biome's proposed unsafe assignment-to-undefined repair is forbidden: it retains the own property and ceases to test a hole. Do not suppress the lint rule, catch failures, alter captureData or replace this negative with an undefined-value test. The prior RPC plan's byte-exact callback requirement is relaxed only for this one reviewed operation; all remaining original callback bytes stay exact except separately proven formatting. Reverse the explicit statement delta plus hook/import additions to reconstruct the original outer preimage.
+
+Run the repository's existing Prettier writer only for the seven reported files: `issue-3518-canonical-3c6-inventory-successor.test.ts`, `issue-3518-canonical-489d-inventory-successor.test.ts`, `issue-3518-current-main-inventory-successor.test.ts`, `issue-3518-nested-stackification-policy-evolution.test.ts`, `issue-3518-number-prerequisite-policy-evolution.test.ts`, `issue-3518-wasmgc-helper-policy-evolution.test.ts`, and `issue-3518-well-known-symbol-policy-evolution.test.ts`, all under tests/. Capture complete before/after bytes. Require parsed TypeScript AST equivalence after excluding source positions/trivia, while preserving literal values, template semantics, declaration/call ordering and all executable operations. Compare exact registration names/duplicate ordinals and unchanged capture calls, file IO, mutations and finally restoration boundaries. Do not conflate the deliberate outer deletion-expression change with this whitespace-only proof. An unexpected executable difference is rejected rather than called formatting.
+
+Only two of those seven formatting targets belong to C1's12 current instruments: number-prerequisite-policy-evolution and well-known-symbol-policy-evolution. Root alone updates their two currentInstruments pins and the matching two instrumentEdits afterPin/span arrays, deriving each complete formatted after-image from the same existing immutable historical beforePin. Verify the complete inverse and replay for every one of the10 recipes after final formatting, with increasing/nonoverlapping UTF-8 coordinates; preserve the other eight recipes, ten instrument pins, all beforePins, population counts, artifacts, immutable authorities and every LinearOptions declaration/binding/closure/resolver field. Source authority has not changed. This is mechanical formatting custody, not a new C1 instrument or historical authority.
+
+Then root changes only the manifest-SHA scalar in the authority anchor and the corresponding manifestSha256/anchorSource/anchorPin fields inside the existing external independentFreeze string. Preserve the declarationPin and every byte outside these bounded fields. Do not edit ir-c1-current-source.ts or ir-c1-historical-authority.ts. Independent review must prove the two-instrument-only manifest difference, all10 whole inverses/replays and the anchor/external-string boundary before installation. Re-run the actual metadata formatting/lint checks and applicable type validation; acceptance is the real command exit status with no error, with remaining warnings reported honestly.
+
+After that static release, execute the full228 outer proof once under the unchanged ordinary settings, including both preserved hole controls and the complete-case yield. Qualify the revised C1 authority through the complete existing343-case C1 proof once on its final resealed bytes; retain original identities, actual exit0/no unhandled errors and exact physical custody. Formatting-only reader edits need collection/AST/capture-equivalence evidence and their unchanged fault assertions, not an automatic repeat of the entire prior853 or full metadata corpus. Existing reader186 and older fault results keep their measured pre-format epoch. Any real unexpected diagnostic expands only the affected control after attribution.
+
+This amendment supersedes the earlier “keep C1 byte-exact” direction only for the two required formatting recipes and their root anchor/external freeze updates. Once this431 checkpoint is qualified, its resealed C1 bytes become the fixed input for main6998: that separate seven-source/one-policy-row change still has an empty C1 source/instrument intersection and warrants no further blind reseal. Preserve every prior failed command and every original fixture; publication remains conditional on both checkpoint repair and the subsequent finite fresh-main acceptance.
+
+
+### Mandatory checkpoint corrections installed; scoped acceptance active (2026-10-06)
+
+The ordinary33-file formatting and28-TypeScript-file lint checks first failed and their raw diagnostics remain in .tmp/post-6535-rpc-correction. Sol formatted exactly seven authorized files: each removed one generic trailing comma from <T,> to <T>; complete TypeScript ASTs, all registration nodes and all assertions remain identical. Root's earlier informal inference of an extra blank line was incorrect; independent byte-offset comparisons identify the actual comma removal. No source or shared helper changed.
+
+Root installed the reviewed file-local afterEach macrotask yield and the single equivalent Reflect.deleteProperty operation that still produces a genuine missing index1 on the ordinary cloned array. Reversing only those authorized changes reconstructs the entire86995-byte old proof. Final correctedproof87220/SHA9f2c40c6c72b48afedc4cd5766356a234630dfd4f51abfe4137d1d044cbf9a37; no timeout, dependency, assertion, error suppression or authority-caching change occurred.
+
+The Number/WKS format-byte changes required exactly two existing source-pin/recipe updates from the same immutable before operands. Independent review verified all10 strict inverse/replay records, all12 live candidate pins, unchanged other10 instruments/eight recipes/authorities/artifacts/declaration closure, SHA-only anchor replacement and external freeze's three existing scalar fields. Root installed manifest411293/SHAaaeaf4079f22c3d76bc1257159c1f4b9f1c0f528e12e871314b847b9fcedfbc1 and its two existing seal consumers. The final33-file format and28-file lint commands each exited0; existing warnings are not errors. Full old failed process records remain unchanged.
+
+Actual full correctedouter228 plus updatedC1343 acceptance is now active as two sequential fresh ordinary processes with exact571 original identities and current7790 custody, under the original settings. No new pass credit is claimed yet. The separate186selected reader body already exited0 with exact186 identities and restored7790 paths; its2248 deliberately unselected registrations are not called passing. Root holds all physical source/test/policy writes until corrected acceptance is terminal/restored.
+
+Fresh refs-only Git verified upstream/main6998bf0b290c065249e01861ffdbec2dd268662a. PR6538 exactd97cb31763f98845801997b3d9326a1705da89f2 and mergebe34114e16157bee892c00887e6526d289cdf44d are ancestors, and both delivered paths match complete main bytes. Only its finite typed-replay-helper claim was marked done and independently read back from upstream/issue-assignments6c0ed0841b4ce24ac24632fd5cd06dc1c288804d. The4376 composition claim remains held by root. ExistingPR6341 still has remotehead60f99, ready/noqueue/noauto; its GraphQL baseRefOid1a1608 is an old October2 ancestor, not current main. No merge used that stale field.
+
+Astra's finite6998 spec and Sol's four-file ignored candidate preserve the new TypedArray main fixes, both disjoint owned source integrations, existing proof algorithms and all three complete projection histories without adding a helper chain. Candidate construction does not install code or count as delivery. Root first completes the reviewed431 checkpoint, then normally merges authenticated6998 and accepts the bounded successor; no duplicatePR, fixture loss, broad scope or compiler retirement is authorized.
+
+
+### Corrected checkpoint acceptance terminal (2026-10-06)
+
+The reviewed correctedouter228 and updatedC1343 each completed their full ordinary fresh process with exit0, empty stderr, no unhandled error and all cases passing. Their exact571 original identities/duplicate ordinals match; all7790 before/after per-file and terminal custody paths are restored, including Node/dependency/corpus identities,1862 source modules, two READMEs and33 metadata files. Earlier combined1081 and isolated228 process failures remain immutable and accurately labeled failures. The corrected cooperative yield resolves the reproduced process failure under unchanged settings; parent acknowledgement timing remains unmeasured and no compiler speedup or full1081 same-epoch rerun is claimed.
+
+Root rechecked the complete1925 native/build input vector after terminal ownership release: every byte/hash/mode exact. The793-case native body and three-stage build retain their scoped evidence. The separate186-reader process and seven prior853-file cases remain separately attributed observations; no unselected or stale epoch is promoted. Current formatting/lint pass and normal signed commit/push hooks still apply.
+
+Independent review approved the four-file6998 candidate and exact two source compositions. Candidate mappings retain228 historical identities and16 separate added controls;244 is only a static expected population until actual collection/execution. No candidate has been installed yet. Root will first commit the completed431 checkpoint, then perform the normal merge of authenticated main6998 and release bounded current acceptance. ExistingPR6341 remains the only delivery vehicle.

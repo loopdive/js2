@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule } from "../../ir/types.js";
+import type { Instr, ValType } from "../model/instructions.js";
+import type { FieldDef, StructTypeDef, WasmFunction } from "../model/module-records.js";
+import type { PhysicalModuleStorage } from "./module-reservations.js";
 import { indexPhysicalTypes } from "./type-layout.js";
 
 /**
@@ -7,7 +9,10 @@ import { indexPhysicalTypes } from "./type-layout.js";
  * struct, without retaining the struct in a module-global allocation registry.
  * Run before binary emission, after semantic getter/field ladders are finalized.
  */
-export function stampAllocationOwners(mod: WasmModule, exportName: string): void {
+export function stampAllocationOwners(
+  mod: Pick<PhysicalModuleStorage, "types" | "imports" | "functions" | "globals" | "elements" | "exports">,
+  exportName: string,
+): void {
   if (mod.exports.some((entry) => entry.name === exportName))
     throw new Error("Allocation owner export already exists.");
   const table = indexPhysicalTypes(mod.types);

@@ -1,3 +1,4 @@
+import { localGlobalIdx } from "../registry/imports.js";
 import {
   initializeNativeGeneratorFunctionValue,
   nativeGeneratorFunctionValueNeedsResultBridge,
@@ -307,7 +308,7 @@ function emitMemoizedNestedFnClosure(
       // (#2029 family A) Immutable capture promoted to a value global by
       // the accessor-capture pass — read it instead of the out-of-scope
       // declaring-function local slot.
-      fctx.body.push(...promotedCaptureValueInstrs(ctx, cap.name, cap.valType));
+      fctx.body.push(...promotedCaptureValueInstrs(ctx, cap.name, cap.valType, localGlobalIdx));
     } else {
       const capSourceIdx = captureSourceSlot(fctx, cap);
       const sourceType = getLocalType(fctx, capSourceIdx);

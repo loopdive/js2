@@ -81,11 +81,17 @@ import { pushMarkBuiltinCarrierCallable } from "./builtin-callable-brand.js"; //
 import { emitTransferredCharAtProtoMemberBody, unboxProtoArgToI32 as unboxArgToI32 } from "./char-at-transfer.js";
 import { compileArrayConcatNativeSpecFromReceiverAndArgsVec } from "./array-concat-spec.js";
 import { emitArrayFlatProtoMemberBody } from "./array-flat-native.js"; // (#2717)
-import { emitSliceProtoArrayLikeFallback, emitSliceProtoEndDefault } from "./array-slice-native.js"; // (#6701)
+import {
+  emitSliceProtoArrayLikeFallback,
+  emitSliceProtoEndDefault,
+  clampRelative,
+  requireObjectCoercible,
+  resolveSliceDeps,
+} from "./array-slice-native.js"; // (#6701)
 import { emitArraySpliceProtoMemberBody, isArraySpliceVariadicMember } from "./array-splice-native.js"; // (#6701)
 import { emitArrayProtoIteratorMemberBody } from "./array-proto-iterator-value.js"; // (#6651 RS1)
 import { emitArrayLikeNativeMemberBody } from "./array-like-native.js";
-import { emitArrayFillProtoMemberBody, isArrayFillVariadicMember } from "./array-fill-proto-value.js";
+import { emitArrayFillProtoMemberBody, isArrayFillVariadicMember } from "./array/array-fill-proto-value.js";
 // (#4119) The shared member-body tail: `Object.prototype.toString`'s real
 // §20.1.3.6 runtime classifier, and the graceful catchable-TypeError refusal for
 // every `(brand, member)` whose native body is not wired yet. Aliased to the
@@ -143,12 +149,16 @@ import {
   emitErrorStackGetterBody,
   emitErrorStackSetterBody,
 } from "./error-stack-accessor.js";
+import {
+  OBJECT_PROTO_GETTER_MEMBER,
+  OBJECT_PROTO_SETTER_MEMBER,
+  emitObjectProtoProtoMemberBody,
+} from "./object-proto-proto-accessor.js"; // (#6770 S5)
 import { emitSymbolProtoValueOfBody } from "./symbol-proto-valueof.js";
 import { emitSymbolProtoToStringBody } from "./symbol-proto-tostring.js"; // (#4776)
 import { emitNumberProtoFormatBody } from "./number-proto-format.js";
 import { emitDateProtoToPrimitiveBody } from "./date-proto-to-primitive.js"; // (#5156)
 import { emitDateProtoToJsonBody } from "./date-proto-to-json.js"; // (#6775 S8)
-import { PROTOTYPE_SEED_FLAGS } from "../runtime/wasmgc/values/prototype-seeder-bodies.js"; // (#6775 S16)
 import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
 import {
   emitStandalonePromiseFinally,
@@ -160,6 +170,7 @@ import {
 // `Invoke(this, "then", …)`, so its non-Promise receiver arm reuses the same
 // vararg `then` dispatcher the thenable-assimilation job already uses.
 import { reserveClosedMethodDispatchVararg } from "./closed-method-dispatch.js";
+import { ARRAY_PROTO_SYMBOL_DATA_PROPS } from "./array/array-unscopables.js"; // (#6771 S5)
 // (#6651 E4) Real §23.2.2.1/§23.2.2.2 bodies for the `%TypedArray%` statics.
 import {
   emitTaStaticFromOfBody,
@@ -167,6 +178,18 @@ import {
   taStaticFromOfIsVariadic,
   taStaticFromOfSpecLength,
 } from "./ta-static-from-of-body.js";
+
+const arrayFillServices = {
+  get clampRelative() {
+    return clampRelative;
+  },
+  get requireObjectCoercible() {
+    return requireObjectCoercible;
+  },
+  get resolveSliceDeps() {
+    return resolveSliceDeps;
+  },
+} as const;
 
 /**
  * `Array.prototype`'s own enumerable+non-enumerable method names (ES2024
@@ -938,7 +961,7 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
   // cores used by direct `array.push`/`reverse`/`unshift` calls.
   const spliceBody = emitArraySpliceProtoMemberBody(ctx, fctx, member); // (#6701)
   if (spliceBody !== undefined) return spliceBody;
-  const fillBody = emitArrayFillProtoMemberBody(ctx, fctx, member);
+  const fillBody = emitArrayFillProtoMemberBody(ctx, fctx, member, arrayFillServices);
   if (fillBody !== undefined) return fillBody;
   const arrayLikeMutator = emitArrayLikeNativeMemberBody(ctx, fctx, member);
   if (arrayLikeMutator !== undefined) return arrayLikeMutator;
@@ -2594,6 +2617,14 @@ function makeGlue(
           ] as ReadonlyArray<{ readonly key: string; readonly get: string; readonly set: string }>,
         }
       : {}),
+    // (#6770 S5) Annex B §B.2.2.1 `Object.prototype.__proto__`, same kind.
+    ...(name === "Object" && ctx.standalone
+      ? {
+          accessorProps: [
+            { key: "__proto__", get: OBJECT_PROTO_GETTER_MEMBER, set: OBJECT_PROTO_SETTER_MEMBER },
+          ] as ReadonlyArray<{ readonly key: string; readonly get: string; readonly set: string }>,
+        }
+      : {}),
     // Array/Object.prototype members are all data methods (no accessor getters
     // on the prototype itself; `length` is an own data property of an instance,
     // not the proto).
@@ -2605,9 +2636,9 @@ function makeGlue(
       // (#5269 D-1) The accessor pair's halves: a getter takes nothing, a
       // setter takes the value. They are not in `memberCsv`, so the table
       // below would otherwise hand them its default of 1.
-      member === ERROR_STACK_GETTER_MEMBER
+      member === ERROR_STACK_GETTER_MEMBER || member === OBJECT_PROTO_GETTER_MEMBER
         ? 0
-        : member === ERROR_STACK_SETTER_MEMBER
+        : member === ERROR_STACK_SETTER_MEMBER || member === OBJECT_PROTO_SETTER_MEMBER
           ? 1
           : name === "Number" && member === "toString"
             ? 1
@@ -2672,6 +2703,7 @@ function makeGlue(
       // them — and the setter needs the brand to identify its home object.
       (name === "Error" && member === ERROR_STACK_GETTER_MEMBER ? emitErrorStackGetterBody(c, fctx) : null) ??
       (name === "Error" && member === ERROR_STACK_SETTER_MEMBER ? emitErrorStackSetterBody(c, fctx, brand) : null) ??
+      (name === "Object" ? emitObjectProtoProtoMemberBody(c, fctx, member) : null) ?? // (#6770 S5)
       (name === "Symbol" && member === "valueOf" ? emitSymbolProtoValueOfBody(c, fctx) : null) ??
       // (#5269 B-c) §20.4.3.3 `Symbol.prototype.toString` — SymbolDescriptiveString
       // of `thisSymbolValue(this)`. Placed with the `valueOf` arm (and BEFORE the
@@ -2854,7 +2886,10 @@ export function ensureArrayNativeProtoGlue(ctx: CodegenContext): number | undefi
   const brand = getBuiltinBrand(ctx, "Array");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Array", ARRAY_PROTO_METHODS));
+    registerNativeProtoBuiltin(ctx, {
+      ...makeGlue(ctx, brand, "Array", ARRAY_PROTO_METHODS),
+      symbolDataProps: ARRAY_PROTO_SYMBOL_DATA_PROPS, // (#6771 S5) @@unscopables
+    });
   }
   return brand;
 }
@@ -3083,14 +3118,11 @@ export function ensureFunctionNativeProtoGlue(ctx: CodegenContext): number | und
   const brand = getBuiltinBrand(ctx, "Function");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    // (#6775 S16) §20.2.3: %Function.prototype% owns `length` 0 and `name` ""
-    // as {w:F,e:F,c:T} — the symbolTag attribute word.
-    const glue = makeGlue(ctx, brand, "Function", FUNCTION_PROTO_METHODS);
-    glue.dataProps = [
-      ["length", 0, PROTOTYPE_SEED_FLAGS.symbolTag],
-      ["name", "", PROTOTYPE_SEED_FLAGS.symbolTag],
-    ];
-    registerNativeProtoBuiltin(ctx, glue);
+    // (#6775 S16) %Function.prototype%'s own `length` 0 / `name` "" are NOT
+    // seeded into the companion: every callable's miss walks to it, so a
+    // provider-owned function (`GeneratorFunction()`) read `name` "" instead
+    // of reaching its owner (GeneratorFunction/instance-{name,length}.js).
+    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Function", FUNCTION_PROTO_METHODS));
   }
   return brand;
 }
