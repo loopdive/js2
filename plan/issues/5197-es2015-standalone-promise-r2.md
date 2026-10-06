@@ -3303,3 +3303,31 @@ B input-map epoch and collection runner; never overwrite either failed attempt
 or its7737 map. Original A and validated E remain frozen. Acceptance continues
 to require original identity preservation and exact repaired-B/E comparison,
 with additive controls separately identified; no automatic HOLD removal.
+
+### Baseline promise-port implementation and focused validation release
+
+Avicenna returned the four-file patch and froze it for parent review. Parent
+read the complete final helper and controls, confirmed the existing reader's
+only change is import/initial-read delegation, and independently verified the
+seven source endpoints,46 spans and53 retained intervals against physical B and
+historical Git. Final file SHA256 pins are:
+
+- promise-export-main-port.ts:3f240ccfd4da19145993f201e7bf598e23dd2ac9ccf5ea24d9a254ae4b0b179b
+- baseline-4bff-promise-port-projection.ts:992583b59997f0cc6420142d927aa20045bec3734f6b6911d76772f8523adbd4
+- baseline-4bff-promise-port-projection.json:f82ec8a702e1149900cde8b2d3e351e601d923ecb3ea75232ba3c4fff419e240
+- issue-5883-baseline-4bff-promise-port-projection.test.ts:9124a847f84a2d9b739673f875f6d6115ef382b778ba22aa2f2b8893ef7f56cc
+
+Parent released the focused controls followed, only if clean, by earlier/export
+and both shared-consumer suites, using canonical Node22.23.2,one worker,2048MiB
+and unchanged35000ms test timeout. Runner verifies pinned B head/branch and the
+exact four-path delta from the preserved7737 input map, captures all7740 current
+inputs before/after, and retains invocation,raw channels,native report and
+terminal for each stage. No original collection archive/map is overwritten.
+
+Execution session74325 writes exclusively under new B
+`.tmp/5883-baseline-promise-focused-20261006-3bWJ6h`, including a byte-exact copy
+of the parent runner. Controls completed102/102,zero failed/skipped/todo,
+unchanged7740 inputs,at21:08:41.653Z. The affected four-suite stage is running;
+no result is claimed yet. This is scoped baseline validation,not A/B/E equality,
+not acceptance,and not permission to clear HOLD. Source and controls remain
+frozen during execution; no competing heavy job is released.

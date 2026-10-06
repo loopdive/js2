@@ -575,3 +575,32 @@ The separately owned acquisition repair stages both pinned packages privately, v
 Focused deterministic tests cover the partial-file visibility window, the unchanged old-reader link assertion, concurrent publication winner/loser behavior, failed extraction, corrupt tarballs despite an existing generation, and force preserving prior returned paths. These tests are written but not yet executed; no race reproduction or repair pass is claimed at this checkpoint. Compiler, runtime, workflows, baselines, pin contents and link assertions are unchanged. The join/presence and TypedArray blockers remain separate, and PR 5784 stays held.
 
 The five acquisition tests subsequently passed (session 23374, exit 0, 1.86 seconds, Node 22.23.2 Darwin). The deterministic barrier exposes incomplete JSBI bytes and proves the unchanged old-reader link assertion rejects them; it does not execute the full old setup implementation. Concurrent new callers instead return the same completed generation and source hash, with no leftover staging directory. Negative controls retain tarball integrity and incomplete-generation refusal, and a failure extracting the second package publishes neither package. Cleanup releases the owned barrier and awaits acquisition-process close before deleting private fixtures, including assertion-failure paths. This is bounded acquisition evidence only: the 26 actual Temporal rows have not been rerun, and other held PRs are not cleared by this test result. Final review and normal publication gates remain pending.
+
+### 2026-10-06 queue-drain ownership and blocker refresh
+
+Read-only Sol6.1/medium sidecar verified PR5784 head
+`5aa3d8f85743bbedad1c6872b9dfd1918f97dacd`. Parent independently refreshed
+GitHub: OPEN,CONFLICTING/DIRTY,HOLD,no auto-merge request. No ownership transfer,
+conflict repair, source edit, test run or queue action was performed.
+
+At that head, src/codegen/index.ts4949-4952 keeps the standalone externref
+sharedVecIdx open in finalizeLeafStructTypes, introduced by5086736c37bd96f34e6dd69fdee4ac1fad18dfcf.
+Presence of this hunk is not evidence that the whole PR is ready. The sidecar
+found green quality/smoke/eight equivalence shards, but the Test262 verdict log
+said no js-host shard artifacts were available to diff; that green verdict is
+not a fresh conformance comparison.
+
+Merge-group run34303910910 at mergedSHA01cdf5927cf102bbe2489feb3acd41e7876f2441
+records28 regressions and5 improvements across48735 tests. This verifies the
+historical park, not those failures at the current head. Retain that evidence
+and the acquisition repair's narrower limitations above. Runtime v8x PR2 now
+identifies draft compiler PR6468 as its companion; no current paired-artifact
+certification for5784 was established by this audit.
+
+The source-head issue still assigns ttraenkler/codex-v8x-js2wasm and records a
+September10 user-requested pause; later October4 publication demonstrates
+continued involvement but not current repair activity or release of ownership.
+Next integration work requires ownership coordination, preservation of the
+current source intent while resolving conflicts, then fresh nonempty required
+evidence for the resulting merge candidate. Do not adopt or clear HOLD from an
+old handoff, the vector hunk alone, or a stub-green Test262 result.
