@@ -126,6 +126,8 @@ export interface ObjectPrototypeHelperState {
   objRefNull: ValType;
   propMapRef: ValType;
   boundaryObjectGetPrototypeIdx?: number;
+  /** (#6748) A regime module's wasm peer, asked before the JS boundary. */
+  peerGetPrototypeFirstIdx?: number;
   boundaryObjectSetPrototypeIdx?: number;
   INITIAL_CAP: number;
   OBJ_FLAG_NONEXTENSIBLE: number;
@@ -355,6 +357,33 @@ function boundaryGetPrototypeArm(boundaryIdx: number | undefined): Instr[] {
       ];
 }
 
+/**
+ * (#6748) A native-regime module in a JS environment asks its wasm PEER first
+ * (a struct the provider minted — `Object.getPrototypeOf(new Temporal.PlainTime())`)
+ * and returns a non-null answer; null falls through to the JS boundary arm.
+ * `[]` for every module that has only one of the two families.
+ */
+function peerFirstGetPrototypeArm(peerIdx: number | undefined, scratch: number): Instr[] {
+  if (peerIdx === undefined) return [];
+  return [
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: peerIdx },
+    { op: "local.tee", index: scratch },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "local.get", index: scratch }, { op: "return" }] },
+  ];
+}
+
+/** (#6748) The appended scratch local for {@link peerFirstGetPrototypeArm}: its index and declaration. */
+function peerFirstGetPrototypeScratch(
+  ctx: CodegenContext,
+  peerIdx: number | undefined,
+): [number, { name: string; type: ValType }[]] {
+  const index = 2 + fnctorProtoLocal(ctx).length + arrayProtoLocal(ctx).length;
+  return [index, peerIdx === undefined ? [] : [{ name: "peerProto", type: { kind: "externref" } }]];
+}
+
 /** Register the prototype-chain native helpers. Called once, in place, from `ensureObjectRuntime`. */
 export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectPrototypeHelperState): void {
   const {
@@ -367,6 +396,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
     objRefNull,
     propMapRef,
     boundaryObjectGetPrototypeIdx,
+    peerGetPrototypeFirstIdx,
     boundaryObjectSetPrototypeIdx,
     INITIAL_CAP,
     OBJ_FLAG_NONEXTENSIBLE,
@@ -593,6 +623,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
         },
       ];
     };
+    const [peerProtoScratch, peerProtoLocal] = peerFirstGetPrototypeScratch(ctx, peerGetPrototypeFirstIdx); // (#6748)
     const body: Instr[] = [
       { op: "local.get", index: 0 },
       ...(ctx.funcMap.has(NATIVE_GENERATOR_PROTO_VIEW)
@@ -608,6 +639,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
         else: [
           ...fnctorGetPrototypeArm(ctx, 2, devirtualizeProtoResult()), // (#4643) scratch local 2
           ...arrayGetPrototypeArm(ctx, 2 + fnctorProtoLocal(ctx).length, arrayProtoSingletonIdx), // (#6651 R1)
+          ...peerFirstGetPrototypeArm(peerGetPrototypeFirstIdx, peerProtoScratch),
           ...boundaryGetPrototypeArm(boundaryObjectGetPrototypeIdx),
         ],
       },
@@ -616,7 +648,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
       "__getPrototypeOf",
       [{ kind: "externref" }],
       [{ kind: "externref" }],
-      [{ name: "any", type: { kind: "anyref" } }, ...fnctorProtoLocal(ctx), ...arrayProtoLocal(ctx)],
+      [{ name: "any", type: { kind: "anyref" } }, ...fnctorProtoLocal(ctx), ...arrayProtoLocal(ctx), ...peerProtoLocal],
       body,
     );
   }
