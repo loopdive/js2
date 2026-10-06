@@ -3724,3 +3724,53 @@ new maps for both new-main baseline and candidate. Validate changed upstream
 regression tests and preservation controls before the complete reviewed schedule.
 Old B results do not confer acceptance on a new-main composition. Normal protected
 landing gates and legacy-retirement restrictions remain unchanged.
+
+Read-only source audit narrowed the demonstrated new-main dependency bridge to
+two physical inputs, both still at their old endpoints in frozen E:
+
+- builtin-fn-meta.ts:18333 bytes/SHA256
+  61a65b087cd30897debcc79e60640656bba990ef4452dc67fd6631d9cf0c1755
+  becomes20998 bytes/SHA256
+  cb90358d4dedc2d4d032aa38cc576b8f2ba3619579d70ee3102c4817506fb642.
+  The linked-signature guard insertion has UTF-16 interval2948:2948 ->2948:5607.
+- object-runtime.ts:551964 bytes/SHA256
+  4e9d437a7ef699388b47e6d9e60adfaf4ada104c9ac02abff6ac9c5d322f461b
+  becomes552373 bytes/SHA256
+  a3c5e0c82e02b31b770eb5736531b220ded743b0b8a031685622b10ce2277e40.
+  Ten changed-line spans cover guard import/use and peer-first routing.
+
+The thirteen retained intervals across these inputs reconstruct both endpoints
+exactly in the read-only audit; UTF-16 offsets are not UTF-8 byte offsets.
+Any future receipt must explicitly name its coordinate system, retain empty
+insertion spans and prove reciprocal replay. Apply at specific initial-source
+and dependency-authentication seams before existing main4bff/main5f inverses,
+not to arbitrary supplied transform operands. Do not broadly alter later-main
+passthrough: an existing suite explicitly requires raw builtin metadata there.
+Audit that compatibility contract even though it is outside the old87-file
+schedule. No new-main implementation is released by this observation alone.
+
+Resource observation while incoming23 remained live: parent runner63458 and
+worker68330 were active; a peer's separate issue6878 test process84575 had started
+after this run. This lane has only one heavy job, but cannot claim exclusive
+host capacity throughout execution. Do not interrupt peer work or attribute a
+future failure to contention without terminal/native evidence. Preserve this
+attempt unchanged; any retry requires a separately recorded diagnosis.
+
+Parent test-preservation decision for the proposed410cc7da refresh: retain every
+original assertion literal, case identity, fixture and mutation. An old592524-byte
+union assertion describes the authenticated4bff view, not the new594168-byte
+physical union. State that distinction in comments and evidence, without deleting
+or renaming the old cases. Keep old helper corruption/rejection controls on their
+deliberately corrupted historical operands; do not mask them with the new gate.
+
+For the two finally current-union controls, preserve their pinned4bff physical
+staging and assertions as historical-epoch controls, with only initial healthy
+witness acquisition passing through the new authenticated projection. Add
+separate named410cc7da physical raw-newline and semantic-row controls using actual
+new inventory bytes, fresh authentication on each reread, exact restoration,
+zero historical calls on rejection, and independently specified error/read traces.
+Semantic admission must be tested as semantic admission, not rejected earlier
+merely because JSON serialization changes whitespace. Existing compiler-boundaries
+current-policy reads stay unprojected. This retains all original failure detectors
+and adds current-physical coverage; neither substitutes for the other.
+Sol6.1 medium is checking the exact acquisition seams before final coding release.
