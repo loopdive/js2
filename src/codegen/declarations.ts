@@ -215,6 +215,7 @@ import {
   registerModuleGlobal,
   registerModulePatternTdzGlobal,
   registerModuleTdzGlobal,
+  scriptVarRedeclaresAmbientGlobal, // (#6651 V10b)
 } from "./module-global-registration.js";
 import { annexBModuleGlobalSeedsFromTopLevel } from "./annexb-global-live-binding.js";
 import { variableSlotHoldsReconstructedFnctorInstance } from "./fnctor-instance-object-slot.js";
@@ -3402,7 +3403,16 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     if (decl.initializer && ts.isIdentifier(decl.initializer)) {
       return resolveIdentifierType(ctx, decl.initializer);
     }
-    return ctx.checker.getTypeAtLocation(decl);
+    // (#6651 V10b) A SCRIPT `var` that redeclares an ambient lib global
+    // (`var length = {valueOf…}` vs lib.dom's `declare var length: number`)
+    // merges into one checker symbol whose declared type is the LIB's. Typing
+    // the global from it made the binding an f64 global, so the initializer
+    // ran ToNumber (an observable `valueOf` call) at the declaration. The
+    // runtime binding holds whatever the script stores; type it from the
+    // initializer instead.
+    const typedNode =
+      decl.initializer !== undefined && scriptVarRedeclaresAmbientGlobal(ctx, decl) ? decl.initializer : decl;
+    return ctx.checker.getTypeAtLocation(typedNode);
   }
 
   /**

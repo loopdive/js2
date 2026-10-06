@@ -574,8 +574,13 @@ export function fillCarrierBagDelete(ctx: CodegenContext): void {
   // through Function.prototype machinery.  The generator type registry is
   // complete at this FINALIZE seam, and `__closure_bag_lookup`'s slotless
   // registry path is already the canonical storage for these state objects.
+  // (#6651 V10b) A `$__dv_window` DataView carrier takes the same identity bag
+  // (`instance-props.ts`), so its expando deletion needs the same admission.
   const nativeGeneratorStateTypeIdxs = [
-    ...new Set([...ctx.nativeGenerators.values()].map((info) => info.stateTypeIdx)),
+    ...new Set([
+      ...[...ctx.nativeGenerators.values()].map((info) => info.stateTypeIdx),
+      ...(ctx.dvWindowTypeIdx >= 0 ? [ctx.dvWindowTypeIdx] : []),
+    ]),
   ];
   const nativeGeneratorArm: Instr[] =
     nativeGeneratorStateTypeIdxs.length === 0 || ctx.funcMap.get(CLOSURE_BAG_LOOKUP) === undefined

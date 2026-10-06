@@ -148,6 +148,43 @@ function functionIsFromAnotherSource(
 }
 
 /**
+ * (#6651 V10b) Does this top-level SCRIPT `var` redeclare an ambient lib global
+ * (`var length = {…}` against lib.dom's `declare var length: number`)? The two
+ * merge into one checker symbol whose declared type is the LIB's, which is a
+ * host fiction on the host-free lane: the runtime binding holds whatever the
+ * script stores. Standalone only, so host-lane bytes are untouched.
+ */
+export function scriptVarRedeclaresAmbientGlobal(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
+  if (!ctx.standalone || ctx.sourceIsModule || decl.initializer === undefined) return false;
+  if (decl.getSourceFile().isDeclarationFile || !ts.isIdentifier(decl.name)) return false;
+  return ctx.oracle.declarationsOf(decl.name).some((d) => d.getSourceFile().isDeclarationFile);
+}
+
+/** (#6651 V10b) An identifier read whose binding is such a redeclared ambient script var. */
+function readsAmbientRedeclaringScriptVar(ctx: CodegenContext, expr: ts.Expression): boolean {
+  if (!ctx.standalone || ctx.sourceIsModule || !ts.isIdentifier(expr)) return false;
+  return ctx.oracle
+    .declarationsOf(expr)
+    .some((d) => ts.isVariableDeclaration(d) && scriptVarRedeclaresAmbientGlobal(ctx, d));
+}
+
+/**
+ * (#6651 V10b) A CALL-ARGUMENT object literal reading such a var: the read
+ * carries the LIB's checker type (`length: number`), so a closed struct field
+ * would ToNumber it at construction (one observable `valueOf`). The caller
+ * builds it as an open `$Object` instead. A declaration initializer keeps the
+ * shape its binding was typed with.
+ */
+export function objectLiteralReadsAmbientRedeclaredVar(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
+  if (!ctx.standalone || ctx.sourceIsModule || ts.isVariableDeclaration(expr.parent)) return false;
+  return expr.properties.some(
+    (p) =>
+      (ts.isPropertyAssignment(p) && readsAmbientRedeclaringScriptVar(ctx, p.initializer)) ||
+      (ts.isShorthandPropertyAssignment(p) && readsAmbientRedeclaringScriptVar(ctx, p.name)),
+  );
+}
+
+/**
  * Register one module-level global and expose its exact allocator object to
  * the structural ABI sidecar when the source declaration is authoritative.
  */
