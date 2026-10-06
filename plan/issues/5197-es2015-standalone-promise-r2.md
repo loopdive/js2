@@ -2782,3 +2782,90 @@ trace. Stop and report any ordinary caller that cannot meet acquisition-only
 constraints. Return an unapplied patch, exact scope/preimages and verification
 record. No A/B worktree creation, source application, compiler/tests, commit or
 push is released. The running E2972 inputs and full-run runner stay frozen.
+
+Parent reviewed ordinary-B patch31e26d1be0017c39b0d9fc4b3fd606f66372ed1977fc44d6adab08f4eae060a0
+at E `.tmp/laplace-5883-baseline-b-ordinary-20261006.apply_patch.txt`.
+Independent in-memory application against17 exact4bff Git preimages confirms
+24 wrappers and one import per file; reversing only those additions restores
+every original caller byte. The two added support files equal the reviewed
+helper/receipt byte-for-byte. All934570 archived preimage bytes match Git;
+archive SHAfa288018604a44daee59af7f4ce8b8aea1e8f1531e897be36fd02e65a04d6a08,
+verification72fa5a951e87786990023b658d5d15b0ac0a90c070d792f704637c8b50adf1c4.
+Parent independently reconstructed the raw/semantic main-to-incoming inverse
+and replay against both Git blobs: exact590770-to589117 transformation.
+The patch is still unapplied and unexecuted. Formatting, three successor
+acquisition/control paths and B-specific C1 pins remain separate pending work;
+do not infer a complete repaired baseline from this ordinary-callers review.
+
+Release the next B preparation to Laplace: an independent unapplied patch for
+the three issue-6866 finally/class-fields/source-map-position successor tests,
+starting from their exact4bff Git blobs. Use main-to-incoming, never the candidate
+union profile, at current physical acquisition boundaries before the unchanged
+historical projections. Preserve every original fixture/identity/assertion/
+mutation/timeout and explicit read trace. The previously approved finally
+separation applies to B as well: authenticate fresh actual main, derive/stage
+the exact incoming witness, then retain the historical healthy/corrupt/raw/
+semantic/restored sequence and its original four historical authority reads.
+Keep historical receipt-corruption controls on their real receipt. Add separate
+physical main-profile controls for healthy/raw-newline/semantic corruption and
+restoration, fresh receipt reads, correct new rejection owner and no historical
+helper calls on rejected inputs. Added controls must be separately identified,
+never substituted for original failures or counted as the original population.
+
+Do not copy E postimages or alter the shared fixed support files. Return full
+Git preimages, reviewable patch, exact old-versus-added identity declaration
+(static only until native collection), and an assertion/trace preservation
+account. If a historical obligation cannot be preserved, stop that edit and
+report the specific mismatch. No C1 changes yet: its B-specific authority
+depends on finalized and formatted acquisition bytes. No source application,
+worktree creation, test/compiler execution, commit or push in this assignment.
+
+Parent read the complete three-successor patch
+5e67d268d16941ed00f706b5fb830981842fd1563ea4785d7e628da96f7c09de and independently
+applied it in memory against57250 bytes of exact4bff Git preimages. Postimage
+hashes match; all three parse without diagnostics. All145 original assertion
+statements remain in order after accounting only for the approved staged-policy
+reader substitution. Historical mutation/recovery and four-read assertions are
+retained; two additive main-profile controls retain separate identities and
+assert new-boundary rejection without extra historical calls. This is static
+review, not native execution or a test count. Preimage archived0232062930fc517fab636e4452d03850416173b7e9b56e2492956572d80c98a;
+verificationa354979e07639692abe6d90a605d002ad3ff6e8c5e4f9e2f0b8152ca8c466bf5.
+
+Release formatting preparation only: combine the reviewed ordinary and successor
+B patches in memory against4bff and format the20 changed test postimages with
+the repository's existing Prettier configuration. Preserve both original patch
+artifacts and all preimages. Keep the two fixed support files byte-identical.
+Produce a new unapplied combined patch plus before/after hashes and AST-level
+equivalence evidence that formatting changed no literals, statements, control
+flow, tables, identities or timeouts. Do not copy E postimages, apply source,
+change C1 yet, create worktrees, run tests/builds or mutate Git. Parent reviews
+the final formatted bytes before authorizing B-specific C1 reconciliation.
+
+Parent independently reconstructed the combined formatted patch from4bff and
+both reviewed predecessors. All20 formatted postimages have equivalent parsed
+syntax trees to the reviewed unformatted bytes; both support files are exact.
+Combined patch600e48de3c3c2f5d245abca3245d2c0e3b2391d761c682e2c23e7f678a0fd05a;
+verificationec28cd5beb46e349f6523d81fa227a7170e7a9851e0b262aa8ad8b6955cfe498.
+It remains unapplied; no baseline result is claimed.
+
+Release B-specific C1 patch preparation under E .tmp only, from exact4bff
+Git originals plus those formatted B postimages. Scope is exactly
+tests/helpers/ir-c1-authority.json, tests/helpers/ir-c1-authority-root.ts and
+tests/issue-3518-c1-current-source.test.ts. Refresh only currentInstruments
+entries3/9/10/11 (boundary/runtime-program/well-known-symbol/number-prerequisite)
+and instrumentEdits1/7/8/9 after-side pins, offsets and spans as required by the
+final B acquisition bytes. All before-pins, before-offsets and before-span text,
+other instruments/recipes, immutable authorities, artifact/population/option
+records and historical/current base declarations must remain unchanged.
+Independently reconstruct every historical instrument and replay to its exact
+B postimage; authenticate historical bytes against existing Git/archived roots,
+not candidate output. Stop if the four-record scope is insufficient.
+
+After final manifest formatting, update its anchor hash and the one independent
+freeze literal only, retaining declarationPin and all C1 test-body bytes outside
+that literal. B keeps the original30000ms probe deadline and no150000ms case
+budget. Do not copy E's C1 file or its authority postimages. Include three exact
+Git preimages, semantic JSON leaf-diff inventory, whole-file inverse/replay
+evidence and proof that the test body/budgets/identities are unchanged. Return
+an unapplied patch for parent review. No source application, test/compiler job,
+worktree creation, commit, push or full-candidate launch is released here.
