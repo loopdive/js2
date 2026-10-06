@@ -2,10 +2,11 @@
   "id": "3525",
   "slice": "recursive-source-map-recorder-20261005",
   "assignee": "ttraenkler/codex-3525-source-map-recorder-20261005",
-  "requested_by": "ttraenkler/codex-3525-source-map-recorder-20261005",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3525-source-map-origins-20261005",
   "claimed_at": "2026-10-05T21:47:07Z",
-  "updated_at": "2026-10-05T21:47:07Z",
-  "write_id": "8695-hxj314sm"
+  "updated_at": "2026-10-06T01:55:05Z",
+  "write_id": "30662-szrp3mv7",
+  "released_at": "2026-10-06T01:55:05Z"
 }
