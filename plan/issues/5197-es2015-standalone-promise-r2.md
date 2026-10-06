@@ -2869,3 +2869,127 @@ Git preimages, semantic JSON leaf-diff inventory, whole-file inverse/replay
 evidence and proof that the test body/budgets/identities are unchanged. Return
 an unapplied patch for parent review. No source application, test/compiler job,
 worktree creation, commit, push or full-candidate launch is released here.
+
+Parent independently reconstructed B C1 patch
+5b13c101cc4229c3f6cd904c40b00f196383807a345aad1e255c2dbcfc001732.
+All three preimages equal4bff Git; all12 current pins match the assembled B
+postimages or untouched Git files. All10 recipes invert to their independent
+historical Git blobs and replay exactly. Exactly86 semantic leaf changes fall
+within the four authorized current pins/after-side recipes. The C1 body outside
+its single freeze literal is byte-identical; declarationPin is unchanged, and
+the manifest/anchor/freeze pins agree. Preimages454660cc58e0cc59e372ba5804c71977e863e57b231e37e65112a30e1983e2b3;
+verificationfa4136c7c1b5b774ec7b6b1537cc4c4c32e69a4b548e5a78f765ef9c5918b1b3.
+
+Prepare separate managed comparison checkouts at exact4bff: original-main A
+stays source-clean; repaired B receives only the reviewed formatted22-file
+patch and3-file C1 patch after checkout identity verification. No shared source
+or hardlinked mutable fixtures, no installs and no changes to existing evidence
+trees. Dependencies may reference the existing shared node_modules without
+altering it. Authenticate every B postimage and an explicit complete input map;
+prove production source and original fixture bytes equal A. Preserve original
+A failures when its run is released, then collect measured A/B identities for
+the exact common comparison. Creating or preparing these checkouts releases no
+test/compiler execution: E2972 still owns the slot, and all results remain
+unproven. Parent alone releases execution after reviewing source and evidence.
+
+Comparison checkout paths: original A is
+`/Users/thomas/.codex/worktrees/5883-original-main4bff-a/js2` (detached4bff,
+clean verified after allowing the ordinary Git-LFS temporary-file operation).
+B is `/Users/thomas/.codex/worktrees/5883-repaired-main4bff-b/js2`, branch
+codex/5883-repaired-main4bff-b-20261006, clean4bff verified before release.
+Laplace may apply only the two reviewed patches there and verify all25 resulting
+paths plus the complete original-versus-repaired source domain. A stays read-only.
+
+Parent physical inventory check finds69 of E's87 scheduled test files on A;
+18 are absent from pinned main. This is file presence, not a native population
+or a pass count. The absent paths are promise-main-reconcile, the two5748 vector
+storage tests, and5883 flat-layout, historical-reader-successors, inventory-
+source-successor, main-4bff-inventory-views, main-bba74-inventory-source-successor,
+main-d0a13-inventory-source-successor, main4bff-reader-successor, main5f-reader-
+epoch, observable-cache-unavailable, observable-drive-composition, observable-
+service-boundary, pop-storage-regression, preservation-capability-order,
+preservation-protocol and vec-terminal-repairs (all under tests with .test.ts).
+Keep all18 in the full candidate schedule and disclose them separately in the
+comparison. Never fabricate A/B results for absent files or silently omit them
+from candidate validation. Native A/B collection must establish exact common
+identities, including multiplicities and baseline-added versus candidate-added
+controls; physical presence alone is insufficient. Preserve original A's
+collection/execution failures and raw channels without relabeling them as B.
+
+Parent independently verified applied B against both physical trees and the
+reviewed records. A has7735 inputs, map8af103a477f6805b97021323ce95967df6cf4a913efbdf4215dc53648f5622ea;
+B has7737, map4e345c78323ec2362484a766e3fabe6c8150a71efad0807d7a20101027a78fa0.
+Exactly23 existing test/support paths changed and two support paths were added;
+all25 postimages match, all other inputs equal A, including production/config
+and every original fixture. Integration record in B .tmp:
+laplace-5883-baseline-b-integration-20261006-verification.json,
+SHA6781575ce080daf99dcb4d01d8c36db5281408fbc60cdef7dab7000f2c13ada8.
+Neither baseline has executed tests; source preparation is not equivalence.
+
+Release preparation only of native A/B collection runners under B .tmp. Use
+the exact69 physical test paths common to pinned A and E's reviewed87 schedule;
+retain a complete explicit list of the18 candidate-only paths. Authenticate the
+two full maps, source identities, schedule and integration record. Collect each
+arm independently with an impossible test-name selector, canonical Node and
+original resource limits: zero test executions, every collected identity tuple
+and multiplicity retained, native/raw/error/exit/before/after records separate
+per arm. No static count may substitute for a native denominator. Missing
+native output or collection errors remain visible, not empty success; do not
+require A to pass or repair its errors. Stop for source/authority drift. Any
+future release must explicitly govern whether the B collection follows a
+recorded A collection failure; no automatic retries or inferred acceptance.
+Do not modify A/B source, provision dependencies, launch tests/compilers, or
+change either candidate runner. Parent reviews full runner source before release.
+
+Serial-slot priority after the existing2972 run: review its actual terminal,
+full raw/native identity evidence and7772 map first. If clean, prioritize the
+existing source checkpoint's normal checks, pending merge completion and
+non-force publication to PR5883, plus the accumulated issue handoff to PR5748,
+before starting another long acceptance run. Keep HOLD: publication is not
+three-arm acceptance or delivery. No bypass of ordinary hooks or protected
+queue checks. If committing changes only Git state while input bytes stay
+identical, preserve the old full-run runner and prepare/review a new explicit
+commit-bound runner; never silently relax its HEAD/MERGE_HEAD guards. If inputs
+change, record a new epoch and reassess affected evidence. A demonstrated failure
+requires its own bounded repair plan, not an automatic retry or early merge.
+
+Parent read the complete A/B collection runner2d2dd339ba70412b799eb836c47914157f3e21ec4055d86098cb66094b2b1ba2
+and independently syntax-checked it. Before release, add an explicit per-file
+native status===passed collection guard alongside the existing all-skipped
+case checks. Prior clean native collection l9hajy records that suite status;
+it is not passing test execution. Preserve the reviewed runner version before
+this one-line change. No launch or dependency provisioning is released by this
+review; original A failures must still be retained in raw/native records.
+
+Parent verified updated A/B runner32668aca7ae7df6e9a0191c3dfe9605c79e775e3dd59b6f723ea984236a2589a
+differs from the preserved2d2dd339 source by exactly that suite-status guard;
+canonical-Node syntax check passed. Parent provisioned only ignored node_modules
+symlinks in A and B to `/Users/thomas/Code/js2/node_modules`, after verifying
+both destinations absent and existing Vitest/TS7 available. No dependency
+installation or shared-module mutation occurred. Source-map domains exclude
+these links. Neither arm is released to execute while the candidate owns the
+slot; launcher identity is recorded separately when collection is released.
+
+Parallel custody assignment to Laplace: prepare an inert lossless archive under
+B .tmp for the reviewed baseline work and completed new-epoch additional18
+collection. Include all ordinary/successor/combined/C1 patches, preimage archives
+and verification records; B integration record and complete A/B maps; the25
+actual reviewed B postimages; current A/B collection runner and preserved prior
+version/preparation record; E's full87 schedule and full-candidate runner; the
+completed dDNbv5 collection's complete regular evidence files, its exact runner,
+and common-epoch86 parent authority. Pin the known hashes, preserve provenance
+and scope tags, reject symlinks/duplicates/drift, and decode every payload back
+against its original. Package accepted=false and unexecuted A/B status clearly.
+Do not capture the live N4b2EF output, repackage old archives, alter source,
+commit/push, launch any test or delete originals. Parent independently verifies
+before publishing the archive with the existing checkpoint.
+
+Parent independently verified B custody archive
+`.tmp/laplace-5883-baseline-and-additional18-custody-20261006.json`, SHA256
+36a0fc7a6ebcaafebc6a2535571148537a0262b3bf53360e86f6b8d08e4676b4:
+3080162 encoded bytes,55 unique regular files,9208250 decoded bytes. Every
+decoded payload matches its current original and recorded pin; no live N4b2EF
+output is included. A/B collectionExecuted/testsExecuted remain false and the
+package remains accepted=false. Release Laplace to copy these exact bytes via
+apply_patch into E plan/agent-context/5883-baseline-and-additional18-custody-20261006.json
+and verify equality. No source/index/commit/push changes or test launch.
