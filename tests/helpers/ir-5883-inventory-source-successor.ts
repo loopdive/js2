@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-// Fixed test-only source preservation: exact main preview -> PR5883 checkpoint -> canonical 6128dd.
+// Fixed test-only source preservation: exact d0a13 merge -> bba74 -> PR5883 checkpoint -> canonical 6128dd.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
@@ -31,6 +31,12 @@ const mainReceiptSha256 = "18c1fdee2a7d8c56ed9c1dcea6c6fe2624eec568181e4f27fdd3e
 const mainSourceBytes = 590751;
 const mainSourceSha256 = "491fc3c8e470a5a4c58da8e7d78cd24ab3a2cd18d7ce6bcccf279d927c0ea942";
 const mainDataSha256 = "2c3a9c757d9068dc2701f269bf3df3bccf645e0046c7b05db4ac723dbc6c0ac7";
+const d0a13ReceiptPath = "tests/helpers/ir-5883-main-d0a13-inventory-source-successor.json";
+const d0a13ReceiptBytes = 3936;
+const d0a13ReceiptSha256 = "a9cae6b07573589385669cf19ac09c80642e9742b7959dcf16482c0f5e182281";
+const d0a13SourceBytes = 591084;
+const d0a13SourceSha256 = "8a8747f2771bd2aa9fa5c01233499f0d587b394d6b0e176e1889dae06900b765";
+const d0a13DataSha256 = "4a199b3a38331d81420879afbb49e0312ba60539ed8a927de10951c2e51af680";
 const defaultRead: Reader = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
 const sha = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -184,7 +190,25 @@ function mainReceipt(readAuthority: Reader, checkpoint: Receipt): Receipt {
   if (!same(receipt.before, checkpoint.current)) return fail("transition checkpoint profile mismatch");
   return receipt;
 }
+function d0a13Receipt(readAuthority: Reader, bba74: Receipt): Receipt {
+  const receipt = authenticate(readAuthority, d0a13ReceiptPath, d0a13ReceiptBytes, d0a13ReceiptSha256);
+  if (!same(receipt.before, bba74.current)) return fail("transition bba74 profile mismatch");
+  return receipt;
+}
+function isD0a13Raw(raw: string): boolean {
+  return Buffer.byteLength(raw) === d0a13SourceBytes && sha(raw) === d0a13SourceSha256;
+}
 function checkpointRaw(raw: string, readAuthority: Reader, checkpoint: Receipt): string {
+  if (isD0a13Raw(raw)) {
+    const bba74 = mainReceipt(readAuthority, checkpoint);
+    const projected = beforeRaw(raw, d0a13Receipt(readAuthority, bba74));
+    pin(Buffer.from(projected), bba74.current.source);
+    profile(JSON.parse(projected) as Policy, bba74.current);
+    const result = beforeRaw(projected, bba74);
+    pin(Buffer.from(result), checkpoint.current.source);
+    profile(JSON.parse(result) as Policy, checkpoint.current);
+    return result;
+  }
   if (Buffer.byteLength(raw) !== mainSourceBytes || sha(raw) !== mainSourceSha256) return raw;
   const result = beforeRaw(raw, mainReceipt(readAuthority, checkpoint));
   pin(Buffer.from(result), checkpoint.current.source);
@@ -192,7 +216,29 @@ function checkpointRaw(raw: string, readAuthority: Reader, checkpoint: Receipt):
   return result;
 }
 
-// Initial independent-fixture acquisition only: accepts exactly checkpoint or preview.
+// Initial 77-control fixture acquisition only. Older checkpoint input remains exact and unchanged.
+export function capture5883InventoryBba74PolicySource(raw: string, readAuthority: Reader = defaultRead): string {
+  if (typeof raw !== "string") return fail("raw input must be a primitive string");
+  const checkpoint = authenticate(readAuthority);
+  if (isD0a13Raw(raw)) {
+    const bba74 = mainReceipt(readAuthority, checkpoint);
+    const result = beforeRaw(raw, d0a13Receipt(readAuthority, bba74));
+    pin(Buffer.from(result), bba74.current.source);
+    profile(JSON.parse(result) as Policy, bba74.current);
+    return result;
+  }
+  if (Buffer.byteLength(raw) === mainSourceBytes && sha(raw) === mainSourceSha256) {
+    const bba74 = mainReceipt(readAuthority, checkpoint);
+    pin(Buffer.from(raw), bba74.current.source);
+    profile(JSON.parse(raw) as Policy, bba74.current);
+    return raw;
+  }
+  pin(Buffer.from(raw), checkpoint.current.source);
+  profile(JSON.parse(raw) as Policy, checkpoint.current);
+  return raw;
+}
+
+// Initial independent-fixture acquisition only: accepts exactly checkpoint, bba74 or d0a13.
 export function capture5883InventoryCheckpointPolicySource(raw: string, readAuthority: Reader = defaultRead): string {
   if (typeof raw !== "string") return fail("raw input must be a primitive string");
   const receipt = authenticate(readAuthority);
@@ -214,10 +260,19 @@ export function capture5883InventoryPredecessorPolicy(
   if (!current || typeof current !== "object" || Array.isArray(current))
     return fail("policy input must be a plain object");
   const receipt = authenticate(readAuthority);
-  const checkpoint =
-    sha(JSON.stringify(current)) === mainDataSha256
-      ? beforeSemantic(current as Policy, mainReceipt(readAuthority, receipt))
-      : (current as Policy);
+  const digest = sha(JSON.stringify(current));
+  let checkpoint: Policy;
+  if (digest === d0a13DataSha256) {
+    const bba74 = mainReceipt(readAuthority, receipt);
+    const projected = beforeSemantic(current as Policy, d0a13Receipt(readAuthority, bba74));
+    profile(projected, bba74.current);
+    checkpoint = beforeSemantic(projected, bba74);
+  } else {
+    checkpoint =
+      digest === mainDataSha256
+        ? beforeSemantic(current as Policy, mainReceipt(readAuthority, receipt))
+        : (current as Policy);
+  }
   profile(checkpoint, receipt.current);
   return beforeSemantic(checkpoint, receipt);
 }

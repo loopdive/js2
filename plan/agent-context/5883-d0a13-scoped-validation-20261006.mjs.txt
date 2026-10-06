@@ -1,0 +1,32 @@
+import {readFileSync,writeFileSync,mkdirSync,openSync,closeSync} from 'node:fs';
+import {spawnSync,execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
+import assert from 'node:assert/strict';
+const root='/Users/thomas/Code/js2/.codex-worktrees/codex-5883-cycle-main9c-20261002';
+assert.equal(process.cwd(),root);
+assert.equal(execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),'d81a1e9c330adafebb496a7926240eda8991169f');
+const files=['tests/issue-5883-inventory-source-successor.test.ts','tests/issue-5883-main-bba74-inventory-source-successor.test.ts','tests/issue-5883-main-d0a13-inventory-source-successor.test.ts'];
+const paths=[...files,'scripts/compiler-boundaries.json','tests/helpers/ir-5883-inventory-source-successor.ts','tests/helpers/ir-5883-inventory-source-successor.json','tests/helpers/ir-5883-main-bba74-inventory-source-successor.json','tests/helpers/ir-5883-main-d0a13-inventory-source-successor.json','tests/helpers/ir-main-inventory-source-successor.ts','tests/helpers/ir-main-inventory-source-successor.json','vitest.config.ts','package.json','pnpm-lock.yaml'];
+const sha=b=>createHash('sha256').update(b).digest('hex');
+const pins=()=>Object.fromEntries(paths.map(p=>[p,sha(readFileSync(p))]));
+const before=pins();
+assert.equal(before['scripts/compiler-boundaries.json'],'8a8747f2771bd2aa9fa5c01233499f0d587b394d6b0e176e1889dae06900b765');
+const out='.tmp/5883-d0a13-actual-merge-proof-20261006';
+mkdirSync(out);
+const save=(p,v)=>writeFileSync(out+'/'+p,JSON.stringify(v,null,2)+'\n',{flag:'wx'});
+const args=['node_modules/vitest/vitest.mjs','run',...files,'--reporter=dot','--reporter=json','--outputFile.json='+out+'/native-results.json'];
+save('before.json',before);
+save('invocation.json',{root,head:'d81a1e9c330adafebb496a7926240eda8991169f',scope:'actual merged source; scoped proof only, not full acceptance',node:process.execPath,nodeHash:sha(readFileSync(process.execPath)),args,expected:[97,77,73],startedAt:new Date().toISOString()});
+let result,fd,error;
+try{
+ fd=openSync(out+'/raw.log','wx');
+ result=spawnSync(process.execPath,args,{env:{...process.env,VITEST_MAX_FORKS:'1',VITEST_FORK_MAX_OLD_SPACE_SIZE:'2048',NODE_OPTIONS:'--max-old-space-size=2048'},stdio:['ignore',fd,fd]});closeSync(fd);fd=undefined;
+ assert.equal(result.status,0);assert.equal(result.signal,null);assert.equal(result.error,undefined);
+ const report=JSON.parse(readFileSync(out+'/native-results.json'));assert.equal(report.numTotalTests,247);assert.equal(report.numPassedTests,247);assert.equal(report.numFailedTests,0);assert.equal(report.numPendingTests,0);assert.equal(report.testResults.length,3);assert.equal(report.success,true);
+ const prior=JSON.parse(readFileSync('.tmp/5883-main-bba74-bridge-lint-repair-20261006/native-results.json'));
+ const identity=r=>JSON.stringify([r.ancestorTitles,r.fullName,r.title]);
+ for(const[p,count]of files.map((p,i)=>[p,[97,77,73][i]])){const rows=report.testResults.filter(r=>r.name===root+'/'+p);assert.equal(rows.length,1);const ids=rows[0].assertionResults.map(identity).sort();assert.equal(ids.length,count);assert.equal(new Set(ids).size,count);assert(rows[0].assertionResults.every(r=>r.status==='passed'));const old=prior.testResults.find(r=>r.name===root+'/'+p);if(old)assert.deepEqual(ids,old.assertionResults.map(identity).sort());}
+ const raw=readFileSync(out+'/raw.log','utf8');assert(!/\[vitest-worker\]|Timeout calling onTaskUpdate|Unhandled (?:Error|Rejection|Exception)|Vitest caught \d+ unhandled/i.test(raw));
+}catch(e){error=String(e.stack??e);}finally{if(fd!==undefined)closeSync(fd);const after=pins();save('after.json',after);try{assert.deepEqual(after,before);}catch(e){error=(error??'')+'\nInput drift: '+String(e);}}
+save('terminal.json',{code:result?.status??null,signal:result?.signal??null,error:error??null,accepted:false,rawReviewRequired:true,finishedAt:new Date().toISOString()});
+console.log(JSON.stringify({out,code:result?.status,error:error??null}));process.exitCode=error?1:0;

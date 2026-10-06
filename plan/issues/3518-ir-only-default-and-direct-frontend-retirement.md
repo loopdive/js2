@@ -8667,3 +8667,100 @@ Parent reviews the runner and inventory before serial compiler-heavy execution.
 No public issue writes, new checkpoint PRs, weakened gates, omitted fixtures or
 automatic acceptance. Publish through existing PR5883 only after scoped checks;
 protected-queue landing still requires complete acceptance evidence.
+
+### d0a13 main successor implementation contract
+
+The actual merge d81a1e9c330adafebb496a7926240eda8991169f is clean and contains
+upstream d0a13fb182e6a4e198ce34bd4ec2c489deeb10b9. Read-only audit found exactly
+one additional333-byte inventory insertion relative to the bba74 preview:
+files[890], src/codegen/object-model/proxy-forward-carriers.ts, between
+proxy-get-iterator.ts and proxy-trap-read.ts. It is unmigrated, mixed-needs-split,
+backend-wasmgc, owner3518-coordinator with the standard nextBoundary text.
+No removals, moves or retained-field changes; earlier two rows remain exact.
+
+Release Laplace/Sol6.1 Medium in isolated policy-callers worktree to implement:
+
+1. Add a separate immutable d0a13 successor receipt, from exact actual merged
+   source591084 bytes (SHA2568a8747f2771bd2aa9fa5c01233499f0d587b394d6b0e176e1889dae06900b765,
+   blob82e2c378a744f23c2ac3256ee8ceea16fe48a27e) to exact bba74 source590751
+   bytes (SHA256491fc3c8e470a5a4c58da8e7d78cd24ab3a2cd18d7ce6bcccf279d927c0ea942).
+   Bind actual merge/main, full raw/data profiles, exact row/neighbors and
+   insertion offset334729. Independently replay and invert every byte.
+2. Extend only the existing5883 helper to recognize this exact source/data
+   profile and compose d0a13 -> bba74 -> checkpoint -> canonical. Authenticate
+   every receipt on each invocation, including reused readers; no Git fallback,
+   caching, wildcard profiles, dropped fields or relaxed descriptor validation.
+   Keep both old receipts unchanged and all old input/read-trace behavior.
+3. Preserve original97+77 controls and all independent literals/mutations.
+   The77-test initial fixture acquisition may project authenticated d0a13
+   physical input to exact bba74 via a narrowly named new helper export; no
+   alteration to their assertions, expected receipts or test identities.
+   Archive pre-edit helper and77-test bytes exactly before editing.
+4. Add separate new controls proving actual-current raw/data composition,
+   source/receipt corruption rejection, exact row/property/neighbor and ordering
+   preservation, receipt chain linkage, per-call freshness behind healthy calls,
+   and malformed data rejection before authority IO. Reject unknown profiles.
+   Keep sparse fixtures genuinely sparse. Explicitly label old-checkout replay
+   as fixture evidence, never actual merged-main execution.
+
+Worker owns helper,77-test acquisition only, new receipt/test, and new lossless
+pre-edit archive in C. No seven-caller or C1-authority edits, production changes,
+test execution, commit or publication. Parent reviews diff and independently
+authenticates Git sources, integrates into D, then runs original174 plus new
+controls with full raw records before updating the outer validation epoch.
+All prior failed attempts remain immutable and retirement stays blocked.
+
+Parent independently checked actual merged inventory: removing bytes334729..335061
+recovers all590751 original bytes; reinsertion reproduces all591084 bytes.
+Deleting only files[890] recovers the complete prior semantic object. This is
+actual-merge source verification, not test-suite acceptance.
+
+Live5883 review read: no unresolved threads; published head remains6f73c8ed and
+DIRTY/held. Its passing historical checks do not cover the local successor.
+Serial diagnostic94111 on d81a1e9c completed canonical TS7 source typecheck,
+exit0, no diagnostics. No src/config/package inputs differed from that commit;
+the pending changes were parent issue documentation only. This was a scoped
+diagnostic outside the frozen full-population runner, not accepted-epoch evidence.
+
+Successor runner delivered in held-B .tmp/5883-successor-validation-20261006.mjs,
+SHA25618c0c40bfa449949c921c069268c12e7cbac08810835d8ebb5a5746d002bad2f.
+Parent read it fully: full mode preserves compiler176/text992/runtime505,
+incoming2399+4, boundary131, original bridge97+77, all seven imported-main files
+and separately enumerated new proof controls. No run or epoch approved yet.
+
+Release Darwin to prepare only a bounded manifest-assembly utility in held-B
+.tmp. It must use exact existing native reports/lossless archives to recover
+old identities (including all skipped historical names), never an observed
+passing subset. New-main/new-proof identities require explicit parent-supplied
+collection authority and source pins; absent authority must fail, not guess.
+Pin every retained attempt and every input from the existing capture function;
+derive the full7752-to-current delta, preserving historical non-domain pins.
+Include parent-selected proof approval and immutable evidence in the map.
+Require an explicit committed D head and verify working bytes against it.
+No tests, D writes, final approved manifest, commits or publication by worker.
+Parent will inspect and approve the complete input/identity record after the
+new receipt is integrated; this utility cannot grant itself acceptance.
+
+Checkpoint64849f95d2a0482820bafdd90bb0852184baeab1 was pushed normally to the
+existing5883 branch and independently confirmed live, ready and held. Normal
+pre-push typecheck/lint/format/ratchet/issue gates passed; numeric-local tests
+passed18/18. Those hooks ran on D's then-current worktree, not an isolated
+checkout of the published ancestor, so they are not claimed as an exact remote
+head validation. The newer main merge remained local during that publication.
+
+Reviewed d0a13 helper/receipt/test integrated with exact post-copy fingerprints.
+Parent decoded both pre-edit archive files and compared them byte-for-byte to D;
+old97 controls and old receipts remain unchanged; old77 change only initial
+source acquisition and its import. Scoped actual-merge run12377 passed247/247
+(97+77+73), exit0 in41.43s. All13 scoped pins unchanged, all174 old identities
+exact, raw and native error channels clean. Lossless six-record archive:
+5883-d0a13-actual-merge-proof-20261006.json.txt SHA256
+ab93f833160cf56b838b8c2608599490958a29aa20947a17c41d907a676edfc3.
+
+Main identity collection28764 deliberately selected no tests and executed zero
+test bodies:117 skipped across seven files (12/17/70/6/4/5/3), exit0,38.22s.
+All captured source/instrument inputs unchanged; raw read completely, clean.
+This records the denominator only and is NEVER a passing-test claim. Full
+successor execution remains required. Runner and assembly sources are preserved
+as exact .mjs.txt artifacts; parent must inspect assembled identities and delta
+before execution. No retirement, queue release or full acceptance is granted.

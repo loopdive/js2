@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  capture5883InventoryBba74PolicySource,
   capture5883InventoryCheckpointPolicySource,
   capture5883InventoryPredecessorPolicy,
   capture5883InventoryPredecessorPolicySource,
@@ -229,7 +230,7 @@ function forward(raw: string): string {
   return bytes.toString("utf8");
 }
 function witness() {
-  const physical = read("scripts/compiler-boundaries.json");
+  const physical = capture5883InventoryBba74PolicySource(read("scripts/compiler-boundaries.json"));
   const pin = sourcePin(physical);
   let current: string, checkpoint: string;
   if (JSON.stringify(pin) === JSON.stringify(expected.current.source)) {

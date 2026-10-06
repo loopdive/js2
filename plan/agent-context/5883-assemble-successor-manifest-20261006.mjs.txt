@@ -1,0 +1,185 @@
+// Assembly ONLY. Never runs tests, approves an epoch, or writes D.
+// Run from D: node THIS SELF_SHA REQUEST_ABSOLUTE_PATH REQUEST_SHA LABEL
+// Request: {head,node,nodeHash,proofAuthority:{path,sha256},evidencePins,
+// additionalProofFiles,collection:{path,sha256}}. Paths within authorities are
+// relative to D. LABEL is a fresh lowercase/digit/hyphen output suffix in B/.tmp.
+// Collection: {schema:'5883-source-pinned-collection-v1',head,cwd,sourcePins,
+// assertions}. sourcePins MUST equal the complete captured successor map;
+// assertions MUST cover exactly seven main files plus additionalProofFiles.
+// Values use the existing assertionIdentity JSON tuple encoding; duplicates stay.
+// Parent must inspect this record's collection provenance, not just its hash.
+// Output: B/.tmp/5883-successor-assembly-LABEL/{manifest-draft.json,boundary-native.json}.
+// Parent must explicitly transfer boundary-native.json to the same relative D
+// path before using the draft. No approved filename/epoch is generated here.
+import { readFileSync, writeFileSync, mkdirSync, lstatSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { gunzipSync } from 'node:zlib';
+import { resolve, relative, isAbsolute } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const D = '/Users/thomas/Code/js2/.codex-worktrees/codex-5883-cycle-main9c-20261002';
+const B = '/private/tmp/js2-5883-held-b-20261006';
+const SELF = fileURLToPath(import.meta.url);
+const sha = b => createHash('sha256').update(b).digest('hex');
+const must = (ok, text) => { if (!ok) throw Error(text); };
+const eq = (a, b, text) => must(JSON.stringify(a) === JSON.stringify(b), text);
+const validPath = p => typeof p === 'string' && p.length > 0 && !isAbsolute(p) && !p.startsWith('../') && relative(D, resolve(D, p)) === p;
+function auth(p, h) {
+  must(/^[a-f0-9]{64}$/.test(h ?? '') && lstatSync(p).isFile(), 'Missing hash/regular authority: ' + p);
+  const b = readFileSync(p); must(sha(b) === h, 'Authority drift: ' + p); return b;
+}
+const [selfHash, requestPath, requestHash, label, ...extra] = process.argv.slice(2);
+must(extra.length === 0 && process.cwd() === D && isAbsolute(requestPath ?? '') && /^[a-z0-9][a-z0-9-]{0,60}$/.test(label ?? ''), 'Explicit self/request/hash/fresh label required; cwd must be D');
+auth(SELF, selfHash);
+must(!Object.keys(process.env).some(k => k.startsWith('GIT_')), 'Inherited Git overrides forbidden');
+const request = JSON.parse(auth(requestPath, requestHash));
+must(/^[a-f0-9]{40}$/.test(request.head ?? ''), 'Explicit committed target required');
+const helperPins = {
+  '.tmp/5883-validation-v3-lib.mjs': 'db2c9c4984801899ae972f86bf8b4de28ab7c44f8d6a1b0bea246b8712c9c526',
+  '.tmp/5883-validation-v2-lib.mjs': '5b880ccab30e80241c6c9809f3482ba9f1393514c9f73e280b0312ae08ee2d3d',
+};
+for (const [p, h] of Object.entries(helperPins)) auth(p, h);
+const lib = await import(pathToFileURL(D + '/.tmp/5883-validation-v3-lib.mjs').href);
+const git = args => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 20000000 });
+for (const ancestor of ['3a5dac945396882d9247eaab770ddff2a1816416', 'd0a13fb182e6a4e198ce34bd4ec2c489deeb10b9']) git(['merge-base', '--is-ancestor', ancestor, request.head]);
+const extensions = ['.tmp/5883-validation-v4-continuation-20261006.mjs', 'plan/agent-context/5883-compiler-reader-before-yield-20261006.ts.txt'];
+const capture = () => ({ ...lib.captureEpochPins(), ...lib.hashPaths(extensions) });
+const pins = capture();
+const domain = ['src', 'tests', 'scripts', 'package.json', 'pnpm-lock.yaml', 'tsconfig.json', 'tsconfig.ts7.json', 'vitest.config.ts'];
+function verifyCommit() {
+  must(lib.currentHead() === request.head, 'HEAD changed or not explicit target');
+  const tree = git(['ls-tree', '-r', '-z', request.head, '--', ...domain]).split('\0').filter(Boolean);
+  const paths = [];
+  for (const row of tree) {
+    const [meta, path] = row.split('\t'); const [mode, type, blob] = meta.split(' ');
+    must(type === 'blob' && ['100644', '100755'].includes(mode), 'Nonregular committed input');
+    const bytes = readFileSync(path);
+    must(createHash('sha1').update(Buffer.from(`blob ${bytes.length}\0`)).update(bytes).digest('hex') === blob, 'Uncommitted input: ' + path);
+    paths.push(path);
+  }
+  eq(paths.sort(), lib.listDomain(true), 'Input path domain differs from explicit commit');
+}
+verifyCommit();
+must(process.execPath === request.node, 'Explicit node path mismatch'); auth(request.node, request.nodeHash);
+const incomingDir = '.tmp/5883-main5f-final-v4-permission-incoming23-20261006';
+const sourceAuthority = {
+  baseline: { path: incomingDir + '/after.json', sha256: 'e0976f4965503ddb33e4089c6e7de7a71bc51411e75e19f11cec15637b66e124' },
+  incoming: { path: incomingDir + '/native-results.json', sha256: 'b68ff29e2bbeff77ff1c073f85b1327d8867acdd4f170e855f6c87000333fe59' },
+  runtime: { path: '.tmp/5883-main5f-final-v4-permission-runtime-20261006/native-results.json', sha256: '873a4693e0c8865f08ec7d55dfbf6eb4130962ba0ac7cc2cd548d15b0fe71887' },
+  boundary: { path: 'plan/agent-context/5883-scoped-validation-attempts-20261006.json.txt', sha256: 'cd8a69f513c7cf09303fd3f9dcd3b9102fa651622039b2db02693e235babad0d', stream: '.tmp/5883-held-b-candidate-20261006/native-results.json', streamSha256: '907d2187f68cae784fbc05919aa58c1f2c66a5a7933293e18f853f451fc104be', rootLabel: 'B' },
+  bridge: { path: 'plan/agent-context/5883-sparse-fixture-validation-20261006.json.txt', sha256: 'deeb134eafde617d788266ef1bc96917949fea8270f07799f17501f109d40667', stream: '.tmp/5883-main-bba74-bridge-lint-repair-20261006/native-results.json', streamSha256: '355b470a69ce25f7d0c5c59d08c1ddc4c88fd673d4bbfeb0b8326c54100e41f2' },
+  historical: { path: 'plan/agent-context/5883-historical-capture-passed-candidate-20261006.json.txt', sha256: 'b7a9c1f4407f9fa42e5d35bec2c5b6d4874738bffc969fe0c48765e0221bbae6', stream: '.tmp/5883-historical-capture-candidate-v2-20261006/native-results.json', streamSha256: '6d58ed6248fcb84f6573b76377a9f76b5fb838355cd368fe91356a195e7426ec' },
+};
+const evidencePins = Object.create(null);
+function addEvidence(p, h) {
+  must(validPath(p), 'Evidence must be relative D path: ' + p); auth(p, h);
+  must(!Object.hasOwn(evidencePins, p) || evidencePins[p] === h, 'Conflicting evidence authority'); evidencePins[p] = h;
+}
+function sourceBytes(source) {
+  addEvidence(source.path, source.sha256);
+  const bytes = auth(source.path, source.sha256);
+  if (!source.stream) return bytes;
+  const rows = JSON.parse(bytes).files.filter(r => r.path === source.stream && (source.rootLabel === undefined || r.rootLabel === source.rootLabel));
+  must(rows.length === 1, 'Missing/duplicate archived native stream');
+  const r = rows[0], decoded = gunzipSync(Buffer.from(r.gzipBase64 ?? r.payload, 'base64'));
+  must(decoded.length === r.bytes && sha(decoded) === r.sha256 && r.sha256 === source.streamSha256, 'Archive byte/hash mismatch'); return decoded;
+}
+const baseline = JSON.parse(sourceBytes(sourceAuthority.baseline));
+must(Object.keys(baseline).length === 7752, 'Original7752 mismatch');
+const delta = [];
+for (const path of [...new Set([...Object.keys(baseline), ...Object.keys(pins)])].sort()) {
+  if (!domain.some(d => path === d || path.startsWith(d + '/')) && Object.hasOwn(baseline, path)) must(pins[path] === baseline[path], 'Historical non-domain authority changed: ' + path);
+  if (baseline[path] !== pins[path]) delta.push({ path, status: !Object.hasOwn(baseline, path) ? 'A' : !Object.hasOwn(pins, path) ? 'D' : 'M', beforeSha256: baseline[path] ?? null, afterSha256: pins[path] ?? null });
+}
+lib.verifySuccessorRows(baseline, pins, delta);
+function inventory(p) {
+  const stat = lstatSync(p); if (stat.isFile()) return [p]; must(stat.isDirectory(), 'Nonregular retained evidence');
+  return readdirSync(p).sort().flatMap(n => inventory(p + '/' + n));
+}
+const retainedDirs = [
+  '.tmp/5883-main5f-final-v3-canonical-20261006', '.tmp/5883-main5f-final-v3-text-readers-20261006',
+  '.tmp/5883-main5f-final-v3-compiler-readers-20261006', '.tmp/5883-main5f-final-v3-compiler-readers-retry1-20261006',
+  '.tmp/5883-main5f-final-v4-canonical-20261006', '.tmp/5883-main5f-final-v4-compiler-readers-20261006',
+  '.tmp/5883-main5f-final-v4-text-readers-20261006', '.tmp/5883-main5f-final-v4-runtime-20261006',
+  '.tmp/5883-main5f-final-v4-permission-runtime-20261006', incomingDir,
+];
+const retained = retainedDirs.flatMap(inventory).sort();
+for (const p of retained) addEvidence(p, sha(readFileSync(p)));
+must(request.evidencePins && typeof request.evidencePins === 'object' && !Array.isArray(request.evidencePins), 'Explicit additional evidence map required');
+for (const [p, h] of Object.entries(request.evidencePins)) addEvidence(p, h);
+for (const s of [request.proofAuthority, request.collection]) { must(s, 'Proof approval and source-pinned collection are required'); addEvidence(s.path, s.sha256); }
+const population = lib.acceptedPopulation();
+const oldStreams = lib.decodedArchives();
+for (const [p, h] of lib.ARCHIVES) addEvidence(p, h);
+sourceAuthority.originalArchives = lib.ARCHIVES;
+const assertions = Object.create(null), controlReports = Object.create(null);
+function readRows(bytes, root, files, replace = false) {
+  const report = JSON.parse(bytes);
+  for (const p of files) {
+    const rows = report.testResults.filter(t => t.name === root + '/' + p); must(rows.length === 1, 'Missing/duplicate native file: ' + p);
+    const ids = rows[0].assertionResults.map(lib.assertionIdentity).sort(); must(ids.length > 0, 'Empty native population');
+    if (Object.hasOwn(assertions, p)) {
+      if (!replace) eq(assertions[p], ids, 'Repeated file identities disagree');
+      else { const remaining = [...ids]; for (const id of assertions[p]) { const i = remaining.indexOf(id); must(i >= 0, 'Lost historical identity/multiplicity'); remaining.splice(i, 1); } }
+    }
+    assertions[p] = ids;
+  }
+  return report;
+}
+readRows(oldStreams.get('.tmp/5883-main5f-existing-readers-20261006/native-results.json').bytes, D, population.compilerFiles);
+readRows(oldStreams.get('.tmp/5883-main5f-final-text-readers-20261006/native-results.json').bytes, D, population.textFiles);
+must(readRows(sourceBytes(sourceAuthority.runtime), D, [...population.originalRuntime, ...population.freshRuntime]).numTotalTests === 505, 'Runtime505 mismatch');
+must(readRows(sourceBytes(sourceAuthority.incoming), D, population.incomingTests).numTotalTests === 2399, 'Incoming2399 mismatch');
+const boundary = 'tests/issue-3518-compiler-boundaries.test.ts';
+const bridge = ['tests/issue-5883-inventory-source-successor.test.ts', 'tests/issue-5883-main-bba74-inventory-source-successor.test.ts'];
+const historical = 'tests/issue-3518-historical-runtime-reconstruction.test.ts';
+const boundaryBytes = sourceBytes(sourceAuthority.boundary);
+readRows(boundaryBytes, B, [boundary]);
+readRows(sourceBytes(sourceAuthority.bridge), D, bridge);
+readRows(sourceBytes(sourceAuthority.historical), B, [historical], true);
+const outputRelative = '.tmp/5883-successor-assembly-' + label;
+const boundaryPath = outputRelative + '/boundary-native.json';
+controlReports[boundary] = { path: boundaryPath, sha256: sha(boundaryBytes), nativeFile: B + '/' + boundary };
+for (const [source, root, files] of [[sourceAuthority.bridge, D, bridge], [sourceAuthority.historical, B, [historical]]]) {
+  for (const p of files) controlReports[p] = { path: source.path, sha256: source.sha256, stream: source.stream, nativeFile: root + '/' + p };
+}
+for (const [p, count] of [[boundary, 131], [bridge[0], 97], [bridge[1], 77], [historical, 635]]) must(assertions[p].length === count, 'Preserved population count mismatch: ' + p);
+for (const set of [population.compilerIdentities, population.textIdentities, population.runtimeIdentities]) for (const [p, e] of Object.entries(set)) must(assertions[p].length === e.count && sha(JSON.stringify(assertions[p])) === e.sha256, 'Original176/992/330 identity drift');
+const importedMainTests = [
+  'tests/issue-2527-runtime-provider-abi.test.ts', 'tests/issue-3525-source-map-specialization-origins.test.ts',
+  'tests/issue-5267-finally-reentry.test.ts', 'tests/issue-6651-u1b-seeds-linked-bfnid.test.ts',
+  'tests/issue-6651-v1-proxy-forward.test.ts', 'tests/issue-6844-error-subclass-field-initializers.test.ts',
+  'tests/issue-6868-template-literal-string-types.test.ts',
+];
+const additionalProofFiles = request.additionalProofFiles;
+must(Array.isArray(additionalProofFiles) && additionalProofFiles.length > 0 && additionalProofFiles.every(p => validPath(p) && /^tests\/.*\.test\.ts$/.test(p)), 'Explicit new-proof file list required');
+const newFiles = [...importedMainTests, ...additionalProofFiles];
+must(new Set(newFiles).size === newFiles.length && newFiles.every(p => !Object.hasOwn(assertions, p)), 'Duplicate/overlapping new file selection');
+const collection = JSON.parse(auth(request.collection.path, request.collection.sha256));
+must(collection.schema === '5883-source-pinned-collection-v1' && collection.head === request.head && collection.cwd === D, 'Collection not for explicit source epoch');
+lib.sameMap(collection.sourcePins, pins, 'Collection source/input drift');
+eq(Object.keys(collection.assertions).sort(), [...newFiles].sort(), 'Collection must enumerate exactly all new-main/proof files');
+for (const p of newFiles) {
+  const ids = collection.assertions[p]; must(Array.isArray(ids) && ids.length > 0, 'Absent/empty collected identities: ' + p);
+  for (const id of ids) { const t = JSON.parse(id); must(Array.isArray(t) && t.length === 3, 'Invalid identity tuple'); eq(id, lib.assertionIdentity({ ancestorTitles: t[0], fullName: t[1], title: t[2] }), 'Invalid collected identity'); }
+  assertions[p] = [...ids].sort();
+}
+const changedTests = git(['diff', '--no-renames', '--name-only', '--diff-filter=AM', '884d2fc58f40a28c391ef5cf238b49582329e55b', request.head, '--', 'tests']).split('\n').filter(p => /\.test\.ts$/.test(p));
+must(changedTests.every(p => Object.hasOwn(assertions, p)), 'Changed/new test omitted from cohorts');
+must(population.incomingTests.reduce((n, p) => n + assertions[p].length, 0) === 2403, 'Incoming2399+4 mismatch');
+verifyCommit(); lib.sameMap(capture(), pins, 'Inputs drifted during assembly');
+eq(retainedDirs.flatMap(inventory).sort(), retained, 'Retained inventory drift');
+lib.sameMap(lib.hashPaths(Object.keys(evidencePins)), evidencePins, 'Evidence drift during assembly');
+auth(SELF, selfHash); auth(requestPath, requestHash);
+must(!Object.hasOwn(evidencePins, boundaryPath), 'Generated evidence path collides with existing authority');
+evidencePins[boundaryPath] = sha(boundaryBytes);
+const draft = { schema: '5883-explicit-successor-validation-v1', scope: 'full', head: request.head, cwd: D, node: request.node, nodeHash: request.nodeHash, pins, delta, evidencePins, assertions, additionalProofFiles, importedMainTests, proofAuthority: request.proofAuthority, controlReports,
+  assembly: { accepted: false, approval: 'PENDING_PARENT_REVIEW', self: SELF, selfHash, requestPath, requestHash, collection: request.collection, sourceAuthority, requiredEvidenceTransfer: boundaryPath, allNativeStatusesIncluded: true } };
+const output = B + '/' + outputRelative;
+mkdirSync(output); // exclusive, never overwrite an existing bundle
+writeFileSync(output + '/boundary-native.json', boundaryBytes, { flag: 'wx' });
+const bytes = Buffer.from(JSON.stringify(draft, null, 2) + '\n');
+writeFileSync(output + '/manifest-draft.json', bytes, { flag: 'wx' });
+must(readFileSync(output + '/boundary-native.json').equals(boundaryBytes) && readFileSync(output + '/manifest-draft.json').equals(bytes), 'Output readback mismatch');
+console.log(JSON.stringify({ output, draftSha256: sha(bytes), inputCount: Object.keys(pins).length, evidenceCount: Object.keys(evidencePins).length, identityFiles: Object.keys(assertions).length, accepted: false, approval: 'PENDING_PARENT_REVIEW', requiredEvidenceTransfer: boundaryPath }));

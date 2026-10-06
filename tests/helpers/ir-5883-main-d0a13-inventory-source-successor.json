@@ -1,0 +1,110 @@
+{
+  "schema": "fixed-pr5883-main-d0a13-inventory-source-successor-v1",
+  "coordinateUnit": "utf8-byte",
+  "sourcePath": "scripts/compiler-boundaries.json",
+  "main": "d0a13fb182e6a4e198ce34bd4ec2c489deeb10b9",
+  "merge": "d81a1e9c330adafebb496a7926240eda8991169f",
+  "mergeTree": "51d3d9b8bbbf8878e6955d9be6a040bcdc344186",
+  "before": {
+    "source": {
+      "bytes": 590751,
+      "sha256": "491fc3c8e470a5a4c58da8e7d78cd24ab3a2cd18d7ce6bcccf279d927c0ea942",
+      "gitBlob": "109e1bab21c7ffdf936e8d2d2208c22e31ef77dd"
+    },
+    "dataSha256": "2c3a9c757d9068dc2701f269bf3df3bccf645e0046c7b05db4ac723dbc6c0ac7",
+    "topLevelKeys": [
+      "schema",
+      "description",
+      "sourceRoot",
+      "tsconfig",
+      "requireGitProvenance",
+      "externalAssets",
+      "frontendWrapper",
+      "moduleExtensions",
+      "layers",
+      "allowedEdges",
+      "externalPackages",
+      "activationHistory",
+      "nonModules",
+      "moves",
+      "evidence",
+      "files"
+    ],
+    "movesCount": 15,
+    "movesSha256": "dee1f3da0891e29bfb95534a899b3f5da31dae05c45d3a35be7123115e1466b4",
+    "filesCount": 1843,
+    "filesSha256": "a246e8bb1d23b73af9320d9baa55394de0c8ba29e870c92076a234929ab32957",
+    "retainedSha256": "dd91458d637f35a7ad9ac9c3a0663e34fd4e0fa9dc6e4786b3b8fa716e1afa12"
+  },
+  "current": {
+    "source": {
+      "bytes": 591084,
+      "sha256": "8a8747f2771bd2aa9fa5c01233499f0d587b394d6b0e176e1889dae06900b765",
+      "gitBlob": "82e2c378a744f23c2ac3256ee8ceea16fe48a27e"
+    },
+    "dataSha256": "4a199b3a38331d81420879afbb49e0312ba60539ed8a927de10951c2e51af680",
+    "topLevelKeys": [
+      "schema",
+      "description",
+      "sourceRoot",
+      "tsconfig",
+      "requireGitProvenance",
+      "externalAssets",
+      "frontendWrapper",
+      "moduleExtensions",
+      "layers",
+      "allowedEdges",
+      "externalPackages",
+      "activationHistory",
+      "nonModules",
+      "moves",
+      "evidence",
+      "files"
+    ],
+    "movesCount": 15,
+    "movesSha256": "dee1f3da0891e29bfb95534a899b3f5da31dae05c45d3a35be7123115e1466b4",
+    "filesCount": 1844,
+    "filesSha256": "32b10e52c025d69cef49b754d0c32c301cdb2ab51faf5b36a24d0f2393406d6a",
+    "retainedSha256": "dd91458d637f35a7ad9ac9c3a0663e34fd4e0fa9dc6e4786b3b8fa716e1afa12"
+  },
+  "additions": [
+    {
+      "field": "files",
+      "index": 890,
+      "rows": [
+        {
+          "path": "src/codegen/object-model/proxy-forward-carriers.ts",
+          "state": "unmigrated",
+          "layer": "mixed-needs-split",
+          "destination": "backend-wasmgc",
+          "owner": "3518-coordinator",
+          "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+        }
+      ],
+      "previous": {
+        "path": "src/codegen/object-model/proxy-get-iterator.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "backend-wasmgc",
+        "owner": "3518-coordinator",
+        "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      },
+      "next": {
+        "path": "src/codegen/object-model/proxy-trap-read.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "backend-wasmgc",
+        "owner": "3518-coordinator",
+        "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      }
+    }
+  ],
+  "rawSpans": [
+    {
+      "beforeOffset": 334729,
+      "afterOffset": 334729,
+      "before": "",
+      "after": "    {\n      \"path\": \"src/codegen/object-model/proxy-forward-carriers.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
+    }
+  ]
+}
