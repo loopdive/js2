@@ -13,6 +13,7 @@
 // `function f(): number { return <literal>; }`. The union is open —
 // Phase 2 & 3 widen the Instr and Terminator sets.
 
+import type { IrSourceMapOrigin } from "../../shared/contracts/ir-unit-inventory.js";
 import type { IrAsyncPlan } from "./async-plan.js";
 // #3954 phase 2 — the ECMAScript-specific instruction kinds. This is the ONE
 // sanctioned core->dialect import; `scripts/check-ir-dialect.mjs` fails the
@@ -193,10 +194,14 @@ export type IrConst =
 // kept minimal — line/column — and is optional so Phase 1 builders can omit
 // it without the verifier complaining.
 
-export interface IrSiteId {
-  readonly line: number;
-  readonly column: number;
-}
+export type IrSiteId =
+  | { readonly line: number; readonly column: number; readonly origin?: never }
+  | { readonly line: number; readonly column: number; readonly origin: Extract<IrSourceMapOrigin, { kind: "source" }> }
+  | {
+      readonly line?: never;
+      readonly column?: never;
+      readonly origin: Extract<IrSourceMapOrigin, { kind: "generated" }>;
+    };
 
 export interface IrInstrBase {
   /** SSA def produced by this instr. `null` for void instrs. */

@@ -875,6 +875,20 @@ function dynamicProtoReceiverNames(source: ts.SourceFile): Set<string> {
     ) {
       mark(node.arguments[0]);
     }
+    // (#6651 U3) A Proxy TARGET's [[Prototype]] is written through the proxy —
+    // the trap-absent §10.5.2 forward, or a trap acting on its `target`
+    // parameter (`Object.setPrototypeOf(t, p)` inside the handler, where `t` is
+    // not this binding's name) — so the declaration fold is unsound for it too.
+    if (
+      (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Proxy") ||
+      (ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === "Proxy" &&
+        node.expression.name.text === "revocable")
+    ) {
+      mark(node.arguments?.[0]);
+    }
     if (
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&

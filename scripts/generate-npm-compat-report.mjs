@@ -102,9 +102,11 @@ import {
   npmPerfOptimizationOmittedPasses,
   npmPerfRows,
   packagePerfRecord,
+  resolveNativeFirstPerfLane,
   resolveStandalonePerfLanes,
   skippedPerfLane,
-  STANDALONE_PERF_LANES,
+  CHILD_PERF_LANES,
+  childLaneFailureDiagnostic,
 } from "./lib/npm-compat-perf.mjs";
 import {
   laneBudgetOverrun,
@@ -1687,7 +1689,9 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
   const driverPath = join(setup.root, `.js2-npm-compat-perf-${lane}.mjs`);
   const packageSpecifier = packageSpecifierFor(setup);
   writeFileSync(driverPath, buildNpmCompatPerfDriver(spec, packageSpecifier, lane));
-  if (target === "standalone") markLanePhase("codegen");
+  // (#6851) Every bounded child marks codegen, the js-host-native one too, so
+  // its overrun says where the budget went (a no-op outside a lane child).
+  markLanePhase("codegen");
   const compileStarted = performance.now();
   let result;
   try {
@@ -1881,16 +1885,17 @@ function renderModuleInitThrow(error, instance) {
 const NPM_COMPAT_REPORT_SCRIPT = join(ROOT, "scripts", "generate-npm-compat-report.mjs");
 
 /**
- * (#6661, #6660) Measure one package's standalone lane (`standalone-static` or
- * `standalone-dynamic`) in a child process with a wall-clock budget. Used when
- * the JS-host package-entry gate failed: the in-process lane has no budget,
- * and a graph that exhausted the host harness (TypeScript, webpack, ...) would
- * otherwise stall the whole refresh. Returns the child's lane record verbatim,
- * or a failed lane naming the budget overrun / child failure — never the host
- * lane's diagnostic.
+ * (#6661, #6660, #6851) Measure one package's lane (`standalone-static`,
+ * `standalone-dynamic` or `js-host-native`) in a child process with a
+ * wall-clock budget. Used when the JS-host package-entry gate failed: the
+ * in-process lane has no budget and shares the generator's heap, and a graph
+ * that exhausted the host harness (TypeScript, webpack, jsdom, ...) would
+ * otherwise stall — or, out of memory, kill — the whole refresh. Returns the
+ * child's lane record verbatim, or a failed lane naming the budget overrun /
+ * heap exhaustion / child failure — never the host lane's diagnostic.
  */
-function standaloneLaneInChild(name, lane, budgetMs) {
-  const { key, inputMode } = STANDALONE_PERF_LANES.find((entry) => entry.lane === lane);
+function perfLaneInChild(name, lane, budgetMs) {
+  const { key, inputMode, placement } = CHILD_PERF_LANES.find((entry) => entry.lane === lane);
   const partial = join(ROOT, ".tmp", "npm-compat-lane", `${name}-${lane}-${process.pid}.json`);
   const args = ["--import", "tsx", NPM_COMPAT_REPORT_SCRIPT, "--only", name, "--no-write", "--perf-only"];
   args.push("--lane", lane, "--partial-output", partial, "--lane-budget-ms", String(budgetMs));
@@ -1906,8 +1911,9 @@ function standaloneLaneInChild(name, lane, budgetMs) {
   const extra = { inputMode, compileDurationMs: performance.now() - started };
   const marker = takeLanePhase(partial);
   if (child.error?.code === "ETIMEDOUT") {
+    rmSync(partial, { force: true });
     const overrun = laneBudgetOverrun(lane, budgetMs, marker);
-    return failedOptimizedPerfLane("standalone", "compile-error", overrun.diagnostic, {
+    return failedOptimizedPerfLane(placement, "compile-error", overrun.diagnostic, {
       ...extra,
       phase: overrun.phase,
     });
@@ -1921,13 +1927,12 @@ function standaloneLaneInChild(name, lane, budgetMs) {
   } finally {
     rmSync(partial, { force: true });
   }
-  const tail = `${child.stderr ?? ""}${child.stdout ?? ""}`.trim().split("\n").filter(Boolean).at(-1);
-  return failedOptimizedPerfLane(
-    "standalone",
-    "compile-error",
-    `${lane} lane child exited ${child.status ?? child.signal ?? "abnormally"}: ${tail ?? "no output"}`,
-    extra,
-  );
+  const diagnostic = childLaneFailureDiagnostic(lane, {
+    status: child.status,
+    signal: child.signal,
+    output: `${child.stderr ?? ""}${child.stdout ?? ""}`,
+  });
+  return failedOptimizedPerfLane(placement, "compile-error", diagnostic, extra);
 }
 
 async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions } = {}) {
@@ -2181,7 +2186,18 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
       : runJsHostLane
         ? await collectJsHostPerfLane(() => runHost())
         : skippedPerfLane("js-host");
-    jsHostNative = await nativeFirstPerfLane(() => runHost("js-host-native"));
+    // (#6851) A host-blocked graph is compiled for the native-first lane in a
+    // bounded child, like the standalone lanes below: in process it has no
+    // budget and shares this generator's heap, and for webpack/jsdom it ran
+    // that heap out — killing the measure job, so no partial was written and
+    // the dashboard kept serving their stale pre-#6661 rows.
+    jsHostNative = await nativeFirstPerfLane(() =>
+      resolveNativeFirstPerfLane({
+        hostBlocked,
+        inProcess: () => runHost("js-host-native"),
+        inChild: (lane) => perfLaneInChild(name, lane, report.compile?.timeoutMs ?? 120_000),
+      }),
+    );
   }
   // (#6661, #6660) Both standalone lanes compile their own host-free graph, so
   // a JS-host compile/validation failure is not evidence about them. When the
@@ -2192,7 +2208,7 @@ async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions
     hostBlocked,
     selected: { "standalone-static": runStandaloneLane, "standalone-dynamic": runStandaloneDynamicLane },
     inProcess: (lane) => (lane === "standalone-static" ? runStatic() : runDynamic()),
-    inChild: (lane) => standaloneLaneInChild(name, lane, report.compile?.timeoutMs ?? 120_000),
+    inChild: (lane) => perfLaneInChild(name, lane, report.compile?.timeoutMs ?? 120_000),
   });
   return packagePerfRecord(spec.sampleOp, jsHost, standalone, { jsHostNative, standaloneDynamic });
 }
@@ -3170,7 +3186,11 @@ for (const entry of NPM_COMPAT_CATALOG) {
       ? await workloadRunner({ quiet: true })
       : null;
   const hasApiWorkload = workloadRunner !== null;
+  // (#6851) Name each phase, so a measure job that dies (OOM, runner kill)
+  // leaves the phase it died in on the CI log instead of only the first line.
+  console.log(`[npm-compat] ${entry.name} — upstream suite...`);
   const catalogUpstreamReport = await runConfiguredUpstreamSuite(entry.name, { quiet: true });
+  console.log(`[npm-compat] ${entry.name} — perf lanes...`);
   const upstreamSuite = entry.upstreamSuite;
   const upstreamTests = upstreamSuite
     ? {

@@ -492,7 +492,7 @@ function collectClosureParameterReferences(
  * outer assignment. Declaration identity comes from the checker; ancestry is
  * used only to establish the evaluation ordering within that declaration.
  */
-function closurePrecedesBindingInitializerStore(
+export function closurePrecedesBindingInitializerStore(
   closure: ts.ArrowFunction | ts.FunctionExpression,
   declaration: ts.Declaration | undefined,
 ): boolean {

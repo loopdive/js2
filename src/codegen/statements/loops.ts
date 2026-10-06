@@ -105,6 +105,7 @@ import { forOfArrayOverlayGetIdx, forOfArrayOverlayReadInstrs } from "../forof-a
 import { emitF64HoleToUndef, f64HolesActive } from "../vec-f64-hole-presence.js"; // (#4491 T11)
 import { definedFuncAt, nativeStrHelperHandle } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 import { isOpenForInReceiver } from "../for-in-open-object.js";
+import { isDirectProxyBinding } from "../proxy-value-provenance.js"; // (#6651 U3) for-in/for-of over a Proxy
 
 /** Strip the transparent parentheses used by CoverParenthesizedExpression in a
  * for-of assignment head. The declaration/destructuring paths intentionally
@@ -4110,7 +4111,13 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
   // wrong, and host mode enumerated nothing). Emit a self-contained native
   // index loop here for BOTH host and standalone — length from vec field 0,
   // each index ToString'd via the sealed decimal-key formatter, no host import.
-  const recvArrayInfo = resolveArrayInfo(ctx, ctx.checker.getTypeAtLocation(stmt.expression));
+  // (#6651 U3) TypeScript types `new Proxy(arr, h)` as the TARGET's array type,
+  // but the binding holds a `$Proxy`: the vec index loop saw no vec and ran zero
+  // times. Such a receiver enumerates dynamically (the proxy dispatch below).
+  const proxyReceiver = (ctx.standalone || ctx.wasi) && isDirectProxyBinding(ctx, stmt.expression);
+  const recvArrayInfo = proxyReceiver
+    ? undefined
+    : resolveArrayInfo(ctx, ctx.checker.getTypeAtLocation(stmt.expression));
   if (recvArrayInfo) {
     emitArrayForIn(ctx, fctx, stmt, recvArrayInfo, keyLocal, memberTarget, bindingPattern, callTarget);
     restoreForInHeadBindings(fctx, headSaved);
@@ -4148,7 +4155,8 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
     // `$Object` (so `__object_keys` would return empty) — those keep the
     // static-unroll path below, which is exact for a non-mutated closed shape.
     const recvWasmType = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(stmt.expression));
-    const isDynamicReceiver = isOpenForInReceiver(ctx, stmt.expression) || forInReceiverIsDynamic(ctx, recvWasmType);
+    const isDynamicReceiver =
+      proxyReceiver || isOpenForInReceiver(ctx, stmt.expression) || forInReceiverIsDynamic(ctx, recvWasmType);
     if (isDynamicReceiver) {
       ensureObjectRuntime(ctx);
       // #2964 — for-in must enumerate inherited enumerable keys too, so route

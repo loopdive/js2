@@ -3,6 +3,7 @@ import { ts, forEachChild } from "../ts-api.js";
 import { restPatternParamSlot } from "./resolved-rest-param.js"; // (#6774 S7)
 import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 import { isAccessorObjectLiteralType, propertyValueIsAccessorObjectLiteral } from "./accessor-value-field.js";
+import { propertyValueWidenedArrayCarrier } from "./declarations/array-rebind-element-widening.js"; // (#6651 U4)
 import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { emitToBoolean } from "./coercion-engine.js";
@@ -738,6 +739,7 @@ import {
 } from "./extern-declarations.js"; // (#3272) extracted verbatim
 import { buildLibDeclIndex } from "./lib-decl-index.js"; // (#4218) syntactic lib walk
 import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#2071)
+import { typeIsRuntimeKeyedObjectLiteral } from "./object-model/runtime-key-open-object.js"; // (#4526)
 import { typeTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) the consumer-side twin of the literal gate
 import { readEnv } from "../env.js";
 // (#6770/#6797) The object-model leaves reach these core helpers through
@@ -12451,9 +12453,36 @@ export function findUserBindingDecl(id: ts.Identifier): ts.Node | undefined {
         if (found) return found;
       }
     }
+    // A `var` nested in a loop / if / try body is hoisted to the enclosing
+    // function or script (§14.3.2 VarScopedDeclarations); the shallow search
+    // above misses it, so `for (…) { var name = … }` then `name` read the
+    // lib.dom `name` instead of the binding (#6651 U2, harness/testTypedArray).
+    const hoistRoot = ts.isSourceFile(scope)
+      ? scope
+      : ts.isFunctionLike(scope)
+        ? (scope as ts.FunctionLikeDeclaration).body
+        : undefined;
+    const hoisted = hoistRoot ? findHoistedVarDecl(hoistRoot, name) : undefined;
+    if (hoisted) return hoisted;
     scope = scope.parent;
   }
   return undefined;
+}
+
+/** A `var` declaration of `name` anywhere under `root`, not crossing a nested function or class. */
+function findHoistedVarDecl(root: ts.Node, name: string): ts.VariableDeclaration | undefined {
+  if (root.getSourceFile().isDeclarationFile) return undefined;
+  let found: ts.VariableDeclaration | undefined;
+  const visit = (node: ts.Node): void => {
+    if (found || ts.isFunctionLike(node) || ts.isClassLike(node)) return;
+    if (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.BlockScoped) === 0) {
+      found = node.declarations.find((d) => ts.isIdentifier(d.name) && d.name.text === name);
+      if (found) return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(root, visit);
+  return found;
 }
 
 /**
@@ -12996,6 +13025,9 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     if (ctx.standalone && typeTakesToPrimitiveOpenPath(tsType)) {
       return { kind: "externref" };
     }
+    // (#4526) A literal with a runtime computed key is an open object; a closed
+    // struct snapshot of it drops that key. See runtime-key-open-object.ts.
+    if (typeIsRuntimeKeyedObjectLiteral(ctx, tsType, omLiterals._hasRuntimeComputedKey)) return { kind: "externref" };
 
     let name = exactClassExpressionTypeName(ctx, tsType) ?? sym?.name;
     // Map class expression display names to their synthetic names only when
@@ -13606,6 +13638,7 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
     if ((wasmType.kind === "ref" || wasmType.kind === "ref_null") && propertyValueIsAccessorObjectLiteral(prop)) {
       wasmType = { kind: "externref" };
     }
+    wasmType = propertyValueWidenedArrayCarrier(ctx, prop, wasmType); // (#6651 U4) alias, not copy
     // For valueOf/toString callable properties, store as eqref instead of externref
     // so coercion can recover the closure and call it via call_ref
     if (wasmType.kind === "externref" && callSigs.length > 0 && (prop.name === "valueOf" || prop.name === "toString")) {

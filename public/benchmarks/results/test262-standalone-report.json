@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-10-05T18:57:10.360Z",
-  "baseline_generated_at": "2026-10-05T18:57:10.360Z",
-  "baseline_sha": "08952b0e37983496f753572884d5d8e3f567b1e8",
+  "timestamp": "2026-10-05T23:24:37.006Z",
+  "baseline_generated_at": "2026-10-05T23:24:37.006Z",
+  "baseline_sha": "2ecddde5bd388bfd120e7bc2b16ea1f9c028cde7",
   "oracle_version": 14,
   "mode": {
     "target": "standalone",
@@ -11,24 +11,24 @@
   },
   "summary": {
     "total": 48232,
-    "pass": 41818,
+    "pass": 41816,
     "fail": 4517,
-    "compile_error": 1861,
-    "compile_timeout": 18,
+    "compile_error": 1862,
+    "compile_timeout": 19,
     "skip": 18,
-    "compilable": 46335,
-    "host_free_pass": 41818,
+    "compilable": 46333,
+    "host_free_pass": 41816,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
-        "pass": 40777,
+        "pass": 40775,
         "fail": 4488,
-        "compile_error": 1845,
-        "compile_timeout": 18,
+        "compile_error": 1846,
+        "compile_timeout": 19,
         "skip": 18,
-        "compilable": 45265,
-        "host_free_pass": 40777,
+        "compilable": 45263,
+        "host_free_pass": 40775,
         "stale": 0,
         "label": "ECMAScript current standard"
       },
@@ -58,25 +58,25 @@
       },
       "official": {
         "total": 48232,
-        "pass": 41818,
+        "pass": 41816,
         "fail": 4517,
-        "compile_error": 1861,
-        "compile_timeout": 18,
+        "compile_error": 1862,
+        "compile_timeout": 19,
         "skip": 18,
-        "compilable": 46335,
-        "host_free_pass": 41818,
+        "compilable": 46333,
+        "host_free_pass": 41816,
         "stale": 0,
         "label": "standard + annex_b (default)"
       },
       "full": {
         "total": 48735,
-        "pass": 42054,
+        "pass": 42052,
         "fail": 4533,
-        "compile_error": 2016,
-        "compile_timeout": 18,
+        "compile_error": 2017,
+        "compile_timeout": 19,
         "skip": 114,
-        "compilable": 46587,
-        "host_free_pass": 42054,
+        "compilable": 46585,
+        "host_free_pass": 42052,
         "stale": 0,
         "label": "standard + annex_b + proposals"
       }
@@ -84,35 +84,35 @@
   },
   "official_summary": {
     "total": 48232,
-    "pass": 41818,
+    "pass": 41816,
     "fail": 4517,
-    "compile_error": 1861,
-    "compile_timeout": 18,
+    "compile_error": 1862,
+    "compile_timeout": 19,
     "skip": 18,
-    "compilable": 46335,
-    "host_free_pass": 41818,
+    "compilable": 46333,
+    "host_free_pass": 41816,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
-    "pass": 42054,
+    "pass": 42052,
     "fail": 4533,
-    "compile_error": 2016,
-    "compile_timeout": 18,
+    "compile_error": 2017,
+    "compile_timeout": 19,
     "skip": 114,
-    "compilable": 46587,
-    "host_free_pass": 42054,
+    "compilable": 46585,
+    "host_free_pass": 42052,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
-    "pass": 39460,
+    "pass": 39458,
     "fail": 4419,
-    "compile_error": 1806,
-    "compile_timeout": 18,
+    "compile_error": 1807,
+    "compile_timeout": 19,
     "skip": 18,
-    "compilable": 43879,
-    "host_free_pass": 39460,
+    "compilable": 43877,
+    "host_free_pass": 39458,
     "stale": 0
   },
   "scope_summaries": {
@@ -140,13 +140,13 @@
     },
     "standard": {
       "total": 47146,
-      "pass": 40777,
+      "pass": 40775,
       "fail": 4488,
-      "compile_error": 1845,
-      "compile_timeout": 18,
+      "compile_error": 1846,
+      "compile_timeout": 19,
       "skip": 18,
-      "compilable": 45265,
-      "host_free_pass": 40777,
+      "compilable": 45263,
+      "host_free_pass": 40775,
       "stale": 0
     }
   },
@@ -781,13 +781,13 @@
     {
       "name": "built-ins/Temporal",
       "path": "built-ins/Temporal",
-      "pass": 4495,
+      "pass": 4493,
       "fail": 102,
       "compile_error": 0,
-      "compile_timeout": 6,
+      "compile_timeout": 8,
       "skip": 0,
       "total": 4603,
-      "host_free_pass": 4495
+      "host_free_pass": 4493
     },
     {
       "name": "built-ins/ThrowTypeError",
@@ -805,8 +805,8 @@
       "path": "built-ins/TypedArray",
       "pass": 1080,
       "fail": 355,
-      "compile_error": 10,
-      "compile_timeout": 1,
+      "compile_error": 11,
+      "compile_timeout": 0,
       "skip": 0,
       "total": 1446,
       "host_free_pass": 1080
@@ -1205,7 +1205,7 @@
     "negative_test_fail": 4,
     "null_deref": 9,
     "oob": 7,
-    "other": 1242,
+    "other": 1243,
     "promise_error": 41,
     "range_error": 27,
     "runtime_error": 341,
@@ -1221,8 +1221,8 @@
   },
   "root_cause_map": {
     "target": "standalone",
-    "total_non_pass_non_skip": 6567,
-    "classified": 6567,
+    "total_non_pass_non_skip": 6569,
+    "classified": 6569,
     "unclassified_threshold": null,
     "has_edition_breakdown": true,
     "buckets": [
@@ -1272,14 +1272,14 @@
           "#661"
         ],
         "label": "Temporal proposal/polyfill gap",
-        "count": 108,
+        "count": 110,
         "statuses": {
           "pass": 0,
           "fail": 102,
           "compile_error": 0,
-          "compile_timeout": 6,
+          "compile_timeout": 8,
           "skip": 0,
-          "total": 108,
+          "total": 110,
           "host_free_pass": 0
         },
         "error_categories": {
@@ -1290,7 +1290,7 @@
           "illegal_cast": 1
         },
         "by_edition": {
-          "ES2026": 108
+          "ES2026": 110
         },
         "sample_files": [
           "test/built-ins/Temporal/Duration/prototype/subtract/precision-no-floating-point-loss.js",
@@ -1794,7 +1794,7 @@
           "test/language/statements/async-generator/yield-star-return-missing-value-is-awaited.js",
           "test/language/statements/for-of/head-using-fresh-binding-per-iteration.js",
           "test/language/statements/async-generator/generator-created-after-decl-inst.js",
-          "test/language/expressions/async-generator/yield-star-sync-next.js"
+          "test/language/expressions/class/elements/async-gen-private-method-static/yield-star-async-next.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::__create_async_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_done, env::__gen_result_value, env::__gen_return, env::__gen_set_return, env::__gen_yield_star, env::__gen_y",
@@ -1969,8 +1969,8 @@
         "statuses": {
           "pass": 0,
           "fail": 1185,
-          "compile_error": 185,
-          "compile_timeout": 12,
+          "compile_error": 186,
+          "compile_timeout": 11,
           "skip": 0,
           "total": 1382,
           "host_free_pass": 0
@@ -1981,7 +1981,7 @@
           "host_import_leak": 179,
           "type_error": 161,
           "oob": 5,
-          "other": 10,
+          "other": 11,
           "null_deref": 2
         },
         "by_edition": {
@@ -2061,20 +2061,20 @@
           "#1466"
         ],
         "label": "Object/property/destructuring semantic mismatches behind the object model",
-        "count": 245,
+        "count": 241,
         "statuses": {
           "pass": 0,
           "fail": 200,
-          "compile_error": 45,
+          "compile_error": 41,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 245,
+          "total": 241,
           "host_free_pass": 0
         },
         "error_categories": {
           "assertion_fail": 119,
           "type_error": 52,
-          "other": 19,
+          "other": 15,
           "wasm_compile": 1,
           "host_import_leak": 29,
           "runtime_error": 13,
@@ -2092,7 +2092,7 @@
           "ES2020": 18,
           "ES2027": 23,
           "ES2026": 3,
-          "ES2025": 8,
+          "ES2025": 4,
           "ES2018": 11,
           "ES2021": 13,
           "ES2016": 1
@@ -2454,24 +2454,25 @@
           "#1103"
         ],
         "label": "Wasm-native Map/Set/Weak collection semantics",
-        "count": 40,
+        "count": 44,
         "statuses": {
           "pass": 0,
           "fail": 33,
-          "compile_error": 7,
+          "compile_error": 11,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 40,
+          "total": 44,
           "host_free_pass": 0
         },
         "error_categories": {
           "assertion_fail": 29,
           "type_error": 4,
-          "host_import_leak": 7
+          "host_import_leak": 7,
+          "other": 4
         },
         "by_edition": {
           "ES2026": 10,
-          "ES2025": 23,
+          "ES2025": 27,
           "ES2015": 1,
           "ES2020": 2,
           "ES2024": 2,

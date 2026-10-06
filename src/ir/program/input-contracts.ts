@@ -4,7 +4,7 @@ import type { IrModule } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import type { IrGlobalRef } from "../core/value-references.js";
 import type { IrSourceId, IrUnitId } from "../../shared/contracts/ir-identity.js";
-import type { IrUnitInventory } from "../../shared/contracts/ir-unit-inventory.js";
+import type { IrUnitInventory, IrPreparedSourceMap } from "../../shared/contracts/ir-unit-inventory.js";
 import type { AllocRegistrySnapshot } from "../analysis/contracts/allocations.js";
 import type { IrModuleInitPlan } from "./startup.js";
 import type { ProgramAbiDerivedUnitRecord } from "./abi.js";
@@ -41,6 +41,7 @@ export interface TypedIrProgramInput {
   readonly globals: readonly TypedIrProgramGlobal[];
   readonly allocations: AllocRegistrySnapshot;
   readonly runtimeSupport?: IrRuntimeSupport;
+  readonly sourceMap?: IrPreparedSourceMap;
 }
 
 export interface TypedIrProgramOptions {

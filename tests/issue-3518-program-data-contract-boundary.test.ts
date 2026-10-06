@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { captureMainInventoryPredecessorPolicy } from "./helpers/ir-main-inventory-source-successor.js";
 import {
   captureArrayBufferIsViewMainPredecessorPolicy,
   capturePresentationClassificationPredecessorPolicy,
@@ -6,7 +7,10 @@ import {
   captureWasmGcHelperPredecessorPolicy,
 } from "./helpers/ir-runtime-program-policy-evolution.js";
 import { captureProgramValidatorPredecessorPolicy } from "./helpers/ir-runtime-program-policy-evolution.js";
-import { beforeProgramValidatorRelocation } from "./helpers/ir-program-validator-relocation.js";
+import {
+  beforeSourceMapProgramValidatorRelocation,
+  captureSourceMapSchemaSourceEpoch,
+} from "./helpers/ir-program-validator-relocation.js";
 
 import { beforeRuntimePreparationRelocation } from "./helpers/ir-runtime-preparation-relocation.js";
 import { spawnSync } from "node:child_process";
@@ -159,7 +163,9 @@ const policy = () => {
                       captureLoweringAnalysisPredecessorPolicy(
                         capturePresentationClassificationPredecessorPolicy(
                           captureArrayBufferIsViewMainPredecessorPolicy(
-                            JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8")),
+                            captureMainInventoryPredecessorPolicy(
+                              JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8")),
+                            ),
                           ),
                         ),
                       ),
@@ -215,8 +221,24 @@ function fixture(includeOwnership = false) {
   // Fresh complete live inputs are authenticated once for this initial copy.
   // The maps are never used by run/append/put or after mutant injection.
   const rawRead = liveSourceReader(repository);
+  assertSourceMapValidatorComponent(rawRead);
+  const sourceEpoch = captureSourceMapSchemaSourceEpoch(rawRead);
+  const sourceEpochPaths: readonly string[] = [
+    "src/compiler/define-substitution.ts",
+    "src/ir/core/async-plan.ts",
+    "src/ir/core/nodes.ts",
+    "src/ir/program-codec.ts",
+    "src/ir/program-prepare-ir.ts",
+    "src/ir/program/input-contracts.ts",
+    "src/ir/program/input.ts",
+    "src/ir/program/prepared-contracts.ts",
+    "src/ir/program/validation.ts",
+    "src/position-map.ts",
+    "src/shared/contracts/ir-unit-inventory.ts",
+  ];
   const historicalDependencyRead = (path: string): string => {
-    const source = rawRead(path);
+    const actual = rawRead(path);
+    const source = sourceEpochPaths.includes(path) ? sourceEpoch.before(path, actual) : actual;
     return path === "src/wasm/model/instructions.ts" ? beforeCanonicalInstructionsSource(source) : source;
   };
   const initialRuntimeSources = reconstructRuntimeContractReceiptSources(
@@ -251,7 +273,7 @@ function fixture(includeOwnership = false) {
       const projected = initialProgramSources.get(path);
       if (projected === undefined) throw new Error(`missing authenticated initial program source ${path}`);
       source = projected;
-    } else source = rawRead(path);
+    } else source = historicalDependencyRead(path);
     put(path, source);
   }
   put(
@@ -698,3 +720,22 @@ describe("complete canonical program-data dependency boundary", () => {
     ).toBe(true);
   });
 });
+
+// Fresh whole component authentication precedes each explicit source-epoch bridge.
+function assertSourceMapValidatorComponent(readLive: (path: string) => string): void {
+  const path = "tests/helpers/ir-program-validator-relocation.ts";
+  const text = readLive(path);
+  if (typeof text !== "string" || text.length === 0)
+    throw new Error("program validator relocation: nonempty primitive text required: " + path);
+  if (
+    Buffer.byteLength(text) !== 46642 ||
+    createHash("sha256").update(text).digest("hex") !==
+      "6e32ca208775e8eeae765bf3345cdd3cb1e0f40a1784f684afd9c4dff3a4cfe0"
+  )
+    throw new Error("program validator relocation: complete source pin mismatch: " + path);
+}
+function beforeProgramValidatorRelocation(readLive: (path: string) => string): (path: string) => string {
+  if (typeof readLive !== "function") throw new Error("program validator relocation: physical reader required");
+  assertSourceMapValidatorComponent(readLive);
+  return beforeSourceMapProgramValidatorRelocation(readLive);
+}

@@ -1,10 +1,12 @@
 ---
 id: 4526
 title: "Redux: 55/82 — remaining observable, lexical-shadowing, and dynamic-call clusters"
-status: ready
+status: done
+completed: 2026-10-05
+done_scope: "Clusters A-E of the 2026-10-05 wave-10 slice (Redux 67/82 -> 76/82). Remaining rows routed: F -> #6852, G -> #6853, H wont-fix (#5347); an element-access-call trap found while reducing D -> #6854."
 sprint: current
 created: 2026-08-16
-updated: 2026-08-27
+updated: 2026-10-05
 priority: high
 horizon: l
 feasibility: hard
@@ -14,20 +16,30 @@ area: codegen, runtime
 language_feature: closures, objects
 goal: npm-library-support
 related: [3996, 3995, 4370, 4456]
-oracle-ratchet-allow:
-  - src/codegen/module-namespace-value.ts
+# 2026-10-05 (wave-10 slice) — the mechanisms live in two NEW leaf modules
+# (expressions/apply-dynamic-arglist.ts, object-model/runtime-key-open-object.ts)
+# plus one allowlist entry in runtime/wasm-vec-prototype.ts; src/runtime.ts is
+# untouched (#4401 ceiling). What lands in the god-files is the wiring:
+# calls.ts +9 (Case-1 registry/dynamic-apply gate), closures.ts +6 (callback
+# capture boxing — the decision must be made in compileArrowAsCallback's own
+# capture loop), index.ts +4 (one resolveWasmType arm, lockstep with the
+# literal's host path), object-ops.ts +5 (same predicate for Object.keys),
+# import-resolver.ts +24 (setImmediate/clearImmediate timer shim —
+# the shim table lives there), calls-closures.ts +3 (`includes` joins the
+# existing String∩Array refusal list in tryExternClassMethodOnAny).
 loc-budget-allow:
-  - src/codegen/closure-exports.ts
-  - src/codegen/expressions/call-identifier.ts
   - src/codegen/expressions/calls.ts
-  - src/codegen/context/types.ts
+  - src/codegen/closures.ts
   - src/codegen/index.ts
+  - src/codegen/object-ops.ts
+  - src/import-resolver.ts
+  - src/codegen/expressions/calls-closures.ts
 func-budget-allow:
-  - src/codegen/closure-exports.ts::emitClosureCallExportN
-  - src/codegen/closures/arrow-phases.ts::planClosureCaptures
-  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
-  - src/codegen/index.ts::generateModule
-  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/expressions/calls.ts::compileCallExpression
+  - src/codegen/closures.ts::compileArrowAsCallback
+  - src/codegen/index.ts::resolveWasmType
+  - src/codegen/object-ops.ts::compileObjectKeysOrValues
+  - src/codegen/expressions/calls-closures.ts::tryExternClassMethodOnAny
 files:
   - tests/dogfood/redux-upstream-suite.mjs
   - tests/dogfood/upstream-suite-runner.mjs
@@ -164,6 +176,80 @@ infrastructure, caching answers, or introducing Redux-specific rewrites:
       suppressing failures.
 - [ ] Focused closure/call tests, typecheck, compiler ratchets, and the full
       pinned Redux suite remain green.
+
+## 2026-10-05 wave-10 slice — Implementation Plan
+
+Base measured on upstream main `c3e3fab33d` (2026-10-05): **67/82 Wasm**,
+82/82 native. The 15 failing rows grouped by root cause from the suite report:
+
+| cluster | rows | mechanism (measured on two-file fixtures under `.tmp/`) |
+| --- | --: | --- |
+| A `.apply` with a runtime list | 3 bind + feeds createStore | `actionCreator.apply(this, args)`: Case 1 of the identifier `.call/.apply` lowering read the graph-wide `funcMap` by NAME (a test file's nested `function actionCreator` captured Redux's parameter), and its static arms only spread an array LITERAL — any runtime list called the target with ZERO args and no receiver |
+| B `setImmediate` | 2 applyMiddleware | no binding for a bare `setImmediate(cb)` call (the timer shim covered setTimeout/setInterval only) |
+| C callback capture of its own initializer's const | 2 createStore | `const unSubB = store.subscribe(() => { …; unSubB() })` — `compileArrowAsCallback` boxed only captures written in the callback; the ordinary closure path's `closurePrecedesBindingInitializerStore` rule was missing, so the TDZ hole (null) was snapshotted |
+| D runtime computed key | 1 createStore | `{ subscribe(){}, [$$observable]() {} }` is built as an open object (`_hasRuntimeComputedKey`) but its mixed type `{subscribe; [x: number]: …}` lowered to a closed struct, so every return/param slot took a snapshot that dropped the runtime-keyed member |
+| E inherited Array.prototype member | 1 createStore (`toContain`) | a dynamic `actual.includes` read on a compiled array reached `__extern_get`, which answered own data only — `typeof actual.includes` was `"undefined"`; and the dynamic CALL `actual.includes(x)` on an `any` receiver bound the first ambient extern class declaring `includes` — DOM's `IDBKeyRange` — and answered `false` |
+| F per-literal method fork vs host dispatch | 2 createStore | → [#6852](6852-objlit-method-host-dispatch-ignores-per-literal-fork.md) |
+| G TS `number` param / method mixed return | 3 combineReducers | → [#6853](6853-ts-number-param-undefined-and-method-mixed-return.md) |
+| H `vm.runInNewContext` | 1 isPlainObject | wont-fix (second realm), recorded in #5347 |
+
+Fix plan (A–E, generic, no Redux-specific code):
+
+- A: `expressions/apply-dynamic-arglist.ts` — `mappedFunctionIsForeign`
+  (a parameter/variable/binding never owns another declaration's registry
+  entry) and `isDynamicApplyArgList`; on the JS host a runtime list skips the
+  static arms and takes the existing reflective host-call tail (receiver and
+  list applied by the host). Standalone keeps its lowering.
+- B: `import-resolver.ts` timer shim lowers `setImmediate(cb)` /
+  `clearImmediate(h)` onto the existing callback-aware timeout capability
+  (no new host import).
+- C: `compileArrowAsCallback` adds the same initializer-store rule as
+  `planClosureCaptures`.
+- D: `object-model/runtime-key-open-object.ts` — `resolveWasmType` (and `Object.keys`'s
+  static fold) treat an object-literal type whose literal took the
+  runtime-key path as externref, in lockstep with the value side.
+- E: `runtime/wasm-vec-prototype.ts` — the JS-host vec prototype bridge
+  (deliberately limited to reflective `slice` by an earlier Moment fix, so
+  native search/mutating methods do not bypass compiled sidecar properties)
+  admits `includes` as its second member; measured host `--isolate` on
+  `built-ins/Array/prototype/{includes,slice}` (101 rows, including the
+  `[].includes.call(<object>)` length rows): 82/19 before and after, identical
+  rows. And `includes` joins the `tryExternClassMethodOnAny` String∩Array
+  ambiguity refusals (`indexOf`, `slice`, …) so an `any` receiver dispatches
+  on its runtime shape.
+
+## Resolution (2026-10-05)
+
+Clusters A–E landed as planned; all on upstream `c3e3fab33d`, measured base
+(file-copy A/B, every file swapped together) vs fix at one HEAD, suites run
+one at a time:
+
+| suite | base | fix | flips |
+| --- | --: | --: | --- |
+| redux | 67/82 | **76/82** | +9 / −0 |
+| lodash | 59/62 | 60/62 | +1 / −0 |
+| axios | 208/231 | 210/231 | +2 / −0 |
+| hono | 271/324 | 272/324 | +1 / −0 |
+| prettier | 75/151 | 75/151 | 0 |
+| jest | 336/356 | 336/356 | 0 |
+| marked | 16/30 | 16/30 | 0 |
+| uuid | 75/75 | 75/75 | 0 |
+| clsx | 32/32 | 32/32 | 0 |
+| cookie | 63740/63740 | 63740/63740 | 0 |
+| moment | 10/10 | 10/10 | 0 |
+
+Standalone test262, scoped to the touched surface (507 rows:
+`built-ins/Function/prototype/{apply,call}`, `language/computed-property-names`,
+`built-ins/Object/keys`, `language/expressions/object/method-definition`):
+443 pass / 47 fail / 17 CE on BOTH sides, identical non-pass row sets. Host
+lane `--isolate` on the 97 apply/call rows: 84/13 on both sides, identical.
+
+Regression coverage: `tests/issue-4526-redux-wave10.test.ts` (5 tests, two-file
+untyped fixtures, expected values computed by Node running the same files);
+all 5 fail on the parent and pass with the fix.
+
+Residual Redux rows (6): 3 combineReducers → #6853; 2 observable integration
+→ #6852; isPlainObject → wont-fix (`vm` realm, #5347).
 
 ## 2026-08-28 host-import policy ratchet (native-first 394 → 395)
 

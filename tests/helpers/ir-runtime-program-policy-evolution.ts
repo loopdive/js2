@@ -5504,7 +5504,7 @@ export function captureNestedStackificationPredecessorPolicySource(raw: string):
 
 // Fixed five-owner program validator successor. All predecessor APIs above remain byte-exact.
 import {
-  captureProgramValidatorRelocation,
+  captureSourceMapProgramValidatorRelocation,
   type ProgramValidatorCurrentPath,
 } from "./ir-program-validator-relocation.js";
 const programValidatorPolicyReceiptPath = "tests/helpers/ir-runtime-program-policy-program-validator.json";
@@ -6219,12 +6219,17 @@ function authenticateProgramValidatorPolicy(): ProgramValidatorPolicyReceipt {
     "source receipt changed",
   );
   captureC1HistoricalAuthority();
-  const sources = captureProgramValidatorRelocation((path) =>
+  programValidatorPolicyPin(
+    readFileSync(new URL("./ir-program-validator-relocation.ts", import.meta.url)),
+    sourceMapPolicyComponentPin,
+    "complete current source map component changed",
+  );
+  const sources = captureSourceMapProgramValidatorRelocation((path) =>
     readFileSync(new URL(`../../${path}`, import.meta.url), "utf8"),
   );
   for (const pin of receipt.sourcePins)
     programValidatorPolicyPin(
-      Buffer.from(sources.readCurrent(pin.path as ProgramValidatorCurrentPath)),
+      Buffer.from(sources.readRelocationCurrent(pin.path as ProgramValidatorCurrentPath)),
       pin,
       "current source changed: " + pin.path,
     );
@@ -7053,8 +7058,8 @@ function authenticateWasmGcHelperPolicy(): WasmGcHelperReceipt {
   for (const key of Object.keys(old.current))
     if (!same(old.current[key], receipt.before[key as keyof typeof receipt.before]))
       wasmGcHelperFail("program-validator predecessor profile mismatch");
-  const prefix = readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)).subarray(
-    0,
+  const prefix = sourceMapProgramValidatorPolicyHistoricalPrefix(
+    readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)),
     receipt.helperPrefix.bytes,
   );
   wasmGcHelperPin(prefix, receipt.helperPrefix, "complete predecessor helper prefix changed");
@@ -7582,8 +7587,8 @@ function authenticateLoweringAnalysisPolicy(): LoweringAnalysisReceipt {
   const predecessor = JSON.parse(predecessorBytes.toString("utf8")) as typeof wasmGcHelperExpected;
   if (!same(predecessor, wasmGcHelperExpected) || !same(predecessor.current, receipt.before))
     loweringAnalysisFail("fixed D2 predecessor profile mismatch");
-  const prefix = readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)).subarray(
-    0,
+  const prefix = sourceMapProgramValidatorPolicyHistoricalPrefix(
+    readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)),
     receipt.helperPrefix.bytes,
   );
   loweringAnalysisPin(prefix, receipt.helperPrefix, receipt.helperPrefix.path + " prefix");
@@ -7914,7 +7919,10 @@ function authenticatePresentationClassification(): PresentationClassificationRec
     presentationClassificationFail("fixed receipt schema mismatch");
   presentationClassificationPin(
     earlyReturnClassificationHistoricalPrefix(
-      readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),
+      sourceMapProgramValidatorPolicyHistoricalPrefix(
+        readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),
+        357119,
+      ),
     ),
     receipt.helperPrefix,
     "complete predecessor helper prefix changed",
@@ -8214,7 +8222,10 @@ function authenticateArrayBufferIsViewMain(): ArrayBufferIsViewMainReceipt {
   if (!same(receipt, arrayBufferIsViewMainExpected)) arrayBufferIsViewMainFail("fixed receipt schema mismatch");
   arrayBufferIsViewMainPin(
     earlyReturnIsViewHistoricalPrefix(
-      readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),
+      sourceMapProgramValidatorPolicyHistoricalPrefix(
+        readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),
+        369684,
+      ),
     ),
     receipt.helperPrefix,
     "complete predecessor helper prefix changed",
@@ -8530,4 +8541,262 @@ function earlyReturnIsViewHistoricalPrefix(source: Buffer): Buffer {
     arrayBufferIsViewMainPin,
     arrayBufferIsViewMainFail,
   );
+}
+
+// Independent root-bound outer epoch; all proof tables follow every captured prefix.
+const sourceMapPolicyComponentPin = {
+  bytes: 46642,
+  sha256: "6e32ca208775e8eeae765bf3345cdd3cb1e0f40a1784f684afd9c4dff3a4cfe0",
+  gitBlob: "d82bdac04db23be88135f00a2b43bdb172cb5f89",
+} as const;
+const sourceMapPolicyPrefixProofs: readonly EarlyReturnPrefixProof[] = [
+  {
+    before: {
+      bytes: 292423,
+      sha256: "22e2dc2bd4ca495a661708f7ef4591aa77567ac55889bd19fb845788e32d21f4",
+      gitBlob: "eb100dc9b4152f493d0d6584aeeb983cb724bc4d",
+    },
+    current: {
+      bytes: 292655,
+      sha256: "c6e20681eed8d9461f111b4746449030607029f42cb6a1565b401dce22c34175",
+      gitBlob: "f1876da32201607c1d9def16d2314ee2e3701fa7",
+    },
+    edits: [
+      {
+        beforeOffset: 254123,
+        afterOffset: 254123,
+        before: "  captureProgramValidatorRelocation,\n",
+        after: "  captureSourceMapProgramValidatorRelocation,\n",
+      },
+      {
+        beforeOffset: 285052,
+        afterOffset: 285061,
+        before: "  const sources = captureProgramValidatorRelocation((path) =>\n",
+        after:
+          '  programValidatorPolicyPin(\n    readFileSync(new URL("./ir-program-validator-relocation.ts", import.meta.url)),\n    sourceMapPolicyComponentPin,\n    "complete current source map component changed",\n  );\n  const sources = captureSourceMapProgramValidatorRelocation((path) =>\n',
+      },
+      {
+        beforeOffset: 285259,
+        afterOffset: 285481,
+        before: "      Buffer.from(sources.readCurrent(pin.path as ProgramValidatorCurrentPath)),\n",
+        after: "      Buffer.from(sources.readRelocationCurrent(pin.path as ProgramValidatorCurrentPath)),\n",
+      },
+    ],
+  },
+  {
+    before: {
+      bytes: 331953,
+      sha256: "735727a935f4a7d38ef65d8a43cfd8543ef110ddb9f5e2e840c59aa3a086e1b7",
+      gitBlob: "eb3bd1d242534987788ba3c6ea8dfd85534df056",
+    },
+    current: {
+      bytes: 332222,
+      sha256: "233364d8254879d72a87d17b5de7864596337cfb4a3f4c5ccd10c86982b6697f",
+      gitBlob: "525d515a53a79bf9ef185dcf783283f50cd7fb66",
+    },
+    edits: [
+      {
+        beforeOffset: 254123,
+        afterOffset: 254123,
+        before: "  captureProgramValidatorRelocation,\n",
+        after: "  captureSourceMapProgramValidatorRelocation,\n",
+      },
+      {
+        beforeOffset: 285052,
+        afterOffset: 285061,
+        before: "  const sources = captureProgramValidatorRelocation((path) =>\n",
+        after:
+          '  programValidatorPolicyPin(\n    readFileSync(new URL("./ir-program-validator-relocation.ts", import.meta.url)),\n    sourceMapPolicyComponentPin,\n    "complete current source map component changed",\n  );\n  const sources = captureSourceMapProgramValidatorRelocation((path) =>\n',
+      },
+      {
+        beforeOffset: 285259,
+        afterOffset: 285481,
+        before: "      Buffer.from(sources.readCurrent(pin.path as ProgramValidatorCurrentPath)),\n",
+        after: "      Buffer.from(sources.readRelocationCurrent(pin.path as ProgramValidatorCurrentPath)),\n",
+      },
+      {
+        beforeOffset: 322798,
+        afterOffset: 323030,
+        before:
+          "  const prefix = readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)).subarray(\n    0,\n",
+        after:
+          "  const prefix = sourceMapProgramValidatorPolicyHistoricalPrefix(\n    readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)),\n",
+      },
+    ],
+  },
+  {
+    before: {
+      bytes: 357119,
+      sha256: "91f4c65528072df09092f47ac11f2a6d9d944ae90bd58aa4c29258d2aec71dd2",
+      gitBlob: "996123d86af1f162e19f37fff2c19339ce203440",
+    },
+    current: {
+      bytes: 357425,
+      sha256: "be408433c6934bf3b2358b343faf651507ce745ecad055658e40fd7b6dff65a9",
+      gitBlob: "20ddf2ef28cb330b5e5a448740df4751d07b9ba5",
+    },
+    edits: [
+      {
+        beforeOffset: 254123,
+        afterOffset: 254123,
+        before: "  captureProgramValidatorRelocation,\n",
+        after: "  captureSourceMapProgramValidatorRelocation,\n",
+      },
+      {
+        beforeOffset: 285052,
+        afterOffset: 285061,
+        before: "  const sources = captureProgramValidatorRelocation((path) =>\n",
+        after:
+          '  programValidatorPolicyPin(\n    readFileSync(new URL("./ir-program-validator-relocation.ts", import.meta.url)),\n    sourceMapPolicyComponentPin,\n    "complete current source map component changed",\n  );\n  const sources = captureSourceMapProgramValidatorRelocation((path) =>\n',
+      },
+      {
+        beforeOffset: 285259,
+        afterOffset: 285481,
+        before: "      Buffer.from(sources.readCurrent(pin.path as ProgramValidatorCurrentPath)),\n",
+        after: "      Buffer.from(sources.readRelocationCurrent(pin.path as ProgramValidatorCurrentPath)),\n",
+      },
+      {
+        beforeOffset: 322798,
+        afterOffset: 323030,
+        before:
+          "  const prefix = readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)).subarray(\n    0,\n",
+        after:
+          "  const prefix = sourceMapProgramValidatorPolicyHistoricalPrefix(\n    readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)),\n",
+      },
+      {
+        beforeOffset: 347924,
+        afterOffset: 348193,
+        before:
+          "  const prefix = readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)).subarray(\n    0,\n",
+        after:
+          "  const prefix = sourceMapProgramValidatorPolicyHistoricalPrefix(\n    readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)),\n",
+      },
+    ],
+  },
+  {
+    before: {
+      bytes: 369684,
+      sha256: "dc117e53e82264b09aac71009b46a5424925fe16cf16c2dc434744d5b73c867b",
+      gitBlob: "9a83c4f87cf586ee1776accdcd95e8227381cfd3",
+    },
+    current: {
+      bytes: 370072,
+      sha256: "7dc497609863d45906c5d249b025b175aa0174ab3d83b1c62248ba86c7c5ecbe",
+      gitBlob: "a98e876527b212e59c649024095f643426ebbc50",
+    },
+    edits: [
+      {
+        beforeOffset: 254123,
+        afterOffset: 254123,
+        before: "  captureProgramValidatorRelocation,\n",
+        after: "  captureSourceMapProgramValidatorRelocation,\n",
+      },
+      {
+        beforeOffset: 285052,
+        afterOffset: 285061,
+        before: "  const sources = captureProgramValidatorRelocation((path) =>\n",
+        after:
+          '  programValidatorPolicyPin(\n    readFileSync(new URL("./ir-program-validator-relocation.ts", import.meta.url)),\n    sourceMapPolicyComponentPin,\n    "complete current source map component changed",\n  );\n  const sources = captureSourceMapProgramValidatorRelocation((path) =>\n',
+      },
+      {
+        beforeOffset: 285259,
+        afterOffset: 285481,
+        before: "      Buffer.from(sources.readCurrent(pin.path as ProgramValidatorCurrentPath)),\n",
+        after: "      Buffer.from(sources.readRelocationCurrent(pin.path as ProgramValidatorCurrentPath)),\n",
+      },
+      {
+        beforeOffset: 322798,
+        afterOffset: 323030,
+        before:
+          "  const prefix = readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)).subarray(\n    0,\n",
+        after:
+          "  const prefix = sourceMapProgramValidatorPolicyHistoricalPrefix(\n    readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)),\n",
+      },
+      {
+        beforeOffset: 347924,
+        afterOffset: 348193,
+        before:
+          "  const prefix = readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)).subarray(\n    0,\n",
+        after:
+          "  const prefix = sourceMapProgramValidatorPolicyHistoricalPrefix(\n    readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)),\n",
+      },
+      {
+        beforeOffset: 362950,
+        afterOffset: 363256,
+        before: '      readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n',
+        after:
+          '      sourceMapProgramValidatorPolicyHistoricalPrefix(\n        readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n        357119,\n      ),\n',
+      },
+    ],
+  },
+  {
+    before: {
+      bytes: 390466,
+      sha256: "bb2d3a7e6bcfb54237cb03fbe4bdc61f128a508ccfb7425bdde6a150d0add55c",
+      gitBlob: "c5a6659926bd635a4fe56d7459d120cffa9eeb58",
+    },
+    current: {
+      bytes: 390936,
+      sha256: "9ce3265577df5fc340276f25d7edf8c9df5f0f5c2d3803cae14fba47ce68b814",
+      gitBlob: "9d1d71f2e4b652608a8ba38745d50858385e954a",
+    },
+    edits: [
+      {
+        beforeOffset: 254123,
+        afterOffset: 254123,
+        before: "  captureProgramValidatorRelocation,\n",
+        after: "  captureSourceMapProgramValidatorRelocation,\n",
+      },
+      {
+        beforeOffset: 285052,
+        afterOffset: 285061,
+        before: "  const sources = captureProgramValidatorRelocation((path) =>\n",
+        after:
+          '  programValidatorPolicyPin(\n    readFileSync(new URL("./ir-program-validator-relocation.ts", import.meta.url)),\n    sourceMapPolicyComponentPin,\n    "complete current source map component changed",\n  );\n  const sources = captureSourceMapProgramValidatorRelocation((path) =>\n',
+      },
+      {
+        beforeOffset: 285259,
+        afterOffset: 285481,
+        before: "      Buffer.from(sources.readCurrent(pin.path as ProgramValidatorCurrentPath)),\n",
+        after: "      Buffer.from(sources.readRelocationCurrent(pin.path as ProgramValidatorCurrentPath)),\n",
+      },
+      {
+        beforeOffset: 322798,
+        afterOffset: 323030,
+        before:
+          "  const prefix = readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)).subarray(\n    0,\n",
+        after:
+          "  const prefix = sourceMapProgramValidatorPolicyHistoricalPrefix(\n    readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)),\n",
+      },
+      {
+        beforeOffset: 347924,
+        afterOffset: 348193,
+        before:
+          "  const prefix = readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)).subarray(\n    0,\n",
+        after:
+          "  const prefix = sourceMapProgramValidatorPolicyHistoricalPrefix(\n    readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)),\n",
+      },
+      {
+        beforeOffset: 362950,
+        afterOffset: 363256,
+        before: '      readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n',
+        after:
+          '      sourceMapProgramValidatorPolicyHistoricalPrefix(\n        readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n        357119,\n      ),\n',
+      },
+      {
+        beforeOffset: 376430,
+        afterOffset: 376818,
+        before: '      readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n',
+        after:
+          '      sourceMapProgramValidatorPolicyHistoricalPrefix(\n        readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n        369684,\n      ),\n',
+      },
+    ],
+  },
+];
+/** Pure fixed inverse to the immediately preceding policy epoch, before existing earlier inverses. */
+export function sourceMapProgramValidatorPolicyHistoricalPrefix(source: Buffer, beforeBytes: number): Buffer {
+  if (!Buffer.isBuffer(source)) programValidatorPolicyFail("primitive source map policy buffer required");
+  const proof = sourceMapPolicyPrefixProofs.find((entry) => entry.before.bytes === beforeBytes);
+  if (!proof) programValidatorPolicyFail("unexpected source map policy prefix domain");
+  return earlyReturnHistoricalPrefix(source, proof, programValidatorPolicyPin, programValidatorPolicyFail);
 }

@@ -241,6 +241,59 @@ export async function resolveStandalonePerfLanes({ hostBlocked, selected, inProc
   return lanes;
 }
 
+/**
+ * (#6851) The native-first JS-host lane as a bounded-child lane. When the
+ * JS-host package-entry gate blocked (it timed out or failed on the package
+ * graph), compiling that same graph in the generator's own process has no
+ * budget and no memory isolation: for webpack and jsdom it exhausted the
+ * generator's ~4 GB heap, the measure job died without a partial report, and
+ * the dashboard carried their pre-#6661 rows ("package entry did not produce a
+ * runnable Wasm module") forward as stale for weeks.
+ */
+export const JS_HOST_NATIVE_PERF_LANE = Object.freeze({
+  lane: "js-host-native",
+  key: "jsHostNative",
+  placement: "js-host",
+  inputMode: "runtime-dynamic",
+});
+
+/** Every lane a bounded `--perf-only --lane <lane>` child can measure. */
+export const CHILD_PERF_LANES = Object.freeze([
+  ...STANDALONE_PERF_LANES.map((entry) => ({ ...entry, placement: "standalone" })),
+  JS_HOST_NATIVE_PERF_LANE,
+]);
+
+// V8's fatal-OOM banner. The child's last output lines after it are a native
+// stack trace ("10: 0x1269c4e [node]"), so a "last line" tail names nothing.
+const HEAP_EXHAUSTED_RE = /JavaScript heap out of memory|Reached heap limit|Allocation failed - /;
+
+/**
+ * (#6851) Diagnostic for a bounded lane child that exited (within its budget —
+ * an overrun is `laneBudgetOverrun`'s) without writing a lane record: a heap
+ * exhaustion is named as such, anything else quotes the child's last line.
+ *
+ * @param {string} lane CLI lane name (`standalone-dynamic`, `js-host-native`, ...)
+ * @param {{ status?: number | null, signal?: string | null, output?: string }} child
+ */
+export function childLaneFailureDiagnostic(lane, child) {
+  const { status = null, signal = null, output = "" } = child;
+  const text = String(output ?? "");
+  if (HEAP_EXHAUSTED_RE.test(text)) {
+    return `${lane} lane ran out of JS heap compiling the package graph (V8: JavaScript heap out of memory; child exit ${status ?? signal ?? "abnormal"})`;
+  }
+  const tail = text.trim().split("\n").filter(Boolean).at(-1);
+  return `${lane} lane child exited ${status ?? signal ?? "abnormally"}: ${tail ?? "no output"}`;
+}
+
+/**
+ * (#6851) Resolve the native-first JS-host lane: host-blocked → the bounded
+ * child (`inChild`), never the unbudgeted in-process compile that took the
+ * whole generator down with it; otherwise in process, as before.
+ */
+export async function resolveNativeFirstPerfLane({ hostBlocked, inProcess, inChild }) {
+  return hostBlocked ? await inChild(JS_HOST_NATIVE_PERF_LANE.lane) : await inProcess();
+}
+
 /** The one tolerated O4 deviation (#4586): Flatten cannot read `try_table`. */
 export const O4_TRY_TABLE_FLATTEN_OMISSION =
   "wasm-opt -O4 omitted Binaryen's unsupported flatten pass for standardized try_table output; all remaining O4 passes completed.";

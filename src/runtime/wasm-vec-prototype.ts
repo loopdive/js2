@@ -11,6 +11,14 @@ export const WASM_VEC_PROTOTYPE_MISS = Symbol("wasm-vec-prototype-miss");
  * symbolic length and fail to throw. Reflective `slice.call(arguments, ...)`
  * remains necessary for published ES5 bundles and is safe because the runtime
  * already presents arguments objects through their live host mirror.
+ *
+ * (#4526) `includes` is the second member: the upstream test harnesses'
+ * `toContain` feature-tests `typeof actual.includes === "function"` on a
+ * dynamic slot, which answered "undefined" for every compiled array (Redux
+ * "exposes the public API"). Measured with host `--isolate` on
+ * `built-ins/Array/prototype/{includes,slice}` (101 rows, incl. the
+ * `[].includes.call(<object>)` length/ToNumber rows): 82/19 before and after,
+ * identical non-pass rows.
  */
 export function getWasmVecPrototypeMember(
   obj: unknown,
@@ -19,7 +27,7 @@ export function getWasmVecPrototypeMember(
   exports: Record<string, Function> | undefined,
 ): unknown {
   if (isArgumentsObject) return WASM_VEC_PROTOTYPE_MISS;
-  if (key !== "slice") return WASM_VEC_PROTOTYPE_MISS;
+  if (key !== "slice" && key !== "includes") return WASM_VEC_PROTOTYPE_MISS;
   const isVec = exports?.__is_vec as ((value: unknown) => number) | undefined;
   if (typeof isVec !== "function") return WASM_VEC_PROTOTYPE_MISS;
   try {

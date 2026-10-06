@@ -1,6 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { IrSourceId, IrUnitId, IrClassId, IrLexicalOwnerId, IrSyntheticUnitRole } from "./ir-identity.js";
+import type {
+  IrBindingId,
+  IrSourceId,
+  IrUnitId,
+  IrClassId,
+  IrLexicalOwnerId,
+  IrSyntheticUnitRole,
+} from "./ir-identity.js";
 import type { CompilerSourceProducer } from "./source-origin.js";
 import type { IrPreparationFailure } from "./ir-preparation-failure.js";
 
@@ -123,4 +130,108 @@ export interface IrUnitInventory {
   readonly allUnits: readonly IrUnitRecord[];
   /** Exact R0 attempt-root population; no support unit manufactures a row. */
   readonly terminalUnits: readonly IrTerminalUnitRecord[];
+}
+
+export interface IrSourceMapSpan {
+  readonly start: number;
+  readonly end: number;
+}
+export type IrSourceMapStageProducer =
+  | "define"
+  | "stdin-prelude"
+  | "iterator-prelude"
+  | "listformat-prelude"
+  | "cjs-rewrite"
+  | "eval-super-rewrite"
+  | "imports";
+export interface IrSourceMapTextEdit {
+  readonly input: IrSourceMapSpan;
+  readonly removed: string;
+  readonly inserted: string;
+  readonly kind: "replacement" | "generated-insertion";
+}
+export interface IrSourceMapTextStage {
+  readonly producer: IrSourceMapStageProducer;
+  readonly inputText: string;
+  readonly outputText: string;
+  readonly edits: readonly IrSourceMapTextEdit[];
+}
+export interface IrSourceMapTextProjection {
+  readonly originalText: string;
+  readonly analyzedText: string;
+  readonly stages: readonly IrSourceMapTextStage[];
+}
+export interface IrSourceMapSource {
+  readonly sourceId: IrSourceId;
+  readonly sourceKey: string;
+  readonly originalFileName: string;
+  readonly mapName: string;
+  readonly projection: IrSourceMapTextProjection;
+}
+export interface IrSourceMapPoint {
+  readonly sourceId: IrSourceId;
+  readonly donorUnitId: IrUnitId;
+  readonly analyzed: IrSourceMapSpan;
+  readonly original: IrSourceMapSpan;
+  readonly mapping: "exact" | "rewrite";
+}
+export interface IrSourceMapSourceOrigin {
+  readonly kind: "source";
+  readonly point: IrSourceMapPoint;
+  // Innermost-to-outermost actual inlining calls, absent when not inlined.
+  readonly inlinedAt?: readonly IrSourceMapPoint[];
+  // Additional actual causal source points; primary is always point above.
+  readonly contributors?: readonly IrSourceMapPoint[];
+}
+export type IrSourceMapGeneratedOrigin =
+  | {
+      readonly kind: "generated";
+      readonly phase: "frontend";
+      readonly role: "insertion" | "implicit-return" | "binding-scaffold" | "control-scaffold";
+      readonly ownerUnitId: IrUnitId;
+      readonly cause?: IrSourceMapPoint;
+    }
+  | {
+      readonly kind: "generated";
+      readonly phase: "middleend";
+      readonly role: "cfg-scaffold" | "representation-scaffold";
+      readonly ownerUnitId: IrUnitId;
+      readonly cause?: IrSourceMapPoint;
+    }
+  | {
+      readonly kind: "generated";
+      readonly phase: "async";
+      readonly role: "state-dispatch" | "frame-access" | "capability" | "continuation";
+      readonly ownerUnitId: IrUnitId;
+      readonly cause?: IrSourceMapPoint;
+    }
+  | {
+      readonly kind: "generated";
+      readonly phase: "backend";
+      readonly role: "control-scaffold" | "abi-scaffold";
+      readonly ownerUnitId: IrUnitId;
+      readonly cause?: IrSourceMapPoint;
+    }
+  | {
+      readonly kind: "generated";
+      readonly phase: "support";
+      readonly role: "runtime-body" | "runtime-adapter";
+      readonly bindingId: IrBindingId;
+    }
+  | {
+      readonly kind: "generated";
+      readonly phase: "startup";
+      readonly role: "adapter";
+      readonly sourceIds: readonly IrSourceId[];
+    };
+export type IrSourceMapOrigin = IrSourceMapSourceOrigin | IrSourceMapGeneratedOrigin;
+export interface IrSourceMapDerivedSource {
+  readonly unitId: IrUnitId;
+  readonly donorUnitId: IrUnitId;
+}
+
+export interface IrPreparedSourceMap {
+  readonly schema: "prepared-ir-source-map-v1";
+  readonly sources: readonly IrSourceMapSource[];
+  readonly derivedSources?: readonly IrSourceMapDerivedSource[];
 }

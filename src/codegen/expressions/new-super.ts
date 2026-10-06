@@ -1,4 +1,5 @@
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
+import { compileCollectionSuperMethodCall } from "../classes/standalone-collection-carrier.js"; // (#6754)
 import { widenJsDefaultGuessSlot } from "../js-default-param-type-guess.js";
 import { materializeFnctorTwinCaptures } from "../fnctor-twin-captures.js";
 import { resolveStaticSpreadArgs } from "../static-spread-arity.js"; // (#6460)
@@ -67,7 +68,7 @@ import { compileArrayMethodCall, emitBoundsCheckedArrayGet } from "../array-meth
 import { isStandaloneArraySubclass, withArraySubclassReceiverAsVec } from "../array-subclass-receiver.js"; // (#2917)
 import { emitObjectCoercion } from "./calls-guards.js"; // (#3118) shared Object(...) / new Object(...) ToObject coercion
 import { COLLECTION_KIND } from "../collection-kind.js"; // (#6419) import-free leaf — map-runtime.js is in an import cycle
-import { ensureMapHelpers, coerceMapKeyToAnyref } from "../map-runtime.js";
+import { ensureMapHelpers, coerceMapKeyToAnyref, tryCompileNativeMapMethodCall } from "../map-runtime.js";
 import { ensureDisposableStackNew } from "../disposable-runtime.js";
 import { emitSetNewTargetBeforeCall, ensureNewTargetGlobal } from "../new-target.js"; // (#2023)
 import { fnctorBindingName } from "./new-target-value.js"; // (#6774 S4)
@@ -78,7 +79,8 @@ import {
   reserveApplyClosure,
   WRAPPER_PRIMITIVE_KEY, // (#6775 S5)
 } from "../object-runtime.js"; // (#1100) standalone Proxy native runtime; (#2928) Function-marker construct
-import { ensureSetHelpers } from "../set-runtime.js";
+import { ensureSetHelpers, tryCompileNativeSetMethodCall } from "../set-runtime.js";
+const COLLECTION_CALLS = { map: tryCompileNativeMapMethodCall, set: tryCompileNativeSetMethodCall } as const; // (#6754)
 import { ensureWeakCollectionHelpers } from "../weak-collections-runtime.js";
 import { tryCompileNativeWeakRefNew } from "../weakref-runtime.js";
 import { classMemberFuncKey } from "../class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
@@ -1370,6 +1372,9 @@ function compileSuperMethodCallCore(
       );
       if (arrayResult !== undefined) return arrayResult === VOID_RESULT ? null : arrayResult;
     }
+    // (#6754) Standalone Map/Set/WeakMap/WeakSet parent: the native helper on `this`.
+    const collectionResult = compileCollectionSuperMethodCall(ctx, fctx, expr, currentClassName, COLLECTION_CALLS);
+    if (collectionResult !== undefined) return collectionResult;
     // (#1614) The parent may be a builtin extern class (Set/Map/Array/...)
     // whose methods are host-backed, not compiled into funcMap. Dispatch
     // `super.method(args)` dynamically via __extern_method_call(this, name, args).
@@ -3810,6 +3815,11 @@ function resolvesToNativeProxyValue(ctx: CodegenContext, expression: ts.Expressi
   return isProxyFactory(expression);
 }
 
+/** (#6651 U3) Standalone `new <realm global>.Proxy(…)` — a member callee proven to hold `%Proxy%`. */
+function isMemberProxyConstructorCallee(ctx: CodegenContext, callee: ts.Expression): boolean {
+  return noJsHost(ctx) && ts.isPropertyAccessExpression(callee) && tracesToProxyConstructorValue(ctx, callee);
+}
+
 function tryCompileNativeConstructFromValue(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3833,7 +3843,12 @@ function tryCompileNativeConstructFromValue(
       resolvesToDynamicAnyCtorValue(ctx, calleeExpr)) ||
       isValueSelectingNewCallee(calleeExpr) ||
       ts.isTaggedTemplateExpression(calleeExpr)); // (#6774 S3) `new tag\`x\``: the tag call's result
-  if (!ts.isIdentifier(calleeExpr) && !runtimeEvalCallableResult && !dynamicCtorValue) return undefined;
+  // (#6651 U3) `new other.Proxy(t, h)` — the realm-global MEMBER spelling of the
+  // proven Proxy-constructor value (`tracesToProxyConstructorValue` already
+  // claims `<realm global>.Proxy`); only the identifier form was admitted.
+  const memberProxyCtorValue = isMemberProxyConstructorCallee(ctx, calleeExpr);
+  if (!ts.isIdentifier(calleeExpr) && !runtimeEvalCallableResult && !dynamicCtorValue && !memberProxyCtorValue)
+    return undefined;
   // A compiled fnctor for this binding means the typed-struct path owns it.
   if (ts.isIdentifier(calleeExpr) && ctx.funcConstructorMap.has(calleeExpr.text)) return undefined;
   const runtimeFunctionAlias =
@@ -3843,7 +3858,8 @@ function tryCompileNativeConstructFromValue(
   const proxyValue = ts.isIdentifier(calleeExpr) && resolvesToNativeProxyValue(ctx, calleeExpr);
   // (#5196 R3-0) `Proxy` reached as a VALUE also needs the proxy runtime and
   // the construct driver; the driver's carrier arm does the identity test.
-  const proxyCtorValue = ts.isIdentifier(calleeExpr) && tracesToProxyConstructorValue(ctx, calleeExpr);
+  const proxyCtorValue =
+    memberProxyCtorValue || (ts.isIdentifier(calleeExpr) && tracesToProxyConstructorValue(ctx, calleeExpr));
   if (
     !runtimeFunctionAlias &&
     !runtimeEvalCallableResult &&
@@ -7449,6 +7465,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       (ts.isPropertyAccessExpression(expr.expression) || ts.isElementAccessExpression(expr.expression)) &&
       resolvesToDynamicAnyCtorValue(ctx, expr.expression)) ||
     isValueSelectingNewSite(ctx, expr.expression, className) || // (#6738)
+    isMemberProxyConstructorCallee(ctx, expr.expression) || // (#6651 U3)
     (noJsHost(ctx) && ts.isTaggedTemplateExpression(expr.expression)) // (#6774 S3)
   ) {
     const nativeCtor = tryCompileNativeConstructFromValue(ctx, fctx, expr.expression, expr.arguments ?? []);

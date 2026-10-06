@@ -45,6 +45,7 @@ import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js"
 import { expectedArgumentCountOfParams } from "../function-expected-argument-count.js";
 import { reshapeFunctionCtorReflectiveCall } from "../function-ctor-reflective-call.js"; // (#4483) Function.call/apply → Function(…)
 import { tryEmitApplyArgArrayTypeError } from "../apply-arglist-typeerror.js"; // (#4483) §20.2.3.1 step 4 primitive argArray
+import { isDynamicApplyArgList, mappedFunctionIsForeign } from "./apply-dynamic-arglist.js"; // (#4526)
 import { tryEmitClassConstructorCallWithoutNew } from "../class-call-without-new.js"; // (#4483) §10.2.1 step 2
 import { tryEmitClassCtorCallApply } from "../classes/class-ctor-call-apply.js"; // (#6772 S3)
 import { buildClosureResultBoxing } from "../closures/result-boxing.js"; // (#4082) the single closure-result→externref decision
@@ -8837,10 +8838,22 @@ function compileCallExpression(
             !ts.isFunctionDeclaration(aliasedImportTarget) &&
             !ts.isFunctionExpression(aliasedImportTarget) &&
             !ts.isArrowFunction(aliasedImportTarget));
-        let closureInfo = moduleValueOwnsName ? undefined : ctx.closureMap.get(funcName);
-        const funcIdx = moduleValueOwnsName ? undefined : ctx.funcMap.get(funcName);
+        // (#4526) …and a parameter/local never owns another declaration's entry.
+        // A runtime `.apply` list cannot be spread by the static arms below
+        // (they would call with ZERO arguments); on the JS host the reflective
+        // host-call tail applies the real list and receiver instead.
+        const hostDynamicApply =
+          !isCall &&
+          expr.arguments.length >= 2 &&
+          !ctx.standalone &&
+          !ctx.wasi &&
+          isDynamicApplyArgList(expr.arguments[1]!);
+        const registryIsForeign =
+          moduleValueOwnsName || hostDynamicApply || mappedFunctionIsForeign(ctx, funcName, valueDeclaration);
+        let closureInfo = registryIsForeign ? undefined : ctx.closureMap.get(funcName);
+        const funcIdx = registryIsForeign ? undefined : ctx.funcMap.get(funcName);
 
-        if (!closureInfo && funcIdx === undefined) {
+        if (!closureInfo && funcIdx === undefined && !hostDynamicApply) {
           closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);
         }
 
