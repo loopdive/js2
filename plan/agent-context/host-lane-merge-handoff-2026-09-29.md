@@ -187,3 +187,22 @@ implementer when the gate opens; (3) #6748, #6750 unchanged.
   the literal `__npmCompatPerf → __npmCompatApply → Number(op(input))` chain
   lowers `input.length` to `""` while every replica computes 9 — next bisect
   step (WAT diff of `__npmCompatApply` vs a replica) is in the #6875 issue.
+
+### Evening, 2026-10-06
+
+- **PR #6527 merged** (part A + cookie harness fix).
+- **PR #6534** (#6875) now also carries the fix for hono AND redux: not
+  codegen in the end — `wrapExports` passed every `__`-prefixed export
+  through raw, and the npm-compat drivers export `__npmCompatPerf(input)`,
+  so on the regime the string arrived un-marshalled (`input.length` → `""`,
+  `Number(input)` → NaN). Rule is now "unmarked = no signature". Regime lane
+  after it (local): clsx, cookie, moment, hono, redux **measured**; uuid links
+  (sample op waits on the next refresh with #6868); acorn/marked/lit/prettier
+  part C; react needs the CJS-rewrite hoist (both lanes).
+- **#6750 attributed** per edition (section in the issue): ES2026 is #6748
+  (3,383 of 3,492 rows); ES2023/ES2016 are the "callable as a value" tail
+  (#6651 PR-C) plus a 10-row legacy `__js_array_*` leak on the
+  `includes/sparse.js` family that only reproduces in the linked-harness
+  context; ES5's 62 are small independent gaps listed in the issue.
+- Next, in order: land #6534; dispatch #6748 (lifts ES2026); #6651 PR-C tail;
+  the ES5 list; part C; react hoist; then re-evaluate the S6 bar.
