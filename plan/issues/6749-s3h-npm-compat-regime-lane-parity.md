@@ -1,9 +1,10 @@
 ---
 id: 6749
 title: "S3-h: npm-compat regime lane parity — packages that measure on the host lane must measure, with the same checksum, on the native regime"
-status: ready
+status: in-progress
+assignee: ttraenkler/fable
 created: 2026-09-29
-updated: 2026-09-29
+updated: 2026-10-06
 priority: critical
 horizon: l
 feasibility: hard
@@ -12,6 +13,13 @@ task_type: bug
 area: codegen, runtime, host-interop, testing
 language_feature: npm-compat
 goal: architecture
+loc-budget-allow:
+  # 2026-10-06 (#6749 part A): +1 line in calls.ts — the regime arm that
+  # marshals the host UUID string (helper lives in standalone-crypto.ts).
+  - src/codegen/expressions/calls.ts
+func-budget-allow:
+  # 2026-10-06 (#6749 part A): +1 line, same arm.
+  - src/codegen/expressions/calls.ts::compileCallExpression
 sprint: current
 parent: 5385
 depends_on: [6686, 6707]
@@ -96,3 +104,21 @@ Order by kind, cheapest and most diagnostic first:
       npm numbers unchanged.
 - [ ] Each B-item fix has a focused test with the exact diverging value.
 - [ ] #6708's evidence item 3 can be ticked with the run id.
+
+## Progress — 2026-10-06 (part A, Fable lane; spawn gate blocked at load 27–33)
+
+Starting state re-derived from `benchmarks/results/npm-compat.json`
+(generatedAt 2026-10-06T06:19Z): identical to the table above, plus
+**prettier** host-measured / regime `compile-error` ("emitted WebAssembly
+failed validation … `__closure_538` … expected (ref null 38), got (ref 2)") —
+a codegen validation bug, filed under part C, not A.
+
+| package | before (regime) | after (local, focused lane) | change |
+| --- | --- | --- | --- |
+| uuid | compile-error (unknown `__crypto_*`) | links and runs; `randomUUID()` marshals to a native string | `src/host-import-policy.ts` classifies `__crypto_get_random_values` / `__crypto_random_uuid` as `platform-capability/randomness` (owner 4398, no native fallback); `src/capability-registry.ts` js-host `randomness` provider contract carries both; `src/codegen/expressions/calls.ts` marshals the UUID through `emitHostExternrefToNativeString` on the regime (`ctx.standalone`, bridge gated by environment) |
+| uuid sample op | — | still blocked: `.length` / RegExp on the UUID reads `NaN` | **#6868** — template-literal types (`crypto.randomUUID()`'s lib type) are not strings in `oracle.ts` / `type-mapper.ts`; reproduces under plain standalone; separate PR (not byte-identical for default gc) |
+| moment | runtime-error (`js2wasm:runtime-eval` not an object) | **measured** (3.0 ms vs Node 6.6 µs) | `scripts/generate-npm-compat-report.mjs` `npmCompatHostImportObject` attaches the seam via `attachConditionalImportNamespaces` before linked providers; `npm-compat-refresh.yml` prebuilds the refusal provider (6 s) and sets `JS2WASM_EVAL_ENGINE=interpreter` on both measure jobs |
+| react | `require is not defined` | unchanged — diagnosed | host lane never compiles react: `package/index.js` is `process.env.NODE_ENV === 'production' ? require('./cjs/…') : require('./cjs/…')`, a shape the CJS rewrite leaves alone, so the host lane reads the bare `require` global (`__get_builtin`) and Node executes react natively. On the regime the read throws because every declared-global import (`src/codegen/extern-declarations.ts` ≈ L1613/L1657/L1757, `global_<name>`) and the host-global materialization (`src/codegen/expressions/identifiers.ts` ≈ L1744: `Buffer`, `process`, `crypto`, `Intl`, TA ctors) are gated on `ctx.standalone` rather than `hostFreeEnvironment(ctx)`. Two honest options: (a) re-key those platform-shaped gates to the environment so a Node-environment `require`/`process` binds as the `global:<name>` platform capability (reads must go through the value-adapter MOP, not `__extern_get`); (b) hoist in-branch relative `require` literals in the CJS rewrite so BOTH lanes compile react. (a) is the #5385 design rule; do (a) first, consider (b) as a separate improvement |
+
+Byte identity (sha256, default `gc` / `--target standalone` / `--target wasi`
+on a crypto + string probe), base vs after: see PR body.

@@ -39,6 +39,7 @@ import {
   wrapExports,
 } from "../src/runtime.ts";
 import { instantiateLinkedProviders } from "../src/linked-provider-runtime.ts";
+import { attachConditionalImportNamespaces } from "./test262-import-object.mjs";
 
 import { runHarness as runAcorn } from "../tests/dogfood/acorn-harness.mjs";
 import { runHarness as runAcornOfficialSuite } from "../tests/dogfood/acorn-official-suite.mjs";
@@ -1677,9 +1678,18 @@ function packageSpecifierFor(setup) {
  * ran — lodash's root detection reaches `Function("return this")()` — so build
  * the same import object with the explicit `hostEval` policy.
  */
-function npmCompatHostImportObject(result) {
+function npmCompatHostImportObject(result, rootModule) {
   const options = { dynamicCode: "hostEval" };
   const imports = buildCompiledImports(result, undefined, options);
+  // (#6749) The native-first lane compiles eval-shaped spellings against the
+  // `js2wasm:runtime-eval` seam instead of a host accelerator; link the cached
+  // provider exactly as the test262 lane does (a no-op when nothing imports
+  // it, so the host-assisted lane is untouched). Before the linked providers:
+  // they inherit this import object and may carry the seam themselves.
+  attachConditionalImportNamespaces(rootModule ?? new WebAssembly.Module(result.binary), imports, {
+    linkedProviderModules: (result.linkedModules ?? []).map((artifact) => new WebAssembly.Module(artifact.binary)),
+    providerLabel: "npm-compat",
+  });
   if (result.linkedModules?.length) instantiateLinkedProviders(result.linkedModules, imports, { options });
   return imports;
 }
@@ -1817,7 +1827,7 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
   let instance;
   const instantiateStarted = performance.now();
   try {
-    const importObject = target === "standalone" ? {} : npmCompatHostImportObject(result);
+    const importObject = target === "standalone" ? {} : npmCompatHostImportObject(result, module);
     instance = await WebAssembly.instantiate(module, importObject);
     importObject.setInstance?.(instance);
     const init = instance.exports.__module_init;
