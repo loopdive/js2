@@ -112,11 +112,12 @@ export function prepareTypedIrProgram(
     ...optimized,
     abi: { entries },
     startup: source.startup,
+    ...(source.sourceMap === undefined ? {} : { sourceMap: source.sourceMap }),
     ...(finalSource.runtimeSupport === undefined ? {} : { runtimeSupport: finalSource.runtimeSupport }),
     allocations: allocations.snapshot(),
   }) as Pick<
     PreparedIrProgram,
-    "inventory" | "ir" | "derivedUnits" | "abi" | "startup" | "allocations" | "runtimeSupport"
+    "inventory" | "ir" | "derivedUnits" | "abi" | "startup" | "allocations" | "runtimeSupport" | "sourceMap"
   >;
   const runtime: PreparedIrProgramRuntimeProjection[] = [];
   const demands = new Map(semantic.ir.functions.map((fn) => [fn.unitId, irProgramRuntimeDemands(fn)]));

@@ -56,6 +56,7 @@ import {
   resolveModuleAwareIdentifierWriteTarget,
 } from "./expressions/identifier-assignment.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
+import { resolveComputedKeyExpression } from "./literals.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { coerceType, compileExpression } from "./shared.js";
@@ -560,4 +561,38 @@ function wrapWithIteratorClose(ctx: CodegenContext, fctx: FunctionContext, body:
       ],
     },
   ]);
+}
+
+/**
+ * (#6651 U4) §13.15.5.3 `PropertyName : AssignmentElement` — a computed key is
+ * EVALUATED (abrupt completion propagates) before the GetV, in source order.
+ * The for-of object-pattern arms used to SKIP a key they could not resolve
+ * statically, so `for ({ [a.b]: x } of [{}])` with `a` undefined threw nothing
+ * (`for-of/dstr/obj-prop-name-evaluation-error.js`). Returns the static key, or
+ * `""` with `keyLocal` holding the runtime key evaluated here.
+ */
+export function evaluateForOfPatternKey(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  prop: ts.PropertyAssignment,
+): { name: string; keyLocal?: number } | undefined {
+  if (!ts.isComputedPropertyName(prop.name)) return undefined;
+  const resolved = resolveComputedKeyExpression(ctx, prop.name.expression);
+  if (resolved) return { name: resolved };
+  const keyLocal = allocLocal(fctx, `__forof_iterkey_${fctx.locals.length}`, EXTERNREF);
+  const keyType = compileExpression(ctx, fctx, prop.name.expression, EXTERNREF);
+  if (keyType === null) fctx.body.push({ op: "ref.null.extern" });
+  else if (keyType.kind !== "externref") coerceType(ctx, fctx, keyType, EXTERNREF);
+  fctx.body.push({ op: "local.set", index: keyLocal });
+  return { name: "", keyLocal };
+}
+
+/** (#6651 U4) Does an object assignment pattern carry a key only the runtime can name? */
+export function objectPatternHasRuntimeKey(ctx: CodegenContext, pattern: ts.ObjectLiteralExpression): boolean {
+  return pattern.properties.some(
+    (prop) =>
+      ts.isPropertyAssignment(prop) &&
+      ts.isComputedPropertyName(prop.name) &&
+      resolveComputedKeyExpression(ctx, prop.name.expression) === undefined,
+  );
 }

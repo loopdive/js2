@@ -553,6 +553,7 @@ export function seededNativeProtoOwnMembersByBrand(ctx: CodegenContext): Readonl
     // (#5156) Seeded string DATA properties are companion entries too, so
     // `delete Error.prototype.message` / a redefinition must be observable.
     for (const [key] of glue.dataProps ?? []) members.push(key);
+    if (glue.name === "Array" && ctx.funcMap.has("__box_number")) members.push("length"); // (#6651 U3)
     // (#5269 D-1) Same reasoning as dataProps: the accessor lives in the
     // companion, so `hasOwnProperty` / `delete` / gOPD must see it — but only
     // once the accessor seeder is actually available.
@@ -800,6 +801,27 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
       body.push(...stringConstantExternrefInstrs(ctx, value));
     }
     body.push(...buildPrototypeSeedDataPropertyTail(typeof value === "number" ? "number" : "string", defineIdx));
+    installed++;
+  }
+
+  // (#6651 U3) §23.1.3: %Array.prototype% is itself an Array exotic object
+  // whose own `length` is 0 {w:T, e:F, c:F}. Without the companion entry the
+  // DYNAMIC chain consults (`__extern_has` / `__extern_get` on
+  // `Object.create(Array.prototype)`, and `with` HasBinding through them) saw
+  // the methods but no `length`.
+  const arrayLengthBoxIdx = glue.name === "Array" ? ctx.funcMap.get("__box_number") : undefined;
+  if (arrayLengthBoxIdx !== undefined) {
+    const body = seedFctx.body;
+    body.push(...buildPrototypeSeedReceiver());
+    addStringConstantGlobal(ctx, "length");
+    body.push(...stringConstantExternrefInstrs(ctx, "length"));
+    body.push(...buildPrototypeSeedNumberValue(0, arrayLengthBoxIdx));
+    body.push(
+      ...buildPrototypeSeedDataTail(
+        ctx.funcMap.get("__defineProperty_value") ?? defineValueIdx,
+        PROTOTYPE_SEED_FLAGS.arrayLength,
+      ),
+    );
     installed++;
   }
 

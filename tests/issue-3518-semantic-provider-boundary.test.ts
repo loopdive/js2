@@ -1,4 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
+import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
+import { captureSourceMapPositionInventoryPredecessorPolicySource } from "./helpers/ir-source-map-position-inventory-successor.js";
+import { captureMainInventoryPredecessorPolicySource } from "./helpers/ir-main-inventory-source-successor.js";
 import {
   captureArrayBufferIsViewMainPredecessorPolicy,
   capturePresentationClassificationPredecessorPolicy,
@@ -295,7 +299,7 @@ const realmFixtureAdditions = {
     "src/runtime/wasmgc/values/closure-capture-layouts.ts",
   ],
 };
-const liveFixtureGroups = {
+const priorLiveFixtureGroups = {
   ...groups,
   "runtime-contracts": [
     ...groups["runtime-contracts"],
@@ -347,6 +351,60 @@ const liveFixtureGroups = {
     "src/backend/wasmgc/program/native-invocation-abi.ts",
     "src/backend/wasmgc/program/native-primitive-boundary-abi.ts",
   ],
+};
+const priorLiveRequired = Object.values(priorLiveFixtureGroups).flat();
+// Fixed actual source-map validator dependency closure, independently reviewed.
+// Keep the prior live population and every historical mutation matrix unchanged.
+const sourceMapValidatorFixtureAdditions = {
+  "ir-program": [
+    "src/ir/program/validation.ts",
+    "src/ir/program/runtime-abi.ts",
+    "src/ir/program/class-layouts.ts",
+    "src/ir/program/allocations.ts",
+    "src/ir/program/runtime-support-dependencies.ts",
+    "src/ir/program/runtime-validation.ts",
+    "src/ir/program/owner.ts",
+    "src/ir/program/draft-abi-lookup.ts",
+    "src/ir/program/runtime-demands.ts",
+    "src/ir/program/runtime-manifest.ts",
+  ],
+  "ir-core": [
+    "src/ir/core/global-binding-keys.ts",
+    "src/ir/core/type-binding-keys.ts",
+    "src/ir/core/declared-types.ts",
+    "src/ir/core/tag-domain.ts",
+    "src/ir/core/fnctor-abi.ts",
+    "src/ir/core/string-runtime.ts",
+    "src/ir/core/runtime-symbols.ts",
+  ],
+  "ir-runtime": [
+    "src/ir/runtime/verify.ts",
+    "src/ir/runtime/producer.ts",
+    "src/ir/runtime/js-tag-domain.ts",
+    "src/ir/runtime/generator-support.ts",
+    "src/ir/runtime/intrinsic-preparation.ts",
+  ],
+  foundation: [
+    "src/shared/contracts/ir-counted-string-site-id.ts",
+    "src/shared/contracts/ir-preparation-errors.ts",
+    "src/shared/contracts/string-surrogate.ts",
+  ],
+  "ir-analysis": [
+    "src/ir/analysis/dominance.ts",
+    "src/ir/analysis/ownership.ts",
+    "src/ir/analysis/escape.ts",
+    "src/ir/analysis/encoding.ts",
+    "src/ir/analysis/alloc-verification.ts",
+    "src/ir/analysis/lattice.ts",
+  ],
+};
+const liveFixtureGroups = {
+  ...priorLiveFixtureGroups,
+  "ir-program": [...priorLiveFixtureGroups["ir-program"], ...sourceMapValidatorFixtureAdditions["ir-program"]],
+  "ir-core": [...priorLiveFixtureGroups["ir-core"], ...sourceMapValidatorFixtureAdditions["ir-core"]],
+  "ir-runtime": [...priorLiveFixtureGroups["ir-runtime"], ...sourceMapValidatorFixtureAdditions["ir-runtime"]],
+  foundation: [...priorLiveFixtureGroups["foundation"], ...sourceMapValidatorFixtureAdditions["foundation"]],
+  "ir-analysis": [...priorLiveFixtureGroups["ir-analysis"], ...sourceMapValidatorFixtureAdditions["ir-analysis"]],
 };
 const liveRequired = Object.values(liveFixtureGroups).flat();
 // Ordered additions independently reviewed at published policy 1eaa57abc,
@@ -425,7 +483,17 @@ const policy = () => {
                       captureLoweringAnalysisPredecessorPolicy(
                         capturePresentationClassificationPredecessorPolicy(
                           captureArrayBufferIsViewMainPredecessorPolicy(
-                            JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8")),
+                            JSON.parse(
+                              captureMainInventoryPredecessorPolicySource(
+                                captureSourceMapPositionInventoryPredecessorPolicySource(
+                                  capturePositionClassFieldsMainPredecessorPolicySource(
+                                    capturePositionFinallyMainPredecessorPolicySource(
+                                      readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       ),
@@ -974,6 +1042,86 @@ function fixture() {
   return { root, p, put, append, run };
 }
 
+type FixtureRun = ReturnType<ReturnType<typeof fixture>["run"]>;
+type FixtureEdge = { from: string; to?: string; typeOnly: boolean };
+function edgePopulation(edges: FixtureEdge[]) {
+  return {
+    edges: edges.length,
+    typeOnly: edges.filter((edge) => edge.typeOnly).length,
+    runtime: edges.filter((edge) => !edge.typeOnly).length,
+  };
+}
+
+function assertLiveFixtureClosure(r: FixtureRun) {
+  expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
+  expect(r.report.errors).toEqual([]);
+  expect(r.report.graphComplete).toBe(true);
+  expect(r.report.inventoryValid).toBe(true);
+  for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
+    expect(r.report[field]).toEqual([]);
+  expect(required).toHaveLength(106);
+  expect(priorLiveRequired).toHaveLength(174);
+  expect(new Set(priorLiveRequired).size).toBe(174);
+  const additions = Object.values(sourceMapValidatorFixtureAdditions).flat();
+  expect(additions).toHaveLength(31);
+  expect(new Set(additions).size).toBe(31);
+  const added = new Set(additions);
+  expect(priorLiveRequired.filter((path) => added.has(path))).toEqual([]);
+  expect(liveRequired).toHaveLength(205);
+  expect(new Set(liveRequired).size).toBe(205);
+  for (const [layer, paths] of Object.entries(liveFixtureGroups)) {
+    expect(paths.filter((path) => !added.has(path))).toEqual(
+      priorLiveFixtureGroups[layer as keyof typeof priorLiveFixtureGroups],
+    );
+    expect(r.report.counts.byLayer[layer]).toBe(paths.length);
+    expect(
+      r.report.modules
+        .filter((module: { layer: string }) => module.layer === layer)
+        .map((module: { path: string }) => module.path)
+        .sort(),
+    ).toEqual([...paths].sort());
+  }
+  expect(r.report.counts.total).toBe(205);
+  expect(r.report.modules).toHaveLength(205);
+  const edges: FixtureEdge[] = r.report.edges;
+  // This runtime edge is load-bearing: CLI exit zero alone admits its bypass.
+  expect(
+    edges.filter((edge) => edge.from === "src/ir/program/input.ts" && edge.to === "src/ir/program/validation.ts"),
+  ).toEqual([expect.objectContaining({ typeOnly: false })]);
+  expect({ edges: r.report.resolvedEdgeCount, ...r.report.counts.resolvedEdgesByType }).toEqual({
+    edges: 977,
+    typeOnly: 476,
+    runtime: 501,
+  });
+  expect(edgePopulation(edges)).toEqual({ edges: 977, typeOnly: 476, runtime: 501 });
+  const prior = new Set(priorLiveRequired);
+  const priorEdges = edges.filter((edge) => prior.has(edge.from) && edge.to !== undefined && prior.has(edge.to));
+  expect(edgePopulation(priorEdges)).toEqual({ edges: 783, typeOnly: 404, runtime: 379 });
+  const schemaEdges = priorEdges.filter(
+    (edge) => edge.from === "src/ir/core/nodes.ts" && edge.to === "src/shared/contracts/ir-unit-inventory.ts",
+  );
+  expect(schemaEdges).toEqual([expect.objectContaining({ typeOnly: true })]);
+  // Report-derived bounded historical population, after exactly one known type edge.
+  expect(edgePopulation(priorEdges.filter((edge) => edge !== schemaEdges[0]))).toEqual({
+    edges: 782,
+    typeOnly: 403,
+    runtime: 379,
+  });
+  expect(edgePopulation(edges.filter((edge) => !priorEdges.includes(edge)))).toEqual({
+    edges: 194,
+    typeOnly: 72,
+    runtime: 122,
+  });
+  for (const module of r.report.modules) {
+    expect(module.state).toBe("clean");
+    expect(module.hash).toBe(
+      createHash("sha256")
+        .update(readFileSync(resolve(repository, module.path)))
+        .digest("hex"),
+    );
+  }
+}
+
 describe("semantic verification and provider ownership boundary", () => {
   it("pins the original 70 modules plus seven Promise/vector and five string/error owners without relaxing historical policy", () => {
     expect(required).toHaveLength(106);
@@ -1172,39 +1320,33 @@ describe("semantic verification and provider ownership boundary", () => {
   });
 
   it("loads the complete actual canonical type-and-value closure", () => {
-    const r = fixture().run();
-    expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
-    expect(required).toHaveLength(106);
-    expect(liveRequired).toHaveLength(174);
-    expect(new Set(liveRequired).size).toBe(174);
-    expect(r.report.counts.total).toBe(174);
-    expect(r.report.errors).toEqual([]);
-    for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
-      expect(r.report[field]).toEqual([]);
-    // Formatter support adds four canonical modules and 26 imports to the
-    // delivered-main closure: 11 type-only and 15 runtime. The original
-    // September 14 missing-module and history-offset failures are retained.
-    // Boolean bodies/owner add five edges: three type-only and two runtime.
-    // The signed-i64 BigInt body adds two model-only type imports.
-    // The live closure also includes eight actual string-output/semantic-callable
-    // dependencies. Counts below include import-type nodes and erased named imports.
-    // Invocation adds six reachable modules; static reference census includes
-    // their complete dependency closure without admitting unrelated owner modules.
-    // The previous 123-module graph had 506 edges (298 type-only / 208 runtime).
-    // The getter/Boolean join adds eleven actual dependencies with 100 edges
-    // (40 type-only / 60 runtime), plus six imports in existing owners
-    // (two type-only / four runtime). Every copied dependency remains real source.
-    // The import-free canonical tag leaf adds one real module and zero edges.
-    // Realm literals/requirements add the fixed 39-module dependency closure:
-    // 168 further edges (62 type-only / 106 runtime), measured by the detector.
-    // Public builtin requests add one realm-requirements runtime import and
-    // one catalog type-only import; both modules already belong to this closure.
-    // Historical parent and published activation records remain unchanged.
-    expect({ edges: r.report.resolvedEdgeCount, ...r.report.counts.resolvedEdgesByType }).toEqual({
-      edges: 782,
-      typeOnly: 403,
-      runtime: 379,
-    });
+    assertLiveFixtureClosure(fixture().run());
+  });
+
+  it("rejects bypass of the actual input-to-source-map-validator dependency", () => {
+    const f = fixture();
+    assertLiveFixtureClosure(f.run());
+    const path = "src/ir/program/input.ts";
+    const original = readFileSync(resolve(repository, path), "utf8");
+    const actualImport = 'import { assertPreparedSourceMap } from "./validation.js";';
+    expect(original.split(actualImport)).toHaveLength(2);
+    for (const replacement of ["", 'import type { assertPreparedSourceMap } from "./validation.js";']) {
+      f.put(path, original.replace(actualImport, replacement));
+      const bypass = f.run();
+      expect(bypass.status).toBe(0);
+      expect(bypass.report.errors).toEqual([]);
+      expect(
+        bypass.report.edges.filter(
+          (edge: FixtureEdge) => edge.from === path && edge.to === "src/ir/program/validation.ts" && !edge.typeOnly,
+        ),
+      ).toEqual([]);
+      expect({ edges: bypass.report.resolvedEdgeCount, ...bypass.report.counts.resolvedEdgesByType }).toEqual(
+        replacement === "" ? { edges: 976, typeOnly: 476, runtime: 500 } : { edges: 977, typeOnly: 477, runtime: 500 },
+      );
+      expect(() => assertLiveFixtureClosure(bypass)).toThrow();
+      f.put(path, original);
+      assertLiveFixtureClosure(f.run());
+    }
   });
 
   it.each(["delete", "reorder", "layer", "entries", "minimum", "extra"] as const)(
@@ -1460,8 +1602,9 @@ describe("semantic verification and provider ownership boundary", () => {
 
   it("rejects a backend implementation dependency from the frontend formatter contract", () => {
     const f = fixture();
-    expect(f.run().status).toBe(0);
+    assertLiveFixtureClosure(f.run());
     const path = formatterGroups["frontend-ts"][0]!;
+    const original = readFileSync(resolve(repository, path), "utf8");
     f.put("src/forbidden.ts", "export interface Hidden { value: number }");
     f.p.files.push({ path: "src/forbidden.ts", layer: "backend-wasmgc", state: "unmigrated" });
     f.append(path, 'export type { Hidden } from "@forbidden";');
@@ -1470,6 +1613,11 @@ describe("semantic verification and provider ownership boundary", () => {
     expect(r.report.forbiddenEdges).toContainEqual(
       expect.objectContaining({ from: path, to: "src/forbidden.ts", typeOnly: true }),
     );
+    expect(r.report.transitiveViolations).not.toEqual([]);
+    f.put(path, original);
+    f.p.files.pop();
+    rmSync(resolve(f.root, "src/forbidden.ts"));
+    assertLiveFixtureClosure(f.run());
   });
 
   for (const [source, field] of [

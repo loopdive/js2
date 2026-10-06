@@ -24,6 +24,7 @@ import { ensureExternStrictEqHelper } from "./any-helpers.js";
 import { registerProxyInvariantValidators } from "./object-runtime-proxy-invariants.js"; // (#5316) §10.5 descriptor-model half
 import { reserveStandaloneLinkReversePeer, reverseProxyGetArmInstrs } from "./standalone-link-reverse-peer.js"; // (#6637 S63)
 import { protoLinkReceiverSetForward } from "./object-runtime-proxy-chain.js"; // (#6766)
+import { prependProxyArrayGetIteratorArm } from "./object-model/proxy-get-iterator.js"; // (#6651 U3)
 import {
   ensureGopdResultReify,
   ensureProxyListFromArrayLike,
@@ -35,6 +36,7 @@ import {
   ensureOwnKeysAllNative,
   installProxyKeyBagGuards,
 } from "./object-model/proxy-own-keys-surfaces.js"; // (#6770 S7)
+import { installProxyForwardArms } from "./object-model/proxy-forward-carriers.js"; // (#6651 V1)
 
 /** (#1100/#1355) Reserved trap-invoke driver names — filled by `fillProxyDispatch`. */
 const PROXY_CALL_GET = "__proxy_call_get";
@@ -2517,6 +2519,12 @@ export function ensureProxyRuntime(
       },
     ];
     objectKeysBody.unshift(...guard);
+    // (#6651 U3) `for (k in p)` enumerates through the same EnumerableOwnProperties
+    // dispatch (§14.7.5.9 via `ownKeys` + `getOwnPropertyDescriptor`; no
+    // `enumerate` trap since ES2016). The ordinary `__object_keys_forin` walk
+    // reads `$PropEntry`s, which a `$Proxy` has none of, so it yielded nothing.
+    // Gated on the pre-scan seeing `Proxy`. Residual: inherited keys unwalked.
+    if (ctx.proxyDirty) findBody("__object_keys_forin")?.unshift(...guard.map((i) => structuredClone(i)));
   }
 
   // (#1355 Slice E) __getOwnPropertyNames(obj) -> externref : if proxy →
@@ -2576,6 +2584,7 @@ export function ensureProxyRuntime(
     objDefineBody.unshift(...guard);
   }
   installProxyKeyBagGuards(ctx, proxyTypeIdx, findBody); // (#6770 S7) gOPDs / defineProperties bags
+  installProxyForwardArms(ctx, { proxyTypeIdx, findBody }); // (#6651 V1)
 
   void objectTypeIdx;
 }
@@ -2699,4 +2708,5 @@ export function fillProxyDispatch(ctx: CodegenContext): void {
   fill(PROXY_CALL_DEFINE, 3); // (#1355 Slice F) defineProperty (target, key, desc)
   fill(PROXY_CALL_APPLY, 3); // (#3031 apply slice) apply (target, thisArg, argArray)
   fill(PROXY_CALL_CONSTRUCT, 3); // (#4397) construct (target, argumentsList, newTarget)
+  prependProxyArrayGetIteratorArm(ctx); // (#6651 U3) GetIterator over a trapless-get Proxy(array)
 }

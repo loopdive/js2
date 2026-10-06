@@ -1,4 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
+import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
+import { captureSourceMapPositionInventoryPredecessorPolicySource } from "./helpers/ir-source-map-position-inventory-successor.js";
+import { captureMainInventoryPredecessorPolicySource } from "./helpers/ir-main-inventory-source-successor.js";
 import {
   captureArrayBufferIsViewMainPredecessorPolicy,
   captureArrayBufferIsViewMainPredecessorPolicySource,
@@ -89,7 +93,17 @@ function actual(): Policy {
                           captureLoweringAnalysisPredecessorPolicy(
                             capturePresentationClassificationPredecessorPolicy(
                               captureArrayBufferIsViewMainPredecessorPolicy(
-                                JSON.parse(read("scripts/compiler-boundaries.json")),
+                                JSON.parse(
+                                  captureMainInventoryPredecessorPolicySource(
+                                    captureSourceMapPositionInventoryPredecessorPolicySource(
+                                      capturePositionClassFieldsMainPredecessorPolicySource(
+                                        capturePositionFinallyMainPredecessorPolicySource(
+                                          read("scripts/compiler-boundaries.json"),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
                           ),
@@ -167,7 +181,15 @@ describe("C1 exact policy inverse and reciprocal B proof", () => {
                               captureLoweringAnalysisPredecessorPolicySource(
                                 capturePresentationClassificationPredecessorPolicySource(
                                   captureArrayBufferIsViewMainPredecessorPolicySource(
-                                    read("scripts/compiler-boundaries.json"),
+                                    captureMainInventoryPredecessorPolicySource(
+                                      captureSourceMapPositionInventoryPredecessorPolicySource(
+                                        capturePositionClassFieldsMainPredecessorPolicySource(
+                                          capturePositionFinallyMainPredecessorPolicySource(
+                                            read("scripts/compiler-boundaries.json"),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),

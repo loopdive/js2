@@ -55,12 +55,47 @@ export function isReflectiveWriterCall(call: ts.CallExpression): boolean {
 }
 
 /**
+ * (#6651 U3) Is `n` a `new Proxy(…)` / `Proxy.revocable(…)` construction?
+ *
+ * Its FIRST argument becomes [[ProxyTarget]], and every trap-absent internal
+ * method (§10.5.10 step 7 `target.[[Delete]](P)`, §10.5.6 step 7
+ * `target.[[DefineOwnProperty]]`, §10.5.7 has, §10.5.9 set) reaches it through
+ * the dynamic natives — the same reflective-write channel as `Reflect.*`. A
+ * closed struct target cannot be tombstoned and re-defined (`delete p.attr`
+ * then `Object.defineProperty(target, "attr", {configurable: false})` left
+ * the delete marker in force, so `Reflect.deleteProperty(p, "attr")` answered
+ * `true`), and a statically-typed `"attr" in target` read the struct slot after
+ * the proxy deleted it.
+ */
+function isProxyConstruction(n: ts.Node): n is ts.NewExpression | ts.CallExpression {
+  if (ts.isNewExpression(n)) {
+    const callee = stripped(n.expression);
+    return ts.isIdentifier(callee) && callee.text === "Proxy";
+  }
+  if (ts.isCallExpression(n)) {
+    const callee = stripped(n.expression);
+    return (
+      ts.isPropertyAccessExpression(callee) &&
+      ts.isIdentifier(callee.expression) &&
+      callee.expression.text === "Proxy" &&
+      callee.name.text === "revocable"
+    );
+  }
+  return false;
+}
+
+/**
  * Poison `varName` in `poisonSet` when it is the FIRST argument of a
- * reflective writer call anywhere under `node`.
+ * reflective writer call — or the target of a Proxy construction (#6651 U3) —
+ * anywhere under `node`.
  */
 export function markStandaloneReflectiveWriteTargets(node: ts.Node, varName: string, poisonSet: Set<string>): void {
   const visit = (n: ts.Node): void => {
     if (ts.isCallExpression(n) && n.arguments.length > 0 && isReflectiveWriterCall(n)) {
+      const first = stripped(n.arguments[0]!);
+      if (ts.isIdentifier(first) && first.text === varName) poisonSet.add(varName);
+    }
+    if (isProxyConstruction(n) && n.arguments !== undefined && n.arguments.length > 0) {
       const first = stripped(n.arguments[0]!);
       if (ts.isIdentifier(first) && first.text === varName) poisonSet.add(varName);
     }
@@ -128,5 +163,6 @@ export function integrityLiteralResultNeedsExternref(
  */
 export function isReflectiveWriterCallArg(id: ts.Identifier): boolean {
   const call = id.parent;
+  if (isProxyConstruction(call) && call.arguments?.[0] === id) return true; // (#6651 U3) `new Proxy<T>(target: T, …)`
   return ts.isCallExpression(call) && call.arguments.includes(id) && isReflectiveWriterCall(call);
 }

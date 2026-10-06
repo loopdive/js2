@@ -485,25 +485,43 @@ describe("#3525 genuine mixed prepared presentation and detached finalization", 
     expect(result.failure.detail).toMatch(/promise\.capability\.create has no linear adapter/);
     expect(result.failure.sourceFile).toBe("entry.ts");
   });
-  it("retains the authentic producer refusal for a distinct rejecting async body without claiming rejection execution", () => {
+  it("executes the unchanged formerly refused zero-suspension body through its genuine prepared helper", () => {
     const files = {
       "./entry.ts": "export async function reject(value:number):Promise<number>{if(value<0)throw null;return value+1;}",
     };
     expect(Buffer.byteLength(files["./entry.ts"])).toBe(97);
-    const result = runPreparedIrPipelinePresentation(input(files));
-    expect(result.kind, snapshot(result)).toBe("unsupported");
-    if (result.kind !== "unsupported") throw new Error(snapshot(result));
-    expect(result.phase).toBe("preparation");
-    expect(result.failure).toMatchObject({
-      kind: "unsupported",
-      code: "body-shape-rejected",
-      stage: "build",
-      detail: "async-plan producer cannot represent the complete body of reject",
-      sourceFile: "entry.ts",
-      location: { line: 1, column: 1, declarationStart: 0, declarationEnd: 97 },
-    });
-    expect(result).not.toHaveProperty("artifacts");
-    expect(result).not.toHaveProperty("emission");
+    expect(createHash("sha256").update(files["./entry.ts"]).digest("hex")).toBe(
+      "94b33355141949ce931730767308505fb55744cd3fc79c5b68724b94101db9c5",
+    );
+    const result = artifacts(input(files));
+    expect(result.finalization?.originalEmissionUnchanged).toBe(true);
+    expect(emittedPhysicalSetupPlan(result.emission)).toBeDefined();
+    const dir = mkdtempSync(join(tmpdir(), "prepared-zero-suspension-transition-"));
+    try {
+      const runtime = pathToFileURL(join(import.meta.dirname, "../src/index.ts")).href;
+      const helper = result.artifacts.importsHelper.replace('from "js2wasm"', `from ${JSON.stringify(runtime)}`);
+      expect(helper).not.toBe(result.artifacts.importsHelper);
+      writeFileSync(join(dir, "module.imports.mjs"), helper);
+      writeFileSync(join(dir, "module.wasm"), result.artifacts.binary);
+      writeFileSync(
+        join(dir, "run.mjs"),
+        `import {readFileSync} from 'node:fs';import {types} from 'node:util';import {instantiateBytes} from './module.imports.mjs';const instance=await instantiateBytes(readFileSync(new URL('./module.wasm',import.meta.url)));const rejected=instance.exports.reject(-1);const fulfilled=instance.exports.reject(2);if(!types.isPromise(rejected)||!types.isPromise(fulfilled))throw Error('not real Promises');console.log(JSON.stringify(await Promise.allSettled([rejected,fulfilled])));`,
+      );
+      const child = spawnSync(process.execPath, ["--import", "tsx", join(dir, "run.mjs")], {
+        cwd: join(import.meta.dirname, ".."),
+        encoding: "utf8",
+      });
+      expect(child.error).toBeUndefined();
+      expect(child.signal).toBeNull();
+      expect(child.status, child.stdout + child.stderr).toBe(0);
+      expect(child.stderr).toBe("");
+      expect(JSON.parse(child.stdout.trim())).toEqual([
+        { status: "rejected", reason: null },
+        { status: "fulfilled", value: 3 },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
   it("rejects forged and spread prepared objects after a genuine healthy completion", () => {
     finish(prepared());

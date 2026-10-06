@@ -2,6 +2,7 @@
 
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { emitThrowReferenceError } from "../js-errors.js";
+import { emitHostExternrefToNativeString } from "../string-ops.js";
 import type { ValType } from "../../ir/types.js";
 
 /**
@@ -29,4 +30,17 @@ export function compileHostFreeCryptoCall(ctx: CodegenContext, fctx: FunctionCon
   // Unreachable after the throw; satisfies the caller's externref contract.
   fctx.body.push({ op: "ref.null.extern" });
   return { kind: "externref" };
+}
+
+/**
+ * (#6749) `crypto.randomUUID()` on the native regime in a JavaScript
+ * environment: the host returns a JS string, and the regime's string carrier
+ * is the native one, so marshal it (`.length`, RegExp, concat then see a
+ * string). Returns null — leaving the raw `externref` — wherever the bridge is
+ * unavailable: the host-assisted regime (`ctx.standalone` false) and the
+ * host-free environments, which keeps those binaries byte-identical.
+ */
+export function marshalRegimeCryptoUuid(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
+  if (!ctx.standalone) return null;
+  return emitHostExternrefToNativeString(ctx, fctx);
 }

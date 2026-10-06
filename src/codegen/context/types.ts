@@ -965,6 +965,8 @@ export interface FunctionContext {
    * binding) hands `.then` a real `$Promise`. See `async-eager-promise.ts`.
    */
   eagerAsyncPromiseReturn?: boolean;
+  /** (#6417) A `boolean` host callback: an i32 return boxes via `__box_boolean`. */
+  hostBooleanReturn?: boolean;
   asyncDriveReturn?: {
     /** Local holding the frame's result `$Promise` (loaded at resume entry). */
     resultPromiseLocal: number;
