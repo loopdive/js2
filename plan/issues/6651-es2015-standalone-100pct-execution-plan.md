@@ -174,6 +174,17 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-10-06 — slice V6 (module namespace internals; record under "2026-10-06
+  # — Slice V6"). The §10.4.6 arms live in the NEW leaf
+  # `object-model/module-namespace-exotic.ts`. What stays in god-files (paths
+  # already listed below, restated here per the stranded-grant rule):
+  #   - `literals.ts` +14: `[...strings, Symbol.toStringTag]` widens the element
+  #     kind to externref instead of null-derefing the symbol into a string vec
+  #     (the define-own-property row);
+  #   - `expressions/new-super.ts` +4: the super receiver in a derived ctor is
+  #     the parent's override object (BindThisValue), not the struct;
+  #   - `declarations.ts` +2: allocate a self-importing module's TDZ flags
+  #     before class bodies compile (a class body may build `ns` first).
   # 2026-10-06 — slice V5 (captured-binding TDZ; record under "2026-10-06 —
   # Slice V5"). `index.ts` +3: `preallocateBlockScopedSlots` stops skipping a
   # block that hoists a function declaration when the frame is `__module_init`
@@ -1281,6 +1292,11 @@ loc-budget-allow:
   # `promise-subclass-cell-read.ts`; the hand-off cannot move, because it is the
   # arm that would otherwise emit the bare `global.get` of the cell.
 func-budget-allow:
+  # 2026-10-06 — slice V6 (see the loc-budget note): `compileArrayLiteral` +14
+  # (the externref widening for a non-string fixed element after a string
+  # spread) and `compileDeclarations` +1 (the early TDZ-flag call).
+  - src/codegen/literals.ts::compileArrayLiteral
+  - src/codegen/declarations.ts::compileDeclarations
   # 2026-10-06 — slice V5 (see the loc-budget note): `compileAssignment` +2 (the
   # TDZ guard on the boxed-capture write) and `planClosureCaptures` +2 (skip the
   # #1177 by-name slot rescan for a name no reference binds).
@@ -3485,6 +3501,67 @@ reproduced failing on base with `.tmp` probes before the fix).
 Equivalence gate green (1748 pass, 22 known). Temporal control
 (`Duration/prototype/round/*`, standalone, prewarmed cache): **119 pass / 7 fail of
 126, 0 `illegal cast`** — unchanged.
+
+### 2026-10-06 — Slice V6
+
+Module namespace exotic object internals (H6), on `77f00492c7`. **7/7 target
+rows flip** (`namespace/internals/{define-own-property, delete-exported-uninit,
+get-own-property-str-found-uninit, get-str-found-uninit,
+own-property-keys-binding-types, own-property-keys-sort,
+super-access-to-tdz-binding}`), plus `get-own-property-str-found-init`.
+Measured base vs branch with `JS2WASM_EVAL_ENGINE=quickjs … run-test262-paths.mts
+--standalone`, both sides with the runner fix below.
+
+What each row actually needed (several were not §10.4.6 at all):
+
+1. **[[Get]]/[[GetOwnProperty]] TDZ.** Every live export slot (`var`/`let`, a
+   TDZ-tracked `const`, `export default <expr>`) is a non-configurable accessor
+   over a minted getter that runs the binding's TDZ check first
+   (`ensureLiveBindingGetters`, in its own phase before the object's helpers are
+   reserved so index shifts settle first). A module that imports its OWN
+   namespace keeps every top-level TDZ flag (`ns.x` is invisible to the elision
+   walk), and allocates them before class bodies compile — a class body can
+   build `ns` first, which baked a getter with no flag
+   (`prepareSelfImportingModuleTdzGlobals`).
+2. **The data-property view.** The NEW leaf `object-model/module-namespace-exotic.ts`
+   brands each binding entry and prepends arms to the generic natives:
+   `__getOwnPropertyDescriptor` answers `{value, writable: true, enumerable:
+   true, configurable: false}` by reading the binding; `hasOwnProperty`/`hasOwn`/
+   `propertyIsEnumerable` read it (TDZ) then answer true; `__defineProperty_value`
+   implements §10.4.6.6 through the #6770 rejection channel; accessor defines
+   and `Object.freeze` reject; `isFrozen` answers false.
+3. **`[...exported, Symbol.toStringTag]`** (define-own-property) null-derefed:
+   the string spread picked a native-string vec and the symbol was coerced into
+   it. The literal now widens to externref when a fixed element is not a string.
+4. **own-property-keys-sort was an `illegal cast`, not a sort bug**: the harness
+   prelude has a direct `eval`, which keeps `var allKeys = Reflect.ownKeys(ns)`
+   as an externref global holding the runtime `$ObjVec`; `allKeys.indexOf(…)`
+   then `ref.cast` it to the string vec. #6770 S5's materialize-the-receiver arm
+   now also admits `Reflect.ownKeys` / `getOwnPropertySymbols` calls and a
+   binding initialised from any own-key-list call (read-only methods only — the
+   receiver is a copy).
+5. **super-access-to-tdz-binding**: the super receiver in a derived constructor
+   was the struct `this`, not the object the parent constructor returned
+   (§9.1.1.3.1 BindThisValue). `emitTypedThisSuperReceiver` now uses
+   `tryEmitDerivedEffectiveThis`; the §10.1.9.2 receiver step then reaches the
+   descriptor arm and throws the ReferenceError. A dedicated
+   `__reflect_set_receiver` arm in the saved WIP was removed: it fired before the
+   target chain's setter (`super-set-to-tdz-binding-with-accessor` regressed).
+6. **own-property-keys-binding-types** was a local-runner gap: the in-process
+   self-import branch of `tests/test262-runner.ts` compiled the entry alone, so
+   `export * from './…_FIXTURE.js'` resolved nothing (7 of 10 keys). It now links
+   the static fixture graph exactly as the sharded path in `test262-shared.ts`
+   already does; the CI verdict for this row was never subject to this gap.
+
+Not fixed: `super.x = v` where the namespace binding is INITIALISED and `v`
+differs still answers true (the receiver write goes through `__extern_set`,
+which skips an accessor without a setter instead of applying §10.4.6.6).
+
+**Receipts.** Family `language/module-code/namespace/**` + `instn-*` (114 rows):
+base 36 → branch 44, **0 lost**. Pin `tests/issue-6651-v6-module-namespace.test.ts`
+(3 cases, all RED on base). Equivalence gate green (1748 pass, 22 known).
+Temporal control (`Duration/prototype/round/*`, standalone, prewarmed cache):
+**119 pass / 7 fail of 126, 0 `illegal cast`** — unchanged.
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 

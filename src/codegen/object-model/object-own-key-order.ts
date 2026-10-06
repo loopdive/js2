@@ -65,13 +65,41 @@ function staticArrayIndexOf(name: string): number {
  * coercion materializes the vec. The caller materializes the receiver the same
  * way (`withArraySubclassReceiverAsVec`) when this answers true.
  */
-function isStandaloneOwnKeyListCall(ctx: CodegenContext, expr: ts.Expression): boolean {
-  if (!ctx.standalone || !ts.isCallExpression(expr) || !ts.isPropertyAccessExpression(expr.expression)) return false;
+function isOwnKeyListCall(expr: ts.Expression): boolean {
+  if (!ts.isCallExpression(expr) || !ts.isPropertyAccessExpression(expr.expression)) return false;
   const callee = expr.expression;
+  if (!ts.isIdentifier(callee.expression)) return false;
+  const owner = callee.expression.text;
+  const name = callee.name.text;
   return (
-    ts.isIdentifier(callee.expression) &&
-    callee.expression.text === "Object" &&
-    (callee.name.text === "keys" || callee.name.text === "getOwnPropertyNames")
+    (owner === "Object" && (name === "keys" || name === "getOwnPropertyNames" || name === "getOwnPropertySymbols")) ||
+    (owner === "Reflect" && name === "ownKeys")
+  );
+}
+
+/**
+ * (#6651 V6) Read-only methods, safe over the materialized COPY a binding
+ * receiver gets (a mutating one must reach the binding's own vec).
+ */
+const READ_ONLY_KEY_LIST_METHODS = new Set(["indexOf", "lastIndexOf", "includes", "at", "slice", "every", "some"]);
+
+/**
+ * …or (#6651 V6) a binding initialized from one, read by a read-only method:
+ * a module with a direct `eval` keeps `var keys = Reflect.ownKeys(o)` as an
+ * externref global holding the raw `$ObjVec`, so `keys.indexOf(k)` traps on the
+ * same cast. The coercion only copies a foreign value, so a reassigned binding
+ * still reads correctly.
+ */
+function isStandaloneOwnKeyListCall(ctx: CodegenContext, expr: ts.Expression, methodName: string): boolean {
+  if (!ctx.standalone) return false;
+  if (isOwnKeyListCall(expr)) return true;
+  if (!ts.isIdentifier(expr) || !READ_ONLY_KEY_LIST_METHODS.has(methodName)) return false;
+  const decl = ctx.oracle.valueDeclarationOf(expr);
+  return (
+    decl !== undefined &&
+    ts.isVariableDeclaration(decl) &&
+    decl.initializer !== undefined &&
+    isOwnKeyListCall(decl.initializer)
   );
 }
 
@@ -81,9 +109,10 @@ export function withOwnKeyListReceiverAsVec<T>(
   fctx: FunctionContext,
   receiverExpr: ts.Expression,
   eligible: boolean,
+  methodName: string,
   lower: () => T | undefined,
 ): T | undefined {
-  if (!eligible || !isStandaloneOwnKeyListCall(ctx, receiverExpr)) return undefined;
+  if (!eligible || !isStandaloneOwnKeyListCall(ctx, receiverExpr, methodName)) return undefined;
   return withArraySubclassReceiverAsVec(
     ctx,
     fctx,
