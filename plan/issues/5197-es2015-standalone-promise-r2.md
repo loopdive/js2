@@ -2136,3 +2136,130 @@ multisets and stable before/after inputs. Then run both complete files with all
 original782 identities plus separately accounted new controls. This does not
 replace remaining full-composition or three-arm acceptance. Parent independently
 verified C1's10 inverse/replays and12 current pins against Git before this release.
+
+### Reviewed repair and original-deadline execution release
+
+Darwin completed the two-file E repair. Parent read the full diff and Laplace
+independently approved the exact final bytes. Historical test SHA256
+da9d1e506f1b1bf994bdec3af74bb5151bb02cb2dcd77ad5dfefbb926271b9ce;
+seam SHA256106889692b67ee87c3a5cce268985956834302bc3f8aa90ce6743fe1470b8d5f.
+The original-byte archive in E `.tmp/5883-six-timeout-before-20261006.json`
+has SHA256a49845207b9957e1ce1ea3207cac7a636a3cd5f883a70c36ea2eb6d4c866f252,
+two files and238809 decoded bytes. All248 original assertion expressions,
+57 registrations/parameter tables and both seam acquisition edges are preserved.
+Four additive freshness controls require changed mandatory input rejection and
+restoration acceptance. No timeout increase or additional yield was introduced.
+
+Parent reviewed E `.tmp/5883-six-historical-acceptance-20261006.mts`, SHA256
+5a256de3347ca32c816e317445618181dd6f2322517527d3284ace1ba84f103e, including
+its cwd-relative imported pin helpers. Release one execution at35000ms with
+one worker/2048MB. It enforces six selected original occurrences,786 complete
+identities and780 explicitly unselected occurrences, preserving original782
+plus four new controls. Full E source/test/script/config pin maps, Node identity,
+pending4bff merge, original failed-run authorities, raw/native and terminal are
+retained. Neither six passing assertions nor this targeted run grants full-suite
+acceptance; raw worker errors reject it. No automatic retry or source mutation.
+
+The three A documentation commits through0adac4bed9884c5e2e6a6ce8f0d02bf6df715e0d
+were pushed to existing held PR5748 and independently verified on the remote.
+Normal push checks passed, including18/18 numeric-local parity tests. No PR was
+merged and no hold was removed. External test262 processes were observed during
+preparation; their presence is environmental context, never a failure waiver or
+authority to interrupt them.
+
+The exact-six run subsequently terminated exit0 (job73628). E evidence directory
+`.tmp/5883-six-historical-acceptance-20261006-huPmgk` records6 passed,0 failed,
+780 explicitly unselected and786 complete identities. Parent reviewed complete
+raw output: no RPC/unhandled errors. Independent comparison confirms identical
+7769-input maps (SHA25632aaa62bbc2149477f5759f4b74a9c5159484559931dca85e4d453e565b579f3)
+and exact identity multisets including duplicate names. The six durations are
+2.725/2.567/3.324seconds historical and1.592/1.319/1.210seconds seam. This
+establishes the six-case repair only; four new controls were not yet executed.
+
+Next release preparation is a separate full-two-file runner, preserving this
+attempt and enforcing636 historical plus150 seam cases:786 passed with no skips,
+failures or todos, including original782 and four new controls. Keep the same
+35000ms deadline, Node/control pins, explicit4bff composition and raw-error gate;
+freeze input equality to the just-completed six-case map above. Parent reviews
+the runner delta before execution. No source changes or automatic retries.
+
+Parent read the complete two-file runner delta and independently syntax-checked
+SHA2564f68727c162527d69da14643a2b4fb82b0f82c6ad90baf7f4d52761435436093
+at E `.tmp/5883-two-file-historical-acceptance-20261006.mts`. One execution is
+released to Darwin with the sole owned heavy-test slot. The runner removes the
+name filter, authenticates the completed six-run's7769-input map and enforces all
+786 exact identities, zero skipped/failed/todo, clean raw output and stable pins.
+Original failures remain recorded separately. No further stages until review.
+
+### Parallel preparation of pinned-main comparison arms
+
+While E's two-file run owns the compiler slot, release Laplace to read-only
+scope verification for original main A and narrowly repaired main B, both pinned
+to4bffef14505f26558556a707931c711105a968af. Read actual Git blobs, not working
+main or summaries. Enumerate every physical inventory acquisition reaching the
+589117-byte incoming chain, identify the exact wrapper insertion needed for
+main-to-incoming, and distinguish caller repairs from additive candidate proofs.
+For each proposed B file, retain all parameter tables, assertion bodies, fixture
+values, timeouts, failure ownership and physical-source read traces. Identify
+dependent C1 current pins/after-side recipes requiring reconciliation; historical
+before-fields must remain unchanged. Flag any site needing more than acquisition
+repair rather than silently redesigning it.
+
+Return a concrete path/function/reader inventory and minimal B patch specification
+for parent decision. Do not edit E, create baseline worktrees, run tests, change
+main, or generate authority from candidate outputs. Test identity populations
+must subsequently be collected natively and measured; static registration counts
+are not denominators. A's original failures and raw error channel will remain
+untouched, and B/C comparison must use exact common identities/results with all
+candidate-only controls separately accounted. This preparation does not waive
+the full E comparison or authorize an easier acceptance target.
+
+### Additional acquisition sites found before full-composition acceptance
+
+Laplace's pinned4bff audit found24 ordinary physical acquisition sites in17
+caller files, plus the three6866 successor acquisition paths. Static counts are
+not native test denominators. Parent independently inspected E and confirmed
+seven callers outside the earlier ten-file assignment still feed the physical
+union directly into the finally predecessor reader, which expects589117 bytes:
+
+- issue-3518-canonical-3c6-inventory-successor, raw;
+- issue-3518-canonical-489d-inventory-successor, raw;
+- issue-3518-current-main-inventory-successor, raw;
+- issue-3518-lowering-analysis-preservation, applicationInput (non-h2 only);
+- issue-3518-nested-stackification-policy-evolution, raw;
+- issue-3518-semantic-provider-boundary, policy;
+- issue-3518-validation-policy-evolution, actual.
+
+Each filename is under tests and ends .test.ts. This is a source-level gap,
+not a measured failure count. Release Laplace to prepare an apply_patch artifact
+only under E .tmp, plus exact preimage hashes and static preservation evidence.
+Do not apply it to the frozen E source tree while786-case validation runs.
+For each of these seven files, add the named helper import and wrap only the
+actual physical inventory read immediately inside the existing finally call
+with capture5883Main4bffInventoryViewSource(value, "union-to-incoming"). Keep
+the entire incoming chain, h2 branch, global readers, mutation operands, fixture
+values, assertion bodies and budgets unchanged. No other paths or C1 edits.
+Require exact preimages and full registration/fixture/assertion preservation;
+stop on a failure-owner incompatibility. Parent reviews the artifact and applies
+only after the active run is terminal, then revises candidate input authority
+explicitly and includes all seven complete files in acceptance.
+
+For future main B, all17 ordinary callers use the distinct main-to-incoming
+profile. Its C1 body retains the original30000ms native deadline and no added
+150000ms case budget; copying E's body would be an additional unauthorized
+baseline repair. Only the four established current pins/after-side recipes and
+independent freeze may change. Finally's physical controls need separate fixed
+historical-witness and current-main projection controls, preserving original
+rejection ownership and four-read trace. Original main A remains unchanged.
+
+Parent read the complete seven-file proposed patch and verification report, then
+independently authenticated the patch/archive hashes and all seven unchanged
+source preimages. E `.tmp/laplace-4bff-additional-seven-20261006.apply_patch.txt`
+SHA2568f06e133c84fe741c73e9cef03eb30f8883e944d61ab45849d159e0deff66c71
+contains only seven imports and seven physical-read wrappers. Preimage archive
+SHA256e546e12ca62cb8c1b56202843ff6cd52adbe5b1b5bcc832e8508cad9aec7c451
+retains7 files/338625 decoded bytes. Static preservation covers152 registrations,
+624 assertion expressions and36 parameter tables; these are not executed counts.
+The source patch is approved but unapplied pending terminal786-run evidence.
+After termination, recheck exact preimages before application; preserve that run's
+original7769-pin result and define the seven-file delta for subsequent acceptance.

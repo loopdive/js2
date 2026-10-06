@@ -492,3 +492,25 @@ execute compiler/Vitest tests while session65800 runs. Lightweight source/hash/
 inverse verification and syntax checks are allowed. Parent reviews this phase
 before assigning the existing callers, physical-source negatives and C1 recipes.
 No staging, commits, merge completion, dependency installs or pushes by the agent.
+
+### Parallel read-only lifecycle queue audit
+
+While PR5883's full two-file validation runs, assign Sol6.1 Medium to recheck
+PR6195's live head, base, merge state, hold and unresolved review threads. Compare
+against recorded head0f858c60e17bc0718f39e2653a4adb5666143d9e and the actual
+producer/activation requirements above. Read relevant failing check records where
+needed; do not infer readiness from an old green summary. Report what changed,
+what still prevents safe protected-queue landing, and whether another owner has
+unpublished work. This is read-only evidence gathering: no source edits, fetch
+that changes shared refs, branch refresh, PR comments/labels, merge or test runs.
+Do not duplicate or displace an active owner. Parent decides any coding release.
+
+Audit reconfirmed6195 at the same0f858c60 head, ready but held and behind main;
+no review threads or submitted reviews. Quality job108603166235 in run36313282107
+still demonstrates988 owned-adapter lines against952, entirely71-to107 growth
+in instance-lifecycle-adapter.ts. Parent reread that exact committed adapter:
+enrollment remains an adapter-local genuine-instance handle, not module/producer
+provenance. Observed main6998bf0b290c065249e01861ffdbec2dd268662a still lacks
+the required allocation-role and root-inclusive startup authority. This does not
+release managed activation or a budget increase. Constructor/binding worktrees
+retain unpublished other-owner changes and were left untouched. No tests run.
