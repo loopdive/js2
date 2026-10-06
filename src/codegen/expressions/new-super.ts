@@ -1,4 +1,5 @@
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
+import { compileCollectionSuperMethodCall } from "../classes/standalone-collection-carrier.js"; // (#6754)
 import { widenJsDefaultGuessSlot } from "../js-default-param-type-guess.js";
 import { materializeFnctorTwinCaptures } from "../fnctor-twin-captures.js";
 import { resolveStaticSpreadArgs } from "../static-spread-arity.js"; // (#6460)
@@ -67,7 +68,7 @@ import { compileArrayMethodCall, emitBoundsCheckedArrayGet } from "../array-meth
 import { isStandaloneArraySubclass, withArraySubclassReceiverAsVec } from "../array-subclass-receiver.js"; // (#2917)
 import { emitObjectCoercion } from "./calls-guards.js"; // (#3118) shared Object(...) / new Object(...) ToObject coercion
 import { COLLECTION_KIND } from "../collection-kind.js"; // (#6419) import-free leaf — map-runtime.js is in an import cycle
-import { ensureMapHelpers, coerceMapKeyToAnyref } from "../map-runtime.js";
+import { ensureMapHelpers, coerceMapKeyToAnyref, tryCompileNativeMapMethodCall } from "../map-runtime.js";
 import { ensureDisposableStackNew } from "../disposable-runtime.js";
 import { emitSetNewTargetBeforeCall, ensureNewTargetGlobal } from "../new-target.js"; // (#2023)
 import { fnctorBindingName } from "./new-target-value.js"; // (#6774 S4)
@@ -78,7 +79,8 @@ import {
   reserveApplyClosure,
   WRAPPER_PRIMITIVE_KEY, // (#6775 S5)
 } from "../object-runtime.js"; // (#1100) standalone Proxy native runtime; (#2928) Function-marker construct
-import { ensureSetHelpers } from "../set-runtime.js";
+import { ensureSetHelpers, tryCompileNativeSetMethodCall } from "../set-runtime.js";
+const COLLECTION_CALLS = { map: tryCompileNativeMapMethodCall, set: tryCompileNativeSetMethodCall } as const; // (#6754)
 import { ensureWeakCollectionHelpers } from "../weak-collections-runtime.js";
 import { tryCompileNativeWeakRefNew } from "../weakref-runtime.js";
 import { classMemberFuncKey } from "../class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
@@ -1370,6 +1372,9 @@ function compileSuperMethodCallCore(
       );
       if (arrayResult !== undefined) return arrayResult === VOID_RESULT ? null : arrayResult;
     }
+    // (#6754) Standalone Map/Set/WeakMap/WeakSet parent: the native helper on `this`.
+    const collectionResult = compileCollectionSuperMethodCall(ctx, fctx, expr, currentClassName, COLLECTION_CALLS);
+    if (collectionResult !== undefined) return collectionResult;
     // (#1614) The parent may be a builtin extern class (Set/Map/Array/...)
     // whose methods are host-backed, not compiled into funcMap. Dispatch
     // `super.method(args)` dynamically via __extern_method_call(this, name, args).

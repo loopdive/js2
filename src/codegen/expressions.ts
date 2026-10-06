@@ -122,6 +122,7 @@ import { notePromiseDynamicMemberRead } from "./promise-dynamic-member-read.js";
 import { compileTaggedTemplateExpression, compileTemplateExpression } from "./string-ops.js";
 import { compileDeleteExpression, compileRegExpLiteral, compileTypeofExpression } from "./typeof-delete.js";
 import { describeInternalError } from "./internal-error.js";
+import { isNodeBuiltinNamedImportCallee } from "./expressions/node-builtin-named-import.js"; // (#6450)
 
 // ── Public re-exports (preserves the external API) ────────────────────
 
@@ -285,6 +286,8 @@ function isAsyncCallExpression(ctx: CodegenContext, expr: ts.CallExpression): bo
   }
 
   if (ts.isIdentifier(expr.expression)) {
+    // (#6450) A host builtin: its own result, never the async-call wrap.
+    if (isNodeBuiltinNamedImportCallee(ctx, expr.expression)) return false;
     if (ctx.asyncFunctions.has(expr.expression.text)) return true;
   }
 

@@ -3783,7 +3783,7 @@ function emitExternrefBackedOwnFieldWrite(
   className: string,
 ): ValType | null | undefined {
   const backing = externrefBackedOwnFieldBacking(ctx, className);
-  if (backing === undefined) return undefined;
+  if (backing === undefined || backing === "collection-struct") return undefined; // (#6754) struct path stores it
   ensureObjectRuntime(ctx);
   const newObjIdx = ctx.funcMap.get("__new_plain_object");
   const externSetIdx = ensureLateImport(

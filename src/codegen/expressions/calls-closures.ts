@@ -2483,7 +2483,10 @@ export function tryExternClassMethodOnAny(
   // + the #3139 prototype-inclusive `__extern_length`/`__extern_get_idx`/
   // `__extern_has_idx` handlers) resolve inherited length/elements correctly.
   // `indexOf`/`lastIndexOf` are String∩Array-ambiguous exactly like `.slice`.
+  // (#4526) `includes` too — and the first ambient match is DOM's
+  // `IDBKeyRange.includes`, so `actual.includes(x)` on an array answered false.
   if (
+    methodName === "includes" ||
     methodName === "forEach" ||
     methodName === "some" ||
     methodName === "every" ||

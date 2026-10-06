@@ -215,6 +215,7 @@ import {
   mintClosureStructTypes,
   emitClosureParamDestructuring,
   emitClosureConstruction,
+  closurePrecedesBindingInitializerStore,
 } from "./closures/arrow-phases.js"; // (#3278) arrow/fn-expr closure phase helpers
 import {
   collectDirectEvalActivationBindingNames,
@@ -4374,7 +4375,12 @@ export function compileArrowAsCallback(
     // (#2128) forceMutableCaptures: a sibling accessor in the same object
     // literal writes this local — capture via the shared ref cell even if
     // this callback (e.g. the getter) only reads it.
-    const isMutable = writtenInCallback.has(name) || (options?.forceMutableCaptures?.has(name) ?? false);
+    // (#4526) …or the binding is initialized AFTER this callback is built
+    // (`const off = subscribe(() => off())`): a by-value capture is the TDZ hole.
+    const isMutable =
+      writtenInCallback.has(name) ||
+      (options?.forceMutableCaptures?.has(name) ?? false) ||
+      closurePrecedesBindingInitializerStore(arrow, bindingDeclaration);
     const alreadyBoxed = !!fctx.boxedCaptures?.has(name);
     captures.push({ name, type, localIdx, mutable: isMutable, alreadyBoxed });
   }

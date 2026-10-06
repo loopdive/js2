@@ -36,9 +36,11 @@ import {
   prepareIrProgramPresentation,
   beginPreparedPresentationFinalization,
   completePreparedPresentationFinalization,
+  preparedPresentationWitView,
   type PreparedPresentationFinalization,
   type PreparedPresentationFinalizationReceipt,
   type IrProgramPresentationResult,
+  type IrProgramPresentationGap,
   type PreparedIrPipelinePresentationResult,
 } from "./compiler/ir-program-presentation.js";
 import { freezePreparedIrValue, PreparedIrProgramInvariantError, type PreparedIrBackendOptions } from "./ir/program.js";
@@ -102,7 +104,7 @@ import * as irIds from "./compiler/ir-outcome-inventory.js";
 import { buildLinearOptions } from "./compiler/linear-options.js";
 import type { CompileError, CompileOptions, CompileResult } from "./index.js";
 import { optimizeBinaryAsync } from "./optimize.js";
-import { generateWit } from "./wit-generator.js";
+import { generateWit, renderPreparedWit } from "./wit-generator.js";
 import {
   foldGroundCallsInMultiFilesForCompile as foldGroundCallsInMulti,
   foldGroundExportCallsForCompile as foldGroundCalls,
@@ -1182,13 +1184,16 @@ export function runPreparedIrPipelinePresentation(input: PipelineInput): Prepare
   const finalization: PreparedMixedFinalization | undefined = prepared.requiresDetachedFinalization
     ? { token: beginPreparedPresentationFinalization(prepared) }
     : undefined;
+  const wit: PreparedWitFinalization | undefined = options.wit ? { presentation: prepared } : undefined;
   const finalized = finalizePipelineModule(
     { ...prepared.output, preparedStartup: prepared.startup },
     finalization?.token.outputModule ?? prepared.emission.module,
     undefined,
     { targetProfile, emitWatOutput: options.emitWat !== false, emitSourceMap: options.sourceMap === true },
     finalization,
+    wit,
   );
+  if (wit?.gaps) return { kind: "presentation-unsupported", gaps: wit.gaps };
   if (finalized.success && finalization && !finalization.receipt)
     throw new PreparedIrProgramInvariantError(
       "invalid-transaction-capability",
@@ -1243,6 +1248,13 @@ interface PreparedMixedFinalization {
   receipt?: PreparedPresentationFinalizationReceipt;
 }
 
+/** Only the private prepared entry supplies a genuine presentation here. */
+interface PreparedWitFinalization {
+  readonly presentation: Extract<IrProgramPresentationResult, { kind: "prepared-presentation" }>;
+  text?: string;
+  gaps?: readonly IrProgramPresentationGap[];
+}
+
 /** Shared output contract; generation and its diagnostics finish before entry. */
 function finalizePipelineModule(
   input: PipelineOutputContext,
@@ -1254,6 +1266,7 @@ function finalizePipelineModule(
     emitSourceMap: boolean;
   },
   finalization?: PreparedMixedFinalization,
+  wit?: PreparedWitFinalization,
 ): CompileResult {
   const { errors, options, entryAst, diagnosticAnchor } = input;
   const { targetProfile, emitWatOutput, emitSourceMap } = output;
@@ -1305,6 +1318,24 @@ function finalizePipelineModule(
       );
       return failResult(errors, telemetry);
     }
+  }
+
+  // Requested prepared WIT must be complete before any final artifacts are emitted.
+  let preparedCapabilities: ReturnType<typeof buildCapabilityRequirements> | undefined;
+  if (wit) {
+    const view = preparedPresentationWitView(wit.presentation, mod);
+    preparedCapabilities = buildCapabilityRequirements(mod, hostImportInventory, targetEnvironment);
+    const rendered = renderPreparedWit(view, {
+      ...(typeof options.wit === "object" ? options.wit : {}),
+      imports: mod.imports,
+      types: mod.types,
+      capabilities: preparedCapabilities,
+    });
+    if (rendered.kind === "unsupported") {
+      wit.gaps = rendered.gaps;
+      return failResult(errors, telemetry);
+    }
+    wit.text = rendered.text;
   }
 
   // Step 3: Emit binary (with source map collection if enabled).
@@ -1392,7 +1423,8 @@ function finalizePipelineModule(
   const dts = profilePhase("emit-dts", () => generateDts(entryAst, mod));
 
   const hostImportSummary = summarizeHostImportInventory(hostImportInventory);
-  const capabilityRequirements = buildCapabilityRequirements(mod, hostImportInventory, targetEnvironment);
+  const capabilityRequirements =
+    preparedCapabilities ?? buildCapabilityRequirements(mod, hostImportInventory, targetEnvironment);
   const capabilityProviderDiagnostics = validatePlatformCapabilityRequirements(
     capabilityRequirements,
     targetEnvironment,
@@ -1401,7 +1433,14 @@ function finalizePipelineModule(
   // Step 6: Generate WIT from the same frozen capability requirements used by
   // explain output and adapter validation, never from a parallel authority map.
   let witOutput: string | undefined;
-  if (options.wit) {
+  if (wit) {
+    if (wit.text === undefined)
+      throw new PreparedIrProgramInvariantError(
+        "invalid-transaction-capability",
+        "prepared WIT lacks preflighted text",
+      );
+    witOutput = wit.text;
+  } else if (options.wit) {
     const witOpts = typeof options.wit === "object" ? options.wit : undefined;
     witOutput = generateWit(entryAst, {
       ...witOpts,

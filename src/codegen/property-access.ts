@@ -2111,7 +2111,7 @@ export function emitExternrefBackedOwnFieldRead(
 ): ValType | null | undefined {
   const backing =
     backingOverride ?? (className === undefined ? "error-struct" : externrefBackedOwnFieldBacking(ctx, className));
-  if (backing === undefined) return undefined;
+  if (backing === undefined || backing === "collection-struct") return undefined; // (#6754) struct path reads it
   ensureObjectRuntime(ctx);
   const externGetIdx = ensureLateImport(
     ctx,

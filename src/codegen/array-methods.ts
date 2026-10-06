@@ -145,7 +145,7 @@ import { buildSpreadArgList, hasSpreadArgument } from "./spread-arg-list.js"; //
 import { canBuildSpreadArgList, isTupleStructType } from "./spread-arg-list.js"; // (#5361)
 import { compileArrayPushSpread } from "./array-push-spread.js"; // (#5361)
 import { callArgsNeedEarlyEvaluation, planCallArgs } from "./array-method-arg-order.js"; // (#6787)
-import { taDynDetachedGuardPrologue } from "./ta-dyn-method-call.js"; // (#6651 E6) join/toLocaleString
+import { taDynDetachedGuardPrologue, taDynJoinLengthInstrs } from "./ta-dyn-method-call.js"; // (#6651 E6/U2) join/toLocaleString
 import { reserveNumberToLocaleString } from "./to-locale-string-element.js"; // (#6651 TA1) numeric element Invoke
 import { reserveBoolToLocaleString } from "./expressions/bool-to-locale-string.js"; // (#6771 S6) boolean element Invoke
 
@@ -5645,8 +5645,9 @@ function compileArrayJoinExternNative(
   // Receiver → externref, retained in recvTmp. len = trunc(__extern_length(recv)).
   const recvType = compileExpression(ctx, fctx, propAccess.expression);
   if (recvType && recvType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
-  fctx.body.push({ op: "local.tee", index: recvTmp });
-  fctx.body.push({ op: "call", funcIdx: externLenIdx });
+  fctx.body.push({ op: "local.set", index: recvTmp });
+  // (#6651 U2) a dyn-view receiver reads its INTERNAL length, not an own `length`.
+  fctx.body.push(...taDynJoinLengthInstrs(ctx, fctx, recvTmp, externLenIdx));
   fctx.body.push({ op: "i32.trunc_sat_f64_s" });
   fctx.body.push({ op: "local.set", index: lenTmp });
   // (#6651 E6) §23.2.3.18/.32 ValidateTypedArray on a dyn view: a detached

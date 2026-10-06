@@ -19,7 +19,16 @@ import { widenAsyncThenableResults } from "./async-thenable-return.js"; // (#537
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
 // (#3522) nested implicit-ctor family
 import { irPreparedNestedOrdinaryClass, type IrNestedClassFieldCallAdmission, type IrUnitId } from "../ir/identity.js";
-import { isHostConstructibleBuiltin, isNativeCollectionBuiltin } from "./builtin-tags.js";
+import { isHostConstructibleBuiltin } from "./builtin-tags.js";
+import { ensureMapRuntimeTypes } from "./map-runtime.js";
+import {
+  applyCollectionCarrierLayout,
+  classFieldInitReceiver,
+  prepareCollectionSubclassHeritage,
+  emitCollectionCarrierWrap,
+  isCollectionCarrierClass,
+  isRuntimeCollectionStructHeritage,
+} from "./classes/standalone-collection-carrier.js"; // (#6754)
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2637 B2) host-only Promise-subclass ctor gate
 import { emitStandalonePromiseFromExecutorValue } from "./promise-executor.js"; // native standalone Promise-subclass super(executor)
 import { emitPromiseSubclassProtoLink, isStandalonePromiseSuperForwarder } from "./promise-subclass-proto-link.js"; // (#6651 D4)
@@ -1088,7 +1097,11 @@ export function collectClassDeclaration(
             break;
           }
           parentStructTypeIdx = ctx.structMap.get(parentClassName);
-          parentFields = ctx.structFields.get(parentClassName) ?? [];
+          // (#6754) The runtime `$Map` struct is never a user-class parent.
+          if (isRuntimeCollectionStructHeritage(ctx, parentStructTypeIdx, parentClassName)) {
+            parentStructTypeIdx = undefined;
+          }
+          parentFields = parentStructTypeIdx === undefined ? [] : (ctx.structFields.get(parentClassName) ?? []);
           // Record parent-child relationship
           ctx.classParentMap.set(className, parentClassName);
           // (#6623, #5383 S36) `resolveClassHeritageAlias` returning `undefined`
@@ -1104,57 +1117,24 @@ export function collectClassDeclaration(
           if ((ctx.standalone || ctx.wasi) && resolvedParentClassName === undefined) {
             ctx.classDynamicUnresolvedHeritageSet.add(className);
           }
-          // (#2620) A subclass of a native-collection builtin (Set/Map/WeakMap/
-          // WeakSet) under nativeStrings (`--target standalone`/`wasi`) cannot
-          // take the host-constructible path below: there is no JS host, so
-          // `super(...)`/`new Sub()` lowering to `__new_<Parent>` would leak an
-          // unsatisfiable `env::__new_Set` import (defect A), and the synthetic
-          // `<Class>_<method>` accessor desyncs across the late-import shift
-          // (defect B — the #2043 invalid-Wasm class, e.g. `MySet_has`/`_size`
-          // baking a `-1` global / a stale call funcIdx).
-          //
-          // (#3972) NARROWED to property/accessor declarations, deliberately NOT
-          // deleted, and narrowed to the shape MEASURED to be broken rather than
-          // a guessed one. Defect A is fixed at the root:
-          // `emitStandaloneCollectionSuperCtor` gives `super()` a DEFINED `$Map`
-          // constructor, so `class Sub extends Set {}` emits no import at all —
-          // and with no late import there is no reorder, so defect B cannot
-          // arise from construction either. A bare subclass plus an inherited
-          // `s.add(1)` also stays host-free (the brand-stamped `$Map` is what
-          // makes the value-representation dispatch succeed), so declared
-          // methods and explicit constructors are allowed. A declared FIELD or
-          // ACCESSOR still traps, which is a family-wide defect the earlier
-          // Array/TypedArray rungs ship unguarded.
-          //
-          // Full rationale, the two measurements that set this boundary, and the
-          // terminal fix: see standalone-subclass-ctors.ts (the note above
-          // `resolveStandaloneSubclassBuiltinCtor`). Do NOT widen this back to
-          // "any non-empty body" and do NOT drop it while the field defect
-          // stands. gc/host mode is unaffected: the externClass host path
-          // handles the subclass there.
-          const declaresFieldOrAccessor = decl.members.some(
-            (m) => ts.isPropertyDeclaration(m) || ts.isGetAccessorDeclaration(m) || ts.isSetAccessorDeclaration(m),
+          // (#2620 → #3972 → #6754) A native-collection subclass (Set/Map/
+          // WeakMap/WeakSet) under nativeStrings constructs host-free through
+          // `__new_<Parent>@N`, and own fields live on a `$Map`-subtype carrier
+          // (standalone-collection-carrier.ts). What is still unrepresentable —
+          // a declared accessor, a subclass OF a carrier, any declared field
+          // off the standalone/WASI lanes — is a clean CE here, never a trap.
+          // Skip the externref-backed marking so the host-leak path is never
+          // entered; the queued error fails the compile.
+          const collectionRefusal = prepareCollectionSubclassHeritage(
+            ctx,
+            decl,
+            className,
+            parentClassName,
+            ctx.classSet.has(parentClassName),
+            ensureMapRuntimeTypes,
           );
-          if (
-            parentStructTypeIdx === undefined &&
-            ctx.nativeStrings &&
-            isNativeCollectionBuiltin(parentClassName) &&
-            declaresFieldOrAccessor
-          ) {
-            reportError(
-              ctx,
-              decl,
-              `Codegen error: 'class ${className} extends ${parentClassName}' with a declared ` +
-                `property or accessor is not yet supported in --target standalone (#2620/#3972). ` +
-                `Construction and inherited methods are native now — an empty-bodied ` +
-                `'class ${className} extends ${parentClassName} {}', declared methods, and an ` +
-                `explicit constructor all compile and run host-free — but instance FIELD storage on ` +
-                `an externref-backed builtin subclass is not implemented, and would trap at runtime ` +
-                `rather than fail here. Drop the field/accessor, use ${parentClassName} directly, or ` +
-                `recompile without --target standalone.`,
-            );
-            // Skip the externref-backed marking so the host-leak/invalid-Wasm
-            // path is never entered; the queued error fails the compile.
+          if (collectionRefusal !== undefined) {
+            reportError(ctx, decl, collectionRefusal);
             break;
           }
           // (#2029 → RESOLVED by #3972) A Number/Boolean subclass used to be
@@ -1444,6 +1424,7 @@ export function collectClassDeclaration(
   if (parentStructTypeIdx !== undefined) {
     structDef.superTypeIdx = parentStructTypeIdx;
   }
+  applyCollectionCarrierLayout(ctx, className, structTypeIdx, structDef, fields); // (#6754)
   commitClassStructLayout(ctx, decl, className, structTypeIdx, structDef, fields);
 
   // Register a prototype singleton global (externref, lazily initialized)
@@ -2909,6 +2890,7 @@ function compileClassBodiesInner(
             fctx.body.push({ op: "local.get", index: i });
           }
           fctx.body.push({ op: "call", funcIdx });
+          emitCollectionCarrierWrap(ctx, fctx, className); // (#6754)
         } else {
           // Standalone (no host import): treat the first constructor argument
           // as the instance, matching the previous single-arg fallback.
@@ -2993,7 +2975,7 @@ function compileClassBodiesInner(
       // externref-backed classes — they have no WasmGC struct fields; user
       // `prop = ...` declarations inside `class Sub extends Error` would need
       // to be installed via host setters, which is out of scope.
-      if (isExternrefBacked || ownFieldInitializersEmitted) return;
+      if ((isExternrefBacked && !isCollectionCarrierClass(ctx, className)) || ownFieldInitializersEmitted) return;
       ownFieldInitializersEmitted = true;
       for (const member of decl.members) {
         if (ts.isPropertyDeclaration(member) && member.name && member.initializer && !hasStaticModifier(member)) {
@@ -3001,7 +2983,7 @@ function compileClassBodiesInner(
           if (fieldName === undefined) continue; // dynamic computed name — skip
           const fieldIdx = fields.findIndex((f) => f.name === fieldName);
           if (fieldIdx !== -1) {
-            fctx.body.push({ op: "local.get", index: selfLocal });
+            fctx.body.push(...classFieldInitReceiver(ctx, className, selfLocal, structTypeIdx)); // (#6754) carrier
             compileExpression(ctx, fctx, member.initializer, fields[fieldIdx]!.type);
             fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
           }
@@ -4428,6 +4410,7 @@ export function compileSuperCall(
         }
       }
       fctx.body.push({ op: "call", funcIdx });
+      emitCollectionCarrierWrap(ctx, fctx, childClassName); // (#6754)
     } else {
       // If the import is unavailable (standalone/WASI), preserve the old
       // best-effort fallback: evaluate arguments, then use the first value (or

@@ -70,6 +70,7 @@ import { tryEmitArrayOfSpreadVec } from "../array-of-spread.js";
 import { tryEmitSpreadHostArgs } from "../host-method-args.js";
 import { hasSpreadArgument } from "../spread-arg-list.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { emitRefElemArraySnapshot } from "../dataview-native.js"; // (#6651 U2) drain-before-ToNumber
 import { emitGlobalThisGopdFold } from "../dyn-read.js";
 import { dynamicProtoRootFor, dynamicProtoFieldIdx, reserveDynprotoNorm } from "../dynamic-proto.js"; // (#802)
 import { emitNativeGeneratorToVec, nativeGeneratorInfoForForOfSubject } from "../generators-native.js";
@@ -1294,6 +1295,7 @@ export function compileBuiltinStaticCall(
               fctx.body.push({ op: "local.get", index: srcVec });
               fctx.body.push({ op: "struct.get", typeIdx: srcVecIdx, fieldIdx: 1 });
               fctx.body.push({ op: "local.set", index: srcData });
+              emitRefElemArraySnapshot(ctx, fctx, srcArrIdx, srcData, lenTmp); // (#6651 U2)
               // dst data array of len (default-filled)
               for (const ins of defaultValueInstrs(elemWasm)) fctx.body.push(ins);
               fctx.body.push({ op: "local.get", index: lenTmp });

@@ -127,25 +127,28 @@ export function ensureMapRuntimeTypes(ctx: CodegenContext): void {
   } as ArrayTypeDef);
 
   // $Map: struct { buckets; entries; entryCount(mut i32); liveCount(mut i32) }
+  // (#6754) Reserved `__map_*` names: a collection-subclass carrier repeats this
+  // prefix in `ctx.structFields`, where a user `x.entries()`/`x.kind` structural
+  // scan must not match it. Field names are not encoded in the binary.
   ctx.mapTypeIdx = ctx.mod.types.length;
   ctx.mod.types.push({
     kind: "struct",
     name: "Map",
     fields: [
       {
-        name: "buckets",
+        name: "__map_buckets",
         type: { kind: "ref", typeIdx: ctx.mapBucketsTypeIdx },
         mutable: true,
       },
       {
-        name: "entries",
+        name: "__map_entries",
         type: { kind: "ref", typeIdx: ctx.mapEntriesTypeIdx },
         mutable: true,
       },
-      { name: "entryCount", type: { kind: "i32" }, mutable: true },
-      { name: "liveCount", type: { kind: "i32" }, mutable: true },
+      { name: "__map_entryCount", type: { kind: "i32" }, mutable: true },
+      { name: "__map_liveCount", type: { kind: "i32" }, mutable: true },
       // (#3171) COLLECTION_KIND brand tag, trailing + immutable — see MAP_LAYOUT.
-      { name: "kind", type: { kind: "i32" }, mutable: false },
+      { name: "__map_kind", type: { kind: "i32" }, mutable: false },
     ],
   } as StructTypeDef);
   ctx.structMap.set("Map", ctx.mapTypeIdx);
