@@ -8634,3 +8634,36 @@ Separate `5883-sparse-fixture-lint-followup-20261006.json.txt` records the two
 post-transfer source hashes without rewriting the original transfer snapshot.
 Normal commit hooks will be retried; current-main and full-population acceptance
 remain pending.
+
+### Resumed integration and bounded Sol 6.1 dispatch
+
+Checkpoint 3a5dac945396882d9247eaab770ddff2a1816416 completed normal hooks.
+Parent verified all17 transferred source fingerprints, including the two sparse
+fixture overrides; the worktree was clean. The commit has no signature header:
+the old signing-memory claim is not true for the current local configuration.
+Do not claim signature verification or change shared signing configuration.
+
+Live PR5883 remains OPEN, ready and held at6f73c8edd15a2fb88f3f7c34166ec5ce0337ae80.
+Live upstream main is now d0a13fb182e6a4e198ce34bd4ec2c489deeb10b9, not the earlier
+bba74 preview. Parent owns comparison, integration and publication. Preserve
+the existing source proofs and original failures; inspect the new base delta
+before accepting any bridge profile. Legacy retirement remains blocked.
+
+Bounded implementation dispatch uses existing Sol6.1 Medium workers:
+
+- Darwin, isolated held-B worktree: implement a successor validation runner in
+  its own .tmp directory, for parent review only. Accept explicit integrated
+  commit and pinned input manifest; fail closed on a different commit or input.
+  Preserve the original population identities, native outputs and all failed
+  attempts. Include all original cohorts, the added controls and newly imported
+  main tests explicitly. Never infer success from zero selection or exit alone.
+  Do not run tests, edit production/fixtures/authority, commit or publish.
+- Laplace, isolated policy-callers worktree: independently audit the new upstream
+  delta against the exact bba74 preview receipt and report whether the merged
+  policy remains byte-identical. Read-only: no source/pin repairs, test execution,
+  Git mutations or publication. Any new profile requires a parent-authored plan.
+
+Parent reviews the runner and inventory before serial compiler-heavy execution.
+No public issue writes, new checkpoint PRs, weakened gates, omitted fixtures or
+automatic acceptance. Publish through existing PR5883 only after scoped checks;
+protected-queue landing still requires complete acceptance evidence.
