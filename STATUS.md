@@ -18,13 +18,13 @@ prose anywhere in the repo.
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 39,270 / 48,232 (81.4 %)
+**test262 conformance**: 39,272 / 48,232 (81.4 %)
 
 <!-- AUTO:conformance-end -->
 
 <!-- AUTO:conformance-standalone-start -->
 
-**standalone (host-free) test262 conformance**: 41,819 / 48,232 (86.7 %)
+**standalone (host-free) test262 conformance**: 41,906 / 48,232 (86.9 %)
 
 <!-- AUTO:conformance-standalone-end -->
 
@@ -40,20 +40,20 @@ Per-area pass rates, JS-host (`gc`) lane. The area rows cover all 48,735 test fi
 
 | Area          |   Pass |  Total |   Rate |
 | ------------- | -----: | -----: | -----: |
-| `language/`   | 19,825 | 23,724 | 83.6 % |
-| `built-ins/`  | 18,811 | 23,809 | 79.0 % |
+| `language/`   | 19,830 | 23,724 | 83.6 % |
+| `built-ins/`  | 18,807 | 23,809 | 79.0 % |
 | `annexB/`     |    855 |  1,086 | 78.7 % |
-| `harness/`    |    103 |    116 | 88.8 % |
-| **All areas** | 39,594 | 48,735 | 81.2 % |
+| `harness/`    |    104 |    116 | 89.7 % |
+| **All areas** | 39,596 | 48,735 | 81.2 % |
 
 Selected built-ins:
 
 | Feature              | Test262 path                            |  Pass | Total |   Rate |
 | -------------------- | --------------------------------------- | ----: | ----: | -----: |
 | eval                 | `built-ins/eval` + `language/eval-code` |   320 |   357 | 89.6 % |
-| Proxy                | `built-ins/Proxy`                       |   241 |   311 | 77.5 % |
+| Proxy                | `built-ins/Proxy`                       |   243 |   311 | 78.1 % |
 | Reflect              | `built-ins/Reflect`                     |   129 |   153 | 84.3 % |
-| Temporal             | `built-ins/Temporal`                    | 3,397 | 4,603 | 73.8 % |
+| Temporal             | `built-ins/Temporal`                    | 3,383 | 4,603 | 73.5 % |
 | SharedArrayBuffer    | `built-ins/SharedArrayBuffer`           |    80 |   104 | 76.9 % |
 | Atomics              | `built-ins/Atomics`                     |   215 |   389 | 55.3 % |
 | WeakRef              | `built-ins/WeakRef`                     |    16 |    29 | 55.2 % |
