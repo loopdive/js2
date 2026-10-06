@@ -229,8 +229,7 @@ for (const target of ["gc", "standalone"] as const) {
 }
 
 function emptyRegion(standardized: boolean) {
-  // Empty blocks need no checker or runtime helpers; use the real statement
-  // emitter to inspect its private-slot contract in both EH encodings.
+  // Exercise the real statement emitter; empty blocks need no checker.
   const ctx = { exnTagIdx: 0, standalone: standardized, wasi: false } as CodegenContext;
   const fctx = {
     params: [{ name: "argument", type: { kind: "i32" } }],
@@ -245,7 +244,7 @@ function emptyRegion(standardized: boolean) {
   } as unknown as FunctionContext;
   const file = ts.createSourceFile("empty.js", "try {} finally {}", ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   const stmt = file.statements[0] as ts.TryStatement;
-  return { ctx, fctx, emit: () => compileTryStatement(ctx, fctx, stmt) };
+  return { fctx, emit: () => compileTryStatement(ctx, fctx, stmt) };
 }
 
 function flatten(body: Instr[]): Instr[] {
@@ -254,71 +253,250 @@ function flatten(body: Instr[]): Instr[] {
   return result;
 }
 
+function slot(fctx: FunctionContext, index: number) {
+  expect(Number.isInteger(index)).toBe(true);
+  expect(index).toBeGreaterThanOrEqual(0);
+  expect(index).toBeLessThan(fctx.params.length + fctx.locals.length);
+  return index < fctx.params.length ? fctx.params[index]! : fctx.locals[index - fctx.params.length]!;
+}
+
+function balanced(fctx: FunctionContext) {
+  expect(fctx.savedBodies).toEqual([]);
+  expect(fctx.breakStack).toEqual([]);
+  expect(fctx.continueStack).toEqual([]);
+  expect(fctx.finallyStack ?? []).toEqual([]);
+}
+
+function ownHandler(body: Instr[], standardized: boolean) {
+  const regions = body.filter((i) => i.op === (standardized ? "block" : "try"));
+  expect(regions).toHaveLength(1);
+  const region = regions[0]!;
+  if (!standardized) {
+    if (region.op !== "try") throw new Error("expected own legacy try");
+    expect(region.catches ?? []).toEqual([]);
+    expect(region.catchAll?.length).toBeGreaterThan(0);
+    if (!region.catchAll) throw new Error("missing own catch_all");
+    return { region, protectedBody: region.body, handler: region.catchAll };
+  }
+  if (region.op !== "block") throw new Error("expected own standard join block");
+  expect(region.blockType).toEqual({ kind: "empty" });
+  const payloadBlock = region.body[0];
+  if (payloadBlock?.op !== "block") throw new Error("missing payload-result block");
+  expect(payloadBlock.blockType).toEqual({ kind: "val", type: { kind: "externref" } });
+  expect(payloadBlock.body).toHaveLength(2);
+  const protectedTry = payloadBlock.body[0];
+  if (protectedTry?.op !== "try_table") throw new Error("missing protected try_table");
+  expect(protectedTry.catches).toEqual([{ kind: "catch", tagIdx: 0, depth: 0 }]);
+  expect(payloadBlock.body[1]).toEqual({ op: "br", depth: 1 });
+  expect(region.body.at(-1)).toEqual({ op: "br", depth: 0 });
+  return { region, protectedBody: protectedTry.body, handler: region.body.slice(1, -1) };
+}
+
+function checkRegion(fctx: FunctionContext, body: Instr[], standardized: boolean) {
+  const { region, protectedBody, handler } = ownHandler(body, standardized);
+  const markerRead = handler[standardized ? 1 : 0];
+  if (markerRead?.op !== "local.get") throw new Error("missing leading marker read");
+  const marker = markerRead.index;
+  expect(slot(fctx, marker).type.kind).toBe("i32");
+  const guard = handler[standardized ? 2 : 1];
+  if (guard?.op !== "if") throw new Error("missing own handler guard");
+  expect(guard.blockType).toEqual({ kind: "empty" });
+  expect(guard.else ?? []).toEqual([]);
+  let payload: number | undefined;
+  if (standardized) {
+    expect(handler).toHaveLength(5);
+    const capture = handler[0];
+    if (capture?.op !== "local.set") throw new Error("missing pending payload capture");
+    payload = capture.index;
+    expect(slot(fctx, payload).type.kind).toBe("externref");
+    expect(payload).not.toBe(marker);
+    expect(guard.then).toEqual([
+      { op: "local.get", index: payload },
+      { op: "throw", tagIdx: 0 },
+    ]);
+    expect(handler.slice(3)).toEqual([
+      { op: "local.get", index: payload },
+      { op: "throw", tagIdx: 0 },
+    ]);
+    expect(flatten(handler).some((i) => i.op === "rethrow")).toBe(false);
+    const gets = flatten(handler).filter((i) => i.op === "local.get" && i.index === payload);
+    expect(gets).toHaveLength(2);
+    expect(new Set(gets).size).toBe(2);
+  } else {
+    expect(handler).toHaveLength(3);
+    expect(guard.then).toEqual([{ op: "rethrow", depth: 1 }]);
+    expect(handler[2]).toEqual({ op: "rethrow", depth: 0 });
+  }
+  const reset = [
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: marker },
+  ];
+  const before = body.slice(0, body.indexOf(region));
+  const resetInside = JSON.stringify(protectedBody.slice(0, 2)) === JSON.stringify(reset);
+  const resetOutside = JSON.stringify(before.slice(-2)) === JSON.stringify(reset);
+  expect(Number(resetInside) + Number(resetOutside)).toBe(1);
+  const resetStore = (resetInside ? protectedBody : before)[resetInside ? 1 : before.length - 1]!;
+  const markPositions = protectedBody
+    .flatMap((i, n) => (i.op === "local.set" && i.index === marker ? [n] : []))
+    .filter((n) => !(resetInside && n === 1));
+  expect(markPositions).toHaveLength(1);
+  const markPosition = markPositions[0]!;
+  expect(markPosition).toBeGreaterThan(resetInside ? 1 : 0);
+  expect(protectedBody[markPosition - 1]).toEqual({ op: "i32.const", value: 1 });
+  const markStore = protectedBody[markPosition]!;
+  const writes = flatten(body).filter((i) => (i.op === "local.set" || i.op === "local.tee") && i.index === marker);
+  expect(writes).toHaveLength(2);
+  expect(writes.includes(resetStore)).toBe(true);
+  expect(writes.includes(markStore)).toBe(true);
+  expect(new Set(writes).size).toBe(2);
+  for (const i of flatten(body)) {
+    if (i.op === "local.get" || i.op === "local.set" || i.op === "local.tee") slot(fctx, i.index);
+  }
+  balanced(fctx);
+  return { marker, payload, markerLocal: slot(fctx, marker) };
+}
+
+function privateMarker(fctx: FunctionContext, marker: number, sourceName: string) {
+  const local = slot(fctx, marker);
+  expect(marker).toBeGreaterThanOrEqual(fctx.params.length);
+  expect(local.name).toContain("@");
+  expect(local.name.startsWith("__")).toBe(false);
+  expect(local.name).not.toBe(sourceName);
+  expect([...fctx.localMap.values()]).not.toContain(marker);
+  for (const bucket of fctx.tempFreeList?.values() ?? []) expect(bucket).not.toContain(marker);
+  return local;
+}
+
 describe("#5267 private marker and handler structure", () => {
   for (const standardized of [false, true]) {
-    it(`resets outside protection, prepends fresh clone writes and never registers a source/temp name (${standardized})`, () => {
+    it(`resets on entry and guards own handlers without replacing the pending exception (${standardized})`, () => {
       const { fctx, emit } = emptyRegion(standardized);
       emit();
-      expect(fctx.locals[0]).toEqual({ name: "finally@entered$1", type: { kind: "i32" } });
-      expect(fctx.localMap.has("finally@entered$1")).toBe(false);
-      expect(fctx.tempFreeList?.size).toBe(0);
-      expect(fctx.body.slice(0, 2)).toEqual([
-        { op: "i32.const", value: 0 },
-        { op: "local.set", index: 1 },
-      ]);
-      expect(fctx.body[2]!.op).toBe(standardized ? "block" : "try");
-      const writes = flatten(fctx.body).filter((i) => i.op === "local.set" && i.index === 1);
-      expect(writes).toHaveLength(3); // reset, normal clone, handler clone
-      expect(new Set(writes).size).toBe(3);
-      expect(fctx.savedBodies).toEqual([]);
-      expect(fctx.breakStack).toEqual([]);
-      expect(fctx.continueStack).toEqual([]);
-      if (!standardized) {
-        const region = fctx.body[2]!;
-        expect(region.op).toBe("try");
-        if (region.op !== "try") throw new Error("expected legacy try");
-        expect(region.catchAll?.slice(0, 2)).toEqual([
-          { op: "local.get", index: 1 },
-          { op: "if", blockType: { kind: "empty" }, then: [{ op: "rethrow", depth: 1 }] },
-        ]);
-        expect(region.catchAll?.at(-1)).toEqual({ op: "rethrow", depth: 0 });
-      } else {
-        const guard = flatten(fctx.body).find((i) => i.op === "if");
-        expect(guard?.op).toBe("if");
-        if (guard?.op !== "if") throw new Error("expected payload guard");
-        expect(guard.then).toEqual([
-          { op: "local.get", index: 2 },
-          { op: "throw", tagIdx: 0 },
-        ]);
-      }
+      checkRegion(fctx, fctx.body, standardized);
     });
 
-    it(`distinct slots survive numeric remapping and rollback (${standardized})`, () => {
-      const { fctx, emit } = emptyRegion(standardized);
-      fctx.locals.push({ name: "__duplicate", type: { kind: "i32" } }, { name: "__duplicate", type: { kind: "i32" } });
-      emit();
-      const first = fctx.locals.find((l) => l.name.startsWith("finally@"))!;
-      emit();
-      const markers = fctx.locals.filter((l) => l.name.startsWith("finally@"));
-      expect(markers).toHaveLength(2);
-      expect(markers[0]).toBe(first);
-      expect(markers[0]!.name).not.toBe(markers[1]!.name);
-      deduplicateLocals(fctx);
-      for (const marker of markers) {
-        const index = fctx.params.length + fctx.locals.indexOf(marker);
-        expect(flatten(fctx.body).filter((i) => i.op === "local.set" && i.index === index)).toHaveLength(3);
-        expect(fctx.localMap.has(marker.name)).toBe(false);
+    it(`private guard slots preserve source bindings through remapping and rollback (${standardized})`, () => {
+      // Sequential positive: duplicates precede both markers so dedup must shift them.
+      const sequential = emptyRegion(standardized);
+      sequential.fctx.locals.push(
+        { name: "__duplicate", type: { kind: "i32" } },
+        { name: "__duplicate", type: { kind: "i32" } },
+      );
+      const retainedDuplicate = sequential.fctx.locals[0]!;
+      const slices: { start: number; end: number; marker: number; local: ReturnType<typeof slot> }[] = [];
+      for (let n = 0; n < 2; n++) {
+        const start = sequential.fctx.body.length;
+        sequential.emit();
+        const end = sequential.fctx.body.length;
+        const checked = checkRegion(sequential.fctx, sequential.fctx.body.slice(start, end), standardized);
+        privateMarker(sequential.fctx, checked.marker, "__duplicate");
+        slices.push({ start, end, marker: checked.marker, local: checked.markerLocal });
       }
-      // Rollback is a separate fresh context: locals snapshots precede
-      // deduplication in production, and callers discard tentative bodies.
+      expect(slices[0]!.local).not.toBe(slices[1]!.local);
+      const duplicateRead: Instr = { op: "local.get", index: 2 };
+      sequential.fctx.body.push(duplicateRead, { op: "drop" });
+      const beforeCount = sequential.fctx.locals.length;
+      deduplicateLocals(sequential.fctx);
+      expect(sequential.fctx.locals.length, "sequential: actual duplicate removal").toBe(beforeCount - 1);
+      expect(slot(sequential.fctx, duplicateRead.index)).toBe(retainedDuplicate);
+      for (const slice of slices) {
+        const after = checkRegion(sequential.fctx, sequential.fctx.body.slice(slice.start, slice.end), standardized);
+        expect(after.marker, "sequential: shifted marker").toBe(slice.marker - 1);
+        expect(after.markerLocal).toBe(slice.local);
+        // localMap is a codegen map, not a post-dedup index contract.
+        expect(after.markerLocal.name).toContain("@");
+        expect(after.markerLocal.name.startsWith("__")).toBe(false);
+      }
+      for (const i of flatten(sequential.fctx.body)) {
+        if (i.op === "local.get" || i.op === "local.set" || i.op === "local.tee") slot(sequential.fctx, i.index);
+      }
+
+      for (const booleanBrand of [false, true]) {
+        const collision = emptyRegion(standardized);
+        const sourceName = "__finally_ran_1";
+        const source = {
+          name: sourceName,
+          type: booleanBrand ? { kind: "i32" as const, boolean: true as const } : { kind: "i32" as const },
+        };
+        collision.fctx.locals.push(source);
+        collision.fctx.localMap.set(sourceName, 1);
+        const priorMap = [...collision.fctx.localMap];
+        collision.emit();
+        const regionEnd = collision.fctx.body.length;
+        const first = checkRegion(collision.fctx, collision.fctx.body, standardized);
+        expect(first.marker, `source-local: booleanBrand=${booleanBrand}`).not.toBe(1);
+        expect(slot(collision.fctx, 1)).toBe(source);
+        expect(slot(collision.fctx, 1).type).toEqual(booleanBrand ? { kind: "i32", boolean: true } : { kind: "i32" });
+        for (const [name, index] of priorMap) expect(collision.fctx.localMap.get(name)).toBe(index);
+        const markerLocal = privateMarker(collision.fctx, first.marker, sourceName);
+        const sourceRead: Instr = { op: "local.get", index: 1 };
+        const tempIndex = collision.fctx.params.length + collision.fctx.locals.length;
+        collision.fctx.locals.push(
+          { name: "__unrelated", type: { kind: "i32" } },
+          { name: "__unrelated", type: { kind: "i32" } },
+        );
+        const tempRead: Instr = { op: "local.get", index: tempIndex + 1 };
+        collision.fctx.body.push(sourceRead, { op: "drop" }, tempRead, { op: "drop" });
+        const count = collision.fctx.locals.length;
+        deduplicateLocals(collision.fctx);
+        expect(collision.fctx.locals.length).toBe(count - 1);
+        expect(slot(collision.fctx, sourceRead.index)).toBe(source);
+        const remapped = checkRegion(collision.fctx, collision.fctx.body.slice(0, regionEnd), standardized);
+        expect(remapped.markerLocal).toBe(markerLocal);
+        expect(slot(collision.fctx, sourceRead.index)).not.toBe(remapped.markerLocal);
+        expect(tempRead.index).toBe(tempIndex);
+        for (const i of flatten(collision.fctx.body)) {
+          if (i.op === "local.get" || i.op === "local.set" || i.op === "local.tee") slot(collision.fctx, i.index);
+        }
+      }
+
+      const parameter = emptyRegion(standardized);
+      parameter.fctx.params[0]!.name = "__finally_ran_0";
+      parameter.fctx.localMap.set("__finally_ran_0", 0);
+      parameter.emit();
+      const parameterEnd = parameter.fctx.body.length;
+      const parameterMarker = checkRegion(parameter.fctx, parameter.fctx.body, standardized);
+      expect(parameter.fctx.localMap.get("__finally_ran_0"), "parameter: source map").toBe(0);
+      expect(parameterMarker.marker).not.toBe(0);
+      privateMarker(parameter.fctx, parameterMarker.marker, "__finally_ran_0");
+      const parameterRead: Instr = { op: "local.get", index: 0 };
+      parameter.fctx.body.push(parameterRead, { op: "drop" });
+      deduplicateLocals(parameter.fctx);
+      expect(parameterRead.index).toBe(0);
+      expect(checkRegion(parameter.fctx, parameter.fctx.body.slice(0, parameterEnd), standardized).markerLocal).toBe(
+        parameterMarker.markerLocal,
+      );
+
+      // Rollback is separate from dedup: discard speculative instructions first.
       const rolled = emptyRegion(standardized);
+      const source = { name: "__finally_ran_1", type: { kind: "i32" as const } };
+      rolled.fctx.locals.push(source);
+      rolled.fctx.localMap.set(source.name, 1);
+      rolled.fctx.tempFreeList!.set("i32", [1]);
       const rollback = snapshotLocals(rolled.fctx);
+      const originalLocals = [...rolled.fctx.locals];
+      const bodyLength = rolled.fctx.body.length;
       rolled.emit();
+      const first = checkRegion(rolled.fctx, rolled.fctx.body.slice(bodyLength), standardized);
+      privateMarker(rolled.fctx, first.marker, source.name);
+      const firstTypes = rolled.fctx.locals.map((local) => local.type);
+      const firstCount = rolled.fctx.locals.length;
+      rolled.fctx.tempFreeList!.get("i32")!.push(rolled.fctx.params.length + firstCount);
+      rolled.fctx.body.length = bodyLength;
       restoreLocals(rolled.fctx, rollback);
-      rolled.fctx.body.length = 0;
+      expect(snapshotLocals(rolled.fctx), "rollback: full metadata").toEqual(rollback);
+      expect(rolled.fctx.locals).toEqual(originalLocals);
+      expect(rolled.fctx.locals[0]).toBe(source);
+      expect(rolled.fctx.body).toEqual([]);
+      expect(rolled.fctx.tempFreeList!.get("i32")).toEqual([1]);
+      balanced(rolled.fctx);
       rolled.emit();
-      expect(rolled.fctx.locals[0]!.name).toBe("finally@entered$1");
-      expect(rolled.fctx.body[1]).toEqual({ op: "local.set", index: 1 });
+      const second = checkRegion(rolled.fctx, rolled.fctx.body.slice(bodyLength), standardized);
+      privateMarker(rolled.fctx, second.marker, source.name);
+      expect(rolled.fctx.localMap.get(source.name)).toBe(1);
+      expect(rolled.fctx.locals.length).toBe(firstCount);
+      expect(rolled.fctx.locals.map((local) => local.type)).toEqual(firstTypes);
+      expect(second.markerLocal).not.toBe(first.markerLocal);
     });
   }
 });
@@ -358,5 +536,38 @@ describe("#5267 legacy catch_all preserves foreign host exceptions", () => {
       expect(calls).toBe(1);
       expect(exports.probe()).toBe(1);
     });
+  }
+});
+
+describe("#5267 literal direct-eval source binding privacy", () => {
+  for (const target of ["gc", "standalone"] as const) {
+    for (const suffix of [8, 0]) {
+      it(`preserves ${suffix === 8 ? "colliding" : "noncolliding"} parameter in typed and plain JS (${target})`, async () => {
+        // AST literal-eval lowering naturally allocated __finally_ran_8.
+        // Keep the observed collision and one noncolliding positive, not a sweep.
+        for (const typed of [true, false]) {
+          const name = `__finally_ran_${suffix}`;
+          const source = `export function probe(${name}${typed ? ": number" : ""})${typed ? ": number" : ""} { try {} finally {} return eval("${name}"); }`;
+          const result = await compile(source, {
+            ...(typed ? {} : { allowJs: true }),
+            fileName: `issue-5267-private.${typed ? "ts" : "js"}`,
+            skipSemanticDiagnostics: true,
+            deferTopLevelInit: true,
+            emitWat: true,
+            ...(target === "standalone" ? { target } : {}),
+          });
+          expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
+          if (target === "standalone") expect(result.imports).toEqual([]);
+          expect(WebAssembly.validate(result.binary)).toBe(true);
+          const imports = buildImports(result.imports, undefined, result.stringPool);
+          const { instance } = await WebAssembly.instantiate(result.binary, imports);
+          imports.setInstance?.(instance);
+          imports.setExports?.(instance.exports as Record<string, Function>);
+          const exports = instance.exports as Record<string, (...args: number[]) => unknown>;
+          exports.__module_init?.();
+          expect(exports.probe(37)).toBe(37);
+        }
+      });
+    }
   }
 });

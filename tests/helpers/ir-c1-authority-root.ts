@@ -1,3 +1,3 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-export const c1AuthorityManifestSha256 = "15df36672c658dd96fd3e35a5ab0a538a6d1183eea1c2d618ee4e282d7cc97d0";
+export const c1AuthorityManifestSha256 = "c0a10ae0c0bfc4d27fc24bea20401edc2cac683254fc1664781889c98f63ed66";

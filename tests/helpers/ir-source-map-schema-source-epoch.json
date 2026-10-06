@@ -1,0 +1,464 @@
+{
+  "schema": "ir-source-map-schema-source-epoch-v1",
+  "coordinateUnit": "utf8-byte",
+  "baseMain": "f02ded0b9bcd22fc5f6a1c88fcee0bb0b98303eb",
+  "helperPrefix": {
+    "path": "tests/helpers/ir-program-validator-relocation.ts",
+    "bytes": 33271,
+    "sha256": "7c81f94913cc91e45e8afe779979ec3e01ddf5622b14716956ffa2bdf15ba5e5",
+    "gitBlob": "ab945aff6be69db9c80b8ec526d0c2a58a13c962"
+  },
+  "entries": [
+    {
+      "path": "src/compiler/define-substitution.ts",
+      "before": {
+        "path": "src/compiler/define-substitution.ts",
+        "bytes": 3653,
+        "sha256": "6d39f71c8fc108cd27285f31819b2101970603c095c3bbf5f9e32e1021ac32b1",
+        "gitBlob": "23d1827ef8abe8d35ff23f42562b2d5460389881"
+      },
+      "current": {
+        "path": "src/compiler/define-substitution.ts",
+        "bytes": 3901,
+        "sha256": "4fb03b0ec93fe23c5f8feabcf8be4810dd417bc436637b003693e84a0d336f75",
+        "gitBlob": "8a8d6e22eb62b8d01506009b9e76421952d33bc9"
+      },
+      "spans": [
+        {
+          "beforeStart": 501,
+          "beforeEnd": 501,
+          "currentStart": 501,
+          "currentEnd": 587,
+          "beforeText": "",
+          "currentText": "import type { IrSourceMapTextStage } from \"../shared/contracts/ir-unit-inventory.js\";\n"
+        },
+        {
+          "beforeStart": 1556,
+          "beforeEnd": 1556,
+          "currentStart": 1642,
+          "currentEnd": 1698,
+          "beforeText": "",
+          "currentText": "  captureStage?: (stage: IrSourceMapTextStage) => void,\n"
+        },
+        {
+          "beforeStart": 2864,
+          "beforeEnd": 2864,
+          "currentStart": 3006,
+          "currentEnd": 3112,
+          "beforeText": "",
+          "currentText": "    if (captureStage) captureStage(new PositionMap(edits).captureSourceMapStage(\"define\", current, out));\n"
+        }
+      ]
+    },
+    {
+      "path": "src/ir/core/async-plan.ts",
+      "before": {
+        "path": "src/ir/core/async-plan.ts",
+        "bytes": 5072,
+        "sha256": "110a4529b81ecec8a51943d3d33643cc7374959eabf382bc22dbbe066ca642d8",
+        "gitBlob": "9bcfbb701fc410e9034fed8836ad9a0a828345d8"
+      },
+      "current": {
+        "path": "src/ir/core/async-plan.ts",
+        "bytes": 5278,
+        "sha256": "d840b1eac116e6e4b8ea61d2019f3117013e2a15e88436fe9ff562a54010f173",
+        "gitBlob": "934603c9b5215570851500f60bfb613e871b688e"
+      },
+      "spans": [
+        {
+          "beforeStart": 871,
+          "beforeEnd": 925,
+          "currentStart": 871,
+          "currentEnd": 935,
+          "beforeText": "import type { IrInstr, IrValueId } from \"./nodes.js\";\n",
+          "currentText": "import type { IrInstr, IrValueId, IrSiteId } from \"./nodes.js\";\n"
+        },
+        {
+          "beforeStart": 2646,
+          "beforeEnd": 2646,
+          "currentStart": 2656,
+          "currentEnd": 2684,
+          "beforeText": "",
+          "currentText": "  readonly site?: IrSiteId;\n"
+        },
+        {
+          "beforeStart": 3243,
+          "beforeEnd": 3243,
+          "currentStart": 3281,
+          "currentEnd": 3309,
+          "beforeText": "",
+          "currentText": "  readonly site?: IrSiteId;\n"
+        },
+        {
+          "beforeStart": 3732,
+          "beforeEnd": 3732,
+          "currentStart": 3798,
+          "currentEnd": 3826,
+          "beforeText": "",
+          "currentText": "  readonly site?: IrSiteId;\n"
+        },
+        {
+          "beforeStart": 3838,
+          "beforeEnd": 3838,
+          "currentStart": 3932,
+          "currentEnd": 3960,
+          "beforeText": "",
+          "currentText": "  readonly site?: IrSiteId;\n"
+        },
+        {
+          "beforeStart": 4016,
+          "beforeEnd": 4016,
+          "currentStart": 4138,
+          "currentEnd": 4166,
+          "beforeText": "",
+          "currentText": "  readonly site?: IrSiteId;\n"
+        },
+        {
+          "beforeStart": 4155,
+          "beforeEnd": 4155,
+          "currentStart": 4305,
+          "currentEnd": 4333,
+          "beforeText": "",
+          "currentText": "  readonly site?: IrSiteId;\n"
+        },
+        {
+          "beforeStart": 4260,
+          "beforeEnd": 4260,
+          "currentStart": 4438,
+          "currentEnd": 4466,
+          "beforeText": "",
+          "currentText": "  readonly site?: IrSiteId;\n"
+        }
+      ]
+    },
+    {
+      "path": "src/ir/core/nodes.ts",
+      "before": {
+        "path": "src/ir/core/nodes.ts",
+        "bytes": 96066,
+        "sha256": "ad0aa4b2aa29cb030a5f46dc29ec71d8a336e76e12737c78afe6bb5d9732fd77",
+        "gitBlob": "3554d930c5873b9133666b32a14b34ef30df1d81"
+      },
+      "current": {
+        "path": "src/ir/core/nodes.ts",
+        "bytes": 96440,
+        "sha256": "edbebcf99227dc64eaf1dd83cec02a2431b21c25992e20138c0917f09487dccd",
+        "gitBlob": "2f26e8acb8f2c68b97a71d41c1176dd79da2bd40"
+      },
+      "spans": [
+        {
+          "beforeStart": 793,
+          "beforeEnd": 793,
+          "currentStart": 793,
+          "currentEnd": 879,
+          "beforeText": "",
+          "currentText": "import type { IrSourceMapOrigin } from \"../../shared/contracts/ir-unit-inventory.js\";\n"
+        },
+        {
+          "beforeStart": 7427,
+          "beforeEnd": 7509,
+          "currentStart": 7513,
+          "currentEnd": 7883,
+          "beforeText": "export interface IrSiteId {\n  readonly line: number;\n  readonly column: number;\n}\n",
+          "currentText": "export type IrSiteId =\n  | { readonly line: number; readonly column: number; readonly origin?: never }\n  | { readonly line: number; readonly column: number; readonly origin: Extract<IrSourceMapOrigin, { kind: \"source\" }> }\n  | {\n      readonly line?: never;\n      readonly column?: never;\n      readonly origin: Extract<IrSourceMapOrigin, { kind: \"generated\" }>;\n    };\n"
+        }
+      ]
+    },
+    {
+      "path": "src/ir/program-codec.ts",
+      "before": {
+        "path": "src/ir/program-codec.ts",
+        "bytes": 30465,
+        "sha256": "566b3d1ab02657429818d91f5cdeb80c3d80460f6f7adbf0bda9d178d0327d91",
+        "gitBlob": "0f7bc3c07f194ab197805b952c61cddb739f2e39"
+      },
+      "current": {
+        "path": "src/ir/program-codec.ts",
+        "bytes": 30714,
+        "sha256": "69c988fa6366e8627d24abb6de4c5d8855856567e8294a471e53e852b4766062",
+        "gitBlob": "5877e871b6cdc893e0ceb127eb0c91f51fdcb0fd"
+      },
+      "spans": [
+        {
+          "beforeStart": 2317,
+          "beforeEnd": 2317,
+          "currentStart": 2317,
+          "currentEnd": 2384,
+          "beforeText": "",
+          "currentText": "import { assertPreparedSourceMap } from \"./program/validation.js\";\n"
+        },
+        {
+          "beforeStart": 20286,
+          "beforeEnd": 20286,
+          "currentStart": 20353,
+          "currentEnd": 20439,
+          "beforeText": "",
+          "currentText": "    ...(persisted.sourceMap === undefined ? {} : { sourceMap: persisted.sourceMap }),\n"
+        },
+        {
+          "beforeStart": 30463,
+          "beforeEnd": 30463,
+          "currentStart": 30616,
+          "currentEnd": 30712,
+          "beforeText": "",
+          "currentText": "  if (Object.hasOwn(program, \"sourceMap\")) assertPreparedSourceMap(value as PreparedIrProgram);\n"
+        }
+      ]
+    },
+    {
+      "path": "src/ir/program-prepare-ir.ts",
+      "before": {
+        "path": "src/ir/program-prepare-ir.ts",
+        "bytes": 6738,
+        "sha256": "2965ad4e3ab247413a8a4d3597f6fccb5adc421bf80b38585be5b910f7ed9e83",
+        "gitBlob": "34c80c180b1f40b4b403811af059937867b47e1f"
+      },
+      "current": {
+        "path": "src/ir/program-prepare-ir.ts",
+        "bytes": 6832,
+        "sha256": "211ca16d6c0c3b0378c8347bb0eedc074d237d90aee8f4a45073cbd6cfa480dd",
+        "gitBlob": "1e9f6c0e18fe47d06536d4688516fbf54a565333"
+      },
+      "spans": [
+        {
+          "beforeStart": 5389,
+          "beforeEnd": 5389,
+          "currentStart": 5389,
+          "currentEnd": 5469,
+          "beforeText": "",
+          "currentText": "    ...(source.sourceMap === undefined ? {} : { sourceMap: source.sourceMap }),\n"
+        },
+        {
+          "beforeStart": 5572,
+          "beforeEnd": 5667,
+          "currentStart": 5652,
+          "currentEnd": 5761,
+          "beforeText": "    \"inventory\" | \"ir\" | \"derivedUnits\" | \"abi\" | \"startup\" | \"allocations\" | \"runtimeSupport\"\n",
+          "currentText": "    \"inventory\" | \"ir\" | \"derivedUnits\" | \"abi\" | \"startup\" | \"allocations\" | \"runtimeSupport\" | \"sourceMap\"\n"
+        }
+      ]
+    },
+    {
+      "path": "src/ir/program/input-contracts.ts",
+      "before": {
+        "path": "src/ir/program/input-contracts.ts",
+        "bytes": 2375,
+        "sha256": "755022df130534f4ddeb0dab4eaebd50a5a1f9790bbc9a98d2e3d74e29e65fe7",
+        "gitBlob": "ae84ebb03ddd7461cf887d1028d558140ecba156"
+      },
+      "current": {
+        "path": "src/ir/program/input-contracts.ts",
+        "bytes": 2440,
+        "sha256": "db4965e7dbd76eb88bb9c9ccbe848d3a7c3a11e3af26032a1751684d086048f8",
+        "gitBlob": "0dbacd92330e06a788088d9db5d3c825a2a4c56d"
+      },
+      "spans": [
+        {
+          "beforeStart": 330,
+          "beforeEnd": 414,
+          "currentStart": 330,
+          "currentEnd": 435,
+          "beforeText": "import type { IrUnitInventory } from \"../../shared/contracts/ir-unit-inventory.js\";\n",
+          "currentText": "import type { IrUnitInventory, IrPreparedSourceMap } from \"../../shared/contracts/ir-unit-inventory.js\";\n"
+        },
+        {
+          "beforeStart": 2181,
+          "beforeEnd": 2181,
+          "currentStart": 2202,
+          "currentEnd": 2246,
+          "beforeText": "",
+          "currentText": "  readonly sourceMap?: IrPreparedSourceMap;\n"
+        }
+      ]
+    },
+    {
+      "path": "src/ir/program/input.ts",
+      "before": {
+        "path": "src/ir/program/input.ts",
+        "bytes": 6763,
+        "sha256": "3c9da679634f7fcb8fee9a8e5664cc752ee1e6a370148d4d375e56f6462afbda",
+        "gitBlob": "07e2f9c4ec8b24f94028f76ba0ac7daebd963fb7"
+      },
+      "current": {
+        "path": "src/ir/program/input.ts",
+        "bytes": 6872,
+        "sha256": "66f7f3c1b233f889d9e578bbe6532ce2265b4a52feb72d0edf5bb7d417ef5520",
+        "gitBlob": "7518528738b783afbb8e933480f74c5f5965486b"
+      },
+      "spans": [
+        {
+          "beforeStart": 378,
+          "beforeEnd": 378,
+          "currentStart": 378,
+          "currentEnd": 437,
+          "beforeText": "",
+          "currentText": "import { assertPreparedSourceMap } from \"./validation.js\";\n"
+        },
+        {
+          "beforeStart": 4055,
+          "beforeEnd": 4079,
+          "currentStart": 4114,
+          "currentEnd": 4151,
+          "beforeText": "    [\"runtimeSupport\"],\n",
+          "currentText": "    [\"runtimeSupport\", \"sourceMap\"],\n"
+        },
+        {
+          "beforeStart": 5408,
+          "beforeEnd": 5408,
+          "currentStart": 5480,
+          "currentEnd": 5517,
+          "beforeText": "",
+          "currentText": "  assertPreparedSourceMap(captured);\n"
+        }
+      ]
+    },
+    {
+      "path": "src/ir/program/prepared-contracts.ts",
+      "before": {
+        "path": "src/ir/program/prepared-contracts.ts",
+        "bytes": 4843,
+        "sha256": "889bedc1c23fb8e26db609634ce0a0137da73a9cc85f636b810a86a396173225",
+        "gitBlob": "e8443bbd780aff5284f322d89748b8de691babe3"
+      },
+      "current": {
+        "path": "src/ir/program/prepared-contracts.ts",
+        "bytes": 4915,
+        "sha256": "252ad6fb99453fc4bf5a5b8107a9947a338638d51b8016dc75a2c262b0d659d6",
+        "gitBlob": "92148be56b1df81b323e453bcc6f119a6fa7575e"
+      },
+      "spans": [
+        {
+          "beforeStart": 181,
+          "beforeEnd": 287,
+          "currentStart": 181,
+          "currentEnd": 315,
+          "beforeText": "import type { IrTerminalUnitRecord, IrUnitInventory } from \"../../shared/contracts/ir-unit-inventory.js\";\n",
+          "currentText": "import type {\n  IrTerminalUnitRecord,\n  IrUnitInventory,\n  IrPreparedSourceMap,\n} from \"../../shared/contracts/ir-unit-inventory.js\";\n"
+        },
+        {
+          "beforeStart": 4211,
+          "beforeEnd": 4211,
+          "currentStart": 4239,
+          "currentEnd": 4283,
+          "beforeText": "",
+          "currentText": "  readonly sourceMap?: IrPreparedSourceMap;\n"
+        }
+      ]
+    },
+    {
+      "path": "src/ir/program/validation.ts",
+      "before": {
+        "path": "src/ir/program/validation.ts",
+        "bytes": 19448,
+        "sha256": "572aab2d72f9eabf322347e90c3d13e25f690a44fa3cede1ac5666dcd1674354",
+        "gitBlob": "18e65c59b175e01412683b4c0b977513bde868fe"
+      },
+      "current": {
+        "path": "src/ir/program/validation.ts",
+        "bytes": 45816,
+        "sha256": "33cba90b606278805766b4eb739214c31dd84babafb873773f3e92f60c470231",
+        "gitBlob": "1f1e3b4c02e64727da5bf4996ff8d24ad1d322a2"
+      },
+      "spans": [
+        {
+          "beforeStart": 85,
+          "beforeEnd": 85,
+          "currentStart": 85,
+          "currentEnd": 480,
+          "beforeText": "",
+          "currentText": "import type { TypedIrProgramInput } from \"./input-contracts.js\";\nimport type { IrModuleInitPlan, IrModuleInitBindingIntent } from \"./startup.js\";\nimport type { IrSiteId, IrInstr } from \"../core/nodes.js\";\nimport type {\n  IrSourceMapSpan,\n  IrSourceMapTextProjection,\n  IrSourceMapTextStage,\n  IrSourceMapPoint,\n  IrSourceMapGeneratedOrigin,\n} from \"../../shared/contracts/ir-unit-inventory.js\";\n"
+        },
+        {
+          "beforeStart": 371,
+          "beforeEnd": 424,
+          "currentStart": 766,
+          "currentEnd": 840,
+          "beforeText": "import { forEachInstrDeep } from \"../core/nodes.js\";\n",
+          "currentText": "import { forEachInstrDeep, forEachNestedBuffer } from \"../core/nodes.js\";\n"
+        },
+        {
+          "beforeStart": 9622,
+          "beforeEnd": 9622,
+          "currentStart": 10038,
+          "currentEnd": 10074,
+          "beforeText": "",
+          "currentText": "  assertPreparedSourceMap(program);\n"
+        },
+        {
+          "beforeStart": 19448,
+          "beforeEnd": 19448,
+          "currentStart": 19900,
+          "currentEnd": 45816,
+          "beforeText": "",
+          "currentText": "\ntype SourceMapInput = Pick<TypedIrProgramInput, \"inventory\" | \"ir\" | \"derivedUnits\" | \"startup\" | \"sourceMap\">;\n\nfunction sourceMapInvalid(detail: string): never {\n  return invalid(`source map: ${detail}`);\n}\n\nfunction sourceMapFields(value: unknown, required: readonly string[], optional: readonly string[] = []): void {\n  if (!value || typeof value !== \"object\" || Array.isArray(value)) sourceMapInvalid(\"expected a data record\");\n  const prototype = Object.getPrototypeOf(value);\n  if (prototype !== Object.prototype && prototype !== null) sourceMapInvalid(\"expected a plain data record\");\n  const keys = Reflect.ownKeys(value);\n  if (\n    required.some((key) => !Object.hasOwn(value, key)) ||\n    keys.some((key) => typeof key !== \"string\" || ![...required, ...optional].includes(key))\n  )\n    sourceMapInvalid(\"missing or unknown record field\");\n  for (const key of keys) {\n    const descriptor = Object.getOwnPropertyDescriptor(value, key)!;\n    if (!(\"value\" in descriptor) || descriptor.value === undefined)\n      sourceMapInvalid(\"absent fields must be omitted, not undefined or accessors\");\n  }\n}\n\nfunction sourceMapArray(value: unknown): asserts value is readonly unknown[] {\n  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype)\n    sourceMapInvalid(\"expected a plain array with the standard prototype\");\n  if (Reflect.ownKeys(value).length !== value.length + 1)\n    sourceMapInvalid(\"expected a dense array without extra fields\");\n  for (let i = 0; i < value.length; i++) {\n    const descriptor = Object.getOwnPropertyDescriptor(value, i);\n    if (!descriptor) sourceMapInvalid(\"missing array entry\");\n    if (!(\"value\" in descriptor)) sourceMapInvalid(\"array entries must be data, not accessors\");\n  }\n}\n\nfunction sourceMapSpan(span: IrSourceMapSpan, length: number): void {\n  sourceMapFields(span, [\"start\", \"end\"]);\n  if (\n    !Number.isSafeInteger(span.start) ||\n    !Number.isSafeInteger(span.end) ||\n    span.start < 0 ||\n    span.end < span.start ||\n    span.end > length\n  )\n    sourceMapInvalid(\"span lies outside its actual text\");\n}\n\nfunction assertSourceMapProjection(projection: IrSourceMapTextProjection): void {\n  sourceMapFields(projection, [\"originalText\", \"analyzedText\", \"stages\"]);\n  if (typeof projection.originalText !== \"string\" || typeof projection.analyzedText !== \"string\")\n    sourceMapInvalid(\"text must be primitive strings\");\n  sourceMapArray(projection.stages);\n  let text = projection.originalText;\n  for (const stage of projection.stages) {\n    sourceMapFields(stage, [\"producer\", \"inputText\", \"outputText\", \"edits\"]);\n    if (\n      ![\n        \"define\",\n        \"stdin-prelude\",\n        \"iterator-prelude\",\n        \"listformat-prelude\",\n        \"cjs-rewrite\",\n        \"eval-super-rewrite\",\n        \"imports\",\n      ].includes(stage.producer) ||\n      stage.inputText !== text ||\n      typeof stage.outputText !== \"string\"\n    )\n      sourceMapInvalid(\"text stages contradict their producer or ordered input\");\n    sourceMapArray(stage.edits);\n    let cursor = 0;\n    let output = \"\";\n    for (const edit of stage.edits) {\n      sourceMapFields(edit, [\"input\", \"removed\", \"inserted\", \"kind\"]);\n      sourceMapSpan(edit.input, text.length);\n      if (\n        edit.input.start < cursor ||\n        typeof edit.removed !== \"string\" ||\n        typeof edit.inserted !== \"string\" ||\n        edit.removed !== text.slice(edit.input.start, edit.input.end) ||\n        edit.removed === edit.inserted\n      )\n        sourceMapInvalid(\"text edit overlaps, is a no-op, or contradicts actual removed text\");\n      if (edit.kind !== (edit.input.start === edit.input.end ? \"generated-insertion\" : \"replacement\"))\n        sourceMapInvalid(\"edit kind contradicts its actual input extent\");\n      output += text.slice(cursor, edit.input.start) + edit.inserted;\n      cursor = edit.input.end;\n    }\n    output += text.slice(cursor);\n    if (output !== stage.outputText) sourceMapInvalid(\"text-stage replay differs from output\");\n    text = output;\n  }\n  if (text !== projection.analyzedText) sourceMapInvalid(\"ordered stages do not reach analyzed text\");\n}\n\n/** Reverse an authenticated stage, preserving causal replacement spans. */\nfunction sourceMapReverseSpan(\n  span: IrSourceMapSpan,\n  stage: IrSourceMapTextStage,\n): { span: IrSourceMapSpan; rewritten: boolean } {\n  let delta = 0;\n  let rewritten = false;\n  let start: number | undefined;\n  let end: number | undefined;\n  for (const edit of stage.edits) {\n    const lo = edit.input.start + delta;\n    const hi = lo + edit.inserted.length;\n    const intersects = span.start < hi && span.end > lo;\n    if (intersects && edit.kind === \"generated-insertion\")\n      sourceMapInvalid(\"source point refers to generated inserted text\");\n    if (intersects) rewritten = true;\n    if (start === undefined && span.start < hi) start = span.start < lo ? span.start - delta : edit.input.start;\n    if (end === undefined && span.end <= hi) end = span.end <= lo ? span.end - delta : edit.input.end;\n    delta += edit.inserted.length - (edit.input.end - edit.input.start);\n  }\n  return { span: { start: start ?? span.start - delta, end: end ?? span.end - delta }, rewritten };\n}\n\nfunction sourceMapStartupRange(row: { readonly start: number; readonly end: number }, length: number): IrSourceMapSpan {\n  const span = { start: row.start, end: row.end };\n  sourceMapSpan(span, length);\n  if (span.start === span.end) sourceMapInvalid(\"startup occurrence must be nonempty\");\n  return span;\n}\n\nfunction sourceMapStartupBindings(plan: IrModuleInitPlan, length: number): readonly IrModuleInitBindingIntent[] {\n  sourceMapArray(plan.bindings);\n  let end = 0;\n  const ids = new Set<string>();\n  for (const [index, binding] of plan.bindings.entries()) {\n    sourceMapFields(binding, [\n      \"declarationOrdinal\",\n      \"names\",\n      \"declarationKind\",\n      \"mutable\",\n      \"initialization\",\n      \"globalBindingId\",\n      \"tdzBindingId\",\n      \"start\",\n      \"end\",\n    ]);\n    const span = sourceMapStartupRange(binding, length);\n    sourceMapArray(binding.names);\n    if (\n      binding.declarationOrdinal !== index ||\n      span.start < end ||\n      ![\"var\", \"let\", \"const\"].includes(binding.declarationKind) ||\n      binding.mutable !== (binding.declarationKind !== \"const\") ||\n      binding.initialization !== (binding.declarationKind === \"var\" ? \"undefined-at-instantiation\" : \"tdz\") ||\n      binding.names.length !== 1 ||\n      typeof binding.names[0] !== \"string\" ||\n      !binding.names[0] ||\n      typeof binding.globalBindingId !== \"string\" ||\n      !binding.globalBindingId ||\n      ids.has(binding.globalBindingId) ||\n      (binding.declarationKind === \"var\"\n        ? binding.tdzBindingId !== null\n        : typeof binding.tdzBindingId !== \"string\" || !binding.tdzBindingId)\n    )\n      sourceMapInvalid(\"startup binding contradicts its declared occurrence\");\n    ids.add(binding.globalBindingId);\n    end = span.end;\n  }\n  return plan.bindings;\n}\n\nfunction sourceMapStartupEvaluations(\n  plan: IrModuleInitPlan,\n  length: number,\n  bindings: readonly IrModuleInitBindingIntent[],\n): readonly IrSourceMapSpan[] {\n  sourceMapArray(plan.evaluations);\n  const ranges: IrSourceMapSpan[] = [];\n  let statement = -1;\n  let eligibleStatement = -1;\n  let eligibleEnd = 0;\n  for (const [index, row] of plan.evaluations.entries()) {\n    sourceMapFields(row, [\n      \"key\",\n      \"kind\",\n      \"sourceOrdinal\",\n      \"statementOrdinal\",\n      \"nestedOrdinal\",\n      \"start\",\n      \"end\",\n      \"classId\",\n      \"bindingIds\",\n      \"legacyKey\",\n    ]);\n    const span = sourceMapStartupRange(row, length);\n    sourceMapArray(row.bindingIds);\n    if (\n      row.sourceOrdinal !== index ||\n      row.key !== `${plan.sourceId}:eval:${index}` ||\n      !Number.isSafeInteger(row.statementOrdinal) ||\n      row.statementOrdinal < 0 ||\n      row.statementOrdinal < statement ||\n      !Number.isSafeInteger(row.nestedOrdinal) ||\n      row.nestedOrdinal < 0 ||\n      ![\"statement\", \"variable-initializer\", \"export-assignment\", \"class-static-field\", \"class-static-block\"].includes(\n        row.kind,\n      ) ||\n      (row.classId !== null && (typeof row.classId !== \"string\" || !row.classId)) ||\n      typeof row.legacyKey !== \"string\" ||\n      row.bindingIds.some((id) => typeof id !== \"string\" || !id) ||\n      new Set(row.bindingIds).size !== row.bindingIds.length\n    )\n      sourceMapInvalid(\"startup evaluation contradicts its declared occurrence\");\n    statement = row.statementOrdinal;\n    if (row.kind !== \"statement\" && row.kind !== \"variable-initializer\") continue;\n    if (\n      row.nestedOrdinal !== 0 ||\n      row.classId !== null ||\n      row.legacyKey !== `statement:${span.start}:${span.end}` ||\n      row.statementOrdinal <= eligibleStatement ||\n      span.start < eligibleEnd\n    )\n      sourceMapInvalid(\"startup statement lacks its exact ordered occurrence\");\n    const expected =\n      row.kind === \"statement\"\n        ? []\n        : bindings\n            .filter((binding) => binding.start >= span.start && binding.end <= span.end)\n            .map((binding) => binding.globalBindingId);\n    if (\n      (row.kind === \"variable-initializer\" && expected.length === 0) ||\n      preparedIrDataMismatch(expected, row.bindingIds) !== undefined\n    )\n      sourceMapInvalid(\"startup statement binding IDs contradict contained declarations\");\n    eligibleStatement = row.statementOrdinal;\n    eligibleEnd = span.end;\n    ranges.push(span);\n  }\n  return ranges;\n}\n\nfunction sourceMapStartupOccurrences(\n  point: IrSourceMapPoint,\n  input: SourceMapInput,\n  length: number,\n  joins: SourceMapDonorJoins,\n): readonly IrSourceMapSpan[] {\n  const key = JSON.stringify([point.sourceId, point.donorUnitId]);\n  const cached = joins.startupOccurrences.get(key);\n  if (cached) return cached;\n  const originals = input.inventory.terminalUnits.filter(\n    (unit) => unit.id === point.donorUnitId && unit.sourceId === point.sourceId && unit.kind === \"module-init\",\n  );\n  if (\n    originals.length !== 1 ||\n    input.derivedUnits.some((unit) => unit.id === point.donorUnitId) ||\n    input.ir.functions.filter((fn) => fn.unitId === point.donorUnitId).length !== 1\n  )\n    sourceMapInvalid(\"startup point lacks its one original module-init body\");\n  sourceMapArray(input.startup);\n  const candidates: IrModuleInitPlan[] = [];\n  for (const plan of input.startup) {\n    sourceMapFields(plan, [\n      \"sourceId\",\n      \"unitId\",\n      \"executable\",\n      \"bindings\",\n      \"liveSeeds\",\n      \"evaluations\",\n      \"exports\",\n      \"invocation\",\n      \"gaps\",\n    ]);\n    if (plan.sourceId === point.sourceId || plan.unitId === point.donorUnitId) candidates.push(plan);\n  }\n  if (candidates.length !== 1) sourceMapInvalid(\"startup point lacks its unique source/unit plan\");\n  const plan = candidates[0]!;\n  sourceMapArray(plan.gaps);\n  if (\n    plan.sourceId !== point.sourceId ||\n    plan.unitId !== point.donorUnitId ||\n    plan.executable !== true ||\n    plan.gaps.length\n  )\n    sourceMapInvalid(\"startup point contradicts its executable source/unit plan\");\n  const bindings = sourceMapStartupBindings(plan, length);\n  const evaluations = sourceMapStartupEvaluations(plan, length, bindings);\n  const ranges = [...bindings.map((binding) => ({ start: binding.start, end: binding.end })), ...evaluations];\n  joins.startupOccurrences.set(key, ranges);\n  return ranges;\n}\n\nfunction sourceMapPoint(point: IrSourceMapPoint, input: SourceMapInput, joins: SourceMapDonorJoins): void {\n  sourceMapFields(point, [\"sourceId\", \"donorUnitId\", \"analyzed\", \"original\", \"mapping\"]);\n  if (\n    typeof point.sourceId !== \"string\" ||\n    !point.sourceId ||\n    typeof point.donorUnitId !== \"string\" ||\n    !point.donorUnitId\n  )\n    sourceMapInvalid(\"point identities must be nonempty primitive strings\");\n  const sources = input.sourceMap!.sources.filter((source) => source.sourceId === point.sourceId);\n  const donors = input.inventory.allUnits.filter(\n    (unit) => unit.id === point.donorUnitId && unit.sourceId === point.sourceId,\n  );\n  if (sources.length !== 1 || donors.length !== 1) sourceMapInvalid(\"point lacks its unique actual source/donor unit\");\n  const source = sources[0]!;\n  const donor = donors[0]!;\n  sourceMapSpan(point.analyzed, source.projection.analyzedText.length);\n  sourceMapSpan(point.original, source.projection.originalText.length);\n  if (point.analyzed.start < donor.declarationStart || point.analyzed.end > donor.declarationEnd) {\n    if (\n      donor.kind !== \"module-init\" ||\n      point.analyzed.start === point.analyzed.end ||\n      !sourceMapStartupOccurrences(point, input, source.projection.analyzedText.length, joins).some(\n        (span) => span.start <= point.analyzed.start && point.analyzed.end <= span.end,\n      )\n    )\n      sourceMapInvalid(\"point escapes its donor declaration and exact startup occurrences\");\n  }\n  let projected = point.analyzed;\n  let rewritten = false;\n  for (const stage of [...source.projection.stages].reverse()) {\n    const reverse = sourceMapReverseSpan(projected, stage);\n    projected = reverse.span;\n    rewritten ||= reverse.rewritten;\n  }\n  if (\n    projected.start !== point.original.start ||\n    projected.end !== point.original.end ||\n    point.mapping !== (rewritten ? \"rewrite\" : \"exact\")\n  )\n    sourceMapInvalid(\"point contradicts complete text projection\");\n}\n\nfunction sourceMapGenerated(\n  origin: IrSourceMapGeneratedOrigin,\n  input: SourceMapInput,\n  ownerUnitId: string,\n  joins: SourceMapDonorJoins,\n): void {\n  const roles = {\n    frontend: [\"insertion\", \"implicit-return\", \"binding-scaffold\", \"control-scaffold\"],\n    middleend: [\"cfg-scaffold\", \"representation-scaffold\"],\n    async: [\"state-dispatch\", \"frame-access\", \"capability\", \"continuation\"],\n    backend: [\"control-scaffold\", \"abi-scaffold\"],\n    support: [\"runtime-body\", \"runtime-adapter\"],\n    startup: [\"adapter\"],\n  };\n  if (!Object.hasOwn(roles, origin.phase) || !roles[origin.phase].includes(origin.role))\n    sourceMapInvalid(\"unknown generated phase/role\");\n  if (origin.phase === \"support\") {\n    sourceMapFields(origin, [\"kind\", \"phase\", \"role\", \"bindingId\"]);\n    sourceMapInvalid(\"source IR cannot claim an unjoined physical support binding\");\n  }\n  if (origin.phase === \"startup\") {\n    sourceMapFields(origin, [\"kind\", \"phase\", \"role\", \"sourceIds\"]);\n    sourceMapArray(origin.sourceIds);\n    const actual = input.startup.filter((plan) => plan.unitId === ownerUnitId).map((plan) => plan.sourceId);\n    if (!actual.length || preparedIrDataMismatch(actual, origin.sourceIds) !== undefined)\n      sourceMapInvalid(\"startup origin contradicts actual ordered contributors\");\n    return;\n  }\n  sourceMapFields(origin, [\"kind\", \"phase\", \"role\", \"ownerUnitId\"], [\"cause\"]);\n  const original = input.inventory.allUnits.filter((unit) => unit.id === origin.ownerUnitId);\n  const derived = input.derivedUnits.filter((unit) => unit.id === origin.ownerUnitId);\n  if (origin.ownerUnitId !== ownerUnitId || original.length + derived.length !== 1)\n    sourceMapInvalid(\"generated origin lacks its exact current function owner\");\n  if (origin.phase === \"frontend\" && origin.role === \"insertion\" && !original[0]?.syntheticRole)\n    sourceMapInvalid(\"inserted origin lacks a compiler-created unit\");\n  if (origin.phase === \"async\" && !input.ir.functions.some((fn) => fn.unitId === ownerUnitId && fn.asyncPlan))\n    sourceMapInvalid(\"async scaffold lacks its owner's actual async plan\");\n  if (origin.cause !== undefined) {\n    sourceMapPoint(origin.cause, input, joins);\n    assertSourceMapDonor(input, ownerUnitId, origin.cause.donorUnitId, joins);\n  }\n}\n\nfunction assertSourceMapSite(\n  site: IrSiteId | undefined,\n  input: SourceMapInput,\n  ownerUnitId: string,\n  joins: SourceMapDonorJoins,\n): void {\n  if (!site || !Object.hasOwn(site, \"origin\")) sourceMapInvalid(\"instruction or exit lacks requested origin coverage\");\n  sourceMapFields(site, [\"origin\"], [\"line\", \"column\"]);\n  sourceMapFields(\n    site.origin,\n    [\"kind\"],\n    [\"point\", \"inlinedAt\", \"contributors\", \"phase\", \"role\", \"ownerUnitId\", \"cause\", \"bindingId\", \"sourceIds\"],\n  );\n  if (site.origin?.kind === \"source\") {\n    sourceMapFields(site, [\"line\", \"column\", \"origin\"]);\n    sourceMapFields(site.origin, [\"kind\", \"point\"], [\"inlinedAt\", \"contributors\"]);\n    for (const chain of [site.origin.inlinedAt, site.origin.contributors])\n      if (chain !== undefined) sourceMapArray(chain);\n    sourceMapPoint(site.origin.point, input, joins);\n    const sourceId = site.origin.point.sourceId;\n    const source = input.sourceMap!.sources.find((row) => row.sourceId === sourceId)!;\n    const prefix = source.projection.analyzedText.slice(0, site.origin.point.analyzed.start);\n    const lines = prefix.split(/\\r\\n|\\r|\\n|\\u2028|\\u2029/);\n    if (site.line !== lines.length || site.column !== lines.at(-1)!.length)\n      sourceMapInvalid(\"diagnostic coordinates contradict analyzed start\");\n    const outerDonor = site.origin.inlinedAt?.at(-1)?.donorUnitId ?? site.origin.point.donorUnitId;\n    assertSourceMapDonor(input, ownerUnitId, outerDonor, joins);\n    if (site.origin.inlinedAt) {\n      const donors = [site.origin.point.donorUnitId, ...site.origin.inlinedAt.map((point) => point.donorUnitId)];\n      if (new Set(donors).size !== donors.length) sourceMapInvalid(\"inlined call chain is cyclic\");\n    }\n    const primary = preparedIrDataKey(site.origin.point);\n    for (const chain of [site.origin.inlinedAt, site.origin.contributors]) {\n      if (chain === undefined) continue;\n      sourceMapArray(chain);\n      if (!chain.length) sourceMapInvalid(\"empty optional point chain must be omitted\");\n      const seen = new Set([primary]);\n      for (const point of chain) {\n        sourceMapPoint(point, input, joins);\n        const key = preparedIrDataKey(point);\n        if (seen.has(key)) sourceMapInvalid(\"point chain repeats a causal frame\");\n        seen.add(key);\n      }\n    }\n  } else if (site.origin?.kind === \"generated\") {\n    sourceMapFields(site, [\"origin\"]);\n    sourceMapGenerated(site.origin, input, ownerUnitId, joins);\n  } else sourceMapInvalid(\"unknown site origin variant\");\n}\n\nfunction walkSourceMapInstructions(\n  instrs: readonly IrInstr[],\n  input: SourceMapInput,\n  ownerUnitId: string,\n  joins: SourceMapDonorJoins,\n  active: Set<IrInstr> = new Set(),\n): void {\n  sourceMapArray(instrs);\n  for (const instr of instrs) {\n    if (active.has(instr)) sourceMapInvalid(\"cyclic nested instruction graph\");\n    active.add(instr);\n    try {\n      assertSourceMapSite(instr.site, input, ownerUnitId, joins);\n      forEachNestedBuffer(instr, (nested) => walkSourceMapInstructions(nested, input, ownerUnitId, joins, active));\n    } finally {\n      active.delete(instr);\n    }\n  }\n}\n\n/** Validate requested data; absent no-map payloads retain the original path. */\nexport function assertPreparedSourceMap(input: SourceMapInput): void {\n  if (!Object.hasOwn(input, \"sourceMap\")) return;\n  const descriptor = Object.getOwnPropertyDescriptor(input, \"sourceMap\")!;\n  if (!(\"value\" in descriptor)) sourceMapInvalid(\"catalog must be data, not an accessor\");\n  const map: TypedIrProgramInput[\"sourceMap\"] = descriptor.value;\n  sourceMapFields(map, [\"schema\", \"sources\"], [\"derivedSources\"]);\n  if (!map || map.schema !== \"prepared-ir-source-map-v1\") sourceMapInvalid(\"unknown catalog schema\");\n  sourceMapArray(map.sources);\n  if (map.sources.length !== input.inventory.sources.length)\n    sourceMapInvalid(\"catalog differs from actual source population\");\n  const ids = new Set<string>();\n  const names = new Set<string>();\n  for (const [index, source] of map.sources.entries()) {\n    sourceMapFields(source, [\"sourceId\", \"sourceKey\", \"originalFileName\", \"mapName\", \"projection\"]);\n    const actual = input.inventory.sources[index]!;\n    if (\n      source.sourceId !== actual.id ||\n      source.sourceKey !== actual.sourceKey ||\n      source.originalFileName !== actual.originalFileName ||\n      source.mapName !== actual.sourceKey ||\n      typeof source.mapName !== \"string\" ||\n      ids.has(source.sourceId) ||\n      names.has(source.mapName)\n    )\n      sourceMapInvalid(\"catalog source identity/order/name contradicts inventory\");\n    ids.add(source.sourceId);\n    names.add(source.mapName);\n    assertSourceMapProjection(source.projection);\n  }\n  const joins = assertSourceMapDerivedSources(input);\n  for (const fn of input.ir.functions) {\n    for (const block of fn.blocks) {\n      walkSourceMapInstructions(block.instrs, input, fn.unitId, joins);\n      assertSourceMapSite(block.terminator.site, input, fn.unitId, joins);\n    }\n    for (const state of fn.asyncPlan?.states ?? []) {\n      walkSourceMapInstructions(state.body, input, fn.unitId, joins);\n      for (const update of state.updates ?? []) assertSourceMapSite(update.site, input, fn.unitId, joins);\n      assertSourceMapSite(state.terminator.site, input, fn.unitId, joins);\n    }\n  }\n  if (joins.used.size !== joins.donors.size) sourceMapInvalid(\"derived source table contains an unused donor grant\");\n}\n\ninterface SourceMapDonorJoins {\n  readonly donors: ReadonlyMap<string, string>;\n  readonly used: Set<string>;\n  readonly startupOccurrences: Map<string, readonly IrSourceMapSpan[]>;\n}\n\nfunction assertSourceMapDerivedSources(input: SourceMapInput): SourceMapDonorJoins {\n  const joins: SourceMapDonorJoins = { donors: new Map(), used: new Set(), startupOccurrences: new Map() };\n  if (!Object.hasOwn(input.sourceMap!, \"derivedSources\")) return joins;\n  const rows = input.sourceMap!.derivedSources!;\n  sourceMapArray(rows);\n  if (!rows.length) sourceMapInvalid(\"empty derived source table must be omitted\");\n  assertSourceMapAcyclicBodies(input);\n  // Reuse semantic identity/parent/body validation; map metadata never replaces it.\n  try {\n    assertPreparedIrProgramPopulation(input);\n  } catch (error) {\n    if (!(error instanceof PreparedIrProgramInvariantError)) throw error;\n    sourceMapInvalid(`derived source population contradicts ownership: ${error.message}`);\n  }\n  const donors = new Map<string, string>();\n  for (const row of rows) {\n    sourceMapFields(row, [\"unitId\", \"donorUnitId\"]);\n    const derived = input.derivedUnits.filter((record) => record.id === row.unitId);\n    const functions = input.ir.functions.filter((fn) => fn.unitId === row.unitId);\n    const originals = input.inventory.allUnits.filter((unit) => unit.id === row.donorUnitId);\n    if (\n      donors.has(row.unitId) ||\n      input.inventory.allUnits.some((unit) => unit.id === row.unitId) ||\n      derived.length !== 1 ||\n      functions.length !== 1 ||\n      originals.length !== 1\n    )\n      sourceMapInvalid(\"derived source row lacks unique derived function/donor identities\");\n    const record = derived[0]!;\n    const donor = originals[0]!;\n    if (\n      record.role !== \"lifted-closure\" ||\n      ![\"arrow-function\", \"function-expression\", \"object-method\", \"object-getter\", \"object-setter\"].includes(\n        donor.kind,\n      ) ||\n      record.sourceId !== donor.sourceId ||\n      record.terminalOwnerId !== donor.terminalOwnerId\n    )\n      sourceMapInvalid(\"derived source row contradicts actual lifting role/source/terminal owner\");\n    const ancestors = sourceMapOwnerIds(input, row.unitId);\n    let lexical = donor.lexicalOwnerId;\n    const visited = new Set<string>();\n    while (lexical !== null && !ancestors.has(lexical)) {\n      if (visited.has(lexical)) sourceMapInvalid(\"source donor lexical chain is cyclic\");\n      visited.add(lexical);\n      const parents = input.inventory.allUnits.filter(\n        (unit) =>\n          unit.id === lexical && unit.sourceId === donor.sourceId && unit.terminalOwnerId === donor.terminalOwnerId,\n      );\n      if (parents.length !== 1) sourceMapInvalid(\"derived source donor lacks its actual lexical owner\");\n      lexical = parents[0]!.lexicalOwnerId;\n    }\n    if (lexical === null) sourceMapInvalid(\"derived source donor contradicts its actual parent chain\");\n    donors.set(row.unitId, row.donorUnitId);\n  }\n  const ordered = input.derivedUnits.filter((record) => donors.has(record.id)).map((record) => record.id);\n  if (\n    preparedIrDataMismatch(\n      ordered,\n      rows.map((row) => row.unitId),\n    ) !== undefined\n  )\n    sourceMapInvalid(\"derived source table contradicts actual derived order\");\n  return { donors, used: joins.used, startupOccurrences: joins.startupOccurrences };\n}\n\nfunction sourceMapOwnerIds(input: SourceMapInput, ownerUnitId: string): Set<string> {\n  const ids = new Set<string>([ownerUnitId]);\n  let parent = input.derivedUnits.find((unit) => unit.id === ownerUnitId);\n  while (parent) {\n    if (ids.has(parent.parentId)) sourceMapInvalid(\"derived owner chain is cyclic\");\n    ids.add(parent.parentId);\n    const parentId = parent.parentId;\n    parent = input.derivedUnits.find((unit) => unit.id === parentId);\n  }\n  return ids;\n}\n\nfunction assertSourceMapDonor(\n  input: SourceMapInput,\n  ownerUnitId: string,\n  donorUnitId: string,\n  joins: SourceMapDonorJoins,\n): void {\n  const ids = sourceMapOwnerIds(input, ownerUnitId);\n  for (const id of ids) {\n    if (joins.donors.get(id) === donorUnitId) {\n      if (id === ownerUnitId) joins.used.add(id);\n      return;\n    }\n  }\n  if (!ids.has(donorUnitId)) sourceMapInvalid(\"source origin lacks its current or inlined owner chain\");\n}\n\n/** Population validation uses a recursive walk, so reject cycles before it. */\nfunction assertSourceMapAcyclicBodies(input: SourceMapInput): void {\n  const active = new Set<IrInstr>();\n  const visit = (instrs: readonly IrInstr[]): void => {\n    sourceMapArray(instrs);\n    for (const instr of instrs) {\n      if (active.has(instr)) sourceMapInvalid(\"cyclic nested instruction graph\");\n      active.add(instr);\n      try {\n        forEachNestedBuffer(instr, visit);\n      } finally {\n        active.delete(instr);\n      }\n    }\n  };\n  for (const fn of input.ir.functions) {\n    for (const block of fn.blocks) visit(block.instrs);\n    for (const state of fn.asyncPlan?.states ?? []) visit(state.body);\n  }\n}\n"
+        }
+      ]
+    },
+    {
+      "path": "src/position-map.ts",
+      "before": {
+        "path": "src/position-map.ts",
+        "bytes": 6306,
+        "sha256": "18e228f204079171a28bfc763514fe54aa30030b3e1529dae706f86488b0aecb",
+        "gitBlob": "a79a6f460eae2d51028e1eef673b3f7b363ae243"
+      },
+      "current": {
+        "path": "src/position-map.ts",
+        "bytes": 8649,
+        "sha256": "aed06dbcabad1d12cfd4d228c25f30dca5d0ff0006ced9e467b26bf84485b8f9",
+        "gitBlob": "19dd7fd273ad68976e9302fc14894b170541aa8c"
+      },
+      "spans": [
+        {
+          "beforeStart": 84,
+          "beforeEnd": 84,
+          "currentStart": 84,
+          "currentEnd": 223,
+          "beforeText": "",
+          "currentText": "import type {\n  IrSourceMapStageProducer,\n  IrSourceMapTextStage,\n  IrSourceMapTextEdit,\n} from \"./shared/contracts/ir-unit-inventory.js\";\n"
+        },
+        {
+          "beforeStart": 3068,
+          "beforeEnd": 3068,
+          "currentStart": 3207,
+          "currentEnd": 5411,
+          "beforeText": "",
+          "currentText": "  }\n\n  /** Capture actual replacement bytes before a single stage loses its input. */\n  captureSourceMapStage(\n    producer: IrSourceMapStageProducer,\n    inputText: string,\n    outputText: string,\n  ): IrSourceMapTextStage {\n    if (typeof inputText !== \"string\" || typeof outputText !== \"string\")\n      throw new Error(\"source map: stage text must be primitive strings\");\n    if (this.inner && !this.inner.isIdentity) throw new Error(\"source map: cannot capture a composed position map\");\n    if (\n      ![\n        \"define\",\n        \"stdin-prelude\",\n        \"iterator-prelude\",\n        \"listformat-prelude\",\n        \"cjs-rewrite\",\n        \"eval-super-rewrite\",\n        \"imports\",\n      ].includes(producer)\n    )\n      throw new Error(\"source map: unknown text-stage producer\");\n    const edits: IrSourceMapTextEdit[] = [];\n    let cursor = 0;\n    let delta = 0;\n    let replay = \"\";\n    for (const edit of this.edits) {\n      const { origStart: start, origEnd: end, newLength } = edit;\n      if (\n        ![start, end, newLength].every(Number.isSafeInteger) ||\n        start < cursor ||\n        end < start ||\n        end > inputText.length ||\n        newLength < 0\n      )\n        throw new Error(\"source map: invalid single-stage edit\");\n      const outputStart = start + delta;\n      if (outputStart < 0 || outputStart + newLength > outputText.length)\n        throw new Error(\"source map: replacement lies outside actual output\");\n      const removed = inputText.slice(start, end);\n      const inserted = outputText.slice(outputStart, outputStart + newLength);\n      replay += inputText.slice(cursor, start) + inserted;\n      if (removed !== inserted)\n        edits.push(\n          Object.freeze({\n            input: Object.freeze({ start, end }),\n            removed,\n            inserted,\n            kind: start === end ? \"generated-insertion\" : \"replacement\",\n          }),\n        );\n      cursor = end;\n      delta += newLength - (end - start);\n    }\n    replay += inputText.slice(cursor);\n    if (replay !== outputText) throw new Error(\"source map: single-stage replay differs from actual output\");\n    return Object.freeze({ producer, inputText, outputText, edits: Object.freeze(edits) });\n"
+        }
+      ]
+    },
+    {
+      "path": "src/shared/contracts/ir-unit-inventory.ts",
+      "before": {
+        "path": "src/shared/contracts/ir-unit-inventory.ts",
+        "bytes": 4708,
+        "sha256": "f6f253cefa3b4618bd5f2daf2555b6c0d734a715f2dd44a30a83921c0d9b6496",
+        "gitBlob": "e7f088edffda5ef76b726b6786341e5bcc744078"
+      },
+      "current": {
+        "path": "src/shared/contracts/ir-unit-inventory.ts",
+        "bytes": 8077,
+        "sha256": "6b5b77eeb6865023b01891bf2bc2efb1d803fac37c9f8ac739759e15e23fef83",
+        "gitBlob": "180df8e4f8b7aa3eabac4cb88b54dc6b04a642bb"
+      },
+      "spans": [
+        {
+          "beforeStart": 85,
+          "beforeEnd": 197,
+          "currentStart": 85,
+          "currentEnd": 223,
+          "beforeText": "import type { IrSourceId, IrUnitId, IrClassId, IrLexicalOwnerId, IrSyntheticUnitRole } from \"./ir-identity.js\";\n",
+          "currentText": "import type {\n  IrBindingId,\n  IrSourceId,\n  IrUnitId,\n  IrClassId,\n  IrLexicalOwnerId,\n  IrSyntheticUnitRole,\n} from \"./ir-identity.js\";\n"
+        },
+        {
+          "beforeStart": 4708,
+          "beforeEnd": 4708,
+          "currentStart": 4734,
+          "currentEnd": 8077,
+          "beforeText": "",
+          "currentText": "\nexport interface IrSourceMapSpan {\n  readonly start: number;\n  readonly end: number;\n}\nexport type IrSourceMapStageProducer =\n  | \"define\"\n  | \"stdin-prelude\"\n  | \"iterator-prelude\"\n  | \"listformat-prelude\"\n  | \"cjs-rewrite\"\n  | \"eval-super-rewrite\"\n  | \"imports\";\nexport interface IrSourceMapTextEdit {\n  readonly input: IrSourceMapSpan;\n  readonly removed: string;\n  readonly inserted: string;\n  readonly kind: \"replacement\" | \"generated-insertion\";\n}\nexport interface IrSourceMapTextStage {\n  readonly producer: IrSourceMapStageProducer;\n  readonly inputText: string;\n  readonly outputText: string;\n  readonly edits: readonly IrSourceMapTextEdit[];\n}\nexport interface IrSourceMapTextProjection {\n  readonly originalText: string;\n  readonly analyzedText: string;\n  readonly stages: readonly IrSourceMapTextStage[];\n}\nexport interface IrSourceMapSource {\n  readonly sourceId: IrSourceId;\n  readonly sourceKey: string;\n  readonly originalFileName: string;\n  readonly mapName: string;\n  readonly projection: IrSourceMapTextProjection;\n}\nexport interface IrSourceMapPoint {\n  readonly sourceId: IrSourceId;\n  readonly donorUnitId: IrUnitId;\n  readonly analyzed: IrSourceMapSpan;\n  readonly original: IrSourceMapSpan;\n  readonly mapping: \"exact\" | \"rewrite\";\n}\nexport interface IrSourceMapSourceOrigin {\n  readonly kind: \"source\";\n  readonly point: IrSourceMapPoint;\n  // Innermost-to-outermost actual inlining calls, absent when not inlined.\n  readonly inlinedAt?: readonly IrSourceMapPoint[];\n  // Additional actual causal source points; primary is always point above.\n  readonly contributors?: readonly IrSourceMapPoint[];\n}\nexport type IrSourceMapGeneratedOrigin =\n  | {\n      readonly kind: \"generated\";\n      readonly phase: \"frontend\";\n      readonly role: \"insertion\" | \"implicit-return\" | \"binding-scaffold\" | \"control-scaffold\";\n      readonly ownerUnitId: IrUnitId;\n      readonly cause?: IrSourceMapPoint;\n    }\n  | {\n      readonly kind: \"generated\";\n      readonly phase: \"middleend\";\n      readonly role: \"cfg-scaffold\" | \"representation-scaffold\";\n      readonly ownerUnitId: IrUnitId;\n      readonly cause?: IrSourceMapPoint;\n    }\n  | {\n      readonly kind: \"generated\";\n      readonly phase: \"async\";\n      readonly role: \"state-dispatch\" | \"frame-access\" | \"capability\" | \"continuation\";\n      readonly ownerUnitId: IrUnitId;\n      readonly cause?: IrSourceMapPoint;\n    }\n  | {\n      readonly kind: \"generated\";\n      readonly phase: \"backend\";\n      readonly role: \"control-scaffold\" | \"abi-scaffold\";\n      readonly ownerUnitId: IrUnitId;\n      readonly cause?: IrSourceMapPoint;\n    }\n  | {\n      readonly kind: \"generated\";\n      readonly phase: \"support\";\n      readonly role: \"runtime-body\" | \"runtime-adapter\";\n      readonly bindingId: IrBindingId;\n    }\n  | {\n      readonly kind: \"generated\";\n      readonly phase: \"startup\";\n      readonly role: \"adapter\";\n      readonly sourceIds: readonly IrSourceId[];\n    };\nexport type IrSourceMapOrigin = IrSourceMapSourceOrigin | IrSourceMapGeneratedOrigin;\nexport interface IrSourceMapDerivedSource {\n  readonly unitId: IrUnitId;\n  readonly donorUnitId: IrUnitId;\n}\n\nexport interface IrPreparedSourceMap {\n  readonly schema: \"prepared-ir-source-map-v1\";\n  readonly sources: readonly IrSourceMapSource[];\n  readonly derivedSources?: readonly IrSourceMapDerivedSource[];\n}\n"
+        }
+      ]
+    }
+  ]
+}

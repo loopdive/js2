@@ -686,6 +686,22 @@ export function emitNonObjectArgGuard(
  * Emit a null check on the ref stored in `localIdx`.
  * If null, throws TypeError via the exception tag.
  */
+/**
+ * (#6651 U3) Stack `[externref] -> [externref]`: §7.1.18 ToObject's TypeError
+ * when the value is null/undefined, else the value unchanged.
+ */
+function emitToObjectNullishGuard(ctx: CodegenContext, fctx: FunctionContext): void {
+  const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert undefined or null to object", {
+    flush: fctx,
+  });
+  const nullishIdx = ctx.funcMap.get("__extern_is_nullish");
+  const tmp = allocLocal(fctx, `__toobj_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.tee", index: tmp });
+  fctx.body.push(nullishIdx !== undefined ? { op: "call", funcIdx: nullishIdx } : { op: "ref.is_null" });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs });
+  fctx.body.push({ op: "local.get", index: tmp });
+}
+
 function emitObjectArgNullGuard(ctx: CodegenContext, fctx: FunctionContext, localIdx: number): void {
   const message = "TypeError: Object method called on null or undefined";
   addStringConstantGlobal(ctx, message);
@@ -4463,7 +4479,15 @@ export function compileObjectKeysOrValues(
   const NULLISH_FLAGS = ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void;
   const isNullishType = (t: ts.Type): boolean =>
     t.isUnion() ? t.types.every(isNullishType) : (t.flags & NULLISH_FLAGS) !== 0 && (t.flags & ~NULLISH_FLAGS) === 0;
-  if (isNullishType(argType)) {
+  // (#6651 U3) NOT for an evolving `var d;` the checker narrowed to nullish
+  // here: that is TypeScript's control-flow type, which ignores assignments
+  // made inside closures — after `function f(x) { d = x }` + `f({a: 1})` it
+  // still says `undefined` at `Object.keys(d)`, so the fold threw on a live
+  // object (`Proxy/defineProperty/call-parameters` stores the trap's
+  // descriptor that way). Same decline as the #5197 `hasOwnProperty` fold: the
+  // runtime path below, with a ToObject guard for a value that IS nullish.
+  const evolvingNullishArg = (noJsHost(ctx) || ctx.strictNoHostImports) && evolvingVarNullishNarrowed(ctx, arg);
+  if (!evolvingNullishArg && isNullishType(argType)) {
     const t = compileExpression(ctx, fctx, arg);
     if (t) fctx.body.push({ op: "drop" });
     const which = !argType.isUnion() && argType.flags & ts.TypeFlags.Null ? "null" : "undefined";
@@ -4535,6 +4559,7 @@ export function compileObjectKeysOrValues(
     if (argResult.kind !== "externref") {
       coerceType(ctx, fctx, argResult, { kind: "externref" });
     }
+    if (evolvingNullishArg) emitToObjectNullishGuard(ctx, fctx); // (#6651 U3)
     const importName = `__object_${method}`;
     const funcIdx = ensureLateImport(ctx, importName, [{ kind: "externref" }], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);

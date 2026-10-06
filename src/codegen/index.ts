@@ -3,6 +3,7 @@ import { ts, forEachChild } from "../ts-api.js";
 import { restPatternParamSlot } from "./resolved-rest-param.js"; // (#6774 S7)
 import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 import { isAccessorObjectLiteralType, propertyValueIsAccessorObjectLiteral } from "./accessor-value-field.js";
+import { propertyValueWidenedArrayCarrier } from "./declarations/array-rebind-element-widening.js"; // (#6651 U4)
 import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { emitToBoolean } from "./coercion-engine.js";
@@ -13637,6 +13638,7 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
     if ((wasmType.kind === "ref" || wasmType.kind === "ref_null") && propertyValueIsAccessorObjectLiteral(prop)) {
       wasmType = { kind: "externref" };
     }
+    wasmType = propertyValueWidenedArrayCarrier(ctx, prop, wasmType); // (#6651 U4) alias, not copy
     // For valueOf/toString callable properties, store as eqref instead of externref
     // so coercion can recover the closure and call it via call_ref
     if (wasmType.kind === "externref" && callSigs.length > 0 && (prop.name === "valueOf" || prop.name === "toString")) {

@@ -30,7 +30,9 @@ import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import { concatCallYieldsDynamicCarrier } from "../array-concat-carrier.js"; // (#4655) concat result-slot carrier
 import { filterResultNeedsDynamicCarrier } from "../array-filter-spec-access.js";
 import { emitShapeInferredVecInit } from "../shape-vec-literal-seed.js"; // (#4491) module-global array-carrier seed
+import { rebindWidenedArrayInit } from "../declarations/array-rebind-element-widening.js"; // (#6651 U4)
 import {
+  compileArrayLiteral,
   arrayLiteralEscapeWidensToExternref,
   objectLiteralIsStandaloneAnyObjectCarrier,
   objectLiteralForcesHostPath,
@@ -1713,7 +1715,10 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
         const wasmType = globalDef?.type ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(decl));
         const materializationStart = fctx.body.length;
-        if (tryEmitPromiseSubclassClassExpressionValue(ctx, fctx, decl.initializer, wasmType) === undefined) {
+        const widenedInit = rebindWidenedArrayInit(ctx, decl, wasmType);
+        if (widenedInit) {
+          compileArrayLiteral(ctx, fctx, widenedInit, { kind: "externref" }); // (#6651 U4) straight into the widened vec
+        } else if (tryEmitPromiseSubclassClassExpressionValue(ctx, fctx, decl.initializer, wasmType) === undefined) {
           compileExpression(ctx, fctx, decl.initializer, wasmType);
         } else {
           emitHandledClassExpressionBindingEffects(ctx, fctx, decl.initializer, materializationStart);

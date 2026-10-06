@@ -21,6 +21,8 @@ import { collectBindingNames } from "../../ir/analysis/loop-shape.js";
 import { adjustRethrowDepth, restoreBlockScopedShadows, saveBlockScopedShadows } from "./shared.js";
 import { beginFinallyCompletionSnapshot, endFinallyCompletionSnapshot } from "./eval-completion-value.js";
 import { buildStandardTryTable } from "../../ir/try-table.js";
+import { createFinallyRanGuard } from "./finally-ran-guard.js"; // (#6651 U4)
+import { allocFinallyPrivateLocal } from "./finally-private-local.js";
 
 type BoxedCapture = { refCellTypeIdx: number; valType: ValType };
 
@@ -344,13 +346,6 @@ export function compileThrowStatement(ctx: CodegenContext, fctx: FunctionContext
 export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.TryStatement): void {
   const tagIdx = ensureExnTag(ctx);
   const standardizedEh = ctx.wasi || ctx.standalone;
-  // A throwing finally clone is still inside this no-catch try's handler.
-  // Reserve a private, non-deduplicated slot before compiling any clones;
-  // it must never participate in source-name lookup or temporary reuse.
-  const finallyEnteredLocal = stmt.finallyBlock && !stmt.catchClause ? fctx.params.length + fctx.locals.length : null;
-  if (finallyEnteredLocal !== null) {
-    fctx.locals.push({ name: `finally@entered$${finallyEnteredLocal}`, type: { kind: "i32" } });
-  }
 
   // Pre-compile the finally body once so we can clone it into each
   // control-flow path instead of re-compiling the TS statements 2-5 times.
@@ -411,11 +406,7 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
 
   /** Return a deep clone of the pre-compiled finally instructions. */
   function cloneFinally(): Instr[] {
-    const cloned = cloneInstructions(ctx, finallyInstrs!);
-    if (finallyEnteredLocal !== null) {
-      cloned.unshift({ op: "i32.const", value: 1 }, { op: "local.set", index: finallyEnteredLocal });
-    }
-    return cloned;
+    return cloneInstructions(ctx, finallyInstrs!);
   }
 
   /**
@@ -427,7 +418,7 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
    * finally was compiled at +1.
    */
   function cloneFinallyAtDepth(extraDepth: number): Instr[] {
-    const cloned = cloneFinally();
+    const cloned = cloneInstructions(ctx, finallyInstrs!);
     if (extraDepth === 0 || outerBreakDepths.size === 0) return cloned;
     bumpOuterBranchDepths(cloned, outerBreakDepths, extraDepth);
     return cloned;
@@ -441,8 +432,12 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
     fctx.savedBodies.push(finallyInstrs);
   }
 
+  // (#6651 U4) a throw BY the finally must not reach this statement's own handlers.
+  const ran = finallyInstrs ? createFinallyRanGuard(fctx, tagIdx, stmt, allocFinallyPrivateLocal) : undefined;
+
   // Compile the try block body
   const savedBody = pushBody(fctx);
+  if (ran) fctx.body.push(...ran.reset());
 
   // Adjust break/continue depths: the try block adds one label level
   for (let i = 0; i < fctx.breakStack.length; i++) fctx.breakStack[i]!++;
@@ -455,8 +450,7 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
   if (finallyInstrs) {
     if (!fctx.finallyStack) fctx.finallyStack = [];
     fctx.finallyStack.push({
-      cloneFinally,
-      cloneFinallyAtDepth,
+      ...ran!.guarded({ cloneFinally, cloneFinallyAtDepth }),
       breakStackLen: fctx.breakStack.length,
       continueStackLen: fctx.continueStack.length,
       breakDepthBaseline: fctx.breakStack.slice(),
@@ -487,7 +481,7 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
 
   // If there's a finally block, inline it at the end of the try body (normal path)
   if (finallyInstrs) {
-    fctx.body.push(...cloneFinally());
+    fctx.body.push(...ran!.mark(), ...cloneFinally());
   }
 
   const tryBody = fctx.body;
@@ -502,25 +496,13 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
     fctx.body = [];
     if (standardizedEh) {
       const finallyExnLocal = allocLocal(fctx, `__finally_exn_${fctx.locals.length}`, { kind: "externref" });
-      fctx.body.push({ op: "local.set", index: finallyExnLocal });
-      fctx.body.push({ op: "local.get", index: finallyEnteredLocal! });
-      fctx.body.push({
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: finallyExnLocal },
-          { op: "throw", tagIdx },
-        ],
-      });
+      fctx.body.push({ op: "local.set", index: finallyExnLocal }, ...ran!.rethrowIfRan(finallyExnLocal));
       fctx.body.push(...cloneFinally());
       fctx.body.push({ op: "local.get", index: finallyExnLocal });
       fctx.body.push({ op: "throw", tagIdx });
       catches = [{ tagIdx, body: fctx.body }];
     } else {
-      fctx.body.push({ op: "local.get", index: finallyEnteredLocal! });
-      // This guard adds one label around the active catch_all exception.
-      fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: [{ op: "rethrow", depth: 1 }] });
-      fctx.body.push(...cloneFinally());
+      fctx.body.push(...ran!.rethrowIfRan(), ...cloneFinally());
       fctx.body.push({ op: "rethrow", depth: 0 } as any);
       catchAllBody = fctx.body;
     }
@@ -610,8 +592,7 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
         // inline the finally instructions before transferring control.
         if (!fctx.finallyStack) fctx.finallyStack = [];
         fctx.finallyStack.push({
-          cloneFinally,
-          cloneFinallyAtDepth,
+          ...ran!.guarded({ cloneFinally, cloneFinallyAtDepth }),
           breakStackLen: fctx.breakStack.length,
           continueStackLen: fctx.continueStack.length,
           breakDepthBaseline: catchBreakBaseline,
@@ -667,6 +648,7 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
 
     // Build "catch $exn" body: receives the externref value on the stack
     fctx.body = [];
+    if (ran) fctx.body.push(...(standardizedEh ? ran.payloadPrologue() : ran.rethrowIfRan()));
     if (exnLocalIdx !== null) {
       fctx.body.push({ op: "local.set", index: exnLocalIdx });
     } else {
@@ -684,6 +666,7 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
         const innerExnLocal = allocLocal(fctx, `__finally_exn_${fctx.locals.length}`, { kind: "externref" });
         const innerHandler: Instr[] = [
           { op: "local.set", index: innerExnLocal },
+          ...ran!.rethrowIfRan(innerExnLocal),
           ...cloneFinallyAtDepth(1),
           { op: "local.get", index: innerExnLocal },
           { op: "throw", tagIdx },
@@ -694,7 +677,11 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
           ]),
         );
       } else {
-        const innerCatchAllBody: Instr[] = [...cloneFinallyAtDepth(1), { op: "rethrow", depth: 0 } as any];
+        const innerCatchAllBody: Instr[] = [
+          ...ran!.rethrowIfRan(),
+          ...cloneFinallyAtDepth(1),
+          { op: "rethrow", depth: 0 } as any,
+        ];
         fctx.body.push({
           op: "try",
           blockType: { kind: "empty" },
@@ -726,7 +713,7 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
       // (e.g. __get_caught_exception) shift their function indices too.
       fctx.savedBodies.push(tryBody);
       for (const c of catches) fctx.savedBodies.push(c.body);
-      fctx.body = [];
+      fctx.body = ran ? ran.rethrowIfRan() : [];
       if (exnLocalIdx !== null) {
         const getCaughtIdx = ensureLateImport(ctx, "__get_caught_exception", [], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, fctx);
@@ -740,7 +727,11 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
         // Same wrapping as catch $exn body above, but with cloned catch body.
         // The cloned finally inside inner catch_all is at +2 depth — bump
         // outer branch depths by +1 (see #993 / cloneFinallyAtDepth above).
-        const innerCatchAllBody: Instr[] = [...cloneFinallyAtDepth(1), { op: "rethrow", depth: 0 } as any];
+        const innerCatchAllBody: Instr[] = [
+          ...ran!.rethrowIfRan(),
+          ...cloneFinallyAtDepth(1),
+          { op: "rethrow", depth: 0 } as any,
+        ];
 
         fctx.body.push({
           op: "try",
@@ -803,14 +794,8 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
   if (fctx.generatorReturnDepth !== undefined) fctx.generatorReturnDepth--;
   adjustRethrowDepth(fctx, -1);
 
-  // Reset on every dynamic entry (including loop iterations), outside the
-  // protected try so neither its handler nor an abrupt clone resets it.
-  if (finallyEnteredLocal !== null) {
-    fctx.body.push({ op: "i32.const", value: 0 }, { op: "local.set", index: finallyEnteredLocal });
-  }
-
   // Embedded standalone runtimes implement the standardized EH proposal.
-  // Host output retains the legacy EH encoding.
+  // Keep the legacy structured encoding byte-inert for JS-host output.
   if (standardizedEh) {
     if (catchAllBody) throw new Error("standalone try_table lowering cannot retain a legacy catch_all body");
     fctx.body.push(

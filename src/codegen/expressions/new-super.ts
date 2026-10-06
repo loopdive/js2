@@ -3815,6 +3815,11 @@ function resolvesToNativeProxyValue(ctx: CodegenContext, expression: ts.Expressi
   return isProxyFactory(expression);
 }
 
+/** (#6651 U3) Standalone `new <realm global>.Proxy(…)` — a member callee proven to hold `%Proxy%`. */
+function isMemberProxyConstructorCallee(ctx: CodegenContext, callee: ts.Expression): boolean {
+  return noJsHost(ctx) && ts.isPropertyAccessExpression(callee) && tracesToProxyConstructorValue(ctx, callee);
+}
+
 function tryCompileNativeConstructFromValue(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3838,7 +3843,12 @@ function tryCompileNativeConstructFromValue(
       resolvesToDynamicAnyCtorValue(ctx, calleeExpr)) ||
       isValueSelectingNewCallee(calleeExpr) ||
       ts.isTaggedTemplateExpression(calleeExpr)); // (#6774 S3) `new tag\`x\``: the tag call's result
-  if (!ts.isIdentifier(calleeExpr) && !runtimeEvalCallableResult && !dynamicCtorValue) return undefined;
+  // (#6651 U3) `new other.Proxy(t, h)` — the realm-global MEMBER spelling of the
+  // proven Proxy-constructor value (`tracesToProxyConstructorValue` already
+  // claims `<realm global>.Proxy`); only the identifier form was admitted.
+  const memberProxyCtorValue = isMemberProxyConstructorCallee(ctx, calleeExpr);
+  if (!ts.isIdentifier(calleeExpr) && !runtimeEvalCallableResult && !dynamicCtorValue && !memberProxyCtorValue)
+    return undefined;
   // A compiled fnctor for this binding means the typed-struct path owns it.
   if (ts.isIdentifier(calleeExpr) && ctx.funcConstructorMap.has(calleeExpr.text)) return undefined;
   const runtimeFunctionAlias =
@@ -3848,7 +3858,8 @@ function tryCompileNativeConstructFromValue(
   const proxyValue = ts.isIdentifier(calleeExpr) && resolvesToNativeProxyValue(ctx, calleeExpr);
   // (#5196 R3-0) `Proxy` reached as a VALUE also needs the proxy runtime and
   // the construct driver; the driver's carrier arm does the identity test.
-  const proxyCtorValue = ts.isIdentifier(calleeExpr) && tracesToProxyConstructorValue(ctx, calleeExpr);
+  const proxyCtorValue =
+    memberProxyCtorValue || (ts.isIdentifier(calleeExpr) && tracesToProxyConstructorValue(ctx, calleeExpr));
   if (
     !runtimeFunctionAlias &&
     !runtimeEvalCallableResult &&
@@ -7454,6 +7465,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       (ts.isPropertyAccessExpression(expr.expression) || ts.isElementAccessExpression(expr.expression)) &&
       resolvesToDynamicAnyCtorValue(ctx, expr.expression)) ||
     isValueSelectingNewSite(ctx, expr.expression, className) || // (#6738)
+    isMemberProxyConstructorCallee(ctx, expr.expression) || // (#6651 U3)
     (noJsHost(ctx) && ts.isTaggedTemplateExpression(expr.expression)) // (#6774 S3)
   ) {
     const nativeCtor = tryCompileNativeConstructFromValue(ctx, fctx, expr.expression, expr.arguments ?? []);
