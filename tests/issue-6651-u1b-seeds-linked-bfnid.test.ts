@@ -21,7 +21,7 @@
  * `(self, this)` signature and trapped. Unseeded, nothing local was 719 and the
  * foreign closure fell through to the funcref-type ladder, which is correct.
  *
- * THE FIX (`closures/transferred-native-proto.ts::linkedSignatureGuard`): in a
+ * THE FIX (`linkedSignatureGuard`, now in `builtin-fn-meta.ts` — #6651 V0): in a
  * canonically linked module the claim additionally requires the funcref to
  * have the entry's exact signature. A same-signature collision is harmless —
  * the arm calls through field 0, the peer's own function. Unlinked modules

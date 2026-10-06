@@ -17,7 +17,7 @@
  */
 import type { Instr, ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
-import { BFN_ID_FIELD_IDX } from "./builtin-fn-meta.js";
+import { BFN_ID_FIELD_IDX, linkedSignatureGuard } from "./builtin-fn-meta.js";
 import { runtimeToPrimitiveInstrs } from "./coercion-engine.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -310,6 +310,8 @@ function buildTransferredStringProtoApplyArm(
 
   const userArgs: Instr[] = [];
   for (let i = 0; i < userArgCount; i++) userArgs.push(...argOf(i));
+  const fnAny = (): Instr[] => [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }];
+  const linked = ctx.mod.canonicalRuntimeRecGroup !== undefined;
 
   return [
     { op: "local.get", index: 0 },
@@ -327,6 +329,7 @@ function buildTransferredStringProtoApplyArm(
         { op: "struct.get", typeIdx: metaTypeIdx, fieldIdx: BFN_ID_FIELD_IDX },
         { op: "i32.const", value: metaTypeIdx },
         { op: "i32.eq" },
+        ...linkedSignatureGuard(ctx, { typeIdx: metaTypeIdx, funcTypeIdx: closureInfo.funcTypeIdx }, fnAny()),
         {
           op: "if",
           blockType: { kind: "empty" },
@@ -339,7 +342,17 @@ function buildTransferredStringProtoApplyArm(
             { op: "local.get", index: 1 },
             // user args (missing -> the ordinary undefined sentinel)
             ...userArgs,
-            { op: "call", funcIdx },
+            // (#6651 V0) Linked: a same-signature PEER closure can still carry
+            // our id, so call through its own field 0, never our local body.
+            ...(linked
+              ? ([
+                  ...fnAny(),
+                  { op: "ref.cast", typeIdx: metaTypeIdx },
+                  { op: "struct.get", typeIdx: metaTypeIdx, fieldIdx: 0 },
+                  { op: "ref.cast", typeIdx: closureInfo.funcTypeIdx },
+                  { op: "call_ref", typeIdx: closureInfo.funcTypeIdx },
+                ] satisfies Instr[])
+              : ([{ op: "call", funcIdx }] satisfies Instr[])),
             { op: "return" },
           ],
         },

@@ -93,7 +93,7 @@ import {
   ARGUMENTS_LENGTH_VALUE_FIELD,
   reserveArgumentsLengthBrand,
 } from "./arguments-length-brand.js"; // (#4658/#4491)
-import { BFN_ID_FIELD_IDX, BFN_STATE_FIELD_IDX } from "./builtin-fn-meta.js"; // (#4241) header-derived
+import { BFN_ID_FIELD_IDX, BFN_STATE_FIELD_IDX, linkedMetaSignatureGuard } from "./builtin-fn-meta.js"; // (#4241) header-derived
 import { ensureNativeCharCodeAtHelper } from "./char-code-at-helpers.js";
 import { getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js"; // (#3673 round 19b)
 import { lazyStrFlattenEnabled, redundantFlattenCall } from "./lazy-str-flatten.js"; // (#4157)
@@ -11518,6 +11518,7 @@ export function fillBuiltinFnMeta(ctx: CodegenContext): void {
         { op: "struct.get", typeIdx, fieldIdx: BFN_ID_FIELD_IDX },
         { op: "i32.const", value: typeIdx },
         { op: "i32.eq" },
+        ...linkedMetaSignatureGuard(ctx, typeIdx, [{ op: "local.get", index: 2 }]), // (#6651 V0) linked peer ids
         { op: "if", blockType: { kind: "empty" }, then },
       ],
     },
