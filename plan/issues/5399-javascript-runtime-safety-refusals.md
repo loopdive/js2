@@ -296,3 +296,199 @@ newline bytes, missing terminal, wrong authority hash, symlink and output reuse
 must be covered. No compiler tests, production source edits, Git mutations,
 commits, pushes or changes to the running process. Parent reviews the packer and
 authorizes its real invocation only after session65800 is terminal.
+
+Parent reviewed the complete packer implementation at C
+.tmp/5883-pack-full-successor-evidence-20261006.mjs, SHA256
+6cc1cfbb390841cb35a53252832ac895c806a1edac0f58a1a08d59efda032557.
+All nine artificial smoke controls passed, including missing/failed terminal,
+wrong terminal head, missing explicit parent confirmation and unexpected stage.
+Parent independently decoded and hash-verified all51 artificial archive streams.
+This approves the packaging tool only, not the actual run or semantic acceptance.
+The live run remains unmodified and unpackaged until its process is terminal.
+The implementation and artificial evidence stay in C's isolated .tmp for later
+publication with the actual terminal records; no new checkpoint PR is authorized.
+
+### Incoming-main composition contract after frozen PR5883 validation
+
+Read-only conflict assessment observed server main
+4bffef14505f26558556a707931c711105a968af,26 commits after d0a13, and
+published64849 still DIRTY. This is a hunk comparison, not an executed merge.
+Twelve changed paths overlap local8b9. Ten require deliberate composition:
+the C1 authority root, JSON manifest and current-source test, plus the seven
+policy acquisition callers listed in the prior PR5883 repair. Context types
+have disjoint additions to retain. The inventory requires five added rows:
+source-map-position.ts (clean ir-program), callable-property-omittable-param.ts,
+host-boolean-callback.ts, typeof-import-binding.ts and ta-iter-detach.ts (the
+latter four unmigrated/mixed-needs-split/backend-wasmgc). Observed main inventory
+blob126b9da52886d6c153271005953d87816189f19f is a source identity, not yet
+the candidate union's byte authority.
+
+Implementation sequence, parent-controlled after the running epoch terminates:
+
+1. Preserve and review the full8b9 result, even if it fails. Do not label it a
+   result for newer main. Pin the actual incoming commit before integration;
+   if it differs from4bff, enumerate additional changes before releasing edits.
+2. Merge into the integration branch with normal Git history, preserving both
+   source trees' intended changes. Capture the exact inventory union and its
+   five additions with full bytes, positions, hashes and semantic comparison.
+   Add an exact successor projection to the existing591084-byte D profile;
+   keep all old receipts and inverse/replay controls unchanged.
+3. Give one Sol6.1 Medium writer ownership of the successor helper/receipt and
+   the seven acquisition adapters plus their preservation controls. Incoming
+   main expects a separate589117-byte historical profile, so blindly nesting
+   adapters is invalid. Define explicit views of the same authenticated physical
+   source; preserve each original view and every physical-source corruption
+   negative, reject unknown input, and retain malformed-before-I/O behavior and
+   read traces. Do not authorize arbitrary current inventory by recomputing a
+   self-consistent receipt from it at test runtime.
+4. Only once those source bytes are final, give the C1 owner the exact resulting
+   instrument hashes and inverse recipes. Preserve immutable historical source,
+   all assertion identities and fixtures, D's demonstrated120000/150000 probe
+   budgets, and the incoming main recipe edits. No independent concurrent edits
+   to the shared C1 authority files.
+5. Collect the full incoming test identity population as identity evidence only;
+   retain all existing68 files/4515 unique identities and account explicitly
+   for additions. Test exact bridge controls, C1 and affected callers, then the
+   required full composition with all original failed attempts retained. Parent
+   audits native/raw channels before pushing the existing PR and protected-queue
+   admission. No budget increase, skipped fixtures or legacy retirement.
+
+This contract releases further read-only profiling now; production/test edits
+await a pinned composition and isolated write ownership after session65800.
+The existing dirty issue6440 worktree is not available for this implementation.
+PR5911's actual historical queue job103729834926 reports host-free35585 against
+floor35692 (mark35742,tolerance50), rather than an infrastructure failure. Its
+published938342 remains held/DIRTY; its local branch has an unpublished6c648fec
+merge and dirty README/baseline files. Preserve those owner changes and require
+row-level attribution/current-main verification before touching its hold.
+
+### Parent decision: independent allocation verification reconstruction
+
+Inspection of src/ir/program/allocations.ts and the existing registry restore
+interface resolves one prerequisite without inventing another allocation owner.
+The verifier must first validate and retain the caller's complete metadata rows
+as the expected evidence (including namespace ownership, duplicate rejection,
+live owner checks and absent-versus-explicit-undefined semantics). Reconstruct
+the registry jointly with the IR/runtime-support data through
+AllocSiteRegistry.restorePreparationData, using the same provenance entries but
+an empty metadata population for the recomputation side. Run the existing
+encoding/ownership/escape analyses on that restored data, then compare their
+results with the retained claims using the existing exact namespace rules.
+
+Do not restore caller-supplied analysis values into the recomputation registry.
+Do not mint dummy object sites and replay aliases as a replacement for restoring
+the recorded slot graph: doing so loses creation-owned fields and can conflict
+with a future role-aware alias check. Joint restore must retain site/type/IR
+sharing, slot order, aliases, retired slots and subsequent fresh-ID behavior.
+This decision does not make untrusted role strings semantic proof: the producer
+contract still must establish creation roles and validate their propagation.
+
+Required additions to the eventual writer's controls: valid live/alias/retired
+graphs and shared type identity survive reconstruction; forged encoding,
+ownership or escape claims fail even if internally self-consistent; absent and
+explicit undefined remain distinct; metadata on non-live slots, duplicate rows
+or namespaces, unsupported namespaces and cyclic/broken aliases remain rejected.
+All existing allocation/typed-input tests remain unchanged. This is a settled
+implementation decision within the pending producer contract, not a release to
+modify the frozen PR5883 source or activate managed receivers.
+
+### Pinned incoming acquisition profiles and baseline preservation
+
+Read-only profiling is pinned to4bffef14505f26558556a707931c711105a968af,
+not a moving main. Physical main inventory is590770 bytes, SHA256
+b606727c951331096a458b46ef344e8042018089b04e0e1fa587d7045fad3d13.
+The incoming fixed acquisition chain is:
+
+- ir-position-finally-main-successor:589117 to588799;
+- ir-position-class-fields-main-successor:588799 to588471;
+- ir-source-map-position-inventory-successor:588471 to588351.
+
+The first input's SHA256 is
+58ae19c3c96ecbb3ebe43ec81cfb1d244a0c15e80c7da6000becb58d44834857.
+Parent read the complete first helper: it pins receipt.current on input and
+does not admit deliveredMain as an alternative source profile. The agent is
+checking complete call sites for an outer normalization before concluding
+whether main itself encounters this mismatch. No test execution on4bff is
+claimed by this source inspection.
+
+If that outer normalization is absent, retain the original main failure as
+arm A. Specify the smallest exact acquisition-only main repair as arm B before
+execution, preserving its full source/fixture/assertion population and expected
+outputs. The composed PR candidate is arm C; require exact identities/results
+against arm B and retain A unchanged. Do not disguise main's failure by applying
+candidate-only source projections to both arms or replacing historical receipts.
+The projection difference between repaired main and candidate must be explicit
+and limited to their authenticated physical inventory profiles.
+
+Incoming C1 manifest SHA256 is
+7866e5631d0c18a1226dec77fce73733a0140253f3ee959fca45289ae6c93d00.
+Only currentInstruments and instrumentEdits differ from d0a13: recipes1,7,8,9
+(boundary, runtime-program, well-known-symbol, number-prerequisite). Historical
+before-pins/text/offsets and span counts remain unchanged. Preserve those
+historical fields exactly when composing; final current pins cannot come from
+either branch before its acquisition source bytes are settled.
+
+### Isolation refinement for parallel conflict implementation
+
+Parent inspected captureEpochPins/listDomain/currentHead and the full frozen
+runner: authority is D's own HEAD, index/source bytes and explicit file pins,
+not another worktree's branch or additions to the shared Git object store.
+Accordingly the earlier wait-for-terminal restriction is narrowed: D remains
+completely frozen, but composition may proceed in a newly isolated checkout
+starting at exact8b9, with incoming4bff pinned and fetched without changing D's
+HEAD/index or shared configuration. This supersedes only the blanket prohibition
+on isolated edits before terminal; validation, push and acceptance restrictions
+remain. Do not run competing compiler tests, install dependencies, change shared
+configuration, or modify any existing occupied checkout. Parent owns the merge
+and exact inventory union; the Sol6.1 writer receives an explicit disjoint write
+set only after that candidate state is inspected. New incoming commits are not
+silently folded into this pinned composition.
+
+Follow-up source inspection found no preceding590770-to589117 normalization in
+the pinned boundary/runtime-program acquisition calls or the finally/class-fields/
+source-map-position physical successor tests. Ordinary unchanged reads therefore
+encounter the mismatch before downstream positives; retain this as a source-level
+finding until arm A is actually executed. Do not label inferred failures as
+measured test outcomes.
+
+### Phase one coding release: exact inventory views
+
+Parent created managed isolated checkout
+/Users/thomas/.codex/worktrees/5883-main4bff-composition/js2, branch
+codex/5883-main4bff-composition-20261006, at8b9 and fetched exact4bff without
+updating tracking refs/FETCH_HEAD. A normal no-commit merge produced the ten
+expected unmerged authority/caller paths. Context types and inventory merged
+automatically. Parent independently measured the inventory union:592524 bytes,
+SHA25662dac966e6f945ba268a3ad76ee6b1e5215629234ab63e6f8ace744d8ecbfe22,
+1849 rows, precisely the five additions above, zero removed/modified D rows,
+and all non-files fields unchanged. This is a candidate, not acceptance.
+
+Release Laplace (Sol6.1 Medium) only these new files in that checkout:
+tests/helpers/ir-5883-main-4bff-inventory-views.ts, its same-basename JSON receipt,
+and tests/issue-5883-main-4bff-inventory-views.test.ts. No existing file edits yet.
+Implement explicit raw and semantic projections using the established fixed
+receipt/authenticated inverse-and-replay pattern:
+
+- exact candidate union592524 to prior D591084, removing only the five additions;
+- exact candidate union592524 to incoming589117;
+- exact physical main590770 to incoming589117 for narrowly repaired baseline B.
+
+Recover incoming589117 from existing blob e775a64483ace95ca46b0d65221cff9cf84c4500
+and verify its previously pinned SHA; preserve it byte-for-byte. The last two
+projections must have independent explicit source profiles and raw edit recipes,
+not runtime-generated acceptance from the caller's input. Map known source
+profiles to named views, reject every other source, authenticate a fresh fixed
+receipt on every call, validate input shape before authority I/O, and verify full
+source/target profiles plus reciprocal raw/semantic transforms. Record every
+removed row and any non-row change; stop and report unexpected semantic changes
+instead of treating them as formatting. Original D/main receipts stay untouched.
+
+Controls cover each valid projection; wrong/mutated physical profiles; reordered,
+duplicated, changed or omitted additions; changed retained rows/non-files fields;
+raw formatting corruption; malformed input before I/O; corrupt/stale receipts;
+and fresh reads after a successful call. Keep test assertions independently
+literal rather than deriving expected receipt values from the helper. Do not
+execute compiler/Vitest tests while session65800 runs. Lightweight source/hash/
+inverse verification and syntax checks are allowed. Parent reviews this phase
+before assigning the existing callers, physical-source negatives and C1 recipes.
+No staging, commits, merge completion, dependency installs or pushes by the agent.

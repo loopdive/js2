@@ -1855,3 +1855,37 @@ an exported setter. Full history and limitations are in
 This prerequisite does not complete Promise iterator acquisition, custom array
 prototype storage, IR equivalence, or legacy retirement. No frozen Promise
 source, test expectation, CI workflow, or acceptance denominator is changed.
+
+## 2026-10-06: held PR5883 validation and pinned main composition
+
+The published checkpoint is64849f95d2a0482820bafdd90bb0852184baeab1.
+Its head CI completed successfully, but it remains held and conflicts with main;
+neither those checks nor this issue's earlier passing slices prove completion.
+
+Local8b9e89a5f9009d7a17a8c6410fa2ea2b1d0b3960 integrates d0a13 and is
+undergoing the full frozen comparison in execution session65800. Canonical,
+compiler-reader176/176, text-reader992/992 and runtime505/505 stages completed;
+incoming2403 and the subsequent repair305, successor73 and imported-main117
+stages remain unaccepted. The intended total is4571 executions representing
+4515 unique identities. Original failures and all input/fixture authorities are
+retained. Runtime preservation controls are not an end-to-end IR pass claim.
+
+To avoid changing that run, parent created a separate managed checkout at
+/Users/thomas/.codex/worktrees/5883-main4bff-composition/js2, branch
+codex/5883-main4bff-composition-20261006, and began a no-commit merge of pinned
+4bffef14505f26558556a707931c711105a968af. Ten test-authority/caller conflicts
+are unresolved. The automatic inventory union has1849 rows and SHA256
+62dac966e6f945ba268a3ad76ee6b1e5215629234ab63e6f8ace744d8ecbfe22;
+it retains every D row/field and adds exactly five main rows. No compiler tests
+are authorized in the new checkout until the current heavy run terminates.
+
+The parent-authored, staged implementation contract is recorded in the shared
+[runtime/landing dependency issue](5399-javascript-runtime-safety-refusals.md),
+sections "Incoming-main composition contract", "Pinned incoming acquisition
+profiles and baseline preservation", and "Phase one coding release". Native
+Sol6.1 Medium agent Laplace owns only a new fixed inventory-view helper, receipt
+and control test. Existing callers and C1 are a later, separately reviewed phase.
+Pinned main itself has a source-level inventory-profile mismatch; preserve the
+unrepaired arm, narrowly repaired baseline and candidate as distinct arms with
+exact fixture/assertion/result comparison. No measured main failure count is
+claimed before execution. No gate waiver, hold removal or legacy retirement.
