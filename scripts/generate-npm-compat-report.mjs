@@ -34,11 +34,13 @@ import { optimizeBinaryAsync } from "../src/optimize.ts";
 import {
   buildCompiledImports,
   buildStringConstants,
+  wrapCompiledExports,
   buildStringConstants16,
   jsString,
   wrapExports,
 } from "../src/runtime.ts";
 import { instantiateLinkedProviders } from "../src/linked-provider-runtime.ts";
+import { attachConditionalImportNamespaces } from "./test262-import-object.mjs";
 
 import { runHarness as runAcorn } from "../tests/dogfood/acorn-harness.mjs";
 import { runHarness as runAcornOfficialSuite } from "../tests/dogfood/acorn-official-suite.mjs";
@@ -958,9 +960,7 @@ export function ${resultFloorExport}(input, options) {
   importObject.__setInstance?.(instance);
   const wireMs = performance.now() - wireStart;
   const wrapStart = performance.now();
-  const exp = wrapExports(instance, {
-    signatures: result.exportSignatures,
-  });
+  const exp = npmCompatWrapExports(result, instance);
   const wrapMs = performance.now() - wrapStart;
   const compiledOperation = inspectResultFloor
     ? (input, options) => exp[resultFloorExport](input, options)
@@ -1202,7 +1202,7 @@ export function ${op.name}(first, second) {
   const importObject = result.importObject ?? {};
   const { instance } = await WebAssembly.instantiate(result.binary, importObject);
   importObject.__setInstance?.(instance);
-  const exp = wrapExports(instance, { signatures: result.exportSignatures });
+  const exp = npmCompatWrapExports(result, instance);
   if (typeof exp[op.name] !== "function") return null;
 
   const cjsEntryPath = entryModulePath.replace(/\/clsx\.mjs$/, "/clsx.js");
@@ -1387,9 +1387,7 @@ async function perfCookieJsHost(semanticProviders = "auto") {
     const { instrumented, importCalls, callbackCalls } = instrumentImports(importObject);
     const { instance: probeInstance } = await WebAssembly.instantiate(result.binary, instrumented);
     instrumented.__setInstance?.(probeInstance);
-    const probeExports = wrapExports(probeInstance, {
-      signatures: result.exportSignatures,
-    });
+    const probeExports = npmCompatWrapExports(result, probeInstance);
     const snapshot = (jsToWasmExportCalls) => ({
       wrapperCalls: 1,
       jsToWasmExportCalls,
@@ -1412,9 +1410,7 @@ async function perfCookieJsHost(semanticProviders = "auto") {
   }
   const { instance } = await WebAssembly.instantiate(result.binary, importObject);
   importObject.__setInstance?.(instance);
-  const exp = wrapExports(instance, {
-    signatures: result.exportSignatures,
-  });
+  const exp = npmCompatWrapExports(result, instance);
   if (typeof exp.parseCookie !== "function") return null;
 
   const nativeModule = await import(pathToFileURL(entryModulePath).href);
@@ -1573,7 +1569,7 @@ async function perfLitJsHost(semanticProviders = "auto") {
   );
   const instance = await WebAssembly.instantiate(module, importObject);
   importObject.__setInstance?.(instance);
-  const exports = wrapExports(instance.exports, { signatures: result.exportSignatures });
+  const exports = npmCompatWrapExports(result, instance.exports);
   if (typeof exports[LIT_WHEN_PERF_EXPORT] !== "function") return null;
 
   const nativeModule = await import(pathToFileURL(entryModulePath).href);
@@ -1677,11 +1673,33 @@ function packageSpecifierFor(setup) {
  * ran — lodash's root detection reaches `Function("return this")()` — so build
  * the same import object with the explicit `hostEval` policy.
  */
-function npmCompatHostImportObject(result) {
+function npmCompatHostImportObject(result, rootModule) {
   const options = { dynamicCode: "hostEval" };
   const imports = buildCompiledImports(result, undefined, options);
+  // (#6749) The native-first lane compiles eval-shaped spellings against the
+  // `js2wasm:runtime-eval` seam instead of a host accelerator; link the cached
+  // provider exactly as the test262 lane does (a no-op when nothing imports
+  // it, so the host-assisted lane is untouched). Before the linked providers:
+  // they inherit this import object and may carry the seam themselves.
+  attachConditionalImportNamespaces(rootModule ?? new WebAssembly.Module(result.binary), imports, {
+    linkedProviderModules: (result.linkedModules ?? []).map((artifact) => new WebAssembly.Module(artifact.binary)),
+    providerLabel: "npm-compat",
+  });
   if (result.linkedModules?.length) instantiateLinkedProviders(result.linkedModules, imports, { options });
   return imports;
+}
+
+/**
+ * (#6749) Wrap a JS-host lane's exports. A native-first (regime) build presents
+ * its objects at the boundary through the export boundary policies the compile
+ * result carries — without them a returned object reaches JS as `{}` and every
+ * checksum over a parsed object reads 0 (cookie/hono/redux). The host-assisted
+ * lane keeps the exact legacy wrapper so its numbers do not move.
+ */
+function npmCompatWrapExports(result, instanceOrExports) {
+  return result.targetProfile?.semanticProviders === "native-first"
+    ? wrapCompiledExports(result, instanceOrExports)
+    : wrapExports(instanceOrExports, { signatures: result.exportSignatures });
 }
 
 async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
@@ -1817,7 +1835,7 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
   let instance;
   const instantiateStarted = performance.now();
   try {
-    const importObject = target === "standalone" ? {} : npmCompatHostImportObject(result);
+    const importObject = target === "standalone" ? {} : npmCompatHostImportObject(result, module);
     instance = await WebAssembly.instantiate(module, importObject);
     importObject.setInstance?.(instance);
     const init = instance.exports.__module_init;
@@ -1845,8 +1863,7 @@ async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
       ),
     };
   }
-  const exports =
-    target === "standalone" ? instance.exports : wrapExports(instance, { signatures: result.exportSignatures });
+  const exports = target === "standalone" ? instance.exports : npmCompatWrapExports(result, instance);
   return {
     result,
     exports,
