@@ -3465,3 +3465,114 @@ all tracked files are read-only for this task. Avicenna separately owns the
 custody packager in B.tmp. No tests,compiler,collections,Git mutations or source
 edits. Return complete runner/delta,epoch authority and source-only checks for
 parent review. No execution before the publication push releases the heavy slot.
+
+Checkpoint9057d39c5c published after all normal gates passed; remote verified.
+Parent reviewed the complete B-only successor delta and epoch authority:
+runnerffce49df0ad24f8343065599e7818a4fc99742ee193d58d04b364d2690c1c14a,
+authority5e4f03a0c65a025334218727d7ccea8f935a6d62006ce88fc3ce7dabdcf96162.
+Current B map9cfb35d9302654ed62fb05d71eaa0ce6ac0e756ef9f0be56b8aee14ea0880820
+pins7740 files. Release one B69 collection with original failed A terminal61a46526,
+unchanged zero-execution/resource/raw-error controls and no automatic retry.
+This does not run A again or establish test passes/equality. All three physical
+maps were independently rechecked before release: A7735,B7740,E7772 unchanged.
+
+Evidence-packager01fbee3360 failed before output creation because its path
+validator rejected an existing scoped-package fixture component @scope. Preserve
+that script; Sol is preparing a v2 allowing the necessary @ character while
+retaining traversal,absolute-path,NUL,backslash and symlink rejection. No source,
+fixture or evidence was overwritten. Packaging remains pending review.
+
+The repaired B69 collection is live as session78748, output in docs.tmp
+`erdos-5883-repaired-b69-epoch-20261006-01a03e4f-run-CSH6zT`; no complete
+population or terminal outcome is claimed yet.
+
+Parent reviewed packager v2's exact two-line change (SELF and @ in safe path
+components), SHA2565198586e1a14ab3485194a9c9c30507a8e6e2d25bde60c8aeba5a666b1b5f4f8,
+and ran it successfully. B.tmp
+`5883-focused-baseline-repair-custody-reviewed-v2-20261006.json` is31780233 bytes,
+SHA256957e31c43cc0f7a2e6c17feb8c5914bda445022193e27c18b2ea51e90f7921cc.
+Parent independently decoded all49 payloads (116758564 bytes) and compared each
+to its exact original. The archive nests the prior28-payload collection archive;
+failed and successful focused runs and their child records remain separate.
+accepted=false,historicalPairExecuted=false. Archive publication remains pending;
+this result certifies custody only,not baseline/candidate equivalence.
+
+Publication preparation is restricted to candidate E's plan/agent-context:
+add `5883-focused-baseline-repair-custody-20261006.json` from reviewed957e31c4
+and byte-exact `.txt` copies of both focused packagers (original01fbee33 and
+corrected5198586e). No source/test/configuration/input-map change. E remains
+HEAD446808ce4d until parent integration; agent must refuse a dirty or changed E
+preimage. Use apply_patch,format only the new JSON with the existing formatter,
+then verify deep JSON equality and every decoded payload against the reviewed
+archive. Preserve both original and formatted wrapper hashes. No Git mutation,
+push,test/compiler run or dependency installation. Sol6.1/medium owns those
+three new artifact files only; parent supplies issue record,commit and normal
+publication after the collection releases the heavy slot.
+
+### Complete B population and execution preparation
+
+B69 session78748 finished exit0 at21:24:43.200Z,collectionVerified=true,
+69 files/5408 skipped identities/zero executions. Parent verified all14 artifact
+hashes and native rows. Terminal83c285e682ffe2d4773a57fb716e6aea3d91270809d81c91011d4bee4d6c9a37.
+All5166 originally available identities remain;240 previously missing originals
+are restored and two distinct B main-profile controls are additive. Exact tuple
+multisets establish5406 shared B/E cases,B-only2,E-only16 (6 compiler boundaries,
+5 historical reconstruction,3 data-contract freshness,2 finally-current-union).
+These are identity results,not execution equivalence. A/E remain unchanged.
+
+Parent execution-runner specification for Erdos,Sol6.1/medium: prepare only new
+docs.tmp files,with all tracked files and A/B/E read-only. Derive the B schedule
+by intersecting the pinned E stage file lists with the actual complete B69
+collection,not by silently dropping failing identities. Preserve stage order:
+canonical typecheck; compiler-readers2/176;text-readers2/240;runtime17/351;
+incoming23/2399;repair-controls1/125;imported-main7/117;additional18 narrowed to
+17/2000. Exactly69 file occurrences,69 unique files,5408 cases. Explicitly mark
+successor-proof/helper47 and the18 E-only files as absent by design. E's repeated
+flat-layout56 cases are in those absent files,so B has no duplicated stage.
+Add a separately labelled102-control stage,for5510 total executions across70
+files; never merge those identities into the5406 shared comparison denominator.
+
+Use canonical Node22.23.2,1 worker,2048MiB,35000ms default and unchanged B test
+timeouts (including original C1 probes). Pin B4bff branch,7740 input map9cfb35d9,
+original A7735 map and frozen E7772 map; bind source E112 validation through
+unchanged inputs while allowing only the independently reviewed evidence-only
+HEAD446 checkpoint (later publication requires explicit reviewed HEAD update).
+Authenticate complete B terminal/native/identities,epoch authority and pinned E
+schedule. Use native tuples with duplicate multiplicities for exact per-file
+identity checks; require all cases pass,zero skips/todos,clean raw channels,
+no snapshot edits,and unchanged physical inputs before/after each stage.
+
+Retain invocation,raw/native,stage/root terminals,runner,schedule and maps in a
+fresh directory. Stop after first failed stage,mark remaining stages unexecuted,
+preserve partial native data and missing-native reasons. A failed preflight or
+child must still produce terminal evidence,not a silent missing result. Always
+accepted=false; no automatic repair/retry/acceptance/HOLD change. No tests,
+compiler or Git mutation during preparation. Return complete source/hash and
+schedule for parent review; execution waits until evidence publication releases
+the heavy slot. Do not copy candidate-only helpers or production code into B.
+
+Add the completed collection custody to the same evidence checkpoint: Avicenna
+may add exactly one further E plan/agent-context artifact,
+`5883-repaired-b69-collection-custody-20261006.json`. Archive all15 records from
+CSH6zT (14 terminal-listed artifacts plus terminal),verifying their existing
+hash/length pins and terminal83c285e6. Preserve exact gzip/base64 payloads,
+native skipped identities and all original flags; explicit collectionOnly=true,
+executedTests=0,accepted=false. Safe unique paths,no symlinks,full round-trip
+comparison and exact inventory required. Format only that new JSON and retain
+wrapper before/after hashes and deep equality. E remains446808ce4d; only the
+three just-prepared artifacts may preexist as changes. No source,test,issue,
+Git or dependency mutations. Parent integrates the combined evidence checkpoint.
+
+Parent integrated the four artifact files and handoff into evidence-only E
+commitb9bb743c0b3cbc0370807b2f85a9a6bff4d21b33 over446808ce4d. Diff contains
+only plan/agent-context and this issue record; E's7772 validated inputs do not
+change. Archive hashes remain957e31c4 and5f3add7c after commit hooks. Parent
+independently verified all15 collection payloads (9832373 decoded bytes).
+E worktree is clean. Normal push session18537 targets the existing PR5883 branch;
+publication is pending,not a merge. A live-process check before launch found no
+compiler/test process,after the other team's reported focused job had ended.
+
+Full-B preparation may now pin E HEADb9bb743c0b instead of446,with the recorded
+evidence-only transition and unchanged source/input-map authorities. No other
+HEAD relaxation is allowed. Execution still waits for publication completion
+and a fresh shared-host capacity check. No legacy retirement or HOLD release.
