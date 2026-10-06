@@ -201,6 +201,12 @@ loc-budget-allow:
   # share the raw-lastIndex identity record). Paths already listed; restated.
   - src/codegen/declarations.ts
   - src/codegen/declarations/object-shape-widening.ts
+  # 2026-10-06 — slice V10d (record under "2026-10-06 — Slice V10d"). index.ts
+  # +3: one import line and the two finalize calls (`generateModule` /
+  # `generateMultiModule`) that unshift the ToPropertyKey arm onto
+  # `__extern_get`; the arm itself lives in the NEW leaf
+  # `object-model/extern-get-object-key.ts` and `symbol-to-primitive-arms.ts`.
+  - src/codegen/index.ts
   # 2026-10-06 — slice V6 (module namespace internals; record under "2026-10-06
   # — Slice V6"). The §10.4.6 arms live in the NEW leaf
   # `object-model/module-namespace-exotic.ts`. What stays in god-files (paths
@@ -1358,6 +1364,14 @@ func-budget-allow:
   # assigned-shape collector call).
   - src/codegen/declarations.ts::compileDeclarations
   - src/codegen/declarations/object-shape-widening.ts::collectGrowableObjectLiterals
+  # 2026-10-06 — slice V10d (see the loc-budget note): `generateModule` +1 and
+  # `generateMultiModule` +1 (the finalize call each), `planClosureCaptures` +4
+  # (the read-only-closure skip over a module-init shadow local; it has to sit in
+  # the capture loop beside the sibling `isDirectRuntimeModuleVariableBinding`
+  # skip, where `localIdx` and `writtenInClosure` are known).
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/closures/arrow-phases.ts::planClosureCaptures
   # 2026-10-06 — slice V6 (see the loc-budget note): `compileArrayLiteral` +14
   # (the externref widening for a non-string fixed element after a string
   # spread) and `compileDeclarations` +1 (the early TDZ-flag call).
@@ -3989,6 +4003,96 @@ underlying #2358 value-copy materialization); `typeof u.flags` on a widened
 binding still folds from the checker type (`"object"` for the symbol);
 function-local bindings are not covered by the assignment collector (scoped to
 module bindings like its sibling).
+
+### 2026-10-06 — Slice V10d
+
+H10 last group (3 rows). Base `410cc7da1d` (harness worktree branch; the lead
+merges by sha). **1 of 3 rows flips
+(`Symbol/prototype/Symbol.toPrimitive/removed-symbol-wrapper-ordinary-toprimitive`);
+`Map/prototype/set/append-new-values` and `Array/from/source-array-boundary`
+are root-caused below but NOT fixed — both need a design decision.**
+
+**Row 1 — `removed-symbol-wrapper-ordinary-toprimitive`.** Three independent
+causes, each found with a probe that recorded every failing assert of the test
+(the first failure masked the rest: 20 failing lines on base).
+(a) *Closure capture forks a module binding.* A closure-valued top-level `let`
+(`let valueOfFunction = () => …`) keeps a `__module_init` shadow local beside its
+module global (#3546). A READ-ONLY closure over it (the `valueOf` getter arrow)
+boxed that shadow into a fresh ref cell; later top-level writes go to the global
+— and, once the init body is split into chunks, ONLY to the global, because a
+chunk helper cannot see another chunk's locals — so the getter kept returning
+the first function after `valueOfFunction = null`. Unchunked it still diverged
+for every other function (`function h() { return vf; }` read the stale global
+while the cell held the write). `planClosureCaptures` now skips a capture whose
+slot is the recorded shadow of a module global when the closure does not write
+the name; the lifted body reads the live global, exactly like the sibling
+`isDirectRuntimeModuleVariableBinding` skip. A closure that WRITES such a
+binding is unchanged (and still diverges — residual).
+(b) *ToString of a Symbol wrapper.* `__extern_to_string_spec`'s #6651 H1 arm
+threw "Cannot convert a Symbol value to a string" for every wrapper with no
+user-visible `@@toPrimitive`, assuming the intrinsic. It now also requires the
+intrinsic to stand: the Symbol brand's prototype companion is absent, unseeded
+(no `constructor` entry — a bare named write such as `Symbol.prototype.foo = 1`
+creates an empty companion), or still carries `@@3`. After
+`delete Symbol.prototype[Symbol.toPrimitive]` the conversion reaches
+OrdinaryToPrimitive (`"".concat(Object(Symbol()))` → `"Symbol()"`).
+(c) *ToPropertyKey of an object key.* `{ "123": 1, foo: 3 }[o]` returned
+`undefined` for ANY object key with a `toString` — not Symbol-specific: only
+`__obj_hash`/`__obj_find` coerced their key, and the closed-struct field ladder
+(and the other finalize prologue arms) answer before the `$Object` walk. A new
+leaf `object-model/extern-get-object-key.ts` unshifts, LAST, a ToPropertyKey arm
+onto standalone `__extern_get`: a `$Object` key goes through
+`__to_property_key` once (the result is a fixed point, so the user `toString`
+runs exactly once); a Symbol wrapper decided by the intrinsic `@@toPrimitive`
+keys by its Symbol (`symbolWrapperIntrinsicArm`, factored out of the H1 arm),
+because `__to_primitive` cannot see the intrinsic on a wrapper (H5) and would
+have keyed `o[Object(sym)]` by `"Symbol(…)"`. Non-object keys pay one
+`ref.test`.
+
+**Row 2 — `Map/prototype/set/append-new-values` (not fixed).** Not a size bug:
+the failing assert is `map.get(1)` (`NaN` vs `"valid"`; the runner's line
+attribution points at the preceding statement). TypeScript infers
+`Map<string | number | symbol, number>` from `new Map([[4, 4], ['foo3', 3], [s, 2]])`
+in the JS file; the native `__map_get` returns the stored `anyref` correctly,
+but every consumer that trusts the inferred `V = number` — a `var` initialised
+from `map.get(1)`, a call argument specialised to `f64`, and later the
+`forEach` callback's `value` parameter — coerces the string to `NaN`. Probe:
+`new Map()` (no initializer) answers correctly; `[1, 2]` + `push("x")` shows the
+same class for arrays. A fix needs JS-file generic-inference soundness (treat
+inferred collection type arguments as untrusted when the file writes a
+non-assignable value), which touches every Map/Set/Array consumer — out of a
+singles slice. #3585 / PR #6234 (direct `Map.get` equality) is adjacent, not
+the cause.
+
+**Row 3 — `Array/from/source-array-boundary` (not fixed).** Confirms the
+2026-10-02 audit: `this.arrayIndex++` through ANY dynamic global-object
+receiver misses the `var arrayIndex` binding (`function m() { return
+this.arrayIndex; } m()` and `f.call(this)` both fail standalone; only the
+lexical top-level `this.x` / `globalThis.x` folds work). Needs the canonical
+global-object ↔ var-binding identity (#2727), not an `Array.from` change.
+
+**Rows (standalone, QuickJS eval, in-process):** targets 0/3 → 1/3.
+
+| family | base pass | branch pass |
+| --- | --- | --- |
+| `Symbol/toPrimitive/**` + `Symbol/prototype/**` + `Map/**` + `Array/from/**` + `expressions/{equals,does-not-equals}/**` (373, 2 chunks) | 341 | 342 (only the target moved; 0 lost) |
+
+The first branch run of chunk 2 reported 3 extra failures
+(`Symbol/toPrimitive/cross-realm`, `equals/S11.9.1_A6.1`,
+`does-not-equals/S11.9.2_A6.1`), all "quickjs provider is not built" — a source
+edit mid-run changed the adapter key. Rebuilt and re-run: all 3 pass.
+
+Pin: `tests/issue-6651-v10d-toprimitive-map-from.test.ts` (7 cases, 2 GUARDs:
+an unseeded Symbol companion keeps the intrinsic TypeError; an intact wrapper
+keys by its Symbol). Controls: `node scripts/equivalence-gate.mjs` green (22
+known failures, 1748 passing); Temporal `Duration/prototype/round/*` standalone
+119 pass / 7 fail of 126, 0 `illegal cast`.
+
+**Residuals.** A closure that WRITES a closure-valued top-level binding still
+boxes the shadow (writes reach the cell, not the global); the ToPropertyKey arm
+covers `__extern_get` only (`__extern_set`/`__extern_has` keep their
+`__obj_*`-level coercion); `redefined-symbol-wrapper-ordinary-toprimitive`
+(sibling row, not in scope) still fails.
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 

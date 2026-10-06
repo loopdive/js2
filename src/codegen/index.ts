@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { unshiftExternGetNativeStringReceiverArm } from "./object-model/extern-get-string-receiver.js"; // (#6875)
+import { unshiftExternGetPropertyKeyArm } from "./symbol-to-primitive-arms.js"; // (#6651 V10d)
 import { ts, forEachChild } from "../ts-api.js";
 import { restPatternParamSlot } from "./resolved-rest-param.js"; // (#6774 S7)
 import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
@@ -6739,6 +6740,7 @@ export function generateModule(
     // ordinary $Object numeric adapter can box its miss as 0.
     unshiftExternGetStringExoticArm(ctx);
     unshiftExternGetNativeStringReceiverArm(ctx); // (#6875)
+    unshiftExternGetPropertyKeyArm(ctx); // (#6651 V10d) ToPropertyKey ahead of the arms above
 
     // Dynamic-path ArraySetLength-lite + vec-"length" own-ness: splice the
     // `$__vec_base` `"length"` WRITE arm into `__extern_set` and the
@@ -11418,6 +11420,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-dynamic-forin-vec-arms", () => fillDynamicForinVecArms(ctx));
     profilePhase("unshift-extern-get-string-exotic", () => unshiftExternGetStringExoticArm(ctx));
     profilePhase("unshift-extern-get-string-receiver", () => unshiftExternGetNativeStringReceiverArm(ctx)); // (#6875)
+    profilePhase("unshift-extern-get-property-key", () => unshiftExternGetPropertyKeyArm(ctx)); // (#6651 V10d)
 
     // Dynamic ArraySetLength/own-length semantics must land after the generic
     // vec write arm and before the overlay/typed-view fills that require front
