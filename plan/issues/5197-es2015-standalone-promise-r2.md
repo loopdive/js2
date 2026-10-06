@@ -3331,3 +3331,31 @@ unchanged7740 inputs,at21:08:41.653Z. The affected four-suite stage is running;
 no result is claimed yet. This is scoped baseline validation,not A/B/E equality,
 not acceptance,and not permission to clear HOLD. Source and controls remain
 frozen during execution; no competing heavy job is released.
+
+Focused session74325 completed exit1 at21:09:46.372Z. The two formerly
+uncollectable suites now pass216/216 and24/24. Across all four affected files,
+325/416 pass and91 fail,zero skips/todos,unchanged7740 inputs. Layout ownership
+fails10/31; native source preservation fails81/145. Parent read native failure
+rows and raw traces: every failure stops at promise-export span offset mismatch,
+including seven assertions expecting later historical-validator messages.
+These are retained failures,not accepted baseline results. The shared consumers'
+initial readers still send raw4bff combinator bytes to the unchanged old inverse.
+
+Parent follow-up implementation specification: only the physical acquisition
+inside the two shared consumers may now call projectBaselinePromisePortSource
+before beforePromiseExportMain. In layout ownership, wrap the existing
+readFileSync result; in native source preservation, wrap the existing rawRead
+result. Add one helper import per file. Keep root selection,rawRead,all existing
+transforms,assertions,registrations,fixtures and explicit mutant construction
+byte-identical. Mutants are constructed AFTER this initial boundary; never
+normalize explicit arguments inside the old transforms or verifier callbacks.
+Do not replace either physical reader with a historical file or candidate reader.
+
+Sole writer remains Avicenna,gpt-6.1-sol/medium. Only these two existing test
+files may change; freeze the preceding four-file repair. Source-only verification
+must show exactly the two imports and two acquisition wrappers, and unchanged
+original assertions. No test/compiler/collection or Git mutation is released
+until parent reviews that diff. Preserve3bWJ6h and both original failed native
+collections intact. A fresh subsequent run must have new records and a new
+six-path input delta; the original7737 map remains immutable. This repair still
+does not authorize changing source semantics,fixtures,denominators or HOLD.
