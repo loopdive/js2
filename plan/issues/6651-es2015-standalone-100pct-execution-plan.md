@@ -3825,6 +3825,16 @@ baked, so the `$Symbol` test exists when the harness has not yet minted one.
 Pin: `tests/issue-6651-v10a-primitive-base.test.ts` (first describe fails on the
 base tree with `undefined|undefined` / `!TypeError`; the controls pass on both).
 
+**Follow-up slice V11 — a writable [[Prototype]] on builtin prototypes (1 row,
+from V10a).** `language/types/reference/put-value-prop-base-primitive.js` stays
+red until `Object.setPrototypeOf(<builtin prototype>, proxy)` takes effect:
+store the parent on the `$NativeProto` companion in `__object_setPrototypeOf`,
+read it back in `getPrototypeOf`, and make `__protoidx_get_k` /
+`__protoidx_set_r` / has walk that parent instead of jumping to the Object
+companion. Acceptance: the row; `built-ins/Object/setPrototypeOf/**`,
+`built-ins/Object/getPrototypeOf/**`, `built-ins/Reflect/{get,set,has}PrototypeOf/**`
+and `language/types/reference/**` 0 lost; Temporal control.
+
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 
 Written at the user's "wrap up, handoff, open pr" (about 22:10 UTC). The goal
