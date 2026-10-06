@@ -182,3 +182,8 @@ implementer when the gate opens; (3) #6748, #6750 unchanged.
   links (sample op waits on #6868 → re-measure after the next refresh);
   hono/redux mismatches (#6875 / open); acorn/marked/lit/prettier part C.
 - Load stayed 60–90 all day; no implementer could be spawned.
+- **PR #6534** — #6875 implemented (native-string receiver arm in
+  `__extern_get`; standalone + regime). hono's row still reads 1 on the lane:
+  the literal `__npmCompatPerf → __npmCompatApply → Number(op(input))` chain
+  lowers `input.length` to `""` while every replica computes 9 — next bisect
+  step (WAT diff of `__npmCompatApply` vs a replica) is in the #6875 issue.
