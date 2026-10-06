@@ -177,6 +177,7 @@ function normalizeReturnExpression(
   expression: ts.Expression,
   exprType: ValType | null,
 ): void {
+  if (fctx.hostBooleanReturn === true && exprType?.kind === "i32") exprType = { kind: "i32", boolean: true };
   if (exprType && fctx.returnType && !valTypesMatch(exprType, fctx.returnType)) {
     // (#4406) A BOOLEAN-branded i32 return target wants ToBoolean, and
     // `coerceType(externref → i32)` is ToNumber + `i32.trunc_sat_f64_s`. On the

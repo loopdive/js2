@@ -7,6 +7,7 @@ import { ts } from "../ts-api.js";
 import { chainRootIsGrowable, isNumericIndexExpression, runtimeAccessorDescriptorKey } from "./property-access.js";
 import { emitHostEqualityFromStack } from "./coercion-engine.js";
 import { resolveWidenedVarKey } from "./widened-var-key.js";
+import { typeofOperandIsDeclared } from "./typeof-import-binding.js"; // (#6417)
 import { isBooleanType, isStringType, isSymbolType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { reportError } from "./context/errors.js";
@@ -1839,7 +1840,7 @@ export function compileTypeofExpression(
         }
       }
       const sym = ctx.checker.getSymbolAtLocation(ident);
-      const hasValueDecl = !!sym?.valueDeclaration;
+      const hasValueDecl = typeofOperandIsDeclared(ctx, ident, sym);
       // (#3436) In standalone / WASI mode `structuredClone` is deliberately NOT
       // provided — its host import is skipped in extern-declarations, so the
       // global genuinely does not exist and `typeof structuredClone` must be
@@ -2266,7 +2267,7 @@ export function compileTypeofComparison(
         }
       }
       const sym = ctx.checker.getSymbolAtLocation(ident);
-      if (!sym?.valueDeclaration) {
+      if (!typeofOperandIsDeclared(ctx, ident, sym)) {
         const annexB = emitAnnexBTypeofFlagBranch(ctx, fctx, ident.text);
         if (annexB) {
           const actual = annexB;
