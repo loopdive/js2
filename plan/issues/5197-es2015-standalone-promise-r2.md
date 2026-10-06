@@ -3030,3 +3030,17 @@ recheck that remote before writing. Normal hooks remain mandatory. In particular
 lint-staged may rewrite test/support or archive JSON with Prettier: compare all
 input and archive hashes after hooks, and stop for review if frozen bytes change.
 Keep ignored .tmp/dependencies and the separate docs worktree out of staging.
+
+Parent independently verified N4b2EF terminal success:23 files and2972 complete
+native identities all passed, with no failed/skipped/todo cases or raw worker,
+RPC/unhandled/error signatures. All7772 before/after/current physical input
+hashes still equal309eacc2. Native report SHA256
+51d676e17c205df82e2d33f1137eb0ec82b8668fde07356263934f5bf68998fc;
+raw6740 bytes SHA b0d62f96f6a3c0cfbfa50b9fc2d9a7e4c6e99f434cb5f297990f5167c62856af;
+terminal SHA3c51e8124a4bbcd56d0b6de0d9d2c26449650ca0e932be53040faded5e42f11f.
+This releases normal checkpoint preparation, not equivalence or HOLD removal.
+Darwin may package the six completed run records plus exact runner, file-list
+and collection authority in an inert lossless archive, accepted=false, verifying
+each decoded payload. Laplace may perform read-only formatting preflight of the
+39 owned publication paths. Neither assignment permits test execution or source
+rewrites. Parent reviews their results before staging/committing the merge.
