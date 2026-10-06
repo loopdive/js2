@@ -73,8 +73,11 @@ export async function replayProgram(
   const acceptance = acceptPreparedIrProgram(program, options);
   if (acceptance.kind !== "accepted") return { kind: "not-accepted", failure: acceptance };
   const emitted = emitAcceptedIrProgram(acceptance);
-  const binary = emitBinary(emitted.module);
-  const imports: WebAssembly.Imports = {};
+  // WasmEncoder allocates ordinary ArrayBuffers and finish() returns a slice copy.
+  // emitBinary's bare Uint8Array return type loses that buffer provenance.
+  const binary = emitBinary(emitted.module) as Uint8Array<ArrayBuffer>;
+  // The DOM import-value union omits Tag despite exposing native tag imports.
+  const imports: Record<string, Record<string, WebAssembly.ImportValue | WebAssembly.Tag>> = {};
   const plan = acceptedPhysicalSetupPlan(acceptance);
   const callState = createHostImportCallState();
   const instanceState: { exports?: Record<string, Function> } = {};
@@ -115,7 +118,7 @@ export async function replayProgram(
     const guarded = callState.wrap(descriptor, resolved.fn, callState.registerImport(entry.name));
     (imports[entry.module] ??= {})[entry.name] = guarded.fn;
   }
-  const { instance } = await WebAssembly.instantiate(binary, imports);
+  const { instance } = await WebAssembly.instantiate(binary, imports as WebAssembly.Imports);
   instanceState.exports = instance.exports as Record<string, Function>;
   return { kind: "ran", run: { accepted: acceptance, emitted, bytes: binary.byteLength, exports: instance.exports } };
 }
