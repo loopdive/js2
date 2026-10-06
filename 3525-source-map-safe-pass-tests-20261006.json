@@ -2,10 +2,11 @@
   "id": "3525",
   "slice": "source-map-safe-pass-tests-20261006",
   "assignee": "ttraenkler/codex-3525-source-map-safe-pass-tests-20261006",
-  "requested_by": "ttraenkler/codex-3525-source-map-safe-pass-tests-20261006",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3525-source-map-safe-pass-tests-20261006",
   "claimed_at": "2026-10-06T00:14:47Z",
-  "updated_at": "2026-10-06T00:14:47Z",
-  "write_id": "90653-1vibgkie"
+  "updated_at": "2026-10-06T06:01:16Z",
+  "write_id": "39201-tsx9e5f9",
+  "released_at": "2026-10-06T06:01:16Z"
 }
