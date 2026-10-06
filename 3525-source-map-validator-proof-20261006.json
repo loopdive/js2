@@ -2,10 +2,11 @@
   "id": "3525",
   "slice": "source-map-validator-proof-20261006",
   "assignee": "ttraenkler/codex-3525-source-map-validator-proof-20261006",
-  "requested_by": "ttraenkler/codex-3525-source-map-validator-proof-20261006",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3525-source-map-inline-origins-20261006",
   "claimed_at": "2026-10-06T03:22:11Z",
-  "updated_at": "2026-10-06T03:22:11Z",
-  "write_id": "63669-qkoih679"
+  "updated_at": "2026-10-06T06:03:03Z",
+  "write_id": "41242-yxa02bmx",
+  "released_at": "2026-10-06T06:03:03Z"
 }
