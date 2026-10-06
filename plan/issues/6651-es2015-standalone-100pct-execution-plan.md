@@ -195,6 +195,13 @@ loc-budget-allow:
   # below): the deps hand-off to `registerProxyConstructChainNatives` for
   # `__proxy_construct_newtarget_proto`; the native lives in
   # `object-runtime-proxy-construct-chain.ts`.
+  # 2026-10-06 — slice V7 (keyed destructuring order + deleted Array @@iterator;
+  # record `### 2026-10-06 — Slice V7`). Hand-off lines only, mechanism in
+  # `dstr-assign-iterator-drive.ts` / `with-var-decl.ts` / `proto-override.ts`:
+  # `expressions/assignment.ts` +3 (import + the `tryEmitSpecOrderedObjectAssign`
+  # call in `compileDestructuringAssignment`), `statements/loops.ts` +2 (import +
+  # the for-of delete guard call), `statements/variables.ts` +1 (the with-scoped
+  # var-pattern hook). All three paths already listed below; restated here.
   # 2026-10-06 — slice V1 (trapless Proxy forwarding; record under
   # "2026-10-06 — Slice V1"). `object-runtime-proxy.ts` +2: the import and the
   # one-line call of `installProxyForwardArms`; the arms themselves live in the
@@ -1311,6 +1318,11 @@ func-budget-allow:
   # `__proxy_construct_newtarget_proto` native (get dispatch, "prototype" key,
   # objectTest, throwRevoked, the revoked field). The native body itself lives
   # in `object-runtime-proxy-construct-chain.ts`.
+  # 2026-10-06 — slice V7: `compileDestructuringAssignment` +3 (the
+  # `tryEmitSpecOrderedObjectAssign` hand-off), `compileForOfArray` +1 (the
+  # delete-guard call), `compileVariableStatement` +1 (the with-scoped
+  # var-pattern hook). The last two keys are already listed below.
+  - src/codegen/expressions/assignment.ts::compileDestructuringAssignment
   # 2026-10-06 — slice V1: `ensureProxyRuntime` +1, the one-line call of
   # `installProxyForwardArms` next to `installProxyKeyBagGuards` (key already listed below).
   # 2026-10-06 — slice V0 (see the loc-budget note): the refusal-closure ladder
@@ -3624,6 +3636,51 @@ base 36 → branch 44, **0 lost**. Pin `tests/issue-6651-v6-module-namespace.tes
 (3 cases, all RED on base). Equivalence gate green (1748 pass, 22 known).
 Temporal control (`Duration/prototype/round/*`, standalone, prewarmed cache):
 **119 pass / 7 fail of 126, 0 `illegal cast`** — unchanged.
+
+### 2026-10-06 — Slice V7
+
+Keyed destructuring evaluation order + for-of after `delete
+Array.prototype[Symbol.iterator]` (H7; adopts #5154 A(a)), on `77f00492c7`.
+**6/6 target rows flip** (the spec said 5; the for-of `*-ary-init-iter-get-err-
+array-prototype` row exists for `var`, `let` and `const`): the three
+`keyed-destructuring-property-reference-target-evaluation-order*` rows and the
+three for-of rows, measured base vs branch with `JS2WASM_EVAL_ENGINE=quickjs …
+run-test262-paths.mts --standalone`.
+
+Root causes (none was an ordering bug in an existing lowering — the elements
+were not evaluated at all):
+
+1. **An object assignment pattern with a key only the runtime can name**
+   (`{ [k]: t } = s`, `k` an object with `toString`) was SKIPPED by the struct
+   lowering — no ToPropertyKey, no GetV, no PutValue. Standalone/WASI now route
+   such a pattern to `tryEmitSpecOrderedObjectAssign`
+   (`dstr-assign-iterator-drive.ts`): PropertyName + ToPropertyKey once → the
+   target Reference (base, raw key) → GetV → Initializer on undefined → PutValue
+   (the target key's ToPropertyKey runs inside the [[Set]]), per §13.15.5.6.
+   Strict/sloppy [[Set]] chosen from the pattern's context. Host lane unchanged.
+2. **`with (o) { var { [k]: x = d } = s; }`** never consulted the with object for
+   `x`. `tryCompileWithScopedVarDeclaration` now takes object binding patterns
+   whose names resolve through a dynamic `with` scope and emits §14.3.3.3 order
+   (key → ResolveBinding/HasBinding → GetV → Initializer → write through the
+   chosen scope) via `tryEmitSpecOrderedBindingPattern`.
+3. **The for-of array fast path never read the #5139 delete flag.**
+   `emitForOfArrayIteratorDeletedGuard` (`proto-override.ts`, moved
+   `emitArrayIteratorDeletedGuard` out of `destructuring-params.ts`) throws
+   TypeError after the iterable is evaluated when the flag is set, for an
+   Array/tuple-typed iterable only (oracle `typeFactOf`; TypedArrays keep their
+   own `@@iterator`). Zero emitted bytes when no delete exists in the program.
+
+**Receipts.** Family `for-of/dstr/**` + `expressions/assignment/{destructuring,
+dstr}/**` + `destructuring/binding/**` + `statements/with/**` (1,145 rows):
+base 1,096 → branch 1,102, **0 lost**. Pin
+`tests/issue-6651-v7-dstr-order.test.ts` (4 shape cases + the 6 rows, 10/10).
+Equivalence gate green (1748 pass, 22 known). Temporal control
+(`Duration/prototype/round/*`, standalone, prewarmed cache): **119 pass / 7 fail
+of 126, 0 `illegal cast`** — unchanged.
+
+Not fixed (base fails identically): the `obj-rest-*` rows in for-of/dstr and
+assignment/dstr (object rest over runtime sources), `array-elem-init-in.js`
+(parse), and three `with` Proxy-env rows.
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 
