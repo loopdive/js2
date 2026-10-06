@@ -2404,6 +2404,11 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/source-map-position.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/ir/program/data.ts",
       "state": "clean",
       "layer": "ir-program"
