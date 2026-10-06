@@ -100,6 +100,7 @@ import { injectProcessStdinPrelude } from "./process-stdin-prelude.js";
 import { injectIteratorStaticsPrelude } from "./iterator-statics-prelude.js";
 import { applyIntlListFormatPrelude, applyIntlListFormatPreludeToFiles } from "./intl-listformat-prelude.js";
 import { normalizeScriptHtmlLikeComments } from "./compiler/html-like-comments.js";
+import { normalizeForHeadParserCompat } from "./compiler/for-head-parser-compat.js";
 import * as irIds from "./compiler/ir-outcome-inventory.js";
 import { buildLinearOptions } from "./compiler/linear-options.js";
 import type { CompileError, CompileOptions, CompileResult } from "./index.js";
@@ -1661,7 +1662,11 @@ export function compileSourceSync(
   const defineResult = options.define
     ? applyDefineSubstitutionsWithMap(lexScriptSource(source, options), options.define)
     : { source: lexScriptSource(source, options), positionMap: PositionMap.identity() };
-  const definedSource = defineResult.source;
+  // #6836 — `for (let; ;)` / `for ([x = 'x' in o] of …)` heads TypeScript misparses.
+  const forHeadResult = normalizeForHeadParserCompat(defineResult.source, {
+    scriptGoal: options.inferModuleStrictArguments === false,
+  });
+  const definedSource = forHeadResult.source;
 
   // Step 0a.4: #2632 Phase 3 — inject the faithful `process.stdin` Node `Readable`
   // source-prelude (string/Buffer chunks over the fd0 reactor substrate) and
@@ -1720,13 +1725,14 @@ export function compileSourceSync(
   const { rawWasi: wasiRawImports, memAccessors: wasiMemAccessors } = detectRawWasiImports(cjsRewritten);
   const preprocessed = preprocessImports(cjsRewritten2, { wasi: targetProfile.target === "wasi" });
   let processedSource = preprocessed.source;
-  // Compose imports → eval/super → CJS → ListFormat → Iterator → stdin → define back to the original source.
+  // Compose imports → eval/super → CJS → ListFormat → Iterator → stdin → for-head → define back to the original source.
   const positionMap = preprocessed.positionMap
     .compose(evalResult.positionMap)
     .compose(cjsResult.positionMap)
     .compose(listFormatResult.positionMap)
     .compose(iterStaticsResult.positionMap)
     .compose(stdinResult.positionMap)
+    .compose(forHeadResult.positionMap)
     .compose(defineResult.positionMap);
 
   // Step 1: Parse and type-check

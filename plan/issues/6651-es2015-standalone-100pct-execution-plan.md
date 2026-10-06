@@ -185,6 +185,14 @@ loc-budget-allow:
   #     the parent's override object (BindThisValue), not the struct;
   #   - `declarations.ts` +2: allocate a self-importing module's TDZ flags
   #     before class bodies compile (a class body may build `ns` first).
+  # 2026-10-06 — slice V9 (parser compatibility, adopts #6836; record under
+  # "2026-10-06 — Slice V9"). `src/compiler.ts` +6: the import, a one-line
+  # comment, the 3-line call of `normalizeForHeadParserCompat` in
+  # `compileSourceSync` and its `.compose(...)` in the pre-parse PositionMap
+  # chain. The recognizer itself is the NEW leaf
+  # `src/compiler/for-head-parser-compat.ts`; the call site cannot move — it is
+  # the single-source pre-parse pipeline that owns every rewrite stage and map.
+  - src/compiler.ts
   # 2026-10-06 — slice V5 (captured-binding TDZ; record under "2026-10-06 —
   # Slice V5"). `index.ts` +3: `preallocateBlockScopedSlots` stops skipping a
   # block that hoists a function declaration when the frame is `__module_init`
@@ -3681,6 +3689,63 @@ of 126, 0 `illegal cast`** — unchanged.
 Not fixed (base fails identically): the `obj-rest-*` rows in for-of/dstr and
 assignment/dstr (object rest over runtime sources), `array-elem-init-in.js`
 (parse), and three `with` Proxy-env rows.
+
+### 2026-10-06 — Slice V9
+
+Parser compatibility (H9, 2 rows; adopts #6836). Base `559c18a93f` (harness
+worktree branch; the lead merges by sha).
+
+**Root cause.** Both failures are in TypeScript's parser, before any js2wasm code
+runs. `parseForOrForInOrForOfStatement` treats every leading `let` as a
+declaration. So `for (let; ;)` silently becomes an empty `let` list and
+`for (let = 3; ;)` fails with "Variable declaration expected". It also keeps
+the head's NoIn context inside array literals, so `[x = 'x' in {}]` in a
+`for` head gets "',' expected". Neither can be fixed downstream: by the time
+codegen sees them, the AST is already wrong.
+
+**Fix.** A new pre-parse leaf `src/compiler/for-head-parser-compat.ts` makes
+insertion-only edits. `compileSourceSync` calls it after define substitution
+and composes its edits into the #1928 PositionMap chain:
+
+- `for (let …` becomes `for (0, let …`. This needs an explicit Script goal,
+  non-strict code (no `"use strict"` prologue on the script or any enclosing
+  function, not inside a class) and an unescaped `let`, and the next token
+  must not be able to start a binding. It does not use `(let)`, because a
+  parenthesised target loses NamedEvaluation (#6836 hazard 4).
+- `[x = <rhs with in>]` becomes `[x = (<rhs>)]`. The parse must have a TS1005
+  at that `in`, and the element must be exactly `Identifier = RHS`.
+
+Every other program comes back byte-identical. The full admission boundary and
+the residuals are in #6836's "Implementation" section.
+
+**Rows (standalone, QuickJS eval, in-process, chunks ≤200):** both targets went
+from compile_error to pass. Family controls:
+
+| family | base pass | branch pass |
+| --- | --- | --- |
+| `language/statements/for/**` (385) | 384 | 385 (+`head-lhs-let`, 0 lost) |
+| `language/statements/for-in/**` (119) | 116 | 116 (identical non-pass set) |
+| `language/statements/for-of/**` (751) | 715 | 716 (+`dstr/array-elem-init-in`, 0 lost) |
+| `language/statements/let/**` (145) | 143 | 143 (identical) |
+| host (gc) lane, first 200 rows of `statements/for/**` | 194 | 194 (identical) |
+
+Measurement note: creating the new src file made the QuickJS provider key stale,
+so the first base pass got "provider is not built" on 34 eval-dependent rows.
+Those 34 were re-measured on the restored base tree (file-copy swap, provider
+cache HIT at key `320718af46eaa03c`). The table uses those re-measured results.
+
+**Residuals.** Not wired into the multi-source, disk-project or object-output
+entry points. Emitted source maps and function source text show the inserted
+characters, a gap every pre-parse rewriter shares. The inserted `0,` produces
+one downgraded TS2695 warning. Not handled: `for await` heads, A targets that
+are not identifiers, and L followers `++`/`--`/`=>`/template.
+
+Pin: `tests/issue-6651-v9-sloppy-let-parse.test.ts` (35 cases: leaf admission
+both ways, a position-map check, and 4 standalone runtime cases including the
+unresolvable-`let` ReferenceError and `let = function(){}` naming).
+Controls: `node scripts/equivalence-gate.mjs` green (22 known failures, 1748
+passing); Temporal `Duration/prototype/round/*` standalone 119 pass / 7 fail of 126, 0
+`illegal cast`.
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 

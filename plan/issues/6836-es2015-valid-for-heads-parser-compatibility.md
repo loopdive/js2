@@ -1,10 +1,11 @@
 ---
 id: 6836
 title: "ES2015 valid for-head grammar: TypeScript parser compatibility"
-status: ready
+status: done
 created: 2026-10-03
-updated: 2026-10-03
-assignee: ttraenkler/es2015_valid_for_heads_plan_astra
+updated: 2026-10-06
+assignee: ttraenkler/claude-es2015-v9
+completed: 2026-10-06
 priority: high
 feasibility: hard
 reasoning_effort: xhigh
@@ -16,6 +17,44 @@ related: [143, 1928, 3514, 3518, 3520, 3525, 4712, 5144, 5158, 5267, 5271]
 ---
 
 # 6836 — Valid ES2015 for-head grammar
+
+## Implementation — 2026-10-06 (#6651 slice V9)
+
+Landed as the single-source pre-parse leaf `src/compiler/for-head-parser-compat.ts`,
+called from `compiler.ts::compileSourceSync` right after define substitution;
+its insertion-only `SourceEdit`s are composed into the existing #1928
+PositionMap chain, so diagnostics keep original line/column. Both originals
+pass on standalone and host. Measurements and family controls are in the #6651
+record "2026-10-06 — Slice V9".
+
+How it differs from the candidates above, and why:
+
+- **L uses `0, let …`, not `(let)`.** Hazard 4 (a parenthesised target loses
+  NamedEvaluation) disappears: the head becomes a comma expression whose right
+  operand is the original text, so `let = function () {}` still names the
+  function `let`. The head keeps NoIn, so `for (let = 'x' in o;;)` stays a
+  parse error. The added `0` is not observable. The cost is one downgraded
+  TS2695 warning ("left side of comma operator is unused") at that head.
+- **L admission:** explicit Script goal (`inferModuleStrictArguments === false`),
+  no `"use strict"` prologue on the script or any enclosing function, not inside
+  a class, unescaped `let`, and the next token is one of `;` `,` `.` `?.` `(`
+  `?` `instanceof`, an assignment operator, or a binary punctuator. It only fires
+  where TS built a `let`-flagged declaration list as the `for` initializer.
+  `let x`, `let [`, `let {`, for-in `let`, for-of `let` (hazards 2 and 5) and
+  escaped `let` are never edited.
+- **A admission:** the parse must have a TS1005 at an `in` token in the head's
+  LHS. The `in` must be nested only in array literals up to the head, and its
+  element must be exactly `Identifier = RHS`. Only the RHS is parenthesised.
+  Call targets (hazard 3), rest elements and member/pattern targets are not
+  edited, nor is a head-level `in`. This applies in every goal, because it is a
+  grammar fix and does not depend on strictness.
+
+**Residuals (not edited, still tracked):** the multi-source, disk-project and
+object-output entries are not wired (single-source only). Emitted source maps
+and `Function.prototype.toString` source text are not remapped, which is
+existing debt shared by every pre-parse rewriter. Not covered: `for await` heads;
+A targets that are not identifiers; L followers `++`/`--`, `=>` and templates;
+for-in `let` heads.
 
 ## Status and authority
 
