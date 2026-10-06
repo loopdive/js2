@@ -287,13 +287,40 @@ export function registerModulePatternTdzGlobal(ctx: CodegenContext, binding: ts.
   bindings.set(binding.name.text, previous === undefined || previous === binding ? binding : null);
 }
 
+/** (#6651 V6) `import * as ns from '<this module>'` anywhere at top level. */
+function importsOwnNamespace(ctx: CodegenContext, sourceFile: ts.SourceFile): boolean {
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement)) continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (bindings === undefined || !ts.isNamespaceImport(bindings)) continue;
+    if (ctx.oracle.aliasedValueDeclarationOf(bindings.name) === sourceFile) return true;
+  }
+  return false;
+}
+
+/**
+ * (#6651 V6) A self-importing module's namespace getter bakes each binding's
+ * TDZ flag, and a class body compiled before the top-level pass can build that
+ * namespace first — so allocate the flags before classes compile. The module
+ * keeps every flag (no elision), so the early call answers the same set.
+ */
+export function prepareSelfImportingModuleTdzGlobals(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
+  if (importsOwnNamespace(ctx, sourceFile)) prepareModuleTdzGlobals(ctx, sourceFile);
+}
+
 /**
  * Materialize the top-level TDZ globals that both body emitters reference.
  * Safe to call before IR preparation and again from the direct declaration
  * pass because allocation and structural ABI observation are idempotent.
  */
 export function prepareModuleTdzGlobals(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
-  const elidableTdzNames = computeElidableTopLevelTdzNames(ctx, sourceFile, ctx.tdzLetConstNames);
+  // (#6651 V6) A module that imports its OWN namespace can observe every
+  // binding through `ns.x` before initialization (§10.4.6.8 step 12 →
+  // ReferenceError), and that read is invisible to the identifier walk below.
+  // Keep every top-level lexical flag for such a module.
+  const elidableTdzNames = importsOwnNamespace(ctx, sourceFile)
+    ? new Set<string>()
+    : computeElidableTopLevelTdzNames(ctx, sourceFile, ctx.tdzLetConstNames);
   for (const name of unresolvedDynamicWithTopLevelLexicalWrites(ctx, sourceFile, elidableTdzNames)) {
     elidableTdzNames.delete(name);
   }

@@ -174,12 +174,34 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-10-06 — slice V6 (module namespace internals; record under "2026-10-06
+  # — Slice V6"). The §10.4.6 arms live in the NEW leaf
+  # `object-model/module-namespace-exotic.ts`. What stays in god-files (paths
+  # already listed below, restated here per the stranded-grant rule):
+  #   - `literals.ts` +14: `[...strings, Symbol.toStringTag]` widens the element
+  #     kind to externref instead of null-derefing the symbol into a string vec
+  #     (the define-own-property row);
+  #   - `expressions/new-super.ts` +4: the super receiver in a derived ctor is
+  #     the parent's override object (BindThisValue), not the struct;
+  #   - `declarations.ts` +2: allocate a self-importing module's TDZ flags
+  #     before class bodies compile (a class body may build `ns` first).
   # 2026-10-06 — slice V5 (captured-binding TDZ; record under "2026-10-06 —
   # Slice V5"). `index.ts` +3: `preallocateBlockScopedSlots` stops skipping a
   # block that hoists a function declaration when the frame is `__module_init`
   # (no function-entry pre-hoist exists there) and re-installs the pre-hoisted
   # slots otherwise. `expressions/assignment.ts` +2: the SetMutableBinding TDZ
   # guard on the boxed-capture write arm. Both paths already listed below.
+  # 2026-10-06 — slice V4: `object-runtime-proxy.ts` +16 (path already listed
+  # below): the deps hand-off to `registerProxyConstructChainNatives` for
+  # `__proxy_construct_newtarget_proto`; the native lives in
+  # `object-runtime-proxy-construct-chain.ts`.
+  # 2026-10-06 — slice V7 (keyed destructuring order + deleted Array @@iterator;
+  # record `### 2026-10-06 — Slice V7`). Hand-off lines only, mechanism in
+  # `dstr-assign-iterator-drive.ts` / `with-var-decl.ts` / `proto-override.ts`:
+  # `expressions/assignment.ts` +3 (import + the `tryEmitSpecOrderedObjectAssign`
+  # call in `compileDestructuringAssignment`), `statements/loops.ts` +2 (import +
+  # the for-of delete guard call), `statements/variables.ts` +1 (the with-scoped
+  # var-pattern hook). All three paths already listed below; restated here.
   # 2026-10-06 — slice V1 (trapless Proxy forwarding; record under
   # "2026-10-06 — Slice V1"). `object-runtime-proxy.ts` +2: the import and the
   # one-line call of `installProxyForwardArms`; the arms themselves live in the
@@ -1281,11 +1303,26 @@ loc-budget-allow:
   # `promise-subclass-cell-read.ts`; the hand-off cannot move, because it is the
   # arm that would otherwise emit the bare `global.get` of the cell.
 func-budget-allow:
+  # 2026-10-06 — slice V6 (see the loc-budget note): `compileArrayLiteral` +14
+  # (the externref widening for a non-string fixed element after a string
+  # spread) and `compileDeclarations` +1 (the early TDZ-flag call).
+  - src/codegen/literals.ts::compileArrayLiteral
+  - src/codegen/declarations.ts::compileDeclarations
   # 2026-10-06 — slice V5 (see the loc-budget note): `compileAssignment` +2 (the
   # TDZ guard on the boxed-capture write) and `planClosureCaptures` +2 (skip the
   # #1177 by-name slot rescan for a name no reference binds).
   - src/codegen/expressions/assignment.ts::compileAssignment
   - src/codegen/closures/arrow-phases.ts::planClosureCaptures
+  # 2026-10-06 — slice V4: `ensureProxyRuntime` +16 (key already listed below):
+  # handing `registerProxyConstructChainNatives` the deps of the new
+  # `__proxy_construct_newtarget_proto` native (get dispatch, "prototype" key,
+  # objectTest, throwRevoked, the revoked field). The native body itself lives
+  # in `object-runtime-proxy-construct-chain.ts`.
+  # 2026-10-06 — slice V7: `compileDestructuringAssignment` +3 (the
+  # `tryEmitSpecOrderedObjectAssign` hand-off), `compileForOfArray` +1 (the
+  # delete-guard call), `compileVariableStatement` +1 (the with-scoped
+  # var-pattern hook). The last two keys are already listed below.
+  - src/codegen/expressions/assignment.ts::compileDestructuringAssignment
   # 2026-10-06 — slice V1: `ensureProxyRuntime` +1, the one-line call of
   # `installProxyForwardArms` next to `installProxyKeyBagGuards` (key already listed below).
   # 2026-10-06 — slice V0 (see the loc-budget note): the refusal-closure ladder
@@ -3485,6 +3522,165 @@ reproduced failing on base with `.tmp` probes before the fix).
 Equivalence gate green (1748 pass, 22 known). Temporal control
 (`Duration/prototype/round/*`, standalone, prewarmed cache): **119 pass / 7 fail of
 126, 0 `illegal cast`** — unchanged.
+
+### 2026-10-06 — Slice V4
+
+Derived-constructor completion and revoked-proxy construct (H4, 3 rows). Base
+`adbf109200` (harness worktree branch; the lead merges by sha).
+
+**The census location was off for row 1.** The `return null` ReferenceError
+does not come from `expressions/new-super.ts`: a derived constructor with NO
+lexical `super()` takes `class-bodies.ts`'s missing-super lowering, which threw
+the uninitialised-`this` ReferenceError at entry unless the body was a single
+`return <checker-proven primitive>`. `null` is not a primitive by those flags
+(it is typeof "object"), so §10.2.1.3 step 13.c's TypeError was lost. The
+decision moved to the new leaf `classes/missing-super-return.ts`, which reads
+`ctx.oracle.typeFactOf` (primitive or `null` ⇒ TypeError) — one raw-checker
+call fewer. Constructors that DO call `super()` already classify `null`
+correctly in `statements/control-flow.ts` (#5195 Step 11 E); unchanged.
+
+**Row 2/3 are not "handler already null before the read".** `new f()` on a
+trapless proxy forwards to `Construct(target, args, proxy)`, and the target's
+OrdinaryCreateFromConstructor performs `Get(proxy, "prototype")` — the `get`
+trap in these rows revokes the proxy and answers undefined, so
+GetFunctionRealm(proxy) throws (§7.3.22 step 4.a). The driver never performed
+that read: it passed a null prototype and let the target read its own
+`prototype`. New native `__proxy_construct_newtarget_proto` (in
+`object-runtime-proxy-construct-chain.ts`) does `Get(proxy, "prototype")`
+through `__proxy_get_dispatch`; an Object answers itself, a non-Object on a
+now-revoked proxy throws the revoked TypeError, a live proxy answers null
+(the caller keeps its target-prototype fallback). The trapless-forward arm of
+`native-construct.ts` reads `[[ProxyTarget]]` FIRST (the trap may revoke and
+null it) and only consults the native when no prototype was supplied.
+
+**Rows (standalone, QuickJS eval, in-process):** the 3 target rows 0/3 → 3/3.
+
+| family | base pass | branch pass |
+| --- | --- | --- |
+| `language/statements/class/subclass/**` (109) | 93 | 93 (identical non-pass set) |
+| `built-ins/Proxy/revocable/**` (18) | 17 | 17 (identical) |
+| `built-ins/{Proxy,Reflect,Function/internals}/**` minus revocable (454) | 419 | 422 (only the 3 targets moved) |
+
+**Residuals.**
+- A live proxy whose trap answers a non-Object prototype still gets the
+  target's `prototype`, not the realm's %Object.prototype% (§10.1.14 step 4.b).
+- A prototype the trap returns as a CLOSED struct object literal reaches the
+  instance, but the instance does not see that struct's methods (`b.m()` throws
+  where node answers 9; base answered the target's 5). `__object_create` on a
+  closed struct; pinned as a residual comment in the test.
+- A missing-`super()` body returning an Object (`return {}`) still throws the
+  entry ReferenceError instead of returning the object (step 13.a).
+
+Pin: `tests/issue-6651-v4-derived-ctor-completion.test.ts` (5 cases).
+Controls: `node scripts/equivalence-gate.mjs` green; Temporal
+`Duration/prototype/round/*` standalone 119 pass / 7 fail of 126, 0
+`illegal cast`.
+
+### 2026-10-06 — Slice V6
+
+Module namespace exotic object internals (H6), on `77f00492c7`. **7/7 target
+rows flip** (`namespace/internals/{define-own-property, delete-exported-uninit,
+get-own-property-str-found-uninit, get-str-found-uninit,
+own-property-keys-binding-types, own-property-keys-sort,
+super-access-to-tdz-binding}`), plus `get-own-property-str-found-init`.
+Measured base vs branch with `JS2WASM_EVAL_ENGINE=quickjs … run-test262-paths.mts
+--standalone`, both sides with the runner fix below.
+
+What each row actually needed (several were not §10.4.6 at all):
+
+1. **[[Get]]/[[GetOwnProperty]] TDZ.** Every live export slot (`var`/`let`, a
+   TDZ-tracked `const`, `export default <expr>`) is a non-configurable accessor
+   over a minted getter that runs the binding's TDZ check first
+   (`ensureLiveBindingGetters`, in its own phase before the object's helpers are
+   reserved so index shifts settle first). A module that imports its OWN
+   namespace keeps every top-level TDZ flag (`ns.x` is invisible to the elision
+   walk), and allocates them before class bodies compile — a class body can
+   build `ns` first, which baked a getter with no flag
+   (`prepareSelfImportingModuleTdzGlobals`).
+2. **The data-property view.** The NEW leaf `object-model/module-namespace-exotic.ts`
+   brands each binding entry and prepends arms to the generic natives:
+   `__getOwnPropertyDescriptor` answers `{value, writable: true, enumerable:
+   true, configurable: false}` by reading the binding; `hasOwnProperty`/`hasOwn`/
+   `propertyIsEnumerable` read it (TDZ) then answer true; `__defineProperty_value`
+   implements §10.4.6.6 through the #6770 rejection channel; accessor defines
+   and `Object.freeze` reject; `isFrozen` answers false.
+3. **`[...exported, Symbol.toStringTag]`** (define-own-property) null-derefed:
+   the string spread picked a native-string vec and the symbol was coerced into
+   it. The literal now widens to externref when a fixed element is not a string.
+4. **own-property-keys-sort was an `illegal cast`, not a sort bug**: the harness
+   prelude has a direct `eval`, which keeps `var allKeys = Reflect.ownKeys(ns)`
+   as an externref global holding the runtime `$ObjVec`; `allKeys.indexOf(…)`
+   then `ref.cast` it to the string vec. #6770 S5's materialize-the-receiver arm
+   now also admits `Reflect.ownKeys` / `getOwnPropertySymbols` calls and a
+   binding initialised from any own-key-list call (read-only methods only — the
+   receiver is a copy).
+5. **super-access-to-tdz-binding**: the super receiver in a derived constructor
+   was the struct `this`, not the object the parent constructor returned
+   (§9.1.1.3.1 BindThisValue). `emitTypedThisSuperReceiver` now uses
+   `tryEmitDerivedEffectiveThis`; the §10.1.9.2 receiver step then reaches the
+   descriptor arm and throws the ReferenceError. A dedicated
+   `__reflect_set_receiver` arm in the saved WIP was removed: it fired before the
+   target chain's setter (`super-set-to-tdz-binding-with-accessor` regressed).
+6. **own-property-keys-binding-types** was a local-runner gap: the in-process
+   self-import branch of `tests/test262-runner.ts` compiled the entry alone, so
+   `export * from './…_FIXTURE.js'` resolved nothing (7 of 10 keys). It now links
+   the static fixture graph exactly as the sharded path in `test262-shared.ts`
+   already does; the CI verdict for this row was never subject to this gap.
+
+Not fixed: `super.x = v` where the namespace binding is INITIALISED and `v`
+differs still answers true (the receiver write goes through `__extern_set`,
+which skips an accessor without a setter instead of applying §10.4.6.6).
+
+**Receipts.** Family `language/module-code/namespace/**` + `instn-*` (114 rows):
+base 36 → branch 44, **0 lost**. Pin `tests/issue-6651-v6-module-namespace.test.ts`
+(3 cases, all RED on base). Equivalence gate green (1748 pass, 22 known).
+Temporal control (`Duration/prototype/round/*`, standalone, prewarmed cache):
+**119 pass / 7 fail of 126, 0 `illegal cast`** — unchanged.
+
+### 2026-10-06 — Slice V7
+
+Keyed destructuring evaluation order + for-of after `delete
+Array.prototype[Symbol.iterator]` (H7; adopts #5154 A(a)), on `77f00492c7`.
+**6/6 target rows flip** (the spec said 5; the for-of `*-ary-init-iter-get-err-
+array-prototype` row exists for `var`, `let` and `const`): the three
+`keyed-destructuring-property-reference-target-evaluation-order*` rows and the
+three for-of rows, measured base vs branch with `JS2WASM_EVAL_ENGINE=quickjs …
+run-test262-paths.mts --standalone`.
+
+Root causes (none was an ordering bug in an existing lowering — the elements
+were not evaluated at all):
+
+1. **An object assignment pattern with a key only the runtime can name**
+   (`{ [k]: t } = s`, `k` an object with `toString`) was SKIPPED by the struct
+   lowering — no ToPropertyKey, no GetV, no PutValue. Standalone/WASI now route
+   such a pattern to `tryEmitSpecOrderedObjectAssign`
+   (`dstr-assign-iterator-drive.ts`): PropertyName + ToPropertyKey once → the
+   target Reference (base, raw key) → GetV → Initializer on undefined → PutValue
+   (the target key's ToPropertyKey runs inside the [[Set]]), per §13.15.5.6.
+   Strict/sloppy [[Set]] chosen from the pattern's context. Host lane unchanged.
+2. **`with (o) { var { [k]: x = d } = s; }`** never consulted the with object for
+   `x`. `tryCompileWithScopedVarDeclaration` now takes object binding patterns
+   whose names resolve through a dynamic `with` scope and emits §14.3.3.3 order
+   (key → ResolveBinding/HasBinding → GetV → Initializer → write through the
+   chosen scope) via `tryEmitSpecOrderedBindingPattern`.
+3. **The for-of array fast path never read the #5139 delete flag.**
+   `emitForOfArrayIteratorDeletedGuard` (`proto-override.ts`, moved
+   `emitArrayIteratorDeletedGuard` out of `destructuring-params.ts`) throws
+   TypeError after the iterable is evaluated when the flag is set, for an
+   Array/tuple-typed iterable only (oracle `typeFactOf`; TypedArrays keep their
+   own `@@iterator`). Zero emitted bytes when no delete exists in the program.
+
+**Receipts.** Family `for-of/dstr/**` + `expressions/assignment/{destructuring,
+dstr}/**` + `destructuring/binding/**` + `statements/with/**` (1,145 rows):
+base 1,096 → branch 1,102, **0 lost**. Pin
+`tests/issue-6651-v7-dstr-order.test.ts` (4 shape cases + the 6 rows, 10/10).
+Equivalence gate green (1748 pass, 22 known). Temporal control
+(`Duration/prototype/round/*`, standalone, prewarmed cache): **119 pass / 7 fail
+of 126, 0 `illegal cast`** — unchanged.
+
+Not fixed (base fails identically): the `obj-rest-*` rows in for-of/dstr and
+assignment/dstr (object rest over runtime sources), `array-elem-init-in.js`
+(parse), and three `with` Proxy-env rows.
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 

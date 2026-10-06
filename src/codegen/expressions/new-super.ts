@@ -169,7 +169,7 @@ import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5
 import { emitStandaloneCommaHeritageEffects } from "../classes/class-heritage-comma.js"; // (#6772 S6)
 import { emitStandaloneHeritagePrototypeGet } from "../classes/class-heritage-runtime-get.js"; // (#6772 S11)
 import { emitSuperUninitializedThisCheck, emitUninitializedThisGuard } from "../classes/derived-ctor-this-guard.js"; // (#6772 S1b)
-import { emitNewSiteOverrideSelect } from "../classes/ctor-return-override.js"; // (#6772 S2)
+import { emitNewSiteOverrideSelect, tryEmitDerivedEffectiveThis } from "../classes/ctor-return-override.js"; // (#6772 S2)
 import { compileTemporalNewExpression } from "../temporal-native.js";
 import {
   emitSuperUninitializedThisGuard,
@@ -1838,10 +1838,14 @@ export function classSuperRefEmitters(
  * an ordinary `new C().method()` keeps the typed local.
  */
 function emitTypedThisSuperReceiver(ctx: CodegenContext, fctx: FunctionContext, selfIdx: number): void {
-  fctx.body.push({ op: "local.get", index: selfIdx });
-  const selfType = getLocalType(fctx, selfIdx);
-  if (selfType?.kind !== "externref" && selfType?.kind !== "ref_extern") {
-    fctx.body.push({ op: "extern.convert_any" });
+  // (#6651 V6) In a derived constructor whose parent returned an object, `this`
+  // IS that object (BindThisValue) — `super.x = v` must target it.
+  if (tryEmitDerivedEffectiveThis(ctx, fctx) === undefined) {
+    fctx.body.push({ op: "local.get", index: selfIdx });
+    const selfType = getLocalType(fctx, selfIdx);
+    if (selfType?.kind !== "externref" && selfType?.kind !== "ref_extern") {
+      fctx.body.push({ op: "extern.convert_any" });
+    }
   }
   const recvLocal = allocLocal(fctx, `__super_recv_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.tee", index: recvLocal });
