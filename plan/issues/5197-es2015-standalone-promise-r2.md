@@ -2993,3 +2993,22 @@ output is included. A/B collectionExecuted/testsExecuted remain false and the
 package remains accepted=false. Release Laplace to copy these exact bytes via
 apply_patch into E plan/agent-context/5883-baseline-and-additional18-custody-20261006.json
 and verify equality. No source/index/commit/push changes or test launch.
+
+### Parent-owned dispatch and checkpoint release, 2026-10-06
+
+The parent owns implementation specifications, issue updates, independent
+acceptance review and integration. Native implementation agents use Sol 6.1
+at medium effort; increase effort only for a demonstrated reasoning bottleneck.
+Darwin retains ownership of the existing N4b2EF conformance process: poll the
+same run, preserve all terminal evidence and do not retry or launch a successor.
+Laplace is assigned a read-only publication preflight: enumerate exact owned
+paths for the pending E merge, normal commit/push checks and the existing5883
+remote destination. Flag unrelated or ambiguous paths instead of staging them.
+Neither assignment permits source changes while the2972-case run is active.
+
+The integration owner reviews the actual terminal result before releasing any
+write or heavy check. A clean scoped result releases checkpoint publication,
+not equivalence acceptance: keep HOLD and retain the full87 and separate A/B
+requirements above. A failure releases only a newly documented bounded repair
+after preserving the original failure. No new PR, scope expansion, automatic
+test retry, legacy retirement or blanket staging is authorized by this dispatch.
