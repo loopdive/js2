@@ -535,3 +535,111 @@ results, original instruments, full memory observations, environment and
 hashes live in `plan/log/6893-linear-cabi-20261007/`; see
 `final-comparison.json` and the Session B handoff for A's integration request.
 Retain status in-progress and PR hold until coordinated acceptance.
+
+## Current-main composition qualification — 2026-10-07
+
+This append specifies a new measurement epoch, not a measured result or a source
+release. All preceding plans, failures, fixtures and evidence remain immutable.
+Planning slice `6893:linear-cabi-main-composition-plan-20261007` belongs to
+`ttraenkler/codex-linear-b-cabi-main-astra-20261007`; its only write is this append.
+Parent owns execution/evidence. A retains shared source ownership and final
+integration/queue authority; PR6568 remains HOLD pending reviewed acceptance.
+
+### Frozen operands and dependency attribution
+
+- Baseline: canonical main `e1e07bd4683faafcd69846bc757cce36ebb9fb61`.
+- Composed candidate: `3cba5b08c59fa4d63c238629c0fad456c8c5eae4`, merging that main
+  into the existing B packet. Static comparison confirms its entire production
+  delta against baseline is `src/codegen-linear/c-abi.ts`, the ten-line array-return
+  resolver selection/call before `local.tee`; no shared source delta is authorized.
+- Both arms use identical `tests/issue-6893-linear-cabi-array-forwarding.test.ts`,
+  SHA-256 `7612ec537bd3876f3a872e029629601442b7593b1150c30cd25d49db7351be62`.
+  Freeze every control test and relevant production input before/after execution.
+  Record actual commits, tree/input hashes and dirty state; later main movement
+  does not silently change either operand or inherit these results.
+- Main contains A's `2a98b75de9` forwarding repair. Its published contract is
+  [issue6897](6897-linear-ir-vector-read-forwarding.md): the closed vector
+  `resolve-forwarding` operation, `LinearEmitter.emitVecLen/emitVecDataPtr`
+  resolver calls, and integration demand/typed defined-helper preflight before
+  frozen-body consumption. Demand includes reads with no allocation. Both arms
+  consume that same landed implementation; B does not copy or modify it.
+- Historical combined **95 pass/3 fail of98** remains historical. The retained
+  scalar requirements **3.75,69,40** (previously **0,24,16**) must now pass in BOTH
+  arms with their original source/options. Attribute that improvement to A6897,
+  not B's return marshaling. A's independent results do not substitute for this run.
+
+### One paired, unchanged 98-case population
+
+Parent runs both frozen arms sequentially with identical harness/environment and
+test bytes, preserving all names, statuses, complete failures, raw stdout/stderr,
+exit codes and deadlines. Record Linear lane, C ABI where selected by the original
+fixture, effective compiler options, `JS2WASM_LINEAR_IR`, Node/V8/execArgv and other
+environment settings; do not force one suite-wide routing configuration over the
+existing controls. Use the established serial Vitest protocol and retain the exact
+command. No competing heavy job, alternate fixture, instrumentation rewrite or
+charCodeAt qualification is part of this packet.
+
+- `tests/issue-6893-linear-cabi-array-forwarding.test.ts`:18.
+- `tests/c-abi.test.ts`:38; `tests/issue-1835.test.ts`:8.
+- `tests/issue-1938-number-array-f64.test.ts`:17; `tests/issue-1977.test.ts`:8.
+- `tests/issue-4539-c-link.test.ts`:9. Existing controls total80; combined total98.
+
+Require collection and terminal identities/statuses to account for every case.
+No skip, `it.fails`, changed assertion, green unsupported marker or reduced
+population is allowed. Preserve the old V1/V2/V3 instruments, setup diagnostics,
+raw logs and `final-comparison.json`; write new evidence separately, not over them.
+Do not predict a new baseline pass count from historical arithmetic: measure it.
+
+### Exact records, semantics and custody
+
+Require **33 structured issue6893 records in each arm**, with matching kind/case
+multiplicities, not just a total. Compare the existing ten route/control kinds
+deeply and exactly between these two new arms: `public-compile`, `public-string`,
+`public-scalar`, `runtime-no-growth`, `no-resolver-string`, `no-resolver-scalar`,
+`public-namesake-compile`, `public-namesake-imports`, `public-namesake-invocation`,
+`public-namesake-array`. Keep provenance separate: revisions/source hashes differ
+deliberately. New scalar values need not equal the historical wrong values.
+
+For native array results, retain the original index31 length/tail assertions
+without claiming JS hole-padding parity; compare every initialized fractional
+element in the dense32/96 fixtures against their existing independent JS oracle.
+For all three real-runtime growth rows, preserve real multihop links, original/current
+headers, capacity, sentinel, full memory snapshots and allocator-used observations.
+Within each arm require reads to leave complete memory and allocation state
+unchanged. Across arms compare every existing `growthCustody.unchangedFields`
+field exactly; only oldest-alias `actual` pair/payload is the intended growth-row
+delta. Candidate oldest/current pairs and complete initialized payloads must agree.
+Inspect all remaining record differences, including expected wrapper-contract and
+missing-resolver diagnostic improvements; do not blanket-normalize failures or bytes.
+
+Retain real function-import offsets (excluding table imports), stable-handle
+finalization, and host namesake controls. Candidate must call the DEFINED runtime
+`__arr_resolve`, with zero namesake host calls; import-only absence must reject.
+String/scalar no-resolver controls remain valid. ABI signatures, C headers, f64
+stride, ownership and import contracts remain unchanged. Record actual binary
+validation/hashes; do not require whole binaries to match across a production fix.
+
+Source array-return cases remain honest fallback controls, not new PreparedIR or
+overlay admission proof. Record their actual compile/rejection evidence unchanged
+between arms. Preserve genuine scalar IR owner requirements; use A's published
+attribution only as dependency context, not as a replacement for native results.
+Runtime-built wrapper controls likewise earn boundary/runtime credit only.
+
+### Gates, acceptance and stop boundary
+
+Parent runs strict new-test-inclusive typing with the unchanged18-case file included,
+plus normal source typing, scoped format/lint, build and required architecture/LOC/
+function-budget gates against this actual main base. Retain commands and diagnostics;
+no casts, exclusions, borrowed allowances or weakened configuration to obtain green.
+Classify any inherited gate failure with an identical baseline check, never conceal it.
+
+Acceptance requires candidate **98/98 pass, zero skips**, baseline controls **80/80**,
+all three scalar requirements passing in both arms, exact33-record/ten-kind checks,
+and all stated native/memory/import/ABI obligations. Baseline boundary failures must
+be recorded individually and the candidate improvement attributable to the sole
+C ABI production delta. Unexpected routes, populations, shared failures, custody
+changes or gate failures stop acceptance for parent review; they authorize no edits.
+No fresh fixtures, shared wiring, registry/ABI change, IR retirement or performance
+claim follows. Array-return IR admission remains separately unresolved and gains no
+coverage credit from boundary acceptance. Parent may recommend this bounded fix
+after reviewing actual evidence; only A can authorize final integration/queue release.
