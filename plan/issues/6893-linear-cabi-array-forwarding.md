@@ -1,7 +1,7 @@
 ---
 id: 6893
 title: "Linear C ABI: resolve forwarded array headers before export return marshaling"
-status: ready
+status: in-progress
 created: 2026-10-07
 updated: 2026-10-07
 sprint: Backlog
@@ -302,3 +302,211 @@ acceptance. No changes are released to `src/compiler/output.ts`, compiler
 entrypoints, `src/codegen-linear/index.ts`, shared IR/layout/metadata,
 `linear-integration.ts`, `linear-emitter.ts`, runtime, imports/refcount, C-header
 generation, source-map paths or existing tests.
+
+## Validation amendment — finite no-resolver string-fixture repair
+
+### Preserve v1 evidence and classify the failure
+
+Parent reports identical-test v1 baseline execution on exact
+`91e519587ec2d383a96cfc7d06f48bac04d2c286`: **10 failed, 6 passed / 16**.
+The v1 test SHA-256 is
+`d84af82e9bd232380753227d0ff3424c501f267a7a8258db1c797be2ccc37894`.
+One failure is an instrument setup defect: the no-resolver string unit calls
+`addStringRuntime`, which throws for missing `__u8arr_len` during module
+construction, before emitting/executing the intended wrapper control.
+The parent is running the immutable v1 file on the candidate; its results
+remain pending at amendment time and must be recorded without substitution.
+No candidate count is inferred from the baseline or a predicted 15/16 split.
+
+Source inspection confirms the dependency:
+`src/codegen-linear/runtime.ts::addStringRuntime` (line 1399) resolves
+`__u8arr_len` near line 2065. The intentionally minimal absence fixture does
+not install that runtime. This is not evidence that the production C-ABI
+change broke strings, nor that the new absence assertion executed successfully.
+The earlier read-only test review missed this setup dependency; it does not
+override the actual red result. Preserve all v1 test bytes, raw logs and
+provenance, including this failure and the separate A-owned scalar failure.
+
+### T-only repair; K source remains unchanged
+
+Edit only the existing new test
+`tests/issue-6893-linear-cabi-array-forwarding.test.ts`, specifically the
+`"emits and executes %s without any resolver"` string setup. Remove its
+`addStringRuntime` call and unused import and its `__str_from_data` export/use.
+Keep `addRuntime`, the existing raw-header identity and actual
+`emitCabiWrappers`/binary execution. Expose the existing `__malloc` function
+through the test's existing export helper; do not define any substitute
+constructor/provider or new Wasm helper. No source change is needed.
+
+For the string arm only, prepare a canonical record as follows:
+
+1. Encode the unchanged `"é😀"` fixture with `TextEncoder` (six UTF-8 bytes).
+2. Call the real exported `__malloc` with
+   `LINEAR_STRING_ELEMENTS_OFFSET + bytes.length` (18 bytes before allocator
+   alignment). Reacquire DataView/Uint8Array after that call, which may grow
+   memory. Validate the allocated header/payload range before writing.
+3. The real allocator clears the header word at +0 (`runtime.ts:302–323`);
+   leave that responsibility there. Do not install an array tag or resolver.
+   Optionally assert the observed cleared word before host initialization;
+   do not overwrite it to make a broken allocator appear correct.
+4. Use shared constants from `src/ir/analysis/linear-memory-plan.ts:92–96`:
+   store `bytes.length + LINEAR_STRING_PAYLOAD_PREFIX_BYTES` at
+   `raw + LINEAR_STRING_PAYLOAD_SIZE_OFFSET` and `bytes.length` at
+   `raw + LINEAR_STRING_LENGTH_OFFSET`, both u32 little-endian. Copy the exact
+   UTF-8 bytes to `raw + LINEAR_STRING_ELEMENTS_OFFSET`. This is layout-driven
+   test initialization, not a new production string-building algorithm.
+5. Take the memory snapshot and arena-usage observation **after** allocation
+   and initialization, then call the actual identity wrapper with `raw`.
+   Require exactly `[raw + LINEAR_STRING_ELEMENTS_OFFSET, bytes.length]`,
+   exact six output bytes and decoded text, the unchanged C header signature,
+   unchanged memory and unchanged arena usage across wrapper execution.
+6. Assert `__arr_resolve` remains absent before and after wrapper emission.
+   Do not add array/Uint8Array runtime merely to satisfy string-builder
+   dependencies; that would invalidate the absence control.
+
+This unit is explicitly **raw-record wrapper coverage**, not string-provider
+construction or source-IR execution proof. Its direct i32 identity parameter
+must remain direct; it must not exercise missing-constructor fallback by
+pretending to be a C-ABI string parameter. Keep the existing public UTF-8
+source-compile case unchanged as the separate real production-path control.
+
+Do not alter any other case, especially the original scalar IR assertion of
+`3.75`, ownership assertions, sparse probes, dense fixtures, import/stable
+controls or missing-array-resolver refusal. No skip, expected-failure wrapper,
+observed-zero expectation, helper stub or changed fixture semantics is allowed.
+The scalar `0` result remains A-owned and must remain visible if still present.
+
+### Paired v2 validation and attribution
+
+Parent retains the immutable v1 candidate execution and archives v1 bytes/logs
+before using v2. Run identical v2 test bytes on exact baseline and the actual
+source-fix candidate, sequentially as coordinated. Record each full revision,
+new test digest, source digest, Node/V8/options and actual pass/fail totals out
+of the unchanged 16 cases. Use distinct v2 log names; never overwrite or
+relabel d84 v1 results. No heavy validation is performed by this architect.
+
+Any no-resolver string case that changes from setup failure to pass on both
+sides is an **instrument-repair gain**, not a production C-ABI improvement.
+Credit the production wrapper only for actual same-v2 baseline-to-candidate
+improvements, retaining exact payload/route/error rows and unchanged controls.
+Do not assume either outcome before execution. If another concrete fixture
+defect appears, stop and report it rather than broadening this repair.
+
+Correctness acceptance for the bounded C-ABI change is separate from full
+integration acceptance. Even if all C-ABI-owned checks pass, a remaining
+scalar IR failure keeps the suite red and the PR held for coordinated A
+integration. Array-return source-IR admission also remains unproved until its
+own positive source-owner evidence exists. No new claims, source edits,
+commits, benchmark work or shared-wiring authority arise from this amendment.
+
+## Containment amendment — defined resolver, not a namesake host import
+
+### Source-derived supported risk; execution evidence pending
+
+Read-only review found a supported configuration that the original K lookup
+does not distinguish. This is a source-derived risk, **not a runtime-tested
+reproduction**; no extra pass/fail counts are claimed. The relevant API chain
+on the reviewed baseline/source implementation is:
+
+- `src/index.ts:1141`, `CompileOptions.linearExternImports`, accepts external
+  C import descriptors. `src/compiler/linear-options.ts:18` forwards them to
+  `LinearOptions.externImports` without a runtime-name restriction.
+- `src/codegen-linear/c-abi.ts::declareExternCImports` (baseline line 538;
+  first K candidate line 548) registers the supplied import field name.
+  Its checks concern declaration ordering and ownership; there is no reserved
+  `__arr_resolve` name check. A non-engine `(i32)->i32` import can use that name.
+- `src/codegen-linear/index.ts:196` declares imports before runtime builders;
+  lines 221–224 install the array runtime. The defined resolver is still
+  registered: `ensureArrayResolveRuntime` checks definitions, not imports.
+  Runtime `findFuncIndex` near `runtime.ts:4225` also searches definitions
+  and adds the function-import count, so runtime accessors use their helper.
+- In contrast, `c-abi.ts:42`, `findFuncIndexByName`, searches function imports
+  first by unqualified field name. The initial K addition therefore selects
+  the foreign import rather than the defined runtime resolver when both exist.
+
+A same-signature throwing host import would cause the new array-return call
+to throw even for an ordinary no-growth array. The baseline wrapper never
+made this call. An imported namesake without any definition would also
+incorrectly satisfy the intended missing-runtime-resolver check. These are
+concrete source mechanisms to validate, not claims of an executed regression.
+
+### K — replace only the new array-return lookup
+
+This amendment supersedes the earlier instruction to use
+`findFuncIndexByName` for the array-return resolver. Write only inside
+`emitCabiWrappers`' existing `info.result.semantic === 'array'` guard:
+
+1. Find the position of the **defined** function named `__arr_resolve` in
+   `mod.functions`, without consulting imports for the provider identity.
+2. If no definition exists, throw the existing named C-ABI array-return
+   invariant error, even if an import has that field name.
+3. Add the current count of imports whose `desc.kind === 'func'` to that
+   definition position. Reuse the wrapper's already-derived `numImportFuncs`
+   (imports are not mutated in this function); never count non-function
+   imports or emit the raw definition position as a call index.
+4. Emit the same single resolver call before `local.tee __ret_ptr`, preserving
+   the original call and both return outputs exactly as in the first K patch.
+
+Do not change the general `findFuncIndexByName` helper, parameter-constructor
+selection, `declareExternCImports`, import-name acceptance, ownership/address
+roles, runtime registration, ABI, C headers, shared layout or compiler wiring.
+The import remains legal; it simply cannot impersonate this defined runtime
+dependency. No new registry, name-reservation policy or provider framework.
+Original export stable-handle normalization remains unchanged.
+
+### T — two additive controls; all 16 v2 cases retained
+
+Only `tests/issue-6893-linear-cabi-array-forwarding.test.ts` is writable by T.
+Retain every current v2 case and assertion, including the corrected raw-record
+string absence fixture and the A-owned scalar assertion expecting `3.75`.
+Add these two independent cases, without replacing existing import controls:
+
+1. **Public namesake import:** compile a separate no-growth fractional array
+   source, such as `export function run(): number[] { return [1.5, -2.25]; }`,
+   with the existing public Linear/C-ABI options and
+   `linearExternImports: [{ module: 'host', name: '__arr_resolve',
+   params: [{kind:'i32'}], results: [{kind:'i32'}] }]`. Use `optimize:false`;
+   no TS declaration or source call to the host function is required. Verify
+   the emitted import inventory actually includes that function. Instantiate
+   with a counted host implementation that throws when called. The actual
+   array export must return length 2 and both exact f64 elements, with host
+   call count zero and its C header unchanged. Record full source/options,
+   imports and actual route; this fixture is not an IR-return admission proof.
+   Parameterize the existing public-fixture setup minimally or make a narrow
+   local setup in this case: do not weaken its zero-import assertions for
+   existing no-import cases. The import must not be pruned/missing while the
+   test silently claims a collision was exercised.
+2. **Import-only absence:** use a distinct minimal module with a legal
+   `(i32)->i32` function import named `__arr_resolve`, registered before the
+   ordinary allocator/runtime setup, but no defined array resolver. Add the
+   same raw-header identity/array-return descriptor as the existing missing
+   resolver negative. Assert the import exists and the definition does not;
+   actual `emitCabiWrappers` must throw the named missing-resolver invariant
+   error. Do not add array runtime or accept a successful host substitute.
+
+Existing real-growth, interleaved non-function import, stable-handle and exact
+call-target assertions remain in place. The public no-growth control isolates
+new shadowing from the baseline's separate growth defect; the synthetic
+negative proves fail-closed definition custody, not source admission.
+
+### Evidence and acceptance classification
+
+Preserve v1 and v2 test bytes, digests, every raw result and the original
+instrument-setup failure. Do not overwrite running/archived tests or logs.
+The architect has neither executed these two additions nor inferred results
+from the paired v2 run. Parent records that run's actual outcomes separately.
+
+After K/T completion, parent runs identical amended test bytes on exact
+`91e519587ec2d383a96cfc7d06f48bac04d2c286` and the newly recorded candidate,
+with fresh names/digests and actual denominators (18 cases if exactly these
+two are added). If checking the initial K revision to establish the shadowing
+regression, record that third exact revision separately, not as the baseline.
+No extra run is performed or scheduled by this specification author.
+
+Expected obligations, not measured outcomes: the no-growth namesake control
+should remain correct on original baseline and the amended candidate; the
+import-only absence control should fail closed only after the scoped fix.
+Any gain from the earlier string-fixture repair stays classified as instrument
+repair. Public growth fixes, namesake-regression prevention and the unresolved
+A-owned scalar-read/array-return-admission obligations remain separate.
+Keep the PR held while coordinated A integration requirements remain unmet.
