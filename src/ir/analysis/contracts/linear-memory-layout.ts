@@ -82,6 +82,10 @@ export type LinearRuntimeOperation =
       readonly elementStorage: LinearStorageKind;
     }
   | {
+      readonly family: "vector";
+      readonly operation: "resolve-forwarding";
+    }
+  | {
       readonly family: "string";
       readonly operation: "materialize-data" | "concatenate";
       readonly allocationClass: LinearAllocationClass;
