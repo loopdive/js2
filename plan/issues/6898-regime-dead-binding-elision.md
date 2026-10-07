@@ -122,3 +122,54 @@ regime: a script with an unused direct-eval binding, the assembled
 and a reassigned-function script. The sha256 for gc, standalone and wasi is
 identical before and after. The regime's output changed only for the two
 probes that carry an unused binding.
+
+### Round 2 — the standalone defects the regime inherits (2026-10-07)
+
+Per the lead's decision (option 2), this PR also fixes the native array-like
+arms that the regime reaches once the shim is gone. These change standalone
+and wasi output by design; default gc is byte-identical (sha256 on four probes).
+
+1. **`map` over a huge `length` hung** (`map/15.4.4.19-3-{8,14,28,29}`). The
+   array-like `map` result is ArrayCreate(len), but the RangeError guard
+   (`arrayLikeLengthLimitGuard`) ran only in modules that could hold a Proxy.
+   Without it, the saturating i32 truncation ran 2^31 − 1 iterations.
+   `arrayCreate = true` now applies the guard to array-like `map` on the native
+   regime unconditionally (`proxy-array-like.ts`, `array-prototype-borrow.ts`).
+2. **`map` over an array-like lost positions**
+   (`map/15.4.4.19-8-b-{2,10}`, `-8-c-i-{1,3,5,7,17}`,
+   `create-non-array-invalid-len`). The native `__objvec_push` store is
+   positional, but the HasProperty gate skipped absent indices without
+   pushing, so `{5: v, length: 100}` mapped to a 1-element array. The skipped
+   slot now pushes `undefined` (`positionalMapGate`, `array-like-hof-arms.ts`).
+   This is the same rule `hof-native.ts` already follows.
+3. **A void callback counted as truthy** (`filter/15.4.4.20-9-c-iii-2`). In
+   `array-prototype-borrow.ts`, `toTruthy` answered the constant 1 for a
+   callback with no return value. Its result is `undefined`, which is falsy,
+   so the native regime now answers 0 (the host lane keeps 1, byte-identical).
+
+Focused test: `tests/issue-6898-array-like-map-filter.test.ts`, regime and
+standalone. The positional and void cases fail on base; the huge-length case
+hangs on base.
+
+**Re-measured** (same lane; I re-ran the rows that lost their eval provider
+mid-run because the provider cache key moved with a source edit):
+
+| set | rows | before (base) | round 1 | round 2 |
+| --- | ---: | ---: | ---: | ---: |
+| (a) 321-row sample | 321 | 285 | 275 | **288** |
+| (b) function-code / filter / with / try | 841 | 762 | 774 | **787** |
+| total | 1162 | 1047 | 1061 | **1075** |
+
+fail → pass: 33 (22 `filter`, 7 `map`, 3 `with`, 1 `try`). pass → fail
+against the regime before-state: 5.
+
+- `map/15.4.4.19-8-b-{5,7,13}`: the host baseline fails these too, so they are
+  **not** pass → fail against the host lane. They are a different cause from
+  the length and positional bugs above (the callback sees a value deleted or
+  shadowed during the walk); listed for later.
+- `filter/15.4.4.20-9-c-ii-11` and `map/15.4.4.19-8-c-ii-11`: `arguments[2]`
+  is lost once any function carries an expando property. This is split out
+  as **#6913**. The host lane passes both rows, so they are **not eligible**
+  for the ES5 ratchet `exceptions`. This PR waits for #6913.
+
+`check:host-import-policy`: 0 legacy / 0 unknown.
