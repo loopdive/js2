@@ -13,23 +13,23 @@ import {
 } from "./helpers/ir-deno-post-position-main-successor.js";
 // Complete fixed source/receipt pins are independently frozen after formatting.
 const helperPin = {
-  bytes: 111591,
-  sha256: "9dbc770999fe8d35bdef7c4a0a0eda3dde5af626d25f7451b8e297fe503a0d2c",
+  bytes: 116346,
+  sha256: "40283ee30a63f456edd3b4ed4e9dfdeaa10dea081d114aee286018d66c573807",
 };
 const receiptPin = {
-  bytes: 105796,
-  sha256: "34e1bfc094fe7003757d9d3407c0e638b1c0d419e65ce9aaafbc02b55589a96b",
+  bytes: 110734,
+  sha256: "67eb76a5afa73c01e46fb1ffc3732c035984b4933fa64f83d36b5e7ee7b759d5",
 };
 const expected = {
   current: {
     source: {
-      bytes: 599006,
-      sha256: "89271aaacc5bb80516e5ace874945529561a755c045cb4224afc9403814f00d1",
-      gitBlob: "67d856f545a15c6a55b18cc9ced67fc15bb38946",
+      bytes: 599338,
+      sha256: "7432d603d0af52d765647dd80c2e3db5f671ca7c40a07f48206a90876cd90f1b",
+      gitBlob: "5bff2ad57ecfd67e1eb087f4126c9bf3d111b04f",
     },
-    fileCount: 1872,
-    dataSha256: "2c167ab1cdff4e017c6197e456adde6ee5449830b1d85e95e2631d768e2e492a",
-    filesSha256: "48e3f104d708ee7a90ead8e88ac8bcbb59fdcb9b38fa0dd7d6c4ec197488ad6f",
+    fileCount: 1873,
+    dataSha256: "4770a667062d663af75232e4f700354b011b1d1976a9ef4fe0c1a2b81fa46f1e",
+    filesSha256: "ce4d3c87fef433f5919e432d96f621c00cd7af94f6aff65f31b216414db632c5",
     nonFilesSha256: "3a4788461bc5c6757c931554be0ec6218711f00814f580d9bb70d26a5929c1ce",
     topLevelKeys: [
       "schema",
@@ -691,7 +691,34 @@ const expected = {
           },
         },
         {
-          index: 1668,
+          index: 1662,
+          row: {
+            path: "src/codegen/object-model/extern-get-object-key.ts",
+            state: "unmigrated",
+            layer: "mixed-needs-split",
+            destination: "backend-wasmgc",
+            owner: "3518-coordinator",
+            nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
+          },
+          previous: {
+            path: "src/codegen/object-model/extern-get-string-receiver.ts",
+            state: "unmigrated",
+            layer: "mixed-needs-split",
+            destination: "backend-wasmgc",
+            owner: "3518-coordinator",
+            nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
+          },
+          next: {
+            path: "src/codegen/builtin-subclass-receiver.ts",
+            state: "unmigrated",
+            layer: "mixed-needs-split",
+            destination: "backend-wasmgc",
+            owner: "3518-coordinator",
+            nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
+          },
+        },
+        {
+          index: 1669,
           row: {
             path: "src/codegen/registry/microtask-drain-boundary.ts",
             state: "unmigrated",
@@ -720,7 +747,7 @@ const expected = {
           },
         },
         {
-          index: 1669,
+          index: 1670,
           row: {
             path: "src/codegen/registry/microtask-notification.ts",
             state: "unmigrated",
@@ -749,7 +776,7 @@ const expected = {
           },
         },
         {
-          index: 1800,
+          index: 1801,
           row: {
             path: "src/codegen/registry/promise-rejection-dispatch.ts",
             state: "unmigrated",
@@ -777,7 +804,7 @@ const expected = {
           },
         },
         {
-          index: 1870,
+          index: 1871,
           row: {
             path: "src/ir/runtime/number-remainder-callables.ts",
             state: "clean",
@@ -799,7 +826,7 @@ const expected = {
           },
         },
         {
-          index: 1871,
+          index: 1872,
           row: {
             path: "src/wasm/physical/number-remainder.ts",
             state: "clean",
@@ -927,22 +954,29 @@ const expected = {
             '      "state": "clean",\n      "layer": "wasm-physical"\n    },\n    {\n      "path": "src/wasm/physical/allocation-owner.ts",\n',
         },
         {
+          beforeOffset: 541961,
+          afterOffset: 547230,
+          before: "",
+          after:
+            '      "path": "src/codegen/object-model/extern-get-object-key.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n',
+        },
+        {
           beforeOffset: 543876,
-          afterOffset: 549145,
+          afterOffset: 549477,
           before: "",
           after:
             '    },\n    {\n      "path": "src/codegen/registry/microtask-drain-boundary.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate scheduler-context and physical export registration from the canonical native microtask drain body."\n    },\n    {\n      "path": "src/codegen/registry/microtask-notification.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate context-owned late notification import and index shifting from native scheduling instructions."\n',
         },
         {
           beforeOffset: 582207,
-          afterOffset: 588170,
+          afterOffset: 588502,
           before: "",
           after:
             '      "path": "src/codegen/registry/promise-rejection-dispatch.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Place context-dependent rejection dispatcher resolution and import/defined-function identity checks behind explicit backend resources."\n    },\n    {\n',
         },
         {
           beforeOffset: 592407,
-          afterOffset: 598749,
+          afterOffset: 599081,
           before: "",
           after:
             ',\n    {\n      "path": "src/ir/runtime/number-remainder-callables.ts",\n      "state": "clean",\n      "layer": "ir-runtime"\n    },\n    {\n      "path": "src/wasm/physical/number-remainder.ts",\n      "state": "clean",\n      "layer": "wasm-physical"\n    }',
@@ -1596,6 +1630,33 @@ const expected = {
             nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
           },
           next: {
+            path: "src/codegen/object-model/extern-get-object-key.ts",
+            state: "unmigrated",
+            layer: "mixed-needs-split",
+            destination: "backend-wasmgc",
+            owner: "3518-coordinator",
+            nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
+          },
+        },
+        {
+          index: 1662,
+          row: {
+            path: "src/codegen/object-model/extern-get-object-key.ts",
+            state: "unmigrated",
+            layer: "mixed-needs-split",
+            destination: "backend-wasmgc",
+            owner: "3518-coordinator",
+            nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
+          },
+          previous: {
+            path: "src/codegen/object-model/extern-get-string-receiver.ts",
+            state: "unmigrated",
+            layer: "mixed-needs-split",
+            destination: "backend-wasmgc",
+            owner: "3518-coordinator",
+            nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
+          },
+          next: {
             path: "src/codegen/builtin-subclass-receiver.ts",
             state: "unmigrated",
             layer: "mixed-needs-split",
@@ -1605,7 +1666,7 @@ const expected = {
           },
         },
         {
-          index: 1668,
+          index: 1669,
           row: {
             path: "src/codegen/registry/microtask-drain-boundary.ts",
             state: "unmigrated",
@@ -1634,7 +1695,7 @@ const expected = {
           },
         },
         {
-          index: 1669,
+          index: 1670,
           row: {
             path: "src/codegen/registry/microtask-notification.ts",
             state: "unmigrated",
@@ -1663,7 +1724,7 @@ const expected = {
           },
         },
         {
-          index: 1789,
+          index: 1790,
           row: {
             path: "src/codegen/expressions/callable-property-omittable-param.ts",
             state: "unmigrated",
@@ -1690,7 +1751,7 @@ const expected = {
           },
         },
         {
-          index: 1790,
+          index: 1791,
           row: {
             path: "src/codegen/closures/host-boolean-callback.ts",
             state: "unmigrated",
@@ -1717,7 +1778,7 @@ const expected = {
           },
         },
         {
-          index: 1791,
+          index: 1792,
           row: {
             path: "src/codegen/expressions/typeof-import-binding.ts",
             state: "unmigrated",
@@ -1744,7 +1805,7 @@ const expected = {
           },
         },
         {
-          index: 1800,
+          index: 1801,
           row: {
             path: "src/codegen/registry/promise-rejection-dispatch.ts",
             state: "unmigrated",
@@ -1772,7 +1833,7 @@ const expected = {
           },
         },
         {
-          index: 1870,
+          index: 1871,
           row: {
             path: "src/ir/runtime/number-remainder-callables.ts",
             state: "clean",
@@ -1794,7 +1855,7 @@ const expected = {
           },
         },
         {
-          index: 1871,
+          index: 1872,
           row: {
             path: "src/wasm/physical/number-remainder.ts",
             state: "clean",
@@ -1964,29 +2025,36 @@ const expected = {
             '      "path": "src/codegen/object-model/extern-get-string-receiver.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n',
         },
         {
+          beforeOffset: 539666,
+          afterOffset: 547230,
+          before: "",
+          after:
+            '      "path": "src/codegen/object-model/extern-get-object-key.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n',
+        },
+        {
           beforeOffset: 541581,
-          afterOffset: 549145,
+          afterOffset: 549477,
           before: "",
           after:
             '    },\n    {\n      "path": "src/codegen/registry/microtask-drain-boundary.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate scheduler-context and physical export registration from the canonical native microtask drain body."\n    },\n    {\n      "path": "src/codegen/registry/microtask-notification.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate context-owned late notification import and index shifting from native scheduling instructions."\n',
         },
         {
           beforeOffset: 576359,
-          afterOffset: 584617,
+          afterOffset: 584949,
           before: "",
           after:
             '      "path": "src/codegen/expressions/callable-property-omittable-param.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n      "path": "src/codegen/closures/host-boolean-callback.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n      "path": "src/codegen/expressions/typeof-import-binding.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n',
         },
         {
           beforeOffset: 578897,
-          afterOffset: 588157,
+          afterOffset: 588489,
           before: "",
           after:
             '    },\n    {\n      "path": "src/codegen/registry/promise-rejection-dispatch.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Place context-dependent rejection dispatcher resolution and import/defined-function identity checks behind explicit backend resources."\n',
         },
         {
           beforeOffset: 589110,
-          afterOffset: 598749,
+          afterOffset: 599081,
           before: "",
           after:
             ',\n    {\n      "path": "src/ir/runtime/number-remainder-callables.ts",\n      "state": "clean",\n      "layer": "ir-runtime"\n    },\n    {\n      "path": "src/wasm/physical/number-remainder.ts",\n      "state": "clean",\n      "layer": "wasm-physical"\n    }',
@@ -2305,6 +2373,33 @@ const expected = {
             nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
           },
           next: {
+            path: "src/codegen/object-model/extern-get-object-key.ts",
+            state: "unmigrated",
+            layer: "mixed-needs-split",
+            destination: "backend-wasmgc",
+            owner: "3518-coordinator",
+            nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
+          },
+        },
+        {
+          index: 1662,
+          row: {
+            path: "src/codegen/object-model/extern-get-object-key.ts",
+            state: "unmigrated",
+            layer: "mixed-needs-split",
+            destination: "backend-wasmgc",
+            owner: "3518-coordinator",
+            nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
+          },
+          previous: {
+            path: "src/codegen/object-model/extern-get-string-receiver.ts",
+            state: "unmigrated",
+            layer: "mixed-needs-split",
+            destination: "backend-wasmgc",
+            owner: "3518-coordinator",
+            nextBoundary: "Separate AST/context-driven generation, physical resources and generated native runtime.",
+          },
+          next: {
             path: "src/codegen/builtin-subclass-receiver.ts",
             state: "unmigrated",
             layer: "mixed-needs-split",
@@ -2314,7 +2409,7 @@ const expected = {
           },
         },
         {
-          index: 1789,
+          index: 1790,
           row: {
             path: "src/codegen/expressions/callable-property-omittable-param.ts",
             state: "unmigrated",
@@ -2341,7 +2436,7 @@ const expected = {
           },
         },
         {
-          index: 1790,
+          index: 1791,
           row: {
             path: "src/codegen/closures/host-boolean-callback.ts",
             state: "unmigrated",
@@ -2368,7 +2463,7 @@ const expected = {
           },
         },
         {
-          index: 1791,
+          index: 1792,
           row: {
             path: "src/codegen/expressions/typeof-import-binding.ts",
             state: "unmigrated",
@@ -2395,7 +2490,7 @@ const expected = {
           },
         },
         {
-          index: 1870,
+          index: 1871,
           row: {
             path: "src/ir/runtime/number-remainder-callables.ts",
             state: "clean",
@@ -2417,7 +2512,7 @@ const expected = {
           },
         },
         {
-          index: 1871,
+          index: 1872,
           row: {
             path: "src/wasm/physical/number-remainder.ts",
             state: "clean",
@@ -2503,15 +2598,22 @@ const expected = {
             '      "path": "src/codegen/object-model/extern-get-string-receiver.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n',
         },
         {
+          beforeOffset: 543822,
+          afterOffset: 547230,
+          before: "",
+          after:
+            '      "path": "src/codegen/object-model/extern-get-object-key.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n',
+        },
+        {
           beforeOffset: 581209,
-          afterOffset: 584617,
+          afterOffset: 584949,
           before: "",
           after:
             '      "path": "src/codegen/expressions/callable-property-omittable-param.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n      "path": "src/codegen/closures/host-boolean-callback.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n      "path": "src/codegen/expressions/typeof-import-binding.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n',
         },
         {
           beforeOffset: 594339,
-          afterOffset: 598749,
+          afterOffset: 599081,
           before: "",
           after:
             ',\n    {\n      "path": "src/ir/runtime/number-remainder-callables.ts",\n      "state": "clean",\n      "layer": "ir-runtime"\n    },\n    {\n      "path": "src/wasm/physical/number-remainder.ts",\n      "state": "clean",\n      "layer": "wasm-physical"\n    }',
@@ -2522,6 +2624,82 @@ const expected = {
   },
 } as const;
 
+const former1872Profile = {
+  source: {
+    bytes: 599006,
+    sha256: "89271aaacc5bb80516e5ace874945529561a755c045cb4224afc9403814f00d1",
+    gitBlob: "67d856f545a15c6a55b18cc9ced67fc15bb38946",
+  },
+  fileCount: 1872,
+  dataSha256: "2c167ab1cdff4e017c6197e456adde6ee5449830b1d85e95e2631d768e2e492a",
+  filesSha256: "48e3f104d708ee7a90ead8e88ac8bcbb59fdcb9b38fa0dd7d6c4ec197488ad6f",
+  nonFilesSha256: "3a4788461bc5c6757c931554be0ec6218711f00814f580d9bb70d26a5929c1ce",
+  topLevelKeys: [
+    "schema",
+    "description",
+    "sourceRoot",
+    "tsconfig",
+    "requireGitProvenance",
+    "externalAssets",
+    "frontendWrapper",
+    "moduleExtensions",
+    "layers",
+    "allowedEdges",
+    "externalPackages",
+    "activationHistory",
+    "nonModules",
+    "moves",
+    "evidence",
+    "files",
+  ],
+} as const;
+const fccMain1871Profile = {
+  source: {
+    bytes: 599088,
+    sha256: "0ae46e7f8b29199a8779ddd32be7a33d44de8b5cadba4e4755ce4b3d4d5c2741",
+    gitBlob: "da3285282a5f971acaf1c6a7902e67cde909868c",
+  },
+  fileCount: 1871,
+  dataSha256: "9c58916ec3c6e418afdb90108396badd256ca21d4f0dd1883cd07bc1de939617",
+  filesSha256: "76fae65a2cfea8c7b6aa4b9dd8579d2360c8ed6ad1b340884bbd940a003a83ee",
+  nonFilesSha256: "3a4788461bc5c6757c931554be0ec6218711f00814f580d9bb70d26a5929c1ce",
+  topLevelKeys: [
+    "schema",
+    "description",
+    "sourceRoot",
+    "tsconfig",
+    "requireGitProvenance",
+    "externalAssets",
+    "frontendWrapper",
+    "moduleExtensions",
+    "layers",
+    "allowedEdges",
+    "externalPackages",
+    "activationHistory",
+    "nonModules",
+    "moves",
+    "evidence",
+    "files",
+  ],
+} as const;
+const fccInsertions = [
+  {
+    beforeOffset: 547230,
+    afterOffset: 547230,
+    before: "",
+    after:
+      '      "path": "src/codegen/object-model/extern-get-object-key.ts",\n      "state": "unmigrated",\n      "layer": "mixed-needs-split",\n      "destination": "backend-wasmgc",\n      "owner": "3518-coordinator",\n      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."\n    },\n    {\n',
+  },
+] as const;
+const fccRemainderInsertions = [
+  {
+    beforeOffset: 599081,
+    afterOffset: 599081,
+    before: "",
+    after:
+      ',\n    {\n      "path": "src/ir/runtime/number-remainder-callables.ts",\n      "state": "clean",\n      "layer": "ir-runtime"\n    },\n    {\n      "path": "src/wasm/physical/number-remainder.ts",\n      "state": "clean",\n      "layer": "wasm-physical"\n    }',
+  },
+] as const;
 const checkpoint1870Profile = {
   source: {
     bytes: 598331,
@@ -2945,6 +3123,8 @@ const sha = (value: string | Buffer): string => createHash("sha256").update(valu
 type Policy = Record<string, unknown> & { files: Record<string, unknown>[] };
 type Profile =
   | typeof expected.current
+  | typeof former1872Profile
+  | typeof fccMain1871Profile
   | typeof checkpoint1870Profile
   | typeof prior1871Profile
   | typeof upstream1870Profile
@@ -3037,11 +3217,14 @@ function undo0be(
   expect(replay.toString("utf8")).toBe(raw);
   return previous.toString("utf8");
 }
+function former1872(raw: string): string {
+  return undo0be(raw, fccInsertions, former1872Profile);
+}
 function checkpoint1870(raw: string): string {
-  return undo0be(raw, incomingInsertions, checkpoint1870Profile);
+  return undo0be(former1872(raw), incomingInsertions, checkpoint1870Profile);
 }
 function prior1871(raw: string): string {
-  return undo0be(raw, [incomingInsertions[0]], prior1871Profile);
+  return undo0be(former1872(raw), [incomingInsertions[0]], prior1871Profile);
 }
 function former1868(raw: string): string {
   return undo0be(checkpoint1870(raw), remainderInsertions, former1868Profile);
@@ -3141,22 +3324,22 @@ describe("fixed post-position main and Deno predecessor routes", () => {
     healthy();
     expect(
       expected.projections.main46caf.removedRows.filter(
-        (row) => row.index < 1870 && row.index !== 396 && row.index !== 1052,
+        (row) => row.index < 1871 && row.index !== 396 && row.index !== 1052 && row.index !== 1662,
       ),
     ).toHaveLength(18);
-    expect(expected.projections.main46caf.removedRows).toHaveLength(22);
+    expect(expected.projections.main46caf.removedRows).toHaveLength(23);
     expect(
       expected.projections.oldPosition.removedRows.filter(
-        (row) => row.index < 1870 && row.index !== 396 && row.index !== 1052,
+        (row) => row.index < 1871 && row.index !== 396 && row.index !== 1052 && row.index !== 1662,
       ),
     ).toHaveLength(28);
-    expect(expected.projections.oldPosition.removedRows).toHaveLength(32);
+    expect(expected.projections.oldPosition.removedRows).toHaveLength(33);
     expect(
       expected.projections.oldDeno.removedRows.filter(
-        (row) => row.index < 1870 && row.index !== 396 && row.index !== 1052,
+        (row) => row.index < 1871 && row.index !== 396 && row.index !== 1052 && row.index !== 1662,
       ),
     ).toHaveLength(12);
-    expect(expected.projections.oldDeno.removedRows).toHaveLength(16);
+    expect(expected.projections.oldDeno.removedRows).toHaveLength(17);
   });
   it("detaches both semantic routes and preserves every frozen input byte", () => {
     const { current } = healthy();
@@ -3293,7 +3476,7 @@ describe("fixed post-position main and Deno predecessor routes", () => {
     it(`${route} refuses new-row accessors and hidden data without observation and restores healthy input`, () => {
       const { raw, current } = healthy();
       const original = JSON.stringify(current);
-      for (const index of [1870, 1871]) {
+      for (const index of [1871, 1872]) {
         for (const kind of ["accessor", "hidden data"] as const) {
           const mutant = structuredClone(current);
           let touched = 0,
@@ -3325,17 +3508,19 @@ describe("fixed post-position main and Deno predecessor routes", () => {
     });
     it(`${route} accepts productive current1872 with complete prior1871 and checkpoint1870 inverse/replay`, () => {
       const { raw, current } = healthy();
-      const checkpoint = checkpoint1870(raw),
+      const previous = former1872(raw),
+        previousData = profile(previous, former1872Profile),
+        checkpoint = checkpoint1870(raw),
         prior = prior1871(raw);
-      expect(Buffer.byteLength(raw) - Buffer.byteLength(checkpoint)).toBe(675);
-      expect(Buffer.byteLength(raw) - Buffer.byteLength(prior)).toBe(343);
+      expect(Buffer.byteLength(previous) - Buffer.byteLength(checkpoint)).toBe(675);
+      expect(Buffer.byteLength(previous) - Buffer.byteLength(prior)).toBe(343);
       const checkpointData = profile(checkpoint, checkpoint1870Profile),
         priorData = profile(prior, prior1871Profile);
-      const incomingMain = undo0be(raw, currentRemainderInsertions, upstream1870Profile);
+      const incomingMain = undo0be(previous, currentRemainderInsertions, upstream1870Profile);
       const base = former1868(raw);
       expect(undo0be(incomingMain, incomingInsertions, former1868Profile)).toBe(base);
-      expect(checkpointData.files).toEqual(current.files.filter((_, index) => index !== 396 && index !== 1052));
-      expect(priorData.files).toEqual(current.files.filter((_, index) => index !== 396));
+      expect(checkpointData.files).toEqual(previousData.files.filter((_, index) => index !== 396 && index !== 1052));
+      expect(priorData.files).toEqual(previousData.files.filter((_, index) => index !== 396));
       expect(rawCapture(raw)).toBe(independent(raw, route === "main" ? "oldPosition" : "oldDeno"));
       expect(dataCapture(current)).toEqual(JSON.parse(rawCapture(raw)));
     });
@@ -3384,6 +3569,63 @@ describe("fixed post-position main and Deno predecessor routes", () => {
         }
       healthy();
     });
+    it(`${route} accepts productive current1873 with complete former1872 inverse/replay and commuting remainder append`, () => {
+      const { raw, current } = healthy();
+      const previous = former1872(raw),
+        before = profile(previous, former1872Profile);
+      expect(Buffer.byteLength(raw) - Buffer.byteLength(previous)).toBe(332);
+      expect(current.files.filter((_, index) => index !== 1662)).toEqual(before.files);
+      expect(Object.fromEntries(Object.entries(current).filter(([key]) => key !== "files"))).toEqual(
+        Object.fromEntries(Object.entries(before).filter(([key]) => key !== "files")),
+      );
+      const upstream = undo0be(raw, fccRemainderInsertions, fccMain1871Profile);
+      expect(undo0be(upstream, fccInsertions, upstream1870Profile)).toBe(
+        undo0be(previous, currentRemainderInsertions, upstream1870Profile),
+      );
+      expect(rawCapture(raw)).toBe(independent(raw, route === "main" ? "oldPosition" : "oldDeno"));
+      expect(dataCapture(current)).toEqual(JSON.parse(rawCapture(raw)));
+      healthy();
+    });
+    it(`${route} refuses exact stale former1872 as current and restores healthy current1873`, () => {
+      const { raw } = healthy();
+      const stale = former1872(raw);
+      expect(() => rawCapture(stale)).toThrow(/complete raw source profile mismatch/);
+      expect(() => dataCapture(JSON.parse(stale))).toThrow(/complete policy profile mismatch/);
+      healthy();
+    });
+    it(`${route} refuses f087 incoming-row accessors and hidden data with zero observation and healthy restoration`, () => {
+      const { raw, current } = healthy();
+      const original = JSON.stringify(current);
+      for (const kind of ["accessor", "hidden data"] as const) {
+        const mutant = structuredClone(current);
+        let touched = 0,
+          reads = 0;
+        Object.defineProperty(
+          mutant.files[1662]!,
+          "state",
+          kind === "accessor"
+            ? {
+                enumerable: true,
+                get() {
+                  touched++;
+                  throw new Error("f087 row getter observed");
+                },
+              }
+            : { value: "unmigrated", enumerable: false },
+        );
+        expect(() =>
+          dataCapture(mutant, (path) => {
+            reads++;
+            return read(path);
+          }),
+        ).toThrow(/accessor or hidden field/);
+        expect(touched).toBe(0);
+        expect(reads).toBe(0);
+        expect(JSON.stringify(current)).toBe(original);
+        expect(dataCapture(current)).toEqual(JSON.parse(rawCapture(raw)));
+      }
+      healthy();
+    });
     it(`${route} refuses the exact stale main1850 profile as current`, () => {
       const { raw } = healthy();
       const stale = independent(raw, "main46caf");
@@ -3406,8 +3648,8 @@ describe("fixed post-position main and Deno predecessor routes", () => {
     for (const projection of ["oldPosition", "oldDeno"] as const)
       for (const row of expected.projections[projection].removedRows)
         for (const location of ["row", "previous", "next"] as const)
-          it(`${route} refuses ${projection} ${originalIndices[row.row.path as keyof typeof originalIndices] ?? row.index} ${location} profile drift`, () => {
-            const { current } = healthy(),
+          it(`${route} refuses ${projection} ${originalIndices[row.row.path as keyof typeof originalIndices] ?? (row.row.path === "src/codegen/object-model/extern-get-object-key.ts" ? "f087-1662" : row.index)} ${location} profile drift`, () => {
+            const { raw, current } = healthy(),
               mutant = structuredClone(current),
               index = row.index + (location === "previous" ? -1 : location === "next" ? 1 : 0);
             if (index === mutant.files.length) {
@@ -3417,6 +3659,10 @@ describe("fixed post-position main and Deno predecessor routes", () => {
               mutant.files.push({ path: "src/foreign-boundary.ts", state: "foreign", layer: "ir-runtime" });
             } else mutant.files[index]!.state = "foreign";
             expect(() => dataCapture(mutant)).toThrow(/complete policy profile mismatch/);
+            if (row.row.path === "src/codegen/object-model/extern-get-object-key.ts") {
+              expect(dataCapture(current)).toEqual(JSON.parse(rawCapture(raw)));
+              healthy();
+            }
           });
     for (const kind of ["whitespace", "span"] as const)
       it(`${route} refuses raw ${kind} drift`, () => {

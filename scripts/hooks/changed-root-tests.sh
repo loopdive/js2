@@ -52,14 +52,20 @@ if [ -z "$changed" ]; then
 fi
 
 count="$(printf '%s\n' "$changed" | wc -l | tr -d ' ')"
-if [ "$count" -gt 20 ]; then
-  echo "changed-root-tests: $count root test files changed (>20); skipping the change-scoped gate."
-  echo "The post-merge issue-tests detector covers mass edits."
-  exit 0
+# (#6783) A mass edit used to skip this gate outright (`exit 0`), so a PR that
+# touched 21 root test files ran none of them. Run the first $max instead, and
+# name every file that is not run so the log shows exactly what was skipped.
+max=20
+to_run="$changed"
+if [ "$count" -gt "$max" ]; then
+  to_run="$(printf '%s\n' "$changed" | sed -n "1,${max}p")"
+  echo "changed-root-tests: WARNING — $count root test files changed (>$max); running the first $max."
+  echo "changed-root-tests: NOT RUN ($((count - max)) file(s) beyond the first $max):"
+  printf '%s\n' "$changed" | sed -n "$((max + 1)),\$p" | sed 's/^/  /'
 fi
 
-echo "changed-root-tests: running $count changed root test file(s):"
-printf '%s\n' "$changed"
+echo "changed-root-tests: running $(printf '%s\n' "$to_run" | wc -l | tr -d ' ') changed root test file(s):"
+printf '%s\n' "$to_run"
 
 # (#3505 follow-up) vitest.config.ts pins each fork worker's old-space via an
 # explicit execArgv (default 512MB — which also overrides any NODE_OPTIONS),
@@ -77,10 +83,22 @@ export VITEST_FORK_MAX_OLD_SPACE_SIZE
 # "[vitest-worker]: Timeout calling onTaskUpdate" unhandled error and exits 1
 # with every test green. Test FAILURES still gate — only the unhandled-error
 # channel is ignored, and only in this change-scoped runner.
-for test_file in $changed; do
-  pnpm exec vitest run "$test_file" \
+#
+# Stops at the first failing file; every changed file after it — the rest of
+# the first $max and anything beyond them — is listed as not run.
+index=0
+for test_file in $to_run; do
+  index=$((index + 1))
+  if ! pnpm exec vitest run "$test_file" \
     --pool=forks \
     --poolOptions.forks.singleFork=true \
     --dangerouslyIgnoreUnhandledErrors \
-    --no-file-parallelism || exit 1
+    --no-file-parallelism; then
+    echo "changed-root-tests: FAILED: $test_file — stopping at the first failure."
+    if [ "$index" -lt "$count" ]; then
+      echo "changed-root-tests: NOT RUN ($((count - index)) changed root test file(s) not reached):"
+      printf '%s\n' "$changed" | sed -n "$((index + 1)),\$p" | sed 's/^/  /'
+    fi
+    exit 1
+  fi
 done

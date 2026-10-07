@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11555,
-    "fail": 135,
+    "pass": 11556,
+    "fail": 134,
     "ce": 14,
     "skip": 0,
     "total": 11704,
@@ -192,12 +192,12 @@
       },
       {
         "name": "Symbol.toPrimitive",
-        "pass": 81,
-        "fail": 2,
+        "pass": 82,
+        "fail": 1,
         "ce": 0,
         "skip": 0,
         "total": 83,
-        "pct": 98
+        "pct": 99
       },
       {
         "name": "let",
