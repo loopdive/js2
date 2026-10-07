@@ -181,6 +181,22 @@ loc-budget-allow:
   # mechanism (an explicit `setPrototypeOf` side-table read must stay in front).
   # The arms and the identity natives live in the NEW leaf
   # `generator-function-proto-arm.ts`. `index.ts` is already listed below.
+
+  # 2026-10-07 — slice W9 (record `### 2026-10-07 — Slice W9`).
+  # `any-helpers.ts` +60: `emitPrimitiveUnionExternToAny` and its predicate sit
+  # beside `ensureAnyFromExternHelper`, the classifier they compose (#5185).
+  # `expressions.ts` +5: the one arm in the public expected-type coercion, next
+  # to its i32 → `$AnyValue` boolean twin. `dataview-native.ts` +11: the split
+  # of the dynamic TA constructor's plain-vec arm on a patched
+  # `%ArrayIteratorPrototype%.next` (mechanism in
+  # `iterator-proto-next.ts`, beside S2). `iterator-native.ts` +8: the OBJ
+  # step's `next` read admits a wrapped `$__IterRec`, and the OBJ variant of
+  # `userIterRecordDirectInstrs`. The last three are restated per the
+  # stranded-grant rule.
+  - src/codegen/any-helpers.ts
+  - src/codegen/expressions.ts
+  - src/codegen/dataview-native.ts
+  - src/codegen/iterator-native.ts
   # 2026-10-06 — slice V10b (ArraySetLength order / DataView expandos /
   # arguments @@iterator; record `### 2026-10-06 — Slice V10b`). Paths other
   # than `array-holes.ts` are already listed below (restated per the
@@ -1390,6 +1406,14 @@ loc-budget-allow:
 func-budget-allow:
   # 2026-10-07 — slice W5/W8 (see the loc-budget note): `generateModule` +1 and
   # `generateMultiModule` +1, the finalize call each (both keys listed below).
+
+  # 2026-10-07 — slice W9 (restated per the stranded-grant rule):
+  # `emitTaDynCtorConstructInline` +10, the patched-next split of its plain-vec
+  # arm (mechanism in `iterator-proto-next.ts`);
+  # `buildIteratorNextBody` +7, the `$__IterRec` admission in the OBJ step's
+  # `next` read.
+  - src/codegen/dataview-native.ts::emitTaDynCtorConstructInline
+  - src/codegen/iterator-native.ts::buildIteratorNextBody
   # 2026-10-06 — slice V10b (see the loc-budget note): `compileElementAccessBody`
   # +15 (the standalone `vec[Symbol.iterator]` arm), `collectDeclarations` +9
   # (`moduleVarDeclType` from the initializer — both keys already listed below)
@@ -4955,6 +4979,70 @@ false — the #3037 mechanism, for the `function`-valued spelling too).
   (the TA link + the §10.4.5.5 receiver arm in the walkers); not attempted in
   this time box after W8 — the link writer and four walker arms are a separate
   slice.
+
+### 2026-10-07 — Slice W9
+
+TypedArray singles, on `fab22c35ff`. **2 of 3 rows flip** (plus one bonus
+twin); the third is diagnosed and left.
+
+- **`ctors/length-arg/toindex-length.js` (#5185) — flips.** Not the
+  destructured shape #5185 was filed for (that repro already answers 201 on
+  base). Inside `items.forEach(function (item) { var expected = item[1]; … })`
+  over 4-kind rows (`[-0, 0, "-0"]`, `["", 0, …]`, `[true, 1, …]`,
+  `[null, 0, …]`), `expected` is a `string | number | boolean | null`
+  `$AnyValue` local fed by a dynamic element read (externref). The generic
+  externref → `$AnyValue` default `__any_box_extern_s1` keeps the #1888 tag-5
+  lie for every non-nullish value, so the boxed `0` was stored as a "string".
+  Fix at the coercion site (`compileExpression`'s expected-type arm →
+  `emitPrimitiveUnionExternToAny`, `any-helpers.ts`): when the static type is a
+  union of primitives only, box through `s1` and re-classify a residual tag-5
+  wrap with `__any_from_extern` (number → 3, boolean → 4, string stays 5). The
+  shared default is untouched (the −788/−794 hazard). Also flips
+  `ctors-bigint/length-arg/toindex-length.js`.
+- **`ctors/object-arg/iterated-array-with-modified-array-iterator.js` (#6484)
+  — flips.** The dynamic TA constructor's plain-vec arms copied the source
+  storage and never looked at `%ArrayIteratorPrototype%.next`.
+  `emitPatchedArrayIterCopy` (`iterator-proto-next.ts`) splits those arms:
+  when the prototype singleton is materialised and its `next` is not the
+  intrinsic closure (identity compare), the source is opened as a genuine
+  array-iterator record wrapped in an OBJ record and drained by
+  `__array_from_iter_n`; the OBJ step (`iterator-native.ts`) now admits a
+  wrapped `$__IterRec` for its `Get(it, "next")`, which resolves through the S2
+  `__extern_get` prologue, and calls the patch with the genuine record as
+  `this` — so a patch delegating to the original still steps the real cursor.
+  Unpatched cost: one `global.get` + `ref.is_null`, or one property read +
+  `ref.eq` once the prototype exists. TA-carrier (`i8_byte`/`i16_byte`)
+  sources are excluded (§23.2.5.1.2 does not iterate them).
+- **`ArrayBuffer/isView/arg-is-typedarray-subclass-instance.js` — NOT done.**
+  `class TA extends ctor {}` with `ctor` a parameter compiles `TA_new` to a
+  closed two-`i32` struct that never sees the heritage value: probe p1 gives
+  `ArrayBuffer.isView(new TA(0))` false, `instanceof ctor` false, `length`
+  wrong, while `instanceof TA` and the prototype are right. It is not
+  TypedArray-specific: `function run(B) { class C extends B {} new C() }` with
+  a USER base class also loses the base constructor's effects and
+  `instanceof B` (both 0). The fix is general runtime-heritage support (capture
+  the heritage value at class evaluation, construct through it with NewTarget
+  = the class) — `Reflect.construct(ctor, args, TA)` is itself a #3371 CE
+  today. Beyond the one-hour budget; needs its own slice.
+
+**Receipts** (`JS2WASM_EVAL_ENGINE=quickjs … run-test262-paths.mts
+--standalone`, 200-row in-process chunks, base = `git archive` of
+`fab22c35ff`, same box). `TypedArrayConstructors/**` +
+`TypedArray/prototype/{forEach,values,entries,keys,Symbol.iterator}/**` +
+`ArrayIteratorPrototype/**` + `class/subclass/**` — 976 rows: base 801 pass →
+branch 804, **0 lost**, exactly the 3 rows above gained. Measurement
+incidents, each re-run: one base and one branch chunk were OOM-killed (exit
+137, box load 18) and re-run whole; 28 base rows hit ENOENT when a borrowed
+`test262` symlink target was removed mid-run and were re-run row-wise (27
+pass, 1 fails identically on both sides); 10 branch rows read a stale QuickJS
+adapter key and were re-run after the provider rebuild (10/10 pass).
+`ArrayIteratorPrototype/**` 27/27 and `{Map,Set}IteratorPrototype/**` +
+`Iterator/prototype/Symbol.iterator/**` 27/27 on the branch. Pin
+`tests/issue-6651-w9-typedarray-singles.test.ts` 6/6 (1/6 on base — the GUARD
+case). Equivalence gate green (1748 pass, 22 known). Temporal control
+(`Duration/prototype/round/*`, standalone, fresh prewarmed cache after
+`build:compiler-bundle` + `build:runtime-bundle`): **119 pass / 7 fail of 126,
+0 `illegal cast`** — unchanged.
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 
