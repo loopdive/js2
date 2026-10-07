@@ -259,3 +259,48 @@ small body. Preserve all inherited failures and diagnose against the same base,
 never borrow another issue's grant or weaken configuration. Parent reviews exact
 two-source diff and paired evidence before publication; A owns final queue landing.
 No performance claim, new IR coverage, frontend allocation release or retirement.
+
+## Narrow test typing repair — 2026-10-07
+
+Parent reports the original paired51 cases passed with exact13 observation rows,
+16 binaries and10 memory observations. Preserve that epoch, original test commit
+`da6d5ceed9bceb02c648a09801f5d186421db228`, test bytes/hash and all raw evidence.
+Candidate strict test-inclusive TS7 exited1: TS2339 at new-test lines622 and629,
+because `TypeDef.name` is not present on `RecGroupDef`. Parent subsequently
+confirmed baseline strict at da6d5 also exited1, with both complete diagnostics
+identical to candidate06533320 and no source errors. Both failures are preserved;
+this does not establish repaired qualification.
+
+Actual canonical `src/wasm/model/module-records.ts:5–37` defines TypeDef as
+FuncTypeDef | StructTypeDef | ArrayTypeDef | RecGroupDef | SubTypeDef. Only the
+`kind: "rec"` arm lacks name; function name is optional, and the other three
+non-rec arms require it. No shared model change is needed or authorized.
+
+After parent confirms the test writer's exact scope, repair ONLY two expressions
+inside `registration` in
+`tests/issue-6914-linear-ir-array-forwarding-provider-body.test.ts`:
+
+1. `typeNames`: use
+   `module.types.map((entry) => entry.kind === "rec" ? null : entry.name ?? null)`.
+   Preserve one output per type and its order; recursive groups and unnamed
+   functions still produce null. Do not flatten groups or drop unnamed entries.
+2. Resolver-type count: use
+   `module.types.filter((entry) => entry.kind !== "rec" && entry.name === "$type___arr_resolve")`.
+   Keep the existing `.toHaveLength(1)` assertion exactly. Do not narrow to only
+   function types, which would weaken the original all-named-types count.
+
+Use discriminant narrowing only: no casts, any, suppressions, helper/schema,
+configuration changes or new fixtures. All remaining assertions, consumer/owner
+joins, imports, source strings, flags, ABI, binaries and evidence fields stay intact.
+This is test typing, not production behavior or additional IR coverage.
+
+Parent retains both original strict failures, then freezes identical
+repaired test bytes in both exact production arms. Require unchanged strict TS7
+to pass both; archive new logs beside the original failures. Rerun the unchanged
+13+38=51 population in both arms with zero skips; require every case identity and
+status, all13 complete observation rows,16 binaries and10 memory observations to
+equal the original passing epoch within each arm and across arms. Exclude only
+explicitly enumerated provenance changes (test hash/revision), never typeNames,
+resolver counts, route, body, byte or memory data. Preserve all unexpected failures
+and stop for parent review rather than widen scope. Normal scoped gates and A's
+integration authority remain; no acceptance or queue release is implied here.
