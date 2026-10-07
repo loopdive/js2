@@ -16,6 +16,7 @@ import {
   linkedMallocPrologue,
 } from "./linked-arena.js";
 import { isLinearStringLiteralCacheGlobal } from "./string-literals.js";
+import { buildLinearF64VectorInitializationBody } from "./runtime/vector-initialization.js";
 
 /**
  * Heap starts at byte offset 1024 (leave low addresses for null/sentinel).
@@ -1374,15 +1375,14 @@ export const LINEAR_IR_VEC_INIT_F64_FN = "__linear_ir_vec_init_f64";
  */
 export function addLinearIrVecRuntime(mod: WasmModule): void {
   if (mod.functions.some((fn) => fn.name === LINEAR_IR_VEC_INIT_F64_FN)) return;
-  addRuntimeFunc(mod, LINEAR_IR_VEC_INIT_F64_FN, [{ kind: "f64" }, { kind: "i32" }, { kind: "i32" }], [], [], () => [
-    { op: "local.get", index: 1 },
-    { op: "local.get", index: 2 },
-    { op: "i32.const", value: 8 },
-    { op: "i32.mul" },
-    { op: "i32.add" },
-    { op: "local.get", index: 0 },
-    { op: "f64.store", align: 3, offset: 16 },
-  ]);
+  addRuntimeFunc(
+    mod,
+    LINEAR_IR_VEC_INIT_F64_FN,
+    [{ kind: "f64" }, { kind: "i32" }, { kind: "i32" }],
+    [],
+    [],
+    buildLinearF64VectorInitializationBody,
+  );
 }
 
 /**
