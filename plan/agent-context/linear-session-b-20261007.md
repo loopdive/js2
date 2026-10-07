@@ -19,7 +19,18 @@ Sol6.1 implements bounded slices in isolated worktrees.
   `ttraenkler/codex-linear-b-astra-plan-20261007`, branch
   `codex/6888-linear-spec-20261007`. Writer scope is the new issue6888 Markdown
   plan only. Implementation claims and exact file/function partitions follow
-  task selection and collision review; no source edit is released yet.
+  task selection and collision review. Issue6888 is blocked on shared f32
+  semantic admission; no implementation edit is released for it.
+- Issue6891's Astra plan releases two independent, upstream effect-verified
+  implementation claims: `6891:linear-stack-source-20261007`, owner
+  `ttraenkler/codex-linear-b-stack-sol61-20261007`, and
+  `6891:linear-stack-tests-20261007`, owner
+  `ttraenkler/codex-linear-b-stack-tests-sol61-20261007`. Their branches are
+  `codex/6891-linear-stack-source-20261007` and
+  `codex/6891-linear-stack-tests-20261007` respectively. Sol6.1 Medium workers
+  own only `runtime-stack-arena.ts::addLinearStackArenaRuntime`'s emitted
+  allocation locals/body and the new issue6891 regression test respectively.
+  Existing shared contracts suffice; no shared wiring is requested for6891.
 - Coordination-file owner: this parent session, limited to this handoff.
   No ownership of shared compiler/API/registry wiring is assumed.
 
@@ -40,8 +51,12 @@ and existing runtime/coercion work under issues4540,4542,4544,6778 and6793.
 These stay owned by their current owners. Check the live book before every
 coding release, because names and timestamps alone do not prove abandonment.
 
-Session A's current publication has not yet been identified. A requested pointer
-is pending from the user. No active A/subagent claim is adopted while waiting.
+Session A's human-confirmed pending publication is branch
+`codex/ir-session-a-coordination-20261007`, issue6889, document
+`plan/log/ir-coordination-session-a.md`. It is not yet pushed, so no future
+commit is treated as a verified dependency. A explicitly owns shared integration,
+compiler entry points and active source-map files; leave these unchanged until
+comparing explicit scopes. No active A/subagent claim is adopted while waiting.
 Shared wiring changes require the designated owner's handoff; independent leaf
 work may proceed once its own claims are effect-verified.
 
