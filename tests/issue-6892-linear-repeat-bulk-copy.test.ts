@@ -28,6 +28,9 @@ const decoder = new TextDecoder("utf-8", { fatal: true });
 const align8 = (value: number) => Math.ceil(value / 8) * 8;
 const TEST_PATH = "tests/issue-6892-linear-repeat-bulk-copy.test.ts";
 const KERNEL_PATH = "src/codegen-linear/string-repeat.ts";
+const timedCases: [string, number][] = ["xy", "abc"].flatMap((fragment) =>
+  [3, 9, 1024, 65537].map((count): [string, number] => [fragment, count]),
+);
 let observations = 0;
 
 function record(kind: string, data: object) {
@@ -79,18 +82,29 @@ function sourceText(fragment: string, count: number) {
   }`;
 }
 
-async function compileCounted(fragment: string, count: number, exposeUsage = false) {
+async function compileCounted(
+  fragment: string,
+  count: number,
+  exposeUsage = false,
+  captureCheckpoint?: (phase: string) => void,
+) {
   vi.stubEnv("JS2WASM_LINEAR_IR", "1");
   vi.stubEnv("JS2WASM_IR_STRING_BUILDER", "1");
   const caseId = `ascii-${encoder.encode(fragment).length}-n-${count}`;
-  const result = await compile(sourceText(fragment, count), {
+  const source = sourceText(fragment, count);
+  const fileName = `issue-6892-${caseId}.ts`;
+  const compileOptions = {
     target: "linear",
-    fileName: `issue-6892-${caseId}.ts`,
+    fileName,
     optimize: false,
     emitWat: true,
     allocator: exposeUsage ? "arena-reset" : "bump",
-  });
+  } as const;
+  captureCheckpoint?.("before compilation");
+  const result = await compile(source, compileOptions);
+  captureCheckpoint?.("after compilation");
   const preparationReport = getLastLinearIrReport();
+  captureCheckpoint?.("before semantic preparation reporting");
   record("semantic-preparation", {
     caseId,
     fragment,
@@ -101,8 +115,9 @@ async function compileCounted(fragment: string, count: number, exposeUsage = fal
     rejected: preparationReport?.rejected ?? null,
     receiptCount: preparationReport?.preparedCountedStringAppendReceipts.length ?? null,
   });
+  captureCheckpoint?.("after semantic preparation reporting");
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-  const report = getLastLinearIrReport();
+  const report = preparationReport;
   expect(report).toBeDefined();
   if (!report) throw new Error("missing Linear IR report");
   expect(report.compiled).toContain("run");
@@ -133,17 +148,24 @@ async function compileCounted(fragment: string, count: number, exposeUsage = fal
     expect(repeats).toHaveLength(0);
     expect(result.wat).not.toContain("$__str_repeat");
   }
+  captureCheckpoint?.("after ownership assertions / before binary validation");
   expect(WebAssembly.validate(result.binary)).toBe(true);
+  captureCheckpoint?.("after binary validation / before module compilation");
   const module = new WebAssembly.Module(result.binary);
+  captureCheckpoint?.("after module compilation");
   expect(WebAssembly.Module.imports(module)).toEqual([]);
+  captureCheckpoint?.("before disposable validation instance");
   const instance = await WebAssembly.instantiate(module);
+  captureCheckpoint?.("after disposable validation instance");
   const memory = instance.exports.memory as WebAssembly.Memory;
   const output = readRecord(memory, (instance.exports.run as () => number)());
+  captureCheckpoint?.("after disposable output execution and decoding");
   const expected = "seed" + fragment.repeat(count);
   expect(output.text).toBe(expected);
   expect(output.bytes).toEqual(Array.from(encoder.encode(expected)));
+  captureCheckpoint?.("after semantic output assertions");
   observations++;
-  record("semantic", {
+  const semanticWitness = {
     caseId,
     fragment,
     count,
@@ -160,8 +182,226 @@ async function compileCounted(fragment: string, count: number, exposeUsage = fal
       binding: repeats[0]?.provider?.binding ?? null,
     },
     output,
-  });
-  return { module, caseId, expected, outputBytes: encoder.encode(expected).length };
+  };
+  captureCheckpoint?.("before semantic reporting");
+  record("semantic", semanticWitness);
+  captureCheckpoint?.("after semantic reporting");
+  return {
+    module,
+    caseId,
+    expected,
+    outputBytes: encoder.encode(expected).length,
+    binary: result.binary,
+    source,
+    fileName,
+    compileOptions,
+    semanticWitness,
+    receiptWitness: {
+      count: report.preparedCountedStringAppendReceipts.length,
+      siteId: receipt.siteId,
+      planSiteId: receipt.plan.siteId,
+      tripCount: receipt.plan.syntaxPlan.tripCount,
+      planOwner: receipt.plan.ownerUnitId,
+      planSource: receipt.plan.sourceId,
+    },
+    repeatCount: repeats.length,
+  };
+}
+
+type CountedArtifact = Awaited<ReturnType<typeof compileCounted>>;
+interface RepeatArtifactCapture {
+  schemaVersion: 1;
+  ordinal: number;
+  caseId: string;
+  fragment: string;
+  count: number;
+  source: string;
+  sourceSha256: string;
+  fileName: string;
+  compileOptions: CountedArtifact["compileOptions"];
+  binaryBase64: string;
+  binaryByteLength: number;
+  binarySha256: string;
+  imports: WebAssembly.ModuleImportDescriptor[];
+  exports: WebAssembly.ModuleExportDescriptor[];
+  outputBytes: number;
+  estimatedAllocationPerCall: number;
+  calls: number;
+  semanticWitness: CountedArtifact["semanticWitness"];
+  receiptWitness: CountedArtifact["receiptWitness"];
+  repeatCount: number;
+}
+
+/** Capture authentic source artifacts only; this path performs NO timed batches. */
+async function captureRepeatArtifacts(): Promise<void> {
+  const started = performance.now();
+  const caseIds: string[] = [];
+  const binarySha256s: string[] = [];
+  let phase = "capture setup";
+  const checkpoint = (nextPhase: string): void => {
+    phase = nextPhase;
+    if (performance.now() - started >= 30_000)
+      throw new Error(`incomplete repeat artifact capture: 30-second total cap exceeded at ${phase}`);
+  };
+  const bounded = <T>(label: string, operation: () => T): T => {
+    checkpoint(`before ${label}`);
+    const value = operation();
+    checkpoint(`after ${label}`);
+    return value;
+  };
+  const sha256 = (bytes: Uint8Array | string): string => createHash("sha256").update(bytes).digest("hex");
+  const git = (args: string[]): string =>
+    bounded(`git ${args.join(" ")}`, () => execFileSync("git", args, { encoding: "utf8" }).trim());
+  const digest = (path: string): string => bounded(`hash ${path}`, () => sha256(readFileSync(path)));
+  const expectedTrees: Readonly<Record<string, string>> = {
+    a5c5689f9c85090d44f940204ae3c65605f01ce5: "a2c05cf247880acb2bee3650f3735303927e0594",
+    "6b33a4934e8f95cc2d8c788f059844ffaa5a8f7b": "fb5702851a974b8de9d2744ddc1460420efe5cca",
+  };
+  try {
+    checkpoint("capture gate check");
+    if (process.env.JS2WASM_BENCH_LINEAR_REPEAT === "1")
+      throw new Error("JS2WASM_CAPTURE_LINEAR_REPEAT and JS2WASM_BENCH_LINEAR_REPEAT are mutually exclusive");
+    const sourceEpoch = process.env.JS2WASM_REPEAT_SOURCE_EPOCH;
+    if (!sourceEpoch || !Object.hasOwn(expectedTrees, sourceEpoch))
+      throw new Error("capture requires a pinned baseline/candidate JS2WASM_REPEAT_SOURCE_EPOCH");
+    vi.stubEnv("JS2WASM_LINEAR_IR", "1");
+    vi.stubEnv("JS2WASM_IR_STRING_BUILDER", "1");
+    const head = git(["rev-parse", "HEAD"]);
+    const sourceTree = git(["rev-parse", "HEAD:src"]);
+    const epochSourceTree = git(["rev-parse", `${sourceEpoch}:src`]);
+    const assertCleanSource = (): void => {
+      expect(git(["status", "--porcelain=v1", "--untracked-files=all", "--", "src"])).toBe("");
+      // Include ignored untracked files too: no extra source input is credited.
+      expect(git(["ls-files", "--others", "--", "src"])).toBe("");
+      expect(git(["rev-parse", "HEAD:src"])).toBe(sourceTree);
+    };
+    expect(sourceTree).toBe(expectedTrees[sourceEpoch]);
+    expect(epochSourceTree).toBe(sourceTree);
+    assertCleanSource();
+    const lockfileName = "pnpm-lock.yaml";
+    const lockfileSha256 = digest(lockfileName);
+    expect(lockfileSha256).toBe("6a8b59fd4430c6600dc16ac33a749d0f5fed4ef0c100425de8490e43d916f2ac");
+    const kernelSha256 = digest(KERNEL_PATH);
+    const testSha256 = digest(TEST_PATH);
+    const orderedCaseIds = timedCases.map(([fragment, count]) => `ascii-${encoder.encode(fragment).length}-n-${count}`);
+    bounded("capture start reporting", () =>
+      record("artifact-capture-start", {
+        schemaVersion: 1,
+        sourceEpoch,
+        head,
+        sourceTree,
+        epochSourceTree,
+        sourceClean: true,
+        kernelSha256,
+        testSha256,
+        lockfileName,
+        lockfileSha256,
+        node: process.version,
+        v8: process.versions.v8,
+        platform: process.platform,
+        arch: process.arch,
+        execPath: process.execPath,
+        execArgv: process.execArgv,
+        nodeOptions: process.env.NODE_OPTIONS ?? "",
+        lane: "linear",
+        harness: TEST_PATH,
+        flags: {
+          JS2WASM_LINEAR_IR: process.env.JS2WASM_LINEAR_IR,
+          JS2WASM_IR_STRING_BUILDER: process.env.JS2WASM_IR_STRING_BUILDER,
+        },
+        compileConfiguration: { target: "linear", optimize: false, emitWat: true, allocator: "arena-reset" },
+        caseIds: orderedCaseIds,
+        count: 8,
+      }),
+    );
+    for (const [ordinal, [fragment, count]] of timedCases.entries()) {
+      checkpoint(`before capture case ${ordinal}`);
+      const artifact = await compileCounted(fragment, count, true, checkpoint);
+      checkpoint(`after capture case ${ordinal} ownership and output validation`);
+      const repeatedBytes = encoder.encode(fragment).length * count;
+      // Deliberately identical to the legacy instrument's conservative charge;
+      // its timing branch and batch lifecycle are not changed by capture.
+      const estimatedAllocationPerCall =
+        align8(repeatedBytes + 12) +
+        align8(artifact.outputBytes + 12) +
+        align8(4 + 12) +
+        align8(encoder.encode(fragment).length + 12);
+      const calls = Math.min(256, Math.floor(1_048_576 / estimatedAllocationPerCall));
+      const row = bounded(
+        `serialize capture case ${ordinal}`,
+        (): RepeatArtifactCapture => ({
+          schemaVersion: 1,
+          ordinal,
+          caseId: artifact.caseId,
+          fragment,
+          count,
+          source: artifact.source,
+          sourceSha256: sha256(artifact.source),
+          fileName: artifact.fileName,
+          compileOptions: artifact.compileOptions,
+          binaryBase64: Buffer.from(artifact.binary).toString("base64"),
+          binaryByteLength: artifact.binary.byteLength,
+          binarySha256: sha256(artifact.binary),
+          imports: WebAssembly.Module.imports(artifact.module),
+          exports: WebAssembly.Module.exports(artifact.module),
+          outputBytes: artifact.outputBytes,
+          estimatedAllocationPerCall,
+          calls,
+          semanticWitness: artifact.semanticWitness,
+          receiptWitness: artifact.receiptWitness,
+          repeatCount: artifact.repeatCount,
+        }),
+      );
+      bounded(`capture case ${ordinal} final assertions`, () => {
+        expect(row.caseId).toBe(orderedCaseIds[ordinal]);
+        expect(row.calls).toBe([256, 256, 252, 3, 256, 256, 168, 2][ordinal]);
+        expect(row.imports).toEqual([]);
+        expect(row.exports).toEqual(
+          expect.arrayContaining([
+            { name: "run", kind: "function" },
+            { name: "memory", kind: "memory" },
+            { name: "__arena_used", kind: "function" },
+          ]),
+        );
+        expect(row.semanticWitness.compiled).toEqual(["run"]);
+        expect(row.receiptWitness.count).toBe(1);
+        expect(row.repeatCount).toBe(1);
+        expect(row.semanticWitness.output.length).toBe(row.outputBytes);
+        expect(row.semanticWitness.output.capacity).toBe(row.outputBytes + 4);
+      });
+      bounded(`capture artifact ${ordinal} reporting`, () => record("artifact-capture", row));
+      caseIds.push(row.caseId);
+      binarySha256s.push(row.binarySha256);
+    }
+    assertCleanSource();
+    expect(digest(KERNEL_PATH)).toBe(kernelSha256);
+    expect(digest(TEST_PATH)).toBe(testSha256);
+    expect(digest(lockfileName)).toBe(lockfileSha256);
+    expect(caseIds).toEqual(orderedCaseIds);
+    expect(binarySha256s).toHaveLength(8);
+    bounded("capture completion reporting", () =>
+      record("artifact-capture-complete", {
+        schemaVersion: 1,
+        status: "complete",
+        count: 8,
+        caseIds,
+        binarySha256s,
+        elapsedMs: performance.now() - started,
+      }),
+    );
+  } catch (error) {
+    record("artifact-capture-incomplete", {
+      schemaVersion: 1,
+      status: "incomplete",
+      count: caseIds.length,
+      caseIds,
+      binarySha256s,
+      elapsedMs: performance.now() - started,
+      phase,
+      error: error instanceof Error ? { name: error.name, message: error.message } : { message: String(error) },
+    });
+    throw error;
+  }
 }
 
 function providerFixture() {
@@ -652,6 +892,10 @@ describe("issue 6892: real reserved provider and memory integrity", () => {
 });
 
 it("runs the optional bounded source-derived paired instrument", async () => {
+  if (process.env.JS2WASM_CAPTURE_LINEAR_REPEAT === "1") {
+    await captureRepeatArtifacts();
+    return;
+  }
   if (process.env.JS2WASM_BENCH_LINEAR_REPEAT !== "1") {
     record("instrument", { enabled: false, status: "disabled", observations });
     return;
@@ -673,9 +917,7 @@ it("runs the optional bounded source-derived paired instrument", async () => {
   // Total cap includes compilation, instantiation, checking, warmup and timings.
   // Compiler calls are not cancelled; a call that crosses the deadline is
   // reported as incomplete immediately on return, never credited as evidence.
-  const cases: [string, number][] = ["xy", "abc"].flatMap((fragment) =>
-    [3, 9, 1024, 65537].map((count): [string, number] => [fragment, count]),
-  );
+  const cases = timedCases;
   const measurements: object[] = [];
   for (const [fragment, count] of cases) {
     checkBudget("before compilation");
