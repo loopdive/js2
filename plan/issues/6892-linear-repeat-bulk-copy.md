@@ -798,3 +798,38 @@ their bounded correctness result. Parent/A must review every case and explicitly
 decide performance acceptance; the runner never removes `hold` or queues PR6563.
 Mixed intermediate/short results keep performance unresolved without another
 threshold, warmup or flag sweep. Record both exact epochs, identical new test
+hash, runner hash, commands/options, raw logs and all decisions in new evidence
+files; never overwrite the historical bulk-only/hybrid comparisons. This append
+contains no executed capture/replay result and leaves all prior evidence intact.
+
+## Controlled pairing outcome (2026-10-07)
+
+Capture test commit `e8741f81fdf74156605ee76c396a57e474bd2278`, SHA256
+19b728dfe6941a44941e0817f70c8c2b333f63e858a85cc596814686a3763e82.
+Replay commit `f0f801f7959b1bdaec893439c1bfefadc9588aa9`, runner SHA256
+9fc16d53922e7fb7696dc6a2a20bead36eddad41528eb2b0cfeb76b9e958ae9a.
+Both capture suites pass61/61 and emit eight source-derived artifacts each.
+All90 original functional rows match exactly. Current-main hybrid's unchanged
+repeat controls pass25/25.
+
+One primary-default replay completed448/448 batches and8/8 cases in
+2125.015458ms, with exact full initial/final memory and output equality.
+Two cases have all twelve measured ratios above1: xy N1024 (median1.884592)
+and xy N65537 (median4.272995). Six cases are mixed/unresolved, including
+abc N1024 (median2.268120 but minimum0.888874). Short cases likewise reverse
+direction. All samples, order/early-late statistics and actual full output
+witnesses are retained, not filtered by favorable median.
+
+**Performance is not accepted for landing; PR6563 remains held.** This finite
+instrument did not settle the intermediate/short uncertainty. No additional
+tuning, warmup, engine-profile sweep, retry or source change follows from it.
+Bounded correctness passed; that does not establish full IR equality or
+legacy retirement. A retains queue and shared integration ownership.
+
+Positive replay raw SHA256:
+f1f1d98181cd6f772876c1b3aa81ce921676bfdd50014d1236321e167a8dc200.
+Empty capture and corrupted binary-digest negative controls both exit1 before
+any batch (0 cases/0 batches), with explicit incomplete records. Original
+capture logs, comparison, replay and negatives are retained losslessly under
+`plan/log/6892-linear-repeat-20261007/`; see the updated Session B handoff
+for exact commands and source epochs. No old fixture, result or log is changed.

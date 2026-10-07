@@ -141,3 +141,103 @@ and standalone-only scratch-local declarations plus one new issue-specific test;
 leave linked/chunked prologue, shared tail, options, globals, ABI and wiring with
 their owner. The designated owner or A's explicit coordinated reassignment must
 publish that partition first. Until then continue only truly independent scopes.
+
+## Current-main controlled measurement packet (2026-10-07)
+
+Canonical main refreshed and server-verified at
+`a5c5689f9c85090d44f940204ae3c65605f01ce5`. The independent stack repair
+PR6561 is now a main ancestor; its runtime/test files are exactly unchanged
+from12defc659a8a6fd3ec1ce2f08808a47392a4f9e8. Fresh main execution passes
+23/23, retained in landed-stack-main-validation.log.gz. This is not repeat
+performance or full IR acceptance.
+
+Repeat main-sync source epoch: `6b33a4934e8f95cc2d8c788f059844ffaa5a8f7b`.
+Its source tree differs from main only in string-repeat.ts; hybrid kernel
+SHA5ba8a23ed459fb717864e776813d5df09c1846a060e3a3ceaa7753a05db821b1
+is unchanged. Accepted Astra High measurement-plan commit
+`7df397224f886c3283ecc7db8b5ab20a5179d7d0` is remotely verified on the
+existing non-draft held PR6563. Normal sync push protections include18/18
+numeric-local parity. Fresh unchanged repeat controls at7df pass25/25;
+their raw log is retained in current-main-hybrid-controls.log.gz.
+
+Canonical publication read9e3618fc9c5c909667739d12878ed6fe4882f11e,
+951 active records, proves unique exact paired-plan/capture/replay owners:
+6892:linear-repeat-paired-plan-20261007 (Astra High),
+6892:linear-repeat-paired-capture-20261007 and
+6892:linear-repeat-paired-replay-20261007 (Sol6.1 Medium).
+Their owner suffixes are repeat-paired-astra, repeat-capture-sol61 and
+repeat-replay-sol61 under ttraenkler/codex-linear-b, each dated20261007;
+branches codex/6892-repeat-paired-plan-20261007,
+codex/6892-repeat-capture-20261007 and codex/6892-repeat-replay-20261007.
+T changes only the existing issue test; R only the new issue-local replay
+runner. No shared production scope is released. Parent alone runs heavy jobs.
+
+Reviewed capture commit: `e8741f81fdf74156605ee76c396a57e474bd2278`,
+test SHA19b728dfe6941a44941e0817f70c8c2b333f63e858a85cc596814686a3763e82.
+Baseline source remains exacta5; candidate source remains exact6b despite
+later test/document commits. Source trees are pinned and tested for clean
+tracked/untracked source before and after capture. Capture never substitutes
+for the old timed instrument and rejects mutually enabled capture/benchmark
+gates. All61 fixtures and prior errors/results remain; new capture/replay
+outcomes are still unmeasured at the authoring point of this paragraph.
+
+### Measured outcome and replay commands
+
+Final replay commit `f0f801f7959b1bdaec893439c1bfefadc9588aa9`, SHA256
+9fc16d53922e7fb7696dc6a2a20bead36eddad41528eb2b0cfeb76b9e958ae9a.
+Baseline capture actualHEAD a5; candidate capture actualHEAD e874. Both source
+epochs/trees remain the pinned a5/6b above. Both full suites exit0,61/61;
+exactly90 old functional rows compare equal without exclusions. New protocol
+has one start/eight artifacts/one complete footer per arm. Capture raw hashes:
+4543c75489723cbeebd0555219e78e63f0781e2029514e41c59258c33b43b928
+(baseline) and8e4120a2dfafae754b6d10613bf8d570a3ded5549e0ec8eebeafe4e0643cfab8
+(candidate). Each uses the identical committed19b728 test bytes.
+
+Capture command in each isolated source epoch:
+`JS2WASM_LINEAR_IR=1 JS2WASM_IR_STRING_BUILDER=1
+JS2WASM_CAPTURE_LINEAR_REPEAT=1 JS2WASM_REPEAT_SOURCE_EPOCH=<pinned a5 or6b>
+node node_modules/vitest/dist/cli.js run
+tests/issue-6892-linear-repeat-bulk-copy.test.ts --no-file-parallelism
+--maxWorkers=1 --reporter=default`. Baseline carries the identical untracked
+new test, candidate the committed test. No capture/benchmark dual gate.
+
+Primary replay uses ordinary Node with empty NODE_OPTIONS/no execArgv:
+`node plan/log/6892-linear-repeat-20261007/paired-artifact-replay.mjs
+--baseline <baseline raw capture.log> --candidate <candidate raw capture.log>
+--test-sha256 19b728dfe6941a44941e0817f70c8c2b333f63e858a85cc596814686a3763e82`.
+Parent wrapped it with `python3 -c 'import subprocess,sys;
+sys.exit(subprocess.run(sys.argv[1:],timeout=35).returncode)'` followed by that
+Node command, because no timeout/gtimeout/project watchdog was available.
+This supplies the specified external35-second watchdog without modifying the
+runner or engine options; neither watchdog nor internal30-second cap fired.
+
+The single positive replay exits0,448 batches/8 cases,2125.015458ms. Every
+quartet has exact unmasked initial/final memory bytes, pointers/checksums,
+headers/full output and allocation state equality. Both artifacts execute in
+one process with fixed balanced order and fresh instances; no reset, pre-grow,
+GC forcing or tier claim. Full raw replay is paired-replay-v1.log.gz and its
+complete raw SHA isf1f1d98181cd6f772876c1b3aa81ce921676bfdd50014d1236321e167a8dc200.
+Summary retains all12 ratios and24 arm samples per case. Two xy medium/large
+cases consistently improve; six—including abc N1024 and all short cases—are
+mixed. **No performance landing acceptance**. PR6563 remains held; no repeated
+tuning is authorized by this packet. A owns final acceptance and queue action.
+
+Negative instrument controls: replace artifact binarySha256 values in a
+separate generated baseline copy with64 zeros, or supply a separate empty
+capture fixture. Both exit1 with explicit incomplete rows,0 cases/0 batches;
+hash mismatch and missing full-suite summary respectively. Original captures
+remain intact. Their raw rejection logs are retained beside the positive run.
+
+Publication correction: the first plan-copy command stopped at line800 and
+omitted its final three custody/retention lines. They are restored verbatim
+from Astra's reviewed803-line document in this packet. No fixture, assertion,
+kernel or executable instrument changed from that document-transfer fix.
+
+Final canonical claim read3e507f8e81a7e08707f58df21bc88d7ae23630d6
+has955 active records and the same three sole paired-slice owners. During
+measurement, main advanced to534620a636c63c257bc5afb8d543d0306b26928c
+via PR6565's GC generator changes. Those bytes are not in either frozen
+source epoch and receive no equality credit here. This branch's merge-base PR
+source diff is still only string-repeat.ts; no peer change is reverted.
+A must refresh/integrate against its chosen current main and revalidate any
+affected controls. Do not relabel the frozen a5/6b results as latest-main proof.
