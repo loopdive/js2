@@ -566,8 +566,8 @@ const INTEGRATION_PATH = join(dirname(fileURLToPath(import.meta.url)), "../src/i
  * reason all 65 byte cells are unchanged. What moved is WHICH authority
  * answers, and that is a source fact. This is the #2955 grep-gate idiom.
  */
-function integrationSlice(startMarker: string, endMarker: string): string {
-  const raw = readFileSync(INTEGRATION_PATH, "utf8");
+function integrationSlice(startMarker: string, endMarker: string, sourcePath = INTEGRATION_PATH): string {
+  const raw = readFileSync(sourcePath, "utf8");
   const start = raw.indexOf(startMarker);
   expect(start, `the ${startMarker} site must exist`).toBeGreaterThan(-1);
   const rest = raw.slice(start);
@@ -611,7 +611,11 @@ describe("#3526 F2-S7 the instr arm reads the frozen manifest", () => {
   });
 
   it("counts BOTH producers in the demand scan", () => {
-    const source = integrationSlice("function irStringCharCodeAtDemand(", "\n}\n");
+    const source = integrationSlice(
+      "function irStringCharCodeAtDemand(",
+      "\n}\n",
+      join(dirname(fileURLToPath(import.meta.url)), "../src/ir/program/runtime-demands.ts"),
+    );
     expect(source).toContain('instr.kind === "string.char_code_at"');
     expect(source).toContain("JSSTR_CHARCODEAT_FN");
     expect(source).toContain("NATIVE_CHARCODEAT_FN");

@@ -221,6 +221,7 @@ describe("lowering cycle separation", () => {
       "src/ir/js-tag-domain.ts",
       "src/ir/lower-generic.ts",
       "src/ir/lowering-dynamic-scratch.ts",
+      "src/ir/lowering/string-operations.ts",
       "src/ir/nested-stackification.ts",
       "src/ir/nodes.ts",
       "src/ir/outcomes.ts",
@@ -231,6 +232,7 @@ describe("lowering cycle separation", () => {
       "src/shared/contracts/ir-preparation-errors.ts",
     ]);
     expect(graph.edges).toEqual([
+      "src/ir/lower-generic.ts -> src/ir/lowering/string-operations.ts",
       "src/ir/lower-generic.ts -> src/ir/backend/legality.ts",
       "src/ir/backend/legality.ts -> src/ir/analysis/backend-legality.ts",
       "src/ir/analysis/backend-legality.ts -> src/ir/core/types.ts",
@@ -269,7 +271,7 @@ describe("lowering cycle separation", () => {
       "src/ir/core/string-runtime.ts -> src/ir/core/string-callables.ts",
     ]);
     expect(graph.modules).toContain("src/shared/contracts/identity-values.ts");
-    expect(graph.edges.filter((edge) => edge.startsWith(genericPath + " -> "))).toHaveLength(12);
+    expect(graph.edges.filter((edge) => edge.startsWith(genericPath + " -> "))).toHaveLength(13);
   });
 
   it.each(forbidden)("rejects an injected reverse edge through a barrel to %s", (target) => {
