@@ -265,10 +265,11 @@ function iterFamilyOperand(family: number, familyLocal?: number): Instr {
  * called), which the GetIterator ladder cannot express — and the ladder's OBJ
  * arm mis-claims such an instance once the object runtime is bootstrapped.
  */
-export function userIterRecordDirectInstrs(ctx: CodegenContext, iterLocal: number): Instr[] {
+export function userIterRecordDirectInstrs(ctx: CodegenContext, iterLocal: number, obj = false): Instr[] {
   const { iterRecTypeIdx, vecTypeIdx } = iterRuntimeTypes(ctx);
   return [
-    { op: "i32.const", value: ITER_KIND_USER },
+    // `obj`: an OBJ record instead (#6651 W9) — `next` is re-read by PROPERTY.
+    { op: "i32.const", value: obj ? ITER_KIND_OBJ : ITER_KIND_USER },
     { op: "ref.null", typeIdx: vecTypeIdx },
     { op: "i32.const", value: 0 },
     { op: "local.get", index: iterLocal },
@@ -5477,6 +5478,13 @@ function buildIteratorNextBody(
             { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
             { op: "any.convert_extern" },
           ]),
+          // (#6651 W9) …and so does a wrapped genuine array-iterator record
+          // (`next` resolves through its family prototype, #6484 S2).
+          { op: "local.get", index: 1 },
+          { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: iterRecTypeIdx },
+          { op: "i32.or" },
           {
             op: "if",
             blockType: { kind: "val", type: { kind: "externref" } },
