@@ -25,9 +25,11 @@ files:
 ## Evidence and release state
 
 Exact inspected base: `3c671f11506f91f4eb91624cf9a8456ca95a6ce8`.
-**Specification only; source implementation is blocked on explicit ownership
-agreement and publication of A's shared contract and wiring.** No source/test
-scope transfers with this plan. No migration or production fix is completed.
+The original shared-route specification remains blocked on explicit ownership
+agreement and publication of A's shared contract and wiring. Subsequent bounded
+amendments below release only the independent initializer extraction and new
+regression file; these are now implemented and measured. No shared-route
+allocation support or full migration completion is claimed.
 Canonical reservation owner: `ttraenkler/codex-linear-b-prepared-memory-20261007`.
 Planning claim: `6905:prepared-memory-plan-20261007`, owner
 `ttraenkler/codex-linear-b-memory-astra-20261007`, branch
@@ -328,3 +330,50 @@ V2 baseline/candidate observation rows to match exactly, including `binaryBase64
 Preserve failed-row diagnostics as evidence without converting positive tests to
 refusal-success. Attribute any repaired overlay row to instrument correction,
 not source wiring, new Prepared coverage, full coverage or permission to merge.
+
+## Measured initializer checkpoint and unresolved source prerequisite
+
+Canonical production epoch: `9e22f80ce60956ea2f397b4dfbe1cd46cdabac0a`.
+Baseline tree: `609286c99f06ea7abcfed51aebd33ecaec3f454c` (production equals that epoch).
+V1 candidate: `1d44c3e08359d50d8a6a15481bd24e14e9acb13a`.
+V2 candidate: `0ab3a68cf0744f2b4b56616ce7b505998d62d7fc`.
+Initializer implementation: `af5cdbf4bf8af89344a4434336a13fc2ec8c39f5`.
+
+- V1 identical test SHA `dc1fc260e3a8239cb87056d3b38e32db97e0645d9c8079ec3dec08c3a8e2c002`: both arms **23 pass / 2 fail / 25**, exit 1. The unchanged scalar control passed 17/17 in each arm; all eight new observation records matched exactly.
+- V2 identical test SHA `d63ce7141a98425a490405127cbbd63e382f5de857ebb8031c15da2a64ce7d31`: both arms **7 pass / 1 fail / 8**, exit 1. All eight observation records matched exactly, including unit binary bytes. All seven untouched rows matched V1→V2 separately in both arms. Zero skipped/pending.
+- The repaired overlay row proves this compilation's real caller, admission, owner/slot/body identity, two initializer calls, validated artifact and native result **1.25**. It is overlay preservation, not shared Prepared allocation support.
+- Shared allocation still fails at **preparation**, `array-representation-unsupported`, with prepare 1 / accept 0 / emit 0. The later physical planner is not reached. A's frontend representation/admission prerequisite therefore precedes the memory contract and shared wiring request.
+- All source fixtures, ABI/store/memory assertions, legacy and hooks remain. The initializer leaf is actually used; no speculative target resource module was added.
+
+Lossless V1/V2 logs, original V1 test and exact-row comparison are under
+`plan/log/6905-linear-prepared-memory-20261007/`. Integration details and complete
+claims/file ownership are in `plan/agent-context/linear-prepared-memory-session-b-20261007.md`.
+PR #6577 remains **non-draft / hold / no queue submission** until A's prerequisite
+and shared route make the ordinary positive allocation requirement pass.
+
+### V3 instrument correction: preserve generator-spy tuple types
+
+Parent measured V2 **7 pass / 1 fail / 8 on both arms**, with all eight observation
+rows exact across arms and the seven untouched V1 rows exact against V2. Explicit
+test-inclusive TS7 then reported **12 diagnostics**: `generatorSpies` array
+inference erased index-specific GC/Linear spy return types. Preserve the V2 test
+snapshot, diagnostics and both raw runs. Authorize only an **`as const` tuple
+annotation on the original `generatorSpies` array**; no `any`, `WasmModule` cast,
+configuration weakening, runtime changes, assertion changes or fixture changes.
+Recheck explicit test-inclusive TS7 without weakening its population or settings;
+if this correction is insufficient, retain diagnostics and stop for review.
+Parent reruns identical V3 test bytes on both frozen arms: require all eight rows
+exact V2→V3 within each arm and exact baseline→candidate, including `binaryBase64`.
+Keep the positive shared-allocation failure red. This is type-instrument repair,
+not source coverage, production wiring, full acceptance or permission to merge.
+
+### Final V3 measurements
+
+Type-only corrected test SHA `0afcb36a4cb3e783a06191bfe6356d568d96791d7aeca8249bfcdd580eac8d77`.
+Candidate tested HEAD `4ad7fd4279b40273f0d01200e32ab38fc86c3ad0`.
+Both frozen arms: **7 pass / 1 fail / 8**, exit 1, zero skipped/pending.
+All eight complete observation rows are exact across arms, and exact V2→V3 in
+each arm, including unit binary bytes and original preparation failure.
+Strict test-inclusive TS7: **exit 0, zero diagnostics**, unchanged configuration;
+the original V2 twelve-diagnostic log is preserved. The later publication adds
+only docs/evidence. Shared preparation is still red; hold and ownership remain.
