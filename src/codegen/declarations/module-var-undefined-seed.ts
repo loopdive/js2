@@ -77,6 +77,9 @@ import { scriptVarBindingNames } from "../source-scan-predicates.js";
  * function bindings afterwards — so a name that is both a `var` and a function
  * declaration must end up holding the FUNCTION, not this seed.
  */
+/** (#6894) Names whose module global the prologue seed wrote, per compile. */
+const seededModuleVarNames = new WeakMap<CodegenContext, Set<string>>();
+
 export function emitModuleVarUndefinedSeeds(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
@@ -88,6 +91,8 @@ export function emitModuleVarUndefinedSeeds(
   // Script's live value after all accesses are routed to the shared record.
   if (ctx.standaloneScriptVarBindings && !ctx.sourceIsModule) return;
   const seeded = new Set<number>();
+  let seededNames = seededModuleVarNames.get(ctx);
+  if (seededNames === undefined) seededModuleVarNames.set(ctx, (seededNames = new Set()));
   for (const varName of scriptVarBindingNames(sourceFile)) {
     const globalIdx = ctx.moduleGlobals.get(varName);
     if (globalIdx === undefined || seeded.has(globalIdx)) continue;
@@ -95,5 +100,20 @@ export function emitModuleVarUndefinedSeeds(
     if (!emitUndefinedExtern(ctx, initFctx)) continue;
     initFctx.body.push({ op: "global.set", index: globalIdx });
     seeded.add(globalIdx);
+    seededNames.add(varName);
   }
+}
+
+/**
+ * (#6894) True when `emitModuleVarUndefinedSeeds` wrote `undefined` into the
+ * module global backing the `var <name>` in the `__module_init` prologue. That
+ * slot is fully instantiated before the first statement runs, so evaluating an
+ * initializer-less `var <name>;` at its statement position is a no-op
+ * (§14.3.2.1) and must emit NO store. A store would clobber whatever the
+ * binding holds by then: the hoisted `function <name>` seeded right after this
+ * prologue (§9.1.1.4.17 CreateGlobalVarBinding never resets an existing
+ * binding), or an assignment that ran earlier (`x = 5; var x;`).
+ */
+export function moduleVarSlotIsUndefinedSeeded(ctx: CodegenContext, name: string): boolean {
+  return seededModuleVarNames.get(ctx)?.has(name) === true;
 }

@@ -174,6 +174,18 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-10-07 — slice W2a (`new <%Function% value>()`; record
+  # `### 2026-10-07 — Slice W2a`). `expressions/new-super.ts` +29: four import
+  # lines, the `isFunctionIntrinsicValueCallee` admission in
+  # `tryCompileNativeConstructFromValue` (its two gates and the reservation
+  # list) and at the `compileNewExpression` door, the arm's open/finish around
+  # the existing driver call, and the one-line last retry in the dynamic-`new`
+  # chain. The arm itself is the NEW leaf `closures/function-intrinsic-construct.ts`
+  # (deps injected, no SCC edge); the retry body lives in
+  # `runtime-eval-construct.ts` beside the retry it follows; the
+  # `globalThis.Function` read lives in `function-intrinsic-carrier.ts`, the
+  # module that owns every `%Function%` spelling.
+  - src/codegen/expressions/new-super.ts
   # 2026-10-07 — slice W5/W8 (record `### 2026-10-07 — Slices W5+W8`):
   # `index.ts` +3 — the import and the two finalize calls of
   # `fillGeneratorFunctionPrototypeArms` (single- and multi-source), each placed
@@ -181,6 +193,22 @@ loc-budget-allow:
   # mechanism (an explicit `setPrototypeOf` side-table read must stay in front).
   # The arms and the identity natives live in the NEW leaf
   # `generator-function-proto-arm.ts`. `index.ts` is already listed below.
+
+  # 2026-10-07 — slice W9 (record `### 2026-10-07 — Slice W9`).
+  # `any-helpers.ts` +60: `emitPrimitiveUnionExternToAny` and its predicate sit
+  # beside `ensureAnyFromExternHelper`, the classifier they compose (#5185).
+  # `expressions.ts` +5: the one arm in the public expected-type coercion, next
+  # to its i32 → `$AnyValue` boolean twin. `dataview-native.ts` +11: the split
+  # of the dynamic TA constructor's plain-vec arm on a patched
+  # `%ArrayIteratorPrototype%.next` (mechanism in
+  # `iterator-proto-next.ts`, beside S2). `iterator-native.ts` +8: the OBJ
+  # step's `next` read admits a wrapped `$__IterRec`, and the OBJ variant of
+  # `userIterRecordDirectInstrs`. The last three are restated per the
+  # stranded-grant rule.
+  - src/codegen/any-helpers.ts
+  - src/codegen/expressions.ts
+  - src/codegen/dataview-native.ts
+  - src/codegen/iterator-native.ts
   # 2026-10-06 — slice V10b (ArraySetLength order / DataView expandos /
   # arguments @@iterator; record `### 2026-10-06 — Slice V10b`). Paths other
   # than `array-holes.ts` are already listed below (restated per the
@@ -1388,8 +1416,21 @@ loc-budget-allow:
   - src/codegen/expressions/calls.ts
   - src/codegen/expressions/call-identifier.ts
 func-budget-allow:
+  # 2026-10-07 — slice W2a (see the loc-budget note): `compileNewExpression` +2,
+  # the `isFunctionIntrinsicValueCallee` term at the native-construct door and
+  # the one-line `emitOrdinaryFunctionConstructOnNull` retry at the end of the
+  # standalone dynamic-`new` chain (both have to sit at those two points).
+  - src/codegen/expressions/new-super.ts::compileNewExpression
   # 2026-10-07 — slice W5/W8 (see the loc-budget note): `generateModule` +1 and
   # `generateMultiModule` +1, the finalize call each (both keys listed below).
+
+  # 2026-10-07 — slice W9 (restated per the stranded-grant rule):
+  # `emitTaDynCtorConstructInline` +10, the patched-next split of its plain-vec
+  # arm (mechanism in `iterator-proto-next.ts`);
+  # `buildIteratorNextBody` +7, the `$__IterRec` admission in the OBJ step's
+  # `next` read.
+  - src/codegen/dataview-native.ts::emitTaDynCtorConstructInline
+  - src/codegen/iterator-native.ts::buildIteratorNextBody
   # 2026-10-06 — slice V10b (see the loc-budget note): `compileElementAccessBody`
   # +15 (the standalone `vec[Symbol.iterator]` arm), `collectDeclarations` +9
   # (`moduleVarDeclType` from the initializer — both keys already listed below)
@@ -4780,6 +4821,103 @@ NewTarget `prototype` (instead of post-construction patching), then the bound
 `super/realm` can pass. Budget ~4 h each; family runs on this box take ~1 h, so
 run one ≤200-row chunk per background job (30-min background cap).
 
+### 2026-10-07 — Slice W2a
+
+`new <%Function% value>()` — the realm `%Function%` reached as a value — now
+builds the same ordinary function as the bare `new Function()`. One row flips:
+`built-ins/Proxy/construct/trap-is-undefined-proto-from-cross-realm-newtarget.js`.
+**None of the six W2 rows flips from W2a alone**, as the W2 record predicted.
+
+**Which W2 rows depend only on W2a.** None. After W2a every row builds a real
+`C` with `C.prototype = null`, then reaches a NewTarget route that is W2b's or
+#5269's:
+
+| row | after W2a | still needs |
+| --- | --- | --- |
+| `Array/from/proto-from-ctor-realm.js` | proto `null` (was `Array.prototype`: `C` was not a constructor) | W2b: §10.1.14 step 4 in the `Array.from` construct |
+| `Array/of/proto-from-ctor-realm.js` | proto `null` (same) | W2b: same, `Array.of` |
+| `Function/prototype/bind/proto-from-ctor-realm.js` | proto `null` | W2b: bound `[[Construct]]` with a primitive NewTarget `prototype` |
+| `language/expressions/super/realm.js` | proto `null` | W2b: class/derived construct, closed struct |
+| `Proxy/construct/trap-is-undefined-proto-from-newtarget-realm.js` | proto is a non-`%Object.prototype%` object | W2b: the Proxy forward's NewTarget proto fallback |
+| `Function/proto-from-ctor-realm.js` | `other.Function.prototype` reads `undefined` | #5269 (provider boundary) |
+
+**Root causes, probe-verified (in-process, `--standalone`, QuickJS provider).**
+1. `new other.Function()` and `var OF = other.Function; new OF()` matched no
+   construct arm: the checker types the callee `FunctionConstructor`, so every
+   arm declined and the site fell to `Unsupported new expression for class:
+   Function`. `var F = Function; new F()` took the runtime-alias driver arm
+   and got a provider function whose `prototype` reads `undefined`.
+2. **The identity test needs two spellings of `%Function%`, not one.** In a
+   runtime-eval module that never reads the bare `Function` value (every W2
+   row), `emitStandaloneFunctionIntrinsicValue` answers its self-contained
+   carrier, while `globalThis.Function` holds a different carrier:
+   `globalThis.Function === (function(){}).constructor` is `false` there and
+   `true` in an eval-free module. The realm seed copies `globalThis.Function`,
+   so a test against the emitter alone never fired for the rows (`new
+   other.Function()` then threw "value is not a constructor"). `__extern_strict_eq`
+   was needed as the W2 record said; `ref.eq` was not the only gap.
+3. `var C = new Function(); new C()` evaluated to **null**, on base too. A
+   `Function`-typed callee goes through the standalone dynamic-`new` retry chain
+   (TypedArray ctor, bound, runtime-eval, builtin ctor, collection, Array,
+   Promise), and none of those arms answers an ordinary closure. The same value
+   through an `any` parameter (`function nn(x) { return new x(); }`)
+   constructs correctly through the native construct driver.
+
+**Fix.**
+- New leaf `closures/function-intrinsic-construct.ts` (codegen services
+  injected, no import-cycle edge). In `tryCompileNativeConstructFromValue`,
+  after the callee and arguments are evaluated in source order, the arm emits
+  `callee === %Function% ? <bare new Function(args) lowering> : <unchanged
+  driver call>`. The admission is syntactic: a member read named `Function`, or
+  an identifier whose initializer chain ends at one or at the global `Function`.
+  The runtime test decides. It compares with the module's `===`, first against
+  `emitStandaloneFunctionIntrinsicValue`, then, short-circuited, against the
+  `globalThis.Function` property
+  (`emitStandaloneGlobalFunctionPropertyValue` in `function-intrinsic-carrier.ts`).
+  The second spelling is skipped when the file may write a global `Function`
+  (a `Function` declaration, an assignment or `delete` on a `.Function` /
+  `["Function"]` target, or `"Function"` passed to a call).
+- `emitOrdinaryFunctionConstructOnNull` (`runtime-eval-construct.ts`) is the
+  last retry of the dynamic-`new` chain. It applies only to an identifier typed
+  as the lib `Function` interface, only when every arm answered null and the
+  callee is callable. It runs the native construct driver with its §13.3.5.1
+  IsConstructor guard armed.
+
+**Measurement.** Standalone, QuickJS eval provider, in-process. BEFORE is a
+frozen `git archive` of base `b18baee96b`, run with its own provider build.
+AFTER is this tree.
+
+| family | rows | before pass | after pass | lost |
+| --- | --- | --- | --- | --- |
+| `built-ins/Function/**`, `language/expressions/new/**`, `built-ins/Reflect/construct/**` | 578 | 531 | 531 | 0 |
+| every other row naming `new Function(`, `= Function;` or `.Function` (TypedArray/Temporal excluded) | 101 | 58 | 59 | 0 |
+
+`built-ins/Function/**` includes the ES5 `15.3.*` rows; none was lost.
+
+Pin: `tests/issue-6651-w2a-function-construct.test.ts`, host-free. All five
+cases fail on the base tree. They cover the realm-global member, aliases, a
+constant argument list, a non-`%Function%` value behind a `.Function`
+spelling, and `new C()` on a bare `new Function()` result. Probe-only (it
+links the provider): `var F = Function; new F()` gives `typeof` "function",
+an object `prototype`, and `new` instances with that prototype.
+
+Controls:
+- `node scripts/equivalence-gate.mjs` is green: 22 known failures, 1748
+  passing.
+- Temporal `Duration/prototype/round/*` standalone: 119 pass / 7 fail of 126,
+  0 `illegal cast` (bundles rebuilt, provider prewarmed into a fresh cache,
+  QuickJS provider rebuilt).
+
+**Residuals.**
+- A non-constant argument list (`new other.Function(src)`) keeps the previous
+  lowering (the #2924 compile-away condition).
+- The `globalThis.Function` spelling is not consulted after a
+  computed-runtime-key write (`g[k] = v` with `k === "Function"`).
+- The two `%Function%` spellings in a no-bare-read eval module are still two
+  references. Reconciling them is a module-wide identity change, left for #5269.
+- A `prototype` that is not an Object still yields a null-prototype instance
+  (§10.1.14 step 4). That is W2b.
+
 ### 2026-10-07 — Slices W3+W4
 
 Two small slices from the 2026-10-07 re-census, one commit. All 4 rows flip.
@@ -4955,6 +5093,70 @@ false — the #3037 mechanism, for the `function`-valued spelling too).
   (the TA link + the §10.4.5.5 receiver arm in the walkers); not attempted in
   this time box after W8 — the link writer and four walker arms are a separate
   slice.
+
+### 2026-10-07 — Slice W9
+
+TypedArray singles, on `fab22c35ff`. **2 of 3 rows flip** (plus one bonus
+twin); the third is diagnosed and left.
+
+- **`ctors/length-arg/toindex-length.js` (#5185) — flips.** Not the
+  destructured shape #5185 was filed for (that repro already answers 201 on
+  base). Inside `items.forEach(function (item) { var expected = item[1]; … })`
+  over 4-kind rows (`[-0, 0, "-0"]`, `["", 0, …]`, `[true, 1, …]`,
+  `[null, 0, …]`), `expected` is a `string | number | boolean | null`
+  `$AnyValue` local fed by a dynamic element read (externref). The generic
+  externref → `$AnyValue` default `__any_box_extern_s1` keeps the #1888 tag-5
+  lie for every non-nullish value, so the boxed `0` was stored as a "string".
+  Fix at the coercion site (`compileExpression`'s expected-type arm →
+  `emitPrimitiveUnionExternToAny`, `any-helpers.ts`): when the static type is a
+  union of primitives only, box through `s1` and re-classify a residual tag-5
+  wrap with `__any_from_extern` (number → 3, boolean → 4, string stays 5). The
+  shared default is untouched (the −788/−794 hazard). Also flips
+  `ctors-bigint/length-arg/toindex-length.js`.
+- **`ctors/object-arg/iterated-array-with-modified-array-iterator.js` (#6484)
+  — flips.** The dynamic TA constructor's plain-vec arms copied the source
+  storage and never looked at `%ArrayIteratorPrototype%.next`.
+  `emitPatchedArrayIterCopy` (`iterator-proto-next.ts`) splits those arms:
+  when the prototype singleton is materialised and its `next` is not the
+  intrinsic closure (identity compare), the source is opened as a genuine
+  array-iterator record wrapped in an OBJ record and drained by
+  `__array_from_iter_n`; the OBJ step (`iterator-native.ts`) now admits a
+  wrapped `$__IterRec` for its `Get(it, "next")`, which resolves through the S2
+  `__extern_get` prologue, and calls the patch with the genuine record as
+  `this` — so a patch delegating to the original still steps the real cursor.
+  Unpatched cost: one `global.get` + `ref.is_null`, or one property read +
+  `ref.eq` once the prototype exists. TA-carrier (`i8_byte`/`i16_byte`)
+  sources are excluded (§23.2.5.1.2 does not iterate them).
+- **`ArrayBuffer/isView/arg-is-typedarray-subclass-instance.js` — NOT done.**
+  `class TA extends ctor {}` with `ctor` a parameter compiles `TA_new` to a
+  closed two-`i32` struct that never sees the heritage value: probe p1 gives
+  `ArrayBuffer.isView(new TA(0))` false, `instanceof ctor` false, `length`
+  wrong, while `instanceof TA` and the prototype are right. It is not
+  TypedArray-specific: `function run(B) { class C extends B {} new C() }` with
+  a USER base class also loses the base constructor's effects and
+  `instanceof B` (both 0). The fix is general runtime-heritage support (capture
+  the heritage value at class evaluation, construct through it with NewTarget
+  = the class) — `Reflect.construct(ctor, args, TA)` is itself a #3371 CE
+  today. Beyond the one-hour budget; needs its own slice.
+
+**Receipts** (`JS2WASM_EVAL_ENGINE=quickjs … run-test262-paths.mts
+--standalone`, 200-row in-process chunks, base = `git archive` of
+`fab22c35ff`, same box). `TypedArrayConstructors/**` +
+`TypedArray/prototype/{forEach,values,entries,keys,Symbol.iterator}/**` +
+`ArrayIteratorPrototype/**` + `class/subclass/**` — 976 rows: base 801 pass →
+branch 804, **0 lost**, exactly the 3 rows above gained. Measurement
+incidents, each re-run: one base and one branch chunk were OOM-killed (exit
+137, box load 18) and re-run whole; 28 base rows hit ENOENT when a borrowed
+`test262` symlink target was removed mid-run and were re-run row-wise (27
+pass, 1 fails identically on both sides); 10 branch rows read a stale QuickJS
+adapter key and were re-run after the provider rebuild (10/10 pass).
+`ArrayIteratorPrototype/**` 27/27 and `{Map,Set}IteratorPrototype/**` +
+`Iterator/prototype/Symbol.iterator/**` 27/27 on the branch. Pin
+`tests/issue-6651-w9-typedarray-singles.test.ts` 6/6 (1/6 on base — the GUARD
+case). Equivalence gate green (1748 pass, 22 known). Temporal control
+(`Duration/prototype/round/*`, standalone, fresh prewarmed cache after
+`build:compiler-bundle` + `build:runtime-bundle`): **119 pass / 7 fail of 126,
+0 `illegal cast`** — unchanged.
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 
