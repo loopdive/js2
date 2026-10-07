@@ -1,7 +1,7 @@
 ---
 id: 6911
 title: "Linear IR charCodeAt provider: reusable emission body and exact preservation"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-10-07
 updated: 2026-10-07
@@ -206,9 +206,48 @@ baseline, or broadly exempt the directory. No tests/heavy jobs were run in plann
 
 ## Acceptance
 
-- [ ] Fresh exact K/T claims and parent-reviewed partition before implementation.
+- [x] Fresh exact K/T claims and parent-reviewed partition before implementation.
 - [ ] Existing real caller delegates; only the released two source files change.
 - [ ] All ten new tests measured; source route/callee attribution is non-vacuous.
 - [ ] Identical paired rows/artifacts, native oracles and cache/custody controls.
 - [ ] Existing controls and strict test-inclusive checks retain their full results.
 - [ ] Parent publishes coherent evidence; no new Prepared coverage/retirement claim.
+
+## Dispatch checkpoint — 2026-10-07
+
+Canonical main remains `6c88d157444ea4ae377a7ef1b82b15ef2f4f6603`.
+Reviewed Astra plan commit: `987d870cb7` (production baseline unchanged).
+The refreshed assignment snapshot had 976 held claims, including only B's
+reservation and plan for this issue. Main history and the refreshed 27-open-PR
+inventory contain no implementation of this task.
+
+Exact claims were acquired and verified on `upstream/issue-assignments`:
+
+- `6911:char-code-at-source-20261007`, owner
+  `ttraenkler/codex-linear-b-char-code-at-sol61-20261007`, branch
+  `codex/6911-linear-char-code-at-source-20261007`: the two source paths and
+  final callback region above, Sol 6.1 Medium.
+- `6911:char-code-at-tests-20261007`, owner
+  `ttraenkler/codex-linear-b-char-code-at-tests-sol61-20261007`, branch
+  `codex/6911-linear-char-code-at-tests-20261007`: the single new test file,
+  Sol 6.1 Medium.
+- `6911:char-code-at-docs-20261007`, owner
+  `ttraenkler/codex-linear-b-char-code-at-docs-20261007`, planning branch above:
+  parent documentation, evidence and serialized validation.
+
+Session A has now published vector-read repair PR #6582, observed head
+`556d0a3324ca41637d7eb6ff38a0513889a5c9df`. Its reported alias/read repairs are
+not this task's evidence or an ownership transfer. A retains its shared emitter
+and final integration. B's corresponding C ABI checkpoint remains separately
+published; only an integrated test epoch can establish combined behavior.
+
+Baseline existing-control raw log SHA256:
+`2d425264b85eed78b3b7180c6c3488a6e2593004b18e8eeb994509bf620f5576`.
+Unchanged issue-2956 fixture SHA256:
+`cb187a61186bb77761f5cfcad6ed36dc0a50f6a10cad5108650915baedf08d42`.
+Unchanged ASCII-fast-path fixture SHA256:
+`47e99c2b55177f1af551abcd16d6e4731a15e3a82349ac74f62d5e508a5250ab`.
+The three baseline failures retain their original ordinary assertions:
+vector operand/coercion closure; string concat ASCII-proof rejection; and
+UTF-16 source compilation rejection. No claim that runtime extraction repairs
+these admission failures is made.
