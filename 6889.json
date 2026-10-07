@@ -1,12 +1,11 @@
 {
   "id": "6889",
   "assignee": "ttraenkler/codex-ir-session-a-20261007",
-  "requested_by": "ttraenkler/codex-ir-session-a-20261007",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/ir-session-a-coordination-20261007",
-  "reserved_at": "2026-10-07T09:07:15Z",
   "claimed_at": "2026-10-07T09:07:15Z",
-  "updated_at": "2026-10-07T09:07:15Z",
-  "write_id": "17627-eh9a4kyw",
-  "pr_scan": "ok"
+  "updated_at": "2026-10-07T10:40:31Z",
+  "write_id": "95117-jh1g1oo9",
+  "released_at": "2026-10-07T10:40:31Z"
 }
