@@ -251,3 +251,28 @@ The three baseline failures retain their original ordinary assertions:
 vector operand/coercion closure; string concat ASCII-proof rejection; and
 UTF-16 source compilation rejection. No claim that runtime extraction repairs
 these admission failures is made.
+
+## Source preservation checkpoint
+
+Source commit: `5761898b7b8e9c3e0983077a35efd33269c9219c`.
+Frozen source hashes are `3f9ead0c3f3342a78f07e4afe624be205b99413ce203f167365e01ef63fb0e60`
+(runtime.ts) and `89a29dfe8162813b907ae7a4291eded47ebdd468e7f7f486d9d420815dcae538`
+(char-code-at.ts). Scoped format/lint, LOC and function-budget checks passed.
+The unchanged 31-control candidate run completed exit 1 in 70.85s: **28 pass /
+3 fail / 31**, matching baseline. All 6,316 characters of the complete three
+failure sections match exactly, including their original assertion locations.
+No failure is skipped or converted into expected-success behavior.
+
+Candidate raw log SHA256:
+`82bd6a0778bb0eedb2caf66b2bb6d9c3d1202ad93e78d0f1ac4349a88e28cb49`.
+Both original logs are retained compressed under
+`plan/log/6911-linear-char-code-at-20261007/`. The count-floored
+`compare-existing-controls.mjs` verifies both populations and exact failure text.
+The ten new paired preservation tests and strict test-inclusive typing are still
+pending at this checkpoint; it is not final acceptance.
+
+B published an explicit dependency request on A's vector-read integration PR:
+[coordination comment](https://github.com/loopdive/js2/pull/6582#issuecomment-6041736166).
+It identifies B's published C ABI and initializer checkpoints and requests A's
+shared array admission/resource-binding contract. Posting is not acknowledgement
+or an ownership transfer. A retains queue submission and final integration.
