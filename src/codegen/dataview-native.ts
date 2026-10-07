@@ -68,6 +68,7 @@ import { reserveNativeConstructDriver } from "./native-construct.js"; // (#4449)
 import { ensureSymbolCarrier } from "./symbol-native.js"; // (#4449) Symbol.species key
 import { ensureNativeArrayFromIterN } from "./iterator-native.js"; // (#5138 A1) iterable ctor arg
 import { orNativeGeneratorCarrierInstrs } from "./generators-native-protocol.js"; // (#6651 A13) generator-object ctor arg
+import { emitPatchedArrayIterCopy } from "./iterator-proto-next.js"; // (#6651 W9)
 import { reserveBuiltinConstructorIdentityGlobal } from "./builtin-static-globals.js"; // (#5349 r4) %ArrayBuffer% identity
 
 /** DataView accessor descriptor parsed from a method name like "getUint32". */
@@ -6401,6 +6402,16 @@ function emitTaDynCtorConstructInline(
       trackChain(vecArm);
       const saved = fctx.body;
       fctx.body = vecArm;
+      // (#6484 / #6651 W9) an ARRAY source is iterated through a patched
+      // `%ArrayIteratorPrototype%.next`; the copy below stays the fast path.
+      const isTaCarrier = carrierKey === "i8_byte" || carrierKey === "i16_byte";
+      const patched = isTaCarrier ? undefined : emitPatchedArrayIterCopy(ctx, fctx, a0CandidateLocal, trackChain);
+      if (patched) {
+        patched.emitCopy(dstNLocal, emitAllocViewFromN, (push) =>
+          emitCopyLoop((i) => emitTaExternrefElementToF64(ctx, fctx, () => push(i))),
+        );
+        fctx.body = patched.restArm;
+      }
       const srcVecLocal = allocLocal(fctx, `__dtac_sv_${fctx.locals.length}`, { kind: "ref", typeIdx: vIdx });
       const srcDataLocal = allocLocal(fctx, `__dtac_sd_${fctx.locals.length}`, { kind: "ref", typeIdx: srcArrIdx });
       fctx.body.push({ op: "local.get", index: a0CandidateLocal });
