@@ -20,7 +20,7 @@ loc-budget-allow:
   # 2026-10-07 (#6912): routing lines for the member closure bodies; the bodies live in src/codegen/array/
   - src/codegen/array-object-proto.ts
 import-cycles-allow:
-  - largestSccSize: 699 # 2026-10-07 (#6912): array/array-search-proto-value.ts joins the codegen SCC (it is called from array-object-proto.ts and uses shared.js coerceType/ensureLateImport, like array-fill-proto-value.ts); the pure scan core array/array-search-core.ts stays outside it
+  - largestSccSize: 700 # 2026-10-07 (#6912): array/array-search-proto-value.ts (PR A) and array/array-generic-value-bodies.ts (PR B) join the codegen SCC (it is called from array-object-proto.ts and uses shared.js coerceType/ensureLateImport, like array-fill-proto-value.ts); the pure scan core array/array-search-core.ts stays outside it
 ---
 
 # #6912 — finish the array-member closure table
@@ -98,4 +98,30 @@ two or three members is fine; `.length` from `nativeClosureMeta`.
 - Default `gc` and `wasi`: probe sha256 identical base vs after
   (`.tmp/probe-sha.mjs`: indexOf/lastIndexOf/includes `.call` borrows, values,
   reduce value, typed-vec indexOf/lastIndexOf).
+
+### PR B — `pop`, `shift`, `toString` (2026-10-07)
+
+- `src/codegen/array/array-generic-value-bodies.ts`: spec-literal bodies on
+  the dynamic array-like substrate (`__extern_length` / `__extern_get_idx` /
+  `__extern_has_idx` / `__extern_set_strict` / `__delete_property`). Every
+  Set is Set(O, P, V, true); every delete is DeletePropertyOrThrow (a `false`
+  from `__delete_property` throws a TypeError). `shift` preserves holes.
+- These members take no arguments, so their closures keep the fixed ABI.
+  `pop`/`shift` were missing from `PROTO_METHOD_LENGTH` and had picked up the
+  table's default of 1. They now have their spec `.length` of 0, which also
+  drops the unused argument slot from their native closures.
+- `toString` (§23.1.3.36): `Get(O, "join")`; if it is callable, call it with
+  no arguments; otherwise use `Object.prototype.toString` (the minted
+  `__object_proto_to_string_runtime` classifier). Residual workaround: a dynamic
+  `vec["join"]` read does not see the inherited `Array.prototype.join`
+  (measured: `typeof ([1,2] as any)[k]` with `k = "join"` is not `"function"`
+  on standalone). A real Array whose `join` read misses is therefore joined
+  natively with the default separator (`prepareArrayLikeDefaultJoin`,
+  array-like-native.ts), which is what the inherited method does. An Array
+  whose `Array.prototype.join` was REPLACED is not observed on that path. The
+  missing inherited-method read is a separate gap and is not this issue's.
+- No direct-call core to share: `arr.pop()` / `arr.shift()` lower against the
+  typed vec, a different receiver class, and there is no array-like borrow
+  arm for these members. The closure is the only array-like lowering.
+- Default `gc` / `wasi` probe sha256 identical.
 

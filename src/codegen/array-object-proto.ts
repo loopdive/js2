@@ -94,6 +94,7 @@ import { emitArrayProtoIteratorMemberBody } from "./array-proto-iterator-value.j
 import { emitArrayLikeNativeMemberBody } from "./array-like-native.js";
 import { emitArrayFillProtoMemberBody, isArrayFillVariadicMember } from "./array/array-fill-proto-value.js";
 import { emitArraySearchProtoMemberBody, isArraySearchVariadicMember } from "./array/array-search-proto-value.js"; // (#6912)
+import { emitArrayGenericValueMemberBody } from "./array/array-generic-value-bodies.js"; // (#6912)
 // (#4119) The shared member-body tail: `Object.prototype.toString`'s real
 // §20.1.3.6 runtime classifier, and the graceful catchable-TypeError refusal for
 // every `(brand, member)` whose native body is not wired yet. Aliased to the
@@ -651,9 +652,12 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = Object.assign(
     every: 1,
     fill: 1,
     forEach: 1,
+    // (#6912) §23.1.3.22 / .27 — pop() and shift() take no arguments.
+    pop: 0,
     push: 1,
     reduce: 1,
     reverse: 0,
+    shift: 0,
     slice: 2,
     splice: 2,
     unshift: 1,
@@ -1008,7 +1012,8 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
   // (undefined) outside standalone or on a missing dep, keeping the refusal below.
   const rs1IterBody = emitArrayProtoIteratorMemberBody(ctx, fctx, member);
   if (rs1IterBody !== undefined) return rs1IterBody;
-  const searchBody = emitArraySearchProtoMemberBody(ctx, fctx, member); // (#6912)
+  const searchBody = // (#6912) indexOf/lastIndexOf/includes, then pop/shift/toString
+    emitArraySearchProtoMemberBody(ctx, fctx, member) ?? emitArrayGenericValueMemberBody(ctx, fctx, member);
   if (searchBody !== undefined) return searchBody;
   if (member !== "slice") {
     // Other Array.prototype members: their *FromVecLocal cores land in PR-C; until
