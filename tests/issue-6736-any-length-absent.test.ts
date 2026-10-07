@@ -141,7 +141,64 @@ h(...fixture);
 export function run() { return out; }
 `;
 
+/**
+ * PR #6506 merge-group park: the real Get must stay confined to ordinary
+ * objects. Routing every non-closure receiver through `__extern_get` broke 79
+ * standalone test262 rows: a length-tracking TypedArray view read its raw -1
+ * sentinel, a detached view its stale length, a rest-args array `undefined`, and
+ * a String wrapper `undefined`. These carriers keep `__extern_length`.
+ * Bits 32/128/256 (a fixed view, `{ length: 7 }`, two literal arrays) are the
+ * anti-vacuity control: they pass with and without the fix. Node answers 1023.
+ */
+const NON_OBJECT_CARRIERS = `
+var out = 0;
+function compareArray(a, b) {
+  if (b.length !== a.length) return false;
+  for (var i = 0; i < a.length; i++) if (b[i] !== a[i]) return false;
+  return true;
+}
+if (compareArray(((...args) => args)(), [])) out += 1;
+if (compareArray(((...args) => args)(1, 2, 3), [1, 2, 3])) out += 2;
+var seen = false;
+Array.prototype.forEach.call(new String("012"), function (val, idx, obj) { seen = obj.length === 3; });
+if (seen) out += 4;
+var tracked = 0, detached = 0, fixedOk = 0;
+function each(f) {
+  var ctors = [Float64Array, Uint8Array];
+  for (var i = 0; i < ctors.length; i++) f(ctors[i]);
+}
+each(function (TA) {
+  var rab = new ArrayBuffer(4 * TA.BYTES_PER_ELEMENT, { maxByteLength: 8 * TA.BYTES_PER_ELEMENT });
+  var ta = new TA(rab);
+  if (ta.length === 4) tracked += 1;
+  rab.resize(6 * TA.BYTES_PER_ELEMENT);
+  if (ta.length === 6) tracked += 1;
+  var buf = new ArrayBuffer(3 * TA.BYTES_PER_ELEMENT);
+  var fixed = new TA(buf);
+  if (fixed.length === 3) fixedOk += 1;
+  buf.transfer();
+  if (fixed.length === 0) detached += 1;
+});
+if (tracked === 4) out += 8;
+if (detached === 2) out += 16;
+if (fixedOk === 2) out += 32;
+var proto = (function () { function F() {} return F.prototype; })();
+function readLen(o) { return o.length; }
+if (typeof readLen(proto) === "undefined") out += 64;
+if (readLen({ length: 7 }) === 7) out += 128;
+if (compareArray([1, 2], [1, 2])) out += 256;
+var result = false;
+function callbackfn(val, idx, obj) { result = (obj.length === 3); }
+Array.prototype.forEach.call(new String("012"), callbackfn);
+if (result) out += 512;
+export function run() { return out; }
+`;
+
 describe("#6736 standalone `.length` on an any receiver is the real Get", () => {
+  it("non-object carriers keep their own length (TypedArray views, rest arrays, String wrappers)", async () => {
+    expect(await runStandalone(NON_OBJECT_CARRIERS)).toBe(1023);
+  });
+
   it("a spread call puts the spread values themselves into `arguments`", async () => {
     expect(await runStandalone(SPREAD_INTO_ARGUMENTS)).toBe(1983);
   });

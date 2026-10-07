@@ -102,7 +102,13 @@ import { tryEmitRegExpOwnConstructorRead } from "./regexp-split-protocol.js";
 import { tryEmitBuiltinInstanceConstructorPrototype } from "./builtin-instance-constructor-prototype.js";
 import { tryEmitDerivedLengthLocal } from "./derived-split-scalar.js";
 import { emitStandaloneAnyLengthGet } from "./expressions/standalone-any-length.js"; // (#6736) absent `length` reads undefined
-const ANY_LENGTH_DEPS = { coercionInstrs, addStringConstantGlobal, stringConstantExternrefInstrs }; // (#6736) cycle-free injection
+import { demandStringWrapperDynamicLength } from "./string-wrapper-dynamic-length.js";
+const ANY_LENGTH_DEPS = {
+  coercionInstrs,
+  addStringConstantGlobal,
+  stringConstantExternrefInstrs,
+  demandStringWrapperDynamicLength,
+}; // (#6736) cycle-free injection
 import {
   tryCompileStandaloneRegExpMatchResultRead,
   tryCompileStandaloneRegExpPropertyRead,
