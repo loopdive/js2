@@ -307,6 +307,7 @@ import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
 import { fillClosedObjectPrototypeEdges } from "./object-model/closed-object-prototype-edges.js";
+import { fillGeneratorFunctionPrototypeArms } from "./object-model/generator-function-proto-arm.js";
 import { fillClassProtoLookupArm } from "./class-proto-lookup.js"; // (#5195 Step 1.7)
 import { classArmClaimInstrs, classArmTagCondition } from "./class-arm-tag-guard.js"; // (#4618 / #6608) nominal `__tag` arm guard
 import { fillClassPrototypeReadArm } from "./standalone-class-prototype-read.js"; // (#6457)
@@ -6935,6 +6936,7 @@ export function generateModule(
     fillStandaloneClassInstanceProtoArm(ctx);
     fillVecProtoLinkArms(ctx); // (#2917)
     fillDynamicProtoHelpers(ctx);
+    fillGeneratorFunctionPrototypeArms(ctx); // (#6651 W8) before the side-table arm
     fillClosedObjectPrototypeEdges(ctx, nativeLeafServices);
 
     // A separately compiled runtime-eval provider can invoke caller-owned AOT
@@ -10018,6 +10020,7 @@ function registerReassignedFunctionGlobals(
       const declaration = ctx.topLevelFunctionDeclarations.get(name);
       const canBeReboundByEval = !ctx.sourceIsModule || !declaration || !hasExportModifier(declaration);
       if (canBeReboundByEval && (hasUnknownDynamicSource || mentionedByDynamicSource(name))) {
+        if (!reassigned.has(name)) (ctx.evalOnlyLiveFuncBindings ??= new Set<string>()).add(name);
         reassigned.add(name);
         if (declaration) reassignedDeclarations.add(declaration);
       }
@@ -11535,6 +11538,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-class-instance-proto-arm", () => fillStandaloneClassInstanceProtoArm(ctx));
     profilePhase("fill-vec-proto-link-arms", () => fillVecProtoLinkArms(ctx)); // (#2917)
     profilePhase("fill-dynamic-proto-helpers", () => fillDynamicProtoHelpers(ctx));
+    profilePhase("fill-genfn-proto-arms", () => fillGeneratorFunctionPrototypeArms(ctx)); // (#6651 W8)
     profilePhase("fill-closed-object-prototype-edges", () => fillClosedObjectPrototypeEdges(ctx, nativeLeafServices));
     profilePhase("fill-runtime-eval-callable-get-arm", () => fillRuntimeEvalCallablePropertyGetArm(ctx));
     profilePhase("fill-runtime-eval-intrinsic-own-props", () => fillRuntimeEvalIntrinsicFunctionOwnProps(ctx));

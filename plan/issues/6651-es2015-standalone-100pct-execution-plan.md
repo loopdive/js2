@@ -4,7 +4,7 @@ title: "ES2015 standalone → 100%: cluster execution plan from the 2026-09-20 c
 status: in-progress
 sprint: current
 created: 2026-09-20
-updated: 2026-10-06
+updated: 2026-10-07
 priority: high
 horizon: xl
 feasibility: hard
@@ -174,6 +174,13 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-10-07 — slice W5/W8 (record `### 2026-10-07 — Slices W5+W8`):
+  # `index.ts` +3 — the import and the two finalize calls of
+  # `fillGeneratorFunctionPrototypeArms` (single- and multi-source), each placed
+  # immediately before `fillClosedObjectPrototypeEdges` because the order IS the
+  # mechanism (an explicit `setPrototypeOf` side-table read must stay in front).
+  # The arms and the identity natives live in the NEW leaf
+  # `generator-function-proto-arm.ts`. `index.ts` is already listed below.
   # 2026-10-06 — slice V10b (ArraySetLength order / DataView expandos /
   # arguments @@iterator; record `### 2026-10-06 — Slice V10b`). Paths other
   # than `array-holes.ts` are already listed below (restated per the
@@ -1370,7 +1377,19 @@ loc-budget-allow:
   # `cell ?? Get(%Promise%, p)` read) lives in the NEW leaf
   # `promise-subclass-cell-read.ts`; the hand-off cannot move, because it is the
   # arm that would otherwise emit the bare `global.get` of the cell.
+  # 2026-10-07 — slice W3/W4. `node-checks.ts` +3: the outermost-label gate on
+  # the IsLabelledFunction check (one condition term, two comment lines).
+  # `calls.ts` +9: one import and the proxy-receiver admission into the existing
+  # `.call`/`.apply` → `__apply_closure` arm. `call-identifier.ts` +10: one
+  # import and the proxy-binding arm inside `tryCompileStoredStandaloneCarrierCall`
+  # (the helper that already owns the bound-carrier twin of this hazard). The
+  # predicate itself is the existing `tracesToProxyValue`; nothing new to move.
+  - src/compiler/early-errors/node-checks.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/expressions/call-identifier.ts
 func-budget-allow:
+  # 2026-10-07 — slice W5/W8 (see the loc-budget note): `generateModule` +1 and
+  # `generateMultiModule` +1, the finalize call each (both keys listed below).
   # 2026-10-06 — slice V10b (see the loc-budget note): `compileElementAccessBody`
   # +15 (the standalone `vec[Symbol.iterator]` arm), `collectDeclarations` +9
   # (`moduleVarDeclType` from the initializer — both keys already listed below)
@@ -1950,6 +1969,13 @@ func-budget-allow:
   # (path already listed below, restated): the `decodeRead` field of the OBJ
   # deps it builds, and passing each rebuilt function's own `locals`.
   - src/codegen/iterator-native.ts::buildIteratorNextBody
+  # 2026-10-07 — slice W3/W4: `compileCallExpression` +8 — the W4 proxy-receiver
+  # admission into the existing `.call`/`.apply` → `__apply_closure` arm (one
+  # predicate line, its comment, and the conditional around the
+  # `tryStaticNewFunction` synthesis that only the Function-ctor half uses).
+  # The arm must be admitted where the typed `.call` lowerings below would
+  # otherwise cast the proxy to its target's closure shape.
+  - src/codegen/expressions/calls.ts::compileCallExpression
 coercion-sites-allow:
 # 2026-10-06 — slice V1: `object-model/proxy-forward-carriers.ts` is a NEW file
 # (baseline 0); its one `__is_truthy` is §20.1.3.4 step 4's ToBoolean of the
@@ -4205,6 +4231,730 @@ Controls:
   passing.
 - Temporal `Duration/prototype/round/*` standalone: 119 pass / 7 fail of 126,
   0 `illegal cast`.
+
+### 2026-10-07 — Slice V13
+
+Adopts #2727. Target `built-ins/Array/from/source-array-boundary.js` (the H10
+row V10d left open: `Array.from(array, mapFn, this)` with `this.arrayIndex++`
+in a sloppy `mapFn`). Base `fcc80f1a4c` (harness worktree branch; the lead
+merges by sha). **The row flips; 0 rows lost.**
+
+**Cause.** §9.1.1.4.17 CreateGlobalVarBinding makes a script's top-level `var`
+an own property of the global object. Standalone keeps the value in a wasm
+module global; bare `v` and the lexical `this.v` / `globalThis.v` folds (#4500
+Slice A) read it, and #4491 T4 seeded a matching realm property — but with a
+one-time `undefined`, never kept in sync. Every receiver the compiler cannot
+resolve statically (the global object reaching a sloppy callee as `this`,
+`f.call(this)`, `globalThis[k]`) read the stale seed and wrote a property the
+`var` never saw: `var i = -1; function m() { this.i++; return this.i; } m()`
+→ `NaN`, `i` stays `-1`.
+
+**Fix — one cell, two views.** In standalone the realm property is now a
+non-configurable enumerable ACCESSOR entry whose getter/setter (two reserved
+functions per var, `__global_var_{get,set}_<name>`, wrapped by the cached
+func-closure singletons) read and write the module global, so the global stays
+the single storage cell and every direct access keeps its fast `global.get` /
+`global.set`. The entry is branded (`$PropEntry.flags` 0x200, `$Object.flags`
+0x200) so the reflective MOP still reports the §9.1.1.4.17 data property:
+`__getOwnPropertyDescriptor` answers `{value: <live>, writable: true,
+enumerable: true, configurable: false}` (the V6 namespace descriptor arm, now
+parameterised by the brand bits); `__defineProperty_value` applies §10.1.6.3 —
+`value` writes the binding through the setter, `writable: false` turns the
+entry into the plain non-writable data property holding the current value,
+`configurable: true` / `enumerable: false` / an accessor descriptor reject.
+[[Get]], [[Set]], `in`, `hasOwnProperty`, own keys, `for…in` and `delete`
+(→ false / strict TypeError) were already right for such an entry.
+Mechanism: `src/codegen/object-model/global-var-binding-exotic.ts` (new
+leaf); the reservation and the cost gate live in `global-var-bindings.ts`;
+the arm plumbing is factored out of `module-namespace-exotic.ts`
+(`markBindingEntryInstrs`, `armResources`, exported guards); one call in
+`accessor-driver.ts`.
+
+- **Bodies filled late, against the final type.** The getter/setter bodies are
+  placeholders until `fillAccessorDrivers`, so a later widening of the var's
+  carrier cannot leave a stale conversion behind. Conversion goes through the
+  coercion engine (`coercionInstrs`, injected — the leaf imports no core
+  module), warmed at reservation time so no helper is minted late. A typed
+  struct/string slot stores only a value of its own type (`ref.test`-guarded;
+  `null` for a nullable slot); anything else is dropped, never a trap.
+- **Cost gate.** The view is emitted only when the global object can reach code
+  as a value the compiler does not fold: a top-level `this` (also through
+  arrows), a `this` in a SLOPPY non-arrow function, or the names `globalThis`,
+  `eval`, `Function`, `constructor`. Without one of those the view is
+  unobservable, and the module keeps the old `undefined` seed byte-for-byte.
+- **Unchanged:** module-goal code (no realm property at all), the host lane,
+  WASI, the shared-realm `standaloneScriptVarBindings` mode (where the property
+  IS the storage), and a carrier the view cannot convert (`i32`, AnyValue),
+  which keep the plain seed.
+
+**Rows (standalone, QuickJS eval, in-process).** Before measured on
+`7ebc362ecc`, after on `fcc80f1a4c` (the 11 intervening commits — V10d and CI
+— touch none of these rows; the non-pass lists are identical except the
+target).
+
+| family | before pass | after pass |
+| --- | --- | --- |
+| `language/global-code/**` + `statements/variable/**` + `built-ins/global/**` + `built-ins/Array/from/**` + `expressions/this/**` + `function-code/**` (519, 3 chunks) | 500 | 501 (only the target moved; 0 lost) |
+| `language/statements/function/**` 200-row sample, gc (host) lane | 185 | 185 (identical) |
+
+Pin: `tests/issue-6651-v13-global-var-binding.test.ts` (5 cases: sloppy plain
+call read/write, the `Array.from` shape, computed `globalThis[k]` read/write +
+keys + `delete`, the descriptor/define MOP, a strict script through a captured
+global object) — all 5 fail on base. Controls: `node scripts/equivalence-gate.mjs`
+green (22 known failures, 1748 passing); Temporal `Duration/prototype/round/*`
+standalone 119 pass / 7 fail of 126, 0 `illegal cast`. A script with no global-object
+reach compiles byte-identically to base (two probes, sha256-equal).
+
+**Residuals.** (1) A dynamic write of a value the var's typed slot cannot hold
+is dropped or narrowed: `var y = 1; (function () { this.y = undefined; })()`
+leaves `y` as `NaN` (f64 slot), a different object shape is not stored into a
+struct-typed slot. Closing it needs the slot widened when a dynamic write is
+possible — a representation change. (2) `Object.freeze(this)` leaves the view
+an accessor, so the descriptor arm keeps reporting `writable: true`. (3)
+Boolean (`i32`) and AnyValue-typed vars keep the stale seed.
+
+### 2026-10-07 — Slice V12
+
+Inferred keyed-collection types in JavaScript, on `7ebc362ecc`. **Target
+`Map/prototype/set/append-new-values.js` flips**, plus its two siblings
+`Map/prototype/{getOrInsert,getOrInsertComputed}/append-new-values.js`.
+
+**Root cause (type source, not consumer).** In a `.js` entry the stock
+`MapConstructor` overloads infer `K`/`V` from the initial entries:
+`new Map([[4, 4], ['foo3', 3], [s, 2]])` is `Map<string | number | symbol,
+number>`. JavaScript does not honour that — `map.set(1, 'valid')` is an
+ordinary write — but every consumer that trusts the inferred value type (a
+`var` slot, a call argument, a `forEach` callback parameter) lowers the read as
+`f64`, so the string reads back as `NaN`. Patching consumers one by one would
+leave the rest wrong; the inference itself is unsound for JS.
+
+**Fix.** NEW leaf `src/checker/js-collection-inference.ts`: for a `.js`/`.jsx`/
+`.mjs`/`.cjs` entry, `analyzeSource` adds one synthetic ambient root
+(`__js2wasm_js_collections.d.ts`) that prepends construct overloads to
+`MapConstructor`/`SetConstructor`/`WeakMapConstructor` (interface merging puts
+a later declaration's overloads first). Their type parameters default to `any`
+(`WeakKey` for weak keys, as the stock zero-argument overload) and the
+parameters are `NoInfer<…>`, so the constructor arguments no longer pick the
+types; an explicit type argument or a contextual JSDoc `@type` still binds
+them. A JS `new Map([[1, 2]])` is therefore typed exactly like the already
+well-exercised JS `new Map()`. TypeScript sources never get the root, so
+annotated and inferred TS collections keep their typed fast paths
+(byte-identical, below). `src/checker/index.ts` +9 (import, root, host
+wiring); no codegen change.
+
+**Receipts** (`JS2WASM_EVAL_ENGINE=quickjs … run-test262-paths.mts
+--standalone`, base vs branch, same box). Family `Map/**`, `Set/**`,
+`WeakMap/**`, `WeakSet/**`, `Array/prototype/{push,map,filter,forEach,concat}/**`
+— 1,554 rows: base 147 non-passing → branch 144, **0 lost**, exactly the 3
+rows above gained. 20 rows (`Array/prototype/{forEach,map}` sub-chunks 13 and
+15 of the third 200-row chunk) hang in-process on BOTH sides under the 240 s
+cap and are unmeasured on both. Base Array chunks ran as 200-row in-process
+chunks, branch as 50-row quarters (200-row runs exceeded a 25-min cap under
+box load 14); verdicts match row for row. Playground examples + benchmark
+suites (17 `.ts` files × gc/standalone): **byte-identical**. Pin
+`tests/issue-6651-v12-inferred-collection-types.test.ts` 3/3 (2/3 on base —
+the TS control passes on both). Equivalence gate green (1748 pass, 22 known).
+Temporal control (`Duration/prototype/round/*`, standalone, fresh prewarmed
+cache after `build:compiler-bundle` + `build:runtime-bundle`): **119 pass / 7
+fail of 126, 0 `illegal cast`** — unchanged.
+
+Known gaps: `analyzeMultiSource` (multi-file `.js` projects) does not get the
+root; array literals (`var a = [1]; a.push('x')`) are a separate inference
+path, not touched; `WeakSet` is not covered (its members are objects anyway).
+
+## Re-census — 2026-10-07 (after V11)
+
+Measurement-and-plan only; no source change. Architect lane, harness worktree off
+`origin/main` @ `e24d111705` (V0–V11 merged; V2 and V8 never landed; PR #6555 =
+V12+V13 open).
+
+**Input.** The CI standalone baseline after V0–V11: ES2015 standalone **11,557 /
+11,704** (147 non-pass: 133 fail, 14 compile_error). PR #6555 flips two of them
+(`Map/prototype/set/append-new-values`, `Array/from/source-array-boundary`; its
+`getOrInsert*` rows are not ES2015) — treated as covered. The other **145** were
+re-run on `e24d111705`:
+`JS2WASM_EVAL_ENGINE=quickjs npx tsx scripts/run-test262-paths.mts <chunk> --standalone --isolate`,
+four chunks, QuickJS provider built from source (artifact `e2e7385d1fa8`, adapter
+key `98a3d263845367aa`), zero "provider is not built" rows. Probes `p1`–`p8`
+(`.tmp/probes/`, gitignored) ran through the real runner (`runTest262File`,
+standalone, QuickJS) via `.tmp/probe.mts`.
+
+**Result: 0 of the 145 pass in CI; 1 passes locally** —
+`language/module-code/instn-uniq-env-rec.js` passes in-process `--isolate` on
+`e24d111705` (it did on 10-06 too) but the CI artifact still records
+`[object WebAssembly.Exception]`. That is a runner-lane disagreement, not a gain
+(W7). The other 144 fail locally with the CI message or a narrower one (128 fail,
+16 compile_error locally against CI's 131 / 14 — the local lane reports the two
+`instn-*-bndng-gen` host-import leaks as CE where CI shows a runtime exception).
+
+**Ownership rule (stricter than 10-06).** A row is claimed only when a claimed or
+PR'd issue names it by full path, by its last three path segments, or by an
+explicit brace form — and the claiming lane's own final record does not route the
+row elsewhere. The 10-06 table attributed rows to #3031, #2515, #3024, #2200,
+#4491 and #5181 by basename + directory. At that precision **none of those six
+issues names any of the 145 rows as its own work**. #4491 mentions
+`RegExp/prototype/source/cross-realm` only in an error table. Those rows are
+reclassified below. Claims read
+2026-10-07 with `node scripts/claim-issue.mjs --check <id>` (read
+`origin/issue-assignments`); open PRs read with `gh api repos/loopdive/js2/pulls`.
+
+### Totals
+
+| class | rows | meaning |
+| --- | ---: | --- |
+| (a) fixable, unclaimed | **34** | 9 slices W1–W9 below |
+| (b) blocked on a named issue | **45** | #4274 realms 27 · #4245 eval membrane 16 · #3037 identity 2 |
+| (c) another lane's claim | **66** | 20 active · 41 finished lane, claim not released · 5 stale (table below) |
+| (d) not passable by construction | **0** | see the #6657 note |
+| covered by PR #6555 | 2 | |
+| **total** | **147** | |
+
+**Best achievable.** Today 11,557. With PR #6555: **11,559**. With W1–W9:
+**11,593 / 11,704 = 99.05 %** (W7's row counts only if the CI lane really passes it).
+Adopting the 46 rows of finished/stale lanes after their claims are released
+(slices sketched in the (c) table): **11,639 (99.44 %)**; the 20 active-lane rows on
+top: **11,659 (99.62 %)**. The last **45 (0.38 %)** need #4274, #4245 and #3037.
+
+### (a) Fixable — slices ordered by rows per effort
+
+Effort weights: S = 1, M = 2, L = 3, XL = 5. Common constraints from the 10-06 plan
+still apply (no new host import without a standalone fallback; new helpers in a
+`src/codegen/<subdir>/` leaf, never `runtime.ts`; no new import-cycle SCC edge;
+`LOC_GATE_BASE=$(git rev-parse origin/main)` for the budget gates; rebuild the
+QuickJS provider after every `src/` edit; per-path joins, never count deltas; the
+in-process Temporal control from the V-slices).
+**ES5 is a completed edition** (zero-regression rule, `CLAUDE.md`): every slice
+must also run the ES5 rows of its acceptance families.
+
+| slice | rows | effort | rows/effort | risk |
+| --- | ---: | :-: | ---: | --- |
+| W1 Proxy forwarding onto exotic carriers | 10 | L | 3.3 | high — generic MOP natives; ES5 `Object/defineProperty` String-wrapper rows |
+| W2 runtime `%Function%` construct + GetPrototypeFromConstructor fallback | 6 | M | 3.0 | medium |
+| W3 Annex B sloppy early errors | 2 | S | 2.0 | low |
+| W4 trapless [[Call]] onto builtin and bound targets | 2 | S | 2.0 | low–medium |
+| W5 a TypedArray in [[Prototype]] position | 3 | M | 1.5 | medium |
+| W6 `with` Tier-2 (dynamic Object Environment Record) | 6 | XL | 1.2 | high — ES5 `with` rows are in the completed edition |
+| W7 `instn-uniq-env-rec` CI/local disagreement | 1 | S | 1.0 | none (verify) |
+| W8 OrdinaryHasInstance for generator functions | 1 | M | 0.5 | low–medium |
+| W9 TypedArray singles | 3 | 3×M | 0.5 | medium each |
+
+**W1 — Proxy forwarding onto String-wrapper, function, RegExp and Array carriers (10).**
+Rows: `built-ins/Proxy/{defineProperty,get,getOwnPropertyDescriptor,has,set}/trap-is-missing-target-is-proxy.js`,
+`built-ins/Proxy/getOwnPropertyDescriptor/result-type-is-not-object-nor-undefined-realm.js`,
+`built-ins/Proxy/set/trap-is-{null,undefined}-target-is-proxy.js`,
+`built-ins/Proxy/setPrototypeOf/trap-is-{null,undefined}-target-is-proxy.js`.
+Owner check: #5140 (reserved, nobody) names `set/trap-is-missing`; #6766 lists
+`get`/`has` `trap-is-missing` and `setPrototypeOf/trap-is-null` as measure rows
+whose failure is "not a link". The rest are named only by done issues (#5196, #5316).
+V1 fixed the Proxy layer itself; what is left are the forwarded-to carriers,
+which fail **without any Proxy** (p1, p4):
+- *String exotic object* (§10.4.3.1–.3): `s = new String("str"); s[4] = 1; s[4]`
+  reads `null`; `Reflect.defineProperty(s, "4", {value: 4})` is lost;
+  `Reflect.set(s, "0" | "length", v)` answers `true` (must be `false`);
+  `Object.defineProperty(s, "0", {value: "x"})` does not throw. The String-wrapper
+  carrier has no expando storage and no StringGetOwnProperty validation in
+  `__defineProperty_value` / `__extern_set`. Give it the instance identity bag
+  (`instance-props.ts`, the V10b DataView precedent, plus the delete admission in
+  `carrier-bag-delete.ts`) and a §10.4.3.2 [[DefineOwnProperty]] arm that runs
+  IsCompatiblePropertyDescriptor against the immutable index/`length` descriptors.
+  Rows: `defineProperty/…`, `set/trap-is-null…`, `getOwnPropertyDescriptor/trap-is-missing…`.
+- *Function carrier* (§10.2.4 MakeConstructor, §20.2.4.1–.3): `hasOwnProperty.call(function(){}, "prototype")`
+  is `false`; `Reflect.set(f, "prototype", null)` is lost; `"name" in <proxy of fn>`
+  and `"length" in Object.create(fn)` are `false`; `Object.create(function(a){}).length`
+  is `0`; defining an accessor over the non-configurable `prototype` does not
+  throw. The own `prototype`/`name`/`length` of a closure are answered by the
+  direct-read lowering, not by the carrier's MOP (`__hasOwnProperty`,
+  `__extern_has`, `__getOwnPropertyDescriptor`, `__defineProperty_value`,
+  the `__extern_get` proto walk). Add one closure-own-property arm per native,
+  shared through a new `object-model/closure-own-props.ts` leaf. Rows:
+  `getOwnPropertyDescriptor/trap-is-missing…`, `set/trap-is-undefined…`,
+  `defineProperty/…`, `get/…`, `has/…`.
+- *RegExp through two proxies*: `p = new Proxy(new Proxy(/x/i, {}), {}); p[Symbol.match] === RegExp.prototype[Symbol.match]`
+  is `false`, and the row's `Reflect.has(regExpProxy, "ignoreCase")` is `false`; the
+  direct reads pass (p1 `reMatch`/`reHas`/`reIn`). The two-level forward does not
+  carry the RegExp carrier's `%RegExp.prototype%` walk. Rows: `get/…`, `has/…`.
+- *Array vec [[SetPrototypeOf]]*: `Object.setPrototypeOf([], Number.prototype)` is
+  a no-op on the vec carrier. Row: `setPrototypeOf/trap-is-undefined…`. Store the
+  prototype as V11 does for `$NativeProto` (a companion-held parent), and read it back in
+  `__getPrototypeOf`. `setPrototypeOf/trap-is-null…` additionally needs the nested
+  forward with V = `null` to reach the ordinary target (#6766's note).
+- *Strict [[Set]] onto a getter-only accessor through a trapless proxy* does not
+  throw (`"use strict"; p.foo = 2`): `__extern_set_strict` intercepts only the
+  trap-present arm. Row: `set/trap-is-missing…`.
+- *gOPD trap returning `null`* (§10.5.5 step 9): no TypeError. V1 wrote and
+  withdrew this guard because a function EXPRESSION that falls off its end after
+  a ref-typed `return` answered `ref.null` (#4641's residual). A function
+  DECLARATION now answers `undefined` (p1 `fallOff`); re-measure the expression
+  form first and land the guard only with that fix. Row: `…result-type-is-not-object-nor-undefined-realm`
+  (`other.Proxy === Proxy` under the realm seeds, p6).
+Acceptance: the 10 rows per path; `built-ins/Proxy/**`, `built-ins/Reflect/**`,
+`built-ins/Object/{defineProperty,defineProperties,getOwnPropertyDescriptor,setPrototypeOf}/**`,
+`built-ins/String/**` and `built-ins/Function/**` 0 lost, ES5 rows of those
+families 0 lost; Temporal control. Split into W1a (String) and W1b (function,
+RegExp, vec, strict set, gOPD guard) if one PR grows past ~600 lines.
+
+**W2 — runtime `%Function%` construction and the GetPrototypeFromConstructor fallback (6).**
+Rows: `built-ins/Array/{from,of}/proto-from-ctor-realm.js`,
+`built-ins/Function/prototype/bind/proto-from-ctor-realm.js`,
+`language/expressions/super/realm.js`, `built-ins/Function/proto-from-ctor-realm.js`,
+`built-ins/Proxy/construct/trap-is-undefined-proto-from-newtarget-realm.js`.
+Owner check: `Array/{from,of}` are named by #1633 (blocked, unassigned); the others
+only by done issues or by the host-lane error tables of #4648/#4649, which do not
+own standalone work. Every row builds its NewTarget as
+`var C = new other.Function(); C.prototype = null;`, and `other.Function === Function`
+under the realm seeds (p6). Two defects stack:
+1. **`new <runtime %Function% value>()` is not an ordinary function.** p6:
+   `C = new other.Function(); C.prototype = null` throws "Cannot access property on
+   null or undefined"; p6b: `var F = Function; new F()` gives a function whose
+   `.prototype` reads `undefined` and drops the write. Only the bare identifier
+   `new Function()` takes the #2924 compile-away. Everything else goes through
+   the runtime-eval provider, and the function it returns gets its `prototype`
+   only at the source-known site (`runtime-eval-construct.ts` header, "Where the
+   prototype is minted"). Fix: in the dynamic `new` chain, test the callee
+   against the `%Function%` intrinsic (the cached value behind
+   `emitStandaloneFunctionIntrinsicValue`, `function-intrinsic-carrier.ts:170`).
+   With **zero arguments**, mint the same native empty ordinary function the
+   compile-away emits. §20.2.1.1.1 CreateDynamicFunction with empty P and body
+   needs no parser and no provider. With arguments, route to the same lowering as
+   `new Function(<args>)` (`emitStandaloneDynamicFunctionRuntime`), which seeds
+   `prototype`.
+2. **§10.1.14 step 4 is missing** (V2's analysis, re-verified, p3):
+   `Reflect.construct(function(){}, [], NT)` with `NT.prototype = null` does not
+   answer `%Object.prototype%`; `Array.from.call(C, [])` / `Array.of.call(C, 1)`
+   likewise. Apply V2 as written: `reflect-construct-newtarget.ts:136
+   emitRuntimeNewTargetPrototype` replaces a non-Object with the realm intrinsic,
+   and `array-from-native.ts` passes `GetPrototypeFromConstructor(C, %Object.prototype%)`
+   instead of `ref.null.extern`.
+`Function/proto-from-ctor-realm` additionally reads `other.Function.prototype`, which answers
+`undefined` today. That is #6775 S16's "`Function.prototype` read is a provider
+boundary" mechanism, which overlaps #5269 F (active). Verify it first; if it needs the
+`%Function.prototype%` reification, take that row out of W2 and leave it with #5269.
+Spec: §20.2.1.1.1, §10.1.14, §23.1.2.1 step 7.a / §23.1.2.3 step 4.a.
+Acceptance: p3 and p6 at node's answer; the 6 rows; `built-ins/{Reflect/construct,Function,Array/from,Array/of}/**`,
+`language/expressions/{new.target,super}/**` 0 lost. Bonus, owned by #3371:
+`Proxy/get-fn-realm{,-recursive}`, `Function/prototype/bind/get-fn-realm{,-recursive}`
+and `Proxy/construct/trap-is-undefined-proto-from-cross-realm-newtarget` share
+defect 1. Report them, do not target them.
+
+**W3 — Annex B sloppy early errors (2).**
+Rows: `annexB/language/function-code/function-redeclaration-switch.js` (CE "Cannot
+redeclare block-scoped variable 'a'"), `annexB/language/statements/labeled/function-declaration.js`
+(CE "Function declaration in a labeled statement within iteration/if body").
+Owner check: named only by #5158/#5271 (reserved, nobody) and done issues.
+- `src/compiler/early-errors/duplicates.ts:254 checkSwitchCaseLexicalDuplicates`
+  reports every duplicate FunctionDeclaration in a CaseBlock. ES2015 B.3.3.5 (the
+  switch twin of the Block rule) lifts it in sloppy code when every binding for
+  the name is a plain FunctionDeclaration. The Block path already does this
+  (`annexBEligible` + `fnOnlyLexNames`, `:150–:173`); mirror it, with the same
+  `isStrictMode` gate.
+- `src/compiler/early-errors/node-checks.ts:488`: for `label1: label2: function f(){}`
+  the INNER LabeledStatement's parent is a LabeledStatement, which
+  `isStatementPosition` treats as a statement position. Only the outermost label's
+  position matters (13.7.1.1 IsLabelledFunction applies to the iteration/if
+  Statement). Skip when `parent` is a LabeledStatement. The outer node already
+  walks its inner labels.
+Acceptance: the 2 rows; `annexB/language/**`, `language/statements/{labeled,switch,block}/**`
+including every negative/early-error row 0 lost.
+
+**W4 — trapless [[Call]] onto builtin-method and bound-function targets (2).**
+Rows: `built-ins/Proxy/apply/trap-is-{missing,null}-target-is-proxy.js`. Owner
+check: named only by done issues (#5196, #6632, #826).
+p8: `Reflect.apply(new Proxy(Object.prototype.hasOwnProperty, {}), obj, ["foo"])`
+traps uncatchably with `illegal cast in __closure_N`. The forward hands the
+builtin glue body a `self` it casts to the glue closure type. And
+`new Proxy(sum.bind({foo: 10}, 1), {})(2)` answers `null` (expected 13): the
+forward has no `$__bound_fn` arm. An ordinary closure target works (p8 `p1Fn`).
+In `object-runtime-proxy.ts`'s trapless `apply` arm, unwrap nested `$Proxy`
+targets, then dispatch a `$__bound_fn` through `__call_bound` /
+`construct-bound.ts`'s call twin and a builtin-fn-meta closure through
+`__apply_closure` with the TARGET as self (§10.5.12 step 7 → Call(target, …)).
+Acceptance: p8 at node's answer; the 2 rows; `built-ins/Proxy/{apply,construct}/**`,
+`built-ins/Function/prototype/{call,apply,bind}/**` 0 lost.
+
+**W5 — a TypedArray in [[Prototype]] position (3).**
+Rows: `built-ins/TypedArrayConstructors/internals/Set/key-is-{out-of-bounds-receiver-is-proto,canonical-invalid-index-prototype-chain-set,valid-index-prototype-chain-set}.js`.
+#6766 measured the last two and recorded "a TypedArray in [[Prototype]] position…
+not a link". V3 measured the first: `Object.create(<Int32Array>)` does not even
+link the prototype (`Object.getPrototypeOf(obj) === ta` is false). The #6766
+`protoLink` regime is Proxy-only (`protoLinkActive` = standalone ∧ `proxyDirty`).
+Extend the link writer to TA carriers (a `taDirty` pre-scan twin), then give
+every proto walker (`__extern_get`/`__extern_set`/`__extern_has`/`__getPrototypeOf`)
+a TA arm that applies the CURRENT §10.4.5.5 [[Set]]: if `SameValue(O, Receiver)`
+is false and the key is a canonical numeric string, a valid index goes to
+OrdinarySet with the receiver, an invalid one answers true without creating
+anything. The ES2015 §9.4.5.5 text predates the receiver check; test262 asserts
+the current text. Acceptance: the 3 rows;
+`built-ins/{TypedArray,TypedArrayConstructors}/**` 0 lost; `Object/create/**` 0 lost.
+
+**W6 — `with` Tier-2: a dynamic Object Environment Record (6).**
+Rows: `language/statements/with/{get-binding-value-call-with-proxy-env,has-binding-call-with-proxy-env,set-mutable-binding-binding-deleted-with-typed-array-in-proto-chain}.js`,
+`language/expressions/arrow-function/arrow/capturing-closure-variables-2.js` (CE
+#1387 arrow capture), `language/statements/variable/binding-resolution.js`,
+`language/expressions/call/tco-non-eval-with.js`. Owner check: #2663 (Tier-2
+design) claim released 2026-08-06; #6774 routes `tco-non-eval-with` and the arrow
+row to #1472/#1387 (unassigned/done). Mechanism (10-06 H13, #6774 "Deferred"):
+the Tier-1 lowering (`with-scope.ts`) resolves names against a closed shape at
+compile time, so HasBinding/GetBindingValue never call the object's `has`/`get`
+traps or read `@@unscopables` at runtime (§9.1.1.2.1/.6; the row logs are empty).
+`binding-resolution` needs `var x = delete obj.x` inside `with (obj)` to write
+through the object binding, and `set-mutable-binding-…-typed-array` a TypedArray
+in the object's prototype chain. Adopt #2663's Tier-2 design: a runtime Object
+Environment Record consulted per reference, plus capture of that record by
+closures created inside the `with` body.
+**Out of W6:** `with/unscopables-inc-dec.js` (#4206 claim) and `yield/from-with.js`
+(#2864 claim). XL, and ES5 `language/statements/with/**` is completed-edition
+territory. Run the full ES5 `with` set before the PR.
+
+**W7 — `language/module-code/instn-uniq-env-rec.js`, CI fail vs local pass (1).**
+Reproduce on the sharded path (`tests/test262-shared.ts`) before any compiler
+change. The local in-process path got the V6 / #6834 fixture-graph linking; the CI
+message `[object WebAssembly.Exception]` suggests the sharded compile of
+`instn-uniq-env-rec-other_FIXTURE.js` differs. If the CI lane is the defect, the
+fix is in the runner.
+
+**W8 — OrdinaryHasInstance for generator functions (1).**
+Row: `built-ins/GeneratorFunction/has-instance.js`. Owner check: #6775 listed it as
+a residual routed to #6640/#4238, both `done` and unassigned, so it has no live
+owner. p7: `GeneratorFunction = Object.getPrototypeOf(function*(){}).constructor`
+is already a constructor (#6651 A9/A14, `generator-function-intrinsic.ts`), but
+`function* g(){}; g instanceof GeneratorFunction` is `false`.
+OrdinaryHasInstance (`native-dynamic-instanceof.ts`, §7.3.19) must read
+`GeneratorFunction.prototype` and walk a generator closure's [[Prototype]] to
+`%GeneratorFunction.prototype%`. The row's last two asserts (`new GeneratorFunction()`,
+`GeneratorFunction()`) go through the A9 realm engine; verify they hold once the
+walk is fixed. Acceptance: p7 `gfHasInst`; the row; `built-ins/GeneratorFunction/**`,
+`language/expressions/instanceof/**` 0 lost.
+
+**W9 — TypedArray singles (3), one PR each, each verify-first.**
+- `ArrayBuffer/isView/arg-is-typedarray-subclass-instance.js`: runtime heritage.
+  `class TA extends ctor {}` with `ctor` a parameter compiles to a closed struct whose
+  `TA_new` never captures the heritage value (V3). Needs a captured heritage plus a
+  construct route for a `$__ta_ctor` parent. #6775 routed it to #6772's
+  `NEW_SITE_BUILTIN_PARENTS`, but #6772's record does not take it. Highest-risk single.
+- `ctors/object-arg/iterated-array-with-modified-array-iterator.js`: a patched
+  `%ArrayIteratorPrototype%.next` is not consulted by the native iterator ladder.
+  Adopt #6484 (reserved, nobody).
+- `ctors/length-arg/toindex-length.js`: inside `items.forEach(function(item){…})`
+  over a nested heterogeneous literal, `item[0]`/`item[1]` read a leaked `$AnyValue`.
+  Adopt #5185 (reserved, nobody).
+
+### (b) Blocked on a named issue (45)
+
+| issue | rows | why it blocks |
+| --- | ---: | --- |
+| **#4274** true realms (`ready`, claim released 2026-09-03) | 27 | The assertion IS a second realm. Under the realm seeds `other.X === X`, except the Error family (#4634 mints distinct Error ctors, so `other.TypeError.prototype !== TypeError.prototype` by construction). Rows: `built-ins/RegExp/prototype/{global,ignoreCase,multiline,source,sticky,unicode}/cross-realm.js`, `built-ins/String/prototype/{toString,valueOf}/non-generic-realm.js`, `built-ins/Function/prototype/apply/{argarray-not-object,this-not-callable}-realm.js`, `built-ins/Function/call-bind-this-realm-undef.js`, `built-ins/Symbol/{for,keyFor}/cross-realm.js`, `built-ins/ThrowTypeError/distinct-cross-realm.js`, `built-ins/Proxy/revocable/tco-fn-realm.js`, `language/expressions/call/eval-realm-indirect.js`, `built-ins/Error/proto-from-ctor-realm.js`, `built-ins/NativeErrors/{EvalError,RangeError,ReferenceError,SyntaxError,TypeError,URIError}/proto-from-ctor-realm.js`, `built-ins/Error/prototype/stack/{getter,setter}-cross-realm.js` (also CE: `env::Object_new` host-import leak, #2961), `built-ins/Function/internals/Call/class-ctor-realm.js`, `language/eval-code/indirect/realm.js` |
+| **#4245** eval-tier membrane (`in-progress`, unassigned) | 16 | The value under test is minted inside QuickJS (`other.eval(…)`, `new other.Function('<src>')`) and crosses as a branded marker without its own prototype, array-ness or error identity. Probe p5c: even `eval(["[1,","2];"].join(""))` returns a non-array (`Array.isArray` false, length 0). Rows: `built-ins/Function/call-bind-this-realm-value.js`, `built-ins/RegExp/prototype/Symbol.split/splitter-proto-from-ctor-realm.js`, `built-ins/Proxy/{apply,construct}/arguments-realm.js`, `built-ins/Function/internals/Construct/derived-{return-val,this-uninitialized}-realm.js`, `built-ins/Function/proto-from-ctor-realm-prototype.js`, `built-ins/GeneratorFunction/proto-from-ctor-realm{,-prototype}.js`, `language/expressions/generators/eval-body-proto-realm.js`, `language/types/reference/{get,put}-value-prop-base-primitive-realm.js`, `language/statementList/eval-class-array-literal{,-with-item}.js`. The last two are new here: `eval('class C {}[];')` bails the static inline (`allNodesInlineSupported` rejects `ClassDeclaration`, `eval-inline.ts:1502`), and the provider's array result is not an Array (p5/p5b/p5c). Also new:
+`built-ins/{GeneratorFunction,AsyncGeneratorFunction}/is-a-constructor.js` obtain
+the intrinsic through `harness/wellKnownIntrinsicObjects.js`, i.e.
+`new Function("return (function* () {}).constructor")()` (harness L378). That is
+QuickJS's own `%GeneratorFunction%`, not the compiled one, so `isConstructor` reads
+a provider marker. §20.2.1.1 says the dynamic function runs in the running realm.
+The fix is an intrinsic-identity map in the membrane (provider intrinsic →
+compiled intrinsic), which is #4245's scope, not a carrier change. The compiled
+`%GeneratorFunction%` already answers `isConstructor` true (p7). #4648/#4649 (claimed 2026-08-23) name 11 of these rows only in host-lane error tables; they do not own standalone work. |
+| **#3037** object-identity substrate (`ready`, claim released) | 2 | `let v = {valueOf(){…}}; id(v) === v` is false: a ToPrimitive-bearing literal crosses to externref as a value COPY (`materializeStructAsDynamicObject`, V3 `.tmp/probes/q1.js`). Rows: `built-ins/TypedArrayConstructors/internals/Set/key-is-{in-bounds-receiver-is-not-typed-array,valid-index-reflect-set}.js`. |
+
+### (c) Overlapping another lane's claim (66)
+
+| claim (read 2026-10-07) | state | rows | dependency |
+| --- | --- | ---: | --- |
+| **#5269** — `proxy-class-baseline-sol61`, claimed 2026-10-06T22:25Z | **active** | 7 | its clusters C, D, F, K: `built-ins/Function/is-a-constructor.js`, `built-ins/Function/prototype/name.js`, `built-ins/Function/prototype/toString/{proxy-class,not-a-constructor}.js`, `built-ins/AsyncFunction/{is-a-constructor,AsyncFunctionPrototype-to-string}.js`, `built-ins/Error/prototype/stack/getter-subclass.js` |
+| **#5197** — `opus-5197` (2026-09-30) + **PR #5883** (open, `hold`, updated 2026-10-06T21:34Z, touches `promise-combinators*.ts`) | active | 1 | `built-ins/Promise/all/resolve-element-function-prototype.js` (#5197 residual R1) |
+| **PR #6246** (#5157 eval-spread, open since 2026-10-02) | active | 2 | `language/expressions/call/eval-spread{,-empty-leading}.js` (non-constant direct eval must write caller locals, #6774's "provider capability") |
+| **#5157** Script-declaration plan (Codex lane; P1 PR #6476 merged 2026-10-04, P2 proposal open; claim book: reserved) | active | 7 | `language/global-code/{decl-lex,script-decl-func,script-decl-func-err-non-configurable,script-decl-lex,script-decl-lex-restricted-global,script-decl-var,script-decl-var-collision}.js` |
+| **#6834** — `module_self_import_sol` (2026-10-02, `in-review`) | active | 3 | `language/module-code/instn-{iee,named}-bndng-gen.js` (local CE `standalone target emitted host imports: env::B` / `env::g2` — a self-import re-export of a generator binding leaks a host import; `iee` by mechanism), `built-ins/Proxy/preventExtensions/trap-is-undefined-target-is-proxy.js` (`ns is not defined`, the self-import namespace) |
+| **#3371** — `fable-es6` (2026-09-04; last record a 2026-09-28 handoff; #5269 records it "reopened 2026-09-01, blocked on #2046") | lane finished | 19 | the `Reflect.construct` distinct-NewTarget refusal and bound-carrier NewTarget threading: CE `built-ins/Object/subclass-object-arg.js`, `built-ins/Proxy/construct/trap-is-{missing,null,undefined}-target-is-proxy.js`, `language/expressions/new.target/value-via-reflect-construct.js`, `language/expressions/super/call-construct-invocation.js`, `built-ins/Reflect/construct/arguments-list-is-not-array-like.js`; fail `built-ins/ArrayBuffer/prototype-from-newtarget.js`, `built-ins/Date/subclassing.js`, `built-ins/Error/prototype/stack/getter-foreign-new-target.js` (no prototype slot on `$__Date` / `$Error_struct` / byte vec, #6775), `built-ins/Function/prototype/bind/{get-fn-realm,get-fn-realm-recursive,instance-construct-newtarget-boundtarget,instance-construct-newtarget-boundtarget-bound,instance-construct-newtarget-self-new,instance-construct-newtarget-self-reflect}.js` (the `self-*` pair handed to #3371 by #5269; #6775 S15 has the design), `built-ins/Proxy/get-fn-realm{,-recursive}.js`, `built-ins/Proxy/construct/trap-is-undefined-proto-from-cross-realm-newtarget.js` |
+| **#6772** — `opus-6772` (2026-09-30; final record merged 2026-10-02) + **#5318** — `fable-es6` (2026-09-04) | lane finished | 11 | `language/statements/class/definition/{fn-name-accessor-get,fn-name-accessor-set,methods-restricted-properties}.js`, `language/statements/class/strict-mode/arguments-callee.js`, `language/statements/class/subclass/builtin-objects/{ArrayBuffer/regular-subclassing,TypedArray/regular-subclassing}.js`, `language/statements/class/subclass/builtin-objects/GeneratorFunction/{instance-length,instance-name,instance-prototype,regular-subclassing,super-must-be-called}.js` |
+| **#6774** — `opus-6774-r2` (2026-10-02; "S14 and S23 not done") | lane finished | 4 | S14 `language/expressions/call/tco-non-eval-{function,function-dynamic,global}.js` (tail position through `__dyn_call_N`; `eval` aliases; `RangeError: Maximum call stack size exceeded in __dyn_call_1`), S23 `language/expressions/super/call-proto-not-ctor.js`. The 10-06 table put the `tco-*` rows under #4245; #6774's S14 shows they need no membrane. |
+| **#6766** — `opus-6766` (2026-09-30) | lane finished | 3 | its own targets: `built-ins/Proxy/has/call-in-prototype-index.js`, `built-ins/Proxy/set/{call-parameters-prototype-index,trap-is-null-receiver}.js` |
+| **#6770** — `opus-6770` (2026-09-30; final record 2026-10-02) | lane finished | 3 | its S6 residuals: `built-ins/Object/prototype/toString/symbol-tag-{generators-builtin,non-str-builtin,override-primitives}.js` (p2: `toString.call(function*(){})` → `[object Function]`; `Boolean.prototype[@@toStringTag] = "t"` ignored; `delete Symbol.prototype[@@toStringTag]` ignored) |
+| **#6771** — `opus-6771` (2026-09-30) | lane finished | 1 | `built-ins/Array/prototype/splice/property-traps-order-with-species.js` |
+| **#3481** — `opus-3481` (2026-08-27) | stale | 2 | `built-ins/Proxy/ownKeys/call-parameters-object-getownpropertysymbols.js` (also #5176, ready; p2: `Object.getOwnPropertySymbols(<proxy>)` throws when the trap returns `getOwnPropertySymbols(t)`), `built-ins/Symbol/prototype/Symbol.toPrimitive/redefined-symbol-wrapper-ordinary-toprimitive.js` (also #6775 residual) |
+| **#2917** — `claude-s74b` (2026-09-23) | stale | 1 | `built-ins/Proxy/getPrototypeOf/not-extensible-same-proto.js` (p2: the invariant check throws for a non-extensible `Object.create(Array.prototype)` target whose trap returns `Array.prototype`) |
+| **#4206** — `claude/es5-team-with` (2026-08-15, `suspended`) | stale | 1 | `language/statements/with/unscopables-inc-dec.js` (CE #1387) |
+| **#2864** — `fable-es2015` (2026-09-18) | stale | 1 | `language/expressions/yield/from-with.js` (CE #680: `with` inside a generator body) |
+
+Counts: active 20, lane finished 41, stale 5.
+
+**The V8 group, row by row (the 10-06 H8).** None of the 145 rows is named by
+#4442, #4656 or #4647 at full-path precision, so no row depends on those
+August claims:
+- #4442 is `done`; its live claim is a leftover in the book.
+- #4656 and #4647 overlap only at file level (`function-intrinsic-carrier.ts`,
+  `construct-bound.ts`, `closed-method-dispatch.ts`). Their last activity is
+  2026-08-23/25.
+
+Where the 8 H8 rows actually sit:
+
+| rows | owner |
+| --- | --- |
+| `Function/is-a-constructor`, `Function/prototype/name`, `AsyncFunction/{is-a-constructor,AsyncFunctionPrototype-to-string}` | #5269 (active) |
+| `GeneratorFunction/has-instance` | unclaimed → W8 |
+| `GeneratorFunction/is-a-constructor`, `AsyncGeneratorFunction/is-a-constructor` | (b) #4245 — the intrinsic comes from the provider via `wellKnownIntrinsicObjects.js` |
+| `Promise/all/resolve-element-function-prototype` | #5197 / PR #5883 |
+
+`AsyncFunction/is-a-constructor` gets its value from the same harness, so #5269's
+cluster K (a compiled `%AsyncFunction%`) will not flip it alone; it also needs the
+#4245 intrinsic map. Tell that lane.
+
+**Adoption recommendation.** The lanes behind #6766, #6770, #6771, #6772, #6774
+and #3371 each posted a final or handoff record and stopped. Releasing those
+claims would let a slice adopt 41 rows whose mechanisms are already written up
+in those records. Likewise #3481, #2917, #4206 and #2864 (5 rows), which show no
+activity on these rows. Sketches:
+- #3371's 19 rows: #6775 S15 for the bound pair; a `constructProto` field per
+  carrier for the `$__Date` / `$Error_struct` / byte-vec trio; the distinct-NewTarget
+  refusal for the 7 CEs.
+- #6770's tag trio: a step-14 consult through the wrapper prototype; symbol-keyed
+  storage on primitive-wrapper prototypes; `%GeneratorFunction.prototype%[@@toStringTag]`.
+- #6774 S14/S23 as written.
+
+### (d) Not passable on this target by construction — 0 rows
+
+No row needs anything a standalone module cannot express:
+- The `$262` host hooks are supplied in-module by the runner's shim.
+- A second realm needs a realm record that holds its own intrinsic objects
+  inside the one module (#4274's design), not a second instance.
+
+**#6657** (`wont-fix`, 2026-09-23) argues the opposite for 5 of the (b) rows:
+`ThrowTypeError/distinct-cross-realm`, `eval-code/indirect/realm`,
+`call/eval-realm-indirect`, `types/reference/{get,put}-value-prop-base-primitive-realm`
+(the first three are counted under #4274, the last two under #4245, since their values come from
+`other.eval`). Its point 3 (two module instances cannot share type identity) is
+true, but does not rule out one-module realms. Its point 1 (a host hook) does not
+hold either, because the hook is the runner's in-module shim. The two issues
+contradict each other, and the lead should pick one:
+- **Uphold #6657:** move all 39 `$262.createRealm` rows of (b) (27 under #4274, 12 under #4245) to (d), record them as
+  edition-ratchet `exceptions` with that reason, and narrow #4274 to the host lane.
+- **Uphold #4274's standalone scope:** reopen #6657.
+
+Until then they are counted in (b), not as exceptions.
+
+**Scope note (not a class).** The four `built-ins/Error/prototype/stack/*` rows
+carry `features: [error-stack-accessor]`, a Stage-3 proposal (`test262/features.txt`
+"Proposed language features"). `PROPOSAL_FEATURES` (`tests/test262-runner.ts:272`)
+lists only `import-defer` and `source-phase-imports`, so they count toward ES2015.
+If the lead adds `error-stack-accessor` there, the denominator drops by 4 in every
+edition. That is a runner-scope decision, not an exception.
+
+**Nearby open PRs to avoid.**
+- **#6206** (String `split` coercion staging, updated 2026-09-28): touches the
+  `@@split` path that `splitter-proto-from-ctor-realm` uses.
+- **#6234** (`Map.get` direct equality, 2026-09-28): adjacent to PR #6555's V12, not a cause.
+- **#5883** (Promise combinators, `hold`): do not touch `promise-combinator*.ts`.
+
+No W-slice above touches the files these PRs change.
+
+### 2026-10-07 — Slice W2 attempt (no commit; re-scoped)
+
+The first W2 lane ran out its 2.5 h box with 0 of 6 rows flipped and committed
+nothing. Probe-verified findings, for the next attempt:
+
+- **`new <%Function% value>()` reaches two compile paths.** `new other.Function()`
+  and an `any`-typed alias give `typeof === "undefined"`; `var F = Function;
+  new F()` gives a function whose `prototype` reads `undefined`. Identity with
+  `%Function%` only holds through `__extern_strict_eq` (`ensureExternStrictEqHelper`),
+  not `ref.eq` against `emitStandaloneFunctionIntrinsicValue`. An arm in
+  `tryCompileNativeConstructFromValue` (`new-super.ts`) fixed only the alias
+  case; the harness-context sites likely go through the dynamic-`new` chain that
+  ends in `emitRuntimeEvalConstructOnNull` /
+  `bcv.emitBuiltinCtorValueConstructOnNull` (~L7955), which needs its own
+  retry-on-null `%Function%` arm.
+- **The V2 §10.1.14 fix is never reached by these rows.** They assign a static
+  `C.prototype = null`, which `call-namespace-static.ts`
+  (`assignedNewTargetPrototype` → `isDefinitelyPrimitivePrototype`) resolves by
+  returning the plain `new target()` result. Bound targets give proto `null`
+  (even without NewTarget — a separate bound-`[[Construct]]` defect); class
+  targets give `null` and cannot be re-parented after construction (closed
+  structs); a runtime null `prototype` on a bound/class target is a #3371
+  compile error.
+- **`Function/proto-from-ctor-realm`** reads `other.Function.prototype` →
+  `undefined`; that is #5269's provider-boundary mechanism, so it leaves W2.
+
+Draft (not working, not applied) and probes are preserved in the session
+scratchpad as `w2/w2-draft.patch` and `w2/probes/`. **Re-scope:** W2a — a
+`%Function%` construct arm in both dynamic-`new` paths using strict-eq; W2b —
+construct through the driver with `%Object.prototype%` for a static primitive
+NewTarget `prototype` (instead of post-construction patching), then the bound
+`[[Construct]]` and closed-struct fixes before `bind/proto-from-ctor-realm` and
+`super/realm` can pass. Budget ~4 h each; family runs on this box take ~1 h, so
+run one ≤200-row chunk per background job (30-min background cap).
+
+### 2026-10-07 — Slices W3+W4
+
+Two small slices from the 2026-10-07 re-census, one commit. All 4 rows flip.
+
+**W3 — Annex B sloppy early errors (2 rows).**
+- `annexB/language/function-code/function-redeclaration-switch.js`: CE
+  "Cannot redeclare block-scoped variable 'a'" → pass.
+  `checkSwitchCaseLexicalDuplicates` (`early-errors/duplicates.ts`) reported
+  every duplicate FunctionDeclaration in a CaseBlock. §B.3.3.5 is the switch
+  twin of the Block rule: sloppy code allows duplicates when every binding for
+  the name is a plain FunctionDeclaration. The fix mirrors the Block path's
+  `fnOnlyLexNames`. A name first bound by a plain function may be re-bound by
+  another plain function in sloppy code. Generator, async, `let`/`class`, `var`
+  and strict-mode twins still error, and the pin test asserts each one.
+- `annexB/language/statements/labeled/function-declaration.js`: CE "Function
+  declaration in a labeled statement within iteration/if body" → pass. For
+  `l1: l2: function f(){}` the inner LabeledStatement's parent is a
+  LabeledStatement, which `isStatementPosition` treats as a statement
+  position. IsLabelledFunction (§13.7.1.1) is asked of the iteration/if body,
+  so only the outermost label's position matters, and that check already walks
+  the inner labels. The LabeledStatement check in `node-checks.ts` now skips a
+  label whose parent is a label. `while (0) l1: l2: function f(){}`, the `if`
+  twin and the strict form still error. A nested-label `class` still errors
+  through the ClassDeclaration check.
+
+**W4 — trapless [[Call]] through a proxy binding (2 rows).**
+`built-ins/Proxy/apply/trap-is-{missing,null}-target-is-proxy.js`.
+
+The re-census root cause did not reproduce. It said the trapless forward in
+`__proxy_apply_dispatch` lacked bound/builtin arms. The probe shows otherwise:
+both traps fire in `__module_init` at the CALL SITE, before any dispatch.
+`new Proxy(t, h)` has the TARGET's checker type, so:
+- `sumProxy(2)` took the typed closure-call lowering. That lowering casts the
+  value to the `$4` closure struct and, on a miss, `struct.get`s a null:
+  *dereferencing a null pointer*.
+- `hasOwnProxy.call(obj, "foo")` took `tryEmitNativeProtoReflectiveCall`.
+  That path resolves the receiver's symbol to `Object.hasOwnProperty`'s
+  method signature and `call_ref`s the proxy as the native glue closure:
+  *illegal cast*.
+
+The forward itself is fine. `__apply_closure` already carries the `$__bound_fn`
+front-guard (#3140) and the `$Proxy` guard. `Reflect.apply` on the same
+proxy-of-proxy answered correctly once the `.call` site was fixed.
+
+Fix: both typed sites now decline a callee for which the existing
+`tracesToProxyValue` (`proxy-value-provenance.ts`) is true, standalone only:
+- `tryCompileStoredStandaloneCarrierCall` (`call-identifier.ts`, the helper
+  that already owns the bound-carrier twin of this hazard) routes it to
+  `tryEmitInlineDynamicCall`, whose `$Proxy` arm reaches
+  `__proxy_apply_dispatch`.
+- The reflective `.call`/`.apply` site in `compileCallExpression`
+  (`calls.ts`) admits it into the existing `__apply_closure` arm used for
+  dynamic Function values.
+
+Only proxy-traced callees change route. Every other callee keeps its typed
+lowering byte-for-byte.
+
+**Measurement.** Standalone, QuickJS eval provider, in-process. BEFORE is a
+frozen `git archive` snapshot of base `e24d111705`, run with its own provider
+build. AFTER is this tree.
+
+| family | rows | before pass | after pass | lost |
+| --- | --- | --- | --- | --- |
+| `annexB/language/**` | 845 | 828 | 830 | 0 |
+| `language/statements/{switch,labeled,function,block}/**` | 607 | 601 | 601 | 0 |
+| `built-ins/Proxy/**` | 311 | 283 | 285 | 0 |
+| `built-ins/Function/prototype/{bind,call,apply}/**` | 197 | 187 | 187 | 0 |
+
+The touched families include the ES5 rows of `switch`/`labeled`/`function`/`block`
+and Annex B. None of them was lost.
+
+Pin: `tests/issue-6651-w3-w4.test.ts`. Three W4 probes trap on the base tree:
+measured with `.tmp` probes that swap the two call-site files back to base.
+The W3 probes include the strict/non-plain/iteration twins that must stay
+SyntaxErrors.
+
+Controls:
+- `node scripts/equivalence-gate.mjs` is green: 22 known failures, 1748
+  passing.
+- Temporal `Duration/prototype/round/*` standalone: 119 pass / 7 fail of 126, 0 `illegal cast` (bundles rebuilt, provider
+  prewarmed into a fresh cache, QuickJS provider rebuilt).
+
+**Residuals.** The admission is the `tracesToProxyValue` trace: a
+single-initializer binding, a `.proxy` handle read, or a single-return helper.
+A proxy reached through a reassigned or parameter binding still takes the typed
+lowering if its checker type is a function type. `.apply(thisArg, list)` with a
+non-literal, non-`arguments` list still falls through to the established
+reflective machinery for a proxy receiver.
+
+### 2026-10-07 — Slices W5+W8
+
+Opus lane, harness branch off `origin/main` @ `34cc063e2a`. `src/` was copied to
+`.tmp/base-src` before the first edit and a `git archive` of the base was built
+as `.tmp/basetree` with its own QuickJS provider; every "base" number below was
+run there by this lane. **W8 landed; W5 landed no code** (reasons below).
+
+**W8 — `built-ins/GeneratorFunction/has-instance.js`: base fail → branch pass**
+(`JS2WASM_EVAL_ENGINE=quickjs … --standalone --isolate`).
+
+Root cause, re-verified by probe: the compiled `%GeneratorFunction%` is a real
+constructor whose `prototype` is `%GeneratorFunction.prototype%`, and
+`OrdinaryHasInstance` already walks the candidate through `__isPrototypeOf`,
+whose non-`$Object` seed asks `__getPrototypeOf`. But nothing at RUN TIME knew a
+generator closure's `[[Prototype]]`: `Object.getPrototypeOf(genFn)` was answered
+only by the static folds in `call-builtin-static.ts`, so the walk saw `null`
+(`g instanceof GeneratorFunction`, `GP.isPrototypeOf(g)` both `false` on base).
+The A9 products (`GeneratorFunction()` / `new GeneratorFunction()`) had the same
+gap — their record already named it ("a carrier has no settable
+`[[Prototype]]`").
+
+Mechanism — identity, never shape (a generator closure shares its struct type
+with every closure of its signature):
+- `function-instance-meta.ts`: a sync generator declaration/expression interns
+  its `$fnmeta` instance under a `g`-prefixed key, so its metadata object is
+  never shared with an ordinary function's. `name`/`length` are unchanged.
+- NEW leaf `object-model/generator-function-proto-arm.ts`:
+  `__genfn_proto_of(v)` answers `%GeneratorFunction.prototype%` when
+  `__fninst_meta(v)` is `ref.eq` a generator-keyed metadata global, or when `v`
+  is on the A9 product list (pushed at creation in
+  `generator-function-dynamic.ts`). Reserved (null body) where the intrinsic is
+  first reified, filled at finalize; nothing minted at finalize. Two front arms
+  consult it: `__getPrototypeOf` returns it; `__isPrototypeOf(O, V)` answers
+  `O === P || O.isPrototypeOf(P)`. Both are spliced BEFORE
+  `fillClosedObjectPrototypeEdges`, so an explicit `setPrototypeOf` side-table
+  entry still answers first. Read-only on the intrinsic's lazy global: a module
+  that never reified it is unchanged.
+
+Pin `tests/issue-6651-w5-w8.test.ts`: 2 mechanisms + 1 guard, no eval engine.
+Base: both mechanisms fail (0 / 0), guard passes; branch 3/3.
+
+Controls (in-process, standalone, QuickJS provider rebuilt per tree; the box
+was at load ~10 on 4 cores, so `--isolate` was used only for the 4 target rows):
+
+| family | rows | base | branch |
+| --- | ---: | --- | --- |
+| `built-ins/GeneratorFunction/**`, `language/expressions/instanceof/**`, `built-ins/Function/prototype/Symbol.hasInstance/**` (incl. every ES5 `instanceof` row) | 77 | 73 / 4 | **74 / 3** — `has-instance` flips; the other 3 non-pass rows identical |
+| `built-ins/GeneratorPrototype/**`, `language/{statements,expressions}/generators/**` (the `$fnmeta` key change touches every generator closure) | 617 | 603 pass | 603 pass, identical non-pass paths per chunk |
+
+- `node scripts/equivalence-gate.mjs`: 22 failing = the 22 known failures, no
+  new regression.
+- Temporal (after `build:compiler-bundle` + `build:runtime-bundle`, a fresh
+  prewarmed worktree-local cache, provider rebuilt; in-process, three 42-row
+  chunks): `Duration/prototype/round/*.js` **119 pass / 7 fail of 126, 0
+  `illegal cast`**.
+- Neighbouring pins `issue-6651-{a3,a9,a14}` pass (one A9 case timed out once
+  at 51 s under load and passes alone).
+
+Residuals (pre-existing, not widened):
+- `Object.getPrototypeOf(<generator value>)` still answers
+  `%Function.prototype%` where the checker proves the argument callable
+  (`object-get-prototype-of.ts`' callable fold) or where the dynamic arm's
+  `__is_callable` test fires first (`tryEmitDynamicCallableGetPrototypeOf`).
+  The row does not read it; `instanceof` and `isPrototypeOf` go through the
+  natives above.
+- In a module that also evaluates `x instanceof Function`, a probe
+  (`gDecl instanceof Function; gDecl instanceof GeneratorFunction`) still
+  answers `false` for the second; not reached by any row of the acceptance
+  families (measured below), not diagnosed further.
+
+**W5 — no code.** Re-verified by probe on base (`.tmp/w5a.js`): `Object.create(ta)`
+does not link (`getPrototypeOf(obj) === ta` false), and
+`{ valueOf: function () {} }` crosses to externref as a COPY (`id(v) === v`
+false — the #3037 mechanism, for the `function`-valued spelling too).
+- `key-is-valid-index-prototype-chain-set.js` fails on exactly that identity
+  (`receiver[0] === value`, "Expected SameValue(«[object Object]», «[object
+  Object]»)") before it reaches anything W5 owns → **(b) #3037**, not W5.
+- `key-is-canonical-invalid-index-prototype-chain-set.js` also needs
+  `Object.setPrototypeOf([], ta)` on the vec carrier and
+  `Object.setPrototypeOf(new String(""), ta)` with String-wrapper expandos —
+  both are W1 items (vec `[[SetPrototypeOf]]`, String exotic object). It
+  belongs after W1.
+- `key-is-out-of-bounds-receiver-is-proto.js` is the one W5-only row
+  (the TA link + the §10.4.5.5 receiver arm in the walkers); not attempted in
+  this time box after W8 — the link writer and four walker arms are a separate
+  slice.
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 

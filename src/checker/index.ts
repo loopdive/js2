@@ -10,6 +10,7 @@ import {
 } from "./multi-file-paths.js";
 import { getDefaultEnvironment } from "../env.js";
 import { DTS_ENTRY_DECLS_NAME } from "./dts-entrypoint-seeds.js";
+import { JS_COLLECTION_INFERENCE_DTS_NAME, jsCollectionInferenceSourceFile } from "./js-collection-inference.js";
 import { buildModuleDecls } from "./node-capability-map.js";
 import { traceTs5Checker } from "./ts5-trace.js";
 import { nodeBuiltinClassStub } from "../import-resolver.js";
@@ -1011,6 +1012,9 @@ export function analyzeSource(source: string, fileName = "input.ts", analyzeOpti
   // (#743) Optional extra root: the entry's shipped sibling `.d.ts` (flag-gated
   // upstream — undefined means byte-identical behavior). See AnalyzeOptions.
   const entryDeclsText = analyzeOptions?.entryDeclarationsText;
+  // #6651 V12 — a `.js` entry has no static types: the checker must not infer a
+  // collection's key/value/element type from its constructor arguments.
+  const injectJsCollections = isJs;
 
   const compilerHost: ts.CompilerHost = {
     getSourceFile(name, languageVersion) {
@@ -1022,6 +1026,9 @@ export function analyzeSource(source: string, fileName = "input.ts", analyzeOpti
       }
       if (entryDeclsText !== undefined && name === DTS_ENTRY_DECLS_NAME) {
         return ts.createSourceFile(name, entryDeclsText, languageVersion, true, ts.ScriptKind.TS);
+      }
+      if (injectJsCollections && name === JS_COLLECTION_INFERENCE_DTS_NAME) {
+        return jsCollectionInferenceSourceFile(languageVersion);
       }
       const libSf = getLibSourceFile(name, languageVersion);
       if (libSf) return libSf;
@@ -1037,6 +1044,7 @@ export function analyzeSource(source: string, fileName = "input.ts", analyzeOpti
       name === fileName ||
       (injectNodeEnv && name === NODE_ENV_DTS_NAME) ||
       (entryDeclsText !== undefined && name === DTS_ENTRY_DECLS_NAME) ||
+      (injectJsCollections && name === JS_COLLECTION_INFERENCE_DTS_NAME) ||
       isKnownLibName(name),
     readFile: () => undefined,
     getDirectories: () => [],
@@ -1056,6 +1064,7 @@ export function analyzeSource(source: string, fileName = "input.ts", analyzeOpti
   function buildProgram(withNodeEnv: boolean) {
     const rootNames = withNodeEnv ? [fileName, NODE_ENV_DTS_NAME] : [fileName];
     if (entryDeclsText !== undefined) rootNames.push(DTS_ENTRY_DECLS_NAME);
+    if (injectJsCollections) rootNames.push(JS_COLLECTION_INFERENCE_DTS_NAME);
     const prog = ts.createProgram(rootNames, compilerOptions, compilerHost);
     // (#743) The shipped declaration root's own diagnostics never surface: it
     // exists purely as a seed source and must not block compiling the package.

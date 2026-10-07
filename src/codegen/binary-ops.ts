@@ -8,7 +8,7 @@ import {
   admitsAnyAdditionOperands,
   compileStringBinaryOpWithNativeAddition,
   emitAnyAdd,
-  provenNumericOperand,
+  numericAnyOperand,
 } from "./native-addition.js";
 export { emitAnyAdd, emitAnyAddFromExternTemps } from "./native-addition.js";
 import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
@@ -1401,8 +1401,8 @@ export function compileBinaryExpression(
   // skip AnyValue and compile with a numeric hint so operands unbox to f64
   // directly, avoiding the overhead of AnyValue tag dispatch.
   if (ctx.anyValueTypeIdx >= 0) {
-    const leftIsAny = (leftTsType.flags & ts.TypeFlags.Any) !== 0 && !provenNumericOperand(ctx, expr.left);
-    const rightIsAny = (rightTsType.flags & ts.TypeFlags.Any) !== 0 && !provenNumericOperand(ctx, expr.right);
+    const leftIsAny = (leftTsType.flags & ts.TypeFlags.Any) !== 0 && !numericAnyOperand(ctx, fctx, expr.left);
+    const rightIsAny = (rightTsType.flags & ts.TypeFlags.Any) !== 0 && !numericAnyOperand(ctx, fctx, expr.right);
     // (#745 S3) A local whose static type is (or whose DECLARED symbol type
     // is) a heterogeneous primitive union compiles to `ref_null $AnyValue`
     // under `unionAnyRep` (S2 mapping) — no legacy path (string/numeric/
