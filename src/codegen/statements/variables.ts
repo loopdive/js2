@@ -89,7 +89,7 @@ import { tryCompileDerivedAsciiCaseBinding as tryAsciiCase } from "../derived-as
 import { detectNullGuardAlias } from "./null-guard-alias.js"; // (#4555) extraction
 import { reusedVarSlotIndex } from "./var-slot-reuse.js"; // (#4555) §10.5 step 8
 import { emitRealmGlobalPrimitiveMethodWriteback } from "../global-environment.js";
-import { isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
+import { chunkDeclarationIsFunctionLocal, isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
 import {
   tryCompileClassExpressionBindingValue,
   tryEmitPromiseSubclassClassExpressionValue,
@@ -1346,7 +1346,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // cannot shadow a module binding in a later source entry: for example, a
     // completed top-level block may have used the same local name before the
     // following source-level `let` must initialize its module global.
-    const hasLocalShadow = !chunkedModuleInit && fctx.localMap.has(name);
+    // (#6877) …unless the declaration is inside an inlined function (IIFE).
+    const hasLocalShadow = fctx.localMap.has(name) && (!chunkedModuleInit || chunkDeclarationIsFunctionLocal(stmt));
     // A lexical declaration nested in a top-level block is still local to that
     // block. `moduleGlobals` is keyed only by name, so an outer Script-level
     // binding with the same name must not make this declaration take the
