@@ -591,3 +591,210 @@ experiment intentionally remains on the exact recorded e776 baseline, not an
 unmeasured merge. Session A owns final integration and queue submission.
 No shared compiler/API/registry/source-map file was edited, no source packet
 was inferred from A's documentation publication, and no legacy path is retired.
+
+## Amendment: bounded same-process artifact pairing (2026-10-07)
+
+Status remains **in-progress; performance unresolved; PR6563 held**. This is
+an instrumentation specification, not new measurements or a kernel release.
+Preserve every preceding failure, fixture, result and historical log unchanged.
+Read alongside `plan/agent-context/linear-repeat-session-b-20261007.md` and
+`plan/log/6892-linear-repeat-20261007/hybrid-comparison.json`. The latter records
+61/61 in all four runs and 90 equal functional rows, but `ascii-3-n-1024`
+baseline/candidate ratios 0.7840080258521459 and 3.564348213212435. This amendment
+addresses that unresolved reversal, not a demonstrated tiering diagnosis.
+
+### Exact epoch and disjoint implementation releases
+
+- Baseline source A: `a5c5689f9c85090d44f940204ae3c65605f01ce5`.
+- Candidate source B: `6b33a4934e8f95cc2d8c788f059844ffaa5a8f7b`, presently local,
+  not the already published held PR head. Its `src/` diff against A contains
+  only `src/codegen-linear/string-repeat.ts`; independently inspected here.
+  Parent reports historical hybrid kernel/test hashes unchanged after merge.
+- T owns only `tests/issue-6892-linear-repeat-bulk-copy.test.ts`: optional
+  capture, reusing `compileCounted`, its existing admission/receipt/output
+  assertions, and the existing eight timed cases. No new production helper.
+- R owns only new
+  `plan/log/6892-linear-repeat-20261007/paired-artifact-replay.mjs`: dependency-free
+  Node evidence replay using built-ins, no compiler/provider imports or codegen.
+  Parent found no existing runner with this paired-artifact lifecycle; other
+  cold-start/cross-engine harnesses are not equivalent.
+- Parent owns integration, generated logs/manifests/comparison, fresh exact
+  source/test verification and serialization of all heavy runs. These are two
+  finite disjoint Sol6.1 Medium slices, subject to parent's explicit release.
+  This plan claim does not itself allocate implementation ownership.
+
+No production changes, source tuning, new benchmark registry, shared
+index/compiler/frontend/emitter/integration/receipt edits or legacy retirement.
+Session A retains those scopes and final queue authority. The independent
+fresh-main stack control reported by parent is not repeat-performance evidence.
+
+### T: optional capture protocol, existing route only
+
+Keep all 61 cases, assertions and historical logging. Keep the old
+`JS2WASM_BENCH_LINEAR_REPEAT=1` timing algorithm, three warmup/seven sample
+batches, calls, cap and 35-second test timeout unchanged. Permit only extracting
+its eight-case declaration into one test-local constant reused by capture,
+and an early capture-mode branch in that same optional instrument test.
+`JS2WASM_CAPTURE_LINEAR_REPEAT=1` selects capture; setting both gates is an
+error, not a silent substitution. Neither gate retains current disabled mode.
+Capture does not run the old timed batches and must never claim they completed.
+Its own 30-second cap includes compilation, validation and reporting, checked
+around each operation; synchronous work crossing the deadline is incomplete
+on return, never accepted. Do not increase either timeout to obtain a result.
+
+For `xy` then `abc`, each at N=3,9,1024,65537, call the existing
+`compileCounted(fragment,count,true)` once. Extend its returned artifact with
+the exact `result.binary` bytes and the already validated semantic witness;
+do not recompile, hand-assemble, use a provider fixture, weaken assertions or
+read a later compilation's global report. Existing one-call output validation
+is on a disposable capture instance, never a replay instance. Reuse the same
+case list and allocation/calls calculation without changing the legacy branch.
+
+Emit JSON lines through existing `record`, with `issue:6892`, `schemaVersion:1`
+and new kinds `artifact-capture-start`, `artifact-capture`,
+`artifact-capture-complete` (or incomplete on failure). Required schema:
+
+- Start: exact source epoch, actual git HEAD, `HEAD:src` tree ID, clean-source
+  assertion, kernel/test/package-lockfile SHA256, Node/V8/platform/arch,
+  execPath/execArgv/NODE_OPTIONS, lane/IR flags, case IDs and count 8.
+  Parent supplies expected source epoch; verify its `src` tree equals HEAD's
+  and actual tracked source is unchanged, with no untracked source files.
+  Test-only commits may change HEAD, never the pinned source tree. Record the
+  actual lockfile name; its bytes and compile configuration must match arms.
+- Artifact: ordinal, caseId, fragment/count, exact source text and SHA256,
+  fileName and complete compile options (`linear`, optimize false, emitWat true,
+  allocator `arena-reset`), binary base64/byteLength/SHA256, module imports and
+  exports, outputBytes, estimatedAllocationPerCall and calls. Include the full
+  semantic output record (pointer/capacity/length/bytes/text), compiled/rejected
+  owners and existing associations: unique compiled `run` owner, site/parsed
+  owner/source, receipt tripCount/plan owner/source, repeat site, ASCII encoding
+  and intrinsic binding. Require exactly one receipt/repeat, no `run` rejection.
+- Complete: count 8, ordered case IDs and ordered binary hashes, elapsedMs,
+  status complete; emit only after every assertion succeeds. Incomplete capture
+  is not replayable. Preserve the raw successful test log and test exit status;
+  a capture footer cannot override another failed case in the 61-case suite.
+
+Hashes provide integrity, not independent proof of compiler admission. The
+ownership proof remains the inspected producer assertions on the real source
+compile plus parent's source/test custody. Replay checks witness consistency;
+it must not describe serialized receipts as newly authenticated capabilities.
+
+### R: strict input and execution contract
+
+Invocation: `node plan/log/6892-linear-repeat-20261007/paired-artifact-replay.mjs
+--baseline <capture.log> --candidate <capture.log> --test-sha256 <approved-T-hash>`.
+Pin the two source epochs above in this issue-local runner. Do not discover a
+moving main or accept an arbitrary epoch override. Emit JSONL to stdout and
+nonzero exit on malformed/incomplete evidence, state mismatch or budget expiry.
+Preserve partial rows and an explicit incomplete/error footer when possible.
+
+Read at most 32 MiB per input, reject artifacts over 2 MiB each. Parse only the
+capture protocol's JSON records, ignoring ordinary Vitest text; malformed
+capture records, duplicate start/footer/cases, unknown cases, missing rows,
+noncanonical base64, length/hash mismatches and nonfinite numbers fail closed.
+Require exactly eight artifacts per arm, identical approved test hash, source
+text/hash, cases/config/calls, producer Node/V8 and options, and consistent
+owner/site/source/binding associations. Allow only the declared source epoch,
+kernel hash, source tree, HEAD and binary differences. Recompute binary/source
+hashes; do not trust reported hashes alone. Log raw input hashes and runner hash.
+
+Compile the two captured binaries once per case outside timing and validate
+imports are empty; require matching export descriptions including `run`, memory
+and `__arena_used`. Never modify binary bytes or substitute a new module.
+Replay's Node/V8 must match captures. Record replay process/host options
+separately: Vitest's worker flags need not equal standalone Node's flags, but
+both artifacts run under the single recorded replay configuration.
+
+Primary profile uses ordinary Node defaults, no Wasm engine overrides, forced
+GC or tracing. Local read-only inspection found Node v22.23.2 / V8
+12.4.254.21-node.56 advertising wasm-tier-up, liftoff and wasm-lazy-compilation
+as default true. That does not establish the tier of any timed invocation.
+Do not assume `--no-wasm-tier-up` support, infer tiering from timing, or apply
+unrecorded NODE_OPTIONS. Require empty NODE_OPTIONS and no execArgv for this
+primary invocation. Parent's suggested eager-optimized diagnostic is deferred:
+it would need separate advertised-flag validation and positive sanity checks,
+and could never replace primary results. No engine-configuration sweep here.
+
+### Fixed paired lifecycle and finite limits
+
+One primary replay, all eight cases in the original order. Per case, two warmup
+quartets (ABBA, BAAB), then twelve measured quartets alternating ABBA/BAAB,
+starting ABBA. A always means baseline, B candidate; never relabel by speed.
+This yields four warmup and 24 measured batches per arm/case, 448 batches total.
+Two balanced warmup quartets exercise both artifacts and the common JS caller;
+they do not guarantee optimized tiers or steady state. Twelve measured quartets
+give six blocks of each order and early/late observations without adaptive
+stopping. ABBA/BAAB counterbalances position and approximately linear drift,
+not arbitrary GC, scheduling or compilation effects.
+
+Every batch instantiates a fresh instance of its arm's shared compiled module,
+outside timing. Assert initial arena use zero and identical initial memory
+length/content. Do not run `run` before timing on that instance, pre-grow memory,
+reset its arena, force GC, change imports or cache literal pointers across
+instances. Wasm modules are reused, instances are not; disclose that distinction.
+Use one common JS batch function and the old timed loop exactly: invoke run,
+update unsigned pointer checksum with `Math.imul(checksum,31)+pointer`, retain
+last pointer. Only that loop is timed with `performance.now()`; instantiation,
+decoding, hashing, byte comparison and logging are outside the interval.
+
+Preserve old conservative aligned allocation formula (repeat record, final
+seed concat, seed and fragment literal records, each header 12/alignment 8).
+Calls remain min(256,floor(1048576/estimatedAllocationPerCall)): xy =
+256,256,252,3; abc = 256,256,168,2. Check these against capture, do not trust or
+autotune them. Each batch retains at most 1 MiB of charged arena allocations;
+the maximum charged cumulative work is 448 MiB, not a process RSS guarantee.
+Do not retain instances; retain only the current quartet's comparison snapshots
+and bounded scalar rows. Garbage collection timing remains uncontrolled.
+
+Replay has a 30-second whole-run cap including parsing, module compilation,
+warmup, checks and reporting, checked before/after operations. A blocking call
+may cross the deadline; fail incomplete immediately on return. Parent supplies
+a 35-second external process watchdog because JS cannot interrupt synchronous
+Wasm. No automatic retries, extra batches, discarded slow cases or cap widening.
+A time limit or unresolved result returns to review, not another tuning loop.
+
+### Equality, evidence and decision rule
+
+Outside timing for every warmup/measured batch, validate full last output bytes
+and UTF-8 text against `seed + fragment.repeat(count)`, header length/capacity,
+pointer bounds, arena use and allocation cap. Within each quartet require exact
+equality across all four executions of pointer/checksum, complete output record,
+before/after arena and memory sizes, growth and **all linear-memory bytes**
+(initial and final snapshots, fresh views after possible memory growth).
+Use actual byte comparisons, not checksum-only or hash-only equivalence; report
+SHA256 and lengths for audit. Any mismatch blocks performance interpretation;
+do not mask regions. This extends, rather than replaces, the old functional
+and batch-state checks. It is still bounded coverage, not whole-compiler proof.
+
+Emit each batch's case, phase, quartet/position/order, arm, calls, elapsedMs,
+checksum/pointer, output header/hash, arena/memory states and snapshot hashes.
+Emit the full expected/verified output bytes once per case (base64 plus UTF-8
+text), with every batch referencing its hash after actual full-byte validation;
+this avoids printing the same large payload 56 times, without sampling bytes.
+Retain every warmup and measured sample, including short cases and outliers.
+Footer requires exactly 448 batches, eight complete cases and all equality
+checks passed. Preserve raw logs losslessly; no truncating output witnesses.
+Parent also compares all original noncapture functional rows between the two
+61-case runs separately; new capture rows must not conceal missing old rows.
+
+For each measured quartet report ratio `(A1ms+A2ms)/(B1ms+B2ms)` with equal
+calls. Report all twelve ratios, median/min/max/MAD, arm sample distributions,
+ABBA versus BAAB medians, and first-six versus last-six medians. No pooling
+across cases, deletion, best-of selection, operation-count speedup, unpaired
+cross-process ratio substitution or unsupported confidence/tiering claim.
+
+Conservative classification: all twelve ratios above 1 is consistent observed
+candidate benefit in this bounded run; all below 1 is consistent observed
+regression; otherwise performance remains mixed/unresolved. Zero/nonfinite
+elapsed times are insufficient resolution, not a win. Report magnitude and
+spread even when the direction is consistent; no classification proves universal
+speedup, equivalence or a statistical confidence bound. In particular the
+`ascii-3-n-1024` question is not settled by a favorable pooled median when its
+blocks reverse direction. Short-row regressions remain visible blockers to any
+unqualified performance claim. No numeric tolerance silently permits slowdown.
+
+Successful provenance, 61-case equality and replay-state equality establish only
+their bounded correctness result. Parent/A must review every case and explicitly
+decide performance acceptance; the runner never removes `hold` or queues PR6563.
+Mixed intermediate/short results keep performance unresolved without another
+threshold, warmup or flag sweep. Record both exact epochs, identical new test
