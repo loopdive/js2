@@ -806,3 +806,35 @@ pending. No heap/configuration override, source repair or protection weakening
 was applied. The dialect gate passes27 canonical declarations; flat-directory
 budget passes829 existing codegen files. Compiler inventory gate is pending.
 Keep HOLD until the remaining build/gate obligations and A acceptance are met.
+
+### Matched baseline build result and verified publication
+
+The original `pnpm run build` is now terminal on BOTH frozen operands:
+candidate production44dd2415dc8422939c313c72b3034943eadcf997 and test-only main
+baseline2a866ff9d31dc0a7c0d18cc7489c6bee79c0705a. Both exit134 after1762 transformed
+modules, during Vite rendering, with `Reached heap limit` at roughly4GiB. Both
+use empty NODE_OPTIONS and identical Vite config SHA256
+a658cb99507555a3a15527375590f76940311cf4ee6bca825ab687b6594956e4.
+No source or configuration changed while either build ran; subsequent candidate
+commits append documentation/evidence only. Baseline production is exact e1e.
+
+This demonstrates an inherited baseline resource failure for the same gate,
+not a green build or proof that no later build error exists. Preserve both raw
+logs (`build-failed.log.gz`, `build-baseline-failed.log.gz`) without normalizing
+their allocator/GC traces. No heap increase, gate waiver, or build-source fix
+is taken. A retains the acceptance decision and final queue authority.
+
+Compiler inventory is also terminal, exit0, actual e1e comparison base. Its
+explicit status is `inventory-valid-architecture-incomplete`, with
+architectureComplete=false, graphComplete=false and inventoryValid=true.
+It accounts for1885 modules (1556 unmigrated,315 clean,14 compatibility adapters)
+and reports no activated-policy errors; this is not an IR-only completion claim.
+Dialect guard27 declarations and flat-directory guard829 files both pass.
+
+Prior repaired checkpoint3a8443ec26d647f93e9107dc074bddedd5361a96 was verified
+by remote branch and PR6587 APIs; all normal push gates passed, including18
+numeric parity tests. PR6587 is non-draft HOLD with auto-merge=null. Fork-headed
+PR6568 is now closed as ancestry-verified superseded; its branch is retained.
+A received the checkpoint and dependencies in GitHub comment6043613775, with
+no response when checked. Main has independently advanced to3146af9a349bb20a5a398fba37e8b69b16fb4ab9;
+that later epoch is not relabeled as these frozen results.

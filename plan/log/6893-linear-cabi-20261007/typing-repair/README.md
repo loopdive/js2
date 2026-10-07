@@ -59,3 +59,12 @@ Node's default roughly4GiB heap is exhausted. `build-failed.log.gz` retains the
 original failure; no configuration/heap override was applied. Matched baseline
 build diagnosis remains pending, so no inherited-failure attribution is made.
 Dialect and flat-directory guards pass (27 declarations,829 existing files).
+
+Matched baseline build is now terminal: same original command, empty NODE_OPTIONS,
+same Vite config,1762 transformed modules, rendering-phase roughly4GiB heap
+exhaustion, exit134. `build-baseline-failed.log.gz` retains that complete result.
+The baseline demonstrates this resource failure is inherited; neither build
+passes, and no hidden later error is ruled out. No override/waiver/source repair
+was applied. Compiler inventory exits0 while explicitly reporting architecture
+and graph incomplete (1885 modules,1556 unmigrated,315 clean,14 adapters).
+Session A must decide bounded checkpoint acceptance; no queue authority transfers.
