@@ -13390,6 +13390,11 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/process-capability.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
       "path": "src/runtime/object-create-class-instance.ts",
       "state": "unmigrated",
       "layer": "legacy-host"

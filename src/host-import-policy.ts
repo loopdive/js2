@@ -161,6 +161,12 @@ function classifyBuiltin(name: string): HostImportPolicy {
     // PRNG (#1503/#6659).
     return policy("platform-capability", "randomness", 4398, false, "Web Crypto entropy capability");
   }
+  if (name === "__get_process" || name.startsWith("__get_process_")) {
+    // (#1490, #6910) The live Node `process` (and its env/argv/platform/…
+    // members): an environment capability, not ECMAScript semantics. A
+    // host-free build substitutes its stand-in at compile time.
+    return policy("platform-capability", "node", 1490, false, "Node process capability");
+  }
   if (LEGACY_SEMANTIC_BUILTIN_PREFIXES.some((prefix) => name.startsWith(prefix))) {
     return policy("legacy-semantic", "ecmascript-runtime", 4397, false, "implicit JavaScript semantic fallback");
   }
