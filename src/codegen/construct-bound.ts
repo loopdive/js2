@@ -76,6 +76,7 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import { coerceType, compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { ensureDateStruct } from "./expressions/builtins.js";
+import { constructorProtoNullToDefaultInstrs } from "./object-model/construct-default-proto.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const DRIVER_NAME = "__construct_bound";
@@ -486,6 +487,7 @@ export function fillConstructBoundDriver(ctx: CodegenContext): void {
     ...protoKeyInstrs,
     { op: "call", funcIdx: externGetIdx },
     { op: "local.set", index: protoLocal },
+    ...constructorProtoNullToDefaultInstrs(ctx, protoLocal), // (#6651 W2b) §10.1.14 step 4
     { op: "local.get", index: protoLocal },
     { op: "call", funcIdx: objectCreateIdx },
     { op: "local.set", index: selfLocal },
@@ -526,5 +528,56 @@ export function fillConstructBoundDriver(ctx: CodegenContext): void {
     { name: "__cb_proto", type: EXTERNREF },
     { name: "__cb_self", type: EXTERNREF },
     { name: "__cb_result", type: EXTERNREF },
+  ];
+}
+
+/**
+ * (#6651 W2b) `new D()` where `D`'s single declaration initializes it with a
+ * `<fn>.bind(…)` call. The checker types `D` as a plain call signature (`() =>
+ * void`), and `classifyNonConstructableValue` calls it a "probe" (a bound
+ * function is a constructor iff its target is, §10.4.1.2) — so no construct
+ * route claimed it, and `new D()` (and `Reflect.construct(D, …)`) evaluated to
+ * null. The native construct driver can own it: this reserves
+ * `__construct_bound` so the driver's {@link boundConstructDriverArm} fires
+ * for a `$__bound_fn` callee at run time. Any other value (a rewritten
+ * binding included) takes the driver's unchanged arms, including its
+ * IsConstructor TypeError.
+ */
+export function admitBoundValueConstruct(ctx: CodegenContext, callee: ts.Expression): boolean {
+  if (!ctx.standalone || !ts.isIdentifier(callee) || !nodeCanMintBoundFn(callee)) return false;
+  const decls = ctx.oracle.declarationsOf(callee);
+  if (decls.length !== 1 || !ts.isVariableDeclaration(decls[0]!)) return false;
+  let init = ctx.oracle.variableInitializerOf(callee);
+  while (init !== undefined && ts.isParenthesizedExpression(init)) init = init.expression;
+  if (init === undefined || !ts.isCallExpression(init)) return false;
+  const bindAccess = init.expression;
+  if (!ts.isPropertyAccessExpression(bindAccess) || bindAccess.name.text !== "bind") return false;
+  reserveConstructBoundDriver(ctx, stringConstantExternrefInstrs(ctx, "prototype"));
+  return true;
+}
+
+/**
+ * The native construct driver's `$__bound_fn` arm: `[[Construct]]` through
+ * `__construct_bound(callee, argv)`. `[]` unless a site reserved that driver
+ * and the module minted the carrier type.
+ */
+export function boundConstructDriverArm(ctx: CodegenContext, argv: Instr[], argvLocal: number): Instr[] {
+  const boundIdx = ctx.funcMap.get(DRIVER_NAME);
+  if (boundIdx === undefined || ctx.boundFnTypeIdx < 0 || argv.length === 0) return [];
+  return [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: ctx.boundFnTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...argv,
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: argvLocal },
+        { op: "call", funcIdx: boundIdx },
+        { op: "return" },
+      ],
+    },
   ];
 }

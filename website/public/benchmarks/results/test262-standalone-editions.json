@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11568,
-    "fail": 124,
+    "pass": 11573,
+    "fail": 119,
     "ce": 12,
     "skip": 0,
     "total": 11704,
@@ -120,21 +120,21 @@
       },
       {
         "name": "Proxy",
-        "pass": 402,
-        "fail": 26,
+        "pass": 403,
+        "fail": 25,
         "ce": 3,
         "skip": 0,
         "total": 431,
-        "pct": 93
+        "pct": 94
       },
       {
         "name": "Reflect.construct",
-        "pass": 400,
-        "fail": 8,
+        "pass": 401,
+        "fail": 7,
         "ce": 7,
         "skip": 0,
         "total": 415,
-        "pct": 96
+        "pct": 97
       },
       {
         "name": "class",
@@ -147,12 +147,12 @@
       },
       {
         "name": "Reflect",
-        "pass": 293,
-        "fail": 30,
+        "pass": 296,
+        "fail": 27,
         "ce": 7,
         "skip": 0,
         "total": 330,
-        "pct": 89
+        "pct": 90
       },
       {
         "name": "Symbol.species",
@@ -183,12 +183,12 @@
       },
       {
         "name": "cross-realm",
-        "pass": 79,
-        "fail": 47,
+        "pass": 84,
+        "fail": 42,
         "ce": 2,
         "skip": 0,
         "total": 128,
-        "pct": 62
+        "pct": 66
       },
       {
         "name": "Symbol.toPrimitive",
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4606,
+    "pass": 4605,
     "fail": 186,
-    "ce": 129,
+    "ce": 130,
     "skip": 0,
     "total": 4921,
     "pct": 94,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4503,
+        "pass": 4502,
         "fail": 105,
-        "ce": 3,
+        "ce": 4,
         "skip": 0,
         "total": 4611,
         "pct": 98
