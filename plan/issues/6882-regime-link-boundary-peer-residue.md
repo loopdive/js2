@@ -97,8 +97,12 @@ raised locally to 400 s for the measurement only — not committed)
 
 | folder | regime before | regime after | standalone (baseline 2026-10-07) |
 | --- | ---: | ---: | ---: |
-| `built-ins/Temporal/PlainTime/` | 473 / 493 (#6748 report, 2026-10-06) | **485 / 493** | 485 / 493 |
-| `built-ins/Temporal/Now/` | 64 / 66 (#6748 report) | 64 / 66 | 64 / 66 |
+| `built-ins/Temporal/PlainTime/` | 473 / 493 | **485 / 493** | 485 / 493 |
+| `built-ins/Temporal/Now/` | 64 / 66 | 64 / 66 | 64 / 66 |
+
+Both columns measured on this branch's base (`20297ba9ae`) and head, full
+folders. The 12 rows fixed: 10 `options-{wrong-type,invalid}` (Symbol typeof),
+`prop-desc.js` (typeof of a provider class), `constructor.js`.
 
 Before-state measured on THIS base for the 72-row subset (every standalone-
 passing PlainTime row that mentions `Symbol`/`typeof`/`toStringTag`, plus the
