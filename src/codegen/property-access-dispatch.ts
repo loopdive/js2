@@ -26,7 +26,7 @@ import { NATIVE_GENERATOR_FACTORY_PROTO } from "./generators-native-protocol.js"
 
 import { ts } from "../ts-api.js";
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, hostFreeEnvironment, jsValueBoundary } from "./context/types.js";
 import {
   isExternalDeclaredClass,
   isIteratorResultType,
@@ -1923,11 +1923,11 @@ export function tryGlobalThisAndProcessRead(
       // the standard EventEmitter surface (`stdout.on`/`removeListener`) too.
       else if (procProp === "stdout") hostImport = "__get_process_stdout";
       else if (procProp === "stderr") hostImport = "__get_process_stderr";
-      // Standalone has no process to read: `process.env` is the host-free
-      // empty object the JS-host import also answers when no `process` exists
-      // (react's / redux's `process.env.NODE_ENV === "production"` gate kept a
-      // `__get_process_env` import and failed the standalone npm-compat lane).
-      if (ctx.standalone && procProp === "env") {
+      // A host-free build has no process to read: `process.env` is the empty
+      // object the JS-host import answers when no `process` exists (react's
+      // NODE_ENV gate). (#6910) The process is a PLATFORM capability: a JS
+      // environment reads the host's, admitted at the value boundary.
+      if (ctx.standalone && procProp === "env" && (hostFreeEnvironment(ctx) || !jsValueBoundary(ctx))) {
         const idx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, fctx);
         if (idx !== undefined) fctx.body.push({ op: "call", funcIdx: idx });
