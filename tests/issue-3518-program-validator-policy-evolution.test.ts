@@ -1,4 +1,9 @@
+import { captureDenoPostPositionMainPredecessorPolicySource } from "./helpers/ir-deno-post-position-main-successor.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
+import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
+import { captureSourceMapPositionInventoryPredecessorPolicySource } from "./helpers/ir-source-map-position-inventory-successor.js";
+import { captureMainInventoryPredecessorPolicySource } from "./helpers/ir-main-inventory-source-successor.js";
 import {
   captureArrayBufferIsViewMainPredecessorPolicySource,
   capturePresentationClassificationPredecessorPolicySource,
@@ -708,7 +713,17 @@ const raw = () =>
     captureLoweringAnalysisPredecessorPolicySource(
       capturePresentationClassificationPredecessorPolicySource(
         captureArrayBufferIsViewMainPredecessorPolicySource(
-          readFileSync(new URL("../scripts/compiler-boundaries.json", import.meta.url), "utf8"),
+          captureMainInventoryPredecessorPolicySource(
+            captureSourceMapPositionInventoryPredecessorPolicySource(
+              capturePositionClassFieldsMainPredecessorPolicySource(
+                capturePositionFinallyMainPredecessorPolicySource(
+                  captureDenoPostPositionMainPredecessorPolicySource(
+                    readFileSync(new URL("../scripts/compiler-boundaries.json", import.meta.url), "utf8"),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     ),
@@ -814,7 +829,9 @@ function withAuthorityFault(path: string, kind: "mutation" | "missing", action: 
               ? expected.sourceReceipt
               : path === authorityPath
                 ? { bytes: original.length, sha256: sha(original) }
-                : expected.sourcePins.find((item) => item.path === path)!;
+                : path === "src/ir/program/validation.ts"
+                  ? { bytes: 45816, sha256: "33cba90b606278805766b4eb739214c31dd84babafb873773f3e92f60c470231" }
+                  : expected.sourcePins.find((item) => item.path === path)!;
     const authenticated = path === helperPath ? original.subarray(0, 254018) : original;
     expect(authenticated.length).toBe(pin.bytes);
     expect(createHash("sha256").update(authenticated).digest("hex")).toBe(pin.sha256);

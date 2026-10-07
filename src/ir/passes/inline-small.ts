@@ -79,12 +79,45 @@ import {
   type IrFunction,
   type IrInstr,
   type IrModule,
+  type IrSiteId,
   type IrTerminator,
   type IrValueId,
 } from "../nodes.js";
 import type { AllocSiteRegistry } from "../alloc-registry.js";
 import type { IrUnitId } from "../identity.js";
 import { forkAllocInInstr, retireAllocsIn } from "./alloc-discipline.js";
+
+/** Preserve truthful source frames only where the removed call supplies one. */
+function inlineSourceSite(
+  site: IrSiteId | undefined,
+  callSite: IrSiteId | undefined,
+  ownerUnitId: IrUnitId,
+): IrSiteId | undefined {
+  const origin = site?.origin;
+  if (!origin) return site;
+  if (origin.kind === "source") {
+    const callOrigin = callSite?.origin;
+    if (callOrigin?.kind !== "source") return site;
+    return {
+      ...site,
+      line: site.line!,
+      column: site.column!,
+      origin: {
+        ...origin,
+        inlinedAt: [...(origin.inlinedAt ?? []), callOrigin.point, ...(callOrigin.inlinedAt ?? [])],
+      },
+    };
+  }
+  return "ownerUnitId" in origin ? { origin: { ...origin, ownerUnitId } } : site;
+}
+
+/** Fresh inline allocations share the copied instruction's enriched site. */
+function forkInlineAllocation(instr: IrInstr, registry: AllocSiteRegistry | undefined): IrInstr {
+  if (!instr.site?.origin || !registry || instr.alloc === undefined) return forkAllocInInstr(instr, registry);
+  const allocation = registry.resolve(instr.alloc);
+  if (allocation === null) return instr;
+  return { ...instr, alloc: registry.fresh(allocation.kind, allocation.type, instr.site) };
+}
 
 const MAX_CALLEE_INSTRS = 10;
 const CALLER_SIZE_BUDGET_MULTIPLIER = 4;
@@ -283,7 +316,9 @@ function inlineIntoFunction(
         // than sharing it (inlining the same callee twice must not conflate
         // the two allocations — #747 escape analysis depends on this).
         const renamed = renameAllInInstr(inst, calleeRename);
-        newInstrs.push(forkAllocInInstr(renamed, registry));
+        const site = inlineSourceSite(renamed.site, rewritten.site, caller.unitId);
+        const located = site === renamed.site ? renamed : { ...renamed, site };
+        newInstrs.push(forkInlineAllocation(located, registry));
       }
 
       // The call's result becomes the renamed return value for all downstream

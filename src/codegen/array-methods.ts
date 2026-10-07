@@ -63,6 +63,8 @@ import {
   emitTaViewToVec,
   emitTaViewValidate,
   emitTaViewWriteBack,
+  emitExternTaViewReceiverAsVec,
+  emitExternTaViewSetWriteBack,
   pushTaViewEffectiveLen,
   taViewDecode,
 } from "./dataview-native.js"; // (#3054 B1 Option A) de-view; (B3) write-through; (#3058) dyn-view materialize+validate
@@ -145,7 +147,8 @@ import { buildSpreadArgList, hasSpreadArgument } from "./spread-arg-list.js"; //
 import { canBuildSpreadArgList, isTupleStructType } from "./spread-arg-list.js"; // (#5361)
 import { compileArrayPushSpread } from "./array-push-spread.js"; // (#5361)
 import { callArgsNeedEarlyEvaluation, planCallArgs } from "./array-method-arg-order.js"; // (#6787)
-import { taDynDetachedGuardPrologue } from "./ta-dyn-method-call.js"; // (#6651 E6) join/toLocaleString
+import { taDynDetachedGuardPrologue, taDynJoinLengthInstrs } from "./ta-dyn-method-call.js"; // (#6651 E6/U2) join/toLocaleString
+import { elementAccessTypedArrayName } from "./array-nonindex-key.js"; // (#6651 V3) externref `set` view arm
 import { reserveNumberToLocaleString } from "./to-locale-string-element.js"; // (#6651 TA1) numeric element Invoke
 import { reserveBoolToLocaleString } from "./expressions/bool-to-locale-string.js"; // (#6771 S6) boolean element Invoke
 
@@ -2318,7 +2321,7 @@ export function compileArrayMethodCall(
   }
 
   const keyListOk = receiverIsExternref && !skipDynViewWrap && methodName !== "join"; // (#6770 S5)
-  const keyListCall = withOwnKeyListReceiverAsVec(ctx, fctx, receiverExpr, keyListOk, () =>
+  const keyListCall = withOwnKeyListReceiverAsVec(ctx, fctx, receiverExpr, keyListOk, methodName, () =>
     compileArrayMethodCall(ctx, fctx, propAccess, callExpr, receiverType, methodName, expectedType, true),
   );
   if (keyListCall !== undefined) return keyListCall;
@@ -5645,8 +5648,9 @@ function compileArrayJoinExternNative(
   // Receiver → externref, retained in recvTmp. len = trunc(__extern_length(recv)).
   const recvType = compileExpression(ctx, fctx, propAccess.expression);
   if (recvType && recvType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
-  fctx.body.push({ op: "local.tee", index: recvTmp });
-  fctx.body.push({ op: "call", funcIdx: externLenIdx });
+  fctx.body.push({ op: "local.set", index: recvTmp });
+  // (#6651 U2) a dyn-view receiver reads its INTERNAL length, not an own `length`.
+  fctx.body.push(...taDynJoinLengthInstrs(ctx, fctx, recvTmp, externLenIdx));
   fctx.body.push({ op: "i32.trunc_sat_f64_s" });
   fctx.body.push({ op: "local.set", index: lenTmp });
   // (#6651 E6) §23.2.3.18/.32 ValidateTypedArray on a dyn view: a detached
@@ -6311,14 +6315,18 @@ function compileArraySplice(
     const recvType = compileExpression(ctx, fctx, propAccess.expression);
     const zeroArgSpeciesDeps = prepareArraySpeciesDeps(ctx, fctx);
     let zeroArgSpeciesLocal: number | undefined;
-    if (zeroArgSpeciesDeps !== undefined && (recvType?.kind === "ref" || recvType?.kind === "ref_null")) {
+    // (#6651 U5) An `externref` receiver — a module global in a runtime-eval
+    // module (every test262 file) — is already the step-1 `O`; dropping it
+    // skipped ArraySpeciesCreate for `a.splice()` only, while the 1+-arg paths ran it.
+    const recvIsRef = recvType?.kind === "ref" || recvType?.kind === "ref_null";
+    if (zeroArgSpeciesDeps !== undefined && (recvIsRef || recvType?.kind === "externref")) {
       const recvTmp = allocLocal(fctx, `__arr_spl0_recv_${fctx.locals.length}`, recvType);
       fctx.body.push({ op: "local.set", index: recvTmp });
       zeroArgSpeciesLocal = emitArraySpeciesCreate(
         ctx,
         fctx,
         zeroArgSpeciesDeps,
-        [{ op: "local.get", index: recvTmp }, { op: "extern.convert_any" }],
+        [{ op: "local.get", index: recvTmp }, ...(recvIsRef ? [{ op: "extern.convert_any" } as Instr] : [])],
         [{ op: "f64.const", value: 0 }],
       );
     } else {
@@ -9709,11 +9717,19 @@ function compileTypedArraySet(
   const iTmp = allocLocal(fctx, `__ta_set_i_${fctx.locals.length}`, { kind: "i32" });
 
   // Receiver -> vec ref, extract length (field 0) + data array (field 1).
+  // (#6651 V3) A host-free externref receiver may carry a buffer-backed view.
+  const xViewName =
+    dstCarrier?.kind === "externref" && !unwrapHostFacade
+      ? elementAccessTypedArrayName(ctx, propAccess.expression)
+      : undefined;
+  const xViewIdx = xViewName === undefined ? undefined : ctx.taViewTypeMap.get(xViewName);
+  let xViewLocal: number | undefined;
   if (dstCarrier?.kind === "externref") {
     compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
     if (unwrapHostFacade) fctx.body.push({ op: "call", funcIdx: unwrapForWasmIdx! });
     fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: unwrapHostFacade ? "ref.cast" : "ref.cast_null", typeIdx: vecTypeIdx }); // null → TypeError guard
+    if (xViewIdx !== undefined) xViewLocal = emitExternTaViewReceiverAsVec(ctx, fctx, xViewIdx, vecTypeIdx);
+    else fctx.body.push({ op: unwrapHostFacade ? "ref.cast" : "ref.cast_null", typeIdx: vecTypeIdx }); // null → TypeError guard
   } else {
     compileExpression(ctx, fctx, propAccess.expression);
   }
@@ -9835,6 +9851,9 @@ function compileTypedArraySet(
       blockType: { kind: "empty" },
       body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
     });
+  }
+  if (xViewIdx !== undefined && xViewLocal !== undefined) {
+    emitExternTaViewSetWriteBack(ctx, fctx, xViewIdx, xViewLocal, dstVec, vecTypeIdx);
   }
 
   return VOID_RESULT as unknown as ValType;

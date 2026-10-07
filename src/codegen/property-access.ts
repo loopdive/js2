@@ -92,6 +92,7 @@ import {
   ab4519RevertsToBase,
   emitIsNullishAnyAt,
   ensureAnyFromExternHelper,
+  isAnyValue,
   nullishExternTestInstrs,
   undefinedExternInstrs,
   undefinedSingletonActive,
@@ -175,6 +176,7 @@ import {
   isWiredTypedArrayViewName,
   emitNativeGlobalThisObject,
   emitGeneratorPrototypeSingleton,
+  demandArrayProtoDynamicCompanion, // (#6651 V10b)
 } from "./array-object-proto.js";
 import { isBuiltinSubtype, isBuiltinTypeName } from "./builtin-tags.js";
 import {
@@ -1678,6 +1680,7 @@ export function findAlternateStructsForField(
     // (#6651 B6) A RegExp's `lastIndex` is two slots (f64 + deferred raw); a field arm sees only the f64.
     // (B9) Its `flags` slot is the i32 bitfield, not §22.2.6.4's string: `__extern_get` runs the accessor.
     if ((propName === "lastIndex" || propName === "flags") && typeName === "__StandaloneRegExp") continue;
+    if (typeName === "$Promise" && propName === "$handled") continue;
     const fIdx = fields.findIndex((f) => f.name === propName);
     if (fIdx !== -1) {
       const shapeId = ctx.shapeIdByStructName.get(typeName);
@@ -2111,7 +2114,7 @@ export function emitExternrefBackedOwnFieldRead(
 ): ValType | null | undefined {
   const backing =
     backingOverride ?? (className === undefined ? "error-struct" : externrefBackedOwnFieldBacking(ctx, className));
-  if (backing === undefined) return undefined;
+  if (backing === undefined || backing === "collection-struct") return undefined; // (#6754) struct path reads it
   ensureObjectRuntime(ctx);
   const externGetIdx = ensureLateImport(
     ctx,
@@ -2831,15 +2834,18 @@ export function receiverIsNativeStringValType(
  * {@link emitGuardedNativeStringLength} and `compileGuardedNativeStringMethodCall`)
  * and keep the prior behaviour in the else arm for non-string values.
  *
- * Narrow scope: `any`/`unknown` only (NOT `object`/`{}`, NOT unions containing
- * `string`), native-string mode only (host/gc mode's generic `__extern_get`
+ * Narrow scope: `any`/`unknown` or unions containing string (NOT `object`/`{}`),
+ * native-string mode only (host/gc mode's generic `__extern_get`
  * already returns the correct length from the real JS value).
  */
 export function receiverMayBeNativeStringAtRuntime(ctx: CodegenContext, recv: ts.Expression): boolean {
   if (!(ctx.wasi || ctx.standalone)) return false;
   if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
   const t = ctx.checker.getTypeAtLocation(recv);
-  return (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+  return (
+    (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+    (t.isUnion() && t.types.some((part) => (part.flags & ts.TypeFlags.StringLike) !== 0))
+  );
 }
 
 /**
@@ -5384,7 +5390,17 @@ export function compileElementAccess(
       receiverMayBeNativeStringAtRuntime(ctx, expr.expression)
     ) {
       const guarded = emitGuardedNativeStringElementGet(ctx, fctx, expr.expression, expr.argumentExpression);
-      if (guarded) return guarded;
+      if (guarded) {
+        // The string/array arms return raw externrefs. A heterogeneous union
+        // sink must classify those values, not label a boxed number "string".
+        if (expectedType && isAnyValue(expectedType, ctx)) {
+          const classify = ensureAnyFromExternHelper(ctx, { forceHonest: true });
+          if (classify === undefined) throw new Error("native string union read requires honest value classification");
+          fctx.body.push({ op: "call", funcIdx: classify });
+          return { kind: "ref", typeIdx: ctx.anyValueTypeIdx };
+        }
+        return guarded;
+      }
     }
   }
 
@@ -6559,6 +6575,21 @@ export function compileElementAccessBody(
     // `toString() { return 0; }`) still reach the vec element, while ordinary
     // names use the expando/prototype lookup (`S15.4_A1.1_T9`). Constant
     // numeric-looking names have already taken the dedicated bag route above.
+    // (#6651 V10b) Standalone `<vec>[Symbol.iterator]` is an inherited (or, on
+    // `arguments`, own) PROPERTY read, never an index: `Symbol.iterator` lowers
+    // to its i32 well-known id, so `arguments[Symbol.iterator]` read element 1.
+    if (
+      noJsHost(ctx) &&
+      isSymbolIteratorKey(expr.argumentExpression) &&
+      elementAccessTypedArrayName(ctx, expr.expression) === undefined &&
+      !isRegexMatchVec
+    ) {
+      demandArrayProtoDynamicCompanion(ctx);
+      const dynamic = emitDynamicVecElementGet(ctx, fctx, objType, expr.argumentExpression, (e, h) =>
+        compileExpression(ctx, fctx, e, h),
+      );
+      if (dynamic) return dynamic;
+    }
     if (
       elementAccessTypedArrayName(ctx, expr.expression) === undefined &&
       !(ts.isIdentifier(expr.expression) && expr.expression.text === "arguments") &&

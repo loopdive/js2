@@ -31,7 +31,7 @@ import {
   isVoidType,
 } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
-import { compileHostFreeCryptoCall, isHostFreeCryptoCall } from "./standalone-crypto.js";
+import { compileHostFreeCryptoCall, isHostFreeCryptoCall, marshalRegimeCryptoUuid } from "./standalone-crypto.js";
 import { tryStandaloneQueueMicrotaskCall } from "./standalone-queue-microtask.js";
 import { tryStandaloneHostFreeCall } from "./standalone-dynamic-code.js"; // (#6675/#6676) timers, Function(src)
 import { compileArrayMethodCall, compileArrayPrototypeCall, resolveArrayInfo } from "../array-methods.js";
@@ -45,6 +45,7 @@ import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js"
 import { expectedArgumentCountOfParams } from "../function-expected-argument-count.js";
 import { reshapeFunctionCtorReflectiveCall } from "../function-ctor-reflective-call.js"; // (#4483) Function.call/apply → Function(…)
 import { tryEmitApplyArgArrayTypeError } from "../apply-arglist-typeerror.js"; // (#4483) §20.2.3.1 step 4 primitive argArray
+import { isDynamicApplyArgList, mappedFunctionIsForeign } from "./apply-dynamic-arglist.js"; // (#4526)
 import { tryEmitClassConstructorCallWithoutNew } from "../class-call-without-new.js"; // (#4483) §10.2.1 step 2
 import { tryEmitClassCtorCallApply } from "../classes/class-ctor-call-apply.js"; // (#6772 S3)
 import { buildClosureResultBoxing } from "../closures/result-boxing.js"; // (#4082) the single closure-result→externref decision
@@ -107,6 +108,7 @@ import {
   runtimeParameters,
 } from "../closures.js";
 import { registerRestDeclarationWrapperShapes } from "../closures/funcref-wrapper-types.js"; // (#5334)
+import { appendDynamicTupleRestArgument, dynamicCandidateTupleRest } from "../closures/tuple-rest-carrier.js"; // (#6867)
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import {
@@ -5290,6 +5292,9 @@ function buildInlineDynamicDispatch(
       }
     }
 
+    const tupleRest = restVec === undefined ? dynamicCandidateTupleRest(ctx, funcTypeDef, cand.info) : null; // (#6867)
+    if (tupleRest !== null) fixedCount = cand.info.paramTypes.length - 1;
+
     const callBody: Instr[] = [];
 
     appendDynamicCandidateArgcSetup(ctx, fctx, callBody, fixedCount, argLocals, arity);
@@ -5418,6 +5423,8 @@ function buildInlineDynamicDispatch(
       callBody.push({ op: "array.new_fixed", typeIdx: restVec.arrTypeIdx, length: restCount });
       callBody.push({ op: "struct.new", typeIdx: restVec.vecTypeIdx });
     }
+    const undefinedPad = (body: Instr[]) => pushDynamicUndefinedExternref(body, undefinedIdx, undefinedSingletonPad);
+    if (tupleRest) appendDynamicTupleRestArgument(callBody, tupleRest, fixedCount, argLocals, plan, undefinedPad);
 
     // Extract funcref from field 0 and call_ref.
     callBody.push({ op: "local.get", index: anyLocal });
@@ -5452,7 +5459,7 @@ function buildInlineDynamicDispatch(
     // struct type — its funcref signature alone is indistinguishable from a
     // genuine vec-param closure's, and the positional arm for that signature
     // stays in the chain below for those.
-    const structGuardIdx = restVec !== undefined ? cand.structTypeIdx : rootStructIdx;
+    const structGuardIdx = restVec !== undefined || tupleRest !== null ? cand.structTypeIdx : rootStructIdx;
     const testCond: Instr[] = [
       { op: "local.get", index: anyLocal },
       { op: "ref.test", typeIdx: structGuardIdx },
@@ -8837,10 +8844,22 @@ function compileCallExpression(
             !ts.isFunctionDeclaration(aliasedImportTarget) &&
             !ts.isFunctionExpression(aliasedImportTarget) &&
             !ts.isArrowFunction(aliasedImportTarget));
-        let closureInfo = moduleValueOwnsName ? undefined : ctx.closureMap.get(funcName);
-        const funcIdx = moduleValueOwnsName ? undefined : ctx.funcMap.get(funcName);
+        // (#4526) …and a parameter/local never owns another declaration's entry.
+        // A runtime `.apply` list cannot be spread by the static arms below
+        // (they would call with ZERO arguments); on the JS host the reflective
+        // host-call tail applies the real list and receiver instead.
+        const hostDynamicApply =
+          !isCall &&
+          expr.arguments.length >= 2 &&
+          !ctx.standalone &&
+          !ctx.wasi &&
+          isDynamicApplyArgList(expr.arguments[1]!);
+        const registryIsForeign =
+          moduleValueOwnsName || hostDynamicApply || mappedFunctionIsForeign(ctx, funcName, valueDeclaration);
+        let closureInfo = registryIsForeign ? undefined : ctx.closureMap.get(funcName);
+        const funcIdx = registryIsForeign ? undefined : ctx.funcMap.get(funcName);
 
-        if (!closureInfo && funcIdx === undefined) {
+        if (!closureInfo && funcIdx === undefined && !hostDynamicApply) {
           closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);
         }
 
@@ -9744,6 +9763,7 @@ function compileCallExpression(
           flushLateImportShifts(ctx, fctx);
           if (idx !== undefined) {
             fctx.body.push({ op: "call", funcIdx: idx });
+            return marshalRegimeCryptoUuid(ctx, fctx) ?? { kind: "externref" }; // (#6749)
           } else {
             fctx.body.push({ op: "ref.null.extern" });
           }

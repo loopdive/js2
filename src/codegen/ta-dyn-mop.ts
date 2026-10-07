@@ -51,7 +51,7 @@ import {
 import { addFuncType, TA_CTOR_KINDS, taCtorIdentityTestInstrs } from "./registry/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
-import { BFN_ID_FIELD_IDX } from "./builtin-fn-meta.js"; // (#5194 r3 F3) refusal-closure filter
+import { BFN_ID_FIELD_IDX, linkedMetaSignatureGuard } from "./builtin-fn-meta.js"; // (#5194 r3 F3) refusal-closure filter
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 // (#3177 slice 3) per-kind `<View>.prototype` identity — the SAME $NativeProto
 // glue singleton a static `<View>.prototype` value read yields.
@@ -696,11 +696,13 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
         byFamily.set(superIdx, list);
       }
       const out: Instr[] = [];
+      const valueAny = (): Instr[] => [{ op: "local.get", index: valueLocal }, { op: "any.convert_extern" }];
       for (const list of byFamily.values()) {
         const family = list[0];
         const isOneOf: Instr[] = [];
         list.forEach((idx, i) => {
           isOneOf.push({ op: "local.get", index: aBfnId }, { op: "i32.const", value: idx }, { op: "i32.eq" });
+          isOneOf.push(...linkedMetaSignatureGuard(ctx, idx, valueAny(), family)); // (#6651 V0) linked peer ids
           if (i > 0) isOneOf.push({ op: "i32.or" });
         });
         out.push(

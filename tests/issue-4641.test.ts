@@ -83,14 +83,6 @@ function pinResidual(name: string, source: string, owner: string): void {
   });
 }
 
-function residualRow(rel: string, owner: string): void {
-  it.fails(`RESIDUAL ${rel} — ${owner}`, { timeout: 60_000 }, async () => {
-    const abs = join(__dirname, "..", "test262", "test", rel);
-    const r = await runTest262File(abs, "issue-4641", 30_000, "standalone");
-    expect(`${r.status}: ${r.error ?? ""}`).toBe("pass: ");
-  });
-}
-
 describe.skipIf(!TEST262)("#4641 mixed-return `T | undefined` (standalone)", () => {
   // The row dev-4640 pinned `it.fails` and escalated. CHECK#3 is
   // `myfunc3()!==undefined` where `myfunc3` is `x3++; return; return x3;` — a
@@ -291,15 +283,9 @@ describe.skipIf(!TEST262)("#4641 mixed-return `T | undefined` (standalone)", () 
       "`number | undefined` local collapses to f64 (#3580 S3/S4)",
     );
 
-    // ── CONCRETE-ref carriers. A `string | undefined` return lowers to
-    // `ref_null $AnyString`, and a bare `return;` pushes `ref.null` — which is
-    // JS `null`, not `undefined`. MEASURED (`typeof` answers "object",
-    // `String()` answers "null"); the `=== undefined` leg is already right, so
-    // only the identity/stringify legs are pinned here. This is the LARGER half
-    // of the real-world census (26 of 1,363 function bodies vs 2 for the scalar
-    // carrier) and is held back deliberately: widening a string-returning
-    // signature changes the ABI of a much hotter family. Owner: #4641 follow-on.
-    pinResidual(
+    // (#4376) Nullable native-reference results now retain undefined through
+    // generic function-value calls as well as these typeof/ToString observers.
+    pinSource(
       "mixed-return-concrete-ref-carrier",
       "function pick(i) {\n" +
         "  if (i % 2 === 0) return;\n" +
@@ -310,7 +296,7 @@ describe.skipIf(!TEST262)("#4641 mixed-return `T | undefined` (standalone)", () 
         "  t += typeof pick(i) + '/' + String(pick(i)) + ',';\n" +
         "}\n" +
         "assert.sameValue(t, 'undefined/undefined,string/x1,', 'ref-carrier mixed return');\n",
-      "`ref.null $AnyString` means null, not undefined (#4641 follow-on)",
+      "native-reference mixed returns preserve undefined (#4376)",
     );
 
     // ── The array-ELEMENT half. A `null` in a `number[]`-lowered vec slot
@@ -319,14 +305,16 @@ describe.skipIf(!TEST262)("#4641 mixed-return `T | undefined` (standalone)", () 
     // UNDEF_F64_BITS / HOLE_F64_BITS) with its own `=== null` /
     // `typeof === "object"` observers. Owner: value-rep lane, sized in this
     // issue's decision matrix (ONE corpus row).
-    residualRow("built-ins/Array/prototype/toString/S15.4.4.2_A1_T2.js", "null element in an f64 vec slot renders 0");
+    // Reverified passing with the #4376 change removed on 2026-09-30.
+    pinRow("built-ins/Array/prototype/toString/S15.4.4.2_A1_T2.js", "null array element regression control");
 
     // ── The heterogeneous-array element tag-5 lie. Nothing to do with
     // mixed-return: reading element 2 of `[0,1,2,"last"]` answers a box whose
     // `typeof` is "string" and whose ToString is "[object Object]". Owner:
     // #1888 / #2141-S4 honest-boxing flip (the flip measured −788/−794 solo, so
     // it is deliberately deferred).
-    pinResidual(
+    // Reverified passing with the #4376 change removed on 2026-09-30.
+    pinSource(
       "heterogeneous-array-element-tag",
       "var arr = [0, 1, 2, 'last'];\n" +
         "var out = '';\n" +

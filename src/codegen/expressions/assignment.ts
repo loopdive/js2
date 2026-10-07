@@ -65,7 +65,7 @@ import {
 } from "../registry/types.js"; // (#2357/#47) subview write; (#3054 B1) TA view write; vec-base length write
 import { emitTaDynViewElementSet, emitTaViewElementSet } from "../dataview-native.js"; // (#3054 B1) shared-backing TA view write; (#3057) dynamic view element write
 import { buildDestructureNullThrow, emitNativeObjectRest, patternIteratorStepCount } from "../destructuring-params.js";
-import { tryEmitSpecOrderedArrayAssignDrive } from "../dstr-assign-iterator-drive.js"; // (#6651 G1) §13.15.5.2 lazy drive
+import { tryEmitSpecOrderedArrayAssignDrive, tryEmitSpecOrderedObjectAssign } from "../dstr-assign-iterator-drive.js"; // (#6651 G1/V7)
 import { isProvablyNonIterableStructSource } from "../dstr-non-iterable-guard.js"; // (#6651 G4)
 import { resolveComputedKeyExpression } from "../literals.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js"; // (#2681/#2686 A3) pinned-struct write dispatch
@@ -519,6 +519,8 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
         }
         const tmpVal = allocLocal(fctx, `__box_tmp_${fctx.locals.length}`, boxed.valType);
         fctx.body.push({ op: "local.set", index: tmpVal });
+        // (#6651 V5) §9.1.1.1.5 step 2: a captured binding written in its TDZ throws (RHS already evaluated).
+        if (fctx.tdzFlagLocals?.has(name)) emitPutValueTargetGuard(ctx, fctx, expr.left, false);
         // A cell minted inside a conditional arm is null on every path that
         // skipped it, and the guard below would then DROP this write. Mint it
         // from the pre-box slot first.
@@ -1294,6 +1296,9 @@ function compileDestructuringAssignment(
     fctx.body.push({ op: "ref.null.extern" });
     return { kind: "externref" };
   }
+
+  // (#6651 V7) A runtime-only key: spec-ordered externref lowering (standalone/WASI).
+  if (tryEmitSpecOrderedObjectAssign(ctx, fctx, target, resultType)) return { kind: "externref" };
 
   // Determine struct type from the RHS expression's type
   const rhsType = ctx.checker.getTypeAtLocation(value);
@@ -3783,7 +3788,7 @@ function emitExternrefBackedOwnFieldWrite(
   className: string,
 ): ValType | null | undefined {
   const backing = externrefBackedOwnFieldBacking(ctx, className);
-  if (backing === undefined) return undefined;
+  if (backing === undefined || backing === "collection-struct") return undefined; // (#6754) struct path stores it
   ensureObjectRuntime(ctx);
   const newObjIdx = ctx.funcMap.get("__new_plain_object");
   const externSetIdx = ensureLateImport(

@@ -30,7 +30,9 @@ import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import { concatCallYieldsDynamicCarrier } from "../array-concat-carrier.js"; // (#4655) concat result-slot carrier
 import { filterResultNeedsDynamicCarrier } from "../array-filter-spec-access.js";
 import { emitShapeInferredVecInit } from "../shape-vec-literal-seed.js"; // (#4491) module-global array-carrier seed
+import { rebindWidenedArrayInit } from "../declarations/array-rebind-element-widening.js"; // (#6651 U4)
 import {
+  compileArrayLiteral,
   arrayLiteralEscapeWidensToExternref,
   objectLiteralIsStandaloneAnyObjectCarrier,
   objectLiteralForcesHostPath,
@@ -1300,7 +1302,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
   const chunkedModuleInit = isModuleInitChunkFunctionContext(fctx);
   for (const decl of stmt.declarationList.declarations) {
     if (ts.isObjectBindingPattern(decl.name)) {
-      compileObjectDestructuring(ctx, fctx, decl);
+      // (#6651 V7) a `var` pattern inside a `with` body resolves through the object first.
+      if (!tryCompileWithScopedVarDeclaration(ctx, fctx, stmt, decl)) compileObjectDestructuring(ctx, fctx, decl);
       continue;
     }
 
@@ -1713,7 +1716,10 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
         const wasmType = globalDef?.type ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(decl));
         const materializationStart = fctx.body.length;
-        if (tryEmitPromiseSubclassClassExpressionValue(ctx, fctx, decl.initializer, wasmType) === undefined) {
+        const widenedInit = rebindWidenedArrayInit(ctx, decl, wasmType);
+        if (widenedInit) {
+          compileArrayLiteral(ctx, fctx, widenedInit, { kind: "externref" }); // (#6651 U4) straight into the widened vec
+        } else if (tryEmitPromiseSubclassClassExpressionValue(ctx, fctx, decl.initializer, wasmType) === undefined) {
           compileExpression(ctx, fctx, decl.initializer, wasmType);
         } else {
           emitHandledClassExpressionBindingEffects(ctx, fctx, decl.initializer, materializationStart);
@@ -1729,7 +1735,14 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         // variables are `undefined`. For externref globals, emit __get_undefined()
         // so `x === undefined` works correctly (#737).
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
-        if (globalDef?.type.kind === "externref") {
+        if (
+          globalDef?.type.kind === "externref" &&
+          !(
+            ctx.standaloneScriptVarBindings &&
+            !ctx.sourceIsModule &&
+            (stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0
+          )
+        ) {
           emitUndefined(ctx, fctx);
           fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
         }

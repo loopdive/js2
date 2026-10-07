@@ -24,6 +24,7 @@ import type { WasmModule } from "../ir/types.js";
 import type { IrType } from "../ir/core/types.js";
 import { runIrProgramDriver } from "./ir-program-driver.js";
 import type { IrProgramDriverResult } from "./ir-program-result.js";
+import type { PreparedWitExport, PreparedWitView } from "../wit-generator.js";
 
 export interface IrProgramPresentationRequest {
   readonly preparation: IrWholeProgramPreparationInput;
@@ -113,6 +114,7 @@ interface DeclarationCapture {
   readonly start: number;
   readonly end: number;
   readonly params: readonly PresentationSlot[];
+  readonly witParamNames?: readonly string[];
   readonly results: readonly PresentationSlot[];
   readonly synchronous: boolean;
   readonly name?: string;
@@ -352,6 +354,13 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
               start: node.getStart(source),
               end: node.end,
               params: Object.freeze(params),
+              ...(options.wit
+                ? {
+                    witParamNames: Object.freeze(
+                      node.parameters.map((param) => (ts.isIdentifier(param.name) ? param.name.text : "")),
+                    ),
+                  }
+                : {}),
               results: Object.freeze(result === "void" ? [] : [result]),
               synchronous,
               name: node.name?.text,
@@ -407,6 +416,7 @@ function checkAbiExports(
   signatures: Record<string, ExportSignature>,
   mixed: boolean,
   asyncNames: Set<string>,
+  witExports?: PreparedWitExport[],
 ): Set<string> {
   const mod = emission.module;
   const { globals } = capture;
@@ -511,6 +521,12 @@ function checkAbiExports(
           "primitive source binding, global ABI slot and physical export must join exactly",
           { bindingId: plan.id },
         );
+      if (witExports)
+        gap("wit.exports", "unmapped-wit-export", "public global exports have no scalar WIT callable mapping", {
+          bindingId: plan.id,
+          sourceFile: source?.originalFileName,
+          unitId: binding?.row.unitId ?? undefined,
+        });
       continue;
     }
     const unitId = target?.plan.intent.kind === "callable" ? target.plan.intent.unitId : undefined;
@@ -560,6 +576,7 @@ function checkAbiExports(
           },
         );
       else {
+        if (witExports) captureWitExport(contract.externalName, plan.id, unitId!, declaration, witExports, gap);
         const signature = booleanExportSignature(declaration);
         if (signature) signatures[contract.externalName] = signature;
         if (
@@ -575,6 +592,39 @@ function checkAbiExports(
     }
   }
   return joinedExports;
+}
+function captureWitExport(
+  externalName: string,
+  bindingId: IrBindingId,
+  unitId: IrUnitId,
+  declaration: DeclarationCapture,
+  exports: PreparedWitExport[],
+  gap: GapRecorder,
+): void {
+  const association = { sourceFile: declaration.sourceFile, unitId, bindingId };
+  if (
+    !declaration.witParamNames ||
+    declaration.witParamNames.length !== declaration.params.length ||
+    declaration.witParamNames.some((name) => !name) ||
+    declaration.params.some((kind) => kind === "promise") ||
+    declaration.results.includes("promise")
+  ) {
+    gap(
+      "wit.exports",
+      "unmapped-wit-export",
+      "complete source-owned scalar WIT callable signature is required",
+      association,
+    );
+    return;
+  }
+  const params: PreparedWitExport["params"][number][] = [];
+  for (const [index, kind] of declaration.params.entries()) {
+    if (kind === "promise") return;
+    params.push(Object.freeze({ sourceName: declaration.witParamNames[index]!, kind }));
+  }
+  const result = declaration.results[0];
+  if (result === "promise") return;
+  exports.push(Object.freeze({ externalName, params: Object.freeze(params), result: result ?? null, ...association }));
 }
 function checkResourceDemand(
   program: PreparedIrProgram,
@@ -760,7 +810,30 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
   const signatures: Record<string, ExportSignature> = Object.create(null);
   const mixed = [...captures.values()].some((row) => row.results.includes("promise"));
   const asyncNames = new Set<string>();
-  const joinedExports = checkAbiExports(program, emission, capture, captures, gap, signatures, mixed, asyncNames);
+  const witExports: PreparedWitExport[] | undefined = capture.context.options.wit ? [] : undefined;
+  const joinedExports = checkAbiExports(
+    program,
+    emission,
+    capture,
+    captures,
+    gap,
+    signatures,
+    mixed,
+    asyncNames,
+    witExports,
+  );
+  if (witExports && (mixed || mod.imports.length)) {
+    const promise = [...captures].find(([, declaration]) => declaration.results.includes("promise"));
+    gap(
+      "wit.resources",
+      "unmapped-wit-resources",
+      "requested scalar WIT requires no Promise, import or detached reference demand",
+      {
+        sourceFile: promise?.[1].sourceFile ?? capture.input.entrySource.fileName,
+        unitId: promise?.[0],
+      },
+    );
+  }
   if (mixed) checkMixedDemand(program, emission, capture.backend, captures, gap);
   else checkResourceDemand(program, emission, capture.backend, gap);
   const startup = joinStartup(program, emission, capture.input, gap);
@@ -805,6 +878,14 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
   if (mixed)
     mixedPresentations.set(presentation, {
       plan: emittedPhysicalSetupPlan(emission),
+      original: observeModuleData(mod),
+    });
+  if (witExports)
+    witPresentations.set(presentation, {
+      emission,
+      module: mod,
+      plan: emittedPhysicalSetupPlan(emission),
+      view: Object.freeze({ entryFile: capture.input.entrySource.fileName, exports: Object.freeze(witExports) }),
       original: observeModuleData(mod),
     });
   return presentation;
@@ -1440,4 +1521,32 @@ export function completePreparedPresentationFinalization(
     widenedSlots: [...observation.widening.values()].reduce((total, slots) => total + slots.size, 0),
     originalEmissionUnchanged: true,
   });
+}
+
+interface WitPresentationObservation {
+  readonly emission: EmittedPreparedIrProgram;
+  readonly module: WasmModule;
+  readonly plan: PhysicalSetupPlan;
+  readonly view: PreparedWitView;
+  readonly original: readonly DataObservation[];
+}
+const witPresentations = new WeakMap<object, WitPresentationObservation>();
+/** Requested-only, authentic completed presentation view; never a caller data capability. */
+export function preparedPresentationWitView(
+  presentation: Extract<IrProgramPresentationResult, { kind: "prepared-presentation" }>,
+  module: WasmModule,
+): PreparedWitView {
+  const observation = witPresentations.get(presentation);
+  if (!observation) throw new Error("prepared presentation WIT: invalid presentation");
+  if (module !== observation.module) throw new Error("prepared presentation WIT: foreign module");
+  try {
+    for (const row of observation.original) verifyDataObservation(row);
+    emittedSupportFunctionReceipts(observation.emission);
+    if (emittedPhysicalSetupPlan(observation.emission) !== observation.plan)
+      throw new Error("prepared presentation WIT: physical plan changed");
+  } catch (error) {
+    witPresentations.delete(presentation);
+    throw error;
+  }
+  return observation.view;
 }

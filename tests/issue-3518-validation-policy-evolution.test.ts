@@ -1,4 +1,9 @@
+import { captureDenoPostPositionMainPredecessorPolicySource } from "./helpers/ir-deno-post-position-main-successor.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
+import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
+import { captureSourceMapPositionInventoryPredecessorPolicySource } from "./helpers/ir-source-map-position-inventory-successor.js";
+import { captureMainInventoryPredecessorPolicySource } from "./helpers/ir-main-inventory-source-successor.js";
 import {
   captureArrayBufferIsViewMainPredecessorPolicy,
   capturePresentationClassificationPredecessorPolicy,
@@ -65,7 +70,19 @@ function actual(): MutablePolicy {
                             captureLoweringAnalysisPredecessorPolicy(
                               capturePresentationClassificationPredecessorPolicy(
                                 captureArrayBufferIsViewMainPredecessorPolicy(
-                                  JSON.parse(read("scripts/compiler-boundaries.json")),
+                                  JSON.parse(
+                                    captureMainInventoryPredecessorPolicySource(
+                                      captureSourceMapPositionInventoryPredecessorPolicySource(
+                                        capturePositionClassFieldsMainPredecessorPolicySource(
+                                          capturePositionFinallyMainPredecessorPolicySource(
+                                            captureDenoPostPositionMainPredecessorPolicySource(
+                                              read("scripts/compiler-boundaries.json"),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),

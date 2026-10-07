@@ -1,4 +1,7 @@
+import { reserveBuiltinConstructorIdentityGlobal } from "../builtin-static-globals.js";
+import { isStandalonePromiseActive } from "../async-scheduler.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
+import { compileCollectionSuperMethodCall } from "../classes/standalone-collection-carrier.js"; // (#6754)
 import { widenJsDefaultGuessSlot } from "../js-default-param-type-guess.js";
 import { materializeFnctorTwinCaptures } from "../fnctor-twin-captures.js";
 import { resolveStaticSpreadArgs } from "../static-spread-arity.js"; // (#6460)
@@ -67,7 +70,7 @@ import { compileArrayMethodCall, emitBoundsCheckedArrayGet } from "../array-meth
 import { isStandaloneArraySubclass, withArraySubclassReceiverAsVec } from "../array-subclass-receiver.js"; // (#2917)
 import { emitObjectCoercion } from "./calls-guards.js"; // (#3118) shared Object(...) / new Object(...) ToObject coercion
 import { COLLECTION_KIND } from "../collection-kind.js"; // (#6419) import-free leaf — map-runtime.js is in an import cycle
-import { ensureMapHelpers, coerceMapKeyToAnyref } from "../map-runtime.js";
+import { ensureMapHelpers, coerceMapKeyToAnyref, tryCompileNativeMapMethodCall } from "../map-runtime.js";
 import { ensureDisposableStackNew } from "../disposable-runtime.js";
 import { emitSetNewTargetBeforeCall, ensureNewTargetGlobal } from "../new-target.js"; // (#2023)
 import { fnctorBindingName } from "./new-target-value.js"; // (#6774 S4)
@@ -77,8 +80,10 @@ import {
   ensureObjVecBuilders,
   reserveApplyClosure,
   WRAPPER_PRIMITIVE_KEY, // (#6775 S5)
+  emitStandaloneArrayConstructor,
 } from "../object-runtime.js"; // (#1100) standalone Proxy native runtime; (#2928) Function-marker construct
-import { ensureSetHelpers } from "../set-runtime.js";
+import { ensureSetHelpers, tryCompileNativeSetMethodCall } from "../set-runtime.js";
+const COLLECTION_CALLS = { map: tryCompileNativeMapMethodCall, set: tryCompileNativeSetMethodCall } as const; // (#6754)
 import { ensureWeakCollectionHelpers } from "../weak-collections-runtime.js";
 import { tryCompileNativeWeakRefNew } from "../weakref-runtime.js";
 import { classMemberFuncKey } from "../class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
@@ -108,6 +113,7 @@ import { linkCompatibleDeclaredStructAncestor } from "../struct-hierarchy-layout
 import { emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
 import { emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; // (#4438) §10.2.2
 import * as bcv from "../builtin-ctor-value-invoke.js"; // (#6713) RegExp / Error-family carriers as values
+import { emitBuiltinArrayConstructOnNull, emitBuiltinPromiseConstructOnNull } from "./builtin-native-dyn-construct.js";
 import {
   emitBuiltinCollectionConstructOnNull,
   tryEmitErrorFamilyValueConstruct,
@@ -167,7 +173,7 @@ import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5
 import { emitStandaloneCommaHeritageEffects } from "../classes/class-heritage-comma.js"; // (#6772 S6)
 import { emitStandaloneHeritagePrototypeGet } from "../classes/class-heritage-runtime-get.js"; // (#6772 S11)
 import { emitSuperUninitializedThisCheck, emitUninitializedThisGuard } from "../classes/derived-ctor-this-guard.js"; // (#6772 S1b)
-import { emitNewSiteOverrideSelect } from "../classes/ctor-return-override.js"; // (#6772 S2)
+import { emitNewSiteOverrideSelect, tryEmitDerivedEffectiveThis } from "../classes/ctor-return-override.js"; // (#6772 S2)
 import { compileTemporalNewExpression } from "../temporal-native.js";
 import {
   emitSuperUninitializedThisGuard,
@@ -216,6 +222,21 @@ import {
   emitClassExpressionStaticInitialization,
   emitClassExpressionStaticsBeforeValue,
 } from "../class-expression-static-init.js";
+
+const builtinNativeConstructServices = {
+  get emitStandaloneArrayConstructor() {
+    return emitStandaloneArrayConstructor;
+  },
+  get emitStandalonePromiseFromExecutorValue() {
+    return emitStandalonePromiseFromExecutorValue;
+  },
+  get isStandalonePromiseActive() {
+    return isStandalonePromiseActive;
+  },
+  get reserveBuiltinConstructorIdentityGlobal() {
+    return reserveBuiltinConstructorIdentityGlobal;
+  },
+} as const;
 
 // #2146: resolveEnclosingClassName now lives in shared.ts (imported above).
 
@@ -1302,7 +1323,7 @@ function compileSuperMethodCallCore(
   expr: ts.CallExpression,
   methodName: string,
 ): InnerResult {
-  emitUninitializedThisGuard(ctx, fctx, expr.expression); // (#6772 S1b) GetThisBinding precedes the lookup
+  if (emitSuperUninitializedThisCheck(ctx, fctx, expr.expression)) return VOID_RESULT; // (#6772 S1b) GetThisBinding precedes the lookup
   // Degenerate fallback: evaluate args for side effects and leave a
   // return-typed default (0 / 0 / undefined) so a value remains for the
   // enclosing expression.
@@ -1370,6 +1391,9 @@ function compileSuperMethodCallCore(
       );
       if (arrayResult !== undefined) return arrayResult === VOID_RESULT ? null : arrayResult;
     }
+    // (#6754) Standalone Map/Set/WeakMap/WeakSet parent: the native helper on `this`.
+    const collectionResult = compileCollectionSuperMethodCall(ctx, fctx, expr, currentClassName, COLLECTION_CALLS);
+    if (collectionResult !== undefined) return collectionResult;
     // (#1614) The parent may be a builtin extern class (Set/Map/Array/...)
     // whose methods are host-backed, not compiled into funcMap. Dispatch
     // `super.method(args)` dynamically via __extern_method_call(this, name, args).
@@ -1833,10 +1857,14 @@ export function classSuperRefEmitters(
  * an ordinary `new C().method()` keeps the typed local.
  */
 function emitTypedThisSuperReceiver(ctx: CodegenContext, fctx: FunctionContext, selfIdx: number): void {
-  fctx.body.push({ op: "local.get", index: selfIdx });
-  const selfType = getLocalType(fctx, selfIdx);
-  if (selfType?.kind !== "externref" && selfType?.kind !== "ref_extern") {
-    fctx.body.push({ op: "extern.convert_any" });
+  // (#6651 V6) In a derived constructor whose parent returned an object, `this`
+  // IS that object (BindThisValue) — `super.x = v` must target it.
+  if (tryEmitDerivedEffectiveThis(ctx, fctx) === undefined) {
+    fctx.body.push({ op: "local.get", index: selfIdx });
+    const selfType = getLocalType(fctx, selfIdx);
+    if (selfType?.kind !== "externref" && selfType?.kind !== "ref_extern") {
+      fctx.body.push({ op: "extern.convert_any" });
+    }
   }
   const recvLocal = allocLocal(fctx, `__super_recv_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.tee", index: recvLocal });
@@ -3810,6 +3838,11 @@ function resolvesToNativeProxyValue(ctx: CodegenContext, expression: ts.Expressi
   return isProxyFactory(expression);
 }
 
+/** (#6651 U3) Standalone `new <realm global>.Proxy(…)` — a member callee proven to hold `%Proxy%`. */
+function isMemberProxyConstructorCallee(ctx: CodegenContext, callee: ts.Expression): boolean {
+  return noJsHost(ctx) && ts.isPropertyAccessExpression(callee) && tracesToProxyConstructorValue(ctx, callee);
+}
+
 function tryCompileNativeConstructFromValue(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3833,7 +3866,12 @@ function tryCompileNativeConstructFromValue(
       resolvesToDynamicAnyCtorValue(ctx, calleeExpr)) ||
       isValueSelectingNewCallee(calleeExpr) ||
       ts.isTaggedTemplateExpression(calleeExpr)); // (#6774 S3) `new tag\`x\``: the tag call's result
-  if (!ts.isIdentifier(calleeExpr) && !runtimeEvalCallableResult && !dynamicCtorValue) return undefined;
+  // (#6651 U3) `new other.Proxy(t, h)` — the realm-global MEMBER spelling of the
+  // proven Proxy-constructor value (`tracesToProxyConstructorValue` already
+  // claims `<realm global>.Proxy`); only the identifier form was admitted.
+  const memberProxyCtorValue = isMemberProxyConstructorCallee(ctx, calleeExpr);
+  if (!ts.isIdentifier(calleeExpr) && !runtimeEvalCallableResult && !dynamicCtorValue && !memberProxyCtorValue)
+    return undefined;
   // A compiled fnctor for this binding means the typed-struct path owns it.
   if (ts.isIdentifier(calleeExpr) && ctx.funcConstructorMap.has(calleeExpr.text)) return undefined;
   const runtimeFunctionAlias =
@@ -3843,7 +3881,8 @@ function tryCompileNativeConstructFromValue(
   const proxyValue = ts.isIdentifier(calleeExpr) && resolvesToNativeProxyValue(ctx, calleeExpr);
   // (#5196 R3-0) `Proxy` reached as a VALUE also needs the proxy runtime and
   // the construct driver; the driver's carrier arm does the identity test.
-  const proxyCtorValue = ts.isIdentifier(calleeExpr) && tracesToProxyConstructorValue(ctx, calleeExpr);
+  const proxyCtorValue =
+    memberProxyCtorValue || (ts.isIdentifier(calleeExpr) && tracesToProxyConstructorValue(ctx, calleeExpr));
   if (
     !runtimeFunctionAlias &&
     !runtimeEvalCallableResult &&
@@ -4985,6 +5024,8 @@ function emitDynamicNewFallback(
     emitTaDynCtorConstructFromLocals(ctx, fctx, descLocal, argLocals);
     bcv.emitBuiltinCtorValueConstructOnNull(ctx, fctx, calleeExpr, descLocal, argLocals);
     emitBuiltinCollectionConstructOnNull(ctx, fctx, descLocal, argLocals); // (#6720)
+    emitBuiltinArrayConstructOnNull(ctx, fctx, descLocal, argLocals, builtinNativeConstructServices);
+    emitBuiltinPromiseConstructOnNull(ctx, fctx, descLocal, argLocals, builtinNativeConstructServices);
     fctx.body = savedBase;
     noMatchBase = base;
   } else if (noJsHost(ctx) && useRuntimeArgv) {
@@ -7449,6 +7490,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       (ts.isPropertyAccessExpression(expr.expression) || ts.isElementAccessExpression(expr.expression)) &&
       resolvesToDynamicAnyCtorValue(ctx, expr.expression)) ||
     isValueSelectingNewSite(ctx, expr.expression, className) || // (#6738)
+    isMemberProxyConstructorCallee(ctx, expr.expression) || // (#6651 U3)
     (noJsHost(ctx) && ts.isTaggedTemplateExpression(expr.expression)) // (#6774 S3)
   ) {
     const nativeCtor = tryCompileNativeConstructFromValue(ctx, fctx, expr.expression, expr.arguments ?? []);
@@ -7934,6 +7976,8 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
           emitRuntimeEvalConstructOnNull(ctx, fctx, expr, taDescLocal, taArgLocals);
           bcv.emitBuiltinCtorValueConstructOnNull(ctx, fctx, dynCallee, taDescLocal, taArgLocals);
           emitBuiltinCollectionConstructOnNull(ctx, fctx, taDescLocal, taArgLocals); // (#6720) Map/Set carrier value
+          emitBuiltinArrayConstructOnNull(ctx, fctx, taDescLocal, taArgLocals, builtinNativeConstructServices);
+          emitBuiltinPromiseConstructOnNull(ctx, fctx, taDescLocal, taArgLocals, builtinNativeConstructServices);
           return { kind: "externref" };
         }
       }

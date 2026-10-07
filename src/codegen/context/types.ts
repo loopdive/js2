@@ -173,7 +173,16 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
    *  runnable under pure-Wasm engines (wasmtime, wasmer) without a JS host. */
   standalone?: boolean;
   /** Linked zero-argument getter for a canonical standalone realm-global object. */
-  standaloneGlobalThisImport?: { module: string; name: string; call?: string };
+  standaloneGlobalThisImport?: {
+    module: string;
+    name: string;
+    call?: string;
+    exceptionTag?: string;
+    owns?: string;
+    get?: string;
+  };
+  standaloneMicrotaskNotifyImport?: { module: string; name: string };
+  standaloneScriptVarBindings?: boolean;
   /** JS-host direct-eval lowering; see `CompileOptions.directEval`. */
   directEval?: "legacy" | "reified-host";
   runtimeEvalProvider?: boolean; // see CompileOptions.runtimeEvalProvider (#6676)
@@ -965,6 +974,8 @@ export interface FunctionContext {
    * binding) hands `.then` a real `$Promise`. See `async-eager-promise.ts`.
    */
   eagerAsyncPromiseReturn?: boolean;
+  /** (#6417) A `boolean` host callback: an i32 return boxes via `__box_boolean`. */
+  hostBooleanReturn?: boolean;
   asyncDriveReturn?: {
     /** Local holding the frame's result `$Promise` (loaded at resume entry). */
     resultPromiseLocal: number;
@@ -4248,7 +4259,16 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  `__str_extern_len`). Implies `nativeStrings === true`. */
   standalone: boolean;
   /** Linked zero-argument getter for the canonical standalone realm-global object. */
-  standaloneGlobalThisImport?: { module: string; name: string; call?: string };
+  standaloneGlobalThisImport?: {
+    module: string;
+    name: string;
+    call?: string;
+    exceptionTag?: string;
+    owns?: string;
+    get?: string;
+  };
+  standaloneMicrotaskNotifyImport?: { module: string; name: string };
+  standaloneScriptVarBindings?: boolean;
   /** (#5383 S2p) True while the outlined `__native_globalThis_ensure` seed body
    *  is under construction, so a re-entrant realm-global read inside the seed
    *  itself takes the legacy inline splice instead of calling a function whose

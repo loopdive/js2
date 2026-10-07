@@ -86,7 +86,7 @@ async function expectNativeCollectionSubclass(parent: string, body: string, expe
   expect(ex.test!(), `extends ${parent} instanceof answered incorrectly`).toBe(expected);
 }
 
-/** A declared field/accessor must still be a CLEAN refusal — no leak, no binary. */
+/** A declared accessor must still be a CLEAN refusal — no leak, no binary. */
 async function expectFieldRefusal(parent: string, body: string): Promise<void> {
   const targs = TYPE_ARGS[parent as (typeof COLLECTIONS)[number]];
   const src = `class Sub extends ${parent}${targs} { ${body} }
@@ -117,8 +117,10 @@ describe("#2620/#3972 standalone subclass of a native collection", () => {
       await expectNativeCollectionSubclass(parent, "constructor() { super(); }", 1);
     });
 
-    it(`standalone: 'class Sub extends ${parent}' with a declared FIELD is still a clean refusal`, async () => {
-      await expectFieldRefusal(parent, "tag: number = 3;");
+    // (#6754) A declared field is no longer refused: the instance is a
+    // `$Map`-subtype carrier struct with room for own fields.
+    it(`standalone: 'class Sub extends ${parent}' with a declared FIELD compiles host-free (#6754 carrier)`, async () => {
+      await expectNativeCollectionSubclass(parent, "tag: number = 3;", 1);
     });
 
     it(`standalone: 'class Sub extends ${parent}' with a declared ACCESSOR is still a clean refusal`, async () => {

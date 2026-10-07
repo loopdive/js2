@@ -1,4 +1,9 @@
+import { captureDenoPostPositionMainPredecessorPolicySource } from "./helpers/ir-deno-post-position-main-successor.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
+import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
+import { captureSourceMapPositionInventoryPredecessorPolicySource } from "./helpers/ir-source-map-position-inventory-successor.js";
+import { captureMainInventoryPredecessorPolicySource } from "./helpers/ir-main-inventory-source-successor.js";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -1068,7 +1073,17 @@ const raw = () =>
   captureLoweringAnalysisPredecessorPolicySource(
     capturePresentationClassificationPredecessorPolicySource(
       captureArrayBufferIsViewMainPredecessorPolicySource(
-        readFileSync(new URL("../scripts/compiler-boundaries.json", import.meta.url), "utf8"),
+        captureMainInventoryPredecessorPolicySource(
+          captureSourceMapPositionInventoryPredecessorPolicySource(
+            capturePositionClassFieldsMainPredecessorPolicySource(
+              capturePositionFinallyMainPredecessorPolicySource(
+                captureDenoPostPositionMainPredecessorPolicySource(
+                  readFileSync(new URL("../scripts/compiler-boundaries.json", import.meta.url), "utf8"),
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     ),
   );
@@ -1210,7 +1225,8 @@ function withAuthorityFault(path: string, kind: "mutation" | "missing", action: 
           : path === expected.predecessorReceipt.path
             ? expected.predecessorReceipt
             : expected.sourceInputs.find((item) => item.path === path)!;
-    const authenticated = path === helperPath ? original.subarray(0, 292423) : original;
+    const authenticated =
+      path === helperPath ? independentSourceMapPolicyPredecessor(original).subarray(0, 292423) : original;
     expect(authenticated.length).toBe(pin.bytes);
     expect(createHash("sha256").update(authenticated).digest("hex")).toBe(pin.sha256);
     const mode = initial.mode & 0o7777;
@@ -1666,3 +1682,91 @@ describe("fixed three WasmGC helper owners policy predecessor capture", () => {
         profile(api.run(raw()), false);
       });
 });
+
+const sourceMapPolicyOuterExpected = [
+  {
+    beforeOffset: 254123,
+    afterOffset: 254123,
+    before: "  captureProgramValidatorRelocation,\n",
+    after: "  captureSourceMapProgramValidatorRelocation,\n",
+  },
+  {
+    beforeOffset: 285052,
+    afterOffset: 285061,
+    before: "  const sources = captureProgramValidatorRelocation((path) =>\n",
+    after:
+      '  programValidatorPolicyPin(\n    readFileSync(new URL("./ir-program-validator-relocation.ts", import.meta.url)),\n    sourceMapPolicyComponentPin,\n    "complete current source map component changed",\n  );\n  const sources = captureSourceMapProgramValidatorRelocation((path) =>\n',
+  },
+  {
+    beforeOffset: 285259,
+    afterOffset: 285481,
+    before: "      Buffer.from(sources.readCurrent(pin.path as ProgramValidatorCurrentPath)),\n",
+    after: "      Buffer.from(sources.readRelocationCurrent(pin.path as ProgramValidatorCurrentPath)),\n",
+  },
+  {
+    beforeOffset: 322798,
+    afterOffset: 323030,
+    before:
+      "  const prefix = readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)).subarray(\n    0,\n",
+    after:
+      "  const prefix = sourceMapProgramValidatorPolicyHistoricalPrefix(\n    readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)),\n",
+  },
+  {
+    beforeOffset: 347924,
+    afterOffset: 348193,
+    before:
+      "  const prefix = readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)).subarray(\n    0,\n",
+    after:
+      "  const prefix = sourceMapProgramValidatorPolicyHistoricalPrefix(\n    readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)),\n",
+  },
+  {
+    beforeOffset: 362950,
+    afterOffset: 363256,
+    before: '      readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n',
+    after:
+      '      sourceMapProgramValidatorPolicyHistoricalPrefix(\n        readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n        357119,\n      ),\n',
+  },
+  {
+    beforeOffset: 376430,
+    afterOffset: 376818,
+    before: '      readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n',
+    after:
+      '      sourceMapProgramValidatorPolicyHistoricalPrefix(\n        readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n        369684,\n      ),\n',
+  },
+] as const;
+function independentSourceMapPolicyPredecessor(actual: Buffer): Buffer {
+  expect(actual.length).toBe(402646);
+  expect(createHash("sha256").update(actual).digest("hex")).toBe(
+    "0ddf7556360e8937b25ba58b23629533c8042e026a4b6e6fc05df3d1263c97b8",
+  );
+  const current = actual.subarray(0, 390936);
+  const inverse: Buffer[] = [];
+  let beforeCursor = 0,
+    currentCursor = 0;
+  for (const edit of sourceMapPolicyOuterExpected) {
+    const before = Buffer.from(edit.before),
+      after = Buffer.from(edit.after);
+    expect(edit.beforeOffset - beforeCursor).toBe(edit.afterOffset - currentCursor);
+    expect(current.subarray(edit.afterOffset, edit.afterOffset + after.length)).toEqual(after);
+    inverse.push(current.subarray(currentCursor, edit.afterOffset), before);
+    beforeCursor = edit.beforeOffset + before.length;
+    currentCursor = edit.afterOffset + after.length;
+  }
+  inverse.push(current.subarray(currentCursor));
+  const historical = Buffer.concat(inverse);
+  expect(historical.length).toBe(390466);
+  expect(createHash("sha256").update(historical).digest("hex")).toBe(
+    "bb2d3a7e6bcfb54237cb03fbe4bdc61f128a508ccfb7425bdde6a150d0add55c",
+  );
+  const forward: Buffer[] = [];
+  beforeCursor = 0;
+  for (const edit of sourceMapPolicyOuterExpected) {
+    const before = Buffer.from(edit.before);
+    expect(historical.subarray(edit.beforeOffset, edit.beforeOffset + before.length)).toEqual(before);
+    forward.push(historical.subarray(beforeCursor, edit.beforeOffset), Buffer.from(edit.after));
+    beforeCursor = edit.beforeOffset + before.length;
+  }
+  forward.push(historical.subarray(beforeCursor));
+  expect(Buffer.concat(forward)).toEqual(current);
+  return historical;
+}

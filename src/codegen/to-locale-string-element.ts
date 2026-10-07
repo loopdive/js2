@@ -107,7 +107,7 @@ import { makeHelperFctx, reservePlaceholder, reservedFunc, TO_STRING } from "./h
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { protoIndexBrandCompanionHasInstrs, protoIndexRecvGetMissInstrs } from "./proto-index-store.js";
 import { getOrRegisterTaDynViewType } from "./registry/types.js";
-import { taDynDetachedGuardPrologue } from "./ta-dyn-method-call.js";
+import { taDynDetachedGuardPrologue, taDynJoinLengthInstrs } from "./ta-dyn-method-call.js";
 
 export const NUM_TO_LOCALE_STRING = "__num_to_locale_string";
 export const TA_TO_LOCALE_STRING = "__ta_to_locale_string";
@@ -354,6 +354,8 @@ export function fillTaToLocaleString(ctx: CodegenContext): void {
           },
         ];
 
+  // (#6651 U2) §23.2.3.32 step 3 reads the INTERNAL length, never an own `length`.
+  const lenInstrs = taDynJoinLengthInstrs(ctx, fctx, 0, externLenIdx);
   fn.body = [
     ...guard,
     { op: "local.get", index: 0 },
@@ -365,8 +367,7 @@ export function fillTaToLocaleString(ctx: CodegenContext): void {
       then: [
         ...nativeStringLiteralInstrs(ctx, ""),
         { op: "local.set", index: resultLocal },
-        { op: "local.get", index: 0 },
-        { op: "call", funcIdx: externLenIdx },
+        ...lenInstrs,
         { op: "i32.trunc_sat_f64_s" },
         { op: "local.set", index: lenLocal },
         { op: "i32.const", value: 0 },
