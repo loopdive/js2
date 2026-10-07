@@ -161,6 +161,7 @@ import {
   saveArgumentLocalAsExtern,
 } from "./argc-extras.js";
 import { resolvePlainCallThisTrampoline } from "../named-this-call.js"; // (#6436)
+import { nestedCapturesForCallee } from "../nested-function-name-scope.js"; // (#6877)
 import { readEnv } from "../../env.js";
 
 function tryEmitGenericStructFactoryResult(
@@ -3787,8 +3788,10 @@ function compileBoundIdentifierCall(
       return inlineInfo.returnType ?? VOID_RESULT;
     }
 
-    // Prepend captured values for nested functions with captures
-    const nestedCaptures = ctx.nestedFuncCaptures.get(funcName);
+    // Prepend captured values for nested functions with captures — only the
+    // plan of the function this call targets (#6877: not a same-named nested
+    // function of another module once the call is rebound to its own decl).
+    const nestedCaptures = nestedCapturesForCallee(ctx, funcName, ctx.funcMap.get(funcName));
     // (#5148 checkpoint) The funcMap/nestedFuncCaptures registries are
     // NAME-keyed across the whole graph, so a callee name that is really a
     // LOCAL closure value here (Deno's `const { __isLeakTracingEnabled } =

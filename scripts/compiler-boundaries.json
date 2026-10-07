@@ -13393,6 +13393,11 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/native-regime-view.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
       "path": "src/runtime/object-create-class-instance.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
