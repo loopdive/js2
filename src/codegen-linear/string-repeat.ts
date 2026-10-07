@@ -113,12 +113,13 @@ export function addLinearStringRepeatRuntime(mod: WasmModule): void {
   });
 
   // params: string(0), count(1)
-  // locals: integerCount(2:f64), sourceLen(3), resultLen(4), result(5), i(6)
+  // locals: integerCount(2:f64), sourceLen(3), resultLen(4), result(5), initializedBytes(6), copyBytes(7)
   const integerCount = 2;
   const sourceLen = 3;
   const resultLen = 4;
   const result = 5;
-  const i = 6;
+  const initializedBytes = 6;
+  const copyBytes = 7;
   const body: Instr[] = [
     // n = ToIntegerOrInfinity(count). f64.trunc preserves NaN and infinities;
     // NaN is normalized to +0 below, as required by ToIntegerOrInfinity.
@@ -216,40 +217,67 @@ export function addLinearStringRepeatRuntime(mod: WasmModule): void {
     { op: "local.get", index: resultLen },
     { op: "i32.store", align: 2, offset: 8 },
 
-    // result[i] = source[i % sourceLen]. This copies UTF-8 bytes, so repeating
-    // a non-ASCII string preserves its exact code-point/code-unit sequence.
-    { op: "i32.const", value: 0 },
-    { op: "local.set", index: i },
+    // Seed the UTF-8 payload, then expand only from its initialized prefix.
+    // Empty results retain allocation/header writes but skip all copying.
+    { op: "local.get", index: resultLen },
     {
-      op: "block",
+      op: "if",
       blockType: { kind: "empty" },
-      body: [
+      then: [
+        { op: "local.get", index: result },
+        { op: "i32.const", value: STRING_RECORD_HEADER_BYTES },
+        { op: "i32.add" },
+        { op: "local.get", index: 0 },
+        { op: "i32.const", value: STRING_RECORD_HEADER_BYTES },
+        { op: "i32.add" },
+        { op: "local.get", index: sourceLen },
+        { op: "memory.copy" },
+        { op: "local.get", index: sourceLen },
+        { op: "local.set", index: initializedBytes },
         {
-          op: "loop",
+          op: "block",
           blockType: { kind: "empty" },
           body: [
-            { op: "local.get", index: i },
-            { op: "local.get", index: resultLen },
-            { op: "i32.ge_u" },
-            { op: "br_if", depth: 1 },
-            { op: "local.get", index: result },
-            { op: "local.get", index: i },
-            { op: "i32.add" },
-            { op: "local.get", index: 0 },
-            { op: "local.get", index: i },
-            { op: "local.get", index: sourceLen },
-            { op: "i32.rem_u" },
-            { op: "i32.add" },
-            { op: "i32.load8_u", align: 0, offset: 12 },
-            { op: "i32.store8", align: 0, offset: 12 },
-            { op: "local.get", index: i },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "local.set", index: i },
-            { op: "br", depth: 0 },
+            {
+              op: "loop",
+              blockType: { kind: "empty" },
+              body: [
+                { op: "local.get", index: initializedBytes },
+                { op: "local.get", index: resultLen },
+                { op: "i32.ge_u" },
+                { op: "br_if", depth: 1 },
+                // copyBytes = min(initializedBytes, resultLen - initializedBytes).
+                { op: "local.get", index: initializedBytes },
+                { op: "local.get", index: resultLen },
+                { op: "local.get", index: initializedBytes },
+                { op: "i32.sub" },
+                { op: "local.tee", index: copyBytes },
+                { op: "local.get", index: initializedBytes },
+                { op: "local.get", index: copyBytes },
+                { op: "i32.lt_u" },
+                { op: "select" },
+                { op: "local.set", index: copyBytes },
+                { op: "local.get", index: result },
+                { op: "i32.const", value: STRING_RECORD_HEADER_BYTES },
+                { op: "i32.add" },
+                { op: "local.get", index: initializedBytes },
+                { op: "i32.add" },
+                { op: "local.get", index: result },
+                { op: "i32.const", value: STRING_RECORD_HEADER_BYTES },
+                { op: "i32.add" },
+                { op: "local.get", index: copyBytes },
+                { op: "memory.copy" },
+                { op: "local.get", index: initializedBytes },
+                { op: "local.get", index: copyBytes },
+                { op: "i32.add" },
+                { op: "local.set", index: initializedBytes },
+                { op: "br", depth: 0 },
+              ],
+            },
           ],
         },
       ],
+      else: [],
     },
     { op: "local.get", index: result },
   ];
@@ -262,7 +290,8 @@ export function addLinearStringRepeatRuntime(mod: WasmModule): void {
       { name: "sourceLen", type: { kind: "i32" } },
       { name: "resultLen", type: { kind: "i32" } },
       { name: "result", type: { kind: "i32" } },
-      { name: "i", type: { kind: "i32" } },
+      { name: "initializedBytes", type: { kind: "i32" } },
+      { name: "copyBytes", type: { kind: "i32" } },
     ],
     body,
     exported: false,
