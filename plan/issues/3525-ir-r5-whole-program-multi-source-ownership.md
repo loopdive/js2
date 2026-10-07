@@ -6780,3 +6780,306 @@ Accordingly no C1 authority change is justified by ab86 itself. The already acti
 ## Integration floor
 
 After signed checkpoint and normal root merge, independently verify staged source policy equals scratch merged pin before authoring the three-file candidate. Hold the original348 failure and all finalized348+343 evidence. Freeze pristine candidate copies before fault bodies; review exact3 pins, original-case Counter retention, complete inverse/replay proofs and unchanged suffix. Root installation occurs only after actual qualification and reader release. Full goal/public pipeline parity, source-map/performance completion, and legacy retirement remain unproved.
+
+
+## 2026-10-07 actual 7eb composition and finalized reader integration
+
+The signed source checkpoint is `a41cca746f43604d69dc09a001d51ed76405b922`. Its full normal hook chain passed 786/786 cases with no bypass. The root then normally merged freshly fetched main `7ebc362ecc19ca0dd6d3f4251dcea7a1769635e4` with no conflicts. That merge remains uncommitted; source checkpoint publication and protected queue admission remain pending. The original signing failure and prospective 1871-policy mismatch are preserved as failures.
+
+The actual staged policy is 1872 rows / 599006 bytes / SHA256 `89271aaacc5bb80516e5ace874945529561a755c045cb4224afc9403814f00d1`. The isolated three-file inventory owner received those bytes, the real 7eb merge, and the four finalized metadata inputs before authoring. Its previous 1871 failure remains retained. The actual 1872 original baseline is 348 total / 0 pass / 348 fail. The pristine successor collects 380 cases, preserving all 348 original identities plus 32 new controls; runtime qualification and independent review remain pending.
+
+Root installed the exact frozen eight preparation/contract reader files plus the one live semantic-fixture file, after verifying that every existing owned root file still equaled checkpoint HEAD. The six reader bodies passed 1398/1398 in their declared worker source/metadata epochs; the runtime-data body's earlier 75/147 (72 source-policy guard failures) remains preserved, and its composed rerun passed 147/147 with the declared four-file successor. The semantic fixture passed its complete ordinary 354/354 population, preserving all 353 old identities plus one paired omitted/restored-leaf control. That fixture owns exactly the new current runtime leaf (209 modules, 995 edges); historical 106/174/205 populations and Deno3/native51 are unchanged. These worker observations are not root7eb execution or main delivery. Source checking and formatting/lint passed; the fixture's test-inclusive strict baseline and candidate both have the same 16 existing diagnostics, with zero new diagnostics.
+
+The sole C1 program-data-contract-boundary caller remains unchanged and requires a separately specified, claimed successor association before delivery. Earlier four-file metadata proofs, immutable receipts and source8/dependencies38/closure12 memberships remain authoritative. No legacy route retirement, complete IR performance proof, or complete-goal claim follows.
+
+Cross-machine coordination uses the canonical upstream `issue-assignments` branch and existing `plan/issues` files. A fresh shared-register read verified current finite IR owners and branches. The user asked to coordinate with another machine, but no identifying branch, claim owner or chat link has been supplied and no unknown session has been contacted. Existing prepared packets and dirty primary checkout remain preserved.
+
+The following replacement plan was derived from the actual staged 1872 bytes, not cached GitHub metadata:
+
+# Actual staged7eb composition: replacement finite three-file inventory plan
+
+This supersedes the prospective ab86/1871 plan as the writer input epoch. Root actualHEAD a41cca746f43604d69dc09a001d51ed76405b922 and MERGE_HEAD7ebc362ecc19ca0dd6d3f4251dcea7a1769635e4 were read. Actual on-disk policy equals the INDEX blob:1872 rows,599006 bytes,SHA89271aaacc5bb80516e5ace874945529561a755c045cb4224afc9403814f00d1,Git blob67d856f545a15c6a55b18cc9ced67fc15bb38946. No prospective or cached-base credit. Scratch actual-staged1872.json copies those exact bytes. Worker must refresh from7eb plus root's exact checkpoint source overlay and actual staged policy, not work on its earlier ab86-derived1871 candidate.
+
+## Exact ownership and immutable floor
+
+Only the existing helper `tests/helpers/ir-deno-post-position-main-successor.ts`, its `.json`, and `tests/issue-4376-post-position-main-inventory-successor.test.ts`. Keep algorithm suffix byte-exact (previously frozen3a3bc4…). Keep schema/four public APIs, descriptor-only capture, authentic receipt freshness, whole-source pins, all old endpoints and full inverse/replay guarantees. No C1 edit, old historical receipt rewrite, codegen/compiler source change or helper-chain expansion.
+
+Existing finalized348 outer identities are authoritative. Preserve the original661 identities plus the earlier30 ordinary additions (old691 population including343C1). The separately frozen four-file instrument successor adds8 C1 identities351; retain those if that package is installed, but do not mix epoch-specific totals or assume its installation. Root's already qualified source/native evidence must remain attributed to its actual source epoch; postmerge source/artifact checks still required.
+
+## Actual two insertions and retained epochs
+
+Relative to checkpoint1870 (598331/a524ce190ef6fc619b92539c328e52b7abe5692d362238d11f4e4082953a6d33), current1872 adds:
+
+-343bytes at checkpoint/current byteoffset173546: new row396 `src/codegen/declarations/assigned-shape-divergent-objects.ts`.
+-332bytes at checkpoint385678/current386021 in the independently derived line-hunk representation: new row1052 `src/codegen/object-model/struct-optional-widen.ts`.
+
+Both rows are unmigrated/mixed-needs-split/backend-wasmgc. This raw decomposition is exact and may anchor at a different equivalent brace boundary from the earlier1871 scratch; use the actual saved complete spans and forward proof, not guessed line offsets. Every old row and non-file field is unchanged. Two remainder append rows now occupy1870/1871, and their250-byte raw append starts598749.
+
+Required independent complete-epoch checks:
+
+1. Remove both incoming spans: exact checkpoint1870/a524ce… .
+2. Remove only the343-byte first span: exact prior ab86+remainder1871/598663/9da336fb5d7b967cac681510c8569edd4bea93e6144badaea6fbf2354c46c0dc.
+3. Remove only remainder250: exact actual upstream7eb policy1870 (different bytes from checkpoint1870; do not confuse same row counts).
+4. Remove both incoming spans AND remainder250: exact original base1868/598081/72ae9374… .
+
+Keep all these endpoint pins without representing the unexecuted old1871 scratch as a qualified runtime result. Prior historical routes beneath1868 remain unchanged.
+
+## Compose fixed three projections
+
+Actual independently derived populations: mainLineage22removedRows/19rawSpans; mainPredecessor32/26; denoPredecessor16/12. Saved proofs.json includes exact added raw spans in each endpoint coordinate system, each original case-index→current-index mapping, row neighbors and old endpoint pins. Raw inverse AND forward replay to actual staged bytes independently passed; semantic removals matched each raw endpoint. Candidate must reproduce those checks and semantic reinsertion itself.
+
+Update each original removal index according to actual path position in1872 and verify original row data exact. Update neighbors from actual policy rather than applying a blanket index formula to fields. Shift original afterOffset positions by cumulative inserted bytes before them; retain old endpoint beforeOffset positions. Add the two exact spans. Current raw/full-data/files/non-files profiles must be computed from actual1872 bytes and old endpoint whole-data profiles retained unchanged.
+
+## Old labels, actual operands, added cases
+
+Freeze348 full-name/multiplicity multiset. Interior insertions shift old current row coordinates (first shift begins396; second begins prior1051), so use a finite old-label→new-coordinate mapping for old generated tests. Do not rename old labels or retain obsolete operand indices. In particular the existing remainder1868/1869 labels must mutate actual1870/1871. Old productive1870 lineage cases should explicitly derive their1870 source before applying old raw tables; stale1868 and all older proofs remain genuinely checked. The last-row next control must append an actual foreign row1872 and reach the API mismatch, never access undefined.
+
+Add both new rows×two routes×two semantic projections×row/previous/next =24 substantive API refusal cases. Per route also require productive current1872 proving complete1871 AND checkpoint1870 predecessors; exact stale1870 refusal; exact stale1871 refusal; descriptor/accessor refusal for both new rows with zero observation and restored healthy. This suggests32 added cases if each described item is one collected case; actual collection is authoritative, not an assumed total. Keep all348 original identities and all old lower-level genuine mutations. Capture actual old-helper348 failure against staged1872 before edits, and preserve the earlier successful348 source epoch separately.
+
+## C1 incoming intersection: full116f→7eb independently checked
+
+Full incoming delta has72 paths, not only the ab86 subset. The following consumed domains were explicitly read from the authoritative frozen successor manifest and component receipts and compared against ALL72: population8, dependencies38, closure12, configs3, instruments12, immutable authorities11, artifacts7, resolver containing/target requests and repository IO observations, program-validator relocation currentPaths, source-map schema source-epoch records, lowering-analysis source records. EVERY intersection is empty. All tracked declared input Git blobs were independently verified equal116f→7eb; directory/external observation locations are separately identified, not treated as source blobs. Exact lists/results are in proofs.json.
+
+FieldDef.optional adds six lines in module-records.ts; the full incoming diff is saved. This module is lexically reexported by unchanged ir/types.ts159/176, so wholegraph equivalence is NOT inferred from membership absence. Actual C1 capture reads the enumerated fields at current-source.ts862–900; resolveContract759–797 iterates only the fixed request list and exact57 IO observations, not recursive typechecking of all exports. Component capture APIs enumerate fixed paths/source records. The optional field's current type/compiler effects require actual postmerge source and backend execution, separately from finite C1 proof. There is no incoming reason to widen C1 source8/38/12 or reseal configs.
+
+Preserve the INDEPENDENT already-approved four-file instrument successor exactly: helper409599/e3bd76cbcee13e469f8c5c6ec6bafb08e6fc786efa410bd8572b56f9d5193170; manifest418831/c2ef32c1a52c73496a5d8be1b773e03896b888880be906ed923fcbfc162b5fa4; anchor194/c6dd5fd067f4031975eeb6c95d3387110f8fa0cbfb47c2735c70e4b83f5cd92a; C1test153099/c0329f3ab89742e1552fe03fccca14c6d8f665dd4e1a828a1edc952fc1ede27e. Frozen pins are copied into proofs.json and actual bytes independently matched. Do not overwrite these from root's older checkout authority or from main. This instrument successor was justified by intrinsic-preparation reader edits, not by7eb.
+
+## Qualification/install sequence
+
+Root appends this finite scope after successful normal source checkpoint/merge and refreshes isolated writer source view. Assert worker policy equals actual staged pin before collecting baseline. Own only3 paths, preserve algorithm suffix and immutable historical receipts. Freeze pristine candidate3 before fault bodies; collect exact old/new names, full ordinary body, strict owned typecheck/lint/format and restored physical custody. Serialize mutation bodies with C1/four-file/other authority readers. Independent review exact3pins and complete proofs precedes root install. Current-source gates/native artifact comparisons must use actual postmerge code, including incoming new tests; no broader pipeline completion or legacy-retirement claim follows from metadata qualification.
+
+
+
+## 2026-10-07 sole C1 caller successor ownership and plan
+
+Canonical upstream slice `3525:remainder-c1-caller-20261007` is verified for `ttraenkler/codex-ir-remainder-c1-caller-20261007`, branch `codex/3525-remainder-c1-caller-20261007`. The isolated worktree has the same real a41 checkpoint + 7eb merge and exact frozen reader overlays. Only the four files below are writable. Node25.9.0 is the actual same-before/after qualification toolchain; the architect's Node24 command is a proposed local executable, not a source-epoch requirement.
+
+To preserve independent parallel work, the isolated caller baseline may consume the exact static-reviewed pristine1872 outer candidate while its complete ordinary380 qualification runs in a different worktree. This records a precisely declared baseline epoch and earns no outer execution or delivery credit. Root installation still waits for full380/custody success and final byte equality. Caller final acceptance also requires those qualified same bytes. No physical authority mutation or shared-root reader runs concurrently in the same worktree.
+
+# Sole program-data C1 caller: finite current-reader successor
+
+Specification only. Actual root HEAD a41cca746f43604d69dc09a001d51ed76405b922 / MERGE_HEAD7ebc362ecc19ca0dd6d3f4251dcea7a1769635e4. This consequence comes from changing one current instrument, not incoming main: the separately measured full116f→7eb intersections with declared C1 source/dependency/closure/config/resolver/component domains were empty. No runtime or mutation body was executed for this specification.
+
+## Exact four-file writer ownership
+
+1. tests/issue-3518-program-data-contract-boundary.test.ts
+2. tests/helpers/ir-c1-authority.json
+3. tests/helpers/ir-c1-authority-root.ts
+4. tests/issue-3518-c1-current-source.test.ts
+
+Read-only prerequisites: finalized eight-file adapter packet (1398/1398 parent-reported execution), finalized live fixture (354/354 parent-reported), and approved current1872 outer successor after its actual complete qualification. Do not edit those packets. In particular preserve policy helper409599/e3bd76cbcee13e469f8c5c6ec6bafb08e6fc786efa410bd8572b56f9d5193170, its existing19-span instrument proof, and every other instrument record. No changes to old preparation/contract kernels or receipts, C1 historical fixture bytes, source8/dependencies38/closure12, resolver/config data, source compiler code or source policy. Root appends this finite scope to the existing issue before writer edits.
+
+## Minimal actual caller change and reader contract
+
+The actual caller33271/8b8ca2d079315b43efc7915ffce1bbd9e71ab2d844f66e06459dc7c547dbf265 imports old preparation at19 and old reconstruction at28–31. Change only these imports, using the approved new APIs under the SAME local names. Keep runtimeContractCurrentPaths imported from the unchanged old kernel. The exact proposed two-import diff is saved beside this plan; no body/test-title changes are necessary.
+
+The call at258–260 therefore remains textually unchanged:
+reconstructRuntimeContractReceiptSources(beforeRuntimePreparationRelocation(beforeProgramValidatorRelocation(rawRead))).
+The aliases select beforeRemainderRuntimePreparationRelocation and reconstructRemainderRuntimeContractReceiptSources. Preserve this order: real supplied raw reader → existing source-map/program-validator relocation view → exact current intrinsic-preparation association → exact current three contract-owner association → unchanged old contract source/AST/recipe kernel. Do not route the runtime-contract adapter around the live C1 reader.
+
+Actual fixture obligations remain:
+- policy() runs first and authenticates current outer policy; source-epoch schema/component validation then reads actual raw inputs.
+- Only the initial historical fixture copy uses the reconstructed27 contract paths, followed by historicalIntrinsicSource. Unknown paths retain raw delegation. No cached source or filesystem fallback.
+- reconstructC1CurrentSources(rawRead) at268 MUST still receive the actual raw reader. The eleven source-epoch paths and instruction view remain in historicalDependencyRead; program/core reconstruction and donor selection remain unchanged.
+- Later fixture run/append/put mutations are not passed through any inverse. Existing negative tests must still act on the actual mutated fixture. This is historical proof construction, not replacement of sources fed into production compilation.
+
+Approved new runtime imports are only two helpers: preparation3487/006db370d2bf4b1fa6637118eaec821942b0e5a146350386009243f64d5cfae4 and contract8176/d56507064cd8afd9362dbb36a9d10a1c175cb0042764d2df70b45f342fc7be01. Their full packet pins are in proofs.json. Preparation authenticates49704/171aa935 intrinsic source before exact49541/bd27170 historical view; only support output is substituted, all other requested paths stay supplied/raw. Contract authenticates the exact three current owners (contracts/manifest, callable-declarations, runtime/manifest), including SHA/bytes/Git and complete inverse/replay. Old kernel still owns receipt-before-source validation, all27 source/AST/recipe checks and resulting historical records. Unknown-path and explicit-source delegation behavior remains covered by the already-qualified adapter packet; do not duplicate or broaden it here.
+
+## Current-instrument proof, not a new historical epoch
+
+The existing manifest currentInstruments[3] pins the33271 caller; instrumentEdits[1] maps original28535/cd1938063fa11485d4ec15fd260aeb3e65b6fa7a220e46932978f7a06528b8e0 (Git7e22a6829277d6475df4714de8d48ad2e76e3ada) through12 spans. Preserve that ORIGINAL beforePin and original historical artifact. Do not make33271 the new historical beforePin or merely replace current hashes.
+
+Independent static composition found both new imports in unchanged gaps. Their original-coordinate starts are85 and667, current starts1195 and1777. The saved import-only draft produces33453/57d583e78b471047d6eaddbab8b8f746a01d3c7a432a6c523f51c9fa70c45d28 and14 ordered spans: retain all12 existing before/after contents, shift their current offsets by actual preceding import deltas, add the two new spans. Complete inverse, exact original pin, every equal gap, and forward replay were independently verified. This is an implementation draft, not a formatter freeze: recompute after the writer's final formatting and retain the same proof obligations. Original semantic/test body bytes remain unchanged.
+
+Change ONLY this caller's current pin and its corresponding afterPin/spans. Preserve every other manifest field and record exactly, especially prior e3bd policy-helper proof and immutable historical pins. Then compute manifest hash, update the existing anchor literal, and update current-source test independentFreeze manifest hash/anchor source/anchor pin. Preserve its LinearOptions declaration pin and all other fixed membership/receipt assertions. No helper changes are needed: ir-c1-historical-authority.ts839–875 already validates exact original domains and ordered bounds;1004/1027 validates edit domain and actual full current instrument bytes. Existing current-source test346 onward independently performs full inverse/replay and archive association. Manifest/anchor/proof test stay outside instrument membership, preserving the acyclic authority model.
+
+## Baseline, serial qualification and acceptance
+
+At initial review root outer receipt still expected1870 while actual policy was1872; that earlier failure masks this caller. The1872 pristine outer candidate is now statically approved at9dbc7709/34e1bfc0/5eafd159, with380 collected and runtime qualification pending. Install it only after its body/custody qualifies, plus exact read-only adapter prerequisites and e3bd/c2ef/c6dd/c032 four-file predecessor, before collecting the useful unmodified-caller baseline. If a masked baseline is also recorded, preserve it and label its first guard accurately. Do not claim the hypothesized preparation/contract failure until actual rows establish it.
+
+Exact baseline command, from the isolated writer root (create .tmp/c1-caller-consequence-execution first):
+
+    env VITEST_MAX_FORKS=1 /Users/thomas/.nvm/versions/node/v24.4.1/bin/node node_modules/vitest/dist/cli.js run tests/issue-3518-program-data-contract-boundary.test.ts --fileParallelism=false --reporter=json --outputFile=.tmp/c1-caller-consequence-execution/before.json > .tmp/c1-caller-consequence-execution/before.log 2>&1
+
+This Node path is the locally resolved executable observed during review; writer must record actual executable/version and use the same toolchain for before/after. No source execution claim is attached to this proposed command. Preserve actual exit, full case IDs/multiplicity and first error rows, including any further earlier guard. Run the same command after the complete four-file candidate is installed, with after filenames. Count full executed/failed/skipped cases from records; no assumed caller denominator.
+
+Run the complete current-source test in a SEPARATE invocation with the same serial flags after caller termination. Preserve all351 current identities (original343 plus prior8) and every original caller identity. Existing per-instrument warm mutation controls and full original/archive inverse tests remain. Add two narrow supplied-reader controls, one rolling back each of the newly changed import spans in otherwise healthy current caller bytes: warm healthy capture → actual caller pin refusal → fresh restored healthy capture. Assert the intended import bytes were found and changed; do not let an undefined replacement or unexecuted mutation count. These validate the new association without calling a production compiler on historical source. Actual collection defines the new denominator; two additions would yield353 C1 cases, not pre-earned pass credit.
+
+Freeze pristine four files before authority fault bodies; independent static review precedes anchor/public installation approval. Serialize all physical authority mutations with caller/outer/adapter readers. Capture and restore full declared source/authority/adapter inputs, not just owned files. Record scoped source/test typecheck and format/lint; preserve any pre-existing diagnostics separately. Runtime acceptance requires actual complete caller execution, full C1 execution with old identities retained, new control failures at the intended guard followed by healthy restoration, exact historical bytes and unchanged source8/dependency38/closure12/config/resolver records. Existing1398 and354 runs are separate epoch-specific evidence, not rerun or automatically invalidated solely by this caller metadata change; prove their consumed input intersection before retaining them. Full IR pipeline migration and legacy retirement remain unproved and out of this finite task.
+
+
+
+## 2026-10-07 actual post-merge source qualification and caller failure
+
+At actual checkpoint a41 + main7eb composition, the complete original source population passed87/87 with no failures/pending cases and every original case identity exact. This includes native/direct-legacy comparisons, both prepared backends and fresh-process replay controls. Source typecheck, production build and31 required source/architecture/issue checks passed; strict compiler-boundary inventory is valid with no errors but graphComplete remainsfalse. The existing standalone corpus independently reports5/5 sources and47/47 units, not complete IR coverage or number-remainder WASI performance proof. Three failed audit invocations were sandbox IPC permission failures and two were percent-encoded path failures; all originals remain retained, with successful normal IPC-permitted commands or explicit space-free entry paths. No source gate was weakened.
+
+The useful unmodified C1 caller baseline in its declared isolated1872/static-outer epoch completed105 cases:3pass,102fail,0skipped. All102 failed at the same complete source SHA256/length guard for src/ir/runtime/intrinsic-preparation.ts. All109 declared inputs and the staged incoming-main diff remain exact. This establishes the two-alias successor plan against an actual failure. The formatted four-file candidate is frozen before C1 authority faults; full caller and C1 execution plus independent review remain pending. Source/helper historical artifacts and original failures remain preserved.
+
+
+## 2026-10-07 initial-graph main association after the next measured guard
+
+The exact1872 outer packet completed380/380 with all348 original identities retained and146 inputs restored, and is installed in root. The first four-file C1 caller successor independently passed353/353 (all351 prior +2 controls) but its whole105 caller still fails102 cases at the incoming module-records dependency; all prior failures remain preserved. Canonical slice initial-graph-main-association-20261007 reserves only two NEW test helper/regression files for its separate Sol owner. The same C1 owner extends to the five existing instrument files through initial-graph-c1-readers-20261007. Preserve main's six optional-field lines and every original regression; this is an exact historical-fixture association, not a source pin waiver.
+
+# Initial-graph fixture: finite incoming optional-field source association
+
+This is the next measured failure, not a blanket source reseal. The frozen import-only C1 packet is preserved: caller33447/e2c05630; manifest419750/20c64fa7; anchor194/5324c8a2; current-source test155214/77c90c68. Its actual105 caller body has3 passes/102 failures, all now ProgramInitialGraphEvolutionError pin SHA/length mismatch for src/wasm/model/module-records.ts; zero prior intrinsic-preparation failures. Its complete353 C1 body separately passed and restored109 inputs, according to parent terminal custody. Preserve both the old105 intrinsic failure and this next105 failure and the353 success at their exact epochs.
+
+## Source cause and fixed proof
+
+Actual root and immutable7eb module-records bytes are identical:4111/SHA7a16486fdc674335c690ed51c4e2767486732275b3acad00af5429a7d3ebf4cc/Git8ff4cab7afb94aea25b5b5a79a07fe89d0538d12. Exact116f bytes are3867/SHA0de6972cbc506dc29a04119fed1efbf9a4b84e4219a52363c120e0130364ae75/Gitc700df20e0e24aa54b0dd5d4a438773c22deb6f7. The latter matches the unchanged initial-graph receipt input exactly. One244-byte/six-line insertion at old/current byte2806 adds the FieldDef.optional documentation and optional?: true. Saved proofs.json contains the whole span; independent complete inverse and forward replay passed. Do not remove or alter this field in live source.
+
+The unchanged initial-graph kernel captures17 sources plus the nested pre-A receipt before constructing exactly4 historical outputs. module-records is a required dependency input, not an output. Its full pin therefore legitimately stops the caller. Existing current source-map/type wrappers do not cover this field: helper search found no existing optional-field source association. Reuse existing initial-graph pin/error/reader types; do not rewrite its kernel or receipt.
+
+## Ownership and mandatory sequencing
+
+FIRST membership check: both existing tests below ARE current C1 instruments. The initial-graph kernel and JSON are NOT current instruments or immutable-authority members, but remain immutable by this task's contract. Both existing test edits require one subsequent composed current-instrument proof. No existing source8/dependency38/closure12/config/resolver member changes.
+
+Independent writer A owns ONLY two new non-C1 files:
+- tests/helpers/ir-initial-graph-optional-fields-source.ts
+- tests/issue-3525-initial-graph-optional-fields-source.test.ts
+
+Existing C1 writer B, after the prior353 body is terminal and its exact custody is verified, owns FIVE existing files:
+- tests/issue-3518-program-data-contract-boundary.test.ts
+- tests/issue-3518-program-initial-graph-evolution.test.ts
+- tests/helpers/ir-c1-authority.json
+- tests/helpers/ir-c1-authority-root.ts
+- tests/issue-3518-c1-current-source.test.ts
+
+Parent records and claims this precise two+five split before implementation. Writer A freezes its helper/regression for read-only consumption by B; B cannot alter A's helper. Preserve prior e3bd policy helper and19-span record. Do not copy an earlier c2ef manifest over the qualified20c64fa predecessor. Isolated worktrees may qualify independently; no physical mutation beside another body's readers in one checkout.
+
+## Small lazy adapter and exact call sites
+
+Export one function, beforeOptionalFieldModuleRecords(reader: ProgramInitialGraphReader): ProgramInitialGraphReader. Require a callable supplied reader; construction performs ZERO source reads. On each invocation, read the supplied path once. For every path other than exactly src/wasm/model/module-records.ts return the supplied value unchanged, including undefined or other malicious runtime values, so the unchanged downstream kernel owns its original diagnostics. No default filesystem reader, source cache, discovery, historical Git read, fallback, alternate accepted epoch, or widening the path set.
+
+For that exact target only: require a nonempty primitive string before coercion; authenticate full4111-byte current SHA AND Git; check the exact244-byte span at2806; delete only that span; authenticate the complete3867 prior SHA/Git against the independently fixed receipt endpoint; reinsert the fixed span at2806 and require byte-for-byte equality with the original current input. Return the prior view. Reject exact old3867 as CURRENT input, arbitrary body/header/trailing changes, malformed optional field, boxed/object/null/undefined sources without observing coercion, and changed source after a warmed success. Fresh restoration succeeds. A typed ProgramInitialGraphEvolutionError can be reused; no new authority class or registry is necessary.
+
+Program-data caller: import the new adapter and wrap ONLY the operand at the existing initial-graph call:
+reconstructProgramInitialGraph(beforeOptionalFieldModuleRecords(initialPreCProgramRead)).
+Keep sourceHandoff-independent runtime adapters, source-epoch capture, reconstructC1CurrentSources(rawRead), historicalRuntimeRead, historicalDependencyRead and later core-type capture unchanged. The new view does not feed the live fixture copy loop: module-records is outside initialGraph's4 outputs and continues to be copied raw by the existing fallback. No historical source reaches compiler or live semantic fixture.
+
+Initial-graph test: import the adapter and wrap the reader RETURNED by local beforeC1(), after reconstructC1CurrentSources has consumed the actual raw reader. Keep its donor restoration and instructions association; return the new lazy view around that existing reader. Do NOT alias or wrap every reconstructProgramInitialGraph call: that would re-normalize already historical test inputs and could invalidate old mutants. Existing tests must derive their healthy initialRead once, then feed deliberate mutations DIRECTLY into the unchanged kernel, including supplied-source and reciprocal controls. Preserve actual17+one receipt read order/multiplicity and all original case names.
+
+## Reader/consumer closure and non-targets
+
+Actual direct consumers of the initial-graph helper are exactly the two existing tests named above. Its three live APIs reconstructProgramInitialGraph, createProgramInitialGraphReader and verifyProgramInitialGraphReciprocal are all exercised by the initial-graph test; the latter two invoke the same17-input capture. Kernel460 authenticates its immutable receipt BEFORE calling capture; capture449 reads17 sources then the nested pre-A receipt. The new lazy adapter preserves invalid-receipt zero supplied-source observations. Unknown paths remain raw in the old createProgramInitialGraphReader; specifically current module-records must NOT become one of its4 output paths or a cached output.
+
+Important diagnostic detail: unchanged requiredRead309–317 wraps a reader exception as ProgramInitialGraphEvolutionError(code missing-source, cause). A malformed current model rejected by the adapter through the old kernel may therefore surface as missing-source with a typed pin cause. Test that exact documented chain; do not edit the old kernel to manufacture the previous top-level error string. Mutants supplied AFTER the historical view remain direct old-kernel pin failures, as before.
+
+programPreA's4 source+9 dependency domains do not include module-records; this dependency is added only by the initial-graph layer. programCoreType's7 inputs also do not include it. Core-vocabulary receipt/source-contract reconstruction has its own raw-owner domains and does not include module-records or call this initial-graph helper. The existing132-case15pass/117fail core-vocabulary result first stops at its pre-existing nodes/source-contract pin mismatch; preserve it and do not attribute or reseal it for this244-byte incoming change. Whole parent closure paths and membership pins are in proofs.json.
+
+Live semantic-provider-boundary354 explicitly copies current module-records into its209-module scanner graph; leave this raw. Module-reservations and native model/closure/source readers similarly stay current. Their mentions are not callers of the historical initial-graph APIs. Native compiler source, emitted artifacts, current source policy, and the six incoming lines remain untouched.
+
+## New regression floor and historical preservation
+
+Writer A should prove this exact source operation with a real repository read, and a real17-input historical construction using the existing source/C1 bridge pattern. Retain a control that the unchanged kernel receives the actual current model with the other genuine historical inputs and refuses its old full pin; the same source passed through the finite adapter then yields exactly4 old-pinned outputs. No fabricated dummy four-function map.
+
+Focused controls must include: exact current→prior pin/Git and reciprocal bytes; one physical target read per request; adapter construction zero reads; unchanged kernel invalid receipt zero supplied-source reads; two successive captures with exact17-source+nested-receipt order; exact historical3867 rejected as current; changed optional-field span; unrelated body/trailing mutation; missing/nonprimitive values with zero coercion; changed-after-warm then restored healthy; unknown-path raw delegation including changed value and undefined; caller exception identity propagated by adapter; and genuine post-capture mutation reaching the unchanged old kernel. Reuse unchanged kernel error types. Keep the live raw reader's4111 bytes intact before/after. Count actual cases; do not preclaim a denominator.
+
+Writer B first preserves/records the unmodified initial-graph test's complete current baseline in its isolated fully composed source epoch; parent already has the useful105 failure. Then qualify both full caller bodies and full C1 body serially. Retain all105 program-data identities, all actual original initial-graph identities, and all353 C1 identities. A new C1 supplied-reader rollback control for each changed instrument should warm healthy, replace a unique new adapter operand/import in otherwise exact current text, hit that instrument's intended full-file pin refusal, and restore fresh healthy capture. No skip/title edits or relaxed test expectations.
+
+## Compose two instrument proofs, preserving every historical anchor
+
+Program-data original remains28535/cd193806…; compose onto the qualified14-span e2c056 current association, not the old33271 file. Preserve all existing old span contents and both runtime import associations; derive exact new spans/coordinates after formatting. Initial-graph test original remains24556/44f5ac79766e9046aa4ed3ccc32c5e609209d0000ffe4d7b06d9afcc8049c2e6/Gitb776f75396a99c2b0a4b94b1c989b9c85a298c14, current24928/da15f0a2 with6 spans. Compose the new import/reader-return changes with those original6 spans, preserving that archived original. For BOTH, prove nonoverlap, equal untouched gaps, exact full historical inverse and exact current forward replay. Do not substitute a newer beforePin or rewrite archived originals.
+
+Only these two current instrument pins and matching afterPin/spans may change in the manifest. Every other field/record, policy-helper19 spans, artifacts, immutable sources and source8/38/12/config/resolver association stays exact. Then update anchor and independent current-source freeze from final formatted bytes and append the focused controls. Freeze pristine five-file packet before C1 fault qualification. Independent exact static review precedes root installation; actual caller/C1 bodies, typecheck deltas, formatting/lint and restored custody still required.
+
+Use the established Node25.9.0 serial Vitest command, same before/after, e.g. env VITEST_MAX_FORKS=1 /Users/thomas/.nvm/versions/node/v25.9.0/bin/node node_modules/vitest/dist/cli.js run tests/issue-3518-program-initial-graph-evolution.test.ts --fileParallelism=false --reporter=json --outputFile=<owned scratch>/before.json, with stdout/stderr preserved. New helper standalone proof may run in A's isolated snapshot; current C1 instrument edits cannot be intermixed with ongoing fault readers in B. All successful results remain epoch-qualified. After final five-file install, previously identified validator62/runtime-data147/live354 authority readers require integrated qualification; parent normal hooks already cover this. No full IR migration/legacy-retirement claim follows.
+
+
+
+## 2026-10-07 measured source-map reader omission addendum
+
+The actual unchanged initial-graph test baseline is129 cases,35pass/94fail, with all112 inputs and staged merge content restored. Its first failures concern unchanged four source-map epoch inputs, not the incoming optional field. The original V1 two-file helper/regression has20 collected cases and no runtime pass credit; five real graph controls would stop at the incomplete reader. Preserve those bytes. The following finite addendum corrects only the existing historical-reader use, three-file mutation operands at thirteen explicit sites, and the strict supplied-reader return type. No source-map receipt, old kernel, source population, live model or production compiler is modified.
+
+# Addendum: measured initial-test source-map reader omission and V1 adapter review
+
+This addendum supersedes the earlier assumption that the existing initial-graph test already supplies all16 non-model inputs correctly. Preserve the earlier plan and both actual failures. Program-data105 now stops at module-records, but the separately measured unmodified initial-graph129 has35passes/94failures (88 first input-contracts graph pins,1 pre-A input-contracts,5 paired-positive assertions). It has not reached the new model dependency first. No existing kernel, historical JSON or source domain changes are needed to correct this reader omission.
+
+## Exact existing four-path association
+
+The old initial-test beforeC1 restores C1 donors and instructions only. Four of its17 inputs pass through its raw fallback even though the initial-graph receipt requires their pre-source-map schemas:
+
+- src/ir/program/input-contracts.ts: current2440/db4965e7 → existing receipt.before2375/755022df.
+- src/ir/program/prepared-contracts.ts: current4915/252ad6fb → before4843/889bedc1.
+- src/shared/contracts/ir-unit-inventory.ts: current8077/6b5b77ee → before4708/f6f253ce.
+- src/ir/program/input.ts: current6872/66f7f3c1 → before6763/3c9da679.
+
+Each current full byte sequence is already identical in116f and7eb. Each existing source-map-schema receipt.before pin equals the initial-graph17-input receipt pin exactly. Full inverses and forward replays were independently checked from those existing spans. This is pre-existing incomplete use of an existing source bridge, separate from the incoming244-byte FieldDef.optional addition. Full pins and spans are in source-map-reader-addendum-proofs.json. Do not create another source-map inverse or update its receipt.
+
+## Minimal correction in B's already-owned initial-graph test
+
+Keep actual(path) strictly raw and keep reconstructC1CurrentSources(readLive) on actual supplied raw population. In beforeC1, after its original raw C1 capture, separately obtain captureSourceMapSchemaSourceEpoch(readLive) through the existing helper. Do not run this through the population callback that records captureCalls: that array intentionally records the original population-channel reads, not all authority reads. C1 already authenticates the helper as its current source-map component; the schema API independently validates its exact receipt and helper prefix.
+
+Retain the entire existing donor/instructions callback byte-for-byte, including the sixth old instrument span that contains its raw fallback. Bind that formerly returned callback to a local strict reader, then return beforeOptionalFieldModuleRecords around a second strict callback: obtain source from the original callback; apply epoch.before(path, source) ONLY for the four explicit paths above; otherwise return source unchanged. None of those four paths is a C1 donor or instructions.ts, so this safely composes outside the original donor/instructions projection while preserving all six old span contents. No discovery/filtering against current receipt membership, no mapping already-historical donors, no change to raw C1 reader, no broad global actual() normalization. The original17-input+nested-receipt kernel census remains unchanged.
+
+There is a second concrete operand defect once the positive reader is fixed: thirteen raw actual(input), actual(inputContract), or actual(preparedContract) references in the old mutation factories construct mutations from source-map-current text. The 'later optional operand' factory specifically searches for ["runtimeSupport"], which is absent from current source containing ["runtimeSupport", "sourceMap"]. Other factories would be rejected incidentally by the full input epoch pin even if their intended mutation were ineffective.
+
+Add a distinct historicalControlSource(path) used ONLY at those thirteen explicit three-file mutation-source references, with fresh captureSourceMapSchemaSourceEpoch(actual).before(path, actual(path)). Keep the existing mutation strings, names and assertions. Assert/limit its domain to those three paths. It derives the authentic receipt-coordinate source BEFORE the old mutation is applied. Never apply the inverse after mutation, never change actual() used by C1, and leave handles-path factories unchanged. The explicit13 line sites are saved in the proof. This is necessary to preserve the old negative controls' meaning, not a weakening or blanket rewrite. Other129 test body logic and every old identity stay intact.
+
+## A's pristine V1 review and permitted narrow revision
+
+Reviewed V1 helper2324/1066c4b7 and test11587/af6e9224. Helper runtime logic correctly enforces primitive current source, exact current SHA/length/Git,244-byte span, full prior pin and forward equality, fresh one-path reads, raw unknown delegation and direct supplied exception identity. However, its union return unnecessarily loses a strict reader's string return type. Add a strict-reader overload first, nullable-reader overload second, retaining the same implementation:
+
+    beforeOptionalFieldModuleRecords(reader: (path: string) => string): (path: string) => string;
+    beforeOptionalFieldModuleRecords(reader: ProgramInitialGraphReader): ProgramInitialGraphReader;
+
+No casts in B's old tests, no nullable widening of their controls, and no runtime validation weakening. A can add a compile-time strict assignment in its regression to verify the overload under the owned typecheck.
+
+A's new regression copied the incomplete beforeC1 fallback and therefore cannot yet substantiate its claimed model-first refusal/four genuine outputs. Apply the same EXISTING four-path schema capture to that regression's local beforeC1, after raw C1 capture. It needs no mutation-factory correction because it creates model-only mutations; no other files are authorized. In its genuine old-kernel/model-first control, explicitly assert that all16 other inputs match their old full receipt pins before invoking the unchanged kernel with current4111 model bytes. Then assert the actual model pin refusal, and4 exact historical outputs after the optional-field adapter. This prevents a different upstream pin from masquerading as the intended control.
+
+Preserve the V1 packet. Freeze revised A helper/test pins, repeat scoped types/format/lint and independent static readback before releasing the ordinary body. The reported20 is collection only at V1, not a pass count. All existing20 names should remain; no extra source architecture or adapter API is required.
+
+## Qualification and authority composition remain finite
+
+Ownership remains A's two NEW files and B's five existing files. Parent appends this addendum before B authoring and before A revises its regression. B composes its two instruments from the prior qualified e2c05614-span caller and original24556→24928 six-span initial-test proof. Extra initial-test import/fallback and thirteen genuine mutation-source substitutions must be recorded as exact current edit spans, preserving original beforePin, old span contents and historical archive. Policy helper19-span proof and all other manifest domains stay exact. Add no source8/38/12 memberships and no core-vocabulary association.
+
+Run unchanged129 baseline remains35/94 historical evidence; revised full129 plus any genuinely appended cases must execute, as must105 program-data and original353 C1 floor plus new controls, with original identity multisets and physical custody restored. If another actual first guard appears, preserve it and report the precise row before expanding scope. No current-module normalization in live semantic354, compiler sources, or production input. Existing source87/main gates and prior metadata bodies retain their own measured epochs only.
+
+
+
+## 2026-10-07 narrow association qualification and strict span correction
+
+The new optional-field source association completed its actual20-case body with20passes/0failures/0pending, all20 original identities retained and146 inputs restored. Its two exact reviewed files are installed in root; the live module-records source remains4111 bytes. Preserve the preceding V2 body19/20: its sole final custody assertion counted UTF16 characters4109 instead of UTF8bytes4111. The reviewed V3 correction changes only Buffer.byteLength, with the helper runtime unchanged.
+
+The first five-file instrument candidate's105 caller body completed1pass/104fail at the unchanged authority's ordered-nonoverlapping span rule. An empty new import insertion shared an original coordinate with the existing Vitest span; complete inverse/replay alone did not prove the validator's strict-start requirement. Preserve that failed candidate and full rows. The same owner moved only the new import into another unchanged gap and recomposed the two records, retaining all historical anchors/old span contents and every other manifest record. Actual raw captureC1HistoricalAuthority now succeeds with the corrected candidate. The formatted new rollback control also now targets its actual unique inner adapter operand. No validator or old receipt was relaxed. Revised complete105 caller execution,129 initial-graph execution and355 C1 execution remain pending; all must qualify before publication.
+
+
+## 2026-10-07 final instrument review and cross-machine coordination
+
+The revised five-file instrument packet received independent static approval. The unchanged authority validator now accepts strict increasing starts, nonoverlap and complete bounds for all ten instrument proof records. Full historical inverse and current forward replay, all old span contents, both actual unique rollback operands, and all unaffected manifest domains were verified. The approved report is `.tmp/ir-executable-ladder-20261007/astra-inventory-review/initial-graph-main-consequence/static-b-v2-review.json`, SHA256 `98a4158fea0b6ed27e1542e228a06bcccac53d082db131485e1cc198dbc63174`. This is static evidence; the complete 105, 129 and 355 case executions remain a separate release requirement. The failed prior five-file candidate stays archived.
+
+A fresh canonical remote read still identifies main as `7ebc362ecc19ca0dd6d3f4251dcea7a1769635e4`. There is no open PR for `codex/3525-executable-stage1-20261007`. Root retains the uncommitted normal merge onto signed source checkpoint `a41cca746f43604d69dc09a001d51ed76405b922`; no source has changed since its current-main source qualification. The 87 source cases, 14 incoming-main regression cases, 20 new optional-field association cases and 380 inventory successor cases are distinct scoped populations, not full IR completion evidence.
+
+Cross-machine coordination uses the canonical `loopdive/js2` `issue-assignments` ref through `scripts/claim-issue.mjs`. The fresh registry confirms this session's eleven current finite claims. A claim owner cannot be identified as a remote session merely because its name is unfamiliar. The other session's branch, owner or handoff has been requested; no unknown session was contacted, no existing claim was taken, and root remains the single integration owner for this delivery. Separate file ownership and branches will be reconciled when that identity is supplied.
+
+
+### Final integrated affected-root qualification
+
+The unchanged normal changed-root runner selects 21 root test files from the actual merge base `116f04d` once the new regression and both instrument readers are staged. Its existing greater-than-20 guard skips all test bodies at this size. That self-skip is not accepted as evidence. Keep the hook and its selection unchanged, explicitly execute the complete 21-file set serially on the final integrated candidate under Node 25.9.0, retain every case result, and verify source, script, test-fixture and index custody after each file. Then run the normal commit and push hook chains and protected queue checks. No selection-base override, excluded test, changed threshold or bypass is authorized. The exact selected list is recorded in `.tmp/ir-executable-ladder-20261007/final-affected-root-selection.json`.
+
+The isolated, static-approved instrument owner has now qualified all 105 program-data cases and all 129 initial-graph cases with original full names retained, 113 inputs restored and the staged main merge unchanged. Its complete 355-case current-source instrument body is running separately; root installation still waits for that terminal result and custody. These isolated passes do not substitute for the integrated 21-file qualification.
+
+
+The final isolated instrument qualification completed 105/105, 129/129 and 355/355 under the exact approved revision. All old identities, 113 inputs, the staged incoming-main merge and approved five hashes were preserved. Root installed exactly these five files after verifying their original root bytes against the signed checkpoint; production source and the merge index were unchanged. The installation record is `.tmp/ir-executable-ladder-20261007/five-instrument-installation.json`.
+
+The independent hook audit confirms the complete 21-file case floor is 2,854. An initial programmatic formatting probe omitted `.prettierignore` and falsely reported thirteen inherited generated JSONs as needing formatting. Installed Prettier ignore resolution disproved that report: all thirteen are already ignored; 51 staged candidates split into seventeen ignored and 34 eligible, with zero eligible formatting failures. Preserve the original generated data and the disproved report; no formatting/configuration/index workaround or expanded scope is needed.
+
+
+## 2026-10-07 complete integrated remainder qualification
+
+The explicit unfiltered final run completed with exit zero: all 21 affected root files and all 2,854 cases passed, with zero failed or pending cases. Each file matched its independently collected case floor. The 7,815 source, script, test/fixture, configuration and Git-custody entries are identical before and after the complete run; the staged merge, HEAD and MERGE_HEAD are unchanged. The approved final five instrument hashes remain exact. This qualifies the previously impacted validator62, runtime-data147 and semantic fixture354 on the final integrated source epoch, rather than borrowing prior worker results. All 87 source execution cases and fourteen incoming production regressions are included.
+
+The authoritative receipt is `.tmp/ir-executable-ladder-20261007/final-qualification-receipt.json`. Complete per-file rows, names and logs remain in `final-affected-root/`; the final results SHA256 is `93008d87e0d6d676013e7553753cd85a8919dafa89e398741230196bca138b14`. Source typecheck, build and 31 source/architecture/issue checks remain qualified at this unchanged composed source. Normal commit/push hooks and protected delivery are still required; the hook's greater-than-20 self-skip receives no test credit. No source, fixture, kernel or protection was relaxed.
+
+Only verified main delivery completes the finite claims. The broad issue stays in progress: the strict inventory still reports `graphComplete=false`; full language/backend/standalone behavior, artifacts, effects, optimization and measured pipeline-performance parity remain incomplete. Keep the public legacy compiler. After this remainder change lands, the next existing executable-ladder action is the unchanged five-case genuine native source-closure consumer suite on the actual delivered head. Source-map and allocation packets retain their open wiring/public-acceptance and performance gaps.
+
+
+## 2026-10-07 freshly observed fcc main refresh plan
+
+The fresh canonical fetch before signing found main advanced from `7ebc362` to `fcc80f1a4c33a5925c1cbe7962d810b382ad5ce5`; the guard stopped before any hook or commit. Preserve the complete 21-file/2,854-case 7eb receipt as that source epoch's evidence. Nineteen incoming paths add ES2015 V10d fixes, the known-failures gate/reporter and root-test repairs. The raw compiler-boundaries diff contains exactly one new mixed row, `src/codegen/object-model/extern-get-object-key.ts`; an initial “four rows” assumption was disproved from Git objects before authoring.
+
+Independent Astra plan `fcc-refresh-plan.json`, SHA256 `dc8bdef974d1e12cfb64702cec9590536407c951fe1f33d5717c838b5c9ed3ae`, authorizes the ordinary two-checkpoint route: finish the already staged, fully qualified 7eb merge with unchanged normal signing/hooks solely to preserve it, then perform the normal merge of freshly fetched fcc. Do not publish the old snapshot as current delivery, reset/abort/rebase or discard its failures/fixtures. The new main source files do not overlap our ten remainder files, and only compiler-boundaries intersects the approved 39-path own scope.
+
+The predicted actual combined policy is 1,873 rows / 599,338 bytes / SHA256 `7432d603d0af52d765647dd80c2e3db5f671ca7c40a07f48206a90876cd90f1b`. Authenticate actual post-merge bytes before authoring. Only the existing outer successor helper, JSON and test may change: `tests/helpers/ir-deno-post-position-main-successor.ts`, its `.json`, and `tests/issue-4376-post-position-main-inventory-successor.test.ts`. Preserve all 380 existing case identities and historical endpoints. Compose the exact 332-byte insertion inverse from 1,873 to 1,872, all existing projection inverses and complete forward replays, with authenticated semantic row order and neighboring coordinates; add productive row mutation/restoration controls. A shifted index already labels an old microtask case, so give the new row an explicit disjoint label rather than duplicate any old full name. Keep the current three-file 1872 packet archived.
+
+All declared finite C1 domains and consumed operands have empty incoming intersections. Keep the current five files, their seal/anchor, the e3bd 19-span proof, old kernels and receipts unchanged; no C1/source reseal is justified. Refresh authoring remains under the held main-inventory finite claim with one writer and independent review. After the 7eb checkpoint, the new hook naturally selects sixteen own plus four incoming root files and runs all twenty. Qualify the full twenty-five-file union of the prior twenty-one and four incoming files, retaining old identities and measuring new case floors, plus the supplemental shared equivalence-gate test. Normal hooks remain mandatory; explicit complementary files may supply union coverage without repeating an already qualified identical epoch. Preserve the new known-failures gate and its absent-baseline seed semantics; do not add allowances, edit baselines, change limits or bypass protection.

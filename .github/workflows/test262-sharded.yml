@@ -5048,10 +5048,11 @@ jobs:
               echo "WARN: func-budget baseline recompute on re-anchored tip failed (non-fatal)"
             git add -f scripts/loc-budget-baseline.json 2>/dev/null || true
             git add -f scripts/func-budget-baseline.json 2>/dev/null || true
-            # #6797 — bank import-cycle / flat-dir decreases. Run ONLY here, on
-            # the re-anchored tip, never in the pre-loop snapshot: the PR gates
-            # read these baselines, so a value computed on an older checkout
-            # could undercut main's tree and turn the gate red on main.
+            # #6797 — bank import-cycle / flat-dir decreases into their
+            # low-water marks. Run ONLY here, on the re-anchored tip, never in
+            # the pre-loop snapshot: a value computed on an older checkout could
+            # record a low the tree being pushed does not have. Lowers only,
+            # never fails (the PR gates are change-scoped and do not read it).
             node scripts/check-import-cycles.mjs --update-on-decrease || \
               echo "WARN: import-cycles baseline bank on re-anchored tip failed (non-fatal)"
             node scripts/check-flat-dir-budget.mjs --update-on-decrease || \

@@ -335,11 +335,11 @@ jobs:
               echo "WARN: func-budget baseline recompute on re-anchored tip failed (non-fatal)"
             git add -f scripts/loc-budget-baseline.json 2>/dev/null || true
             git add -f scripts/func-budget-baseline.json 2>/dev/null || true
-            # #6797 — bank flat-dir decreases on the re-anchored tip only (the
-            # PR gate reads this baseline; a snapshot value from an older
-            # checkout could undercut main and turn it red). The import-cycle
-            # twin needs the `typescript` package, which this job does not
-            # install; promote-baseline in test262-sharded.yml banks it.
+            # #6797 — bank flat-dir decreases on the re-anchored tip only (a
+            # snapshot value from an older checkout could record a low the
+            # pushed tree does not have). The import-cycle twin needs the
+            # `typescript` package, which this job does not install;
+            # promote-baseline in test262-sharded.yml banks it.
             node scripts/check-flat-dir-budget.mjs --update-on-decrease || \
               echo "WARN: flat-dir budget bank on re-anchored tip failed (non-fatal)"
             git add -f scripts/flat-dir-budget-baseline.json 2>/dev/null || true

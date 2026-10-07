@@ -192,9 +192,9 @@
     {
       "path": "tests/issue-3518-program-data-contract-boundary.test.ts",
       "pin": {
-        "bytes": 33271,
-        "sha256": "8b8ca2d079315b43efc7915ffce1bbd9e71ab2d844f66e06459dc7c547dbf265",
-        "gitBlob": "4bbce0205a0cc2a2a2ab19df6367df0ca8e4b7cb"
+        "bytes": 33595,
+        "sha256": "1a00f71d523da3247ec64ea9affc076e0afda8a2cfcd28842bbaa1b61b5cd217",
+        "gitBlob": "7f680c042816519f623730cb00da2f7a163d1ed2"
       }
     },
     {
@@ -224,9 +224,9 @@
     {
       "path": "tests/issue-3518-program-initial-graph-evolution.test.ts",
       "pin": {
-        "bytes": 24928,
-        "sha256": "da15f0a27d68b1e4019919758dfeb3e0a06b78e353253c34b7babbc116fabdba",
-        "gitBlob": "6e24f513fb0f5261320707fd80964b8f62a2b03b"
+        "bytes": 26243,
+        "sha256": "c99fb581cdfa5290f43c990ee0b9ac4a0283a02d4be4a87b767d4a98e7218635",
+        "gitBlob": "718dfb9576e979b80f9367358e5e7ea984e8d40e"
       }
     },
     {
@@ -400,9 +400,9 @@
         "gitBlob": "7e22a6829277d6475df4714de8d48ad2e76e3ada"
       },
       "afterPin": {
-        "bytes": 33271,
-        "sha256": "8b8ca2d079315b43efc7915ffce1bbd9e71ab2d844f66e06459dc7c547dbf265",
-        "gitBlob": "4bbce0205a0cc2a2a2ab19df6367df0ca8e4b7cb"
+        "bytes": 33595,
+        "sha256": "1a00f71d523da3247ec64ea9affc076e0afda8a2cfcd28842bbaa1b61b5cd217",
+        "gitBlob": "7f680c042816519f623730cb00da2f7a163d1ed2"
       },
       "spans": [
         {
@@ -418,62 +418,86 @@
           "after": "import { capturePositionFinallyMainPredecessorPolicySource } from \"./helpers/ir-position-finally-main-successor.js\";\nimport { capturePositionClassFieldsMainPredecessorPolicySource } from \"./helpers/ir-position-class-fields-main-successor.js\";\nimport { captureSourceMapPositionInventoryPredecessorPolicySource } from \"./helpers/ir-source-map-position-inventory-successor.js\";\nimport { captureMainInventoryPredecessorPolicy } from \"./helpers/ir-main-inventory-source-successor.js\";\nimport {\n  captureArrayBufferIsViewMainPredecessorPolicy,\n  capturePresentationClassificationPredecessorPolicy,\n  captureLoweringAnalysisPredecessorPolicy,\n  captureWasmGcHelperPredecessorPolicy,\n} from \"./helpers/ir-runtime-program-policy-evolution.js\";\nimport { captureProgramValidatorPredecessorPolicy } from \"./helpers/ir-runtime-program-policy-evolution.js\";\nimport {\n  beforeSourceMapProgramValidatorRelocation,\n  captureSourceMapSchemaSourceEpoch,\n} from \"./helpers/ir-program-validator-relocation.js\";\n"
         },
         {
+          "beforeOffset": 85,
+          "afterOffset": 1195,
+          "before": "import { beforeRuntimePreparationRelocation } from \"./helpers/ir-runtime-preparation-relocation.js\";",
+          "after": "import { beforeRemainderRuntimePreparationRelocation as beforeRuntimePreparationRelocation } from \"./helpers/ir-remainder-runtime-preparation-relocation.js\";"
+        },
+        {
+          "beforeOffset": 185,
+          "afterOffset": 1352,
+          "before": "",
+          "after": "\nimport { beforeOptionalFieldModuleRecords } from \"./helpers/ir-initial-graph-optional-fields-source.js\";"
+        },
+        {
+          "beforeOffset": 667,
+          "afterOffset": 1939,
+          "before": "import {\n  reconstructRuntimeContractReceiptSources,\n  runtimeContractCurrentPaths,\n} from \"./helpers/ir-runtime-contract-evolution.js\";",
+          "after": "import { runtimeContractCurrentPaths } from \"./helpers/ir-runtime-contract-evolution.js\";\nimport { reconstructRemainderRuntimeContractReceiptSources as reconstructRuntimeContractReceiptSources } from \"./helpers/ir-remainder-runtime-contract-evolution.js\";"
+        },
+        {
           "beforeOffset": 1053,
-          "afterOffset": 2163,
+          "afterOffset": 2444,
           "before": "import {\n  reconstructRuntimeProgramRelocationSources,\n  runtimeProgramRelocationPairs,\n} from \"./helpers/ir-runtime-program-relocation.js\";\n",
           "after": "import { runtimeProgramRelocationPairs } from \"./helpers/ir-runtime-program-relocation.js\";\nimport { beforeCanonicalInstructionsSource, reconstructC1CurrentSources } from \"./helpers/ir-c1-current-source.js\";\n"
         },
         {
           "beforeOffset": 1299,
-          "afterOffset": 2476,
+          "afterOffset": 2757,
           "before": "",
           "after": "  captureNestedStackificationPredecessorPolicy,\n  captureCanonical489dPredecessorPolicy,\n  beforeCanonical3c6InventoryPolicy,\n"
         },
         {
           "beforeOffset": 1576,
-          "afterOffset": 2879,
+          "afterOffset": 3160,
           "before": "",
           "after": "  beforeCurrentMainInventoryPolicy,\n"
         },
         {
           "beforeOffset": 4999,
-          "afterOffset": 6338,
+          "afterOffset": 6619,
           "before": "          JSON.parse(readFileSync(resolve(repository, \"scripts/compiler-boundaries.json\"), \"utf8\")),\n",
           "after": "          beforeCurrentMainInventoryPolicy(\n            beforeCanonical3c6InventoryPolicy(\n              captureCanonical489dPredecessorPolicy(\n                captureNestedStackificationPredecessorPolicy(\n                  captureProgramValidatorPredecessorPolicy(\n                    captureWasmGcHelperPredecessorPolicy(\n                      captureLoweringAnalysisPredecessorPolicy(\n                        capturePresentationClassificationPredecessorPolicy(\n                          captureArrayBufferIsViewMainPredecessorPolicy(\n                            captureMainInventoryPredecessorPolicy(\n                              JSON.parse(\n                                captureSourceMapPositionInventoryPredecessorPolicySource(\n                                  capturePositionClassFieldsMainPredecessorPolicySource(\n                                    capturePositionFinallyMainPredecessorPolicySource(\n                                      captureDenoPostPositionMainPredecessorPolicySource(\n                                        readFileSync(resolve(repository, \"scripts/compiler-boundaries.json\"), \"utf8\"),\n                                      ),\n                                    ),\n                                  ),\n                                ),\n                              ),\n                            ),\n                          ),\n                        ),\n                      ),\n                    ),\n                  ),\n                ),\n              ),\n            ),\n          ),\n"
         },
         {
           "beforeOffset": 6958,
-          "afterOffset": 9722,
+          "afterOffset": 10003,
           "before": "  const initialRuntimeSources = reconstructRuntimeContractReceiptSources(beforeRuntimePreparationRelocation(rawRead));\n",
           "after": "  assertSourceMapValidatorComponent(rawRead);\n  const sourceEpoch = captureSourceMapSchemaSourceEpoch(rawRead);\n  const sourceEpochPaths: readonly string[] = [\n    \"src/compiler/define-substitution.ts\",\n    \"src/ir/core/async-plan.ts\",\n    \"src/ir/core/nodes.ts\",\n    \"src/ir/program-codec.ts\",\n    \"src/ir/program-prepare-ir.ts\",\n    \"src/ir/program/input-contracts.ts\",\n    \"src/ir/program/input.ts\",\n    \"src/ir/program/prepared-contracts.ts\",\n    \"src/ir/program/validation.ts\",\n    \"src/position-map.ts\",\n    \"src/shared/contracts/ir-unit-inventory.ts\",\n  ];\n  const historicalDependencyRead = (path: string): string => {\n    const actual = rawRead(path);\n    const source = sourceEpochPaths.includes(path) ? sourceEpoch.before(path, actual) : actual;\n    return path === \"src/wasm/model/instructions.ts\" ? beforeCanonicalInstructionsSource(source) : source;\n  };\n  const initialRuntimeSources = reconstructRuntimeContractReceiptSources(\n    beforeRuntimePreparationRelocation(beforeProgramValidatorRelocation(rawRead)),\n  );\n"
         },
         {
           "beforeOffset": 7460,
-          "afterOffset": 11136,
+          "afterOffset": 11417,
           "before": "  const initialC1ProgramSources: ReadonlyMap<string, string> = reconstructRuntimeProgramRelocationSources(rawRead);\n",
           "after": "  const initialC1ProgramSources: ReadonlyMap<string, string> = reconstructC1CurrentSources(rawRead);\n"
         },
         {
           "beforeOffset": 7637,
-          "afterOffset": 11298,
+          "afterOffset": 11579,
           "before": "    if (!runtimeProgramRelocationPairs.some(([donor]) => donor === path)) return rawRead(path);\n",
           "after": "    if (!runtimeProgramRelocationPairs.some(([donor]) => donor === path)) return historicalDependencyRead(path);\n"
         },
         {
+          "beforeOffset": 7975,
+          "afterOffset": 11934,
+          "before": "initialPreCProgramRead",
+          "after": "\n    beforeOptionalFieldModuleRecords(initialPreCProgramRead),\n  "
+        },
+        {
           "beforeOffset": 8159,
-          "afterOffset": 11837,
+          "afterOffset": 12161,
           "before": "  const initialCoreTypeSources = reconstructProgramCoreTypeEvolution(rawRead);\n",
           "after": "  const initialCoreTypeSources = reconstructProgramCoreTypeEvolution(historicalDependencyRead);\n"
         },
         {
           "beforeOffset": 8911,
-          "afterOffset": 12606,
+          "afterOffset": 12930,
           "before": "    } else source = rawRead(path);\n",
           "after": "    } else source = historicalDependencyRead(path);\n"
         },
         {
           "beforeOffset": 28535,
-          "afterOffset": 32247,
+          "afterOffset": 32571,
           "before": "",
           "after": "\n// Fresh whole component authentication precedes each explicit source-epoch bridge.\nfunction assertSourceMapValidatorComponent(readLive: (path: string) => string): void {\n  const path = \"tests/helpers/ir-program-validator-relocation.ts\";\n  const text = readLive(path);\n  if (typeof text !== \"string\" || text.length === 0)\n    throw new Error(\"program validator relocation: nonempty primitive text required: \" + path);\n  if (\n    Buffer.byteLength(text) !== 46642 ||\n    createHash(\"sha256\").update(text).digest(\"hex\") !==\n      \"6e32ca208775e8eeae765bf3345cdd3cb1e0f40a1784f684afd9c4dff3a4cfe0\"\n  )\n    throw new Error(\"program validator relocation: complete source pin mismatch: \" + path);\n}\nfunction beforeProgramValidatorRelocation(readLive: (path: string) => string): (path: string) => string {\n  if (typeof readLive !== \"function\") throw new Error(\"program validator relocation: physical reader required\");\n  assertSourceMapValidatorComponent(readLive);\n  return beforeSourceMapProgramValidatorRelocation(readLive);\n}\n"
         }
@@ -574,9 +598,9 @@
         "gitBlob": "b776f75396a99c2b0a4b94b1c989b9c85a298c14"
       },
       "afterPin": {
-        "bytes": 24928,
-        "sha256": "da15f0a27d68b1e4019919758dfeb3e0a06b78e353253c34b7babbc116fabdba",
-        "gitBlob": "6e24f513fb0f5261320707fd80964b8f62a2b03b"
+        "bytes": 26243,
+        "sha256": "c99fb581cdfa5290f43c990ee0b9ac4a0283a02d4be4a87b767d4a98e7218635",
+        "gitBlob": "718dfb9576e979b80f9367358e5e7ea984e8d40e"
       },
       "spans": [
         {
@@ -592,28 +616,142 @@
           "after": "import { afterEach, describe, expect, it } from \"vitest\";\n"
         },
         {
+          "beforeOffset": 160,
+          "afterOffset": 224,
+          "before": "",
+          "after": "import { beforeOptionalFieldModuleRecords } from \"./helpers/ir-initial-graph-optional-fields-source.js\";\nimport { captureSourceMapSchemaSourceEpoch } from \"./helpers/ir-program-validator-relocation.js\";\n"
+        },
+        {
           "beforeOffset": 855,
-          "afterOffset": 919,
+          "afterOffset": 1122,
           "before": "  reconstructRuntimeProgramRelocationSources,\n",
           "after": ""
         },
         {
           "beforeOffset": 1069,
-          "afterOffset": 1087,
+          "afterOffset": 1290,
           "before": "",
           "after": "import { beforeCanonicalInstructionsSource, reconstructC1CurrentSources } from \"./helpers/ir-c1-current-source.js\";\n\nafterEach(async () => {\n  // Yield between synchronous source proofs so Vitest can process task-update RPCs.\n  await setImmediate();\n});\n"
         },
         {
           "beforeOffset": 1186,
-          "afterOffset": 1458,
+          "afterOffset": 1661,
           "before": "  const sources = reconstructRuntimeProgramRelocationSources((path) => {\n",
           "after": "  const sources = reconstructC1CurrentSources((path) => {\n"
         },
         {
+          "beforeOffset": 1324,
+          "afterOffset": 1784,
+          "before": "return (path)",
+          "after": "const epoch = captureSourceMapSchemaSourceEpoch(readLive);\n  const beforeDonorsAndInstructions = (path: string): string"
+        },
+        {
           "beforeOffset": 1609,
-          "afterOffset": 1866,
+          "afterOffset": 2175,
           "before": "    return readLive(path);\n",
           "after": "    const source = readLive(path);\n    return path === \"src/wasm/model/instructions.ts\" ? beforeCanonicalInstructionsSource(source) : source;\n"
+        },
+        {
+          "beforeOffset": 1639,
+          "afterOffset": 2320,
+          "before": "",
+          "after": ";\n  const beforeSourceEpoch = (path: string): string => {\n    const source = beforeDonorsAndInstructions(path);\n    return [\n      \"src/ir/program/input-contracts.ts\",\n      \"src/ir/program/prepared-contracts.ts\",\n      \"src/ir/program/input.ts\",\n      \"src/shared/contracts/ir-unit-inventory.ts\",\n    ].includes(path)\n      ? epoch.before(path, source)\n      : source;\n  };\n  return beforeOptionalFieldModuleRecords(beforeSourceEpoch)"
+        },
+        {
+          "beforeOffset": 2198,
+          "afterOffset": 3314,
+          "before": "",
+          "after": "\nfunction historicalControlSource(path: string): string {\n  if (![input, inputContract, preparedContract].includes(path))\n    throw new Error(\"historical control source: expected one of three fixed source paths\");\n  return captureSourceMapSchemaSourceEpoch(actual).before(path, actual(path));\n}"
+        },
+        {
+          "beforeOffset": 7501,
+          "afterOffset": 8911,
+          "before": "actual",
+          "after": "historicalControlSource"
+        },
+        {
+          "beforeOffset": 7651,
+          "afterOffset": 9078,
+          "before": "actual",
+          "after": "historicalControlSource"
+        },
+        {
+          "beforeOffset": 7812,
+          "afterOffset": 9256,
+          "before": "actual",
+          "after": "historicalControlSource"
+        },
+        {
+          "beforeOffset": 8023,
+          "afterOffset": 9484,
+          "before": "\"later optional operand\", input, () => replaceOnce(actual",
+          "after": "\n    \"later optional operand\",\n    input,\n    () => replaceOnce(historicalControlSource"
+        },
+        {
+          "beforeOffset": 8134,
+          "afterOffset": 9625,
+          "before": "",
+          "after": ",\n  "
+        },
+        {
+          "beforeOffset": 8218,
+          "afterOffset": 9713,
+          "before": "actual",
+          "after": "historicalControlSource"
+        },
+        {
+          "beforeOffset": 8446,
+          "afterOffset": 9958,
+          "before": "actual",
+          "after": "historicalControlSource"
+        },
+        {
+          "beforeOffset": 8587,
+          "afterOffset": 10116,
+          "before": " replaceOnce(actual(input),",
+          "after": "\n      replaceOnce(\n        historicalControlSource(input),\n       "
+        },
+        {
+          "beforeOffset": 8682,
+          "afterOffset": 10251,
+          "before": " \"\"",
+          "after": "\n        \"\",\n      "
+        },
+        {
+          "beforeOffset": 8766,
+          "afterOffset": 10351,
+          "before": "actual",
+          "after": "historicalControlSource"
+        },
+        {
+          "beforeOffset": 8913,
+          "afterOffset": 10515,
+          "before": "actual",
+          "after": "historicalControlSource"
+        },
+        {
+          "beforeOffset": 9065,
+          "afterOffset": 10684,
+          "before": "actual",
+          "after": "historicalControlSource"
+        },
+        {
+          "beforeOffset": 9213,
+          "afterOffset": 10849,
+          "before": "actual",
+          "after": "historicalControlSource"
+        },
+        {
+          "beforeOffset": 9374,
+          "afterOffset": 11027,
+          "before": "actual",
+          "after": "historicalControlSource"
+        },
+        {
+          "beforeOffset": 9522,
+          "afterOffset": 11192,
+          "before": "actual",
+          "after": "historicalControlSource"
         }
       ]
     },

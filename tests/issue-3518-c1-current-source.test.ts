@@ -57,7 +57,7 @@ afterEach(async () => {
 // Root replaces this ONE external assertion root after final instrument formatting/manifest assembly.
 // A missing freeze is a hard failure, never an alternate accepted manifest.
 const independentFreeze: string =
-  '{"manifestSha256":"c2ef32c1a52c73496a5d8be1b773e03896b888880be906ed923fcbfc162b5fa4","anchorSource":"// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\\n\\nexport const c1AuthorityManifestSha256 = \\"c2ef32c1a52c73496a5d8be1b773e03896b888880be906ed923fcbfc162b5fa4\\";\\n","anchorPin":{"bytes":194,"sha256":"c6dd5fd067f4031975eeb6c95d3387110f8fa0cbfb47c2735c70e4b83f5cd92a","gitBlob":"4431b74a026ba251fde495056cb4c2440219dc26"},"declarationPin":{"bytes":1633,"sha256":"5294c0fce2be6c6974b61a3686c05e60aa66d5bb4599fc97cb315ee53cab71be","gitBlob":"8c594e598e0d946ed92fd658cbe2efe3063ca2c4"}}';
+  '{"manifestSha256":"32a15b44ebf42a538cb44ecff4e00b4f3e40b0ca52da3a3559109cca584adfda","anchorSource":"// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\\n\\nexport const c1AuthorityManifestSha256 = \\"32a15b44ebf42a538cb44ecff4e00b4f3e40b0ca52da3a3559109cca584adfda\\";\\n","anchorPin":{"bytes":194,"sha256":"5ba405e0295edc7723625c3efaf340d609988a65268e905409e9656e8dfc105f","gitBlob":"48041b1231b955022d620fb64a371fdf33ffdd53"},"declarationPin":{"bytes":1633,"sha256":"5294c0fce2be6c6974b61a3686c05e60aa66d5bb4599fc97cb315ee53cab71be","gitBlob":"8c594e598e0d946ed92fd658cbe2efe3063ca2c4"}}';
 const root = resolve(import.meta.dirname, "..");
 const manifestPath = "tests/helpers/ir-c1-authority.json";
 const anchorPath = "tests/helpers/ir-c1-authority-root.ts";
@@ -3647,4 +3647,91 @@ describe("C1 finite numeric remainder historical inputs", () => {
     expect(pin(read(remainderPreparationPath))).toEqual(remainderIndependentProof.source.current);
     remainderPolicyHealthy();
   });
+});
+
+describe("C1 program-data caller remainder reader association", () => {
+  it.each([
+    [
+      "preparation import",
+      'import { beforeRemainderRuntimePreparationRelocation as beforeRuntimePreparationRelocation } from "./helpers/ir-remainder-runtime-preparation-relocation.js";',
+      'import { beforeRuntimePreparationRelocation } from "./helpers/ir-runtime-preparation-relocation.js";',
+    ],
+    [
+      "contract import",
+      'import { runtimeContractCurrentPaths } from "./helpers/ir-runtime-contract-evolution.js";\nimport { reconstructRemainderRuntimeContractReceiptSources as reconstructRuntimeContractReceiptSources } from "./helpers/ir-remainder-runtime-contract-evolution.js";',
+      'import {\n  reconstructRuntimeContractReceiptSources,\n  runtimeContractCurrentPaths,\n} from "./helpers/ir-runtime-contract-evolution.js";',
+    ],
+  ] as const)(
+    "refuses a warm rolled-back %s and accepts fresh exact restoration",
+    (_label, currentImport, oldImport) => {
+      const path = "tests/issue-3518-program-data-contract-boundary.test.ts";
+      const current = read(path);
+      let operand = current,
+        supplied: string | undefined;
+      const reader = (request: string): string => {
+        if (request !== path) return read(request);
+        supplied = operand;
+        return operand;
+      };
+      const healthy = captureC1HistoricalAuthority(reader);
+      expect(supplied).toBe(current);
+      operand = replaceOnce(current, currentImport, oldImport);
+      expect(operand).not.toBe(current);
+      expect(operand).toContain(oldImport);
+      expect(operand).not.toContain(currentImport);
+      expect(() => captureC1HistoricalAuthority(reader)).toThrow(
+        "C1 historical authority: full-file pin changed: " + path,
+      );
+      expect(supplied).toBe(operand);
+      operand = current;
+      const restored = captureC1HistoricalAuthority(reader);
+      expect(supplied).toBe(current);
+      expect(restored).not.toBe(healthy);
+      expect(restored.linearOptions).toEqual(healthy.linearOptions);
+      expect(pin(read(path))).toEqual(pin(current));
+    },
+  );
+});
+
+describe("C1 initial-graph optional-field reader association", () => {
+  it.each([
+    [
+      "tests/issue-3518-program-data-contract-boundary.test.ts",
+      "beforeOptionalFieldModuleRecords(initialPreCProgramRead)",
+      "initialPreCProgramRead",
+    ],
+    [
+      "tests/issue-3518-program-initial-graph-evolution.test.ts",
+      "return beforeOptionalFieldModuleRecords(beforeSourceEpoch);",
+      "return beforeSourceEpoch;",
+    ],
+  ] as const)(
+    "refuses a warm adapter operand rollback in %s and accepts exact fresh restoration",
+    (path, currentView, oldView) => {
+      const current = read(path);
+      let operand = current,
+        supplied: string | undefined;
+      const reader = (request: string): string => {
+        if (request !== path) return read(request);
+        supplied = operand;
+        return operand;
+      };
+      const healthy = captureC1HistoricalAuthority(reader);
+      expect(supplied).toBe(current);
+      operand = replaceOnce(current, currentView, oldView);
+      expect(operand).not.toBe(current);
+      expect(operand).toContain(oldView);
+      expect(operand).not.toContain(currentView);
+      expect(() => captureC1HistoricalAuthority(reader)).toThrow(
+        "C1 historical authority: full-file pin changed: " + path,
+      );
+      expect(supplied).toBe(operand);
+      operand = current;
+      const restored = captureC1HistoricalAuthority(reader);
+      expect(supplied).toBe(current);
+      expect(restored).not.toBe(healthy);
+      expect(restored.linearOptions).toEqual(healthy.linearOptions);
+      expect(pin(read(path))).toEqual(pin(current));
+    },
+  );
 });
