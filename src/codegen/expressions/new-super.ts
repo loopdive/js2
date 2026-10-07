@@ -110,7 +110,7 @@ import { resolvePromiseSubclassName } from "./promise-subclass.js"; // (#5197 r3
 import { armExternF64ArgTypeGuard, armExternRefArgTypeGuard } from "../extern-arg-marshal.js"; // (#6615 / #5383 S28, #6619 / #5383 S32)
 import { armConstructIsConstructorGuard, primitiveWrapperConstructThrow } from "../construct-is-constructor-guard.js"; // (#6612 / #5383 S25)
 import { linkCompatibleDeclaredStructAncestor } from "../struct-hierarchy-layout.js";
-import { emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
+import { admitBoundValueConstruct, emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
 import { emitOrdinaryFunctionConstructOnNull, emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; // (#4438) §10.2.2, (#6651 W2a)
 import * as bcv from "../builtin-ctor-value-invoke.js"; // (#6713) RegExp / Error-family carriers as values
 import { emitBuiltinArrayConstructOnNull, emitBuiltinPromiseConstructOnNull } from "./builtin-native-dyn-construct.js";
@@ -3908,7 +3908,8 @@ function tryCompileNativeConstructFromValue(
     !dynamicCtorValue &&
     !resolvesToConstructableFunctionValue(ctx, calleeExpr) &&
     !resolvesToLateAssignedConstructSignatureValue(ctx, calleeExpr) &&
-    !(noJsHost(ctx) && isDefaultExpressionImport(ctx, calleeExpr)) // (#6720) the snapshot cell's VALUE
+    !(noJsHost(ctx) && isDefaultExpressionImport(ctx, calleeExpr)) && // (#6720) the snapshot cell's VALUE
+    !admitBoundValueConstruct(ctx, calleeExpr) // (#6651 W2b) `var D = f.bind(…); new D()`
   )
     return undefined;
 
@@ -3916,7 +3917,15 @@ function tryCompileNativeConstructFromValue(
   // closure struct. Reserve the argv builders + generic apply bridge used by
   // the construct driver's exact marker arm; ordinary function values retain
   // the existing method-dispatch lowering.
-  if (runtimeFunctionAlias || functionIntrinsicCallee || runtimeEvalCallableResult || proxyValue || proxyCtorValue) {
+  const boundValue = ctx.funcMap.has("__construct_bound"); // (#6651 W2b) its driver calls `__apply_closure`
+  if (
+    runtimeFunctionAlias ||
+    functionIntrinsicCallee ||
+    runtimeEvalCallableResult ||
+    proxyValue ||
+    proxyCtorValue ||
+    boundValue
+  ) {
     if (proxyValue || proxyCtorValue) ensureNativeProxyRuntime(ctx);
     // (#5196 R3-0) Arm the driver's proxy-carrier identity test for this module.
     if (proxyCtorValue) ctx.proxyConstructorValueNewSite = true;
