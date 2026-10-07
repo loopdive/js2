@@ -1,4 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import {
+  reconstructRemainderRuntimeContractReceiptSources as reconstructRuntimeContractReceiptSources,
+  readRemainderRuntimeContractReceiptSource as readRuntimeContractReceiptSource,
+} from "./helpers/ir-remainder-runtime-contract-evolution.js";
 import { createHash } from "node:crypto";
 import { beforeSourceMapProgramValidatorRelocation } from "./helpers/ir-program-validator-relocation.js";
 
@@ -18,13 +22,9 @@ import {
   type SourceReader,
 } from "./helpers/ir-historical-runtime-reconstruction.js";
 
-import {
-  readRuntimeContractReceiptSource,
-  reconstructRuntimeContractReceiptSources,
-  runtimeContractCurrentPaths,
-} from "./helpers/ir-runtime-contract-evolution.js";
+import { runtimeContractCurrentPaths } from "./helpers/ir-runtime-contract-evolution.js";
 
-import { beforeRuntimePreparationRelocation } from "./helpers/ir-runtime-preparation-relocation.js";
+import { beforeRemainderRuntimePreparationRelocation as beforeRuntimePreparationRelocation } from "./helpers/ir-remainder-runtime-preparation-relocation.js";
 
 const rawRead = liveSourceReader(resolve(import.meta.dirname, ".."));
 const read: SourceReader = (path) =>

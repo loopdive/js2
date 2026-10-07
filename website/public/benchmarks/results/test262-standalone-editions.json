@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11555,
-    "fail": 135,
+    "pass": 11557,
+    "fail": 133,
     "ce": 14,
     "skip": 0,
     "total": 11704,
@@ -102,8 +102,8 @@
       },
       {
         "name": "Symbol",
-        "pass": 594,
-        "fail": 15,
+        "pass": 595,
+        "fail": 14,
         "ce": 0,
         "skip": 0,
         "total": 609,
@@ -120,8 +120,8 @@
       },
       {
         "name": "Proxy",
-        "pass": 397,
-        "fail": 31,
+        "pass": 398,
+        "fail": 30,
         "ce": 3,
         "skip": 0,
         "total": 431,
@@ -192,12 +192,12 @@
       },
       {
         "name": "Symbol.toPrimitive",
-        "pass": 81,
-        "fail": 2,
+        "pass": 82,
+        "fail": 1,
         "ce": 0,
         "skip": 0,
         "total": 83,
-        "pct": 98
+        "pct": 99
       },
       {
         "name": "let",
@@ -3571,21 +3571,21 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4600,
+    "pass": 4598,
     "fail": 187,
-    "ce": 134,
+    "ce": 136,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4497,
+        "pass": 4495,
         "fail": 106,
-        "ce": 8,
+        "ce": 10,
         "skip": 0,
         "total": 4611,
-        "pct": 98
+        "pct": 97
       },
       {
         "name": "Symbol",
@@ -3789,8 +3789,8 @@
   },
   {
     "edition": "ES2027",
-    "pass": 385,
-    "fail": 304,
+    "pass": 386,
+    "fail": 303,
     "ce": 208,
     "skip": 0,
     "total": 897,

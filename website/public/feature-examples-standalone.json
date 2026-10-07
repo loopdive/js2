@@ -4,7 +4,7 @@
     {
       "name": "Primitive types (string, number, boolean, null, undefined)",
       "testCategories": ["language/types", "language/literals"],
-      "passCount": 643,
+      "passCount": 644,
       "totalCount": 647,
       "editionSpread": [
         {
@@ -14,7 +14,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 38,
+          "pass": 39,
           "total": 41
         },
         {
@@ -574,7 +574,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 4460,
+      "passCount": 4461,
       "totalCount": 4581,
       "editionSpread": [
         {
@@ -634,7 +634,7 @@
         },
         {
           "edition": "ES2027",
-          "pass": 52,
+          "pass": 53,
           "total": 55
         },
         {
@@ -1080,7 +1080,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1927,
+      "passCount": 1929,
       "totalCount": 1955
     },
     {
@@ -1151,7 +1151,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 1005,
+      "passCount": 1006,
       "totalCount": 1072
     },
     {
@@ -1564,12 +1564,12 @@
     {
       "name": "Temporal",
       "testCategories": ["built-ins/Temporal"],
-      "passCount": 4494,
+      "passCount": 4492,
       "totalCount": 4603,
       "editionSpread": [
         {
           "edition": "ES2026",
-          "pass": 4494,
+          "pass": 4492,
           "total": 4603
         }
       ]
