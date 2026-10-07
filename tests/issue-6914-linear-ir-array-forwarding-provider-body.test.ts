@@ -619,14 +619,16 @@ async function registration(order: "array" | "u8", evidence: Evidence) {
     stages.push({
       helper: helperWitness(module),
       functions: module.functions.map((fn) => ({ name: fn.name, typeIdx: fn.typeIdx })),
-      typeNames: module.types.map((entry) => entry.name ?? null),
+      typeNames: module.types.map((entry) => (entry.kind === "rec" ? null : (entry.name ?? null))),
     });
     expect(current.fn).toBe(original.fn);
     expect(current.index).toBe(original.index);
     expect(module.types[current.fn.typeIdx]).toBe(type);
     expect(current.fn.body).toEqual(beforeBody);
     expect(module.functions.filter((fn) => fn.name === "__arr_resolve")).toHaveLength(1);
-    expect(module.types.filter((entry) => entry.name === "$type___arr_resolve")).toHaveLength(1);
+    expect(module.types.filter((entry) => entry.kind !== "rec" && entry.name === "$type___arr_resolve")).toHaveLength(
+      1,
+    );
   }
   const artifact = binaryArtifact(emitBinary(module));
   Object.assign(evidence, {
