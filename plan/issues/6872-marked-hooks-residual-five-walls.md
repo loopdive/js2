@@ -20,16 +20,18 @@ files:
   - src/codegen/literals.ts
   - src/codegen/struct-field-exports.ts
   - src/codegen/closures/arrow-phases.ts
-  - src/codegen/closures/closure-declared-names.ts
+  - src/codegen/closures/closure-binding-identity.ts
   - src/codegen/struct-field-name-tags.ts
   - tests/issue-6872-marked-hooks-residual.test.ts
 # 2026-10-07: the five fixes are small and local; the bulk moved into leaf
-# modules (struct-field-name-tags.ts, closures/closure-declared-names.ts) and
+# modules (struct-field-name-tags.ts, closures/closure-binding-identity.ts) and
 # helpers (dropOwnScopeBindings, capturedBindingWriteTest). What remains is the
 # helper body that needs closures.ts-private analyzeDescriptorCaptureReferences,
-# the one new parameter / call line, and a 3-line receiver hint.
+# the one new parameter / call line, a 3-line receiver hint, and +9 lines of
+# import/call/collision-check wiring in arrow-phases.ts (crossed 1500 on main).
 loc-budget-allow:
   - src/codegen/closures.ts
+  - src/codegen/closures/arrow-phases.ts
   - src/codegen/property-access-dispatch.ts
 func-budget-allow:
   - src/codegen/closures.ts::promoteAccessorCapturesToGlobals
@@ -113,9 +115,38 @@ landed via #5358. None of the five mechanisms below are in it.
 
 ## Resolution
 
-All five landed in one PR. marked `Hooks.test.js` **18/30 → 30/30** (base and
-fix measured at the same HEAD, one suite at a time). A/B for the eleven
-required suites is recorded below.
+All five landed in one PR. marked `Hooks.test.js` **18/30 → 30/30**.
+
+Recovered from an uncommitted worktree on 2026-10-07 and re-measured after
+merging `upstream/main` `75252327a4`: base = that commit's five source files,
+fix = the merged branch, file-copy A/B, suites one at a time. To keep the
+budget gates honest, two pieces moved into new leaf modules
+(`struct-field-name-tags.ts`, `closures/closure-binding-identity.ts`) and two
+into named helpers (`dropOwnScopeBindings`, `capturedBindingWriteTest`).
+
+| Suite | base | fix |
+| ----- | ---- | --- |
+| marked | 18/30 | **30/30** |
+| prettier | 111/151 | 111/151 |
+| hono | 294/324 | 294/324 |
+| redux | 76/82 | 76/82 |
+| lodash | 60/62 | 60/62 |
+| axios | 219/231 | 219/231 |
+| jest | 344/356 | 344/356 |
+| uuid | 75/75 | 75/75 |
+| clsx | 32/32 | 32/32 |
+| cookie | 63740/63740 | 63740/63740 |
+| moment | 10/10 | 10/10 |
+
+The regression test fails on base (5/5 cases) and passes with the fix.
+
+Scoped standalone test262 (1388 rows: `expressions/object/method-definition`,
+`expressions/arrow-function`, `statements/for`, `statements/let`,
+`expressions/this`, `statements/class/subclass`,
+`Function.prototype.call`/`apply`): base 1282 pass / 86 fail / 20 CE, fix
+identical, and the non-pass row set is identical row for row. (42 of the
+fails are local-only: the quickjs eval provider is not built in this
+worktree, so they fail the same way on both sides.)
 
 ### Residuals seen, not fixed here
 

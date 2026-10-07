@@ -4307,7 +4307,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/closures/closure-declared-names.ts",
+      "path": "src/codegen/closures/closure-binding-identity.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
