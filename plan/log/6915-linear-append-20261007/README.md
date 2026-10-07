@@ -120,3 +120,20 @@ versus local1024MiB. Its actual wiring is still A/designated-owner work. No
 exemption, missing-input skip, self-approval or shared hook/workflow change was
 taken. Configured36/36 is NOT default-CI, protected-queue, performance or full
 IR migration acceptance. Source-loop scope and broader contracts remain held.
+
+## Composed canonical main and actual CI failures
+
+`composed-main` artifacts qualify execution HEAD352accfce5618a44edc4e2f659dcb38c4b7a5d93
+with main8452732f included, source tree953f74f80cf2f8085b8e1c93489fcdd357929b37
+and unchanged c63 test. Configured36/36, zero failures/skips; strict typing0,
+zero diagnostics. All36 complete observation graphs and completion strictly
+match repaired-v3 without field filtering or normalization. Distinct execution
+provenance is retained, not relabeled as the previous epoch. Comparison script
+and JSON, full stdout/stderr/reporter JSON, parent input/receipt, runner and
+strict output are archived separately. This does not prove default CI or full IR.
+
+`ci-changed-job-113044032212.log.gz` retains the advisory SUCCESS job whose actual
+test setup fails and skips all36. `ci-quality-job-113043352038.log.gz` retains
+the separately required FAILURE job propagating the same missing parent-input
+defect. Both are run37694677932 on published f99, not the local composition.
+No shared workflow/hook was changed and no missing-input exemption granted.

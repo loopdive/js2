@@ -591,4 +591,49 @@ Canonical main now resolves to8452732f0b88c14c5c7634ece58f83240970ea4c.
 Its delta from frozen c41 includes compiler source changes, not only baseline
 reports. Historical c41 qualifications remain frozen and cannot be relabeled
 as qualification of the new composition. Refresh and scoped requalification
-are still pending; this observation changes no production ownership.
+were pending at that inspection; this observation changes no production ownership.
+
+### Local main composition and independent review — 2026-10-08
+
+Canonical main8452732f was merged without conflicts into local composition
+HEAD `352accfce5618a44edc4e2f659dcb38c4b7a5d93`, source tree
+`953f74f80cf2f8085b8e1c93489fcdd357929b37`. The regression remains byte-identical
+at c63; neither the merge nor this review is qualification. Remote PR6593
+still points to f99 while its original CI run remains live.
+
+Astra read-only review found the changed constructor/NewTarget paths belong
+to WasmGC/standalone emission, not the Linear generator selected by this
+regression. The source evidence uses ONE unchanged string-hash fixture at
+four inputs. Linear runtime, IR, consumer, integration and fixture files are
+unchanged. Node-native Error self-checks do not exercise compiled constructors.
+These facts support expected invariance, not measured equality. Require a new
+actual-HEAD/source-tree provenance epoch, unchanged c63 bytes, all36 observations,
+33 transitions/eight negatives, strict typing and complete evidence comparison.
+Retain old execution identities and investigate rather than normalize changes.
+
+Independent Sol review found main's registry delta adds only three WasmGC
+constructor-related classifications. It still omits forwarding6590's README
+nonModule and forwarding-resolver.ts legacy-linear entries. No incompatible
+policy change was found, but A must compose the existing proposal with main's
+new entries and qualify canonical policy. Old temporary-policy replay does
+not prove that composition. No source/registry ownership release is inferred.
+
+### Composition qualification and required CI failure — 2026-10-08
+
+Execution HEAD352accfce5618a44edc4e2f659dcb38c4b7a5d93, source tree953f74f8,
+unchanged c63 test: configured regression exit0,36pass/0fail/0skip. Strict TS7
+including the new test exits0/zero diagnostics. Raw38 graph envelopes retain
+all36 observations and completion. ALL36 complete observation graphs and the
+completion graph are strictly equal to repaired-v3 with NO filtered fields or
+normalization. Only the separately retained provenance epoch differs. Raw log,
+reporter JSON, parent inputs/receipt, runner, strict output and exact comparison
+script/result are archived as composed-main artifacts. No timing acceptance,
+new source implementation, default-CI pass or full-IR completion follows.
+
+Required quality job113043352038 on published f99 has now finished FAILURE.
+Its changed-root invocation fails with missing EXPECTED_PROVENANCE, one failed
+test file and36 setup-skipped cases; full raw output is retained in
+ci-quality-job-113043352038.log.gz. Unlike the separate advisory job, this gate
+propagates failure. Preserve both job records. The containing run37694677932
+still has live jobs; the local refresh has not restarted or cancelled them.
+Designated-owner parent-input wiring remains an actual landing blocker.
