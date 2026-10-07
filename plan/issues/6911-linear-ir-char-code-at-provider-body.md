@@ -207,10 +207,10 @@ baseline, or broadly exempt the directory. No tests/heavy jobs were run in plann
 ## Acceptance
 
 - [x] Fresh exact K/T claims and parent-reviewed partition before implementation.
-- [ ] Existing real caller delegates; only the released two source files change.
-- [ ] All ten new tests measured; source route/callee attribution is non-vacuous.
-- [ ] Identical paired rows/artifacts, native oracles and cache/custody controls.
-- [ ] Existing controls and strict test-inclusive checks retain their full results.
+- [x] Existing real caller delegates; only the released two source files change.
+- [x] All ten new tests measured; source route/callee attribution is non-vacuous.
+- [x] Identical paired rows/artifacts, native oracles and cache/custody controls.
+- [x] Existing controls and strict test-inclusive checks retain their full results.
 - [ ] Parent publishes coherent evidence; no new Prepared coverage/retirement claim.
 
 ## Dispatch checkpoint — 2026-10-07
@@ -276,3 +276,54 @@ B published an explicit dependency request on A's vector-read integration PR:
 It identifies B's published C ABI and initializer checkpoints and requests A's
 shared array admission/resource-binding contract. Posting is not acknowledgement
 or an ownership transfer. A retains queue submission and final integration.
+
+## Paired provider acceptance — 2026-10-07
+
+[PR #6583](https://github.com/loopdive/js2/pull/6583) is non-draft, labelled HOLD,
+with no auto-merge. The original creation request completed without a retry.
+Its first verified published head was `90aeff4bccd4c360180baaa8f50d7c3d434e4952`.
+The new test is committed locally at
+`462fb0565d1e3f296c12a7e87ab422b398ea057d`, pending the evidence push below.
+
+Identical V1 test SHA256:
+`a3e5d6fa5389615c2fe97faedb6f2f2228098ee6175ce53fb1cfc0a036b996b9`.
+Baseline test-only commit:
+`a9f672f1dd776726cf7bde948b8646b72254dbcb`, whose production tree is unchanged
+from canonical main `6c88d157444ea4ae377a7ef1b82b15ef2f4f6603`.
+Candidate observations record checkpoint `90aeff4bccd4c360180baaa8f50d7c3d434e4952`
+plus the explicitly frozen test bytes (then untracked); production is source
+commit `5761898b7b8e9c3e0983077a35efd33269c9219c`. The later test-only commit
+retains exactly those measured source and test hashes; it is not a new test epoch.
+
+Both arms: **10 pass / 0 fail / 10**, external deadline 300s, unchanged single
+fork configuration. Baseline total 86.45s; candidate total 45.15s. These are raw
+run durations, not a performance claim. All ten complete behavior rows match
+exactly, including **14 valid binary witnesses per arm**, actual owner/body and
+helper binding, UTF-16 units, NaN tags, deep object custody and cache/memory
+effects. The finite populations are native 41, source 5, ASCII runtime 24,
+BMP/tail runtime 19, astral runtime 9, extreme runtime 5, imported-helper 2,
+cache/early-exit 8. Runtime units do not prove Unicode frontend admission.
+
+Raw JSONL SHA256: baseline
+`2997ab638a77e1d9126f51f4241d7279bc3b610b00f6b93a0331ca018252d571`, candidate
+`3c937aec7ed73208bbc6f36e782e2ccc3ac3882000b8ec02f4c2b6b1cc14d657`.
+Raw new-test logs: baseline
+`56242a2c86daa42469528223c10e405dc9dc53964fa15996f2346b5f484b9c3c`, candidate
+`ca7021540d0604bbe20c939da25da973281555ca74a3b2bd1bdbe0bc668433cb`.
+The original V1 test, both raw observation/log files and exact comparison result
+are retained compressed in the evidence directory. The comparator checks ten
+unique rows, all finite case counts, all fourteen nonempty binary witnesses,
+their bytes/hashes/validation and full-row equality; it accepts compressed inputs.
+
+Strict test-inclusive TS7 exit 0, zero diagnostics, unchanged strict settings.
+The saved configuration explicitly includes all source and the new test, since
+the normal root gate excludes tests. Config SHA256:
+`9306b6dc0f73a94f8628d2a23889cbc0e7b0015af8abd3ccf067037487c574de`.
+The empty diagnostic log is saved separately; no test instrument repair or
+typing suppression was needed. Normal first-push gates passed, including
+18/18 numeric parity tests. Final evidence push gates remain a separate step.
+
+The original 31-control results and all three complete failures remain unchanged.
+This accepts only used provider-body preservation; shared provider reservations,
+Unicode source admission, whole-program IR equality and legacy retirement are
+not delivered. Session A must requalify any combined integration epoch.
