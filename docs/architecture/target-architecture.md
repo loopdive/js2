@@ -110,6 +110,41 @@ default); the moves are mechanical `git mv` waves once the interfaces exist.
 interfaces exist, no third front-end, no in-repo MLIR backend commitment
 (feasibility memo first, #3029-S9).
 
+### Module boundaries for incremental IR work (2026-10-07)
+
+Generic IR contracts, JavaScript semantics, analyses and verification belong in
+cohesive generic modules. Backend-specific representation, physical indices,
+layout and provider wiring belong behind the declared target boundary. WasmGC
+and linear memory consume shared semantics through explicit contracts. C and
+LLVM are examples of future consumers, not supported targets or authorization
+to add speculative interfaces.
+
+Keep one authoritative implementation of each shared algorithm. Separate
+inlining, dead-code elimination and other passes into focused modules with
+explicit inputs, outputs, effects, prerequisites, invalidation and verification.
+Target legalization stays with the target. Use cohesive subfolders rather than
+expanding central switches or duplicating helpers. Callback/plugin escape
+hatches and TypeScript frontend imports in detached replay do not establish a
+valid dependency boundary.
+
+Extract incrementally under issue-owned file and function scopes. Declare
+readers, writers, owners and dependency direction before moving code; preserve
+observable behavior, currentness checks and error types. These review questions
+supplement the migration map; they do not claim new CI enforcement:
+
+- Is the responsibility generic semantics/analysis or target representation?
+- Which existing module is authoritative, and does this create duplication?
+- Do imports preserve dependency direction, cycle limits and source-free replay?
+- Are pass effects, invalidation and owner transitions explicit and verified?
+- Do malformed inputs fail closed without refreshing authority from mutations?
+- Do native and artifact controls cover both backends at the same frozen epoch?
+- Are performance claims supported by measurements retaining failures?
+
+Legacy remains until full tested equality. Architectural tidiness alone is not
+parity evidence or a reason to retire routes, rename whole trees, or change proof
+schemas. See the dated [Session A handoff](../../plan/log/ir-coordination-session-a.md)
+for current local ownership and measured limitations.
+
 ## "Reviewable", concretely (rules + enforcement)
 
 Every rule has a CI mechanism, following the project's ratchet pattern —
