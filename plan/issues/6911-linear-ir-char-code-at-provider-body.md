@@ -211,7 +211,7 @@ baseline, or broadly exempt the directory. No tests/heavy jobs were run in plann
 - [x] All ten new tests measured; source route/callee attribution is non-vacuous.
 - [x] Identical paired rows/artifacts, native oracles and cache/custody controls.
 - [x] Existing controls and strict test-inclusive checks retain their full results.
-- [ ] Parent publishes coherent evidence; no new Prepared coverage/retirement claim.
+- [x] Parent publishes coherent evidence; no new Prepared coverage/retirement claim.
 
 ## Dispatch checkpoint — 2026-10-07
 
@@ -282,8 +282,8 @@ or an ownership transfer. A retains queue submission and final integration.
 [PR #6583](https://github.com/loopdive/js2/pull/6583) is non-draft, labelled HOLD,
 with no auto-merge. The original creation request completed without a retry.
 Its first verified published head was `90aeff4bccd4c360180baaa8f50d7c3d434e4952`.
-The new test is committed locally at
-`462fb0565d1e3f296c12a7e87ab422b398ea057d`, pending the evidence push below.
+At authoring, the new test was committed locally at
+`462fb0565d1e3f296c12a7e87ab422b398ea057d`; the verified publication follows below.
 
 Identical V1 test SHA256:
 `a3e5d6fa5389615c2fe97faedb6f2f2228098ee6175ce53fb1cfc0a036b996b9`.
@@ -327,3 +327,21 @@ The original 31-control results and all three complete failures remain unchanged
 This accepts only used provider-body preservation; shared provider reservations,
 Unicode source admission, whole-program IR equality and legacy retirement are
 not delivered. Session A must requalify any combined integration epoch.
+
+## Verified publication and integration boundary
+
+Both `git ls-remote upstream` and PR #6583's API independently confirmed remote
+HEAD `f9c64b9f0b972617fdf15d56351e2f4654c49341`, containing source, tests and all
+paired evidence. The normal evidence push completed exit 0, including source
+typing, lint/format, oracle/coercion ratchets, numeric parity **18/18**, and issue
+integrity. PR remains non-draft HOLD, `auto_merge: null`; B has not submitted it
+to the queue. Subsequent documentation-only commits are not new test epochs.
+
+Canonical main has meanwhile advanced to
+`e02ed67eb91bbe0d3ffeec1359a599ad17004ecd`, landing A's generic string-operation
+extraction PR #6578. That eight-file shared change is not merged into this tested
+branch or requalified here. A must qualify the new combined epoch before landing.
+The shared array admission/reservation contract remains unreleased to B, and the
+GitHub coordination request had no response when checked. No acknowledgment or
+shared-file ownership transfer is inferred. Status stays in-progress until actual
+main integration, and full IR migration remains open.
