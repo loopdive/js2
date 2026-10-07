@@ -488,7 +488,10 @@ on([ts.SyntaxKind.ClassDeclaration], (ctx, node) => {
 on([ts.SyntaxKind.LabeledStatement], (ctx, node) => {
   if (ts.isLabeledStatement(node)) {
     const parent = node.parent;
-    if (parent && isStatementPosition(parent, node)) {
+    // Only the OUTERMOST label's position matters (§13.7.1.1 IsLabelledFunction
+    // is asked of the iteration/if body Statement); it already walks its inner
+    // labels. `l1: l2: function f(){}` at top level is legal sloppy Annex B.
+    if (parent && !ts.isLabeledStatement(parent) && isStatementPosition(parent, node)) {
       // Check if the innermost statement (through label nesting) is a function/class declaration
       let inner: ts.Statement = node.statement;
       while (ts.isLabeledStatement(inner)) inner = inner.statement;

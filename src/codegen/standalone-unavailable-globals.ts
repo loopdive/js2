@@ -49,8 +49,74 @@ const STANDALONE_UNAVAILABLE_FETCH_GLOBALS: ReadonlySet<string> = new Set([
   "URLSearchParams",
 ]);
 
+/**
+ * (#6841) Browser value globals of lib.dom. `typeof` already answers
+ * "undefined" for them in a host-free module (HOST_ONLY_AMBIENT_GLOBALS), but
+ * a read silently produced `null` and every member reached through the
+ * lib.dom type (`document.head`, `navigator.product`, …) lowered to an
+ * `env::` extern-class import. styled-components' sheet bootstrap merely
+ * CONTAINS such code. A read now throws `ReferenceError` like an engine
+ * without the global. A certified DOM capability module owns `document`
+ * (#4576) and keeps its provider.
+ */
+const STANDALONE_UNAVAILABLE_BROWSER_GLOBALS: ReadonlySet<string> = new Set([
+  "document",
+  "window",
+  "navigator",
+  "location",
+  "history",
+]);
+
+/**
+ * (#6841) lib.dom node/document/CSSOM interfaces. A value of one of these types
+ * can only come from an unavailable browser global, so in a host-free module
+ * their members take the ordinary dynamic-property lowering instead of
+ * `env::<Class>_<member>` imports (the receiver read has already thrown).
+ */
+const STANDALONE_UNPROVIDED_DOM_CLASSES: ReadonlySet<string> = new Set([
+  "Window",
+  "Navigator",
+  "Location",
+  "History",
+  "Node",
+  "Document",
+  "DocumentFragment",
+  "ShadowRoot",
+  "Element",
+  "CharacterData",
+  "Text",
+  "Comment",
+  "Attr",
+  "NodeList",
+  "HTMLCollection",
+  "NamedNodeMap",
+  "DOMTokenList",
+  "StyleSheet",
+  "StyleSheetList",
+  "CSSStyleSheet",
+  "CSSRule",
+  "CSSRuleList",
+  "CSSStyleDeclaration",
+  "MediaQueryList",
+]);
+
+/** Host-free and not a certified DOM-capability module (#4576). */
+function lacksBrowserDom(ctx: CodegenContext): boolean {
+  return ctx.targetProfile.environment === "none" && ctx.requiresStandaloneDomCapability !== true;
+}
+
+function isUnprovidedDomClass(ctx: CodegenContext, className: string): boolean {
+  if (!lacksBrowserDom(ctx)) return false;
+  return (
+    STANDALONE_UNPROVIDED_DOM_CLASSES.has(className) ||
+    /^(HTML|SVG)\w*Element$/.test(className) ||
+    className === "HTMLDocument"
+  );
+}
+
 function isUnavailableName(ctx: CodegenContext, name: string): boolean {
   if (STANDALONE_UNAVAILABLE_CONSTRUCTOR_GLOBALS.has(name)) return true;
+  if (lacksBrowserDom(ctx) && STANDALONE_UNAVAILABLE_BROWSER_GLOBALS.has(name)) return true;
   return ctx.targetProfile.environment === "none" && STANDALONE_UNAVAILABLE_FETCH_GLOBALS.has(name);
 }
 
@@ -68,7 +134,12 @@ const STANDALONE_UNPROVIDED_EXTERN_CLASSES: ReadonlySet<string> = new Set([
 
 /** Skip registering `className` as an `env::`-backed extern class. */
 export function isStandaloneUnprovidedExternClass(ctx: CodegenContext, className: string): boolean {
-  return ctx.standalone && (STANDALONE_UNPROVIDED_EXTERN_CLASSES.has(className) || isUnavailableName(ctx, className));
+  return (
+    ctx.standalone &&
+    (STANDALONE_UNPROVIDED_EXTERN_CLASSES.has(className) ||
+      isUnavailableName(ctx, className) ||
+      isUnprovidedDomClass(ctx, className))
+  );
 }
 
 /**

@@ -807,6 +807,30 @@ function preservableDescriptorCaptureDeclaration(
 }
 
 /**
+ * (#6872) A parameter/local of the method itself that merely shares a name with
+ * an enclosing local is not a capture: promoting would re-route the enclosing
+ * frame's binding through a global the method never writes. Inside an async
+ * frame (whose resume state machine keeps its own locals) the frame's later
+ * writes then missed the global its reads used (`const html = await …` around a
+ * `{ postprocess(html) {…} }` literal read `null`). Only names with at least
+ * one resolved reference and none outside `ownScope` are dropped.
+ */
+function dropOwnScopeBindings(
+  ctx: CodegenContext,
+  ownScope: ts.FunctionLikeDeclaration,
+  referencedNames: Set<string>,
+): void {
+  for (const name of [...referencedNames]) {
+    if (name === "this") continue;
+    const references = analyzeDescriptorCaptureReferences(ctx, ownScope, name);
+    if (references.unresolvedValueReference || references.declarations.size === 0) continue;
+    if ([...references.declarations].every((declaration) => nodeIsInside(declaration, ownScope))) {
+      referencedNames.delete(name);
+    }
+  }
+}
+
+/**
  * Promote captured locals to globals for getter/setter accessor functions.
  *
  * When an object literal getter/setter references variables from the enclosing
@@ -856,6 +880,7 @@ export function promoteAccessorCapturesToGlobals(
      *  `__isLeakTracingEnabled` const vs 00_infra's declaration). */
     forceValueNames?: ReadonlySet<string>;
   },
+  ownScope?: ts.FunctionLikeDeclaration, // (#6872) owner of `accessorBody`; see dropOwnScopeBindings
 ): void {
   if (!transitiveOnly && !accessorBody && (!extraNodes || extraNodes.length === 0)) return;
 
@@ -875,6 +900,7 @@ export function promoteAccessorCapturesToGlobals(
       collectReferencedIdentifiers(node, referencedNames);
     }
   }
+  if (ownScope) dropOwnScopeBindings(ctx, ownScope, referencedNames);
   // (#5148 checkpoint) Recorded-slot fallbacks for transitive captures whose
   // block-scoped source binding is already unmapped from `localMap` (the
   // declaring IIFE block of a concatenated multi-module init has ended) but

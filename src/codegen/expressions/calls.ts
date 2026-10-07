@@ -310,6 +310,7 @@ import {
 } from "../property-access.js";
 import { emitToNumber, emitToString } from "../coercion-engine.js";
 import type { InnerResult } from "../shared.js";
+import { tracesToProxyValue } from "../proxy-value-provenance.js"; // (#6651 W4)
 import { compileStandaloneDynamicImport } from "./standalone-dynamic-import.js";
 import {
   brandExternMethodResult,
@@ -8470,7 +8471,12 @@ function compileCallExpression(
       }
 
       const dynamicFunctionCtorArgs = standaloneDynamicFunctionCtorArgs(ctx, innerExpr);
-      if (dynamicFunctionCtorArgs !== undefined) {
+      // (#6651 W4) …and a native `$Proxy` binding, whose checker type is the
+      // TARGET's: the typed lowerings below would cast the proxy to the
+      // target's closure (or native-proto glue) shape and trap. The bridge's
+      // `$Proxy` guard routes it to `__proxy_apply_dispatch` (§10.5.12).
+      const proxyReceiver = ctx.standalone && tracesToProxyValue(ctx, innerExpr);
+      if (dynamicFunctionCtorArgs !== undefined || proxyReceiver) {
         const applyArgsExpr = !isCall && expr.arguments.length >= 2 ? expr.arguments[1]! : undefined;
         const applyVector = applyArgsExpr === undefined ? undefined : materializedArgumentsVector(fctx, applyArgsExpr);
         const applyElements =
@@ -8491,7 +8497,10 @@ function compileCallExpression(
           // `this` in that synthesis so `new Function("this.x = 1").call(o)`
           // stays in the caller module where the object-property runtime can see
           // `o`; non-constant bodies retain the provider carrier path below.
-          const staticCalleeType = tryStaticNewFunction(ctx, fctx, dynamicFunctionCtorArgs, true);
+          const staticCalleeType =
+            dynamicFunctionCtorArgs === undefined
+              ? undefined
+              : tryStaticNewFunction(ctx, fctx, dynamicFunctionCtorArgs, true);
           const calleeType = staticCalleeType ?? compileExpression(ctx, fctx, innerExpr, { kind: "externref" });
           if (calleeType === null) {
             fctx.body.push({ op: "ref.null.extern" });

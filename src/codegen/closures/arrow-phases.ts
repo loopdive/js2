@@ -33,6 +33,7 @@ import { closureObservesBindingValue, collectTransitiveCaptureNames } from "../f
 import { valTypesMatch } from "../shared.js";
 import { tryEmitNativeIteratorResultParam } from "../promise-native-iterator-result.js";
 import { materializeHoistedFunctionValueBinding } from "./funcref-as-closure.js";
+import { capturedBindingWriteTest, namesDeclaredInsideClosure } from "./closure-binding-identity.js";
 import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
 // (#4437) per-declaration `name` / §15.1.5 `length` carrier
 import { ensureFnMetaSubtype, fnMetaSlot, registerFnMetaFamily } from "../function-instance-meta.js";
@@ -499,8 +500,11 @@ function removeClosureOwnedBlockBindingCollisions(
   ownLocals: ReadonlySet<string>,
   referencedNames: Set<string>,
 ): void {
+  // (#6872) Also names the closure declares whose outer slot left `localMap`.
+  let declaredInside: ReadonlySet<string> | undefined;
   for (const name of [...referencedNames]) {
-    if (ownLocals.has(name) || !fctx.localMap.has(name)) continue;
+    if (ownLocals.has(name)) continue;
+    if (!fctx.localMap.has(name) && !(declaredInside ??= namesDeclaredInsideClosure(closure)).has(name)) continue;
     if (!hasReferenceOutsideClosure(ctx, closure, name)) referencedNames.delete(name);
   }
 }
@@ -730,17 +734,22 @@ export function planClosureCaptures(
         if (outerBody) {
           // Collect writes in the outer body, excluding the closure body itself
           const outerWrites = new Set<string>();
+          const writesCapturedBinding = capturedBindingWriteTest(
+            ctx,
+            name,
+            referencedBindingDeclaration(ctx, arrow, name, true),
+          );
           const collectOuterWrites = (node: ts.Node): void => {
             // Skip the closure body itself
             if (node === arrow) return;
             // Check for assignments
             if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-              if (ts.isIdentifier(node.left) && node.left.text === name) {
+              if (ts.isIdentifier(node.left) && writesCapturedBinding(node.left)) {
                 outerWrites.add(name);
               }
             }
             if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
-              if (ts.isIdentifier(node.operand) && node.operand.text === name) {
+              if (ts.isIdentifier(node.operand) && writesCapturedBinding(node.operand)) {
                 outerWrites.add(name);
               }
             }
@@ -750,7 +759,7 @@ export function planClosureCaptures(
               node.operatorToken.kind >= ts.SyntaxKind.PlusEqualsToken &&
               node.operatorToken.kind <= ts.SyntaxKind.CaretEqualsToken
             ) {
-              if (ts.isIdentifier(node.left) && node.left.text === name) {
+              if (ts.isIdentifier(node.left) && writesCapturedBinding(node.left)) {
                 outerWrites.add(name);
               }
             }
