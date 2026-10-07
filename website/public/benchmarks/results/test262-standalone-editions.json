@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11557,
-    "fail": 133,
+    "pass": 11558,
+    "fail": 132,
     "ce": 14,
     "skip": 0,
     "total": 11704,
@@ -3571,21 +3571,21 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4598,
+    "pass": 4599,
     "fail": 187,
-    "ce": 136,
+    "ce": 135,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4495,
+        "pass": 4496,
         "fail": 106,
-        "ce": 10,
+        "ce": 9,
         "skip": 0,
         "total": 4611,
-        "pct": 97
+        "pct": 98
       },
       {
         "name": "Symbol",
@@ -4305,8 +4305,8 @@
   {
     "edition": "Unclassified (untagged)",
     "pass": 4659,
-    "fail": 718,
-    "ce": 68,
+    "fail": 717,
+    "ce": 69,
     "skip": 0,
     "total": 5445,
     "pct": 86
