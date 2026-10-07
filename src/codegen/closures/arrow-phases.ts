@@ -842,6 +842,10 @@ export function planClosureCaptures(
     // `ctx.moduleGlobals` is active for this whole closure compilation, so
     // leave the name uncaptured and let the lifted body read that live global.
     if (ctx.moduleGlobals.has(name) && isDirectRuntimeModuleVariableBinding(bindingDeclaration)) continue;
+    // (#6651 V10d) A read-only closure must not box the `__module_init` shadow of a module global:
+    // later top-level writes (other init chunks, other functions) reach only the global, never that cell.
+    const readsShadow = fctx.moduleBindingShadowLocals?.get(name) === localIdx && ctx.moduleGlobals.has(name);
+    if (readsShadow && !writtenInClosure.has(name)) continue;
     // A lexical capture can share its spelling with a function declaration
     // already registered in funcMap (for example `{ dispatch }` beside a
     // module-local `dispatch`).  The old spelling-only guard dropped every

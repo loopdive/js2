@@ -27,6 +27,7 @@ import {
 } from "./host-capabilities.js";
 import { IR_ASYNC_CLOCK_SNAPSHOT_FN } from "../core/async-callables.js";
 import { irRuntimeCallableDeclaration } from "./callable-declarations.js";
+import { irNumberRemainderCallableDeclaration } from "./number-remainder-callables.js";
 import { irOrdinaryObjectCallableDeclaration } from "./ordinary-object-callables.js";
 import {
   assertNativeAsyncCallableDemands,
@@ -828,7 +829,8 @@ export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput): 
                 declaration &&
                 (declaration.feature === "error.reference.construct" ||
                   declaration.feature === "js.number.from-value" ||
-                  irOrdinaryObjectCallableDeclaration(declaration.ref))
+                  irOrdinaryObjectCallableDeclaration(declaration.ref) ||
+                  irNumberRemainderCallableDeclaration(declaration.ref))
               )
                 runtimeCallFeatures.add(declaration.feature);
             }

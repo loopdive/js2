@@ -2622,6 +2622,14 @@
       "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
+      "path": "src/checker/js-collection-inference.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "New #6651 V12 leaf of src/checker/index.ts (synthetic ambient root for `.js` checker programs); it depends only on the TS wrapper and moves with its parent when the checker's TS-wrapper dependencies are separated at frontend closure."
+    },
+    {
       "path": "src/checker/language-service.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -7587,6 +7595,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/object-model/native-proto-reparent.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the AST pre-scan predicate and codegen-context gate from the finalize-time native prototype arms and physical function allocation."
+    },
+    {
       "path": "src/codegen/object-model/primitive-carrier-test.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -8796,6 +8812,14 @@
     },
     {
       "path": "src/codegen/object-model/module-namespace-exotic.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/object-model/global-var-binding-exotic.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -14331,6 +14355,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/object-model/extern-get-object-key.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/builtin-subclass-receiver.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -15737,6 +15769,16 @@
       "destination": "compiler",
       "owner": "3525-prepared-presentation",
       "nextBoundary": "Separate AST declaration capture and finalizer presentation from prepared-program output association before compiler-layer activation."
+    },
+    {
+      "path": "src/ir/runtime/number-remainder-callables.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/wasm/physical/number-remainder.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
     }
   ]
 }

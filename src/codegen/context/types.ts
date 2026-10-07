@@ -1864,6 +1864,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * (`String.prototype.foo = …`).
    */
   protoNamedDirty: boolean;
+  /** (#6651 V11) Pre-scan: a builtin `.prototype` is re-parented (`object-model/native-proto-reparent.ts`). */
+  builtinProtoReparentDirty?: boolean;
   /**
    * (#4492 wave-5) The MEMBER NAMES behind `protoNamedDirty` — the `<m>` of every
    * `<BrandedBuiltin>.prototype.<m> = …` the pre-scan saw.
