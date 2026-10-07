@@ -4219,6 +4219,14 @@
       "nextBoundary": "Separate codegen-context prototype edge registration and physical function/global allocation from native prototype bodies."
     },
     {
+      "path": "src/codegen/object-model/generator-function-proto-arm.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate codegen-context generator-function identity registration and physical function/global allocation from the native [[Prototype]] arm bodies."
+    },
+    {
       "path": "src/codegen/closed-struct-extern-set.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
