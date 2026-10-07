@@ -384,3 +384,76 @@ original and repaired epochs remain separate. Seven original source actions
 reaching emission do not recover their missing complete records or establish
 passing tests. No production edit, source ownership release, performance
 acceptance or retirement follows from this instrument repair.
+
+### Parent original-record population audit
+
+Reading the actual preserved original raw log yields31 JSON records:
+one provenance,29 observation records and one completion. Of29 observations,
+28 report action success and Runtime16 reports its construction-floor failure.
+The seven absent observation records are exactly Source01–04 and Negative02–04;
+their JSON reporter failures are retained and cannot be credited from the
+completion's attempted-ID list. Runtime22's actual surviving record contains
+all33 transitions. These counts are raw-record custody, not a passing new
+qualification or a recovered source witness. Repaired qualification must
+retain the surviving full memory/artifact observations while supplying genuine
+complete records for the previously missing source/negative observations.
+
+### First frozen repair qualification — incomplete, retained
+
+Sol handed off uncommitted snapshot SHA-256
+`7145be7f67a51d6817bc90117ebecc39cc9a7db6d0e84e16840d8015cebc4b32`.
+Actual worker execution HEAD is original test commit
+`276b10a1a7e16a521ed599d240ec3c5286c5aec2`; production/fixture hashes remain
+the pinned c41 epoch. Parent retained the complete frozen test copy and exact
+parent identity input/receipt separately from original qualification.
+
+New-test-inclusive strict TS7 exits1 with one TS2345 at line362:
+`Reflect.get(prototype, "constructor")` receives an unknown prototype not
+narrowed to object. No cast, suppression or source diagnostic is inferred.
+The qualified runtime command exits1 before observations in the encoder's
+self-check: native Error.stack is an accessor rejected as unsupported.
+Vitest reports36 suite-skipped tests (zero executed observations), not an
+intentional skip waiver or passing population; completion lists all36 missing
+and records a provenance/schema failure. No repaired runtime result is accepted.
+
+Parent's same-toolchain descriptor probe verifies Error and AggregateError
+stack are own native getter/setter properties; two fresh Error instances share
+the getter/setter identities. Message and AggregateError.errors are data
+properties. Preserve all error contents/stacks; do not remove that self-check
+or permit arbitrary accessors. Astra's next exact owner-handed repair is pending.
+The frozen test, raw stdout/stderr, JSON, strict diagnostics and parent input/
+receipt are retained in worker `.tmp/6915-validation/repaired-v1*` and
+`strict-repaired-v1.log`; publication of this epoch remains pending.
+
+### Astra High exact second repair — same test owner
+
+Both first-repair checks are terminal. Sol may now change ONLY the owned new
+test, preserving frozen7145 bytes and the original epoch separately:
+
+1. Keep prototype typed unknown. Handle null separately; otherwise assert
+   `typeof prototype === "object" && prototype !== null` on that SAME variable
+   before Reflect.get. No cast, suppression, exclusion or permissive typing.
+2. Allow ONLY native Error's own stack accessor whose getter AND setter
+   identities match independently captured fresh-native-Error references.
+   Retain stack text and an explicit accessor representation (native getter/
+   setter markers, enumerable false, configurable true). Never invent a
+   writable data descriptor. Retain message, aggregate errors, causes, other
+   data properties and graph-reference identity. Reject arbitrary accessors
+   without invoking them, no catch-and-ignore. Keep Error self-checks. The
+   probe establishes this accessor mechanism, not absence of other unsupported
+   properties; any further actual failure remains visible and separately held.
+3. Capture source action outcome, attempt each cleanup independently, and
+   retain original plus every cleanup error. Protect final restorers and
+   diagnostic emission similarly. Any cleanup failure prevents successful
+   completion. Preserve error stacks/causes, never replace primary failure
+   with finally's last exception.
+4. Remove redundant vi.stubEnv(Linear IR,1); assert the actual incoming value
+   immediately before compile. Startup already requires1, so no changed
+   source/runtime behavior is attributed to this removal. Detect later drift
+   instead of silently resetting it.
+
+Finish scoped formatting/light checks, freeze and hand back exact SHA/schema.
+Parent alone runs strict typing and original-population qualification with
+new separately retained identity/receipt/logs. Do not change36IDs/33transitions,
+eight same-validator negatives, source owner joins, fixture/options/native
+values, allocator/memory expectations, source code or acceptance boundaries.

@@ -53,3 +53,29 @@ Exit0, 2pass/1existing optional Porffor skip/3; complete stdout/stderr and JSON
 are `controls-c41.log.gz` and `controls-c41.json.gz`. This is not four-lane equality.
 Astra High instrument review/repair remains pending. Source two-loop ownership,
 broader shared contracts and Session A's final integration authority stay held.
+
+## First repaired snapshot: separate failed epoch
+
+`repaired-v1.test.ts.gz` preserves frozen, uncommitted instrument bytes SHA-256
+`7145be7f67a51d6817bc90117ebecc39cc9a7db6d0e84e16840d8015cebc4b32`.
+Actual execution HEAD was `276b10a1a7e16a521ed599d240ec3c5286c5aec2`;
+source/fixture remained c41. Exact parent-approved hashes, command and effective
+flags are retained in `repaired-v1-parent-input.json.gz`; terminal status and
+post-execution identical test digest in `repaired-v1-parent-receipt.json.gz`.
+
+Strict test-inclusive TS7 exits1 with TS2345 at test line362, the unknown
+prototype passed to `Reflect.get`. Full diagnostic is `strict-repaired-v1.log.gz`.
+Vitest exits1 during the encoder self-check, before any observations: native
+Error.stack is an accessor rejected by the data-only encoder. Reporter output
+has36 skipped cases because the suite setup failed. No case executes, no
+passing repaired population is accepted, and completion correctly records36
+missing observations plus provenance/schema failure. These are not deliberate
+skips or relaxed requirements. Complete output and JSON are `repaired-v1.log.gz`
+and `repaired-v1.json.gz`. Original files above remain unchanged.
+
+The same Node22.23.2/V812.4.254.21-node.56 descriptor probe verifies native
+Error/AggregateError.stack own native getter/setter; fresh Error objects share
+those getter/setter identities. Message/errors are own data properties. The
+next repair must retain all stacks/error contents and continue rejecting
+arbitrary accessors. Production, fixtures,36IDs,33transitions and eight
+same-validator negatives remain unchanged; no source acceptance follows.
