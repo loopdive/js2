@@ -53,3 +53,9 @@ The3.75/69/40 scalar corrections belong to A's landed read repair. The source
 array-return fixtures still use fallback: no new IR admission, performance
 equality or legacy-retirement credit. Session A owns final queue integration.
 PR6587 remains non-draft HOLD until remaining gates and coordinated acceptance.
+
+`pnpm run build` exits134 during Vite rendering after1762 transformed modules:
+Node's default roughly4GiB heap is exhausted. `build-failed.log.gz` retains the
+original failure; no configuration/heap override was applied. Matched baseline
+build diagnosis remains pending, so no inherited-failure attribution is made.
+Dialect and flat-directory guards pass (27 declarations,829 existing files).

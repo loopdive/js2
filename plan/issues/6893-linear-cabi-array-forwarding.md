@@ -797,3 +797,12 @@ Full evidence, reproduction commands and review boundaries live in
 raw logs/reports/comparisons. Production build is still live; architecture gates
 and final normal push remain pending. Do not convert these results into whole-
 program IR equality, source-array admission, performance or retirement credit.
+
+Production build is terminal, exit134: after1762 transformed modules, Vite
+rendering exhausted Node's default roughly4GiB heap (`Reached heap limit`).
+Raw failure is preserved as `typing-repair/build-failed.log.gz`. This is NOT a
+passing build or an attributed inherited failure: matched baseline build remains
+pending. No heap/configuration override, source repair or protection weakening
+was applied. The dialect gate passes27 canonical declarations; flat-directory
+budget passes829 existing codegen files. Compiler inventory gate is pending.
+Keep HOLD until the remaining build/gate obligations and A acceptance are met.
