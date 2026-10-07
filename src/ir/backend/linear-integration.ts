@@ -436,8 +436,18 @@ function linearBackendResourceInvariant(detail: string): never {
   );
 }
 
-function addLinearBackendInstructionDemand(instr: IrInstr, runtimeFunctions: Set<string>): void {
+function addLinearBackendInstructionDemand(
+  instr: IrInstr,
+  runtimeFunctions: Set<string>,
+  addOperation: (operation: LinearRuntimeOperation) => void,
+): void {
   switch (instr.kind) {
+    case "vec.len":
+    case "vec.get":
+    case "vec.set":
+    case "forof.vec":
+      addOperation({ family: "vector", operation: "resolve-forwarding" });
+      return;
     case "string.const":
       runtimeFunctions.add("__str_from_data");
       return;
@@ -552,7 +562,7 @@ export function collectLinearBackendResourceDemand(
     for (const operation of allocation.operations) addOperation(operation);
   }
   for (const fn of module.functions) {
-    forEachLinearIrInstruction(fn, (instr) => addLinearBackendInstructionDemand(instr, runtimeFunctions));
+    forEachLinearIrInstruction(fn, (instr) => addLinearBackendInstructionDemand(instr, runtimeFunctions, addOperation));
   }
 
   return Object.freeze({
@@ -562,6 +572,20 @@ export function collectLinearBackendResourceDemand(
     layoutIds: Object.freeze([...layoutIds].sort()),
     dataSegmentIds: Object.freeze([...dataSegmentIds].sort()),
   });
+}
+
+/** Prove structural resources and the forwarding ABI before any body consumer. */
+function preflightLinearBackendResources(ctx: LinearContext, module: IrModule, memoryPlan: LinearMemoryPlan): void {
+  const demand = collectLinearBackendResourceDemand(module, memoryPlan);
+  validateLinearBackendResourceDemand({
+    demand,
+    memoryPlan,
+    availableFunctionNames: new Set(ctx.mod.functions.map((fn) => fn.name)),
+  });
+  for (const operation of demand.runtimeOperations) {
+    if (operation.family === "vector" && operation.operation === "resolve-forwarding")
+      resolveLinearRuntimeOperation(ctx, operation);
+  }
 }
 
 /**
@@ -1534,21 +1558,8 @@ export function compileLinearIrFunctions(
   irModule = frozenBodyBatch.module;
   memoryPlan = planLinearMemoryFromFrozenFacts(irModule, frozenBodyBatch.allocationFacts, allocationPolicy);
   bindMemoryPlan(memoryPlan);
-  // Resolve every helper/operation/layout/data join demanded by the captured
-  // module before the first authenticated consumer/emitter callback. Data
-  // segments and globals intentionally remain relocatable/symbolic; this
-  // check only proves that the semantic resources the emitter will request
-  // are present in the completed plan and runtime table.
-  const resourceDemand = collectLinearBackendResourceDemand(irModule, memoryPlan);
-  validateLinearBackendResourceDemand({
-    demand: resourceDemand,
-    memoryPlan,
-    availableFunctionNames: new Set(ctx.mod.functions.map((func) => func.name)),
-  });
+  preflightLinearBackendResources(ctx, irModule, memoryPlan);
 
-  // Every body is lowered through the authenticated batch consumer. The
-  // existing local-slot/vector-scratch adaptation remains below this point,
-  // but the captured function and lowerer output are now the sole authority.
   let consumedBodies: ReturnType<typeof consumeFrozenIrBodyBatchWithFactories<Instr[], ValType>>;
   try {
     consumedBodies = consumeFrozenIrBodyBatchWithFactories<Instr[], ValType>({
@@ -2198,58 +2209,28 @@ function makeLinearIrResolver(
 
 /** Map a symbolic plan operation to the existing linear runtime helper. */
 function linearRuntimeFunctionName(operation: LinearRuntimeOperation): string | undefined {
-  let name: string | undefined;
-  if (operation.family === "memory" && operation.operation === "allocate" && operation.allocationClass === "arena") {
-    name = "__malloc";
-  } else if (
-    operation.family === "memory" &&
-    operation.operation === "allocate" &&
-    operation.allocationClass === "stack"
-  ) {
-    name = "__linear_stack_alloc";
-  } else if (
-    operation.family === "vector" &&
-    operation.operation === "allocate" &&
-    operation.allocationClass === "arena" &&
-    operation.elementStorage === "f64"
-  ) {
-    name = "__arr_new";
-  } else if (
-    operation.family === "vector" &&
-    operation.operation === "initialize-element" &&
-    operation.allocationClass === "arena" &&
-    operation.elementStorage === "f64"
-  ) {
-    name = LINEAR_IR_VEC_INIT_F64_FN;
-  } else if (
-    operation.family === "vector" &&
-    operation.operation === "grow" &&
-    operation.allocationClass === "arena" &&
-    operation.elementStorage === "f64"
-  ) {
-    // Vector growth is realized by the existing checked element-store helper;
-    // the semantic plan keeps a distinct grow operation for other adapters.
-    name = "__arr_set";
-  } else if (
-    operation.family === "string" &&
-    operation.operation === "materialize-data" &&
-    operation.allocationClass === "arena" &&
-    operation.elementStorage === "i8"
-  ) {
-    name = "__str_from_data";
-  } else if (
-    operation.family === "string" &&
-    operation.operation === "concatenate" &&
-    operation.allocationClass === "arena" &&
-    operation.elementStorage === "i8"
-  ) {
-    name = "__str_concat";
-  } else if (operation.family === "stack" && operation.operation === "mark") {
-    name = "__linear_stack_mark";
-  } else if (operation.family === "stack" && operation.operation === "restore") {
-    name = "__linear_stack_restore";
+  if (operation.family === "vector") {
+    if (operation.operation === "resolve-forwarding") return "__arr_resolve";
+    if (operation.allocationClass !== "arena" || operation.elementStorage !== "f64") return undefined;
+    if (operation.operation === "allocate") return "__arr_new";
+    if (operation.operation === "initialize-element") return LINEAR_IR_VEC_INIT_F64_FN;
+    // The existing checked store realizes the distinct symbolic grow operation.
+    if (operation.operation === "grow") return "__arr_set";
+    return undefined;
   }
-  return name;
+  if (operation.family === "memory" && operation.operation === "allocate") {
+    if (operation.allocationClass === "arena") return "__malloc";
+    if (operation.allocationClass === "stack") return "__linear_stack_alloc";
+  }
+  if (operation.family === "string" && operation.allocationClass === "arena" && operation.elementStorage === "i8") {
+    if (operation.operation === "materialize-data") return "__str_from_data";
+    if (operation.operation === "concatenate") return "__str_concat";
+  }
+  if (operation.family === "stack") {
+    if (operation.operation === "mark") return "__linear_stack_mark";
+    if (operation.operation === "restore") return "__linear_stack_restore";
+  }
+  return undefined;
 }
 
 /** Bind a symbolic plan operation to the existing linear runtime adapter. */
@@ -2258,6 +2239,18 @@ function resolveLinearRuntimeOperation(ctx: LinearContext, operation: LinearRunt
   if (!name) throw new Error(`linear-ir: no runtime binding for '${linearRuntimeOperationKey(operation)}'`);
   const localIdx = ctx.mod.functions.findIndex((func) => func.name === name);
   if (localIdx < 0) throw new Error(`linear-ir: runtime helper '${name}' missing`);
+  if (operation.family === "vector" && operation.operation === "resolve-forwarding") {
+    const type = ctx.mod.types[ctx.mod.functions[localIdx]!.typeIdx];
+    if (
+      type?.kind !== "func" ||
+      type.params.length !== 1 ||
+      type.results.length !== 1 ||
+      type.params[0]!.kind !== "i32" ||
+      type.results[0]!.kind !== "i32"
+    ) {
+      linearBackendResourceInvariant("defined runtime helper '__arr_resolve' must have signature (i32)->i32");
+    }
+  }
   return ctx.numImportFuncs + localIdx;
 }
 
