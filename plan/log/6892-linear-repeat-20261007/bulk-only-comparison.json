@@ -1,0 +1,665 @@
+{
+  "issue": 6892,
+  "sourceBase": "e7760d1c2af4636ede6a352154d193b234af5fc4",
+  "candidate": "9544cc223f46c58bfa4f9f8bb2c00ba3d78a1d9e",
+  "exactFunctionalRowsPerRun": 80,
+  "testsPassedPerRun": 54,
+  "runs": [
+    {
+      "path": "/private/tmp/js2-6892-linear-repeat-baseline-20261007/.tmp/6892-baseline-ab1.log",
+      "sha256": "89ea79eb6f5c55c07bab2906e13e8a6fa21fb95265eb5bfedfeff02ff63a9977",
+      "provenance": {
+        "issue": 6892,
+        "kind": "provenance",
+        "revision": "e7760d1c2af4636ede6a352154d193b234af5fc4",
+        "kernelSha256": "c8df1de8944d12cd155a29f321fe4bd09f72cb3b36078ec8b828ce9de32dfcad",
+        "testSha256": "1c81601b54034f178179e55ffeb232c39ad15916a6ed9423b2bddbfd8951812b",
+        "node": "v22.23.2",
+        "v8": "12.4.254.21-node.56",
+        "execArgv": ["--max-old-space-size=1024", "--expose-gc", "--conditions", "node", "--conditions", "development"],
+        "nodeOptions": "",
+        "lane": "linear",
+        "harness": "tests/issue-6892-linear-repeat-bulk-copy.test.ts",
+        "allocator": "ordinary bump; source instrument exposes arena usage but never resets",
+        "flags": {
+          "JS2WASM_LINEAR_IR": "1",
+          "JS2WASM_IR_STRING_BUILDER": "1",
+          "optimize": false
+        },
+        "benchmarkEnabled": true,
+        "caseCounts": {
+          "semantic": 12,
+          "semanticControls": 2,
+          "provider": 29,
+          "providerTraps": 8,
+          "providerCustody": 1,
+          "mechanism": 1,
+          "optionalInstrument": 1
+        }
+      },
+      "mechanism": {
+        "issue": 6892,
+        "kind": "mechanism",
+        "provider": "__str_repeat",
+        "bulkCopies": 0,
+        "remainders": 1,
+        "mechanism": "bytewise-remainder",
+        "locals": [
+          {
+            "name": "integerCount",
+            "type": "f64"
+          },
+          {
+            "name": "sourceLen",
+            "type": "i32"
+          },
+          {
+            "name": "resultLen",
+            "type": "i32"
+          },
+          {
+            "name": "result",
+            "type": "i32"
+          },
+          {
+            "name": "i",
+            "type": "i32"
+          }
+        ]
+      },
+      "instrument": {
+        "issue": 6892,
+        "kind": "instrument",
+        "enabled": true,
+        "status": "complete",
+        "cases": 8,
+        "elapsedMs": 1820.570375000003,
+        "pairing": "parent alternates exact baseline/candidate order on the same machine and joins medians by caseId",
+        "observations": 60
+      }
+    },
+    {
+      "path": ".tmp/6892-candidate-ab1.log",
+      "sha256": "07d77166bb7a17df2f7057fd98d56fff765511864b81996ac950ec730fb4602b",
+      "provenance": {
+        "issue": 6892,
+        "kind": "provenance",
+        "revision": "9544cc223f46c58bfa4f9f8bb2c00ba3d78a1d9e",
+        "kernelSha256": "717d7180bbcac0435eadd79f92d2a0e414da9d270dbff50d76fc9f16968f10f7",
+        "testSha256": "1c81601b54034f178179e55ffeb232c39ad15916a6ed9423b2bddbfd8951812b",
+        "node": "v22.23.2",
+        "v8": "12.4.254.21-node.56",
+        "execArgv": ["--max-old-space-size=1024", "--expose-gc", "--conditions", "node", "--conditions", "development"],
+        "nodeOptions": "",
+        "lane": "linear",
+        "harness": "tests/issue-6892-linear-repeat-bulk-copy.test.ts",
+        "allocator": "ordinary bump; source instrument exposes arena usage but never resets",
+        "flags": {
+          "JS2WASM_LINEAR_IR": "1",
+          "JS2WASM_IR_STRING_BUILDER": "1",
+          "optimize": false
+        },
+        "benchmarkEnabled": true,
+        "caseCounts": {
+          "semantic": 12,
+          "semanticControls": 2,
+          "provider": 29,
+          "providerTraps": 8,
+          "providerCustody": 1,
+          "mechanism": 1,
+          "optionalInstrument": 1
+        }
+      },
+      "mechanism": {
+        "issue": 6892,
+        "kind": "mechanism",
+        "provider": "__str_repeat",
+        "bulkCopies": 2,
+        "remainders": 0,
+        "mechanism": "bulk-copy",
+        "locals": [
+          {
+            "name": "integerCount",
+            "type": "f64"
+          },
+          {
+            "name": "sourceLen",
+            "type": "i32"
+          },
+          {
+            "name": "resultLen",
+            "type": "i32"
+          },
+          {
+            "name": "result",
+            "type": "i32"
+          },
+          {
+            "name": "initializedBytes",
+            "type": "i32"
+          },
+          {
+            "name": "copyBytes",
+            "type": "i32"
+          }
+        ]
+      },
+      "instrument": {
+        "issue": 6892,
+        "kind": "instrument",
+        "enabled": true,
+        "status": "complete",
+        "cases": 8,
+        "elapsedMs": 2393.4716250000056,
+        "pairing": "parent alternates exact baseline/candidate order on the same machine and joins medians by caseId",
+        "observations": 60
+      }
+    },
+    {
+      "path": ".tmp/6892-candidate-ba2.log",
+      "sha256": "09dc25417ec38dae3d2e6956c31e17aa07389ef61301fb2f90139b2edbe56f4a",
+      "provenance": {
+        "issue": 6892,
+        "kind": "provenance",
+        "revision": "9544cc223f46c58bfa4f9f8bb2c00ba3d78a1d9e",
+        "kernelSha256": "717d7180bbcac0435eadd79f92d2a0e414da9d270dbff50d76fc9f16968f10f7",
+        "testSha256": "1c81601b54034f178179e55ffeb232c39ad15916a6ed9423b2bddbfd8951812b",
+        "node": "v22.23.2",
+        "v8": "12.4.254.21-node.56",
+        "execArgv": ["--max-old-space-size=1024", "--expose-gc", "--conditions", "node", "--conditions", "development"],
+        "nodeOptions": "",
+        "lane": "linear",
+        "harness": "tests/issue-6892-linear-repeat-bulk-copy.test.ts",
+        "allocator": "ordinary bump; source instrument exposes arena usage but never resets",
+        "flags": {
+          "JS2WASM_LINEAR_IR": "1",
+          "JS2WASM_IR_STRING_BUILDER": "1",
+          "optimize": false
+        },
+        "benchmarkEnabled": true,
+        "caseCounts": {
+          "semantic": 12,
+          "semanticControls": 2,
+          "provider": 29,
+          "providerTraps": 8,
+          "providerCustody": 1,
+          "mechanism": 1,
+          "optionalInstrument": 1
+        }
+      },
+      "mechanism": {
+        "issue": 6892,
+        "kind": "mechanism",
+        "provider": "__str_repeat",
+        "bulkCopies": 2,
+        "remainders": 0,
+        "mechanism": "bulk-copy",
+        "locals": [
+          {
+            "name": "integerCount",
+            "type": "f64"
+          },
+          {
+            "name": "sourceLen",
+            "type": "i32"
+          },
+          {
+            "name": "resultLen",
+            "type": "i32"
+          },
+          {
+            "name": "result",
+            "type": "i32"
+          },
+          {
+            "name": "initializedBytes",
+            "type": "i32"
+          },
+          {
+            "name": "copyBytes",
+            "type": "i32"
+          }
+        ]
+      },
+      "instrument": {
+        "issue": 6892,
+        "kind": "instrument",
+        "enabled": true,
+        "status": "complete",
+        "cases": 8,
+        "elapsedMs": 2045.2017909999995,
+        "pairing": "parent alternates exact baseline/candidate order on the same machine and joins medians by caseId",
+        "observations": 60
+      }
+    },
+    {
+      "path": "/private/tmp/js2-6892-linear-repeat-baseline-20261007/.tmp/6892-baseline-ba2.log",
+      "sha256": "f13ccc9dc79c372878fbf8855e7b3c23b1483d07a4278f7a326a66f0277a3dbe",
+      "provenance": {
+        "issue": 6892,
+        "kind": "provenance",
+        "revision": "e7760d1c2af4636ede6a352154d193b234af5fc4",
+        "kernelSha256": "c8df1de8944d12cd155a29f321fe4bd09f72cb3b36078ec8b828ce9de32dfcad",
+        "testSha256": "1c81601b54034f178179e55ffeb232c39ad15916a6ed9423b2bddbfd8951812b",
+        "node": "v22.23.2",
+        "v8": "12.4.254.21-node.56",
+        "execArgv": ["--max-old-space-size=1024", "--expose-gc", "--conditions", "node", "--conditions", "development"],
+        "nodeOptions": "",
+        "lane": "linear",
+        "harness": "tests/issue-6892-linear-repeat-bulk-copy.test.ts",
+        "allocator": "ordinary bump; source instrument exposes arena usage but never resets",
+        "flags": {
+          "JS2WASM_LINEAR_IR": "1",
+          "JS2WASM_IR_STRING_BUILDER": "1",
+          "optimize": false
+        },
+        "benchmarkEnabled": true,
+        "caseCounts": {
+          "semantic": 12,
+          "semanticControls": 2,
+          "provider": 29,
+          "providerTraps": 8,
+          "providerCustody": 1,
+          "mechanism": 1,
+          "optionalInstrument": 1
+        }
+      },
+      "mechanism": {
+        "issue": 6892,
+        "kind": "mechanism",
+        "provider": "__str_repeat",
+        "bulkCopies": 0,
+        "remainders": 1,
+        "mechanism": "bytewise-remainder",
+        "locals": [
+          {
+            "name": "integerCount",
+            "type": "f64"
+          },
+          {
+            "name": "sourceLen",
+            "type": "i32"
+          },
+          {
+            "name": "resultLen",
+            "type": "i32"
+          },
+          {
+            "name": "result",
+            "type": "i32"
+          },
+          {
+            "name": "i",
+            "type": "i32"
+          }
+        ]
+      },
+      "instrument": {
+        "issue": 6892,
+        "kind": "instrument",
+        "enabled": true,
+        "status": "complete",
+        "cases": 8,
+        "elapsedMs": 2070.0125409999964,
+        "pairing": "parent alternates exact baseline/candidate order on the same machine and joins medians by caseId",
+        "observations": 60
+      }
+    }
+  ],
+  "pairs": [
+    {
+      "order": "baseline-candidate",
+      "cases": [
+        {
+          "caseId": "ascii-2-n-3",
+          "calls": 256,
+          "outputBytes": 10,
+          "baselineSamplesMs": [
+            0.08866699999634875, 0.06558399999630637, 0.06766699999570847, 0.02375000000029104, 0.02412499999627471,
+            0.021333999997295905, 0.05625000000145519
+          ],
+          "candidateSamplesMs": [
+            0.028791000004275702, 0.027999999998428393, 0.02916700000059791, 0.07287499999802094, 0.02845800000068266,
+            0.027916000006371178, 0.12108299999817973
+          ],
+          "baselineMedianMs": 0.05625000000145519,
+          "candidateMedianMs": 0.028791000004275702,
+          "baselineSpreadMs": 0.06733299999905284,
+          "candidateSpreadMs": 0.09316699999180855,
+          "baselineOverCandidate": 1.9537355421173839,
+          "retainedArenaBytes": [12320, 12320, 12320, 12320, 12320, 12320, 12320, 12320, 12320, 12320],
+          "memoryGrowthBytes": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-2-n-9",
+          "calls": 256,
+          "outputBytes": 22,
+          "baselineSamplesMs": [
+            0.03245800000149757, 0.03241600000183098, 0.03379200000199489, 0.03212500000518048, 0.033750000002328306,
+            0.032417000002169516, 0.03500000000349246
+          ],
+          "candidateSamplesMs": [
+            0.10399999999935972, 0.09737500000483124, 0.12162499999976717, 0.07408399999985704, 0.0362920000043232,
+            0.03604099999938626, 0.1274589999957243
+          ],
+          "baselineMedianMs": 0.03245800000149757,
+          "candidateMedianMs": 0.09737500000483124,
+          "baselineSpreadMs": 0.002874999998311978,
+          "candidateSpreadMs": 0.09141799999633804,
+          "baselineOverCandidate": 0.333329910140048,
+          "retainedArenaBytes": [18464, 18464, 18464, 18464, 18464, 18464, 18464, 18464, 18464, 18464],
+          "memoryGrowthBytes": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-2-n-1024",
+          "calls": 252,
+          "outputBytes": 2052,
+          "baselineSamplesMs": [
+            2.2040839999972377, 0.7308330000014394, 0.6965000000054715, 2.0120420000021113, 1.0431250000037835,
+            0.9880420000044978, 0.8090840000004391
+          ],
+          "candidateSamplesMs": [
+            0.377874999998312, 0.7209170000060112, 0.6694170000046142, 0.455999999998312, 0.4438330000048154,
+            0.6260000000038417, 1.0059170000022277
+          ],
+          "baselineMedianMs": 0.9880420000044978,
+          "candidateMedianMs": 0.6260000000038417,
+          "baselineSpreadMs": 1.5075839999917662,
+          "candidateSpreadMs": 0.6280420000039157,
+          "baselineOverCandidate": 1.5783418530326427,
+          "retainedArenaBytes": [
+            1040288, 1040288, 1040288, 1040288, 1040288, 1040288, 1040288, 1040288, 1040288, 1040288
+          ],
+          "memoryGrowthBytes": [983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-2-n-65537",
+          "calls": 3,
+          "outputBytes": 131078,
+          "baselineSamplesMs": [
+            0.49979200000234414, 0.9455830000006245, 1.6654170000037993, 0.5117080000054557, 2.453417000004265,
+            0.8457500000004075, 2.0018329999948037
+          ],
+          "candidateSamplesMs": [
+            0.2885000000023865, 0.2480409999989206, 0.26229199999943376, 0.5714169999992009, 0.5958749999990687,
+            0.6439170000012382, 0.307874999998603
+          ],
+          "baselineMedianMs": 0.9455830000006245,
+          "candidateMedianMs": 0.307874999998603,
+          "baselineSpreadMs": 1.9536250000019209,
+          "candidateSpreadMs": 0.3958760000023176,
+          "baselineOverCandidate": 3.071321153081332,
+          "retainedArenaBytes": [786584, 786584, 786584, 786584, 786584, 786584, 786584, 786584, 786584, 786584],
+          "memoryGrowthBytes": [786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-3-n-3",
+          "calls": 256,
+          "outputBytes": 13,
+          "baselineSamplesMs": [
+            0.6019169999999576, 0.07995800000207964, 0.07316700000228593, 0.03562499999679858, 0.07691699999850243,
+            0.072041999999783, 0.025125000000116415
+          ],
+          "candidateSamplesMs": [
+            0.03054100000008475, 0.1364160000011907, 0.030249999996158294, 0.029958999999507796, 0.03012499999749707,
+            0.041916000001947396, 0.030167000004439615
+          ],
+          "baselineMedianMs": 0.07316700000228593,
+          "candidateMedianMs": 0.030249999996158294,
+          "baselineSpreadMs": 0.5767919999998412,
+          "candidateSpreadMs": 0.1064570000016829,
+          "baselineOverCandidate": 2.4187438020356375,
+          "retainedArenaBytes": [14368, 14368, 14368, 14368, 14368, 14368, 14368, 14368, 14368, 14368],
+          "memoryGrowthBytes": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-3-n-9",
+          "calls": 256,
+          "outputBytes": 31,
+          "baselineSamplesMs": [
+            0.04199999999400461, 0.04279099999985192, 0.041834000003291294, 0.040375000004132744, 0.04200000000128057,
+            0.04212499999994179, 0.04087499999877764
+          ],
+          "candidateSamplesMs": [
+            0.04287499999918509, 0.5397499999962747, 0.08541599999443861, 0.0435840000063763, 0.04250000000320142,
+            0.04241599999659229, 0.042584000002534594
+          ],
+          "baselineMedianMs": 0.04199999999400461,
+          "candidateMedianMs": 0.04287499999918509,
+          "baselineSpreadMs": 0.002415999995719176,
+          "candidateSpreadMs": 0.4973339999996824,
+          "baselineOverCandidate": 0.9795918366134784,
+          "retainedArenaBytes": [22560, 22560, 22560, 22560, 22560, 22560, 22560, 22560, 22560, 22560],
+          "memoryGrowthBytes": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-3-n-1024",
+          "calls": 168,
+          "outputBytes": 3076,
+          "baselineSamplesMs": [
+            0.8032090000051539, 0.9012499999953434, 3.113833000003069, 2.243958000006387, 1.7445000000006985,
+            1.1607080000030692, 3.3138749999998254
+          ],
+          "candidateSamplesMs": [
+            0.4105420000050799, 0.5423329999975977, 0.49316600000020117, 0.41437500000029104, 0.38445900000078836,
+            0.8082910000011907, 0.6038330000010319
+          ],
+          "baselineMedianMs": 1.7445000000006985,
+          "candidateMedianMs": 0.49316600000020117,
+          "baselineSpreadMs": 2.5106659999946714,
+          "candidateSpreadMs": 0.42383200000040233,
+          "baselineOverCandidate": 3.5373484790110976,
+          "retainedArenaBytes": [
+            1037600, 1037600, 1037600, 1037600, 1037600, 1037600, 1037600, 1037600, 1037600, 1037600
+          ],
+          "memoryGrowthBytes": [983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-3-n-65537",
+          "calls": 2,
+          "outputBytes": 196615,
+          "baselineSamplesMs": [
+            1.0727079999996931, 0.5099170000030426, 0.8743749999994179, 1.4686660000006668, 2.661832999998296,
+            0.5100000000020373, 0.7883749999964493
+          ],
+          "candidateSamplesMs": [
+            0.23599999999714782, 0.6668750000026193, 0.6526250000024447, 0.2500419999996666, 0.6268750000017462,
+            0.23933299999771407, 0.36691600000631297
+          ],
+          "baselineMedianMs": 0.8743749999994179,
+          "candidateMedianMs": 0.36691600000631297,
+          "baselineSpreadMs": 2.1519159999952535,
+          "candidateSpreadMs": 0.4308750000054715,
+          "baselineOverCandidate": 2.383038624601745,
+          "retainedArenaBytes": [786544, 786544, 786544, 786544, 786544, 786544, 786544, 786544, 786544, 786544],
+          "memoryGrowthBytes": [786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432],
+          "exactBatchStateEquality": true
+        }
+      ]
+    },
+    {
+      "order": "candidate-baseline",
+      "cases": [
+        {
+          "caseId": "ascii-2-n-3",
+          "calls": 256,
+          "outputBytes": 10,
+          "baselineSamplesMs": [
+            0.021957999997539446, 0.021749999999883585, 0.02237500000046566, 0.022125000003143214, 0.021583999994618353,
+            0.0214170000035665, 0.02270900000439724
+          ],
+          "candidateSamplesMs": [
+            0.07504100000369363, 0.07087499999761349, 0.0740829999995185, 0.07566700000461424, 0.0712089999942691,
+            0.0733330000002752, 0.07349999999860302
+          ],
+          "baselineMedianMs": 0.021957999997539446,
+          "candidateMedianMs": 0.07349999999860302,
+          "baselineSpreadMs": 0.0012920000008307397,
+          "candidateSpreadMs": 0.004792000007000752,
+          "baselineOverCandidate": 0.29874829929192914,
+          "retainedArenaBytes": [12320, 12320, 12320, 12320, 12320, 12320, 12320, 12320, 12320, 12320],
+          "memoryGrowthBytes": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-2-n-9",
+          "calls": 256,
+          "outputBytes": 22,
+          "baselineSamplesMs": [
+            0.03283400000509573, 0.03245799999422161, 0.03258300000015879, 0.031749999994644895, 0.10266699999920093,
+            0.03420899999764515, 0.03250000000116415
+          ],
+          "candidateSamplesMs": [
+            0.590875000001688, 0.0970000000015716, 0.10508300000219606, 0.09895900000265101, 0.10804199999984121,
+            0.14970800000446616, 0.14691599999787286
+          ],
+          "baselineMedianMs": 0.03258300000015879,
+          "candidateMedianMs": 0.10804199999984121,
+          "baselineSpreadMs": 0.07091700000455603,
+          "candidateSpreadMs": 0.4938750000001164,
+          "baselineOverCandidate": 0.30157716443796556,
+          "retainedArenaBytes": [18464, 18464, 18464, 18464, 18464, 18464, 18464, 18464, 18464, 18464],
+          "memoryGrowthBytes": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-2-n-1024",
+          "calls": 252,
+          "outputBytes": 2052,
+          "baselineSamplesMs": [
+            1.4419159999961266, 2.9728329999998095, 2.5134590000016033, 1.8135000000038417, 1.5002080000049318,
+            2.7087499999979627, 0.6842920000053709
+          ],
+          "candidateSamplesMs": [
+            0.9834590000027674, 1.4052500000034343, 0.43108399999618996, 2.8967909999992116, 1.3856660000019474,
+            0.36687499999970896, 1.677917000000889
+          ],
+          "baselineMedianMs": 1.8135000000038417,
+          "candidateMedianMs": 1.3856660000019474,
+          "baselineSpreadMs": 2.2885409999944386,
+          "candidateSpreadMs": 2.5299159999995027,
+          "baselineOverCandidate": 1.3087569443150753,
+          "retainedArenaBytes": [
+            1040288, 1040288, 1040288, 1040288, 1040288, 1040288, 1040288, 1040288, 1040288, 1040288
+          ],
+          "memoryGrowthBytes": [983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-2-n-65537",
+          "calls": 3,
+          "outputBytes": 131078,
+          "baselineSamplesMs": [
+            0.5312919999996666, 0.5155410000006668, 1.8771669999987353, 2.276333000001614, 0.9963750000024447,
+            2.4592499999998836, 1.8475840000028256
+          ],
+          "candidateSamplesMs": [
+            0.45404100000450853, 0.7093749999985448, 0.5935420000023441, 0.6430410000029951, 0.6375840000036987,
+            0.24650000000110595, 0.6697499999936554
+          ],
+          "baselineMedianMs": 1.8475840000028256,
+          "candidateMedianMs": 0.6375840000036987,
+          "baselineSpreadMs": 1.9437089999992168,
+          "candidateSpreadMs": 0.46287499999743886,
+          "baselineOverCandidate": 2.8977891540441845,
+          "retainedArenaBytes": [786584, 786584, 786584, 786584, 786584, 786584, 786584, 786584, 786584, 786584],
+          "memoryGrowthBytes": [786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-3-n-3",
+          "calls": 256,
+          "outputBytes": 13,
+          "baselineSamplesMs": [
+            0.023249999998370185, 0.023332999997364823, 0.024375000000873115, 0.040333999997528736, 0.02350000000296859,
+            0.023290999997698236, 0.023542000002635177
+          ],
+          "candidateSamplesMs": [
+            0.11129199999413686, 0.07862500000192085, 0.0761659999989206, 0.12583399999857647, 0.08241699999780394,
+            0.07554199999867706, 0.6084160000027623
+          ],
+          "baselineMedianMs": 0.02350000000296859,
+          "candidateMedianMs": 0.08241699999780394,
+          "baselineSpreadMs": 0.01708399999915855,
+          "candidateSpreadMs": 0.5328740000040852,
+          "baselineOverCandidate": 0.28513534833341136,
+          "retainedArenaBytes": [14368, 14368, 14368, 14368, 14368, 14368, 14368, 14368, 14368, 14368],
+          "memoryGrowthBytes": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-3-n-9",
+          "calls": 256,
+          "outputBytes": 31,
+          "baselineSamplesMs": [
+            0.4364160000041011, 0.040791999999783, 0.04124999999476131, 0.0405419999951846, 0.12070800000219606,
+            0.11866600000212202, 0.04087499999877764
+          ],
+          "candidateSamplesMs": [
+            0.11220799999864539, 0.10870900000008987, 0.10874999999941792, 0.10899999999674037, 0.1061249999984284,
+            0.10920800000167219, 0.10874999999941792
+          ],
+          "baselineMedianMs": 0.04124999999476131,
+          "candidateMedianMs": 0.10874999999941792,
+          "baselineSpreadMs": 0.3958740000089165,
+          "candidateSpreadMs": 0.006083000000216998,
+          "baselineOverCandidate": 0.3793103447814446,
+          "retainedArenaBytes": [22560, 22560, 22560, 22560, 22560, 22560, 22560, 22560, 22560, 22560],
+          "memoryGrowthBytes": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-3-n-1024",
+          "calls": 168,
+          "outputBytes": 3076,
+          "baselineSamplesMs": [
+            0.8050829999992857, 1.9184999999997672, 0.929374999999709, 0.7086249999993015, 1.0582910000011907,
+            1.1525000000037835, 0.7090000000025611
+          ],
+          "candidateSamplesMs": [
+            0.3826660000049742, 1.4366249999948195, 0.9772919999959413, 0.9300419999999576, 1.0394589999996242,
+            0.9455000000016298, 0.9993329999997513
+          ],
+          "baselineMedianMs": 0.929374999999709,
+          "candidateMedianMs": 0.9772919999959413,
+          "baselineSpreadMs": 1.2098750000004657,
+          "candidateSpreadMs": 1.0539589999898453,
+          "baselineOverCandidate": 0.9509696180911833,
+          "retainedArenaBytes": [
+            1037600, 1037600, 1037600, 1037600, 1037600, 1037600, 1037600, 1037600, 1037600, 1037600
+          ],
+          "memoryGrowthBytes": [983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040, 983040],
+          "exactBatchStateEquality": true
+        },
+        {
+          "caseId": "ascii-3-n-65537",
+          "calls": 2,
+          "outputBytes": 196615,
+          "baselineSamplesMs": [
+            0.5475420000002487, 2.103792000001704, 1.0066250000018044, 2.677332999999635, 0.8574579999985872,
+            0.5198329999984708, 1.3926250000004075
+          ],
+          "candidateSamplesMs": [
+            0.7418330000000424, 0.24283299999660812, 0.243916999999783, 0.23729199999797856, 0.6950419999993755,
+            0.24612500000512227, 0.6722499999959837
+          ],
+          "baselineMedianMs": 1.0066250000018044,
+          "candidateMedianMs": 0.24612500000512227,
+          "baselineSpreadMs": 2.157500000001164,
+          "candidateSpreadMs": 0.5045410000020638,
+          "baselineOverCandidate": 4.089893346798801,
+          "retainedArenaBytes": [786544, 786544, 786544, 786544, 786544, 786544, 786544, 786544, 786544, 786544],
+          "memoryGrowthBytes": [786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432, 786432],
+          "exactBatchStateEquality": true
+        }
+      ]
+    }
+  ]
+}

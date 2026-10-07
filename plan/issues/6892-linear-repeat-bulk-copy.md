@@ -1,7 +1,7 @@
 ---
 id: 6892
 title: "Linear string.repeat provider: replace bytewise remainder loop with bounded bulk copies"
-status: ready
+status: in-progress
 created: 2026-10-07
 updated: 2026-10-07
 sprint: Backlog
@@ -347,3 +347,14 @@ the performance decision to the parent without expanding scope.
 
 This document is a ready specification, not an implementation claim or a
 report of completed tests or measured performance.
+
+## Bulk-only checkpoint outcome
+
+Initial candidate9544cc223f passes all54 new tests on both sides of two
+ordered baseline/candidate pairs; all80 complete functional rows match.
+Existing repeat controls pass25/25. Raw observations, all timed samples,
+provenance and exact comparisons are retained in
+`plan/log/6892-linear-repeat-20261007/` and the Session B repeat handoff.
+Large-output improvements coexist with measured short-output slowdowns.
+This checkpoint is not accepted for landing; a bounded specification
+amendment and follow-up validation are underway. No case is dropped.
