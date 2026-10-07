@@ -302,3 +302,85 @@ permissive index-signature evidence bags. Restore observers/environment in
 finally. Parent alone runs heavy qualification, including new-file-inclusive
 strict typing and existing protections without configuration weakening.
 Source/performance acceptance and A's final integration authority stay gated.
+
+### Original regression qualification — 2026-10-07
+
+Sol6.1 Medium delivered the isolated test file with SHA-256
+`669d8dfb5150a6574eaef1bb0436884aad18cdf60fab87745cb41418f8571f84`,
+on publication base `ea9c2eced70508dbb130dacf52f80de531f1fd3c`.
+Production and fixtures remain unchanged from canonical main
+`c41bca2bc07e9d8fddbb38ca77904dd1f0cac438`.
+
+Parent's original new-file Vitest run exited1: **28pass/8fail/36, zero skips**.
+All36 case IDs were attempted. Runtime16 (canonical self-append with growth)
+fails the instrument's construction-count floor, which incorrectly requires
+two records although genuine self-aliasing constructs one string. All four
+source cases and three source-based negative controls fail while serializing
+BigInt evidence in observation's finally block. The emitted completion reports
+only Runtime16 as an action failure, so it does NOT accurately represent the
+eight test failures and is not accepted as a successful evidence population.
+Do not infer that the source joins are fully qualified from that completion.
+
+Original test bytes, full13MiB stdout/stderr and JSON reporter output are
+retained in the isolated worker's `.tmp/6915-validation/`; an Astra High review
+and exact instrument-repair specification are pending. No source fix, skip,
+fixture change or weakened semantic assertion is authorized by these findings.
+The original unchanged3502 control suite at this fresh c41 epoch separately
+exited0: **2pass/1existing optional Porffor skip/3**. Its raw log and JSON remain
+in the planning worktree's `.tmp/`; this does not establish four-lane equality.
+New-test-inclusive strict TS7 terminated exit0, zero diagnostics. The attempted `pnpm exec tsgo` was
+unavailable (exit254); the actual repository lane uses
+`node node_modules/typescript7/lib/tsc.js --noEmit -p
+.tmp/6915-validation/tsconfig.test-inclusive.json`. No typing result is claimed
+from the unavailable-command attempt. Original test commit
+`276b10a1a7e16a521ed599d240ec3c5286c5aec2` was explicitly handed off by Sol and
+integrated as `27c2ecb0e6`; original test bytes remain identical. Full raw
+qualification is preserved in `plan/log/6915-linear-append-20261007/`.
+Full publication and acceptance remain pending.
+
+### Astra High instrument-repair plan — owner handoff
+
+Review of original28pass/8fail identifies infrastructure defects, not a
+demonstrated append-runtime bug. Sol owns ONLY the existing new test file.
+Preserve original commits/logs/JSON and all36 observations,33 transitions,
+inputs, expected outputs, complete memory bytes and functional assertions.
+
+1. Replace the false construction-count floor with genuine operand custody:
+   every initial distinct operand pointer comes from a recorded real
+   construction; self-alias uses one carrier. Subsequent repeated-append left
+   pointers equal the preceding result, with the original constructed RHS.
+   Validate construction field types/recipes. Do not add dummy allocations,
+   unexplained count weakening or alter the self-append population.
+2. Add an explicit lossless test-local graph encoder: BigInt tagged canonical
+   decimal (never Number); separate tags for NaN/infinities/negative zero and
+   undefined; native AND frozen Map/Set actual entries; typed-array bytes and
+   unchanged artifact/memory base64. Preserve graph nodes through explicit
+   object IDs/references for repeats/cycles, with every node's contents.
+   Reject unsupported values. No omitted fields, truncated bodies, summary
+   substitution or '[Circular]'. Actual identity assertions retain original
+   compiler-owned objects. No fixture cycle was demonstrated; BigInt failure
+   and frozen-collection information loss are confirmed.
+3. Track action and emission outcomes separately. Emission failure marks the
+   observation/completion failed. If both fail, preserve both errors/stacks;
+   finally must not overwrite the original action error. Emit a primitive-only
+   incomplete-evidence diagnostic when full emission fails, then fail. Require
+   zero action/schema/emission failures plus exact IDs/counts for completion.
+4. Validate records before writing: required fields/discriminants/scalar types,
+   construction and collection populations, graph reference integrity, finite
+   integral bounded pointer/length/heap fields, exact approved production and
+   fixture identities and parent-supplied test digest. Record effective flags;
+   reject incompatible incoming Linear IR settings rather than silently
+   overriding them. Require parent command/provenance fields. Parameterize
+   approved baseline/candidate identity so future paired runs use IDENTICAL
+   repaired test bytes, not baseline-specific edits.
+5. Bounded encoder/schema self-checks (no new observation IDs): large signed
+   BigInts, frozen collections, repeated/cyclic references, malformed/missing
+   fields and incompatible provenance. Keep eight same-positive-validator
+   negative controls unchanged. Preserve source owner/batch/completed-consumer/
+   module-session/body/layout-resolved defined-helper joins in full.
+
+Parent reruns test-inclusive strict typing and qualification after repair;
+original and repaired epochs remain separate. Seven original source actions
+reaching emission do not recover their missing complete records or establish
+passing tests. No production edit, source ownership release, performance
+acceptance or retirement follows from this instrument repair.
