@@ -56,6 +56,7 @@ import {
   temporalProviderCompileOptions,
   temporalProviderDisabled,
   test262TemporalLaneEnabled,
+  withTemporalCompilerFingerprint,
 } from "./test262-temporal.mjs";
 import { test262CompilerBundleHash, test262HarnessProviderCacheDir } from "./test262-harness-cache.mjs";
 
@@ -1367,7 +1368,8 @@ async function getWorkerTemporalProvider(target, semanticProviders = "auto") {
       announceTemporalUnavailable(`no ${memoKey} pre-warm stamp in ${cacheDir}`);
       return null;
     }
-    const compileOptions = temporalProviderCompileOptions(target, semanticProviders);
+    // (#6882) Keyed with the compiler's identity, exactly as the pre-warm did.
+    const compileOptions = withTemporalCompilerFingerprint(temporalProviderCompileOptions(target, semanticProviders));
     const { loadTemporalPolyfillSource } = await import("./test262-temporal.mjs");
     const polyfillSource = await loadTemporalPolyfillSource();
     const key = compilerBundle.temporalProviderCacheKey({ polyfillSource, compileOptions });

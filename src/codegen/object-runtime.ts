@@ -297,7 +297,9 @@ import { backedBoundsGuard, canonicalIndexDigitStep } from "./vec-index-domain.j
 import { buildVecIndexKeyPush, reserveVecIndexEnumerable } from "./vec-index-enumerable.js"; // (#4491) overlay-aware key flags
 import { fillHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649) js-host late-bound carrier test
 import {
+  definedIdxs,
   emitStandaloneLinkBoundaryTerminals,
+  hasTriStateArmsInstrs,
   methodCallForwardArmInstrs,
   standaloneLinkBoundaryPeerIndex,
   standaloneLinkBoundaryPeerIndices,
@@ -1130,6 +1132,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // ladder (`object-integrity-carrier.ts`) only by structural accident, so
     // only the owning module can answer `Object.isExtensible` for it.
     isExtensible: peerIsExtensibleIdx,
+    // (#6882) …and the HasProperty twin, which `in` and `for…in` need.
+    has: peerHasIdx,
   } = standaloneLinkBoundaryPeerIndices(ctx);
   // (#5383 S17 / #6600) The same question asked from the other side: a PROVIDER
   // handed a carrier its consumer owns. Registered in this window, next to the
@@ -1141,9 +1145,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // (#5383 S17) `__extern_has`'s boundary arm, in the tri-state the host lane's
   // import already speaks (0 = not mine · 2 = mine and present). The reverse hop
   // answers the same tri-state on purpose, so the arm — and its local-index
-  // arithmetic — is unchanged; only which index it calls differs, and the two
-  // are mutually exclusive (a JS-host module never has a wasm peer).
-  const hasBoundaryOrReverseIdx = boundaryObjectHasIdx ?? reversePeerHasIdx;
+  // arithmetic — is unchanged; only which index it calls differs. (#6882) The
+  // peer `has` terminal speaks it too, and a native-regime module in a JS
+  // environment has the boundary AND a peer or reverse hop: all are asked.
+  const hasArmIdxs = definedIdxs(peerHasIdx, boundaryObjectHasIdx, reversePeerHasIdx);
   const boundaryObjectGetOwnPropertyDescriptorIdx = boundaryObjectInterop
     ? ctx.funcMap.get("__boundary_object_get_own_property_descriptor")
     : undefined;
@@ -3754,7 +3759,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     const nullProtoRootLocal =
       objectProtoIndexHasMiss === undefined
         ? undefined
-        : 4 + (hasBoundaryOrReverseIdx !== undefined ? 1 : 0) + (fnctorProtoStartIdx === undefined ? 0 : 1);
+        : 4 + (hasArmIdxs.length > 0 ? 1 : 0) + (fnctorProtoStartIdx === undefined ? 0 : 1);
     const body: Instr[] = [
       // (#4491) §10.4.3 String-exotic own properties (`length` + the canonical
       // indices) are DERIVED from the wrapper's [[PrimitiveValue]], so the
@@ -3789,24 +3794,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         op: "if",
         blockType: { kind: "empty" },
         then: [
-          ...(hasBoundaryOrReverseIdx !== undefined
-            ? ([
-                { op: "local.get", index: 0 },
-                { op: "local.get", index: 1 },
-                { op: "call", funcIdx: hasBoundaryOrReverseIdx },
-                { op: "local.tee", index: 4 },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [
-                    { op: "local.get", index: 4 },
-                    { op: "i32.const", value: 2 },
-                    { op: "i32.eq" },
-                    { op: "return" },
-                  ],
-                },
-              ] satisfies Instr[])
-            : []),
+          ...hasTriStateArmsInstrs(hasArmIdxs, 4),
           // own carrier-bag hit → present (1)…
           ...(ctx.funcMap.get("__carrier_bag_has") !== undefined
             ? ([
@@ -3830,7 +3818,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             : ([
                 { op: "local.get", index: 0 },
                 { op: "call", funcIdx: fnctorProtoStartIdx },
-                { op: "local.tee", index: 4 + (hasBoundaryOrReverseIdx !== undefined ? 1 : 0) },
+                { op: "local.tee", index: 4 + (hasArmIdxs.length > 0 ? 1 : 0) },
                 { op: "ref.is_null" },
                 { op: "i32.eqz" },
                 {
@@ -3839,7 +3827,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                   then: [
                     {
                       op: "local.get",
-                      index: 4 + (hasBoundaryOrReverseIdx !== undefined ? 1 : 0),
+                      index: 4 + (hasArmIdxs.length > 0 ? 1 : 0),
                     },
                     { op: "any.convert_extern" },
                     { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -3979,7 +3967,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       [
         { name: "o", type: objRefNull },
         { name: "any", type: { kind: "anyref" } },
-        ...(hasBoundaryOrReverseIdx !== undefined ? [{ name: "boundaryHas", type: { kind: "i32" } as ValType }] : []),
+        ...(hasArmIdxs.length > 0 ? [{ name: "boundaryHas", type: { kind: "i32" } as ValType }] : []),
         ...(fnctorProtoStartIdx === undefined ? [] : [{ name: "fnctorProto", type: { kind: "externref" } as ValType }]),
         ...(nullProtoRootLocal === undefined
           ? []
@@ -4436,7 +4424,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     propMapRef,
     // (#6617) The two are mutually exclusive by construction — a JS-host module
     // never has a wasm peer — so ONE arm serves both lanes, exactly as
-    // `hasBoundaryOrReverseIdx` does for `__extern_has`.
+    // `hasArmIdxs` does for `__extern_has`.
     boundaryObjectGetPrototypeIdx: boundaryObjectGetPrototypeIdx ?? peerGetPrototypeOfIdx,
     // (#6748) …except in a native-regime module in a JS environment, which has
     // both: the wasm peer is asked first.
@@ -5159,8 +5147,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // the identical "non-null means a real answer" contract. The three are
     // mutually exclusive by construction — a module is a JS-host module, or a
     // standalone consumer, or a standalone provider — so no lane grows an arm.
-    boundaryObjectKeysIdx: boundaryObjectKeysIdx ?? peerObjectKeysIdx ?? reversePeerKeysIdx,
-    boundaryObjectForInKeysIdx: boundaryObjectForInKeysIdx ?? peerObjectKeysIdx ?? reversePeerKeysIdx,
+    // (#6882) …except a native-regime module in a JavaScript environment, which
+    // has the JS boundary AND its peer (consumer) or reverse hop (provider):
+    // each answers for different values, so all are asked — peer, boundary,
+    // reverse — instead of the first one that exists.
+    boundaryObjectKeysIdxs: definedIdxs(peerObjectKeysIdx, boundaryObjectKeysIdx, reversePeerKeysIdx),
+    boundaryObjectForInKeysIdxs: definedIdxs(peerObjectKeysIdx, boundaryObjectForInKeysIdx, reversePeerKeysIdx),
     FLAG_ENUMERABLE,
     FLAG_TOMBSTONE,
   });
