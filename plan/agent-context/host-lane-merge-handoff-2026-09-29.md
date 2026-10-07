@@ -238,3 +238,46 @@ implementer when the gate opens; (3) #6748, #6750 unchanged.
   lit/prettier → part C (unchanged).
 - Next, in order: #6877 (react), part C, the ES5 list in #6750, then the S6
   bar (#6708) re-evaluation on the next nightly that carries #6748.
+
+## 2026-10-07 — fan-out day
+
+The stakeholder raised the per-box spawn cap (`.claude/max-load` → 500) and
+re-stated the goal as "retire the JS host mode after integrating what's worth
+keeping; Fable writes plans, Opus implements". Plans for every remaining
+slice went to main in PR #6546 (#6879, #6880, #6881, #6882) and six Opus
+implementers were dispatched in parallel; two more slices were filed by
+implementers and dispatched the same day.
+
+| issue | PR | state at time of writing | result |
+| --- | --- | --- | --- |
+| #6877 cross-module bare-name captures (react) | #6566 | **merged** | react **measures on the host lane** (checksum 8 = Node) for the first time; three bare-name readers fixed; chunked-IIFE `var` global clobber fixed (was wrong on gc too) |
+| #6880 g1 sloppy `this` under call/apply/bind | #6560 | **merged** | `10.4.3-1-*` 156 → 184 on the regime |
+| #6880 g3 `filter` receiver identity | #6573 | open, synced | `filter/*` 210 → 227 |
+| #6879 acorn | #6567 | open, synced | acorn **measures** on the regime (422 = 422); four gaps: `hasOwn` on admitted objects, export boundary signatures, >32 K string bridge, instance props in the JS view |
+| #6879 prettier | #6569 | open, CLEAN | compiles + correct unoptimized; `-O4` timed out locally, CI measures |
+| #6882 link residue | #6571 | open, synced | PlainTime 473 → 485 (the 8 left fail on standalone too); `in`/for-in/keys/`typeof` across the link; Symbol `typeof` fix; Temporal cache key now includes the compiler hash |
+| #6890 `console` as a value on the regime | #6576 | open, synced | react **measures on the regime lane** (8 = 8) |
+| #6898 #3418 elision re-keyed to the regime | (in flight, opus-6880) | — | the unused harness `eval` shim kept every regime row in eval mode; 43/43 probed rows pass with the one-line re-key; needs the whole-regime measurement |
+| #6894 eval-mode `var g;` clobbers hoisted `function g` | (in flight, opus-6894) | — | deepEqual rows / ES5 group 2 |
+| #6881 legacy `__js_array_*` leak | (in flight, opus-6881) | — | |
+| #6910 `process.env` host read on the regime | (in flight, opus-6910) | — | from #6890's finding |
+
+Process facts worth keeping:
+- The agent worktrees' cwd hook blocks `git merge upstream/main`; the lead
+  syncs each PR from this worktree via a local alias branch
+  (`git checkout -B sync-N fork/<branch> && git merge upstream/main && git push fork sync-N:<branch>`).
+- The pre-push LOC hook compares against the FORK's main in agent worktrees
+  and flags untouched files; implementers used its documented
+  `LOC_BUDGET_SKIP=1` escape after the gate passed against upstream — CI's
+  `quality` is the arbiter. Worth fixing the hook's base (it should resolve
+  upstream like `check-loc-budget.mjs` does).
+- Two implementers used `pkill -f` with broad patterns on the shared box;
+  the rule "stop only your own PIDs" is now in every brief.
+- New #6797 gates bite every new codegen file: import-cycle ratchet
+  (`--update` for a file inside the SCC), flat-dir budget (new files go in a
+  `src/codegen/<sub-dir>/`), boundaries inventory.
+
+Regime npm-compat lane expected after the next refresh: clsx, cookie,
+moment, hono, redux, acorn, react measured; prettier pending its `-O4`;
+marked and lit measured since 10-06. S6 (#6708) re-evaluation waits on the
+next nightly that carries #6748, #6882 and #6898.
