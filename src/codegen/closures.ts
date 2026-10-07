@@ -1,3 +1,4 @@
+import { undefinedExternInstrs } from "./any-helpers.js";
 import { initializeNativeGeneratorFunctionValue } from "./generators-factory-prototype.js";
 import { snapshotArrowNewTarget } from "./expressions/new-target-value.js";
 import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
@@ -47,6 +48,7 @@ import {
   hostFacingCallbackReturnType,
   resolveCallbackMakerName,
 } from "./callback-ctor-bridge.js"; // (#4394) bridge [[Construct]] parity · (#5375) host-facing result type
+import { BOOLEAN_I32, callbackBodyBoxesBoolean, hostBooleanCallbackResult } from "./closures/host-boolean-callback.js";
 import { registerStandaloneDomCallbackDirectClosure } from "./standalone-dom-callback-authority.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
@@ -217,6 +219,11 @@ import {
   emitClosureConstruction,
   closurePrecedesBindingInitializerStore,
 } from "./closures/arrow-phases.js"; // (#3278) arrow/fn-expr closure phase helpers
+import {
+  initializeOrdinaryNewTarget,
+  ORDINARY_NEW_TARGET,
+  arrowReadsLexicalNewTarget,
+} from "./closures/ordinary-new-target.js";
 import {
   collectDirectEvalActivationBindingNames,
   collectDirectEvalBindingNames,
@@ -799,6 +806,30 @@ function preservableDescriptorCaptureDeclaration(
 }
 
 /**
+ * (#6872) A parameter/local of the method itself that merely shares a name with
+ * an enclosing local is not a capture: promoting would re-route the enclosing
+ * frame's binding through a global the method never writes. Inside an async
+ * frame (whose resume state machine keeps its own locals) the frame's later
+ * writes then missed the global its reads used (`const html = await …` around a
+ * `{ postprocess(html) {…} }` literal read `null`). Only names with at least
+ * one resolved reference and none outside `ownScope` are dropped.
+ */
+function dropOwnScopeBindings(
+  ctx: CodegenContext,
+  ownScope: ts.FunctionLikeDeclaration,
+  referencedNames: Set<string>,
+): void {
+  for (const name of [...referencedNames]) {
+    if (name === "this") continue;
+    const references = analyzeDescriptorCaptureReferences(ctx, ownScope, name);
+    if (references.unresolvedValueReference || references.declarations.size === 0) continue;
+    if ([...references.declarations].every((declaration) => nodeIsInside(declaration, ownScope))) {
+      referencedNames.delete(name);
+    }
+  }
+}
+
+/**
  * Promote captured locals to globals for getter/setter accessor functions.
  *
  * When an object literal getter/setter references variables from the enclosing
@@ -848,6 +879,7 @@ export function promoteAccessorCapturesToGlobals(
      *  `__isLeakTracingEnabled` const vs 00_infra's declaration). */
     forceValueNames?: ReadonlySet<string>;
   },
+  ownScope?: ts.FunctionLikeDeclaration, // (#6872) owner of `accessorBody`; see dropOwnScopeBindings
 ): void {
   if (!transitiveOnly && !accessorBody && (!extraNodes || extraNodes.length === 0)) return;
 
@@ -867,6 +899,7 @@ export function promoteAccessorCapturesToGlobals(
       collectReferencedIdentifiers(node, referencedNames);
     }
   }
+  if (ownScope) dropOwnScopeBindings(ctx, ownScope, referencedNames);
   // (#5148 checkpoint) Recorded-slot fallbacks for transitive captures whose
   // block-scoped source binding is already unmapped from `localMap` (the
   // declaring IIFE block of a concatenated multi-module init has ended) but
@@ -2204,11 +2237,13 @@ export function computeClosureWrapperSig(
   const sig = yieldKeyedGenerator ? undefined : ctx.checker.getSignatureFromDeclaration(arrow);
   let closureReturnType: ValType | null = null;
   let checkerReturnWasNever = false;
+  let checkerReturnWasUndefined = false;
   if (isGenerator || yieldKeyedGenerator) {
     closureReturnType = { kind: "externref" };
   } else if (sig) {
     let retType = ctx.checker.getReturnTypeOfSignature(sig);
     checkerReturnWasNever = (retType.flags & ts.TypeFlags.Never) !== 0;
+    checkerReturnWasUndefined = (retType.flags & ts.TypeFlags.Undefined) !== 0;
     if (isAsync) {
       retType = unwrapPromiseType(retType, ctx.checker);
     }
@@ -2255,13 +2290,25 @@ export function computeClosureWrapperSig(
   if (closureReturnType === null && checkerReturnWasNever && !ts.isFunctionDeclaration(arrow)) {
     closureReturnType = inferExplicitClosureReturnType(ctx, arrow);
   }
+  // `undefined` is a value, not a void callback contract. In particular the
+  // checker can infer it for a getter of an initially-undefined binding that
+  // another retained closure later writes. Dropping the getter's result then
+  // hides those writes forever. Preserve the runtime value on the open carrier.
+  if (
+    closureReturnType === null &&
+    !ts.isFunctionDeclaration(arrow) &&
+    checkerReturnWasUndefined &&
+    unboundClosureReturnsAValue(arrow)
+  ) {
+    closureReturnType = { kind: "externref" };
+  }
   if (closureReturnType !== null && !ts.isFunctionDeclaration(arrow)) {
     const ctxType = ctx.checker.getContextualType(arrow);
     if (ctxType) {
       const ctxCallSigs = ctxType.getCallSignatures?.();
       if (ctxCallSigs && ctxCallSigs.length > 0) {
         const ctxRetType = ctx.checker.getReturnTypeOfSignature(ctxCallSigs[0]!);
-        if (isVoidType(ctxRetType) && !isAssignedToSymbolIterator(arrow)) {
+        if ((ctxRetType.flags & ts.TypeFlags.Void) !== 0 && !isAssignedToSymbolIterator(arrow)) {
           closureReturnType = null;
         }
       }
@@ -2860,6 +2907,7 @@ export function compileLiftedClosureBody(
   for (let i = 0; i < liftedFctx.params.length; i++) {
     liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
   }
+  if (!ts.isArrowFunction(arrow)) initializeOrdinaryNewTarget(ctx, liftedFctx, undefinedExternInstrs);
   // (#3683 S2/S3) Typed-`this` TWIN prologue. Runs FIRST so `typedThisLocalIdx`
   // is live for every subsequent statement. Since S3 this emits NO instructions
   // at all — the receiver arrives as param 0 — see typed-this.ts.
@@ -3710,7 +3758,10 @@ export function compileArrowAsClosure(
   // 2. Analyze captured variables (referenced/written free vars, outer-write +
   //    TDZ-flag boxing) and the self-recursive binding — see planClosureCaptures.
   const reachesDirectEval = functionMayReachDirectEval(arrow, ctx.oracle);
-  const additionalCaptureNames = planAdditionalWithEnvironmentCaptureNames(fctx, reachesDirectEval);
+  const additionalCaptureNames = new Set(planAdditionalWithEnvironmentCaptureNames(fctx, reachesDirectEval));
+  if (ts.isArrowFunction(arrow) && fctx.localMap.has(ORDINARY_NEW_TARGET) && arrowReadsLexicalNewTarget(arrow)) {
+    additionalCaptureNames.add(ORDINARY_NEW_TARGET);
+  }
   // Ordinary function frames do not bind `this` in localMap: their receiver
   // is resolved through __current_this at each source read.  An arrow must
   // snapshot that value at creation, however. Keep the snapshot in a private
@@ -4448,6 +4499,7 @@ export function compileArrowAsCallback(
   // return type instead of crashing the whole compile — the body still coerces
   // its actual return value via the normal path.
   let cbReturnType: ValType | null = null;
+  let hostBooleanResult = false;
   try {
     const sig = ctx.checker.getSignatureFromDeclaration(arrow);
     if (sig) {
@@ -4457,6 +4509,8 @@ export function compileArrowAsCallback(
         // object-literal return types lower to externref (host plain objects).
         // (#5375) A host-invoked accessor/method returns references as externref.
         cbReturnType = hostFacingCallbackReturnType(resolveWasmTypeForClosureReturn(ctx, retType), needsThis);
+        hostBooleanResult = hostBooleanCallbackResult(ctx, retType, cbReturnType); // (#6417)
+        if (hostBooleanResult) cbReturnType = { kind: "externref" };
       }
     }
   } catch {
@@ -4488,6 +4542,7 @@ export function compileArrowAsCallback(
     locals: [],
     localMap: new Map(),
     returnType: cbReturnType,
+    hostBooleanReturn: hostBooleanResult || undefined,
     body: [],
     blockDepth: 0,
     breakStack: [],
@@ -4648,7 +4703,9 @@ export function compileArrowAsCallback(
       // Expression result is the return value — already on stack
       exprBodyHasReturnValue = true;
       // Coerce expression type to declared return type if needed
-      if (exprType.kind !== cbReturnType.kind) {
+      if (callbackBodyBoxesBoolean(ctx, exprType, cbReturnType, hostBooleanResult, body)) {
+        coerceType(ctx, cbFctx, BOOLEAN_I32, cbReturnType); // (#6417) `true`, not `1`
+      } else if (exprType.kind !== cbReturnType.kind) {
         const instrs = coercionInstrs(ctx, exprType, cbReturnType, cbFctx);
         if (instrs.length > 0) {
           cbFctx.body.push(...instrs);

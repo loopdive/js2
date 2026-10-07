@@ -238,7 +238,7 @@ export function buildDrainLocals(): LocalDef[] {
   ];
 }
 
-export function buildDrainBody(resources: PreparedNativeMicrotaskReservations): Instr[] {
+export function buildDrainBody(resources: PreparedNativeMicrotaskReservations, single = false): Instr[] {
   const fnLocal = 0;
   const capsLocal = 1;
   const argLocal = 2;
@@ -306,7 +306,7 @@ export function buildDrainBody(resources: PreparedNativeMicrotaskReservations): 
             { op: "drop" },
 
             // depth 0: re-enter the loop label.
-            { op: "br", depth: 0 },
+            ...(single ? [{ op: "return" } as Instr] : [{ op: "br", depth: 0 } as Instr]),
           ],
         },
       ],

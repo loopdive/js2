@@ -1,4 +1,9 @@
+import { captureDenoPostPositionMainPredecessorPolicySource } from "./helpers/ir-deno-post-position-main-successor.js";
+import { readRemainderRuntimeContractReceiptSource as readRuntimeContractReceiptSource } from "./helpers/ir-remainder-runtime-contract-evolution.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
+import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
+import { captureSourceMapPositionInventoryPredecessorPolicySource } from "./helpers/ir-source-map-position-inventory-successor.js";
 import { captureMainInventoryPredecessorPolicySource } from "./helpers/ir-main-inventory-source-successor.js";
 import {
   captureArrayBufferIsViewMainPredecessorPolicySource,
@@ -83,9 +88,7 @@ import {
   receiptRows,
 } from "./helpers/ir-historical-runtime-reconstruction.js";
 
-import { readRuntimeContractReceiptSource } from "./helpers/ir-runtime-contract-evolution.js";
-
-import { beforeRuntimePreparationRelocation } from "./helpers/ir-runtime-preparation-relocation.js";
+import { beforeRemainderRuntimePreparationRelocation as beforeRuntimePreparationRelocation } from "./helpers/ir-remainder-runtime-preparation-relocation.js";
 
 afterEach(async () => {
   // Yield between synchronous source proofs so Vitest can process task-update RPCs.
@@ -2666,7 +2669,17 @@ function fixtureCaptureInput(epoch: (typeof fixtureCaptureEpochs)[number]): stri
           captureLoweringAnalysisPredecessorPolicySource(
             capturePresentationClassificationPredecessorPolicySource(
               captureArrayBufferIsViewMainPredecessorPolicySource(
-                captureMainInventoryPredecessorPolicySource(fixtureCaptureRead("scripts/compiler-boundaries.json")),
+                captureMainInventoryPredecessorPolicySource(
+                  captureSourceMapPositionInventoryPredecessorPolicySource(
+                    capturePositionClassFieldsMainPredecessorPolicySource(
+                      capturePositionFinallyMainPredecessorPolicySource(
+                        captureDenoPostPositionMainPredecessorPolicySource(
+                          fixtureCaptureRead("scripts/compiler-boundaries.json"),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
@@ -3384,7 +3397,17 @@ function fourStageCaptureInput(epoch: (typeof fourStageCaptureEpochs)[number]): 
               captureLoweringAnalysisPredecessorPolicySource(
                 capturePresentationClassificationPredecessorPolicySource(
                   captureArrayBufferIsViewMainPredecessorPolicySource(
-                    captureMainInventoryPredecessorPolicySource(fixtureCaptureRead("scripts/compiler-boundaries.json")),
+                    captureMainInventoryPredecessorPolicySource(
+                      captureSourceMapPositionInventoryPredecessorPolicySource(
+                        capturePositionClassFieldsMainPredecessorPolicySource(
+                          capturePositionFinallyMainPredecessorPolicySource(
+                            captureDenoPostPositionMainPredecessorPolicySource(
+                              fixtureCaptureRead("scripts/compiler-boundaries.json"),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),

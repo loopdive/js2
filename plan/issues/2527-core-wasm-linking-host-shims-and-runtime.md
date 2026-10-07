@@ -404,6 +404,110 @@ Apply the same discipline to any other capability this linker makes optional
 (host-API shims, `runtime.wasm` GC helpers): if a lane can run with or without
 it, the artifact must say which, unprompted.
 
+## Narrow runtime-provider ABI alignment — implementation admission (2026-10-06)
+
+Approved Astra prerequisite plan: align only the maintained provider builder's
+strict expected ABI with canonical producer version 3, add a producer parity
+test and exercise the exact extracted `verify` declaration. Preserve missing,
+old and future metadata rejection, zero imports, five required exports, canary
+instantiation and publication ordering. No shared loader, canonical producer,
+IR, cache schema or Symbol-demand changes are admitted.
+
+Sol 6.1 owns `codex/2527-runtime-provider-abi-sol61`, created from freshly fetched
+upstream main `bba74cfa80aac38a3d29ba6b331d70f6bb0f9cb1`. The earlier
+`e1d0485572bf189d887e4bbfbbbc2675cf26aa08` to current-main diff changes IR
+monomorphization and reports, but not this builder, canonical producer, loader,
+package manifest, lockfile or workspace configuration. Root reconciled the
+exact script/test ownership: no identified active overlap; no foreign worktree
+or primary-checkout edits are authorized.
+
+At admission, native acceptance was UNEXECUTED. Provision a genuinely
+private Node 24 and frozen dependency graph, build fresh compiler/runtime
+bundles, then use the normal cold builder with unique own cache/output paths.
+Require actual ABI 3 metadata and raw binary verification, matching manifest
+inputs, zero imports, all exports and canary. Execute the existing canonical
+provider/consumer scenario plus an actual formatting-value check; reject ABI 2
+and wrong hash through the canonical binary verifier. Remove just the alignment
+and repeat a cold builder rejection, restore it and repeat success. Retain
+terminal receipts and never substitute a stale provider or an unchanged-cache
+hit for attribution. Stop if metadata is absent/not 3 or binary verification
+fails. Scoped checks precede publication; broad suites need root admission.
+
+### Measured prerequisite acceptance (2026-10-06)
+
+The production change is the script-local expected-version constant 3, its
+strict equality and version diagnostic. The new test reads the exact AST
+`verify` declaration and actual version/export initializers; it does not run
+the CLI main or substitute a rewritten verifier. Current-version admission,
+missing fingerprint/ABI, old ABI 2, future ABI 4, each of five missing exports
+and nonempty imports are covered. All 12 guard/parity tests and all 10 existing
+canonical-recgroup tests passed (22/22; 2/2 files) with private Vitest 3.2.7.
+Scoped formatting, lint, LOC/function budgets, oracle ratchet, issue-document
+integrity and issue-ID checks also passed without waivers. Publication uses the
+normal repository commit/push hooks; broad suites were not run locally.
+
+Own upstream source epoch has 1,841 source files and SHA256 digest
+`f1d7c1f3042201a8fae0de085c2441532009c1a26adbde99637550dde8e7c8a5`.
+The full private Node 24 copy contains 8,615 files; executable SHA256 is
+`7f9f8346011946e63956e45d1860cc409631802529e8cb18a0c86eed2ff5bf2e`.
+Normal frozen-lockfile installation retained lifecycle scripts and a private
+copy store. Readback verified 45 roots, 825 installed snapshots, 171 supported
+platform omissions, 1,636 edges and all eight Vitest packages at 3.2.7. Fresh
+normal compiler and runtime bundles both terminated 0. Source, primary
+dependencies/configuration and worktree-hook sentinels stayed unchanged.
+
+Actual normal cold builder inputs were source `export {};\n` (SHA256
+`8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881`),
+the script's unchanged normal compile options, loader origin
+`compiler-bundle.mjs`, compiler bundle hash `cf57d16657725e73`, and key
+`84803e1bfa2640a06b5a9010`. Published and cache manifests/binaries matched;
+manifest key, bundle hash, source hash, options and byte count were checked.
+The actual 30,975-byte provider SHA256 is
+`c4edcb1007da47cb9984cfd08795dc09ae88ac2583457e1de173a41f825930bf`.
+Its fingerprint is ABI 3, count 10, hash `9f92591261f6a7b1`. Raw binary
+verification passed; imports are empty, all five number exports exist and
+canary instantiation succeeds. The same-store number-format consumer has the
+identical fingerprint and passed raw verification. Its actual formatted results
+were `"42"`, `"-123.5"`, `"0"` (3/3) through the supported normal host decoder.
+
+The first acceptance driver failed after a successful builder because it
+omitted normal `importObject.__setExports(instance.exports)` wiring. Preserve
+that failed arm rather than count it as success. A same-source/same-provider
+diagnostic measured three empty host strings before the supported hook and all
+three exact expected strings after it. Only the ignored driver was corrected;
+no runtime/loader or consumer-source change was made. A fresh cold builder arm
+then passed the complete consumer value check.
+
+For removal attribution, changing only the expected-version literal 3 to 2
+made another normal cold builder terminate 1 with the ABI v2 metadata error,
+before publishing any cache/output files. Exact restoration (builder SHA256
+`911b762ade9323295ff7d8ab8508fadba3cea9a09a7629b4cf3ca49f5318ae8a`)
+made a third unique cold cache build terminate 0 and reproduce the identical
+provider bytes, current fingerprint and raw verification. Old ABI 2 and a
+same-version wrong hash were rejected by the real canonical binary verifier.
+Those negatives do **not** assert independent builder cache hash validation;
+that remains outside this repair. No Symbol rows or conformance gains are
+claimed, and the earlier failed Symbol compile's actual metadata remains unknown.
+
+Retained own `.tmp/` receipts (all paths relative to this worktree):
+
+- `2527-abi-private-deps.C33Q6v/graph-readback.json`, SHA256
+  `86894096e7fc608789e45af78082fb82391c08d12706e136036b66cdfbeae271`.
+- `2527-abi-build.AGcCbp/receipt.json`, SHA256
+  `ff545e74ec5cdf7384148c1a874426e38143e2e294921491cea4bac0320f5597`.
+- Failed first arm: `2527-abi-native-current.085zZm/` retains normal builder
+  terminal, published binary/manifest and both decoder diagnostics.
+- Successful corrected arm: `2527-abi-native-current.F5SRxX/receipt.json`, SHA256
+  `7153b0d5c52a67894f1e815b78f69976245098379ffa4851f1d512224aab06bb`.
+- Removed arm: `2527-abi-native-removed.iylgsO/receipt.json`, SHA256
+  `2052ae284c0507eb9cdd2e06b6780f3b08b388db6420aed87f568c275ee4b883`.
+- Restored arm: `2527-abi-native-restored.gcPbWK/receipt.json`, SHA256
+  `38488a155372db87ea246efa135d5059fa74b948f004dc95f423335d7c2510b4`.
+- Focused tests: `2527-abi-checks-focused.8pRXte/receipt.json`, SHA256
+  `44fff179c7498dc13e1b88f961010e54b3469779f1ccc253a3f3630e8ba9f58a`.
+- Scoped gates: `2527-abi-checks-gates.su6HwW/receipt.json`, SHA256
+  `16df9f202a1a1805ab76797efce239298ba878c1e7105bc67067dadaf38fa3fc`.
+
 ## Notes
 
 Split from the #389-driven modularization discussion. The Component Model + WIT

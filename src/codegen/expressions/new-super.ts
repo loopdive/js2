@@ -1,3 +1,5 @@
+import { reserveBuiltinConstructorIdentityGlobal } from "../builtin-static-globals.js";
+import { isStandalonePromiseActive } from "../async-scheduler.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { compileCollectionSuperMethodCall } from "../classes/standalone-collection-carrier.js"; // (#6754)
 import { widenJsDefaultGuessSlot } from "../js-default-param-type-guess.js";
@@ -78,6 +80,7 @@ import {
   ensureObjVecBuilders,
   reserveApplyClosure,
   WRAPPER_PRIMITIVE_KEY, // (#6775 S5)
+  emitStandaloneArrayConstructor,
 } from "../object-runtime.js"; // (#1100) standalone Proxy native runtime; (#2928) Function-marker construct
 import { ensureSetHelpers, tryCompileNativeSetMethodCall } from "../set-runtime.js";
 const COLLECTION_CALLS = { map: tryCompileNativeMapMethodCall, set: tryCompileNativeSetMethodCall } as const; // (#6754)
@@ -110,6 +113,7 @@ import { linkCompatibleDeclaredStructAncestor } from "../struct-hierarchy-layout
 import { emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
 import { emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; // (#4438) §10.2.2
 import * as bcv from "../builtin-ctor-value-invoke.js"; // (#6713) RegExp / Error-family carriers as values
+import { emitBuiltinArrayConstructOnNull, emitBuiltinPromiseConstructOnNull } from "./builtin-native-dyn-construct.js";
 import {
   emitBuiltinCollectionConstructOnNull,
   tryEmitErrorFamilyValueConstruct,
@@ -169,7 +173,7 @@ import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5
 import { emitStandaloneCommaHeritageEffects } from "../classes/class-heritage-comma.js"; // (#6772 S6)
 import { emitStandaloneHeritagePrototypeGet } from "../classes/class-heritage-runtime-get.js"; // (#6772 S11)
 import { emitSuperUninitializedThisCheck, emitUninitializedThisGuard } from "../classes/derived-ctor-this-guard.js"; // (#6772 S1b)
-import { emitNewSiteOverrideSelect } from "../classes/ctor-return-override.js"; // (#6772 S2)
+import { emitNewSiteOverrideSelect, tryEmitDerivedEffectiveThis } from "../classes/ctor-return-override.js"; // (#6772 S2)
 import { compileTemporalNewExpression } from "../temporal-native.js";
 import {
   emitSuperUninitializedThisGuard,
@@ -218,6 +222,21 @@ import {
   emitClassExpressionStaticInitialization,
   emitClassExpressionStaticsBeforeValue,
 } from "../class-expression-static-init.js";
+
+const builtinNativeConstructServices = {
+  get emitStandaloneArrayConstructor() {
+    return emitStandaloneArrayConstructor;
+  },
+  get emitStandalonePromiseFromExecutorValue() {
+    return emitStandalonePromiseFromExecutorValue;
+  },
+  get isStandalonePromiseActive() {
+    return isStandalonePromiseActive;
+  },
+  get reserveBuiltinConstructorIdentityGlobal() {
+    return reserveBuiltinConstructorIdentityGlobal;
+  },
+} as const;
 
 // #2146: resolveEnclosingClassName now lives in shared.ts (imported above).
 
@@ -1304,7 +1323,7 @@ function compileSuperMethodCallCore(
   expr: ts.CallExpression,
   methodName: string,
 ): InnerResult {
-  emitUninitializedThisGuard(ctx, fctx, expr.expression); // (#6772 S1b) GetThisBinding precedes the lookup
+  if (emitSuperUninitializedThisCheck(ctx, fctx, expr.expression)) return VOID_RESULT; // (#6772 S1b) GetThisBinding precedes the lookup
   // Degenerate fallback: evaluate args for side effects and leave a
   // return-typed default (0 / 0 / undefined) so a value remains for the
   // enclosing expression.
@@ -1838,10 +1857,14 @@ export function classSuperRefEmitters(
  * an ordinary `new C().method()` keeps the typed local.
  */
 function emitTypedThisSuperReceiver(ctx: CodegenContext, fctx: FunctionContext, selfIdx: number): void {
-  fctx.body.push({ op: "local.get", index: selfIdx });
-  const selfType = getLocalType(fctx, selfIdx);
-  if (selfType?.kind !== "externref" && selfType?.kind !== "ref_extern") {
-    fctx.body.push({ op: "extern.convert_any" });
+  // (#6651 V6) In a derived constructor whose parent returned an object, `this`
+  // IS that object (BindThisValue) — `super.x = v` must target it.
+  if (tryEmitDerivedEffectiveThis(ctx, fctx) === undefined) {
+    fctx.body.push({ op: "local.get", index: selfIdx });
+    const selfType = getLocalType(fctx, selfIdx);
+    if (selfType?.kind !== "externref" && selfType?.kind !== "ref_extern") {
+      fctx.body.push({ op: "extern.convert_any" });
+    }
   }
   const recvLocal = allocLocal(fctx, `__super_recv_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.tee", index: recvLocal });
@@ -5001,6 +5024,8 @@ function emitDynamicNewFallback(
     emitTaDynCtorConstructFromLocals(ctx, fctx, descLocal, argLocals);
     bcv.emitBuiltinCtorValueConstructOnNull(ctx, fctx, calleeExpr, descLocal, argLocals);
     emitBuiltinCollectionConstructOnNull(ctx, fctx, descLocal, argLocals); // (#6720)
+    emitBuiltinArrayConstructOnNull(ctx, fctx, descLocal, argLocals, builtinNativeConstructServices);
+    emitBuiltinPromiseConstructOnNull(ctx, fctx, descLocal, argLocals, builtinNativeConstructServices);
     fctx.body = savedBase;
     noMatchBase = base;
   } else if (noJsHost(ctx) && useRuntimeArgv) {
@@ -7951,6 +7976,8 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
           emitRuntimeEvalConstructOnNull(ctx, fctx, expr, taDescLocal, taArgLocals);
           bcv.emitBuiltinCtorValueConstructOnNull(ctx, fctx, dynCallee, taDescLocal, taArgLocals);
           emitBuiltinCollectionConstructOnNull(ctx, fctx, taDescLocal, taArgLocals); // (#6720) Map/Set carrier value
+          emitBuiltinArrayConstructOnNull(ctx, fctx, taDescLocal, taArgLocals, builtinNativeConstructServices);
+          emitBuiltinPromiseConstructOnNull(ctx, fctx, taDescLocal, taArgLocals, builtinNativeConstructServices);
           return { kind: "externref" };
         }
       }

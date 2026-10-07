@@ -230,6 +230,7 @@ function buildHandlerBody(res: BodyRes): Instr[] {
         { op: "ref.null.extern" },
         { op: "ref.null.extern" },
         closureBagInitInstr(),
+        { op: "i32.const", value: 0 },
         { op: "struct.new", typeIdx: promiseTypeIdx },
         { op: "local.tee", index: 5 },
         { op: "ref.as_non_null" },

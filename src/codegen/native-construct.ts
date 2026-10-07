@@ -1,3 +1,4 @@
+import { ensureExnTag } from "./registry/imports.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * #3981 — Wasm-native ordinary [[Construct]] for a first-class function VALUE
@@ -67,15 +68,17 @@ import { addFuncType } from "./registry/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { constructIsConstructorGuard } from "./construct-is-constructor-guard.js"; // (#6612 / #5383 S25)
+import { proxyNewTargetProtoInstrs } from "./object-runtime-proxy-construct-chain.js"; // (#6651 V4)
 import {
   builtinCollectionConstructArm,
   fillBuiltinCollectionDynConstruct,
 } from "./builtin-collection-dyn-construct.js"; // (#6720)
-import { standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js"; // (#5383 S2f R12)
+import { constructBoundaryPairs } from "./standalone-link-boundary.js"; // (#5383 S2f R12, #6748)
 import { arrayCtorThisCallSeen, objectConstructArm } from "./array/array-ctor-this.js"; // (#6771 S7)
 import { buildOrdinaryConstructCall, unwrapRuntimeEvalCarrierCallee } from "./construct-under-application.js"; // (#6738)
 import { CLASS_CONSTRUCT_DISPATCH, ensureStandaloneClassConstructDispatch } from "./standalone-class-construct.js"; // (#5383 S2g)
 import { RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A, RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B } from "./runtime-eval-boundary.js";
+import { ordinaryConstructTargetFrame } from "./closures/ordinary-new-target.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -354,6 +357,11 @@ function fillArgvConstructDriver(ctx: CodegenContext): void {
   const protoLocal = 4;
   const selfLocal = 5;
   const resultLocal = 6;
+  const driverLocals = [
+    { name: "__ctor_proto", type: EXTERNREF },
+    { name: "__ctor_self", type: EXTERNREF },
+    { name: "__ctor_result", type: EXTERNREF },
+  ];
   const body: Instr[] = unwrapRuntimeEvalCarrierCallee(ctx, 0); // (#6738)
 
   // (#5383 S2g twin) A class the CONSUMER owns (module-local candidates) is
@@ -373,11 +381,10 @@ function fillArgvConstructDriver(ctx: CodegenContext): void {
   }
 
   // (#5383 S2f R12 twin) A class the PROVIDER owns, reached across the link.
-  const boundaryCallableKindIdx =
-    ctx.funcMap.get("__boundary_object_callable_kind") ?? standaloneLinkBoundaryPeerIndex(ctx, "callableKind");
-  const boundaryConstructIdx =
-    ctx.funcMap.get("__boundary_object_construct") ?? standaloneLinkBoundaryPeerIndex(ctx, "construct");
-  if (boundaryCallableKindIdx !== undefined && boundaryConstructIdx !== undefined) {
+  // (#6748) Each family as a coherent pair, peer first.
+  for (const { callableKind: boundaryCallableKindIdx, construct: boundaryConstructIdx } of constructBoundaryPairs(
+    ctx,
+  )) {
     body.push(
       { op: "local.get", index: 0 },
       { op: "call", funcIdx: boundaryCallableKindIdx },
@@ -416,10 +423,18 @@ function fillArgvConstructDriver(ctx: CodegenContext): void {
     // result = callee.[[Call]](self, argsVec) — arity-generic; also serves a
     // runtime-eval interpreted-callback marker (its own driver arm calls the
     // SAME `__apply_closure`, just from a freshly-built vec).
-    { op: "local.get", index: 0 },
-    { op: "local.get", index: selfLocal },
-    { op: "local.get", index: 2 },
-    { op: "call", funcIdx: applyClosureIdx },
+    ...ordinaryConstructTargetFrame(
+      ctx,
+      [
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: selfLocal },
+        { op: "local.get", index: 2 },
+        { op: "call", funcIdx: applyClosureIdx },
+      ],
+      driverLocals,
+      4,
+      ensureExnTag,
+    ),
     { op: "local.set", index: resultLocal },
   );
 
@@ -455,11 +470,7 @@ function fillArgvConstructDriver(ctx: CodegenContext): void {
     },
   );
 
-  driver.locals = [
-    { name: "__ctor_proto", type: EXTERNREF },
-    { name: "__ctor_self", type: EXTERNREF },
-    { name: "__ctor_result", type: EXTERNREF },
-  ];
+  driver.locals = driverLocals;
   driver.body = body;
 }
 
@@ -502,10 +513,7 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
     // reaches this already-correct arm instead of falling into the ordinary
     // tail, where `Object.create(<foreign>.prototype)` and a module-local
     // closure dispatch cannot see the peer's constructor at all.
-    const boundaryCallableKindIdx =
-      ctx.funcMap.get("__boundary_object_callable_kind") ?? standaloneLinkBoundaryPeerIndex(ctx, "callableKind");
-    const boundaryConstructIdx =
-      ctx.funcMap.get("__boundary_object_construct") ?? standaloneLinkBoundaryPeerIndex(ctx, "construct");
+    const boundaryPairs = constructBoundaryPairs(ctx); // (#6748) coherent pairs, peer first
     const protoKeyInstrs = ctx.nativeConstructProtoKey.get(arity);
     if (externGetIdx === undefined || objectCreateIdx === undefined || protoKeyInstrs === undefined) {
       driver.body = [{ op: "ref.null.extern" }];
@@ -637,7 +645,7 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
                 { op: "ref.cast", typeIdx: proxyTypeIdx },
                 { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: 1 },
                 { op: "extern.convert_any" },
-                { op: "local.get", index: 1 },
+                ...proxyNewTargetProtoInstrs(ctx.funcMap.get("__proxy_construct_newtarget_proto")),
                 ...Array.from({ length: arity }, (_, arg) => ({
                   op: "local.get" as const,
                   index: arg + 2,
@@ -677,12 +685,10 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
       );
     }
 
-    const canBoundaryConstruct =
-      boundaryCallableKindIdx !== undefined &&
-      boundaryConstructIdx !== undefined &&
-      objVecNewIdx !== undefined &&
-      objVecPushIdx !== undefined;
-    if (canBoundaryConstruct) {
+    const canBoundaryConstruct = objVecNewIdx !== undefined && objVecPushIdx !== undefined;
+    for (const { callableKind: boundaryCallableKindIdx, construct: boundaryConstructIdx } of canBoundaryConstruct
+      ? boundaryPairs
+      : []) {
       body.push(
         { op: "local.get", index: 0 },
         { op: "call", funcIdx: boundaryCallableKindIdx },
@@ -748,18 +754,12 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
     // marker cannot enter that module-local classifier, so an exact type+brand
     // arm packs the already-evaluated args and invokes `__apply_closure`.
     const ordinaryCall: Instr[] = [];
-    // (#5383 S24) Above `MAX_NATIVE_CONSTRUCT_ARITY` there is no
-    // `__call_fn_method_<N>` to dispatch through — that family stops at 8 and is
-    // not widened here (its arity range is also the host bridge's scan range).
-    // `__apply_closure` takes the arguments as a vector, so it serves any arity;
-    // it is the same terminal the runtime-marker arm below already uses. Gated
-    // strictly on `arity > MAX_NATIVE_CONSTRUCT_ARITY` so that a module which
-    // reserves a driver only for Proxy→admitted-JS construction (the
-    // `methodCallIdx === undefined` case that has always existed at arities ≤ 8)
-    // keeps its exact previous null tail and stays byte-identical.
+    // A dispatcher may be absent below the cap too: a module containing only
+    // one-formal closures need not mint `__call_fn_method_0`, although `new C()`
+    // must still enter C and initialize its defaults. The vector bridge widens
+    // to the declared arity and keeps the actual argument count at zero.
     const highArityApplyTail =
       methodCallIdx === undefined &&
-      arity > MAX_NATIVE_CONSTRUCT_ARITY &&
       applyClosureIdx !== undefined &&
       objVecNewIdx !== undefined &&
       objVecPushIdx !== undefined;
@@ -790,6 +790,21 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
       applyClosureIdx !== undefined &&
       objVecNewIdx !== undefined &&
       objVecPushIdx !== undefined;
+    const driverLocals = [
+      { name: "__ctor_proto", type: EXTERNREF },
+      { name: "__ctor_self", type: EXTERNREF },
+      { name: "__ctor_result", type: EXTERNREF },
+      ...(canApplyRuntimeMarker ||
+      canProxyConstruct ||
+      canBoundaryConstruct ||
+      canClassConstruct ||
+      highArityApplyTail ||
+      underApplied
+        ? [{ name: "__ctor_args", type: EXTERNREF }]
+        : []),
+      ...(underApplied ? [{ name: "__ctor_declared_arity", type: I32 }] : []),
+    ];
+    const ordinaryTargetCall = ordinaryConstructTargetFrame(ctx, ordinaryCall, driverLocals, arity + 2, ensureExnTag);
     if (canApplyRuntimeMarker) {
       const markerBrandsMatch: Instr[] = [
         { op: "local.get", index: 0 },
@@ -837,11 +852,11 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
           op: "if",
           blockType: { kind: "val", type: EXTERNREF },
           then: markerCall,
-          else: ordinaryCall,
+          else: ordinaryTargetCall,
         },
       );
     } else {
-      body.push(...ordinaryCall);
+      body.push(...ordinaryTargetCall);
     }
     body.push({ op: "local.set", index: resultLocal });
 
@@ -886,17 +901,7 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
       },
     );
 
-    driver.locals = [
-      { name: "__ctor_proto", type: EXTERNREF },
-      { name: "__ctor_self", type: EXTERNREF },
-      { name: "__ctor_result", type: EXTERNREF },
-      ...(canApplyRuntimeMarker || canProxyConstruct || canBoundaryConstruct || canClassConstruct || highArityApplyTail
-        ? [{ name: "__ctor_args", type: EXTERNREF }]
-        : underApplied
-          ? [{ name: "__ctor_args", type: EXTERNREF }]
-          : []),
-      ...(underApplied ? [{ name: "__ctor_declared_arity", type: I32 }] : []),
-    ];
+    driver.locals = driverLocals;
     driver.body = body;
   }
 

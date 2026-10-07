@@ -1,3 +1,4 @@
+import { undefinedExternInstrs } from "./any-helpers.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * Function body compilation — compileFunctionBody and call-site inlining helpers.
@@ -6,6 +7,7 @@
  */
 import { hoistParameterEvalVars } from "./expressions/eval-param-scope-hoist.js"; // (#6774 S7)
 import { ts, forEachChild } from "../ts-api.js";
+import { initializeOrdinaryNewTarget } from "./closures/ordinary-new-target.js";
 import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
@@ -481,6 +483,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   }
 
   ctx.currentFunc = fctx;
+  initializeOrdinaryNewTarget(ctx, fctx, undefinedExternInstrs);
   initializeFunctionPoisonPillContext(ctx, fctx, decl);
 
   const funcPos = getSourcePos(ctx, decl);

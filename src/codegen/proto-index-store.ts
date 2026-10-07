@@ -125,6 +125,7 @@ import { nativeStringLiteralInstrs } from "./native-strings.js"; // (#4176) wrap
 import { nativeProtoParentBrands, nativeProtoSeedersByBrandOffset } from "./native-proto.js"; // (#2175 V2-S3b-1) companion seeding
 import { addFuncType } from "./registry/types.js";
 import { createToPrimitivePresenceOwner } from "./to-primitive-presence.js";
+import { spliceNativeProtoReparentArms } from "./object-model/native-proto-reparent.js"; // (#6651 V11)
 export {
   protoIndexRecvGetMissInstrs,
   captureProtoIndexReadBinding,
@@ -291,6 +292,10 @@ export function reserveProtoIndexStore(ctx: CodegenContext): void {
   // resolves that index at fill time; this one now matches them structurally so
   // the split cannot be reintroduced.
   reserve(PROTOIDX_OWN_RECV, [ext], [ext], () => [{ op: "local.get", index: 0 }]);
+  // (#6651 V11) `(protoValue, foldedAnswer) -> answer` for a builtin-proto
+  // getPrototypeOf; the identity stub keeps the fold until the V11 fill.
+  if (ctx.builtinProtoReparentDirty)
+    reserve("__protoidx_reparent_gpo", [ext, ext], [ext], () => [{ op: "local.get", index: 1 }]);
   toPrimitivePresence.installReservations(ctx, presenceReservations);
 }
 
@@ -639,6 +644,7 @@ export function fillProtoIndexStore(ctx: CodegenContext): void {
   fillOwnRecvBody(ctx); // (#2175 P2) own-view substitution — type idx resolved HERE
   spliceNativeProtoWriteArms(ctx);
   spliceNativeProtoDirectReadArms(ctx);
+  spliceReparentArms(ctx, deps); // (#6651 V11) writable [[Prototype]] on builtin prototypes
   toPrimitivePresence.complete(ctx, presenceInputs);
 }
 
@@ -1241,6 +1247,19 @@ function spliceNativeProtoWriteArms(ctx: CodegenContext): void {
     { op: "local.get", index: 0 },
     { op: "return" },
   ]);
+}
+
+/** (#6651 V11) Bind the re-parent arms to this store's helpers. */
+function spliceReparentArms(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
+  const brandOffIdx = ctx.funcMap.get(PROTOIDX_BRAND_OFF);
+  if (brandOffIdx === undefined) return;
+  spliceNativeProtoReparentArms(ctx, {
+    objectTypeIdx: deps.objectTypeIdx,
+    companionIdx: deps.companionIdx,
+    brandOffIdx,
+    objFindIdx: deps.objFindIdx,
+    undefinedValue: () => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
+  });
 }
 
 /**

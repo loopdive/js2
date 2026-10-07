@@ -1,0 +1,116 @@
+{
+  "schema": "fixed-deno-class-fields-main-successor-v1",
+  "baseMain": "cdc0255882d45181072342d9fd57f291aca93092",
+  "coordinateUnit": "utf8-byte",
+  "before": {
+    "source": {
+      "bytes": 594018,
+      "sha256": "59752f826a8a2298966e4bbae6ec29e15a168f7e45fb58379dbb923ccd2f2694",
+      "gitBlob": "dfd1b16089d1d66982e0eef5d79b50f74fd6d869"
+    },
+    "dataSha256": "07d3bc5470d5864ae6f1e7d199eed523b382119aace6366db92804a7c7c63380",
+    "filesSha256": "f30f8e6a86c56fc16e6c9ad768d52930b70f73beef57feffae69ad932d5bf78c",
+    "fileCount": 1855,
+    "topLevelKeys": [
+      "schema",
+      "description",
+      "sourceRoot",
+      "tsconfig",
+      "requireGitProvenance",
+      "externalAssets",
+      "frontendWrapper",
+      "moduleExtensions",
+      "layers",
+      "allowedEdges",
+      "externalPackages",
+      "activationHistory",
+      "nonModules",
+      "moves",
+      "evidence",
+      "files"
+    ]
+  },
+  "current": {
+    "source": {
+      "bytes": 594346,
+      "sha256": "4ee416b75193d78ec696ac0d21e9328cee842602f6926cf3223e6de0dc703f7a",
+      "gitBlob": "e70ee1b32f53de5d5935aa0ac52987959effc64a"
+    },
+    "dataSha256": "5f5afeb67c06edff1727dedda43820f8a66b92f8b3351b9e5a81d264822396c7",
+    "filesSha256": "fb880095aab466a486a6b34d17c2f9587a89fa11c87d77f68bc25b938bf187e9",
+    "fileCount": 1856,
+    "topLevelKeys": [
+      "schema",
+      "description",
+      "sourceRoot",
+      "tsconfig",
+      "requireGitProvenance",
+      "externalAssets",
+      "frontendWrapper",
+      "moduleExtensions",
+      "layers",
+      "allowedEdges",
+      "externalPackages",
+      "activationHistory",
+      "nonModules",
+      "moves",
+      "evidence",
+      "files"
+    ]
+  },
+  "addedRows": [
+    {
+      "index": 1664,
+      "row": {
+        "path": "src/codegen/classes/externref-class-fields.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "backend-wasmgc",
+        "owner": "3518-coordinator",
+        "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      },
+      "previous": {
+        "path": "src/codegen/error-subclass-proto-chain.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "backend-wasmgc",
+        "owner": "3518-coordinator",
+        "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      },
+      "next": {
+        "path": "src/codegen/class-proto-toplevel-write.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "backend-wasmgc",
+        "owner": "3518-coordinator",
+        "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+      }
+    }
+  ],
+  "lineage": {
+    "beforeMain": "abb3471c46bb9e7129b28812fe16313c857cda69",
+    "deliveredMain": "cdc0255882d45181072342d9fd57f291aca93092",
+    "beforeSource": {
+      "bytes": 588351,
+      "sha256": "4b442f641a2a99fd4abffc5ef85271858f4a3ae2337fcde8c380fba076a22d05",
+      "gitBlob": "c5da824f89dded25e85e7e315825d2d61d97f906"
+    },
+    "deliveredSource": {
+      "bytes": 588679,
+      "sha256": "e91199cafc1788a5e976e29553b0c093a28c53fd7e2dcc3d806c8559c3f9547e",
+      "gitBlob": "6066caa751c06e8726076ee622311f509bdd5f77"
+    },
+    "index": 1647,
+    "beforeOffset": 542771,
+    "afterOffset": 542771,
+    "insertion": "    {\n      \"path\": \"src/codegen/classes/externref-class-fields.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
+  },
+  "rawSpans": [
+    {
+      "beforeOffset": 548059,
+      "afterOffset": 548059,
+      "before": "",
+      "after": "    {\n      \"path\": \"src/codegen/classes/externref-class-fields.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
+    }
+  ]
+}

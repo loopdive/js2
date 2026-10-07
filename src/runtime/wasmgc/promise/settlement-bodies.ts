@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { FuncHandle, TypeHandle, Instr, LocalDef } from "../../../wasm/model/instructions.js";
+import { buildRegistrationOrderedCallbacks } from "./reaction-order-bodies.js";
+import { buildPromiseRejectionEvent } from "./rejection-event-bodies.js";
 
 export type PromiseHookResources =
   | undefined
@@ -16,6 +18,7 @@ export interface PromiseSettleResources {
   readonly resolveHook: PromiseHookResources;
   readonly unhandledHeadGlobalIdx: number;
   readonly unhandledNodeTypeIdx: number;
+  readonly rejectionDispatchFuncIdx?: FuncHandle;
 }
 
 export interface IdentityReactionResources {
@@ -78,86 +81,7 @@ export function buildPromiseSettleLocals(callbackTypeIdx: TypeHandle): LocalDef[
   return [
     { name: "$callbacks", type: { kind: "externref" } },
     { name: "$callback", type: { kind: "ref", typeIdx: callbackTypeIdx } },
-    { name: "$fifo", type: { kind: "externref" } }, // (#5197 r3) the list in attach order
-  ];
-}
-
-/**
- * (#5197 r3 Step 2) §27.2.1.8 TriggerPromiseReactions runs reactions in the order
- * they were attached, but every attach site PREPENDS its node (O(1)). With two or
- * more nodes the detached list is rebuilt in reverse into `fifoLocal` — fresh
- * nodes, so `$PromiseCallback` stays immutable and every twin declaration of it
- * is untouched — and handed back through `callbacksLocal`. One node needs nothing.
- */
-function reverseDetachedCallbacks(
-  callbackTypeIdx: TypeHandle,
-  callbacksLocal: number,
-  callbackLocal: number,
-  fifoLocal: number,
-): Instr[] {
-  const node = (fieldIdx: number): Instr[] => [
-    { op: "local.get", index: callbackLocal },
-    { op: "struct.get", typeIdx: callbackTypeIdx, fieldIdx },
-  ];
-  const hasTwo: Instr[] = [
-    { op: "local.get", index: callbacksLocal },
-    { op: "ref.is_null" },
-    {
-      op: "if",
-      blockType: { kind: "val", type: { kind: "i32" } },
-      then: [{ op: "i32.const", value: 0 }],
-      else: [
-        { op: "local.get", index: callbacksLocal },
-        { op: "any.convert_extern" },
-        { op: "ref.cast", typeIdx: callbackTypeIdx },
-        { op: "struct.get", typeIdx: callbackTypeIdx, fieldIdx: 4 },
-        { op: "ref.is_null" },
-        { op: "i32.eqz" },
-      ],
-    },
-  ];
-  return [
-    ...hasTwo,
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "ref.null.extern" },
-        { op: "local.set", index: fifoLocal },
-        {
-          op: "block",
-          blockType: { kind: "empty" },
-          body: [
-            {
-              op: "loop",
-              blockType: { kind: "empty" },
-              body: [
-                { op: "local.get", index: callbacksLocal },
-                { op: "ref.is_null" },
-                { op: "br_if", depth: 1 },
-                { op: "local.get", index: callbacksLocal },
-                { op: "any.convert_extern" },
-                { op: "ref.cast", typeIdx: callbackTypeIdx },
-                { op: "local.set", index: callbackLocal },
-                ...node(0),
-                ...node(1),
-                ...node(2),
-                ...node(3),
-                { op: "local.get", index: fifoLocal },
-                { op: "struct.new", typeIdx: callbackTypeIdx },
-                { op: "extern.convert_any" },
-                { op: "local.set", index: fifoLocal },
-                ...node(4),
-                { op: "local.set", index: callbacksLocal },
-                { op: "br", depth: 0 },
-              ],
-            },
-          ],
-        },
-        { op: "local.get", index: fifoLocal },
-        { op: "local.set", index: callbacksLocal },
-      ],
-    },
+    { name: "$orderedCallbacks", type: { kind: "externref" } },
   ];
 }
 
@@ -170,7 +94,6 @@ export function buildPromiseSettleBody(
   const valueLocal = 1;
   const callbacksLocal = 2;
   const callbackLocal = 3;
-  const fifoLocal = 4;
   const fnFieldIdx = settledState === PROMISE_STATE_FULFILLED ? 0 : 2;
   const capsFieldIdx = settledState === PROMISE_STATE_FULFILLED ? 1 : 3;
 
@@ -191,7 +114,16 @@ export function buildPromiseSettleBody(
     {
       op: "if",
       blockType: { kind: "empty" },
-      then: [{ op: "local.get", index: valueLocal }, { op: "return" }],
+      then: [
+        ...buildPromiseRejectionEvent(
+          state.rejectionDispatchFuncIdx,
+          settledState === PROMISE_STATE_REJECTED ? 2 : 3,
+          [{ op: "local.get", index: promiseLocal }],
+          [{ op: "local.get", index: valueLocal }],
+        ),
+        { op: "local.get", index: valueLocal },
+        { op: "return" },
+      ],
     },
 
     // promise.state = fulfilled/rejected; promise.value = value
@@ -201,6 +133,24 @@ export function buildPromiseSettleBody(
     { op: "local.get", index: promiseLocal },
     { op: "local.get", index: valueLocal },
     { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 1 },
+
+    ...(settledState === PROMISE_STATE_REJECTED && state.rejectionDispatchFuncIdx !== undefined
+      ? ([
+          { op: "local.get", index: promiseLocal },
+          { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 4 },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: buildPromiseRejectionEvent(
+              state.rejectionDispatchFuncIdx,
+              0,
+              [{ op: "local.get", index: promiseLocal }],
+              [{ op: "local.get", index: valueLocal }],
+            ),
+          },
+        ] satisfies Instr[])
+      : []),
 
     // Detach callbacks before enqueueing so re-entrant `.then` calls append to
     // the settled promise's normal immediate-enqueue path.
@@ -220,6 +170,10 @@ export function buildPromiseSettleBody(
       ? ([
           { op: "local.get", index: callbacksLocal },
           { op: "ref.is_null" },
+          { op: "local.get", index: promiseLocal },
+          { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 4 },
+          { op: "i32.eqz" },
+          { op: "i32.and" },
           {
             op: "if",
             blockType: { kind: "empty" },
@@ -228,8 +182,7 @@ export function buildPromiseSettleBody(
         ] satisfies Instr[])
       : []),
 
-    ...reverseDetachedCallbacks(callbackTypeIdx, callbacksLocal, callbackLocal, fifoLocal),
-
+    ...buildRegistrationOrderedCallbacks(callbackTypeIdx, callbacksLocal, callbackLocal, 4),
     {
       op: "block",
       blockType: { kind: "empty" },
