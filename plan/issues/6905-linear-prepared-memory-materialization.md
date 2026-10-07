@@ -294,3 +294,16 @@ whole-matrix completion or permission to merge the red held PR is implied.
 - Verified test claim `6905:prepared-memory-regression-20261007`: owner `ttraenkler/codex-linear-b-memory-tests-sol61-20261007`, branch `codex/6905-linear-prepared-memory-tests-20261007`; Noether owns only the new test file.
 - Parent alone may create `src/codegen-linear/runtime/README.md`: emitted-body builders only; no registration, module mutation or AST/frontend imports; fresh instruction objects and canonical generic layout contracts. Documentation only, no behavior change.
 - Allocator scope remains with [Heap coexistence in one linear memory: relocate the bump arena above the engine’s heap base, passive data segments only](4540-linear-heap-coexistence-arena-relocation.md), owner `ttraenkler/claude-opus`, branch `claude/linear-memory-quickjs-backend-gkhszu`; its heap scope excludes this initializer function.
+
+### Final caller-attribution control: planned floor 8 (5 source / 3 unit)
+
+Preserve all seven original rows; add exactly one ordinary source-overlay control.
+Use the identical SOURCE/arguments/result 1.25 with public single-source `compile()`:
+`target:"linear", optimize:false, sourceMap:false, experimentalIR:false, disableIrFirst:true`,
+and `JS2WASM_LINEAR_IR=1`. Call-through spies must observe `generateLinearModule`,
+`prepareLinearIrOverlay`, `compileLinearIr` and `runtime.addLinearIrVecRuntime`.
+Require this compilation's real body-admission report, initializer definition in
+its captured module, validated artifact and native execution 1.25; a stale global
+getter alone is insufficient. Restore spies/environment. No new fixture/config
+variant beyond this row; unit custody/exact-artifact proofs stay unchanged. Eight
+is the planned test count, not a measured result or new Prepared allocation credit.
