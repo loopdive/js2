@@ -2,10 +2,11 @@
   "id": "6917",
   "slice": "linear-malloc-baseline-tests-20261008",
   "assignee": "ttraenkler/codex-linear-b-malloc-tests-sol61-20261008",
-  "requested_by": "ttraenkler/codex-linear-b-malloc-tests-sol61-20261008",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/6917-linear-malloc-tests-20261008",
   "claimed_at": "2026-10-07T22:39:10Z",
-  "updated_at": "2026-10-07T22:39:10Z",
-  "write_id": "1863-a3utrbfd"
+  "updated_at": "2026-10-07T22:41:13Z",
+  "write_id": "4301-d1q0s6fl",
+  "released_at": "2026-10-07T22:41:13Z"
 }
