@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { reconstructRemainderRuntimeContractReceiptSources as reconstructRuntimeContractReceiptSources } from "./helpers/ir-remainder-runtime-contract-evolution.js";
 import { beforeSourceMapProgramValidatorRelocation } from "./helpers/ir-program-validator-relocation.js";
 
 import { createHash } from "node:crypto";
@@ -31,16 +32,17 @@ import type { PreparedIrAsyncRuntime, PreparedIrAsyncRuntimeInput } from "../src
 import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 import { currentDeclarations, historicalRuntimeDeclarations } from "./helpers/ir-historical-runtime-reconstruction.js";
 
-import { beforeRuntimePreparationRelocation } from "./helpers/ir-runtime-preparation-relocation.js";
-import {
-  reconstructRuntimeContractReceiptSources,
-  runtimeContractCurrentPaths,
-} from "./helpers/ir-runtime-contract-evolution.js";
+import { beforeRemainderRuntimePreparationRelocation as beforeRuntimePreparationRelocation } from "./helpers/ir-remainder-runtime-preparation-relocation.js";
+import { runtimeContractCurrentPaths } from "./helpers/ir-runtime-contract-evolution.js";
 import {
   NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
   nativeAsyncProviderMismatch,
 } from "../src/ir/runtime/native-async-callables.js";
 import { VECTOR_CALLABLE_RUNTIME_PROVIDERS, vectorProviderMismatch } from "../src/ir/runtime/vector-callables.js";
+import {
+  NUMBER_REMAINDER_RUNTIME_PROVIDERS,
+  numberRemainderProviderMismatch,
+} from "../src/ir/runtime/number-remainder-callables.js";
 import {
   ORDINARY_OBJECT_RUNTIME_PROVIDERS,
   ordinaryObjectProviderMismatch,
@@ -675,13 +677,33 @@ describe("canonical provider identities and catalogs", () => {
       expect(ORDINARY_OBJECT_RUNTIME_PROVIDERS).toHaveLength(8);
       const semanticProviders = callables.SEMANTIC_CALLABLE_RUNTIME_PROVIDERS;
       expect(Object.isFrozen(semanticProviders)).toBe(true);
-      expect(semanticProviders).toHaveLength(14);
+      expect(semanticProviders).toHaveLength(16);
       const canonicalProviders = [
         ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
         ...VECTOR_CALLABLE_RUNTIME_PROVIDERS,
         ...ORDINARY_OBJECT_RUNTIME_PROVIDERS,
       ];
       for (const [index, provider] of canonicalProviders.entries()) expect(semanticProviders[index]).toBe(provider);
+      expect(canonicalProviders).toHaveLength(14);
+      expect(NUMBER_REMAINDER_RUNTIME_PROVIDERS).toHaveLength(2);
+      expect(Object.isFrozen(NUMBER_REMAINDER_RUNTIME_PROVIDERS)).toBe(true);
+      expect(NUMBER_REMAINDER_RUNTIME_PROVIDERS.map((provider) => [provider.id, provider.feature])).toEqual([
+        ["backend.js.number.remainder", "js.number.remainder"],
+        ["backend.js.number.remainder.early-magnitude", "js.number.remainder.early-magnitude"],
+      ]);
+      for (const [index, provider] of NUMBER_REMAINDER_RUNTIME_PROVIDERS.entries()) {
+        expect(semanticProviders[14 + index]).toBe(provider);
+        expect(callables.semanticCallableProviderMismatch(provider)).toBeUndefined();
+        expect(provider.supportedBackends).toEqual(["linear", "wasmgc"]);
+        const altered: RuntimeProviderDefinition = { ...provider, supportedBackends: ["wasmgc"] };
+        const mismatch = callables.semanticCallableProviderMismatch(altered);
+        expect(mismatch).toBe("number remainder callable provider supportedBackends mismatch");
+        expect(mismatch).toBe(numberRemainderProviderMismatch(altered));
+        for (const backend of ["linear", "wasmgc"] as const)
+          expect(
+            callables.semanticCallablePolicyMismatch(provider.feature, { target: "host", backend }),
+          ).toBeUndefined();
+      }
       for (const provider of callables.REFERENCE_ERROR_RUNTIME_PROVIDERS)
         expect(semanticProviders).not.toContain(provider);
       for (const [provider, familyMismatch] of [

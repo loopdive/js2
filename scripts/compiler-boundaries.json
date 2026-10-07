@@ -15737,6 +15737,16 @@
       "destination": "compiler",
       "owner": "3525-prepared-presentation",
       "nextBoundary": "Separate AST declaration capture and finalizer presentation from prepared-program output association before compiler-layer activation."
+    },
+    {
+      "path": "src/ir/runtime/number-remainder-callables.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/wasm/physical/number-remainder.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
     }
   ]
 }
