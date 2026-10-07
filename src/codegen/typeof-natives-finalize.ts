@@ -365,11 +365,16 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
       // (#3505 harness) typeof Symbol() is "symbol", never "object" — exclude
       // the $Symbol carrier exactly like closures.
       if (symbolTypeIdx !== undefined) {
-        exclusionArms.push(
+        const symbolArm: Instr[] = [
           { op: "local.get", index: 1 },
           { op: "ref.test", typeIdx: symbolTypeIdx },
           { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
-        );
+        ];
+        // (#6894) The boundary callable-kind arm ends the ladder with an
+        // unconditional `return`, so on the native regime a trailing symbol arm
+        // was dead and `typeof sym !== "object"` answered false. Test it first.
+        if (boundaryCallableKindIdx !== undefined) exclusionArms.unshift(...symbolArm);
+        else exclusionArms.push(...symbolArm);
       }
       b.splice(lastIdx, 0, ...exclusionArms);
     }
