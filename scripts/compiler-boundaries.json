@@ -8851,6 +8851,14 @@
       "nextBoundary": "Separate context-bound promoted capture lookup and ref-cell type selection from native capture-value instructions."
     },
     {
+      "path": "src/codegen/closures/function-intrinsic-construct.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the AST callee-shape admission from the injected %Function% identity-arm instruction assembly."
+    },
+    {
       "path": "src/codegen/closures/proxy-trap-closure-return.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

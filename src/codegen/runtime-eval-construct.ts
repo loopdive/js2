@@ -125,6 +125,13 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { RUNTIME_EVAL_AOT_CALLABLE_BRAND_A, RUNTIME_EVAL_AOT_CALLABLE_BRAND_B } from "./runtime-eval-boundary.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { armConstructIsConstructorGuard } from "./construct-is-constructor-guard.js"; // (#6651 W2a)
+import {
+  MAX_DYNAMIC_CONSTRUCT_ARITY,
+  MAX_NATIVE_CONSTRUCT_ARITY,
+  reserveNativeConstructDriver,
+} from "./native-construct.js"; // (#6651 W2a)
+import { markClassValueConstructSite } from "./standalone-class-construct.js"; // (#6651 W2a)
 
 const EXTERNREF: ValType = { kind: "externref" };
 const DRIVER_NAME = "__construct_runtime_eval";
@@ -510,4 +517,77 @@ export function fillRuntimeEvalConstructDriver(ctx: CodegenContext): void {
     { name: "__rec_self", type: EXTERNREF },
     { name: "__rec_result", type: EXTERNREF },
   ];
+}
+
+/**
+ * (#6651 W2a) The last retry of the standalone dynamic-`new` chain:
+ * `[prior] → [result]`. A binding typed as the lib `Function` interface —
+ * what `new Function()`, `new other.Function()` and `new F()` (F a
+ * `%Function%` alias) are typed as — reaches this chain, whose arms each
+ * answer ONE carrier shape (TypedArray ctor, bound function, runtime-eval
+ * callable, builtin ctor, collection, Array, Promise). An ordinary function
+ * compiled in this module is none of them, so `var C = new Function(); new
+ * C()` evaluated to null. When every arm declined (`prior` is null) and the
+ * callee is callable, run §10.2.2 [[Construct]] through the native construct
+ * driver — the same driver `function nn(x) { return new x(); }` already uses,
+ * so `C.prototype` becomes the instance's [[Prototype]]. The driver's
+ * §13.3.5.1 IsConstructor guard is armed, so a callable without
+ * [[Construct]] (an arrow, a method) throws the spec TypeError instead.
+ */
+export function emitOrdinaryFunctionConstructOnNull(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  calleeExpr: ts.Expression,
+  calleeAnyLocal: number,
+  argLocals: readonly number[],
+): void {
+  if (!ctx.standalone || argLocals.length > MAX_DYNAMIC_CONSTRUCT_ARITY || !ts.isIdentifier(calleeExpr)) return;
+  const fact = ctx.oracle.typeFactOf(calleeExpr);
+  if (fact.kind !== "builtin" || fact.name !== "Function") return;
+  if (argLocals.length > MAX_NATIVE_CONSTRUCT_ARITY) {
+    ensureObjVecBuilders(ctx);
+    reserveApplyClosure(ctx);
+  }
+  ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+  ensureLateImport(ctx, "__object_create", [{ kind: "externref" }], [{ kind: "externref" }]);
+  ensureLateImport(ctx, "__typeof_function", [{ kind: "externref" }], [{ kind: "i32" }]);
+  flushLateImportShifts(ctx, fctx);
+  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+  if (typeofFunctionIdx === undefined) return;
+  addStringConstantGlobal(ctx, "prototype");
+  markClassValueConstructSite(ctx);
+  armConstructIsConstructorGuard(ctx, fctx);
+  const driverIdx = reserveNativeConstructDriver(
+    ctx,
+    argLocals.length,
+    stringConstantExternrefInstrs(ctx, "prototype"),
+  );
+  const priorLocal = allocLocal(fctx, `__ofc_prior_${fctx.locals.length}`, { kind: "externref" });
+  const calleeLocal = allocLocal(fctx, `__ofc_callee_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push(
+    { op: "local.tee", index: priorLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [
+        { op: "local.get", index: calleeAnyLocal },
+        { op: "extern.convert_any" },
+        { op: "local.tee", index: calleeLocal },
+        { op: "call", funcIdx: ctx.funcMap.get("__typeof_function") ?? typeofFunctionIdx },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: [
+            { op: "local.get", index: calleeLocal },
+            { op: "ref.null.extern" }, // no supplied prototype: the driver reads `callee.prototype`
+            ...argLocals.map((argLocal): Instr => ({ op: "local.get", index: argLocal })),
+            { op: "call", funcIdx: ctx.funcMap.get(`__native_construct_${argLocals.length}`) ?? driverIdx },
+          ],
+          else: [{ op: "ref.null.extern" }],
+        },
+      ],
+      else: [{ op: "local.get", index: priorLocal }],
+    },
+  );
 }
