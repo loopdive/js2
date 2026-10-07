@@ -749,3 +749,27 @@ Source-array fallback remains fallback, scalar repair remains A6897's contributi
 and this test repair earns no source admission or migration credit. PR6568 remains
 HOLD until reviewed evidence and A's integration/queue authorization. All preceding
 sections, including the108-line composition append, remain unchanged.
+
+### Implemented instrument repair (paired validation pending)
+
+Sol6.1 Medium completed the exact four-site repair in commit
+cf07ca68c160c46155e0b4d4819a649224fc9d07, integrated unchanged as
+b023378983 on the canonical PR branch. Only the owned test file changed,
+10 insertions/8 deletions; all fixtures and assertions remain intact. The test-
+only baseline mirrors it at2a866ff9d3. Both repaired files have SHA-256
+d3dec54184b30de6aea6c25c9b6e6adb99eca98f2f603bd1b05d958ca764585a.
+The original676-line test is saved separately as `typing-repair/original-v3-test.ts.gz`.
+
+Fresh upstream claim `6893:linear-cabi-test-typing-20261007`, unique owner
+`ttraenkler/codex-linear-b-cabi-typing-sol61-20261007`, was verified before dispatch.
+Canonical main b5991f6 changes only benchmark artifacts from the frozen e1e
+production baseline. No shared source contract was modified or transferred.
+Parent's new `compare-instrument-repair.mjs` requires all32 semantic records per
+arm to remain exactly equal; only revision/testSha256 provenance may change.
+The paired comparator accepts an explicit frozen test hash for this new epoch,
+retaining its historical default and all existing count/custody requirements.
+
+Canonical PR6587 replaces fork-headed PR6568, which the upstream push did not
+update. Both remain HOLD; older PR is not yet closed. Exact earlier publication
+def4c3befda0d31a312332296aa55af2519b5beb and its acceptance blocker were shared
+with A in GitHub comment6043055409. No response or queue delegation is inferred.

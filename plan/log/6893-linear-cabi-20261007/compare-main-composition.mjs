@@ -7,8 +7,10 @@ const read = (path) => {
   const bytes = readFileSync(path);
   return (path.endsWith(".gz") ? gunzipSync(bytes) : bytes).toString("utf8");
 };
-const [baselinePath, candidatePath] = process.argv.slice(2);
+const [baselinePath, candidatePath, testSha256 = "7612ec537bd3876f3a872e029629601442b7593b1150c30cd25d49db7351be62"] =
+  process.argv.slice(2);
 assert.ok(baselinePath && candidatePath, "two raw logs required");
+assert.match(testSha256, /^[a-f0-9]{64}$/, "explicit frozen test SHA-256 required");
 const logs = [read(baselinePath), read(candidatePath)];
 const arms = logs.map((log) =>
   log
@@ -47,7 +49,7 @@ for (const rows of arms) {
   const actualCounts = {};
   for (const row of rows) actualCounts[row.kind] = (actualCounts[row.kind] ?? 0) + 1;
   assert.deepEqual(actualCounts, counts);
-  assert.equal(rows[0].testSha256, "7612ec537bd3876f3a872e029629601442b7593b1150c30cd25d49db7351be62");
+  assert.equal(rows[0].testSha256, testSha256);
   const scalar = rows.find((row) => row.kind === "public-scalar" && row.caseId === "aliasScalar31-out-of-scope-A");
   assert.ok(scalar, "original scalar witness missing");
   assert.equal(scalar.actual, 3.75);
