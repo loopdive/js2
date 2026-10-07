@@ -643,3 +643,30 @@ No fresh fixtures, shared wiring, registry/ABI change, IR retirement or performa
 claim follows. Array-return IR admission remains separately unresolved and gains no
 coverage credit from boundary acceptance. Parent may recommend this bounded fix
 after reviewing actual evidence; only A can authorize final integration/queue release.
+
+### Measured current-main composition (2026-10-07, pending typing review)
+
+The frozen main epoch above is now tested. Baseline production is exactly main
+e1e07bd4683faafcd69846bc757cce36ebb9fb61; test-only baseline HEAD is
+a8341b8de729ec1926d940dd31ade3616d5044b0. Candidate execution HEAD is
+696d73bee17e0d1a47b2357ad233769b90d2c70f (production unchanged from3cba5b08).
+Both retain the unchanged676-line test hash7612ec537bd3876f3a872e029629601442b7593b1150c30cd25d49db7351be62.
+
+- Baseline:89 pass/9 fail of98; all80 existing controls pass. Exit1.
+- Candidate:98 pass/0 fail of98, all6 files pass, no skips. Exit0.
+- Both original scalar-return3.75 and issue1977's69/40 assertions pass. This
+  improvement belongs to A's landed read repair, not B's boundary fix.
+- The new count-floored `compare-main-composition.mjs` verifies33 records per
+  arm, every kind multiplicity, exact unchanged controls, all full-memory and
+  allocator custody observations, and all13 explicitly inspected record deltas.
+  All three candidate oldest-alias results exactly equal their current-header
+  results and all96 initialized elements. Missing defined resolvers reject.
+- Raw logs and comparison are retained separately in
+  `plan/log/6893-linear-cabi-20261007/main-e1e/`; all historical failures and
+  instruments remain unchanged. Runtime-boundary success does not establish
+  source array-return IR admission, performance equality or legacy retirement.
+
+Strict test-inclusive TS7 exposed BufferSource/instantiate typing errors in the
+unchanged test. Acceptance remains pending matched-baseline diagnosis and repair
+planning; passing runtime tests do not waive this gate. PR6568 remains HOLD, with
+Session A owning final integration and queue submission.
