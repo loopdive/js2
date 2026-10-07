@@ -351,3 +351,14 @@ fbfe7d2462 (unchanged canonical845 production). Sol6.1 Medium owns only
 qualification, commits and publication. Implementation is pending, not passing.
 Production4540 and the two existing6891 test callbacks remain RELEASE REQUIRED.
 No source ownership is inferred from the planning reservation or this phase.
+
+### Test-worker interruption — 2026-10-08
+
+The delegated Sol task terminated with a tool safety-screening error before
+writing the regression file. Parent inspected the exact worker checkout:
+clean, no issue6917 test file, no source edits. No test ran and no baseline
+or candidate counts exist. This tool error is not an observed allocator result.
+Parent did not retry the flagged delegation through another route. The exact
+test-only claim above was released and effect-verified upstream; it is no
+longer active. A later test dispatch requires a fresh claim and resolved tool
+access as well as the unchanged ownership boundaries. The plan remains blocked.
