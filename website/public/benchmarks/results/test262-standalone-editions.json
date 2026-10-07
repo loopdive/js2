@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11556,
-    "fail": 134,
+    "pass": 11557,
+    "fail": 133,
     "ce": 14,
     "skip": 0,
     "total": 11704,
@@ -102,8 +102,8 @@
       },
       {
         "name": "Symbol",
-        "pass": 594,
-        "fail": 15,
+        "pass": 595,
+        "fail": 14,
         "ce": 0,
         "skip": 0,
         "total": 609,
@@ -120,8 +120,8 @@
       },
       {
         "name": "Proxy",
-        "pass": 397,
-        "fail": 31,
+        "pass": 398,
+        "fail": 30,
         "ce": 3,
         "skip": 0,
         "total": 431,
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4600,
+    "pass": 4601,
     "fail": 187,
-    "ce": 134,
+    "ce": 133,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4497,
+        "pass": 4498,
         "fail": 106,
-        "ce": 8,
+        "ce": 7,
         "skip": 0,
         "total": 4611,
         "pct": 98
@@ -3789,8 +3789,8 @@
   },
   {
     "edition": "ES2027",
-    "pass": 385,
-    "fail": 304,
+    "pass": 386,
+    "fail": 303,
     "ce": 208,
     "skip": 0,
     "total": 897,
@@ -4305,8 +4305,8 @@
   {
     "edition": "Unclassified (untagged)",
     "pass": 4659,
-    "fail": 718,
-    "ce": 68,
+    "fail": 717,
+    "ce": 69,
     "skip": 0,
     "total": 5445,
     "pct": 86
