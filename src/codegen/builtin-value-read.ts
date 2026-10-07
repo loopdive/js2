@@ -85,6 +85,7 @@ import {
 import { ensureAnyFromExternHelper, ensureAnyHelpers, ensureExternStrictEqHelper } from "./any-helpers.js";
 import { sameValueNumberOps } from "./same-value-number-ops.js";
 import { ensureNativeProxyRuntime, ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
+import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dyn-member.js"; // (#6879)
 import {
   emitStandalonePromiseReject,
   emitStandalonePromiseResolve,
@@ -1065,6 +1066,13 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       paramTypes = [{ kind: "externref" }, { kind: "externref" }];
       returnType = { kind: "externref" };
       break;
+    // (#6879) esbuild's CJS interop snapshots it (`var uo = Object.getPrototypeOf`)
+    // and calls it from `__toESM` during module init (prettier).
+    case "Object.getPrototypeOf":
+      ensureObjectRuntime(ctx);
+      paramTypes = [{ kind: "externref" }];
+      returnType = { kind: "externref" };
+      break;
     case "Object.freeze":
     case "Object.seal":
     case "Object.preventExtensions":
@@ -1420,6 +1428,15 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
         { op: "local.get", index: 2 },
         { op: "call", funcIdx: setPrototypeIdx },
       );
+    } else if (key === "Object.getPrototypeOf") {
+      // The generic tail of the direct call (`emitBuiltinGetPrototypeOfFallback`):
+      // the native helper resolves the receiver's prototype at run time.
+      recordStandaloneRuntimeKeyClassMemberRead(ctx, undefined);
+      const gptIdx = ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]);
+      if (gptIdx === undefined) return null;
+      flushLateImportShifts(ctx, closureFctx);
+      closureFctx.body.push({ op: "local.get", index: 1 });
+      closureFctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__getPrototypeOf") ?? gptIdx });
     } else if (key === "Object.freeze" || key === "Object.seal" || key === "Object.preventExtensions") {
       const helperName =
         key === "Object.freeze"
