@@ -161,6 +161,24 @@ validation remains A's responsibility. Actual registry is NOT changed.
 Architecture/graph remain incomplete, canonical acceptance remains false and
 HOLD stays. The patch is for the designated owner to review and apply.
 
+## Refreshed main composition
+
+Main `fefc9c0e79f4fbf70191f69ab0fdd76a07cc1206` includes the verified
+C-ABI checkpoint merge0a60976d75; landed c-abi.ts exactly matches qualified
+PR6587 head8dd1492071. Conflict-free composition HEAD:
+`721777e0a66f4eed6c2b8f1ce928b0f029684d9c`.
+
+Original three-file command plus unchanged
+`tests/issue-6893-linear-cabi-array-forwarding.test.ts`, same single-fork and
+no-file-parallelism options, runs69/69 across four files with zero skipped or
+failed twice. Complete logs/reports are `main-composition-v1/v2.*.gz`.
+V1 receipt includes an untracked replay evidence directory; it is preserved,
+not presented as clean. V2 verifies exact HEAD721777e0a6 and empty dirty receipt.
+All13 complete V2 forwarding observation rows exactly equal the prior repaired
+candidate51-v2 rows. No observation or artifact normalization was performed.
+This bounded composed runtime check does not override the shared registry
+blocker, failed full builds or A's final integration authority.
+
 ## Integration boundaries
 
 Only production changes: root runtime's private resolver callback/import and

@@ -469,3 +469,18 @@ Temporary policy comparisonBase.policyPresent=false remains explicit. This
 provides an owner-ready patch, NOT canonical historical-policy acceptance,
 architecture/graph completion or permission to release HOLD. A must publish
 the authorized registry update and run canonical-path checks before landing.
+
+## Canonical-main composition refresh
+
+Canonical main `fefc9c0e79f4fbf70191f69ab0fdd76a07cc1206` now contains B's
+C-ABI forwarding PR6587, merge commit0a60976d75 (verified ancestor; landed
+c-abi.ts exactly equals the qualified PR head8dd1492071). Merge into this
+branch completed without conflict at `721777e0a66f4eed6c2b8f1ce928b0f029684d9c`.
+Four-file forwarding/C-ABI suite passed69/69, zero skipped/failing, twice.
+First run retained an untracked replay evidence directory in its dirty receipt;
+second run explicitly verifies empty dirty receipt and exact execution HEAD.
+Both full logs/reports are preserved as main-composition-v1/v2. All13 full
+forwarding observations from the clean run exactly equal the earlier repaired
+candidate51-v2 observations. This is composed bounded runtime evidence, not
+full migration, canonical inventory repair, passing full build or queue release.
+Prior frozen qualification and failures retain their original heads.
