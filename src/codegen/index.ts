@@ -10020,6 +10020,7 @@ function registerReassignedFunctionGlobals(
       const declaration = ctx.topLevelFunctionDeclarations.get(name);
       const canBeReboundByEval = !ctx.sourceIsModule || !declaration || !hasExportModifier(declaration);
       if (canBeReboundByEval && (hasUnknownDynamicSource || mentionedByDynamicSource(name))) {
+        if (!reassigned.has(name)) (ctx.evalOnlyLiveFuncBindings ??= new Set<string>()).add(name);
         reassigned.add(name);
         if (declaration) reassignedDeclarations.add(declaration);
       }
