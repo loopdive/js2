@@ -321,14 +321,14 @@ export function emitCabiWrappers(mod: WasmModule, exportInfos: CabiExportInfo[])
 
       // After the call, the header pointer is on the stack.
       if (info.result.semantic === "array") {
-        const resolverIndex = findFuncIndexByName(mod, "__arr_resolve");
+        const resolverIndex = mod.functions.findIndex((func) => func.name === "__arr_resolve");
         if (resolverIndex === -1) {
           throw new Error(
             `C-ABI array return for export '${info.cabiName}' is missing required __arr_resolve; ` +
               "register the array runtime before emitting C-ABI wrappers.",
           );
         }
-        body.push({ op: "call", funcIdx: resolverIndex });
+        body.push({ op: "call", funcIdx: numImportFuncs + resolverIndex });
       }
       // result[0] = data pointer = headerPtr + dataOffset
       body.push({ op: "local.tee", index: retLocal });

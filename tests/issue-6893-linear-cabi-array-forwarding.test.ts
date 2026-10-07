@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  declareExternCImports,
   emitCabiWrappers,
   mapResultToCabi,
   type CabiExportInfo,
@@ -13,7 +14,7 @@ import { addArrayRuntime, addRuntime } from "../src/codegen-linear/runtime.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { extractCHeaderExports, generateCHeader } from "../src/emit/c-header.js";
 import { resolveLayout, STABLE_FUNC_BASE } from "../src/emit/resolve-layout.js";
-import { compile } from "../src/index.js";
+import { compile, type CompileOptions } from "../src/index.js";
 import {
   LINEAR_ARRAY_FORWARDING,
   LINEAR_RECORD_ALIGNMENT,
@@ -120,6 +121,81 @@ async function publicFixture(caseId: string, source: string) {
 }
 
 describe("issue 6893: public C ABI reproductions and controls", () => {
+  it("uses the defined resolver despite a public namesake host import", async () => {
+    vi.stubEnv("JS2WASM_LINEAR_IR", "1");
+    const source = "export function run(): number[] { return [1.5, -2.25]; }";
+    const options = {
+      ...PUBLIC_OPTIONS,
+      linearExternImports: [
+        { module: "host", name: "__arr_resolve", params: [{ kind: "i32" }], results: [{ kind: "i32" }] },
+      ],
+    } satisfies CompileOptions;
+    const result = await compile(source, options);
+    const report = getLastLinearIrReport();
+    const route = report
+      ? {
+          compiled: [...report.compiled],
+          rejected: report.rejected,
+          ownerEvidence: report.ownerEvidence,
+          legacySlots: report.legacySlots,
+        }
+      : null;
+    record("public-namesake-compile", {
+      source,
+      options,
+      success: result.success,
+      errors: result.errors,
+      route,
+      declaredImports: result.imports,
+      cHeader: result.cHeader ?? null,
+      valid: WebAssembly.validate(result.binary),
+      sourceIrAdmissionProof: false,
+    });
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(report).toBeDefined();
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    const module = new WebAssembly.Module(result.binary);
+    const imports = WebAssembly.Module.imports(module);
+    record("public-namesake-imports", { imports });
+    expect(imports).toEqual([{ module: "host", name: "__arr_resolve", kind: "function" }]);
+    let hostCalls = 0;
+    const instance = await WebAssembly.instantiate(module, {
+      host: {
+        __arr_resolve: () => {
+          hostCalls++;
+          throw new Error("namesake host import must not resolve array returns");
+        },
+      },
+    });
+    let pair: unknown;
+    let failure: unknown;
+    try {
+      pair = (instance.exports.run as () => unknown)();
+    } catch (error) {
+      failure = error;
+    }
+    record("public-namesake-invocation", {
+      pair: pair ?? null,
+      hostCalls,
+      failure: failure instanceof Error ? { name: failure.name, message: failure.message } : null,
+      route,
+    });
+    expect(failure).toBeUndefined();
+    const actual = readArrayPair(instance.exports.memory as WebAssembly.Memory, pair);
+    record("public-namesake-array", {
+      ...actual,
+      hostCalls,
+      imports,
+      route,
+      cHeader: result.cHeader,
+      sourceIrAdmissionProof: false,
+    });
+    expect(actual.pair[1]).toBe(2);
+    expect(actual.elements).toEqual([1.5, -2.25]);
+    expect(hostCalls).toBe(0);
+    expect(result.cHeader).toContain("int32_t run(int32_t* out_0);");
+  });
+
   it.each([
     ["alias31", alias31],
     ["owned31", owned31],
@@ -447,6 +523,38 @@ async function exerciseGrowth(imports: boolean, stable: boolean) {
 }
 
 describe("issue 6893: actual runtime forwarding and wrapper custody", () => {
+  it("rejects an import-only namesake as the missing defined array resolver", () => {
+    const module = createEmptyModule();
+    declareExternCImports(module, [
+      { module: "host", name: "__arr_resolve", params: [{ kind: "i32" }], results: [{ kind: "i32" }] },
+    ]);
+    addRuntime(module);
+    const info = addIdentityExport(module, "array");
+    expect(module.imports).toContainEqual({
+      module: "host",
+      name: "__arr_resolve",
+      desc: { kind: "func", typeIdx: 0 },
+    });
+    expect(module.functions.some((func) => func.name === "__arr_resolve")).toBe(false);
+    let failure: unknown;
+    try {
+      emitCabiWrappers(module, [info]);
+    } catch (error) {
+      failure = error;
+    }
+    record("import-only-missing-resolver", {
+      imports: module.imports,
+      definedResolverPresent: module.functions.some((func) => func.name === "__arr_resolve"),
+      failure: failure instanceof Error ? { name: failure.name, message: failure.message } : null,
+      sourceIrAdmissionProof: false,
+    });
+    expect(failure).toBeInstanceOf(Error);
+    const message = (failure as Error).message;
+    expect(message).toMatch(/C.?ABI.*array.*return/i);
+    expect(message).toContain("__arr_resolve");
+    expect(message).toMatch(/raw|wrapped/);
+  });
+
   it.each([
     [false, false],
     [true, false],
