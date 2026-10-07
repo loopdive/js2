@@ -1,9 +1,10 @@
 ---
 id: 6880
 title: "S3-j: the 62 ES5 rows the host lane passes and the native regime fails (per-row list, grouped by cause)"
-status: ready
+status: in-progress
+assignee: ttraenkler/opus-6880
 created: 2026-10-06
-updated: 2026-10-06
+updated: 2026-10-07
 priority: high
 horizon: l
 feasibility: medium
@@ -15,6 +16,11 @@ goal: architecture
 sprint: current
 parent: 5385
 related: [6750, 6708, 5385]
+# 2026-10-07 (group 1): one ctx field (`evalOnlyLiveFuncBindings`, 7 lines with its
+# doc) and the one line in registerReassignedFunctionGlobals that fills it.
+loc-budget-allow:
+  - src/codegen/context/types.ts
+  - src/codegen/index.ts
 # 2026-10-07 (group 3): the filter receiver import + the two-line identity call in
 # setupArrayLoop; the arm itself lives in src/codegen/array/vec-receiver-identity.ts.
 loc-budget-allow:
@@ -53,6 +59,60 @@ PR with a focused test, byte-identical for default gc.
 - [ ] After the last group: `check:edition-ratchet --results <regime.jsonl> --compare <host.jsonl>`
       reports ES5 with no `pass → not-pass` rows.
 
+## Progress
+
+Measurement lane for every group: `scripts/run-test262-paths.mts` (in-process,
+`JS2WASM_EVAL_ENGINE=interpreter TEST262_SEMANTIC_PROVIDERS=native-first
+JS2WASM_NATIVE_REGIME_JS=1`, refusal eval provider prebuilt for the tree under
+test, 120 s per row). The sharded `pnpm run test:262` lane was unusable on the
+shared box (load 180–400: 61 of 200 group-1 rows hit the 10 s compile timeout).
+The in-process lane did not hand `semanticProviders` to
+`instantiateTest262Module`, so every eval-mentioning regime row failed at
+link time; group 1's PR fixes that one line in `tests/test262-runner.ts`.
+
+### Group 1 — receiver of `.call` / `.apply` / `.bind` (2026-10-07, PR pending)
+
+**Root cause.** Not the sloppy-`this` arm. Every row carries the harness
+`$262.evalScript` shim, whose direct `eval` puts the module into runtime-eval
+mode on the regime: the #3418 dead-binding elision that removes the unused shim
+runs only for host-free environments (`compiler.ts`, environment `none`/`wasi`).
+In runtime-eval mode `registerReassignedFunctionGlobals` marks every top-level
+function declaration live (eval could rebind it). The named `.call` receiver
+trampoline (`resolveNamedThisCallTarget`, also reached by the `.apply` and
+`.bind` reshapes) refused live bindings, and the fallback calls the SAME static
+function with the receiver dropped — so `f.apply(o)` saw `this === undefined`
+and `foo.call(1)` reported `typeof this === "undefined"`. Standalone has the
+identical defect whenever the eval stays reachable (it passes the test262 rows
+only because the elision removes the shim there).
+
+**Fix.** `ctx.evalOnlyLiveFuncBindings` records the names that are live only
+because eval could rebind them (no source assignment). The trampoline admits
+those; a statically reassigned function keeps its live-value lowering. Default
+gc never populates the set (`runtimeEvalConsumer` requires the native regime),
+so it is byte-identical (sha256 on three probes unchanged).
+
+| lane (200 rows `language/function-code/10.4.3-1-*`) | before | after |
+| --- | ---: | ---: |
+| regime | 156 | 184 |
+| standalone | 184 | 184 (same 16 non-pass) |
+
+The 16 left on both lanes are `eval`-dependent rows that the refusal provider
+fails by construction (`10.4.3-1-{13,14,15,16,19,20,83,84}{-s,gs}`); the
+QuickJS provider in CI is the lane that measures them.
+
+Residual, not fixed here: a `.call` on an eval-only live binding still targets
+the static function, so a runtime `eval("f = …")` followed by `f.call(o)` calls
+the original `f` (unchanged from before; the dropped receiver was the only
+difference). Statically reassigned functions (`f = …` in source) also drop the
+receiver on the live-value path on every lane, including host.
+
+**Lever noted for later groups.** Most of this issue's groups reproduce only
+with the shim's `eval` live (group 3's `filter` rows too: the eval-widened
+`srcArr` global is copied into a fresh vec before the loop). Running the #3418
+elision for the regime (gate on the implementation, not the environment) would
+make the regime see the same module standalone sees for shim-only tests. That
+is a separate, broader change; the per-group fixes repair the eval-live shapes
+on both lanes.
 ## Progress — group 3 (filter over a mutated array, 2026-10-07)
 
 Measured with the in-process lane (`scripts/run-test262-paths.mts`, refusal
