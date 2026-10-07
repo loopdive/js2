@@ -5803,15 +5803,14 @@ export function compileArrayLiteral(
     // the hole, because `unwrapObjectLiteralElement` does not resolve an
     // identifier to its initializer.
     //
-    // Standalone / WASI only. The predicate itself is lane-agnostic (it skips
-    // `externref` elements, which is what a string is on the JS-host lane), but
-    // the gate is explicit so the host lane's bytes cannot move: the host lane
-    // has its own, differently-shaped residual for a NUMERIC sibling, which is
-    // filed rather than fixed here (this slice is standalone-scoped).
+    // (#6885) Every lane. #6613 gated this on standalone/WASI believing the
+    // JS-host lane kept a string sibling; it kept the LENGTH but stored the
+    // string as null (`[obj, "s"]` → `[{…}, null]`) and trapped on a number
+    // sibling (`[obj, 5]`). The predicate now also counts a primitive-typed
+    // `externref` element, which is what a host-lane string is.
     if (
       !hasSpread &&
       !hasContextualRefCarrier &&
-      (ctx.standalone || ctx.wasi) &&
       (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
       hasNonStructElementForStructCarrier(ctx, expr, elemWasm)
     ) {
