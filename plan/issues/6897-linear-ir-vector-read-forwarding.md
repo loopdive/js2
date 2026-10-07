@@ -128,7 +128,7 @@ Published B results remain historical until rerun on this composition. A passing
 
 All REMOTE entries below refer to 08fecaa9f53c80f0178d4a101fc3a6aa873a799a. LOCAL entries refer to read working bytes in the A worktree, not an assertion of clean HEAD. Format: path, byte count, SHA-256.
 
-REMOTE plan/issues/6893-linear-cabi-array-forwarding.md 31711 15a668ce0a7c44d5fdd8e67a904a471df140479994afca2ec289f1422c87da10
+REMOTE directory plan/issues; filename 6893-linear-cabi-array-forwarding.md; published head 08fecaa9f53c80f0178d4a101fc3a6aa873a799a; 31711 bytes; SHA256 15a668ce0a7c44d5fdd8e67a904a471df140479994afca2ec289f1422c87da10
 REMOTE plan/agent-context/linear-cabi-session-b-20261007.md 9084 18ca7b49da85b4d824a8b7bb2d5e0dc94cf34745807359be54d7d0f7477a04e5
 REMOTE plan/log/6893-linear-cabi-20261007/final-comparison.json 7015 d08e8d1fe7c2ec1f2762a8b71db9e6e583d39e0b7261991e1d61cd6ab1def4bc
 REMOTE plan/log/6893-linear-cabi-20261007/baseline-probes.json 2747 894f0438186aadce8ff66cbfa2cbb9d2482c982fc2b2e93ec2443f672d1dcc2f
