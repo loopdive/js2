@@ -1,7 +1,7 @@
 // (#6872) Same-structure class structs in the `__struct_field_names` ladder.
 // Leaf module: depends only on context/IR types.
-import type { Instr } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import type { Instr } from "../../ir/types.js";
+import type { CodegenContext } from "../context/types.js";
 
 /** One legacy `ref.test typeIdx → CSV` arm of the `__struct_field_names` ladder.
  *  `tag` (class structs only): the `__tag` value an instance of THIS class

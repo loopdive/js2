@@ -23,8 +23,8 @@ import { recordStructFieldAccessor } from "./struct-field-accessor-abi.js"; // (
 import { buildShapeGuardedArm } from "./shape-guarded-arm.js"; // (#4645) single-`next` dispatch arm
 import { walkChildren } from "./walk-instructions.js";
 import { profileCount } from "../compile-profile.js";
-import type { FieldNameLegacyEntry } from "./struct-field-name-tags.js";
-import { fieldNameArmTest, tagDisambiguateSharedClassStructs } from "./struct-field-name-tags.js";
+import type { FieldNameLegacyEntry } from "./object-model/struct-field-name-tags.js";
+import { fieldNameArmTest, tagDisambiguateSharedClassStructs } from "./object-model/struct-field-name-tags.js";
 
 /**
  * Emit exported getter/setter helper functions so the JS runtime can read

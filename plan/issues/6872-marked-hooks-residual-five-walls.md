@@ -21,10 +21,10 @@ files:
   - src/codegen/struct-field-exports.ts
   - src/codegen/closures/arrow-phases.ts
   - src/codegen/closures/closure-binding-identity.ts
-  - src/codegen/struct-field-name-tags.ts
+  - src/codegen/object-model/struct-field-name-tags.ts
   - tests/issue-6872-marked-hooks-residual.test.ts
 # 2026-10-07: the five fixes are small and local; the bulk moved into leaf
-# modules (struct-field-name-tags.ts, closures/closure-binding-identity.ts) and
+# modules (object-model/struct-field-name-tags.ts, closures/closure-binding-identity.ts) and
 # helpers (dropOwnScopeBindings, capturedBindingWriteTest). What remains is the
 # helper body that needs closures.ts-private analyzeDescriptorCaptureReferences,
 # the one new parameter / call line, a 3-line receiver hint, and +9 lines of
@@ -121,7 +121,7 @@ Recovered from an uncommitted worktree on 2026-10-07 and re-measured after
 merging `upstream/main` `75252327a4`: base = that commit's five source files,
 fix = the merged branch, file-copy A/B, suites one at a time. To keep the
 budget gates honest, two pieces moved into new leaf modules
-(`struct-field-name-tags.ts`, `closures/closure-binding-identity.ts`) and two
+(`object-model/struct-field-name-tags.ts`, `closures/closure-binding-identity.ts`) and two
 into named helpers (`dropOwnScopeBindings`, `capturedBindingWriteTest`).
 
 | Suite | base | fix |

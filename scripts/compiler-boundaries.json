@@ -10011,7 +10011,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/struct-field-name-tags.ts",
+      "path": "src/codegen/struct-hierarchy-layout.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -10019,7 +10019,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/struct-hierarchy-layout.ts",
+      "path": "src/codegen/object-model/struct-field-name-tags.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
