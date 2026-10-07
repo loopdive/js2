@@ -9,13 +9,19 @@ import {
   type CabiExportInfo,
   type TsSemanticType,
 } from "../src/codegen-linear/c-abi.js";
-import { addArrayRuntime, addRuntime, addStringRuntime } from "../src/codegen-linear/runtime.js";
+import { addArrayRuntime, addRuntime } from "../src/codegen-linear/runtime.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { extractCHeaderExports, generateCHeader } from "../src/emit/c-header.js";
 import { resolveLayout, STABLE_FUNC_BASE } from "../src/emit/resolve-layout.js";
 import { compile } from "../src/index.js";
 import {
   LINEAR_ARRAY_FORWARDING,
+  LINEAR_RECORD_ALIGNMENT,
+  LINEAR_RECORD_TAG_OFFSET,
+  LINEAR_STRING_ELEMENTS_OFFSET,
+  LINEAR_STRING_LENGTH_OFFSET,
+  LINEAR_STRING_PAYLOAD_PREFIX_BYTES,
+  LINEAR_STRING_PAYLOAD_SIZE_OFFSET,
   LINEAR_VECTOR_CAPACITY_OFFSET,
   LINEAR_VECTOR_ELEMENTS_OFFSET,
   LINEAR_VECTOR_LENGTH_OFFSET,
@@ -498,11 +504,14 @@ describe("issue 6893: actual runtime forwarding and wrapper custody", () => {
   it.each(["string", "number_f64"] as const)("emits and executes %s without any resolver", async (semantic) => {
     const module = createEmptyModule();
     addRuntime(module, { exposeArenaReset: true });
-    if (semantic === "string") addStringRuntime(module);
     expect(module.functions.some((func) => func.name === "__arr_resolve")).toBe(false);
     const info = addIdentityExport(module, semantic);
-    if (semantic === "string") exportFunction(module, "fromData", "__str_from_data");
+    if (semantic === "string") {
+      exportFunction(module, "malloc", "__malloc");
+      exportFunction(module, "used", "__arena_used");
+    }
     emitCabiWrappers(module, [info]);
+    expect(module.functions.some((func) => func.name === "__arr_resolve")).toBe(false);
     const signatures = extractCHeaderExports(module).filter((entry) => entry.name === "wrapped");
     const cHeader = generateCHeader("issue6893", signatures);
     const binary = emitBinary(module);
@@ -511,16 +520,43 @@ describe("issue 6893: actual runtime forwarding and wrapper custody", () => {
     if (semantic === "string") {
       const memory = instance.exports.memory as WebAssembly.Memory;
       const bytes = new TextEncoder().encode("é😀");
-      new Uint8Array(memory.buffer).set(bytes, 64);
-      const raw = (instance.exports.fromData as (pointer: number, length: number) => number)(64, bytes.length);
+      // Raw-record C ABI wrapper unit only. The public UTF-8 case above
+      // exercises the compiled string provider; this fixture needs no provider
+      // builders (or array resolver) to marshal an existing canonical record.
+      const raw = (instance.exports.malloc as (size: number) => number)(LINEAR_STRING_ELEMENTS_OFFSET + bytes.length);
+      expect(Number.isInteger(raw)).toBe(true);
+      expect(raw).toBeGreaterThanOrEqual(0);
+      expect(raw % LINEAR_RECORD_ALIGNMENT).toBe(0);
+      expect(raw + LINEAR_STRING_ELEMENTS_OFFSET + bytes.length).toBeLessThanOrEqual(memory.buffer.byteLength);
+      const view = new DataView(memory.buffer);
+      expect(view.getUint32(raw + LINEAR_RECORD_TAG_OFFSET, true)).toBe(0);
+      view.setUint32(raw + LINEAR_STRING_PAYLOAD_SIZE_OFFSET, bytes.length + LINEAR_STRING_PAYLOAD_PREFIX_BYTES, true);
+      view.setUint32(raw + LINEAR_STRING_LENGTH_OFFSET, bytes.length, true);
+      new Uint8Array(memory.buffer).set(bytes, raw + LINEAR_STRING_ELEMENTS_OFFSET);
       const before = snapshot(memory);
+      const usedBefore = (instance.exports.used as () => number)();
       const actual = (instance.exports.wrapped as (pointer: number) => [number, number])(raw);
-      expect(actual).toEqual([raw + 12, bytes.length]);
+      const usedAfter = (instance.exports.used as () => number)();
+      expect(actual).toEqual([raw + LINEAR_STRING_ELEMENTS_OFFSET, bytes.length]);
       const outputBytes = Array.from(new Uint8Array(memory.buffer, actual[0], actual[1]));
       const after = snapshot(memory);
-      record("no-resolver-string", { raw, actual, outputBytes, before, after, signatures, cHeader });
+      record("no-resolver-string", {
+        raw,
+        actual,
+        outputBytes,
+        before,
+        after,
+        usedBefore,
+        usedAfter,
+        signatures,
+        cHeader,
+        fixture:
+          "real malloc plus canonical raw string record; C ABI wrapper unit, not string-provider/source-IR proof",
+      });
       expect(outputBytes).toEqual(Array.from(bytes));
+      expect(new TextDecoder().decode(new Uint8Array(outputBytes))).toBe("é😀");
       expect(after).toEqual(before);
+      expect(usedAfter).toBe(usedBefore);
       expect(cHeader).toContain("int32_t wrapped(int32_t p0, int32_t* out_0);");
     } else {
       const actual = (instance.exports.wrapped as (value: number) => number)(3.75);
