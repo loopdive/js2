@@ -2,10 +2,11 @@
   "id": "3525",
   "slice": "remainder-c1-caller-20261007",
   "assignee": "ttraenkler/codex-ir-remainder-c1-caller-20261007",
-  "requested_by": "ttraenkler/codex-ir-remainder-c1-caller-20261007",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-executable-stage1-20261007",
+  "status": "done",
   "branch": "codex/3525-remainder-c1-caller-20261007",
   "claimed_at": "2026-10-06T23:37:28Z",
-  "updated_at": "2026-10-06T23:37:28Z",
-  "write_id": "29001-6f14012c"
+  "updated_at": "2026-10-07T06:03:03Z",
+  "write_id": "15567-rutnmq38",
+  "released_at": "2026-10-07T06:03:03Z"
 }
