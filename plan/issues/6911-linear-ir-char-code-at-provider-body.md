@@ -345,3 +345,27 @@ The shared array admission/reservation contract remains unreleased to B, and the
 GitHub coordination request had no response when checked. No acknowledgment or
 shared-file ownership transfer is inferred. Status stays in-progress until actual
 main integration, and full IR migration remains open.
+
+## Measured composition with canonical main e1e — 2026-10-07
+
+The previously pending shared changes are merged unchanged from canonical main
+e1e07bd4683faafcd69846bc757cce36ebb9fb61. Candidate execution HEAD is
+cc08d22e987dc0e42608b25d23996961b87e41e4; baseline production is exactly that
+main, with only the identical new test and documentation at test-only HEAD
+87d7d5f09facc4e23ba077e5966db5218adc33ce. No shared ownership transferred.
+
+The unchanged combined population is41 tests: the original31 controls and the
+ten new provider tests. Both arms measure38 pass/3 fail, exit1; all ten new tests
+pass. All ten full observation rows and fourteen valid binary witnesses per arm
+are exactly equal under the existing count-floored comparator. Strict new-test-
+inclusive TS7 on candidate exits0 with zero diagnostics, unchanged configuration.
+The complete three historical control failures remain retained; no fixtures,
+assertions or failure markers changed. Raw logs, rows, comparison and strict log
+are archived separately under `plan/log/6911-linear-char-code-at-20261007/main-e1e/`.
+
+This is preservation of the used Linear IR provider on the composed epoch, not
+Unicode source admission, shared provider reservation, full IR equality or
+legacy retirement. A retains final integration/queue authority; HOLD remains.
+Canonical main later b5991f6c760623c8e06a692d0905123bf66ce6d9 changes only nine
+benchmark artifact files, not these frozen production operands. These results
+remain explicitly pinned to e1e; later publication commits do not change them.
