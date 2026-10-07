@@ -174,6 +174,13 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-10-07 — slice W5/W8 (record `### 2026-10-07 — Slices W5+W8`):
+  # `index.ts` +3 — the import and the two finalize calls of
+  # `fillGeneratorFunctionPrototypeArms` (single- and multi-source), each placed
+  # immediately before `fillClosedObjectPrototypeEdges` because the order IS the
+  # mechanism (an explicit `setPrototypeOf` side-table read must stay in front).
+  # The arms and the identity natives live in the NEW leaf
+  # `generator-function-proto-arm.ts`. `index.ts` is already listed below.
   # 2026-10-06 — slice V10b (ArraySetLength order / DataView expandos /
   # arguments @@iterator; record `### 2026-10-06 — Slice V10b`). Paths other
   # than `array-holes.ts` are already listed below (restated per the
@@ -1371,6 +1378,8 @@ loc-budget-allow:
   # `promise-subclass-cell-read.ts`; the hand-off cannot move, because it is the
   # arm that would otherwise emit the bare `global.get` of the cell.
 func-budget-allow:
+  # 2026-10-07 — slice W5/W8 (see the loc-budget note): `generateModule` +1 and
+  # `generateMultiModule` +1, the finalize call each (both keys listed below).
   # 2026-10-06 — slice V10b (see the loc-budget note): `compileElementAccessBody`
   # +15 (the standalone `vec[Symbol.iterator]` arm), `collectDeclarations` +9
   # (`moduleVarDeclType` from the initializer — both keys already listed below)
@@ -4335,6 +4344,93 @@ fail of 126, 0 `illegal cast`** — unchanged.
 Known gaps: `analyzeMultiSource` (multi-file `.js` projects) does not get the
 root; array literals (`var a = [1]; a.push('x')`) are a separate inference
 path, not touched; `WeakSet` is not covered (its members are objects anyway).
+
+### 2026-10-07 — Slices W5+W8
+
+Opus lane, harness branch off `origin/main` @ `34cc063e2a`. `src/` was copied to
+`.tmp/base-src` before the first edit and a `git archive` of the base was built
+as `.tmp/basetree` with its own QuickJS provider; every "base" number below was
+run there by this lane. **W8 landed; W5 landed no code** (reasons below).
+
+**W8 — `built-ins/GeneratorFunction/has-instance.js`: base fail → branch pass**
+(`JS2WASM_EVAL_ENGINE=quickjs … --standalone --isolate`).
+
+Root cause, re-verified by probe: the compiled `%GeneratorFunction%` is a real
+constructor whose `prototype` is `%GeneratorFunction.prototype%`, and
+`OrdinaryHasInstance` already walks the candidate through `__isPrototypeOf`,
+whose non-`$Object` seed asks `__getPrototypeOf`. But nothing at RUN TIME knew a
+generator closure's `[[Prototype]]`: `Object.getPrototypeOf(genFn)` was answered
+only by the static folds in `call-builtin-static.ts`, so the walk saw `null`
+(`g instanceof GeneratorFunction`, `GP.isPrototypeOf(g)` both `false` on base).
+The A9 products (`GeneratorFunction()` / `new GeneratorFunction()`) had the same
+gap — their record already named it ("a carrier has no settable
+`[[Prototype]]`").
+
+Mechanism — identity, never shape (a generator closure shares its struct type
+with every closure of its signature):
+- `function-instance-meta.ts`: a sync generator declaration/expression interns
+  its `$fnmeta` instance under a `g`-prefixed key, so its metadata object is
+  never shared with an ordinary function's. `name`/`length` are unchanged.
+- NEW leaf `object-model/generator-function-proto-arm.ts`:
+  `__genfn_proto_of(v)` answers `%GeneratorFunction.prototype%` when
+  `__fninst_meta(v)` is `ref.eq` a generator-keyed metadata global, or when `v`
+  is on the A9 product list (pushed at creation in
+  `generator-function-dynamic.ts`). Reserved (null body) where the intrinsic is
+  first reified, filled at finalize; nothing minted at finalize. Two front arms
+  consult it: `__getPrototypeOf` returns it; `__isPrototypeOf(O, V)` answers
+  `O === P || O.isPrototypeOf(P)`. Both are spliced BEFORE
+  `fillClosedObjectPrototypeEdges`, so an explicit `setPrototypeOf` side-table
+  entry still answers first. Read-only on the intrinsic's lazy global: a module
+  that never reified it is unchanged.
+
+Pin `tests/issue-6651-w5-w8.test.ts`: 2 mechanisms + 1 guard, no eval engine.
+Base: both mechanisms fail (0 / 0), guard passes; branch 3/3.
+
+Controls (in-process, standalone, QuickJS provider rebuilt per tree; the box
+was at load ~10 on 4 cores, so `--isolate` was used only for the 4 target rows):
+
+| family | rows | base | branch |
+| --- | ---: | --- | --- |
+| `built-ins/GeneratorFunction/**`, `language/expressions/instanceof/**`, `built-ins/Function/prototype/Symbol.hasInstance/**` (incl. every ES5 `instanceof` row) | 77 | 73 / 4 | **74 / 3** — `has-instance` flips; the other 3 non-pass rows identical |
+| `built-ins/GeneratorPrototype/**`, `language/{statements,expressions}/generators/**` (the `$fnmeta` key change touches every generator closure) | 617 | 603 pass | 603 pass, identical non-pass paths per chunk |
+
+- `node scripts/equivalence-gate.mjs`: 22 failing = the 22 known failures, no
+  new regression.
+- Temporal (after `build:compiler-bundle` + `build:runtime-bundle`, a fresh
+  prewarmed worktree-local cache, provider rebuilt; in-process, three 42-row
+  chunks): `Duration/prototype/round/*.js` **119 pass / 7 fail of 126, 0
+  `illegal cast`**.
+- Neighbouring pins `issue-6651-{a3,a9,a14}` pass (one A9 case timed out once
+  at 51 s under load and passes alone).
+
+Residuals (pre-existing, not widened):
+- `Object.getPrototypeOf(<generator value>)` still answers
+  `%Function.prototype%` where the checker proves the argument callable
+  (`object-get-prototype-of.ts`' callable fold) or where the dynamic arm's
+  `__is_callable` test fires first (`tryEmitDynamicCallableGetPrototypeOf`).
+  The row does not read it; `instanceof` and `isPrototypeOf` go through the
+  natives above.
+- In a module that also evaluates `x instanceof Function`, a probe
+  (`gDecl instanceof Function; gDecl instanceof GeneratorFunction`) still
+  answers `false` for the second; not reached by any row of the acceptance
+  families (measured below), not diagnosed further.
+
+**W5 — no code.** Re-verified by probe on base (`.tmp/w5a.js`): `Object.create(ta)`
+does not link (`getPrototypeOf(obj) === ta` false), and
+`{ valueOf: function () {} }` crosses to externref as a COPY (`id(v) === v`
+false — the #3037 mechanism, for the `function`-valued spelling too).
+- `key-is-valid-index-prototype-chain-set.js` fails on exactly that identity
+  (`receiver[0] === value`, "Expected SameValue(«[object Object]», «[object
+  Object]»)") before it reaches anything W5 owns → **(b) #3037**, not W5.
+- `key-is-canonical-invalid-index-prototype-chain-set.js` also needs
+  `Object.setPrototypeOf([], ta)` on the vec carrier and
+  `Object.setPrototypeOf(new String(""), ta)` with String-wrapper expandos —
+  both are W1 items (vec `[[SetPrototypeOf]]`, String exotic object). It
+  belongs after W1.
+- `key-is-out-of-bounds-receiver-is-proto.js` is the one W5-only row
+  (the TA link + the §10.4.5.5 receiver arm in the walkers); not attempted in
+  this time box after W8 — the link writer and four walker arms are a separate
+  slice.
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 
