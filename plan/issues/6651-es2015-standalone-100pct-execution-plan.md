@@ -1370,6 +1370,16 @@ loc-budget-allow:
   # `cell ?? Get(%Promise%, p)` read) lives in the NEW leaf
   # `promise-subclass-cell-read.ts`; the hand-off cannot move, because it is the
   # arm that would otherwise emit the bare `global.get` of the cell.
+  # 2026-10-07 — slice W3/W4. `node-checks.ts` +3: the outermost-label gate on
+  # the IsLabelledFunction check (one condition term, two comment lines).
+  # `calls.ts` +9: one import and the proxy-receiver admission into the existing
+  # `.call`/`.apply` → `__apply_closure` arm. `call-identifier.ts` +10: one
+  # import and the proxy-binding arm inside `tryCompileStoredStandaloneCarrierCall`
+  # (the helper that already owns the bound-carrier twin of this hazard). The
+  # predicate itself is the existing `tracesToProxyValue`; nothing new to move.
+  - src/compiler/early-errors/node-checks.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/expressions/call-identifier.ts
 func-budget-allow:
   # 2026-10-06 — slice V10b (see the loc-budget note): `compileElementAccessBody`
   # +15 (the standalone `vec[Symbol.iterator]` arm), `collectDeclarations` +9
@@ -1950,6 +1960,13 @@ func-budget-allow:
   # (path already listed below, restated): the `decodeRead` field of the OBJ
   # deps it builds, and passing each rebuilt function's own `locals`.
   - src/codegen/iterator-native.ts::buildIteratorNextBody
+  # 2026-10-07 — slice W3/W4: `compileCallExpression` +8 — the W4 proxy-receiver
+  # admission into the existing `.call`/`.apply` → `__apply_closure` arm (one
+  # predicate line, its comment, and the conditional around the
+  # `tryStaticNewFunction` synthesis that only the Function-ctor half uses).
+  # The arm must be admitted where the typed `.call` lowerings below would
+  # otherwise cast the proxy to its target's closure shape.
+  - src/codegen/expressions/calls.ts::compileCallExpression
 coercion-sites-allow:
 # 2026-10-06 — slice V1: `object-model/proxy-forward-carriers.ts` is a NEW file
 # (baseline 0); its one `__is_truthy` is §20.1.3.4 step 4's ToBoolean of the
@@ -4753,6 +4770,95 @@ NewTarget `prototype` (instead of post-construction patching), then the bound
 `[[Construct]]` and closed-struct fixes before `bind/proto-from-ctor-realm` and
 `super/realm` can pass. Budget ~4 h each; family runs on this box take ~1 h, so
 run one ≤200-row chunk per background job (30-min background cap).
+
+### 2026-10-07 — Slices W3+W4
+
+Two small slices from the 2026-10-07 re-census, one commit. All 4 rows flip.
+
+**W3 — Annex B sloppy early errors (2 rows).**
+- `annexB/language/function-code/function-redeclaration-switch.js`: CE
+  "Cannot redeclare block-scoped variable 'a'" → pass.
+  `checkSwitchCaseLexicalDuplicates` (`early-errors/duplicates.ts`) reported
+  every duplicate FunctionDeclaration in a CaseBlock. §B.3.3.5 is the switch
+  twin of the Block rule: sloppy code allows duplicates when every binding for
+  the name is a plain FunctionDeclaration. The fix mirrors the Block path's
+  `fnOnlyLexNames`. A name first bound by a plain function may be re-bound by
+  another plain function in sloppy code. Generator, async, `let`/`class`, `var`
+  and strict-mode twins still error, and the pin test asserts each one.
+- `annexB/language/statements/labeled/function-declaration.js`: CE "Function
+  declaration in a labeled statement within iteration/if body" → pass. For
+  `l1: l2: function f(){}` the inner LabeledStatement's parent is a
+  LabeledStatement, which `isStatementPosition` treats as a statement
+  position. IsLabelledFunction (§13.7.1.1) is asked of the iteration/if body,
+  so only the outermost label's position matters, and that check already walks
+  the inner labels. The LabeledStatement check in `node-checks.ts` now skips a
+  label whose parent is a label. `while (0) l1: l2: function f(){}`, the `if`
+  twin and the strict form still error. A nested-label `class` still errors
+  through the ClassDeclaration check.
+
+**W4 — trapless [[Call]] through a proxy binding (2 rows).**
+`built-ins/Proxy/apply/trap-is-{missing,null}-target-is-proxy.js`.
+
+The re-census root cause did not reproduce. It said the trapless forward in
+`__proxy_apply_dispatch` lacked bound/builtin arms. The probe shows otherwise:
+both traps fire in `__module_init` at the CALL SITE, before any dispatch.
+`new Proxy(t, h)` has the TARGET's checker type, so:
+- `sumProxy(2)` took the typed closure-call lowering. That lowering casts the
+  value to the `$4` closure struct and, on a miss, `struct.get`s a null:
+  *dereferencing a null pointer*.
+- `hasOwnProxy.call(obj, "foo")` took `tryEmitNativeProtoReflectiveCall`.
+  That path resolves the receiver's symbol to `Object.hasOwnProperty`'s
+  method signature and `call_ref`s the proxy as the native glue closure:
+  *illegal cast*.
+
+The forward itself is fine. `__apply_closure` already carries the `$__bound_fn`
+front-guard (#3140) and the `$Proxy` guard. `Reflect.apply` on the same
+proxy-of-proxy answered correctly once the `.call` site was fixed.
+
+Fix: both typed sites now decline a callee for which the existing
+`tracesToProxyValue` (`proxy-value-provenance.ts`) is true, standalone only:
+- `tryCompileStoredStandaloneCarrierCall` (`call-identifier.ts`, the helper
+  that already owns the bound-carrier twin of this hazard) routes it to
+  `tryEmitInlineDynamicCall`, whose `$Proxy` arm reaches
+  `__proxy_apply_dispatch`.
+- The reflective `.call`/`.apply` site in `compileCallExpression`
+  (`calls.ts`) admits it into the existing `__apply_closure` arm used for
+  dynamic Function values.
+
+Only proxy-traced callees change route. Every other callee keeps its typed
+lowering byte-for-byte.
+
+**Measurement.** Standalone, QuickJS eval provider, in-process. BEFORE is a
+frozen `git archive` snapshot of base `e24d111705`, run with its own provider
+build. AFTER is this tree.
+
+| family | rows | before pass | after pass | lost |
+| --- | --- | --- | --- | --- |
+| `annexB/language/**` | 845 | 828 | 830 | 0 |
+| `language/statements/{switch,labeled,function,block}/**` | 607 | 601 | 601 | 0 |
+| `built-ins/Proxy/**` | 311 | 283 | 285 | 0 |
+| `built-ins/Function/prototype/{bind,call,apply}/**` | 197 | 187 | 187 | 0 |
+
+The touched families include the ES5 rows of `switch`/`labeled`/`function`/`block`
+and Annex B. None of them was lost.
+
+Pin: `tests/issue-6651-w3-w4.test.ts`. Three W4 probes trap on the base tree:
+measured with `.tmp` probes that swap the two call-site files back to base.
+The W3 probes include the strict/non-plain/iteration twins that must stay
+SyntaxErrors.
+
+Controls:
+- `node scripts/equivalence-gate.mjs` is green: 22 known failures, 1748
+  passing.
+- Temporal `Duration/prototype/round/*` standalone: 119 pass / 7 fail of 126, 0 `illegal cast` (bundles rebuilt, provider
+  prewarmed into a fresh cache, QuickJS provider rebuilt).
+
+**Residuals.** The admission is the `tracesToProxyValue` trace: a
+single-initializer binding, a `.proxy` handle read, or a single-return helper.
+A proxy reached through a reassigned or parameter binding still takes the typed
+lowering if its checker type is a function type. `.apply(thisArg, list)` with a
+non-literal, non-`arguments` list still falls through to the established
+reflective machinery for a proxy receiver.
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 
