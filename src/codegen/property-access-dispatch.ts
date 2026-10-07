@@ -87,6 +87,10 @@ import { moduleExtendsSymbolProto } from "./primitive-absent-property.js"; // (#
 import { buildCaughtErrorPropFallback } from "./caught-error-prop-fallback.js";
 import { emitErrorMessageReadWithProtoFallback } from "./error-message-proto-read.js"; // (#6651 C2) absent-message prototype walk // (#4394) catch-binding non-$Error read
 import { addStringConstantGlobal, localGlobalIdx, registerLateReadStringConstant } from "./registry/imports.js";
+import {
+  identifierLocalSlotIsExternref,
+  undefinedTypedIdentifierGlobalIsExternref,
+} from "./identifier-receiver-slot.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { staticHostPropertyKeyInstrs } from "./host-property-key.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
@@ -4831,37 +4835,11 @@ export function finalizeStructAndDynamicMemberGet(
       // arm), so admit it here. Shared predicate with Bug 2a's var-slot typing
       // (`varBindingNeedsExternrefForUndefined`) — single source of truth.
       undefinedTypedMemberReadProducesExternref(ctx, expr.expression) ||
+      (ts.isIdentifier(expr.expression) && identifierLocalSlotIsExternref(fctx, expr.expression.text)) ||
+      // (#5195 Step 3.2) Same rule one scope up, ONLY where the read would
+      // otherwise fall to the terminal `ref.null.extern` — see the helper.
       (ts.isIdentifier(expr.expression) &&
-        (() => {
-          const localIdx = fctx.localMap.get(expr.expression.text);
-          if (localIdx === undefined) return false;
-          const localType =
-            localIdx < fctx.params.length
-              ? fctx.params[localIdx]!.type
-              : fctx.locals[localIdx - fctx.params.length]?.type;
-          return localType?.kind === "externref";
-        })()) ||
-      // (#5195 Step 3.2) Same rule one scope up, and ONLY where the read would
-      // otherwise fall to the terminal `ref.null.extern`: a MODULE-level
-      // binding whose static type is purely `undefined`/`void` but whose wasm
-      // global slot is externref. The local-slot clause above only sees
-      // function locals, so `var caught; function f(){ …catch(e){ caught = e } }`
-      // — the idiom every `expressions/super/*` error test uses — read
-      // `caught.constructor` as a constant null, even though the write had
-      // physically stored an externref in the global. The slot's representation
-      // is the honest source of truth about the runtime value, exactly as it is
-      // for locals; the checker's flow type (`undefined`, because the only
-      // write is inside a nested closure) is not. Restricted to the
-      // purely-undefined static type so every resolvable receiver keeps its
-      // existing (often struct/fast) lane byte-for-byte.
-      (ts.isIdentifier(expr.expression) &&
-        (objType.flags & ~(ts.TypeFlags.Undefined | ts.TypeFlags.Void)) === 0 &&
-        fctx.localMap.get(expr.expression.text) === undefined &&
-        (() => {
-          const globalIdx = ctx.moduleGlobals.get(expr.expression!.text);
-          if (globalIdx === undefined) return false;
-          return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type.kind === "externref";
-        })());
+        undefinedTypedIdentifierGlobalIsExternref(ctx, fctx, expr.expression, objType));
     if (isExternObj) {
       // These bindings were deliberately placed on the dynamic object carrier
       // because their shape can change (growable objects, Proxy targets, and
