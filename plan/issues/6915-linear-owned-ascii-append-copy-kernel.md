@@ -535,3 +535,37 @@ propagates failures while retaining enforcement of every otherwise selected
 file. Archive this separately as CI integration qualification, not frozen
 paired/performance evidence. No actual wiring delegation, CI pass, protected
 queue acceptance or completed integration is claimed.
+
+### Third repair qualified and integrated — 2026-10-08
+
+Frozen SHA-256 `c63e83104b42104c0ea9e7d5d3fb3f6f2cce960a65973cbf342698e8e79d7f8d`
+passes new-test-inclusive strict TS7 exit0/zero diagnostics and configured
+Vitest36pass/0fail/0skip. Actual38 envelopes contain all36 observations plus
+provenance/completion;87,692 nodes. Parent compared ALL36 complete observation
+graphs and completion against the b5 repaired epoch with strict deep equality:
+no field filtering or normalization. Provenance is separately retained with
+new test SHA and command. Astra read all2,227 lines and found no demonstrated
+breach of the exact finite third-repair criteria. This clears that SOURCE
+REVIEW only, not ordinary CI, source-loop ownership or full IR acceptance.
+
+Independent Sol survivor audit compares29 original records/34 proof objects:
+binary artifacts, append-kernel bodies, complete memory/payload/header/heap,
+host/import custody match. Additional canonicalPointer recipe independently
+verified. Strict decoded equality against original lossy JSON does NOT hold:
+three charCodeAt NaN values were originalnull; four empty Map/Set collections
+were originalarrays per proof. All differences remain explicit. Original JSON
+cannot establish retrospective reference identity. Parent's separately retained
+original-codec projection audit agrees29/29, includes unchanged rejection
+strings, and explicitly labels codec losses; it is NOT strict decoded equality.
+All33 transitions, four source result/owner/batch/consumer/module/physical-call
+joins and eight same-validator negatives are present. Seven originally missing
+records remain missing in the original epoch and receive no retroactive credit.
+
+Sol's actual commit `0a9122245c93625f6212160fc46dae218efb8b17` contains ONLY the
+owned new test and preserves c63 bytes after normal fast hooks. Explicitly
+handed off and integrated as `d2741617beca680cedef63f3e12feb4aa03548ee`.
+Qualification execution HEAD stays276b10a1 with the frozen working test, not
+relabeled as either later commit. Raw final test/log/JSON/strict/input/receipt/
+runner artifacts are retained under repaired-v3 in the evidence directory.
+Default changed-root CI wiring remains a genuine designated-owner dependency;
+the configured instrument success is not a default-CI or merge acceptance.

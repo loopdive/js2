@@ -79,3 +79,44 @@ those getter/setter identities. Message/errors are own data properties. The
 next repair must retain all stacks/error contents and continue rejecting
 arbitrary accessors. Production, fixtures,36IDs,33transitions and eight
 same-validator negatives remain unchanged; no source acceptance follows.
+
+## Complete repaired epochs, strict comparison and remaining CI dependency
+
+Second frozen snapshot b5bbd82d37305a43691ad8197374bc79b2f681d2f8e0879502d97def3865b669
+and third c63e83104b42104c0ea9e7d5d3fb3f6f2cce960a65973cbf342698e8e79d7f8d
+both pass configured36/36 with no failures/skips and strict0/zero diagnostics.
+Each actual log has38 graph envelopes (provenance1/observations36/completion1),
+87,692 nodes. Full test copies, stdout/stderr, JSON, parent identity/receipt,
+exact runner and strict logs are separate repaired-v2/v3 archives. Both
+execution HEADs remain276b10a1 with the separately hashed uncommitted test.
+The third test was subsequently committed by Sol as0a9122245c and integrated
+by parent asd2741617be; those later commits do not replace execution provenance.
+
+Parent strict deep equality compared ALL36 complete observation graphs and
+completion between v2 and v3; every field/reference node matches, no filtering
+or normalization. New test SHA/command provenance remains separate. Astra's
+full2,227-line source review clears exact third-repair requirements only.
+
+Independent Sol audit compared29 surviving ORIGINAL observations/34 proof
+objects, including Runtime16's original failed witness. Binaries, append-kernel
+bodies, complete memory/payload/header/heap and host/import evidence match.
+Additional construction.canonicalPointer is recipe-checked. Strict decoded
+equality to originalJSON is FALSE: three charCodeAt NaNs were JSONnull and four
+empty Map/Set collections were JSONarrays per proof. These representation
+differences are explicit; no retrospective original reference-identity claim.
+
+`original-codec-projection-audit.mjs.gz` plus JSON/log preserves the parent's
+replayable29/29 ORIGINAL-CODEC projection check and its limitations. It explicitly
+retains the original codec's NaN/collection-kind losses, not evidence of exact
+decoded equality. Only added canonicalPointer is excluded AFTER89 recipe
+checks; all negative rejection strings match and are retained. Original seven
+missing records are not recovered or credited. Four newly observed source
+result/owner/batch/completed-consumer/session/physical-call joins and all eight
+same-validator negatives are present; Runtime22 retains33 transitions.
+
+The ordinary changed-root CI invocation does not supply mandatory parent
+identity/command/Linear-IR inputs and uses its existing4096MiB worker policy,
+versus local1024MiB. Its actual wiring is still A/designated-owner work. No
+exemption, missing-input skip, self-approval or shared hook/workflow change was
+taken. Configured36/36 is NOT default-CI, protected-queue, performance or full
+IR migration acceptance. Source-loop scope and broader contracts remain held.
