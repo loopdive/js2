@@ -337,3 +337,17 @@ performance implementation or speed claim. No registry/hook/workflow bypass,
 fixture alteration, legacy retirement, or weakening of existing protections.
 If another failure needs such work, retain it as a separately scoped finding
 and request authority rather than widening this partition silently.
+
+## Parent release of independent baseline tests — 2026-10-08
+
+The fresh pre-dispatch gate stopped solely on root6917 held by the parent
+reservation owner above; no implementation conflict was thereby cleared.
+Parent resolved that own-reservation blocker for ONLY the new file, then
+effect-verified upstream slice `6917:linear-malloc-baseline-tests-20261008`,
+owner `ttraenkler/codex-linear-b-malloc-tests-sol61-20261008`, branch
+`codex/6917-linear-malloc-tests-20261008`. Isolated worker starts at
+fbfe7d2462 (unchanged canonical845 production). Sol6.1 Medium owns only
+`tests/issue-6917-linear-malloc-overflow.test.ts`; parent controls all heavy
+qualification, commits and publication. Implementation is pending, not passing.
+Production4540 and the two existing6891 test callbacks remain RELEASE REQUIRED.
+No source ownership is inferred from the planning reservation or this phase.
