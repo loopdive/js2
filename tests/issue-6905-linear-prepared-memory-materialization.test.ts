@@ -133,7 +133,7 @@ function generatorSpies(poison: boolean) {
     vi.spyOn(gcCodegen, "generateMultiModule"),
     vi.spyOn(linearCodegen, "generateLinearModule"),
     vi.spyOn(linearCodegen, "generateLinearMultiModule"),
-  ];
+  ] as const;
   if (poison)
     for (const spy of spies)
       spy.mockImplementation(() => {
