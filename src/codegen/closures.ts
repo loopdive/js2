@@ -235,6 +235,7 @@ import {
 } from "./direct-eval-environment.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
 import { isStaticTaViewBinding } from "./ta-static-view-mop.js"; // (#6651 E7)
+import { nestedCapturesVisibleFrom, nestedFuncOwnerIsForeignTo } from "./nested-function-name-scope.js"; // (#6877)
 import {
   emitObjectMethodAsClosure,
   finalizeMethodTrampolines,
@@ -806,6 +807,30 @@ function preservableDescriptorCaptureDeclaration(
 }
 
 /**
+ * (#6872) A parameter/local of the method itself that merely shares a name with
+ * an enclosing local is not a capture: promoting would re-route the enclosing
+ * frame's binding through a global the method never writes. Inside an async
+ * frame (whose resume state machine keeps its own locals) the frame's later
+ * writes then missed the global its reads used (`const html = await …` around a
+ * `{ postprocess(html) {…} }` literal read `null`). Only names with at least
+ * one resolved reference and none outside `ownScope` are dropped.
+ */
+function dropOwnScopeBindings(
+  ctx: CodegenContext,
+  ownScope: ts.FunctionLikeDeclaration,
+  referencedNames: Set<string>,
+): void {
+  for (const name of [...referencedNames]) {
+    if (name === "this") continue;
+    const references = analyzeDescriptorCaptureReferences(ctx, ownScope, name);
+    if (references.unresolvedValueReference || references.declarations.size === 0) continue;
+    if ([...references.declarations].every((declaration) => nodeIsInside(declaration, ownScope))) {
+      referencedNames.delete(name);
+    }
+  }
+}
+
+/**
  * Promote captured locals to globals for getter/setter accessor functions.
  *
  * When an object literal getter/setter references variables from the enclosing
@@ -855,6 +880,7 @@ export function promoteAccessorCapturesToGlobals(
      *  `__isLeakTracingEnabled` const vs 00_infra's declaration). */
     forceValueNames?: ReadonlySet<string>;
   },
+  ownScope?: ts.FunctionLikeDeclaration, // (#6872) owner of `accessorBody`; see dropOwnScopeBindings
 ): void {
   if (!transitiveOnly && !accessorBody && (!extraNodes || extraNodes.length === 0)) return;
 
@@ -874,6 +900,7 @@ export function promoteAccessorCapturesToGlobals(
       collectReferencedIdentifiers(node, referencedNames);
     }
   }
+  if (ownScope) dropOwnScopeBindings(ctx, ownScope, referencedNames);
   // (#5148 checkpoint) Recorded-slot fallbacks for transitive captures whose
   // block-scoped source binding is already unmapped from `localMap` (the
   // declaring IIFE block of a concatenated multi-module init has ended) but
@@ -926,8 +953,10 @@ export function promoteAccessorCapturesToGlobals(
     // value global (best-effort, no crash) instead of the shared cell.
     const directlyReferenced = new Set(referencedNames);
     const fnWorklist: string[] = [];
+    const referenceSite = accessorBody ?? extraNodes?.[0]; // (#6877) skip other modules' nested owners
     for (const name of referencedNames) {
       if (transitiveOnly?.forceValueNames?.has(name)) continue; // value-promote, don't follow
+      if (referenceSite !== undefined && nestedFuncOwnerIsForeignTo(ctx, name, referenceSite)) continue;
       if (ctx.funcMap.has(name) && ctx.nestedFuncCaptures.has(name)) fnWorklist.push(name);
     }
     if (transitiveOnly) {
@@ -3453,6 +3482,13 @@ export function compileLiftedClosureBody(
           closureInfoForSelf.returnType = exprType;
           closureInfoForSelf.funcTypeIdx = liftedFuncTypeIdx;
         }
+      } else if (!valTypesMatch(exprType, closureReturnType)) {
+        // (#6879) Same kind, different heap type — a concise body is `return
+        // expr`, so coerce exactly as `normalizeReturnExpression` does for a
+        // block body. prettier's `e => Object.keys(e).filter(...)`: the checker
+        // says `string[]`, the native lowering yields the externref vec, and the
+        // uncoerced fallthrough failed validation.
+        coerceType(ctx, liftedFctx, exprType, closureReturnType);
       }
       // (#4630) Concise parked-async body (`async () => expr`) — settle the
       // completion value into the promoted `$Promise` result.
@@ -4358,7 +4394,7 @@ export function compileArrowAsCallback(
   // closure does; otherwise the direct call reads owner-frame local indices
   // from the callback frame.
   const transitivelyRequiredNames = collectTransitiveCaptureNames(
-    ctx.nestedFuncCaptures,
+    { get: (name) => nestedCapturesVisibleFrom(ctx, name, arrow) }, // (#6877)
     referencedNames,
     ownLocals,
     () => false,

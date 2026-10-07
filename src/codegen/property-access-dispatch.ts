@@ -5354,7 +5354,10 @@ export function finalizeStructAndDynamicMemberGet(
       }
       flushLateImportShifts(ctx, fctx);
       if (getIdx856 !== undefined) {
-        const structExprType = compileExpression(ctx, fctx, expr.expression);
+        // (#6872) `this` as externref so a foreign receiver answers its thisArg (#6651 A11).
+        const recvHint: ValType | undefined =
+          expr.expression.kind === ts.SyntaxKind.ThisKeyword ? { kind: "externref" } : undefined;
+        const structExprType = compileExpression(ctx, fctx, expr.expression, recvHint);
         if (structExprType && (structExprType.kind === "ref" || structExprType.kind === "ref_null")) {
           fctx.body.push({ op: "extern.convert_any" });
         }
