@@ -304,3 +304,46 @@ explicitly enumerated provenance changes (test hash/revision), never typeNames,
 resolver counts, route, body, byte or memory data. Preserve all unexpected failures
 and stop for parent review rather than widen scope. Normal scoped gates and A's
 integration authority remain; no acceptance or queue release is implied here.
+
+## Session B implementation checkpoint and handoff
+
+Branch: `codex/6914-linear-forwarding-provider-20261007`.
+Canonical remote: upstream, `loopdive/js2`. No queue submission is delegated.
+Source execution HEAD: `06533320a4a1a47414d953a6f1656eabb05d6ad6`;
+test-only main execution HEAD: `da6d5ceed9bceb02c648a09801f5d186421db228`.
+Source source-writer commit: `f8d931b5ede5964ae1a536a16fa16a8ea1ed5431`.
+Reviewed two-site typing repair integrated at `fab503f4ae`; current repaired
+test hash `59ccfd57937a8d5a15635e746247e83b714b60abebffab4853010bc22dd01a23`.
+
+Canonical claims use unique owners and exact keys:
+
+- Plan: `6914:linear-forwarding-provider-plan-20261007`, owner
+  `ttraenkler/codex-linear-b-forwarding-astra-20261007`.
+- Source: `6914:linear-forwarding-provider-source-20261007`, owner
+  `ttraenkler/codex-linear-b-forwarding-sol61-20261007`.
+- Tests: `6914:linear-forwarding-provider-tests-20261007`, owner
+  `ttraenkler/codex-linear-b-forwarding-tests-sol61-20261007`.
+- Evidence: `6914:linear-forwarding-provider-evidence-20261007`, owner
+  `ttraenkler/codex-linear-b-forwarding-evidence-20261007`.
+
+Exact source ownership is the private resolver callback/import and new target
+leaf only; the new arrays README, new test, this issue and own evidence are B's
+documentation/test scope. No active shared/other-provider claim was taken.
+All source/test writers are frozen. Shared compiler entry points, frontend,
+preparation/provenance, physical emitters and source-map files remain A's.
+
+Original-instrument qualification:51/51 on both arms, zero skips, all13 complete
+observation rows equal,16 complete validated binary witnesses and10 full-memory
+witnesses per arm equal. Both original strict TS7 runs exit1 with the exact same
+two test-only TS2339 diagnostics. Original tests, complete logs, complete JSON
+case reports and a replayable exact comparator are preserved under
+`plan/log/6914-linear-forwarding-20261007`. They are not erased by the repair.
+
+The first normal push passed source typecheck, lint, formatting, oracle/coercion
+ratchets,18 numeric parity tests and issue integrity, but GitHub rejected it for
+one missing390-byte LFS diagnostic object. That exact object was uploaded using
+its verified object ID; no broad LFS upload, filter/hook bypass or rewrite.
+Retry and remote/PR HEAD verification remain required. Repaired strict typing
+is running; repaired paired runtime comparison, current3146 build and architecture
+checks remain unproven. Keep the PR non-draft HOLD; A owns integration acceptance
+and protected queue landing. No new frontend coverage or retirement is claimed.

@@ -48,11 +48,16 @@ The candidate strict command exits1 with exactly two TS2339 diagnostics at
 test lines622 and629: `TypeDef.name` is not present on `RecGroupDef`. Full
 diagnostics, original test bytes and unchanged configuration are retained here.
 Command: `node node_modules/typescript7/lib/tsc.js --noEmit -p
-.tmp/6914-validation/tsconfig.test-inclusive.json`. The matching baseline is
-running; no inherited attribution or repaired acceptance is claimed yet.
-Astra is specifying a narrow named-type guard for the two test sites, followed
-by Sol implementation and fresh paired qualification. Do not weaken typing or
-discard this original passing-runtime/failing-typing epoch.
+.tmp/6914-validation/tsconfig.test-inclusive.json`. The matching baseline also
+exited1; its complete diagnostics are byte-identical, preserved as
+`baseline-strict-v1.log.gz`. No repaired acceptance is claimed yet.
+Astra plan `1e7cfd53e99f8d130fc33fe1f93244494c7fa33b` specifies two rec-group
+discriminant guards. Sol implemented only those sites in
+`034f8e39109b7e5c508ca0624bdb43de3c4cde50`, integrated as
+`fab503f4ae`; repaired test SHA-256:
+`59ccfd57937a8d5a15635e746247e83b714b60abebffab4853010bc22dd01a23`.
+Fresh strict/runtime comparison is required before accepting this instrument.
+Do not weaken typing or discard this original passing-runtime/failing-typing epoch.
 
 ## Integration boundaries
 
