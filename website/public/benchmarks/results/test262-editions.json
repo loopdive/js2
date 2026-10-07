@@ -3571,21 +3571,21 @@
   },
   {
     "edition": "ES2026",
-    "pass": 3569,
-    "fail": 1339,
+    "pass": 3642,
+    "fail": 1266,
     "ce": 13,
     "skip": 0,
     "total": 4921,
-    "pct": 73,
+    "pct": 74,
     "features": [
       {
         "name": "Temporal",
-        "pass": 3383,
-        "fail": 1215,
+        "pass": 3456,
+        "fail": 1142,
         "ce": 13,
         "skip": 0,
         "total": 4611,
-        "pct": 73
+        "pct": 75
       },
       {
         "name": "Symbol",
