@@ -100,6 +100,7 @@ async function publicFixture(caseId: string, source: string) {
         ),
       }
     : null;
+  const binary = new Uint8Array(result.binary);
   record("public-compile", {
     caseId,
     source,
@@ -108,13 +109,13 @@ async function publicFixture(caseId: string, source: string) {
     errors: result.errors,
     route,
     cHeader: result.cHeader ?? null,
-    valid: WebAssembly.validate(result.binary),
+    valid: WebAssembly.validate(binary),
   });
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   expect(report).toBeDefined();
   // Actual routing is evidence, not a requirement to preserve today's direct fallback.
-  expect(WebAssembly.validate(result.binary)).toBe(true);
-  const module = new WebAssembly.Module(result.binary);
+  expect(WebAssembly.validate(binary)).toBe(true);
+  const module = new WebAssembly.Module(binary);
   expect(WebAssembly.Module.imports(module)).toEqual([]);
   const instance = await WebAssembly.instantiate(module);
   return { result, report, instance, route };
@@ -140,6 +141,7 @@ describe("issue 6893: public C ABI reproductions and controls", () => {
           legacySlots: report.legacySlots,
         }
       : null;
+    const binary = new Uint8Array(result.binary);
     record("public-namesake-compile", {
       source,
       options,
@@ -148,13 +150,13 @@ describe("issue 6893: public C ABI reproductions and controls", () => {
       route,
       declaredImports: result.imports,
       cHeader: result.cHeader ?? null,
-      valid: WebAssembly.validate(result.binary),
+      valid: WebAssembly.validate(binary),
       sourceIrAdmissionProof: false,
     });
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(report).toBeDefined();
-    expect(WebAssembly.validate(result.binary)).toBe(true);
-    const module = new WebAssembly.Module(result.binary);
+    expect(WebAssembly.validate(binary)).toBe(true);
+    const module = new WebAssembly.Module(binary);
     const imports = WebAssembly.Module.imports(module);
     record("public-namesake-imports", { imports });
     expect(imports).toEqual([{ module: "host", name: "__arr_resolve", kind: "function" }]);
@@ -388,7 +390,7 @@ async function runtimeFixture(imports = false, stable = false) {
   ])
     exportFunction(module, name, runtimeName);
   emitCabiWrappers(module, [info]);
-  const binary = emitBinary(module);
+  const binary = new Uint8Array(emitBinary(module));
   expect(WebAssembly.validate(binary)).toBe(true);
   const { instance } = await WebAssembly.instantiate(binary, hostImports);
   return {
@@ -622,7 +624,7 @@ describe("issue 6893: actual runtime forwarding and wrapper custody", () => {
     expect(module.functions.some((func) => func.name === "__arr_resolve")).toBe(false);
     const signatures = extractCHeaderExports(module).filter((entry) => entry.name === "wrapped");
     const cHeader = generateCHeader("issue6893", signatures);
-    const binary = emitBinary(module);
+    const binary = new Uint8Array(emitBinary(module));
     expect(WebAssembly.validate(binary)).toBe(true);
     const { instance } = await WebAssembly.instantiate(binary);
     if (semantic === "string") {
