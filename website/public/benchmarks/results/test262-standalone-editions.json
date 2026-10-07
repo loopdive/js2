@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11557,
-    "fail": 133,
+    "pass": 11558,
+    "fail": 132,
     "ce": 14,
     "skip": 0,
     "total": 11704,
@@ -4305,8 +4305,8 @@
   {
     "edition": "Unclassified (untagged)",
     "pass": 4659,
-    "fail": 717,
-    "ce": 69,
+    "fail": 718,
+    "ce": 68,
     "skip": 0,
     "total": 5445,
     "pct": 86

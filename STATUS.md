@@ -18,13 +18,13 @@ prose anywhere in the repo.
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 39,300 / 48,232 (81.5 %)
+**test262 conformance**: 39,373 / 48,232 (81.6 %)
 
 <!-- AUTO:conformance-end -->
 
 <!-- AUTO:conformance-standalone-start -->
 
-**standalone (host-free) test262 conformance**: 41,968 / 48,232 (87.0 %)
+**standalone (host-free) test262 conformance**: 41,969 / 48,232 (87.0 %)
 
 <!-- AUTO:conformance-standalone-end -->
 
@@ -41,10 +41,10 @@ Per-area pass rates, JS-host (`gc`) lane. The area rows cover all 48,735 test fi
 | Area          |   Pass |  Total |   Rate |
 | ------------- | -----: | -----: | -----: |
 | `language/`   | 19,846 | 23,724 | 83.7 % |
-| `built-ins/`  | 18,819 | 23,809 | 79.0 % |
+| `built-ins/`  | 18,892 | 23,809 | 79.3 % |
 | `annexB/`     |    855 |  1,086 | 78.7 % |
 | `harness/`    |    104 |    116 | 89.7 % |
-| **All areas** | 39,624 | 48,735 | 81.3 % |
+| **All areas** | 39,697 | 48,735 | 81.5 % |
 
 Selected built-ins:
 
@@ -53,7 +53,7 @@ Selected built-ins:
 | eval                 | `built-ins/eval` + `language/eval-code` |   320 |   357 | 89.6 % |
 | Proxy                | `built-ins/Proxy`                       |   244 |   311 | 78.5 % |
 | Reflect              | `built-ins/Reflect`                     |   129 |   153 | 84.3 % |
-| Temporal             | `built-ins/Temporal`                    | 3,383 | 4,603 | 73.5 % |
+| Temporal             | `built-ins/Temporal`                    | 3,456 | 4,603 | 75.1 % |
 | SharedArrayBuffer    | `built-ins/SharedArrayBuffer`           |    80 |   104 | 76.9 % |
 | Atomics              | `built-ins/Atomics`                     |   215 |   389 | 55.3 % |
 | WeakRef              | `built-ins/WeakRef`                     |    16 |    29 | 55.2 % |

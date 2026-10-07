@@ -25,6 +25,11 @@ import type { IrType } from "../ir/core/types.js";
 import { runIrProgramDriver } from "./ir-program-driver.js";
 import type { IrProgramDriverResult } from "./ir-program-result.js";
 import type { PreparedWitExport, PreparedWitView } from "../wit-generator.js";
+import {
+  NUMBER_REMAINDER_RUNTIME_PROVIDERS,
+  irNumberRemainderCallableDeclaration,
+} from "../ir/runtime/number-remainder-callables.js";
+import type { RuntimeProviderDefinition } from "../ir/runtime/contracts/manifest.js";
 
 export interface IrProgramPresentationRequest {
   readonly preparation: IrWholeProgramPreparationInput;
@@ -626,6 +631,55 @@ function captureWitExport(
   if (result === "promise") return;
   exports.push(Object.freeze({ externalName, params: Object.freeze(params), result: result ?? null, ...association }));
 }
+/** Numeric finalization admits only exact completed canonical remainder supports. */
+function numberRemainderSupportMatches(
+  program: PreparedIrProgram,
+  emission: EmittedPreparedIrProgram,
+  providers: readonly RuntimeProviderDefinition[],
+): boolean {
+  const physical = emittedPhysicalSetupPlan(emission);
+  const support = emittedSupportFunctionReceipts(emission);
+  if (
+    !physical ||
+    physical.numberRemainders.length !== providers.length ||
+    support.length !== providers.length ||
+    new Set(physical.numberRemainders.map((row) => row.bindingId)).size !== providers.length ||
+    new Set(providers.map((row) => row.id)).size !== providers.length ||
+    new Set(support.map((row) => row.index)).size !== providers.length
+  )
+    return false;
+  return providers.every((provider) => {
+    const canonical = NUMBER_REMAINDER_RUNTIME_PROVIDERS.find((row) => row.id === provider.id);
+    if (
+      !canonical ||
+      preparedIrDataMismatch(canonical, provider) !== undefined ||
+      canonical.implementation.kind !== "runtime-callable" ||
+      provider.dependencies.length ||
+      provider.hostCapabilities.length
+    )
+      return false;
+    const symbol = canonical.implementation.symbol;
+    const resources = physical.numberRemainders.filter((row) => row.symbol === symbol);
+    if (resources.length !== 1) return false;
+    const resource = resources[0]!;
+    const entry = program.abi.entries.find((row) => row.plan.id === resource.bindingId);
+    if (!entry || entry.contract.kind !== "callable") return false;
+    const declaration = irNumberRemainderCallableDeclaration(entry.contract.ref);
+    const slot = emittedProgramBindingIndex(emission, resource.bindingId);
+    return (
+      declaration?.feature === provider.feature &&
+      entry.plan.structuralReferenceKey === resource.referenceKey &&
+      preparedIrDataMismatch(entry.contract.params, declaration.params) === undefined &&
+      preparedIrDataMismatch(entry.contract.results, declaration.results) === undefined &&
+      slot?.space === "function" &&
+      support.some((row) => row.key === resource.bindingId && row.index === slot.index) &&
+      physicalCallableMatches(emission, resource.bindingId, {
+        params: [{ kind: "f64" }, { kind: "f64" }],
+        results: [{ kind: "f64" }],
+      })
+    );
+  });
+}
 function checkResourceDemand(
   program: PreparedIrProgram,
   emission: EmittedPreparedIrProgram,
@@ -640,7 +694,7 @@ function checkResourceDemand(
     if (
       manifest.hostCapabilities.length ||
       manifest.hostCapabilityRecords.length ||
-      manifest.providers.length ||
+      !numberRemainderSupportMatches(program, emission, manifest.providers) ||
       runtime[0]!.prepared.functions.some((fn) => fn.asyncPlan || fn.asyncRuntime)
     )
       gap("runtime", "runtime-demand", "host provider or async demand is outside this numeric presentation contract");
