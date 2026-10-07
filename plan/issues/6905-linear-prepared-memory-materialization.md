@@ -307,3 +307,24 @@ its captured module, validated artifact and native execution 1.25; a stale globa
 getter alone is insufficient. Restore spies/environment. No new fixture/config
 variant beyond this row; unit custody/exact-artifact proofs stay unchanged. Eight
 is the planned test count, not a measured result or new Prepared allocation credit.
+
+### V2 instrument correction: overlay module filename only
+
+Parent's V1 baseline measured **23 pass / 2 fail / 25**: unchanged scalar control
+17/17, new population 6/8. Shared array preparation rejects with
+`array-representation-unsupported` **before acceptance**; this is the observed
+failure boundary, not proof that the later physical-planner refusal was reached.
+The other failure is instrument setup: the overlay's extensionless `moduleName`
+became a TypeScript root, producing actual AST `[undefined]` and early `node.kind`
+failure. Authorize V2 to change **only that overlay row's options.moduleName to
+`'issue-6905.ts'`**. Keep SOURCE, arguments, eight rows, spy/ownership assertions,
+exact ABI, memory expectations and all production bytes unchanged.
+
+Retain the immutable V1 test snapshot and both raw V1 runs; candidate V1 was still
+running when this amendment was requested, so no candidate result is asserted.
+Run identical V2 test bytes on both frozen arms. Require all seven untouched V1
+rows to match their corresponding V2 observations exactly per arm, and all eight
+V2 baseline/candidate observation rows to match exactly, including `binaryBase64`.
+Preserve failed-row diagnostics as evidence without converting positive tests to
+refusal-success. Attribute any repaired overlay row to instrument correction,
+not source wiring, new Prepared coverage, full coverage or permission to merge.
