@@ -191,8 +191,9 @@ NOT all four lanes, new full owner/consumer attribution, kernel equality or
 performance. Launch first failed because ignored .tmp output directory was
 absent; created it and ran once. No test/source changes or hidden test retry.
 
-Status stays BLOCKED on exact ownership confirmation. Source implementation
-has not been dispatched. Planning publication does not release this gate.
+Source status stays BLOCKED on exact ownership confirmation. Source
+implementation has not been dispatched. Planning publication does not release
+this gate. The independent test-only phase below has separate exact ownership.
 
 ## Astra High review
 
@@ -201,3 +202,103 @@ blocker and requested the three precision fixes now above: exact12-byte payload
 address/stack order, baseline-relative fresh-header behavior, and integer
 alignment cases. Self-append captured lengths and final length-store ordering
 were reviewed as sound; feature-policy stop and performance hold remain.
+
+## Astra High amendment: independently owned baseline tests
+
+Only NEW `tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts`
+is eligible for Sol6.1 Medium dispatch after publishing this amendment and
+verifying its fresh unique upstream test-only claim. No release of the append
+callback or transfer of any older claim is inferred. No runtime, compiler,
+registry, fixture, configuration or shared-test edits. No timing implementation
+or performance conclusion in this phase. The earlier ownership gate applies
+to SOURCE dispatch; this explicitly bounded new test path is independent.
+
+Canonical production baseline: `c41bca2bc07e9d8fddbb38ca77904dd1f0cac438`;
+parent merge `66407da1bf7644417f38ac6d949145662d8e304f`, source tree
+`68296a0d34ceea94dbc9ca9398f71bc8a1b742b8`. Prior fefc measurements retain
+their original heads. Freeze relevant production/fixture hashes before dispatch.
+Identical test bytes/options/assertions/observation code must qualify any later
+authorized candidate; record differing production/artifact hashes honestly,
+never regenerate expectations from candidate output.
+
+### Genuine construction and frozen population
+
+Use actual addRuntime, addStringRuntime, addLinearIrStringRuntime and emitBinary.
+Test-local exports expose EXISTING functions and actual __heap_ptr, with genuine
+function-import counting. Do not replace or instrument production bodies.
+Define C(bytes): allocate raw input using real __malloc, write only input bytes,
+then invoke real __str_from_data. Define S(bytes): actual append C(bytes) to
+C(empty); lengths1..16 produce capacity16. Finish all construction before
+operation snapshots. Never manufacture headers, lengths, capacity or alias
+pointers; cached cases invoke actual __str_is_ascii before snapshots.
+Header+0, payload-size+4, length+8, bytes+12; prefix4 is NOT data offset12.
+
+Freeze exactly36 observation IDs before coding:
+
+- Runtime01..04: C(0)+C(0), C(0)+C(1), C(0)+C(17), C(3)+C(0).
+- Runtime05..08: S(3)+C(1), C(3)+C(1), S(3)+C(4), C(3)+C(4).
+- Runtime09..14: S(6)+C(1), S(7)+C(1), S(8)+C(1), S(14)+C(1),
+  S(15)+C(1), S(15)+C(2).
+- Runtime15..19: self S(4), self C(9), distinct equal-content S(4)/C(4),
+  S("A\0")+C("\0B"), C(4096)+C(4097).
+- Runtime20..21: cached S(4)+C(1), cached C(4)+C(1).
+- Runtime22:33 one-byte appends from C(empty); assert and record ALL33
+  transitions, including capacity16/32/64. Other rows use distinct ASCII
+  patterns except intentional equality/self/NUL cases.
+- Source01..04: unchanged string-hash fixture inputs0/1/100/20000 and
+  expected0/96500/36729899/862771296. Original file identity and Linear/bump
+  options stay unchanged.
+- Import01..02: genuine runtime with throwing unrelated and append-namesake
+  function imports plus a non-function import; exercise no-growth and growth
+  separately. Both host counters remain zero.
+- Negative01..08: independently corrupt result/payload, owner identity,
+  consumer completion, helper binding, heap delta, header bytes, otherwise
+  untouched memory and import binding. SAME positive-evidence validator must
+  reject each; unrelated deliberately false assertions are not controls.
+
+### Exact memory/allocation oracle
+
+For each transition copy complete before/after memory, size, heap pointer,
+operand/result pointers, headers, capacities and payload. Reacquire and
+bounds-check views after calls. No growth: same left pointer/capacity, heap
+delta0; only appended bytes and final length may change. Growth: capacity
+max(2*oldCapacity,16,totalLength), result equals pre-call heap pointer, heap
+delta align8(12+newCapacity). Preserve old allocations/distinct RHS and all
+other memory bytes. Fresh growth header remains allocator-initialized zero;
+never copy cached old header. No-growth preserves existing header/cache.
+Self-append concatenates PRE-CALL payload with itself; do not assert unchanged
+RHS on an alias of the changed left object.
+
+Baseline/future-candidate semantics and memory/allocation witnesses compare
+exactly; differing artifacts stay visible. Heap delta measures allocation
+usage, NOT dynamic call counts. Establish expected zero/one allocation count
+separately from the installed helper's single growth-branch allocator call;
+never label inferred counts as measured.
+
+### Mandatory actual source/consumer/helper join
+
+Follow transparent6914 call-through observers, adapting runtime registration
+to addLinearIrStringRuntime. Preserve receiver/args/returns/thrown errors.
+Require unchanged source/options, genuine owned-append ASCII IR nodes, exact
+frozen batch and completed Linear consumer, exact module-session identity,
+run owner-unit joined to consumed output, installed physical body identity,
+actual layout-resolved call to DEFINED append helper, valid final compiled
+artifact and expected native result. A global report getter alone is insufficient.
+Runtime exports prove kernel behavior, not source admission. Missing admission
+or joins fail the positive source requirement: no altered fixture, manual IR,
+disabled flag, skip or unsupported-as-green. Input0 does not establish dynamic
+append execution; keep compile-time ownership and native call evidence distinct.
+
+### Records, fail-closed typing and delivery
+
+Strict discriminated records: provenance (schema/issue/source/test/fixture
+hashes, options, Node/V8, flags, command, exact36-ID manifest); runtime
+(construction, substeps, installed helper, artifact, full witnesses and import
+counters); source (input/result/artifact/complete joins); negative (mutation
+and rejection); completion (exact IDs, duplicates/missing/failures).
+Reject absent/ill-typed fields, duplicate/missing IDs, invalid artifacts and
+incompatible provenance. No broad Function, unchecked export casts or
+permissive index-signature evidence bags. Restore observers/environment in
+finally. Parent alone runs heavy qualification, including new-file-inclusive
+strict typing and existing protections without configuration weakening.
+Source/performance acceptance and A's final integration authority stay gated.
