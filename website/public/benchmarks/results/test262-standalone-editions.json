@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11562,
-    "fail": 130,
+    "pass": 11568,
+    "fail": 124,
     "ce": 12,
     "skip": 0,
     "total": 11704,
@@ -66,8 +66,8 @@
       },
       {
         "name": "generators",
-        "pass": 2477,
-        "fail": 8,
+        "pass": 2478,
+        "fail": 7,
         "ce": 1,
         "skip": 0,
         "total": 2486,
@@ -84,8 +84,8 @@
       },
       {
         "name": "TypedArray",
-        "pass": 1040,
-        "fail": 10,
+        "pass": 1042,
+        "fail": 8,
         "ce": 0,
         "skip": 0,
         "total": 1050,
@@ -120,8 +120,8 @@
       },
       {
         "name": "Proxy",
-        "pass": 400,
-        "fail": 28,
+        "pass": 402,
+        "fail": 26,
         "ce": 3,
         "skip": 0,
         "total": 431,
@@ -129,8 +129,8 @@
       },
       {
         "name": "Reflect.construct",
-        "pass": 399,
-        "fail": 9,
+        "pass": 400,
+        "fail": 8,
         "ce": 7,
         "skip": 0,
         "total": 415,
@@ -147,12 +147,12 @@
       },
       {
         "name": "Reflect",
-        "pass": 291,
-        "fail": 32,
+        "pass": 293,
+        "fail": 30,
         "ce": 7,
         "skip": 0,
         "total": 330,
-        "pct": 88
+        "pct": 89
       },
       {
         "name": "Symbol.species",
@@ -183,12 +183,12 @@
       },
       {
         "name": "cross-realm",
-        "pass": 78,
-        "fail": 48,
+        "pass": 79,
+        "fail": 47,
         "ce": 2,
         "skip": 0,
         "total": 128,
-        "pct": 61
+        "pct": 62
       },
       {
         "name": "Symbol.toPrimitive",
@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1177,
-    "fail": 687,
+    "pass": 1178,
+    "fail": 686,
     "ce": 153,
     "skip": 18,
     "total": 2035,
@@ -1516,8 +1516,8 @@
     "features": [
       {
         "name": "BigInt",
-        "pass": 643,
-        "fail": 328,
+        "pass": 644,
+        "fail": 327,
         "ce": 77,
         "skip": 0,
         "total": 1048,
@@ -1525,8 +1525,8 @@
       },
       {
         "name": "TypedArray",
-        "pass": 427,
-        "fail": 206,
+        "pass": 428,
+        "fail": 205,
         "ce": 75,
         "skip": 0,
         "total": 708,
@@ -3571,21 +3571,21 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4597,
-    "fail": 187,
-    "ce": 137,
+    "pass": 4606,
+    "fail": 186,
+    "ce": 129,
     "skip": 0,
     "total": 4921,
-    "pct": 93,
+    "pct": 94,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4494,
-        "fail": 106,
-        "ce": 11,
+        "pass": 4503,
+        "fail": 105,
+        "ce": 3,
         "skip": 0,
         "total": 4611,
-        "pct": 97
+        "pct": 98
       },
       {
         "name": "Symbol",
