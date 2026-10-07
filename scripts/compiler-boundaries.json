@@ -2622,6 +2622,14 @@
       "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
+      "path": "src/checker/js-collection-inference.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "New #6651 V12 leaf of src/checker/index.ts (synthetic ambient root for `.js` checker programs); it depends only on the TS wrapper and moves with its parent when the checker's TS-wrapper dependencies are separated at frontend closure."
+    },
+    {
       "path": "src/checker/language-service.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

@@ -3990,6 +3990,55 @@ binding still folds from the checker type (`"object"` for the symbol);
 function-local bindings are not covered by the assignment collector (scoped to
 module bindings like its sibling).
 
+### 2026-10-07 — Slice V12
+
+Inferred keyed-collection types in JavaScript, on `7ebc362ecc`. **Target
+`Map/prototype/set/append-new-values.js` flips**, plus its two siblings
+`Map/prototype/{getOrInsert,getOrInsertComputed}/append-new-values.js`.
+
+**Root cause (type source, not consumer).** In a `.js` entry the stock
+`MapConstructor` overloads infer `K`/`V` from the initial entries:
+`new Map([[4, 4], ['foo3', 3], [s, 2]])` is `Map<string | number | symbol,
+number>`. JavaScript does not honour that — `map.set(1, 'valid')` is an
+ordinary write — but every consumer that trusts the inferred value type (a
+`var` slot, a call argument, a `forEach` callback parameter) lowers the read as
+`f64`, so the string reads back as `NaN`. Patching consumers one by one would
+leave the rest wrong; the inference itself is unsound for JS.
+
+**Fix.** NEW leaf `src/checker/js-collection-inference.ts`: for a `.js`/`.jsx`/
+`.mjs`/`.cjs` entry, `analyzeSource` adds one synthetic ambient root
+(`__js2wasm_js_collections.d.ts`) that prepends construct overloads to
+`MapConstructor`/`SetConstructor`/`WeakMapConstructor` (interface merging puts
+a later declaration's overloads first). Their type parameters default to `any`
+(`WeakKey` for weak keys, as the stock zero-argument overload) and the
+parameters are `NoInfer<…>`, so the constructor arguments no longer pick the
+types; an explicit type argument or a contextual JSDoc `@type` still binds
+them. A JS `new Map([[1, 2]])` is therefore typed exactly like the already
+well-exercised JS `new Map()`. TypeScript sources never get the root, so
+annotated and inferred TS collections keep their typed fast paths
+(byte-identical, below). `src/checker/index.ts` +9 (import, root, host
+wiring); no codegen change.
+
+**Receipts** (`JS2WASM_EVAL_ENGINE=quickjs … run-test262-paths.mts
+--standalone`, base vs branch, same box). Family `Map/**`, `Set/**`,
+`WeakMap/**`, `WeakSet/**`, `Array/prototype/{push,map,filter,forEach,concat}/**`
+— 1,554 rows: base 147 non-passing → branch 144, **0 lost**, exactly the 3
+rows above gained. 20 rows (`Array/prototype/{forEach,map}` sub-chunks 13 and
+15 of the third 200-row chunk) hang in-process on BOTH sides under the 240 s
+cap and are unmeasured on both. Base Array chunks ran as 200-row in-process
+chunks, branch as 50-row quarters (200-row runs exceeded a 25-min cap under
+box load 14); verdicts match row for row. Playground examples + benchmark
+suites (17 `.ts` files × gc/standalone): **byte-identical**. Pin
+`tests/issue-6651-v12-inferred-collection-types.test.ts` 3/3 (2/3 on base —
+the TS control passes on both). Equivalence gate green (1748 pass, 22 known).
+Temporal control (`Duration/prototype/round/*`, standalone, fresh prewarmed
+cache after `build:compiler-bundle` + `build:runtime-bundle`): **119 pass / 7
+fail of 126, 0 `illegal cast`** — unchanged.
+
+Known gaps: `analyzeMultiSource` (multi-file `.js` projects) does not get the
+root; array literals (`var a = [1]; a.push('x')`) are a separate inference
+path, not touched; `WeakSet` is not covered (its members are objects anyway).
+
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 
 Written at the user's "wrap up, handoff, open pr" (about 22:10 UTC). The goal
