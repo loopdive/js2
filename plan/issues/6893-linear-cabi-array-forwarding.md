@@ -670,3 +670,15 @@ Strict test-inclusive TS7 exposed BufferSource/instantiate typing errors in the
 unchanged test. Acceptance remains pending matched-baseline diagnosis and repair
 planning; passing runtime tests do not waive this gate. PR6568 remains HOLD, with
 Session A owning final integration and queue submission.
+
+Matched-baseline typing is now measured: candidate and test-only main baseline
+both exit1 with exactly the same ten diagnostics (full logs byte-equal). The
+baseline uses its own worktree-relative configuration, not candidate sources.
+Diagnostics concern Uint8Array<ArrayBufferLike> at WebAssembly BufferSource calls
+and the resulting instantiate overload; runtime equality does not repair these
+types. Raw logs and unchanged strict configuration are archived in `main-e1e/`.
+An earlier run used the candidate configuration from the baseline cwd and is not
+baseline evidence; the valid rerun uses baseline's own identical configuration.
+Astra's read-only review agrees the nine boundary failures are attributable to
+the bounded fix. Existing1977 asserts69/40 but does not record their IR route;
+retain A6897 attribution rather than claiming independent route proof here.
