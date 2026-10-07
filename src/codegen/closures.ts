@@ -3479,6 +3479,13 @@ export function compileLiftedClosureBody(
           closureInfoForSelf.returnType = exprType;
           closureInfoForSelf.funcTypeIdx = liftedFuncTypeIdx;
         }
+      } else if (!valTypesMatch(exprType, closureReturnType)) {
+        // (#6879) Same kind, different heap type — a concise body is `return
+        // expr`, so coerce exactly as `normalizeReturnExpression` does for a
+        // block body. prettier's `e => Object.keys(e).filter(...)`: the checker
+        // says `string[]`, the native lowering yields the externref vec, and the
+        // uncoerced fallthrough failed validation.
+        coerceType(ctx, liftedFctx, exprType, closureReturnType);
       }
       // (#4630) Concise parked-async body (`async () => expr`) — settle the
       // completion value into the promoted `$Promise` result.
