@@ -265,3 +265,119 @@ canonical main reproduces the exact diagnostic bytes. Alongside the three
 old cycle-test diagnostics, these are disclosed baseline typing errors,
 not repaired assertions or a waiver of production typing. Final lint,
 formatting, dialect, pushRaw and both changed-file budget gates pass.
+
+
+### Compiler inventory registration after published refresh
+
+PR 6578 quality run 37640450319, job 112857675218 failed the activated
+compiler-boundaries inventory step on published head
+`cdd1e7f9817ecc23f0e1a7b30cc148b2b2bd637c`. TypeScript, lint, formatting and
+core tests had passed; downstream gates were skipped. The exact local CI
+command `node --max-old-space-size=2048 scripts/check-compiler-boundaries.mjs
+--mode inventory --base HEAD^1` reproduced precisely two errors:
+`unclassified-module` and `unclassified-target`, both naming
+`src/ir/lowering/string-operations.ts`. Its actual first parent is
+`bec14ffc9fa747545705af2c8dd17cdf8eb336e3`; canonical composition base remains
+`6e5a583e56553c6066646591d1637c45c15e99e8`.
+
+The complete resolver inventory observes two edges from the new module,
+both type-only: `../backend/string-contract.js` resolves to the existing
+mixed-debt `src/ir/backend/string-contract.ts`, and `../core/nodes.js`
+resolves to clean `src/ir/core/nodes.ts`. The separate value-closure witness
+still observes the dispatcher import and no runtime dependencies from the
+leaf. It orchestrates generic string operations through an injected emitter;
+it is not concrete target emission or an activated clean-layer closure.
+
+The bounded correction adds only one explicit file classification to
+`scripts/compiler-boundaries.json`: existing `mixed-needs-split` migration
+debt, destination `compiler` for generic orchestration, with the existing
+coordinator owner and a concrete next-boundary explanation. The contract
+remains debt, so no clean-closure or whole-compiler completion is claimed.
+No allowed edges, activation roots, floors, evidence, detector code, source
+or proof receipts change. Root authorized this finite inventory companion.
+Canonical claim 6906 was re-read from upstream before edits and remains
+in-progress under the same owner/write ID `98930-z5d1p870`. Fresh queue state
+was false with no auto-merge request before these edits. Failed inventory
+JSON/stderr remain preserved under the ignored `main-refresh-v1` receipts.
+
+
+Both corrected inventories exit zero with no errors against the actual
+first parent and canonical composition base. They continue reporting
+`inventory-valid-architecture-incomplete` and `graphComplete: false`, with
+1884 modules inventoried; no architecture-completion claim is made.
+
+The full existing compiler-boundary guard suite registers 125 parameterized
+rows, not the initial estimate of 40 literal test declarations. Its candidate
+window produced 124 passes and one failure in the unchanged held-B fixture
+at line 797. A root-authorized full baseline comparison replaced only the
+policy with the exact published cdd1e7 blob and produced the same 124 passes
+and the same failure. All 125 identity/status rows match between epochs;
+JSON/IPC identities and statuses agree independently in each epoch, there
+are no skips or IPC errors, and 15906 custody inputs plus Git state remain
+unchanged in each window. The candidate policy was then restored byte for
+byte and every other tracked pin verified unchanged.
+
+The failure is the fixture's `manifest.moves.slice(0, 2)` assumption: those
+moves are now nested-stackification and the prepared async frame engine,
+while the ten held findings belong to the engine and adapter. The adapter's
+two findings remain external-unbound in the fixture, so the unchanged
+all-bound assertion fails. Evidence and moves are identical on published
+cdd1e7, canonical 6e5a583e and original 3c671f; the new leaf classification
+cannot affect this fixture. Both failed windows and complete messages are
+preserved in `main-refresh-v1/boundary-guard-v1` and
+`main-refresh-v1/boundary-guard-baseline-v1/comparison.json`. No B evidence,
+policy move declarations, detector logic or stopped assertions were edited.
+Root held commit preparation pending an architectural amendment for the
+finite fixture correction; this baseline comparison is not a waived test.
+
+
+Root adopted the exact amendment below for local plan 6906, **Extract generic string operations from the IR lowering dispatcher**, after the actual unchanged-policy 125-row baseline reproduced the positional fixture failure. Amendment artifact SHA-256: `3491e3b6180361ba565c32a69271058c08fc65e253206d85f15e54224e563904`. Its manifest read pin is historical architectural review evidence; the actual standalone policy and baseline epochs above remain the validation operands.
+
+
+## Conditional fixture correction: select held evidence moves by their original paths
+
+This separate amendment is for the existing issue6906; root adopts it with that issue’s recorded title. It does not change the independent vector-read plan. This is static review only, conditional on the pending unchanged-base125 measurement reproducing the same fixture failure. Do not infer a baseline result before its terminal receipt.
+
+The actual `tests/issue-3518-compiler-boundaries.test.ts` test “preserves all ten held B findings across moves, dummy callers and removed exports” selects `manifest.moves.slice(0, 2)` at797, and later empties `manifest.moves[0].to`. Those are positional assumptions. The reviewed manifest’s first move is nested-stackification, while the held evidence declares precisely these two original paths:
+
+- `src/codegen/prepared-async-frame-engine.ts`: eight findings, including one `sameType`; move to `src/runtime/wasmgc/async/prepared-async-frame-engine.ts`.
+- `src/codegen/prepared-async-frame-adapter.ts`: two findings, including one `sameType`; move to `src/backend/wasmgc/async/prepared-async-frame-adapter.ts`.
+
+Read operand: root `scripts/compiler-boundaries.json`, 602572 bytes, SHA-256 `1cfa9d85f325bdca79b3818cef6fbe5f7eb97c538f41b45c7cce2c969c7b6e8f`. This pins the read working manifest, not clean canonical main. Leaf registration does not alter these evidence/move facts.
+
+One Sol Medium writer owns only this existing test body. Derive the unique original-path set from the held evidence’s symbols and assert it equals exactly the two paths above. For each original path, select the actual declared move by `from`, assert exactly one match, and require its declared target; do not fall back to position or accept a missing/duplicate mapping. Populate both selected targets from that path’s existing symbols, retaining dummy `sameType()` calls and file-policy setup. Replace the later `manifest.moves[0].to` deletion with the specifically selected engine target (or another explicitly selected held target); it must actually remove held symbols. Keep the held evidence clone and full declared moves clone unchanged.
+
+Retain every existing assertion: expectedCount10, ten symbol rows, exactly two sameType findings; absent inventory accounted10/resolved0/all external-unbound; moved inventory accounted10/resolved0/all bound-unresolved; normal gate nonzero; clearing the selected held target reports evidence-symbol-missing; setting policy status resolved reports evidence-policy. No symbol omission, resolved credit, export invention or weakened count is allowed.
+
+Validation: preserve the baseline125 receipt and exact failure. On a frozen fixture-only candidate, run this actual test and then the unchanged same125 population under the root’s existing run procedure; report exact names/statuses and all residual failures. Run scoped formatting/lint and applicable ordinary checks. Do not change gate code, manifest/policy, held B source, schemas, expected findings, shared test helper or ownership ledger. If the baseline does not reproduce this exact positional failure, stop attribution and use its actual result before installing this conditional fix.
+
+
+The adopted fixture correction derives the exact two original paths from
+all ten declared symbols, joins each to one unique manifest move, verifies
+the exact declared targets, and clears the specifically selected engine
+target for the missing-symbol negative. All prior assertions and both dummy
+sameType calls remain; no held-B symbol, move declaration, detector or schema
+changes. The focused case passes once with 124 genuine selection skips;
+the ignored runner initially expected JSON `pending` instead of observed
+`skipped`, stopped after its successful body, and was reconciled from actual
+captured JSON/IPC without repeating the body. The separate unfiltered full
+suite passes all 125 rows, zero skips, with exact collection/body identities,
+JSON/IPC statuses and 15906-input custody. Both required inventories pass
+again against the first parent and canonical 6e5a583e.
+
+Scoped lint reports no errors and formatting passes. Scoped test-inclusive
+TypeScript 7 identifies one unchanged readonly-array diagnostic at line
+243:58; the exact original cdd1e7 test blob reproduces the same diagnostic,
+outside the edited body. This is recorded baseline typing evidence, not a
+typing waiver or an assertion repair. A mistaken initial compiler executable
+path failed before typechecking; its log is preserved and the actual package
+entry point was used for both measured compilations.
+
+Fresh canonical-main inspection observes
+`6c88d157444ea4ae377a7ef1b82b15ef2f4f6603`, six incoming paths, with one owned
+file overlap: compiler-boundaries.json adds only the unrelated
+vec-receiver-identity classification in a disjoint hunk. This packet does
+not refresh or overwrite that main change; root reviews subsequent
+integration independently. All original failed/baseline receipts remain
+historical, the normal signed checkpoint remains subject to root review,
+and publication/queue admission remains root-controlled.
