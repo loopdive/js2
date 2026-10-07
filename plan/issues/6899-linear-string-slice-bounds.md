@@ -300,3 +300,110 @@ Required release evidence:
 
 Plan author performed read-only source/spec inspection and wrote this issue
 only. No source/test edits, test execution, commit, push or claim operation.
+
+## Implementation record — 2026-10-07, Session B
+
+The parent released the finite K/T scopes after reviewing the complete plan.
+Sol 6.1 Medium implemented the source and independent test in separate worktrees;
+Astra High's static source review found no actionable defect. No shared A file
+was edited. Source commit `beda2d0c15db4027b7407d3b0382fd31323fb394`
+adds the 49-line used leaf and changes only the declared runtime seam/import.
+Runtime file growth is +4 lines; `addStringRuntime` grows +3, below both caps.
+Normal formatting, lint and budget hooks passed; ratchet baselines are unchanged.
+
+Frozen validation:
+
+- Baseline source `8f3b70b37a37d5f475f759d155391621d79ffc92`, with the new
+  test untracked in its isolated test worktree; no production edits.
+- Candidate source/test `899883bec7874bc438fe0955d2094d67bb04abc0`.
+- Identical test SHA256:
+  `07ece44523e7e9c82aeb60f44d34b43506bc797151b510099b042b9a2ed03136`.
+- Candidate runtime SHA256:
+  `7482f82a03f431bf5bdeb334697b25c5b5a3ad24ec3130da65ab13c9daa58f09`;
+  leaf `876837def1a21df66198f7bfece58c4096b16e895bd8cba7d069b086c48980f6`.
+- Node 22.23.2 / V8 12.4.254.21-node.56, single-fork Vitest, target Linear,
+  public optimize:false. Each feature run had a 180-second external watchdog;
+  each unchanged-control run had 240 seconds. No timeout or widened limit.
+
+Actual V1 feature result: baseline **22 pass / 25 fail out of 47**, candidate
+**47/47**, no skips. Both population records account for all 45 semantic rows,
+two safety-instrument controls and 12 separately logged real-allocator
+transparency comparisons. Baseline runtime failures were 11/18; public explicit
+bounds failed 6/8 on each route, and omitted-end failed on each route. Candidate
+fixes those values with the same tests. All nine overlay public owners prove
+actual admission, intrinsic binding, installed owner/export association and
+real `__str_slice` call. This is existing overlay ownership, not newly admitted
+source or shared `PreparedIrProgram` acceptance. Direct-mode global report data
+can remain from the preceding overlay; it is diagnostic only, not direct-mode
+ownership evidence. Direct controls are identified by their actual flag/options.
+
+Extreme baseline requests were bounded by the validated test-only instrument;
+one oversized request hit that guard. Guard trips are not production allocator
+trap claims. Candidate never trips it. Split's valid 144-byte array allocation
+uses the unmodified one-page allocator, not the 64-byte instrument. All complete
+payload/header/allocation/source-memory checks pass. In-range byte ABI, six
+charAt controls and both split controls remain unchanged.
+
+All 22 previously passing feature rows compare exactly after excluding only
+`evidence.binarySha256` and `evidence.emittedSha256`; no behavior, memory, error,
+route or ownership field was excluded. The retained comparison reports 47
+baseline rows, 47 candidate rows, 22 compared and zero differences.
+
+The combined unchanged-control population (`linear-string`, issue1976 and
+issue2956) produced **45 pass / 3 fail out of 48**, exit 1, on each revision. Failure
+identities are unchanged: fixed-number-vector admission; core Linear string
+admission; UTF-16 charCodeAt capability including omitted arguments. Original
+positive requirements, fixtures and diagnostics are retained, not weakened.
+These results do not establish whole-suite parity or full IR completion.
+
+Lossless raw feature/control logs and the exact passing-row comparison are in
+`plan/log/6899-linear-string-slice-20261007/`. Raw feature SHA256 values:
+baseline `a402a70dfc856e01210e6272f7506d328a6be7784c5494123a43ae72b6c5e3ca`,
+candidate `08cc7d28252d7da4efb67532c7d2db7e5869f43f704c4014ff74ba6c653b5e32`.
+Raw control SHA256 values: baseline
+`1ab22273aa6fc264cfba79b648927f36b749c69151758f5ed4ffcf2f8dbf4903`,
+candidate `c72dc54693a0edc8a2555d1547583193b76a786bf1b6a2d192d79915b3d9a97b`.
+Vitest's failure rendering includes NUL bytes, so extraction uses `rg -a` plus
+jq with positive population counts; ordinary text-mode search is not evidence
+of empty output. No source fixture or semantic assertion was changed; the
+strict test-typing repair below preserves the original instrument and logs.
+
+PR #6575 is non-draft and held for A's integration/queue decision. Initial
+published plan/handoff HEAD was `519b45f5e24898a0eaed0fd34a470a7f4e775c6d`;
+later publication is verified against the remote/PR head separately. Legacy,
+encoding/numeric conversion limitations and shared allocation refusals remain.
+Signing correction: this host has no configured signing settings and these
+commits contain no `gpgsig`; earlier signed-commit wording was unverified.
+Signing was not disabled; normal commit/push protections remain active.
+
+### Final V2 instrument qualification
+
+V1 strict test-inclusive TS7 diagnosed two DOM `BufferSource` generic mismatches
+and consequent instantiate-overload errors. Sol repaired only those two
+WebAssembly API sites using ordinary ArrayBuffer-backed byte copies; original
+byte digests, all source fixtures and all assertions remain unchanged. V1 test
+bytes and diagnostics remain losslessly archived, not replaced by V2 evidence.
+
+Final V2 test SHA256:
+`d808dc5b064c536f7e94576325fab46dc6ec489aeb453d8936fa60058097252b`.
+The same V2 bytes were rerun on baseline `8f3b70b37a` and candidate
+`cfbfe60ce1`: **22 pass / 25 fail out of 47** versus **47/47**, with all
+45 semantic rows, two guard controls and 12 transparency comparisons accounted
+for. Both repaired-run raw row arrays are exactly equal to their corresponding
+V1 arrays, with **no excluded fields**. The final cross-arm passing-row comparison
+again has 22 rows, zero differences, excluding only the two binary digest fields.
+
+Raw V2 feature log SHA256: baseline
+`f7a4b888baa917cb1de18775e31571c459a29262b7bdaf82c18076bd83d8ee2f`,
+candidate `b0cee9702bdad7d8fde76da9c875acbea95fa304a0e71ea9eb8b9b94e246743c`.
+Source runtime/leaf bytes remain those qualified at `899883bec7`; the unchanged
+48-control population is qualified at that source epoch, not relabeled as a
+new full suite at a later test/docs commit.
+
+Strict candidate TS7 covering all source and the new test finished **exit 0**,
+zero diagnostics, with `.tmp/6899-validation/tsconfig-test.json`; V1's diagnostics
+are its positive control. A path-adjusted reproduction config with the same
+selected files/options is published in this log directory. Reproduce with
+`node node_modules/typescript7/lib/tsc.js --noEmit -p plan/log/6899-linear-string-slice-20261007/tsconfig-test.json`.
+All runtime feature runs kept their original 180-second watchdog; no timeout
+extension, semantic fixture change, skip or protection bypass was used.
