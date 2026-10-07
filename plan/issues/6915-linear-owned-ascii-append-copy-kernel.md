@@ -91,12 +91,14 @@ byte. No speedup or regression has been measured.
 
 After ownership and baseline gates:
 
-1. Replace nonempty growing-prefix byte loop with memory.copy: result+payload
-   offset, originalLeft+payload offset, captured leftLength.
+1. Replace nonempty growing-prefix byte loop with memory.copy, with stack
+   operands in destination/source/byte-count order: result+12,
+   originalLeft+12, captured leftLength. The payload address offset is12;
+   LINEAR_STRING_PAYLOAD_PREFIX_BYTES is4 and is NOT the address offset.
 2. RHS split: zero bytes performs no payload access; one byte performs one
    unsigned byte load/store; longer RHS uses memory.copy. Destination is
-   result+payload offset+captured leftLength; source originalRight+payload
-   offset; count captured rightLength.
+   result+12+captured leftLength; source originalRight+12;
+   count captured rightLength, in that exact stack operand order.
 3. Keep allocation/capacity/address/header/length ordering outside these
    regions unchanged. Preserve local allocation/count and fresh instruction
    trees; no cached mutable bodies or alternate compiler/provider API.
@@ -109,7 +111,11 @@ After ownership and baseline gates:
 Capture both original lengths before writes. No-growth returns same left
 pointer, preserves capacity/allocation, changes only appended payload and final
 length. Growth preserves allocation size/count/capacity and prior allocations,
-copies only initialized prefix, then RHS. Distinct RHS remains unchanged.
+copies only initialized prefix, then RHS. A growing result keeps the header
+initialized by the allocator and the existing new-capacity store; do not copy
+the old header/cache into the fresh allocation. No-growth retains existing
+header/cache bits. Header preservation means equality to baseline behavior,
+not copying headers between allocations. Distinct RHS remains unchanged.
 Self-append uses captured original lengths: duplicate exact bytes with spare
 capacity and growth; this runtime control does not imply frontend admission.
 Preserve empty-input pointer/header behavior, ASCII NUL, cache/header bits,
@@ -133,8 +139,9 @@ switch or shared admission widening.
 Freeze finite new-test population before coding: empty+empty/one/long;
 nonempty+empty; one/long RHS with spare capacity and growth; exact-capacity and
 first-byte-over boundaries; repeated multiple-growth appends; self-append
-growth/no-growth; distinct equal-content carriers; fractional alignment
-boundaries; NUL; bounded long payload; real function-import offsets and throwing
+growth/no-growth; distinct equal-content carriers; integer payload lengths7/8/9
+and15/16/17 around8-byte boundaries, with actual allocated addresses recorded;
+NUL; bounded long payload; real function-import offsets and throwing
 host namesake/decoy. Use genuine runtime allocation, not fabricated headers;
 bind exports with actual import count and validate bounds before host views.
 
@@ -186,3 +193,11 @@ absent; created it and ran once. No test/source changes or hidden test retry.
 
 Status stays BLOCKED on exact ownership confirmation. Source implementation
 has not been dispatched. Planning publication does not release this gate.
+
+## Astra High review
+
+Independent read-only review atd8e154d4ce found no copy-replacement correctness
+blocker and requested the three precision fixes now above: exact12-byte payload
+address/stack order, baseline-relative fresh-header behavior, and integer
+alignment cases. Self-append captured lengths and final length-store ordering
+were reviewed as sound; feature-policy stop and performance hold remain.
