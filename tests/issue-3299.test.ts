@@ -474,6 +474,8 @@ function functionIndex(wasm: WasmModule, name: string): number {
 
 function runtimeOperation(wasm: WasmModule, operation: LinearRuntimeOperation): number {
   if (operation.family === "memory" && operation.operation === "allocate") return functionIndex(wasm, "__malloc");
+  if (operation.family === "vector" && operation.operation === "resolve-forwarding")
+    return functionIndex(wasm, "__arr_resolve");
   if (operation.family === "vector" && operation.operation === "allocate") return functionIndex(wasm, "__arr_new");
   if (operation.family === "vector" && operation.operation === "initialize-element") {
     return functionIndex(wasm, "__linear_ir_vec_init_f64");

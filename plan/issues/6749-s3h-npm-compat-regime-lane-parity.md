@@ -17,9 +17,19 @@ loc-budget-allow:
   # 2026-10-06 (#6749 part A): +1 line in calls.ts — the regime arm that
   # marshals the host UUID string (helper lives in standalone-crypto.ts).
   - src/codegen/expressions/calls.ts
+  # 2026-10-07 (#6879 part C, prettier): +17 the `Object.getPrototypeOf`
+  # value body next to its Object.* siblings; +7 the concise-arrow ref
+  # coercion (mirrors normalizeReturnExpression for a block body). Granted
+  # here rather than in #6879's file so the acorn and prettier PRs do not
+  # conflict on one frontmatter.
+  - src/codegen/builtin-value-read.ts
+  - src/codegen/closures.ts
 func-budget-allow:
   # 2026-10-06 (#6749 part A): +1 line, same arm.
   - src/codegen/expressions/calls.ts::compileCallExpression
+  # 2026-10-07 (#6879 part C, prettier): the same two arms.
+  - src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
+  - src/codegen/closures.ts::compileLiftedClosureBody
 sprint: current
 parent: 5385
 depends_on: [6686, 6707]
@@ -186,3 +196,28 @@ default, `Number(input) + 6`, and `a.type === "add" ? a.amount : -1`. So the
 `.tmp/`, add prints at `dispatch` entry (`action.type`, `typeof
 action.amount`) and after `currentReducer(currentState, action)`, run the lane
 with the copied entry, and bisect from there.
+
+### Part C, prettier (2026-10-07, #6879, opus-6879)
+
+Two codegen gaps. Each also hit `--target standalone`; prettier's own
+standalone lane avoids them through a different driver. Both are fixed in the
+prettier PR and covered by `tests/issue-6879-regime-prettier.test.ts`:
+
+1. **`__closure_538` validation** (`expected (ref null 38), got (ref 2)`). The
+   source is `Fa = e => Object.keys(e).filter(t => !on.has(t))`. The checker
+   types the result as `string[]`, but the native lowering returns the
+   externref vec. A concise arrow body was coerced only when the value KIND
+   differed. Now it also coerces when the kinds match but the heap types
+   differ, as a block body's `return` already does
+   (`compileLiftedClosureBody`, closures.ts).
+2. **Module init threw `Object.getPrototypeOf is not yet implemented`.**
+   esbuild's interop snapshots `var uo = Object.getPrototypeOf` and calls it
+   from `__toESM`. The callable-value table had no body for it. It now calls
+   the same native `__getPrototypeOf` as the direct call's generic tail
+   (builtin-value-read.ts).
+
+Unoptimized regime driver: checksum 49 = 49 (node). With the lane's `-O4`,
+wasm-opt aborts in `Flatten` ("unexpected expr type"). The no-flatten retry
+then hit the 600 s limit three times on this box at load 150–250. The same
+abort-then-retry happened on acorn's first run, and acorn measured on a later
+run. Re-measure on an unloaded box or in CI.
