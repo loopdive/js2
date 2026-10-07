@@ -158,5 +158,5 @@ the `IrBackend` interface instead of the IR importing it.
 - `twoWayDirEdges["ir->codegen"]` in `scripts/import-cycles-baseline.json`
   reaches 0 (each slice lowers it; the post-merge job banks the drop).
 - No slice raises `largestSccSize`, `sccCountOver1` or any other
-  `twoWayDirEdges` entry (`pnpm run check:import-cycles` stays green without
-  `--update`).
+  `twoWayDirEdges` entry (`pnpm run check:import-cycles` stays green without an
+  `import-cycles-allow:` grant).

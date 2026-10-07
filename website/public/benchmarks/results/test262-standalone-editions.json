@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11547,
-    "fail": 143,
+    "pass": 11557,
+    "fail": 133,
     "ce": 14,
     "skip": 0,
     "total": 11704,
@@ -93,17 +93,17 @@
       },
       {
         "name": "Symbol.iterator",
-        "pass": 790,
-        "fail": 5,
+        "pass": 792,
+        "fail": 3,
         "ce": 0,
         "skip": 0,
         "total": 795,
-        "pct": 99
+        "pct": 100
       },
       {
         "name": "Symbol",
-        "pass": 594,
-        "fail": 15,
+        "pass": 595,
+        "fail": 14,
         "ce": 0,
         "skip": 0,
         "total": 609,
@@ -120,8 +120,8 @@
       },
       {
         "name": "Proxy",
-        "pass": 396,
-        "fail": 32,
+        "pass": 398,
+        "fail": 30,
         "ce": 3,
         "skip": 0,
         "total": 431,
@@ -147,8 +147,8 @@
       },
       {
         "name": "Reflect",
-        "pass": 289,
-        "fail": 34,
+        "pass": 290,
+        "fail": 33,
         "ce": 7,
         "skip": 0,
         "total": 330,
@@ -192,12 +192,12 @@
       },
       {
         "name": "Symbol.toPrimitive",
-        "pass": 81,
-        "fail": 2,
+        "pass": 82,
+        "fail": 1,
         "ce": 0,
         "skip": 0,
         "total": 83,
-        "pct": 98
+        "pct": 99
       },
       {
         "name": "let",
@@ -237,12 +237,12 @@
       },
       {
         "name": "Symbol.split",
-        "pass": 55,
-        "fail": 2,
+        "pass": 56,
+        "fail": 1,
         "ce": 0,
         "skip": 0,
         "total": 57,
-        "pct": 96
+        "pct": 98
       },
       {
         "name": "iterator-chunking",
@@ -1316,12 +1316,12 @@
   },
   {
     "edition": "ES2019",
-    "pass": 97,
-    "fail": 38,
+    "pass": 98,
+    "fail": 37,
     "ce": 1,
     "skip": 0,
     "total": 136,
-    "pct": 71,
+    "pct": 72,
     "features": [
       {
         "name": "string-trimming",
@@ -1334,12 +1334,12 @@
       },
       {
         "name": "Symbol.toPrimitive",
-        "pass": 19,
-        "fail": 9,
+        "pass": 20,
+        "fail": 8,
         "ce": 0,
         "skip": 0,
         "total": 28,
-        "pct": 68
+        "pct": 71
       },
       {
         "name": "Object.fromEntries",
@@ -1370,12 +1370,12 @@
       },
       {
         "name": "Array.prototype.flatMap",
-        "pass": 12,
-        "fail": 9,
+        "pass": 13,
+        "fail": 8,
         "ce": 0,
         "skip": 0,
         "total": 21,
-        "pct": 57
+        "pct": 62
       },
       {
         "name": "Array.prototype.flat",
@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4249,
-    "fail": 1163,
+    "pass": 4250,
+    "fail": 1162,
     "ce": 380,
     "skip": 0,
     "total": 5792,
@@ -2204,8 +2204,8 @@
       },
       {
         "name": "class-fields-public",
-        "pass": 1271,
-        "fail": 570,
+        "pass": 1272,
+        "fail": 569,
         "ce": 216,
         "skip": 0,
         "total": 2057,
@@ -3789,8 +3789,8 @@
   },
   {
     "edition": "ES2027",
-    "pass": 384,
-    "fail": 305,
+    "pass": 386,
+    "fail": 303,
     "ce": 208,
     "skip": 0,
     "total": 897,
@@ -3888,12 +3888,12 @@
       },
       {
         "name": "error-stack-accessor",
-        "pass": 12,
-        "fail": 12,
+        "pass": 13,
+        "fail": 11,
         "ce": 0,
         "skip": 0,
         "total": 24,
-        "pct": 50
+        "pct": 54
       },
       {
         "name": "iterator-chunking",
@@ -4304,11 +4304,11 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4653,
-    "fail": 723,
+    "pass": 4659,
+    "fail": 717,
     "ce": 69,
     "skip": 0,
     "total": 5445,
-    "pct": 85
+    "pct": 86
   }
 ]

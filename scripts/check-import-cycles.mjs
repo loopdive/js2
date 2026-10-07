@@ -10,7 +10,7 @@
 // file in an SCC transitively imports every other, so nothing inside it can
 // be deleted, moved or tested in isolation. #912 removed cycles once and
 // nothing stopped them from returning. This gate stops the growth; the cuts
-// themselves are separate slices (first: the ir -> codegen edges).
+// themselves are separate slices (first: the ir -> codegen edges, #6808).
 //
 // WHAT IS MEASURED. Nodes are the `.ts` files under `src/` (no `.d.ts`). An
 // edge A -> B exists when A has a VALUE reference to B — a static import or
@@ -25,7 +25,7 @@
 // `dir/index.ts`); packages and JSON are outside the graph. Several imports
 // of the same file from one file are ONE edge.
 //
-// THE RATCHETED NUMBERS (scripts/import-cycles-baseline.json):
+// THE RATCHETED NUMBERS:
 //   largestSccSize  files in the largest SCC (Tarjan).
 //   sccCountOver1   SCCs with more than one file.
 //   twoWayDirEdges  for every pair of "directories" that import each other,
@@ -35,17 +35,34 @@
 //                   modules such as ts-api.ts never pair with anything.
 //                   A pair that stops being two-way drops out.
 //
-// GATE SEMANTICS (same model as check:ir-fallbacks / check:ir-layering):
-//   - any number above the committed baseline, or a NEW two-way pair -> FAIL
-//   - decreases -> PASS, with a hint; `--update-on-decrease` banks them
-//     (the post-merge baseline jobs call it, so PRs do not have to)
-//   - growth that is genuinely intended (a file split inside the SCC adds a
-//     file; splitting the SCC in two adds an SCC) -> run `--update` in the PR
-//     and commit the baseline, so the increase is visible in review.
+// GATE SEMANTICS — change-scoped, like check:loc-budget / check:func-budget.
+//   The tree is measured twice: at the change-set's own base (resolved by
+//   scripts/lib/change-scope.mjs — HEAD^1 of CI's synthetic merge, else the
+//   merge-base with main; only the changed files are re-read from that base)
+//   and at HEAD. A number that grows, or a NEW two-way pair, FAILS unless the
+//   change-set grants it. The committed baseline is NOT read on this path, so
+//   PRs never edit scripts/import-cycles-baseline.json.
+//
+// INTENDED GROWTH is granted in the YAML frontmatter of an issue file the
+// change-set itself adds or modifies (only those are read, so a grant that
+// landed on main grants nothing to later PRs). One entry per number: the key
+// (`largestSccSize`, `sccCountOver1`, or a two-way pair such as
+// `codegen->ir`), the highest value the change-set may reach, and a dated
+// rationale after `#` (required — an entry without one grants nothing):
+//
+//   import-cycles-allow:
+//     - largestSccSize: 699 # 2026-10-02 (#NNNN): two new codegen helpers join the SCC
+//     - codegen->ir: 297 # 2026-10-02 (#NNNN): new leaf imports from-ast for ...
+//
+// THE COMMITTED BASELINE (scripts/import-cycles-baseline.json) is a low-water
+// mark. The post-merge jobs bank decreases into it with
+// `--update-on-decrease` (it never raises a number), and it is the reference
+// only when no base can be resolved (a source tarball, a --src tree outside
+// any repository). `--update` is a deliberate human re-seed.
 //
 // Usage:
 //   node scripts/check-import-cycles.mjs                      # gate
-//   node scripts/check-import-cycles.mjs --update-on-decrease # gate + bank drops
+//   node scripts/check-import-cycles.mjs --update-on-decrease # bank drops (post-merge)
 //   node scripts/check-import-cycles.mjs --update             # (re)seed baseline
 //   node scripts/check-import-cycles.mjs --verbose            # largest SCC +
 //                                                             # every cross-dir edge
@@ -53,11 +70,13 @@
 //   node scripts/check-import-cycles.mjs --src <dir> --baseline <file>
 //                                                             # alternate tree (tests)
 
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { references } from "./check-compiler-boundaries.mjs";
+import { baseBlob, changedPaths, changeSetAllowances, resolveChangeBase } from "./lib/change-scope.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -75,33 +94,34 @@ function walk(dir) {
 /** First path segment under src/ — a directory, or a root-level file itself. */
 const segment = (rel) => rel.split("/")[0];
 
+/** Module references of one file, reduced to what resolution needs. */
+function scanRefs(srcDir, rel, text) {
+  const sf = ts.createSourceFile(join(srcDir, rel), text, ts.ScriptTarget.Latest, true);
+  return references(sf, {}).map(({ specifier, typeOnly }) => ({ specifier, typeOnly }));
+}
+
 /**
- * Value-import graph of `srcDir`: Map<file, sorted importees>, files relative
- * to `srcDir` with forward slashes. `typeOnlySkipped` counts the type-only
+ * Value-import graph over `refsByFile` (Map<file relative to srcDir, refs>):
+ * Map<file, sorted importees>. `typeOnlySkipped` counts the type-only
  * references that resolved to a node and were left out.
  */
-export function buildGraph(srcDir) {
-  if (!existsSync(srcDir)) throw new Error(`source directory not found: ${srcDir}`);
+function resolveGraph(srcDir, refsByFile) {
   const toRel = (abs) => relative(srcDir, abs).split(sep).join("/");
-  const absFiles = walk(srcDir);
-  const nodes = new Set(absFiles.map(toRel));
-  const resolveSpecifier = (fromAbs, specifier) => {
+  const resolveSpecifier = (fromRel, specifier) => {
     if (!specifier || !specifier.startsWith(".")) return undefined;
-    const base = resolve(dirname(fromAbs), specifier);
+    const base = resolve(dirname(join(srcDir, fromRel)), specifier);
     const candidates = [];
     if (base.endsWith(".js")) candidates.push(`${base.slice(0, -3)}.ts`);
     if (base.endsWith(".ts")) candidates.push(base);
     candidates.push(`${base}.ts`, join(base, "index.ts"));
-    return candidates.map(toRel).find((rel) => nodes.has(rel));
+    return candidates.map(toRel).find((rel) => refsByFile.has(rel));
   };
   const adj = new Map();
   let typeOnlySkipped = 0;
-  for (const abs of absFiles) {
-    const from = toRel(abs);
-    const sf = ts.createSourceFile(abs, readFileSync(abs, "utf8"), ts.ScriptTarget.Latest, true);
+  for (const from of [...refsByFile.keys()].sort()) {
     const out = new Set();
-    for (const ref of references(sf, {})) {
-      const target = resolveSpecifier(abs, ref.specifier);
+    for (const ref of refsByFile.get(from)) {
+      const target = resolveSpecifier(from, ref.specifier);
       if (target === undefined) continue;
       if (ref.typeOnly) typeOnlySkipped++;
       else if (target !== from) out.add(target);
@@ -109,6 +129,77 @@ export function buildGraph(srcDir) {
     adj.set(from, [...out].sort());
   }
   return { adj, typeOnlySkipped };
+}
+
+/** Value-import graph of the working tree under `srcDir` (plus its per-file refs). */
+export function buildGraph(srcDir) {
+  if (!existsSync(srcDir)) throw new Error(`source directory not found: ${srcDir}`);
+  const refs = new Map();
+  for (const abs of walk(srcDir)) {
+    const rel = relative(srcDir, abs).split(sep).join("/");
+    refs.set(rel, scanRefs(srcDir, rel, readFileSync(abs, "utf8")));
+  }
+  return { ...resolveGraph(srcDir, refs), refs };
+}
+
+/** Top level of the work tree containing `dir`, or undefined outside one. */
+function workTreeRoot(dir) {
+  try {
+    // Without GIT_*: inside a hook GIT_DIR would answer for the hook's repo, not `dir`'s.
+    const top = execFileSync("git", ["-C", dir, "rev-parse", "--show-toplevel"], {
+      encoding: "utf8",
+      env: Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_"))),
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return top ? realpathSync(top) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The same graph at the change-set's `base`: HEAD's per-file refs with every
+ * changed `.ts` under srcDir replaced by its base blob (or dropped when the
+ * change-set added it). Undefined when the diff against `base` fails.
+ */
+function baseGraph(srcDir, repoRoot, base, headRefs) {
+  const prefix = relative(repoRoot, srcDir).split(sep).join("/");
+  const changed = changedPaths(repoRoot, base, prefix);
+  if (changed === undefined) return undefined;
+  const refs = new Map(headRefs);
+  for (const path of changed) {
+    if (!path.endsWith(".ts") || path.endsWith(".d.ts")) continue;
+    const rel = path.slice(prefix.length + 1);
+    const text = baseBlob(repoRoot, base, path);
+    if (text === undefined) refs.delete(rel);
+    else refs.set(rel, scanRefs(srcDir, rel, text));
+  }
+  return resolveGraph(srcDir, refs);
+}
+
+const ALLOWANCE = /^(largestSccSize|sccCountOver1|[^\s:>]+->[^\s:]+)\s*:\s*(\d+)\s*#\s*(\S.*)$/;
+
+/**
+ * The change-set's `import-cycles-allow:` grants: Map<flattened key,
+ * {value, sources}>, plus the malformed entries, which grant nothing.
+ */
+function cycleAllowances(repoRoot, base) {
+  const grants = new Map();
+  const invalid = [];
+  for (const [item, sources] of changeSetAllowances(repoRoot, base, "import-cycles-allow")) {
+    const m = ALLOWANCE.exec(item.trim());
+    if (!m) {
+      invalid.push(`${item} (${sources.join(", ")})`);
+      continue;
+    }
+    const key = m[1].includes("->") ? `twoWayDirEdges[${m[1]}]` : m[1];
+    const prior = grants.get(key);
+    grants.set(key, {
+      value: Math.max(Number(m[2]), prior?.value ?? 0),
+      sources: [...(prior?.sources ?? []), ...sources],
+    });
+  }
+  return { grants, invalid };
 }
 
 /** Tarjan's SCC algorithm, iterative (the big cycle is ~700 files deep). */
@@ -202,20 +293,22 @@ function flatten(m) {
   return out;
 }
 
-/** Growth and drops of `current` against `baseline`, one line per number. */
-function compare(baseline, current) {
-  const base = flatten(baseline);
+/** Numbers of `current` above / below `reference`, as {key, from, to}. */
+function compare(reference, current) {
+  const ref = flatten(reference);
   const cur = flatten(current);
   const growth = [];
   const drops = [];
-  for (const key of [...new Set([...Object.keys(base), ...Object.keys(cur)])].sort()) {
-    const b = base[key] ?? 0;
-    const c = cur[key] ?? 0;
-    if (c > b) growth.push(`${key}: ${b} → ${c}${b === 0 ? " (NEW two-way directory pair)" : ""}`);
-    else if (c < b) drops.push(`${key}: ${b} → ${c}`);
+  for (const key of [...new Set([...Object.keys(ref), ...Object.keys(cur)])].sort()) {
+    const from = ref[key] ?? 0;
+    const to = cur[key] ?? 0;
+    if (to > from) growth.push({ key, from, to });
+    else if (to < from) drops.push({ key, from, to });
   }
   return { growth, drops };
 }
+
+const describe = ({ key, from, to }) => `${key}: ${from} → ${to}${from === 0 ? " (NEW two-way directory pair)" : ""}`;
 
 /** Per-number minimum of baseline and current; two-way pairs at 0 drop out. */
 function banked(baseline, current) {
@@ -237,10 +330,9 @@ function main(argv) {
     return i !== -1 && i + 1 < argv.length ? argv[i + 1] : undefined;
   };
   const json = argv.includes("--json");
-  const updateOnDecrease = argv.includes("--update-on-decrease");
   // Under --json stdout carries only the payload; human lines go to stderr.
   const say = (msg) => (json ? console.error(msg) : console.log(msg));
-  const srcDir = resolve(REPO_ROOT, flagValue("--src") ?? "src");
+  const srcDir = realpathSync(resolve(REPO_ROOT, flagValue("--src") ?? "src"));
   const baselinePath = resolve(REPO_ROOT, flagValue("--baseline") ?? "scripts/import-cycles-baseline.json");
   const writeBaseline = (b) => writeFileSync(baselinePath, `${JSON.stringify(b, null, 2)}\n`);
 
@@ -268,32 +360,76 @@ function main(argv) {
     say(`import-cycles ratchet: baseline written — ${summary}`);
     return 0;
   }
-  if (!existsSync(baselinePath)) {
-    console.error(`import-cycles ratchet: no baseline at ${baselinePath} — seed it with --update.`);
+  const baseline = existsSync(baselinePath) ? JSON.parse(readFileSync(baselinePath, "utf8")) : undefined;
+
+  // Post-merge banking: lower the low-water mark, never raise it, never fail.
+  if (argv.includes("--update-on-decrease")) {
+    if (!baseline) {
+      console.error(`import-cycles ratchet: no baseline at ${baselinePath} — seed it with --update.`);
+      return 2;
+    }
+    const { growth, drops } = compare(baseline, current);
+    if (drops.length > 0) writeBaseline(banked(baseline, current));
+    say(`import-cycles ratchet: banked ${drops.length} decrease(s) — ${summary}`);
+    for (const d of drops) say(`  ${describe(d)}`);
+    for (const g of growth) say(`  above the low-water mark (admitted by its PR, not banked): ${describe(g)}`);
+    return 0;
+  }
+
+  // Gate: against the change-set's own base when one resolves.
+  const repoRoot = workTreeRoot(srcDir);
+  const { base, how } = repoRoot ? resolveChangeBase(repoRoot) : { base: undefined, how: "no-git" };
+  const atBase = base ? baseGraph(srcDir, repoRoot, base, graph.refs) : undefined;
+  let reference;
+  let against;
+  let grants = new Map();
+  if (atBase) {
+    reference = measure(atBase.adj).current;
+    against = `base: ${how}`;
+    const allowances = cycleAllowances(repoRoot, base);
+    grants = allowances.grants;
+    for (const bad of allowances.invalid)
+      console.error(
+        `import-cycles ratchet: WARNING — ignoring malformed import-cycles-allow entry: ${bad}\n` +
+          "  expected `- <largestSccSize|sccCountOver1|dirA->dirB>: <value> # <date> (#issue): <why>`",
+      );
+  } else if (baseline) {
+    reference = baseline;
+    against = `committed baseline (${how})`;
+  } else {
+    console.error(
+      `import-cycles ratchet: no base (${how}) and no baseline at ${baselinePath} — seed it with --update.`,
+    );
     return 2;
   }
 
-  const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
-  const { growth, drops } = compare(baseline, current);
-  if (updateOnDecrease && drops.length > 0) {
-    writeBaseline(banked(baseline, current));
-    say(`import-cycles ratchet: banked ${drops.length} decrease(s):`);
-    for (const d of drops) say(`  ${d}`);
+  const { growth, drops } = compare(reference, current);
+  const granted = [];
+  const failed = [];
+  for (const g of growth) {
+    const grant = grants.get(g.key);
+    if (grant && g.to <= grant.value)
+      granted.push(`${describe(g)} — allowed up to ${grant.value} by ${grant.sources.join(", ")}`);
+    else failed.push(describe(g) + (grant ? ` — exceeds the allowed ${grant.value}` : ""));
   }
-  if (growth.length > 0) {
-    console.error("import-cycles ratchet: FAIL — the value-import cycles in src/ grew.");
-    for (const g of growth) console.error(`  - ${g}`);
+  if (failed.length > 0) {
+    console.error(`import-cycles ratchet: FAIL — the value-import cycles in src/ grew (${against}).`);
+    for (const f of failed) console.error(`  - ${f}`);
     console.error(
       "\nFind the new edge with `node scripts/check-import-cycles.mjs --verbose`. Cut it with `import type`,\n" +
         "by moving the shared code below both files (src/shared/, src/backend/wasmgc/), or by injecting\n" +
-        "the dependency. If the growth is intended (a file split inside the SCC adds a file; splitting the\n" +
-        "SCC adds an SCC), run `node scripts/check-import-cycles.mjs --update` and commit the baseline.",
+        "the dependency. If the growth is intended (a new file that must join the SCC, a split), grant it\n" +
+        "in the frontmatter of this change-set's own plan/issues/*.md file:\n" +
+        "  import-cycles-allow:\n" +
+        "    - largestSccSize: <new value> # <date> (#issue): <why>\n" +
+        "Do not edit scripts/import-cycles-baseline.json; main's post-merge job is its sole writer.",
     );
     return 1;
   }
+  for (const g of granted) say(`import-cycles ratchet: granted ${g}`);
   say(
-    `import-cycles ratchet: OK — ${summary}` +
-      (drops.length > 0 && !updateOnDecrease ? " [improved — --update-on-decrease banks it]" : ""),
+    `import-cycles ratchet: OK — ${summary} (${against})` +
+      (drops.length > 0 ? ` [${drops.length} number(s) dropped — the post-merge job banks them]` : ""),
   );
   return 0;
 }
