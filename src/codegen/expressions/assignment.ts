@@ -7,6 +7,7 @@ import { receiverIsRealmGlobalObject } from "../helpers/sloppy-this-global.js"; 
 import { tryEmitRealmGlobalElementWrite } from "../realm-global-element-write.js"; // (#4491 T4) its bracket twin
 import { emitVecLengthHoleFill } from "../vec-length-hole-fill.js"; // (#6482 r4) shared length-store hole fill
 import { isBooleanType, isExternalDeclaredClass, isStringType } from "../../checker/type-mapper.js";
+import { isReparentObservablePrimitiveWrite } from "../object-model/native-proto-reparent.js"; // (#6651 V11)
 import { integrityVarKey } from "../widened-var-key.js";
 import { tracesToProxyValue } from "../proxy-value-provenance.js"; // (#6651 F4)
 import { classMemberFuncKey, isInstanceAccessorKey, staticReceiverAccessorKey } from "../class-member-keys.js"; // (#5195 Step 9 H / #6772 S12) accessor keys
@@ -365,6 +366,9 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
     return { kind: "externref" };
   }
 
+  // (#6651 V11) A re-parented wrapper prototype can observe a sloppy primitive write.
+  if (isReparentObservablePrimitiveWrite(ctx, expr, lhs, () => isStrictContext(lhs, ctx.inferModuleStrictArguments)))
+    return compilePropertyAssignmentExternSet(ctx, fctx, lhs, expr.right, lhs.name.text, true);
   // (#5269 B-d) A property WRITE whose RECEIVER is a symbol primitive.
   const symbolReceiverWrite = tryEmitSymbolReceiverPropertyWrite(ctx, fctx, expr, lhs);
   if (symbolReceiverWrite !== undefined) return symbolReceiverWrite;
@@ -5331,6 +5335,8 @@ function compilePropertyAssignmentExternSet(
     addUnionImports(ctx);
     const boxIdx = ctx.funcMap.get("__box_number");
     if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
+  } else if (objResult.kind === "i32" && ctx.builtinProtoReparentDirty) {
+    coerceType(ctx, fctx, objResult, { kind: "externref" }); // (#6651 V11) boolean / symbol base
   } else {
     return null;
   }

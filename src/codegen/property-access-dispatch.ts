@@ -88,6 +88,7 @@ import {
 import { emitLazyClassObjectGet, emitLazyProtoGet } from "./expressions/extern.js";
 import { emitOwnShadowGuardedMethodRead } from "./expressions/own-property-method-shadow.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
+import { moduleExtendsSymbolProto } from "./primitive-absent-property.js"; // (#6651 V10a)
 import { buildCaughtErrorPropFallback } from "./caught-error-prop-fallback.js";
 import { emitErrorMessageReadWithProtoFallback } from "./error-message-proto-read.js"; // (#6651 C2) absent-message prototype walk // (#4394) catch-binding non-$Error read
 import { addStringConstantGlobal, localGlobalIdx, registerLateReadStringConstant } from "./registry/imports.js";
@@ -3974,9 +3975,11 @@ export function tryNamespaceConstantAndSymbolReads(
     // `undefined`, matching `Symbol().description === undefined`.
     if (usesNativeSymbolProvider(ctx)) {
       ensureNativeSymbolBoundaryBridge(ctx);
-      const recvType = compileExpression(ctx, fctx, expr.expression, { kind: "i32" });
+      // A narrowed any receiver still occupies the boxed symbol plane.
+      const symbolId: ValType = { kind: "i32", symbol: true };
+      const recvType = compileExpression(ctx, fctx, expr.expression, symbolId);
       if (recvType && recvType.kind !== "i32") {
-        coerceType(ctx, fctx, recvType, { kind: "i32" });
+        coerceType(ctx, fctx, recvType, symbolId);
       }
       emitSymbolDescLoad(ctx, fctx);
       // Result is `ref_null $AnyString` — a native string (or null⇒undefined).
@@ -4005,7 +4008,10 @@ export function tryNamespaceConstantAndSymbolReads(
   if (
     ctx.standalone &&
     (objType.flags & ts.TypeFlags.ESSymbolLike) !== 0 &&
-    !SYMBOL_PROTOTYPE_OWN_MEMBERS.has(propName)
+    !SYMBOL_PROTOTYPE_OWN_MEMBERS.has(propName) &&
+    // (#6651 V10a) A module that writes `Symbol.prototype` / `Object.prototype`
+    // makes the chain observable — `tryEmitPrimitiveProtoMemberGet` walks it.
+    !moduleExtendsSymbolProto(expr.getSourceFile())
   ) {
     const recvType = compileExpression(ctx, fctx, expr.expression);
     if (recvType) fctx.body.push({ op: "drop" });

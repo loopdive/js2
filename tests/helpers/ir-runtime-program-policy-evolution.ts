@@ -1188,7 +1188,15 @@ export function authenticateRuntimePreparationPolicyEvolution(
     displacement += after.length - before.length;
   });
   for (const pin of [preparationNumberReceipt, ...preparationSourceInputs]) {
-    const bytes = readFileSync(new URL(`../../${pin.path}`, import.meta.url));
+    const bytes =
+      pin.path === "src/ir/runtime/intrinsic-preparation.ts"
+        ? Buffer.from(
+            runtimePreparationRemainderHistoricalSource(
+              readFileSync(new URL(`../../${pin.path}`, import.meta.url), "utf8"),
+            ),
+            "utf8",
+          )
+        : readFileSync(new URL(`../../${pin.path}`, import.meta.url));
     if (bytes.length !== pin.bytes || createHash("sha256").update(bytes).digest("hex") !== pin.sha256)
       preparationFail("full-file input changed: " + pin.path);
   }
@@ -2449,7 +2457,9 @@ export function authenticateCurrentMainInventoryEvolution(
     currentMainInventoryFail("receipt digest mismatch");
   const receipt = JSON.parse(text) as CurrentMainInventoryReceipt;
   if (!same(receipt, currentMainInventoryExpected)) currentMainInventoryFail("fixed receipt population mismatch");
-  const prefix = readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url));
+  const prefix = remainderPolicyHistoricalPrefix(
+    readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),
+  );
   currentMainInventoryPin(
     beforePolicyCaptureKernelPrefix(prefix.subarray(0, 94641)),
     receipt.helperPrefix,
@@ -4021,7 +4031,9 @@ export function authenticateCanonical3c6InventoryEvolution(
     canonical3c6Fail("receipt digest mismatch");
   const receipt = JSON.parse(text) as Canonical3c6InventoryReceipt;
   if (!same(receipt, canonical3c6Expected)) canonical3c6Fail("fixed receipt schema/population mismatch");
-  const helper = readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url));
+  const helper = remainderPolicyHistoricalPrefix(
+    readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),
+  );
   currentMainInventoryPin(
     helper.subarray(0, 117269),
     receipt.helperPrefix,
@@ -4505,7 +4517,9 @@ export function authenticateCanonical489dInventoryEvolution(
     canonical489dFail("receipt digest mismatch");
   const receipt = JSON.parse(text) as Canonical489dInventoryReceipt;
   if (!same(receipt, canonical489dExpected)) canonical489dFail("fixed receipt schema/population mismatch");
-  const helper = readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url));
+  const helper = remainderPolicyHistoricalPrefix(
+    readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),
+  );
   currentMainInventoryPin(
     helper.subarray(0, 187631),
     receipt.helperPrefix,
@@ -5305,7 +5319,9 @@ export function authenticateNestedStackificationPolicyEvolution(): NestedStackif
   const receipt = JSON.parse(text) as NestedStackificationPolicyReceipt;
   if (!same(receipt, nestedStackificationExpected))
     nestedStackificationFail("fixed receipt schema/population mismatch");
-  const helper = readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url));
+  const helper = remainderPolicyHistoricalPrefix(
+    readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),
+  );
   nestedStackificationPin(
     helper.subarray(0, 228005),
     receipt.helperPrefix,
@@ -6203,7 +6219,9 @@ function authenticateProgramValidatorPolicy(): ProgramValidatorPolicyReceipt {
   const receipt = JSON.parse(raw) as ProgramValidatorPolicyReceipt;
   if (!same(receipt, programValidatorPolicyExpected))
     programValidatorPolicyFail("fixed receipt schema/population mismatch");
-  const helper = readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url));
+  const helper = remainderPolicyHistoricalPrefix(
+    readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),
+  );
   programValidatorPolicyPin(
     helper.subarray(0, 254018),
     receipt.helperPrefix,
@@ -7059,7 +7077,7 @@ function authenticateWasmGcHelperPolicy(): WasmGcHelperReceipt {
     if (!same(old.current[key], receipt.before[key as keyof typeof receipt.before]))
       wasmGcHelperFail("program-validator predecessor profile mismatch");
   const prefix = sourceMapProgramValidatorPolicyHistoricalPrefix(
-    readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)),
+    remainderPolicyHistoricalPrefix(readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url))),
     receipt.helperPrefix.bytes,
   );
   wasmGcHelperPin(prefix, receipt.helperPrefix, "complete predecessor helper prefix changed");
@@ -7588,7 +7606,7 @@ function authenticateLoweringAnalysisPolicy(): LoweringAnalysisReceipt {
   if (!same(predecessor, wasmGcHelperExpected) || !same(predecessor.current, receipt.before))
     loweringAnalysisFail("fixed D2 predecessor profile mismatch");
   const prefix = sourceMapProgramValidatorPolicyHistoricalPrefix(
-    readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)),
+    remainderPolicyHistoricalPrefix(readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url))),
     receipt.helperPrefix.bytes,
   );
   loweringAnalysisPin(prefix, receipt.helperPrefix, receipt.helperPrefix.path + " prefix");
@@ -7920,7 +7938,9 @@ function authenticatePresentationClassification(): PresentationClassificationRec
   presentationClassificationPin(
     earlyReturnClassificationHistoricalPrefix(
       sourceMapProgramValidatorPolicyHistoricalPrefix(
-        readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),
+        remainderPolicyHistoricalPrefix(
+          readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),
+        ),
         357119,
       ),
     ),
@@ -8223,7 +8243,9 @@ function authenticateArrayBufferIsViewMain(): ArrayBufferIsViewMainReceipt {
   arrayBufferIsViewMainPin(
     earlyReturnIsViewHistoricalPrefix(
       sourceMapProgramValidatorPolicyHistoricalPrefix(
-        readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),
+        remainderPolicyHistoricalPrefix(
+          readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),
+        ),
         369684,
       ),
     ),
@@ -8799,4 +8821,139 @@ export function sourceMapProgramValidatorPolicyHistoricalPrefix(source: Buffer, 
   const proof = sourceMapPolicyPrefixProofs.find((entry) => entry.before.bytes === beforeBytes);
   if (!proof) programValidatorPolicyFail("unexpected source map policy prefix domain");
   return earlyReturnHistoricalPrefix(source, proof, programValidatorPolicyPin, programValidatorPolicyFail);
+}
+
+// Exact numeric remainder successor: proof data follows every prior captured prefix.
+const remainderPreparationSourceProof: EarlyReturnPrefixProof = {
+  before: {
+    bytes: 49541,
+    sha256: "bd27170fd1df4a9bbad2874e5f2db34bc455fb6807b26523da4be8c182f3622b",
+    gitBlob: "d8726293aa8df3f95df1962e4c21df437d37d723",
+  },
+  current: {
+    bytes: 49704,
+    sha256: "171aa93513aacb9bebf80897f2c67a827b71f082647ced04a689ca17d116ba82",
+    gitBlob: "f018b105325cdd04934ba538bb5e32ef115b7976",
+  },
+  edits: [
+    {
+      beforeOffset: 1142,
+      afterOffset: 1142,
+      before: "",
+      after: 'import { irNumberRemainderCallableDeclaration } from "./number-remainder-callables.js";\n',
+    },
+    {
+      beforeOffset: 39459,
+      afterOffset: 39547,
+      before: "                  irOrdinaryObjectCallableDeclaration(declaration.ref))\n",
+      after:
+        "                  irOrdinaryObjectCallableDeclaration(declaration.ref) ||\n                  irNumberRemainderCallableDeclaration(declaration.ref))\n",
+    },
+  ],
+};
+const remainderPolicyPrefixProof: EarlyReturnPrefixProof = {
+  before: {
+    bytes: 402646,
+    sha256: "0ddf7556360e8937b25ba58b23629533c8042e026a4b6e6fc05df3d1263c97b8",
+    gitBlob: "201e131a7a67df8a34256f63ee0205b407794ad1",
+  },
+  current: {
+    bytes: 403311,
+    sha256: "a38d46359693dd3b63dfd79642a241385e347273bb4cfb06dad177c063a1c375",
+    gitBlob: "763d42a7d7ab7278149cbc7258f3e90d19371408",
+  },
+  edits: [
+    {
+      beforeOffset: 48240,
+      afterOffset: 48240,
+      before: "    const bytes = readFileSync(new URL(`../../${pin.path}`, import.meta.url));\n",
+      after:
+        '    const bytes =\n      pin.path === "src/ir/runtime/intrinsic-preparation.ts"\n        ? Buffer.from(\n            runtimePreparationRemainderHistoricalSource(\n              readFileSync(new URL(`../../${pin.path}`, import.meta.url), "utf8"),\n            ),\n            "utf8",\n          )\n        : readFileSync(new URL(`../../${pin.path}`, import.meta.url));\n',
+    },
+    {
+      beforeOffset: 108748,
+      afterOffset: 109029,
+      before: '  const prefix = readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url));\n',
+      after:
+        '  const prefix = remainderPolicyHistoricalPrefix(\n    readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n  );\n',
+    },
+    {
+      beforeOffset: 180626,
+      afterOffset: 180949,
+      before: '  const helper = readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url));\n',
+      after:
+        '  const helper = remainderPolicyHistoricalPrefix(\n    readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n  );\n',
+    },
+    {
+      beforeOffset: 202965,
+      afterOffset: 203330,
+      before: '  const helper = readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url));\n',
+      after:
+        '  const helper = remainderPolicyHistoricalPrefix(\n    readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n  );\n',
+    },
+    {
+      beforeOffset: 244703,
+      afterOffset: 245110,
+      before: '  const helper = readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url));\n',
+      after:
+        '  const helper = remainderPolicyHistoricalPrefix(\n    readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n  );\n',
+    },
+    {
+      beforeOffset: 284189,
+      afterOffset: 284638,
+      before: '  const helper = readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url));\n',
+      after:
+        '  const helper = remainderPolicyHistoricalPrefix(\n    readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n  );\n',
+    },
+    {
+      beforeOffset: 323096,
+      afterOffset: 323587,
+      before: "    readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)),\n",
+      after:
+        "    remainderPolicyHistoricalPrefix(readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url))),\n",
+    },
+    {
+      beforeOffset: 348259,
+      afterOffset: 348783,
+      before: "    readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url)),\n",
+      after:
+        "    remainderPolicyHistoricalPrefix(readFileSync(new URL(`../../${receipt.helperPrefix.path}`, import.meta.url))),\n",
+    },
+    {
+      beforeOffset: 363311,
+      afterOffset: 363868,
+      before: '        readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n',
+      after:
+        '        remainderPolicyHistoricalPrefix(\n          readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n        ),\n',
+    },
+    {
+      beforeOffset: 376873,
+      afterOffset: 377484,
+      before: '        readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n',
+      after:
+        '        remainderPolicyHistoricalPrefix(\n          readFileSync(new URL("./ir-runtime-program-policy-evolution.ts", import.meta.url)),\n        ),\n',
+    },
+  ],
+};
+/** Authenticate actual current complete source, derive the unchanged prior pin and replay all bytes. */
+export function runtimePreparationRemainderHistoricalSource(source: unknown): string {
+  if (typeof source !== "string") preparationFail("primitive current remainder preparation source required");
+  const bytes = Buffer.from(source, "utf8");
+  if (bytes.toString("utf8") !== source) preparationFail("current remainder preparation source is not UTF-8");
+  currentMainInventoryPin(
+    bytes,
+    remainderPreparationSourceProof.current,
+    "complete current remainder preparation source changed",
+  );
+  return earlyReturnHistoricalPrefix(
+    bytes,
+    remainderPreparationSourceProof,
+    currentMainInventoryPin,
+    preparationFail,
+  ).toString("utf8");
+}
+/** Normalize one physical self-read before the unchanged historical prefix algorithms. */
+function remainderPolicyHistoricalPrefix(source: Buffer): Buffer {
+  if (!Buffer.isBuffer(source)) preparationFail("primitive current remainder policy buffer required");
+  return earlyReturnHistoricalPrefix(source, remainderPolicyPrefixProof, currentMainInventoryPin, preparationFail);
 }

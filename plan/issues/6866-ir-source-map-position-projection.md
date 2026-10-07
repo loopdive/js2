@@ -1,7 +1,7 @@
 ---
 id: 6866
 title: "IR source maps: project authenticated source-point data to physical UTF-16 positions"
-status: in-progress
+status: done
 sprint: current
 created: 2026-10-06
 updated: 2026-10-06
@@ -564,3 +564,10 @@ Actual Node25 PhaseB:436/436 independentfinally39/class31/own23/C1343 cases pass
 After all physicalfault bodies,64748/64748 capturedinput files matchbytes/hash/mode/inode/device,53933 resolvedcorpusfiles/linkidentity and installedruntime anchors are exact, all1842 source files unchanged, all22 formatted ownedpins and threeinstalledC1pins exact. Twelve normal bounded publicationgates pass; completearchitecture mode correctly exits1 with1840 classified/errors[]/inventoryValidtrue/graphCompletefalse. Gate reuse after the finaltwo cases is justified by the exactfull vector restoration. SourceTS7/build and236native/sourcecontrols remain separately measured on the identicalsource vector. No whole2935/353 rerun, weakenedguard, fixturedeletion, hookbypass, retirement or performanceclaim.
 
 Normal signedThomas/Codexcommit andforkpublication are now authorized from this exactreviewed branch, followed by readyPR andprotected exact-head admission; only verified main ancestry/content willcomplete delivery. Exactcommands/results/selection/custody/intersections andretainedstaleC1collectionfailure are in `.tmp/6866-finally-phase-b`. Issue6866 remainsin-progress until its own actualmain delivery; parent6865/IRmigration remainopen.
+
+
+## Verified bounded main delivery (2026-10-06)
+
+PR6535, “feat(ir): project prepared source points to UTF-16 positions”, delivered exact signed head46d9a47ca00e421572e8ef3a2db4a040af4b84de as merge18d8112894911b309a607a4fa98b26a306216287. Both are ancestors of freshly fetched main431aa4ed7a7be13c922332ab14a85ff05de1ac44. All33 non-policy paths match complete head bytes, including the projector, original104-case test and this issue before this completion record. Main policy preserves all1840 head rows and every non-file field, with four unrelated additional main rows; the projector's complete row is exact. Main delivery proof is retained as source-position-main-delivery.json in the replay-helper integration handoff. Normal signed commit and pre-push hooks ran without bypass, including18/18 numeric-local IR parity. Official claim6866 was completed and effect-verified on upstream/issue-assignments.
+
+This closes only the pure data-to-UTF-16 projection leaf and its bounded preservation proofs. Genuine emission ownership/currentness and public source-map integration remain under parent6865; legacy compiler retirement and full IR equivalence remain open. Earlier pending-delivery statements are retained as historical records and superseded by this observed delivery.

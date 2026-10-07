@@ -1,10 +1,12 @@
 ---
 id: 6783
 title: "ci: ~4,100 test files run under no required check, and main is red (2 of 8 random files fail on a clean checkout)"
-status: suspended
+status: in-progress
 sprint: Backlog
 created: 2026-09-30
-updated: 2026-10-02
+updated: 2026-10-06
+assignee: "ttraenkler/claude-dev-6783"
+branch: "claude/issue-6783-known-failures-gate"
 priority: critical
 horizon: l
 feasibility: medium
@@ -13,9 +15,7 @@ task_type: infrastructure
 area: ci
 language_feature: n/a
 goal: ci-hardening
-related: [3008, 3558, 3726, 3746, 3918, 6785]
-assignee: "ttraenkler/claude-dev-6783"
-branch: "claude/issue-6783-known-failures-gate"
+related: [3008, 3340, 3558, 3726, 3746, 3918, 5232, 6785]
 requested_by: ttraenkler/claude-review
 origin: "2026-09-30 codebase review (plan/agent-context/claude-codebase-review-2026-09-30.md) — C6"
 ---
@@ -81,53 +81,129 @@ pass before it can enter the merge queue:
   CLAUDE.md returns it.
 - The two files above are fixed or deleted in the triage PR.
 
-## Suspended Work (2026-10-02, lead handoff)
+## Implementation Plan
 
-Implementation finished and locally validated by dev-6783 (Opus 5.5 High) but
-**never pushed**: the shared repository went bare at 06:30 UTC (#6822) before
-the first push, and the agent cannot be resumed until `core.bare` is repaired
-(`plan/agent-context/claude-review-wave-handoff-2026-10-02.md`).
+Orchestrator decisions (2026-10-02), recorded here because they reshape the
+Correction:
 
-- **Worktree**: `/home/user/js2/.claude/worktrees/agent-a46f6d39cacfb28ed`,
-  branch `claude/issue-6783-known-failures-gate`, from `a93d489420`.
-- **Checkpoint** `c8cb97e5da` (local only): repairs the two red files the
-  issue names — `tests/native-i32-type.test.ts` 8/8 fail → 8/8 pass (real
-  import object instead of `{ env: {} }`), `tests/issue-3526-string-boundary-
-schema.test.ts` 1/32 fail → 32/32 pass (source pins follow the code to
-  `src/ir/runtime/`). Its first push was refused by the pre-push oracle
-  ratchet only because git broke mid-push and the ratchet fell back to the
-  whole tree — re-push once git works.
-- **Uncommitted since the checkpoint**: new `scripts/known-failures-gate.mjs`
-  (`--suite issue-tests`, seed-then-enforce against
-  `scripts/issue-tests-baseline.json`, `known-failures-allow:` frontmatter
-  excusals, `it.fails`-unexpected-pass always fails per #3340),
-  `scripts/lib/known-failures-reporter.mjs` (crash-safe per-file vitest
-  reporter; OOM'd files re-run alone), `tests/known-failures-gate.test.ts`
-  (17 cases); modified `scripts/equivalence-gate.mjs` (two default-preserving
-  options), `.github/workflows/ci.yml` (`issue-tests-shard` ×8 +
-  `issue-tests-gate`, `continue-on-error` until seeded),
-  `.github/workflows/test262-sharded.yml` (post-merge bank in the re-anchor
-  loop), `scripts/hooks/changed-root-tests.sh` (>20 files: run the first 20
-  and list the rest), `scripts/enable-branch-protection.sh`
-  (`REQUIRED_AFTER_SEEDING`), `docs/ci-policy.md` §1/§7, this issue file
-  (fuller Implementation Plan + Resolution in the worktree copy — keep the
-  worktree's version on merge). PR body draft: `.tmp/pr-body.md` in the
-  worktree, `GATES_PLACEHOLDER` still to fill.
-- **Gates already run (exit 0)**: format:check, prettier on the changed
-  files, lint, typecheck, check:issues, check:done-status-integrity,
-  check:issue-spec-coverage, check:harness-compile-budget,
-  check:verdict-oracle, check:test-vacuity-shapes, YAML parse of both
-  workflows, vitest single-fork on known-failures-gate / equivalence-gate /
-  issue-4609 / issue-3340 (40/40), real-vitest seed/crash/enforce probes.
-- **Remaining**: (1) `git add` the files above and commit (`feat(#6783): … ✓`,
-  `Model: Claude Opus 5.5 High` trailers); (2) git-based gates —
-  loc/func budgets plain and with `LOC_GATE_BASE=$(git rev-parse origin/main)`,
-  coercion-sites, oracle-ratchet, dead-exports, compiler-boundaries
-  `--mode inventory`, the `check:ir-*` loop; (3) fill the exit codes into
-  `## Resolution` and the PR body; (4) merge `origin/main` (it moved: #6424,
-  #6425 changed `ci.yml`/`scripts/hooks/changed-root-tests.sh`; #6797 added
-  two quality steps); (5) push with `VITEST_FORK_MAX_OLD_SPACE_SIZE=2048`;
-  (6) open the PR (base main, not draft). Two tests red before this branch
-  and to be confirmed on base: `tests/issue-1897*` (line-wrapped phrase in
-  `docs/ci-policy.md` ~L694) and `tests/issue-3934*` (2 paths-match cases) —
-  both listed in #6821.
+- **No local triage pass.** The ~4,400-file root suite cannot run on a shared
+  4-core dev box (hours, OOM). CI seeds the baseline instead, in two phases:
+  1. **Seed** — while `scripts/issue-tests-baseline.json` is absent the gate
+     prints the full red list as the proposed baseline and exits 0; only the
+     post-merge bank (`--update-on-decrease --seed-if-missing`) writes it, from
+     a complete merged run on main, and it refuses while that run has an
+     integrity failure or an unexpected pass (#3340).
+  2. **Enforce** — from the first seeded commit the gate fails green→red files
+     and reports red→green ones as newly fixed (banked post-merge).
+  The triage counts (Correction 1) are recorded when the first seeded
+  baseline lands.
+- **Correction 2** — `scripts/known-failures-gate.mjs --suite issue-tests`
+  reuses `scripts/equivalence-gate.mjs`'s exported `summarizeReport`,
+  `mergeSummaries`, `toPartial`/`fromPartial`, `evaluateGate` and
+  `bankBaseline` (two additive, default-preserving options there: a `toRel`
+  mapper for `summarizeReport`, `floors: false` for `evaluateGate` /
+  `bankBaseline`). It scores per FILE. Run sharded 8 ways in `ci.yml` (`issue-tests-shard` → partials →
+  `issue-tests-gate`), mirroring #6785; a missing, duplicated or cross-commit
+  partial, or a file on disk that reached no report, fails it.
+- **Ruleset** — not touched by this PR. `scripts/enable-branch-protection.sh`
+  gains a `REQUIRED_AFTER_SEEDING` list it appends only when the baseline
+  file exists; `docs/ci-policy.md` §7 documents the check as
+  REQUIRED-AFTER-SEEDING (prose, so the six-context table tests still hold).
+- **Correction 3** — the new gate steps are fatal once seeded; in seed mode
+  they are `continue-on-error` so a not-yet-required job cannot make a PR
+  `UNSTABLE`. The existing advisory "issue tests this PR touched" step keeps
+  its semantics until seeding (comment says so). `changed-root-tests.sh` runs
+  the first 20 of >20 changed files with a warning and, on the first failure,
+  lists every changed file it did not reach.
+- **Correction 4** — `test262-sharded.yml` promote-baseline fetches the merged
+  partials (`issue-tests-partials-<sha>`, kept by `issue-tests-gate` on
+  merge_group/push runs) and runs the bank inside the re-anchor loop, on the
+  tip, next to the other banked baselines. `baseline-summary-sync.yml` is not
+  wired (no deps, and it would need its own artifact lookup).
+- **Allowances** — `known-failures-allow:` items in the PR's own issue
+  frontmatter (`"<path> <YYYY-MM-DD> <reason>"`; undated items grant nothing),
+  found via `scripts/lib/change-scope.mjs` like `loc-budget-allow`. Because the
+  baseline lags main (the bank is deferred while the queue is busy), the gate
+  also honours allowances from every issue file changed since the baseline's
+  `measuredAt`; the bank adds an allowed red file to the baseline.
+- **The two named red files** — both fixes were mechanical (stale harness /
+  stale source pins), so both are fixed here.
+
+Files:
+
+- `scripts/known-failures-gate.mjs` (new) — suite population, round-robin
+  sharding, crash-safe runner, per-file scoring, partial merge, allowances,
+  seed/bank.
+- `scripts/lib/known-failures-reporter.mjs` (new) — vitest reporter that
+  appends one JSON line per file as it starts/ends, so a worker OOM loses only
+  the in-flight files (re-run alone at 4 GB; red only if they die alone too).
+- `scripts/equivalence-gate.mjs` — the additive options above.
+- `.github/workflows/ci.yml` — `issue-tests-shard` ×8 + `issue-tests-gate`;
+  advisory-step comment; changed-root step comment.
+- `.github/workflows/test262-sharded.yml` — partials fetch step + bank call in
+  the re-anchor loop.
+- `scripts/hooks/changed-root-tests.sh` — first-20 + not-run listing.
+- `scripts/enable-branch-protection.sh`, `docs/ci-policy.md` §1/§7.
+- `tests/known-failures-gate.test.ts` (new); `tests/native-i32-type.test.ts`,
+  `tests/issue-3526-string-boundary-schema.test.ts` (fixed).
+
+## Resolution
+
+Status stays `in-progress`: the gate lands in seed mode, and the issue's first
+acceptance line (a committed baseline listing every red file) is met only when
+the post-merge bank seeds `scripts/issue-tests-baseline.json` from a complete
+CI run on main. Record the triage counts (red files by class) here then.
+
+**The two named files** (measured here, single fork, before → after):
+
+| file | before | after |
+|---|---|---|
+| `tests/native-i32-type.test.ts` | 8/8 fail (`string_constants` import vs `{ env: {} }`) | 8/8 pass (`buildImports`) |
+| `tests/issue-3526-string-boundary-schema.test.ts` | 1/32 fail (source pins on re-export shims) | 32/32 pass (pins follow the code to `src/ir/runtime/`) |
+
+**Found on the way.**
+
+- The post-merge detector `.github/workflows/issue-tests.yml` (#3008) has not
+  gated in its recent history: 18 of 18 completed non-cancelled runs on
+  2026-10-01/02 ended `failure`. In run 36962288398, 4 of 12 single-fork shards
+  died "Reached heap limit" → `ERR_IPC_CHANNEL_CLOSED` → "vitest produced no
+  JSON report", so `gate` (which `needs` every shard) was skipped. The new
+  runner's crash-safe reporter exists for exactly this. The detector and
+  `scripts/issue-tests-gate.mjs` are superseded by `issue-tests-gate` and
+  should be retired once the baseline is seeded (left in place here, out of
+  scope; note its local default baseline path is the same file name, CI points
+  it at the baselines repo instead).
+- `tests/array-capacity.test.ts` is red on main too (4/4 tests, probe run
+  below) — not named by this issue; left for the seeded baseline.
+
+**Probes of the gate itself** (this box, real vitest):
+
+- 3-file shard (`SHARD=5/1463`, seed mode): 56 s, 1 red / 2 green, partial
+  written; reporter test ids equal vitest's JSON reporter's.
+- Crash + collect error + green file, seed mode: the parallel pass lost vitest
+  to the crash (2 files in flight); the serial re-run reported the import error
+  as a red file and confirmed the crash alone ("worker died even when run alone
+  at 4096 MB heap"); exit 0 with both in the proposed list.
+- Same files in enforce mode against a baseline: the crash file is a
+  REGRESSION (exit 1), the baseline-red green file is "newly fixed" after its
+  confirming re-run.
+
+**Deliberately left out.** The local triage run (orchestrator decision); the
+ruleset change (an admin runs `scripts/enable-branch-protection.sh` after
+seeding); wiring `baseline-summary-sync.yml`; retiring `issue-tests.yml`. The
+shard wall-clock on CI is not measured yet — estimate from the detector's
+single-fork shards (10–53 min for ~366 files): ~10–30 min for ~550 files at 3
+forks.
+
+## Transplant (2026-10-06, lead)
+
+The implementing agent's tree (worktree `agent-a46f6d39cacfb28ed`, checkpoint
+`c8cb97e5` plus its uncommitted files) was moved onto the PR branch by the
+lead as a patch, because the shared repository is still bare (#6822) and the
+agent cannot be resumed. The gates listed under Resolution are the agent's
+runs before the breakage; the git-based gates (budgets, oracle ratchet,
+dead exports, compiler boundaries) run in CI on the PR. On merging `main`,
+its new `issue-tests-select` / `issue-tests-changed` / `issue-tests`
+aggregator jobs were kept and the `issue-tests-shard` / `issue-tests-gate`
+jobs of this change appended after them; this change's edit of the old
+"issue tests this PR touched" step was dropped with that step.

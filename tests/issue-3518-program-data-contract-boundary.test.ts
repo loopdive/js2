@@ -1,3 +1,4 @@
+import { captureDenoPostPositionMainPredecessorPolicySource } from "./helpers/ir-deno-post-position-main-successor.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
 import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
@@ -15,7 +16,8 @@ import {
   captureSourceMapSchemaSourceEpoch,
 } from "./helpers/ir-program-validator-relocation.js";
 
-import { beforeRuntimePreparationRelocation } from "./helpers/ir-runtime-preparation-relocation.js";
+import { beforeRemainderRuntimePreparationRelocation as beforeRuntimePreparationRelocation } from "./helpers/ir-remainder-runtime-preparation-relocation.js";
+import { beforeOptionalFieldModuleRecords } from "./helpers/ir-initial-graph-optional-fields-source.js";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -24,10 +26,8 @@ import { dirname, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { historicalIntrinsicSource, liveSourceReader } from "./helpers/ir-historical-runtime-reconstruction.js";
-import {
-  reconstructRuntimeContractReceiptSources,
-  runtimeContractCurrentPaths,
-} from "./helpers/ir-runtime-contract-evolution.js";
+import { runtimeContractCurrentPaths } from "./helpers/ir-runtime-contract-evolution.js";
+import { reconstructRemainderRuntimeContractReceiptSources as reconstructRuntimeContractReceiptSources } from "./helpers/ir-remainder-runtime-contract-evolution.js";
 import {
   programInitialGraphPaths,
   reconstructProgramInitialGraph,
@@ -171,7 +171,9 @@ const policy = () => {
                                 captureSourceMapPositionInventoryPredecessorPolicySource(
                                   capturePositionClassFieldsMainPredecessorPolicySource(
                                     capturePositionFinallyMainPredecessorPolicySource(
-                                      readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"),
+                                      captureDenoPostPositionMainPredecessorPolicySource(
+                                        readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"),
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -269,7 +271,9 @@ function fixture(includeOwnership = false) {
     if (source === undefined) throw new Error(`missing authenticated pre-C program source ${path}`);
     return source;
   };
-  const initialProgramSources = reconstructProgramInitialGraph(initialPreCProgramRead);
+  const initialProgramSources = reconstructProgramInitialGraph(
+    beforeOptionalFieldModuleRecords(initialPreCProgramRead),
+  );
   // Each inverse authenticates raw current inputs independently. This source
   // selection applies only to the initial copy, never to later fixture mutants.
   const initialCoreTypeSources = reconstructProgramCoreTypeEvolution(historicalDependencyRead);

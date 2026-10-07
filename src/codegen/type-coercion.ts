@@ -49,6 +49,7 @@ import { structMustReifyAtExternrefBoundary } from "./struct-boundary-reify.js";
 import { pushZeroArgCallPad } from "./zero-arg-method-pad.js"; // (#4644) declared-but-unpassed params
 import { samePhysicalValType } from "./struct-hierarchy-layout.js";
 import { wrapArrayProtoVecAlias } from "./vec-proto-link.js"; // (#2917) stable Array.prototype in vec slots
+import { emitOptionalFieldWidening } from "./object-model/struct-optional-widen.js"; // (#6867)
 
 /**
  * Emit a guarded ref.cast: use ref.test to check if the cast will succeed.
@@ -1760,9 +1761,10 @@ function getStructNarrowInfo(
   ctx: CodegenContext,
   fromTypeIdx: number,
   toTypeIdx: number,
+  allowOptional = false,
 ): {
   srcFields: ({ name: string; type: ValType; fieldIdx: number } | undefined)[];
-  dstFields: { name: string; type: ValType }[];
+  dstFields: { name: string; type: ValType; optional?: true }[];
 } | null {
   const fromDef = ctx.mod.types[fromTypeIdx];
   const toDef = ctx.mod.types[toTypeIdx];
@@ -1787,16 +1789,19 @@ function getStructNarrowInfo(
       // does not materialize them. Permit a structural projection to complete
       // only these erased fields with their null/zero default; every ordinary
       // missing field still rejects the projection.
-      if (!erasedTypeBrandFieldCanDefault(field)) return null;
+      // (#6867) …and, when widening, declared-optional (`k?: T`) fields.
+      if (!erasedTypeBrandFieldCanDefault(field) && !(allowOptional && field.optional)) return null;
       srcFields.push(undefined);
       continue;
     }
     srcFields.push({ name: field.name, type: srcField.type, fieldIdx: srcField.fieldIdx });
   }
+  // (#6867) Widening needs a shared field: an unrelated shape is no evidence.
+  if (allowOptional && !srcFields.some((field) => field !== undefined)) return null;
 
   return {
     srcFields,
-    dstFields: dstStruct.fields.map((f) => ({ name: f.name, type: f.type })),
+    dstFields: dstStruct.fields.map((f) => ({ name: f.name, type: f.type, optional: f.optional })),
   };
 }
 
@@ -1921,7 +1926,13 @@ function emitSafeStructConversion(
     }
   }
 
-  return false;
+  // Case 4 (#6867): the destination only ADDS declared-optional fields.
+  const widen = getStructNarrowInfo(ctx, fromTypeIdx, toTypeIdx, true);
+  if (!widen) return false;
+  emitOptionalFieldWidening(fctx, fromTypeIdx, toTypeIdx, toNullable, () =>
+    emitStructNarrowBody(ctx, fctx, fromTypeIdx, toTypeIdx, widen, false, false),
+  );
+  return true;
 }
 
 /**
@@ -2305,7 +2316,7 @@ function emitStructNarrowBody(
   toTypeIdx: number,
   info: {
     srcFields: ({ name: string; type: ValType; fieldIdx: number } | undefined)[];
-    dstFields: { name: string; type: ValType }[];
+    dstFields: { name: string; type: ValType; optional?: true }[];
   },
   fromNullable: boolean,
   toNullable: boolean,
@@ -2346,7 +2357,9 @@ function emitStructNarrowBody(
     const dstField = info.dstFields[i]!;
 
     if (!srcField) {
-      fctx.body.push(...defaultValueInstrs(dstField.type));
+      if (dstField.optional && dstField.type.kind === "externref")
+        emitUndefinedValue(ctx, fctx); // (#6867)
+      else fctx.body.push(...defaultValueInstrs(dstField.type));
       continue;
     }
 

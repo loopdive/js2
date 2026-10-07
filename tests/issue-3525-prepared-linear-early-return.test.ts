@@ -6,7 +6,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { setImmediate } from "node:timers/promises";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as gcCodegen from "../src/codegen/index.js";
+import * as linearCodegen from "../src/codegen-linear/index.js";
+import * as linearIr from "../src/ir/backend/linear-integration.js";
+import * as preparation from "../src/ir/program-preparation.js";
+import * as consumer from "../src/ir/program-consumer.js";
+import { preparedIrProgramOwner } from "../src/ir/program.js";
 import { analyzeMultiSource } from "../src/checker/index.js";
 import { compileMultiSource, runPreparedIrPipelinePresentation } from "../src/compiler.js";
 import { buildCompiledAdapterImports, instantiateWasm } from "../src/runtime.js";
@@ -124,13 +130,101 @@ function input(files: Record<string, string>, backend: Backend) {
     },
   };
 }
+function publicGeneratorSpies(poison = false) {
+  const spies = [
+    vi.spyOn(gcCodegen, "generateModule"),
+    vi.spyOn(gcCodegen, "generateMultiModule"),
+    vi.spyOn(linearCodegen, "generateLinearModule"),
+    vi.spyOn(linearCodegen, "generateLinearMultiModule"),
+  ];
+  if (poison)
+    for (const spy of spies)
+      spy.mockImplementation(() => {
+        throw new Error("prepared path called public legacy generator");
+      });
+  return spies;
+}
 function prepared(files: Record<string, string>, backend: Backend) {
-  const result = runPreparedIrPipelinePresentation(input(files, backend));
-  expect(result.kind, JSON.stringify(result)).toBe("artifacts");
-  if (result.kind !== "artifacts") throw new Error(JSON.stringify(result));
-  expect(result.program.inventory.sources).toHaveLength(Object.keys(files).length);
-  expect(result.emission.emittedUnitIds.length).toBeGreaterThan(0);
-  return result;
+  const current = input(files, backend);
+  const generators = publicGeneratorSpies(true);
+  const prepare = vi.spyOn(preparation, "prepareWholeIrProgram");
+  const accept = vi.spyOn(consumer, "acceptPreparedIrProgram");
+  const emit = vi.spyOn(consumer, "emitAcceptedIrProgram");
+  try {
+    const result = runPreparedIrPipelinePresentation(current);
+    expect(result.kind, JSON.stringify(result)).toBe("artifacts");
+    if (result.kind !== "artifacts") throw new Error(JSON.stringify(result));
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(accept).toHaveBeenCalledOnce();
+    expect(emit).toHaveBeenCalledOnce();
+    expect(prepare.mock.results[0]!.value.program).toBe(result.program);
+    const acceptance = accept.mock.results[0]!.value;
+    expect(consumer.isAuthenticAcceptedIrProgram(acceptance)).toBe(true);
+    expect(acceptance.program).toBe(result.program);
+    expect(emit).toHaveBeenCalledWith(acceptance);
+    expect(emit.mock.results[0]!.value).toBe(result.emission);
+    for (const generator of generators) expect(generator).not.toHaveBeenCalled();
+    expect(result.program.sealed).toBe(true);
+    expect(result.program.inventory.sources).toHaveLength(Object.keys(files).length);
+    const projection = result.program.runtime.find((row) => row.backend === backend && row.target === "host");
+    expect(projection).toBeDefined();
+    if (!projection) throw new Error("missing prepared host projection");
+    expect(projection.prepared.functions.length).toBeGreaterThan(0);
+    expect(result.emission.emittedUnitIds).toEqual(projection.prepared.functions.map((fn) => fn.unitId));
+    expect(new Set(result.emission.emittedUnitIds).size).toBe(result.emission.emittedUnitIds.length);
+    expect(result.emission.emittedUnitIds).toHaveLength(result.program.units.size);
+    for (const unitId of result.emission.emittedUnitIds) {
+      const owner = preparedIrProgramOwner(result.program, unitId);
+      const terminal = result.program.units.get(unitId);
+      expect(owner).toBeDefined();
+      expect(terminal?.id).toBe(unitId);
+      if (!owner || !terminal) throw new Error(`missing complete receipt for ${unitId}`);
+      const source = current.userSourceFiles.find((file) => file.fileName === owner.sourceFile);
+      expect(source).toBeDefined();
+      if (!source) throw new Error(`missing source for ${unitId}`);
+      expect(owner.location.declarationStart).toBe(terminal.declarationStart);
+      expect(owner.location.declarationEnd).toBe(terminal.declarationEnd);
+      expect(source.text.slice(terminal.declarationStart, terminal.declarationEnd).length).toBeGreaterThan(0);
+      expect(owner.location.sourceId).toBe(
+        result.program.inventory.sources.find((row) => row.originalFileName === owner.sourceFile)?.id,
+      );
+    }
+    return result;
+  } finally {
+    for (const spy of [...generators, prepare, accept, emit]) spy.mockRestore();
+  }
+}
+async function directLegacy(files: Record<string, string>, backend: Backend) {
+  const hadLinearIr = Object.hasOwn(process.env, "JS2WASM_LINEAR_IR");
+  const previousLinearIr = process.env.JS2WASM_LINEAR_IR;
+  const generators = publicGeneratorSpies();
+  const overlays = [
+    vi.spyOn(linearIr, "prepareLinearIrOverlay"),
+    vi.spyOn(linearIr, "compileLinearIr"),
+    vi.spyOn(linearIr, "compileLinearIrFunctions"),
+  ];
+  for (const overlay of overlays)
+    overlay.mockImplementation(() => {
+      throw new Error("direct legacy reference called Linear IR overlay");
+    });
+  try {
+    process.env.JS2WASM_LINEAR_IR = "0";
+    const options = { ...input(files, backend).options, experimentalIR: false, disableIrFirst: true };
+    const artifact = await compileMultiSource(files, "./entry.ts", options);
+    expect(artifact.success).toBe(true);
+    for (const [index, generator] of generators.entries()) {
+      if (index === (backend === "wasmgc" ? 1 : 3)) expect(generator).toHaveBeenCalledOnce();
+      else expect(generator).not.toHaveBeenCalled();
+    }
+    for (const overlay of overlays) expect(overlay).not.toHaveBeenCalled();
+    return artifact;
+  } finally {
+    if (hadLinearIr) process.env.JS2WASM_LINEAR_IR = previousLinearIr;
+    else Reflect.deleteProperty(process.env, "JS2WASM_LINEAR_IR");
+    for (const spy of [...generators, ...overlays]) spy.mockRestore();
+    expect(Object.hasOwn(process.env, "JS2WASM_LINEAR_IR")).toBe(hadLinearIr);
+    expect(process.env.JS2WASM_LINEAR_IR).toBe(previousLinearIr);
+  }
 }
 function native(files: Record<string, string>, calls: readonly Call[]): number[] {
   const dir = mkdtempSync(join(tmpdir(), "ir-return-native-"));
@@ -283,14 +377,37 @@ describe("#3525 genuine prepared Linear early returns", () => {
     expect(values[5]).toBe(1.25);
     expect(Object.is(values[6], 0)).toBe(true);
   });
+  it("observes the enabled Linear overlay positive control and restores a preexisting switch exactly", async () => {
+    const hadLinearIr = Object.hasOwn(process.env, "JS2WASM_LINEAR_IR");
+    const previousLinearIr = process.env.JS2WASM_LINEAR_IR;
+    const prepare = vi.spyOn(linearIr, "prepareLinearIrOverlay");
+    const emit = vi.spyOn(linearIr, "compileLinearIr");
+    try {
+      process.env.JS2WASM_LINEAR_IR = "1";
+      const module = linearCodegen.generateLinearModule(
+        input({ "./entry.ts": SEMANTICS[0]!.source }, "linear").entryAst,
+      );
+      expect(module.functions.length).toBeGreaterThan(0);
+      expect(prepare).toHaveBeenCalledOnce();
+      expect(emit).toHaveBeenCalledOnce();
+      prepare.mockRestore();
+      emit.mockRestore();
+      await directLegacy(APPLICATION, "linear");
+      expect(process.env.JS2WASM_LINEAR_IR).toBe("1");
+    } finally {
+      if (hadLinearIr) process.env.JS2WASM_LINEAR_IR = previousLinearIr;
+      else Reflect.deleteProperty(process.env, "JS2WASM_LINEAR_IR");
+      prepare.mockRestore();
+      emit.mockRestore();
+    }
+  });
   for (const backend of BACKENDS) {
     it(`executes the complete five-function eight-call application through ${backend} prepared and legacy binaries and helpers`, async () => {
       const result = prepared(APPLICATION, backend);
       expect(result.program.units.size).toBe(5);
       expect(result.emission.emittedUnitIds).toHaveLength(5);
       const actual = await execute(result.artifacts, APPLICATION_CALLS);
-      const current = input(APPLICATION, backend);
-      const legacy = await compileMultiSource(APPLICATION, "./entry.ts", current.options);
+      const legacy = await directLegacy(APPLICATION, backend);
       const original = await execute(legacy, APPLICATION_CALLS);
       for (const rows of [actual.direct, actual.helper, original.direct, original.helper])
         valuesEqual(rows, APPLICATION_VALUES);
@@ -301,7 +418,7 @@ describe("#3525 genuine prepared Linear early returns", () => {
         valuesEqual(native(files, fixture.calls), fixture.values);
         const result = prepared(files, backend);
         const actual = await execute(result.artifacts, fixture.calls);
-        const legacy = await compileMultiSource(files, "./entry.ts", input(files, backend).options);
+        const legacy = await directLegacy(files, backend);
         const original = await execute(legacy, fixture.calls);
         for (const rows of [actual.direct, actual.helper, original.direct, original.helper])
           valuesEqual(rows, fixture.values);

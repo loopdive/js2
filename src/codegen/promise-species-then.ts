@@ -406,6 +406,7 @@ export function speciesForwardAndResultInstrs(
     { op: "ref.null.extern" },
     { op: "ref.null.extern" },
     closureBagInitInstr(),
+    { op: "i32.const", value: 0 },
     { op: "struct.new", typeIdx: promiseTypeIdx },
     { op: "struct.new", typeIdx: types.capsTypeIdx },
     { op: "extern.convert_any" },

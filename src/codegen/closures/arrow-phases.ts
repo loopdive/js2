@@ -26,6 +26,7 @@ import {
   closureBagInitInstr,
   getOrCreateConstructibleFuncRefWrapperTypes,
   getOrCreateFuncRefWrapperTypes,
+  ensureRestFnWrapSubtype,
 } from "./funcref-wrapper-types.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { closureObservesBindingValue, collectTransitiveCaptureNames } from "../function-declaration-observation.js";
@@ -212,6 +213,11 @@ function canBoxBindingInDominatingParent(
   let owner: ts.Node | undefined = closure.parent;
   while (owner && !ts.isFunctionLike(owner)) owner = owner.parent;
   if (!owner || ts.isSourceFile(owner)) return false;
+  // An inlined IIFE's preceding declarations live in its detached block,
+  // not in the caller's activation-entry buffer. Moving the cell there
+  // would read the raw slot before initialization and leave the initializer
+  // writing behind the cell's back. Keep construction-site boxing instead.
+  if (fctx.inlinedIifeNodes?.has(owner)) return false;
   const ownerBody = (owner as ts.FunctionLikeDeclarationBase).body;
   if (!ownerBody || !ts.isBlock(ownerBody)) return false;
   let region: ts.Node = closure;
@@ -827,6 +833,10 @@ export function planClosureCaptures(
     // `ctx.moduleGlobals` is active for this whole closure compilation, so
     // leave the name uncaptured and let the lifted body read that live global.
     if (ctx.moduleGlobals.has(name) && isDirectRuntimeModuleVariableBinding(bindingDeclaration)) continue;
+    // (#6651 V10d) A read-only closure must not box the `__module_init` shadow of a module global:
+    // later top-level writes (other init chunks, other functions) reach only the global, never that cell.
+    const readsShadow = fctx.moduleBindingShadowLocals?.get(name) === localIdx && ctx.moduleGlobals.has(name);
+    if (readsShadow && !writtenInClosure.has(name)) continue;
     // A lexical capture can share its spelling with a function declaration
     // already registered in funcMap (for example `{ dispatch }` beside a
     // module-local `dispatch`).  The old spelling-only guard dropped every
@@ -1014,6 +1024,27 @@ export function mintClosureStructTypes(
       liftedFuncTypeIdx = wrapperTypes.liftedFuncTypeIdx;
       liftedSelfTypeIdx = wrapperTypes.liftedSelfTypeIdx;
       liftedParams = [{ kind: "ref", typeIdx: liftedSelfTypeIdx }, ...arrowParams];
+      // Rest and ordinary array formals can share a Wasm signature, but not
+      // their calling convention. Preserve the existing rest marker at the
+      // allocation site, as function-declaration singletons already do.
+      if (
+        opts.decl &&
+        (ts.isArrowFunction(opts.decl) || ts.isFunctionExpression(opts.decl)) &&
+        runtimeParameters(opts.decl).some((param) => param.dotDotDotToken !== undefined)
+      ) {
+        structTypeIdx = ensureRestFnWrapSubtype(ctx, structTypeIdx);
+        if (constructible) ctx.constructibleClosureTypeIdxs.add(structTypeIdx);
+        return {
+          structTypeIdx,
+          liftedFuncTypeIdx,
+          liftedSelfTypeIdx,
+          liftedParams,
+          meta: {
+            allocTypeIdx: (metaSlot && ensureFnMetaSubtype(ctx, structTypeIdx)) ?? structTypeIdx,
+            init: [{ op: "f64.const", value: 0 }, ...(metaSlot?.init ?? [])],
+          },
+        };
+      }
       // (#4437) Shared wrapper ⇒ the metadata slot needs a per-base subtype.
       const allocTypeIdx = metaSlot ? ensureFnMetaSubtype(ctx, structTypeIdx) : undefined;
       if (metaSlot && allocTypeIdx !== undefined) {

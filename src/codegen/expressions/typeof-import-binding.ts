@@ -18,6 +18,16 @@ export function typeofOperandIsDeclared(
   ident: ts.Identifier,
   sym: ts.Symbol | undefined,
 ): boolean {
+  // Local import syntax decides whether the binding survives type erasure.
+  // A runtime import stays declared even when target resolution is unavailable.
+  const declaration = ctx.oracle.valueDeclarationOf(ident);
+  if (declaration !== undefined) {
+    if (ts.isImportClause(declaration)) return !declaration.isTypeOnly;
+    if (ts.isNamespaceImport(declaration)) return !declaration.parent.isTypeOnly;
+    if (ts.isImportSpecifier(declaration)) {
+      return !declaration.isTypeOnly && !declaration.parent.parent.isTypeOnly;
+    }
+  }
   if (sym?.valueDeclaration) return true;
   if (sym === undefined || (sym.flags & ts.SymbolFlags.Alias) === 0) return false;
   return ctx.oracle.aliasedValueDeclarationOf(ident) !== undefined;

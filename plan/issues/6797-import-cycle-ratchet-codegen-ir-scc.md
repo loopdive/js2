@@ -1,10 +1,10 @@
 ---
 id: 6797
 title: "arch: codegen, ir and frontend form one 693-file strongly-connected component (40 % of src, 3,083 circular chains) — add an import-cycle ratchet and cut the 74 ir→codegen edges first"
-status: suspended
+status: in-progress
 sprint: Backlog
 created: 2026-09-30
-updated: 2026-10-02
+updated: 2026-10-06
 priority: high
 horizon: l
 feasibility: hard
@@ -15,7 +15,7 @@ language_feature: compiler-internals
 goal: compiler-architecture
 related: [912, 1172, 3113, 4601, 6793, 6808]
 assignee: "ttraenkler/claude-dev-6797"
-branch: "claude/issue-6797-import-cycle-ratchet"
+branch: "claude/issue-6797-change-scoped-allowances"
 requested_by: ttraenkler/claude-review
 origin: "2026-09-30 codebase review (plan/agent-context/claude-codebase-review-2026-09-30.md) — arch #1/#2"
 ---
@@ -118,19 +118,30 @@ remedy. The issue stays `in-progress` until #6808 lands.
    `twoWayDirEdges` holds both directions of every pair of first path
    segments under `src/` that import each other (a root-level file is its own
    segment, so leaf modules like `ts-api.ts` do not pair with everything).
-   Baseline `scripts/import-cycles-baseline.json`; any growth or a new
-   two-way pair fails; `--update-on-decrease` banks drops (min per number);
-   `--update` (re)seeds; `--verbose` prints the SCC and every cross-directory
-   edge. Wired into `quality` (`ci.yml`) and banked by `promote-baseline`
-   (`test262-sharded.yml`) inside its re-anchor loop only — never through
-   the pre-loop snapshot, because the PR gate reads this baseline and a
-   value from an older checkout could undercut main. No post-merge job runs
+   **Change-scoped**, like `check-loc-budget.mjs` / `check-func-budget.mjs`:
+   the gate measures HEAD and the change-set's own base (`resolveChangeBase`
+   from `scripts/lib/change-scope.mjs`; only the changed files are re-read
+   from the base with `baseBlob`, the rest reuse HEAD's parse), and fails
+   when any number or a new two-way pair is higher at HEAD — unless an
+   `import-cycles-allow:` entry in an issue file the change-set touches
+   (`changeSetAllowances`) grants that metric up to a value, with a required
+   `#` rationale: `- largestSccSize: 699 # 2026-10-02 (#NNNN): …` or
+   `- codegen->ir: 297 # …`. PRs never edit the baseline.
+   `scripts/import-cycles-baseline.json` is the low-water mark:
+   `--update-on-decrease` lowers it post-merge (never raises, never fails),
+   `--update` is a human re-seed, and it is the reference only when no git
+   base resolves. `--verbose` prints the SCC and every cross-directory edge.
+   Wired into `quality` (`ci.yml`) and banked by `promote-baseline`
+   (`test262-sharded.yml`) inside its re-anchor loop only, so the recorded
+   low is one the pushed tree actually has. No post-merge job runs
    `check:ir-fallbacks -- --update-on-decrease` today, so the call sits next
    to the `check-func-budget --update-on-decrease` one instead.
 2. `scripts/check-flat-dir-budget.mjs` (`pnpm run check:flat-dir-budget`):
-   counts `src/codegen/*.ts` (non-recursive), baseline
-   `scripts/flat-dir-budget-baseline.json`, fails on growth,
-   `--update-on-decrease` banks drops (promote-baseline and
+   counts `src/codegen/*.ts` (non-recursive). Change-scoped the same way:
+   fails when the change-set adds more top-level files than it lists under
+   `flat-dir-budget-allow:` (`- src/codegen/foo.ts # <date> (#N): <why>`).
+   `scripts/flat-dir-budget-baseline.json` is the low-water mark,
+   `--update-on-decrease` lowers it (promote-baseline and
    baseline-summary-sync re-anchor loops). Wired into `quality`.
 3. `check:godfiles`: run, not refreshed, not wired — see the follow-up
    section above.
@@ -140,7 +151,10 @@ remedy. The issue stays `in-progress` until #6808 lands.
 Tests: `tests/check-import-cycles.test.ts` (3-file cycle; three type-only
 forms not counted; multi-line `import x, { y }`, `export … from` and dynamic
 `import()` counted; growth fails; decrease passes and `--update-on-decrease`
-banks it; missing baseline refuses) and `tests/check-flat-dir-budget.test.ts`.
+banks it; missing baseline refuses; in a throwaway repository, growth against
+the base fails, a grant without a rationale is ignored, a dated grant passes)
+and `tests/check-flat-dir-budget.test.ts` (same, plus an added top-level file
+failing until `flat-dir-budget-allow:` lists it).
 
 ## Resolution
 
@@ -186,17 +200,20 @@ move. So expect roughly one PR in six to trip it until the SCC is cut; a
 new codegen file joins the SCC whenever it imports anything in it and is
 imported from it.
 
-**Intended growth.** Like `check:ir-fallbacks` and `check:ir-layering`, the
-gate reads a committed baseline, so a PR whose growth is deliberate runs
-`node scripts/check-import-cycles.mjs --update` and commits the bump for
-review. That is the opposite of the change-scoped gates
-(`check:loc-budget` etc.), whose baselines PRs must not touch; whether this
-gate should become change-scoped (frontmatter allowances, no baseline bumps)
-is a follow-up decision if the bump churn hurts.
+**Intended growth.** The first cut read the committed baseline, so a PR
+with deliberate growth had to run `--update` and commit the bump, which
+CLAUDE.md forbids — and at one PR in six it would have been broken weekly.
+Both gates are now change-scoped with frontmatter grants
+(`import-cycles-allow:`, `flat-dir-budget-allow:`), the mechanism
+`check:loc-budget` / `check:func-budget` already use. A grant that landed on
+main grants nothing to later PRs, since only issue files in the change-set
+are read. Replaying #6416 against its base (`LOC_GATE_BASE=db906b6007`)
+fails both gates: `largestSccSize: 694 → 697`, and 827 → 829 flat files
+naming `class-builtin-species-read.ts` and `date-proto-to-json.ts`.
 
 ### Gates (all run bare, exit codes)
 
-All exit 0 on `39cc565790` + this branch: `check:import-cycles`,
+All exit 0 on `1f1b0ad61c` + this branch (re-run after the allowance change): `check:import-cycles`,
 `check:flat-dir-budget`, `check:ir-dialect`, `check:ir-kind-neutrality`,
 `check:jstag-seam`, `check:ir-layering`, `check:codegen-fallbacks`,
 `check:any-box-sites`, `check:speculative-rollback`, `check:stack-balance`,
@@ -207,8 +224,8 @@ All exit 0 on `39cc565790` + this branch: `check:import-cycles`,
 `check:dead-exports`, `check:issue-ids:against-main` (GATE_BASE=origin/main),
 `check-compiler-boundaries.mjs --mode inventory`, `check:ir-fallbacks`,
 `check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
-`check:oracle-ratchet`. Tests (single fork): `tests/check-import-cycles.test.ts`
-6/6, `tests/check-flat-dir-budget.test.ts` 4/4; the type-only test fails when
+`check:oracle-ratchet`, `check:claude-md-paths`. Tests (single fork): `tests/check-import-cycles.test.ts`
+7/7, `tests/check-flat-dir-budget.test.ts` 5/5; the type-only test fails when
 the type-only skip is mutated out. `tests/issue-3518-compiler-boundaries.test.ts`
 and `tests/issue-6418-boundary-verdict-in-log.test.ts` pass with `references()`
 exported. `tests/issue-3113-ir-layering-gate.test.ts` fails one case on main
@@ -223,44 +240,16 @@ decrease); this PR touches no `src/` file.
   the flat-dir budget; its existing `check-func-budget --update-on-decrease`
   call already fails there (non-fatally) for the same reason.
 
-## Suspended Work — follow-up PR (2026-10-02, lead handoff)
+## Transplant (2026-10-06, lead)
 
-PR 6430 landed the ratchets **baseline-scoped**, and within four hours that
-scoping parked two unrelated PRs for growth other PRs had landed (6431 for
-5883, 6419 for 6422 — see #6823 item 5). dev-6797 had the change-scoped
-version ready when the shared repository went bare (#6822); the agent cannot
-be resumed until `core.bare` is repaired
-(`plan/agent-context/claude-review-wave-handoff-2026-10-02.md`).
-
-- **Worktree**: `/home/user/js2/.claude/worktrees/agent-adc6ee3039d92814a`,
-  branch `claude/issue-6797-import-cycle-ratchet` at `c60ee5f34d` (17 local
-  commits past its origin ref; 6430 merged from an older head, so this branch
-  can no longer carry the work — create a NEW branch from the current HEAD,
-  e.g. `claude/issue-6797-change-scoped-allowances`, then
-  `git merge origin/main`).
-- **Staged (10 files, 4 also modified unstaged; +530/−132)**:
-  `scripts/check-import-cycles.mjs` and `scripts/check-flat-dir-budget.mjs`
-  become CHANGE-SCOPED like `check:loc-budget` (fail when the metric is
-  higher at HEAD than at the change-set's own base — HEAD^1 of the synthetic
-  merge, merge-base fallback; growth granted by `import-cycles-allow:` /
-  `flat-dir-budget-allow:` entries in the PR's own `plan/issues/*.md`, format
-  `- largestSccSize: 699 # <date> (#N): <why>` / `- src/codegen/foo.ts # <date>
-(#N): <why>`; the committed baselines stay the post-merge low-water mark and
-  no-git fallback), plus GIT*\* hardening (`CLEAN_ENV` for every spawned git);
-  `tests/check-import-cycles.test.ts` and `tests/check-flat-dir-budget.test.ts`
-  (allowance, malformed-entry and GIT*_-stripping cases, their `git init`
-  runs with GIT\__ removed); `.github/workflows/ci.yml` (both steps gain
-  `git fetch --no-tags --depth=200 origin main` for the merge-base fallback,
-  comments rewritten); `baseline-summary-sync.yml` and `test262-sharded.yml`
-  (banking comments: the import-cycle twin needs `typescript`, which only
-  promote-baseline installs); `docs/architecture/codegen-axes.md` (how to
-  verify the layering, allowance syntax); this issue file (plan + Resolution
-  §"Intended growth" updated) and `6808-…md` (+4).
-- **Remaining**: new branch; merge `origin/main` (6430 already contains the
-  baseline-scoped originals — take main's side only where the staged change
-  does not supersede it); gates per the common brief incl.
-  `check:import-cycles` / `check:flat-dir-budget` themselves and both test
-  files; commit `feat(#6797): change-scoped allowances … ✓` with
-  `Model: Claude Opus 5.5 Medium` trailers; push; PR (base main, not draft).
-  Then set `status: done` here; items 2 (#6808) and 4 (godfiles, #6826) stay
-  separate.
+The change-scoped follow-up the agent had staged in worktree
+`agent-adc6ee3039d92814a` (on top of its unpushed merge commit `c60ee5f34d`)
+was moved by the lead onto the branch `claude/issue-6797-change-scoped-allowances`
+as a patch against current `main`, because the shared repository is still
+bare (#6822) and the agent cannot be resumed. Hooks did not run on that
+commit; the gates run in the PR's `quality` job, including the two ratchets
+themselves in their new change-scoped form. Its PR supersedes the
+baseline-scoped behaviour PR 6430 landed: growth is now measured against the
+change-set's own base and granted by `import-cycles-allow:` /
+`flat-dir-budget-allow:` frontmatter entries, so other PRs' growth can no
+longer park a PR (the 2026-10-02 collateral parks of 6431 and 6419).

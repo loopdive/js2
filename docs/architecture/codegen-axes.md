@@ -339,6 +339,20 @@ files directly in `src/codegen/` from growing, and `pnpm run
 check:ir-layering` counts every `src/ir/` import of `src/codegen/`,
 type-only ones included. All three run in CI's `quality` job.
 
+The first two judge only the change-set: they compare HEAD with the PR's own
+base, so a PR never edits their baseline files. When growth is deliberate —
+a new codegen helper that has to join the cycle, or a new top-level file in
+`src/codegen/` — the PR grants it in its own issue file's frontmatter, with
+the highest value it may reach and a dated reason:
+
+```yaml
+import-cycles-allow:
+  - largestSccSize: 699 # 2026-10-02 (#NNNN): two new helpers join the SCC
+  - codegen->ir: 297 # 2026-10-02 (#NNNN): new leaf imports from-ast for ...
+flat-dir-budget-allow:
+  - src/codegen/foo-helper.ts # 2026-10-02 (#NNNN): why it cannot go in a sub-directory
+```
+
 ## See also
 
 - [`target-architecture.md`](target-architecture.md) — the **end-state

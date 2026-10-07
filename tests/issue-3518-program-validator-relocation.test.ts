@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { reconstructRemainderRuntimeContractReceiptSources as reconstructRuntimeContractReceiptSources } from "./helpers/ir-remainder-runtime-contract-evolution.js";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -26,8 +27,7 @@ import {
   type ProgramValidatorDonorPath,
   type ProgramValidatorCurrentPath,
 } from "./helpers/ir-program-validator-relocation.js";
-import { reconstructRuntimeContractReceiptSources } from "./helpers/ir-runtime-contract-evolution.js";
-import { beforeRuntimePreparationRelocation } from "./helpers/ir-runtime-preparation-relocation.js";
+import { beforeRemainderRuntimePreparationRelocation as beforeRuntimePreparationRelocation } from "./helpers/ir-remainder-runtime-preparation-relocation.js";
 import { captureC1CurrentPopulation } from "./helpers/ir-c1-current-source.js";
 import { reconstructRuntimeProgramRelocationPopulation } from "./helpers/ir-runtime-program-relocation.js";
 const expected = {
