@@ -4719,6 +4719,41 @@ edition. That is a runner-scope decision, not an exception.
 
 No W-slice above touches the files these PRs change.
 
+### 2026-10-07 — Slice W2 attempt (no commit; re-scoped)
+
+The first W2 lane ran out its 2.5 h box with 0 of 6 rows flipped and committed
+nothing. Probe-verified findings, for the next attempt:
+
+- **`new <%Function% value>()` reaches two compile paths.** `new other.Function()`
+  and an `any`-typed alias give `typeof === "undefined"`; `var F = Function;
+  new F()` gives a function whose `prototype` reads `undefined`. Identity with
+  `%Function%` only holds through `__extern_strict_eq` (`ensureExternStrictEqHelper`),
+  not `ref.eq` against `emitStandaloneFunctionIntrinsicValue`. An arm in
+  `tryCompileNativeConstructFromValue` (`new-super.ts`) fixed only the alias
+  case; the harness-context sites likely go through the dynamic-`new` chain that
+  ends in `emitRuntimeEvalConstructOnNull` /
+  `bcv.emitBuiltinCtorValueConstructOnNull` (~L7955), which needs its own
+  retry-on-null `%Function%` arm.
+- **The V2 §10.1.14 fix is never reached by these rows.** They assign a static
+  `C.prototype = null`, which `call-namespace-static.ts`
+  (`assignedNewTargetPrototype` → `isDefinitelyPrimitivePrototype`) resolves by
+  returning the plain `new target()` result. Bound targets give proto `null`
+  (even without NewTarget — a separate bound-`[[Construct]]` defect); class
+  targets give `null` and cannot be re-parented after construction (closed
+  structs); a runtime null `prototype` on a bound/class target is a #3371
+  compile error.
+- **`Function/proto-from-ctor-realm`** reads `other.Function.prototype` →
+  `undefined`; that is #5269's provider-boundary mechanism, so it leaves W2.
+
+Draft (not working, not applied) and probes are preserved in the session
+scratchpad as `w2/w2-draft.patch` and `w2/probes/`. **Re-scope:** W2a — a
+`%Function%` construct arm in both dynamic-`new` paths using strict-eq; W2b —
+construct through the driver with `%Object.prototype%` for a static primitive
+NewTarget `prototype` (instead of post-construction patching), then the bound
+`[[Construct]]` and closed-struct fixes before `bind/proto-from-ctor-realm` and
+`super/realm` can pass. Budget ~4 h each; family runs on this box take ~1 h, so
+run one ≤200-row chunk per background job (30-min background cap).
+
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 
 Written at the user's "wrap up, handoff, open pr" (about 22:10 UTC). The goal
