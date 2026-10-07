@@ -1,3 +1,9 @@
+---
+id: 6891
+title: Prevent unsigned wraparound in Linear stack-arena admission
+status: in-progress
+---
+
 # Issue 6891: Prevent unsigned wraparound in Linear stack-arena admission
 
 ## Scope and planning custody
@@ -249,6 +255,20 @@ expected errors, policy activation, or legacy fallbacks to obtain a pass.
   unchecked ordinary-allocator behavior; no claim of universal OOM safety.
 
 ## Overlap assessment and release dependency
+
+## Implementation checkpoint (2026-10-07)
+
+The two upstream source/test claims were effect-verified before Sol6.1 Medium
+implementation. Astra High reviewed the resulting bounded source change.
+The original e7760d1c2a source produced 14 passing and 9 failing new tests,
+including both required pointer-corruption regressions. The unchanged test
+matrix on the candidate passes all23. Existing runtime/allocation-policy
+controls bring the total to32 passed and1 existing optional skip (exit0).
+Exact custody, command, raw baseline-log location and hash are recorded in
+`plan/agent-context/linear-session-b-20261007.md`. No shared wiring changed.
+The ordinary heap allocator overflow limitation remains outside this fix.
+
+### Original overlap assessment
 
 The read-only assessment searched issue files in the session tree and main
 checkout for this helper and stack-arena wrap/overflow. No exact duplicate
