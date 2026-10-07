@@ -235,6 +235,7 @@ import {
 } from "./direct-eval-environment.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
 import { isStaticTaViewBinding } from "./ta-static-view-mop.js"; // (#6651 E7)
+import { nestedCapturesVisibleFrom, nestedFuncOwnerIsForeignTo } from "./nested-function-name-scope.js"; // (#6877)
 import {
   emitObjectMethodAsClosure,
   finalizeMethodTrampolines,
@@ -952,8 +953,10 @@ export function promoteAccessorCapturesToGlobals(
     // value global (best-effort, no crash) instead of the shared cell.
     const directlyReferenced = new Set(referencedNames);
     const fnWorklist: string[] = [];
+    const referenceSite = accessorBody ?? extraNodes?.[0]; // (#6877) skip other modules' nested owners
     for (const name of referencedNames) {
       if (transitiveOnly?.forceValueNames?.has(name)) continue; // value-promote, don't follow
+      if (referenceSite !== undefined && nestedFuncOwnerIsForeignTo(ctx, name, referenceSite)) continue;
       if (ctx.funcMap.has(name) && ctx.nestedFuncCaptures.has(name)) fnWorklist.push(name);
     }
     if (transitiveOnly) {
@@ -3479,6 +3482,13 @@ export function compileLiftedClosureBody(
           closureInfoForSelf.returnType = exprType;
           closureInfoForSelf.funcTypeIdx = liftedFuncTypeIdx;
         }
+      } else if (!valTypesMatch(exprType, closureReturnType)) {
+        // (#6879) Same kind, different heap type — a concise body is `return
+        // expr`, so coerce exactly as `normalizeReturnExpression` does for a
+        // block body. prettier's `e => Object.keys(e).filter(...)`: the checker
+        // says `string[]`, the native lowering yields the externref vec, and the
+        // uncoerced fallthrough failed validation.
+        coerceType(ctx, liftedFctx, exprType, closureReturnType);
       }
       // (#4630) Concise parked-async body (`async () => expr`) — settle the
       // completion value into the promoted `$Promise` result.
@@ -4384,7 +4394,7 @@ export function compileArrowAsCallback(
   // closure does; otherwise the direct call reads owner-frame local indices
   // from the callback frame.
   const transitivelyRequiredNames = collectTransitiveCaptureNames(
-    ctx.nestedFuncCaptures,
+    { get: (name) => nestedCapturesVisibleFrom(ctx, name, arrow) }, // (#6877)
     referencedNames,
     ownLocals,
     () => false,

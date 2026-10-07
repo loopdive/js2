@@ -89,6 +89,7 @@ import { filterResultNeedsDynamicCarrier } from "./array-filter-spec-access.js";
 import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
 import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
+import { jsValueBoundary } from "./context/types.js";
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
 import {
@@ -183,6 +184,7 @@ import { pushProgramAbiModuleInitCallable } from "./program-abi-module-init-plan
 import {
   pushProgramAbiNestedFunctionDeclaration,
   pushProgramAbiTopLevelCallable,
+  sourceFunctionPositionForDeclaration,
 } from "./program-abi-source-callable-planning.js";
 import {
   isolateRuntimeModuleCallableRegistration,
@@ -381,6 +383,29 @@ function ensureNativeDynamicBoundaryBridge(ctx: CodegenContext): void {
   }
 
   ensureNativeDynamicBoundaryTag(ctx);
+}
+
+/**
+ * (#6879) `export { parse }` exports a function declared elsewhere in the
+ * file; only `export function` recorded its boundary signature, so on the
+ * native regime the adapter passed such an export's JS arguments through raw
+ * (an un-admitted options object, an un-marshalled string) and acorn's
+ * `parse(input, { ecmaVersion })` lost its options. Gated on the regime's JS
+ * value boundary so the host lane and the host-free targets keep their bytes.
+ */
+function recordExportListSignature(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  localName: string,
+  exportedName: string,
+): void {
+  if (ctx.targetProfile.semanticProviders !== "native-first" || !jsValueBoundary(ctx)) return;
+  if (ctx.exportSignatures.has(exportedName)) return;
+  const decl = sourceFile.statements.find(
+    (s): s is ts.FunctionDeclaration => ts.isFunctionDeclaration(s) && s.name?.text === localName && !!s.body,
+  );
+  if (!decl) return;
+  recordExportSignature(ctx, exportedName, decl, hasAsyncModifier(decl));
 }
 
 function recordExportSignature(
@@ -3160,6 +3185,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           name: "default",
           desc: { kind: "func", index: funcIdx },
         });
+        for (const name of [targetName, "default"]) recordExportListSignature(ctx, sourceFile, targetName, name);
       }
     }
   }
@@ -3186,6 +3212,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         if (func && !func.exported) func.exported = true;
         if (!ctx.mod.exports.some((e) => e.name === exportedName)) {
           ctx.mod.exports.push({ name: exportedName, desc: { kind: "func", index: funcIdx } });
+          recordExportListSignature(ctx, sourceFile, localName, exportedName);
         }
       }
     }
@@ -6384,7 +6411,7 @@ export function compileDeclarations(
       if (stmt.name && stmt.body && lastFnWithBody.get(stmt.name.text) !== stmt) continue;
       const fnName = stmt.name ? stmt.name.text : "default";
       if (stmt.body) {
-        const idx = funcByName.get(fnName);
+        const idx = sourceFunctionPositionForDeclaration(ctx, stmt) ?? funcByName.get(fnName);
         if (idx !== undefined) {
           const func = ctx.mod.functions[idx]!;
           // (#2138/#3521) Skip direct body emission. The compatibility overlay

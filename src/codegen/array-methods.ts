@@ -14,6 +14,7 @@ import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
 import { probeCompiledType } from "./context/speculative.js";
 import { emitHoleToUndefined, holeTestInstrs, holeToUndefinedInstrs, joinEmptyElementTest } from "./array-holes.js";
 import { holeSearchReadsUndefined } from "./array/array-length-holes.js"; // (#6771 S3) indexOf skips a hole
+import { vecReceiverIdentityArm } from "./array/vec-receiver-identity.js"; // (#6880) keep receiver identity
 import { emitF64HoleToUndef, f64HolesActive, f64HoleTestInstrs, f64HoleToUndefFor } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4491 T11)
 import {
@@ -6980,7 +6981,8 @@ function setupArrayLoop(
   if (receiverIsExternref && receiverType?.kind === "externref") {
     const externTmp = allocLocal(fctx, `__arr_${tag}_extern_${fctx.locals.length}`, { kind: "externref" });
     fctx.body.push({ op: "local.set", index: externTmp });
-    fctx.body.push(...buildVecFromExternref(ctx, fctx, externTmp, vecTypeIdx, { arrTypeIdx, elemType }));
+    const fresh = buildVecFromExternref(ctx, fctx, externTmp, vecTypeIdx, { arrTypeIdx, elemType });
+    fctx.body.push(...vecReceiverIdentityArm(ctx, externTmp, vecTypeIdx, tag, fresh));
     recvExternTmp = externTmp;
   }
 

@@ -111,6 +111,7 @@ import {
   tryStructToString,
 } from "./type-coercion.js";
 import { STRING_ARRAY_SHARED_METHODS } from "./array-slice-native.js"; // (#6683)
+import { nestedCapturesForCallee } from "./nested-function-name-scope.js"; // (#6877)
 import { readEnv } from "../env.js";
 
 /**
@@ -1447,7 +1448,7 @@ export function compileTaggedTemplateExpression(
       // captures AND the TDZ-flag boxes are real leading params, so the capture
       // count that offsets `strings`/substitutions below is value + tdz-flag
       // count — not just the value count (#3576).
-      const nestedCaptures = ctx.nestedFuncCaptures.get(tagName);
+      const nestedCaptures = nestedCapturesForCallee(ctx, tagName, funcIdx); // (#6877) this callee's plan only
       const tdzFlaggedNested = nestedCaptures ? nestedCaptures.filter((c) => c.hasTdzFlag) : [];
       if (nestedCaptures) {
         for (const cap of nestedCaptures) {

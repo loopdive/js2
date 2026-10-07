@@ -10,7 +10,8 @@
 //   2. The LinearEmitter's emitted ops, executed against a hand-laid-out linear
 //      array using the documented layout (src/codegen-linear/runtime.ts:339
 //      `[header 8B][len@+8][cap@+12][elements@+16]`), compute the correct
-//      length and element values at runtime — the linear-correctness proof.
+//      length and element values as a layout illustration. Actual emitted
+//      runtime forwarding is executed in issue-6893-linear-ir-read-forwarding.
 //
 // The WasmGC path's runtime correctness for these same primitives is already
 // covered by the full IR equivalence suite (which routes vec.len/vec.get
@@ -28,6 +29,8 @@ import type { IrVecLowering, LinearVecLowering } from "../src/ir/backend/handles
 import { irUnitFuncRef } from "../src/ir/callable-bindings.js";
 import { lowerFunctionAstToIr } from "../src/ir/from-ast.js";
 import { lowerIrFunctionToWasm } from "../src/ir/lower.js";
+import { addRuntime, addArrayRuntime } from "../src/codegen-linear/runtime.js";
+import { createEmptyModule } from "../src/ir/types.js";
 import { emitBinary } from "../src/emit/binary.js";
 import {
   defaultOperationsForLayout,
@@ -40,7 +43,17 @@ import type { BlockType, Instr, ValType, WasmFunction, WasmModule } from "../src
 import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
 const wasmgc = new WasmGcEmitter();
-const linear = new LinearEmitter();
+const vectorModule = createEmptyModule();
+addRuntime(vectorModule);
+addArrayRuntime(vectorModule);
+const resolverIndex = vectorModule.functions.findIndex((fn) => fn.name === "__arr_resolve");
+const linear = new LinearEmitter({
+  resolveRuntimeOperation: (operation) => {
+    if (operation.family !== "vector" || operation.operation !== "resolve-forwarding")
+      throw new Error("unexpected operation");
+    return resolverIndex;
+  },
+});
 const irIdentities = createTestIrFunctionIdentityFactory("ir-vec-two-backend");
 
 const gcVec: IrVecLowering = {
@@ -75,7 +88,10 @@ describe("#1714 vec primitives diverge per backend (same intent, two emitters)",
 
     const lin: Instr[] = [];
     linear.emitVecLen(linVec, lin);
-    expect(lin).toEqual([{ op: "i32.load", align: 2, offset: 8 }]);
+    expect(lin).toEqual([
+      { op: "call", funcIdx: resolverIndex },
+      { op: "i32.load", align: 2, offset: 8 },
+    ]);
   });
 
   it("emitVecDataPtr: WasmGC struct.get(data) vs linear base+16", () => {
@@ -85,7 +101,7 @@ describe("#1714 vec primitives diverge per backend (same intent, two emitters)",
 
     const lin: Instr[] = [];
     linear.emitVecDataPtr(linVec, lin);
-    expect(lin).toEqual([{ op: "i32.const", value: 16 }, { op: "i32.add" }]);
+    expect(lin).toEqual([{ op: "call", funcIdx: resolverIndex }, { op: "i32.const", value: 16 }, { op: "i32.add" }]);
   });
 
   it("emitElemGet: WasmGC array.get vs linear index*stride+load (f64)", () => {
@@ -118,8 +134,8 @@ describe("#1714 vec primitives diverge per backend (same intent, two emitters)",
 
 describe("#1714 LinearEmitter ops execute correctly against the linear layout", () => {
   it("sums an f64 array via the emitted len + dataPtr + elemGet ops", async () => {
-    // Build a tiny WAT module that mirrors EXACTLY what lower.ts would emit if
-    // it routed a sum-of-array loop through LinearEmitter for the vec ops:
+    // This hand-written WAT illustrates the layout only. The actual emitted
+    // forwarding calls execute in issue-6893-linear-ir-read-forwarding:
     //   len      = i32.load offset=8           (emitVecLen)
     //   dataBase = base + 16                    (emitVecDataPtr: i32.const 16; i32.add)
     //   elem     = f64.load(dataBase + i*8)     (emitElemGet: i32.const 8; i32.mul; i32.add; f64.load)
