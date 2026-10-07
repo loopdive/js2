@@ -1,7 +1,7 @@
 {
-  "generated": "2026-10-06",
+  "generated": "2026-10-07",
   "threshold": 1500,
-  "totalCeiling": 1010369,
+  "totalCeiling": 1010530,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -19,7 +19,7 @@
     "src/codegen/closed-method-dispatch.ts": 2163,
     "src/codegen/closure-exports.ts": 2223,
     "src/codegen/closures.ts": 4956,
-    "src/codegen/closures/arrow-phases.ts": 1513,
+    "src/codegen/closures/arrow-phases.ts": 1517,
     "src/codegen/context/types.ts": 4953,
     "src/codegen/dataview-native.ts": 10035,
     "src/codegen/declarations.ts": 6759,
@@ -49,7 +49,7 @@
     "src/codegen/generators-native-consumer.ts": 1901,
     "src/codegen/generators-native.ts": 7192,
     "src/codegen/generic-struct-factory.ts": 1865,
-    "src/codegen/index.ts": 15360,
+    "src/codegen/index.ts": 15363,
     "src/codegen/ir-inline.ts": 1571,
     "src/codegen/ir-prepared-free-functions.ts": 2332,
     "src/codegen/iterator-native.ts": 6438,
