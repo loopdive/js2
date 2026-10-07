@@ -535,8 +535,59 @@ to settle them, stop after this candidate and return the decision to the
 parent. Do not declare speedup from operation counts, declare regressions
 fixed merely because the old loop is present, or silently accept a tradeoff.
 
-- [ ] Hybrid dispatch, unchanged prefix and both branch mechanisms reviewed.
-- [ ] Boundary, zero-result poison and existing exact semantic controls pass.
-- [ ] Identical amended baseline/candidate test bytes and full rows compared.
-- [ ] Both pair orders reported without suppressing short/intermediate regressions.
+- [x] Hybrid dispatch, unchanged prefix and both branch mechanisms reviewed.
+- [x] Boundary, zero-result poison and existing exact semantic controls pass.
+- [x] Identical amended baseline/candidate test bytes and full rows compared.
+- [x] Both pair orders reported without suppressing short/intermediate regressions.
 - [ ] Parent explicitly accepts the measured tradeoff or requests a new bounded step.
+
+## Hybrid validation checkpoint — 2026-10-07
+
+Tested source commit: `f9800cadcb9c33f928ba9b8e96ad1a0abf1bcbc1`.
+Exact original baseline remains `e7760d1c2af4636ede6a352154d193b234af5fc4`.
+The amended test digest is
+`b0bb3cf778df90f3bef641f923765260bfdcbc2fd168a26a85508aacd7079898` on
+all four runs. Source/test reviewers found no concrete correctness blocker.
+The three unchanged repeat-control files also pass25/25 on the hybrid source:
+issue3518 reservation, issue3518 typed repeat and issue3922 native repeat.
+Their full output is retained as `hybrid-existing-controls.log.gz`.
+Parent ran baseline/candidate then candidate/baseline serially: each passes
+61/61, with all eight timed cases complete and 67 instrument observations.
+All 90 complete functional rows per run compare deeply equal, including bytes,
+owners, receipts, exceptions and negative controls. All ten batch states per
+timed case compare exactly after omitting only elapsed time: allocations,
+retained arena bytes, checksums and memory growth are unchanged.
+
+New evidence is `plan/log/6892-linear-repeat-20261007/hybrid-comparison.json`
+and four `hybrid-*.log.gz` files. They retain all seven samples, spreads,
+medians, provenance and raw observations. The original bulk-only JSON and
+four logs remain intact; no failed acceptance or fixture is withdrawn.
+
+Ratios below are baseline median / hybrid median, ordered N=3,9,1024,65537:
+
+- Forward `xy`: 3.0135, 1.0039, 1.5473, 2.0851.
+- Forward `abc`: 2.7896, 2.7640, 0.7840, 2.4764.
+- Reverse `xy`: 1.0459, 1.0191, 2.2136, 6.3013.
+- Reverse `abc`: 1.0102, 1.9656, 3.5643, 3.7978.
+
+**Decision: bounded correctness/equality checks pass; performance acceptance
+is unresolved. Keep PR6563's `hold` label.** No short-case median is slower
+than its paired baseline here, but that is not a confidence bound or universal
+speedup. Forward `abc` N=1024 is 27.5% slower; reverse is 3.56x faster.
+Wide spreads and shared-machine conditions prevent settling that discrepancy.
+Tiering is not established. Large N=65537 gains in both orders do not erase
+the intermediate result. Do not enqueue, suppress samples, change warmup,
+or sweep thresholds. A further controlled measurement step requires an Astra
+amendment preserving this evidence and original instrument as historical.
+
+Astra High independently reviewed all four logs and agrees with this
+disposition: exact functional/batch equality is established within the bounded
+suite, while the contradictory intermediate timing prevents final performance
+acceptance. No new concrete source or instrument flaw was identified.
+
+Canonical main was refreshed to `8ac2ef29a37cb8edc217b11604c29bb11ef76932`.
+Its intervening changes do not touch this runtime leaf or the new test; this
+experiment intentionally remains on the exact recorded e776 baseline, not an
+unmeasured merge. Session A owns final integration and queue submission.
+No shared compiler/API/registry/source-map file was edited, no source packet
+was inferred from A's documentation publication, and no legacy path is retired.

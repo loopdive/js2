@@ -88,3 +88,56 @@ Published repeat checkpoint: PR6563, held at b7c53b0426dad6407520de9b58c4db34b4b
 pending the bounded follow-up. A alone coordinates final queue submission.
 Issue6888's f32 emission remains blocked on shared semantic admission and an
 explicit A file/function release; this session makes no shared wiring edit.
+
+## Hybrid checkpoint and integration requirements
+
+Tested hybrid runtime/test commit:
+`f9800cadcb9c33f928ba9b8e96ad1a0abf1bcbc1`. It preserves the bytewise loop
+through64 payload bytes and uses the bounded bulk algorithm above64. Only the
+previously released function and new test changed. Astra High specified and
+reviewed the adjustment; Sol6.1 Medium implemented the disjoint code/tests.
+Seven new boundary cases preserve all original cases and the timed instrument.
+
+Four paired amended runs each pass61/61. Parent verified exact deep equality
+of all90 full functional rows and every batch's allocation/checksum/memory state.
+The three unchanged repeat controls also pass25/25 on the hybrid candidate;
+their complete generated log is retained alongside the paired evidence.
+All8 measurements finish within the instrument's30-second cap. Full provenance,
+seven samples/case, medians/spreads and compressed raw logs are published beside
+the intact bulk-only evidence. Test digest:
+`b0bb3cf778df90f3bef641f923765260bfdcbc2fd168a26a85508aacd7079898`.
+
+Correctness/equality is bounded to these tests; **performance remains unresolved,
+so PR6563 remains on hold**. Short medians match or improve in both pair orders,
+and large medians improve2.09–6.30x. The `abc` N=1024 result is27.5% slower in
+one pair but3.56x faster in the other, with wide spreads. Neither suppress that
+regression nor claim universal improvement/tiering. No further tuning sweep is
+authorized by this plan. A reviewed controlled measurement amendment is the
+next performance step; it cannot replace historical failures or raw observations.
+
+Refreshed canonical main: `8ac2ef29a37cb8edc217b11604c29bb11ef76932`.
+No B kernel/test path overlaps its intervening changes. Branch retains exact
+e776 experiment base; latest-main integration/equality remains A's responsibility.
+PR6561 is independent and must not wait for acceptance of this optional
+performance candidate. Neither PR supplies full PreparedIrProgram coverage,
+end-to-end equality, failure preservation across the full compiler or retirement.
+
+## Next allocator scope requires a real handoff
+
+Astra's read-only follow-up to issue6891 identified unchecked unsigned endpoint
+and failed-growth handling in `runtime.ts::addRuntime`'s standalone allocator.
+This is source inspection, not an executed large-index admission result. No
+new issue, source edit, test or claim was created for it.
+
+Fresh upstream claims at `23bc631ba98b9188051a4f7bef800de19fbb4688` hold bare
+issue4540 in-progress for `ttraenkler/claude-opus`, branch
+`claude/linear-memory-quickjs-backend-gkhszu`, published upstream tip
+`48360c40b32cbaa58505c189df193608d359cb1f`. The existing plan owns overlapping
+`addRuntime` assembly/locals; no explicit standalone partition was found.
+A's file exclusion is not a release from that claimant.
+
+Requested release before implementation: only `addRuntime::standalonePrologue`
+and standalone-only scratch-local declarations plus one new issue-specific test;
+leave linked/chunked prologue, shared tail, options, globals, ABI and wiring with
+their owner. The designated owner or A's explicit coordinated reassignment must
+publish that partition first. Until then continue only truly independent scopes.
