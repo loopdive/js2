@@ -6,8 +6,10 @@
  * Extracted from codegen/index.ts (#1013).
  */
 import type { Instr, StructTypeDef, ValType } from "../ir/types.js";
+import type { ts } from "../ts-api.js";
 import { buildAnyValueType, buildUndefinedInitializer } from "../runtime/wasmgc/values/primitive-layouts.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 import { ensureAnyToStringHelper, ensureNativeStringHelpers, nativeStringType } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
@@ -717,6 +719,64 @@ export function ensureAnyFromExternHelper(ctx: CodegenContext, opts?: { forceHon
   ctx.funcMap.set(helperName, funcIdx);
   ctx.anyHelpers.set(helperName, funcIdx);
   return funcIdx;
+}
+
+const PRIMITIVE_FACT_KINDS: ReadonlySet<string> = new Set(["number", "boolean", "string", "undefined", "null", "void"]);
+
+/** (#5185) Is `expr`'s static type a union whose every member is a primitive? */
+function isPrimitiveOnlyUnionFact(ctx: CodegenContext, expr: ts.Expression): boolean {
+  const fact = ctx.oracle.typeFactOf(expr);
+  if (fact.kind !== "union" || fact.parts.length === 0) return false;
+  return fact.parts.every((p) => PRIMITIVE_FACT_KINDS.has(p.kind));
+}
+
+/**
+ * (#5185 / #6651 W9) Box the externref on the stack into `$AnyValue` for a
+ * slot whose static type is a union of PRIMITIVES only (e.g. the
+ * `string | number | boolean | null` element of a heterogeneous literal row).
+ * The generic boxing default (`__any_box_extern_s1`) keeps the #1888 tag-5
+ * lie for every non-nullish externref, so a boxed NUMBER read off a dynamic
+ * receiver (`item[1]` in a `forEach` callback) landed as a tag-5 "string" and
+ * `typeof`/`===` answered for a string. A primitive-only slot cannot hold an
+ * object, so classifying the payload honestly is exact here: `s1` first keeps
+ * its nullish/UNDEF-sentinel partition, then a residual tag-5 wrap is
+ * re-classified by `__any_from_extern` (`$BoxedNumber`/i31 → tag 3,
+ * `$BoxedBoolean` → tag 4, a genuine string stays tag 5). Same per-site
+ * substitution discipline as #6631 / #3055 — the shared default is untouched.
+ * Returns false (nothing emitted) when the regime or a helper is unavailable.
+ */
+export function emitPrimitiveUnionExternToAny(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.Expression,
+): boolean {
+  if (ctx.undefinedSingleton !== true || !(ctx.standalone || ctx.nativeStrings)) return false;
+  if (!isPrimitiveOnlyUnionFact(ctx, expr)) return false;
+  ensureAnyHelpers(ctx);
+  const fromExtern = ensureAnyFromExternHelper(ctx);
+  const s1 = ctx.funcMap.get("__any_box_extern_s1");
+  if (fromExtern === undefined || s1 === undefined || ctx.anyValueTypeIdx < 0) return false;
+  const anyTypeIdx = ctx.anyValueTypeIdx;
+  const tmp = allocTempLocal(fctx, { kind: "ref", typeIdx: anyTypeIdx });
+  fctx.body.push(
+    { op: "call", funcIdx: s1 },
+    { op: "local.tee", index: tmp },
+    { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 0 },
+    { op: "i32.const", value: 5 },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "ref", typeIdx: anyTypeIdx } },
+      then: [
+        { op: "local.get", index: tmp },
+        { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+        { op: "call", funcIdx: fromExtern },
+      ],
+      else: [{ op: "local.get", index: tmp }],
+    },
+  );
+  releaseTempLocal(fctx, tmp);
+  return true;
 }
 
 /**
