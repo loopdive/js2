@@ -111,6 +111,7 @@ import { createHostCallImport, isHostCallImportName } from "./runtime/host-call-
 import { createDynamicFunctionImport } from "./runtime/dynamic-function-import.js"; // (#2960/#4650)
 import * as dynamicCodePolicy from "./runtime/dynamic-code-policy.js"; // (#6779)
 import { createBoundaryObjectAdapter } from "./runtime/boundary-object-adapter.js";
+import { isNativeRegimeExports, readNativeRegimeBag } from "./runtime/native-regime-view.js"; // (#6879)
 import { createBoundaryCallbackAdapter } from "./runtime/boundary-callback-adapter.js";
 import { createBoundaryPromiseAdapter } from "./runtime/boundary-promise-adapter.js";
 import {
@@ -8076,7 +8077,7 @@ function _nativeBoundaryVector(values: readonly any[], exports: Record<string, F
 }
 
 function _nativeOpenObjectKeys(obj: any, exports: Record<string, Function> | undefined): string[] {
-  if (!exports || !_isNativeOpenObject(obj, exports)) return [];
+  if (!exports || !(_isNativeOpenObject(obj, exports) || isNativeRegimeExports(exports))) return [];
   const keys = exports.__object_keys as ((value: any) => any) | undefined;
   if (typeof keys !== "function") return [];
   try {
@@ -8198,6 +8199,8 @@ function _resolveHostField(obj: any, key: any, exports: Record<string, Function>
     const v = _resolveClassMember(obj, key, exports);
     if (v !== _MISS) return v;
   }
+  const bagValue = readNativeRegimeBag(obj, key, exports, _nativeBoundaryKey, _nativePrimitiveToHost); // (#6879)
+  if (bagValue !== undefined) return bagValue;
   // (#1712) fnctor instances: resolve through the constructor's vivified
   // prototype object. Accessors run with the live-mirror proxy as the receiver.
   const protoDesc = _fnctorProtoLookup(obj, key, exports);
