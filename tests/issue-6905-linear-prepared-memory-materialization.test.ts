@@ -354,7 +354,7 @@ describe("independent source controls and positive shared allocation requirement
       const prepare = vi.spyOn(overlay, "prepareLinearIrOverlay");
       const emit = vi.spyOn(overlay, "compileLinearIr");
       const initialize = vi.spyOn(linearRuntime, "addLinearIrVecRuntime");
-      const options = { ...OPTIONS, experimentalIR: false, disableIrFirst: true };
+      const options = { ...OPTIONS, moduleName: "issue-6905.ts", experimentalIR: false, disableIrFirst: true };
       try {
         vi.stubEnv("JS2WASM_LINEAR_IR", "1");
         Object.assign(evidence, {
