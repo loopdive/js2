@@ -4956,6 +4956,84 @@ false — the #3037 mechanism, for the `function`-valued spelling too).
   this time box after W8 — the link writer and four walker arms are a separate
   slice.
 
+### 2026-10-07 — Slice W1a
+
+String exotic object bullet of W1. **1 of 3 target rows flips**:
+`built-ins/Proxy/set/trap-is-null-target-is-proxy.js`. The other two now pass
+their String half and stop at the function carrier (W1b):
+`defineProperty/trap-is-missing-target-is-proxy` at `func.name` after
+`Object.defineProperty(funcProxy, "name", {value: "foo"})`, and
+`getOwnPropertyDescriptor/trap-is-missing-target-is-proxy` at "prototype should
+be an own property".
+
+The plan's diagnosis was half right. A String wrapper is already a `$Object`,
+so it already had expando storage; no identity bag was needed. Three defects
+remained:
+
+1. **Numeric-key reads skipped the wrapper's own table.** `s[4]` / `s[k]` on a
+   statically-`String` receiver lowers to `emitStringExoticIndexGet`
+   (`string-exotic-index.ts`), which answered `undefined` for any index outside
+   `[0, len)`. For a wrapper (not a primitive) that miss now calls
+   `__extern_get_idx(recv, idx)`, which is OrdinaryGetOwnProperty plus the proto
+   walk (§10.4.3.1). `s["4"]` already worked.
+2. **Only sloppy `__extern_set` knew the String-exotic own properties are
+   read-only.** `installStringExoticMutationGuards` (`string-exotic-own-props.ts`,
+   called from `unshiftRegExpAccessorSetGuard`) adds guards keyed on the same
+   `__strexo_hasown` predicate:
+   - `__reflect_set` answers `false`.
+   - `__extern_set_strict` throws a TypeError.
+   - `__defineProperty_accessor` rejects.
+   - `__defineProperty_value` runs the new `__strexo_define`:
+     ValidateAndApplyPropertyDescriptor against `{value, w:false, e:<is index>,
+     c:false}`, with SameValue through `__object_is`. A compatible descriptor
+     changes nothing.
+
+   Rejections park their TypeError in the #6770 S4 rejection global, so
+   `Reflect.defineProperty` answers `false` and `Object.defineProperty` throws.
+3. **The row's array half.** `Reflect.set(proxy(proxy(nonExtArr)), "foo", 2)`
+   answered `true` because of two separate gaps:
+   - `nonExtensibleFreshIndexGuard` (`vec-define-rejections.ts`) refused only a
+     fresh INDEX on a non-extensible vec. It now also refuses a new NAMED key
+     that `__hasOwnProperty` does not find, and parks the rejection.
+   - The §10.1.9.2 receiver walk (`object-runtime-ordinary-set.ts`) let a `$Proxy`
+     receiver's define rejection escape as a throw. Both define sites now go
+     through `nativeDefineRejectionAsFalse` (`define-rejection-channel.ts`), the
+     native-body twin of `catchDefineRejectionAsFalse`. It compares identity
+     with a bare `ref.eq`, because `__extern_strict_eq` exists only under the
+     native-first provider.
+
+   This also fixes `Reflect.set(new Proxy(nonExtObj, {}), "foo", v)`, which
+   threw before.
+
+**Receipts.** Standalone, `JS2WASM_EVAL_ENGINE=quickjs … run-test262-paths.mts
+--standalone`, chunks of 200. Base and branch are frozen file copies of the
+same `a5c5689f9c` tree, each with its own provider build.
+
+| family | rows | base pass | branch pass | Δ |
+| --- | --- | --- | --- | --- |
+| `built-ins/Proxy/**` | 311 | 285 | 286 | +1 |
+| `built-ins/Reflect/**` | 153 | 152 | 152 | 0 |
+| `built-ins/Object/defineProperty/**` | 1131 | 1128 | 1128 | 0 |
+| `built-ins/Object/defineProperties/**` | 632 | 631 | 631 | 0 |
+| `built-ins/Object/getOwnPropertyDescriptor/**` | 310 | 310 | 310 | 0 |
+| `built-ins/Object/{freeze,seal,preventExtensions,isExtensible}/**` | 225 | 219 | 219 | 0 |
+| `built-ins/String/**` | 1223 | 1158 | 1158 | 0 |
+| `built-ins/Array/**` (82 rows that touch extensibility / `Reflect.set` / `Reflect.defineProperty` / `Proxy`, plus `Array/length`) | 82 | 62 | 62 | 0 |
+
+Total 4,067 rows: 3,945 → 3,946, **0 lost** (per-row diff, not counts), so no
+ES5 row is lost. The full `built-ins/Array/**` (3,000+ rows) was not run;
+only the subset above was.
+
+Pin: `tests/issue-6651-w1a-string-exotic.test.ts` (5 shape cases + the
+flipped row, 6/6). `node scripts/equivalence-gate.mjs` is green: 22 known
+failures, 1748 passing.
+
+**Left for W1b:** the function-carrier own `name` / `prototype` /
+`length`, and the accessor-over-non-configurable-`prototype` throw. Both
+remaining target rows fail there. Also not fixed: a dynamic
+`anyWrapper["length"]` read on a String wrapper answers `undefined` (measured;
+the static `.length` read is right).
+
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 
 Written at the user's "wrap up, handoff, open pr" (about 22:10 UTC). The goal
