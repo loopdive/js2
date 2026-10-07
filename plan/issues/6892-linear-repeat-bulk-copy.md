@@ -358,3 +358,185 @@ provenance and exact comparisons are retained in
 Large-output improvements coexist with measured short-output slowdowns.
 This checkpoint is not accepted for landing; a bounded specification
 amendment and follow-up validation are underway. No case is dropped.
+
+## Evidence-driven amendment — 2026-10-07
+
+Integration note: parent has preserved all four raw logs as gzip plus a
+comparison JSON under `plan/log/6892-linear-repeat-20261007` and appended the
+bulk-only checkpoint to the integration issue. Append this amendment after
+that checkpoint; do not replace or overwrite its evidence. Status remains
+`in-progress`. Parent plans a ready PR with the existing hold label and no
+merge queue, keeping the work reviewable but not landed with unresolved short
+regressions. This amendment does not authorize publication, merge or claims
+by the architect.
+
+### Preserved bulk-only candidate evidence; not final acceptance
+
+Baseline: `e7760d1c2af4636ede6a352154d193b234af5fc4`.
+Bulk-only candidate: `9544cc223f46c58bfa4f9f8bb2c00ba3d78a1d9e`.
+The architect read the existing logs; no tests or benchmarks were run while
+authoring this amendment. All four logs report 54/54 tests passed and eight
+completed performance cases. The parent additionally reports all 80 full
+functional comparison rows EXACT equal; that comparison is parent evidence,
+not a new independent equality execution by the architect. Passing semantics
+does not erase the performance regressions below.
+
+Common provenance: target/lane `linear`, harness
+`tests/issue-6892-linear-repeat-bulk-copy.test.ts`, Node `v22.23.2`, V8
+`12.4.254.21-node.56`, `JS2WASM_LINEAR_IR=1`,
+`JS2WASM_IR_STRING_BUILDER=1`, `JS2WASM_BENCH_LINEAR_REPEAT=1`,
+`optimize:false`, empty `NODE_OPTIONS`. Recorded `execArgv`:
+`--max-old-space-size=1024 --expose-gc --conditions node --conditions development`.
+Ordinary bump allocation; benchmark artifacts expose arena usage but never
+reset. Each batch has a fresh instance sharing the case's compiled module;
+three independent warmup batches precede seven fresh-instance samples.
+Literal materialization and memory growth are timed. A separate correctness
+execution precedes these batches. This is not proof that each sampled instance
+or the shared compiled code has reached a stable optimizing tier.
+
+Identical test SHA-256 across all four runs:
+`1c81601b54034f178179e55ffeb232c39ad15916a6ed9423b2bddbfd8951812b`.
+Baseline kernel SHA-256:
+`c8df1de8944d12cd155a29f321fe4bd09f72cb3b36078ec8b828ce9de32dfcad`.
+Bulk-only candidate kernel SHA-256:
+`717d7180bbcac0435eadd79f92d2a0e414da9d270dbff50d76fc9f16968f10f7`.
+
+Keep these original logs unchanged, including every sample, spread, warmup,
+allocation observation, functional row and outcome. Do not overwrite them
+with amended-candidate runs. Paths and SHA-256:
+
+- `/private/tmp/js2-6892-linear-repeat-baseline-20261007/.tmp/6892-baseline-ab1.log`
+  — `89ea79eb6f5c55c07bab2906e13e8a6fa21fb95265eb5bfedfeff02ff63a9977`.
+- `/private/tmp/js2-6892-linear-repeat-bulk-copy-20261007/.tmp/6892-candidate-ab1.log`
+  — `07d77166bb7a17df2f7057fd98d56fff765511864b81996ac950ec730fb4602b`.
+- `/private/tmp/js2-6892-linear-repeat-bulk-copy-20261007/.tmp/6892-candidate-ba2.log`
+  — `09dc25417ec38dae3d2e6956c31e17aa07389ef61301fb2f90139b2edbe56f4a`.
+- `/private/tmp/js2-6892-linear-repeat-baseline-20261007/.tmp/6892-baseline-ba2.log`
+  — `f13ccc9dc79c372878fbf8855e7b3c23b1483d07a4278f7a326a66f0277a3dbe`.
+
+Recorded medians in milliseconds, each list ordered N=3,9,1024,65537
+(decimal values below preserve the logged numbers):
+
+```text
+ab1 baseline xy:  0.05625000000145519, 0.03245800000149757, 0.9880420000044978, 0.9455830000006245
+ab1 candidate xy: 0.028791000004275702, 0.09737500000483124, 0.6260000000038417, 0.307874999998603
+ab1 baseline abc: 0.07316700000228593, 0.04199999999400461, 1.7445000000006985, 0.8743749999994179
+ab1 candidate abc:0.030249999996158294, 0.04287499999918509, 0.49316600000020117, 0.36691600000631297
+ba2 baseline xy:  0.021957999997539446, 0.03258300000015879, 1.8135000000038417, 1.8475840000028256
+ba2 candidate xy: 0.07349999999860302, 0.10804199999984121, 1.3856660000019474, 0.6375840000036987
+ba2 baseline abc: 0.02350000000296859, 0.04124999999476131, 0.929374999999709, 1.0066250000018044
+ba2 candidate abc:0.08241699999780394, 0.10874999999941792, 0.9772919999959413, 0.24612500000512227
+```
+
+Calls per batch are respectively xy `[256,256,252,3]` and abc
+`[256,256,168,2]`, identical across runs. Parent-supplied rounded
+baseline/candidate median ratios (greater than 1 favors candidate), in the
+same N order:
+
+- ab1 xy: `[1.95, 0.333, 1.58, 3.07]`; abc: `[2.42, 0.98, 3.54, 2.38]`.
+- ba2 xy: `[0.299, 0.302, 1.31, 2.90]`; abc: `[0.285, 0.379, 0.951, 4.09]`.
+
+Both N=65537 cases improve in both pair orders. N=1024 abc is mixed, including
+a measured regression in ba2. Short outputs have material measured slowdowns,
+especially xy N=9 in both orders and all four short cases in ba2. Do not
+aggregate these away or claim a universal win. Tiering is a possible
+explanation, not established by these logs: there are no actual tier events
+or controlled tier observations here. Therefore do not change warmup or
+discard samples on that hypothesis. No previously recorded failed acceptance
+or noisy measurement is withdrawn by this amendment.
+
+### One bounded next candidate: bytewise through 64 payload bytes
+
+Keep the same generic IR contract, production source-derived route and
+target-local helper. K's only source scope remains
+`src/codegen-linear/string-repeat.ts`, `addLinearStringRepeatRuntime` (entry
+line 103; candidate copy region starts near line 222). Inside the existing
+positive-result copy guard, dispatch on **resultLen <= 64 unsigned**:
+
+1. If true, execute the original e776 bytewise remainder loop, unchanged in
+   its byte-addressing/load/store semantics. Initialize local 6 to zero and
+   use it as byte index `i`. For `i < resultLen`, store
+   `load8_u(arg0 + 12 + (i % sourceLen))` to `result + 12 + i`, increment i,
+   and repeat. Keep the loop's unsigned exit and block/loop branch depths.
+2. Otherwise execute the reviewed bulk seed/doubling body exactly as in
+   `9544cc223f46c58bfa4f9f8bb2c00ba3d78a1d9e`. Initialize the same local 6
+   from sourceLen for this branch; local 7 remains its copyBytes scratch.
+3. Both branches join at the single existing result-pointer return.
+
+Emit dispatch operands `local.get resultLen; i32.const 64; i32.le_u` followed
+by an empty-result `if`: true is bytewise, false is bulk. Threshold is **payload
+bytes**, excluding the 12-byte record header and the downstream `seed`
+concatenation. Zero results skip both branches using the existing outer guard
+after allocation/header stores. There must be no seed copy before dispatch.
+The unchanged guards guarantee sourceLen>0 whenever remainder is evaluated.
+
+Preserve params 0/1 and locals 2-5 exactly. Reuse i32 local 6 for both mutually
+exclusive progress counters; a neutral name such as `copiedBytes` is allowed.
+Retain i32 local 7, with no additional locals. No duplicate semantic guards,
+allocation, headers, signatures, registration, authentication or returns.
+Keep related instruction construction inside this existing helper; no new
+umbrella module, copying service, shared optimizer, import or index wiring.
+The original bulk correctness argument remains unchanged for resultLen>64;
+the tiny branch is the original bounded byte-copy algorithm. Neither branch
+may write the source/header or bytes beyond the allocated payload.
+
+64 is a fixed bounded experiment, **not a measured optimal crossover**. The
+observed short payloads are 6,9,18,27 bytes; 64 places them on the baseline
+algorithm while leaving every existing N=1024/65537 case on bulk copying.
+The dispatch/code-size cost can still hurt timing; restoring the old loop
+does not prove restoration of the old performance. Try this one threshold,
+not an automatic sweep or successive tuning disguised as validation.
+
+### Disjoint test follow-up and acceptance of the next candidate
+
+T remains confined to `tests/issue-6892-linear-repeat-bulk-copy.test.ts`.
+No existing tests or shared utilities may change. Preserve all original
+semantic/provider cases, poison/zero-result controls, ownership/receipt and
+fail-closed assertions. Add a bounded boundary group for payload lengths
+63,64,65 using source-derived `"x"` counts 63,64,65; also provider `"abc"`
+counts 21/22 (63/66 bytes) to cover a short final bulk copy, and `"é"` counts
+32/33 (64/66 UTF-8 bytes) to pin byte rather than character dispatch. These
+are functional checks, not extra timing cases. Use the same byte/header,
+source immutability, guard poison and allocation assertions on both sides.
+
+Update only the provider mechanism classification that currently admits
+bulkCopies=2/remainders=0 or bulkCopies=0/remainders=1: retain those two named
+historical forms and explicitly recognize the new hybrid form. Do not merely
+allow any body with two memory.copy operations and one remainder. Inspect
+the positive-result guard and nested resultLen/64/i32.le_u dispatch: its true
+branch contains the baseline remainder byte loop and no memory.copy; its
+false branch contains the two bulk copy sites and no remainder. Verify both
+branches reuse local 6, with bulk scratch local 7 and unchanged prefix/return.
+Unknown shapes remain failures. This replaces blanket removal of remainder
+from the entire provider: it must now be absent only from the large branch.
+
+Keep the **same eight timed cases**, calls/allocation limits, three warmup
+batches, seven samples, fresh-instance lifecycle, source ownership proof and
+30-second cap. Do not drop short cases, widen budgets, pre-grow only one side,
+change flags, or add warmup to manufacture acceptance. Fresh-instance and
+shared-module warmup limitations must remain disclosed. If later actual
+tiering evidence warrants another instrument, that needs a separately
+reviewed amendment and cannot replace these historical measurements.
+
+Parent runs the identical amended test bytes on exact e776 and the newly
+committed hybrid candidate, in forward and reverse paired order on the same
+machine. Record the new full commit and source/test digests, actual test/row
+denominators, all seven samples/spreads, medians, per-case ratios and exact
+functional/ownership/allocation equality. Preserve old 54/54 and 80-row results
+as historical, not expected denominators after adding boundary tests. Save
+new logs under new names; do not relabel the bulk-only candidate as hybrid.
+
+This is one finite K change plus one finite disjoint T change, followed by the
+parent's paired validation. Acceptance requires no semantic/integrity drift,
+continued measured large-case benefit, and explicit review of **every** short
+and intermediate result against baseline and the preserved bulk-only evidence.
+If meaningful short regressions remain or the new measurements are too noisy
+to settle them, stop after this candidate and return the decision to the
+parent. Do not declare speedup from operation counts, declare regressions
+fixed merely because the old loop is present, or silently accept a tradeoff.
+
+- [ ] Hybrid dispatch, unchanged prefix and both branch mechanisms reviewed.
+- [ ] Boundary, zero-result poison and existing exact semantic controls pass.
+- [ ] Identical amended baseline/candidate test bytes and full rows compared.
+- [ ] Both pair orders reported without suppressing short/intermediate regressions.
+- [ ] Parent explicitly accepts the measured tradeoff or requests a new bounded step.

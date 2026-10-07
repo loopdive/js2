@@ -69,3 +69,22 @@ these independent runtime/performance slices cannot substitute for them.
 Generated-evidence claim: `6892:linear-repeat-evidence-20261007`, owner
 `ttraenkler/codex-linear-b-repeat-evidence-20261007`, integration branch above;
 scope only this handoff and `plan/log/6892-linear-repeat-20261007/`.
+
+## Verified Session A publication and partition
+
+Read exact fork publication `5a4b64e1d637ab253c2d2107d45142f021c217c4` on
+`codex/ir-session-a-coordination-20261007`, including its complete handoff,
+issue6889 plan, architecture contract and referenced goal documents.
+A's integration source at fab22c35ff plus45 local changed paths is explicitly
+unpublished; no future source commit is assumed as a consumed dependency.
+A reserves shared compiler/entry/context/proof metadata and prepared paths,
+including `src/ir/backend/linear-emitter.ts` and `linear-integration.ts`.
+The two B runtime files and new B tests do not overlap A's published45-path
+inventory; no shared file or function handoff is inferred.
+
+B identity is the owner of the exact6888/6891/6892 claims recorded in these
+handoffs. Published stack fix: PR6561, head12defc659a8a6fd3ec1ce2f08808a47392a4f9e8.
+Published repeat checkpoint: PR6563, held at b7c53b0426dad6407520de9b58c4db34b4bd6a04
+pending the bounded follow-up. A alone coordinates final queue submission.
+Issue6888's f32 emission remains blocked on shared semantic admission and an
+explicit A file/function release; this session makes no shared wiring edit.

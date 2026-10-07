@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
+import { isDeepStrictEqual } from "node:util";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { addRuntime } from "../src/codegen-linear/runtime.js";
 import {
@@ -18,7 +19,7 @@ import { getLastLinearIrReport } from "../src/ir/backend/linear-integration.js";
 import { parseIrCountedStringAppendSiteId } from "../src/ir/counted-string-append-provenance.js";
 import { forEachInstrDeep, type IrInstr } from "../src/ir/nodes.js";
 import { IR_STRING_REPEAT_FN } from "../src/ir/string-runtime.js";
-import { createEmptyModule } from "../src/ir/types.js";
+import { createEmptyModule, type Instr, type WasmModule, type WasmFunction } from "../src/ir/types.js";
 import { ts } from "../src/ts-api.js";
 import { walkInstructions } from "../src/wasm/model/instruction-walk.js";
 
@@ -225,6 +226,9 @@ const semanticCases: [string, number][] = [
   ["x", 32],
   ["xy", 33],
   ["abc", 1024],
+  ["x", 63],
+  ["x", 64],
+  ["x", 65],
 ];
 const validProviderCases: [string, number][] = [
   ...[NaN, 0, -0, -0.75, 0.75].map((count): [string, number] => ["long-source-".repeat(32), count]),
@@ -238,8 +242,206 @@ const validProviderCases: [string, number][] = [
   ["", 1],
   ["", Number.MAX_SAFE_INTEGER],
   ["abc", 32769],
+  ["abc", 21],
+  ["abc", 22],
+  ["é", 32],
+  ["é", 33],
 ];
 const countLabel = (count: number) => (Object.is(count, -0) ? "-0" : String(count));
+
+/** Structural evidence only: these templates never emit or execute a provider. */
+function classifyRepeatBody(module: WasmModule, provider: WasmFunction) {
+  const get = (index: number): Instr => ({ op: "local.get", index });
+  const set = (index: number): Instr => ({ op: "local.set", index });
+  const tee = (index: number): Instr => ({ op: "local.tee", index });
+  const i32 = (value: number): Instr => ({ op: "i32.const", value });
+  const f64 = (value: number): Instr => ({ op: "f64.const", value });
+  const emptyIf = (then: Instr[], otherwise: Instr[] = []): Instr => ({
+    op: "if",
+    blockType: { kind: "empty" },
+    then,
+    else: otherwise,
+  });
+  const loop = (body: Instr[]): Instr => ({
+    op: "block",
+    blockType: { kind: "empty" },
+    body: [{ op: "loop", blockType: { kind: "empty" }, body }],
+  });
+  const mallocIndex =
+    module.imports.filter((entry) => entry.desc.kind === "func").length +
+    module.functions.findIndex((func) => func.name === "__malloc");
+  // Exact historical guards, one allocation and canonical header writes.
+  // Infinity stays a number here; JSON serialization would conflate it with null.
+  const prefix: Instr[] = [
+    get(1),
+    { op: "f64.trunc" },
+    set(2),
+    get(2),
+    f64(0),
+    { op: "f64.lt" },
+    get(2),
+    f64(Infinity),
+    { op: "f64.eq" },
+    { op: "i32.or" },
+    emptyIf([{ op: "unreachable" }]),
+    get(2),
+    get(2),
+    { op: "f64.ne" },
+    emptyIf([f64(0), set(2)]),
+    get(0),
+    { op: "i32.load", align: 2, offset: 8 },
+    tee(3),
+    { op: "i32.eqz" },
+    emptyIf([get(0), { op: "return" }]),
+    get(2),
+    f64(1),
+    { op: "f64.eq" },
+    emptyIf([get(0), { op: "return" }]),
+    get(3),
+    { op: "f64.convert_i32_u" },
+    get(2),
+    { op: "f64.mul" },
+    tee(2),
+    f64(256 * 65536 - 12),
+    { op: "f64.gt" },
+    emptyIf([{ op: "unreachable" }]),
+    get(2),
+    { op: "i32.trunc_f64_u" },
+    set(4),
+    get(4),
+    i32(12),
+    { op: "i32.add" },
+    { op: "call", funcIdx: mallocIndex },
+    set(5),
+    get(5),
+    get(4),
+    i32(4),
+    { op: "i32.add" },
+    { op: "i32.store", align: 2, offset: 4 },
+    get(5),
+    get(4),
+    { op: "i32.store", align: 2, offset: 8 },
+  ];
+  const bytewise: Instr[] = [
+    i32(0),
+    set(6),
+    loop([
+      get(6),
+      get(4),
+      { op: "i32.ge_u" },
+      { op: "br_if", depth: 1 },
+      get(5),
+      get(6),
+      { op: "i32.add" },
+      get(0),
+      get(6),
+      get(3),
+      { op: "i32.rem_u" },
+      { op: "i32.add" },
+      { op: "i32.load8_u", align: 0, offset: 12 },
+      { op: "i32.store8", align: 0, offset: 12 },
+      get(6),
+      i32(1),
+      { op: "i32.add" },
+      set(6),
+      { op: "br", depth: 0 },
+    ]),
+  ];
+  const bulk: Instr[] = [
+    get(5),
+    i32(12),
+    { op: "i32.add" },
+    get(0),
+    i32(12),
+    { op: "i32.add" },
+    get(3),
+    { op: "memory.copy" },
+    get(3),
+    set(6),
+    loop([
+      get(6),
+      get(4),
+      { op: "i32.ge_u" },
+      { op: "br_if", depth: 1 },
+      get(6),
+      get(4),
+      get(6),
+      { op: "i32.sub" },
+      tee(7),
+      get(6),
+      get(7),
+      { op: "i32.lt_u" },
+      { op: "select" },
+      set(7),
+      get(5),
+      i32(12),
+      { op: "i32.add" },
+      get(6),
+      { op: "i32.add" },
+      get(5),
+      i32(12),
+      { op: "i32.add" },
+      get(7),
+      { op: "memory.copy" },
+      get(6),
+      get(7),
+      { op: "i32.add" },
+      set(6),
+      { op: "br", depth: 0 },
+    ]),
+  ];
+  const hybrid: Instr[] = [get(4), emptyIf([get(4), i32(64), { op: "i32.le_u" }, emptyIf(bytewise, bulk)])];
+  const commonLocals = [
+    { name: "integerCount", type: { kind: "f64" } },
+    { name: "sourceLen", type: { kind: "i32" } },
+    { name: "resultLen", type: { kind: "i32" } },
+    { name: "result", type: { kind: "i32" } },
+  ];
+  const unchangedPrefix = isDeepStrictEqual(provider.body.slice(0, prefix.length), prefix);
+  const unchangedReturn = isDeepStrictEqual(provider.body.at(-1), get(5));
+  const unchangedLocals = isDeepStrictEqual(provider.locals.slice(0, 4), commonLocals);
+  const signature = module.types[provider.typeIdx];
+  const unchangedAbi =
+    signature?.kind === "func" &&
+    isDeepStrictEqual(signature.params, [{ kind: "i32" }, { kind: "f64" }]) &&
+    isDeepStrictEqual(signature.results, [{ kind: "i32" }]);
+  const copyRegion = provider.body.slice(prefix.length, -1);
+  const common = unchangedPrefix && unchangedReturn && unchangedLocals && unchangedAbi;
+  const scratch6 = isDeepStrictEqual(provider.locals[4]?.type, { kind: "i32" });
+  const scratch7 = isDeepStrictEqual(provider.locals[5]?.type, { kind: "i32" });
+  const oldShape = common && provider.locals.length === 5 && scratch6 && isDeepStrictEqual(copyRegion, bytewise);
+  const bulkShape =
+    common &&
+    provider.locals.length === 6 &&
+    scratch6 &&
+    scratch7 &&
+    isDeepStrictEqual(copyRegion, [get(4), emptyIf(bulk)]);
+  // Exact nested tree equality pins the zero guard, <=64 unsigned condition,
+  // branch polarity, copy operands, old byte loop, scratch indices and depths.
+  // Counts alone cannot admit extra seed copies or a remainder in the bulk arm.
+  const hybridShape =
+    common && provider.locals.length === 6 && scratch6 && scratch7 && isDeepStrictEqual(copyRegion, hybrid);
+  return {
+    mechanism: oldShape
+      ? "bytewise-remainder"
+      : bulkShape
+        ? "bulk-copy"
+        : hybridShape
+          ? "hybrid-bytewise-through-64"
+          : "unknown",
+    structure: {
+      unchangedPrefix,
+      unchangedReturn,
+      unchangedLocals,
+      unchangedAbi,
+      scratch6,
+      scratch7,
+      oldShape,
+      bulkShape,
+      hybridShape,
+    },
+  };
+}
 
 describe("issue 6892: source-derived ownership and execution", () => {
   it.each(semanticCases)(
@@ -430,25 +632,21 @@ describe("issue 6892: real reserved provider and memory integrity", () => {
   });
 
   it("records the exact provider body mechanism without rejecting baseline semantics", () => {
-    const { reservation } = providerFixture();
+    const { module, reservation } = providerFixture();
     const ops: string[] = [];
     walkInstructions(reservation.provider.body, (instruction) => ops.push(instruction.op));
     const bulkCopies = ops.filter((op) => op === "memory.copy").length;
     const remainders = ops.filter((op) => op === "i32.rem_u").length;
-    const mechanism =
-      bulkCopies === 2 && remainders === 0
-        ? "bulk-copy"
-        : bulkCopies === 0 && remainders === 1
-          ? "bytewise-remainder"
-          : "unknown";
+    const { mechanism, structure } = classifyRepeatBody(module, reservation.provider);
     record("mechanism", {
       provider: reservation.provider.name,
       bulkCopies,
       remainders,
       mechanism,
+      structure,
       locals: reservation.provider.locals.map((local) => ({ name: local.name, type: local.type.kind })),
     });
-    // Both known bodies are admissible for the identical baseline/candidate test.
+    // All three named historical/next-candidate forms remain distinguishable.
     expect(mechanism).not.toBe("unknown");
   });
 });
