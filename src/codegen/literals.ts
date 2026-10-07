@@ -4565,8 +4565,8 @@ export function compileObjectLiteralForStruct(
       // The class-method / getter-setter paths already pass these `extraNodes`
       // (#1161, nested-declarations.ts:128-133); mirror it here for plain object
       // methods (the object-method variants of the `ary-init-iter-close` cluster).
-      const objMethodParamInits = prop.parameters.map((p) => p.initializer).filter((e): e is ts.Expression => !!e);
-      promoteAccessorCapturesToGlobals(ctx, fctx, prop.body, objMethodParamInits);
+      const methodParamInits = prop.parameters.map((p) => p.initializer).filter((e): e is ts.Expression => !!e);
+      promoteAccessorCapturesToGlobals(ctx, fctx, prop.body, methodParamInits, undefined, undefined, undefined, prop);
 
       // Compile method body
       const methodFctxParams: { name: string; type: ValType }[] = [
