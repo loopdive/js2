@@ -457,3 +457,81 @@ Parent alone runs strict typing and original-population qualification with
 new separately retained identity/receipt/logs. Do not change36IDs/33transitions,
 eight same-validator negatives, source owner joins, fixture/options/native
 values, allocator/memory expectations, source code or acceptance boundaries.
+
+### Second frozen repair qualification — runtime passes, review held
+
+Snapshot SHA-256 `b5bbd82d37305a43691ad8197374bc79b2f681d2f8e0879502d97def3865b669`
+is uncommitted on worker HEAD276b10a1; production/fixtures remain pinned c41.
+Parent strict test-inclusive TS7 exits0/zero diagnostics. Configured Vitest
+exits0:36pass/0fail/0skip. Actual raw log contains38 graph envelopes:
+one provenance,36 unique observations,one completion;87,692 total graph nodes.
+Previously missing seven source/negative records are NEW observations, never
+retrospective recovery of original records. All frozen bytes and raw output,
+parent identity/receipt and exact runner are retained separately as repaired-v2
+artifacts. Full original-survivor witness comparison is running independently.
+
+Astra read all2,091 lines and demonstrated a remaining diagnostic boundary
+defect: approved native stack materialization can invoke an arbitrary message
+getter before later descriptor rejection; errorText reads stack directly; and
+Reflect.get can invoke a prototype constructor getter. Therefore runtime green
+does not release review/acceptance. Preserve this positive epoch unchanged.
+
+### Astra High exact third repair — finite descriptor boundary
+
+Existing owned test ONLY; no new top-level functions/observation IDs, proxy or
+security framework, callback-policy work, fixtures or production edits:
+
+1. In encodeGraph, preflight ALL own descriptors before encoding values or
+   materializing a native stack. Reject symbols/accessors except the exact
+   approved native stack getter AND setter with original flags. Resolve
+   effective name/message/prototype constructor by finite bounded descriptor
+   walks, without invoking getters. Require name/message strings before stack
+   materialization. Read constructor metadata including its name via data
+   descriptors; remove Reflect.get. Retain every original data property and
+   reference; never mutate errors or synthesize properties on them. Keep
+   truthful native-error-stack representation, no writable accessor metadata.
+2. errorText uses the SAME preflight/stack restriction. No direct stack/name/
+   message read, String(object) or arbitrary coercion. Unsupported diagnostics
+   emit an explicit primitive incomplete-evidence marker, while original thrown
+   value remains in existing failure aggregation; marker cannot qualify
+   evidence or permit success. Keep primary/all-cleanup retention intact.
+3. Extend existing self-checks, no observation IDs: own message getter with
+   approved stack; inherited name getter; prototype constructor getter;
+   arbitrary stack getter in diagnostic path. Rejection/incomplete diagnostic
+   must leave ALL counters zero. Reject non-string data name/message before
+   materialization. Preserve native Error/AggregateError positive checks,
+   three stack texts, truthful descriptors, aggregate contents and identity.
+
+Parent publishes this specification and verifies survivor equality before
+same-owner release. New bytes receive a new immutable epoch and independent
+strict/runtime qualification;36/33/8, source joins, semantic assertions,
+artifacts and complete memory/allocation witnesses remain unchanged.
+
+### Demonstrated CI integration dependency — owner wiring required
+
+The required changed-root gate in `.github/workflows/ci.yml` lines607–635 runs
+`pnpm run test:changed-root` with only its existing eval-engine environment.
+`scripts/hooks/changed-root-tests.sh` runs the newly changed root test without
+the required parent identity/command/Linear-IR inputs and uses its EXISTING
+4096MiB fork policy. Thus configured local36/36 is not a default-CI pass; the
+current instrument intentionally rejects absent parent inputs. Do not waive,
+skip, exclude or silently approve inside the instrument. No shared hook/workflow
+has been edited or claimed by B.
+
+Astra's exact designated-owner request: A must explicitly delegate the hook's
+invocation branch for this EXACT test path, plus only prerequisite preparation
+in the named CI step that A separately authorizes. Preserve all other test
+invocations, selection, cap, failure propagation and not-run reporting. The
+trusted parent supplies EXPECTED_PROVENANCE, matching TEST_COMMAND and
+Linear IR=1 scoped to this invocation. Actual execution HEAD/source tree and
+runtime/consumer/integration/test/fixture hashes come from the actual checkout,
+not PR-head assumptions or local historical pins. Approve actual WORKER flags;
+hook4096MiB differs from local1024MiB, launcher execArgv is insufficient.
+Missing identity, incompatible flags, changed inputs during execution or
+incomplete qualification must fail. No self-approval or missing-input skip.
+
+Parent must verify the ordinary changed-root route executes all36 and
+propagates failures while retaining enforcement of every otherwise selected
+file. Archive this separately as CI integration qualification, not frozen
+paired/performance evidence. No actual wiring delegation, CI pass, protected
+queue acceptance or completed integration is claimed.
