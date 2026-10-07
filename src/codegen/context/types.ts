@@ -3200,6 +3200,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   reassignedFunctionDeclarations?: WeakSet<ts.FunctionDeclaration>;
   /**
+   * (#6880) Members of {@link liveFuncBindingGlobals} that are live ONLY because
+   * linked runtime eval could rebind them — no source assignment targets them.
+   * The named `.call` receiver trampoline may still serve these: the lowering it
+   * replaces calls the same static function and drops the receiver.
+   */
+  evalOnlyLiveFuncBindings?: Set<string>;
+  /**
    * (#4182) Names bound live at MODULE scope by Annex B B.3.3.2 (a sloppy
    * block/`if`/`switch`-nested `function f` whose enclosing var scope is the
    * SourceFile). Subset discipline: every member is also in

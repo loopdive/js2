@@ -59,6 +59,7 @@ import { fnShadowSlot, isShadowedTopLevelFn, withShadowReadSuppressed } from "..
 import { tryCompileNodeFsCall } from "../node-fs-api.js";
 import { emitSymbolOperandCoercionThrow } from "../tonumber-symbol-throw.js"; // (#3481)
 import { boundFunctionTargetIsDefinitelyCompiled, calleeIsBoundFunctionVar } from "../object-builtin-effects.js";
+import { tracesToProxyValue } from "../proxy-value-provenance.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import { hostFnctorCallableFallbackImportName, reserveHostFnctorMethodDriver } from "../host-fnctor-method-driver.js"; // (#4648)
 import { emitNullCheckThrow, typeErrorThrowInstrs } from "../property-access.js";
@@ -160,6 +161,7 @@ import {
   saveArgumentLocalAsExtern,
 } from "./argc-extras.js";
 import { resolvePlainCallThisTrampoline } from "../named-this-call.js"; // (#6436)
+import { nestedCapturesForCallee } from "../nested-function-name-scope.js"; // (#6877)
 import { readEnv } from "../../env.js";
 
 function tryEmitGenericStructFactoryResult(
@@ -522,7 +524,7 @@ function bindingIsPopulatedFromElementRead(ctx: CodegenContext, identifier: ts.I
  * canonical `$__bound_fn`, not an ordinary funcref-wrapper struct. Casting it
  * through the typed path can therefore null the value—or trap while coercing
  * an argument—before the existing bound arm of the native callable ladder can
- * reach `__apply_closure`.
+ * reach `__apply_closure`. A `new Proxy(…)` binding is the same hazard.
  */
 function tryCompileStoredStandaloneCarrierCall(
   ctx: CodegenContext,
@@ -530,7 +532,16 @@ function tryCompileStoredStandaloneCarrierCall(
   expr: ts.CallExpression,
   isKnownVariable: boolean,
 ): InnerResult | undefined {
-  if (!isKnownVariable || !uncurriedBuiltinAliasArmActive(ctx)) return undefined;
+  if (!isKnownVariable) return undefined;
+  // (#6651 W4) A native `$Proxy` binding carries the TARGET's checker type, so
+  // the typed closure lowering would cast the proxy and trap (bound target:
+  // null deref; builtin target: illegal cast). Route it to the dynamic [[Call]]
+  // ladder, whose `$Proxy` arm reaches `__proxy_apply_dispatch` (§10.5.12).
+  if (ctx.standalone && tracesToProxyValue(ctx, expr.expression)) {
+    const proxyCall = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+    if (proxyCall !== null) return proxyCall;
+  }
+  if (!uncurriedBuiltinAliasArmActive(ctx)) return undefined;
   const storedObjectCall = tryCompileStoredObjectBuiltinCall(ctx, fctx, expr);
   if (storedObjectCall !== undefined) return storedObjectCall;
   if (!calleeIsBoundFunctionVar(ctx.oracle, expr.expression)) return undefined;
@@ -3777,8 +3788,10 @@ function compileBoundIdentifierCall(
       return inlineInfo.returnType ?? VOID_RESULT;
     }
 
-    // Prepend captured values for nested functions with captures
-    const nestedCaptures = ctx.nestedFuncCaptures.get(funcName);
+    // Prepend captured values for nested functions with captures — only the
+    // plan of the function this call targets (#6877: not a same-named nested
+    // function of another module once the call is rebound to its own decl).
+    const nestedCaptures = nestedCapturesForCallee(ctx, funcName, ctx.funcMap.get(funcName));
     // (#5148 checkpoint) The funcMap/nestedFuncCaptures registries are
     // NAME-keyed across the whole graph, so a callee name that is really a
     // LOCAL closure value here (Deno's `const { __isLeakTracingEnabled } =

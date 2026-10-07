@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10310,
-    "fail": 1378,
+    "pass": 10312,
+    "fail": 1376,
     "ce": 16,
     "skip": 0,
     "total": 11704,
@@ -102,12 +102,12 @@
       },
       {
         "name": "Symbol",
-        "pass": 520,
-        "fail": 89,
+        "pass": 522,
+        "fail": 87,
         "ce": 0,
         "skip": 0,
         "total": 609,
-        "pct": 85
+        "pct": 86
       },
       {
         "name": "arrow-function",
@@ -264,12 +264,12 @@
       },
       {
         "name": "WeakMap",
-        "pass": 39,
-        "fail": 4,
+        "pass": 40,
+        "fail": 3,
         "ce": 0,
         "skip": 0,
         "total": 43,
-        "pct": 91
+        "pct": 93
       },
       {
         "name": "Reflect.set",
@@ -3571,21 +3571,21 @@
   },
   {
     "edition": "ES2026",
-    "pass": 3569,
-    "fail": 1339,
+    "pass": 3643,
+    "fail": 1265,
     "ce": 13,
     "skip": 0,
     "total": 4921,
-    "pct": 73,
+    "pct": 74,
     "features": [
       {
         "name": "Temporal",
-        "pass": 3383,
-        "fail": 1215,
+        "pass": 3457,
+        "fail": 1141,
         "ce": 13,
         "skip": 0,
         "total": 4611,
-        "pct": 73
+        "pct": 75
       },
       {
         "name": "Symbol",
