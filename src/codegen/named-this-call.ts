@@ -636,7 +636,10 @@ export function resolveNamedThisCallTarget(
     isStrictContext(declaration.body, ctx.inferModuleStrictArguments);
   if (
     !declaration?.body ||
-    ctx.liveFuncBindingGlobals?.has(callee.text) === true ||
+    // (#6880) An eval-only live binding keeps the trampoline: the fallback
+    // calls the same static function and drops the receiver.
+    (ctx.liveFuncBindingGlobals?.has(callee.text) === true &&
+      ctx.evalOnlyLiveFuncBindings?.has(callee.text) !== true) ||
     !declarationOwnsHandle(ctx, declaration, targetFuncIdx) ||
     userArguments.some((argument) => ts.isSpreadElement(argument)) ||
     (declaration.parameters[0] &&
