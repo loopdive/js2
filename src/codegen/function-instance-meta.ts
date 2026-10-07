@@ -84,6 +84,14 @@ export const FN_META_LENGTH_FIELD_IDX = 1;
 export interface FnInstanceMeta {
   readonly name: string;
   readonly length: number;
+  /**
+   * (#6651 W8) A SYNC generator function. Not observable through `name` or
+   * `length`; it only splits the interning key, so a generator's metadata
+   * instance is never shared with an ordinary function's, and the instance
+   * identity answers "is a generator function" at run time
+   * (`generator-function-proto-arm.ts`).
+   */
+  readonly generator?: true;
 }
 
 /**
@@ -162,8 +170,13 @@ function fnInstanceMetaKey(meta: FnInstanceMeta): string {
   // `<length>:<name>` — unambiguous for ANY name, because `length` is
   // digits-only, so the first `:` is always the separator even when the name
   // itself contains one (a computed key like `{ "a:b": function () {} }`).
-  return `${meta.length}:${meta.name}`;
+  // (#6651 W8) A generator's key starts with `g`, never a digit, so the two
+  // key spaces cannot meet.
+  return `${meta.generator ? GENERATOR_META_KEY_PREFIX : ""}${meta.length}:${meta.name}`;
 }
+
+/** (#6651 W8) The interning-key prefix of a sync generator function's metadata. */
+export const GENERATOR_META_KEY_PREFIX = "g";
 
 /**
  * Prepare the physical `$fnmeta` field and singleton global without emitting
@@ -173,7 +186,11 @@ export function prepareFnMetaSlotOfMeta(ctx: CodegenContext, meta: FnInstanceMet
   if (typeof meta.name !== "string" || !Number.isSafeInteger(meta.length) || meta.length < 0) {
     throw new Error("invalid fn metadata recipe");
   }
-  const canonicalMeta = Object.freeze({ name: meta.name, length: meta.length });
+  const canonicalMeta: FnInstanceMeta = Object.freeze(
+    meta.generator
+      ? { name: meta.name, length: meta.length, generator: true }
+      : { name: meta.name, length: meta.length },
+  );
   const structTypeIdx = ensureFnInstanceMetaStructType(ctx);
   const field = fnMetaField(ctx);
   const key = fnInstanceMetaKey(canonicalMeta);
@@ -521,10 +538,15 @@ export function fnInstanceMetaOf(ctx: CodegenContext, decl: ts.Node | undefined)
   ) {
     return undefined;
   }
-  return {
-    name: fnInstanceNameOf(decl),
-    length: expectedArgumentCountOfParams(decl.parameters),
-  };
+  const name = fnInstanceNameOf(decl);
+  const length = expectedArgumentCountOfParams(decl.parameters);
+  // (#6651 W8) Declarations and expressions only: a generator METHOD's metadata
+  // comes from the member walk (`function-instance-meta-methods.ts`).
+  const generator =
+    (ts.isFunctionDeclaration(decl) || ts.isFunctionExpression(decl)) &&
+    decl.asteriskToken !== undefined &&
+    !decl.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword);
+  return generator ? { name, length, generator: true } : { name, length };
 }
 
 /**
