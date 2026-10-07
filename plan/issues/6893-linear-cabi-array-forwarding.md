@@ -773,3 +773,27 @@ Canonical PR6587 replaces fork-headed PR6568, which the upstream push did not
 update. Both remain HOLD; older PR is not yet closed. Exact earlier publication
 def4c3befda0d31a312332296aa55af2519b5beb and its acceptance blocker were shared
 with A in GitHub comment6043055409. No response or queue delegation is inferred.
+
+### Measured repaired-instrument epoch
+
+Candidate44dd2415dc8422939c313c72b3034943eadcf997 and test-only baseline
+2a866ff9d31dc0a7c0d18cc7489c6bee79c0705a have the identical repaired test hash
+d3dec54184b30de6aea6c25c9b6e6adb99eca98f2f603bd1b05d958ca764585a.
+Both strict new-test-inclusive TS7 runs exit0 with zero diagnostics, using each
+worktree's own identical unchanged configuration. The original ten errors remain
+preserved. The cast-free repair resolves the demonstrated typing blocker.
+
+Final paired runtime result: baseline89 pass/9 fail/98 (exit1), candidate98/98
+(exit0), zero skips and all80 existing controls passing both. Identical JSON
+reporting added to both arms captures all98 named case statuses; case identity
+sets match exactly. A preliminary default-reporter baseline89/9 is also preserved.
+All32 semantic records per arm are exactly equal to their pre-repair epoch;
+only revision/testSha256 provenance changes. Paired33-record/kind/custody checks
+pass unchanged. Thirty baseline failure identity/message lines match exactly;
+raw stack/source frames remain archived, including the expected line shifts.
+
+Full evidence, reproduction commands and review boundaries live in
+`plan/log/6893-linear-cabi-20261007/typing-repair/README.md` and its compressed
+raw logs/reports/comparisons. Production build is still live; architecture gates
+and final normal push remain pending. Do not convert these results into whole-
+program IR equality, source-array admission, performance or retirement credit.
