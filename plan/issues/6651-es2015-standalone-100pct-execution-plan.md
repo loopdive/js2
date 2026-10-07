@@ -4,7 +4,7 @@ title: "ES2015 standalone → 100%: cluster execution plan from the 2026-09-20 c
 status: in-progress
 sprint: current
 created: 2026-09-20
-updated: 2026-10-06
+updated: 2026-10-07
 priority: high
 horizon: xl
 feasibility: hard
@@ -4205,6 +4205,136 @@ Controls:
   passing.
 - Temporal `Duration/prototype/round/*` standalone: 119 pass / 7 fail of 126,
   0 `illegal cast`.
+
+### 2026-10-07 — Slice V13
+
+Adopts #2727. Target `built-ins/Array/from/source-array-boundary.js` (the H10
+row V10d left open: `Array.from(array, mapFn, this)` with `this.arrayIndex++`
+in a sloppy `mapFn`). Base `fcc80f1a4c` (harness worktree branch; the lead
+merges by sha). **The row flips; 0 rows lost.**
+
+**Cause.** §9.1.1.4.17 CreateGlobalVarBinding makes a script's top-level `var`
+an own property of the global object. Standalone keeps the value in a wasm
+module global; bare `v` and the lexical `this.v` / `globalThis.v` folds (#4500
+Slice A) read it, and #4491 T4 seeded a matching realm property — but with a
+one-time `undefined`, never kept in sync. Every receiver the compiler cannot
+resolve statically (the global object reaching a sloppy callee as `this`,
+`f.call(this)`, `globalThis[k]`) read the stale seed and wrote a property the
+`var` never saw: `var i = -1; function m() { this.i++; return this.i; } m()`
+→ `NaN`, `i` stays `-1`.
+
+**Fix — one cell, two views.** In standalone the realm property is now a
+non-configurable enumerable ACCESSOR entry whose getter/setter (two reserved
+functions per var, `__global_var_{get,set}_<name>`, wrapped by the cached
+func-closure singletons) read and write the module global, so the global stays
+the single storage cell and every direct access keeps its fast `global.get` /
+`global.set`. The entry is branded (`$PropEntry.flags` 0x200, `$Object.flags`
+0x200) so the reflective MOP still reports the §9.1.1.4.17 data property:
+`__getOwnPropertyDescriptor` answers `{value: <live>, writable: true,
+enumerable: true, configurable: false}` (the V6 namespace descriptor arm, now
+parameterised by the brand bits); `__defineProperty_value` applies §10.1.6.3 —
+`value` writes the binding through the setter, `writable: false` turns the
+entry into the plain non-writable data property holding the current value,
+`configurable: true` / `enumerable: false` / an accessor descriptor reject.
+[[Get]], [[Set]], `in`, `hasOwnProperty`, own keys, `for…in` and `delete`
+(→ false / strict TypeError) were already right for such an entry.
+Mechanism: `src/codegen/object-model/global-var-binding-exotic.ts` (new
+leaf); the reservation and the cost gate live in `global-var-bindings.ts`;
+the arm plumbing is factored out of `module-namespace-exotic.ts`
+(`markBindingEntryInstrs`, `armResources`, exported guards); one call in
+`accessor-driver.ts`.
+
+- **Bodies filled late, against the final type.** The getter/setter bodies are
+  placeholders until `fillAccessorDrivers`, so a later widening of the var's
+  carrier cannot leave a stale conversion behind. Conversion goes through the
+  coercion engine (`coercionInstrs`, injected — the leaf imports no core
+  module), warmed at reservation time so no helper is minted late. A typed
+  struct/string slot stores only a value of its own type (`ref.test`-guarded;
+  `null` for a nullable slot); anything else is dropped, never a trap.
+- **Cost gate.** The view is emitted only when the global object can reach code
+  as a value the compiler does not fold: a top-level `this` (also through
+  arrows), a `this` in a SLOPPY non-arrow function, or the names `globalThis`,
+  `eval`, `Function`, `constructor`. Without one of those the view is
+  unobservable, and the module keeps the old `undefined` seed byte-for-byte.
+- **Unchanged:** module-goal code (no realm property at all), the host lane,
+  WASI, the shared-realm `standaloneScriptVarBindings` mode (where the property
+  IS the storage), and a carrier the view cannot convert (`i32`, AnyValue),
+  which keep the plain seed.
+
+**Rows (standalone, QuickJS eval, in-process).** Before measured on
+`7ebc362ecc`, after on `fcc80f1a4c` (the 11 intervening commits — V10d and CI
+— touch none of these rows; the non-pass lists are identical except the
+target).
+
+| family | before pass | after pass |
+| --- | --- | --- |
+| `language/global-code/**` + `statements/variable/**` + `built-ins/global/**` + `built-ins/Array/from/**` + `expressions/this/**` + `function-code/**` (519, 3 chunks) | 500 | 501 (only the target moved; 0 lost) |
+| `language/statements/function/**` 200-row sample, gc (host) lane | 185 | 185 (identical) |
+
+Pin: `tests/issue-6651-v13-global-var-binding.test.ts` (5 cases: sloppy plain
+call read/write, the `Array.from` shape, computed `globalThis[k]` read/write +
+keys + `delete`, the descriptor/define MOP, a strict script through a captured
+global object) — all 5 fail on base. Controls: `node scripts/equivalence-gate.mjs`
+green (22 known failures, 1748 passing); Temporal `Duration/prototype/round/*`
+standalone 119 pass / 7 fail of 126, 0 `illegal cast`. A script with no global-object
+reach compiles byte-identically to base (two probes, sha256-equal).
+
+**Residuals.** (1) A dynamic write of a value the var's typed slot cannot hold
+is dropped or narrowed: `var y = 1; (function () { this.y = undefined; })()`
+leaves `y` as `NaN` (f64 slot), a different object shape is not stored into a
+struct-typed slot. Closing it needs the slot widened when a dynamic write is
+possible — a representation change. (2) `Object.freeze(this)` leaves the view
+an accessor, so the descriptor arm keeps reporting `writable: true`. (3)
+Boolean (`i32`) and AnyValue-typed vars keep the stale seed.
+
+### 2026-10-07 — Slice V12
+
+Inferred keyed-collection types in JavaScript, on `7ebc362ecc`. **Target
+`Map/prototype/set/append-new-values.js` flips**, plus its two siblings
+`Map/prototype/{getOrInsert,getOrInsertComputed}/append-new-values.js`.
+
+**Root cause (type source, not consumer).** In a `.js` entry the stock
+`MapConstructor` overloads infer `K`/`V` from the initial entries:
+`new Map([[4, 4], ['foo3', 3], [s, 2]])` is `Map<string | number | symbol,
+number>`. JavaScript does not honour that — `map.set(1, 'valid')` is an
+ordinary write — but every consumer that trusts the inferred value type (a
+`var` slot, a call argument, a `forEach` callback parameter) lowers the read as
+`f64`, so the string reads back as `NaN`. Patching consumers one by one would
+leave the rest wrong; the inference itself is unsound for JS.
+
+**Fix.** NEW leaf `src/checker/js-collection-inference.ts`: for a `.js`/`.jsx`/
+`.mjs`/`.cjs` entry, `analyzeSource` adds one synthetic ambient root
+(`__js2wasm_js_collections.d.ts`) that prepends construct overloads to
+`MapConstructor`/`SetConstructor`/`WeakMapConstructor` (interface merging puts
+a later declaration's overloads first). Their type parameters default to `any`
+(`WeakKey` for weak keys, as the stock zero-argument overload) and the
+parameters are `NoInfer<…>`, so the constructor arguments no longer pick the
+types; an explicit type argument or a contextual JSDoc `@type` still binds
+them. A JS `new Map([[1, 2]])` is therefore typed exactly like the already
+well-exercised JS `new Map()`. TypeScript sources never get the root, so
+annotated and inferred TS collections keep their typed fast paths
+(byte-identical, below). `src/checker/index.ts` +9 (import, root, host
+wiring); no codegen change.
+
+**Receipts** (`JS2WASM_EVAL_ENGINE=quickjs … run-test262-paths.mts
+--standalone`, base vs branch, same box). Family `Map/**`, `Set/**`,
+`WeakMap/**`, `WeakSet/**`, `Array/prototype/{push,map,filter,forEach,concat}/**`
+— 1,554 rows: base 147 non-passing → branch 144, **0 lost**, exactly the 3
+rows above gained. 20 rows (`Array/prototype/{forEach,map}` sub-chunks 13 and
+15 of the third 200-row chunk) hang in-process on BOTH sides under the 240 s
+cap and are unmeasured on both. Base Array chunks ran as 200-row in-process
+chunks, branch as 50-row quarters (200-row runs exceeded a 25-min cap under
+box load 14); verdicts match row for row. Playground examples + benchmark
+suites (17 `.ts` files × gc/standalone): **byte-identical**. Pin
+`tests/issue-6651-v12-inferred-collection-types.test.ts` 3/3 (2/3 on base —
+the TS control passes on both). Equivalence gate green (1748 pass, 22 known).
+Temporal control (`Duration/prototype/round/*`, standalone, fresh prewarmed
+cache after `build:compiler-bundle` + `build:runtime-bundle`): **119 pass / 7
+fail of 126, 0 `illegal cast`** — unchanged.
+
+Known gaps: `analyzeMultiSource` (multi-file `.js` projects) does not get the
+root; array literals (`var a = [1]; a.push('x')`) are a separate inference
+path, not touched; `WeakSet` is not covered (its members are objects anyway).
 
 ## Handoff — 2026-09-28, session wrap-up (D6, D7, H1 landed; I7 in this PR)
 

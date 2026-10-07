@@ -57,10 +57,34 @@ export function markNamespaceBindingInstrs(
   keyInstrs: readonly Instr[],
   entryLocal: number,
 ): Instr[] {
+  const instrs = markBindingEntryInstrs(
+    ctx,
+    objLocal,
+    keyInstrs,
+    entryLocal,
+    FLAG_NS_BINDING,
+    OBJ_FLAG_MODULE_NAMESPACE,
+  );
+  if (instrs.length > 0) usedBy.add(ctx);
+  return instrs;
+}
+
+/**
+ * The shared marker: OR `entryFlag` into the own entry `key` of the `$Object`
+ * in `objLocal` (externref) and `objectFlag` into the object. Also used by the
+ * #6651 V13 script `var` binding view (`global-var-binding-exotic.ts`).
+ */
+export function markBindingEntryInstrs(
+  ctx: CodegenContext,
+  objLocal: number,
+  keyInstrs: readonly Instr[],
+  entryLocal: number,
+  entryFlag: number,
+  objectFlag: number,
+): Instr[] {
   const types = ctx.objectRuntimeTypes;
   const findIdx = ctx.funcMap.get("__obj_find");
   if (!ctx.standalone || types === undefined || findIdx === undefined) return [];
-  usedBy.add(ctx);
   const obj = (): Instr[] => [
     { op: "local.get", index: objLocal },
     { op: "any.convert_extern" },
@@ -82,13 +106,13 @@ export function markNamespaceBindingInstrs(
         { op: "local.get", index: entryLocal },
         { op: "ref.as_non_null" },
         { op: "struct.get", typeIdx: types.propEntryTypeIdx, fieldIdx: ENTRY_FLAGS },
-        { op: "i32.const", value: FLAG_NS_BINDING },
+        { op: "i32.const", value: entryFlag },
         { op: "i32.or" },
         { op: "struct.set", typeIdx: types.propEntryTypeIdx, fieldIdx: ENTRY_FLAGS },
         ...obj(),
         ...obj(),
         { op: "struct.get", typeIdx: types.objectTypeIdx, fieldIdx: OBJECT_FLAGS },
-        { op: "i32.const", value: OBJ_FLAG_MODULE_NAMESPACE },
+        { op: "i32.const", value: objectFlag },
         { op: "i32.or" },
         { op: "struct.set", typeIdx: types.objectTypeIdx, fieldIdx: OBJECT_FLAGS },
       ],
@@ -96,8 +120,11 @@ export function markNamespaceBindingInstrs(
   ];
 }
 
-interface ArmResources {
+export interface ArmResources {
   objectTypeIdx: number;
+  /** `$PropEntry.flags` bit naming a binding entry; `$Object.flags` brand bit. */
+  entryFlag: number;
+  objectFlag: number;
   propEntryTypeIdx: number;
   findIdx: number;
   getterCallIdx: number;
@@ -118,7 +145,7 @@ function brandTest(r: ArmResources, obj = 0): Instr[] {
         { op: "any.convert_extern" },
         { op: "ref.cast", typeIdx: r.objectTypeIdx },
         { op: "struct.get", typeIdx: r.objectTypeIdx, fieldIdx: OBJECT_FLAGS },
-        { op: "i32.const", value: OBJ_FLAG_MODULE_NAMESPACE },
+        { op: "i32.const", value: r.objectFlag },
         { op: "i32.and" },
       ],
       else: [{ op: "i32.const", value: 0 }],
@@ -127,7 +154,7 @@ function brandTest(r: ArmResources, obj = 0): Instr[] {
 }
 
 /** `if (param `obj` is a namespace and its own entry for param 1 is a binding) then` — entry in `entryLocal`. */
-function bindingGuard(r: ArmResources, entryLocal: number, then: Instr[], obj = 0): Instr[] {
+export function bindingGuard(r: ArmResources, entryLocal: number, then: Instr[], obj = 0): Instr[] {
   return [
     ...brandTest(r, obj),
     {
@@ -150,7 +177,7 @@ function bindingGuard(r: ArmResources, entryLocal: number, then: Instr[], obj = 
             { op: "local.get", index: entryLocal },
             { op: "ref.as_non_null" },
             { op: "struct.get", typeIdx: r.propEntryTypeIdx, fieldIdx: ENTRY_FLAGS },
-            { op: "i32.const", value: FLAG_NS_BINDING },
+            { op: "i32.const", value: r.entryFlag },
             { op: "i32.and" },
             { op: "if", blockType: { kind: "empty" }, then },
           ],
@@ -161,7 +188,7 @@ function bindingGuard(r: ArmResources, entryLocal: number, then: Instr[], obj = 
 }
 
 /** Push the binding's current value — §10.4.6.5 step 4 (TDZ ReferenceError). */
-function bindingValue(r: ArmResources, entryLocal: number): Instr[] {
+export function bindingValue(r: ArmResources, entryLocal: number): Instr[] {
   return [
     { op: "local.get", index: 0 },
     { op: "local.get", index: entryLocal },
@@ -173,7 +200,12 @@ function bindingValue(r: ArmResources, entryLocal: number): Instr[] {
 }
 
 /** Add a scratch `(ref null $PropEntry)` local to native `name`; prepend `arm(local)`. */
-function prepend(ctx: CodegenContext, r: ArmResources, name: string, arm: (entryLocal: number) => Instr[]): void {
+export function prepend(
+  ctx: CodegenContext,
+  r: ArmResources,
+  name: string,
+  arm: (entryLocal: number) => Instr[],
+): void {
   const idx = ctx.funcMap.get(name);
   const fn = idx === undefined ? undefined : ctx.mod.functions.find((f) => f.name === name);
   if (fn === undefined) return;
@@ -185,7 +217,7 @@ function prepend(ctx: CodegenContext, r: ArmResources, name: string, arm: (entry
 }
 
 /** The rejection payload: a parked TypeError, thrown (#6770 S4 channel). */
-function rejectInstrs(ctx: CodegenContext, message: string): Instr[] | undefined {
+export function rejectInstrs(ctx: CodegenContext, message: string): Instr[] | undefined {
   const ctorIdx = ctx.funcMap.get("__new_TypeError");
   if (ctorIdx === undefined) return undefined;
   addStringConstantGlobal(ctx, message);
@@ -246,6 +278,23 @@ function defineValueArm(ctx: CodegenContext, r: ArmResources, entryLocal: number
   ]);
 }
 
+/** The natives every arm needs, or `undefined` when the object runtime lacks one. */
+export function armResources(ctx: CodegenContext, entryFlag: number, objectFlag: number): ArmResources | undefined {
+  const types = ctx.objectRuntimeTypes;
+  const findIdx = ctx.funcMap.get("__obj_find");
+  const getterCallIdx = ctx.funcMap.get("__call_accessor_get");
+  if (types === undefined || findIdx === undefined || getterCallIdx === undefined) return undefined;
+  return {
+    objectTypeIdx: types.objectTypeIdx,
+    entryFlag,
+    objectFlag,
+    propEntryTypeIdx: types.propEntryTypeIdx,
+    findIdx,
+    getterCallIdx,
+    toKeyIdx: ctx.funcMap.get("__to_property_key"),
+  };
+}
+
 /**
  * Install every arm. Runs once per compile at the accessor-driver fill, after
  * every native it patches has been emitted, and only when a namespace in this
@@ -254,17 +303,8 @@ function defineValueArm(ctx: CodegenContext, r: ArmResources, entryLocal: number
 export function installModuleNamespaceExoticArms(ctx: CodegenContext): void {
   if (!usedBy.has(ctx)) return;
   usedBy.delete(ctx);
-  const types = ctx.objectRuntimeTypes;
-  const findIdx = ctx.funcMap.get("__obj_find");
-  const getterCallIdx = ctx.funcMap.get("__call_accessor_get");
-  if (types === undefined || findIdx === undefined || getterCallIdx === undefined) return;
-  const r: ArmResources = {
-    objectTypeIdx: types.objectTypeIdx,
-    propEntryTypeIdx: types.propEntryTypeIdx,
-    findIdx,
-    getterCallIdx,
-    toKeyIdx: ctx.funcMap.get("__to_property_key"),
-  };
+  const r = armResources(ctx, FLAG_NS_BINDING, OBJ_FLAG_MODULE_NAMESPACE);
+  if (r === undefined) return;
   const trueAfterRead = (entryLocal: number): Instr[] =>
     bindingGuard(r, entryLocal, [
       ...bindingValue(r, entryLocal),
@@ -297,7 +337,7 @@ export function installModuleNamespaceExoticArms(ctx: CodegenContext): void {
 }
 
 /** `__getOwnPropertyDescriptor` → `{value, writable: true, enumerable: true, configurable: false}`. */
-function installDescriptorArm(ctx: CodegenContext, r: ArmResources): void {
+export function installDescriptorArm(ctx: CodegenContext, r: ArmResources): void {
   const newObjectIdx = ctx.funcMap.get("__new_plain_object");
   const setIdx = ctx.funcMap.get("__extern_set");
   const boxBoolIdx = ctx.funcMap.get("__box_boolean");
