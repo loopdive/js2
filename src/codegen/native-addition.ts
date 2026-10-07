@@ -92,6 +92,16 @@ function representationallyNumericOperand(ctx: CodegenContext, fctx: FunctionCon
   return false;
 }
 
+/**
+ * An `any` operand that is a number at runtime: proven by the whole-program
+ * numeric facts, or already held in an f64/i32 local (untyped JS parameters
+ * get numeric locals from their call sites). Such an operand needs neither the
+ * AnyValue tag dispatch nor the generic any-add lane.
+ */
+export function numericAnyOperand(ctx: CodegenContext, fctx: FunctionContext, e: ts.Expression): boolean {
+  return provenNumericOperand(ctx, e) || representationallyNumericOperand(ctx, fctx, e);
+}
+
 /** Admit any/unknown operands through the existing host or native string-capable addition lane. */
 export function admitsAnyAdditionOperands(
   ctx: CodegenContext,
@@ -104,11 +114,17 @@ export function admitsAnyAdditionOperands(
     ctx.anyValueTypeIdx < 0 ||
     (ctx.targetProfile.semanticProviders === "native-first" && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0)
   ) {
-    // The earlier AnyValue arm uses this proof only for nonnegative indices.
-    // Keep the original negative-index admission unchanged.
+    // The earlier AnyValue arm uses the whole-program numeric proof only for
+    // nonnegative indices; keep that admission unchanged.
     const usesGroundedProof = ctx.anyValueTypeIdx >= 0;
+    // An operand already held in an f64/i32 local is a number whatever its
+    // checker type, so the generic lane would only box it, run a no-op
+    // ToPrimitive and add numerically — identical to the f64 lowering. This
+    // holds without an AnyValue type too: standalone native-first builds
+    // (anyValueTypeIdx < 0) give untyped JS parameters numeric locals from
+    // their call sites, and previously boxed both of them on every `a + b`.
     const numeric = (operand: ts.Expression): boolean =>
-      usesGroundedProof && (provenNumericOperand(ctx, operand) || representationallyNumericOperand(ctx, fctx, operand));
+      representationallyNumericOperand(ctx, fctx, operand) || (usesGroundedProof && provenNumericOperand(ctx, operand));
     const leftIsAnyish = (left.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 && !numeric(expr.left);
     const rightIsAnyish = (right.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 && !numeric(expr.right);
     return leftIsAnyish || rightIsAnyish;
