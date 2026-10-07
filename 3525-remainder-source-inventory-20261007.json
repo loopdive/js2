@@ -2,10 +2,11 @@
   "id": "3525",
   "slice": "remainder-source-inventory-20261007",
   "assignee": "ttraenkler/codex-ir-remainder-inventory-20261007",
-  "requested_by": "ttraenkler/codex-ir-remainder-inventory-20261007",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-executable-stage1-20261007",
+  "status": "done",
   "branch": "codex/3525-remainder-inventory-20261007",
   "claimed_at": "2026-10-06T22:26:40Z",
-  "updated_at": "2026-10-06T22:26:40Z",
-  "write_id": "47269-eypffrz4"
+  "updated_at": "2026-10-07T06:03:27Z",
+  "write_id": "16688-7p9acltf",
+  "released_at": "2026-10-07T06:03:27Z"
 }
