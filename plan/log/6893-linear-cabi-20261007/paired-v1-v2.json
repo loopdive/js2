@@ -1,0 +1,64 @@
+{
+  "issue": 6893,
+  "status": "integration-held",
+  "lane": "linear",
+  "abi": "c",
+  "optimize": false,
+  "flags": {
+    "JS2WASM_LINEAR_IR": "1"
+  },
+  "baseline": "91e519587ec2d383a96cfc7d06f48bac04d2c286",
+  "v1": {
+    "testSha256": "d84af82e9bd232380753227d0ff3424c501f267a7a8258db1c797be2ccc37894",
+    "baseline": {
+      "passed": 6,
+      "failed": 10,
+      "total": 16
+    },
+    "candidate": {
+      "revision": "867c74ac7aa962f0412e37d842b077a96c6283da",
+      "passed": 14,
+      "failed": 2,
+      "total": 16
+    },
+    "instrumentFailure": "no-resolver string fixture missing __u8arr_len during provider setup"
+  },
+  "v2": {
+    "testSha256": "984f72424951f24119a70ecaa2ad47036a4def6487a8d5945b4c3771a958c270",
+    "baseline": {
+      "passed": 7,
+      "failed": 9,
+      "total": 16,
+      "rawLogSha256": "e9c061dc1d719b614b543f66c8acdfd8f4bb3276166865e7a2e250e7f6f11c02"
+    },
+    "candidate": {
+      "revision": "880e9eaa288861eeadc7a6e5936d89bc4d2c35c1",
+      "passed": 15,
+      "failed": 1,
+      "total": 16,
+      "rawLogSha256": "f1645e0bfc53dd79dd510caf51b8bb4b0343253bce3a3cf703b37efb68c64823"
+    },
+    "structuredRowsEach": 28,
+    "exactlyEqualKinds": [
+      "public-compile",
+      "public-string",
+      "public-scalar",
+      "runtime-no-growth",
+      "no-resolver-string",
+      "no-resolver-scalar"
+    ],
+    "productionImprovements": 8,
+    "instrumentRepairGainEachSide": 1
+  },
+  "preservedFailure": {
+    "caseId": "aliasScalar31-out-of-scope-A",
+    "actual": 0,
+    "expected": 3.75,
+    "owner": "Session A shared IR read lowering"
+  },
+  "limitations": [
+    "Array-return source roots remain rejected by IR; these public boundary fixes use legacy source fallback.",
+    "V2 initial resolver lookup has source-derived namesake-import risk; superseded by scoped containment, not final release.",
+    "Preliminary 78/80 control run overlaps source mutation and is not exact-commit acceptance; preserve and rerun."
+  ]
+}

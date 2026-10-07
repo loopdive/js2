@@ -510,3 +510,28 @@ Any gain from the earlier string-fixture repair stays classified as instrument
 repair. Public growth fixes, namesake-regression prevention and the unresolved
 A-owned scalar-read/array-return-admission obligations remain separate.
 Keep the PR held while coordinated A integration requirements remain unmet.
+
+## Parent-measured checkpoint outcome
+
+Final candidate witness `f23aa8afd7d8cc483b3ec92cfde45b525d6d13ae`,
+source implementation `608edfabf404aba0e69691eeccbda7518ca7988d`;
+exact baseline `91e519587ec2d383a96cfc7d06f48bac04d2c286`.
+Identical final test digest
+`7612ec537bd3876f3a872e029629601442b7593b1150c30cd25d49db7351be62`.
+New regressions: baseline8 pass/10 fail versus candidate17 pass/1 fail /18.
+Unchanged controls: both78 pass/2 fail /80. Candidate combined95 pass/3 fail
+/98. All retained original cases run; no skips or expected-failure wrappers.
+
+Three positive scalar requirements remain failing under A's shared ownership:
+new alias read0 vs3.75; existing issue1977 relocation24 vs69 and alias16 vs40.
+These tests/paths remain unchanged; scalar controls do not exercise array
+return marshaling. No full IR migration or source-return admission acceptance.
+Public array-return functions still report actual legacy fallback.
+
+Both v3 logs contain33 structured records. Ten recorded route/control kinds
+are exactly deeply equal, and growth custody observations are unchanged
+apart from the deliberately repaired oldest-alias pair/payload. Raw v1/v2/v3
+results, original instruments, full memory observations, environment and
+hashes live in `plan/log/6893-linear-cabi-20261007/`; see
+`final-comparison.json` and the Session B handoff for A's integration request.
+Retain status in-progress and PR hold until coordinated acceptance.
