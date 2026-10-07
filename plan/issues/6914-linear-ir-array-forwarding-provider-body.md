@@ -384,3 +384,88 @@ advanced since frozen3146. No shared handoff/contract release or source/test/pol
 change was found. All measurements retain exact frozen heads. Broader source-free
 Prepared array materialization and shared-owned Linear emission remain dependent
 on A's explicit contract and scope release; legacy code remains intact.
+
+## Astra High: owner-review inventory proposal plan
+
+This proposal does NOT authorize B to edit A's shared registry. Sol6.1 Medium
+may implement only an issue-local patch/replay artifact under this issue's
+`plan/log/6914-linear-forwarding-20261007/` directory, in an isolated worktree.
+Unique upstream claim: `6914:linear-inventory-proposal-20261007`, owner
+`ttraenkler/codex-linear-b-inventory-proposal-sol61-20261007`, branch
+`codex/6914-linear-inventory-proposal-20261007`. Actual registry remains A-owned.
+
+Minimal proposed entries: add arrays/README.md to `nonModules` with reason
+"Linear array runtime body documentation; not implementation or type code."
+Add arrays/forwarding-resolver.ts to `files` with `state: unmigrated` and
+`layer: legacy-linear`, matching runtime.ts's current inventory taxonomy.
+Existing allowed edges already permit caller-to-leaf and leaf-to-wasm-model.
+No new layer, clean designation, wildcard, exclusion or allowed-edge change.
+This preserves migration debt, not a claim that the desired architecture is done.
+
+Freeze replay source HEAD891412c5eb84fbb7d2570976ca33b143e24d37d2 and canonical
+policy hash8f0fb0fd2992784747e5cb5673aec59f3bec7d76b36abe2c504f459bfbb141b1.
+An issue-local script may generate temporary full policies from those bytes,
+adding ONLY the two entries. Removing them must restore deep equality with
+the original policy, including all remaining fields and ordering. Generate a
+reviewable patch artifact; never apply it to the actual shared policy.
+
+After the current matched build finishes, parent alone serially replays the
+unchanged checker using explicit `--root`, temporary `--config`, `--mode inventory`,
+`--base 891412c5eb84fbb7d2570976ca33b143e24d37d2`, and `--json`. Proposed policy
+must exit0, inventoryValid=true, errors empty, both explicit classifications,
+and architectureComplete=false. Preserve complete reports/streams/exits/hashes.
+Do NOT call this canonical acceptance: the temporary path is absent at the base,
+so comparisonBase.policyPresent=false; historical canonical-policy comparison
+is not exercised. A must later run the normal canonical-path check itself.
+
+Negative policies: remove README only and require its unclassified-nonmodule;
+remove leaf only and require its unclassified-module/unclassified-target;
+remove both and reproduce all three original errors. Preserve source/config
+custody before and after EVERY replay: exact HEAD, all source/test input path
+population and content hashes, canonical policy, checker and relevant configs.
+Copied manifests with deliberately incorrect hashes for runtime.ts, the new leaf
+and the new test must be explicitly rejected with the affected path. These are
+verifier controls, not executions of edited source. Never modify real fixtures.
+
+Only expected classification/edge-accounting changes may explain report deltas;
+do not normalize unrelated observations. Temporary success demonstrates the
+owner-ready metadata fix only. Canonical inventory remains failed and HOLD stays
+until A publishes the authorized registry update and accepts all remaining gates.
+
+## Current full-build result
+
+Candidate HEAD891412c5eb, clean tree, empty NODE_OPTIONS, unchanged Vite/config
+and toolchain: `pnpm run build` exits134 after1765 modules transformed, during
+chunk rendering, with `FATAL ERROR: Reached heap limit`. Complete failure and
+build input provenance are preserved. Log SHA-256:
+`50a8f1fb3f27418aaa16ca6dec4c3af5f7457508d235e1551db6a4c5e9fe80af`.
+Identical frozen baseline build at034f8e39109b7e5c508ca0624bdb43de3c4cde50
+also exits134 during chunk rendering after1764 modules transformed, with the
+same default-heap exhaustion. Baseline log SHA-256:
+`486e0849dd4657d62201ab6ccc169663b77bdf23715f524f04baec9bf989e271`.
+Both runs used Node22.23.2/V8 12.4.254.21-node.56, empty NODE_OPTIONS, unchanged
+Vite/config/lock inputs, no external deadline and clean execution trees. Full
+logs and exact build provenance are retained. This demonstrates a pre-existing
+resource failure, not a passing build or proof against hidden later errors.
+No heap increase, configuration change or waiver is taken; HOLD remains.
+
+## Owner-review proposal verification
+
+Sol6.1 Medium artifact commit `a166aabbd3eff9bfef23111e8582f46bee742a52`
+implements the two-entry patch and fail-closed replay helper. Astra High's
+read-only review found no actionable correctness findings. Parent replay at
+exact891412c5eb completed exit0: canonical inventory still exits1 with three
+errors; proposed temporary policy exits0 with no errors; README omission exits1
+with one error, leaf omission exits1 with two, both omission exits1 with three.
+All complete reports match only explicitly constructed metadata/edge deltas.
+All three copied wrong-hash manifest controls reject the exact affected path.
+Full source/test/config custody is checked against frozen HEAD and around each
+replay; no real source, test, fixture or shared policy is modified.
+
+Complete policies, five reports/streams/exit receipts, before/after manifests
+and wrong-hash controls are archived in `inventory-proposal-replay.tar.gz`,
+SHA-256 `be23cd21610d926bab8377cb63e3b529737b3cc82b456e5086622ca0a4025a81`.
+Temporary policy comparisonBase.policyPresent=false remains explicit. This
+provides an owner-ready patch, NOT canonical historical-policy acceptance,
+architecture/graph completion or permission to release HOLD. A must publish
+the authorized registry update and run canonical-path checks before landing.

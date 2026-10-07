@@ -1,0 +1,19 @@
+{
+  "head": "891412c5eb84fbb7d2570976ca33b143e24d37d2",
+  "sourceTree": "bf6d882fe74cf5b8c1b544ea28453f2bdf64a25e",
+  "dirty": "",
+  "node": "v22.23.2",
+  "v8": "12.4.254.21-node.56",
+  "nodeOptions": "",
+  "command": "pnpm run build",
+  "deadline": null,
+  "hashes": {
+    "vite.config.lib.ts": "a658cb99507555a3a15527375590f76940311cf4ee6bca825ab687b6594956e4",
+    "package.json": "bc084f6c2a17667e42d0c985330cbe064715984a7007201a5635c1622b10c395",
+    "pnpm-lock.yaml": "6a8b59fd4430c6600dc16ac33a749d0f5fed4ef0c100425de8490e43d916f2ac",
+    "tsconfig.json": "c520c3a1d8da732e73833cb53571f93609d0c899f6bcf638d752cb91b8c1fa79",
+    "tsconfig.ts7.json": "e739b6bbafbc3026dd7769692798bb6a01b5b9efe3149038756d80ab57cfb1e2",
+    "src/codegen-linear/runtime.ts": "2335826df9ce1609a10e62ad065870d354b429a5e110995d0f80d8fc2a61e039",
+    "src/codegen-linear/runtime/arrays/forwarding-resolver.ts": "e56843c3e0872d4c3b4132a92ff432d604f3cdd3bf30eb3f1801b79052ac6611"
+  }
+}

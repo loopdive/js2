@@ -114,6 +114,53 @@ artifacts and three unrelated issue documents changed: no source, test, compiler
 policy or target contract change. These measurements remain attributed to their
 frozen execution commits, never relabelled as a new-main run.
 
+## Matched full-build failures
+
+Candidate execution HEAD `891412c5eb84fbb7d2570976ca33b143e24d37d2` and
+test-only baseline `034f8e39109b7e5c508ca0624bdb43de3c4cde50` both ran
+`pnpm run build` with clean execution trees, Node22.23.2,
+V8 12.4.254.21-node.56, empty NODE_OPTIONS and no external deadline.
+The Vite configuration, package, lock and TypeScript configuration hashes match
+exactly, as recorded in the two `*-build-provenance.json` files.
+
+Both exit134 with `FATAL ERROR: Reached heap limit` during chunk rendering:
+candidate1765 modules transformed; baseline1764. Complete failures are retained
+in `candidate-build.log.gz` and `baseline-build.log.gz`. Decompressed SHA-256:
+
+- Candidate: `50a8f1fb3f27418aaa16ca6dec4c3af5f7457508d235e1551db6a4c5e9fe80af`.
+- Baseline: `486e0849dd4657d62201ab6ccc169663b77bdf23715f524f04baec9bf989e271`.
+
+The failure also exists without the production change. Neither build passed;
+later hidden errors remain untested. No heap/configuration override or gate
+waiver is taken, and Session A's integration acceptance remains required.
+
+## Owner-review inventory proposal replay
+
+Sol6.1 Medium commit `a166aabbd3eff9bfef23111e8582f46bee742a52` supplies
+`compiler-inventory-wiring.patch` and `compiler-inventory-proposal.mjs`.
+Astra High static review found no actionable correctness findings. Parent ran:
+
+```sh
+node /private/tmp/js2-6914-linear-inventory-proposal-20261007/plan/log/6914-linear-forwarding-20261007/compiler-inventory-proposal.mjs --root /private/tmp/js2-6914-linear-forwarding-provider-20261007
+```
+
+Frozen source HEAD891412c5eb; canonical policy unchanged8f0fb0fd29. Exit0:
+canonical checker exits1/three errors; temporary proposed policy exits0/no
+errors; omit-README exits1/one, omit-leaf exits1/two, omit-both exits1/three.
+Full reports equal only narrowly constructed classification/edge changes.
+Three wrong-hash copied manifests reject runtime, leaf and test individually.
+Complete source/test population is frozen against reference trees and checked
+before/after every replay together with checker/configuration/toolchain inputs.
+
+Archive `inventory-proposal-replay.tar.gz` contains complete policies, custody
+and negative manifests, all five reports/streams and exit receipts. SHA-256:
+`be23cd21610d926bab8377cb63e3b529737b3cc82b456e5086622ca0a4025a81`.
+The temporary paths do not exist at the comparison base, so their
+comparisonBase.policyPresent=false is required; canonical historical-policy
+validation remains A's responsibility. Actual registry is NOT changed.
+Architecture/graph remain incomplete, canonical acceptance remains false and
+HOLD stays. The patch is for the designated owner to review and apply.
+
 ## Integration boundaries
 
 Only production changes: root runtime's private resolver callback/import and
