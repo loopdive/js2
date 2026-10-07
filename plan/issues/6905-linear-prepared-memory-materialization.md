@@ -14,6 +14,10 @@ goal: ir-full-coverage
 related: [3528, 2956, 6889, 6888, 6893, 6896]
 files:
   - plan/issues/6905-linear-prepared-memory-materialization.md
+  - src/codegen-linear/runtime.ts
+  - src/codegen-linear/runtime/vector-initialization.ts
+  - tests/issue-6905-linear-prepared-memory-materialization.test.ts
+  - src/codegen-linear/runtime/README.md
 ---
 
 # Linear Prepared IR memory materialization and ownership handoff
@@ -193,3 +197,100 @@ central-file growth allowance.
 - [ ] Shared source route actually allocates, executes and records exact owners.
 - [ ] Frozen baseline/candidate, source-free replay and both-target controls pass.
 - [ ] Parent publishes coherent evidence/dependencies for A's final integration.
+
+## Amendment: independent baseline requirement before source wiring
+
+Read-only reground: HEAD `609286c99f06ea7abcfed51aebd33ecaec3f454c`, containing
+main `9e22f80ce60956ea2f397b4dfbe1cd46cdabac0a`. The allocation refusal and existing
+shared APIs remain. A's contract is unpublished; K stays blocked. This amendment
+permits a separately claimed Sol 6.1 Medium T baseline slice before section 4's
+source dependencies: only new `tests/issue-6905-linear-prepared-memory-materialization.test.ts`.
+No shared files, existing tests, harness/configuration or production modules change.
+This is meaningful independent specification of observable behavior, not a new
+resource interface or implementation release. Parent handles claims and runs.
+
+Freeze one source under `./entry.ts` and arguments `(1.5, -2.25)`:
+
+```ts
+export function run(a:number,b:number):number {
+  const values=[a,b]; return values[0]+values[1]+values.length;
+}
+```
+
+Implement four ordinary, independent tests (no shared failing setup):
+
+1. Native JavaScript control: execute the equivalent array expression with those
+   arguments and assert literal **1.25**, independently of compiler outputs.
+2. Actual shared Linear scalar control: source `export function run(a:number,b:number):number
+   { return a+b+2; }`, same arguments/result, accepted/emitted and executed.
+3. Direct Linear legacy positive: compile the unchanged allocation source with
+   `compileMultiSource`, `experimentalIR:false`, `disableIrFirst:true` and
+   `JS2WASM_LINEAR_IR=0`; prove the direct generator ran and overlay did not.
+4. Positive shared Linear allocation requirement: unchanged allocation source
+   must yield artifacts, authentic acceptance, real emission and runtime **1.25**.
+   If preparation/acceptance currently refuses, preserve that failure as red.
+
+Use existing `analyzeMultiSource` → `runPreparedIrPipelinePresentation` from
+`src/compiler.ts`; mirror only the minimal input/execution patterns in the
+unchanged early-return test. Keep `target:"linear"`, `optimize:false`, maps off.
+Observe real `prepareWholeIrProgram`, `acceptPreparedIrProgram`,
+`emitAcceptedIrProgram`; spies must call through, never synthesize their results.
+For shared rows, poison legacy generators and overlay entry points, verify exact
+program/acceptance identity and emitted owner census. Require an actual retained
+live allocation in the allocation row, not merely a nonempty historical registry.
+Validate nonempty Wasm and execute `result.artifacts` with existing runtime adapter
+APIs. Restore all spies/environment in `finally`; do not import another test file.
+Include actual structured failures in assertion output without asserting refusal
+as success. No `it.fails`, skip/todo, catch-and-pass, fabricated headers, hand-built
+IR, dummy allocator, or speculative resource/caller API is permitted.
+
+Parent measures these identical test bytes on current production and later the
+coherent candidate, retaining hashes, settings, exact SHAs and all raw failures.
+The earlier 17/17 scalar result remains historical evidence, not a new-run result.
+Publish the red acceptance file/evidence only in existing **held PR 6577**; it must
+never merge alone, be queued, or be presented as standalone green acceptance.
+Source-free resource replay, tamper/reservation tests and the broader matrix still
+await A's published contract. Four baseline rows do not satisfy those obligations.
+
+## Amendment: used fresh-vector initializer extraction (independent prerequisite)
+
+Verified at the same HEAD: `addLinearIrVecRuntime` (runtime.ts:1375) emits seven
+instructions; `src/codegen-linear/index.ts:235` calls it under `linearIrEnabled()`.
+Existing overlay use needs no new A contract. After parent's claim, Faraday owns only runtime.ts's new
+import and `addLinearIrVecRuntime` body delegation, plus new
+`src/codegen-linear/runtime/vector-initialization.ts`. No other runtime function,
+index, emitter, integration or shared contract is released. Parent confirms 4540
+allocator, PR 6572 array new/grow and PR 6575 string-slice scopes are disjoint.
+
+Export `buildLinearF64VectorInitializationBody(): Instr[]` from that target leaf.
+It returns a new array and seven fresh instruction objects on every call:
+`local.get 1; local.get 2; i32.const 8; i32.mul; i32.add; local.get 0;
+f64.store align=3 offset=16`. Use canonical `LINEAR_VECTOR_ELEMENTS_OFFSET` for
+16; keep f64 width 8. No allocation, forwarding, calls, mutable cache or callbacks.
+Delegate the existing addRuntimeFunc body factory to it; retain the existing
+symbol, duplicate-registration guard, `(f64,i32,i32)->()` ABI, zero locals and
+registration order exactly. Do not move symbol ownership or harden unrelated guards.
+
+Noether's existing new issue test file gains three isolated unit controls via
+the existing `addLinearIrVecRuntime` API, never importing the new leaf on baseline:
+(1) exact registered ABI/seven-instruction body and idempotent registration;
+(2) two modules have equal bodies but distinct arrays/every instruction object,
+with mutation of one not affecting the other or a subsequently built module;
+(3) real bounded runtime allocation plus initializer execution stores 1.5/-2.25
+in distinct fresh vector slots, leaving header and adjacent bytes unchanged.
+Use existing runtime/module/binary APIs and actual allocator/header setup; label
+these unit tests, not source Prepared evidence. Resolve actual function indices,
+including a harmless function-import prefix; never guess, rebase or adopt slots.
+Parent compares exact emitted unit-artifact bytes and runtime observations across
+identical baseline/candidate test bytes; retain hashes/raw results, no claimed pass.
+Keep all four prior acceptance/control rows, including the red shared allocation
+requirement. This narrowly overrides K's block only for the used extraction;
+malloc/resource reservation and A wiring remain blocked. No new IR coverage,
+whole-matrix completion or permission to merge the red held PR is implied.
+
+### Final exact ownership and folder documentation
+
+- Verified source claim `6905:vec-initializer-body-20261007`: owner `ttraenkler/codex-linear-b-vec-initializer-sol61-20261007`, branch `codex/6905-linear-vec-initializer-source-20261007`; Faraday owns only the two code files scoped above, **not README**.
+- Verified test claim `6905:prepared-memory-regression-20261007`: owner `ttraenkler/codex-linear-b-memory-tests-sol61-20261007`, branch `codex/6905-linear-prepared-memory-tests-20261007`; Noether owns only the new test file.
+- Parent alone may create `src/codegen-linear/runtime/README.md`: emitted-body builders only; no registration, module mutation or AST/frontend imports; fresh instruction objects and canonical generic layout contracts. Documentation only, no behavior change.
+- Allocator scope remains with [Heap coexistence in one linear memory: relocate the bump arena above the engine’s heap base, passive data segments only](4540-linear-heap-coexistence-arena-relocation.md), owner `ttraenkler/claude-opus`, branch `claude/linear-memory-quickjs-backend-gkhszu`; its heap scope excludes this initializer function.
