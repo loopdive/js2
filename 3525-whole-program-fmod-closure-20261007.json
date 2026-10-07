@@ -2,10 +2,11 @@
   "id": "3525",
   "slice": "whole-program-fmod-closure-20261007",
   "assignee": "ttraenkler/codex-ir-fmod-closure-20261007",
-  "requested_by": "ttraenkler/codex-ir-fmod-closure-20261007",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-executable-stage1-20261007",
+  "status": "done",
   "branch": "codex/3525-whole-program-fmod-20261007",
   "claimed_at": "2026-10-06T22:09:38Z",
-  "updated_at": "2026-10-06T22:09:38Z",
-  "write_id": "15495-q7t0hu05"
+  "updated_at": "2026-10-07T06:03:31Z",
+  "write_id": "16871-il37noak",
+  "released_at": "2026-10-07T06:03:31Z"
 }
