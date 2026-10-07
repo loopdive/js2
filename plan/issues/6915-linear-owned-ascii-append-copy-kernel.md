@@ -569,3 +569,26 @@ relabeled as either later commit. Raw final test/log/JSON/strict/input/receipt/
 runner artifacts are retained under repaired-v3 in the evidence directory.
 Default changed-root CI wiring remains a genuine designated-owner dependency;
 the configured instrument success is not a default-CI or merge acceptance.
+
+### Observed advisory CI failure — 2026-10-08
+
+GitHub run37694677932 on published HEAD
+`f99e37a1f9496d21a129e7c98ff087119bcba94c`, changed-test job113044032212,
+reports job SUCCESS but its actual test invocation fails setup with
+`JS2WASM_APPEND_EXPECTED_PROVENANCE is required`: one failed test file,
+36 suite-skipped cases, zero completed observations. The wrapper explicitly
+reports the failure as advisory. This is not a passing regression or an
+intentional waiver. Full raw job log is retained as
+`plan/log/6915-linear-append-20261007/ci-changed-job-113044032212.log.gz`.
+
+The separately required quality job113043352038 was still running at this
+inspection; no conclusion or downstream changed-root execution is inferred
+from the advisory job. Designated-owner wiring remains required as specified
+above; B has not modified shared hooks, workflows or their failure policy.
+Preserve the existing run before batching a subsequent branch refresh.
+
+Canonical main now resolves to8452732f0b88c14c5c7634ece58f83240970ea4c.
+Its delta from frozen c41 includes compiler source changes, not only baseline
+reports. Historical c41 qualifications remain frozen and cannot be relabeled
+as qualification of the new composition. Refresh and scoped requalification
+are still pending; this observation changes no production ownership.
