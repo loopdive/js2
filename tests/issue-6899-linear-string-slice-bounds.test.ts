@@ -161,8 +161,9 @@ async function buildRuntime(guarded: boolean): Promise<Runtime> {
   if (heap < 0) throw new Error("fixture missing heap observation");
   mod.exports.push({ name: "issue6899_heap", desc: { kind: "global", index: importedGlobals + heap } });
   const binary = binaryEmitter.emitBinary(mod);
-  expect(WebAssembly.validate(binary)).toBe(true);
-  const { instance } = await WebAssembly.instantiate(binary);
+  const wasmBytes = new Uint8Array(binary);
+  expect(WebAssembly.validate(wasmBytes)).toBe(true);
+  const { instance } = await WebAssembly.instantiate(wasmBytes);
   const e = instance.exports;
   return {
     memory: e.memory as WebAssembly.Memory,
@@ -548,20 +549,21 @@ async function publicRow(mode: "overlay" | "direct", source: string, args: numbe
   const emitted = emission.mock.results.at(-1);
   const emittedSha256 = emitted?.type === "return" ? sha256(emitted.value) : null;
   emission.mockRestore();
+  const wasmBytes = new Uint8Array(result.binary);
   Object.assign(evidence, {
     success: result.success,
     errors: result.errors,
     compiled: report?.compiled ?? null,
     rejected: report?.rejected ?? null,
     ownerEvidence: report?.ownerEvidence ?? null,
-    binaryValidated: WebAssembly.validate(result.binary),
+    binaryValidated: WebAssembly.validate(wasmBytes),
     binarySha256: sha256(result.binary),
     emittedSha256,
   });
   expect(result.success, JSON.stringify(result.errors)).toBe(true);
   expect(evidence.binaryValidated).toBe(true);
   expect(emittedSha256).toBe(sha256(result.binary));
-  const { instance } = await WebAssembly.instantiate(result.binary, result.importObject);
+  const { instance } = await WebAssembly.instantiate(wasmBytes, result.importObject);
   const memory = instance.exports.memory as WebAssembly.Memory;
   const before = new Uint8Array(memory.buffer).slice();
   const outcome = invoke(() => (instance.exports.run as (...values: number[]) => number)(...args));
