@@ -3,9 +3,10 @@
   "slice": "executable-ladder-stage1-20261007",
   "assignee": "ttraenkler/codex-ir-executable-stage1-20261007",
   "requested_by": "ttraenkler/codex-ir-executable-stage1-20261007",
-  "status": "in-progress",
+  "status": "done",
   "branch": "codex/3525-executable-stage1-20261007",
   "claimed_at": "2026-10-06T22:05:56Z",
-  "updated_at": "2026-10-06T22:05:56Z",
-  "write_id": "8192-nq6tiyrq"
+  "updated_at": "2026-10-07T06:02:50Z",
+  "write_id": "15010-9w4ilv7h",
+  "released_at": "2026-10-07T06:02:50Z"
 }
