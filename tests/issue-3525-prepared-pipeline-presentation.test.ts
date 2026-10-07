@@ -15,6 +15,8 @@ import {
 } from "../src/compiler/ir-program-presentation.js";
 import * as gcCodegen from "../src/codegen/index.js";
 import * as linearCodegen from "../src/codegen-linear/index.js";
+import * as linearIntegration from "../src/ir/backend/linear-integration.js";
+import { encodePreparedIrProgram } from "../src/ir/program-codec.js";
 import { emitBinary } from "../src/emit/binary.js";
 import * as binaryEmitter from "../src/emit/binary.js";
 import * as preparation from "../src/ir/program-preparation.js";
@@ -59,7 +61,24 @@ const VISITS = {
 const USER_INIT = {
   "./entry.ts": `${VISITS["./entry.ts"]} export function __module_init(): number { visits = visits * 10 + 7; return visits; }`,
 };
+const COUNTED_LOOP = {
+  "./entry.ts": `export function accumulate(seed: number, limit: number): number {
+    let total = seed;
+    for (let i = 0; i < limit; i++) {
+      if (i % 2 === 0) total = total + i;
+      else total = total - i;
+    }
+    return total;
+  }`,
+};
+const COUNTED_CALLS = [
+  { name: "accumulate", args: [7, 0], value: 7 },
+  { name: "accumulate", args: [-3, 1], value: -3 },
+  { name: "accumulate", args: [7, 4], value: 5 },
+  { name: "accumulate", args: [-3, 5], value: -1 },
+];
 const FIXTURES = [
+  { name: "counted loop and mutable branch", files: COUNTED_LOOP, calls: COUNTED_CALLS, units: 1 },
   {
     name: "scalar",
     files: SCALAR,
@@ -139,7 +158,7 @@ function expectGap(
 
 function artifacts(current: Input): ArtifactResult {
   const result = runPreparedIrPipelinePresentation(current);
-  expect(result.kind, JSON.stringify(result)).toBe("artifacts");
+  expect(result.kind, result.kind === "artifacts" ? undefined : JSON.stringify(result)).toBe("artifacts");
   if (result.kind !== "artifacts") throw new Error(`presentation failed: ${JSON.stringify(result)}`);
   expect(result.artifacts.binary.byteLength).toBeGreaterThan(8);
   expect(WebAssembly.validate(new Uint8Array(result.artifacts.binary))).toBe(true);
@@ -168,6 +187,56 @@ function poisonGenerators() {
     vi.spyOn(linearCodegen, "generateLinearModule").mockImplementation(poison),
     vi.spyOn(linearCodegen, "generateLinearMultiModule").mockImplementation(poison),
   ];
+}
+
+async function directLegacy(files: Record<string, string>, backend: Backend, options: CompileOptions) {
+  const previousLinearIr = process.env.JS2WASM_LINEAR_IR;
+  const hadLinearIr = Object.hasOwn(process.env, "JS2WASM_LINEAR_IR");
+  const generator =
+    backend === "linear"
+      ? vi.spyOn(linearCodegen, "generateLinearMultiModule")
+      : vi.spyOn(gcCodegen, "generateMultiModule");
+  const overlay = vi.spyOn(linearIntegration, "prepareLinearIrOverlay");
+  const compileIr = vi.spyOn(linearIntegration, "compileLinearIr");
+  try {
+    if (backend === "linear") process.env.JS2WASM_LINEAR_IR = "0";
+    const result = await compileMultiSource(files, "./entry.ts", {
+      ...options,
+      experimentalIR: false,
+      disableIrFirst: true,
+    });
+    expect(generator).toHaveBeenCalledOnce();
+    expect(overlay).not.toHaveBeenCalled();
+    expect(compileIr).not.toHaveBeenCalled();
+    expect(result.irCompiledFuncs ?? []).toEqual([]);
+    return result;
+  } finally {
+    if (hadLinearIr) process.env.JS2WASM_LINEAR_IR = previousLinearIr;
+    else Reflect.deleteProperty(process.env, "JS2WASM_LINEAR_IR");
+  }
+}
+
+function nativeCountedValues(): unknown {
+  const dir = mkdtempSync(join(tmpdir(), "ir-prepared-presentation-source-"));
+  try {
+    writeFileSync(join(dir, "entry.ts"), COUNTED_LOOP["./entry.ts"]);
+    writeFileSync(
+      join(dir, "run.mjs"),
+      `import { accumulate } from "./entry.ts";
+console.log(JSON.stringify(${JSON.stringify(COUNTED_CALLS)}.map(call => accumulate(...call.args))));`,
+    );
+    const child = spawnSync(process.execPath, ["--import", "tsx", join(dir, "run.mjs")], {
+      cwd: join(import.meta.dirname, ".."),
+      encoding: "utf8",
+    });
+    expect(child.error).toBeUndefined();
+    expect(child.signal).toBeNull();
+    expect(child.status, `${child.stdout}\n${child.stderr}`).toBe(0);
+    expect(child.stderr).toBe("");
+    return JSON.parse(child.stdout.trim());
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function physicalSnapshot(module: WasmModule) {
@@ -237,6 +306,21 @@ function verifyJoins(result: ArtifactResult, current: Input, backend: Backend, u
   if (!projection) throw new Error("missing real host projection");
   expect(emission.emittedUnitIds).toEqual(projection.prepared.functions.map((fn) => fn.unitId));
   expect(emission.emittedUnitIds).toHaveLength(units);
+  expect(units).toBeGreaterThan(0);
+  expect(program.units.size).toBe(program.inventory.terminalUnits.length);
+  expect([...program.units.keys()]).toEqual(program.inventory.terminalUnits.map((unit) => unit.id));
+  expect(program.units.size).toBeGreaterThanOrEqual(units);
+  const support = consumer.emittedSupportFunctionReceipts(emission);
+  const startupIndex = consumer.emittedStartupAdapterIndex(emission);
+  const supportIndices = new Set(support.map((receipt) => receipt.index));
+  expect(supportIndices.size).toBe(support.length);
+  expect(supportIndices.has(startupIndex!)).toBe(false);
+  expect(emission.module.functions).toHaveLength(units + support.length + (startupIndex === undefined ? 0 : 1));
+  for (const receipt of support) expect(emission.module.functions[receipt.index]).toBeDefined();
+  for (const unit of program.inventory.terminalUnits) {
+    expect(program.units.get(unit.id)?.id).toBe(unit.id);
+    expect(preparedIrProgramOwner(program, unit.id)).toBeDefined();
+  }
   expect(program.inventory.sources.map((source) => source.originalFileName)).toEqual(
     current.userSourceFiles.map((source) => source.fileName),
   );
@@ -371,6 +455,9 @@ afterEach(async () => {
 });
 
 describe("#3525 internal genuine prepared-pipeline presentation", () => {
+  it("pins the counted-loop oracle by executing the exact source in a fresh native child", () => {
+    expect(nativeCountedValues()).toEqual(COUNTED_CALLS.map((call) => call.value));
+  });
   for (const backend of BACKENDS) {
     for (const fixture of FIXTURES) {
       it(`executes ${fixture.name} through real ${backend}/host preparation, emission and finalization`, () => {
@@ -417,7 +504,7 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
       });
       it(`matches genuine legacy ${fixture.name} values and presentation on ${backend}/host`, async () => {
         const current = input(fixture.files, backend);
-        const legacy = await compileMultiSource(fixture.files, "./entry.ts", current.options);
+        const legacy = await directLegacy(fixture.files, backend, current.options);
         expect(legacy.success, JSON.stringify(legacy.errors)).toBe(true);
         expect(legacy.adapterManifest).toBeDefined();
         if (!legacy.adapterManifest) throw new Error("legacy adapter manifest missing");
@@ -429,6 +516,10 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
           imports.string_constants16,
         );
         imports.setInstance?.(original);
+        const referenceValues = fixture.calls.map((call) => callable(original.exports, call.name)(...call.args));
+        expect(referenceValues).toEqual(fixture.calls.map((call) => call.value));
+        if (fixture.files === COUNTED_LOOP)
+          console.info("counted-loop direct legacy", backend, JSON.stringify(referenceValues));
         const prepared = artifacts(current);
         const actual = instantiate(prepared);
         for (const call of fixture.calls) {
@@ -441,6 +532,7 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
         if (backend === "wasmgc") {
           const legacyPools: Record<string, string[]> = {
             scalar: ["calculate", ""],
+            "counted loop and mutable branch": ["accumulate", ""],
             "two-source 42": ["double", "", "./math", "main"],
             "nonconstant cross-source": ["double", "", "./math", "calculate"],
           };
@@ -479,7 +571,7 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
     }
     it(`proves the four-generator poison attaches to the legacy ${backend} route`, async () => {
       const poisons = poisonGenerators();
-      const legacy = await compileMultiSource(SCALAR, "./entry.ts", input(SCALAR, backend).options);
+      const legacy = await directLegacy(SCALAR, backend, input(SCALAR, backend).options);
       expect(legacy.success).toBe(false);
       expect(
         legacy.errors.some((error) => error.message.includes("attached prepared presentation legacy poison")),
@@ -571,6 +663,122 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
     });
   }
 
+  it("replays the genuine counted-loop source packet in a fresh source-free child on both backends", () => {
+    const current = input(COUNTED_LOOP, "wasmgc");
+    const prepared = preparation.prepareWholeIrProgram({
+      ...request(current, "wasmgc").preparation,
+      runtimePolicies: BACKENDS.map((backend) => ({ backend, target: "host" as const })),
+    });
+    expect(prepared.kind, prepared.kind === "prepared" ? undefined : JSON.stringify(prepared)).toBe("prepared");
+    if (prepared.kind !== "prepared") throw new Error(prepared.detail);
+    expect(prepared.program.runtime.map((row) => `${row.backend}:${row.target}`)).toEqual([
+      "wasmgc:host",
+      "linear:host",
+    ]);
+    const dir = mkdtempSync(join(tmpdir(), "ir-prepared-presentation-replay-"));
+    try {
+      const encodedPath = join(dir, "program.json");
+      const oraclePath = join(dir, "oracle.json");
+      writeFileSync(encodedPath, encodePreparedIrProgram(prepared.program));
+      const oracle = {
+        targets: BACKENDS.map((backend) => ({ backend, target: "host" })),
+        calls: COUNTED_CALLS.map((call) => ({ export: call.name, args: call.args, expected: call.value })),
+      };
+      writeFileSync(oraclePath, JSON.stringify(oracle));
+      const replay = (probe = false) => {
+        const child = spawnSync(
+          process.execPath,
+          [
+            "--import",
+            "tsx",
+            "scripts/ir-whole-program-replay.mjs",
+            encodedPath,
+            oraclePath,
+            ...(probe ? ["--probe-forbidden-import"] : []),
+          ],
+          { cwd: join(import.meta.dirname, ".."), encoding: "utf8" },
+        );
+        expect(child.error).toBeUndefined();
+        expect(child.signal).toBeNull();
+        expect(child.stderr).toBe("");
+        const report = JSON.parse(child.stdout.trim()) as {
+          ok: boolean;
+          reencodedIdentical: boolean;
+          loadedModuleCount: number;
+          frontendModules: string[];
+          typescriptModules: string[];
+          failures: string[];
+          targets: Record<
+            string,
+            {
+              kind: string;
+              emittedUnits: number;
+              projectionUnits: number;
+              moduleFunctions: number;
+              startupAdapterIndex?: number;
+              supportFunctions: { index: number }[];
+              rows: { match: boolean; actual: string; expected: string }[];
+            }
+          >;
+        };
+        console.info("counted-loop fresh replay", JSON.stringify({ status: child.status, report }));
+        return { child, report };
+      };
+      const healthy = replay();
+      expect(healthy.child.status).toBe(0);
+      expect(healthy.report.ok).toBe(true);
+      expect(healthy.report.failures).toEqual([]);
+      expect(healthy.report.reencodedIdentical).toBe(true);
+      expect(healthy.report.loadedModuleCount).toBeGreaterThan(0);
+      expect(healthy.report.frontendModules).toEqual([]);
+      expect(healthy.report.typescriptModules).toEqual([]);
+      expect(Object.keys(healthy.report.targets)).toEqual(["wasmgc:host", "linear:host"]);
+      for (const target of Object.values(healthy.report.targets)) {
+        expect(target.kind).toBe("ran");
+        expect(target.emittedUnits).toBe(1);
+        expect(target.projectionUnits).toBe(target.emittedUnits);
+        const supportIndices = new Set(target.supportFunctions.map((receipt) => receipt.index));
+        expect(supportIndices.size).toBe(target.supportFunctions.length);
+        expect(supportIndices.has(target.startupAdapterIndex!)).toBe(false);
+        expect(target.moduleFunctions).toBe(
+          target.emittedUnits + target.supportFunctions.length + (target.startupAdapterIndex === undefined ? 0 : 1),
+        );
+        expect(target.rows).toHaveLength(COUNTED_CALLS.length);
+        expect(target.rows.every((row) => row.match)).toBe(true);
+        expect(target.rows.map((row) => row.actual)).toEqual(COUNTED_CALLS.map((call) => String(call.value)));
+      }
+      const forbidden = replay(true);
+      expect(forbidden.child.status).toBe(1);
+      expect(forbidden.report.ok).toBe(false);
+      expect(forbidden.report.typescriptModules.length).toBeGreaterThan(0);
+      expect(forbidden.report.failures.some((failure) => failure.includes("TypeScript modules were loaded"))).toBe(
+        true,
+      );
+      expect(Object.values(forbidden.report.targets).every((target) => target.rows.every((row) => row.match))).toBe(
+        true,
+      );
+      writeFileSync(
+        oraclePath,
+        JSON.stringify({
+          ...oracle,
+          calls: oracle.calls.map((call, index) => (index === 0 ? { ...call, expected: 999 } : call)),
+        }),
+      );
+      const wrong = replay();
+      expect(wrong.child.status).toBe(1);
+      expect(wrong.report.ok).toBe(false);
+      expect(wrong.report.frontendModules).toEqual([]);
+      expect(wrong.report.typescriptModules).toEqual([]);
+      for (const target of Object.values(wrong.report.targets)) {
+        expect(target.rows).toHaveLength(COUNTED_CALLS.length);
+        expect(target.rows[0]).toMatchObject({ match: false, actual: "7", expected: "999" });
+        expect(target.rows.slice(1).every((row) => row.match)).toBe(true);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("uses one authentic A packet with both host projections in a separate real C witness", () => {
     const current = input(TWO_SOURCE, "wasmgc");
     const base = request(current, "wasmgc").preparation;
@@ -578,7 +786,7 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
       ...base,
       runtimePolicies: BACKENDS.map((backend) => ({ backend, target: "host" as const })),
     });
-    expect(prepared.kind, JSON.stringify(prepared)).toBe("prepared");
+    expect(prepared.kind, prepared.kind === "prepared" ? undefined : JSON.stringify(prepared)).toBe("prepared");
     if (prepared.kind !== "prepared") throw new Error(prepared.detail);
     const program: PreparedIrProgram = prepared.program;
     expect(program.runtime.map((row) => `${row.backend}:${row.target}`)).toEqual(["wasmgc:host", "linear:host"]);
