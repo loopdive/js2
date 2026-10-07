@@ -293,3 +293,68 @@ completes, and the next link is the checksum
 **JS-host.** All three changes are gated on standalone. Binaries are
 byte-identical, before and after, on the 9-file probe set and on lodash's gc
 lane (sha256 `1d5ceb787c914081…`, 1,288,275 bytes).
+
+## Merge-group park — 2026-10-07
+
+PR #6506 was parked by the merge-group standalone guard (run
+`37388187410`): improvements 0, wasm-change regressions 79, host-free pass
+41973 against the 42055 high-water mark.
+
+**Attribution.** All 79 regressed rows were checked against main's standalone
+results at `abb3471c46` (has #6502, lacks #6506; baselines commit
+`b2e4f92e89`). All 79 **pass** there, so every one belongs to this PR. None is
+inherited from #6502.
+
+**Cause.** The re-land sent every receiver that was not a string, closure or
+nullish to `__extern_get(recv, "length")`. It also read a `$__vec_base`
+subtype's field 0 directly. `__extern_length` owns the `length` of several
+carriers that `__extern_get` does not know:
+
+| rows | receiver | re-land read | correct |
+|---|---|---|---|
+| 75 | TypedArray view over a resizable buffer (length-tracking) | -1 (the field-0 sentinel) | live length |
+| (in the 75) | detached TypedArray view | stale length | 0 |
+| 3 | String wrapper (`Array.prototype.{forEach,filter,reduce,reduceRight}.call(new String(…))`) | `undefined` | 3 |
+| 1 | rest-args array from an IIFE (`language/rest-parameters/arrow-function.js`) | `undefined` | 0 / 3 |
+
+**Fix.** Only an ordinary `$Object` takes the real Get. So do number and
+boolean primitives, so that `(5).length` stays `undefined`. Every other carrier
+keeps the old `__extern_length` answer. The read also asks for
+`__extern_get`'s #6651 C5 String-wrapper `length` arm. That arm is passed in
+through `AnyLengthDeps`, so the module stays out of the import cycle.
+
+**Pin.** `tests/issue-6736-any-length-absent.test.ts`, case "non-object
+carriers keep their own length". The parent (`c9e15c4e23`) reads 484. The fix
+reads 1023, which matches Node. Bits 32, 128 and 256 are the anti-vacuity
+control: they pass on both sides.
+
+**The 79 rows.** Re-run in standalone with the fix: 79 of 79 pass. The three
+detach rows need the QuickJS eval provider built.
+
+**lodash.** The standalone-dynamic lane still finishes module init. It fails
+at the `checksum` phase
+([#6751](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6751-standalone-lodash-checksum-called-value-not-function)),
+as before. The narrowing gives none of the lodash progress back.
+
+**Scoped standalone test262.** I ran 2512 rows in-process on the merged
+branch (`a2fbd6121b`, upstream `7ebc362ecc`) and compared them with main's
+standalone baseline (`js2wasm-baselines` `f6fcebfe50`). The rows cover
+`built-ins/Array/prototype/{forEach,filter,reduce,reduceRight,map,every,some}`,
+`built-ins/TypedArray/prototype/{length,set,fill,copyWithin}`,
+`language/arguments-object`, `language/rest-parameters`, `harness`,
+`built-ins/Object/keys`, `built-ins/Function/prototype/apply`,
+`built-ins/String/prototype/split` and `built-ins/Array/from`.
+
+| | pass |
+|---|---|
+| main baseline | 2087 |
+| this branch | 2087 |
+
+No row went pass to non-pass, and none went the other way. Seven rows were
+left out because main's baseline records them as `compile_timeout`.
+Two of them (`Array/prototype/{some,every}/…-7-c-ii-2.js`, which walk a
+million-element sparse array) hang in the in-process runner.
+
+**JS-host.** The new code runs only for standalone and WASI. JS-host binaries
+match the merge parent `7ebc362ecc` byte for byte (sha256) for lodash, redux,
+marked, moment and the probe fixtures.
