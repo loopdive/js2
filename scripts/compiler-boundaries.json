@@ -5091,7 +5091,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/identifier-receiver-slot.ts",
+      "path": "src/codegen/expressions/identifier-receiver-slot.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",

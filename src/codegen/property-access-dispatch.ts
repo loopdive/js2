@@ -90,7 +90,7 @@ import { addStringConstantGlobal, localGlobalIdx, registerLateReadStringConstant
 import {
   identifierLocalSlotIsExternref,
   undefinedTypedIdentifierGlobalIsExternref,
-} from "./identifier-receiver-slot.js";
+} from "./expressions/identifier-receiver-slot.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { staticHostPropertyKeyInstrs } from "./host-property-key.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";

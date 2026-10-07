@@ -17,7 +17,7 @@ related: [4618, 3958, 5195]
 # 2026-10-07 (#6895). Growth measured against upstream/main e7760d1c2a.
 # The decision logic lives OUT of the god-files in two new modules
 # (src/codegen/async-frame-binding-continuity.ts,
-# src/codegen/identifier-receiver-slot.ts); what stays in-file is wiring:
+# src/codegen/expressions/identifier-receiver-slot.ts); what stays in-file is wiring:
 # async-frame.ts +10 (the live-cell spill branch in buildAsyncFrameInfo, its
 # merge into the entry-init map, the prologue call and the import) and
 # index.ts +2 (the one-line arm in varBindingNeedsExternrefForUndefined and
@@ -28,6 +28,8 @@ loc-budget-allow:
   - src/codegen/index.ts
 func-budget-allow:
   - src/codegen/async-frame.ts::ensureAsyncResumeFunction
+flat-dir-budget-allow:
+  - src/codegen/async-frame-binding-continuity.ts # 2026-10-07 (#6895): extracted from async-frame.ts, a flat src/codegen sibling of its only consumer (async-frame.ts / async-cps-ast.ts); keeps the god-file growth to wiring
 ---
 
 # react upstream: bindings lost across `await act()`
@@ -77,7 +79,7 @@ fixture (no React):
   construction (through the existing `derivedSpillInit` entry-init map); skip
   the force-box pass for it. Helper `liveBoxedCaptureSpillType`.
 - (2)/(3) Move the identifier-receiver slot predicates out of
-  `finalizeStructAndDynamicMemberGet` into `identifier-receiver-slot.ts`:
+  `finalizeStructAndDynamicMemberGet` into `expressions/identifier-receiver-slot.ts`:
   a boxed binding answers by its cell's value type; the purely-undefined
   global arm consults `capturedGlobals` before `moduleGlobals` (the identifier
   read's own order). `varBindingNeedsExternrefForUndefined` gains one arm:

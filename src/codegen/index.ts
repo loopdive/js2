@@ -722,7 +722,7 @@ import {
 } from "./numeric-property-analysis.js"; // (#3683 S4a)
 import type { NumericPropertyAnalysisHost } from "./numeric-property-analysis.js";
 import { dynamicReadCrossesStandaloneLink } from "./dynamic-read-narrowing.js"; // (#5383)
-import { copiesUnseenWriteBinding } from "./identifier-receiver-slot.js"; // (#4618)
+import { copiesUnseenWriteBinding } from "./expressions/identifier-receiver-slot.js"; // (#4618)
 import { collectUserMethodNames } from "./user-method-names.js"; // (#3673)
 import {
   registerWasiImports,

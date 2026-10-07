@@ -14,8 +14,7 @@
 
 import ts from "typescript";
 
-import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { localGlobalIdx } from "./registry/imports.js";
+import type { CodegenContext, FunctionContext } from "../context/types.js";
 
 /**
  * True when `name` resolves, in `fctx`, to a function-local slot carrying an
@@ -54,7 +53,9 @@ export function undefinedTypedIdentifierGlobalIsExternref(
   if (fctx.localMap.get(id.text) !== undefined) return false;
   const globalIdx = ctx.capturedGlobals.get(id.text) ?? ctx.moduleGlobals.get(id.text);
   if (globalIdx === undefined) return false;
-  return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type.kind === "externref";
+  // Absolute -> module-local global index (registry/imports `localGlobalIdx`,
+  // inlined so this leaf stays out of the codegen import cycle).
+  return ctx.mod.globals[globalIdx - ctx.numImportGlobals]?.type.kind === "externref";
 }
 
 /**
