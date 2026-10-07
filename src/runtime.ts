@@ -11516,7 +11516,8 @@ function resolveImport(
     wrapWasmClosure: (value, arity, boundary) => _wrapPlatformCapabilityClosure(value, arity, boundary, callbackState),
     wrapUnknownCallable: (value) => _maybeWrapCallableUnknownArity(value, callbackState),
   });
-  if (capability) return wrapConsoleForHost(capability, intent, callbackState, _nativePrimitiveToHost, _MISS);
+  if (capability)
+    return wrapConsoleForHost(capability, intent, callbackState, _nativePrimitiveToHost, _MISS, _nativeDynamicFromHost);
   const compatibilitySemantic = resolveCompatibilitySemanticImport(intent, {
     strictEqual: _hostStrictEqual,
     isWasmStruct: _isWasmStruct,

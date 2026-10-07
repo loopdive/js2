@@ -285,7 +285,10 @@ export function classifyHostImport(descriptor: ImportDescriptor, environment?: C
         ? policy("platform-capability", "clock", 4577, false, "explicit standalone embedder clock capability")
         : policy("platform-capability", "clock", 4398, true, "wall-clock capability");
     case "declared_global":
-      return policy("platform-capability", `global:${intent.name}`, 4398, false, "declared ambient host capability");
+      // (#6890) `global_console` is the console capability read as a VALUE.
+      return intent.name === "console"
+        ? policy("platform-capability", "console", 4398, false, "explicit host console object capability")
+        : policy("platform-capability", `global:${intent.name}`, 4398, false, "declared ambient host capability");
     case "dynamic_import":
       return policy("platform-capability", "module-loader", 4398, false, "dynamic module loading capability");
     case "node_builtin":
