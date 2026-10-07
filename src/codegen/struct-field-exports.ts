@@ -23,6 +23,8 @@ import { recordStructFieldAccessor } from "./struct-field-accessor-abi.js"; // (
 import { buildShapeGuardedArm } from "./shape-guarded-arm.js"; // (#4645) single-`next` dispatch arm
 import { walkChildren } from "./walk-instructions.js";
 import { profileCount } from "../compile-profile.js";
+import type { FieldNameLegacyEntry } from "./object-model/struct-field-name-tags.js";
+import { fieldNameArmTest, tagDisambiguateSharedClassStructs } from "./object-model/struct-field-name-tags.js";
 
 /**
  * Emit exported getter/setter helper functions so the JS runtime can read
@@ -1089,7 +1091,7 @@ function emitStructFieldNamesExport(
   //    the name CSV by shape-id VALUE — disambiguates same-shape types that
   //    `ref.test` cannot tell apart.
   //  - non-colliding structs: legacy `ref.test typeIdx → own CSV` arm.
-  type LegacyEntry = { typeIdx: number; names: string[] };
+  type LegacyEntry = FieldNameLegacyEntry; // (#6872) `tag`: discriminating `__tag`
   type ShapeEntry = { typeIdx: number; shapeFieldIdx: number };
   // Every type index some other emitted type declares as its supertype (#6430).
   const declaredSupertypes = new Set<number>();
@@ -1135,9 +1137,10 @@ function emitStructFieldNamesExport(
     // HAS fields already answers for its subclasses — pre-existing, not
     // widened here — but a field-less one must not start doing so.
     if (orderedNames.length > 0 || !declaredSupertypes.has(typeIdx)) {
-      legacyEntries.push({ typeIdx, names: orderedNames });
+      legacyEntries.push({ typeIdx, names: orderedNames, structName });
     }
   }
+  tagDisambiguateSharedClassStructs(ctx, legacyEntries);
 
   if (legacyEntries.length === 0 && shapeEntries.length === 0) return;
   profileCount("struct-field-name-legacy-entries", legacyEntries.length);
@@ -1145,16 +1148,8 @@ function emitStructFieldNamesExport(
   profileCount("struct-field-name-shape-ids", ctx.shapeNameCsvById.length);
 
   // Register comma-separated field name strings as string constants.
-  const legacyCsvEntries = legacyEntries.map(({ typeIdx, names }) => ({
-    typeIdx,
-    csv: names.map(escapeStructFieldNameForCsv).join(","),
-  }));
-  addStringConstantGlobals(ctx, [...legacyCsvEntries.map(({ csv }) => csv), ...ctx.shapeNameCsvById]);
-  const legacyTypeIdxToGlobalIdx = new Map<number, number>();
-  for (const { typeIdx, csv } of legacyCsvEntries) {
-    const globalIdx = ctx.stringGlobalMap.get(csv);
-    if (globalIdx !== undefined) legacyTypeIdxToGlobalIdx.set(typeIdx, globalIdx);
-  }
+  const legacyCsvEntries = legacyEntries.map(({ names }) => names.map(escapeStructFieldNameForCsv).join(","));
+  addStringConstantGlobals(ctx, [...legacyCsvEntries, ...ctx.shapeNameCsvById]);
   // One CSV global per shape-id (colliding structs share the table by VALUE).
   const shapeIdToGlobalIdx = new Map<number, number>();
   for (let id = 0; id < ctx.shapeNameCsvById.length; id++) {
@@ -1201,12 +1196,12 @@ function emitStructFieldNamesExport(
   let fallback: Instr[] = [{ op: "ref.null.extern" }];
 
   for (let i = legacyEntries.length - 1; i >= 0; i--) {
-    const typeIdx = legacyEntries[i]!.typeIdx;
-    const globalIdx = legacyTypeIdxToGlobalIdx.get(typeIdx);
+    const { typeIdx, tag } = legacyEntries[i]!;
+    const globalIdx = ctx.stringGlobalMap.get(legacyCsvEntries[i]!);
     if (globalIdx === undefined) continue;
+    const matches = fieldNameArmTest(anyLocal, typeIdx, tag);
     fallback = [
-      { op: "local.get", index: anyLocal },
-      { op: "ref.test", typeIdx },
+      ...matches,
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "externref" } },
