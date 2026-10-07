@@ -74,3 +74,7 @@ script-mode-`this` semantics are designed. Do NOT attempt as a one-off.
   same storage as the top-level `var` binding. Mechanism, measurements and
   residuals: `plan/issues/6651-es2015-standalone-100pct-execution-plan.md`
   § "2026-10-07 — Slice V13".
+- **Repro / pins:** `tests/issue-6651-v13-global-var-binding.test.ts` (5 cases,
+  all red on the pre-V13 base) and the test262 rows
+  `test/language/expressions/typeof/built-in-exotic-objects-no-call.js` and
+  `test/built-ins/Array/from/source-array-boundary.js`.
