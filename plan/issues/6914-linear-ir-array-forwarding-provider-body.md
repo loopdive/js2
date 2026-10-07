@@ -347,3 +347,40 @@ Retry and remote/PR HEAD verification remain required. Repaired strict typing
 is running; repaired paired runtime comparison, current3146 build and architecture
 checks remain unproven. Keep the PR non-draft HOLD; A owns integration acceptance
 and protected queue landing. No new frontend coverage or retirement is claimed.
+
+## Repaired qualification and demonstrated registry blocker
+
+Verified publication: non-draft HOLD PR
+https://github.com/loopdive/js2/pull/6590, remote/PR HEAD
+`20908326570526467ddd03c07afe97c4750ef2eb`, autoMerge=null. Session A handoff:
+https://github.com/loopdive/js2/pull/6582#issuecomment-6044498226.
+
+Both repaired strict test-inclusive TS7 arms pass exit0, zero diagnostics.
+Repaired execution baseline034f8e versus candidate209083:51/51 each, three files,
+zero skips. Across repaired arms AND original versus repaired within each arm,
+all51 case identities/statuses and all13 full rows/16 binaries/10 full memories
+are exactly equal. Only verified revision/test-hash instrument provenance differs
+within each arm; no changed fixture, typeNames, resolver count or observation.
+All original failed typing, test bytes and runtime observations remain archived.
+
+Dialect (27), flat directory (829), explicit3146 file/function budgets (two TS
+source changes, net+12 LOC), scoped format and lint pass. Candidate inventory
+exits1 with exactly unclassified-nonmodule for arrays/README.md and
+unclassified-module plus unclassified-target for arrays/forwarding-resolver.ts.
+Matching unchanged-source baseline inventory exits0, inventory-valid but still
+architecture/graph incomplete. Both policy hashes are unchanged8f0fb0fd29.
+This is a new-path classification blocker, not inherited success or full migration.
+
+B leaves shared `scripts/compiler-boundaries.json` untouched. Designated owner A
+must publish its exact module/layer/target/documentation classification or explicitly
+hand off the precise scope. Request posted with raw evidence boundaries:
+https://github.com/loopdive/js2/pull/6582#issuecomment-6044655443.
+Do not relocate cohesive target modules, use broad exclusions, borrow a grant,
+fake migrated status or weaken this gate to obtain green. Full current-epoch build
+qualification also remains pending. HOLD stays until A accepts integration gates.
+
+Refreshed canonical maina6bf4654 and claims9596b786; only docs/benchmark artifacts
+advanced since frozen3146. No shared handoff/contract release or source/test/policy
+change was found. All measurements retain exact frozen heads. Broader source-free
+Prepared array materialization and shared-owned Linear emission remain dependent
+on A's explicit contract and scope release; legacy code remains intact.

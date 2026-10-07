@@ -59,6 +59,61 @@ discriminant guards. Sol implemented only those sites in
 Fresh strict/runtime comparison is required before accepting this instrument.
 Do not weaken typing or discard this original passing-runtime/failing-typing epoch.
 
+## Repaired instrument qualification
+
+Repaired baseline HEAD: `034f8e39109b7e5c508ca0624bdb43de3c4cde50`.
+Repaired candidate execution HEAD: `20908326570526467ddd03c07afe97c4750ef2eb`.
+Both clean execution trees used identical repaired test hash59ccfd, unchanged
+source arms, options, workers and51-case command (output suffix `51-v2`).
+Both exit0:51/51, three files, zero skips. Baseline94.75s; candidate67.71s;
+these observations are not a performance claim. Strict test-inclusive TS7
+exit0, zero diagnostics in BOTH repaired arms. Original failed strict checks
+remain beside these losslessly compressed repaired logs.
+
+Append the following arguments to the original comparison command:
+
+```sh
+plan/log/6914-linear-forwarding-20261007/baseline51-v2.log.gz plan/log/6914-linear-forwarding-20261007/baseline51-v2.json.gz plan/log/6914-linear-forwarding-20261007/candidate51-v2.log.gz plan/log/6914-linear-forwarding-20261007/candidate51-v2.json.gz --repaired
+```
+
+`instrument-repair-comparison.json` records exact equality across repaired arms
+AND original versus repaired within each arm: all51 exact cases, all13 complete
+observations,16 binary witnesses and10 memory witnesses each. Within-arm repair
+exceptions are separately pinned revision/test hash only; no observation,
+type-name output, resolver count, binary, memory or allocation is normalized.
+The same verifier implements both epochs without duplicate comparison logic;
+artifact populations are now checked as exactly16 and10, not merely lower bounds.
+
+## Architecture and integration blocker
+
+Fresh candidate gates at frozen3146: canonical dialect exit0 (27 declarations),
+flat directory exit0 (829 existing codegen files), explicit-base file/function
+budgets exit0 (two changed TS source paths; net+12 LOC), scoped format/lint exit0.
+Raw logs are retained. The compiler inventory is NOT green:
+
+- Candidate inventory exits1: `invalid-inventory`, inventoryValid=false,
+  architectureComplete=false, graphComplete=false. Exactly three errors:
+  unclassified README, unclassified module, unclassified target for the new
+  runtime/arrays README and forwarding-resolver leaf.
+- Matching unchanged production baseline inventory exits0:
+  `inventory-valid-architecture-incomplete`, inventoryValid=true,
+  architectureComplete=false, graphComplete=false, errors empty.
+- Both use unchanged policy SHA-256
+  `8f0fb0fd2992784747e5cb5673aec59f3bec7d76b36abe2c504f459bfbb141b1`.
+
+This is demonstrated new-path shared-registry wiring debt, not an inherited
+candidate failure or permission to exempt the paths. Session A owns
+`scripts/compiler-boundaries.json`; B has NOT changed it. Exact wiring request:
+https://github.com/loopdive/js2/pull/6582#issuecomment-6044655443.
+Require explicit module/layer/target/documentation classification, preserving
+real migration debt and graph incompleteness; no wildcard or completion claim.
+
+Canonical main refreshed to `a6bf4654f7914f5a472ee22dd6c0358a92bbbc2c`, claims tip
+`9596b786795b139e93d1fb9492b61a0c579f9f40`. Since frozen3146, only benchmark
+artifacts and three unrelated issue documents changed: no source, test, compiler
+policy or target contract change. These measurements remain attributed to their
+frozen execution commits, never relabelled as a new-main run.
+
 ## Integration boundaries
 
 Only production changes: root runtime's private resolver callback/import and

@@ -24,7 +24,9 @@ const ids = [
   "fresh-object-custody",
 ];
 const hash = (value) => createHash("sha256").update(value).digest("hex");
-function arm(log, report, head, runtime) {
+const originalTest = "1e5114449c2a05d73b5a0c20a746cf1a12d179bbef083254dd4a2ca286c7a1f1";
+const repairedTest = "59ccfd57937a8d5a15635e746247e83b714b60abebffab4853010bc22dd01a23";
+function arm(log, report, head, runtime, test = originalTest) {
   const rows = read(log)
     .split("\n")
     .filter((line) => line.startsWith('{"issue":6914,'))
@@ -35,7 +37,7 @@ function arm(log, report, head, runtime) {
   assert.equal(provenance[0].head, head);
   assert.equal(provenance[0].runtimeSha256, runtime);
   assert.equal(provenance[0].dirty, "");
-  assert.equal(provenance[0].testSha256, "1e5114449c2a05d73b5a0c20a746cf1a12d179bbef083254dd4a2ca286c7a1f1");
+  assert.equal(provenance[0].testSha256, test);
   assert.equal(provenance[0].baseline, "3146af9a349bb20a5a398fba37e8b69b16fb4ab9");
   const observations = rows.filter((row) => row.kind === "observation");
   assert.deepEqual(observations.map((row) => row.id).sort(), [...ids].sort());
@@ -66,8 +68,8 @@ function arm(log, report, head, runtime) {
     assert.equal(row.failure, null);
     inspect(row.evidence);
   }
-  assert.ok(binaries >= 13);
-  assert.ok(memories >= 10);
+  assert.equal(binaries, 16);
+  assert.equal(memories, 10);
   const result = JSON.parse(read(report));
   assert.equal(result.numTotalTests, 51);
   assert.equal(result.numPassedTests, 51);
@@ -93,7 +95,11 @@ function arm(log, report, head, runtime) {
     memories,
   };
 }
-assert.equal(process.argv.length, 6, "baseline log/report, candidate log/report required");
+assert.ok(
+  [6, 11].includes(process.argv.length),
+  "original four paths, optionally repaired four paths and --repaired required",
+);
+if (process.argv.length === 11) assert.equal(process.argv[10], "--repaired");
 const baseline = arm(
   process.argv[2],
   process.argv[3],
@@ -107,6 +113,35 @@ const candidate = arm(
   "2335826df9ce1609a10e62ad065870d354b429a5e110995d0f80d8fc2a61e039",
 );
 assert.deepEqual(candidate, baseline);
+if (process.argv.length === 11) {
+  const repairedBaseline = arm(
+    process.argv[6],
+    process.argv[7],
+    "034f8e39109b7e5c508ca0624bdb43de3c4cde50",
+    "2a562751f9e2c6291944836681b3bc99b402c2d154a88c429ee16013eaf09e0f",
+    repairedTest,
+  );
+  const repairedCandidate = arm(
+    process.argv[8],
+    process.argv[9],
+    "20908326570526467ddd03c07afe97c4750ef2eb",
+    "2335826df9ce1609a10e62ad065870d354b429a5e110995d0f80d8fc2a61e039",
+    repairedTest,
+  );
+  assert.deepEqual(repairedCandidate, repairedBaseline);
+  for (const [original, repaired] of [
+    [baseline, repairedBaseline],
+    [candidate, repairedCandidate],
+  ]) {
+    const { testSha256: ignoredOriginalHash, ...originalProvenance } = original.commonProvenance;
+    const { testSha256: ignoredRepairedHash, ...repairedProvenance } = repaired.commonProvenance;
+    assert.deepEqual(repairedProvenance, originalProvenance);
+    assert.deepEqual(
+      { ...repaired, commonProvenance: repairedProvenance },
+      { ...original, commonProvenance: originalProvenance },
+    );
+  }
+}
 console.log(
   JSON.stringify({
     status: "exact-equality",
@@ -115,5 +150,7 @@ console.log(
     binariesPerArm: baseline.binaries,
     memoriesPerArm: baseline.memories,
     provenanceExceptions: ["head", "runtimeSha256"],
+    instrumentRepairVerified: process.argv.length === 11,
+    instrumentRepairProvenanceExceptions: process.argv.length === 11 ? ["head", "testSha256"] : [],
   }),
 );
