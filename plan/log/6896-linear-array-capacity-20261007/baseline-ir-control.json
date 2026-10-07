@@ -1,0 +1,97 @@
+{
+  "revision": "c0a314636dfcaa437df1468f922bf0d6b0c5bcae",
+  "node": "v22.23.2",
+  "v8": "12.4.254.21-node.56",
+  "flag": "1",
+  "sourceSha256": "2a562751f9e2c6291944836681b3bc99b402c2d154a88c429ee16013eaf09e0f",
+  "source": "export function run(a:number,b:number):number { const values=[a,b]; return values[0]+values[1]+values.length; }",
+  "options": {
+    "target": "linear",
+    "optimize": false
+  },
+  "inputs": [1.5, -2.25],
+  "success": true,
+  "errors": [],
+  "compiled": ["run"],
+  "rejected": [],
+  "memoryPlan": {
+    "policy": "arena-v1",
+    "layouts": [
+      {
+        "id": "vector:scalar:f64",
+        "kind": "vector",
+        "alignment": 8,
+        "size": {
+          "kind": "elements",
+          "baseBytes": 16,
+          "strideBytes": 8,
+          "minimumElements": 16
+        },
+        "pointerMap": {
+          "kind": "elements",
+          "fixedOffsets": [],
+          "elementsOffset": 16,
+          "elementStride": 8,
+          "elementsContainPointers": false
+        },
+        "lengthOffset": 8,
+        "capacityOffset": 12,
+        "elementsOffset": 16,
+        "elementStorage": "f64",
+        "elementStride": 8,
+        "minimumCapacity": 16
+      }
+    ],
+    "allocations": [
+      {
+        "id": 0,
+        "ownerFunction": "run",
+        "allocationKind": "array",
+        "layoutId": "vector:scalar:f64",
+        "size": {
+          "kind": "constant",
+          "bytes": 144
+        },
+        "ownership": "owned",
+        "accesses": ["read"],
+        "escape": "local",
+        "stackCandidate": false,
+        "allocationClass": "arena",
+        "lifetime": "function",
+        "root": {
+          "kind": "none"
+        },
+        "safepoints": {
+          "kind": "none"
+        },
+        "barrier": {
+          "kind": "none"
+        },
+        "operations": [
+          {
+            "family": "vector",
+            "operation": "allocate",
+            "allocationClass": "arena",
+            "elementStorage": "f64"
+          },
+          {
+            "family": "vector",
+            "operation": "grow",
+            "allocationClass": "arena",
+            "elementStorage": "f64"
+          },
+          {
+            "family": "vector",
+            "operation": "initialize-element",
+            "allocationClass": "arena",
+            "elementStorage": "f64"
+          }
+        ]
+      }
+    ],
+    "dataSegments": [],
+    "globals": []
+  },
+  "actual": 1.25,
+  "expected": 1.25
+}

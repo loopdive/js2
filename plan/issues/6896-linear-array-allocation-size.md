@@ -1,7 +1,7 @@
 ---
 id: 6896
 title: "Linear array runtime: check allocation byte size and capacity doubling before malloc"
-status: ready
+status: in-progress
 created: 2026-10-07
 updated: 2026-10-07
 sprint: Backlog
@@ -345,3 +345,19 @@ Ready finite specification, not implementation/test completion or a claim to
 4540/A work. Parent owns coordination, evidence publication and final
 integration. Any need to change shared layout or allocator authority requires
 a new scope comparison; stop rather than broadening this leaf fix.
+
+## Implemented checkpoint (2026-10-07)
+
+Implementation b749becb4b4e44c5722b742de0dfd83cf7f0a04e; final tests
+f221a809902cf630c1df433298e59ecc85c492ff, based on canonical main
+c0a314636dfcaa437df1468f922bf0d6b0c5bcae. All acceptance checks above are
+demonstrated for this bounded leaf by the integration packet at
+`plan/agent-context/linear-array-capacity-session-b-20261007.md` and retained
+logs under `plan/log/6896-linear-array-capacity-20261007/`.
+
+Final identical test: baseline10pass11fail/21; candidate21pass/21. Eleven
+unchanged actual control rows equal exactly apart from emitted binary
+digests. Unchanged regression files remain37pass2fail/39 on both versions:
+existing1977 scalar growth24vs69 and16vs40 belong to A's emitter scope.
+No skipped fixtures, retirement, shared edits or general malloc safety claim.
+Status remains in-progress pending A's coordinated main integration.
