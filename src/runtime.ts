@@ -7537,7 +7537,7 @@ const _resolveClassMember = createClassMemberResolver({
   marshalBridgeResult: _marshalBridgeResult,
   // (#5237) No reader: the compiled bridges dispatch on the RAW carrier, so an
   // explicit `this` that arrived as a host mirror must be stripped back to it.
-  unwrapReceiver: (value) => _unwrapForHost(value),
+  unwrapReceiver: (value, reader) => _unwrapForHost(value, reader),
 });
 const _invokeClassMethod = createResolvedClassMethodInvoker(_resolveClassMember, _MISS, _unwrapForHost);
 

@@ -4631,6 +4631,7 @@ async function runOriginalHarnessVariant(
       const instantiateStarted = performance.now();
       instance = await instantiateTest262Module(result.binary, imports, {
         target,
+        semanticProviders: parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS),
         providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
         // (#5248) Empty on every non-Temporal row, so the shared finaliser takes
         // its existing path byte-for-byte.
