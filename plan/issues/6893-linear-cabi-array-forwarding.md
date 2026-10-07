@@ -682,3 +682,70 @@ baseline evidence; the valid rerun uses baseline's own identical configuration.
 Astra's read-only review agrees the nine boundary failures are attributable to
 the bounded fix. Existing1977 asserts69/40 but does not record their IR route;
 retain A6897 attribution rather than claiming independent route proof here.
+
+## Cast-free test byte-buffer repair and requalification — 2026-10-07
+
+Parent reports the unchanged current-main population at baseline89 pass/9 fail
+and candidate98/98, with33 records per arm and all strict comparator custody/delta
+checks passing. Strict test-inclusive TS7 nevertheless exits1 in BOTH arms with
+the same ten diagnostics. Preserve the original676-line test, its SHA-256
+`7612ec537bd3876f3a872e029629601442b7593b1150c30cd25d49db7351be62`, all runtime
+evidence, and `main-e1e/strict-{candidate,baseline}.log.gz` under this issue's
+existing evidence directory. This is an instrument typing repair, not a compiler
+fix or a reason to describe the original strict gate as green.
+
+Original test writer Noether has explicitly handed off this bounded test-only
+scope to parent/new Sol6.1 worker. This architect retains only append-only issue
+ownership under `6893:linear-cabi-main-composition-plan-20261007`; parent handles
+writer dispatch and integration onto its frozen successor of `def4c3befd`.
+No shared source, API, registry, configuration or fixture ownership is released.
+
+### Exact four-site implementation scope
+
+Only `tests/issue-6893-linear-cabi-array-forwarding.test.ts` may change:
+
+1. `publicFixture`: after the compile/report capture and before recording the
+   result, introduce `const binary = new Uint8Array(result.binary)`. Use this local
+   for both `WebAssembly.validate` calls and `new WebAssembly.Module` (original
+   lines111,116,117). Leave the returned original result and route capture intact.
+2. The public namesake-host-import test: introduce the same local after its
+   compile/report capture; use it for both validations and module construction
+   (original lines151,156,157). Preserve imports, host callback and assertions.
+3. `runtimeFixture`: replace only its binary initialization with
+   `const binary = new Uint8Array(emitBinary(module))` (original line391).
+4. The parameterized string/scalar no-resolver test: make that same initialization
+   replacement (original line625), leaving both cases and their assertions intact.
+
+The typed-array copy produces ArrayBuffer-backed bytes without casts and preserves
+exactly the input view's bytes and boundaries. Do not pass bare `.buffer`, introduce
+a shared adapter, change compiler return types, or add `any`, suppression, overload
+casts or typecheck exclusions. Once bytes match the BufferSource overload, the two
+`instantiate` result diagnostics should disappear; retain existing `{ instance }`
+destructuring and module-input instantiation elsewhere. This is a source-derived
+expectation, not a claimed successful strict run. No new assertions, cases, source
+strings, options, provider wiring or semantics are authorized.
+
+### Paired requalification before acceptance
+
+Parent freezes identical repaired test bytes in the actual test-only e1e baseline
+and composed candidate, recording exact revisions, hashes and input custody.
+Retain prior operands/evidence rather than silently relabeling them as new runs.
+
+- Run the unchanged strict test-inclusive TS7 command on both arms; require zero
+  diagnostics. Preserve both new logs alongside the original ten-diagnostic logs.
+- Rerun the entire unchanged98-case population serially with the same harness and
+  options: baseline89 pass/9 fail, candidate98/98, zero skips. Require identical
+  case identities and baseline failed assertions/semantic failures; source-line
+  shifts from this edit are not new failures and must not mask message changes.
+- Require all33 semantic records per arm to equal that arm's pre-repair records.
+  Exclude only explicitly enumerated provenance changes such as test hash/revision;
+  retain original provenance and do not normalize routes, values or memory bytes.
+  Re-run the paired ten-kind equality and complete growth-custody/delta checks.
+- Finish normal scoped formatting/lint and required gates without weakening them.
+  An unexpected diagnostic, route, population or semantic delta stops acceptance
+  for parent review; it does not authorize expanding this repair.
+
+Source-array fallback remains fallback, scalar repair remains A6897's contribution,
+and this test repair earns no source admission or migration credit. PR6568 remains
+HOLD until reviewed evidence and A's integration/queue authorization. All preceding
+sections, including the108-line composition append, remain unchanged.
