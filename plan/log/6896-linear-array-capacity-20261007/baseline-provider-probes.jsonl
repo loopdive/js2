@@ -1,0 +1,6 @@
+{"kind":"array-new","cap":0,"usedBefore":0,"usedAfter":16,"ptr":1024,"storedCapacity":0,"bytes":65536,"requiredBytes":"16"}
+{"kind":"array-new","cap":4,"usedBefore":16,"usedAfter":64,"ptr":1040,"storedCapacity":4,"bytes":65536,"requiredBytes":"48"}
+{"kind":"array-new","cap":536870912,"usedBefore":64,"usedAfter":80,"ptr":1088,"storedCapacity":536870912,"bytes":65536,"requiredBytes":"4294967312"}
+{"kind":"array-new","cap":536870913,"usedBefore":80,"usedAfter":104,"ptr":1104,"storedCapacity":536870913,"bytes":65536,"requiredBytes":"4294967320"}
+{"kind":"array-new","cap":-1,"usedBefore":104,"usedAfter":112,"ptr":1128,"storedCapacity":4294967295,"bytes":65536,"requiredBytes":"34359738376"}
+{"kind":"array-grow","ptr":1136,"newPtr":1184,"usedBefore":160,"usedAfter":176,"capacity":536870912,"length":1}
