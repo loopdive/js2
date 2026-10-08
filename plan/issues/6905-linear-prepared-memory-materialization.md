@@ -678,3 +678,100 @@ publish the geometry source before sealing its successor. These refer to the
 held owners already identified above; each must acknowledge exact hunks.
 B owns this appendix only. No foreign helpers, fixtures, receipts, runtime,
 registry, workflow or production source are edited or newly authorized.
+
+## Conditional native memory interface acknowledgement — 2026-10-08
+
+Metadata-only claim `6905:native-interface-amendment-plan-20261008`, owner
+`ttraenkler/codex-linear-b-native-interface-astra-20261008`, write93440-ye5ufxfv,
+parent-effect-verified ledger49bb2fc5d3. This isolated branch starts at
+`a40bee66df93e34870c810d16c12ebf3444c5889`; only this issue appendix is released.
+All previous appendices, historical fixtures, receipts and failures remain.
+
+Astra High read the complete711-line,47999-byte issue6920 plan, **Native Linear
+numeric-vector shared source handoff and integration plan**, published in
+PR6596 at `5d1d87224101fc3ed8a2cc4e54a5a4230dca0dfe` in `ttraenkler/js2`.
+Verified SHA256:
+`e264f64d0e600664881b656c8aae2d2f349ae5c3eeb4ada10a6bd8af816c9cfc`.
+Parent independently read the complete plan and confirmed the source predicates
+below on main845. This is conditional architectural acknowledgement, not tested
+source acceptance, a donor handshake, implementation dispatch or a claim transfer.
+
+### A-C/B-M agreement and required DATA refinements
+
+The five proposed API names and single B implementation home
+`src/backend/linear/program/memory.ts` fit this issue's retained responsibilities.
+Do not introduce a second facade/API alongside them. A owns common acceptance,
+dispatch, original body/slot identity and final publication; B owns the agreed
+target pack. Name every additional contracts/helper path and its exact owner
+before any edit; "cohesive helpers" is not blanket new-file authority.
+
+1. **Actual demand versus operation catalogue.** Existing
+   `linear-memory-plan.ts::operationsForLayout` always lists vector allocate,
+   grow and initialize-element, including fixed vectors. Rejecting that list
+   wholesale as growth demand would reject the required positive fixture.
+   Preserve the canonical plan; distinguish its operation catalogue from exact
+   selected-body demand and transitive provider dependencies. Reject actual
+   unsupported growth before reservation; do not delete catalogue entries or
+   silently admit growth merely because a provider exists.
+2. **Exact module/facts join.** `planLinearMemoryFromFrozenFacts` takes
+   `(module: IrModule, facts, policy)`, not a runtime projection. Its verifier
+   rejects missing AND extra allocation IDs. A-F/A-C must publish the canonical
+   module view and selected facts, including support bodies, with exact final
+   owner/ID census or an explicitly authenticated projection rule. B must not
+   filter facts opportunistically, fabricate an IrModule or rerun analysis.
+3. **Detached DATA versus indexed object.** Use canonical
+   `LinearMemoryPlanSnapshot` for detached/serialized DATA. Keep any indexed
+   `LinearMemoryPlan` class instance, with its private maps/methods, private to
+   validated target planning. No new generic capability schema is needed.
+   A's existing private acceptance record retains the exact accepted plan;
+   an exposed plan copy or successful validation boolean cannot authorize use.
+
+### Five-function transaction contract
+
+- `planPreparedLinearMemory({program, projection, options})`: validate and plan
+  without ledger mutation. Return a discriminated supported immutable plan or
+  located typed unsupported result; malformed DATA throws the existing invariant.
+  Separate source allocations, admitted executable demand, support inventory
+  and export requirements. An empty scalar requirement set stays genuinely empty.
+- `reservePreparedLinearMemory(tx, plan)`: reserving phase only, after all
+  imports. Reserve exactly the planned resources and bind the opaque pack to
+  this transaction and accepted plan. No freeze, final-index lookup, body fill
+  or export publication here; do not codec-persist the reservation authority.
+- `preparedLinearMemoryBindings(tx, pack)`: after freeze and before primary
+  lowering. Authenticate pack/plan/transaction and actual ledger tokens. Return
+  exact carrier/signature conversion, logical layout and representation-derived
+  scratch bindings, operation-to-callable bindings and support inventory.
+  A composes common function/global bindings. No name-based authority, fake GC
+  handle, post-edited locals or acceptance capability is returned.
+- `fillPreparedLinearMemory(tx, pack)`: filling phase only. Fill each planned
+  provider and heap global exactly once through existing ledger APIs, using
+  canonical shared runtime bodies. No raw-module mutation/adoption or copied
+  allocator, initializer or forwarding algorithm.
+- `requireCompletedPreparedLinearMemory(tx, pack)`: use existing
+  `assertCompletedReservation` for every owned function/global and reconcile
+  the entire pack inventory. This does not seal unrelated program resources.
+  A retains overall primary/startup/resource completion and sole sealing.
+
+Two lifecycle clarifications are mandatory. `defineExport` requires the filling
+phase: inventory export requirements before freeze, then designate exactly ONE
+owner to publish memory/lifecycle exports after required completion, never both
+A and B. A provider-construction exception may precede any ledger call and thus
+not trigger the ledger's own failure latch. Explicitly invalidate that pack and
+make A's acceptance/emission failure terminal; prohibit retry, fallback, later
+binding/completion or publication from it. No new kernel API is presumed.
+
+### Real caller and release conditions
+
+Issue6920 names the necessary future joins: `planPhysicalSetup`,
+`materializePhysicalProgram`, shared signature/body resolution and
+`fillPreparedPrimaryUnit`. Its logical-vector representation seam correctly
+covers internal lowering/scratch as well as outer signatures. These are named
+future callers, not delivered source. Require reviewed A-F/A-G/runtime-donor
+dependencies, agreed A-C/B-M refinements, exact lower-contracts/vector/runtime
+owner releases, and coherent source call-through before implementation dispatch
+or native acceptance. Preserve the real runtime-input1.25 requirement and all
+original obligations. Existing test populations and receipts are unchanged;
+these refinements are not executed results or additional claimed passing rows.
+Parent/root retains integration and publication; all foreign claims and old
+historical proofs remain intact. No source, tests, workflow, registry, commits
+or pushes are authorized by this metadata-only acknowledgement.
