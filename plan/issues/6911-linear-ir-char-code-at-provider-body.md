@@ -19,6 +19,7 @@ files:
   - tests/issue-6911-linear-ir-char-code-at-provider-body.test.ts
   - src/codegen-linear/runtime/README.md
   - src/codegen-linear/runtime/strings/README.md
+  - scripts/compiler-boundaries.json
 ---
 
 # Linear IR charCodeAt provider: reusable emission body and exact preservation
@@ -431,3 +432,82 @@ the normal legacy-linear/Linear-target module classification for the decoder
 leaf, without exemptions or relaxing any boundary. The full current report is
 retained as `main-845/compiler-boundaries-report.json.gz`. Requalify the real
 inventory gate on the integrated policy and source before queue submission.
+
+## Bounded registry handoff adopted — 2026-10-08
+
+Parent explicitly releases only `scripts/compiler-boundaries.json` and this
+existing issue for the metadata task, on isolated branch
+`codex/6911-linear-char-code-at-provider-20261007`, actual starting HEAD
+`abe2db03bd680114e83e27ffd6134d50d62e5b68`. Fresh PR6583 read confirms that
+same source head in `loopdive/js2`, OPEN/HOLD and autoMergeRequest null.
+
+Exact canonical claim `6911:registry-handoff-20261008`, sole owner/requester
+`ttraenkler/codex-linear-b-registry-sol61-20261008`, branch as above, is
+in-progress with write ID `61391-vkagd3c6`, claimed/updated
+`2026-10-08T16:16:28Z`. Effect-read ledger tip
+`b57812ab47b49611755d36cd04d327c67e4f522d`; exact claim history records
+`9bcd60da006064e79e1a935c159a9b0816097394`. Existing source/test claims are
+preserved and confer no additional edit scope for this task.
+
+Published authority is [A's handoff PR6596](https://github.com/loopdive/js2/pull/6596),
+exact commit `555af588b3b41dda3b95a3d53468e0f4d55a32c7`, including the adopted
+Astra High plan SHA256
+`ca7b3e3ed09a89da6917231a7ccc906369e567d2e180e0b145ac05c5f299d636`
+and adopted handoff SHA256
+`29879b4e2ee6d4968156ecf950206239087d75011d028d7d14eec776b9e57f57`.
+Its matching-path rule permits applying only records whose source paths exist
+on the actual B head. [A's registry proposal PR6595](https://github.com/loopdive/js2/pull/6595)
+is exact commit `52b64c8277b4e61c42f24e7821445260aa638179`; it is a proposal,
+not main delivery. The parent-approved bounded task applies only its normal
+unmigrated/legacy-linear row for `runtime/strings/char-code-at.ts` and normal
+nonModules rows for `runtime/README.md` and `runtime/strings/README.md`, all
+under `src/codegen-linear`. The other five proposal paths are absent here and
+must not be classified by this task.
+
+Preserve the entire baseline policy, existing entries and order; no exemption,
+new target policy, budget grant, source/test/fixture/hook/workflow change or
+native admission claim. Before commit, run the normal inventory with an actual
+Git comparison base, require a meaningful module/edge population and zero
+errors, and verify exact proposal-row equality plus full baseline-policy
+preservation after removing only the three additions. Check formatting and
+whitespace; use normal fast commit hooks and user author with Codex attribution.
+Heavy tests, typing and builds remain parent-owned. Do not push before parent
+review. All original positive failures, historical paired epochs, HOLDs and
+A's integration/queue ownership remain unchanged.
+
+### Actual bounded registry validation
+
+Normal command `node scripts/check-compiler-boundaries.mjs --mode inventory
+--base abe2db03bd680114e83e27ffd6134d50d62e5b68` exits0: **1,893 modules,
+all1,893 tracked;14,595 resolved edges;4 excluded nonModules;zero errors**.
+Inventory is valid; architecture and graph remain incomplete, explicitly not
+full IR acceptance. Execution HEAD remains abe2 with the working policy change;
+this measurement is not relabeled as the later metadata commit.
+
+The count/policy validator passes floors1,700 modules/1,000 resolved edges,
+requires exactly one new module and two nonModules, actual present source paths,
+exact equality of all three rows to A's published proposal, and exact equality
+of the entire baseline policy and array order after removing only those rows.
+Removing their exact insertion text also recovers baseline bytes unchanged.
+Actual report errors are an empty array, not inferred from a green shell result.
+Baseline policy SHA256:
+`424591ac33717356b1edd6278b7fefc35eec597418911674fb75267093de70da`;
+candidate policy SHA256:
+`132429d72edc89aabe0f55e87242d24dc1bf2f31d4c21970c622e3fcb791af20`.
+Scoped Prettier checks for both edited files and whitespace checks pass.
+Raw report/stderr, both policy preimages, validator/result and fresh claim/PR
+responses stay in worktree-local `.tmp/6911-registry-handoff-20261008/`.
+No tests, typecheck or build were run; parent still owns those qualifications.
+This only clears the measured inventory defect locally, without a CI or landing
+claim. Commit is reserved for parent review before any push; HOLD remains.
+
+Parent subsequently authorized the sole heavy-job lock for the unchanged
+`tests/issue-3518-compiler-boundaries.test.ts` detector regression. Exact run:
+`pnpm exec vitest run tests/issue-3518-compiler-boundaries.test.ts --pool=forks
+--poolOptions.forks.singleFork=true --no-file-parallelism --reporter=default
+--reporter=json --outputFile=.tmp/6911-registry-handoff-20261008/detector-tests.json`.
+Exit0: **125pass/0fail/0skip**, one file,83.12s. Raw log and JSON remain in
+the same evidence directory. The earlier no-test statement describes the
+preceding inventory epoch, not this later authorized detector qualification.
+Heavy job is terminal and its lock released; no source tests, typechecking or
+build were run. Normal fast commit hooks remain required.
