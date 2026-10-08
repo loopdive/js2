@@ -889,3 +889,61 @@ source, donor acknowledgements, coherent real callers and planned qualification
 are still owed. Old proofs, legacy behavior, original failures, tests and receipts
 remain unchanged. No executed result, source acceptance, new native coverage,
 HOLD release, source/test/claim edit, commit or push follows from this appendix.
+
+## Adopted implementation-entry and composed-acceptance gates — 2026-10-09
+
+Metadata-only claim `6905:implementation-entry-staging-plan-20261009`, owner
+`ttraenkler/codex-linear-b-staging-astra-20261009`, write35708-daoey8xz,
+parent-effect-verified ledger41be8b2538. This appendix starts from
+`27e7b3ea47962ebc1899fc47571da47f4230716a` and preserves all prior issue bytes.
+It mirrors root's adopted issue6920 staging clarification at PR6596 commit
+`f0e0af9c6364220e10ad61fefe4d51e276b54027`:109170 bytes, SHA256
+`4e496964c254c7a3f3d4ac6bf9dfaef99d5a7b0ceaffef056098671c002d991c`.
+Astra High and parent read the complete addition; the original97935-byte prefix
+matches its prior hash. This is a planning clarification, not source acceptance.
+
+### Gate 1: release B-M implementation entry
+
+Root must record exact reviewed source endpoints, applicable bounded proof,
+file/function custody and an explicit bounded release for all prerequisites:
+
+- A-F: strict complete module/facts/support join, exact owner/ID census and clean
+  facts-only planner; no filtered registry or still-reanalyzing substitute.
+- A-G: usable canonical geometry, donor/A2 partition and named historical
+  proof/reader releases with their endpoint/proof obligations preserved.
+- A-C inputs: checked executable demand distinct from the catalogue, concrete
+  representation/carrier/scratch/type endpoints and agreed five-function API,
+  including `reservePreparedLinearMemory(tx, plan, assertEmissionActive)`.
+- Runtime donors: canonical reservation-compatible allocator and COMPLETE array
+  constructor/provider dependencies, with retained initializer and forwarding
+  builder; checked arithmetic fragments alone are insufficient.
+- S/ownership: reviewed startup/ReferenceError/shared-resource contract and
+  exact A-C/B-M holders plus all required vector/lower-contracts/runtime releases.
+- Concrete A-C caller packet: reviewed patch/design for actual planning,
+  materialization, signature/body resolution, primary fill, scratch and lifetime
+  joins, agreeing arguments, phases, resource ownership and failure behavior.
+
+B-M's finished source and the final public1.25 result are NOT Gate 1 prerequisites.
+After explicit release, A-C and B-M develop in coordinated isolated worktrees;
+B owns only the agreed `src/backend/linear/program/{contracts,memory}.ts` scope.
+Pending caller patches and B code are integration candidates, not independently
+delivered support. Compose before landing: no dead facade, dummy provider,
+permissive stub, legacy fallback or uncalled module may satisfy this gate.
+
+### Gate 2: accept the composed native-vector source handoff
+
+The packet includes B-M with A-C, A1/S, A-F/A-G, runtime donors, registry and
+required historical successors at one frozen reviewed source head. Require the
+unchanged public standalone/WASI sync/async compile fixture returning1.25,
+actual source/allocation/provider/ledger and memory observations, source-free
+replay, lifetime/export controls, all original F/G/V/R and retained B cohorts,
+failures, denominators, proofs and normal independent/protected-delivery gates.
+
+Explicitly supersede the staging meaning of this issue's historical lines769–772:
+their coherent source call-through requirement belongs to Gate 2, NOT a demand
+that B-M already exist before Gate 1. No original evidence obligation is removed.
+Canonical `runtime/arrays/forwarding-resolver.ts` reuse still supersedes the
+duplicate `runtime/array-forwarding.ts` proposal; array fragments remain arithmetic,
+not a complete constructor. Both gates are UNMET. No dispatch, additional path,
+helper ownership, claim transfer, HOLD release, source/test change, retirement,
+commit or push is authorized. Parent/root retains integration and publication.
