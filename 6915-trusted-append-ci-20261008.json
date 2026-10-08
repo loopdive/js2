@@ -3,9 +3,10 @@
   "slice": "trusted-append-ci-20261008",
   "assignee": "ttraenkler/codex-linear-b-append-ci-sol61-20261008",
   "requested_by": "ttraenkler/codex-linear-b-append-ci-sol61-20261008",
-  "status": "in-progress",
+  "status": "done",
   "branch": "codex/6915-linear-append-plan-20261007",
   "claimed_at": "2026-10-08T16:16:36Z",
-  "updated_at": "2026-10-08T16:16:36Z",
-  "write_id": "61584-ct2bbtgm"
+  "updated_at": "2026-10-08T17:20:20Z",
+  "write_id": "96415-pkpzp33k",
+  "released_at": "2026-10-08T17:20:20Z"
 }
