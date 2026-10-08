@@ -174,6 +174,29 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     `$__ta_ctor`, which the Int8Array `$Object` carrier is not). The first cut
 #     inlined the arm here and cost +68 / +65; extracting it left these 8.
 loc-budget-allow:
+  # 2026-10-07 — slice W2b (GetPrototypeFromConstructor step 4; record
+  # `### 2026-10-07 — Slice W2b`). `expressions/new-super.ts` +12: one import
+  # line and the `admitBoundValueConstruct` term (plus the bound driver's
+  # `__apply_closure` reservation) in `tryCompileNativeConstructFromValue`.
+  # `expressions/call-namespace-static.ts` +9: the import and the three
+  # `objectProtoDefault` uses at the static-primitive NewTarget points of the
+  # `Reflect.construct` arm. Both paths are listed below. The mechanism lives in
+  # the NEW files `object-model/construct-default-proto.ts`,
+  # `expressions/primitive-newtarget-default.ts` and
+  # `expressions/uncalled-shim-eval.ts`; the bound arm in `construct-bound.ts`.
+  - src/codegen/expressions/call-namespace-static.ts
+  # 2026-10-07 — slice W2a (`new <%Function% value>()`; record
+  # `### 2026-10-07 — Slice W2a`). `expressions/new-super.ts` +29: four import
+  # lines, the `isFunctionIntrinsicValueCallee` admission in
+  # `tryCompileNativeConstructFromValue` (its two gates and the reservation
+  # list) and at the `compileNewExpression` door, the arm's open/finish around
+  # the existing driver call, and the one-line last retry in the dynamic-`new`
+  # chain. The arm itself is the NEW leaf `closures/function-intrinsic-construct.ts`
+  # (deps injected, no SCC edge); the retry body lives in
+  # `runtime-eval-construct.ts` beside the retry it follows; the
+  # `globalThis.Function` read lives in `function-intrinsic-carrier.ts`, the
+  # module that owns every `%Function%` spelling.
+  - src/codegen/expressions/new-super.ts
   # 2026-10-07 — slice W5/W8 (record `### 2026-10-07 — Slices W5+W8`):
   # `index.ts` +3 — the import and the two finalize calls of
   # `fillGeneratorFunctionPrototypeArms` (single- and multi-source), each placed
@@ -1404,6 +1427,16 @@ loc-budget-allow:
   - src/codegen/expressions/calls.ts
   - src/codegen/expressions/call-identifier.ts
 func-budget-allow:
+  # 2026-10-07 — slice W2b: `fillNativeConstructDrivers` +3 — the
+  # `$__bound_fn` arm call (`boundConstructDriverArm`, body in
+  # `construct-bound.ts`) and the §10.1.14 step-4 rewrite of a null prototype
+  # (`constructorProtoNullToDefaultInstrs`) right where the driver selects it.
+  - src/codegen/native-construct.ts::fillNativeConstructDrivers
+  # 2026-10-07 — slice W2a (see the loc-budget note): `compileNewExpression` +2,
+  # the `isFunctionIntrinsicValueCallee` term at the native-construct door and
+  # the one-line `emitOrdinaryFunctionConstructOnNull` retry at the end of the
+  # standalone dynamic-`new` chain (both have to sit at those two points).
+  - src/codegen/expressions/new-super.ts::compileNewExpression
   # 2026-10-07 — slice W5/W8 (see the loc-budget note): `generateModule` +1 and
   # `generateMultiModule` +1, the finalize call each (both keys listed below).
 
@@ -2000,6 +2033,8 @@ func-budget-allow:
   # The arm must be admitted where the typed `.call` lowerings below would
   # otherwise cast the proxy to its target's closure shape.
   - src/codegen/expressions/calls.ts::compileCallExpression
+import-cycles-allow:
+  - largestSccSize: 699 # 2026-10-07 (#6651 slice W2b): the split-out `expressions/primitive-newtarget-default.ts` joins the codegen SCC (it reuses `reflect-construct-newtarget.ts`'s binding proofs and is called from `call-namespace-static.ts`); split out to keep that file under the #3102 LOC threshold
 coercion-sites-allow:
 # 2026-10-06 — slice V1: `object-model/proxy-forward-carriers.ts` is a NEW file
 # (baseline 0); its one `__is_truthy` is §20.1.3.4 step 4's ToBoolean of the
@@ -4804,6 +4839,103 @@ NewTarget `prototype` (instead of post-construction patching), then the bound
 `super/realm` can pass. Budget ~4 h each; family runs on this box take ~1 h, so
 run one ≤200-row chunk per background job (30-min background cap).
 
+### 2026-10-07 — Slice W2a
+
+`new <%Function% value>()` — the realm `%Function%` reached as a value — now
+builds the same ordinary function as the bare `new Function()`. One row flips:
+`built-ins/Proxy/construct/trap-is-undefined-proto-from-cross-realm-newtarget.js`.
+**None of the six W2 rows flips from W2a alone**, as the W2 record predicted.
+
+**Which W2 rows depend only on W2a.** None. After W2a every row builds a real
+`C` with `C.prototype = null`, then reaches a NewTarget route that is W2b's or
+#5269's:
+
+| row | after W2a | still needs |
+| --- | --- | --- |
+| `Array/from/proto-from-ctor-realm.js` | proto `null` (was `Array.prototype`: `C` was not a constructor) | W2b: §10.1.14 step 4 in the `Array.from` construct |
+| `Array/of/proto-from-ctor-realm.js` | proto `null` (same) | W2b: same, `Array.of` |
+| `Function/prototype/bind/proto-from-ctor-realm.js` | proto `null` | W2b: bound `[[Construct]]` with a primitive NewTarget `prototype` |
+| `language/expressions/super/realm.js` | proto `null` | W2b: class/derived construct, closed struct |
+| `Proxy/construct/trap-is-undefined-proto-from-newtarget-realm.js` | proto is a non-`%Object.prototype%` object | W2b: the Proxy forward's NewTarget proto fallback |
+| `Function/proto-from-ctor-realm.js` | `other.Function.prototype` reads `undefined` | #5269 (provider boundary) |
+
+**Root causes, probe-verified (in-process, `--standalone`, QuickJS provider).**
+1. `new other.Function()` and `var OF = other.Function; new OF()` matched no
+   construct arm: the checker types the callee `FunctionConstructor`, so every
+   arm declined and the site fell to `Unsupported new expression for class:
+   Function`. `var F = Function; new F()` took the runtime-alias driver arm
+   and got a provider function whose `prototype` reads `undefined`.
+2. **The identity test needs two spellings of `%Function%`, not one.** In a
+   runtime-eval module that never reads the bare `Function` value (every W2
+   row), `emitStandaloneFunctionIntrinsicValue` answers its self-contained
+   carrier, while `globalThis.Function` holds a different carrier:
+   `globalThis.Function === (function(){}).constructor` is `false` there and
+   `true` in an eval-free module. The realm seed copies `globalThis.Function`,
+   so a test against the emitter alone never fired for the rows (`new
+   other.Function()` then threw "value is not a constructor"). `__extern_strict_eq`
+   was needed as the W2 record said; `ref.eq` was not the only gap.
+3. `var C = new Function(); new C()` evaluated to **null**, on base too. A
+   `Function`-typed callee goes through the standalone dynamic-`new` retry chain
+   (TypedArray ctor, bound, runtime-eval, builtin ctor, collection, Array,
+   Promise), and none of those arms answers an ordinary closure. The same value
+   through an `any` parameter (`function nn(x) { return new x(); }`)
+   constructs correctly through the native construct driver.
+
+**Fix.**
+- New leaf `closures/function-intrinsic-construct.ts` (codegen services
+  injected, no import-cycle edge). In `tryCompileNativeConstructFromValue`,
+  after the callee and arguments are evaluated in source order, the arm emits
+  `callee === %Function% ? <bare new Function(args) lowering> : <unchanged
+  driver call>`. The admission is syntactic: a member read named `Function`, or
+  an identifier whose initializer chain ends at one or at the global `Function`.
+  The runtime test decides. It compares with the module's `===`, first against
+  `emitStandaloneFunctionIntrinsicValue`, then, short-circuited, against the
+  `globalThis.Function` property
+  (`emitStandaloneGlobalFunctionPropertyValue` in `function-intrinsic-carrier.ts`).
+  The second spelling is skipped when the file may write a global `Function`
+  (a `Function` declaration, an assignment or `delete` on a `.Function` /
+  `["Function"]` target, or `"Function"` passed to a call).
+- `emitOrdinaryFunctionConstructOnNull` (`runtime-eval-construct.ts`) is the
+  last retry of the dynamic-`new` chain. It applies only to an identifier typed
+  as the lib `Function` interface, only when every arm answered null and the
+  callee is callable. It runs the native construct driver with its §13.3.5.1
+  IsConstructor guard armed.
+
+**Measurement.** Standalone, QuickJS eval provider, in-process. BEFORE is a
+frozen `git archive` of base `b18baee96b`, run with its own provider build.
+AFTER is this tree.
+
+| family | rows | before pass | after pass | lost |
+| --- | --- | --- | --- | --- |
+| `built-ins/Function/**`, `language/expressions/new/**`, `built-ins/Reflect/construct/**` | 578 | 531 | 531 | 0 |
+| every other row naming `new Function(`, `= Function;` or `.Function` (TypedArray/Temporal excluded) | 101 | 58 | 59 | 0 |
+
+`built-ins/Function/**` includes the ES5 `15.3.*` rows; none was lost.
+
+Pin: `tests/issue-6651-w2a-function-construct.test.ts`, host-free. All five
+cases fail on the base tree. They cover the realm-global member, aliases, a
+constant argument list, a non-`%Function%` value behind a `.Function`
+spelling, and `new C()` on a bare `new Function()` result. Probe-only (it
+links the provider): `var F = Function; new F()` gives `typeof` "function",
+an object `prototype`, and `new` instances with that prototype.
+
+Controls:
+- `node scripts/equivalence-gate.mjs` is green: 22 known failures, 1748
+  passing.
+- Temporal `Duration/prototype/round/*` standalone: 119 pass / 7 fail of 126,
+  0 `illegal cast` (bundles rebuilt, provider prewarmed into a fresh cache,
+  QuickJS provider rebuilt).
+
+**Residuals.**
+- A non-constant argument list (`new other.Function(src)`) keeps the previous
+  lowering (the #2924 compile-away condition).
+- The `globalThis.Function` spelling is not consulted after a
+  computed-runtime-key write (`g[k] = v` with `k === "Function"`).
+- The two `%Function%` spellings in a no-bare-read eval module are still two
+  references. Reconciling them is a module-wide identity change, left for #5269.
+- A `prototype` that is not an Object still yields a null-prototype instance
+  (§10.1.14 step 4). That is W2b.
+
 ### 2026-10-07 — Slices W3+W4
 
 Two small slices from the 2026-10-07 re-census, one commit. All 4 rows flip.
@@ -4980,6 +5112,84 @@ false — the #3037 mechanism, for the `function`-valued spelling too).
   this time box after W8 — the link writer and four walker arms are a separate
   slice.
 
+### 2026-10-07 — Slice W1a
+
+String exotic object bullet of W1. **1 of 3 target rows flips**:
+`built-ins/Proxy/set/trap-is-null-target-is-proxy.js`. The other two now pass
+their String half and stop at the function carrier (W1b):
+`defineProperty/trap-is-missing-target-is-proxy` at `func.name` after
+`Object.defineProperty(funcProxy, "name", {value: "foo"})`, and
+`getOwnPropertyDescriptor/trap-is-missing-target-is-proxy` at "prototype should
+be an own property".
+
+The plan's diagnosis was half right. A String wrapper is already a `$Object`,
+so it already had expando storage; no identity bag was needed. Three defects
+remained:
+
+1. **Numeric-key reads skipped the wrapper's own table.** `s[4]` / `s[k]` on a
+   statically-`String` receiver lowers to `emitStringExoticIndexGet`
+   (`string-exotic-index.ts`), which answered `undefined` for any index outside
+   `[0, len)`. For a wrapper (not a primitive) that miss now calls
+   `__extern_get_idx(recv, idx)`, which is OrdinaryGetOwnProperty plus the proto
+   walk (§10.4.3.1). `s["4"]` already worked.
+2. **Only sloppy `__extern_set` knew the String-exotic own properties are
+   read-only.** `installStringExoticMutationGuards` (`string-exotic-own-props.ts`,
+   called from `unshiftRegExpAccessorSetGuard`) adds guards keyed on the same
+   `__strexo_hasown` predicate:
+   - `__reflect_set` answers `false`.
+   - `__extern_set_strict` throws a TypeError.
+   - `__defineProperty_accessor` rejects.
+   - `__defineProperty_value` runs the new `__strexo_define`:
+     ValidateAndApplyPropertyDescriptor against `{value, w:false, e:<is index>,
+     c:false}`, with SameValue through `__object_is`. A compatible descriptor
+     changes nothing.
+
+   Rejections park their TypeError in the #6770 S4 rejection global, so
+   `Reflect.defineProperty` answers `false` and `Object.defineProperty` throws.
+3. **The row's array half.** `Reflect.set(proxy(proxy(nonExtArr)), "foo", 2)`
+   answered `true` because of two separate gaps:
+   - `nonExtensibleFreshIndexGuard` (`vec-define-rejections.ts`) refused only a
+     fresh INDEX on a non-extensible vec. It now also refuses a new NAMED key
+     that `__hasOwnProperty` does not find, and parks the rejection.
+   - The §10.1.9.2 receiver walk (`object-runtime-ordinary-set.ts`) let a `$Proxy`
+     receiver's define rejection escape as a throw. Both define sites now go
+     through `nativeDefineRejectionAsFalse` (`define-rejection-channel.ts`), the
+     native-body twin of `catchDefineRejectionAsFalse`. It compares identity
+     with a bare `ref.eq`, because `__extern_strict_eq` exists only under the
+     native-first provider.
+
+   This also fixes `Reflect.set(new Proxy(nonExtObj, {}), "foo", v)`, which
+   threw before.
+
+**Receipts.** Standalone, `JS2WASM_EVAL_ENGINE=quickjs … run-test262-paths.mts
+--standalone`, chunks of 200. Base and branch are frozen file copies of the
+same `a5c5689f9c` tree, each with its own provider build.
+
+| family | rows | base pass | branch pass | Δ |
+| --- | --- | --- | --- | --- |
+| `built-ins/Proxy/**` | 311 | 285 | 286 | +1 |
+| `built-ins/Reflect/**` | 153 | 152 | 152 | 0 |
+| `built-ins/Object/defineProperty/**` | 1131 | 1128 | 1128 | 0 |
+| `built-ins/Object/defineProperties/**` | 632 | 631 | 631 | 0 |
+| `built-ins/Object/getOwnPropertyDescriptor/**` | 310 | 310 | 310 | 0 |
+| `built-ins/Object/{freeze,seal,preventExtensions,isExtensible}/**` | 225 | 219 | 219 | 0 |
+| `built-ins/String/**` | 1223 | 1158 | 1158 | 0 |
+| `built-ins/Array/**` (82 rows that touch extensibility / `Reflect.set` / `Reflect.defineProperty` / `Proxy`, plus `Array/length`) | 82 | 62 | 62 | 0 |
+
+Total 4,067 rows: 3,945 → 3,946, **0 lost** (per-row diff, not counts), so no
+ES5 row is lost. The full `built-ins/Array/**` (3,000+ rows) was not run;
+only the subset above was.
+
+Pin: `tests/issue-6651-w1a-string-exotic.test.ts` (5 shape cases + the
+flipped row, 6/6). `node scripts/equivalence-gate.mjs` is green: 22 known
+failures, 1748 passing.
+
+**Left for W1b:** the function-carrier own `name` / `prototype` /
+`length`, and the accessor-over-non-configurable-`prototype` throw. Both
+remaining target rows fail there. Also not fixed: a dynamic
+`anyWrapper["length"]` read on a String wrapper answers `undefined` (measured;
+the static `.length` read is right).
+
 ### 2026-10-07 — Slice W9
 
 TypedArray singles, on `fab22c35ff`. **2 of 3 rows flip** (plus one bonus
@@ -5082,6 +5292,120 @@ time (the adapter cache key hashes `src/` — never add `src/` files mid-run),
 byte differential on both targets in separate processes, zero pass→non-pass,
 full gate chain incl. host-import-policy (`src/runtime.ts` is at its cap),
 eval-free pin suite red on base, commit with ✓ and trailers, no push.
+
+### 2026-10-07 — Slice W2b
+
+§10.1.14 GetPrototypeFromConstructor step 4 — "if `Get(constructor,
+"prototype")` is not an Object, use the realm's intrinsicDefaultProto" — now
+holds on every ordinary-function construct route in `--target standalone`.
+**All five W2b rows flip**, 0 lost:
+`built-ins/Array/{from,of}/proto-from-ctor-realm.js`,
+`built-ins/Function/prototype/bind/proto-from-ctor-realm.js`,
+`language/expressions/super/realm.js`,
+`built-ins/Proxy/construct/trap-is-undefined-proto-from-newtarget-realm.js`.
+`Function/proto-from-ctor-realm.js` stays with #5269, as scoped.
+
+**Root causes, probe-verified (standalone, QuickJS provider).**
+1. **A null `prototype` was encoded as an explicit null prototype.**
+   `__object_create` already answers step 4 for every non-Object except one: a
+   non-null non-`$Object` argument leaves `$proto` null with no
+   `OBJ_FLAG_NULL_PROTO`, which is the runtime's encoding of an ordinary object
+   on the implicit `%Object.prototype%` terminal (the shape of `{}`). A raw
+   `null` is `Object.create(null)`'s argument and sets the flag. So
+   `C.prototype = null` built a null-prototype instance (`Array.from/of`, the
+   driver and bound routes).
+2. **The construct driver's "no prototype supplied" signal is `null`.** A
+   NewTarget whose `prototype` read back `null` made `__native_construct_N`
+   read the TARGET's `prototype` instead. The Proxy forward hit this: its
+   instance landed on the target function's `prototype`.
+3. **`Reflect.construct(T, args, NT)` with a statically-primitive
+   `NT.prototype` returned the plain `new T()` result.** That is right for a
+   builtin target (the ordinary result already carries its own intrinsic,
+   `%Date.prototype%` etc.), and wrong for every ordinary-function target,
+   whose default is `%Object.prototype%`. The site never distinguished the two.
+4. **`var D = function(){}.bind(); new D()` evaluated to null.** The checker
+   types `D` as `() => void` and `classifyNonConstructableValue` calls a
+   `.bind(…)` initializer a "probe", so no construct route claimed it.
+5. **Every binding proof failed in `$262` rows.** The runtime prelude's
+   `evalScript` shim contains a direct `eval(sourceText)`, and
+   `isRebound`/`isWrittenAfterDeclaration` refuse on any direct eval in the
+   file.
+6. **A class instance has no prototype slot.** `Reflect.construct(B, [], C)`
+   for `class B extends function(){}` returns a closed `$B` struct, on which
+   `[[SetPrototypeOf]]` is a silent no-op.
+
+**Fix.**
+- New leaf `object-model/construct-default-proto.ts`:
+  `constructorProtoNullToDefaultInstrs` rewrites a constructor-derived null
+  `prototype` to `undefined`. `undefined` is not an Object either, so the
+  step-4 verdict is unchanged, and `__object_create` turns it into the
+  implicit terminal. It is applied where `__native_construct_N` selects its
+  prototype, where `__construct_bound` reads the target's, and at the end of
+  `emitRuntimeNewTargetPrototype`. Standalone only: the host's `Object.create`
+  throws on `undefined`.
+- New `expressions/primitive-newtarget-default.ts`: at the static-primitive
+  point of the `Reflect.construct` arm, when the target provably defaults to
+  `%Object.prototype%`, the result is re-prototyped. The proof covers an
+  ordinary function with no `return <expr>`, a `.bind(…)` of one, a trapless
+  `new Proxy(<one>, {})`, and a class whose heritage chain ends at one. A
+  builtin or unproven target keeps the old result. An `$Object` result gets
+  `[[SetPrototypeOf]](r, undefined)`; any other result gets the
+  `%Object.prototype%` singleton. The IsConstructor-probe shortcut
+  (`function(){}` target, no args) creates from `undefined` instead of `null`
+  on the same condition.
+- `dynamic-proto.ts` prescan: such a `Reflect.construct(K, …, NT)` with a
+  declared class `K` marks `K`'s hierarchy root, so the #802 `$__proto__`
+  field carries the singleton (root cause 6).
+- `construct-bound.ts`: `admitBoundValueConstruct` admits a single-declaration
+  `.bind(…)`-initialized binding into the native construct driver, and
+  `boundConstructDriverArm` dispatches a `$__bound_fn` callee to
+  `__construct_bound` (root cause 4).
+- New `expressions/uncalled-shim-eval.ts`: `isUncalledPropertyShim` exempts a
+  direct eval inside the function value of an object-literal property `N` when
+  the file names `N` only to define or copy that property. That is the
+  `$262.evalScript` shape. Only the W2b classifier passes the opt-in flag;
+  every existing caller of the two scans is unchanged.
+
+**Measurement.** Standalone, QuickJS eval provider, in-process. BEFORE is a
+frozen `git archive` of base `c655f8b16b` (origin/main `e02ed67eb9` + the W2a
+integration branch), run with its own provider build. AFTER is this tree.
+Per-row comparison; every row that passed before passes after.
+
+| family | rows | before pass | after pass | lost |
+| --- | --- | --- | --- | --- |
+| `built-ins/Reflect/construct/**` | 10 | 9 | 9 | 0 |
+| `built-ins/Function/**` (incl. ES5 `15.3.*`) | 509 | 465 | 466 | 0 |
+| `built-ins/Array/from/**` | 47 | 43 | 44 | 0 |
+| `built-ins/Array/of/**` | 16 | 15 | 16 | 0 |
+| `built-ins/Proxy/construct/**` | 29 | 24 | 25 | 0 |
+| `language/expressions/new.target/**` | 14 | 12 | 12 | 0 |
+| `language/expressions/super/**` | 94 | 87 | 88 | 0 |
+| `language/expressions/new/**` | 59 | 57 | 57 | 0 |
+| `language/statements/class/subclass/**` | 109 | 94 | 94 | 0 |
+| every other row assigning `X.prototype = <primitive>` (88, mostly builtin `proto-from-ctor-realm` / `newtarget-prototype-is-not-object`) + `Object/{create,getPrototypeOf,setPrototypeOf}/**` | 459 | 421 | 421 | 0 |
+
+The 88-row control set is the builtin-target half of root cause 3. The
+classifier must leave all of them alone, and none moved.
+
+Pin: `tests/issue-6651-w2b-proto-from-ctor.test.ts`, host-free, 4 cases. Three
+fail on the base tree. The fourth is a control that passes on base and must
+keep passing: a constructor's own returned object is never re-prototyped.
+
+Controls: `node scripts/equivalence-gate.mjs` is green (22 known failures, 1748
+passing).
+
+**Residuals.**
+- `function F(){}; F.prototype = null; new F()` on the fnctor path
+  (`compileFnctorNewAsObject` / closed `$__fnctor_F`) still gives a
+  null-prototype instance. No test262 row in scope uses the shape.
+- `Array.from.call(C, [])` with `var C = function(){}` (not a realm
+  `%Function%` product) lands on a non-`%Object.prototype%` object. The
+  realm rows take the driver; this spelling takes another lowering.
+- `new D()` where `D` is a `.bind` result reached any other way (a
+  parameter, a property read) is still unclaimed outside the existing
+  dynamic-any retry chain.
+- The re-prototype is a construct-then-patch. It is sound only because the
+  classifier refuses any target that can `return` an object of its own.
 
 ### 2026-09-29 — Cluster H, slice H6: Array methods over a proxy — IsArray, ArraySpeciesCreate, revocation (claim)
 

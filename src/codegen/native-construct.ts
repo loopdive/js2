@@ -79,6 +79,8 @@ import { buildOrdinaryConstructCall, unwrapRuntimeEvalCarrierCallee } from "./co
 import { CLASS_CONSTRUCT_DISPATCH, ensureStandaloneClassConstructDispatch } from "./standalone-class-construct.js"; // (#5383 S2g)
 import { RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A, RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B } from "./runtime-eval-boundary.js";
 import { ordinaryConstructTargetFrame } from "./closures/ordinary-new-target.js";
+import { constructorProtoNullToDefaultInstrs } from "./object-model/construct-default-proto.js"; // (#6651 W2b)
+import { boundConstructDriverArm } from "./construct-bound.js"; // (#6651 W2b)
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -711,6 +713,7 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
         },
       );
     }
+    body.push(...boundConstructDriverArm(ctx, buildArgsVec(), argsVecLocal)); // (#6651 W2b) `$__bound_fn`
     body.push(...builtinCollectionConstructArm(ctx, arity, resultLocal)); // (#6720) Map/Set carrier VALUE
     if (arity === 0 && arrayCtorThisCallSeen(ctx)) body.push(...objectConstructArm(ctx)); // (#6771 S7) Construct(Object)
     // (#6612 / #5383 S25) §13.3.5.1 EvaluateNew step 5 — IsConstructor. Every
@@ -742,6 +745,8 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
         else: [{ op: "local.get", index: 1 }],
       },
       { op: "local.set", index: protoLocal },
+      // (#6651 W2b) §10.1.14 step 4: a null `prototype` is not an Object.
+      ...constructorProtoNullToDefaultInstrs(ctx, protoLocal),
 
       // self = Object.create(proto)
       { op: "local.get", index: protoLocal },
