@@ -934,9 +934,13 @@ jobs:
           ISSUE_TEST_FILE: ${{ matrix.file }}
         run: |
           # One selected file per isolated runner; preserve the worker flags.
-          pnpm exec vitest run "$ISSUE_TEST_FILE" \
-            --pool=forks --poolOptions.forks.singleFork=false \
-            --poolOptions.forks.maxForks=1 --no-file-parallelism
+          if [ "$ISSUE_TEST_FILE" = "tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts" ]; then
+            node scripts/hooks/run-linear-append-provenance.mjs
+          else
+            pnpm exec vitest run "$ISSUE_TEST_FILE" \
+              --pool=forks --poolOptions.forks.singleFork=false \
+              --poolOptions.forks.maxForks=1 --no-file-parallelism
+          fi
 
       - name: Report changed issue-test outcome
         if: always() && !cancelled()

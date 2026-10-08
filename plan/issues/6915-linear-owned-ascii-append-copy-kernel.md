@@ -1303,3 +1303,50 @@ records, executed runner and offline replay are retained in
 failed CI job log is separate from the locally observed colored raw input.
 Subsequent actual required CI remains mandatory. The advisory caller's workflow
 scope is still unreleased and no workflow/source/test/fixture edits were made.
+
+### Adopted advisory command-only implementation release — 2026-10-08
+
+The preceding historical unreleased records remain unchanged. A/root explicitly
+released the command body in coordination comment6067224039 and reaffirmed
+exclusive B editing in comment6068998929. Adopt in full the existing Astra High
+"Owner-review proposal: advisory selected append caller" above, with this
+explicit decision: retain the intentional push-event identity refusal. This
+increment repairs supported PR/merge-group execution only; all-event acceptance
+and durable CI archive upload remain unimplemented, unreleased dependencies.
+
+Exact implementation claim `6915:advisory-parent-command-20261008`, owner
+`ttraenkler/codex-linear-b-advisory-command-sol61-20261008`, write80796-adzysol8,
+was effect-read at upstream ledger e4e7086b45. Branch is
+`codex/6915-linear-append-plan-20261007`, starting at published
+`9222d9a0342ea2828d3448e3d8828c5b329c293c`. Parent owns this issue/evidence;
+Sol6.1 Medium owns ONLY `.github/workflows/ci.yml`, shell body of
+`Run changed issue test file (advisory)`, id tests. No other workflow, selector,
+runner, configuration, production, test or fixture edit is released.
+
+The full prior run37826025179 is terminal SUCCESS. Actual quality job113478995304
+and changed-root step48 passed; original failed jobs and all local epochs stay
+preserved. At release readback #6593 remains HOLD, no auto-merge, mergeable/CLEAN,
+with no merge-queue entry or unresolved review threads. No CI graph archive was
+published, so terminal CI success is not separately inspected graph equality.
+
+Current workflow bytes match canonical main845 before this edit. The held
+`3518:runtime-preparation-ci-file-shards-20261002` record remains untouched;
+the exact A-delegated command is not a release of shard, selector, manifest,
+worker-budget or aggregate-policy custody. A expressly will not edit this
+command concurrently; no other shared claim is transferred or completed.
+
+Dispatch exactly the append filename to the existing parent once. Preserve the
+complete original Vitest else argv, id/env/continue-on-error, manifest/ordinal
+checks, cap15, pinned population, selector and raw outcome reporting. Parent
+nonzero must remain the shell/step failure: no retry, spoof, skip, catch-and-pass
+or successful trailing command. No new receipt validator or artifact uploader.
+
+Before publication, static review must prove every byte outside the released
+shell body is unchanged. Isolated lightweight controls must exercise the actual
+extracted body: exact append, another file, near-match filenames and parent
+nonzero, with exact command counts/argv/exit status. These are dispatch controls,
+not production qualification. Retain all104 existing parent controls. Production
+qualification uses the committed candidate and actual supported CI identities;
+require the existing36-ID/38-envelope receipt, zero skip/fail/todo and unchanged
+input custody. No input pin or local-edit exception is broadened. Parent reviews
+and publishes through normal hooks; A retains integration/queue and HOLDs.
