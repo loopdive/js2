@@ -484,3 +484,45 @@ forwarding observations from the clean run exactly equal the earlier repaired
 candidate51-v2 observations. This is composed bounded runtime evidence, not
 full migration, canonical inventory repair, passing full build or queue release.
 Prior frozen qualification and failures retain their original heads.
+
+## Bounded registry handoff — 2026-10-08
+
+Parent released only this existing issue and `scripts/compiler-boundaries.json`
+under canonical claim `6914:registry-handoff-20261008`, owner
+`ttraenkler/codex-linear-b-registry-sol61-20261008`. Fresh canonical ledger
+`7f0c4e36be071ab38a48b4a5fe25b4aa7790d09b` records this claim in progress,
+write ID `81557-b6r1jvfi`; raw evidence is retained in
+`.tmp/6914-registry-handoff-20261008/`.
+
+Authority is A's published registry proposal
+`52b64c8277b4e61c42f24e7821445260aa638179` (PR6595), with approved Astra
+High plan provenance adopted in PR6596 commit
+`555af588b3b41dda3b95a3d53468e0f4d55a32c7`. Adopted plan SHA256:
+`ca7b3e3ed09a89da6917231a7ccc906369e567d2e180e0b145ac05c5f299d636`;
+handoff SHA256:
+`29879b4e2ee6d4968156ecf950206239087d75011d028d7d14eec776b9e57f57`.
+
+Fresh PR6590 head is `82e9517ae762b0f53811b62e8ad6fe5cf34b38cd`,
+actually backed by `loopdive/js2`, mergeable with HOLD and null auto-merge.
+Of the eight proposed Linear runtime paths, only
+`src/codegen-linear/runtime/arrays/forwarding-resolver.ts` and
+`src/codegen-linear/runtime/arrays/README.md` exist here. Add only their exact
+published module and non-module records; the other six absent paths remain
+unregistered. Preserve every baseline policy byte and order outside these
+insertions, with no exemptions. This older source epoch is not refreshed or
+requalified on main. No source, tests, workflow, claims, holds, queue or admission
+changes are released; historical failures and qualification remain unchanged.
+
+Validation: normal boundary inventory against the exact original head exited 0,
+with 1,888 tracked modules, 14,565 resolved edges, three excluded non-modules and
+zero errors. Inventory is valid; graph and architecture completeness remain
+false, so this is not migration completion or main-epoch qualification.
+The meaningful floors (1,700 modules / 1,000 edges), exact published-row equality,
+full-policy removal and baseline-byte/order preservation checks passed.
+Baseline SHA256 is
+`8f0fb0fd2992784747e5cb5673aec59f3bec7d76b36abe2c504f459bfbb141b1`;
+updated policy SHA256 is
+`59ddaff8bac13c389a936f6d2800999d0007e73a643131285f6afddfc61debe6`.
+Prettier and whitespace checks passed. No heavy tests, typecheck or build were
+run; the previously completed 125-test detector regression was not duplicated.
+Parent retains review/push authority; this bounded commit does not release HOLD.
