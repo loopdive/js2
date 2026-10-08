@@ -1,0 +1,41 @@
+# Frozen shared Linear geometry handoff for Session C
+
+Issue 6920, **Native Linear numeric-vector shared source handoff and integration plan**. Documentary packet for Session C following its [reported human assignment, comment6070849011](https://github.com/loopdive/js2/pull/6583#issuecomment-6070849011) and [root's concrete packet request, comment6070860783](https://github.com/loopdive/js2/pull/6583#issuecomment-6070860783). The source is **FROZEN UNCOMMITTED, UNQUALIFIED**. G24 collection/runtime **NOT RUN**; main merges **0**. Root retains integration, publication, runtime release, registry, historical successors and protected queue. PR6596 remains HOLD. No source custody transfer, continuation release or native-vector delivery is established.
+
+## Exact custody
+
+Source worktree `/private/tmp/js2-6920-shared-linear-geometry-20261009`, branch `codex/6920-shared-linear-geometry-20261009`, donor `8452732f0b88c14c5c7634ece58f83240970ea4c`. Source-worker record: slice `6920:shared-linear-geometry-20261009`, owner `ttraenkler/codex-ir-shared-linear-geometry-20261009`, write `94949-it9b3u84`. Its source remains frozen while root coordinates C's overlapping human assignment.
+
+This writer owns only the five new files in this directory under upstream metadata slice `6920:geometry-packet-publication-20261009`, owner `ttraenkler/codex-sol-geometry-packet-publication-20261009`. Actual GitHub Contents effect-read: `in-progress`, write `7437-e9y1gc57`, timestamps `2026-10-08T23:12:47Z`; exact record in manifest. No other claim was changed or released. Issue publication remains under root's separate claim and review.
+
+The root-adopted custody audit supersedes the overbroad proposed `34529-rzivb817` geometry donor prerequisite. Its actual claim owns only `src/ir/alloc-registry.ts`, `src/ir/analysis/alloc-registry.ts`, and `tests/issue-3518-allocation-runtime-seam.test.ts`; no geometry/facts-verifier release was inspected. Declaration custody `28121-b1lsf1lr` was delivered by merged PR6475, **refactor(ir): give linear layout contracts and backend legality canonical owners**. A2 claims `16740-hhm82aur` and `46615-x5dy59lp` retain disjoint facts/extraction hunks in the shared physical planner. Historical source-proof/reader claims including `54017-blpvz0m8` remain held and their original obligations remain. The audit's 0/30 open-PR overlaps does not certify private unpublished work. Audit bytes/hash are independently verified in manifest.
+
+## File and function partition
+
+- `src/shared/contracts/linear-memory-layout.ts`: seven geometry DATA types plus `LinearStringLayoutPlan`; fifteen constants including the single frozen `LINEAR_ARRAY_FORWARDING`; five unchanged pure functions `storageBytes`, `storageAlignment`, `planLinearRecordLayout`, `linearStringLayoutId`, `planLinearStringLayout`; key/geometry entry points `linearScalarStorageKey`, `linearVectorLayoutIdForElementKey`, `planLinearVectorStorageLayout`, `planLinearScalarVectorLayout`. Zero imports.
+- `src/ir/analysis/contracts/linear-memory-layout.ts`: shared identity imports/reexports for seven geometry declarations; allocation/site/policy DATA retained.
+- `src/ir/analysis/linear-memory-plan.ts`: geometry constants/string/storage/record relocation and compatibility identity exports; `linearIrTypeKey` scalar val delegation; vector identity/storage delegation; the root-authorized actual scalar caller in `planLinearVectorLayout`. Stack-arena constants and allocation/facts/policy/verifier bodies remain retained. A2 hunks are outside this packet.
+- `tests/issue-6865-linear-layout-contract.test.ts`: exactly 24 authored finite cases; ordered expected names in manifest. This is inventory, not collected/pass evidence.
+- `scripts/compiler-boundaries.json`: root-owned isolated policy hunk appends the shared leaf only to `foundation.entries` and raises `foundation.minModules` 9 to 10. The required foundation inventory files-row is absent; this is the observed two-field transport, not completed policy registration. Final three-field registration remains planned root-owned follow-up. Source-worker ownership does not include this policy.
+
+## Exact patch transport and verification
+
+`source.patch`: **19675 bytes**, SHA256 `759889320f82a2761961b9af3d74a9c7d840e909c4292826863ce15a5abf4901`.
+
+`tests.patch`: **16656 bytes**, SHA256 `edcea62258f8f16712b6f826dfc3c695ce46cf6289568e1858435bd6c5e2117e`.
+
+`boundaries.patch` isolates root's policy diff only. Manifest gives all patch hashes, exact donor preimages (including absent new files), and all five frozen result hashes. Every source/test/tool pin in `.tmp/geometry-tool-and-source-pins.json` was byte-verified before and after replay. The independent `.tmp/root-reviewed-G24-expected.json` agrees with the test's 24 distinct literal names and source inventory.
+
+Ordinary `git apply --check` rejected the original worker source patch with `dev/null: No such file or directory`: new-file headers omit `new file mode`. The patches are preserved byte-for-byte. All three patches passed POSIX `/usr/bin/patch --batch -p1 --dry-run`, then applied to a throwaway exact donor archive under `/private/tmp`; all five resulting file sizes and SHA256 hashes equal frozen bytes. Manifest records actual commands/results. Root must account for this transport limitation when integrating. Patch replay is not semantic or runtime qualification.
+
+Original immutable predecessor `/private/tmp/js2-6920-geometry-owner-packet-20261009/geometry-owner-review.patch` is independently verified preserved before/after replay: **19595 bytes**, SHA256 `85aa3efab25d7a459be3947ab0533e06663df54bfaacb382851309261d52e43d`. The current patch additionally contains the root-authorized real scalar planner production route and formatter correction. The predecessor omits those changes.
+
+## Recorded static evidence and limits
+
+These are source-worker results, **not rerun by the packet writer**. Node v24.4.1; TypeScript5.9.3 and TypeScript7.0.2. Initial TypeScript5 scratch check exhausted default heap before emitting a report: **not a pass**. Retry with explicit4096MiB heap measured1893 production roots/2376 files/0 diagnostics, exit0. TypeScript7 production and separate authored-test checks each exited0 with0 diagnostics, no emit. Authored-test config uses `allowJs:true/checkJs:false` for the real repository `.mjs` parser import. Scratch TypeScript5 originally duplicated source counts under a test key; corrected source report marks test unassessed for that run. Independent final TypeScript7 authored-test result supplies actual exit0 evidence.
+
+AST checks:30/30 moved-or-unchanged declarations,59/59 retained declarations,28/28 compatible aliases resolving to the same symbol; one shared source root,0 all references,0 value references; real repository parser detects one injected forbidden IR value import. Production scalar helper census moves0 to1 real planner call. Final Prettier and Biome assess four files each, exit0,0 lint errors.
+
+Ordinary before/after dead-export checks exited0 but retain graph **OPEN**, strict modeled closure **FAIL**, preservation6/6 full/cut and core types10/10 full/cut. Existing nonliteral dynamic imports `optimize.ts:412` and `platform-capability-adapter.ts:151` remain. Core-node execution is unassessed. Historical source-preservation/proof-policy qualification remains required; this is not all-gates-green. Existing issue3298/3299/3502 suites and historical proofs/receipts are retained and were unexecuted. G24 collected/passed counts are unassessed; runtime **NOT RUN**.
+
+The packet writer executed no source/test/compiler/collection/parity bodies and installed no packages. New documentation and embedded patch counts are not production implementation. No public1.25/native-vector acceptance, main delivery, equivalence, migration completion, legacy retirement, source publication, queue admission or HOLD release is claimed. The existing109170-byte published issue prefix is preserved unchanged. Root reviewed the exact packet and released the append-only issue publication hunk; source continuation remains paused. At commit preparation, normal publication hooks have not yet completed; actual hook and remote receipts will be reported separately. Independent review remains required.
