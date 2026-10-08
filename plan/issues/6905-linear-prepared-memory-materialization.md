@@ -494,3 +494,55 @@ inventory/stderr, policies, validator/result and claim/PR evidence are retained
 in `.tmp/6905-registry-handoff-20261008/`. No additional Vitest, typecheck or
 build ran. Preceding6911 detector125/125 remains its own epoch, not a test run
 on this branch. This is a local inventory repair, not full CI/Prepared readiness.
+
+### Geometry proof readback and exact owner dependencies — 2026-10-08
+
+A's adopted geometry plan is published at commit
+`8c383ecd8305da61c27a49901d38dd8f31218d94` in existing PR6596, based onmain845.
+This is a plan, not the reviewed source dependency required by B. B acknowledges
+only its three retained runtime leaves after exact source publication: array
+allocation consumes the shared scalar-vector factory without irVal; initializer
+consumes the shared vector offset; char-code-at consumes shared string offsets.
+Provider instructions, required fixtures and existing positive failures stay.
+
+Read-only Astra High review of the actual historical chain found an additional
+operand epoch: the old layout receipt pins4,670bytes/SHA256
+`dba3ca2121063a52b0ae1130f48c0acc70e0f819a9e665a2a2744572eddfae72`, while
+main845 has4,763bytes/SHA256
+`977e572b62737c3459df08c15e4d3f6ce7f461f9fc5b1aac344ad676690e3754`.
+The93-byte difference is the vector resolve-forwarding operation arm. Parent
+verified the current hash and actual old helper pins. This is source-derived
+mismatch evidence, not a newly run test failure. Reversing geometry into main845
+does not reach the old operand; the owner must supply an authenticated bridge
+or identify an existing one. Do not silently remove forwarding as geometry.
+
+Minimum existing preservation joins requiring explicit owner review/release:
+
+- `tests/helpers/ir-lowering-analysis-relocation.ts::captureLinearLayoutPredecessor`
+  pins both operands before proof; its JSON receipt and old implementation remain
+  immutable. New successor authenticates complete current files/new shared owner,
+  exact inverse and forward replay, including the separate forwarding bridge.
+- `tests/helpers/ir-c1-current-source.ts::captureC1CurrentPopulation` pins closure
+  before the old layout proof. Its historical authority/manifest and actual
+  resolver inputs require exact current-successor coverage, not healthy-source
+  substitutions. `ir-c1-historical-authority.ts` remains owner-controlled.
+- `tests/helpers/ir-runtime-program-policy-evolution.ts::loweringAnalysisRead`
+  and `authenticateLoweringAnalysisPolicy` pin sources before invoking the old
+  proof; both policy predecessor entrypoints need the authenticated successor.
+- `tests/issue-3518-lowering-analysis-preservation.test.ts` fixture/accepting/
+  child/application joins and `tests/issue-3518-c1-current-source.test.ts` guarded
+  current-reader joins need genuine current-chain coverage while retaining all
+  historical mutants, receipts and negatives. An unused new helper is insufficient.
+
+These are proposed finite partitions for the held source-proof, trusted-adapter
+and policy-caller owners to confirm, not ownership declarations. The allocation
+donor and A2 same-file facts partition remain with their named owners too.
+Readback verified those five claims still held; B has no handoff permitting their
+files to be edited. Root owns boundary registration/integration. B cannot deliver
+this chain independently by creating a new successor and bypassing old readers.
+
+Exact metadata-only claim `6905:geometry-proof-readback-20261008`, owner
+`ttraenkler/codex-linear-b-geometry-readback-astra-20261008`, write20706-p2lbglok,
+was effect-verified at canonical ledger4081982a43. Only this issue Markdown is
+changed. No source/test/fixture, foreign claim, HOLD or queue state is changed;
+no new tests run or native allocation/Unicode/retirement acceptance claimed.
