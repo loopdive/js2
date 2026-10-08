@@ -409,3 +409,46 @@ frontmatter, never in `scripts/*-baseline.json`.
 - Outside the passes, observed on the legacy Linear backend: `c!.v` on `null`
   returns instead of throwing (`t14`/`t15`), and the valueOf/getter probes
   (`t3`/`t4`) fail Wasm validation. Linear-owner items, not IR.
+
+## Implementation findings (2026-10-08, fed back into this plan)
+
+Implemented in `1c25941500` (Claude Opus 5.5 High) plus the pin update
+below. Before/after evidence is in `plan/log/6921-ir-pass-correctness/`:
+`issue-6921-tests-base-8452732f0b.txt` (12 of 20 failing on base),
+`issue-6921-tests-fixed.txt` (20/20), `nonregression-ab.txt`.
+
+Where the plan above was wrong:
+
+- **Standalone `eqq` acceptance cannot hold.** Base returned 1 only because DCE
+  deleted the loose `==`. On standalone, a JS object or string passed through
+  an `any` parameter already traps with `illegal cast` inside loose `==`
+  whenever the result is used (`return o == 1 ? 1 : 0` traps on base too). Now
+  the `==` is kept, so `eqq(obj)` traps on standalone. That is a standalone
+  boundary/lowering defect outside these passes; the test checks standalone
+  `eqq` with a number only. Follow-up issue needed.
+- **Missing gate.** `tests/issue-3518-semantic-verification-ownership.test.ts`
+  pins SHA-256 hashes of `effectsOf` and `isSideEffecting`. Any intentional
+  semantic change to them must repin. That file belongs to the 3518
+  preservation suite (Session A), so this PR does NOT edit it: the two rows
+  stay red until A repins or rules otherwise. Required values:
+  `effectsOf` 41e55ffd4ab4d440969a4b431db300e76f3a4f61fac6403c5fbe3d72de81077a,
+  `isSideEffecting` 1367e99f4d1fbe57c4bda1b61e16ef5eebc4ee18e61d315d5525390e1be0d00c. The file's other
+  three failures (intrinsics catalog/signature) fail identically on base.
+- **Stale paths.** Playground examples are under `website/playground/examples`;
+  `tests/equivalence.test.ts` is now the directory `tests/equivalence/`.
+- **Extra guard.** The inliner also declines callees whose slots are used by
+  generator/async machinery, and throws if a slot op appears in a nested
+  buffer.
+
+Non-regression, exact pass/fail sets compared base vs fix:
+
+| Population | Base | Fix |
+| --- | --- | --- |
+| 40 targeted test files | 576 pass / 705 fail | 575 / 706; the one change is the effects pin (A decision pending) |
+| `tests/equivalence/` (224 files) | 1764 / 22 | 1764 / 22, identical |
+| WAT, 13 playground examples × {gc, standalone} | — | 26/26 byte-identical |
+
+The 705 base failures are pre-existing (mostly 3518 history/receipt suites).
+Gates: loc-budget, func-budget, coercion-sites, oracle-ratchet, dead-exports,
+`check:ir-fallbacks` exit 0, also with `LOC_GATE_BASE=8452732f0b`; `npm run
+typecheck` 0 errors.
