@@ -3,10 +3,8 @@
   "assignee": "ttraenkler/codex-ir-native-linear-source-facts-sol61-20261008",
   "requested_by": "ttraenkler/codex-ir-native-linear-source-facts-sol61-20261008",
   "status": "in-progress",
-  "branch": "codex/6865-ir-class-cycle-own-data-20261008",
-  "reserved_at": "2026-10-08T16:48:04Z",
-  "claimed_at": "2026-10-08T16:48:04Z",
-  "updated_at": "2026-10-08T16:48:04Z",
-  "write_id": "64498-ih0vkb8o",
-  "pr_scan": "ok"
+  "branch": "codex/6918-ir-class-cycle-own-data-20261008",
+  "claimed_at": "2026-10-08T16:54:12Z",
+  "updated_at": "2026-10-08T16:54:12Z",
+  "write_id": "66058-asmp5a64"
 }
