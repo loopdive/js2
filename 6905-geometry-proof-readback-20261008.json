@@ -2,10 +2,11 @@
   "id": "6905",
   "slice": "geometry-proof-readback-20261008",
   "assignee": "ttraenkler/codex-linear-b-geometry-readback-astra-20261008",
-  "requested_by": "ttraenkler/codex-linear-b-geometry-readback-astra-20261008",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/6905-linear-prepared-memory-plan-20261007",
   "claimed_at": "2026-10-08T18:38:00Z",
-  "updated_at": "2026-10-08T18:38:00Z",
-  "write_id": "20706-p2lbglok"
+  "updated_at": "2026-10-08T18:47:53Z",
+  "write_id": "42281-m2p9bbv6",
+  "released_at": "2026-10-08T18:47:53Z"
 }
