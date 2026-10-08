@@ -3,9 +3,10 @@
   "slice": "registry-handoff-20261008",
   "assignee": "ttraenkler/codex-linear-b-registry-sol61-20261008",
   "requested_by": "ttraenkler/codex-linear-b-registry-sol61-20261008",
-  "status": "in-progress",
+  "status": "done",
   "branch": "codex/6899-linear-string-slice-20261007",
   "claimed_at": "2026-10-08T16:28:30Z",
-  "updated_at": "2026-10-08T16:28:30Z",
-  "write_id": "79507-xolp9ix8"
+  "updated_at": "2026-10-08T16:39:34Z",
+  "write_id": "14383-5z1dnloj",
+  "released_at": "2026-10-08T16:39:34Z"
 }
