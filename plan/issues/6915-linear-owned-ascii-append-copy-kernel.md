@@ -846,3 +846,163 @@ allowance is authorized. Wasm-model publication alone does not unblock this.
 A retains shared compiler/preparation/codec/consumer wiring and final queue
 delivery. Foreign allocator4540 and shared3518 ownership claims are untouched.
 No legacy removal, HOLD release, merge or new checkpoint PR was performed.
+
+### Finite repair: CI-generated boundary-report custody — 2026-10-08
+
+Parent reports a new real failure at PR6593 HEAD
+`7be295c0d8611882ec09492af8d29c229bb4bfba`, run37815701912,
+quality job113443658866, step48: `assertFrozenInputs` rejects the untracked
+`compiler-boundaries-report.json` produced by the earlier unchanged inventory
+step. Parent retains the actual failing log; this specification does not claim
+an independently rerun failure or a passing repaired epoch. Source inspection
+confirms the incompatibility: ci.yml lines168–180 writes that root file, while
+the runner's porcelain loop admits only the three existing local EDITABLE paths.
+
+This is generated-output custody, not source approval or append implementation.
+Parent confirms the implementation slice `6915:ci-generated-report-custody-20261008`,
+owner `ttraenkler/codex-linear-b-generated-report-sol61-20261008`, effect-verified
+held at ledger `364bba862f`, write ID `4156-17hxbrq8`. This appendix authorizes
+no claim mutation. All source, fixture, dependency, workflow and original test
+pins, existing HOLDs, and foreign4540/3518 ownership remain unchanged.
+
+Parent's independent CI-faithful reproduction produced a10,924,371-byte report
+with status `inventory-valid-architecture-incomplete` and sourceRevision7be295.
+The unchanged runner exited1 before spawning the child. Preserve its archive
+`.tmp/6915-ci/run-H4QDf9` and original real-CI log
+`.tmp/6915-custody-repair/failed-job-113443658866.log`. Parent's independently
+authored manifest is `.tmp/6915-approved-parent-7be295.json`. These are measured
+parent observations, not architect-run tests. The deliberately retained untracked
+root report is the positive reproduction input: do not edit or delete it.
+Its status does not approve source or establish architecture completion. The
+64MiB bound below exceeds this actual10,924,371-byte population.
+
+#### Exact worker partition
+
+Only `scripts/hooks/run-linear-append-provenance.mjs` needs implementation:
+
+- `assertFrozenInputs` (line290 at the reported HEAD): exact generated-path
+  classification and inclusion of its detached custody metadata in the returned
+  snapshot. Preserve every existing source/config/git-object check.
+- One narrowly scoped report snapshot helper, proposed
+  `snapshotGeneratedBoundaryReport`, plus literal path/byte-cap constants.
+  Reuse the existing regular-file checks and SHA256 implementation; no generic
+  artifact allowlist, approval resolver, registry or workflow framework.
+- `runAppendQualification` (line998): archive the helper's exact captured bytes
+  before spawn and after child termination, and retain before/after metadata
+  through the existing finally/error aggregation path.
+- `selfTest` (line1179): embedded finite controls of those same production
+  predicates/snapshot comparison. Small isolated temporary filesystem/Git
+  fixtures are permitted for controls; no compiler, Vitest or real suite in
+  self-test mode, and no mutation of the user's checkout or shared refs.
+
+No changes to `changed-root-tests.sh`, ci.yml, the frozen36-case test, fixtures,
+runtime, shared compiler, registry, CONFIG_PINS, parent manifest schema or child
+provenance schema. Parent owns subsequent issue/evidence integration and commits.
+
+#### Exact admissibility and data contract
+
+1. The only additional pathname is repository-root
+   `compiler-boundaries-report.json`, matched exactly, with status exactly `??`
+   when present in porcelain. Renames, copies, staged additions and tracked
+   modifications are not this exception. Require independently that neither
+   frozen HEAD nor the current Git index tracks this pathname, even if Git
+   reports no dirt. A failure to inspect Git is an error, not absence.
+2. Check this exact path independently of porcelain so an ignored file or a
+   dangling symlink cannot evade custody. Absence is allowed and recorded;
+   presence must be a regular, non-symlink, non-executable data file. Reuse path
+   component checks; directories, FIFOs and symlinks (including dangling links)
+   fail without reading their contents. This does not authorize any other
+   ignored-path exception or change existing handling of unrelated paths.
+3. Use a fixed maximum of64MiB (the existing MAX_BYTES bound); no environment
+   override. Enforce the bound before and during capture, so a changing size
+   cannot cause an unbounded read. Capture through one validated file handle,
+   preserving all bytes without JSON parsing, normalization, truncation or
+   reserialization. Read/stat/archive failures fail qualification. Do not import,
+   evaluate or execute the report, nor trust any reported green verdict, hashes,
+   source list or configuration as approval.
+4. Return metadata separately from approved `files`, for example one fixed
+   `generatedBoundaryReport` discriminant: `{path, present:false}` or
+   `{path, present:true, byteLength, sha256}`. Keep raw bytes transiently alongside
+   the snapshot for archival, not in the parent expected-provenance manifest.
+   The bytes hashed must be the same captured bytes saved. Presence, length and
+   digest form the before/after equality contract; timestamps/inodes are not
+   compiler inputs and do not replace content equality.
+5. Archive present pre-spawn bytes as `boundary-report-before.raw` and present
+   post-child bytes as `boundary-report-after.raw` inside the existing unique run
+   archive. `before.json`/`after.json` retain their presence/digest/length metadata.
+   No placeholder raw file for absence. Record the after snapshot and any safe
+   bounded after bytes before comparing snapshots, so a drift failure preserves
+   its evidence. Changed bytes (including same-length changes), disappearance
+   or appearance after an absent baseline all fail. If after capture itself is
+   invalid, retain the original snapshot/raw bytes and existing after-failure
+   diagnostic; do not follow a symlink or read oversized data to obtain evidence.
+6. Keep the existing deep before/after comparison and primary/cleanup error
+   aggregation. Report capture/archive/drift errors prevent success; no failure
+   replaces the primary child error. Never delete or rewrite the producer's root
+   file. Permit this same exact output under either already-approved CI identity
+   or explicit local parent identity, allowing CI-faithful local reproduction
+   without inferring CI identity from the report. The three EDITABLE local paths
+   retain precisely their existing rules; every other unknown untracked or
+   tracked edit still fails. No `*.json`, directory or status-class exemption.
+
+#### Finite implementation controls and parent qualification
+
+Add embedded positives for absent output and unchanged present output, verifying
+exact raw-byte/hash equality; opaque bytes must not need a JSON/green verdict.
+Exercise both existing identity modes without modifying their approval rules.
+Preserve the complete healthy38-record/36-ID, Runtime22/33-transition and eight
+negative witness controls and all prior decoder/receipt failures.
+
+Negatives must exercise the real checks: dirty source, fixture and execution
+config; another unknown root file; tracked report (clean in HEAD as well as
+newly staged); report symlink and dangling symlink; nonregular/executable report;
+oversized output; same-length byte drift; presence-to-absence and
+absence-to-presence drift. Archive-write/capture failure must remain a failing
+qualification through the existing aggregation path. Do not duplicate the
+decision logic in a self-test-only validator or relax pins to create positives.
+Report the actual collected control count only after execution, not a predicted
+new total. Parent serializes any real test runs.
+
+Parent's required production reproduction uses the unchanged CI producer:
+
+```sh
+node --max-old-space-size=2048 scripts/check-compiler-boundaries.mjs \
+  --mode inventory --base HEAD^1 > compiler-boundaries-report.json
+```
+
+Use the actual frozen CI-faithful checkout/base and preserve the producer's exit
+status and raw stderr/output; no synthetic report substituted for this run.
+Then run the existing changed-root/parent path with independently authored
+identity and unchanged source/test/fixture/config pins. Require strict exit0,
+reporter36 passed/zero failed/skipped/todo, all38 complete envelopes (provenance,
+36 unique observations, completion), Runtime22's33 transitions, all eight
+same-validator negatives and genuine source joins. Require identical before/after
+generated-report custody. Compare all36 observation graphs and completion to the
+retained qualified baseline without filtering semantic fields; provenance/run
+identity and the new parent-only artifact metadata are separately recorded.
+
+Retain the first step48 failure and every old archive unchanged. A successful
+local reproduction is not a default-CI pass; actual repaired CI remains required.
+No performance, native caller/admission, full IR delivery, legacy retirement or
+HOLD-release claim follows from this repair. No signing setup work is requested.
+
+#### Implementation and measured qualification
+
+Sol6.1 Medium implemented only the finite runner seam;89 embedded controls
+passed in worker and parent runs. Astra High's final read-only review cleared
+the actual diff against this plan at runner SHA256
+`ba0dd8a0ef4d036f70f730a31202af1879a27e273f7c3eea0e0521818de737d7`.
+Parent executed the real changed-root hook at HEAD7be295/source tree953f74f8
+with the pending patch and unchanged independently approved pins.36 passed,
+zero failed/skipped/todo, strict exit0; all38 full envelopes retained.
+All36 complete observation graphs and completion exactly equal repaired-v3,
+without filtering graph fields. The real10,924,371-byte producer report is
+identical before/after, separately retained as opaque output, never approval.
+
+The original real-CI failure, strict local failed reproduction, repaired raw
+streams/graphs/decoded records, executed runner bytes and offline replay are
+published in `plan/log/6915-linear-append-20261007/ci-report-custody-20261008/`.
+Prior failures/fixtures/epochs remain unchanged. A publication commit must not
+replace7be295 as execution identity. Actual repaired CI is still required;
+later gates and native implementation are not qualified by this bounded repair.
+No hook/workflow/source/config/fixture or protection changes were made.

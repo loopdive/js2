@@ -5,18 +5,25 @@ import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   closeSync,
+  constants,
   existsSync,
+  fstatSync,
+  ftruncateSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
+  readSync,
   readFileSync,
   realpathSync,
   renameSync,
   unlinkSync,
   writeFileSync,
   writeSync,
+  chmodSync,
+  symlinkSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { deserialize, serialize } from "node:v8";
 import { pathToFileURL } from "node:url";
@@ -129,6 +136,8 @@ const OUTPUT_CAP = 256 * 1024 * 1024;
 const MAX_NODES = 250_000,
   MAX_FIELDS = 2_000_000,
   MAX_BYTES = 64 * 1024 * 1024;
+const GENERATED_BOUNDARY_REPORT = "compiler-boundaries-report.json";
+const GENERATED_REPORT_MAX_BYTES = MAX_BYTES;
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const check = (ok, message) => assert.ok(ok, `6915 parent: ${message}`);
 function detachErrors(root) {
@@ -287,6 +296,126 @@ function readApprovedCheckout() {
   assertIdentity(head, process.env, local);
   return { root, head, expected: buildExpectedProvenance(head), local: local !== undefined };
 }
+function assertCheckoutEdits(status, local) {
+  for (const entry of status.split("\0").filter(Boolean)) {
+    const state = entry.slice(0, 2),
+      path = entry.slice(3);
+    check(!state.includes("R") && !state.includes("C"), "rename/copy in execution checkout");
+    if (path === GENERATED_BOUNDARY_REPORT) {
+      check(state === "??", "generated boundary report must be exactly untracked");
+    } else check(local && EDITABLE.includes(path), `unapproved checkout edit: ${path}`);
+  }
+}
+function snapshotGeneratedBoundaryReport({ root, head }) {
+  const inspect = (...args) => execFileSync("git", args, { cwd: root, maxBuffer: OUTPUT_CAP });
+  // Git inspection failures propagate; neither a clean nor ignored tracked file
+  // may use this generated-output exception.
+  check(
+    inspect("ls-tree", "-z", head, "--", GENERATED_BOUNDARY_REPORT).length === 0,
+    "generated report tracked in HEAD",
+  );
+  check(
+    inspect("ls-files", "--stage", "-z", "--", GENERATED_BOUNDARY_REPORT).length === 0,
+    "generated report tracked in index",
+  );
+  const path = join(root, GENERATED_BOUNDARY_REPORT);
+  let entry;
+  try {
+    entry = lstatSync(path);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    return { metadata: { path: GENERATED_BOUNDARY_REPORT, present: false }, bytes: undefined };
+  }
+  check(
+    inspect("status", "--porcelain=v1", "-z", "--untracked-files=all", "--", GENERATED_BOUNDARY_REPORT).toString(
+      "utf8",
+    ) === `?? ${GENERATED_BOUNDARY_REPORT}\0`,
+    "generated report must be visible as exactly untracked",
+  );
+  regular(path);
+  check(
+    entry.isFile() && !entry.isSymbolicLink() && (entry.mode & 0o111) === 0,
+    "generated report must be non-executable regular data",
+  );
+  check(entry.size <= GENERATED_REPORT_MAX_BYTES, "generated report byte cap");
+  // Nonblocking/no-follow prevents a raced FIFO or symlink from escaping the
+  // lstat checks. All bytes are read from this one validated read-only handle.
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  let captured, primary;
+  try {
+    const initial = fstatSync(fd);
+    const validateHandle = (stat) => {
+      check(stat.isFile() && (stat.mode & 0o111) === 0, "generated report handle must be non-executable regular data");
+      check(stat.size <= GENERATED_REPORT_MAX_BYTES, "generated report handle byte cap");
+      check(stat.dev === entry.dev && stat.ino === entry.ino, "generated report handle/path replacement");
+    };
+    validateHandle(initial);
+    const chunks = [];
+    let length = 0;
+    for (;;) {
+      validateHandle(fstatSync(fd));
+      const chunk = Buffer.allocUnsafe(Math.min(1024 * 1024, GENERATED_REPORT_MAX_BYTES - length + 1));
+      const count = readSync(fd, chunk, 0, chunk.length, length);
+      if (count === 0) break;
+      length += count;
+      check(length <= GENERATED_REPORT_MAX_BYTES, "generated report grew beyond byte cap");
+      chunks.push(chunk.subarray(0, count));
+    }
+    const final = fstatSync(fd),
+      current = lstatSync(path);
+    validateHandle(final);
+    check(
+      current.isFile() &&
+        !current.isSymbolicLink() &&
+        (current.mode & 0o111) === 0 &&
+        current.dev === final.dev &&
+        current.ino === final.ino,
+      "generated report path changed during capture",
+    );
+    check(
+      length === initial.size &&
+        final.size === initial.size &&
+        current.size === final.size &&
+        final.mtimeMs === initial.mtimeMs &&
+        final.ctimeMs === initial.ctimeMs,
+      "generated report changed during capture",
+    );
+    const bytes = Buffer.concat(chunks, length);
+    captured = {
+      metadata: { path: GENERATED_BOUNDARY_REPORT, present: true, byteLength: bytes.length, sha256: sha256(bytes) },
+      bytes,
+    };
+  } catch (error) {
+    primary = error;
+  }
+  try {
+    closeSync(fd);
+  } catch (error) {
+    throw new AggregateError(primary ? [primary, error] : [error], "generated report capture/close failed", {
+      cause: primary ?? error,
+    });
+  }
+  if (primary) throw primary;
+  return captured;
+}
+function archiveFrozenInputs(save, phase, capture) {
+  check(phase === "before" || phase === "after", "generated report archive phase");
+  const { snapshot, generatedReportBytes } = capture;
+  const metadata = snapshot.generatedBoundaryReport;
+  if (metadata.present) {
+    check(
+      Buffer.isBuffer(generatedReportBytes) &&
+        generatedReportBytes.length === metadata.byteLength &&
+        sha256(generatedReportBytes) === metadata.sha256,
+      "generated report archive byte/hash custody",
+    );
+    save(`boundary-report-${phase}.raw`, generatedReportBytes);
+  } else check(generatedReportBytes === undefined, "absent generated report has bytes");
+  save(`${phase}.json`, JSON.stringify(snapshot, null, 2) + "\n");
+}
+function compareFrozenInputs(before, after) {
+  assert.deepEqual(after.snapshot, before.snapshot, "post-run custody drift");
+}
 function assertFrozenInputs(checkout) {
   const { root, head, expected, local } = checkout;
   check(gitText("rev-parse", "HEAD") === head, "HEAD drift");
@@ -296,10 +425,8 @@ function assertFrozenInputs(checkout) {
     "dirty source/test/fixture",
   );
   const status = git("status", "--porcelain=v1", "-z", "--untracked-files=all").toString("utf8");
-  for (const entry of status.split("\0").filter(Boolean)) {
-    check(!entry.slice(0, 2).includes("R") && !entry.slice(0, 2).includes("C"), "rename/copy in execution checkout");
-    check(local && EDITABLE.includes(entry.slice(3)), `unapproved checkout edit: ${entry.slice(3)}`);
-  }
+  assertCheckoutEdits(status, local);
+  const generated = snapshotGeneratedBoundaryReport(checkout);
   const files = {};
   const verify = (path, approvedHash) => {
     const absolute = join(root, path);
@@ -339,14 +466,16 @@ function assertFrozenInputs(checkout) {
       files[path] = sha256(readFileSync(join(root, path)));
     }
   }
-  return {
+  const snapshot = {
     head,
     sourceTree: expected.sourceTree,
     branch: gitText("branch", "--show-current"),
     node: process.version,
     v8: process.versions.v8,
     files,
+    generatedBoundaryReport: generated.metadata,
   };
+  return { snapshot, generatedReportBytes: generated.bytes };
 }
 
 // Inert data decoder: never install or call captured getters, functions or prototypes.
@@ -1031,7 +1160,7 @@ async function runAppendQualification() {
     json("expected.json", checkout.expected);
     json("command.json", { executable: "pnpm", argv: ARGV, timeoutMs: TIMEOUT_MS, outputCap: OUTPUT_CAP });
     before = assertFrozenInputs(checkout);
-    json("before.json", before);
+    archiveFrozenInputs(save, "before", before);
     const reportPath = join(directory, "observations.json");
     if (existsSync(reportPath)) {
       regular(reportPath);
@@ -1135,8 +1264,8 @@ async function runAppendQualification() {
   } finally {
     try {
       const after = assertFrozenInputs(checkout);
-      json("after.json", after);
-      if (before !== undefined) assert.deepEqual(after, before, "post-run custody drift");
+      archiveFrozenInputs(save, "after", after);
+      if (before !== undefined) compareFrozenInputs(before, after);
     } catch (error) {
       errors.push(error);
       try {
@@ -1671,6 +1800,164 @@ function selfTest() {
     );
     assert.equal(parsed.diagnostics.length, 1);
     assert.equal(parsed.errors.length, 1);
+  });
+  // Finite filesystem/Git controls use only this fresh private fixture. No
+  // commits, shared refs, production reports or compiler/test jobs are touched.
+  const fixtureRoot = realpathSync(mkdtempSync(join(tmpdir(), "6915-generated-report-self-test-")));
+  const fixtureEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+  const fixtureGit = (...args) =>
+    execFileSync("git", args, { cwd: fixtureRoot, env: fixtureEnv, stdio: ["pipe", "pipe", "pipe"] })
+      .toString("utf8")
+      .trim();
+  fixtureGit("init", "--quiet");
+  const emptyTree = fixtureGit("write-tree");
+  const checkout = { root: fixtureRoot, head: emptyTree };
+  const reportPath = join(fixtureRoot, GENERATED_BOUNDARY_REPORT);
+  const fixtureCapture = () => {
+    const generated = snapshotGeneratedBoundaryReport(checkout);
+    return {
+      snapshot: { files: {}, generatedBoundaryReport: generated.metadata },
+      generatedReportBytes: generated.bytes,
+    };
+  };
+  const fixtureStatus = () => fixtureGit("status", "--porcelain=v1", "-z", "--untracked-files=all");
+  const opaque = Buffer.from([0, 255, 123, 128]);
+  const absent = fixtureCapture();
+  good(() => {
+    assert.deepEqual(absent.snapshot.generatedBoundaryReport, { path: GENERATED_BOUNDARY_REPORT, present: false });
+    assert.equal(absent.generatedReportBytes, undefined);
+    compareFrozenInputs(absent, fixtureCapture());
+  });
+  writeFileSync(reportPath, opaque);
+  const present = fixtureCapture();
+  good(() => {
+    assert.deepEqual(present.generatedReportBytes, opaque);
+    assert.equal(present.snapshot.generatedBoundaryReport.byteLength, opaque.length);
+    assert.equal(present.snapshot.generatedBoundaryReport.sha256, sha256(opaque));
+    assert.equal(Object.hasOwn(present.snapshot.files, GENERATED_BOUNDARY_REPORT), false);
+    compareFrozenInputs(present, fixtureCapture());
+    for (const local of [false, true]) assertCheckoutEdits(fixtureStatus(), local);
+  });
+  const saved = new Map();
+  good(() => {
+    archiveFrozenInputs((name, bytes) => saved.set(name, bytes), "before", present);
+    archiveFrozenInputs((name, bytes) => saved.set(name, bytes), "after", fixtureCapture());
+    assert.deepEqual(saved.get("boundary-report-before.raw"), opaque);
+    assert.deepEqual(saved.get("boundary-report-after.raw"), opaque);
+    assert.equal(
+      JSON.parse(saved.get("before.json")).generatedBoundaryReport.sha256,
+      sha256(saved.get("boundary-report-before.raw")),
+    );
+    assert.equal(
+      JSON.parse(saved.get("after.json")).generatedBoundaryReport.sha256,
+      sha256(saved.get("boundary-report-after.raw")),
+    );
+  });
+  good(() => {
+    const names = [];
+    archiveFrozenInputs((name) => names.push(name), "before", absent);
+    assert.deepEqual(names, ["before.json"]);
+  });
+  for (const path of [
+    "src/dirty.ts",
+    PATHS.fixture,
+    "vitest.config.ts",
+    "another-root.json",
+    "compiler-boundaries-report.json.extra",
+  ]) {
+    for (const local of [false, true]) bad(() => assertCheckoutEdits(`?? ${path}\0`, local));
+  }
+  for (const state of [" M", "A ", "R ", "C "])
+    bad(() => assertCheckoutEdits(`${state} ${GENERATED_BOUNDARY_REPORT}\0`, true));
+  // Current index tracking and clean frozen-tree tracking are independent
+  // predicates. Tree objects exercise ls-tree without creating any commits.
+  fixtureGit("update-index", "--add", GENERATED_BOUNDARY_REPORT);
+  bad(() => snapshotGeneratedBoundaryReport(checkout));
+  const trackedTree = fixtureGit("write-tree");
+  fixtureGit("update-index", "--force-remove", GENERATED_BOUNDARY_REPORT);
+  bad(() => snapshotGeneratedBoundaryReport({ ...checkout, head: trackedTree }));
+  bad(() => snapshotGeneratedBoundaryReport({ ...checkout, head: "0".repeat(40) }));
+  writeFileSync(join(fixtureRoot, ".git/info/exclude"), `${GENERATED_BOUNDARY_REPORT}\n`);
+  bad(() => snapshotGeneratedBoundaryReport(checkout));
+  writeFileSync(join(fixtureRoot, ".git/info/exclude"), "");
+  chmodSync(reportPath, 0o755);
+  bad(() => snapshotGeneratedBoundaryReport(checkout));
+  chmodSync(reportPath, 0o644);
+  writeFileSync(reportPath, Buffer.from([0, 254, 123, 128]));
+  const changed = fixtureCapture();
+  bad(() => compareFrozenInputs(present, changed));
+  good(() => {
+    archiveFrozenInputs((name, bytes) => saved.set(name, bytes), "after", changed);
+    assert.deepEqual(saved.get("boundary-report-after.raw"), changed.generatedReportBytes);
+    assert.notEqual(
+      JSON.parse(saved.get("after.json")).generatedBoundaryReport.sha256,
+      present.snapshot.generatedBoundaryReport.sha256,
+    );
+  });
+  unlinkSync(reportPath);
+  bad(() => compareFrozenInputs(present, fixtureCapture()));
+  writeFileSync(reportPath, opaque);
+  bad(() => compareFrozenInputs(absent, fixtureCapture()));
+  unlinkSync(reportPath);
+  const target = join(fixtureRoot, "target.data");
+  writeFileSync(target, opaque);
+  symlinkSync(target, reportPath);
+  bad(() => snapshotGeneratedBoundaryReport(checkout));
+  unlinkSync(reportPath);
+  symlinkSync(join(fixtureRoot, "missing-target"), reportPath);
+  bad(() => snapshotGeneratedBoundaryReport(checkout));
+  unlinkSync(reportPath);
+  mkdirSync(reportPath);
+  bad(() => snapshotGeneratedBoundaryReport(checkout));
+  // Keep all fixture artifacts for inspection; use a second fresh repository
+  // for bounded sparse-file and failing file-handle controls.
+  const otherRoot = realpathSync(mkdtempSync(join(tmpdir(), "6915-generated-report-cap-self-test-")));
+  const otherGit = (...args) =>
+    execFileSync("git", args, { cwd: otherRoot, env: fixtureEnv, stdio: ["pipe", "pipe", "pipe"] })
+      .toString("utf8")
+      .trim();
+  otherGit("init", "--quiet");
+  const otherCheckout = { root: otherRoot, head: otherGit("write-tree") };
+  const otherReport = join(otherRoot, GENERATED_BOUNDARY_REPORT),
+    sparseFd = openSync(otherReport, "wx");
+  try {
+    ftruncateSync(sparseFd, GENERATED_REPORT_MAX_BYTES + 1);
+  } finally {
+    closeSync(sparseFd);
+  }
+  bad(() => snapshotGeneratedBoundaryReport(otherCheckout));
+  unlinkSync(otherReport);
+  writeFileSync(otherReport, opaque);
+  chmodSync(otherReport, 0o000);
+  bad(() => snapshotGeneratedBoundaryReport(otherCheckout));
+  chmodSync(otherReport, 0o644);
+  bad(() =>
+    archiveFrozenInputs(
+      (name, bytes) => writeFileSync(join(otherRoot, "absent-parent", name), bytes),
+      "before",
+      present,
+    ),
+  );
+  bad(() =>
+    archiveFrozenInputs(() => {}, "before", {
+      snapshot: present.snapshot,
+      generatedReportBytes: Buffer.from("wrong capture"),
+    }),
+  );
+  good(() => {
+    const primary = new Error("retained child failure"),
+      errors = [primary];
+    try {
+      archiveFrozenInputs(
+        (name, bytes) => writeFileSync(join(otherRoot, "absent-parent", name), bytes),
+        "after",
+        present,
+      );
+    } catch (error) {
+      errors.push(error);
+    }
+    assert.equal(errors.length, 2);
+    assert.equal(errors[0], primary);
   });
   console.log(`6915 parent self-test: ${passed} controls passed (no compiler/test execution)`);
 }
