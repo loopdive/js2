@@ -453,19 +453,19 @@ function canInline(
   // raw.wasm carries function-local backend indices that don't survive a
   // change of enclosing function — conservative skip in the same spirit.
   // #6921 — callee slots are remapped into the caller, which serves only
-  // top-level `slot.read` / `slot.write`. Reject callees whose slot indices
-  // are also consumed by function-level lowering fields (generator buffer,
-  // async frames) or by `gen.*` ops reading `generatorBufferSlot`.
+  // top-level `slot.read` / `slot.write`. The pass does not transfer a
+  // captured environment or a suspension protocol, so callees carrying one
+  // are rejected outright (guards composed from #5387 / PR 5748).
   if (
-    (callee.slots?.length ?? 0) > 0 &&
-    ((callee.funcKind ?? "regular") !== "regular" ||
-      callee.generatorBufferSlot !== undefined ||
-      callee.asyncPlan !== undefined)
+    callee.generatorBufferSlot !== undefined ||
+    callee.closureSubtype !== undefined ||
+    callee.asyncPlan !== undefined ||
+    (callee.funcKind ?? "regular") !== "regular"
   ) {
     return false;
   }
   for (const inst of body.instrs) {
-    if (inst.kind === "raw.wasm") return false;
+    if (inst.kind === "raw.wasm" || inst.kind === "closure.cap") return false;
     if (inst.kind.startsWith("gen.")) return false;
     if (
       inst.kind === "forof.vec" ||

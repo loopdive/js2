@@ -1,10 +1,11 @@
 ---
 id: 6921
 title: "IR middle-end pass correctness: inliner splices callee slots unremapped (miscompile / CE); DCE and GVN treat dyn.to_number and loose dyn.eq as pure (drops valueOf / throws)"
-status: in-progress
+status: done
 sprint: current
 created: 2026-10-08
 updated: 2026-10-08
+completed: 2026-10-08
 priority: high
 horizon: s
 feasibility: medium
@@ -428,12 +429,9 @@ Where the plan above was wrong:
   `eqq` with a number only. Follow-up issue needed.
 - **Missing gate.** `tests/issue-3518-semantic-verification-ownership.test.ts`
   pins SHA-256 hashes of `effectsOf` and `isSideEffecting`. Any intentional
-  semantic change to them must repin. That file belongs to the 3518
-  preservation suite (Session A), so this PR does NOT edit it: the two rows
-  stay red until A repins or rules otherwise. Required values:
-  `effectsOf` 41e55ffd4ab4d440969a4b431db300e76f3a4f61fac6403c5fbe3d72de81077a,
-  `isSideEffecting` 1367e99f4d1fbe57c4bda1b61e16ef5eebc4ee18e61d315d5525390e1be0d00c. The file's other
-  three failures (intrinsics catalog/signature) fail identically on base.
+  semantic change to them must repin. The project lead decided (2026-10-08)
+  that this PR repins exactly those two rows; predecessor hashes are kept in
+  a comment and every other row is unchanged.
 - **Stale paths.** Playground examples are under `website/playground/examples`;
   `tests/equivalence.test.ts` is now the directory `tests/equivalence/`.
 - **Extra guard.** The inliner also declines callees whose slots are used by
@@ -444,7 +442,7 @@ Non-regression, exact pass/fail sets compared base vs fix:
 
 | Population | Base | Fix |
 | --- | --- | --- |
-| 40 targeted test files | 576 pass / 705 fail | 575 / 706; the one change is the effects pin (A decision pending) |
+| 40 targeted test files | 576 pass / 705 fail | 575 / 706; the one change is the effects pin, now repinned |
 | `tests/equivalence/` (224 files) | 1764 / 22 | 1764 / 22, identical |
 | WAT, 13 playground examples × {gc, standalone} | — | 26/26 byte-identical |
 
@@ -452,3 +450,30 @@ The 705 base failures are pre-existing (mostly 3518 history/receipt suites).
 Gates: loc-budget, func-budget, coercion-sites, oracle-ratchet, dead-exports,
 `check:ir-fallbacks` exit 0, also with `LOC_GATE_BASE=8452732f0b`; `npm run
 typecheck` 0 errors.
+
+## Composition with PR 5748 and final qualification (2026-10-08)
+
+The project lead reassigned `canInline`, the inliner slot splice and the two
+`effects.ts` functions to Session C for this issue only (claims 5387, 2949,
+3518:number-method-effects keep everything else). `canInline` now keeps
+PR 5748's guards verbatim: callees with a generator buffer, a closure
+subtype, an async plan, or a non-regular `funcKind` are refused, as is any
+`closure.cap` in the callee body. Only 5748's slot rejection is replaced by
+the slot remap. 5748's `asyncRuntime` check is dropped because that field
+does not exist on main's `IrFunction`.
+
+Final run on the composed source (file-copy A/B against `8452732f0b`, same
+16 files: the #6921 suite, the 3518 semantic pin suite, and every test that
+mentions the inliner):
+
+| Arm | Result |
+| --- | --- |
+| base | 33 failed / 197 passed / 230 |
+| composed | 20 failed / 210 passed / 230 |
+
+No test fails only on the composed arm. The 13 that fail only on base are
+the 12 #6921 cases plus the effects pin. The 20 shared failures pre-exist.
+`node scripts/equivalence-gate.mjs`: 1748 passing, 22 known failures, no new
+regressions. All ratchet gates pass, also with `LOC_GATE_BASE=8452732f0b`;
+`npm run typecheck` is clean. Raw sets are in
+`plan/log/6921-ir-pass-correctness/composed-*.txt`.
