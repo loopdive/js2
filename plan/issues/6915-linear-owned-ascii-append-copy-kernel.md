@@ -1006,3 +1006,145 @@ Prior failures/fixtures/epochs remain unchanged. A publication commit must not
 replace7be295 as execution identity. Actual repaired CI is still required;
 later gates and native implementation are not qualified by this bounded repair.
 No hook/workflow/source/config/fixture or protection changes were made.
+
+### Owner-review proposal: advisory selected append caller — 2026-10-08
+
+Planning-only slice `6915:advisory-parent-caller-plan-20261008`, owner
+`ttraenkler/codex-linear-b-advisory-caller-astra-20261008`, is parent-confirmed
+effect-verified at ledger `4b08ba71eb`, write ID `42447-taxim1on`. Its sole write
+scope is this appendix. No workflow or runner implementation, foreign claim
+transfer, commit, push, queue action or HOLD release is authorized. A/root must
+review and explicitly release the exact implementation hunk before any edit.
+Synchronization comment6066046970 requests review; it is not an ownership release.
+
+Inspected checkout is `6900bb7c35d00702c5cf7ca5379c863e22866b1d`, which already
+publishes the required-quality generated-report custody repair. A's earlier
+review referred to7be295; do not attribute that repaired blocker to the new head.
+The separate advisory job113445120654 used direct Vitest. Parent's retained raw
+log `.tmp/6915-custody-repair/advisory-job-113445120654.log` records36 setup-skips,
+zero observations and missing `JS2WASM_APPEND_EXPECTED_PROVENANCE`.
+`steps.tests.outcome` was `failure` despite overall job success. That is an
+unqualified instrument run, not36 passing tests. This appendix records parent
+evidence; the architect did not rerun or refresh the CI job.
+
+#### Proposed exact command-only partition
+
+At the inspected head, `.github/workflows/ci.yml:896` defines
+`issue-tests-changed`. The candidate implementation hunk is only the shell body
+of `Run changed issue test file (advisory)`, `id: tests`, lines935–939. Proposed
+dispatch after the existing selected-file manifest validation:
+
+```sh
+if [ "$ISSUE_TEST_FILE" = "tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts" ]; then
+  node scripts/hooks/run-linear-append-provenance.mjs
+else
+  pnpm exec vitest run "$ISSUE_TEST_FILE" \
+    --pool=forks --poolOptions.forks.singleFork=false \
+    --poolOptions.forks.maxForks=1 --no-file-parallelism
+fi
+```
+
+This is a proposed owner-reviewed branch, not permission to apply it. Invoke the
+already published parent directly for exactly that selected file. Do not call
+`changed-root-tests.sh`, repeat selection, run additional files, duplicate the
+parent, synthesize parent expectations in YAML, or introduce a second receipt
+validator. `scripts/select-changed-issue-tests.mjs` and its tests are read-only
+dependencies, not implementation targets.
+
+Keep `continue-on-error: true` at line932, `id: tests`, the existing environment,
+the one-file-per-runner matrix, max15 selection, manifest/ordinal validation,
+all pinned tests and every other lane unchanged. Keep outcome reporting at
+lines941–952 and the existing aggregate issue-test policy unchanged. The direct
+Vitest else arm retains every existing flag. The append parent uses its own
+already-approved strict command and single-fork flags; do not force the direct
+arm's flags onto it or suppress its unhandled-error channel.
+
+The parent process must be the branch's exit status: no trailing success command,
+`|| true`, direct-Vitest retry, green fallback or catch-and-pass. GitHub's existing
+advisory policy may transform the step conclusion/job result, but the raw step
+outcome must remain failure on nonzero parent exit and the existing warning
+must report it. This proposal neither makes the advisory job required nor changes
+required-quality enforcement. A job-level green alone cannot qualify append.
+
+#### Identity, immutable pins and the explicit push-event gap
+
+The current runner's `readApprovedCheckout`/`assertIdentity` obtains actual Git
+HEAD and requires `GITHUB_ACTIONS=true`, matching `GITHUB_SHA`, no local-manifest
+override, and event `pull_request` or `merge_group`. Continue using those genuine
+CI values, not a frozen historical HEAD or an event invented by the workflow.
+The parent independently checks source tree, production/test/fixture bytes and
+CONFIG_PINS, then supplies the child command/provenance/flags. No test-side
+approval or updated pins learned from test output are allowed.
+
+The changed-file job's default shallow checkout at line908 is sufficient for
+this existing parent: current HEAD/tree/blob/index reads do not require the
+historical APPROVAL_COMMIT object or a merge-base selection in this runner.
+Selection already occurred in the separate full-history selector job. Do not
+add a history fetch as a substitute for failed identity or changed content pins.
+A committed command-only workflow edit can satisfy the existing pins because
+ci.yml is not in CONFIG_PINS and does not alter the source/test/fixture hashes.
+An uncommitted workflow edit remains outside the three local EDITABLE paths and
+must fail; do not add it to that local exception. A composed main changing any
+pinned input still requires separate independent review, not automatic repinning.
+
+**Unresolved owner decision:** ci.yml also runs on `push` to main. The current
+parent intentionally rejects `GITHUB_EVENT_NAME=push`. The current selector
+normally finds an empty push/main diff when origin/main contains HEAD, but its
+HEAD^ fallback can select this append test if that base is unavailable. The
+command-only branch would
+therefore fail closed on that event. Neither this appendix nor the branch makes
+push a supported identity. Do not add an event skip, spoof PR/merge-group values,
+run direct Vitest instead, or silently widen `assertIdentity`.
+
+A/root must explicitly choose and record whether the existing push refusal is
+retained as a known limitation of the bounded caller repair, or whether genuine
+push/main qualification is also required. The latter needs a separately reviewed
+exact parent identity contract and function-scope release (including positive
+and negative controls); no concrete push approval predicate is authorized here.
+Until then do not claim all-event CI compatibility. Any release must name both
+the command hunk and any actually necessary additional identity scope, rather
+than hiding that dependency inside the workflow edit.
+
+#### Output custody and finite verification
+
+Reuse the parent's unique `.tmp/6915-ci/run-*` archives, strict exit receipt,
+raw streams,38 graphs, decoded witnesses, reporter, command, expected inputs
+and before/after custody. The independent advisory runner does not execute the
+quality job's boundary-report producer: absent generated output is valid and
+recorded by the published custody repair; do not fabricate/copy a quality report.
+If present, the same exact-path64MiB opaque-data rules apply. Never treat an
+inventory verdict as source approval.
+
+The command-only hunk adds no artifact uploader. Evidence must be inspected and
+retained by parent during qualification before the runner is discarded. If A
+requires durable Actions artifact retention for future advisory executions, it
+must explicitly release a separate exact append-only upload step; no general
+workflow/artifact framework or unrelated lane change is implied here. Do not
+claim an ephemeral archive is a published durable CI artifact.
+
+Before release, owner review must verify the actual YAML diff changes only the
+named command hunk (plus separately released scope, if any). After release,
+finite lightweight dispatch controls must show the exact append filename calls
+the existing parent once, another selected file receives the byte-equivalent
+old Vitest argv, and injected parent nonzero status propagates to step failure.
+Use isolated controls, never substitute a stub for production qualification.
+Retain the existing selector/manifest assertions and parent control population.
+Missing/mismatched CI identity, unexpected pins/flags, absent/malformed receipts,
+failed diagnostics and child errors must remain failures. Explicitly preserve
+the push-event rejection control until a separate contract changes it.
+
+Parent owns the serialized real selected-file execution on the committed
+candidate/actual supported CI event. Require36 passed/zero failed/skipped/todo,
+38 complete envelopes (one provenance,36 unique observations, one completion),
+Runtime22's33 transitions, all eight same-validator negatives, genuine source
+owner/consumer/helper joins, strict parent exit0 and equal before/after custody.
+Compare complete36 observation graphs and completion with the preserved qualified
+baseline; record actual new provenance separately, without relabeling old runs.
+Keep the original advisory36-skips/zero-observations log and all prior epochs.
+Advisory success does not replace required-quality evidence or prove runtime
+source correctness, native admission, performance, full IR completion or legacy
+retirement. A remains final integration/queue owner.
+
+Parent observed required-quality job113462828513 live at step14, then step17,
+while this proposal was written. Do not interrupt/restart it or push a new revision before
+parent settles that run. No signing setup work is requested.
