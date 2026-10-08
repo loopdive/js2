@@ -2,10 +2,11 @@
   "id": "6905",
   "slice": "native-interface-amendment-plan-20261008",
   "assignee": "ttraenkler/codex-linear-b-native-interface-astra-20261008",
-  "requested_by": "ttraenkler/codex-linear-b-native-interface-astra-20261008",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/6905-linear-prepared-memory-plan-20261007",
   "claimed_at": "2026-10-08T21:13:30Z",
-  "updated_at": "2026-10-08T21:13:30Z",
-  "write_id": "93440-ye5ufxfv"
+  "updated_at": "2026-10-08T21:22:26Z",
+  "write_id": "5518-zkizsvbu",
+  "released_at": "2026-10-08T21:22:26Z"
 }
