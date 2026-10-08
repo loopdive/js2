@@ -637,3 +637,28 @@ ci-quality-job-113043352038.log.gz. Unlike the separate advisory job, this gate
 propagates failure. Preserve both job records. The containing run37694677932
 still has live jobs; the local refresh has not restarted or cancelled them.
 Designated-owner parent-input wiring remains an actual landing blocker.
+
+### Dedicated Linear PR shepherd — 2026-10-08
+
+User explicitly requested a shepherd subagent. Parent reserved and freshly
+effect-verified `6915:linear-pr-shepherd-20261008`, owner
+`ttraenkler/codex-linear-b-pr-shepherd-sol61-20261008`, branch
+`codex/6915-linear-pr-shepherd-20261008`, ledger tip
+`7c09197b155d47ed34f9036934c701d48a46f353`. Isolated checkout:
+`/private/tmp/js2-linear-pr-shepherd-20261008`, canonical main845 production.
+
+Sol6.1 Medium will shepherd B's actual open PRs6563,6570,6572,6575,6577,6583,
+6590 and6593 using conflict → unresolved review → real CI failure ordering.
+Its initial exact write scope is only
+`plan/log/linear-pr-shepherd-20261008.md` plus worktree-local generated evidence.
+No author branch, production/test file, shared registry/hook/workflow or A-owned
+source edits are released by this task. Concrete B-owned fixes require their
+own explicit file/function partition and isolated author-head checkout before
+editing. Parent owns this issue update and publication into existing PRs.
+
+Agent must record exact PR heads, verified main ancestry, genuine failing job
+diagnostics, necessary ownership/dependency requests, and a dependency-first
+landing order. Passing advisory stubs do not establish acceptance. No merges,
+auto-merge, queue submission, hold removal or protection weakening; A remains
+integration owner. Existing positive failures and all historical evidence stay.
+The shepherd task does not authorize new implementation scope or claim delivery.
