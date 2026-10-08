@@ -1,0 +1,11 @@
+{
+  "id": "6905",
+  "slice": "forwarding-epoch-successor-plan-20261008",
+  "assignee": "ttraenkler/codex-linear-b-forwarding-epoch-astra-20261008",
+  "requested_by": "ttraenkler/codex-linear-b-forwarding-epoch-astra-20261008",
+  "status": "in-progress",
+  "branch": "codex/6905-linear-prepared-memory-plan-20261007",
+  "claimed_at": "2026-10-08T18:57:38Z",
+  "updated_at": "2026-10-08T18:57:38Z",
+  "write_id": "45834-oo2576pj"
+}
