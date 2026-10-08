@@ -947,3 +947,48 @@ duplicate `runtime/array-forwarding.ts` proposal; array fragments remain arithme
 not a complete constructor. Both gates are UNMET. No dispatch, additional path,
 helper ownership, claim transfer, HOLD release, source/test change, retirement,
 commit or push is authorized. Parent/root retains integration and publication.
+
+## Semantic evidence prerequisite for implementation entry — 2026-10-09
+
+Metadata-only claim `6905:semantic-witness-entry-plan-20261009`, owner
+`ttraenkler/codex-linear-b-semantic-astra-20261009`, write48308-1tjk3a8g,
+parent-effect-verified canonical ledger00465b714f. This append-only clarification
+starts at `104eff7c191d5947297f4b8e6b993f09bc9eb1ff`. Astra High reviewed A's
+source-derived finding in coordination comment6070453212; parent independently
+read the canonical verifier, collector and program-allocation validation source.
+This is not an executed forgery result or source acceptance.
+
+Gate 1's A-F prerequisite additionally requires a reviewed canonical semantic
+verification or authenticated-witness endpoint establishing encoding, ownership
+and escape evidence against the actual final semantic/support bodies. Agreement
+between saved registry metadata and fact projections is insufficient: coordinated
+false annotations can agree. `verifyLinearPreparedAllocationFacts` compares those
+projections; its allocation collector excludes instructions lacking `alloc`.
+Neither exact census nor descriptor safety establishes semantic evidence truth.
+
+Retain `verifyAllocProvenance`/`assertFinalAllocProvenance` as the single required-ID,
+known/live and allocation-kind authority. Preserve the semantic evidence obligation
+currently enforced by `assertPreparedIrProgramAllocations`, plus its async-state
+provenance and resolved result-type checks. Removing or renaming its analyses is
+not verification. Until a qualified replacement exists, retain existing semantic
+validation and keep zero-analysis dispatch held separately.
+
+A's `requirePreparedLinearMemoryInput` must require that validation before returning
+the canonical module/facts pair, including decoded replay. B consumes that reviewed
+contract; it does not implement a competing semantic verifier or treat snapshot
+equality, an accepted plan, or the lifetime guard as evidence authority. All five
+agreed API signatures and existing owner partitions remain unchanged.
+
+Preserve existing nested missing/foreign/wrong-kind/retired-ID controls,
+revalidation-after-success, missing/stale encoding and result-type mutations in
+`issue-3518-verifier-body-relocation.test.ts`, and stale encoding rejection in
+`issue-3518-inline-call-allocation.test.ts`. Retain support/currentness negatives,
+async-state checks, absent versus present-undefined evidence, A2's original18 and
+its unchanged failing manual encoding-undefined fixture, and all prior census,
+forged-evidence and zero-getter controls. The planned forgery control must include
+coordinated alteration of snapshot metadata AND fact projections, not just their
+disagreement. This is a required future control, not a claimed test execution.
+
+Both entry and composed-acceptance gates remain UNMET. No fixture, failure,
+denominator, source, test, foreign claim, HOLD or queue policy is changed or
+released by this metadata clarification; legacy retirement remains blocked.
