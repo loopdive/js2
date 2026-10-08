@@ -662,3 +662,23 @@ landing order. Passing advisory stubs do not establish acceptance. No merges,
 auto-merge, queue submission, hold removal or protection weakening; A remains
 integration owner. Existing positive failures and all historical evidence stay.
 The shepherd task does not authorize new implementation scope or claim delivery.
+
+### Shepherd findings — 2026-10-08
+
+Dalton completed the bounded first pass and wrote
+`plan/log/linear-pr-shepherd-20261008.md`; parent reviewed/integrated the full
+report. Eight actual open PRs have no merge conflicts and zero review threads,
+but none is declared merge-ready. Only three contain canonical main845. Five
+current real quality jobs fail on eight unique missing normal registry paths
+(five runtime modules, three README files). All are A-owned registry changes.
+The prior append quality job failed with missing trusted provenance and zero
+completed observations; new docs-head CI was still running at the snapshot.
+Advisory SUCCESS jobs with failed/skipped test populations are not credited.
+
+The report preserves exact heads, server-side ancestry, failed-job diagnostics,
+historical pairing denominators and a dependency-first landing proposal. It
+found no independently fixable B-owned blocker and changed no author source,
+tests or GitHub state. Parent will send A the consolidated exact registry and
+trusted-input requests. No queue/hold release, acceptance waiver or completed
+IR migration is inferred. Further concrete source repairs need a new explicit
+file/function release, not generic ownership of this shepherd task.
