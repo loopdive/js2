@@ -2,10 +2,11 @@
   "id": "6915",
   "slice": "colorless-parent-transport-20261008",
   "assignee": "ttraenkler/codex-linear-b-colorless-transport-sol61-20261008",
-  "requested_by": "ttraenkler/codex-linear-b-colorless-transport-sol61-20261008",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/6915-linear-append-plan-20261007",
   "claimed_at": "2026-10-08T18:18:42Z",
-  "updated_at": "2026-10-08T18:18:42Z",
-  "write_id": "44852-vup6elq0"
+  "updated_at": "2026-10-08T18:55:53Z",
+  "write_id": "45195-brfkdmae",
+  "released_at": "2026-10-08T18:55:53Z"
 }
