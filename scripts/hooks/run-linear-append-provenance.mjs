@@ -1124,6 +1124,12 @@ export function readRecords(stdout, stderr) {
   return { records, envelopes, diagnostics, errors };
 }
 
+function colorlessChildEnv(incoming) {
+  const env = { ...incoming, NO_COLOR: "1" };
+  delete env.FORCE_COLOR;
+  return env;
+}
+
 async function runAppendQualification() {
   const checkout = readApprovedCheckout();
   const directory = join(checkout.root, ".tmp/6915-ci");
@@ -1166,14 +1172,14 @@ async function runAppendQualification() {
       regular(reportPath);
       renameSync(reportPath, join(archive, "previous-reporter.json"));
     }
-    const env = {
+    const env = colorlessChildEnv({
       ...process.env,
       JS2WASM_LINEAR_IR: "1",
       VITEST_FORK_MAX_OLD_SPACE_SIZE: "4096",
       NODE_ENV: "test",
       JS2WASM_APPEND_TEST_COMMAND: COMMAND,
       JS2WASM_APPEND_EXPECTED_PROVENANCE: JSON.stringify(checkout.expected),
-    };
+    });
     delete env.NODE_OPTIONS;
     delete env.JS2WASM_APPEND_PARENT_MANIFEST;
     for (const name of ["stdout.log", "stderr.log"]) fds.push(openSync(join(archive, name), "wx"));
@@ -1801,6 +1807,87 @@ function selfTest() {
     assert.equal(parsed.diagnostics.length, 1);
     assert.equal(parsed.errors.length, 1);
   });
+  const parentEnvBefore = { ...process.env };
+  for (const colors of [
+    {},
+    { FORCE_COLOR: "0" },
+    { FORCE_COLOR: "1" },
+    { NO_COLOR: "" },
+    { NO_COLOR: "1" },
+    { CI: "true", FORCE_TTY: "1", FORCE_COLOR: "1" },
+    { CI: "true", FORCE_TTY: "0", NO_COLOR: "", FORCE_COLOR: "0" },
+    { FORCE_TTY: "1", NO_COLOR: "1", FORCE_COLOR: "1" },
+  ])
+    good(() => {
+      const incoming = Object.freeze({
+        GITHUB_ACTIONS: "true",
+        GITHUB_SHA: APPROVAL_COMMIT,
+        GITHUB_EVENT_NAME: "pull_request",
+        NODE_OPTIONS: "--trace-warnings",
+        NODE_NO_WARNINGS: "0",
+        JS2WASM_APPEND_PARENT_MANIFEST: "parent-owned.json",
+        TRANSPORT_SENTINEL: "unchanged",
+        ...colors,
+      });
+      const original = { ...incoming };
+      const child = colorlessChildEnv(incoming);
+      const expectedChild = { ...original, NO_COLOR: "1" };
+      delete expectedChild.FORCE_COLOR;
+      assert.notEqual(child, incoming);
+      assert.equal(Object.hasOwn(child, "NO_COLOR"), true);
+      assert.equal(child.NO_COLOR, "1");
+      assert.equal(Object.hasOwn(child, "FORCE_COLOR"), false);
+      assert.deepEqual(child, expectedChild);
+      assert.deepEqual(incoming, original);
+    });
+  good(() => {
+    const child = colorlessChildEnv(process.env);
+    assert.equal(child.NO_COLOR, "1");
+    assert.equal(Object.hasOwn(child, "FORCE_COLOR"), false);
+    assert.deepEqual({ ...process.env }, parentEnvBefore);
+  });
+  const transportRecord = { kind: "observation", id: "Runtime01", passed: true };
+  const transportLine = JSON.stringify({
+    schema: "6915-evidence-graph-v1",
+    issue: 6915,
+    kind: transportRecord.kind,
+    id: transportRecord.id,
+    graph: {
+      root: { ref: 0 },
+      nodes: [
+        {
+          id: 0,
+          kind: "object",
+          prototype: "Object",
+          properties: Object.entries(transportRecord).map(([key, value]) => prop(key, value)),
+        },
+      ],
+    },
+  });
+  for (const streams of [
+    [transportLine + "\n", ""],
+    ["", transportLine + "\n"],
+  ])
+    good(() => {
+      const parsed = readRecords(...streams);
+      assert.deepEqual(parsed.records, [Object.assign(Object.create(null), transportRecord)]);
+      assert.equal(parsed.envelopes.length, 1);
+      assert.equal(parsed.diagnostics.length, 0);
+      assert.equal(parsed.errors.length, 0);
+    });
+  for (const malformed of [
+    "\u001b[22m\u001b[39m" + transportLine + "\n",
+    "ordinary prefix " + transportLine + "\n",
+    transportLine.slice(0, -1) + "\n",
+    transportLine,
+  ])
+    good(() => {
+      const parsed = readRecords(malformed, "");
+      assert.equal(parsed.records.length, 0);
+      assert.equal(parsed.envelopes.length, 0);
+      assert.equal(parsed.diagnostics.length, 0);
+      assert.equal(parsed.errors.length, 1);
+    });
   // Finite filesystem/Git controls use only this fresh private fixture. No
   // commits, shared refs, production reports or compiler/test jobs are touched.
   const fixtureRoot = realpathSync(mkdtempSync(join(tmpdir(), "6915-generated-report-self-test-")));

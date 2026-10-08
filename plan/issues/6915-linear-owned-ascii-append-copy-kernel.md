@@ -1148,3 +1148,158 @@ retirement. A remains final integration/queue owner.
 Parent observed required-quality job113462828513 live at step14, then step17,
 while this proposal was written. Do not interrupt/restart it or push a new revision before
 parent settles that run. No signing setup work is requested.
+
+### Finite repair: colorless parent-to-child evidence transport — 2026-10-08
+
+Parent releases this specification appendix only under
+`6915:colorless-parent-transport-20261008`, owner
+`ttraenkler/codex-linear-b-colorless-transport-sol61-20261008`, effect-verified
+ledger `11ab00c4b2`, write ID `44852-vup6elq0`. Parent must review the complete
+appendix before releasing the worker's sole runner-file implementation. No
+workflow, runtime, fixture, frozen test, dependency, CONFIG_PINS, manifest schema,
+command/worker flags or shared ownership changes are authorized. The advisory
+workflow caller proposal above remains unreleased. No signing work is requested.
+
+#### Recorded failure and countercontrol
+
+Required-quality job113462828513 failed at step48 after the generated-report
+repair. Preserve `.tmp/6915-custody-repair/failed-job-113462828513.log`; its repeated
+`prefixed/truncated evidence envelope` assertions establish a parent transport
+failure, not a newly observed runtime semantic failure. That job log contains
+no raw envelope lines, so the actual prefix bytes come from the controlled
+local reproduction, not an inference about missing CI bytes.
+
+Both terminal local experiments executed unchanged runner SHA256
+`ba0dd8a0ef4d036f70f730a31202af1879a27e273f7c3eea0e0521818de737d7`
+at HEAD `1a0584f07f69914482c91e9a82e00ac54aada092`, with the same approved source,
+test, fixture and manifest pins. Keep that execution identity even after a later
+specification or implementation publication.
+
+- Plain countercontrol `.tmp/6915-ci/run-enYXb9`: parent supplied FORCE_COLOR=1
+  while NO_COLOR=1 remained inherited. Parent reports terminal exit0. Read-only
+  archive inspection found38 raw envelopes with empty prefixes,38 accepted graph
+  lines, child exit0, no receipt failures, and reporter36 passed/0 failed/0 pending.
+  This is a passing countercontrol, not a failed forced-color experiment.
+- Colored reproduction `.tmp/6915-ci/run-dA6Luk`: parent removed NO_COLOR and
+  supplied FORCE_COLOR=1. Parent reports terminal exit1. Read-only inspection
+  found38 raw envelopes, each prefixed with hex `1b5b32326d1b5b33396d`
+  (`ESC[22m ESC[39m`), zero accepted graph lines, child exit0, one aggregate
+  receipt failure, and reporter36 passed/0 failed/0 pending. Child test success
+  does not override the correctly failing parent receipt.
+
+All original archives, raw colored/plain bytes, previous-reporter files and
+diagnostics remain immutable. Do not rewrite the colored archive into a green
+receipt or credit it as an accepted36-observation qualification.
+
+Parent's completed attribution is retained in
+`.tmp/6915-custody-repair/color-framing-attribution.json`, with raw archives in
+`.tmp/6915-color-transport-evidence`. The failing input has38 parser errors,
+one for each measured prefix. Diagnostic-only JSON recovery removing exactly
+that observed transport prefix yields all36 complete observation graphs and
+completion exactly equal to plain control run-enYXb9, with no graph-field
+filtering. This comparison localizes the observed difference to transport; it
+is not an accepted receipt or permission to normalize production parser input.
+The original failed bytes remain rejected and retained. Original CI child raw
+streams were not uploaded/retrieved: keep the public job log and installed-source
+attribution distinct from this complete local controlled experiment.
+
+#### Source-derived mechanism and minimal implementation
+
+Installed Vitest `dist/chunks/index.VByaPkjc.js::onUserConsoleLog`, line369,
+writes `c.gray(log.type + c.dim(headerWithNewline)) + log.content`. With color
+enabled, closing dim/gray sequences occur after the header newline and before
+the JSON. Installed tinyrainbow2.0.0 `dist/chunk-BVHSVHOK.js::C` checks the
+presence of NO_COLOR before considering FORCE_COLOR, CI and terminal detection.
+Setting FORCE_COLOR to the string `"0"` is NOT sufficient: its mere presence
+enables the installed formatter in the absence of NO_COLOR. These installed
+files are evidence only and must not be edited or replaced.
+
+Exact proposed worker scope: `scripts/hooks/run-linear-append-provenance.mjs`,
+the child environment construction inside `runAppendQualification` (line1169
+at1a0584) and the existing embedded `selfTest`. Set child `NO_COLOR` to `"1"`
+and delete child `FORCE_COLOR` after cloning the incoming environment. Apply
+this before spawning pnpm so pnpm, Vitest and its fork inherit the same policy.
+Deletion also avoids the contradictory FORCE_COLOR/NO_COLOR warning; it is not
+warning suppression. Do not mutate `process.env` or the caller-supplied object.
+
+If needed to test the actual production predicate without invoking the suite,
+factor only this child-color policy into one small pure helper used by the
+production spawn path and embedded controls. Preserve all existing child
+environment construction, NODE_OPTIONS/local-manifest handling and expected
+provenance logic; do not create a second environment builder in the tests.
+CI identity validation still consumes genuine parent inputs unchanged.
+
+No changes to `readRecords`, `decodeGraph`, receipt validators, strict prefix/
+newline/truncation checks, approved command, execArgv or worker flags. Do not
+strip ANSI, trim arbitrary prefixes, search past junk for a JSON opener, use
+`--no-warnings`, suppress stderr, ignore unhandled errors or accept reporter
+success in place of complete evidence. This is one formatter policy for this
+child, not a global shell/workflow environment change. Source and semantic
+test assertions remain byte-identical.
+
+#### Finite controls and parent acceptance
+
+Preserve all existing89 embedded controls. Add finite controls invoking the
+same production color-policy helper, if extracted: missing color variables;
+inherited FORCE_COLOR values `"0"` and `"1"`; inherited NO_COLOR values `""`
+and `"1"`; CI present/absent; FORCE_TTY present/absent. A bounded representative
+matrix is enough; do not introduce a generalized environment framework.
+Every result must have own NO_COLOR=`"1"`, no own FORCE_COLOR, and otherwise
+preserve input keys/values exactly, including CI/GITHUB identity, FORCE_TTY,
+diagnostic/warning controls and unrelated sentinels. Input objects and actual
+parent process.env must remain unchanged. Existing production rules governing
+other variables are unchanged, not bypassed by this helper.
+
+Exercise the unchanged real `readRecords` with a healthy complete envelope
+control and rejecting variants: the measured `ESC[22m ESC[39m` prefix,
+ordinary text prefix, and a truncated/unterminated envelope. Check its returned
+errors and accepted population, not only whether it throws. Never normalize
+the malformed test input before invoking the parser. Retain prior graph,
+receipt, child-error and cleanup controls. Record actual new control counts
+only after execution; this specification does not predict a passing total.
+
+Parent serializes syntax/format/lightweight controls and real qualification.
+Rerun the same genuine hook/parent path on the immutable candidate under the
+previously failing incoming environment (`env -u NO_COLOR FORCE_COLOR=1`),
+without changing approved source/test/fixture/config pins. Preserve exact outer
+environment, executed runner bytes, HEAD and command as parent evidence. Require
+strict parent exit0, child exit0, reporter36 passed/zero failed/skipped/todo,
+38 complete unprefixed envelopes,36 unique passing observation records and
+passing completion, Runtime22's33 transitions, all eight same-validator
+negatives, genuine source joins and equal before/after custody. All36 full
+observation graphs and completion must equal the retained qualified baseline
+without filtering semantic/proof fields; actual provenance is recorded
+separately. Preserve generated-report byte/hash custody unchanged.
+
+The successful prior NO_COLOR=1 countercontrol remains separately retained;
+it is not relabeled as candidate evidence. Preserve the failing colored run and
+original required-CI failure. A successful local repair does not establish
+required-CI success: parent must observe the subsequent actual required job.
+No native admission, runtime performance, full IR acceptance, legacy retirement,
+HOLD release or advisory-workflow release follows. Parent owns commits/pushes
+and A retains final integration/queue authority.
+
+#### Implemented transport policy and measured candidate
+
+Sol6.1 Medium implemented only the child-color policy and its production
+predicate controls. Parent reviewed the complete diff: readRecords/decoder/
+receipt validators, CI identity, approved commands/worker flags and all input
+pins remain unchanged.104 controls passed in worker and parent runs; malformed
+prefixes, truncation and missing newlines remain rejected, not normalized.
+Executed runner SHA256 is
+`3a154510e5f1280cb7dc71f2a89bae77386ba109990fecb71d586531d9c75e54`.
+
+Actual formerly failing invocation `env -u NO_COLOR FORCE_COLOR=1` plus the
+independent parent manifest ran the unchanged changed-root hook at execution
+HEAD1a0584/source tree953f74f8 with the pending runner patch. Parent and child
+exit0; reporter36pass/0fail/0skip/0todo. All38 complete envelopes are unprefixed;
+all36 complete observation graphs and completion exactly equal repaired-v3,
+without filtering graph fields. Full input and generated-report custody is
+equal before/after. This does not reclassify the original colored failure.
+
+Raw countercontrol/failure/candidate streams, reporters, receipts, full graph
+records, executed runner and offline replay are retained in
+`plan/log/6915-linear-append-20261007/colorless-transport-20261008/`. The public
+failed CI job log is separate from the locally observed colored raw input.
+Subsequent actual required CI remains mandatory. The advisory caller's workflow
+scope is still unreleased and no workflow/source/test/fixture edits were made.
