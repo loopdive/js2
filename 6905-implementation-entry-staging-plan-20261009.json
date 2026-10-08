@@ -2,10 +2,11 @@
   "id": "6905",
   "slice": "implementation-entry-staging-plan-20261009",
   "assignee": "ttraenkler/codex-linear-b-staging-astra-20261009",
-  "requested_by": "ttraenkler/codex-linear-b-staging-astra-20261009",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/6905-linear-prepared-memory-plan-20261007",
   "claimed_at": "2026-10-08T22:29:01Z",
-  "updated_at": "2026-10-08T22:29:01Z",
-  "write_id": "35708-daoey8xz"
+  "updated_at": "2026-10-08T22:35:16Z",
+  "write_id": "46888-99xtpntb",
+  "released_at": "2026-10-08T22:35:16Z"
 }
