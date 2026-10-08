@@ -735,3 +735,43 @@ No JS-host IR, generic admission widening by B, foreign3518 append/4540 allocato
 takeover, legacy retirement, new benchmark claim, shared registry exemption or
 error-protection bypass is authorized. This appendix is a dependency-gated
 implementation proposal; only its documentation write/commit is released now.
+
+## Bounded registry handoff — 2026-10-08
+
+Parent released only this existing issue and `scripts/compiler-boundaries.json`
+under canonical claim `6899:registry-handoff-20261008`, owner
+`ttraenkler/codex-linear-b-registry-sol61-20261008`. Fresh canonical ledger
+`7f0c4e36be071ab38a48b4a5fe25b4aa7790d09b` records this claim in progress,
+write ID `79507-xolp9ix8`; raw evidence is retained in
+`.tmp/6899-registry-handoff-20261008/`.
+
+Authority is A's published registry proposal
+`52b64c8277b4e61c42f24e7821445260aa638179` (PR6595), with approved Astra
+High plan provenance adopted in PR6596 commit
+`555af588b3b41dda3b95a3d53468e0f4d55a32c7`. Adopted plan SHA256:
+`ca7b3e3ed09a89da6917231a7ccc906369e567d2e180e0b145ac05c5f299d636`;
+handoff SHA256:
+`29879b4e2ee6d4968156ecf950206239087d75011d028d7d14eec776b9e57f57`.
+
+Fresh PR6575 head is `e04ba4a8df5b81d65787f2b574e0d8f433bd3060`,
+actually backed by `ttraenkler/js2`, with HOLD and null auto-merge. Of the
+eight proposed paths, only `src/codegen-linear/runtime/string-slice.ts`
+exists here. Add only its exact published `unmigrated` / `legacy-linear`
+module row; all seven absent paths, including runtime README, remain absent.
+Preserve every baseline policy byte and order outside that insertion, with no
+exemptions. This older source epoch is not refreshed or requalified on main.
+No source, tests, workflow, claims, holds, queue or admission changes are released.
+
+Validation: normal boundary inventory against the exact original head exited 0,
+with 1,883 tracked modules, 14,526 resolved edges, two excluded non-modules and
+zero errors. Inventory is valid; graph and architecture completeness remain
+false, so this is not migration completion or main-epoch qualification.
+The meaningful floors (1,700 modules / 1,000 edges), exact published-row equality,
+full-policy removal and baseline-byte/order preservation checks passed.
+Baseline SHA256 is
+`1cfa9d85f325bdca79b3818cef6fbe5f7eb97c538f41b45c7cce2c969c7b6e8f`;
+updated policy SHA256 is
+`21173628c0c675407b4381101eb3ffb26aa9fd6bda0a63ce0a4677639bcaa184`.
+Prettier and whitespace checks passed. No heavy tests, typecheck or build were
+run; the previously completed 125-test detector regression was not duplicated.
+Parent retains review/push authority; this bounded commit does not release HOLD.
