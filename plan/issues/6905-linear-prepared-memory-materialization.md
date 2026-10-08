@@ -546,3 +546,135 @@ Exact metadata-only claim `6905:geometry-proof-readback-20261008`, owner
 was effect-verified at canonical ledger4081982a43. Only this issue Markdown is
 changed. No source/test/fixture, foreign claim, HOLD or queue state is changed;
 no new tests run or native allocation/Unicode/retirement acceptance claimed.
+
+## Finite forwarding-epoch successor proposal — 2026-10-08
+
+Metadata-only release: `6905:forwarding-epoch-successor-plan-20261008`, owner
+`ttraenkler/codex-linear-b-forwarding-epoch-astra-20261008`, write45834-oo2576pj,
+parent-effect-verified ledger5e2b1234a0. Planning checkout is isolated branch
+`codex/6905-linear-prepared-memory-plan-20261007` at
+`cfb6b7b238f34bede1b64962fa3c38f36a1f3537`. This appendix requests owner-reviewed
+implementation partitions; it transfers no claim or source authority. The
+requirements below are specifications, not executed test results. Parent owns
+integration/publication; all original evidence and HOLDs remain.
+
+### Genuine source history, not a fabricated predecessor
+
+Commit `2a98b75de993bdc568e3668a2965c026876fe322`, parent
+`6c88d157444ea4ae377a7ef1b82b15ef2f4f6603`, added the forwarding-operation arm
+and is an ancestor of canonical main845. Parent independently verified this
+history and exact diff. For `src/ir/analysis/contracts/linear-memory-layout.ts`:
+
+- Before:4670 bytes, blob `cac9d1e33659380a6ee8d8e03014af53e1123533`, SHA256
+  `dba3ca2121063a52b0ae1130f48c0acc70e0f819a9e665a2a2744572eddfae72`.
+- After:4763 bytes, blob `280a72ab47f43584f93efb664e3e64b55dc896b5`, SHA256
+  `977e572b62737c3459df08c15e4d3f6ce7f461f9fc5b1aac344ad676690e3754`.
+- One insertion at UTF-8 byte offset2820, length93; exact payload, including
+  the terminating newline after the final brace:
+
+```text
+  | {
+      readonly family: "vector";
+      readonly operation: "resolve-forwarding";
+    }
+```
+
+Read-only byte inspection confirmed deletion of `[2820,2913)` reproduces the
+complete parent blob and reinsertion reproduces the complete child blob. This
+is file-operand history, not semantic certification of that entire commit.
+No authenticated forwarding successor was found in the inspected historical
+helpers; an owner identifying one must supply its real entrypoint and caller.
+
+Parent independently verified full raw inverse and forward byte equality on
+the genuine4670/4763-byte operands from6c88/2a98, using offset2820 and length93.
+This is source-byte-only validation, not an executed regression or geometry
+acceptance. At this record, canonical main remains845 and A's PR6596 remains
+documentation-only at8c383; no geometry source endpoint is available to seal.
+
+### Payload, order and separate source views
+
+Inverse order is geometry graph → main845 planner/layout → pre-forwarding
+layout → unchanged lowering-analysis proof. Geometry must reconstruct the4763
+byte layout WITH forwarding; only the separately recorded forwarding epoch
+removes its93 bytes. The planner is unchanged by that step. Replay the reverse
+order and require complete current-byte equality for every geometry operand.
+
+The finite successor payload binds a fixed schema, UTF-8 byte coordinates,
+ordered planner/layout/new-shared-owner domain, complete before/current
+length/SHA256/blob pins, the insertion above, and exact geometry inverse/forward
+recipes. Include scalar-key/vector adapter rewrites, old helper/receipt pins
+and the old expected52704-byte predecessor. Record the new shared owner's
+absence in the earlier epoch. Do not fill geometry candidate pins until actual
+reviewed source is published: PR6596 documentation is not a source endpoint.
+
+One owner-approved capture entrypoint returns closed immutable views:
+`readCurrent(path)` for captured live bytes, `readGeometryBefore(path)` for
+authenticated main845 operands, and `readLoweringBefore(path)` for the old
+proof's operands. Obtain the final predecessor by calling the unchanged
+`captureLinearLayoutPredecessor`; do not copy its reconstruction algorithm.
+Capture physical operands once and reject unknown paths or mixed epochs.
+Independently approved caller pins authenticate the successor implementation
+and raw receipt before use; expected hashes never come from candidate output.
+No historical-file/Git fallback may repair a malformed supplied current input.
+
+Reuse the existing C1 historical authority and lowering verifier. The split
+views in `ir-program-validator-relocation.ts::captureSourceMapProgramValidatorRelocation`
+are an existing composition pattern, not permission to reuse its source-map
+receipt for Linear or create a second historical authority. Preserve old raw
+lowering helper, fixture and receipt bytes; no resealing of their hashes.
+
+### Join before old physical-pin rejection
+
+- C1: authenticate the successor before `captureC1CurrentPopulation`'s closure
+  pin (current line872). Its actual closure and `resolveContract` must retain
+  current source, with an approved current closure/resolver contract. Only the
+  historical reconstruction receives predecessor views; never feed historical
+  planner text to real TypeScript resolution to satisfy an old pin.
+- Policy: capture/authenticate current operands before `loweringAnalysisRead`
+  pins physical files. Supply a separate closed predecessor reader to
+  `loweringAnalysisLayoutProof` within `authenticateLoweringAnalysisPolicy`;
+  both exported predecessor entrypoints must traverse it. Do not turn the
+  physical reader into a permissive multi-epoch reader or rewrite its receipt.
+- Fixture: at the acquisition seam, authenticate current source first and
+  materialize exact old fixture bytes from the verified predecessor view.
+  Preserve historical mutations/expectations and add current-chain coverage.
+  Unchanged direct physical acquisition still rejects changed source; it must
+  not be reported as passing. Preserve the original test-source snapshot too.
+- Instruments: C1 pins its reader instruments. Any changed reader needs an
+  owner-approved instrument successor BEFORE old `captureC1HistoricalAuthority`
+  authentication, reconstructing only named old instrument operands while
+  preserving the original manifest/root. Do not simply replace old instrument
+  hashes. Successor authority must be independently anchored, not self-approved.
+
+### Finite acceptance controls, not claimed executions
+
+Retain every original proof, fixture and mutant control. Add genuine positive
+forwarding-before/after epochs and, once published, geometry-after; require
+exact inverse AND complete forward equality. Required rejecting controls:
+
+- Missing, duplicated, altered or shifted forwarding insertion; unrelated-byte
+  mutation; old layout presented as current; wrong predecessor endpoint.
+- Mixed planner/layout epochs; absent/extra shared owner; geometry offset,
+  pointer flag, scalar key, vector delegation and shared-body mutations.
+- Wrong helper/receipt pins, unknown paths, malformed coordinates, truncation;
+  changed reader output on reuse must not substitute a second source epoch.
+- Damaged current operand with a healthy historical copy available still fails.
+- Instrument/authority mutation or missing successor join fails before the old
+  proof. Both policy entrypoints and fixture acquisition must exercise the join.
+
+Positive observations must distinguish current resolver text from reconstructed
+old-proof text and retain both epochs. No synthetic resolver trace, hidden
+healthy-file substitution, reduced mutant population or semantic/runtime claim
+follows from byte-history acceptance.
+
+### Exact owner-review requests, not implementation release
+
+Source-proof owner: finite successor payload/adapter and preservation-fixture
+acquisition/current-chain tests. Trusted-adapter and C1 authority owners: closure
+and resolver contract, pre-pin composition, instrument-history successor and
+current-reader tests. Policy-caller owner: pre-pin capture and both predecessor
+entrypoint joins. A geometry/forwarding owners: confirm source endpoints and
+publish the geometry source before sealing its successor. These refer to the
+held owners already identified above; each must acknowledge exact hunks.
+B owns this appendix only. No foreign helpers, fixtures, receipts, runtime,
+registry, workflow or production source are edited or newly authorized.
