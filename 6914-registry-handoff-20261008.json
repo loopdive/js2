@@ -3,9 +3,10 @@
   "slice": "registry-handoff-20261008",
   "assignee": "ttraenkler/codex-linear-b-registry-sol61-20261008",
   "requested_by": "ttraenkler/codex-linear-b-registry-sol61-20261008",
-  "status": "in-progress",
+  "status": "done",
   "branch": "codex/6914-linear-forwarding-provider-20261007",
   "claimed_at": "2026-10-08T16:28:39Z",
-  "updated_at": "2026-10-08T16:28:39Z",
-  "write_id": "81557-b6r1jvfi"
+  "updated_at": "2026-10-08T16:43:02Z",
+  "write_id": "25136-hlyigg40",
+  "released_at": "2026-10-08T16:43:02Z"
 }
