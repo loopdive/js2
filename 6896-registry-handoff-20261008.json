@@ -3,9 +3,10 @@
   "slice": "registry-handoff-20261008",
   "assignee": "ttraenkler/codex-linear-b-registry-sol61-20261008",
   "requested_by": "ttraenkler/codex-linear-b-registry-sol61-20261008",
-  "status": "in-progress",
+  "status": "done",
   "branch": "codex/6896-linear-array-capacity-20261007",
   "claimed_at": "2026-10-08T16:28:21Z",
-  "updated_at": "2026-10-08T16:28:21Z",
-  "write_id": "79395-ml861pxf"
+  "updated_at": "2026-10-08T16:36:00Z",
+  "write_id": "2617-uo9fcrkh",
+  "released_at": "2026-10-08T16:36:00Z"
 }
