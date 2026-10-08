@@ -775,3 +775,117 @@ these refinements are not executed results or additional claimed passing rows.
 Parent/root retains integration and publication; all foreign claims and old
 historical proofs remain intact. No source, tests, workflow, registry, commits
 or pushes are authorized by this metadata-only acknowledgement.
+
+## Bounded acknowledgement of amended native contract — 2026-10-08
+
+Metadata-only claim `6905:native-refinement-ack-plan-20261008`, owner
+`ttraenkler/codex-linear-b-native-refinement-astra-20261008`, write15398-onsgpj14,
+parent-effect-verified canonical ledgerf2a607e43c. Only this appendix is released;
+all preceding issue bytes remain intact. Accountable current6905 root holder is
+`ttraenkler/codex-linear-b-prepared-memory-20261007`, write64168-17jzm5kj.
+That accountability does not assign a new implementation worker or transfer
+foreign source claims. Parent/root retains integration and publication.
+
+Astra High independently read the complete amended issue6920 at PR6596 fork
+`ttraenkler/js2`, commit `68c64ccced9122bffcb482f649d3091cc599af61`:
+97935 bytes,949 lines, SHA256
+`e5f5329a3aec835d40f4438642477aa2a078583b39370709f062601bf5f5eb1f`.
+Parent independently read the new appendix, lines712–949, and verified the
+original47999-byte prefix unchanged. This acknowledges the amended architecture,
+not reviewed/tested source, native completion or an effective donor handshake.
+
+### R1/R2 DATA, demand and the exact B boundary
+
+Acknowledge A's `requirePreparedLinearMemoryInput` as the sole authenticated
+module/facts/support join. Preparation counts complete final semantic functions
+and canonical semantic support, including nested/async-state occurrences. The
+selected view retains genuine function/declaration identity and exact final
+allocation owner/ID/kind/result/occurrence census. Original facts and their full
+registry, aliases, retired IDs and own-undefined metadata remain unchanged;
+there is no B-side filtering, fabricated module or analysis rerun. A legitimate
+projection-changing capability needs separate authenticated authority; malformed
+facts remain invariants, not a convenient unsupported result.
+
+Keep primary/derived IR, semantic support IR and physical Wasm provider bodies
+distinct. Physical helpers do not counterfeit source units or allocation facts.
+Unsupported support is counted and located before refusal. Source-free replay
+uses decoded DATA and canonical reauthentication, not frontend analysis.
+
+Acknowledge the three separate populations: unchanged canonical operation
+catalogue, A's checked executable demand, and B's canonical physical dependency
+closure. Catalogue grow does not admit source growth or reject fixed vectors;
+allocator `memory.grow` is not vector-growth admission. Required forwarding and
+empty-construction initializer bindings remain real demands. Unknown/missing
+cases fail before reservation; emission lookups require the accepted relation.
+
+Exactly two proposed B paths are acknowledged under the current root holder:
+`src/backend/linear/program/contracts.ts` for descriptive target DATA and
+`src/backend/linear/program/memory.ts` for the five functions and private pack
+implementation. Use canonical `LinearMemoryPlanSnapshot`; indexed plans stay
+private. No additional helper path, sixth API, facade or implementation dispatch
+is authorized. A's canonical facts/planner/demand dependencies remain A-owned
+and require their named source holders and published endpoints.
+
+### Five functions and whole-attempt lifetime
+
+Retain `planPreparedLinearMemory`, `fillPreparedLinearMemory`,
+`requireCompletedPreparedLinearMemory` and `preparedLinearMemoryBindings`.
+Explicitly acknowledge the revised reserve signature:
+`reservePreparedLinearMemory(tx, plan, assertEmissionActive)`.
+
+A creates the private guard inside its existing consumer attempt; it checks the
+exact acceptance/plan/projection identity and active state. B never supplies or
+serializes that authority. Reserve checks it before resources, remains in the
+reserving phase and performs no fill/export/freeze/index lookup. After A's one
+freeze, bindings validate tokens and recheck the guard and pack state on every
+returned operation/layout/carrier callable use. Descriptive signature planning
+before freeze must not depend on those later token bindings.
+
+B is the sole publisher of its inventoried memory and any explicitly admitted
+lifecycle exports, inside fill during filling after B prerequisites complete.
+A checks combined export-name/owner collisions before reservation and publishes
+only its own source/startup intents. Optional lifecycle remains unadmitted by
+default. Completion rechecks ledger completions and full inventory/publication
+equality; it is read-only/idempotent while the attempt is live and never seals.
+Successful B fill/verification does not revoke bindings needed by later primary
+lowering; whole-attempt completion does.
+
+B-local failures latch its private pack/plan-use state before rethrowing. A's
+whole-attempt failure, including provider construction before a ledger call,
+later primary/startup/reconciliation/sealing or observer failure, revokes all
+captured bindings. Completion also revokes them. Preserve one-shot consumption
+before materialization/emission-started observation, terminal catch/finally,
+original errors and no retry/fallback/result from a failed private module.
+No public kernel abort API or parallel generic lifecycle framework is requested.
+
+### Canonical provider endpoints: reuse, not duplicate extraction
+
+PR6572 at `76b8a02dca23c8e974661b55fdeaeae38b898d9d` in `ttraenkler/js2`
+publishes `src/codegen-linear/runtime/array-allocation.ts` exports
+`checkedArrayAllocationSize` and `checkedArrayCapacityDoubling`. These are checked
+arithmetic fragments, NOT a complete `__arr_new` body/resource factory. Parent
+verified the fragments and real runtime callers. Preserve that distinction:
+reuse the arithmetic, while complete constructor/allocator resource reuse still
+requires exact donor source and callers. Do not copy or invent a full provider.
+
+The retained initializer is
+`runtime/vector-initialization.ts::buildLinearF64VectorInitializationBody`, with
+the real `runtime.ts::addLinearIrVecRuntime` caller on this PR's published source.
+Preserve value-first ABI/fresh instructions; geometry rewire awaits A's source.
+
+Correct R5's proposed duplicate `runtime/array-forwarding.ts` to the existing
+`src/codegen-linear/runtime/arrays/forwarding-resolver.ts::buildArrayForwardingResolverBody`.
+Published PR6590 head `75c98267d4aabba2f78238f292e0e7c2eb6554f3`, introducing
+commit `cea128a3b1c25eb15f62bf3cabb5dc97b9643ccb`, already has the full builder
+and `runtime.ts::ensureArrayResolveRuntime` calling it with
+`LINEAR_ARRAY_FORWARDING`. Parent verified the full builder/import/caller.
+Source holder `ttraenkler/codex-linear-b-forwarding-sol61-20261007`,
+write65589-oamjn90s, remains held; this acknowledgement transfers nothing.
+Use that canonical endpoint under its holder's agreement, not a second file.
+
+No concrete defect remains in the requested amended five-function contract;
+the forwarding path correction above is required before dispatch. Actual shared
+source, donor acknowledgements, coherent real callers and planned qualification
+are still owed. Old proofs, legacy behavior, original failures, tests and receipts
+remain unchanged. No executed result, source acceptance, new native coverage,
+HOLD release, source/test/claim edit, commit or push follows from this appendix.
