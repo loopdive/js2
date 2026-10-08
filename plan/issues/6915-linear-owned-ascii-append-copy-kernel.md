@@ -3,7 +3,7 @@ id: 6915
 title: "Linear owned-ASCII append: optimize the existing copy kernel"
 status: blocked
 created: 2026-10-07
-updated: 2026-10-07
+updated: 2026-10-08
 sprint: current
 priority: high
 task_type: performance
@@ -15,6 +15,125 @@ related: [3502, 3518, 3744, 4540, 6892, 6911]
 ---
 
 ## Objective and authority
+
+### Released trusted append CI implementation — 2026-10-08
+
+Human-approved bounded task `6915:trusted-append-ci-20261008`, owner
+`ttraenkler/codex-linear-b-append-ci-sol61-20261008`, write ID
+`61584-ct2bbtgm`, is implemented as Sol6.1 Medium in the existing isolated
+`codex/6915-linear-append-plan-20261007` checkout at
+`0d2dfddb4b1145097210f5398e535e550f945f82`. Authority is the full adopted Astra
+plan at `555af588b3b41dda3b95a3d53468e0f4d55a32c7`,
+`plan/issues/6865-ir-unmapped-source-map-emission.md`, handoff6063855828.
+This task releases only this issue specification, the exact append-test branch
+inside `scripts/hooks/changed-root-tests.sh`, and new
+`scripts/hooks/run-linear-append-provenance.mjs`. No test, fixture, workflow,
+source, dependency or other shared hook behavior is released.
+
+The parent runner must independently enforce the approved production/test/
+fixture/source-tree pins, verify git objects against worktree bytes, and use
+actual CI `GITHUB_SHA` equal to checkout HEAD for a known checkout event.
+Local invocation requires an explicit parent-supplied nine-field manifest
+(`JS2WASM_APPEND_PARENT_MANIFEST`, absolute JSON file path). Its HEAD must be
+the actual committed HEAD; pending edits are allowed only in these three
+released CI/spec paths, never in source, test, fixture or execution config.
+This permits legitimate pre-commit verification without approving dirty source.
+The manifest cannot refresh approved content pins or learn expectations from
+test output. Subsequent source/test epochs require independent review.
+
+Execute the adopted fixed pnpm argv with 4096-MiB forks, Linear IR enabled,
+NODE_ENV=test, NODE_OPTIONS absent and strict unhandled-error handling. Keep
+the existing 36 fixtures, assertions, order and test caps untouched. Require
+38 complete lossless evidence graphs, the independently reviewed 36-ID set,
+exact provenance/completion and passing action/schema/emission channels, plus
+reporter36 passed/zero skipped/failed/todo and strict process exit0. Retain raw
+streams, graphs, decoded reference-preserving observations, reporter and before/
+after custody even on failure. Missing/truncated/duplicate evidence, flags or
+input drift fail closed. A finite runner timeout is not a test timeout override.
+Only syntax/shell checks and embedded lightweight runner self-tests are
+authorized now; parent owns serialized real-suite validation, review, commits
+and publication. This task does not accept the instrument, deliver a native
+caller, retire legacy behavior or release existing HOLDs.
+
+Read-only parent/Astra review identified four receipt-gate obligations before
+real execution: arrays need explicit valid lengths without truncated indexed
+references; backing buffers/views must still match after property hydration;
+IDs must bind runtime/source/import cohorts, 33 Runtime22 transitions, eight
+reviewed negative mutation identities and authentic positive consumer/helper/
+call joins; reporter assertion titles must join the same exact 36 IDs.
+The runner must retain raw native-error accessor markers/descriptors without
+invoking them. Historical 38-graph decoding is a positive instrument control,
+not current CI qualification. Config pins are frozen byte hashes obtained from
+the published approval object now, avoiding a historical-object dependency in
+fetch-depth2 CI. Stream I/O and cleanup failures aggregate with original child,
+decode and post-run drift failures, never replacing or suppressing them.
+
+Bounded implementation checks: Node syntax, shell syntax, scoped runner
+formatting and whitespace diff checks pass; embedded self-tests pass54 controls
+including a complete synthetic receipt and the four reviewed negative families.
+Read-only historical composed-main log replay (44,273,901 bytes) decodes38
+complete graphs with zero decoder errors and preserves36 full witnesses;
+the current CI contract correctly rejects that historical1024-MiB receipt.
+These are parser/instrument controls only. No actual36-suite execution, heavy
+compiler job, commit, push or publication occurred. Parent review and real
+serialized qualification remain required; approved test bytes stayc63e83104b.
+
+Parent measured native V8 Error serialization losing AggregateError members
+and custom cause details. The runner must not claim native Error losslessness:
+it archives detached plain reference-preserving error data and a descriptor
+sidecar, including aggregate members, causes, custom properties, collections,
+undefined and shared buffer/view data. Observed accessors are recorded, never
+invoked; raw child graph descriptors remain authoritative. A native-loss
+negative control and detached serialize/deserialize positive control verify
+this distinction before real execution.
+
+### Actual trusted-parent qualification — 2026-10-08
+
+Parent independently supplied the nine-field manifest from A's published
+`555af588b3b41dda3b95a3d53468e0f4d55a32c7` handoff, not from test output.
+Execution HEAD `0d2dfddb4b1145097210f5398e535e550f945f82`, source tree
+`953f74f80cf2f8085b8e1c93489fcdd357929b37`, frozen test SHA256
+`c63e83104b42104c0ea9e7d5d3fb3f6f2cce960a65973cbf342698e8e79d7f8d`.
+The working runner and exact hook branch were reviewed before execution; only
+the three released CI/spec paths were pending edits. This is not a claimed
+execution at the subsequent publication commit.
+
+Runner SHA256 `a93d01892de5dba5783248b6441fcbf8979a47759bc2236a834b6abefc2e6bfa`;
+hook SHA256 `51664c0c2254f929456e219292e4410cccfa43b6146c48c0e02e55972aeacdb4`.
+Astra High's final read-only review found no remaining blocker in the four
+reported receipt-gate families against this exact runner hash. Parent verified
+all nine baked configuration hashes against the published approval git objects.
+The final worker qualification has **54 embedded controls**, including detached
+AggregateError/cause/custom-property round trips; raw child graphs remain the
+authority, with unsupported diagnostic views rejected and unevaluated accessors
+explicitly marked incomplete rather than blessed as empty.
+
+Actual local invocation uses the explicit parent manifest, Node22.23.2,
+Linear IR=1, NODE_OPTIONS absent, NODE_ENV=test, and the exact approved strict
+Vitest command with4096-MiB forks. **36pass/0fail/0skip/0todo**, one test file,
+strict process exit0; child elapsed19,733ms. Actual complete output is44,273,883
+bytes, with38 valid envelopes: one provenance,36 unique observations and one
+completion. Runtime22 retains33 transitions and all eight named negative
+controls retain their full witnesses and rejection evidence. No reported
+diagnostic, decoding, emission, cleanup, child, signal or timeout failure.
+
+An independent parent replay requires **exact equality of all36 complete
+observation graphs and the completion graph** against archived repaired-v3,
+without filtering any graph field or changing any fixture. Execution provenance
+is intentionally different and is separately validated/retained, not included
+in a fabricated same-epoch equality claim. Full before/after HEAD, source tree,
+source/test/fixture/configuration/runner/hook/spec hash custody is equal.
+Original28pass/8fail, failed repairs, historical1024-MiB runs and every fixture
+remain untouched. The actual runner invocation is retained separately under
+`plan/log/6915-linear-append-20261007/ci-trusted-parent-20261008/` with a strict
+offline comparison replay, raw streams, graphs, reporter and custody receipts.
+
+This closes the measured missing-parent-input CI implementation gap locally.
+It is the existing public Linear overlay instrument, not A's unpublished native
+caller. It supplies no append performance acceptance, native array/Unicode
+completion, original-failure erasure, legacy retirement, main delivery or HOLD
+release. A retains reviewed composition and protected queue delivery. Normal
+commit/push gates and newly triggered real CI still apply.
 
 Astra High authored the implementation specification; parent preserves it here.
 Improve executed Linear runtime code consumed by existing source-derived IR,
