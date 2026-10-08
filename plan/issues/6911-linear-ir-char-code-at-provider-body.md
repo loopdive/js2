@@ -412,3 +412,22 @@ This qualifies provider-body preservation on main845, not a green full suite,
 Unicode source admission, detached helper authority, full IR equality, a
 performance improvement or legacy retirement. A's unpublished changes are not
 included. A owns final composition and protected queue submission; HOLD remains.
+
+### Demonstrated landing blocker: shared boundary inventory
+
+After composing main845, the unmodified compiler-boundary inventory check
+(`node scripts/check-compiler-boundaries.mjs --mode inventory --base HEAD^1`)
+still exits1. It reports exactly these missing classifications:
+
+- Non-module: `src/codegen-linear/runtime/README.md`.
+- Non-module: `src/codegen-linear/runtime/strings/README.md`.
+- Module and target: `src/codegen-linear/runtime/strings/char-code-at.ts`.
+
+The earlier required quality job112921641574 on PR6583 reports the same four
+diagnostics. Passing provider tests or local pre-push gates do not resolve this
+required CI blocker. Session A owns `scripts/compiler-boundaries.json`; B has
+not changed it. Request exact normal non-module entries for these READMEs and
+the normal legacy-linear/Linear-target module classification for the decoder
+leaf, without exemptions or relaxing any boundary. The full current report is
+retained as `main-845/compiler-boundaries-report.json.gz`. Requalify the real
+inventory gate on the integrated policy and source before queue submission.
