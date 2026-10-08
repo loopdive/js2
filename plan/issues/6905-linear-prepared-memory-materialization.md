@@ -4,7 +4,7 @@ title: "Linear Prepared IR memory materialization and ownership handoff"
 status: in-progress
 sprint: current
 created: 2026-10-07
-updated: 2026-10-07
+updated: 2026-10-08
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -377,3 +377,56 @@ each arm, including unit binary bytes and original preparation failure.
 Strict test-inclusive TS7: **exit 0, zero diagnostics**, unchanged configuration;
 the original V2 twelve-diagnostic log is preserved. The later publication adds
 only docs/evidence. Shared preparation is still red; hold and ownership remain.
+
+## Current-main composition in progress — 2026-10-08
+
+Canonical main `8452732f0b88c14c5c7634ece58f83240970ea4c` merged without
+conflicts into candidate execution HEAD `14aa145dd9ca39bff986dd1626e78f6e12e8da6d`.
+No production edits were authored. The exact V3 test and original seventeen-case
+scalar control retain the hashes above. Parent serializes both-arm execution
+and strict typing; a read-only Sol6.1 Medium agent audits evidence, not source.
+All historical fixtures and failures remain unchanged. No result is inferred
+from this preparation; the shared allocation prerequisite remains unreleased.
+
+B's exact canonical docs and initializer claims were freshly checked before
+composition; A's current PR6583 scope has no overlap with this PR's authored
+source/test paths. Claims are not shared API authority. A retains shared
+admission/preparation, registry and integration/queue ownership. The latest A
+coordination note describes excluding JS-host support from the future IR route;
+this refresh does not alter host routing or claim unknown Linear policies are
+native. Existing compatibility controls are preserved, not counted as native
+migration completion. Actual shared target/policy contracts still need publication.
+
+## Measured current-main composition — 2026-10-08
+
+Candidate `14aa145dd9ca39bff986dd1626e78f6e12e8da6d` has source tree
+`eb095b75eca043b7f9a14ee9dad3a027e1fb612a`. Baseline test-only execution
+`3fee634ae67f23f57085ce6b792e584cd78e85ac` has unchanged main845 source tree
+`953f74f80cf2f8085b8e1c93489fcdd357929b37`. Identical V3/scalar test bytes
+and unchanged before/after receipts were verified. Both runs exit1:
+**24 pass / 1 fail / 25, zero pending**; the seventeen original scalar controls
+all pass. All eight complete new observations match exactly, including the
+same positive shared-allocation preparation rejection. All five complete saved
+unit binary witnesses validate and match; source artifact hashes/lengths and
+memory hashes/header/neighbor observations match. Full memory bytes and full
+source binaries are not retained witnesses and are not claimed as such.
+Complete raw failure text matches exactly (1,561 characters), without exclusions
+or execution-path normalization. Strict test-inclusive TS7 exits0, zero diagnostics.
+
+Evidence, input/terminal receipts, frozen runner/configuration and an executable
+count-floored comparison are under
+`plan/log/6905-linear-prepared-memory-20261007/main-845/`. Historical tests and
+failure evidence remain unchanged. The old test provenance `baseline:609286...`
+is historical metadata; the fresh execution HEADs above govern this comparison.
+The committed historical comparator passed in two-log mode with all eight rows;
+the historical four-log omission mode was not used.
+
+The unmodified boundary inventory still exits1, as required quality job112868414223
+also did: missing normal non-module classification for
+`src/codegen-linear/runtime/README.md`, plus module/target classification for
+`src/codegen-linear/runtime/vector-initialization.ts`. A owns the registry and
+must apply exact normal legacy-linear/Linear-target entries, not exemptions.
+The full fresh report and diagnostics are preserved. The shared source array
+admission, target-policy contract, memory materialization and source-free replay
+requirements above remain undelivered. No unused memory adapter was added.
+HOLD/no auto-merge remains; A controls final integration and protected queue.
