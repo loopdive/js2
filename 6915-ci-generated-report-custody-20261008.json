@@ -2,10 +2,11 @@
   "id": "6915",
   "slice": "ci-generated-report-custody-20261008",
   "assignee": "ttraenkler/codex-linear-b-generated-report-sol61-20261008",
-  "requested_by": "ttraenkler/codex-linear-b-generated-report-sol61-20261008",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/6915-linear-append-plan-20261007",
   "claimed_at": "2026-10-08T17:46:45Z",
-  "updated_at": "2026-10-08T17:46:45Z",
-  "write_id": "4156-17hxbrq8"
+  "updated_at": "2026-10-08T18:55:41Z",
+  "write_id": "44997-5u85ra2d",
+  "released_at": "2026-10-08T18:55:41Z"
 }
