@@ -361,3 +361,51 @@ digests. Unchanged regression files remain37pass2fail/39 on both versions:
 existing1977 scalar growth24vs69 and16vs40 belong to A's emitter scope.
 No skipped fixtures, retirement, shared edits or general malloc safety claim.
 Status remains in-progress pending A's coordinated main integration.
+
+## Bounded registry handoff — 2026-10-08
+
+Parent releases only this existing issue and `scripts/compiler-boundaries.json`
+on isolated branch `codex/6896-linear-array-capacity-20261007`, starting
+HEAD `63ad33f865b0d9c2204d2cd7254e3d61210beb8a`. Fresh PR6572 read confirms
+that exact head in **ttraenkler/js2**, OPEN/HOLD and autoMergeRequest null.
+Canonical same-name branches are not this fork-backed PR's source authority.
+Exact canonical claim `6896:registry-handoff-20261008`, owner/requester
+`ttraenkler/codex-linear-b-registry-sol61-20261008`, branch as above,
+in-progress/write ID `79395-ml861pxf`, updated `2026-10-08T16:28:21Z`, was
+effect-read at ledger `7f0c4e36be071ab38a48b4a5fe25b4aa7790d09b`.
+
+Approved authority: [A handoff PR6596](https://github.com/loopdive/js2/pull/6596),
+commit `555af588b3b41dda3b95a3d53468e0f4d55a32c7`, adopted Astra High plan
+SHA256 `ca7b3e3ed09a89da6917231a7ccc906369e567d2e180e0b145ac05c5f299d636`.
+[A registry proposal PR6595](https://github.com/loopdive/js2/pull/6595), commit
+`52b64c8277b4e61c42f24e7821445260aa638179`, permits only records matching
+actual present source paths. Inspect all eight proposed paths and add only the
+present matching records, preserving all existing baseline bytes/order outside
+the insertions; never copy the proposal's whole newer policy or absent rows.
+No exemption, source/test/workflow edit, main refresh or native release.
+
+Require normal whole-inventory detection with the actual starting Git base,
+module/edge floors and zero errors, exact published-row equality and full-policy
+removal/byte-preservation validation, scoped Prettier/whitespace and normal fast
+user-authored Codex Sol6.1 Medium commit hooks. No heavy tests/type/build; old
+source epochs and their failures remain explicitly old, not requalified on main845.
+Evidence stays in `.tmp/6896-registry-handoff-20261008/`. Commit only for parent
+review; no push or hold/queue change. A retains source integration authority.
+
+### Actual matching-path validation
+
+Only `src/codegen-linear/runtime/array-allocation.ts` is present among A's eight
+proposal paths. Runtime README and the other six paths are absent, so only its
+one normal unmigrated/legacy-linear module record is added; no nonModule row.
+Normal inventory command `node scripts/check-compiler-boundaries.mjs --mode
+inventory --base 63ad33f865b0d9c2204d2cd7254e3d61210beb8a` exits0:
+**1,882 modules;14,518 resolved edges;2 excluded nonModules;zero errors**.
+Count floors1,700 modules/1,000 edges and exact-one-proposal-row/full-policy-
+removal/byte-preservation validation pass. Architecture and graph remain
+incomplete. This is the old branch source epoch with working metadata, not main845.
+Baseline policy SHA256
+`3c26411dda04b40f68501f6ae65450d22c7b84318bb4b4767240e9a20255da1e`;
+candidate SHA256
+`9ea536355ad0228b2001deeea5c4246471647474e4a2f93c103b539d44d5ef95`.
+No production/test changes or heavy qualification. Raw policies, report/stderr,
+validator/result and claims remain in the task-local evidence directory.
