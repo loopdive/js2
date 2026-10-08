@@ -3,9 +3,10 @@
   "slice": "registry-handoff-20261008",
   "assignee": "ttraenkler/codex-linear-b-registry-sol61-20261008",
   "requested_by": "ttraenkler/codex-linear-b-registry-sol61-20261008",
-  "status": "in-progress",
+  "status": "done",
   "branch": "codex/6911-linear-char-code-at-provider-20261007",
   "claimed_at": "2026-10-08T16:16:28Z",
-  "updated_at": "2026-10-08T16:16:28Z",
-  "write_id": "61391-vkagd3c6"
+  "updated_at": "2026-10-08T16:35:49Z",
+  "write_id": "2620-iw193g2i",
+  "released_at": "2026-10-08T16:35:49Z"
 }
