@@ -243,3 +243,215 @@ Unicode required numerical/code-unit evidence, with original tests retained: ASC
 ## Evidence inventory
 
 `published-pins.json` records real GitHub blob IDs, SHA256 bytes and complete paths for the five PR plans/tests/source leaves, main workflow/hook/config and historical append runner receipts. An early guessed hook path returned404 and is retained as such; the real discovered hook is pinned separately. `raw/` preserves GitHub PR/file responses and main/claim refs. `claim-summary.json` contains actual held claim records. `source-preimages.json` and `source-preimages/` hold exact A/W1/D1 inspected bytes, explicitly labeled unpublished. Current A `linear-integration.ts` preimage is SHA256 `7c114e1bf67f48253d933a54bfb5261cc2d9a31ee01a288ba55da8c9a6d95559` (115619 bytes). Re-pin before editing; a line-number reference alone does not authorize applying a stale hunk.
+
+
+## Adopted canonical Linear geometry publication — 2026-10-08
+
+Finite task: publish the complete adopted geometry implementation plan and its current dependency/ownership limits for Session B in existing ready [PR #6596 — docs(ir): publish adopted B implementation handoff](https://github.com/loopdive/js2/pull/6596). This documentation-only task owns this appended issue section and the corresponding coordination-log paragraph under claim `6865:session-a-b-contract-handoff-publication-20261008`, owner `ttraenkler/codex-ir-b-contract-docs-sol61-20261008`, write ID `40378-ror9t78j`. It edits no production source, tests, fixtures, guards, budgets, registry, claims or B branches. Root retains final queue/integration.
+
+Root adopted the entire frozen plan below (SHA256 `f7af00c7d72841db0c9d541bbdcbc717fac4e4c3e5918ec33752e57b3c849266`); its historical snapshots remain identified as planning evidence. The current [bounded public owner handoff](https://github.com/loopdive/js2/pull/6583#issuecomment-6065892558) has independently verified body SHA256 `2e02e48495bbc8e388bb1e05ee940aeae7aa1d50583f429a78e409d4ce35511a`. Actual upstream assignment tip `364bba862f40673cda0d05e05e4bd95e13753480` retains donor `34529-rzivb817`, A2 `16740-hhm82aur`, and historical-proof `54017-blpvz0m8` / `76271-0mo0ncgo` / `75863-k6ti87wv`; the handoff requests their exact acknowledgements and transfers no claims. The new shared module and old-planner consumption remain blocked on foreign-hunk acknowledgements and historical successor coordination.
+
+No geometry implementation source commit exists. Existing docs commit `555af588b3b41dda3b95a3d53468e0f4d55a32c7` and this plan are inspectable agreements, not source dependencies. B rewires only its three owned leaves after receiving the exact reviewed published source commit; original fixtures, custody assertions, guards and budgets remain intact. This publication performs no compiler/runtime qualification and claims no native array/memory/Unicode completion. The plan specifies the required head-specific tests and historical proof; required normal documentation commit-hook results are recorded separately.
+
+### Complete adopted geometry implementation plan
+
+The following frozen architecture text is retained verbatim. References to its private evidence directory describe provenance; the plan itself is fully published here.
+
+# Canonical Linear geometry below IR analysis: bounded source publication
+
+Architecture: Codex GPT-6 Astra High, 2026-10-08. Read-only plan for root adoption in issue6865 before implementation. No source, test, issue, claim or GitHub mutations and no compiler/runtime tests were performed. Root owns final integration; B owns its three provider import rewires. Existing A1/S/A2 work remains separate.
+
+## Verified blocker and exact dependencies
+
+Canonical main is `8452732f0b88c14c5c7634ece58f83240970ea4c`, freshly read from the repository REST git ref. B's request is PR6583 comment6065295694, copied verbatim to b-sync-comment.json. Exact currently published heads and job evidence:
+
+| PR / title | Head and matching job head_sha | Quality job / run | Actual failure |
+|---|---|---|---|
+| 6572 — fix(linear): reject wrapped array allocation sizes | 76b8a02dca23c8e974661b55fdeaeae38b898d9d | 113423217195 / 37809751364 | Import-cycle ratchet: codegen-linear→ir 9→11 |
+| 6577 — refactor(linear): extract initializer and preserve Prepared evidence | 7123e9a305e51f36a1fe0b841fa57d8001a634a1 | 113421304177 / 37809187707 | Import-cycle ratchet: codegen-linear→ir 9→10 |
+| 6583 — refactor(linear): extract reusable charCodeAt provider body | ed60d9648c1f726bf843656ffd12ce6710d539c6 | 113419277902 / 37808594868 | Import-cycle ratchet: codegen-linear→ir 9→10 |
+
+The actual jobs ran those PR heads and failed their named import-cycle step. Subsequent skipped steps are not validation passes. Logs, job metadata, full single-page changed-file inventories (19/40/46 records), exact source leaves and tests are preserved under this directory. The registry repair did not remove the value edges. A type-only migration to wasm/model cannot remove them either.
+
+PR6572's new `src/codegen-linear/runtime/array-allocation.ts` imports `planLinearVectorLayout` from IR analysis and `irVal` from IR nodes, then computes the canonical f64 vector layout at module initialization. Those are two distinct runtime graph edges. PR6577's `runtime/vector-initialization.ts` adds one value edge for LINEAR_VECTOR_ELEMENTS_OFFSET. PR6583's `runtime/strings/char-code-at.ts` adds one value edge for LINEAR_STRING_LENGTH_OFFSET and LINEAR_STRING_ELEMENTS_OFFSET. Multiple names from one source module are one graph edge. The gate's actual `references()` parser includes value imports/reexports/dynamic imports/requires and excludes genuinely type-only edges.
+
+Existing main has nine codegen-linear→IR value edges: index.ts→ir/types, index.ts→analysis/linear-memory-plan, index.ts→backend/linear-integration, index.ts→backend/linear-ir-coverage; layout.ts, runtime.ts, runtime-stack-arena.ts, number-format.ts and string-repeat.ts each→analysis/linear-memory-plan. This is a source import census, not a newly executed whole-graph metric. B's three additions explain the observed job deltas. The new dependency must remove those additions themselves; do not compensate by deleting unrelated edges or granting a budget increase.
+
+No implementing A source commit for this contract exists yet. B must consume an exact reviewed/published A commit recorded at delivery; docs555af588b3b41dda3b95a3d53468e0f4d55a32c7 and this plan are scope agreements, not source dependencies. A2 private facts/extraction and old W1/D1/R1 composition are not dependencies and must not be copied. Root must coordinate honest signed append-only delivery; this plan does not waive B's separately recorded signing hold.
+
+## Decision: one dependency-free shared geometry owner
+
+Create **`src/shared/contracts/linear-memory-layout.ts`**. It contains pure Linear byte geometry DATA and calculation functions; it imports nothing, including no type-only IR references. It is a foundation contract consumed by both the IR planner and direct backend leaves. It has no allocation registry, analysis, source/runtime policy, compiler objects, Wasm instructions, factory calls, allocator, resource handles or mutable module. This is real code ownership extraction, not a facade reexporting IR analysis under a new pathname.
+
+Retain `analysis/linear-memory-plan.ts` as the owner of IR type interpretation, semantic layout identities, allocation evidence/policy/planning and facts verification. Its historical public API remains compatible. The existing IR-specific `planLinearVectorLayout(element: IrType)` stays as a thin typed adapter; all byte geometry comes from the shared module. B uses a separate scalar-storage entry so it does not construct a pretend IR value merely to obtain a stride and offset.
+
+The shared path is appropriate because the current layout is the canonical Linear physical storage contract used by multiple emitters. Do not put it under WasmGC, under the legacy codegen-linear directory, or under IR analysis. Do not describe the current UTF-8 byte geometry as UTF-16 or any particular allocation strategy as generic memory policy.
+
+### Canonical DATA moved once
+
+Move these exact definitions, unchanged, from `src/ir/analysis/contracts/linear-memory-layout.ts` into the shared owner:
+
+- LinearStorageKind
+- LinearSizePlan
+- LinearFieldPlan
+- LinearPointerMap
+- LinearLayoutBase
+- LinearRecordLayoutPlan
+- LinearVectorLayoutPlan
+
+Move `LinearStringLayoutPlan` unchanged from `analysis/linear-memory-plan.ts` into that same shared owner. Its existing i8|i16 and 1|2 type alternatives remain unchanged even though the existing factory returns the UTF-8 i8 arm. The old contracts file imports needed local type names and `export type` reexports these exact definitions; do not redeclare equivalent interfaces in two files. Leave LinearAllocationClass, LinearRuntimeOperation, lifetime/root/barrier/safepoint/decision/site types in the old contract; their IR identity and analysis type dependencies are not part of this slice.
+
+Move these values exactly once out of memory-plan.ts, retaining old named reexports and imported local bindings where existing planner code uses them:
+
+```
+LINEAR_POINTER_BYTES
+LINEAR_RECORD_ALIGNMENT
+LINEAR_RECORD_HEADER_BYTES
+LINEAR_RECORD_FIELD_SLOT_BYTES
+LINEAR_RECORD_TAG_OFFSET
+LINEAR_RECORD_PAYLOAD_SIZE_OFFSET
+LINEAR_ARRAY_FORWARDING
+LINEAR_VECTOR_LENGTH_OFFSET
+LINEAR_VECTOR_CAPACITY_OFFSET
+LINEAR_VECTOR_ELEMENTS_OFFSET
+LINEAR_VECTOR_MINIMUM_CAPACITY
+LINEAR_STRING_LENGTH_OFFSET
+LINEAR_STRING_ELEMENTS_OFFSET
+LINEAR_STRING_PAYLOAD_SIZE_OFFSET
+LINEAR_STRING_PAYLOAD_PREFIX_BYTES
+```
+
+Keep `LINEAR_STACK_ARENA_BYTES` and allocator policy IDs/implementations in the planner. No B leaf needs their relocation. Preserve forwarding object's single Object.freeze result and object identity, not a copy with equal fields.
+
+Move these existing complete pure functions unchanged into the shared owner, including their comments and behavior, with exact old reexports/imports:
+
+```ts
+storageBytes(storage: LinearStorageKind): number
+storageAlignment(storage: LinearStorageKind): number
+planLinearRecordLayout(
+  id: string,
+  fields: readonly { readonly name: string; readonly storage: LinearStorageKind }[],
+): LinearRecordLayoutPlan
+linearStringLayoutId(): string
+planLinearStringLayout(): LinearStringLayoutPlan
+```
+
+There must be one implementation of each, with old-import/new-import function identity. The record planner's existing 8-byte field slots remain unchanged even for wider storage; this relocation is not permission to repair or silently redesign that existing contract. Returned layouts remain fresh mutable DATA objects exactly as before; do not add interning, global layout object caching or deep freezing. Existing LinearMemoryPlan later freezes its own snapshot as before.
+
+### Vector geometry and semantic key split
+
+New functions in the shared module:
+
+```ts
+linearScalarStorageKey(storage: LinearStorageKind): string
+linearVectorLayoutIdForElementKey(elementKey: string): string
+planLinearVectorStorageLayout(
+  elementKey: string,
+  storage: LinearStorageKind,
+): LinearVectorLayoutPlan
+planLinearScalarVectorLayout(storage: LinearStorageKind): LinearVectorLayoutPlan
+```
+
+Exact intended definitions/derivation:
+
+- `linearScalarStorageKey(storage)` owns the existing `scalar:${storage}` string construction.
+- `linearVectorLayoutIdForElementKey(elementKey)` owns `vector:${elementKey}`.
+- `planLinearVectorStorageLayout` owns the current vector function's entire geometry body, replacing only the IR-specific storage calculation with its storage parameter and the id expression with the canonical element-key function. All strides, sizes, alignment, pointer maps, offsets and minimum capacity are calculated by the relocated existing bodies/constants.
+- `planLinearScalarVectorLayout(storage)` calls `planLinearVectorStorageLayout(linearScalarStorageKey(storage), storage)`.
+
+No new vector ABI, scalar-tag number catalog or IrType factory is introduced. Storage values are the existing closed eight-member vocabulary i8/i16/i32/i64/f32/f64/bytes16/pointer. Runtime validation/error behavior of old APIs stays unchanged; do not add broad new validators or fallback cases as part of the extraction.
+
+Old `planLinearVectorLayout(element: IrType)` becomes exactly this semantic adapter:
+
+```ts
+const storage = linearStorageForIrType(element);
+return planLinearVectorStorageLayout(linearIrTypeKey(element), storage);
+```
+
+Preserve evaluation order: compute storage first, then the semantic key, as the original function does. Do not pass storage itself as the semantic key for all IR elements: string, class, object, nested vector, closure, union and dynamic pointers have distinct existing layout identities despite identical pointer width. Old `linearVectorLayoutId(element)` calls `linearVectorLayoutIdForElementKey(linearIrTypeKey(element))`. In private `linearIrTypeKey`, only the val arm changes to call `linearScalarStorageKey(linearStorageForIrType(type))`; all remaining cases and their ordering/refusals stay unchanged.
+
+Keep `linearStorageForIrType` unchanged: the val arm maps v128 to bytes16 and reference-shaped val types to pointer; non-val types map to pointer. A scalar f64 request therefore has exactly id `vector:scalar:f64`, stride8, base16, minimum capacity16 and alignment8 on both paths. Moving irVal or constructing `{kind:'val',val:{kind:'f64'}}` inside the new module would only disguise the old architecture and is prohibited.
+
+Function identity test scope is explicit: the five moved functions are identity-equal through old and new imports. The retained IR vector adapter and the new scalar-storage helper are deliberately distinct functions with exactly equal full results for equivalent scalar input. Do not write a misleading identity assertion between APIs with different argument contracts.
+
+### Layout compatibility table
+
+All values below are independent expected fixtures, not implementation-derived success oracles:
+
+| Property | Required existing value |
+|---|---|
+| Pointer bytes | 4 |
+| Record alignment/header/field slot | 8 / 8 / 8 |
+| Record tag/payload-size offset | 0 / 4 |
+| Forwarding tag/tag offset/pointer offset/bytes | 6 / 0 / 4 / 4 |
+| Vector length/capacity/elements/min capacity | 8 / 12 / 16 / 16 |
+| UTF-8 string length/elements/payload-size/prefix | 8 / 12 / 4 / 4 |
+| Scalar storage widths/alignment | i8=1, i16=2, i32=f32=pointer=4, i64=f64=8, bytes16=16 |
+| String factory identity/storage/stride | string:utf8-bytes-v1 / i8 / 1 |
+
+A vector alignment is max(record alignment, storage alignment), so bytes16 gives16; pointer vector pointer-map flags remain true and numeric flags false. The shared record algorithm still places fields in source order and computes fixed pointer offsets. No allocator/header growth, minimum-capacity behavior, overflow arithmetic or encoding changes occur.
+
+## Exact A/B source ownership and integration order
+
+A's proposed production source scope is only:
+
+1. New `src/shared/contracts/linear-memory-layout.ts` — DATA, moved pure implementations and scalar/vector key/geometry entry points.
+2. `src/ir/analysis/contracts/linear-memory-layout.ts` — replace the seven geometry definitions with imports/type reexports; all allocation-policy/site definitions stay identical.
+3. `src/ir/analysis/linear-memory-plan.ts` — constants block67–96 except stack-arena; LinearStringLayoutPlan99–107; moved record/string functions780–855; vector adapter812; vector/string ID functions869–875; storage helper bodies903–923; the single scalar key arm around1239; required exact imports/reexports. These coordinates describe pinned main845, not mutable worker offsets.
+
+No source preparation, codec, consumer, allocator, runtime provider body, IrType definition, verifier, lattice or provenance algorithm is in this A slice. A2's planned extraction of facts definitions and canonical verification from the same memory-plan physical file remains separate. It cannot be integrated by copying a whole A2 candidate. Freeze its facts/evidence/verifier hunks unchanged; one root-appointed writer composes the two reviewed diffs if both proceed. The current A2 memory-plan/contracts working bytes are unchanged, but pending ownership still requires acknowledgement.
+
+B makes ONLY the three leaf import/callsite updates against the exact published A dependency:
+
+- PR6572 `src/codegen-linear/runtime/array-allocation.ts`: replace planLinearVectorLayout/irVal imports with `planLinearScalarVectorLayout` from `../../shared/contracts/linear-memory-layout.js`; evaluate `planLinearScalarVectorLayout('f64')`. Remove the irVal import completely. Change the existing Instr TYPE import to `../../wasm/model/instructions.js` to keep this leaf's complete dependency closure clean, not merely its runtime edges. Keep both checked-size/doubling bodies and all existing guards unchanged, including their explicit canonical f64 assertion.
+- PR6577 `src/codegen-linear/runtime/vector-initialization.ts`: import LINEAR_VECTOR_ELEMENTS_OFFSET from the shared path instead of IR. Leave the exact seven-instruction body and its existing local indices/stride immediate alone; no cleanup of its preexisting literal8 is needed for this blocker. The structural identity/behavior test verifies it agrees with canonical stride. Any future symbolic-stride cleanup belongs to B's separately reviewed change.
+- PR6583 `src/codegen-linear/runtime/strings/char-code-at.ts`: import both string offsets from `../../../shared/contracts/linear-memory-layout.js`; leave its decoder and resource behavior byte-for-byte unchanged.
+
+B does not copy the shared module, reexport its own constants, import back through the old IR facade or replace irVal with a fake structural IR object. A does not edit B's leaves without the already agreed reviewed-hunk handoff. Existing main runtime.ts/layout.ts/string-repeat.ts/number-format.ts/stack-arena imports can remain compatible through the old planner reexports; removing those old edges is optional later work requiring their actual owners, not necessary to make these three PR additions clean. In particular, runtime.ts allocator4540 remains untouched by A.
+
+Integration: publish the A source contract with actual normal validation and root-owned preservation/registry joins. Record its exact source commit. Then B retargets its real PR leaves against that dependency, preserving held branches/history and running each original suite/custody check. If parent PR delivery is blocked, a root-approved explicit dependency branch can prove combined source locally, but it is not a claim that main already supplies the contract. Do not claim source publication from this plan or a shared leaf added without the old planner consuming it.
+
+## Live held claims and mandatory handoffs
+
+Canonical assignment ref read during planning is `02508b28278d067bceb8d484524064961d0f4312`. Exact records are in claims.json.
+
+- Allocation donor34529: `3518:allocation-ownership-runtime`, ttraenkler/codex-astra-allocation-ownership-20260908, in-progress, write34529-rzivb817. The memory-plan donor is already under the root/A2 custody discussion. Request the exact geometry-only hunks listed above and the geometry DATA reexport change, not allocation/fact/verifier authority. Do not assume A2's previous four-file handoff covers this different request.
+- A2 own source: `6865:native-linear-source-facts-20261008`, ttraenkler/codex-ir-native-linear-source-facts-sol61-20261008, in-progress, write16740-hhm82aur. Require explicit physical-file hunk coordination even though algorithms are disjoint.
+- Allocator4540: ttraenkler/claude-opus, in-progress, write12703-i71z8kda. No edits requested.
+- Vector claim is **2956:l2-vec**, ttraenkler/codex-l2-vec, in-progress; its actual record has no write_id. Whole2956.json returns404; do not manufacture a whole-issue release or write ID. No emitter/vector representation edit requested.
+- Physical kernel3518 remains held by ttraenkler/codex-astra-physical-module-completion-20260908, write19409-8ue0poec. No edits requested.
+- Historical lowering-analysis source proof: owner ttraenkler/codex-lowering-analysis-source-proof-20261004, held write54017-blpvz0m8; trusted-adapters owner ttraenkler/codex-lowering-analysis-trusted-adapters-20261004, held write76271-0mo0ncgo; policy-callers owner ttraenkler/codex-lowering-analysis-policy-callers-20261004, held write75863-k6ti87wv. Their files are not granted to this implementation.
+
+A ledger slice name is not a complete file inventory. Root must join its preserved exact donor scope and current PR/path census before delegation; this plan neither proves release nor overrides a claimant. If donor acknowledgement is absent, keep the production hunks blocked while preparing the concrete reviewable patch in the authorized manner. Do not route around the hold with copied constants or a second planner.
+
+## Registry, import graph and historical proof
+
+Root alone registers the actual new shared path in compiler-boundaries.json: foundation entry population becomes10 from9 if no concurrent registration changed it. The existing foundation root is already src/shared/contracts. Add the actual entry and any existing exact inventory record required by the current policy; preserve allowed dependency directions and tighten/maintain population floors. Do not add an analysis escape hatch or type-only exception, lower a floor, relax cycle budgets, or alter import-cycles-baseline.json to excuse these PRs. Root composes any successor policy proof rather than copying stale policy JSON from a worker.
+
+Require both value-only and all-reference closure from the new module: exactly one root module and zero imports. Include codegen-linear leaf closures at all three retargeted heads: their instruction type imports may reach wasm/model but must reach no IR module through any import/reexport/type query/dynamic load. This is stronger than merely hiding a value edge behind a type import. A negative parser/inventory control injects a real forbidden IR value reference into a temporary copied leaf/new owner and must be detected; an unchanged genuine leaf is the paired positive. Reuse the actual repository reference parser; regex absence alone is not proof.
+
+The planner and layout files are exact operands of `tests/helpers/ir-lowering-analysis-relocation.{ts,json}` and `tests/issue-3518-lowering-analysis-preservation.test.ts`, with downstream C1 authority/policy readers. Those old expected bytes and reconstruction algorithms must remain valid. This extraction changes their physical operands, so source-only green/tsc is insufficient.
+
+Request a separate finite successor from the actual preservation owner: authenticate the complete new three-file source graph and full old two-file pins; reverse only this documented geometry extraction/reexport/adapter recipe to reproduce the exact prior main operands; replay forward and require exact complete candidate bytes. Retain old helper/receipt/inverse algorithms and original negative operands; do not reseal old receipts, normalize mutated test inputs into success, add fallback reads or repin expectations from whatever happens to be in the candidate. The scalar-key/vector-body factoring is an explicit function rewrite in that recipe, not a fictional pure import move. Negative controls must alter an offset, pointer flag, old wrapper key, delegation call or new module body and fail the new proof before entering the unchanged older proof. Actual runtime old/new function identity and behavior tests remain independent of this historical source reconstruction. If the current receipt chain cannot accept the successor without owned changes, report that dependency rather than waive the preserved tests.
+
+## Finite qualification, with meaningful independent oracles
+
+This section specifies required runs; none were executed in this planning task. Proposed A new test path is `tests/issue-6865-linear-layout-contract.test.ts`, scope to be claimed after root approval. Existing suites are run unchanged, not edited opportunistically. All exact selected/collected/pass/fail/skip counts and input SHAs are recorded by implementers.
+
+1. **Authority/compatibility identity:** old/new import equality for all five moved functions; exact same frozen LINEAR_ARRAY_FORWARDING object; old/new constants equality. Assert old public planner/index APIs still expose existing names. New shared module has no runtime initialization depending on IR.
+2. **Scalar/storage matrix:** all eight storage kinds; old `planLinearVectorLayout` using real canonical irVal for their real ValType inputs versus shared scalar helper. For pointer, use real reference-shaped val type; use v128 for bytes16. Assert complete object equality AND independent expected widths, alignment, offsets, pointer flags and ids. Also prove fresh returned arrays/objects across calls by mutation isolation; no accidental shared-layout caching.
+3. **Semantic pointer identities:** at least string, nested vec, object, class, boxed, dynamic and fnctor/closure as constructible by existing canonical fixtures. Existing old semantic ID remains exact and distinct where required; equal pointer width must not collapse them into vector:scalar:pointer. Existing support-ref failure remains identical. Do not invent malformed types to claim full source support.
+4. **Records and strings:** empty record, mixed f64/pointer/i32 ordered fields, bytes16 record behavior retained, multiple pointer offsets; exact UTF-8 string layout and forwarding header. Use hand-written expected bytes/fields, not expectations computed by the same new function. No new Unicode/source-string correctness claim comes from byte geometry equality.
+5. **Real old planner:** unchanged genuine IR/registry fixture in issue-3298 and relevant direct-runtime/physical checks in issue-3299 and string contract issue-3502. Demonstrate planLinearMemory still reaches the shared geometry authority while preserving frozen plan/data/size results. Spy with real passthrough only where the existing import binding is observable; if a same-module call is not interceptable, use actual produced values plus static exact delegation and do not call a zero spy result proof. No fake producer or fabricated allocation evidence.
+6. **Actual B allocation caller:** run unchanged issue-6896 suite at the retargeted exact PR6572 head. Preserve wrapped-allocation pre-malloc traps, doubling bound, small capacities/copies/forwarding, neighbor preservation and actual parent runtime-input fixture result1.25. Its last fixture requires exactly one source vector and allocation, actual arr_new call and authentic canonical arena144 planning. These are full fixtures, not checks of the shared helper in isolation.
+7. **Actual B initializer caller:** run unchanged issue-6905 suite at exact PR6577 successor. Preserve direct legacy positive, exact symbol/ABI/seven-instruction body, fresh bodies across modules, real fractional stores/import offsets/surrounding bytes. Preserve its positive shared-Linear allocation and public source-overlay required failures as originally recorded; this geometry publication does not supply A's missing native public/source contracts or authorize JS-host overlay. Report original fixture statuses honestly and keep full native none/WASI array/resource/source binding goal open.
+8. **Actual B charCodeAt caller:** run unchanged issue-6911 suite at exact PR6583 successor. Preserve 41 native-JavaScript finite cases, the five actual ASCII source-owner cases with exactly one provider call, 2 imported-index controls and 8 cache/early-exit cases; fresh instruction identity census remains greater than100. Preserve cold/cached ASCII, BMP widths, astral halves, NaN bounds, exact cache-byte-only changes and real imported helper binding. This UTF-8 decoder suite is not the missing lossless UTF-16 source-carrier proof.
+9. **Actual gates:** source TypeScript/format/lint, complete new root changed tests, unchanged required boundary/layering/cycle checks and historical preservation chain. Measure graph at actual parent/main plus each exact A+B successor. Expected mechanism is removal of the newly added two/one/one IR edges, not permission to assume all quality jobs now pass. Zero new reverse shared edges and no new SCC growth. New path registration tests must prove detection is nonempty and every new production module classified. Run through root's normal runtime approval/process-custody protocol.
+
+Tests for relocated function identities prove a single authority. Independent offsets/record bytes and unchanged real B caller behavior prove preservation. Source closure and import-ratchet evidence prove the architecture fix. None substitutes for the others, and none supplies the pending native memory/allocator/UTF-16/ReferenceError/source-array resources.
+
+## Delivery and explicit limits
+
+Root adopts this whole plan, records exact source/test/registry/preservation owners and resolves donor/A2 hunk overlap. Use a new isolated worktree from freshly verified main. Publish the complete A contract only with old planner delegation and compatibility, then provide B its exact source commit and the three import recipes. B qualifies its retargeted leaves and reports complete head-specific results; root owns merge/queue and signing resolution. No whole-file transplant from A2, W1/D1/R1, S, or an older B runtime.ts.
+
+The full native goal remains unchanged: genuine none/WASI public caller, array source facts and real memory resources, allocation and forwarder correctness, exact source binding, lossless UTF-16, startup/TDZ/error identity and standard exception behavior. This finite contract publication removes a real value-edge blocker. It is not allocator completion, native array admission, Unicode parity, SOURCE/PROGRAM JS-host permission, retirement evidence or an all-checks-green report.
