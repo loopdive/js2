@@ -3,10 +3,8 @@
   "assignee": "ttraenkler/claude-session-c-ir-passes-20261008",
   "requested_by": "ttraenkler/claude-session-c-ir-passes-20261008",
   "status": "in-progress",
-  "branch": "claude/6921-ir-pass-correctness-20261008",
-  "reserved_at": "2026-10-08T21:26:20Z",
-  "claimed_at": "2026-10-08T21:26:20Z",
-  "updated_at": "2026-10-08T21:26:20Z",
-  "write_id": "24019-8zn25dio",
-  "pr_scan": "degraded"
+  "branch": "claude/ir-migration-completion-lf3fz0",
+  "claimed_at": "2026-10-08T21:27:01Z",
+  "updated_at": "2026-10-08T21:27:01Z",
+  "write_id": "24648-fikt82m9"
 }
