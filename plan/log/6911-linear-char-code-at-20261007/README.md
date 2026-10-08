@@ -65,3 +65,27 @@ After the final push, A should refresh exact PR heads, compose the disjoint
 runtime changes, retain all failing controls, qualify the integrated epoch and
 submit through the protected queue only when justified. This task is not on main
 and the full IR migration goal remains open.
+
+## Current-main845 composition (2026-10-08)
+
+The old epochs above remain historical. Fresh baseline production is canonical
+`8452732f0b88c14c5c7634ece58f83240970ea4c` (test-only HEAD
+`a2e5f2c5af0ae9a2209a444a5ac4c70ea2e009d1`); candidate execution HEAD is
+`62a0cf9294e3743319188790b5866375d7bccde3`. Both use identical frozen test bytes.
+All 41 ordered test names/statuses match: 38 pass, three retained original
+failures, no pending tests. Complete raw failure text matches exactly, without
+normalization. Ten full provider rows and fourteen binary witnesses match;
+strict test-inclusive TS7 exits0 with no diagnostics. No production changes
+were authored during this refresh; the unchanged provider was composed with main.
+
+Replay saved populations and complete failures:
+`node plan/log/6911-linear-char-code-at-20261007/main-845/compare-population.mjs`.
+Replay all provider rows and binary witnesses:
+`node plan/log/6911-linear-char-code-at-20261007/compare-provider-rows.mjs plan/log/6911-linear-char-code-at-20261007/main-845/baseline-provider.jsonl.gz plan/log/6911-linear-char-code-at-20261007/main-845/candidate-provider.jsonl.gz`.
+The `main-845` directory retains raw JSON/logs, input and terminal receipts,
+execution runners, strict configuration and its empty diagnostic log.
+
+B's ownership acknowledgment is now on the actual A coordination thread:
+https://github.com/loopdive/js2/pull/6583#issuecomment-6054418671.
+No overlap with A's published file scopes was found; no ownership was transferred.
+This limited preservation result does not clear HOLD or establish full IR equality.

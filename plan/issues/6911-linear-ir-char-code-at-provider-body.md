@@ -4,7 +4,7 @@ title: "Linear IR charCodeAt provider: reusable emission body and exact preserva
 status: in-progress
 sprint: current
 created: 2026-10-07
-updated: 2026-10-07
+updated: 2026-10-08
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -369,3 +369,46 @@ legacy retirement. A retains final integration/queue authority; HOLD remains.
 Canonical main later b5991f6c760623c8e06a692d0905123bf66ce6d9 changes only nine
 benchmark artifact files, not these frozen production operands. These results
 remain explicitly pinned to e1e; later publication commits do not change them.
+
+## Current-main composition initiated — 2026-10-08
+
+Parent acknowledged A's concrete ownership scope on PR6583 at
+https://github.com/loopdive/js2/pull/6583#issuecomment-6054418671 after checking
+all published B diffs against A's listed paths (no intersection). Earlier
+updates on PR6582 did not fulfill that acknowledgment. A's shared sources
+remain read-only and its unpublished changes are not part of this epoch.
+
+Canonical main8452732f0b88c14c5c7634ece58f83240970ea4c merged without conflicts
+into local candidate62a0cf9294e3743319188790b5866375d7bccde3. Historical e1e
+records remain unchanged. Parent will run the same41-case population, retain
+every original failure, compare all ten full provider rows/fourteen artifacts
+against a fresh canonical845 baseline with identical test bytes, and run strict
+test-inclusive typing. This records execution preparation, not a passing result.
+No source edit, new Unicode admission, helper authority or queue release is
+granted. Native Linear migration stays separate from preserved host controls.
+
+## Verified current-main composition — 2026-10-08
+
+The preceding preparation completed on the exact recorded candidate HEAD
+`62a0cf9294e3743319188790b5866375d7bccde3`, source tree
+`a2a4a09f8e9cd24f1d9af3c187d9081d1e456706`. Baseline test-only HEAD
+`a2e5f2c5af0ae9a2209a444a5ac4c70ea2e009d1` has canonical main845 production,
+source tree `953f74f80cf2f8085b8e1c93489fcdd357929b37`, and the identical frozen
+new test SHA256 `a3e5d6fa5389615c2fe97faedb6f2f2228098ee6175ce53fb1cfc0a036b996b9`.
+Both serialized runs used Linear IR enabled and the same 41-case population.
+
+Both arms exit1: **38 pass / 3 fail / 41, zero pending**; all ten provider tests
+pass. Ordered full test names and statuses match. The three original failures'
+complete raw diagnostic sections are exactly equal (6,316 characters), without
+execution-path normalization, exclusions or altered fixtures. The existing
+count-floored comparator confirms exact equality of all ten full provider rows
+and fourteen valid binary witnesses per arm. Strict test-inclusive TS7 exits0
+with zero diagnostics. Before/after receipts verify unchanged source and test
+inputs and execution HEADs. All raw reports, diagnostics, rows, receipts,
+runners, strict configuration and replay comparisons are archived under
+`plan/log/6911-linear-char-code-at-20261007/main-845/`; earlier evidence is intact.
+
+This qualifies provider-body preservation on main845, not a green full suite,
+Unicode source admission, detached helper authority, full IR equality, a
+performance improvement or legacy retirement. A's unpublished changes are not
+included. A owns final composition and protected queue submission; HOLD remains.
