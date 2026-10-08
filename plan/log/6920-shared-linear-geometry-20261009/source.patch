@@ -1,0 +1,561 @@
+diff --git a/src/shared/contracts/linear-memory-layout.ts b/src/shared/contracts/linear-memory-layout.ts
+--- /dev/null
++++ b/src/shared/contracts/linear-memory-layout.ts
+@@ -0,0 +1,231 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++
++/** Storage vocabulary independent of a machine instruction set. */
++export type LinearStorageKind = "i8" | "i16" | "i32" | "i64" | "f32" | "f64" | "bytes16" | "pointer";
++
++export type LinearSizePlan =
++  | { readonly kind: "constant"; readonly bytes: number }
++  | {
++      readonly kind: "elements";
++      readonly baseBytes: number;
++      readonly strideBytes: number;
++      readonly minimumElements: number;
++    }
++  | { readonly kind: "runtime"; readonly minimumBytes: number };
++
++export interface LinearFieldPlan {
++  readonly name: string;
++  readonly offset: number;
++  readonly storage: LinearStorageKind;
++  /** Reserved bytes in the containing record, which can exceed storage width. */
++  readonly slotBytes: number;
++  readonly alignment: number;
++  readonly containsPointer: boolean;
++}
++
++export type LinearPointerMap =
++  | { readonly kind: "none" }
++  | { readonly kind: "fixed"; readonly offsets: readonly number[] }
++  | {
++      readonly kind: "elements";
++      readonly fixedOffsets: readonly number[];
++      readonly elementsOffset: number;
++      readonly elementStride: number;
++      readonly elementsContainPointers: boolean;
++    };
++
++export interface LinearLayoutBase {
++  /** Stable semantic identity; never a module/type-table index. */
++  readonly id: string;
++  readonly alignment: number;
++  readonly size: LinearSizePlan;
++  readonly pointerMap: LinearPointerMap;
++}
++
++export interface LinearRecordLayoutPlan extends LinearLayoutBase {
++  readonly kind: "record";
++  readonly headerBytes: number;
++  readonly typeTagOffset: number;
++  readonly payloadSizeOffset: number;
++  readonly fields: readonly LinearFieldPlan[];
++}
++
++export interface LinearVectorLayoutPlan extends LinearLayoutBase {
++  readonly kind: "vector";
++  readonly lengthOffset: number;
++  readonly capacityOffset: number;
++  readonly elementsOffset: number;
++  readonly elementStorage: LinearStorageKind;
++  readonly elementStride: number;
++  readonly minimumCapacity: number;
++}
++
++export interface LinearStringLayoutPlan extends LinearLayoutBase {
++  readonly kind: "string";
++  readonly payloadSizeOffset: number;
++  readonly payloadPrefixBytes: number;
++  readonly lengthOffset: number;
++  readonly elementsOffset: number;
++  readonly elementStorage: "i8" | "i16";
++  readonly elementStride: 1 | 2;
++}
++
++/** JS2's current linear address width. Kept here rather than in an emitter. */
++export const LINEAR_POINTER_BYTES = 4;
++
++export const LINEAR_RECORD_ALIGNMENT = 8;
++
++export const LINEAR_RECORD_HEADER_BYTES = 8;
++
++export const LINEAR_RECORD_FIELD_SLOT_BYTES = 8;
++
++export const LINEAR_RECORD_TAG_OFFSET = 0;
++
++export const LINEAR_RECORD_PAYLOAD_SIZE_OFFSET = 4;
++
++/**
++ * Shared forwarding-record representation for relocated linear arrays.
++ *
++ * A grown array rewrites its old record header to this tag plus the pointer
++ * to the replacement record. Keep this contract beside the canonical linear
++ * layout offsets so every artifact adapter and the direct linear runtime read
++ * and write the same representation.
++ */
++export const LINEAR_ARRAY_FORWARDING = Object.freeze({
++  tag: 0x06,
++  tagOffset: LINEAR_RECORD_TAG_OFFSET,
++  pointerOffset: LINEAR_RECORD_PAYLOAD_SIZE_OFFSET,
++  pointerBytes: LINEAR_POINTER_BYTES,
++});
++
++export const LINEAR_VECTOR_LENGTH_OFFSET = 8;
++
++export const LINEAR_VECTOR_CAPACITY_OFFSET = 12;
++
++export const LINEAR_VECTOR_ELEMENTS_OFFSET = 16;
++
++export const LINEAR_VECTOR_MINIMUM_CAPACITY = 16;
++
++export const LINEAR_STRING_LENGTH_OFFSET = 8;
++
++export const LINEAR_STRING_ELEMENTS_OFFSET = 12;
++
++export const LINEAR_STRING_PAYLOAD_SIZE_OFFSET = LINEAR_RECORD_PAYLOAD_SIZE_OFFSET;
++
++/** Bytes between the record header and the first string element (the length field). */
++export const LINEAR_STRING_PAYLOAD_PREFIX_BYTES = LINEAR_STRING_ELEMENTS_OFFSET - LINEAR_RECORD_HEADER_BYTES;
++
++export function storageBytes(storage: LinearStorageKind): number {
++  switch (storage) {
++    case "i8":
++      return 1;
++    case "i16":
++      return 2;
++    case "i32":
++    case "f32":
++    case "pointer":
++      return 4;
++    case "i64":
++    case "f64":
++      return 8;
++    case "bytes16":
++      return 16;
++  }
++}
++
++export function storageAlignment(storage: LinearStorageKind): number {
++  return storageBytes(storage);
++}
++
++/** Shared record-layout primitive consumed by IR and direct linear-Wasm paths. */
++export function planLinearRecordLayout(
++  id: string,
++  fields: readonly { readonly name: string; readonly storage: LinearStorageKind }[],
++): LinearRecordLayoutPlan {
++  const plannedFields = fields.map((field, index): LinearFieldPlan => {
++    const containsPointer = field.storage === "pointer";
++    return {
++      name: field.name,
++      offset: LINEAR_RECORD_HEADER_BYTES + index * LINEAR_RECORD_FIELD_SLOT_BYTES,
++      storage: field.storage,
++      slotBytes: LINEAR_RECORD_FIELD_SLOT_BYTES,
++      alignment: storageAlignment(field.storage),
++      containsPointer,
++    };
++  });
++  const pointerOffsets = plannedFields.filter((field) => field.containsPointer).map((field) => field.offset);
++  return {
++    id,
++    kind: "record",
++    alignment: LINEAR_RECORD_ALIGNMENT,
++    size: {
++      kind: "constant",
++      bytes: LINEAR_RECORD_HEADER_BYTES + plannedFields.length * LINEAR_RECORD_FIELD_SLOT_BYTES,
++    },
++    pointerMap: pointerOffsets.length === 0 ? { kind: "none" } : { kind: "fixed", offsets: pointerOffsets },
++    headerBytes: LINEAR_RECORD_HEADER_BYTES,
++    typeTagOffset: LINEAR_RECORD_TAG_OFFSET,
++    payloadSizeOffset: LINEAR_RECORD_PAYLOAD_SIZE_OFFSET,
++    fields: plannedFields,
++  };
++}
++
++export function linearStringLayoutId(): string {
++  return "string:utf8-bytes-v1";
++}
++
++export function planLinearStringLayout(): LinearStringLayoutPlan {
++  return {
++    id: linearStringLayoutId(),
++    kind: "string",
++    alignment: LINEAR_RECORD_ALIGNMENT,
++    size: { kind: "elements", baseBytes: LINEAR_STRING_ELEMENTS_OFFSET, strideBytes: 1, minimumElements: 0 },
++    pointerMap: { kind: "none" },
++    payloadSizeOffset: LINEAR_STRING_PAYLOAD_SIZE_OFFSET,
++    payloadPrefixBytes: LINEAR_STRING_PAYLOAD_PREFIX_BYTES,
++    lengthOffset: LINEAR_STRING_LENGTH_OFFSET,
++    elementsOffset: LINEAR_STRING_ELEMENTS_OFFSET,
++    elementStorage: "i8",
++    elementStride: 1,
++  };
++}
++
++export function linearScalarStorageKey(storage: LinearStorageKind): string {
++  return `scalar:${storage}`;
++}
++
++export function linearVectorLayoutIdForElementKey(elementKey: string): string {
++  return `vector:${elementKey}`;
++}
++
++export function planLinearVectorStorageLayout(elementKey: string, storage: LinearStorageKind): LinearVectorLayoutPlan {
++  const stride = storageBytes(storage);
++  return {
++    id: linearVectorLayoutIdForElementKey(elementKey),
++    kind: "vector",
++    alignment: Math.max(LINEAR_RECORD_ALIGNMENT, storageAlignment(storage)),
++    size: {
++      kind: "elements",
++      baseBytes: LINEAR_VECTOR_ELEMENTS_OFFSET,
++      strideBytes: stride,
++      minimumElements: LINEAR_VECTOR_MINIMUM_CAPACITY,
++    },
++    pointerMap: {
++      kind: "elements",
++      fixedOffsets: [],
++      elementsOffset: LINEAR_VECTOR_ELEMENTS_OFFSET,
++      elementStride: stride,
++      elementsContainPointers: storage === "pointer",
++    },
++    lengthOffset: LINEAR_VECTOR_LENGTH_OFFSET,
++    capacityOffset: LINEAR_VECTOR_CAPACITY_OFFSET,
++    elementsOffset: LINEAR_VECTOR_ELEMENTS_OFFSET,
++    elementStorage: storage,
++    elementStride: stride,
++    minimumCapacity: LINEAR_VECTOR_MINIMUM_CAPACITY,
++  };
++}
++
++export function planLinearScalarVectorLayout(storage: LinearStorageKind): LinearVectorLayoutPlan {
++  return planLinearVectorStorageLayout(linearScalarStorageKey(storage), storage);
++}
+diff --git a/src/ir/analysis/contracts/linear-memory-layout.ts b/src/ir/analysis/contracts/linear-memory-layout.ts
+--- a/src/ir/analysis/contracts/linear-memory-layout.ts
++++ b/src/ir/analysis/contracts/linear-memory-layout.ts
+@@ -1,71 +1,22 @@
+ // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++
++import type { LinearStorageKind, LinearSizePlan } from "../../../shared/contracts/linear-memory-layout.js";
++export type {
++  LinearStorageKind,
++  LinearSizePlan,
++  LinearFieldPlan,
++  LinearPointerMap,
++  LinearLayoutBase,
++  LinearRecordLayoutPlan,
++  LinearVectorLayoutPlan,
++} from "../../../shared/contracts/linear-memory-layout.js";
+ 
+ import type { AllocKind, AllocSiteId, IrSiteId } from "../../core/nodes.js";
+ import type { Ownership } from "../lattice.js";
+ import type { EscapeClass } from "../escape.js";
+ import type { Encoding } from "../encoding.js";
+ 
+-/** Storage vocabulary independent of a machine instruction set. */
+-export type LinearStorageKind = "i8" | "i16" | "i32" | "i64" | "f32" | "f64" | "bytes16" | "pointer";
+-
+ export type LinearAllocationClass = "static" | "stack" | "arena" | "managed";
+-
+-export type LinearSizePlan =
+-  | { readonly kind: "constant"; readonly bytes: number }
+-  | {
+-      readonly kind: "elements";
+-      readonly baseBytes: number;
+-      readonly strideBytes: number;
+-      readonly minimumElements: number;
+-    }
+-  | { readonly kind: "runtime"; readonly minimumBytes: number };
+-
+-export interface LinearFieldPlan {
+-  readonly name: string;
+-  readonly offset: number;
+-  readonly storage: LinearStorageKind;
+-  /** Reserved bytes in the containing record, which can exceed storage width. */
+-  readonly slotBytes: number;
+-  readonly alignment: number;
+-  readonly containsPointer: boolean;
+-}
+-
+-export type LinearPointerMap =
+-  | { readonly kind: "none" }
+-  | { readonly kind: "fixed"; readonly offsets: readonly number[] }
+-  | {
+-      readonly kind: "elements";
+-      readonly fixedOffsets: readonly number[];
+-      readonly elementsOffset: number;
+-      readonly elementStride: number;
+-      readonly elementsContainPointers: boolean;
+-    };
+-
+-export interface LinearLayoutBase {
+-  /** Stable semantic identity; never a module/type-table index. */
+-  readonly id: string;
+-  readonly alignment: number;
+-  readonly size: LinearSizePlan;
+-  readonly pointerMap: LinearPointerMap;
+-}
+-
+-export interface LinearRecordLayoutPlan extends LinearLayoutBase {
+-  readonly kind: "record";
+-  readonly headerBytes: number;
+-  readonly typeTagOffset: number;
+-  readonly payloadSizeOffset: number;
+-  readonly fields: readonly LinearFieldPlan[];
+-}
+-
+-export interface LinearVectorLayoutPlan extends LinearLayoutBase {
+-  readonly kind: "vector";
+-  readonly lengthOffset: number;
+-  readonly capacityOffset: number;
+-  readonly elementsOffset: number;
+-  readonly elementStorage: LinearStorageKind;
+-  readonly elementStride: number;
+-  readonly minimumCapacity: number;
+-}
+ 
+ /** Semantic operations that a backend may bind to its own runtime. */
+ export type LinearRuntimeOperation =
+diff --git a/src/ir/analysis/linear-memory-plan.ts b/src/ir/analysis/linear-memory-plan.ts
+--- a/src/ir/analysis/linear-memory-plan.ts
++++ b/src/ir/analysis/linear-memory-plan.ts
+@@ -7,6 +7,42 @@
+ // relocatable static-storage requirements. It deliberately contains no Wasm
+ // instructions or module indices, Porffor representation values, renderer
+ // records, concrete runtime symbol names, or artifact fragments.
++
++import {
++  LINEAR_POINTER_BYTES,
++  storageBytes,
++  storageAlignment,
++  planLinearRecordLayout,
++  planLinearStringLayout,
++  linearScalarStorageKey,
++  linearVectorLayoutIdForElementKey,
++  planLinearVectorStorageLayout,
++  planLinearScalarVectorLayout,
++} from "../../shared/contracts/linear-memory-layout.js";
++export {
++  LINEAR_POINTER_BYTES,
++  LINEAR_RECORD_ALIGNMENT,
++  LINEAR_RECORD_HEADER_BYTES,
++  LINEAR_RECORD_FIELD_SLOT_BYTES,
++  LINEAR_RECORD_TAG_OFFSET,
++  LINEAR_RECORD_PAYLOAD_SIZE_OFFSET,
++  LINEAR_ARRAY_FORWARDING,
++  LINEAR_VECTOR_LENGTH_OFFSET,
++  LINEAR_VECTOR_CAPACITY_OFFSET,
++  LINEAR_VECTOR_ELEMENTS_OFFSET,
++  LINEAR_VECTOR_MINIMUM_CAPACITY,
++  LINEAR_STRING_LENGTH_OFFSET,
++  LINEAR_STRING_ELEMENTS_OFFSET,
++  LINEAR_STRING_PAYLOAD_SIZE_OFFSET,
++  LINEAR_STRING_PAYLOAD_PREFIX_BYTES,
++  storageBytes,
++  storageAlignment,
++  planLinearRecordLayout,
++  linearStringLayoutId,
++  planLinearStringLayout,
++} from "../../shared/contracts/linear-memory-layout.js";
++import type { LinearStringLayoutPlan } from "../../shared/contracts/linear-memory-layout.js";
++export type { LinearStringLayoutPlan } from "../../shared/contracts/linear-memory-layout.js";
+ 
+ import {
+   ALLOC_NAMESPACES,
+@@ -37,7 +73,6 @@
+   LinearStorageKind,
+   LinearAllocationClass,
+   LinearSizePlan,
+-  LinearFieldPlan,
+   LinearLayoutBase,
+   LinearRecordLayoutPlan,
+   LinearVectorLayoutPlan,
+@@ -62,49 +97,8 @@
+   LinearAllocationDecision,
+   LinearAllocationSitePlan,
+ } from "./contracts/linear-memory-layout.js";
+-
+-/** JS2's current linear address width. Kept here rather than in an emitter. */
+-export const LINEAR_POINTER_BYTES = 4;
+ export const LINEAR_STACK_ARENA_BYTES = 64 * 1024;
+-export const LINEAR_RECORD_ALIGNMENT = 8;
+-export const LINEAR_RECORD_HEADER_BYTES = 8;
+-export const LINEAR_RECORD_FIELD_SLOT_BYTES = 8;
+-export const LINEAR_RECORD_TAG_OFFSET = 0;
+-export const LINEAR_RECORD_PAYLOAD_SIZE_OFFSET = 4;
+-/**
+- * Shared forwarding-record representation for relocated linear arrays.
+- *
+- * A grown array rewrites its old record header to this tag plus the pointer
+- * to the replacement record. Keep this contract beside the canonical linear
+- * layout offsets so every artifact adapter and the direct linear runtime read
+- * and write the same representation.
+- */
+-export const LINEAR_ARRAY_FORWARDING = Object.freeze({
+-  tag: 0x06,
+-  tagOffset: LINEAR_RECORD_TAG_OFFSET,
+-  pointerOffset: LINEAR_RECORD_PAYLOAD_SIZE_OFFSET,
+-  pointerBytes: LINEAR_POINTER_BYTES,
+-});
+-export const LINEAR_VECTOR_LENGTH_OFFSET = 8;
+-export const LINEAR_VECTOR_CAPACITY_OFFSET = 12;
+-export const LINEAR_VECTOR_ELEMENTS_OFFSET = 16;
+-export const LINEAR_VECTOR_MINIMUM_CAPACITY = 16;
+-export const LINEAR_STRING_LENGTH_OFFSET = 8;
+-export const LINEAR_STRING_ELEMENTS_OFFSET = 12;
+-export const LINEAR_STRING_PAYLOAD_SIZE_OFFSET = LINEAR_RECORD_PAYLOAD_SIZE_OFFSET;
+-/** Bytes between the record header and the first string element (the length field). */
+-export const LINEAR_STRING_PAYLOAD_PREFIX_BYTES = LINEAR_STRING_ELEMENTS_OFFSET - LINEAR_RECORD_HEADER_BYTES;
+ export type LinearAllocatorPolicyId = "arena-v1" | "analysis-stack-arena-v1";
+-
+-export interface LinearStringLayoutPlan extends LinearLayoutBase {
+-  readonly kind: "string";
+-  readonly payloadSizeOffset: number;
+-  readonly payloadPrefixBytes: number;
+-  readonly lengthOffset: number;
+-  readonly elementsOffset: number;
+-  readonly elementStorage: "i8" | "i16";
+-  readonly elementStride: 1 | 2;
+-}
+ 
+ export interface LinearOpaqueLayoutPlan extends LinearLayoutBase {
+   readonly kind: "opaque";
+@@ -776,82 +770,10 @@
+   return planLinearMemoryFromFrozenFacts(module, prepareLinearAllocationFacts(module, registry), policy);
+ }
+ 
+-/** Shared record-layout primitive consumed by IR and direct linear-Wasm paths. */
+-export function planLinearRecordLayout(
+-  id: string,
+-  fields: readonly { readonly name: string; readonly storage: LinearStorageKind }[],
+-): LinearRecordLayoutPlan {
+-  const plannedFields = fields.map((field, index): LinearFieldPlan => {
+-    const containsPointer = field.storage === "pointer";
+-    return {
+-      name: field.name,
+-      offset: LINEAR_RECORD_HEADER_BYTES + index * LINEAR_RECORD_FIELD_SLOT_BYTES,
+-      storage: field.storage,
+-      slotBytes: LINEAR_RECORD_FIELD_SLOT_BYTES,
+-      alignment: storageAlignment(field.storage),
+-      containsPointer,
+-    };
+-  });
+-  const pointerOffsets = plannedFields.filter((field) => field.containsPointer).map((field) => field.offset);
+-  return {
+-    id,
+-    kind: "record",
+-    alignment: LINEAR_RECORD_ALIGNMENT,
+-    size: {
+-      kind: "constant",
+-      bytes: LINEAR_RECORD_HEADER_BYTES + plannedFields.length * LINEAR_RECORD_FIELD_SLOT_BYTES,
+-    },
+-    pointerMap: pointerOffsets.length === 0 ? { kind: "none" } : { kind: "fixed", offsets: pointerOffsets },
+-    headerBytes: LINEAR_RECORD_HEADER_BYTES,
+-    typeTagOffset: LINEAR_RECORD_TAG_OFFSET,
+-    payloadSizeOffset: LINEAR_RECORD_PAYLOAD_SIZE_OFFSET,
+-    fields: plannedFields,
+-  };
+-}
+-
+ export function planLinearVectorLayout(element: IrType): LinearVectorLayoutPlan {
+   const storage = linearStorageForIrType(element);
+-  const stride = storageBytes(storage);
+-  return {
+-    id: linearVectorLayoutId(element),
+-    kind: "vector",
+-    alignment: Math.max(LINEAR_RECORD_ALIGNMENT, storageAlignment(storage)),
+-    size: {
+-      kind: "elements",
+-      baseBytes: LINEAR_VECTOR_ELEMENTS_OFFSET,
+-      strideBytes: stride,
+-      minimumElements: LINEAR_VECTOR_MINIMUM_CAPACITY,
+-    },
+-    pointerMap: {
+-      kind: "elements",
+-      fixedOffsets: [],
+-      elementsOffset: LINEAR_VECTOR_ELEMENTS_OFFSET,
+-      elementStride: stride,
+-      elementsContainPointers: storage === "pointer",
+-    },
+-    lengthOffset: LINEAR_VECTOR_LENGTH_OFFSET,
+-    capacityOffset: LINEAR_VECTOR_CAPACITY_OFFSET,
+-    elementsOffset: LINEAR_VECTOR_ELEMENTS_OFFSET,
+-    elementStorage: storage,
+-    elementStride: stride,
+-    minimumCapacity: LINEAR_VECTOR_MINIMUM_CAPACITY,
+-  };
+-}
+-
+-export function planLinearStringLayout(): LinearStringLayoutPlan {
+-  return {
+-    id: linearStringLayoutId(),
+-    kind: "string",
+-    alignment: LINEAR_RECORD_ALIGNMENT,
+-    size: { kind: "elements", baseBytes: LINEAR_STRING_ELEMENTS_OFFSET, strideBytes: 1, minimumElements: 0 },
+-    pointerMap: { kind: "none" },
+-    payloadSizeOffset: LINEAR_STRING_PAYLOAD_SIZE_OFFSET,
+-    payloadPrefixBytes: LINEAR_STRING_PAYLOAD_PREFIX_BYTES,
+-    lengthOffset: LINEAR_STRING_LENGTH_OFFSET,
+-    elementsOffset: LINEAR_STRING_ELEMENTS_OFFSET,
+-    elementStorage: "i8",
+-    elementStride: 1,
+-  };
++  if (element.kind === "val") return planLinearScalarVectorLayout(storage);
++  return planLinearVectorStorageLayout(linearIrTypeKey(element), storage);
+ }
+ 
+ export function linearObjectLayoutId(shape: IrObjectShape): string {
+@@ -867,11 +789,7 @@
+ }
+ 
+ export function linearVectorLayoutId(element: IrType): string {
+-  return `vector:${linearIrTypeKey(element)}`;
+-}
+-
+-export function linearStringLayoutId(): string {
+-  return "string:utf8-bytes-v1";
++  return linearVectorLayoutIdForElementKey(linearIrTypeKey(element));
+ }
+ 
+ export function linearStringDataSegmentId(value: string): string {
+@@ -898,28 +816,6 @@
+     default:
+       return "pointer";
+   }
+-}
+-
+-export function storageBytes(storage: LinearStorageKind): number {
+-  switch (storage) {
+-    case "i8":
+-      return 1;
+-    case "i16":
+-      return 2;
+-    case "i32":
+-    case "f32":
+-    case "pointer":
+-      return 4;
+-    case "i64":
+-    case "f64":
+-      return 8;
+-    case "bytes16":
+-      return 16;
+-  }
+-}
+-
+-export function storageAlignment(storage: LinearStorageKind): number {
+-  return storageBytes(storage);
+ }
+ 
+ export function linearRuntimeOperationKey(operation: LinearRuntimeOperation): string {
+@@ -1236,7 +1132,7 @@
+     case "support-ref":
+       throw new Error("linear-memory plan does not support compiler support references");
+     case "val":
+-      return `scalar:${linearStorageForIrType(type)}`;
++      return linearScalarStorageKey(linearStorageForIrType(type));
+     case "string":
+       return "string";
+     case "vec":
