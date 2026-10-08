@@ -3,9 +3,10 @@
   "slice": "unicode-slice-contract-plan-20261008",
   "assignee": "ttraenkler/codex-linear-b-unicode-slice-astra-20261008",
   "requested_by": "ttraenkler/codex-linear-b-unicode-slice-astra-20261008",
-  "status": "in-progress",
+  "status": "done",
   "branch": "codex/6899-linear-unicode-slice-plan-20261008",
   "claimed_at": "2026-10-08T07:59:42Z",
-  "updated_at": "2026-10-08T07:59:42Z",
-  "write_id": "43220-r7z9lqbu"
+  "updated_at": "2026-10-08T08:16:00Z",
+  "write_id": "75704-a56iu6lp",
+  "released_at": "2026-10-08T08:16:00Z"
 }
