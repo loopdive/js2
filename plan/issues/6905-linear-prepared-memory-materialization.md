@@ -18,6 +18,7 @@ files:
   - src/codegen-linear/runtime/vector-initialization.ts
   - tests/issue-6905-linear-prepared-memory-materialization.test.ts
   - src/codegen-linear/runtime/README.md
+  - scripts/compiler-boundaries.json
 ---
 
 # Linear Prepared IR memory materialization and ownership handoff
@@ -430,3 +431,66 @@ The full fresh report and diagnostics are preserved. The shared source array
 admission, target-policy contract, memory materialization and source-free replay
 requirements above remain undelivered. No unused memory adapter was added.
 HOLD/no auto-merge remains; A controls final integration and protected queue.
+
+## Bounded registry handoff adopted — 2026-10-08
+
+Parent releases only this existing issue and `scripts/compiler-boundaries.json`
+on isolated branch `codex/6905-linear-prepared-memory-plan-20261007`, starting
+HEAD `54e235eb04a7e1dedca95f7f83ebd1563a99a250`. Fresh actual PR6577 read
+confirms that exact head in `loopdive/js2`, OPEN/HOLD, MERGEABLE and
+autoMergeRequest null. No source/test or other worktree edit is authorized.
+
+Canonical claim `6905:registry-handoff-20261008`, sole owner/requester
+`ttraenkler/codex-linear-b-registry-sol61-20261008`, branch as above, is
+in-progress, write ID `64014-r0cwwzpb`, claimed/updated
+`2026-10-08T16:21:13Z`. Fresh effect-read ledger tip is
+`9ee414938dc59387da48ce7234bd720f857d17c3`; exact claim blob is
+`3ab9ae2a2404e45b422e0aeb106b8a1f56ed0252`. Existing claims stay held;
+this bounded metadata reservation does not transfer their source authority.
+
+Published authority: [A handoff PR6596](https://github.com/loopdive/js2/pull/6596),
+commit `555af588b3b41dda3b95a3d53468e0f4d55a32c7`; adopted Astra High plan
+SHA256 `ca7b3e3ed09a89da6917231a7ccc906369e567d2e180e0b145ac05c5f299d636`
+and handoff SHA256
+`29879b4e2ee6d4968156ecf950206239087d75011d028d7d14eec776b9e57f57`.
+Matching-path rule and parent's exact scope permit only the two present records
+from [A registry proposal PR6595](https://github.com/loopdive/js2/pull/6595),
+commit `52b64c8277b4e61c42f24e7821445260aa638179`: normal unmigrated/
+legacy-linear `src/codegen-linear/runtime/vector-initialization.ts` and normal
+nonModules `src/codegen-linear/runtime/README.md`. Actual source inspection
+confirms the other six proposal paths are absent on this checkout; do not add
+them or any exemption. Preserve every baseline policy entry, order and byte
+outside these two insertions. Neither proposal nor handoff is native delivery.
+
+Require the normal whole-inventory gate with actual Git base, meaningful module
+and resolved-edge floors, zero errors, exact published-row equality and complete
+baseline-policy/order/byte preservation after removing only these additions.
+Run scoped formatting/whitespace and normal fast user-authored commit hooks.
+No further Vitest, typecheck or build: the unchanged detector logic was already
+qualified125/125 in the preceding6911 task, and parent now owns the heavy lock.
+Retain raw evidence in this checkout's `.tmp/6905-registry-handoff-20261008/`.
+Do not push before parent review. Original shared-allocation positive failure,
+source-free replay and native caller dependencies remain unmet; HOLD and A's
+integration/queue ownership remain unchanged.
+
+### Actual bounded registry validation
+
+Normal `node scripts/check-compiler-boundaries.mjs --mode inventory --base
+54e235eb04a7e1dedca95f7f83ebd1563a99a250` exits0 with **1,893 modules,
+all1,893 tracked;14,595 resolved edges;3 excluded nonModules;zero errors**.
+Inventory is valid; architecture and graph remain incomplete. This measurement
+uses starting HEAD54e with working policy additions, not the later metadata
+commit or native/source qualification.
+
+Count/policy validator passes floors1,700 modules/1,000 resolved edges, exact
+one-module/one-nonModule additions, actual path presence, exact two published
+proposal rows, entire baseline-policy/order equality after their removal, and
+baseline byte equality outside the two insertion blocks. Baseline policy SHA256
+`424591ac33717356b1edd6278b7fefc35eec597418911674fb75267093de70da`;
+candidate policy SHA256
+`b2697983a66a797ea99b1890ae06cd540939fc007ff79116ddd6359ceaf12ed9`.
+Scoped Prettier checks for both files and whitespace checks pass. Raw
+inventory/stderr, policies, validator/result and claim/PR evidence are retained
+in `.tmp/6905-registry-handoff-20261008/`. No additional Vitest, typecheck or
+build ran. Preceding6911 detector125/125 remains its own epoch, not a test run
+on this branch. This is a local inventory repair, not full CI/Prepared readiness.
