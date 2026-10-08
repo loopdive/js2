@@ -407,3 +407,331 @@ selected files/options is published in this log directory. Reproduce with
 `node node_modules/typescript7/lib/tsc.js --noEmit -p plan/log/6899-linear-string-slice-20261007/tsconfig-test.json`.
 All runtime feature runs kept their original 180-second watchdog; no timeout
 extension, semantic fixture change, skip or protection bypass was used.
+
+## Residual UTF-16 source-slice plan — 2026-10-08
+
+### Authority, preserved scope, and corrected eligibility
+
+This appendix does not revise the byte-interval contract, original fixtures,
+qualification counts, failures, or acceptance records above. It specifies a
+separate residual within this issue; it does not reclassify PR6575's bounded
+byte-normalization repair as full Unicode slicing or completed IR migration.
+
+Planning base: PR6575 head
+`2ca9e12af199c1d0c4b4fe446e8c99149b2b83af`, in
+`/private/tmp/js2-6899-unicode-slice-plan-20261008`, branch
+`codex/6899-linear-unicode-slice-plan-20261008`. Parent effect-verified exact
+upstream planning claim `6899:unicode-slice-contract-plan-20261008`, owner
+`ttraenkler/codex-linear-b-unicode-slice-astra-20261008`, at ledger
+`884cc91d901f7e2f650c9f713792833274bce500`. The release covers ONLY this issue
+file. All source/test partitions below are proposals, not implementation
+claims, transfers, or permission to edit their files. Parent serializes runtime
+implementation and typing/qualification. Parent integrates this appendix into
+existing PR6575; no new checkpoint PR or GitHub issue is requested.
+
+The residual has two distinct parts: a measured legacy Unicode wrong answer,
+and a missing Linear IR encoding/admission capability. **There is no measured
+accepted-IR Unicode wrong answer in the diagnostic below.** Keep the existing
+loud IR refusal until the representation, provider, routing, and real execution
+contracts are all proven. B cannot widen admission to turn a rejected program
+into an apparently covered one.
+
+### Measured correction: four diagnostic rows, two ASCII controls
+
+Parent ran the genuine public compiler and validated/instantiated native Wasm
+in `/private/tmp/js2-6905-main845-baseline-20261008`, HEAD
+`3fee634ae67f23f57085ce6b792e584cd78e85ac`, source tree
+`953f74f80cf2f8085b8e1c93489fcdd357929b37`. This is a distinct diagnostic epoch,
+not a run on the PR6575 planning head. Runtime SHA256:
+`2a562751f9e2c6291944836681b3bc99b402c2d154a88c429ee16013eaf09e0f`.
+Node was v22.23.2. The recorded native policy is explicitly
+`unclassified; compatibility diagnostic only`.
+
+The actual source template is:
+
+```ts
+export function run(start: number, end: number): number {
+  return "éx".slice(start, end) === "x" ? 1 : 0;
+}
+```
+
+The retained probe carries its exact original one-line source bytes, using
+either `ax` or `éx`, and runtime arguments `(1,2)`. Options were target Linear,
+optimize:false, experimentalIR:false, disableIrFirst:true, and
+moduleName `issue-6899-unicode.ts`; `JS2WASM_LINEAR_IR` was 0 for direct and
+1 for overlay. All four rows compiled successfully and validated their binaries:
+
+1. Direct `ax`: actual1, native1; compiled/rejected fields deliberately null.
+2. Direct `éx`: actual0, native1; compiled/rejected fields deliberately null.
+3. Overlay `ax`: actual1, native1; compiled `["run"]`, rejected `[]`.
+4. Overlay `éx`: actual0, native1; compiled `[]`, rejected `run` with
+   `string-evidence-unsupported`, detail
+   `ir/linear-string: ASCII encoding proof required for constant result (got utf8-guaranteed)`.
+   The actual0 executes retained legacy fallback, not an accepted IR owner.
+
+These are two successful ASCII value controls and two Unicode wrong values
+on the legacy path. The overlay Unicode row also proves a genuine IR refusal.
+The probe records the current report but does not capture a complete prepared
+owner/consumer/physical-call join; do not promote its report into that stronger
+proof or claim new native-policy coverage. Its terminal record confirms source
+custody unchanged and expectedRows4. Parent reports normal approved execution
+exit0; that exit means diagnostic completion, not four semantic passes.
+
+Read and retained evidence, which parent will archive without overwriting:
+
+- `.tmp/6899-unicode-slice-probe.mts`, SHA256
+  `3e6cfec5d0052b677ce0a535ccb5dc7985971f8cda35a5344291c728a777a7d2`.
+- `.tmp/6899-unicode-slice-probe-v2.log`, SHA256
+  `6719ce950524281e6f08ccbaa68c241796e7da2f58708b436a28ec5a8294e097`.
+- Initial `.tmp/6899-unicode-slice-probe.log`, SHA256
+  `161212b205baf5a1e446d6e60fe01a00dc92052285084f02459f7e45e6172b61`:
+  local tsx IPC failure before compilation, not compiler/runtime evidence.
+
+The earlier source-derived prediction is now narrowed by measurement: bytes
+for `éx` are c3 a9 78; the existing byte helper's interval `[1,2)` selects a9,
+not 78. That explains the legacy mismatch. It does not establish an IR
+execution of that Unicode operation. No probe was rerun by the plan author.
+
+### Existing contracts and required architecture
+
+There are two different operations sharing the old name:
+
+- Source `String.prototype.slice` consumes UTF-16 code-unit positions and
+  returns the exact selected code units, including isolated surrogate halves.
+- Internal `__str_slice` consumes byte intervals in the existing record.
+  `addStringRuntime`'s `__str_split` uses it with byte positions;
+  `addLinearIrStringRuntime`'s ASCII-only charAt provider also delegates to it.
+
+Retain `__str_slice` and `linearStringSliceBoundInstrs` as the existing byte
+operation. Do not silently reinterpret their indices, rename the symbol out
+from under callers, or change split/ASCII-charAt bodies. A distinct semantic
+source-slice binding must identify a real UTF-16-capable target provider.
+Its eventual symbol/ABI is a dependency to publish, not a guessed name to
+register now. No boolean mode parameter, name alias, or fallback silently
+switches the meaning of the byte helper.
+
+Generic contracts describe string values, code-unit semantics, encoding
+evidence, allocation identity, and effects. Linear owns physical decoding,
+allocation, and emitted instructions. Runtime body construction belongs in
+the target's cohesive string runtime leaves; it must be installed by the
+real registration path and called by the authenticated current source owner.
+Do not add an idle builder, speculative adapter, new generic orchestration
+layer, or copied JS allocator/decoder as an implementation substitute.
+
+Concrete representation constraints in this source:
+
+- `src/ir/core/string-types.ts::IrStringEncoding` distinguishes `ascii`,
+  `utf8-guaranteed`, and `wtf16`. These are semantic guarantees, not permission
+  to change record bytes or select an undocumented wire format.
+- `src/ir/analysis/encoding.ts::classifyCall` deliberately does not preserve
+  UTF-8 evidence through slice/substring/charAt: slicing can split a surrogate
+  pair, so their general result is conservatively `wtf16`.
+- `src/ir/analysis/linear-string-runtime.ts::validateLinearStringRuntimeEncoding`
+  and `bindLinearStringRuntime` currently require ASCII evidence. The measured
+  Unicode constant refusal is consistent with this gate; removing it alone
+  would be unsound.
+- `linear-memory-plan.ts::linearStringLayoutId` names `string:utf8-bytes-v1`;
+  its literal materialization and `string-literals.ts::linearStringLiteralInstrs`
+  use `TextEncoder`. That cannot preserve an isolated surrogate. The current
+  `__str_from_data` copies bytes; it is not an implicit WTF-16 codec.
+- Runtime length/charCodeAt decoders accepting some byte patterns do not prove
+  a valid lossless carrier contract. `__str_eq` compares bytes, so a new
+  noncanonical surrogate encoding can disagree with an equivalent string
+  constructed by another path. Hashing, concatenation, repeat, caches and
+  boundary conversion must agree too; tolerance by one decoder is insufficient.
+
+For `"😀".slice(0,1)`, the result must contain code unit d83d, and `(1,2)`
+must contain de00. Neither may become fffd, empty, or the original pair.
+Likewise a genuine input lone surrogate must survive. Do not encode the native
+expected string through `TextEncoder` and mistake replacement bytes for an
+oracle. A lossless WTF-8-like representation, UTF-16 storage, or another carrier
+is not selected by this appendix. A must publish the genuine contract and its
+consumer closure first. Until then full Unicode runtime implementation is held.
+
+### A-owned dependency packet and proposed exact partitions
+
+Parent identifies PR6583 comment6049709582 as the latest A scope authority:
+`https://github.com/loopdive/js2/pull/6583#issuecomment-6049709582`.
+A holds `linear-integration.ts`, `index.ts`, target admission and shared
+preparation; its scope excludes JS-host IR. This attribution is parent-supplied;
+the plan author's read-only API lookup failed to connect. No new release is
+inferred, and no JS-host IR route is requested or offered as a substitute.
+
+Before B source dispatch, A/parent must publish and verify:
+
+1. Input/result encoding and physical layout authority, including lossless
+   isolated-surrogate construction, canonical equality/hash behavior, and
+   result allocation/effect evidence. Name every affected real producer and
+   consumer; acquire separate ownership for any changes beyond A's packet.
+2. Exact target provider symbol, signature, locals/dependencies and reservation
+   order, with source-method binding separated from byte-helper binding.
+   State index units, omitted-end policy and supported numeric domain. Do not
+   hardcode function indices or treat a namesake import as the provider.
+3. Admission/preparation rules which reject unsupported input or result
+   encodings before consumption. Keep current refusal until the complete
+   runtime and routing are ready; no optimistically broadened interim gate.
+4. Whether delivery covers the current Linear overlay, the shared Prepared
+   consumer, or both. Authenticate and report each separately. A's wider
+   migration work is not completed merely because a leaf runtime passes.
+
+Proposed A integration partition, subject to A's explicit acceptance:
+
+- `src/ir/backend/linear-integration.ts::makeLinearIrResolver`: its
+  `stringMethodPlan`, intrinsic `resolveFunc` binding, and the exact string
+  encoding/admission/preparation dependencies needed for the new operation.
+  Existing `prepareLinearStringCapabilities`/`prepareLinearIrOverlay` remain
+  A-owned; A must enumerate any necessary subregions before release.
+- `src/codegen-linear/index.ts::sourceMayUseLinearIrStringRuntime`,
+  `generateLinearModuleBody`, and `generateLinearMultiModuleBody`: only the
+  demanded provider registration/preparation plumbing A actually selects.
+- `src/ir/from-ast.ts::lowerStringMethodCall`, `encoding.ts::classifyCall`,
+  `linear-string-runtime.ts::{validateLinearStringRuntimeEncoding,bindLinearStringRuntime}`,
+  and `linear-memory-plan.ts` layout/materialization are contract inspection
+  dependencies, NOT a blanket edit request or a claim that all must change.
+  A identifies exact changes/owners if its published contract requires them.
+
+Proposed B runtime partition, **only after that packet and fresh exact claims**:
+
+- New `src/codegen-linear/runtime/strings/slice-utf16.ts`, proposed
+  `buildLinearStringSliceUtf16Body`: one fresh-instruction body builder for
+  the published physical contract, with concrete dependency/local operands
+  supplied by the real registration owner, no module/AST/planner ownership.
+- `src/codegen-linear/runtime.ts::addLinearIrStringRuntime`: only the new
+  source-slice provider registration/body delegation and associated import,
+  if this is the registration home A approves. Do not change neighboring
+  append/charAt/charCodeAt callbacks or `findFuncIndex`/`addRuntimeFunc`.
+  Function-table/registration effects require A's serial integration review.
+- Existing byte normalization in `runtime/string-slice.ts` may be consumed
+  unchanged against a proven code-unit length if the approved index domain
+  matches its signed-i32/unsigned-length contract. Do not clone the normalization
+  algorithm, alter existing byte callers, or select a new ABI just to reuse it.
+
+There is no runtime-only production release while the result representation
+is unknown. Once it is fixed, runtime construction and exact emitted-Wasm
+semantics are B's independent work package, but landing requires real A-owned
+call-through; a test-only export does not complete the migration. Existing
+budget allowances above apply to the historical byte repair, not automatic
+grants for this additional provider.
+
+Proposed test partition: new
+`tests/issue-6899-linear-utf16-source-slice.test.ts`, separately claimed after
+parent approves its finite population and contract. Keep the existing47-case
+file and all historic logs unchanged. Before implementation, parent may release
+only a bounded diagnostic test phase preserving the four measured rows and
+refusal as evidence, without faking positive IR admission. Parent alone assigns
+and serializes runtime tests, full consumer qualification, and strict typing.
+
+Legacy direct-route parity is an explicit separate dependency:
+`src/codegen-linear/string-methods.ts::compileLinearStringMethodCall`, only its
+`slice` branch, requires its own release and approved source-semantic binding.
+It is not included in B's leaf authority. Its current omitted-end behavior and
+argument conversion must be assessed by its owner. The measured legacy defect
+remains open if only the IR route is delivered; do not claim both fixed.
+
+### Conditional implementation semantics, not a speculative ABI
+
+After A publishes the physical contract, implement the following in the real
+target provider; no source dispatch is authorized before that point:
+
+1. Interpret source endpoints as UTF-16 positions after the published
+   ToIntegerOrInfinity conversion. Normalize each independently against the
+   code-unit length; negative positions count from the end, reversed/equal
+   intervals yield empty, and omitted end means that length. Preserve source
+   evaluation order and single receiver evaluation in the routing owner.
+2. For a proved signed-i32 index domain with code-unit length below INT_MAX,
+   reuse the checked normalization fragment with that length, not byte length.
+   A must prove the length bound if it retains saturating i32 conversion;
+   otherwise index representation is an A dependency, not a B workaround.
+   Numeric NaN, infinities, fractions and negative zero remain source semantics,
+   not accidental Wasm traps or unsigned reinterpretation of negative indices.
+3. Walk the approved physical representation while tracking byte/storage
+   position separately from UTF-16 unit position. For a scalar-only UTF-8 input,
+   one-/two-/three-byte sequences contribute one unit and four-byte sequences
+   contribute two. Endpoints may fall between those two units. Include exactly
+   the selected units; do not round outward to whole code points.
+4. Compute the physical result size using the approved lossless writer before
+   allocation, or use a proven checked bound with the contract's capacity rules.
+   Guard endpoint/size arithmetic before narrowing or allocation. Physical
+   output byte count is not necessarily selected code-unit count. Use the
+   existing allocator, record fields and cache initialization contract once.
+   No foreign allocator repair or universal OOM guarantee is included.
+5. Emit the selected units using the authoritative representation. Copy intact
+   spans only when proven equivalent to that writer; encode a boundary half
+   only according to the published surrogate policy. Initialize all visible
+   result fields; preserve input/neighbor payloads and allocator custody.
+   Do not change the old byte helper's allocation or cache behavior.
+6. Reuse existing target-local codecs only if they implement the published
+   contract. If a missing codec or another consumer needs edits outside this
+   partition, return that concrete dependency to its owner. Do not scatter
+   subtly different decoder/encoder algorithms across helpers.
+
+### Finite acceptance and proof of real consumption
+
+Retain the original four source rows exactly, including flags/options/source
+bytes and the two ASCII controls. Preserve their current Unicode failure and
+overlay refusal records before measuring a candidate. A future positive IR
+claim requires current source-owner identity, actual admitted body, prepared
+consumer/batch association where applicable, resolved defined provider and
+physical call in that same module, validated bytes and executed result. A
+report getter, compilation success, legacy fallback or manual IR is insufficient.
+
+Finite semantic obligations for the later independent test file:
+
+- BMP mixed input `éx`: `(0,1)`, `(1,2)`, `(-1,2)`, full, empty and reversed;
+  mixed `aéb€c`: `(1,4)` selects `éb€`. Compare exact code units and length.
+- Astral `a😀b`: `(1,3)` selects the pair; `(1,2)` only d83d; `(2,3)` only
+  de00; `(2,4)` low half plus b; `(-3,-1)` the intact pair; full/empty controls.
+- Genuine lossless inputs containing a lone high surrogate, lone low surrogate,
+  adjacent nonpair surrogates, and surrounding ASCII. Use the approved real
+  producer, not manually fabricated headers or TextEncoder replacement. Missing
+  production construction is a dependency, not a waived case.
+- Read selected results through authentic length and charCodeAt; compare every
+  code unit to native JS. Check equality with independently produced equivalent
+  values, slicing a result again, concatenating selected high+low halves versus
+  an intact pair, and repeat of a half. These expose carrier/canonicalization
+  mismatches; do not edit foreign consumers to satisfy them without release.
+- For a small proven input, preserve numeric source controls NaN, +Infinity,
+  -Infinity, -0, fractions, signed-i32 boundaries, and omitted end. Compare
+  source results with native JS; do not feed f64 arguments to an i32 runtime
+  export and call that a conversion test. Unsupported source forms remain
+  explicit admission dependencies, not automatic skip/green cases.
+- Old byte helper on `éx`, interval `[0,2)`, must still return c3 a9. Retain
+  original split and ASCII-charAt controls and the earlier47-case population.
+  Keep byte-ABI preservation distinct from source Unicode correctness.
+
+Use genuine runtime construction (`__str_from_data` for valid scalar UTF-8
+fixtures, the approved lossless producer for surrogate cases), real emitted
+providers and native Wasm. Observe full result bytes/header/capacity, source and
+neighbor memory, allocation request/delta, and errors. Interpret raw result bytes
+only with the approved carrier codec; native JS code units are the independent
+semantic oracle. Do not use a JS copy of the candidate algorithm as the subject.
+
+Before dispatch, parent freezes explicit row IDs/inputs/expectations and the
+approved producer/consumer APIs, avoiding an open-ended matrix. Missing owner
+joins, setup failure, suite skips and refusal are not passes. Baseline and
+candidate use identical frozen test bytes; any instrument repair preserves
+both old bytes/logs and reruns both arms. Parent archives full raw records,
+commands, relevant effective flags, source/test/binary hashes, exact epochs,
+actual totals, watchdog outcomes, and complete witness comparisons. The original
+four-row probe is diagnostic evidence, not the future full qualification suite.
+
+### Release/acceptance checklist for this residual
+
+- [ ] A's explicit contract/routing packet is published; source ownership is
+      effect-verified and disjoint, including any direct-route change.
+- [ ] Lossless input/result surrogate representation and its actual consumer
+      closure are proven; existing refusal is not removed prematurely.
+- [ ] B's named runtime provider has a real current source consumer, not only
+      manual exports. Accepted-IR Unicode execution is measured separately
+      from retained fallback and any new shared Prepared capability.
+- [ ] New source/runtime semantic obligations and unchanged byte-caller
+      controls are accounted for without fixture/assertion weakening; original
+      evidence/counts remain under their original source epochs.
+- [ ] Parent's serial strict typing/static/budget/CI checks are recorded on
+      the actual composed revision; no default-CI pass or performance claim
+      follows merely from the diagnostic or a leaf test run.
+
+No JS-host IR, generic admission widening by B, foreign3518 append/4540 allocator
+takeover, legacy retirement, new benchmark claim, shared registry exemption or
+error-protection bypass is authorized. This appendix is a dependency-gated
+implementation proposal; only its documentation write/commit is released now.
