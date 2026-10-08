@@ -811,3 +811,38 @@ tests or GitHub state. Parent will send A the consolidated exact registry and
 trusted-input requests. No queue/hold release, acceptance waiver or completed
 IR migration is inferred. Further concrete source repairs need a new explicit
 file/function release, not generic ownership of this shepherd task.
+
+### Published hook qualification and next owner dependency — 2026-10-08
+
+The actual changed-root hook ran at published HEAD
+`0d210cfa5f9a214309681ef1b8ecf2a6c260c6d7`, selecting exactly the frozen
+append test and invoking the trusted parent.36 passed; zero failed/skipped/todo;
+strict exit0; before/after custody equal. All36 complete observation graphs
+and completion exactly equal repaired-v3 without filtering any graph fields.
+Full raw evidence and offline replay live in
+`plan/log/6915-linear-append-20261007/ci-hook-parent-20261008/`.
+First execution archive, original failures, fixtures and repairs are preserved.
+This qualifies hook routing, not native array/Unicode support or retirement.
+
+Matching-path registry repairs are published on existing PRs6583/6577/6572/
+6575/6590. Fresh shepherd checks found all five mergeable with zero unresolved
+review threads and passing registry inventories. Real quality jobs113423217195
+(6572),113421304177(6577),113419277902(6583) fail the unchanged import-cycle
+guard: Linear-to-IR value edges9→11,9→10,9→10 respectively. Later job steps
+were not run. Quality jobs113425657909(6575),113426640536(6590) succeeded;
+other checks were still running, so no full-green or landing claim follows.
+
+Astra's read-only attribution identifies actual value dependencies on the IR
+memory planner: array size/capacity uses planLinearVectorLayout and irVal;
+vector initialization uses LINEAR_VECTOR_ELEMENTS_OFFSET; char-code-at uses
+the string length/elements offsets. Type-only instruction provenance removes
+none of these edges. Request A's canonical Linear layout VALUE contract outside
+IR analysis, consumed by the existing planner as the same authority. After A
+publishes tested exact source commits and explicit file/function scope, B can
+retarget its three leaf import hunks and run unchanged architecture/regression
+gates. No copied constants, hardcoded enums, barrel camouflage or budget
+allowance is authorized. Wasm-model publication alone does not unblock this.
+
+A retains shared compiler/preparation/codec/consumer wiring and final queue
+delivery. Foreign allocator4540 and shared3518 ownership claims are untouched.
+No legacy removal, HOLD release, merge or new checkpoint PR was performed.
