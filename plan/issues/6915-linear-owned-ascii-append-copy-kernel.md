@@ -24,7 +24,8 @@ Human-approved bounded task `6915:trusted-append-ci-20261008`, owner
 `codex/6915-linear-append-plan-20261007` checkout at
 `0d2dfddb4b1145097210f5398e535e550f945f82`. Authority is the full adopted Astra
 plan at `555af588b3b41dda3b95a3d53468e0f4d55a32c7`,
-`plan/issues/6865-ir-unmapped-source-map-emission.md`, handoff6063855828.
+[A's exact published implementation plan](https://github.com/loopdive/js2/blob/555af588b3b41dda3b95a3d53468e0f4d55a32c7/plan/issues/6865-ir-unmapped-source-map-emission.md),
+handoff6063855828. That separate dependency document is not a local file on this branch.
 This task releases only this issue specification, the exact append-test branch
 inside `scripts/hooks/changed-root-tests.sh`, and new
 `scripts/hooks/run-linear-append-provenance.mjs`. No test, fixture, workflow,
@@ -134,6 +135,13 @@ caller. It supplies no append performance acceptance, native array/Unicode
 completion, original-failure erasure, legacy retirement, main delivery or HOLD
 release. A retains reviewed composition and protected queue delivery. Normal
 commit/push gates and newly triggered real CI still apply.
+
+The first normal pre-push invocation passed type/lint/format and numeric18/18,
+then correctly refused publication because the issue named A's separate plan
+as a local repository path. The document exists only at its published dependency
+commit, so the reference is corrected to that exact GitHub blob URL. No donor
+issue is copied and no integrity gate is relaxed. The runner, test, source and
+recorded qualification bytes remain unchanged; a second normal push is required.
 
 Astra High authored the implementation specification; parent preserves it here.
 Improve executed Linear runtime code consumed by existing source-derived IR,
