@@ -20,7 +20,6 @@
 // host import dependencies.
 
 import type { AllocSiteId, IrType, IrTypeRef } from "../nodes.js";
-import { asVal } from "../nodes.js";
 import type { ValType } from "../types.js";
 import type { IrI32ValType, IrVecBackendLowering, IrVecLowering, LinearVecLowering } from "./handles.js";
 import type { IrBackendKind } from "./legality.js";
@@ -226,8 +225,9 @@ export function resolveIrVecRepresentation(
     return purpose === "carrier" ? { kind, valueType: i32() } : linearRepresentation(linear);
   }
   // Rule 5: physical compatibility route.
-  const valType = asVal(type);
-  if (!valType) return null;
+  // (Inline `asVal`: this module stays a value-graph leaf with type-only imports.)
+  if (type.kind !== "val") return null;
+  const valType = type.val;
   const raw = resolver.resolveVec?.(valType) ?? null;
   if (!raw) return null;
   if (kind === "wasmgc") {
