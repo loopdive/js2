@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { Instr } from "../../wasm/model/instructions.js";
-import { LINEAR_VECTOR_ELEMENTS_OFFSET } from "../../ir/analysis/linear-memory-plan.js";
+import { LINEAR_VECTOR_ELEMENTS_OFFSET } from "../../shared/contracts/linear-memory-layout.js";
 
 /** Fresh value-first `(f64 value, i32 pointer, i32 index) -> void` store body. */
 export function buildLinearF64VectorInitializationBody(): Instr[] {
