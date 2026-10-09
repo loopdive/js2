@@ -1,4 +1,21 @@
+---
+id: 6925
+title: "Private receiver inert-call perimeter implementation"
+status: in-progress
+sprint: current
+created: 2026-10-09
+updated: 2026-10-09
+task_type: bugfix
+area: codegen
+reasoning_effort: high
+parent: 6922
+---
+
 # #6878 private receiver inert-call perimeter — implementation epoch
+
+Historical6878 lane marker; canonical issue identity is #6925, distinct from
+delete-result PR6548. Historical source names, receipts and assertions below
+remain unchanged; this metadata correction does not claim completion.
 
 Status: Sol6.1 High source-only, 2026-10-09. Root released763-row source freeze
 after terminal79511/242a3a:763 unique744PASS/19FAIL/0pending, exact predecessor

@@ -1,4 +1,21 @@
+---
+id: 6923
+title: "Receiver/P2 adapter implementation checkpoint"
+status: in-progress
+sprint: current
+created: 2026-10-09
+updated: 2026-10-09
+task_type: bugfix
+area: codegen
+reasoning_effort: high
+parent: 6922
+---
+
 # #6878 Receiver/P2 private proof adapter implementation
+
+Historical6878 lane marker; canonical issue identity is #6923, distinct from
+delete-result PR6548. Historical source names, receipts and assertions below
+remain unchanged; this metadata correction does not claim completion.
 
 Status: implementation reserved, unverified. Root Codex2026-10-09.
 Ownbranchcodex/6878-receiver-p2-adapter-sol61 base616da017 upstream.

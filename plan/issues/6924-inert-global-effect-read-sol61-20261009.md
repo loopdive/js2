@@ -1,4 +1,21 @@
+---
+id: 6924
+title: "Finite inert global effect-read implementation"
+status: in-progress
+sprint: current
+created: 2026-10-09
+updated: 2026-10-09
+task_type: bugfix
+area: codegen
+reasoning_effort: high
+parent: 6922
+---
+
 # #6878 inert global effect-read capability — G-only repair
+
+Historical6878 lane marker; canonical issue identity is #6924, distinct from
+delete-result PR6548. Historical source names, receipts and assertions below
+remain unchanged; this metadata correction does not claim completion.
 
 Status: Sol6.1 High source-only, 2026-10-09. Root explicitly reopened ONLY
 src/codegen/analysis/local-number-carrier-proof.ts effect-read context/predicate,
