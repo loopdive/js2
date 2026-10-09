@@ -1360,3 +1360,29 @@ Parent verified exactly six archive members and every byte against current
 reviewed files, without executing the archive. The companion README specifies
 the remaining one-run approval and independent packet-digest steps; this packet
 does not invent candidate runtime evidence.
+
+### Generic-vector dependency reconciliation (2026-10-09)
+
+Astra High read A's complete proposal in coordination comment6078742098:
+38932 bytes, SHA256
+`8090c37a1cdb532d15cc66bd464c8a59e9b6562f09e1f88df728dce0283f587c`.
+It refines the existing A-C dependency without changing B's five proposed APIs,
+phase/lifetime rules or ownership. Gate1 remains unmet; this is no source release.
+
+The concrete caller packet must demonstrate BOTH signature-stage joins:
+`program-physical-plan.ts::physicalSignatureConverter` and
+`program-consumer.ts::physicalSignatureConverter`. Updating only the emitter or
+body resolver cannot satisfy the actual planning-side vector admission.
+Construction must retain canonical final allocation-provenance validation and
+exact owner/site/layout association, while allocation-free type/read lookup
+remains valid. An undefined construction ID must not select a first allocation
+or be confused with a descriptive read handle. Existing semantic-entry rules
+already require this; no competing B verifier or new blanket rejection is added.
+
+Parent inspected the actual handle and both converter sites. The proposed
+`src/backend/linear/program/{contracts,memory}.ts` do not exist at this checkpoint;
+the five-function API is a specification, not delivered source. Published complete
+semantic/facts/demand entry, generic representation and caller implementation,
+full runtime donor/startup closure, attempt-wide revocation wiring and explicit
+file/function releases remain prerequisites. No tests or native acceptance are
+claimed by this reconciliation.
