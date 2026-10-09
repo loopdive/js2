@@ -83,6 +83,7 @@ export type {
   IrObjectStructLowering,
   IrRefCellLowering,
   IrUnionLowering,
+  IrVecBackendLowering,
   IrVecLowering,
   LinearMemoryFieldLowering,
   LinearObjectLowering,

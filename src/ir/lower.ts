@@ -18,5 +18,6 @@ export type {
   IrObjectStructLowering,
   IrRefCellLowering,
   IrUnionLowering,
+  IrVecBackendLowering,
   IrVecLowering,
 } from "./backend/lower-contracts.js";

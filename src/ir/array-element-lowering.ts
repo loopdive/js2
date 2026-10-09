@@ -15,15 +15,16 @@ import {
 import { IrFunctionBuilder } from "./builder.js";
 import { irIntrinsicFuncRef } from "./callable-bindings.js";
 import type { I32PureNames } from "./i32-pure-bitwise.js";
-import type { IrVecLowering } from "./lower.js";
+import type { IrVecBackendLowering } from "./lower.js";
+import { irVecGcLowering } from "./backend/vector-representation.js";
 import { asVal, irTypeEquals, irVal, type IrConst, type IrType, type IrValueId } from "./nodes.js";
 import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
 import type { ValType } from "./types.js";
 import { irVecElemSetSymbol } from "./vector-runtime.js";
 
 interface ArrayElementResolver {
-  resolveVec?(valType: ValType): IrVecLowering | null;
-  resolveVecForElement?(elementValType: ValType): IrVecLowering | null;
+  resolveVec?(valType: ValType): IrVecBackendLowering | null;
+  resolveVecForElement?(elementValType: ValType): IrVecBackendLowering | null;
   resolveVecOutOfBoundsConst?(elementValType: ValType): IrConst | null;
   isVecValueExpression?(expression: ts.Expression): boolean;
   preparedAsyncPromiseVectorLocal?(declaration: ts.VariableDeclaration): boolean;
@@ -331,7 +332,11 @@ export function annotatedArrayElementValType(
  * Distinguish a narrowed number[] from another i32-element vector, such as
  * boolean[]. The representation and the receiver-specific proof must agree.
  */
-export function isNarrowedI32Vec(vec: IrVecLowering, receiver: ts.Expression, host: ArrayElementLoweringHost): boolean {
+export function isNarrowedI32Vec(
+  vec: IrVecBackendLowering,
+  receiver: ts.Expression,
+  host: ArrayElementLoweringHost,
+): boolean {
   return vec.elementValType.kind === "i32" && host.emptyArrayInference.isInt32NarrowedVectorExpression(receiver);
 }
 
@@ -468,8 +473,11 @@ export function tryLowerVecPush(
     const nextLength = host.builder.emitBinary("i32.add", lenI32, one, irVal({ kind: "i32" }));
     host.builder.emitVecSetLength(recv, nextLength);
   } else {
-    const symbol =
-      recvType.kind === "vec" ? irVecElemSetSymbol(recvType.elementType) : `__vec_elem_set_${vec!.vecStructTypeIdx}`;
+    // GC struct-suffixed name only for an authenticated GC handle (#6920).
+    const gc = recvType.kind === "vec" ? null : irVecGcLowering(vec!);
+    const symbol = gc
+      ? `__vec_elem_set_${gc.vecStructTypeIdx}`
+      : irVecElemSetSymbol(recvType.kind === "vec" ? recvType.elementType : irVal(vec!.elementValType));
     host.builder.emitCall(irIntrinsicFuncRef(symbol), [recv, lenI32, value], null);
   }
   if (statementPosition) return null;

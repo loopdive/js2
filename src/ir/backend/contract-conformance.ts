@@ -45,8 +45,7 @@ import type {
   IrClosureLowering,
   IrObjectStructLowering,
   IrRefCellLowering,
-  IrVecLowering,
-  LinearVecLowering,
+  IrVecBackendLowering,
 } from "./handles.js";
 import type { WasmGcEmitter } from "./wasmgc-emitter.js";
 import type { LinearEmitter } from "./linear-emitter.js";
@@ -83,7 +82,7 @@ export type StubSink = string[];
  */
 const STUB_KIND: IrBackendKind = "bytecode";
 
-type StubVecLayout = IrVecLowering | LinearVecLowering;
+type StubVecLayout = IrVecBackendLowering;
 
 export class StubEmitter implements BackendEmitter<StubSink> {
   constructor(readonly backend: IrBackendKind = STUB_KIND) {}

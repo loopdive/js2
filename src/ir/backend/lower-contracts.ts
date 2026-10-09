@@ -25,7 +25,7 @@ import type {
   IrObjectStructLowering,
   IrRefCellLowering,
   IrUnionLowering,
-  IrVecLowering,
+  IrVecBackendLowering,
 } from "./handles.js";
 
 export type {
@@ -37,6 +37,7 @@ export type {
   IrObjectStructLowering,
   IrRefCellLowering,
   IrUnionLowering,
+  IrVecBackendLowering,
   IrVecLowering,
 } from "./handles.js";
 
@@ -136,8 +137,14 @@ export interface IrLowerResolver {
    * the typeIdx + field indices + element ValType. Returns `null` when
    * the type isn't a recognisable vec — caller treats that as a bug
    * (selector should have rejected the for-of).
+   *
+   * #6920: returns the active backend's genuine raw handle — the WasmGC
+   * `IrVecLowering`, or a linear-memory `LinearVecLowering` whose carrier is
+   * i32 and which carries no GC indices. Generic lowering authenticates the
+   * handle against the active backend (`vector-representation.ts`); a handle
+   * for the other backend is a representation mismatch, never adapted.
    */
-  resolveVec?(valType: ValType): IrVecLowering | null;
+  resolveVec?(valType: ValType): IrVecBackendLowering | null;
   /**
    * #1804 — resolve (registering if needed) the vec struct for an *element*
    * ValType, used by `vec.new_fixed` construction where a fresh literal has no
@@ -145,9 +152,10 @@ export interface IrLowerResolver {
    * `(ref $vec)`), this get-or-creates the `$arr`/`$vec` types for the element
    * via the legacy registry so the constructed vec shares identity with the
    * legacy `compileArrayLiteral` output (===, instanceof Array, the for-of fast
-   * path). Returns the same `IrVecLowering` shape as `resolveVec`.
+   * path). Returns the same raw handle union as `resolveVec`; a linear
+   * resolver binds the requested `alloc` row when one is supplied.
    */
-  resolveVecForElement?(elementValType: ValType, alloc?: AllocSiteId): IrVecLowering | null;
+  resolveVecForElement?(elementValType: ValType, alloc?: AllocSiteId): IrVecBackendLowering | null;
   /**
    * Resolve the Wasm value type used for `IrType.string` in the active
    * backend.
