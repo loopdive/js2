@@ -1688,6 +1688,49 @@ failed; the tested local2a8 result is not relabeled as newer-main equivalence.
 HOLD, native/performance/equivalence limitations and A queue ownership remain.
 
 ## Adopted A third-source implementation contract — 2026-10-09
+### Pre-trial termination blocker and proposed Astra release plan
+
+Independent Astra High review found no explicit test-termination authority in
+either adopted normative contract. The unchanged `runAppendQualification`
+handler sends SIGKILL on timeout, output fault/cap and forwarded signals.
+Preserving the handler is an edit restriction, not termination permission.
+The geometry diff remains cleared, but its runtime trial is held. No handler
+edit is authorized by the geometry release; request this narrow scope from A.
+
+Proposed implementation plan, not yet released:
+
+- Original authenticated runner owner alone may change
+  `runAppendQualification` termination/fault handling and corresponding inert
+  `selfTest` controls, after A releases that exact scope and a fresh serialized
+  continuation claim is effect-read. No competing writer or takeover.
+- Replace automatic child/group termination with a monotonic infrastructure
+  failure latch and immediate parent notification. Timeout must keep capturing
+  and draining until actual closure, without automatically killing the child.
+- On cap/write failure, retain captured bytes, explicitly record incomplete
+  capture, and continue draining without unbounded buffering.
+- Do not forward SIGINT/SIGTERM as child termination without explicit user
+  authority. Retain lock and open captures until closure; no early finalization
+  or automatic retry. A latched fault prevents success even after child exit0.
+- Keep `killed` truthful and preserve primary/subsequent errors. All source and
+  config pins, identities, command/worker flags, parser, witness validators and
+  complete original baseline bytes remain fixed.
+- Finite inert controls must exercise normal completion, timeout, cap, write
+  failure, signal notification, continued draining, refusal to finalize a live
+  child, secondary-error retention and zero termination calls.
+- After released implementation and exact review, freeze the new runner hash
+  and explicitly update the comparator binding; parent separately authorizes
+  one trial. No trial or source qualification follows from this proposal.
+
+The geometry comparator is separately cleared: only three literal changes
+from the published current-source instrument, one runner hash and two source
+tree literals. SHA256
+`03a5a9752ce408297adc87581dae6a2955755e8d901ccd29703f4692ace2bfcc`.
+Parent and Astra independently ran62/62 inert controls, exit0. Reversing these
+substitutions restores all predecessor bytes; complete graphs1–37 remain
+unfiltered, with full graph0, raw-stream and custody validation.
+Normal main composition `55ac3dfef2402390e3fd844b18237c4eb582a879`
+has exactly released source `171606514a3cf6733e82eb11549a659856d68c1a`.
+No third-target child has run, and failed CI epochs are unchanged.
 
 Private implementation checkpoint:
 `e33560ce57c5912fd75cc36c7156b1037828416e`, original authenticated Sol6.1
@@ -1702,6 +1745,7 @@ The patch is privately integrated; no third-target compiler child has run.
 Committed composition, independent complete input freeze, separate one-trial
 authorization and full original-baseline comparison remain outstanding.
 This review is not runtime equality, source admission, CI or main delivery.
+
 
 Session A release6077817777 and publication6077956780 were independently
 verified against PR6603 HEAD `1cb483b27c7dc2361871939ecf64218cccfb9a86`.
