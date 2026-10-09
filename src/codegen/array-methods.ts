@@ -143,6 +143,7 @@ const {
   isLocalizedJoin,
 } = tls;
 import { emitFuncRefAsClosure } from "./closures/funcref-as-closure.js";
+import { callbackClosureInfo } from "./closures/closure-type-sources.js"; // (#6913)
 import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // (#3481)
 import { buildSpreadArgList, hasSpreadArgument } from "./spread-arg-list.js"; // (#5361)
 import { canBuildSpreadArgList, isTupleStructType } from "./spread-arg-list.js"; // (#5361)
@@ -6821,7 +6822,7 @@ function setupArrayCallback(
 
   if (cbResult && (cbResult.kind === "ref" || cbResult.kind === "ref_null")) {
     closureTypeIdx = (cbResult as { typeIdx: number }).typeIdx;
-    closureInfo = ctx.closureInfoByTypeIdx.get(closureTypeIdx);
+    closureInfo = callbackClosureInfo(ctx, cbArg, closureTypeIdx); // (#6913) a literal keeps its own facts
     if (closureInfo) {
       closureTmp = allocLocal(fctx, `__arr_${tag}_clcb_${fctx.locals.length}`, cbResult);
       fctx.body.push({ op: "local.set", index: closureTmp });
