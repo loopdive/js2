@@ -19,33 +19,85 @@ export type AllocationEvidenceEffect =
       readonly encoding: "no-write";
     };
 
-/** Finite descriptors only. Legacy analysis sharing is a separate source join. */
-export function allocationEvidenceEffect(instr: IrInstr): AllocationEvidenceEffect {
+type OwnershipRuleEvent =
+  | { readonly op: "read" | "write"; readonly operand: "vec" }
+  | { readonly op: "escape"; readonly operand: "newValue" };
+type AllocationEvidenceRule =
+  | { readonly kind: "unsupported" }
+  | {
+      readonly kind: "effects";
+      readonly ownership: readonly OwnershipRuleEvent[];
+      readonly directEscape: readonly [];
+      readonly encoding: "no-write";
+    };
+
+const UNSUPPORTED_RULE: AllocationEvidenceRule = Object.freeze({ kind: "unsupported" });
+const NO_LOCAL_EFFECT_RULE: AllocationEvidenceRule = Object.freeze({
+  kind: "effects",
+  ownership: Object.freeze([] as const),
+  directEscape: Object.freeze([] as const),
+  encoding: "no-write",
+});
+const VECTOR_READ_RULE: AllocationEvidenceRule = Object.freeze({
+  kind: "effects",
+  ownership: Object.freeze([Object.freeze({ op: "read", operand: "vec" } as const)]),
+  directEscape: Object.freeze([] as const),
+  encoding: "no-write",
+});
+const VECTOR_WRITE_RULE: AllocationEvidenceRule = Object.freeze({
+  kind: "effects",
+  ownership: Object.freeze([
+    Object.freeze({ op: "write", operand: "vec" } as const),
+    Object.freeze({ op: "escape", operand: "newValue" } as const),
+  ]),
+  directEscape: Object.freeze([] as const),
+  encoding: "no-write",
+});
+
+/** Shared instruction-local policy. Rule recognition is not finite-profile admission. */
+export function allocationEvidenceRule(instr: IrInstr): AllocationEvidenceRule {
   switch (instr.kind) {
     case "vec.get":
     case "vec.len":
-      return { kind: "effects", ownership: [{ value: instr.vec, op: "read" }], directEscape: [], encoding: "no-write" };
+      return VECTOR_READ_RULE;
     case "vec.set":
-      return {
-        kind: "effects",
-        ownership: [
-          { value: instr.vec, op: "write" },
-          { value: instr.newValue, op: "escape" },
-        ],
-        directEscape: [],
-        encoding: "no-write",
-      };
+      return VECTOR_WRITE_RULE;
     case "binary":
-      if (instr.op !== "i32.lt_u" && instr.op !== "f64.add") return { kind: "unsupported" };
+      if (instr.op !== "i32.lt_u" && instr.op !== "f64.add") return UNSUPPORTED_RULE;
       break;
     case "const":
     case "vec.new_fixed":
     case "if":
       break;
     default:
-      return { kind: "unsupported" };
+      return UNSUPPORTED_RULE;
   }
-  return { kind: "effects", ownership: [], directEscape: [], encoding: "no-write" };
+  return NO_LOCAL_EFFECT_RULE;
+}
+
+/** Resolve one current operand immediately before its rule event is applied. */
+export function allocationEvidenceOperand(instr: IrInstr, operand: "vec" | "newValue"): IrValueId {
+  switch (operand) {
+    case "vec":
+      if (instr.kind === "vec.get" || instr.kind === "vec.len" || instr.kind === "vec.set") return instr.vec;
+      break;
+    case "newValue":
+      if (instr.kind === "vec.set") return instr.newValue;
+      break;
+  }
+  throw new Error("allocation rule mismatch: vector operand");
+}
+
+/** Compatibility descriptor: materialize fresh events without retaining operands. */
+export function allocationEvidenceEffect(instr: IrInstr): AllocationEvidenceEffect {
+  const rule = allocationEvidenceRule(instr);
+  if (rule.kind === "unsupported") return { kind: "unsupported" };
+  const ownership: { value: IrValueId; op: OwnershipRuleEvent["op"] }[] = [];
+  for (let index = 0; index < rule.ownership.length; index++) {
+    const event = rule.ownership[index]!;
+    ownership.push({ value: allocationEvidenceOperand(instr, event.operand), op: event.op });
+  }
+  return { kind: "effects", ownership, directEscape: [], encoding: rule.encoding };
 }
 
 export function primitiveKind(type: IrType | null | undefined): "i32" | "f64" | undefined {
