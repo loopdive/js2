@@ -54,6 +54,7 @@ export function primitiveKind(type: IrType | null | undefined): "i32" | "f64" | 
 
 /** Shape/primitive exclusions supplement, never replace, canonical type validity. */
 export function profileInstructionExclusion(instr: IrInstr): AllocationEvidenceCoverageReason | undefined {
+  if (instr.kind !== "vec.new_fixed" && instr.alloc !== undefined) return "instruction-kind";
   switch (instr.kind) {
     case "const":
       return primitiveKind(instr.resultType) && instr.value.kind === primitiveKind(instr.resultType)
