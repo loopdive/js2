@@ -1,10 +1,11 @@
 {
   "id": "6921",
   "assignee": "ttraenkler/claude-session-c-ir-passes-20261008",
-  "requested_by": "ttraenkler/claude-session-c-ir-passes-20261008",
-  "status": "in-progress",
+  "requested_by": "noreply@anthropic.com",
+  "status": "done",
   "branch": "claude/ir-migration-completion-lf3fz0",
   "claimed_at": "2026-10-08T21:27:01Z",
-  "updated_at": "2026-10-08T21:27:01Z",
-  "write_id": "24648-fikt82m9"
+  "updated_at": "2026-10-09T03:37:58Z",
+  "write_id": "608-sgtbm8pc",
+  "released_at": "2026-10-09T03:37:58Z"
 }
