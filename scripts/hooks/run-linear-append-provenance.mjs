@@ -51,6 +51,18 @@ const PINS = {
   testSha256: "c63e83104b42104c0ea9e7d5d3fb3f6f2cce960a65973cbf342698e8e79d7f8d",
   fixture: "66a15148fdd960dcbe5d87c25a28d870e8db9d00865483d708f0ca4e6e6e335c",
 };
+// Adopted A/Astra review in issue 6915, released by comment 6076669715.
+// Finite qualification target only; full witness acceptance remains with parent.
+const SOURCE_APPROVAL_SUCCESSOR = {
+  commit: "616da017ca11cefa61f3f8d71a1c7ac18773491c",
+  sourceTree: "2a8c200cbb4862b6ffdd5952be7f6fa8f9ce1e63",
+};
+function assertApprovedSourceTree(sourceTree) {
+  check(
+    sourceTree === PINS.sourceTree || sourceTree === SOURCE_APPROVAL_SUCCESSOR.sourceTree,
+    "unapproved source tree",
+  );
+}
 // Independently frozen from the published approval checkpoint. CI's shallow
 // checkout need not contain that historical commit; only actual HEAD is read.
 const CONFIG_PINS = {
@@ -250,11 +262,11 @@ function regular(path) {
   check(lstatSync(path).isFile(), `not a regular file: ${path}`);
 }
 
-function buildExpectedProvenance(head) {
+function buildExpectedProvenance(head, sourceTree = PINS.sourceTree) {
   check(/^[a-f0-9]{40}$/.test(head), "checkout HEAD shape");
-  return { ...PINS, head, command: COMMAND, effectiveFlags: structuredClone(FLAGS) };
+  return { ...PINS, sourceTree, head, command: COMMAND, effectiveFlags: structuredClone(FLAGS) };
 }
-function assertIdentity(head, env, local) {
+function assertIdentity(head, env, local, sourceTree = PINS.sourceTree) {
   if (env.CI === "true" || env.GITHUB_ACTIONS === "true") {
     check(env.GITHUB_ACTIONS === "true", "unsupported CI identity");
     check(["pull_request", "merge_group"].includes(env.GITHUB_EVENT_NAME), "unknown CI checkout event");
@@ -264,7 +276,7 @@ function assertIdentity(head, env, local) {
     check(local !== undefined, "explicit local parent manifest required");
     assert.deepEqual(
       local,
-      buildExpectedProvenance(head),
+      buildExpectedProvenance(head, sourceTree),
       "local manifest differs from approved pins/HEAD/command/flags",
     );
   }
@@ -286,6 +298,7 @@ function readApprovedCheckout() {
     "inherited profiling/diagnostic NODE_OPTIONS",
   );
   const head = gitText("rev-parse", "HEAD");
+  const sourceTree = gitText("rev-parse", "HEAD:src");
   let local;
   if (process.env.JS2WASM_APPEND_PARENT_MANIFEST !== undefined) {
     const path = process.env.JS2WASM_APPEND_PARENT_MANIFEST;
@@ -293,8 +306,8 @@ function readApprovedCheckout() {
     regular(path);
     local = JSON.parse(readFileSync(path, "utf8"));
   }
-  assertIdentity(head, process.env, local);
-  return { root, head, expected: buildExpectedProvenance(head), local: local !== undefined };
+  assertIdentity(head, process.env, local, sourceTree);
+  return { root, head, expected: buildExpectedProvenance(head, sourceTree), local: local !== undefined };
 }
 function assertCheckoutEdits(status, local) {
   for (const entry of status.split("\0").filter(Boolean)) {
@@ -419,6 +432,7 @@ function compareFrozenInputs(before, after) {
 function assertFrozenInputs(checkout) {
   const { root, head, expected, local } = checkout;
   check(gitText("rev-parse", "HEAD") === head, "HEAD drift");
+  assertApprovedSourceTree(expected.sourceTree);
   check(gitText("rev-parse", "HEAD:src") === expected.sourceTree, "unapproved source tree");
   check(
     gitText("status", "--porcelain", "--untracked-files=all", "--", "src", TEST, PATHS.fixture) === "",
@@ -1349,6 +1363,76 @@ function selfTest() {
       GITHUB_SHA: "0".repeat(40),
     }),
   );
+  good(() => assertApprovedSourceTree(PINS.sourceTree));
+  good(() => assertApprovedSourceTree(SOURCE_APPROVAL_SUCCESSOR.sourceTree));
+  const unknownSourceTree = "1".repeat(40);
+  bad(() => assertApprovedSourceTree(unknownSourceTree));
+  const successorExpected = buildExpectedProvenance(
+    SOURCE_APPROVAL_SUCCESSOR.commit,
+    SOURCE_APPROVAL_SUCCESSOR.sourceTree,
+  );
+  good(() => {
+    assert.equal(Object.keys(successorExpected).length, 9);
+    assert.deepEqual(successorExpected, {
+      ...expected,
+      head: SOURCE_APPROVAL_SUCCESSOR.commit,
+      sourceTree: SOURCE_APPROVAL_SUCCESSOR.sourceTree,
+    });
+    assertIdentity(SOURCE_APPROVAL_SUCCESSOR.commit, {}, successorExpected, SOURCE_APPROVAL_SUCCESSOR.sourceTree);
+  });
+  const successorCI = {
+    CI: "true",
+    GITHUB_ACTIONS: "true",
+    GITHUB_EVENT_NAME: "pull_request",
+    GITHUB_SHA: SOURCE_APPROVAL_SUCCESSOR.commit,
+  };
+  for (const event of ["pull_request", "merge_group"])
+    good(() =>
+      assertIdentity(
+        SOURCE_APPROVAL_SUCCESSOR.commit,
+        { ...successorCI, GITHUB_EVENT_NAME: event },
+        undefined,
+        SOURCE_APPROVAL_SUCCESSOR.sourceTree,
+      ),
+    );
+  for (const [actual, substituted] of [
+    [PINS.sourceTree, SOURCE_APPROVAL_SUCCESSOR.sourceTree],
+    [SOURCE_APPROVAL_SUCCESSOR.sourceTree, PINS.sourceTree],
+  ])
+    bad(() =>
+      assertIdentity(
+        SOURCE_APPROVAL_SUCCESSOR.commit,
+        {},
+        buildExpectedProvenance(SOURCE_APPROVAL_SUCCESSOR.commit, substituted),
+        actual,
+      ),
+    );
+  bad(() => buildExpectedProvenance(undefined, SOURCE_APPROVAL_SUCCESSOR.sourceTree));
+  for (const head of [undefined, "0".repeat(40)])
+    bad(() =>
+      assertIdentity(
+        SOURCE_APPROVAL_SUCCESSOR.commit,
+        { ...successorCI, GITHUB_SHA: head },
+        undefined,
+        SOURCE_APPROVAL_SUCCESSOR.sourceTree,
+      ),
+    );
+  bad(() =>
+    assertIdentity(
+      SOURCE_APPROVAL_SUCCESSOR.commit,
+      successorCI,
+      successorExpected,
+      SOURCE_APPROVAL_SUCCESSOR.sourceTree,
+    ),
+  );
+  bad(() =>
+    assertIdentity(
+      SOURCE_APPROVAL_SUCCESSOR.commit,
+      { ...successorCI, GITHUB_EVENT_NAME: "push" },
+      undefined,
+      SOURCE_APPROVAL_SUCCESSOR.sourceTree,
+    ),
+  );
   const prop = (key, value) => ({
     key,
     value,
@@ -2046,6 +2130,103 @@ function selfTest() {
     assert.equal(errors.length, 2);
     assert.equal(errors[0], primary);
   });
+  // Inert Git tree fixtures exercise the actual checkout reader and pre-child
+  // barrier. Missing source objects are deliberate: no fixture can qualify a
+  // child, and no production source bytes, commits or shared refs are changed.
+  const sourceRoot = realpathSync(mkdtempSync(join(tmpdir(), "6915-source-approval-self-test-")));
+  const sourceGit = (args, input) =>
+    execFileSync("git", args, {
+      cwd: sourceRoot,
+      env: fixtureEnv,
+      input,
+      stdio: ["pipe", "pipe", "pipe"],
+    })
+      .toString("utf8")
+      .trim();
+  sourceGit(["init", "--quiet"]);
+  sourceGit(["symbolic-ref", "HEAD", "refs/6915/source-control"]);
+  const sourceHeads = new Map(
+    [PINS.sourceTree, SOURCE_APPROVAL_SUCCESSOR.sourceTree, unknownSourceTree].map((tree) => [
+      tree,
+      sourceGit(["mktree", "--missing"], `040000 tree ${tree}\tsrc\n`),
+    ]),
+  );
+  const originalCwd = process.cwd(),
+    originalEnv = { ...process.env };
+  try {
+    process.chdir(sourceRoot);
+    for (const name of Object.keys(process.env))
+      if (
+        name.startsWith("GIT_") ||
+        [
+          "JS2WASM_APPEND_PARENT_MANIFEST",
+          "NODE_OPTIONS",
+          "NODE_V8_COVERAGE",
+          "TEST262_TARGET",
+          "TEST262_RESULT_PREFIX",
+          "VITE_NODE_OPTIONS",
+          "VITEST_COVERAGE",
+        ].includes(name)
+      )
+        delete process.env[name];
+    Object.assign(process.env, successorCI);
+    const selectSource = (tree) => {
+      const head = sourceHeads.get(tree);
+      sourceGit(["update-ref", "refs/6915/source-control", head]);
+      process.env.GITHUB_SHA = head;
+      return head;
+    };
+    for (const tree of [PINS.sourceTree, SOURCE_APPROVAL_SUCCESSOR.sourceTree]) {
+      const head = selectSource(tree);
+      good(() => {
+        const observed = readApprovedCheckout();
+        assert.equal(observed.head, head);
+        assert.deepEqual(observed.expected, buildExpectedProvenance(head, tree));
+        assertApprovedSourceTree(observed.expected.sourceTree);
+      });
+    }
+    selectSource(unknownSourceTree);
+    const unknownCheckout = readApprovedCheckout();
+    good(() => {
+      // Observation must be archivable before membership refuses it. All
+      // direct-file pins still match; that does not approve a complete tree.
+      assert.deepEqual(JSON.parse(JSON.stringify(unknownCheckout.expected)), {
+        ...expected,
+        head: unknownCheckout.head,
+        sourceTree: unknownSourceTree,
+      });
+      assert.throws(() => assertFrozenInputs(unknownCheckout), /unapproved source tree/);
+    });
+    for (const [beforeTree, afterTree] of [
+      [PINS.sourceTree, SOURCE_APPROVAL_SUCCESSOR.sourceTree],
+      [SOURCE_APPROVAL_SUCCESSOR.sourceTree, PINS.sourceTree],
+    ]) {
+      selectSource(beforeTree);
+      const frozen = readApprovedCheckout();
+      selectSource(afterTree);
+      good(() => {
+        assert.throws(() => assertFrozenInputs(frozen), /HEAD drift/);
+        assert.equal(frozen.expected.sourceTree, beforeTree);
+      });
+      good(() => {
+        // Hold the HEAD guard equal to isolate the following real source
+        // equality barrier; its frozen expected epoch must not be reselected.
+        assert.throws(() => assertFrozenInputs({ ...frozen, head: process.env.GITHUB_SHA }), /unapproved source tree/);
+        assert.equal(frozen.expected.sourceTree, beforeTree);
+      });
+      bad(() => compareFrozenInputs({ snapshot: { sourceTree: beforeTree } }, { snapshot: { sourceTree: afterTree } }));
+    }
+    const missingSourceHead = sourceGit(["mktree"], "");
+    sourceGit(["update-ref", "refs/6915/source-control", missingSourceHead]);
+    process.env.GITHUB_SHA = missingSourceHead;
+    bad(() => readApprovedCheckout());
+    sourceGit(["update-ref", "-d", "refs/6915/source-control"]);
+    bad(() => readApprovedCheckout());
+  } finally {
+    process.chdir(originalCwd);
+    for (const name of Object.keys(process.env)) if (!Object.hasOwn(originalEnv, name)) delete process.env[name];
+    Object.assign(process.env, originalEnv);
+  }
   console.log(`6915 parent self-test: ${passed} controls passed (no compiler/test execution)`);
 }
 
