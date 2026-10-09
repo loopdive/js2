@@ -164,3 +164,53 @@ plan/issues/6925-receiver-inert-call-implementation-sol61-20261009.md.
 Original bodies/history and source/test bytes are preserved; schema frontmatter,
 identity provenance and explicit own links are the only metadata changes.
 Normal issue checks, followup hooks, remote push and draft PR remain pending.
+
+## Successful draft publication receipt
+
+Metadata correction commit44f651e79ce20df16df38368e0af5a2485e8d112 follows
+checkpointdcf9bb4b45 and normal main-merge292c82c6b46. Session65378 terminal
+feeb00 exit0: normal LOC/function hooks passed, lint-staged correctly reported
+no matching MD tasks. Explicit integrity session70539 terminald8a9f7 exit0:
+committed4812issues/4812frontmatter OK; workingtree4815issues and0issue files
+would change, no duplicate or off-schema failure. Historical resolved-dependency
+advisories were not new failures; generated indexes were not rewritten.
+
+Second normal fork push62276 terminal4a64c7 exit0 created only
+fork/codex/6878-receiver-p2-adapter-sol61. Pre-push source typecheck and fresh
+full-tree lint passed; format checked8changed files against dbf5b4f74b;
+oracle/coercion ratchets passed across3codegen files; mandatory #3765 direct/IR
+numeric-local parity passed18/18; issue integrity passed. No pre-push tier or
+hook was bypassed, no timeout/restart/kill occurred, no main/force push or
+upstream fallback was used. Remote readceee29 matched actual
+44f651e79ce20df16df38368e0af5a2485e8d112. These normal-hook passes do not
+convert the14desired selected-fixture failures or unchanged763 floor into green.
+
+Fresh all-state branch PR searchceee29 was empty. Draft creation70294 terminal
+d861c7 exit0 created https://github.com/loopdive/js2/pull/6604 and the desktop
+attachment succeeded. Authoritative011322 readback: OPEN, isDraft=true,
+base=main, head44f651e79ce20df16df38368e0af5a2485e8d112, exact13files below.
+The CLA human checkbox remains unchecked; no human attestation is fabricated.
+Draft is mandatory because the checkpoint is unfinished/unmergeable, not a
+temporary review preference. Root assigns the existing dedicated PR shepherd;
+this writer does not ready, merge, enqueue, waive CI or open GitHub issues.
+
+Exact cumulative upstream PR manifest (diagnostics and .tmp are excluded):
+
+- src/codegen/numeric-property-analysis.ts
+- src/codegen/analysis/local-number-carrier-proof.ts
+- src/codegen/analysis/local-number-receiver-domain.ts
+- scripts/compiler-boundaries.json
+- tests/issue-6878-receiver-p2-adapter.test.ts
+- tests/issue-6878-local-conditional-identity.test.ts
+- tests/issue-6878-local-number-positive-restoration.test.ts
+- tests/issue-6878-inert-global-effect-read.test.ts
+- tests/issue-6878-receiver-inert-call-acceptance.test.ts
+- plan/issues/6922-receiver-checkpoint-publication-handoff-20261009.md
+- plan/issues/6923-receiver-p2-adapter-implementation-sol61-20261009.md
+- plan/issues/6924-inert-global-effect-read-sol61-20261009.md
+- plan/issues/6925-receiver-inert-call-implementation-sol61-20261009.md
+
+This receipt-only followup edits no source/test/policy or semantic assertion.
+All previously measured receipts retain their original epoch; no fresh full
+11778/all74Intl canonical run or completion claim is added. Its own resulting
+commit/head and push terminal are reported separately after actual execution.
