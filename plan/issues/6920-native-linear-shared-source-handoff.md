@@ -1781,3 +1781,939 @@ Root independently verified all36 raw artifact pins, exact authored floors/actua
 Root accepted the exact-e734 Astra carrier delta review (`ec35adf5b604c7f22c673c66879ee1ed4d8abae802212edf72a038b0b70801d6`). Carrier/source commit full normal hooks passed56/56. The normal signed merge `1d9a6c8a16de6b393f8c78e0055f52388ab2b6af` has exact parents e734e6331bd4cbdb1d8f9e5abb9b462957ac94de and revalidated canonical main e610189829ad1554b813d6ca224515666b0e2d28; full normal Node25 merge hooks passed70/70. All21 prior candidate file pins and14 canonical dependency file pins remain exact, with clean tree and verified Thomas SSH signature. Merge receipt8080 bytes/SHA256 `c9e8cb8597419fe33102996afddea1ee278ff14655faf2ffd39c89be60719149` retains complete operands and hook/signature artifacts.
 
 Metadata slice6920:session-a-source-handoff-20261009, owner ttraenkler/codex-sol-session-a-source-handoff-20261009, actual in-progress write89995-6v69lqr6, was freshly effect-read for the publication record. This append preserves every prior issue/handoff byte and source/proof epoch. SOURCE_HEAD1d9 is distinguished from the later metadata publication hash, which requires actual remote readback. No source change, B-contract completion, general/native/public admission, equality, retirement, CI acceptance or queue release follows from metadata publication; root retains those decisions.
+
+
+### ROOT-adopted AE28 canonical local-rule successor — preparation only
+
+ROOT read and adopts the complete Astra High plan below, exact37610 bytes/SHA256 `72e41c5a4f250471c15f6ae1bb42bc1d956edaa7d9633360b449999b492d3644`. New isolated worktree `/private/tmp/js2-6920-ae28-rules-20261009`, branch `codex/6920-ae28-rules-20261009`, starts at exact published predecessor `1e388ef647c9827102b87e869f7526f8c928f11e`. The queued checker lane is untouched. At root's preparation readback PR6599 is OPEN/unmerged, protected group58994f7b4d2cbc1a239b8fb0c0e3f39644066489 has exact parents e610189829ad1554b813d6ca224515666b0e2d28 and1e388 and identical tree1e388; real merge-group run37873242369 is queued/nonterminal and CI37873242356 in progress. This records no main delivery, acceptance or terminal success.
+
+Actual new canonical source claim `6920:ae28-canonical-local-rules-20261009`, same existing checker owner `ttraenkler/codex-sol-allocation-evidence-checker-20261009`, write43989-lv9fr4w8, and disjoint metadata claim `6920:ae28-plan-adoption-20261009`, same owner, write44305-2ijq5h0r, were effect-read in progress on the new branch before this append. Old source claim19199 and all foreign claims remain unchanged. Source custody is only five proposed hunks: ownership.ts applyInstrEffect vector cases/import; escape.ts analyzeEscape.visitInstr three vector cases/import; encoding.ts classifyInstr descriptor/import; effect-rules.ts descriptor comment only; census.ts applyEffects local-facet guards. No executable source release occurs in this preparation; ROOT must separately authorize implementation, tests and proof custody.
+
+The complete pre-claim canonical ledger tip72d3cfebfcb1c813ced05ff1f9e93930dea00926 contains2972 records; fresh all32-open-PR/file pagination finds no foreign overlap with these five paths (only queued6599's own effect-rules/census). Historical donor claim82145 is done/released; actual3518 Phase B source plan names ownership/escape/encoding. Held34529 is registry/facade/seam only. The actual6837 source plan excludes existing analyses and owns orchestration/middle-end paths; held12877/54169/64646 do not grant these donor vector dispatches. A2's actual fifteen dirty paths exclude allfive. Held54017/75863/76271 remain separate proof/policy/adapter custody and are not assigned here. This audit is path/hunk-specific, not a title-based release or permission to modify historical proof readers/boundary metadata.
+
+Scope provenance is retained explicitly: `plan/log/3518-ir-wrap-up-2026-10-01/validation-lowering-extraction-spec.md:70` names the three donor paths; `plan/agent-context/3518-preparation-ownership-implementation-plan-2026-09-08.md:26` assigns only registry/facade/seam to34529; `plan/issues/6837-ir-modular-analysis-optimization-pipeline.md:84` explicitly excludes existing analyses from the orchestration source writer. Actual records and complete paginated PR file census are preserved in this lane's `.tmp/ae28-ledger-all-records.json`, `ae28-ledger-relevant-records.json` and `ae28-open-pr-file-census.json`; this is no blanket declaration that every held claim is free.
+
+All original source/test/proof/fixture bytes and prior issue prefix remain preserved. The initial signing and Node24 pre-push failures, canonical godfile/boundary debt, original finite/historical runtime receipts and broader unfinished native/general/full40 obligations remain evidence. No source/test/proof edit, compilation, runtime, collection, source-branch commit/publication or queue action is authorized by this preparation; the two normal assignment-registry writes are recorded above. Full adopted plan follows unchanged.
+
+## Implementation Plan — AE28 canonical local allocation-rule sharing
+
+Proposed appendix for issue6920, **Native Linear numeric-vector shared source handoff and integration plan**. Prepared by Codex GPT-6 Astra High, 2026-10-09. ROOT must read and adopt this appendix and assign the exact existing-file/test/proof hunks before implementation. This planning task grants no executable edit, claim transfer, runtime execution, publication, queue release or acceptance of PR6599.
+
+### Observed predecessor and scope
+
+Read-only source endpoint: `/private/tmp/js2-6920-allocation-evidence-checker-20261009`, exact published HEAD `1e388ef647c9827102b87e869f7526f8c928f11e`, source merge `1d9a6c8a16de6b393f8c78e0055f52388ab2b6af`. This includes the e734 carrier guard and reviewed canonical DATA dependency. No runtime probe or test was executed for this plan.
+
+The issue's original forty requirements remain intact. AE28 is the held requirement **shared finite rules preserve exact canonical annotations**; it must establish actual donor sharing, exact baseline/candidate annotations, and a genuine stack-candidate producer positive before a leaf no-call observation. This plan does not discharge AE08/18/21–23/29–40, the general IR witness, public standalone/WASI `run(1.5,-2.25)===1.25`, or any migration/retirement obligation. The already qualified leaf22, reuse5, carrier5, J1 eight and historical cohorts keep their own denominators and receipts.
+
+The useful next implementation is **five small existing-source hunks, without another production module**: share the existing local descriptor with canonical ownership, escape and encoding, then make the finite consumer explicitly require the descriptor's zero direct-escape/no-encoding contribution. Keep canonical schedulers, alias analysis, namespace materialization, metadata writeback and generic fallback intact.
+
+### Architecture decision: share local effects, retain each algorithm's responsibilities
+
+Keep `src/ir/analysis/allocation-evidence/effect-rules.ts::allocationEvidenceEffect` as the single owner of the currently supported local rules. Its existing location is in generic IR analysis, not in a target backend. It imports core instruction/operand/type contracts and a type-only coverage contract; it does not import a solver, program adapter, registry constructor, frontend or target. Moving this small already published function into a sixth module would add custody and preservation surface without removing an existing dependency problem. Reconsider a separate broader rule module only when a later concrete general-rule expansion needs it.
+
+The direction is:
+
+```text
+core instruction/type/operand contracts
+                |
+     local allocation effect descriptor
+          /                  \
+canonical legacy solvers      finite body census + exact metadata comparison
+          |                            |
+canonical producer metadata   invocation-local generic truth report
+          |                            |
+          +--- later authenticated generic program adapter ---+
+                                                              |
+                                      later target facts/resources/native decision
+```
+
+No target imports are introduced into generic analysis. No target facts, stack layout, resource handles or emission decisions belong in the descriptor. The later adapter still authenticates complete original/support/projection populations, contextual ABI/SSA/types, descriptors, provenance and facts consistency before using any report. A report is not a reusable authority object or a new JSHost support mode.
+
+Do **not** substitute `analysis/effects.ts::effectsOf` for these rules. That existing model is shared scheduler/DCE heap/control/slot information; `writesHeap` does not say which value escapes, `readsHeap` does not encode an ownership access set, and it supplies neither direct escape attribution nor encoding writes. Its memoized recursive traversal also has different occurrence semantics. It remains unchanged.
+
+### What is reusable, and what is a finite-profile theorem
+
+| Source fact | Shared owner and meaning | What it does not establish |
+| --- | --- | --- |
+| `vec.get`, `vec.len` read `instr.vec` | Existing descriptor's ownership operand event; canonical ownership applies `touch(..., null, "read")` | Receiver is owned, local, a numeric vector, or dominated by an eligible root |
+| `vec.set` writes receiver, then escapes `newValue` | Existing descriptor preserves this exact event order; canonical ownership uses existing `touch` and `markEscaped` | Stored value is primitive; receiver escapes; direct escape class is stored |
+| Three vector operations have zero **direct** escape edges in the current canonical attribution pass | Existing descriptor's `directEscape: []`; canonical escape consumes that rule | Final escape is local. Ownership's backstop can still make a stored allocation opaque |
+| const, supported binary opcodes, vec.new_fixed, vector get/len/set, and if have no encoding write at the local instruction | Existing descriptor's `encoding: "no-write"`; canonical encoding consumes it at `classifyInstr` | Strings in child buffers have no write, unrecognized instructions are harmless, or a default encoding may be manufactured |
+| Local effects of if are empty | Descriptor covers only the if instruction's own contribution | Its children have no effects. Each caller must retain its existing traversal and alias responsibilities |
+| Canonical access ordering and union | Existing `lattice.ts::AccessSet` | A new copied lattice or alphabetically sorted replacement order |
+| Owned/local/true on admitted vector sites, absent encoding and absent stackCandidate marker | Finite census derives this only after the complete restricted body check | A generic per-allocation rule applicable to aliases, calls, loops, reference-valued carriers, extra allocations or absent evidence |
+
+The current duplication is precise: the leaf descriptor repeats the canonical ownership vector cases; direct vector escape and numeric encoding no-write are currently implicit defaults in their canonical passes; and the finite consumer does not read its descriptor's directEscape/encoding fields. The owned/local metadata literals are **not a second general solver** if they remain conditional on the proven closed profile. Extracting generic constructors that merely return those literals would not prove the condition and would create misleading authority.
+
+The profile must retain all exclusions: one ordinary block, primitive parameters/results, root-only unique live vector sites, earlier-root receivers, exact lexical scopes, closed opcode/operand census, no reference carriers, no allocation aliases/site reuse, no async domains, and the F1 guard for every defined non-vector allocation ID. In particular, do not move `profileInstructionExclusion` or call it from legacy solvers: canonical solvers intentionally accept broader inputs, including the unusual scalar allocation carriers now refused by the finite checker.
+
+### Exact production edits
+
+**1. `analysis/allocation-evidence/effect-rules.ts`**
+
+Keep `AllocationEvidenceEffect` and `allocationEvidenceEffect`'s current public shape and supported cases. Retain `unsupported` outside that rule domain. The descriptor is instruction-local; it must not recursively traverse buffers, instantiate a registry, read metadata, inspect target facts, classify lexical dominance, or invoke an analysis.
+
+Update its stale “Legacy analysis sharing is a separate source join” comment only when all three joins below actually exist. Document that descriptor recognition is not profile admission. Preserve the e734 guard and all function/profile/operand behavior byte-for-byte. There is no need to widen `directEscape: readonly []` into a speculative general escape-event schema in this slice.
+
+**2. `analysis/ownership.ts::applyInstrEffect`**
+
+Add a named import of the existing descriptor. Replace only the existing `vec.get`, `vec.len` and `vec.set` switch bodies with one shared-case block consuming `effect.ownership` in order. Keep aliasDerived result seeding before the switch. Use the existing helpers:
+
+```text
+read/write event -> touch(state, event.value, allocOf, null, event.op)
+escape event     -> markEscaped(state, event.value, allocOf)
+```
+
+A shared vector case must require `effect.kind === "effects"`; an unexpected unsupported descriptor is an internal rule mismatch and must fail loudly, never fall through to an empty effect. Use one explicit local Error if needed, rather than adding a new public error contract or helper framework. This unreachable-on-the-fixed-rule-domain safeguard is part of the reviewed substitution and must be recorded in the preservation recipe. Do not keep a second vector-effect fallback table.
+
+Moving the vec.set case beside the two read cases is allowed as an exact named span change; it must still emit receiver write **before** newValue escape. Do not put a broad descriptor early return in front of the entire switch. In particular, if must keep its then/else recursive traversal and its existing alias behavior; binary i32.eq/i32.ne identity effects must stay unchanged. Leave `runBlock`, allocation/alias collection, worklist, MAX_VISITS, block joins, alias fixpoint, terminators, result queries and registry writeback untouched.
+
+**3. `analysis/escape.ts::analyzeEscape`'s `visitInstr`**
+
+Add the descriptor import and exactly three named vector switch cases. Require the recognized descriptor's `directEscape.length === 0`, then finish that local case. An unsupported descriptor or unexpected nonzero direct-edge population is an internal rule mismatch, not permission to drop edges. This deliberately consumes the descriptor's current closed zero-edge contract; it does not add a new direct stored edge for vec.set.
+
+Keep direct edge rules for object/class/refcell stores, captures, calls, returns and throws unchanged. Keep all child traversals, severity ordering, allocation collection, ownership backstop and writeback unchanged. Do not return early for if merely because its descriptor has no local edge. The implicit no-vector-edge default is made explicit and shared; final local classification still belongs to the complete canonical pass or the finite-profile derivation, not this direct-edge check.
+
+**4. `analysis/encoding.ts::classifyInstr`**
+
+Add the descriptor import and a local recognized-no-write dispatch before the existing switch. A recognized descriptor with `encoding === "no-write"` returns without calling `record`; unsupported descriptor falls through to the unchanged existing switch. An impossible recognized-but-other encoding contribution is a loud internal mismatch if the implementation uses an explicit guard. Do not add any fallback that turns unsupported into a no-write witness for the finite checker.
+
+The admitted binary cases remain only i32.lt_u/f64.add; other binary opcodes still reach their old default. The if no-write return is safe **only because** `analyzeEncoding`'s outer `forEachInstrDeep` still invokes `classifyInstr` for each child separately. Preserve that outer traversal exactly. Keep string origin/join/evidence rules and call binding classification untouched. In particular, explicit encoding evidence and present-undefined annotation behavior are not repaired or normalized here.
+
+Although the older issue called this encoding join optional, this bounded proposal includes it: AE28 must not claim shared encoding absence while leaving that field as an unconsumed decorative value.
+
+**5. `analysis/allocation-evidence/census.ts::applyEffects`**
+
+After obtaining a recognized descriptor, explicitly require its current zero direct-escape and no-write encoding facets before using the finite rule. An unsupported/inapplicable facet returns the existing located `not-covered/instruction-kind`; do not synthesize expected metadata. This is a defensive closure check over the descriptor's present closed types, not implementation of hypothetical future edges.
+
+Keep the ownership-event application and read/write occurrence counts. The escape event may be ignored for vector-site accumulation only because the already executed operand/profile check proves the stored operand is primitive and the F1 guard prevents such a primitive from being an untracked allocation carrier in a verified module. Retain the explanatory comment tying that omission to those preconditions. Do not add an ownership result map, alias graph, solver callback or registry reconstruction.
+
+All remaining source stays unchanged, including `metadata.ts`, `contracts.ts`, `verify.ts`'s behavior, `lattice.ts`, `stack-alloc.ts`, `alloc-registry.ts`, J1 and the program adapters. The stack-kind policy stays with the actual `stack-alloc.ts::allocKindOfInstr` and `SMALL_ALLOC_KINDS`: vec.new_fixed is currently unrecognized by the former, and array is absent from the latter. Do not copy a target/finite small-kind table, export a speculative new stack-policy API, or infer stack eligibility solely from ownership's differently named `isStackAllocatable`. The real producer/positive/counterexample controls below are sufficient for this unchanged policy. A narrowly assigned wording update to verify.ts's remaining-work comment is optional documentation only; do not silently add it to the five-file proof population. Its current statement that legacy sharing remains work can simply be updated in a separately reviewed hunk if ROOT wants that accuracy in this implementation.
+
+### Why the finite result remains exact
+
+For an admitted function, root vector allocations start owned/empty; every possible use is an earlier-root get/len/set receiver. The shared rule can add read/write accesses but cannot widen those roots' ownership. Stored values and all if/return values are primitive and disconnected from vector identity; the carrier guard closes the previously demonstrated loophole. Canonical ownership visits the sole block and both nested arms, so the leaf's AccessSet union equals its per-vector writeback rather than merely overapproximating it.
+
+Canonical escape's direct vector edges are empty and its ownership backstop still sees each vector as stack-allocatable in the ownership sense, so local/true is exact. This is different from the stack-allocation optimization: `findStackAllocCandidates` only recognizes eligible small kinds, and vec.new_fixed receives no ownership stackCandidate marker. Encoding's shared no-write rule applies to every fully enumerated instruction, so requested encoding cells must be absent. The namespace comparator's global activation and unused-slot behavior stay unchanged.
+
+This proof fails outside the profile; the result remains not-covered there. No solver may use the finite profile guard to alter generic legacy behavior.
+
+### Honest counterexamples and validation populations
+
+Use genuine current solvers and registry objects, never copied algorithms or fake annotations. The new source receipt proves bounded source evolution; it does not prove behavioral equivalence by itself. ROOT must qualify exact real baseline and candidate source epochs with the same operand fixtures, preserving return/metadata presence, ordering and error rows.
+
+Keep the issue's designated file for the original obligation: `tests/issue-6920-allocation-evidence-entry.test.ts` may initially contain **exactly one real registration**, AE28 `shared finite rules preserve exact canonical annotations`. The other seventeen held ROOT registrations must remain unauthored, not skipped or presented as green. This file name does not authorize writing an adapter or invoking nonexistent public joins.
+
+AE28's actual body should:
+
+1. Build ordinary typed core fixtures through current builders/helpers and real registries for unused/read/write/read+write vectors, nested-only read, constant-false-arm write and primitive-if numeric inputs. Use exact independent expected metadata literals, own-property presence and canonical access order. Compare actual `OwnershipResult` and `EscapeResult` values as well as snapshots where meaningful. Run the full retained allocation validator on compatible snapshots to prove the metadata is not a local helper invention.
+2. Run real `prepareLinearAllocationFacts` on appropriate fresh inputs to exercise the actual producer path through encoding, ownership, escape and stack-candidate selection. This is invocation of an existing producer function over explicitly labeled core fixtures, not a claimed public frontend/codec/native compile.
+3. Establish stack observer liveness with a genuine eligible nonescaping object (as in existing `tests/ir/ownership-analysis.test.ts`) that produces a nonempty candidate and an actual ownership `stackCandidate:true` field. A returned object is the negative pair. Arrays remain noncandidates with the marker absent, and actual direct Linear facts retain `stackCandidate:false`. Do not require the generic full allocation validator to accept a small-object snapshot containing a producer-only marker it historically does not reconstruct.
+4. Reset real constructor/encoding/ownership/escape/stack/prepare-facts observers after producer capture; call only the actual finite leaf on an eligible complete numeric view and require zero calls to those producer/solver bindings. A descriptor call is pure rule execution and is allowed. Preserve original input graphs and legitimate optional values. Do not claim zero public assertion/codec/physical calls that were not invoked.
+
+Add `tests/issue-6920-allocation-evidence-rule-regressions.test.ts` with **six new registrations**, separate from the original forty. All six are baseline-neutral canonical preservation tests and can run identically on the pinned pre-join and candidate sources:
+
+| ID | Required distinction |
+| --- | --- |
+| AR01 | Stored allocation escapes through ownership while vector direct-edge attribution remains empty. Use a canonically valid reference vector/store or the established numeric allocation-carrier form; arrange no direct return of the stored allocation. Pin canonical opaque fallback, not an invented stored classification. Keep a true local pair. |
+| AR02 | Reference-valued if/select or slot alias followed by escape still propagates to the original allocation. Primitive if remains finite-covered; reference carrier remains outside the leaf. This catches an accidental broad descriptor early return that skips child effects or alias seeding. |
+| AR03 | i32.eq/i32.ne identity effects and at least one opaque call/return case stay on the old ownership/escape rules. i32.lt_u/f64.add remain their old no-local-effect cases. Include genuine context/type declarations for calls rather than treating standalone incomplete verification as full validity. |
+| AR04 | String const/concat/repeat or an existing genuine provider-bound call retains real encoding writes, including an encoding-producing child under if. Root if is locally no-write but its string children must still be visited. Keep the original explicit-evidence/presence outcomes; no fixture repair. |
+| AR05 | Scalar allocation carriers and repeated sites retain complete canonical annotations/write order and remain leaf-uncovered under current guards. Missing one active site's evidence still fails the full retained validator. This prevents the legacy solvers from accidentally adopting the finite profile's exclusions or a sitewise union. |
+| AR06 | Multiple independent sites/functions, all four global namespace materialization modes, unused original live/alias/retired slots and empty rows retain exact existing canonical outcomes. Compare by the current contract: order-independent namespace lookup where permitted, but exact ordered access arrays and exact property presence. Retain valid alias-to-retired legacy behavior separately from future strict snapshot behavior. |
+
+Do not require every out-of-profile example to pass every target-facts checker: legacy and strict target domains differ. Record precisely which actual function/allocation/full-prepared authority is invoked. Reuse existing valid fixtures for less common IR kinds. A demonstration excluded by the finite checker is useful donor preservation, not new finite capability.
+
+Add a separate one-registration `tests/issue-6920-allocation-evidence-rule-sharing.test.ts` for **AR07 actual donor bindings reach the shared descriptor**. Use a passthrough observer around the real exported `allocationEvidenceEffect`, preserving its actual return. Invoke ownership, escape and encoding separately on controlled vector instructions and assert each route really consults it; include nested vectors to show traversal remains live. Then invoke the finite leaf and observe the same original descriptor. Keep all other exports actual. This registration is candidate-only because the predecessor intentionally has no donor joins; do not mark it skipped in a baseline run or count it as a baseline equality row.
+
+Thus the initial semantic plan has **seven paired registrations** (AE28 plus AR01–AR06) on baseline/candidate, and **one candidate-only sharing registration** AR07. Original22/reuse5/carrier5 remain separate regression cohorts. Exact test names and literal manifests must be frozen by the test author and reviewed before any runtime release. Internal matrices do not inflate these denominators.
+
+### Preservation successor: exact predecessor plus reciprocal replay
+
+The three donor files still exactly match their Phase B current-source pins at this endpoint (checked by reading the retained JSON and hashing current bytes). Any donor edit will therefore need a new successor, not repinning that receipt or weakening its original mutants.
+
+Proposed new proof files:
+
+- `tests/helpers/ir-allocation-rule-sharing-successor.ts`
+- `tests/helpers/ir-allocation-rule-sharing-successor.json`
+- `tests/issue-6920-allocation-rule-sharing-preservation.test.ts`
+- one exact named-import/raw-reader composition hunk in `tests/helpers/ir-validation-analysis-relocation.ts`
+
+The new receipt authenticates the **complete five production files** listed above, before and after, including the existing shared rule module and census even though those are not Phase B donors. No whole-file executable copy of a legacy algorithm is created. Record exact named import/dispatch/comment/finite-facet-check edits as reviewed source evolution. The new joins are semantic-preserving substitutions with independent runtime obligations, not falsely described as byte-identical declaration moves.
+
+Required operation:
+
+1. Authenticate the fixed root-reviewed receipt bytes and closed schema, exact path population, lengths, SHA256 and Git blob IDs. Read every complete current source exactly once within a reconstruction invocation; do not cache a prior successful reconstruction.
+2. Verify parsed roles for the actual descriptor import and local dispatch sites: ownership call after aliasDerived seeding; exact three vector cases; event order and existing touch/markEscaped bindings; escape vector-only zero-edge guard with untouched child/backstop placement; encoding rule check in classifyInstr with outer traversal untouched; census checks all local facets before accumulation. A descriptor import that is never used is not sharing.
+3. Apply only the declared inverse edits and authenticate the complete pre-AE28 files. The three reconstructed donor hashes must join the unchanged Phase B receipt's current rows. Reconstruct exact effect-rules/census preimages too, including the carrier and site-reuse fixes; do not normalize those away.
+4. Independently replay forward from the reconstructed predecessors using the recorded exact recipes and require equality of every complete live source file. Unchanged scaffold, imports, diagnostics and trailing source remain covered. Literal source snippets in a receipt are non-executable transformation data; never eval or import reconstructed receipt text as a baseline implementation.
+5. Feed those exact predecessor sources into the existing J1/Phase B reader chain. One suitable composition is `readIrValidationAnalysisActual(path) = readBeforeIrAllocationProvenanceLookup(path, p => readBeforeIrAllocationRuleSharing(p, readIrValidationAnalysisRaw))`. The new successor acts only on its declared five paths and otherwise reads the supplied predecessor stream unchanged. For Phase B donor reads it supplies pre-AE28 bytes; J1's four-source reconstruction still executes on its unchanged domains. Preserve the old-stage injected-reader semantics so an old mutant is tested as an old-stage mutant, not magically repaired or promoted to live proof.
+6. Run the unchanged Phase B nine-original/thirteen-current/135-transfer inverse and reciprocal, and the unchanged J1 four-current/three-before successor. Original JSON bytes, trust digests, old test fixtures, mutation expectations and floors remain untouched. Changes to an original proof must not be disguised as a source pin update.
+
+The current J1 helper/receipt need **no edit** for these five source hunks. Do not add an AE28 route to them merely to make the graph look uniform. The common Phase B reader owns the actual integration. If the real source/proof audit reveals another reader requiring adaptation, stop at that named hunk and ask ROOT to assign it; do not make broad text replacements.
+
+Author **twelve new preservation registrations**, separate from the semantic and historical cohorts:
+
+| ID | Required proof control |
+| --- | --- |
+| AP01 | Complete five-source inverse and independent forward equality; predecessor donor pins join original Phase B rows. |
+| AP02 | Actual J1 then Phase B chain executes with original receipts byte-identical and all expected historical populations present. |
+| AP03 | Every current source and both historical receipts are mandatory in the complete chain; missing/wrong-path substitutions fail. |
+| AP04 | Warm-success then current-source drift fails on a fresh call; restored genuine source succeeds. No successful cache. |
+| AP05 | Ownership route/order mutations fail parsed-role diagnostics independently of outer file hashes: omit shared call, swap write/escape use, move before seeding, shadow binding. |
+| AP06 | Escape route/child/backstop and encoding traversal/no-write placement mutations cannot be hidden by inverse recipes. |
+| AP07 | Descriptor semantic mutation and dropped census facet guard fail authentication; finite profile/carrier guard cannot be erased by reconstruction. |
+| AP08 | Complete unchanged scaffold/import/diagnostic/trailing-byte changes are covered. |
+| AP09 | Closed receipt population, span bounds, duplicates/order and recipes reject malformed records; caller-supplied repins are not authority. |
+| AP10 | A structurally plausible wrong forward recipe fails independent replay rather than being accepted by its inverse alone. |
+| AP11 | Historical-stage donor mutants reach original historical assertions; supplying an already historical file cannot stand in for current live proof. |
+| AP12 | Fresh bounded capture and passthrough behavior; proof failure in the new live stage cannot be concealed by a separately supplied historical snapshot. |
+
+The source-role diagnostics need not become a generic TypeScript interpreter. Fixed whole-file/receipt authentication bounds the actual reviewed change; role checks independently reject named dangerous placements and bindings. Do not claim arbitrary semantic equivalence from spelling matches alone.
+
+### Exact predecessor pins and dependency custody
+
+Static pins read at published1e388 (these are not new passing runtime evidence):
+
+| Path | Bytes | SHA256 |
+| --- | ---: | --- |
+| `src/ir/analysis/ownership.ts` | 23654 | `9c622ef53c8c9c1ecbc1c0bc8eee907dfb00da82a5f16c89feecb0c6d918495f` |
+| `src/ir/analysis/escape.ts` | 10829 | `72d036b3565c778b29425f9c853276d67d48b13e2dfff6d38d8d4afa327e4c53` |
+| `src/ir/analysis/encoding.ts` | 10358 | `e1a4e863db13b51769904457502adcca368cf4a9d8bacf79659daaba34596c23` |
+| `src/ir/analysis/allocation-evidence/effect-rules.ts` | 5949 | `8b59082258a7422a6a7913e3af593aa98b0f2fa57b1cd3b7d9b84f799d7ca761` |
+| `src/ir/analysis/allocation-evidence/census.ts` | 9853 | `ed9b780817a6f2521b67b9b748ea9e4b6bb2328ea17539be574b7639b8c57e60` |
+| `src/ir/analysis/stack-alloc.ts` (unchanged) | 4570 | `05524070d9665dc9f56e192b734d74394098432dc7fea1a96d71897eb4e35b18` |
+| `src/ir/analysis/lattice.ts` (unchanged) | 5739 | `8814ff9b71c04e9e16760a913984aaba60f23b402a700968fd6c2a70c92fc22c` |
+| `tests/helpers/ir-validation-analysis-relocation.ts` | 18566 | `69a9f38de63cf98321189e4e2928fa04af784244faa9732961751a66a96da0f1` |
+| original Phase B JSON | 327660 | `9a52664fbba6044d168f428f9398e5d2bff923cf7cac1adc6aae04827431e969` |
+| unchanged J1 helper | 29831 | `7f818067a0ecb8963f582e232f1692af9d3ca9283b9596f42e9ab8846f1f6443` |
+| unchanged J1 JSON | 11637 | `4528c914b70535665feebbd0f93ed5d43ef0a5fbb9b4a752e056da84f89a2c7d` |
+
+ROOT must freeze the exact actual implementation predecessor anew; this table is not permission to overwrite a later legitimate change. The J2 proposal will later move type declarations from lattice/escape and shares the Phase B proof domain. Prefer sequencing this bounded join and its successor first, then have J2 reconstruct this epoch before the retained AE28/J1/Phase B chain. If ROOT chooses another order, specify an exact new composed predecessor and add a separate successor; never rebase the proof by changing original digests.
+
+Existing claims from the issue are not inferred authorization for new donor edits. **Actual root assignment/claim checks are required before executable work** for:
+
+- ownership/escape/encoding's named import and dispatch hunks;
+- effect-rules/census's named checker hunks with their current owner;
+- the new semantic test files and AE28's single original-registration hunk;
+- new successor helper/receipt/test plus the old Phase B reader import/composition hunk;
+- any issue budget allowance or policy update, if actual gates require one.
+
+No new production module is planned, so a module-count/boundary inventory change should not be necessary. Validate the actual all-reference dependency graph, including type imports/reexports/dynamic imports, and demonstrate the forbidden-edge detector on a controlled negative input. Do not edit boundary or LOC baselines to make the change pass. Genuine growth allowances belong to this issue after exact measured need and ROOT approval of the hunk.
+
+C retains the four agreed geometry paths/hunks: `src/shared/contracts/linear-memory-layout.ts`, `src/ir/analysis/contracts/linear-memory-layout.ts`, geometry parts of `src/ir/analysis/linear-memory-plan.ts`, and the issue6865 geometry tests. AE28 edits none of them. Calling the existing prepare-facts producer in tests does not confer its source custody. B's native leaves, A2's fifteen dirty files and its facts-extraction claims, generic consumer/native joins, allocation registry/contract moves, public pipeline, runtime resources and queue remain excluded.
+
+### Qualification and acceptance sequence
+
+1. ROOT adopts the appendix and confirms exact source/proof/test claims. A latest Sol implementer receives the five bounded source hunks; no new parent goal or source ownership is inferred from this planning task.
+2. Freeze the real predecessor and all source/test/proof/tool operands. Author the source and new tests, independently review the actual rules/dispatch and the genuine fixture contracts, then finalize the new proof receipt only after ROOT reviews the complete transformation and current operands.
+3. Before runtime, run authorized selected typing/format/lint plus source budgets, dependency/boundary/cycle/dead-export checks. Existing canonical architecture debt stays separately attributed. Do not regenerate original receipts or grant budgets from an unrelated issue.
+4. ROOT releases actual baseline/candidate semantic qualification: seven paired registrations, one candidate-only live-sharing registration, existing32 candidate regressions, and the new12 plus unchanged historical proof cohorts. Existing ownership/escape/encoding analysis suites are relevant donor regressions; qualify their actual collected denominators rather than importing old counts. Exact cohorts and execution order may be split into frozen windows, but none may be silently omitted or merged into a misleading total. No general/full-Test262 execution is implied by this plan.
+5. Pair exact annotation/error rows on identical operands and distinguish deliberately different shared-rule invocation counts. Every zero interval has a genuine positive on the same real binding. Close process/IPC/observer records and hash custody before source or issue edits resume. Preserve failures; no retries, kills or source changes inside a frozen window.
+6. Independently review the actual source and proof successor, run normal required commit/push hooks and current-base budgets, then publish through the existing authorized workflow. PR6599 queue decisions remain ROOT's separate task. AE28 completion requires the actual donor joins and their qualified paired/proof evidence, not merely this appendix or the existence of a descriptor.
+
+Bounded acceptance: exact canonical annotations and diagnostics are preserved on the demonstrated donor domain; each canonical pass really consumes the shared local descriptor; the finite checker still refuses all existing excluded bodies; stack and encoding absence claims have actual paired controls; original historical receipts/algorithms/custody remain intact; no legacy analysis/fallback or consumer validation is removed.
+
+### General body-derived witness remains a required later capability
+
+This slice removes the current local-rule duplication. It does not eliminate the canonical solvers or make numeric-vector inference a universal witness. A later general design must address the following concrete obligations, with actual source owners and new preservation successors:
+
+- **Complete rule domain:** every executable instruction, terminator and nested/state/support buffer must have either an audited semantic rule or a located refusal. Enumerating alloc-bearing instructions alone is insufficient. The F1 numeric carriers and same/cross-function site reuse demonstrate why “allocation == vec.new_fixed” and “site == one occurrence” are not general facts.
+- **Identity and order:** authentic owner/unit/block/occurrence/definition/use identity, exact snapshots/alias resolution and complete population joins remain prerequisites. Canonical writes are currently ordered and can overwrite the same site; blindly unioning per-site access sets changes repeated-site semantics. General witness rules must reproduce or separately, explicitly change that behavior.
+- **Ownership derivation:** seeds, imported reference defaults, CFG block-argument edges, captures/slots/if/select alias components, terminator effects, joins and worklist behavior must be proved. A certificate that merely supplies a conservative post-fixpoint is insufficient for the present exact-equality contract: forged TOP would otherwise pass. A future derivation certificate can establish reachability from canonical seeds plus complete transfer closure, but the soundness/minimality proof and its resource limits must be designed explicitly rather than presumed.
+- **Actual bounded algorithm:** current ownership has a MAX_VISITS guard and ordered worklist, followed by alias propagation. A mathematical least-fixpoint witness is not automatically equal to a canonical run that stops at its guard. Either demonstrate that the bound is never reached for the authenticated domain, refuse that case, or preserve the exact bounded behavior in a separately reviewed design. Do not silently fix its convergence policy inside a witness extraction.
+- **Escape composition:** direct classifications, severity joins, alias-derived ownership backstop and exact writeback all matter. vec.set's zero direct edge plus opaque fallback is an immediate counterexample to treating shared local edges as the final escape result.
+- **Encoding derivation:** current forward value map, literal code-unit checks, string joins, explicit evidence and identity-based provider rules require their own audited transfer authority and occurrence/order proof. An opaque supplied encoding tag is not a general body-derived proof just because consistency copies agree.
+- **Metadata and stack optimization:** complete global namespace materialization, absent versus present-undefined values, unused slots, ownership field shape and stackCandidate augmentation need exact producer-specific rules. Generic no-analysis verification must not require a namespace globally disabled by legitimate preparation, while native admission still requires its materialized evidence.
+- **Consumer authority:** only the real generic adapter may combine descriptor/context/provenance/snapshot truth with the report and choose generic fallback versus required-native refusal. Target adapters add facts/layout/resource constraints afterward. No target leaf or passed callback may grant source-body authority, and no public validation may be skipped because a small local descriptor returned recognized.
+
+Those are retained implementation obligations toward the original full migration, not grounds to rename the final goal as the finite profile. The next executable release can usefully complete AE28 while the general witness, J2/J3 composition, original seventeen other ROOT registrations, complete native resources and public equality remain explicitly unfinished.
+
+
+### ROOT-adopted AE28 efficiency addendum — metadata release before V2
+
+ROOT read and accepts the full15572-byte Astra High efficiency addendum below, SHA256 `7f35c075667d0af290b2dd912a6a9b936741b1a9f1c1cf16a25a43cc8ea7a700`. Source claim43989-lv9fr4w8 and metadata claim44305-2ijq5h0r were freshly effect-read in progress for the SAME existing owner ttraenkler/codex-sol-allocation-evidence-checker-20261009 on codex/6920-ae28-rules-20261009. This explicitly widens effect-rules.ts custody beyond the V1 comment-only hunk: private closed rule/event types and four deeply frozen static rule objects; exported allocationEvidenceRule/allocationEvidenceOperand; and the old allocationEvidenceEffect API as a fresh-materialization compatibility adapter. The same other four source files will consume the new rule binding directly, resolving operands immediately in ordered ownership/census application. No new module, policy table, cache, per-instruction storage, solver or foreign source hunk is assigned.
+
+V1 source pins, static packet, patch and diagnostic recipes remain immutable private evidence and receive no runtime/performance qualification. The real proof predecessor remains exact published1e388ef647c9827102b87e869f7526f8c928f11e, not the uncommitted V1 checkpoint. Original Phase B/J1 receipts and their obligations are retained. Before further executable edits ROOT publishes this scope and releases V2 separately; this adoption changes only this issue.
+
+The planned normal-path rule lookup/resolver policy construction is allocation-free after module initialization; whole analyses still allocate their existing maps/sets/operands/results. Runtime dispatch cost and actual efficiency are unmeasured. The compatibility adapter must retain fresh nested identities/current operands, with controls inside existing paired AR01; candidate-only AR07's title/API explicitly changes to the actual static-rule binding. Seven paired semantic, one candidate sharing and twelve successor-proof floors remain distinct, with original regression/historical cohorts unchanged. No same-speed claim, test floor inflation, source proof repin, runtime, collection, source-branch commit/push or queue action is released here.
+
+Full addendum follows unchanged.
+
+# AE28 addendum: allocation-free shared local rules
+
+Proposed by Codex GPT-6 Astra High, 2026-10-09. This narrowly supersedes the allocating-descriptor dispatch in `plan.md`; all other semantic, ownership and preservation obligations remain. ROOT must publish the issue/claim amendment before executable edits. No source, tests, receipts, Git state or shared issue were changed, and no runtime was run for this addendum.
+
+Reviewed V1 packet: `/private/tmp/js2-6920-ae28-rules-20261009/.tmp/ae28-source-review-packet.patch`, 5,872 bytes, SHA-256 `7894a760c1da6b3f4e3bb20fdd423cbc6daee8c57009c0e62abd3f34fb0af8ee`. V1 is a static-only checkpoint, not a runtime-qualified candidate. Published `1e388ef647c9827102b87e869f7526f8c928f11e` and its receipts remain immutable.
+
+## Decision and exact API
+
+Keep policy in the existing generic module `src/ir/analysis/allocation-evidence/effect-rules.ts`. Replace its rule-producing implementation with a frozen, module-initialized local-rule representation and retain the old public descriptor as a compatibility adapter. No new production file, per-instruction cache, instruction-keyed map, memoized operand, copied policy table, general solver, or visitor framework.
+
+Use these exact new function names:
+
+```ts
+allocationEvidenceRule(instr: IrInstr): AllocationEvidenceRule
+allocationEvidenceOperand(instr: IrInstr, operand: "vec" | "newValue"): IrValueId
+```
+
+Both are named exports with actual production consumers. Keep the representation types and singleton constants private unless a concrete production type import is needed; tests can use `ReturnType<typeof allocationEvidenceRule>`. Do not add test-only production exports.
+
+The private closed types are:
+
+```ts
+type OwnershipRuleEvent =
+  | { readonly op: "read" | "write"; readonly operand: "vec" }
+  | { readonly op: "escape"; readonly operand: "newValue" };
+type AllocationEvidenceRule =
+  | { readonly kind: "unsupported" }
+  | {
+      readonly kind: "effects";
+      readonly ownership: readonly OwnershipRuleEvent[];
+      readonly directEscape: readonly [];
+      readonly encoding: "no-write";
+    };
+```
+
+Create exactly four private rule objects once: `UNSUPPORTED_RULE`, `NO_LOCAL_EFFECT_RULE`, `VECTOR_READ_RULE`, `VECTOR_WRITE_RULE`. The read rule has one `(read, vec)` event; the write rule has ordered `(write, vec)`, `(escape, newValue)` events. Freeze each rule, each event, and every nested array with `Object.freeze`; `as const` alone is insufficient. Sharing frozen empty arrays is safe. Do not put an instruction, value ID, registry, closure over an invocation, or resolved operand in these objects.
+
+`allocationEvidenceRule` contains the sole recognition/policy switch. Preserve the current domain exactly: vec.get/vec.len → read; vec.set → write; binary i32.lt_u/f64.add, const, vec.new_fixed and if → no-local-effect; everything else, including other binary opcodes → unsupported. Normal lookup only reads `instr.kind` and, for binary, `instr.op`; it constructs nothing. Recognized means only these instruction-local facets are available. It is neither finite-profile admission nor a claim that arbitrary ref-valued vectors, const allocations or full CFGs need no other canonical work.
+
+`allocationEvidenceOperand` is a closed role resolver, not another instruction-effect table. For `vec`, require vec.get/vec.len/vec.set and return that instruction's current `vec`; for `newValue`, require vec.set and return its current `newValue`. Use exhaustive role handling and explicit invariant failure on a mismatched instruction/role, never a cast that silently reads undefined or a fallback ID. It performs no normal-path allocation. No exported role registry or callback protocol is needed.
+
+Resolve one event immediately before applying it. In ownership vec.set, read receiver, finish `touch(..., "write")`, then read the current newValue and call `markEscaped`. Do not collect operand IDs up front. This retains the old canonical receiver-write-before-stored-escape sequence and operand-read timing; V1's eager descriptor read of both fields is removed. Escape and encoding require no operand resolution and must not start reading vec/newValue. The static rule never caches instruction contents: repeated sites, updated instruction operands and later invocations see current values.
+
+## The same five production files
+
+1. **effect-rules.ts:** actual policy extraction plus the resolver and compatibility adapter, widening the earlier comment-only hunk. Leave `primitiveKind`, every profile guard, `profileOperands`, population checks and function exclusions byte-for-byte unchanged. The scalar allocation-carrier guard remains independent of generic rule recognition.
+2. **ownership.ts::applyInstrEffect:** named-import `allocationEvidenceRule` and `allocationEvidenceOperand` from `./allocation-evidence/effect-rules.js`. Only the three vector cases dispatch the rule. Require recognized; iterate the static ordered events with an indexed loop, resolve the current event operand, and use the existing `touch`/`markEscaped`. No broad early return, fresh event array, spread, map, iterator-producing helper or per-visit closure. Keep alias seeding, other cases, worklist/limits, joins and writeback unchanged.
+3. **escape.ts::analyzeEscape/visitInstr:** named-import `allocationEvidenceRule` from the same module. The three vector cases require recognized and the closed empty directEscape facet, without resolving ownership operands. Preserve all other cases, traversal and the ownership backstop. Unsupported generic instructions continue through their old rules; they do not acquire an empty-edge certificate.
+4. **encoding.ts::classifyInstr:** named-import that same `allocationEvidenceRule`. The proposed early local dispatch now returns an existing static object instead of allocating a descriptor on every call. Recognized no-write returns; unsupported falls through to the entire unchanged switch. Preserve outer `forEachInstrDeep`, string/provider writes, explicit evidence and presence behavior. This still adds dispatch overhead, which needs measurement below.
+5. **allocation-evidence/census.ts::applyEffects:** named-import both new functions from `./effect-rules.js`, replacing the old adapter import. Keep recognized/facet checks and all admission/census ordering. Iterate static events by index. For read/write, resolve the current operand immediately before the existing root lookup/access/count update. Continue skipping the escape event only under the already established primitive-operand/carrier exclusions, with the existing explanatory comment. It need not read the skipped stored operand again.
+
+The shared rule lookup and resolver are allocation-free on their normal paths after module initialization. The canonical analyses and finite checker as a whole still allocate maps, sets, profile operands, results and metadata as before. Do not describe the whole analysis as allocation-free. Do not change stack source/policy, C's four geometry hunks, B's native leaves, A2, consumers, J2 or native/public joins.
+
+## Public compatibility and actual usage
+
+Keep the exact exported `AllocationEvidenceEffect` type and `allocationEvidenceEffect(instr)` signature/result shape. Implement the latter by calling the real local rule and materializing its events through the same resolver, in order. Unsupported still returns a fresh `{kind:"unsupported"}`. Recognized calls each return a fresh top-level object, fresh ownership array, fresh directEscape empty array, and fresh event objects containing `{value, op}`. Never return frozen rule objects/arrays from this adapter; never retain operand values between calls. The adapter is allowed to allocate because none of the four hot consumers uses it.
+
+Do not delete this published compatibility export, redirect hot consumers through it, or add dummy calls/re-exports to manufacture production reachability. Its genuine existing use is the AR01 descriptor assertion in `tests/issue-6920-allocation-evidence-rule-regressions.test.ts`. The inspected `check:dead-exports` script roots source outside src/codegen and its old unreferenced-function ratchet is described for codegen; it is not evidence that this compatibility API has a production caller. Keep that distinction explicit, without baseline edits or exemptions. Any different gate failure needs its actual diagnostic reviewed, not an invented consumer.
+
+Add baseline-neutral fresh-result/current-operand checks within AR01's existing registration before freezing the paired manifests: call the actual adapter twice, require equal content but distinct nested identities, then exercise a distinct genuine store (or an isolated adapter-only instruction clone with different operand IDs) and verify new values without altering analyzed fixtures. Include unsupported/no-local-effect freshness. These are compatibility checks within the same seven registrations, not additional migration or performance proof. Keep original canonical semantic matrices and expected results unchanged.
+
+## AR07: observe the real hot binding
+
+Explicitly replace AR07's existing `allocationEvidenceEffect` observer with a passthrough module mock of the named `allocationEvidenceRule` export. Use importOriginal, call `actual.allocationEvidenceRule(instr)` exactly once, record its actual instruction/result identity and route, and return that exact result. Leave other exports actual. All three canonical donor files and census must directly import this same exported binding. Do not spy on the compatibility wrapper and infer internal calls: ESM lexical calls within effect-rules.ts do not pass through a mocked namespace export.
+
+Keep the genuine ownership/escape/encoding/leaf invocations, nested vectors, independent expected metadata and input-preservation controls already planned. Require each route to observe the actual vector instructions and equal shared rule identities for matching rules, including canonical-to-leaf identity. Assert deep frozen static results/events/arrays, exact role/op order and unsupported/no-write distinctions. A separate wrapper around the real compatibility adapter may count calls and require zero during the four hot routes; its counter needs a positive control from a genuine direct adapter call followed by reset. It must never supply a synthetic result or alter a rule.
+
+Within this same candidate-only registration, resolve a rule against two actual store instructions with differing operands and assert the corresponding current IDs; use getter-backed isolated operands if testing read order, clearly labeled as an API ordering control rather than a valid-IR theorem. Canonical semantic preservation remains established by the seven paired cases. Do not require the compatibility adapter's module-internal calls to trigger the exported-rule spy, and do not install mutable production instrumentation for this test.
+
+Counts remain seven paired semantic registrations, one candidate-only AR07, twelve successor proof controls, plus unchanged separately labeled historical cohorts. AR07's title/manifest must now say static rule binding. Test author must freeze the final literal manifests before ROOT releases runtime.
+
+## Exact proof custody and execution boundary
+
+Retain the original AE28 donor/predecessor reconstruction strategy. Authenticate five complete source preimages from the actual adopted pre-AE28 branch endpoint and five final candidate files; do not treat uncommitted V1 as the historical donor or first execute it just to manufacture a baseline. The effect-rules recipe now covers real policy extraction and compatibility, including constants/types/helpers; the other four recipes record imports and exact call-site substitutions. Update the new successor's bounded recipe and twelve controls to cover this actual enlarged five-file delta.
+
+Replay inverse edits to reconstruct the full true predecessor bytes, and forward edits to reconstruct exact final candidate bytes. Require exact hashes/populations/recipe consumption and mismatch rejection. The reconstructed ownership/escape/encoding donors must still join the actual original Phase B current-source pins. Preserve the original Phase B and J1 receipts, original reader obligations, reciprocal tests and earlier mutation populations; no repins, copied canonical algorithms, weakened mutants, or new unreviewed helper exports. Original full preimages and new proof12 are not replaced by static rule identity checks. ROOT must check any intervening source epoch and publish the widened five-hunk ownership before Sol resumes edits.
+
+## Bounded baseline/candidate performance evidence
+
+After the final candidate and test manifests are frozen and ROOT explicitly releases the runtime cohort, measure the actual pre-AE28 baseline against this candidate using the same pinned Node/runtime, flags, machine, fixture bytes and measurement script. V1 has no runtime/performance qualification. Keep any measurement script/raw outputs in ROOT's private evidence lane; no benchmark product/framework or noisy CI threshold is part of this change.
+
+Use genuine builder-created functions and real canonical passes with fresh equivalent registries for every measured invocation. At minimum cover (a) vector read/write/len-heavy functions, including nested arms, (b) mixed generic encoding traversal with strings and unsupported local-rule kinds, so the new every-instruction dispatch cost is visible, and (c) the admitted finite census over genuine canonical snapshots. Include both a small function and a bounded larger instruction population. Build fixtures/snapshots outside the timed region; keep unavoidable per-invocation registry construction equally inside or equally outside for both versions and state which. Never reuse a previously annotated registry as the candidate's shortcut.
+
+Before/after timing, assert exact independent ownership/access/escape outcomes and encoding namespace presence/results. Consume actual result/snapshot fields into a reported checksum and validate that checksum against the untimed semantic controls, so timing cannot become an unused no-op or a fake-output test. Disable passthrough observers for timing; validate binding liveness separately through AR07. Record source/test/script hashes, instruction/site/iteration counts, registry boundary, warmups, samples and process conditions.
+
+Use a predeclared modest fixed warmup and iteration count for each paired row, enough to exceed timer granularity; alternate baseline/candidate order across a small fixed sample count (for example five paired samples). Report every sample, median/range, absolute time and relative difference. If Node allocation/GC observations are collected, report their method and limitations; heap-size deltas/RSS alone do not prove allocation counts. Static source plus frozen-identity controls establish removal of per-call rule descriptor construction; wall-clock evidence only establishes the measured bounded workloads. Do not invent a strict percentage threshold, select only favorable samples, or claim equal speed without measurement. A material repeatable regression returns to ROOT for a focused decision; this addendum does not authorize architecture expansion or dropping difficult rows.
+
+Acceptance wording before measurements: **shared static local policy avoids the newly introduced per-visit descriptor allocations; runtime cost is unmeasured**. After actual evidence, report the observed bounded costs honestly. Neither outcome claims general body-derived witness completion or shrinks the original migration goal.
+
+
+### PR6599 protected delivery and V2 predecessor precision
+
+ROOT published widened AE28 V2 source scope before executable edits in sharedcomment6073242379. Actual PR6599 “feat(ir): verify allocation evidence with preserved provenance” is delivered as protected merge58994f7b4d2cbc1a239b8fb0c0e3f39644066489, exact parents e610189829ad1554b813d6ca224515666b0e2d28 and1e388ef647c9827102b87e869f7526f8c928f11e; published/group trees both359d61ac76fec435ebe2b34067d6818f2ef74e6e. Current canonical main7fc2b700eb320e18db213f286350fd1bd56982ef is its direct-parent successor, changing twelve metadata/report/budget/example files and no candidate source/test/proof path. This verifies bounded checker/carrier content delivery, not native/public/general admission or epic completion.
+
+All102 actual Test262 shards succeeded (20host/82standalone), each lane48735 registered verdicts. Six actual required group checks and the differential succeeded. Host39700pass/8596fail/314compile_error/11compile_timeout/114skip matches48735 baseline, zero regressions/exclusions. Standalone42224pass versus42225 mark (42175floor), one compile-timeout flake excluded, zero Wasm-change regressions/net0. Exact e610 cache was absent; compatible source baseline d2beec5 was distance1 overall and zero Test262-relevant commits behind e610. No fabricated exact-base hit or full-CI-green claim: group CI was cancelled after delivery and eight broad issue shards cancelled.
+
+Separate postmerge failures remain retained: shard2job113641013249 JS heap OOM/ERR_IPC_CHANNEL_CLOSED(exit2); npm-compat acornjob113641090132 runtime-eval provider build lacked a usable compiler;24npm measurement jobs and refresh-fast aggregate failed, aggregate count exit1 with no partial reports. Raw252check/120job records and gate logs remain in `/private/tmp/js2-6599-delivery-shepherd-20261009/`, summarized by `delivery-final.md`; no retry/cancellation by shepherd. These failures are not relabeled green.
+
+AE28 source baseline/proof preimages remain exact1e388. V1 has no runtime/measurement qualification. V2's source is compatible with delivered7fc; normal current-main integration follows proof/static/paired qualification before final publication, never during a frozen runtime window. Root owns that later merge and all source acceptance/queue decisions.
+
+
+### AE28 V2 root source and semantic-control review — 2026-10-09
+
+Canonical metadata claim44305-2ijq5h0r was independently read at issue-assignments tip df160ab7aedb5fbf11b69f9f8990dc784cc5ee0c: existing checker owner ttraenkler/codex-sol-allocation-evidence-checker-20261009, in-progress, branch codex/6920-ae28-rules-20261009. No foreign claim or source scope changed.
+
+ROOT read the full actual five-source delta and final AR01 compatibility/AR07 static-binding controls. An independent byte-level check verified all five published1e388 predecessor and current full-file hashes, every exact edit span, inverse recovery of complete predecessor bytes and separate forward reconstruction of complete current bytes. All three semantic test pins and their unchanged source/proof/fixture operands matched the final packet. Source review accepts the bounded five-file static-rule change for preservation-proof authoring; it does not establish runtime correctness or performance.
+
+Final source packet `.tmp/ae28-v2-source-review-packet.json`: 15253 bytes, SHA25671de6ba40d46acfe32b3b1bacc06e1e14162542ba41d2117eb3fa8f3b0d83592. Exact transforms `.tmp/ae28-v2-source-transforms.json`: 14509 bytes, SHA256730d5850645699c1e5b09503e0d4de7e015cf95b192229856edbfcd220f10fc5. Semantic packet `.tmp/ae28-semantic-tests-review/authorship-packet.v2.json`: 13227 bytes, SHA2561cabf5e26b5703ee62de9c6f19cd13eb58ce8dbf0daac3dc263876d50df93509. Source/test selected TS7, lint and formatting exited0; source budgets, import cycles, inventory validity and parser closure exited0. Architecture completeness remains false; no waiver or full-architecture claim.
+
+The seven paired registrations and one candidate-only AR07 are authored, not executed. Twelve new preservation controls are now authorized for authoring under actual58644-15pxldcw, solely new rule-sharing helper/receipt/suite plus the old default-reader import/composition. Original Phase B and J1 receipts and injected historical-reader contracts stay unchanged. Frozen runtime qualification and bounded genuine performance measurement remain pending independent review of that successor. No runtime, speed, complete native admission, general witness, solver-skip or legacy-retirement claim follows.
+
+Coordination acknowledgment6073415611 records C's geometry boundary dependency and exact published PR states: #6600 OPEN/unmerged at e5b67e2d2ddb92cc2ccd039a5677f476a78bf93f; it merged canonical7fc into its branch, not delivery to main. Old boundaries.patch alone does not clear ten missing-module diagnostics. Astra is reviewing exact files/layer/target and foundation rows against the actual checker before A claims/implements policy. #6598 remains HOLD at16fa30957a267a96358ce6e44f9d5f3e56c8b59a; quality/equivalence pass and actual issue shard4/job113625763446 remains running at this read. Neither event is credited as canonical delivery.
+
+
+### AE28 successor proof pre-activation defect — 2026-10-09
+
+Independent Astra static review and ROOT's full actual helper read found a genuine-positive parser mismatch: descriptorRoles uses props on allocationEvidenceEffect's final returned object, but props accepts only PropertyAssignment; the frozen accepted source returns shorthand ownership (ShorthandPropertyAssignment). Thus the source-role positive will reject actual accepted production before any mutation control once trust is activated. No proof runtime has executed and the fixed receipt authority remains0/UNREVIEWED; this finding is not a measured runtime failure.
+
+Track repair in this existing issue: narrowly authenticate the actual compatibility object's ownership shorthand and exact local binding without relaxing the four static-rule object parser or altering the production source/receipts/fixtures. Await Astra's complete independent review and concrete helper/test-only amendment before author edits or trust activation. Preserve the initial authoring packet and static failures. Original Phase B/J1 custody and all existing denominators remain unchanged.
+
+
+### Private measurement envelope review before execution
+
+ROOT read the full proposed qualification plan, genuine six-workload measurement source, deterministic checkout-independent identity factory, native TypeScript resolver and process driver. No collection, body or measurement was released. A concrete process-custody defect is tracked here: the driver's spawn error listener rejects before close, allowing the outer failure path to finish before child closure and descriptor cleanup. The author is released only to repair the private envelope so error records are retained and settlement/failure occurs after close; preserve the initial draft, fixed workloads/iterations/sample order, and refresh static packet pins. This implements the adopted always-await-closure obligation; it does not change production, tests, proof authority, receipts or fixture inputs. Any spawn/import/fixture failure remains raw failure, never a fallback or retry. AP12 and final proof pins remain explicit freeze preconditions.
+
+
+### Adopted Astra compatibility-proof repair plan
+
+ROOT read the full independent review and repair plan below and adopts its exact two-file amendment before implementation. Only the compatibility inspector in the new successor helper and AP07's existing matrix are released; strict static props, receipt bytes, five production files, semantic suites, old/J1 receipts and common reader stay unchanged. Existing proof claim58644 retains ownership. Fixed live authority remains0/UNREVIEWED until ROOT separately reviews the repaired files. The private performance driver's error-then-close repair was also read; only its narrow process-settlement change is accepted, not runtime qualification or performance evidence. Preserve all prior packets/drafts/failures and twelve literal proof registrations.
+
+# AE28 successor proof review — hold trust activation
+
+Codex GPT-6 Astra High, 2026-10-09. Independent read-only review of the final authoring packet at `/private/tmp/js2-6920-ae28-rules-20261009/.tmp/ae28-preservation-authoring/review-packet.json`: 19,794 bytes, SHA-256 `fa4c97370a9ef158ea2c30266845e57f0f69f7f35745615208b9f7cbca61ded1`.
+
+**Recommendation: do not activate the two receipt trust literals yet.** The complete byte reconstruction and historical custody are sound at the reviewed checkpoint, but the compatibility-role diagnostic rejects genuine current source and incompletely checks the adapter's required data flow. Repair only the new helper's compatibility inspection and AP07 mutation matrix, then obtain ROOT's final review and normal runtime release. No production, original receipt, J1 helper, reader-composition or semantic-test change is needed.
+
+The adopted 37,610-byte plan (`72e41c5a…d3644`), 15,572-byte efficiency addendum (`7f35c075…a700`) and private preservation preparation/role delta were reviewed. This task executed only independent byte/hash reconstruction and TypeScript syntax-tree inspection of text. It did not import or execute the authored helper, collect/run tests, create a TypeScript Program, execute compiler bodies, activate trust, edit repository files, mutate claims/Git, or post comments. Findings below are source/AST conclusions, not runtime observations.
+
+## Findings requiring repair
+
+### F1 — P1: genuine compatibility return is rejected
+
+In `tests/helpers/ir-allocation-rule-sharing-successor.ts`, `props()` at lines544–550 requires every object member to be a `PropertyAssignment`. `descriptorRoles()` at lines725–728 applies it to the actual `allocationEvidenceEffect` return. The frozen production source at `src/ir/analysis/allocation-evidence/effect-rules.ts:100` is:
+
+```ts
+return { kind: "effects", ownership, directEscape: [], encoding: rule.encoding };
+```
+
+`ownership` is a TypeScript `ShorthandPropertyAssignment`, not a `PropertyAssignment`. Independent parsing confirmed zero syntax diagnostics and this exact node kind. Therefore genuine source reaches `parsed role static direct properties` failure. Once the fixed receipt becomes active, all new AP positives invoking reconstruction and the default historical composition that reaches these donors will fail. The current deliberate `UNREVIEWED` rejection simply occurs earlier; it does not cure this defect.
+
+**Fix:** preserve `props()`'s strict shape for frozen static rules/events. Give the compatibility result a dedicated, narrow AST check accepting the actual shorthand and authenticating its binding to the fresh local `ownership` array. Do not rewrite accepted production source into a longer explicit property just to satisfy the proof, and do not broadly permit shorthand, spreads or arbitrary property forms in static policy objects.
+
+### F2 — P2: compatibility role checks can accept discarded events or wrong projections
+
+The compatibility portion of `descriptorRoles()` at lines708–728 checks the presence of a fresh local array, one resolver call, a final object with four property keys, and fresh `directEscape: []`. It does not authenticate the array that is returned, the actual `ownership.push` operation, the pushed `value/op` projection, the final kind/encoding bindings, or the fresh unsupported branch.
+
+Concrete counterexample: change only the final return to:
+
+```ts
+return { kind: "effects", ownership: [], directEscape: [], encoding: rule.encoding };
+```
+
+This discards every constructed ownership event. It also changes the problematic shorthand into a `PropertyAssignment`, so the current `props()` accepts it. The fresh array declaration and resolver call remain present, all four keys match, and the sole checked final value (`directEscape`) remains `[]`; the inspected role predicates no longer reject this corrupted adapter. Independent AST inspection verified those object shapes. Similarly, `ownership.unshift(...)` instead of `push(...)` reverses two-event order while leaving the currently observed resolver and loop checks unchanged.
+
+This is **not a bypass of live source authentication**: the fixed complete-file pins reject either changed file. It is a defect in the independently claimed semantic-role diagnostic and its AP07 controls, which the adopted plan requires in addition to whole-file hashing. Current AP07 only replaces the local array initializer with `rule.ownership`; that does not test whether the correctly initialized array is actually populated and returned.
+
+**Fix:** authenticate the bounded adapter data flow below and extend AP07's existing registration with actual changed-source negatives. Do not respond by changing receipt pins, disabling the role check, or describing a full-file digest failure as independent semantic-role rejection.
+
+## Narrow implementation-plan amendment
+
+Authorize exactly the compatibility portion of `descriptorRoles()` (or one private compatibility-only helper it calls) and new AP07 cases in `tests/issue-6920-allocation-rule-sharing-preservation.test.ts`. Static `props()`, generic proof/replay logic, all five source files, original receipts/J1 and the common-reader hunk stay unchanged. Avoid a new parser framework or general scope/semantic analyzer.
+
+Require the actual five top-level adapter statements in order:
+
+1. One const declaration `rule = allocationEvidenceRule(instr)`, with the existing sole `instr` parameter and no substitute rule binding.
+2. `if (rule.kind === "unsupported") return { kind: "unsupported" };`: no alternate branch; a fresh object expression containing exactly that literal field. Returning `UNSUPPORTED_RULE`, changing the condition, or manufacturing extra fields must fail this role diagnostic.
+3. One const `ownership` initialized with an empty array expression. This is the array used by both the event application and final shorthand.
+4. The existing indexed event loop. Preserve its seed/condition/increment checks. Its body must contain the current `event = rule.ownership[index]!` declaration followed by exactly the actual push operation. Authenticate receiver/method `ownership.push`, one fresh object argument, exactly `{ value: allocationEvidenceOperand(instr, event.operand), op: event.op }`, in that order. Reject missing/extra push, discarded object construction, unshift, wrong value/operand, wrong op and reuse of a static event object. The current instruction and event bindings must be those declared in this capsule.
+5. A fresh returned object with exactly four members: literal `kind: "effects"`; the actual `ownership` shorthand bound to statement3; fresh empty `directEscape: []`; and `encoding: rule.encoding`. Do not accept `ownership: []` or an unrelated identifier simply because the field key exists. Keep the static object utility strict and inspect this result separately.
+
+These checks can use the existing TypeScript AST utilities and precise expression checks, consistent with the rest of this finite proof. No runtime evaluation of captured source is appropriate. The public exported type/signature and unchanged finite-profile code remain covered by complete source pins and reciprocal reconstruction; this repair does not expand into a general proof of all possible TypeScript programs.
+
+Extend AP07's existing matrix, retaining its genuine unchanged-source positive before each altered-source assertion and its distinct live-hash rejection. Include at least:
+
+- Actual final `ownership` shorthand replaced by `ownership: []`.
+- `ownership.push` changed to `ownership.unshift` (meaningful order corruption), and a discarded push/object result control if needed to distinguish mere resolver presence.
+- Pushed op changed from `event.op` to literal `"read"`, and resolver operand changed from `event.operand` to `"vec"` (wrong stored-value selection).
+- Fresh unsupported result replaced with `UNSUPPORTED_RULE`, plus inverted unsupported condition.
+- Final kind changed, final encoding replaced with an unrelated expression, and fresh directEscape replaced with `rule.directEscape`.
+
+Use `replaceOnce` or an equally exact change assertion. Each matrix row must prove that the direct role diagnostic rejects with the role-stage prefix, independently of the live complete-file digest. Keep the genuine current-source positive; do not substitute a fabricated passing adapter or change the production return. Preserve twelve literal AP registrations and all existing historical/semantic denominators. No new test suite or source scope is necessary.
+
+## What the review verified
+
+- Reviewed helper: 36,739 bytes / `cf6e4cca0908e5fc3e37be197eace0d88554da849cc1e0e9781cd5812ee8c7f1`; new receipt: 45,797 / `7b947e08fab9d09418b3431f0f638f2f8e0278cc5af40ac1d979d7ed2064d8b2`; AP suite: 23,696 / `afcfea579fc51dae82d4bb6bc99d1b31fe575e9bd1d7363e80292a020e953a52`; common reader: 18,730 / `21d909a664c3e0dcd99e52b13c2185d376f8c1fabedb58a2d80b08556a9aca3d`. All four actual files match the packet.
+- All five actual current files match all recorded byte/SHA-256/Git-blob pins. Each true predecessor was independently read from Git commit `1e388ef647c9827102b87e869f7526f8c928f11e` with lazy fetching disabled; all five complete bytes match the receipt. No V1 source is substituted as baseline.
+- Independently applied all 17 inverse and all 17 separately recorded forward steps as data. Each exact source span, expected text, replacement pin, byte boundary, order and full reconstructed output matched. The programs reconstruct the actual opposite files, including unchanged scaffold/trailing bytes. No captured source was compiled or executed.
+- All three reconstructed canonical donors match the original Phase B current-source records across byte count, SHA-256 and Git blob. All 26 immutable packet operands and all four live anchors match. Original Phase B JSON and J1 JSON/helper remain unchanged.
+- The common reader's two inverse steps reconstruct the complete actual 1e predecessor. Its only change is the named successor import and default composition `J1(path, requested => AE28(requested, raw))`. The old APIs that accept supplied historical readers retain their old implementations and do not wrap those readers in AE28. No circular helper import was introduced.
+- Fixed live authentication uses private `receiptBytes/receiptSha256` before JSON/schema/reconstruction. They remain `0/UNREVIEWED`, correctly prohibiting authority now. Caller-repinned drafts have separate diagnostic APIs and cannot select live authority. The authenticated receipt is deeply frozen; whole-file pins bind complete current/predecessor/anchor files.
+- The live successful reconstruction path reads exactly the new receipt, five current files and four anchors freshly through the supplied reader. No success cache or hidden filesystem anchor substitution appears. Unknown-path passthrough calls its supplied reader without pretending to authenticate a chain.
+- AP01–12 are twelve distinct literal registrations, matching the frozen manifest; their bodies contain genuine positive and nonempty assertion/mutation paths. They are not collected/executed results. AP03 covers mandatory dependencies; AP04 warm-drift capture; AP08 full scaffolds; AP09 draft repins; AP11 historical-stage isolation; AP12 fresh ten-read capture and composed-versus-historical separation. AP05–07 are bounded syntactic role diagnostics, not a general semantic equivalence solver. Beyond the compatibility defects above, full fixed-source authentication remains the complete-byte protection.
+- AP10 uses a forward-only, same-length changed comment payload, not an inverse mutation disguised as a forward test. Independent byte assembly produced an 8,002-byte effect-rules file with SHA-256 `977d2a23c5e8894c270bff2b27b8abc0369663cfc078a766a3dd45b2c8d7c776` instead of current `56a0a59536d0d12760fc7dc93fae032669b87eb4a741d089847d00d26f30b18d`. Only “Shared” → “Mutant” in the comment differs; the inverse recipe remains unchanged. After F1 repair, the test is correctly arranged to pass closed draft structure and exact inverse, then reach the independent replayed-current-pin failure. This stage outcome has not been executed in this review.
+
+Private reproducible review records: `/private/tmp/js2-6920-ae28-proof-byte-review-20261009.json` and `/private/tmp/js2-6920-ae28-proof-ast-review-20261009.json`. They contain independent byte/AST observations only, not authored-helper results.
+
+## Acceptance after repair
+
+ROOT should adopt the narrow two-file proof repair before the author resumes. Keep the new receipt's bytes and all five source/current/predecessor pins unchanged; no source change is needed to repair this helper. Regenerate the authoring packet's helper/test/patch hashes and preserve the earlier failed-review packet. Verify the common reader, original receipts/J1, production and semantic-test seals are unchanged.
+
+After reviewing the repaired helper and AP07, ROOT may approve the two-literal trust activation against the unchanged exact 45,797-byte receipt digest. Preserve a separately pinned helper before/after that activation, with no other changes hidden in the trust edit. Only then release the actual new12 and unchanged historical/J1/source-semantic cohorts under the already assigned custody and runtime plan. Confirm AP07 genuine positives and all new role mutants, AP10's intended forward-only failure, and the old supplied-reader controls through real execution; do not infer their passage from TS7/lint/format success or this source review.
+
+No performance, native/public equality, JS-host support, general witness completion, migration completion or queue acceptance follows from proof authoring or this review. ROOT retains those separate decisions.
+
+
+### ROOT repaired-proof acceptance and exact trust release
+
+ROOT read the complete compatibility/AP07 repair patch and independently checked its two current file pins, all33 immutable operands, exact helper prefix/suffix outside the compatibility inspector, unchanged static props, and all17 inverse/17 forward data programs against actual published1e Git source and current full files. The repaired inspector authenticates the genuine five-statement adapter, fresh unsupported branch, current event push/value-op order and actual ownership shorthand; ten new AP07 mutants retain all12 literal registrations. No authored proof runtime has yet executed.
+
+Accept repaired unactivated helper40107B/SHA6e3c76f8dacbdf801241bbc3082a9c854100e3be73627e827ed737fecdc7e13c and suite25673B/SHAd51bfb82c82a3bf748019c00adee19b0745816b866ee1e806c5d46d39b52339e for exactly two-literal trust activation: receiptBytes=45797 and receiptSha256=7b947e08fab9d09418b3431f0f638f2f8e0278cc5af40ac1d979d7ed2064d8b2, the independently reviewed unchanged receipt. Preserve before/after helper pins and assert no other byte change. This releases activation and subsequent final private qualification inputs, not runtime bodies or performance until the final freeze is reviewed. Original receipts, reader, production, semantic suites and fixture bytes stay fixed.
+
+
+### Exact activated helper and qualification freeze boundary
+
+The two-literal activation completed under freshly effect-read own claim58644. ROOT independently compared the entire unactivated40107B helper with actual activated40165B helper and verified the only changes are the approved receipt byte count and digest. Activated helper SHA256b799ad4d8cd52819a21db12c36b7347c4fb8226b87c175f87135094091c848dc. Receipt45797B/7b947e08fab9d09418b3431f0f638f2f8e0278cc5af40ac1d979d7ed2064d8b2, reader18730B/21d909a664c3e0dcd99e52b13c2185d376f8c1fabedb58a2d80b08556a9aca3d and suite25673B/d51bfb82c82a3bf748019c00adee19b0745816b866ee1e806c5d46d39b52339e remain exact. No helper, collection, test body or performance executed yet.
+
+The qualification owner may now finish the detached actual1e baseline, exact portable test copies and final private source-derived contracts/four proof pins, then capture freeze DATA for ROOT review. Runtime release remains separate. ROOT will preserve this issue and all source/test/proof/config operands unchanged through the released window until its seal; queue/coordination evidence can continue in separate lanes. All23 proposed qualification cells retain their actual497 registration occurrences and separate denominators. Performance requires successful real qualification and a further explicit release, not merely the activated digest.
+
+
+## 2026-10-09 closed qualification and adopted AP08 amendment
+
+Canonical metadata claim44305 and proof claim58644 were read back before this append. The finite original qualification window is sealed: 23 cells,497 executed,496 passed,1 AP08 selector failure,0 skipped/instrument faults/custody drift; all observed workers closed. Original final receipt83693 bytes SHA16ee40d55e85daba1175f547e6428a8079f08cc286b5968bd9bd379334d84a4b and seal1158339 bytes SHAeccdb2dd87aed537374dfc9cf1f1fff3f72d8508d6de9544773de5298f65fd03 remain unchanged under .tmp/ae28-qualification-prep. ROOT independently authenticated all48 referenced collection/body/input/seal artifacts. The original failure remains a failure.
+
+ROOT adopts the full Astra amendment below and releases only the existing proof-owner AP08 tuple edit. Source/helpers/receipt/reader and other tests stay unchanged. No performance authorization yet. Successor AP12 execution and honest source-compatible association with the original22 passing cells require a separately reviewed execution contract; no retcon of the failed original epoch.
+
+# AE28 AP08 selector repair — private implementation amendment
+
+Codex GPT-6 Astra High, 2026-10-09. Read-only planning during the frozen qualification window. **Do not implement until ROOT seals that window, adopts this amendment in issue6920 and releases the existing proof-suite owner.** No repository, source, test, receipt, issue, claim or Git edits were made; no authored helper/test was executed, rerun or interrupted. The other qualification cells continue unchanged and performance remains held.
+
+## Actual failure and cause
+
+Read the candidate-AP12 CLI and verified IPC records under `/private/tmp/js2-6920-ae28-rules-20261009/.tmp/ae28-qualification-prep/candidate-AP12/`. Both report twelve executed, eleven passed, one failed, zero skipped; the verified record has `custodyEqual:true`, empty instrument/IPC/observer fault arrays and closed worker records. The failing row is AP08 at test line460. Its assertion expects `/complete source pin/` but receives:
+
+```text
+mutation span missing or repeated: return uncovered("nonroot-receiver", at)
+```
+
+This is a mutation-selector defect before the intended live-source hash check. In the actual frozen census, the selected substring appears twice: once in `checkOperands` and once in `applyEffects`. The existing `replaceOnce` correctly refuses to choose between them. Keep that guard unchanged; do not use replaceAll, silently select the first occurrence or accept its error as a passing preservation control.
+
+Frozen census: 10,151 bytes / SHA-256 `fe5f001a13c82b4bbecc6c17143a102ba0f0d90202f9a1fcd44d0cebe8d2774f`. Frozen AP suite: 25,673 bytes / `d51bfb82c82a3bf748019c00adee19b0745816b866ee1e806c5d46d39b52339e`.
+
+## Exact test-only hunk
+
+Only replace AP08's census tuple in `tests/issue-6920-allocation-rule-sharing-preservation.test.ts`:
+
+```diff
+-      [censusPath, 'return uncovered("nonroot-receiver", at)', 'return uncovered("instruction-kind", at)'],
++      [
++        censusPath,
++        '    const root = state.roots.get(value);\n    if (!root) return uncovered("nonroot-receiver", at);',
++        '    const root = state.roots.get(value);\n    if (!root) return uncovered("instruction-kind", at);',
++      ],
+```
+
+The explicit two-line anchor is the actual `applyEffects` receiver lookup/refusal at census lines131–132. `checkOperands` instead uses `state.roots.get(operand.value)`, so it is excluded without inventing a new selector API. The only changed mutant source token remains the intended diagnostic string; the lookup, control flow, source length and all other bytes are retained.
+
+Independent text inspection established:
+
+- Old unanchored selector: **2** occurrences.
+- Proposed full anchor: **1** occurrence; replacement anchor: **0** before mutation.
+- Constructed private in-memory mutant: 10,151 bytes / SHA-256 `f1006524035fc1199978a6bdd30bfef4550a5cecc6304bca8b06acf84493c783`.
+- Reversing that unique replacement exactly restores the original bytes; the other `nonroot-receiver` return remains unchanged.
+
+These are text/hash observations, not a run of the proof helper or suite. The existing `replaceOnce` enforces actual uniqueness again during the repaired test. Preserve AP08's `positive()` call: it authenticates the genuine unchanged five-source input before any mutation. Preserve the same `changed(path, mutation)` supplied-reader route and the exact existing `/complete source pin/` assertion. Expected rejection remains the current complete-file pin for `src/ir/analysis/allocation-evidence/census.ts`; do not switch to a role-only, recipe, generic exception or mutation-helper failure matcher.
+
+## Custody and acceptance
+
+Keep twelve literal registrations and every other AP08 row/negative unchanged. No production file, new receipt, helper trust literal, original historical receipt/reader, semantic test, assertion-helper semantics or expected source pin changes. This repairs a test's ability to construct its intended mutant; it does not change runtime behavior or rehabilitate the first failed result.
+
+After the current window is sealed, ROOT should retain its complete failed receipts and full original input seal, append this narrowly assigned repair to issue6920, and let the current proof-suite owner make only the tuple edit. Record a new test hash and successor qualification seal; the old 18,352-input window must not be rewritten. The unchanged helper/receipt/production hashes must still match. Run normal static formatting/typing requirements and the ROOT-approved successor AP12 execution; require actual twelve collected/executed, twelve passing, zero skipped/instrument faults, and the unchanged `/complete source pin/` check reached by the intended changed census bytes. No rerun or worker termination is authorized by this planning artifact.
+
+Evidence pins retained here: `body-verified.json` 21,360 bytes / `42e3bf46fea2b32a4290621acf5c5de7b63836d240bff8a7ef01ed0b36fa3f4c`; `body.json` 7,221 / `51cdf7973e5b799dcc932eff1d61b099c20a1abcbb04088bfb510e98c6546739`; `body.stdout.log` 3,122 / `b1364b0bb323efe0629da95f72178f3c31c22e8012aca199df9b815dd755d9f0`; `body.stderr.log` 1,050 / `5057f22f4243e2215de66bdb50ca351bfb6210dbbfa586c6db504e223ee9d4d0`.
+
+AP07's reported ten compatibility mutants passing and the genuine baseline-entry positive remain separate results. Neither this amendment nor a future repaired AP12 result establishes performance parity, general witness completion, native/public equality, JS-host IR support or full migration completion.
+
+
+
+### AP08 implementation review and static validation
+
+Sol6.1 High implemented the exact adopted tuple. ROOT independently replayed the complete old suite to the new suite using only that replacement and authenticated all34 unchanged production/helper/receipt/reader/other-test pins. Twelve registrations, positive control, replaceOnce and complete source pin matcher are unchanged. Suite25822 bytes SHA b8550b1f12aa85592a365e0566f2fa4822073e47af4984ee9908087f9b99662e; exact patch953 bytes SHA0fb0fefa4424d9c1aa6735d8d8e8c06e7af72fab1dc84fc10a3e24dad7bb9f09. Normal selected TS7 and Prettier checks exit0. Worker report10006 bytes SHA3823b146742781a6a5e42bc98a6dce4cd2c77d28fca7239b9cf60ad05b72100c lives under .tmp/ae28-ap08-selector-repair-20261009; its original suite and pre-edit pins are retained. Original309 sealed artifacts remain unchanged. This is test-authoring/static acceptance only: successor twelve-control runtime and performance are not yet run or accepted.
+
+
+## Adopted Astra successor qualification execution amendment
+
+ROOT read and adopts the full plan below. Private envelope preparation only is released first, followed by independently reviewed fresh AP12 execution; performance remains held. Coordination audit6074098309 publishes current B head checks, exact missing durable CI archive and current-main refresh request while retaining foreign holds/claims. No source scope is transferred by that request. Original failures and full scope retained.
+
+# AE28 AP08 successor qualification — narrow execution amendment
+
+Astra High, 2026-10-09. Private planning only. ROOT adopts/releases the work. No repository edit, authored-helper/test execution, runtime probe, Git mutation or performance run was performed for this plan. The approved AP08 repair is already complete; do not expand it.
+
+## 1. Exact transition and retained evidence
+
+Q0 is `/private/tmp/js2-6920-ae28-rules-20261009/.tmp/ae28-qualification-prep`. Retain every file and the actual sealed failure: 23 cells / 497 occurrences / 496 pass / one AP08 fail, zero faults/drift and all processes closed. Its 22 other cells contain 485 passing occurrences. Do not separately reuse the eleven passing AP12 rows.
+
+Independent review anchors:
+
+| Q0 artifact | Bytes | SHA256 |
+|---|---:|---|
+| `freeze.json` | 3988382 | `da09f17145a6ced001178cb3ebf7e63f4ee2913ce8c2c1bea8a87ce99d990f3b` |
+| `qualification-seal.json` | 1158339 | `eccdb2dd87aed537374dfc9cf1f1fff3f72d8508d6de9544773de5298f65fd03` |
+| `qualification-final-receipt.json` | 83693 | `16ee40d55e85daba1175f547e6428a8079f08cc286b5968bd9bd379334d84a4b` |
+| `contracts.reviewed.json` | 170027 | `cf1ddfd6da93b75d22dfb20b5676e79fa477dbd27b89f6a9efe9f982bc56e215` |
+
+The exact candidate test transition is 25673 bytes / `d51bfb82c82a3bf748019c00adee19b0745816b866ee1e806c5d46d39b52339e` to 25822 bytes / `b8550b1f12aa85592a365e0566f2fa4822073e47af4984ee9908087f9b99662e`. ROOT independently replayed the single unique AP08 tuple replacement and checked all 34 immutable pins; this review also read the actual new full-file hash. The adopted repair plan is `/private/tmp/js2-6920-ap08-selector-amendment-20261009.md`, SHA `aa07de7900f2ab1e068b3e822e6db3c9aa78687cde48314159c6310d3759be29`.
+
+The only other changed original operand is the issue: ROOT's latest reviewed issue bytes are 372452 / `4b9771b57d23232da10312011df22419d7baada28efaf80c48f6e64cf1d0d3b0`. Preserve its old frozen prefix plus ROOT's authorization append(s). Adopting this plan may append again: ROOT must record/review that final full hash before freezing, with the same prefix/append-only check. Do not guess a future hash. All other 18350 original operands must equal Q0. HEADs/branches stay unchanged; candidate Git status/diff hashes legitimately change for these two paths. Check the exact two-path delta, not equality of the old aggregate Git hashes.
+
+## 2. Fresh private AP12 window; release this first
+
+Use adjacent Q1 `.tmp/ae28-qualification-ap08-successor-20261009`. Do not overwrite Q0. Keep the existing source/test ownership and actual claim; ROOT coordinates the release.
+
+Copy `run-cell.mjs`, `verify-cell.mjs`, `execute-cell.mjs`, `passive-observer.cjs`, `check-custody.mjs` and `seal-window.mjs` byte-for-byte from Q0. Their home-relative operation supports Q1. There is no new runtime protocol or decoder.
+
+Prepare a Q1-only derivative of the existing freezer and reviewed DATA contracts. Its `cells` must contain exactly `candidate-AP12`, floor twelve, identical expected names/full-name occurrence order, grammar, root and test path, and the new reviewed suite hash. The original freezer's hardcoded 23/497 and old `newSuite` pin need explicit Q1-only assertions, not disabled checks or edits to Q0 data. Preserve the other three proof pins. Preserve the full 23-slot Q0 contracts by reference for later association. Q1's unmodified sealer then truthfully seals one executed cell.
+
+Freeze both roots and the same complete source/test/config/script/fixture/policy/dependency population, with exactly the two approved old-input differences above and individually listed new Q1 private tools/review files. Do not call the new total “18352” if the private inventory grows. Require:
+
+- Both full `src` trees, every other test/helper/fixture, original Phase B/J1 authority, AE28 helper/receipt/activated trust, common reader and all semantic tests unchanged.
+- The same actual Node realpath/version/bytes (`/Users/thomas/.nvm/versions/node/v25.9.0/bin/node`), Vitest 3.2.4 CLI, complete Q0 resolved tool/package closure and all 132 old dependency symlink targets. No install or package resolution change.
+- Identical runner/verifier/observer/envelope/custody/sealer bytes, stock config/flags and effective semantic environment. Permit only the explicit old-home→Q1 substitution for evidence/observer/custody paths. Preserve prior `NODE_OPTIONS`; record environment rather than silently normalize other differences.
+- Both original root paths/HEADs/branches preserved; exact approved test/issue diff and new Q1 Git-state fingerprint. No source/proof/helper/config mutation or baseline change.
+
+Emit a small compatibility DATA record listing old/new pins for the two exceptions, unchanged old operand/link counts and hashes, new private files and actual Git-state delta. ROOT independently checks this and the new freeze before execution. Do not rerun Q0 custody/verifier against today's edited tree: its global old-pin check should reject the two changed inputs.
+
+After ROOT releases Q1, the exact commands are:
+
+```sh
+/Users/thomas/.nvm/versions/node/v25.9.0/bin/node /private/tmp/js2-6920-ae28-rules-20261009/.tmp/ae28-qualification-ap08-successor-20261009/execute-cell.mjs candidate-AP12
+/Users/thomas/.nvm/versions/node/v25.9.0/bin/node /private/tmp/js2-6920-ae28-rules-20261009/.tmp/ae28-qualification-ap08-successor-20261009/seal-window.mjs qualification
+```
+
+The owner awaits collection, all twelve actual callbacks and every observed process close; retain all raw CLI/IPC/log/custody artifacts. Seal even on a test failure using the existing protocol. No retry/kill or edits inside the window. A failure/fault keeps performance held. This stage needs no performance-driver rewrite or association framework before the twelve tests can run.
+
+## 3. Source-compatible association after Q1 seals
+
+If Q1 is genuinely twelve-pass and fault-free, create a private `qualification-association.json` and a small DATA-only validation step using the already authenticated verifier outputs. No production verifier, new execution observer or replay of test callbacks is required.
+
+The mapping must contain exactly the 23 IDs from pinned Q0 contracts: the original 22 successful cells point to their original absolute Q0 collection/body records with their original freeze SHA; `candidate-AP12` points to Q1 collection/body records with Q1's freeze SHA. Pin each referenced file. Do not copy old receipts into Q1, relabel them with its freeze SHA, overwrite Q0 AP12 or patch any failed flag.
+
+Before accepting the association, ROOT independently authenticates Q0 against the fixed anchors above, including its truthful failed status, rehashes its 276 seal-pinned raw artifacts, and authenticates Q1's reviewed freeze/seal and their raw artifact pins. Authenticate the unchanged original verifier/protocol hashes from Q0 freeze. The existing verifiers supply their independently executed raw-IPC/CLI agreement; the association adds no claim that a new decoder ran.
+
+Validate the join itself against records, not summary booleans: exact cell IDs/root/test contracts, original freeze associations, collection/body floors and ordered names/full-name multiplicities, complete process exit/close, `preconditionPassed`, all body rows pass, no skipped/todo or instrument/IPC/observer faults, and CLI/verified counts and statuses agree. Consume each row once within its original cell. Baseline and candidate rows cannot substitute for each other. Require precisely 22/485 retained plus 1/12 new; exclude old AP12 in its entirety from eligibility while retaining it in failure history.
+
+Reuse additionally requires the repaired AP12 file and issue to be irrelevant to the other 22 test bodies. Perform a bounded read-only audit of actual selected imports/config/setup, source-reader path lists and file-reading helpers (including constructed paths). Their global custody hashing of these files is evidence capture, not semantic dependence; actual one-suite CLI/IPC collection also establishes AP12 was not executed by the other cells. Record that distinction and the audit paths. Unresolved dependence invalidates that cell's reuse and returns to ROOT; do not silently grant compatibility or automatically expand the rerun.
+
+Pin the resulting association and its compatibility record independently in ROOT's reviewed release record. Its own self-declared input hashes are not authority. The eventual gate must reject a missing/duplicate/substituted cell, old failed AP12, changed receipt, wrong freeze or source/dependency drift. This is a small validation of existing evidence, not a new test population.
+
+## 4. Performance stays held for a separate narrow review
+
+Q0 `performance-driver.mjs` line 9 requires local `body-verified.json` files for all 23 cells and correctly rejects the old AP12 failure. Leave that driver immutable. After Q1 passes and ROOT accepts the association, prepare a fresh private performance home with the same measurement/loader/custody files and existing workload parameters.
+
+The only qualification logic replacement in the copied driver is: authenticate the independently ROOT-pinned association and its Q0/Q1/compatibility inputs; require its exact 23 IDs/contracts to equal `freeze.performance.requiredCells`; check current source/tool/dependency compatibility; then allow output creation and child spawning. Record the association hash and both epoch pins in the process receipt. Do not merely read a new `allPassed` boolean or redirect only AP12 while leaving the other receipts unauthenticated.
+
+A new performance DATA freeze after Q1 seals can pin the now-existing association, evidence references, unchanged source/dependencies and minimal driver delta without circular future-result hashes. ROOT reviews that narrow diff/freeze before separately releasing performance. The final performance sealer must similarly read qualified status from the authenticated association instead of expecting 23 local test directories, while retaining all existing raw/lifecycle/custody checks. No modifications to Q0's tools, synthetic directories or broader harness redesign.
+
+Keep byte-identical `measure.mjs`, loaders, six real workloads, five alternating paired samples, warmups/iterations, actual registry/results/checksums, owner-awaited ten processes, no-retry behavior and no noisy threshold. The AP12/issue changes must not enter its actual workload import/fixture dependencies. This stage is deliberately deferred until the twelve-control successor is complete. It does not block starting the targeted Q1 window.
+
+## Acceptance/reporting
+
+On success: “497 passing occurrences in 23 qualification slots across two epochs: 485 authenticated compatible occurrences reused from 22 sealed cells, plus twelve newly executed AP12 occurrences.” Actual cumulative execution history remains 24 body cells / 509 occurrences / 508 pass / the original one AP08 failure. Do not claim a fresh all-green 497-test run or rewrite Q0 green.
+
+Any failed association premise keeps performance held and is reported specifically. No source changes, historical repins, general witness/native join/JS-host IR/legacy equality claim or migration-complete claim is authorized. Full migration scope remains unchanged.
+
+
+
+## Q1 actual proof success and adopted geometry integration review
+
+Q1 is sealed with12 collected/executed/pass,0fail/skip/fault/drift; all4 actualworkerrecords have spawn/exit/close. ROOT independently inspected realCLI/IPC/process records and all12rawseal artifactpins. Seal34511 bytes SHA05311b16c316010bf73438f4c8bae85a9e42bd713c94d139a74c6f362fb0f5bb; bodyverified15896 bytes SHA97c98c2ce11d0bf999a3b92290bfac8a1438eb009dd37e931323581e9c314b32. Old Q0 remains496pass1fail/497. Performance not yet run: ROOT now releases only preparation of the adopted source-compatible22/485 plus Q1/12 evidence association and narrow private performance prerequisites from the full plan above; separate actual performance execution review/release required.
+
+The full read-only Astra geometry review below is adopted after Q1 closure. ROOT refreshed actual upstream historical claims54017-blpvz0m8,76271-0mo0ncgo and75863-k6ti87wv: all still in-progress under their original named owners/branches. No claim is released/transferred, no historical reader edit is authorized yet. Original false-positive historical matches remain disclosed, not counted as detector acceptance.
+
+# Shared Linear geometry and B initializer integration — reviewed update
+
+Astra High, 2026-10-09. Read-only source/evidence review; no tests, runtime, source/issue/claim edits, publication or queue action. ROOT may adopt this update in **Native Linear numeric-vector shared source handoff and integration plan**, issue 6920, after the current Q1 window seals.
+
+## Exact checkpoints and recommendation
+
+Fresh REST reads confirm PR6600, **refactor(linear): publish shared Linear memory geometry contract (6920 A-G)**, remains OPEN/unmerged/HOLD, no auto-merge, head `e5b67e2d2ddb92cc2ccd039a5677f476a78bf93f`, base `7fc2b700eb320e18db213f286350fd1bd56982ef`. Local `/private/tmp/js2-6920-linear-geometry-boundary-20261009` is clean at `b932e3a05e353acc59e7b547ef4e417a5d8637e1`. REST independently confirms that published fork commit's sole parent is C's exact head and its only changed files are the existing issue and `scripts/compiler-boundaries.json`.
+
+PR6577, **refactor(linear): extract initializer and preserve Prepared evidence**, is OPEN/unmerged/HOLD, no auto-merge, actual head `6d41eb99a08bcb8505febcb9b7ff4f43b9b2544b`. Its actual leaf and caller were read at that ref.
+
+**Recommendation:** the shared constant endpoint is technically suitable for B's single-import repair. C must consume/publish the policy dependency on its existing PR and report the exact new head; ROOT can then release only B's owned initializer import hunk against that reviewed dependency, retaining HOLD. This is not acceptance of the full historical source chain or the positive native allocation requirement. Historical proof work is a separate still-required owner join, not permission for B/C to edit its readers.
+
+## Source and policy findings
+
+The three production operands are identical between C's head and b932:
+
+| Path | Bytes | SHA256 |
+|---|---:|---|
+| `src/shared/contracts/linear-memory-layout.ts` | 7580 | `08c85d9e8c9891a74b9c0c02a1310b67b16832980849dc0e7b6d511d91350937` |
+| `src/ir/analysis/contracts/linear-memory-layout.ts` | 3161 | `83e6b8a07bdc8e8b93fed590bc0aed5c5f779bde98466e9cbbe3feb7a825cb91` |
+| `src/ir/analysis/linear-memory-plan.ts` | 45359 | `08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc` |
+
+No bounded source correctness defect was found in this extraction. The shared module has zero value or type imports. It owns the existing offsets, storage/layout primitives and one frozen `LINEAR_ARRAY_FORWARDING` object (`tag=6`, offsets 0/4, pointer width4). The old planner re-exports the same value/function bindings; the IR contracts re-export the moved DATA types. Stack-arena and semantic allocation policy remain in IR. `planLinearVectorLayout` computes storage first; scalar IR values use the shared scalar factory while compound pointer-shaped IR types retain their semantic keys through `linearIrTypeKey`. The factories retain fresh mutable result/nested objects; forwarding alone remains the shared frozen identity. These are the intended existing behaviors, not a new generic record-layout capability claim.
+
+b932 adds exactly the shared foundation activation/minimum9→10 and its clean/foundation files row. It changes no allowed edge or source. Existing `ir-analysis → foundation` permission covers the contracts' transitive import. Do not add a special IR allowance for the B runtime leaf or promote the full planner to foundation. The previously reported inventory result and C's G24 results remain their recorded measurements; this review ran neither. Classification of B's own runtime leaf/README is a separate B/A inventory responsibility, not supplied by b932.
+
+## Exact B-owned bounded repair and release conditions
+
+At B head6d41, `src/codegen-linear/runtime/vector-initialization.ts:3` is the actual IR value edge. Its entire production repair is:
+
+```diff
+-import { LINEAR_VECTOR_ELEMENTS_OFFSET } from "../../ir/analysis/linear-memory-plan.js";
++import { LINEAR_VECTOR_ELEMENTS_OFFSET } from "../../shared/contracts/linear-memory-layout.js";
+```
+
+Keep the direct type-only `Instr` import from `../../wasm/model/instructions.js`. Keep `buildLinearF64VectorInitializationBody` and all seven instruction objects byte-identical: local1 pointer + local2 index×8, local0 f64 value, `f64.store` align3/offset16. Each invocation still constructs a fresh array and fresh instruction objects. Do not add `irVal`, a layout planner, another constant, runtime registration, a memoized body or a wrapper.
+
+The real `runtime.ts:1376` `addLinearIrVecRuntime` caller already imports this builder (line19), checks the existing name guard, and passes the builder directly to `addRuntimeFunc` with `(f64,i32,i32)->()` and empty locals/results (line1384). This caller requires no change. B's plan explicitly acknowledges this same bounded rewire after source publication. No new resource pack or unused adapter is needed.
+
+Before release, ROOT records the exact new C head containing b932 and the source pins above, plus B's current head/owned-hunk acknowledgement. B alone composes the dependency and import repair on its branch. Refresh actual source/import closure and policy classification in that composition; require the initializer's value import to terminate at the zero-import shared owner. The reported 9→10 cycle delta is motivation, not a result measured by this review; validate the exact composed graph rather than promise a particular global cycle count after unrelated main changes.
+
+After owner release, use existing `check:import-cycles`, `check:compiler-boundaries:inventory`, typecheck and B's existing initializer/Prepared regression controls on the exact composed checkpoint, with normal hooks and preserved raw results. Existing scripts are `node scripts/check-import-cycles.mjs` and `node scripts/check-compiler-boundaries.mjs --mode inventory` (use the established actual-base option where required). Preserve the original B population and genuine `array-representation-unsupported` failure; a one-line import rewire cannot make it pass. Keep actual value-first ABI, fresh-body and memory/neighbor witnesses, and report any failure independently. No runtime execution is authorized by this review itself.
+
+## Open integration finding: historical source-reader chain
+
+**P1 for full A-G/historical acceptance, not a new defect assigned to C's four-file source scope:** no geometry/forwarding preservation successor or reader integration exists in the inspected C/b932 diff. The old helper still pins planner49040 and layout4670 in `tests/helpers/ir-lowering-analysis-relocation.ts:91–103`; `captureLinearLayoutPredecessor` at417 rejects changed planner bytes before invoking its old pair proof. The JSON receipt remains111423 bytes / `dc8241d36da5b2fe29abe12ed6ee348fc456ef22939c61aabe05d09daad92134`.
+
+C's committed `plan/log/6920-shared-linear-geometry-c/README.md` explicitly records 3005→2902 historical failures and explains that all103 apparent new passes arise from changed first-error text matching old negative assertions. That honest disclosure is correct. Zero new failing test IDs and G24 24/24 do not establish historical detector liveness or preservation. Preserve those original rows; do not convert them into acceptance evidence.
+
+The adopted issue6920 A-G plan and B's actual issue6905 “Finite forwarding-epoch successor proposal” already specify the needed repair; do not replace it with a weaker new scheme:
+
+1. Authenticate complete current planner/contracts/shared-owner bytes and exact geometry inverse/independent forward reconstruction. First reconstruct the genuine main845 layout **with forwarding**, 4763 bytes / `977e572b62737c3459df08c15e4d3f6ce7f461f9fc5b1aac344ad676690e3754`. Only then apply the separate genuine `2a98b75de993bdc568e3668a2965c026876fe322` / parent `6c88d157444ea4ae377a7ef1b82b15ef2f4f6603` bridge: exact93-byte insertion at2820, reaching the old4670-byte operand. Replay in reverse to reproduce every complete current geometry operand. Call the unchanged old proof for its52704-byte predecessor; do not copy its algorithm or repin its receipt.
+2. Source-proof owner handles the finite successor and `tests/issue-3518-lowering-analysis-preservation.test.ts` acquisition/accepting/current-chain seams. Preserve every old historical mutant and its meaningful deep rejection, with genuine new-current positives before mutations.
+3. Trusted-adapter/C1 owner handles `tests/helpers/ir-c1-current-source.ts::captureC1CurrentPopulation`: current closure pin at872 precedes old layout proof at880, so the join belongs before that pin. Current resolver/type-host inputs stay actual current bytes; only historical proof gets predecessor views. Changed reader instruments need independently anchored instrument successors before old `captureC1HistoricalAuthority`; do not update old hashes to bless changed code.
+4. Policy owner handles `tests/helpers/ir-runtime-program-policy-evolution.ts::loweringAnalysisRead` (7573) and `authenticateLoweringAnalysisPolicy`, which pin physical source before proof. Both exported entrypoints, `captureLoweringAnalysisPredecessorPolicy` (7767) and `captureLoweringAnalysisPredecessorPolicySource` (7796), must traverse the authenticated join. Keep supplied current input distinct from historical readers; no healthy historical/Git fallback repairs a mutant.
+
+These are existing bounded obligations, not permission to fix thousands of unrelated historical failures or expand C's scope. Exact implementation pins are established only after owner-authored source exists. Required acceptance retains full reciprocal source equality, mixed-epoch/missing-owner/delegation/forwarding mutations, wrong reader/receipt authority, supplied-current corruption with a healthy historical copy, both policy entrypoints and genuine current resolver observations.
+
+## Ownership and adoption text
+
+C claim4237-ijwd2prx owns only the three geometry hunks and G24 test. A's confirmation expressly retains historical proof/readers, boundary inventory, facts, registry and integration; the old A geometry preparation claim is released. The same record corrects the earlier overbroad assumption that allocation donor34529 owned geometry algorithms—do not demand or invent that release again. A2/J2 same-file facts composition remains distinct.
+
+The inspected issue/acknowledgement records contain outstanding requests, not an exact release from historical source-proof54017-blpvz0m8, trusted-adapter76271-0mo0ncgo and policy-caller75863-k6ti87wv for this published geometry checkpoint. Their current claim state was not refreshed by this review. ROOT must obtain/effect-read the actual owners' bounded acknowledgements before assigning those files; C's source claim or B's plan is not that authority. If newer acknowledgements already exist, record their exact endpoint instead of requesting duplicate permission.
+
+Suggested adoption: “C's exact geometry source plus A's b932 inventory dependency supplies the canonical offset endpoint for B's owned initializer import-only update, conditional on C publishing the composed head and B acknowledging that checkpoint. HOLD and existing positive failures remain. Historical geometry/forwarding source reconstruction, C1 current-reader/instrument joins and both policy entrypoint joins remain separately owner-controlled prerequisites for full A-G/current-chain acceptance. No native caller parity, JS-host IR support, legacy equality or migration completion is claimed.”
+
+
+
+## Sealed first performance failure and corrected historical resumption plan
+
+The first performance epoch is closed and FAILED before timing. Actual first baselinechild58903 spawned/exited1/closed1, no signals; driverexit1. Runtime loader retained type-only AllocKind import in builder.ts and native Node25 rejected missing runtime export. Actual0/5pairedsamples,0timingrows/medians/checksumcomparison; no performance improvement/equality claim. Performance seal28295 bytes SHA662f4f580afbefddd5ea67f86079c56b9bafcbacf8f3b0e34e454cb0401f2297 and driver5145 bytes SHA3d3ed27e5e0d6638be47225bb300f26dc4e3c3557b4567455bbfba728929532d retained unchanged. ROOT independently inspected actual stderr546 bytes SHAccfd17e6588604d37d6aa9640bd82d664dc97deb6cf9c8c474920fa6aa2e9541 and all3rawseal pins. Inputs18675/132links unchanged, custody0. Qualification remains actual485old+12new passing occurrences with original Q0 AP08 failure retained separately. A narrow loader-only new instrument epoch is being specified; no retry/source modification is authorized by this record.
+
+ROOT adopts the full Astra historical resumption plan below, correcting earlier broad policy-owner wording. ROOT READ actual original dispatch-map and full release-amendment. These are retained earlier A-owned partitions, not foreign B/C work. Resume assignments must preserve original identities/claims and exact file custody, old dirtydrafts and their2254/2646 historicalepochs; no claim is transferred/force-released or presumed abandoned. Trusted-adapter76271 owns BOTH policyhelper APIs; caller75863 owns only13tests19initialoperands. Production geometry remains consumed only from published C plus b932; full historical acceptance requires the finite named joins. No implementation starts before an actual isolated current composition and explicit per-owner hunk assignment.
+
+# Historical geometry preservation: resume A's original D1 owners
+
+Astra High, 2026-10-09. Proposed private implementation specification under existing issue6920, **Native Linear numeric-vector shared source handoff and integration plan**. ROOT adopts it after the active performance window seals. No source, issue, claim, worktree or runtime mutation is authorized by this document alone.
+
+## 1. Provenance and exact ownership
+
+Read together: `/private/tmp/js2-historical-layout-prepared-work-inventory-20261009.md`; the retained proof lane's `.tmp/d1-layout-legality/preservation-integration-readiness/dispatch-map.json`; and the adapters lane's `.tmp/d1-layout-legality/preservation-draft/release-amendment.md`. Their roots are under `/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/3518-layout-legality-{proof,adapters-draft,callers-draft}-20261004`. The same ROOT-authored dispatch appears in issue3518 at the D1 amendment/custody sections beginning lines6460/6472/6531 in the inspected published geometry tree.
+
+These are OUR retained Session A preparations. The inventory records ROOT's fresh confirmation of the three original in-progress claim identities; no transfer, abandoned owner or external B/C permission is inferred:
+
+| Original identity / write | Resumption partition |
+|---|---|
+| `ttraenkler/codex-lowering-analysis-source-proof-20261004` / `54017-blpvz0m8` | Existing source-proof helper and finite geometry/forwarding capture implementation; no C1/policy-helper edits. |
+| `ttraenkler/codex-lowering-analysis-trusted-adapters-20261004` / `76271-0mo0ncgo` | `tests/helpers/ir-c1-current-source.ts`, `ir-c1-historical-authority.ts`, and `ir-runtime-program-policy-evolution.ts`; this includes BOTH policy capture APIs. |
+| `ttraenkler/codex-lowering-analysis-policy-callers-20261004` / `75863-k6ti87wv` | Thirteen existing policy test files / nineteen original initial operands (15 raw, four semantic), as enumerated in the actual dispatch map. No helper/receipt ownership. |
+
+**Scope correction:** “policy owner joins both entrypoints” means the trusted-adapter owner for the helper implementations; it must not silently assign those functions to the thirteen-file caller owner. ROOT retains source/policy receipts, C1 manifest/anchor, current-source/graph tests, preservation-suite integration and final composition. Any renewed source-owner work on the preservation test needs ROOT's explicit bounded delegation, consistent with the earlier portable-test transfer. Copied helper/authority/source files in caller/adapters drafts are assembly inputs, not grants to modify them.
+
+Resume the original addressable owners if available; the inventory found no current handle. ROOT must resolve actual identity/assignment before executable edits rather than invent an agent handle or implicit replacement owner. A fresh isolated successor checkout can be used under that resolved custody; leave all old dirty worktrees, untracked files, staging and `.tmp` evidence intact. Do not merge into or wholesale transplant them.
+
+## 2. Freeze the current composition; do not redo delivered D1
+
+PR6475, **refactor(ir): give linear layout contracts and backend legality canonical owners**, is already delivered: publication `650cb1b0a08df7976662c721e0da884b109fbfe0`, merge `7755320d74de1b52eafedbf6cc5cd37d57c6a081`, 2026-10-04. Its delivered helpers replace old draft epochs as the implementation starting point. In particular, draft helper17637/d7e0dd0c and receipt111561/c21a9577 are preserved history, not current authority.
+
+REST main at this review is `7928f27343a171d8e0de434ea005d630eaf64bf3`. Its source-proof, C1-current and policy-helper blobs equal the inspected C/b932 helper blobs (`c732f2eb22a127714373bc8fa363514bcf7a818b`, `020e91dc1d9bd0646b8b16d9b5224fd513caf861`, `2dbe6d7fa227cb7463d73d20d847c433a933dfbc`). Main's planner/layout remain the 49040/4763-byte pre-geometry files. Geometry is published on C's `e5b67e2d2ddb92cc2ccd039a5677f476a78bf93f`; policy-only dependency `b932e3a05e353acc59e7b547ef4e417a5d8637e1` has that exact parent. Neither fact says geometry is on main.
+
+ROOT first freezes one actual composition of current main plus C's source and b932 policy, after C's publication/coordination. Record every real conflict or changed dependency. The three geometry file pins from the reviewed C checkpoint are:
+
+- shared layout:7580 / `08c85d9e8c9891a74b9c0c02a1310b67b16832980849dc0e7b6d511d91350937`;
+- IR layout contracts:3161 / `83e6b8a07bdc8e8b93fed590bc0aed5c5f779bde98466e9cbbe3feb7a825cb91`;
+- planner:45359 / `08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc`.
+
+Do not invent a merged HEAD or resulting policy hash. If these source pins change in composition, return the exact hunk to ROOT before deriving recipes. Exclude A2/J2 dirty facts work, AE28 frozen lane, B runtime leaves and all production redesign from this preservation task.
+
+## 3. Source owner: add a finite bridge to the existing proof
+
+Use the existing `tests/helpers/ir-lowering-analysis-relocation.ts` reconstruction logic and unchanged `captureLinearLayoutPredecessor`; do not copy its algorithm into another verifier. Preserve its old APIs and explicitly supplied historical-reader semantics. Prefer a bounded append-only current-geometry capture in that same helper, preserving the complete currently published18956-byte body as an authentic predecessor. ROOT and source owner freeze the concrete entrypoint spelling/signature and finite receipt location before edits; this specification does not pretend a new API already exists. The prior adopted contract already requires three closed views: actual current, geometry-before, and lowering-before.
+
+ROOT supplies/reviews the new finite receipt's authority. Keep old `ir-lowering-analysis-relocation.json` at111423 bytes / `dc8241d36da5b2fe29abe12ed6ee348fc456ef22939c61aabe05d09daad92134` and the current helper predecessor18956 / `253eda01462fad0ab84a940965a083eaf80b0ca8a3e10a4ca012fbafaaf30e99`. No overwrite of old source pins/receipt or unrelated `early.return` bridge.
+
+The new capture must authenticate fresh actual planner, contracts and shared owner, plus independently anchored receipt/helper authority. Capture each source once into a closed immutable per-call view; no cross-call success cache, Git read, old checkout fallback or healthy-source substitution. If a caller already supplies planner bytes, require exact equality to that call's actual authority channel before deriving history. Unknown paths, missing/extra owners, mixed epochs or differing repeated source reads reject.
+
+Build exact finite source recipes in this order:
+
+1. Inverse current geometry into the genuine pre-geometry planner49040 / `5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52` and layout4763 / `977e572b62737c3459df08c15e4d3f6ce7f461f9fc5b1aac344ad676690e3754`. Bind the shared owner's actual complete bytes and its absence at the predecessor. Include every moved type/function/constant and exact imports/reexports, scalar-key factoring and both vector adapters. Preserve shared forwarding identity, fresh layout objects and retained IR stack policy by the already-reviewed source contract; this proof changes no production behavior.
+2. Apply the separately named forwarding epoch: genuine `2a98b75de993bdc568e3668a2965c026876fe322`, parent `6c88d157444ea4ae377a7ef1b82b15ef2f4f6603`, exactly93 UTF-8 bytes at2820. Only that step reaches layout4670 / `dba3ca2121063a52b0ae1130f48c0acc70e0f819a9e665a2a2744572eddfae72`. Do not hide this semantic operation arm inside geometry relocation. The planner is unchanged by this step.
+3. Call unchanged `captureLinearLayoutPredecessor` with the proved old planner and closed old-layout reader to obtain the existing genuine52704-byte donor. Its established piece counts and proof logic stay authoritative; new geometry piece counts are measured from the actual authored recipe, never borrowed from D1's129/140 totals.
+4. Independently replay authentic old bytes forward through forwarding and geometry, reconstructing every complete current operand. Consume every source span exactly as declared, check byte coordinates/multiplicities and all full hashes; independent forward payloads must not be silently derived from inverse output. No whole current/predecessor source copies used as a fallback answer.
+
+## 4. Trusted adapters: join before old rejection, preserve current resolution
+
+In `ir-c1-current-source.ts::captureC1CurrentPopulation`, the closure `assertPin` at872 precedes planner proof at880. Authenticate/capture geometry before this old planner rejection, while respecting earlier original receipt/population failure priority. The actual `closure`, observed current pins, TypeScript source files and resolver must retain current geometry text/routes, including the real shared import. Only the historical reconstruction sees proved predecessor text. Do not satisfy the real resolver by substituting the old52704-byte planner. Retain current population versus authority comparisons and the independent caller's helper-body check before accepting imported proof output.
+
+`ir-c1-historical-authority.ts` needs the bounded current closure/resolver successor for this actual source graph. Preserve immutable historical contracts, predecessor pins and unrelated current entries. Reuse its existing current/historical mechanism. Derive new actual resolution observations; the old13 requests/57 operations are a baseline record, not a count to synthesize if the new shared import genuinely changes the graph. Explain every added route, and assert no unrelated route drift.
+
+In `ir-runtime-program-policy-evolution.ts`, `loweringAnalysisRead` (7572) physically pins old files before `authenticateLoweringAnalysisPolicy` (7589) calls the old proof. Capture/authenticate current geometry before that path's old rejection and pass an explicit predecessor reader to the old layout proof. Both `captureLoweringAnalysisPredecessorPolicy` (7767) and `captureLoweringAnalysisPredecessorPolicySource` (7796) must traverse the join. Preserve primitive/descriptor-before-IO ordering, fresh C1 authentication, original receipt/helper-prefix checks and genuine source/authority comparisons. Do not make the physical reader permissively accept arbitrary epochs.
+
+Any changed reader/helper is itself an instrument pinned by C1. ROOT's independently anchored instrument successor must reconstruct the exact published predecessor of each named changed instrument before unchanged historical authentication, then independently replay its complete new bytes. Preserve all historical `beforePins`, immutable receipt bytes, existing recipe domains and untouched instruments. New current authority fields/digests bind actual reviewed candidate bytes only after recipes pass. Never simply replace old historical hashes or compute expected trust from candidate output.
+
+## 5. ROOT/test owner and caller owner: preserve real acquisition and detectors
+
+`tests/issue-3518-lowering-analysis-preservation.test.ts::fixture` currently reads and pins physical old planner/layout before copying them (171 onward). Replace that acquisition premise only: first authenticate current geometry through the real bridge, then materialize exact old fixture operands from its proved historical view. Keep old-stage mutants direct to the unchanged old APIs; do not route them through a current full-hash guard and mistake early rejection for detector preservation. Preserve its independent inverse/forward witness and existing `historicalOwner` early-return bridge. Add separate current-chain controls using the actual new source domain.
+
+Caller75863 first inventories the already-delivered nineteen initial sites against its saved thirteen-file recipes. Do not reapply old wrappers or rewrite later Deno/source-map/current-main successors. Add or adjust only a concretely missing outer acquisition join. Preserve the six hostile semantic factories prepared before the missing-receipt closure, direct deep mutants, exact diagnostics, registration order/duplicates and all subsequent APIs. Report no-op sites as already integrated. Any additional file or helper change returns to ROOT for a bounded scope update.
+
+ROOT separately authenticates the exact b932 policy delta (one foundation entry/minimum and one files row) through the existing current-main policy chain. Preserve all original inventory history/allowedEdges and existing unrelated successors. The current policy contains more history than the old ca11 draft: never substitute draft584010 policy or normalize current policy into an invented old epoch. A missing current-main bridge is a separately named finite prerequisite, not permission to loosen the original policy checks.
+
+## 6. Dependency order and finite acceptance
+
+Dispatch source capture/recipe work and adapter read-only seam preparation after ROOT records the original-owner resumption scopes. Source freeze comes first; adapters consume its exact API/receipt/helper pins; ROOT composes authority/instrument recipes; callers/test owner then use the real accepting joined entries. Keep all source/static/proof/runtime windows separately released. No physical fault test during AE28 performance or another owner's execution window.
+
+Necessary checks, using the existing suites/harness rather than a new framework:
+
+- Genuine current geometry →4763 forwarding→4670 old proof→52704 donor, plus independent full forward replay. Healthy main-before and exact forwarding controls remain separately attributed. Reject missing/duplicate/shifted/altered93-byte insertion, unrelated bytes, mixed epochs, missing/extra shared owner, changed scalar key/vector delegation/offset/pointer policy, malformed coordinates and wrong full authority pins. A forward-only wrong payload must pass inverse diagnostics and then fail actual independent forward equality.
+- Repeat healthy capture then change each supplied source/receipt/helper channel: fail fresh, with recorded read order and no cache. Supplying damaged current text while healthy historical files exist must fail. Distinguish full-hash authentication from deeper structural-rule diagnostics; do not change expected pins just to claim a guard was reached.
+- Actual C1 success before each fault, real current resolver text distinct from historical proof text, both raw/semantic policy entrypoints and real fixture acquisition. Preserve primitive/accessor priority and paired malformed-old-input versus bomb-new-reader controls.
+- Reuse the existing exclusive physical fault/restoration harness for installed helper/receipt missing and inert corruption, cached module and pre-import child. Require healthy-before/after, actual accepting callers, independent caller-owned pin failure, full exit/close and exact restoration; no wrapper intercepts credited to C1, global fs mock or sentinel regex pass.
+- Recollect the actual preservation/current-source/graph suites and affected thirteen old policy cohorts after integration. Freeze literal/derived registration manifests and execute all callbacks with CLI/IPC/error/custody evidence under ROOT's normal protocol. Preserve the original distinct34-development,2254/13-file and2646/17-suite historical records; derive current denominators rather than promise those totals. Run existing G24/semantic compatibility only for an actual production composition change or unresolved concern, not as substitute evidence for proof correctness.
+
+C's recorded103 apparent improvements are specifically old first-error-text matches; they are neither new failures caused by this task nor accepted preservation passes. Keep the full original rows and diagnose genuine positive reach. Do not broaden this finite join into a mandate to repair every unrelated historical failure. A test that still fails before its intended guard is reported blocked at that exact prerequisite, not green.
+
+Acceptance is the actual current joined proof/reader chain with unchanged historical authority and live deep controls. It does not grant native allocation execution, JS-host IR support, legacy equality, performance parity, general witness capability, migration completion or queue release. ROOT retains all publication/HOLD decisions.
+
+
+
+## Adopted loader-only measurement successor amendment
+
+ROOT read/adopts the full Astra amendment below after the failed window closed. Release private implementation/static preparation only. Genuine loader controls and both-arm untimed fixtures require separately reviewed finite execution; actual timings require subsequent ROOT acceptance. Old source/qualification/proof/fixture/workload sizes and all failed attempts stay unchanged. No production type import fix or whole-program acceptance is credited.
+
+# AE28 measurement loader successor — narrow amendment
+
+Astra High, 2026-10-09. Private specification only: no source/tool edits or runtime probes performed. ROOT adopts, reviews the private implementation, and separately releases untimed controls and timing.
+
+## Failure and fixed scope
+
+Preserve `.tmp/ae28-performance-associated-20261009` unchanged, including its performance seal28295 bytes / `662f4f580afbefddd5ea67f86079c56b9bafcbacf8f3b0e34e454cb0401f2297`. The first baseline child failed during module linking: `src/ir/builder.ts:16` imports the type `AllocKind` through a mixed ordinary import. The 750-byte loader only resolves emitted `.js` paths to actual `.ts`; Node's syntax transformation leaves that mixed import as a runtime request. This is one closed failed child, zero completed pairs/samples, not a measurement of analysis speed. All original source/proof/qualification and the accepted497-occurrence association remain valid under their recorded instruments.
+
+Create a distinct private successor performance home. Change only its source loader, the minimal untimed mode in the copied measurement script, and corresponding driver/freezer/receipt plumbing. Do not edit `builder.ts`, any production import/export, baseline/candidate source, fixture, proof preimage, expected output or workload size. No `AllocKind` special case, stub export, dropped runtime error or synthesized result.
+
+## Loader implementation
+
+Use the already installed and frozen **TypeScript5.9.3** `transpileModule` API, not TS7 or a package install. Actual frozen implementation:
+
+- `/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/typescript.js`:9112572 bytes / `3ae902c92cc44dace175c0e69e13a4b0899f6983c6121d76b9ab8dd5795e7675`.
+- Adjacent `package.json`:3620 bytes / `822ef7ca6452205657b6288b066481ecf508bfbf43455d715cf7d3ec457561e6`.
+
+The local declaration at `typescript.d.ts:11397` exposes `transpileModule`; `TranspileOptions` supplies `fileName`, `compilerOptions`, `reportDiagnostics`. Repo `tsconfig.json` uses ES2022/ESNext/bundler and does not enable `verbatimModuleSyntax`.
+
+Retain the existing `.js`→`.ts` resolver and add a standard Node ESM `load(url, context, nextLoad)` hook. For actual file-URL `.ts` implementation files in the frozen baseline/candidate source/test roots (plus explicitly frozen private loader-control files), read the exact source and call:
+
+```js
+ts.transpileModule(source, {
+  fileName: absoluteSourcePath,
+  reportDiagnostics: true,
+  compilerOptions: {
+    target: ts.ScriptTarget.ES2022,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    verbatimModuleSyntax: false,
+    isolatedModules: true,
+    useDefineForClassFields: true,
+    noEmit: false,
+    declaration: false,
+    sourceMap: false,
+    inlineSourceMap: false
+  }
+})
+```
+
+Return its emitted JavaScript as `{format:'module', source: outputText, shortCircuit:true}`. Throw on any error diagnostic or absent emitted output, preserving source filename and diagnostic text. Delegate other URLs/extensions/dependencies to `nextLoad`; never execute `.d.ts` as an implementation. Use the exact pinned TypeScript module resolution/realpath for both arms and record these options, module hash and loader hash in the new freeze. No custom transformer, handwritten identifier erasure, export inspection, fake import alias or per-instruction cache. Standard TypeScript's usage-based import elision removes imports used only as types; genuine value-used bindings and explicit side-effect imports must remain. This is transpilation, not a semantic typecheck claim.
+
+The returned ESM JavaScript must reach execution through this hook; it must not fall back to Node's raw TypeScript path on diagnostics. The old Node transform flag can be removed from the successor child command because the hook now supplies JavaScript; record that exact argv change uniformly. Node executable/version, dependency bytes and six actual workloads otherwise remain fixed. Module compilation/loading and fixture construction occur before the existing timed loops and are excluded costs, explicitly reported as such.
+
+## Small loader controls, then genuine untimed workload gate
+
+Before either timing arm, statically inspect emitted AST from two small frozen private control modules using the actual loader/compiler options:
+
+1. Positive mixed import: one binding used only as a type and another used as an exported runtime value. Verify the type-only binding disappears, runtime binding remains and emitted module is nonempty; execute the same tiny positive module to observe the actual dependency's value. Include an explicit side-effect import and observe its real effect, so import removal is not accepted wholesale.
+2. Negative true-value import: import a nonexistent export from a real private dependency and **use it as a runtime value** (`export const observed = missingValue`). Verify the emitted import still names it. Loading through the actual hook must fail with the missing-export link error and nonzero closed child result. A parse/transpile failure or unrelated exception is not this control's success. Keep an actual exported-value companion positive. No production file is mutated for these controls.
+
+These controls are loader qualification, not benchmark samples or new source-qualification tests. They must be owner-awaited and preserve their raw failure diagnostics. No global interception or empty-export workaround.
+
+Add one explicit `fixtures-only` mode to the existing copied `measure.mjs`, using the same imports, `numeric`, `mixed`, `annotate`, expected metadata, prepared-allocation validation, `workloads`, `.run()` and `.check()` functions. It performs the existing setup and, for each of the exact six rows, one actual run/check plus before/after fixture and full input custody checks. It must branch before the40 warmups and before any `performance.now()`/timed iteration loop. Do not duplicate fixture constructors or relax a failed genuine check.
+
+Write a separate untimed receipt with six ordered names, root/epoch/freeze/tool pins, fixture hashes, actual instruction/site counts, actual `result.score`, and the actual checked metadata/census payload. Compare both arms' actual payloads, hashes and semantic-unit checksums, not just an `ok` field or expected constants. No `elapsedMs`, `nsPerInvocation`, fabricated timed checksum, sample index or performance result file is produced in this mode. Keep the original expected-result guards and input-error behavior unchanged.
+
+Run two fresh owner-awaited children, baseline then candidate, through the same new loader. Require clean exit/close, all six nonempty result rows, exact ordered names, unchanged input/fixture custody, existing genuine verification and exact cross-arm result/fixture equality. Any failure seals this new preparation attempt and leaves timing held; do not automatically repair/resize fixtures or rerun. ROOT reviews both actual receipts before releasing timing.
+
+## New epoch and timing release
+
+Freeze the complete successor source/tool/dependency inputs and independently authenticate the existing source-qualification association; do not rerun or relabel the497 occurrences solely because this measurement instrument changed. Keep all old epoch seals/receipts and their failed status. Record a distinct measurement-instrument epoch with the old failure as predecessor and exact private script diffs.
+
+Once ROOT accepts the loader controls and genuine both-arm untimed outputs, release the original ten fresh sample children: five alternating paired samples, the same six rows,40 warmups,500 small/50 larger iterations, real pass/registry/census calls, consumed checksums and no retry/no noisy threshold. The untimed children do not count among those ten or as completed samples. Each timed child retains its original pre/post real-result checks. Report all five actual timings per arm, loader/compiler/options provenance and excluded setup costs; no equal-speed, allocation-count or whole-program/native claim.
+
+A practical sequence is one new private instrument freeze covering controls and fixtures-only code, followed by a ROOT-pinned preflight receipt used as a timing prerequisite. If the existing freezer cannot pin future output, make the final timing DATA freeze after preflight; preserve identical reviewed tool/source bytes and record the association between freezes. This is a narrow gate on the existing driver, not a new benchmark framework. Do not require a second untimed run merely to change the DATA freeze. ROOT owns final release and adoption after the failed window is sealed.
+
+
+
+### AE28 sealed qualification, loader preflight and actual bounded costs — 2026-10-09
+
+ROOT accepted the truthful source-compatible qualification view:497 passing occurrences in23 slots across two epochs (22 original Q0 cells/485 occurrences plus newly executed Q1 AP12/12). Original Q0 remains23 cells/497 executed/496 pass/one AP08 selector failure, with its unchanged failed seal. Actual cumulative qualification execution remains24 body cells/509 occurrences/508 pass/one failure; this is not a fresh all-green497-test run. Q1 seal34511B/SHA05311b16c316010bf73438f4c8bae85a9e42bd713c94d139a74c6f362fb0f5bb is retained.
+
+The first performance epoch remains a closed failure: one baseline child exited1 during module linking because the Node type transformation retained the type-only AllocKind import; zero timed rows/pairs completed. Its immutable seal28295B/SHA662f4f580afbefddd5ea67f86079c56b9bafcbacf8f3b0e34e454cb0401f2297 remains truthful. The separately adopted standard TypeScript5.9.3 loader then passed four real closed preflight children: positive actual value37/side-effect1, genuine used missingValue export refusal (expected exit1 after the positive), baseline and candidate untimed fixtures. Both arms produced six equal full result payloads, fixture hashes and actual scores; no timing/sample fields. Preflight seal38449B/SHA40139ed7ad266f946f22518938ee3ca66816eee8ccf77036e7e607ce5038821d and receipt12743B/SHA6201ee6e02b177bbacb1eff53d1482114d59e18a48e806653184d8db6795b57e are retained.
+
+The final fixed timing epoch completed ten fresh children, all actual spawn/exit/close successful, five alternating paired samples and six workloads per arm/sample (60 timing rows). Every paired fixture/count/checksum/registry boundary agrees; all20 before/after pair custody checks and final seal report zero drift across18732 inputs/132 links. All31 raw artifact hashes and actual sample outputs were independently read back. Driver145717B/SHA60f8fc172a62d25797c449ce69315e9b03a942ddc7644f9def054f0de04fd397; performance seal181951B/SHAf3a5a17f1db40a1688bc4d9ae9a6fd0d87bd295ebbd54f4755aac4e9451a1ccd; final freeze4085523B/SHA9f161b0c6528c632e1efe2989e63656dacb659931ad936bcd1f71faee459c072.
+
+| Workload | Median baseline→candidate ms | Baseline range ms | Candidate range ms | Median difference | Candidate slower pairs |
+|---|---:|---:|---:|---:|---:|
+| vector-small | 19.404125→18.765792 | 18.342708–23.455208 | 17.886084–19.322833 | -3.29% | 2/5 |
+| encoding-small | 1.856500→1.928375 | 1.830000–1.892875 | 1.904792–2.197708 | +3.87% | 5/5 |
+| census-small | 8.563375→8.069042 | 8.161084–8.738000 | 7.963292–8.539125 | -5.77% | 0/5 |
+| vector-larger | 33.424125→34.213500 | 32.795542–34.038542 | 33.501459–34.771959 | +2.36% | 5/5 |
+| encoding-larger | 4.231208→4.000000 | 4.165625–4.258667 | 3.927041–4.072958 | -5.46% | 0/5 |
+| census-larger | 10.543333→10.144333 | 10.127417–10.761083 | 10.036791–10.768084 | -3.78% | 2/5 |
+
+Every actual sample, including outliers, remains in `.tmp/ae28-performance-typescript-timing-20261009/performance/driver.json` and the full sample table `performance-result.md` (2519B/SHAfd0e5bc7e3091d12bca7a56cd0f0d1c4313e3fe5eb5d9e66d994788bb5d2501c); complete result JSON115671B/SHAa9d817559a3fdfe09b935a39a202077a8cb45c5cb3393ac4d81cbeb4901f657f. Small rows use500 iterations, larger50; all use40 warmups. Encoding-small is slower in5/5 pairs (+0.071875ms per500, about0.144µs/invocation), and vector-larger is slower in5/5 (+0.789375ms per50, about15.79µs/invocation). These observed increases are disclosed, not erased by four lower medians. No percentage threshold, overall averaged speed or equal-speed claim is made.
+
+Both arms used actual Node25.9.0 and frozen TypeScript5.9.3 on Apple M4/darwin arm64. TypeScript transpilation/module loading and fixture construction precede timing; registry/output/snapshot/checksum costs remain inside the recorded measured boundaries. OS scheduling/GC are not byte-frozen, five samples do not establish universal significance, and there is no allocation counter/forced GC or whole-program/native/public/general-witness/migration-completion claim. No retry, extra sample, fixture resize, source change or worker kill occurred.
+
+ROOT adopts the complete independent measured-cost decision below: proceed with this qualified architectural checkpoint and disclose both consistent slowdowns. The one-hunk encoding default-dispatch hypothesis stays a separately qualified successor after delivery; it is not implemented in the frozen candidate and does not trigger a blanket497 rerun.
+
+# AE28 measured-cost decision
+
+Astra High read-only review, 2026-10-09. **Proceed with the qualified AE28 PR and disclose the two measured slowdowns. Do not reopen this frozen candidate for an unmeasured optimization.** Keep the small encoding dispatch optimization below as a separately qualified successor in existing issue6920. “Just as efficient” has not been demonstrated; delivery should not claim that it has.
+
+Evidence: `.tmp/ae28-performance-typescript-timing-20261009/performance/driver.json`,145717 bytes / SHA256 `60f8fc172a62d25797c449ce69315e9b03a942ddc7644f9def054f0de04fd397`. The sealed execution has ten closed successful children, five paired samples, six identical-result workload rows and zero custody drift. No new execution occurred in this review.
+
+| Row | Median baseline→candidate ms | Difference | Candidate slower in paired samples |
+|---|---:|---:|---:|
+| vector-small |19.4041→18.7658|−3.29%|2/5|
+| encoding-small |1.8565→1.9284|+3.87%|5/5|
+| census-small |8.5634→8.0690|−5.77%|0/5|
+| vector-larger |33.4241→34.2135|+2.36%|5/5|
+| encoding-larger |4.2312→4.0000|−5.46%|0/5|
+| census-larger |10.5433→10.1443|−3.78%|2/5|
+
+These are sample-batch wall costs with shared registry/output costs included, not pass-isolated timings. Encoding-small's median difference is0.071875ms per500 invocations (about0.144µs/invocation); vector-larger's is0.789375ms per50 (about15.79µs/invocation). Both slower directions recur in all five pairs; do not dismiss them as nonexistent or hide them behind the other four median improvements. Conversely, five bounded samples do not establish a universal regression rate or exact causal contribution. Do not average unlike workload percentages into an “overall” speed claim.
+
+## What the source explains
+
+`encoding.ts::classifyInstr` now invokes `allocationEvidenceRule` before its existing switch, so explicit string/call handlers incur a rule lookup that currently always returns unsupported. That is a concrete extra dispatch on these paths. The larger encoding workload nevertheless measured faster; the data do not isolate that dispatch as the sole cause of the small-row slowdown.
+
+`ownership.ts::transferInstr` vector cases now perform shared-rule recognition, a frozen event-array loop, current operand resolution and an event-op branch before `touch`/`markEscaped`. `escape.ts` also recognizes the vector rule to enforce its empty direct-escape contribution. These replace some direct local operations/no-op branches with shared-policy interpretation. They add executed control flow, but no per-visit descriptor/array allocation. The measured vector-larger row combines encoding, ownership, escape, registry construction, snapshot and checksum; it cannot attribute its15.79µs delta to one helper. The existing static frozen rules and fresh compatibility adapter satisfy the concrete avoidable-allocation repair without proving equal runtime cost.
+
+Restoring direct duplicated vector policy, caching operands, pre-resolving write/escape operands, adding closures per visit or dropping genuine result checks would violate the accepted architecture/semantics and is not justified by these timings.
+
+## Smallest useful follow-up, after delivery
+
+Proposed production scope: **one hunk in `src/ir/analysis/encoding.ts::classifyInstr`**. Move the existing shared-rule lookup and `encoding === 'no-write'` assertion into the existing switch's `default` branch. Preserve all explicit string/call handler bodies and their order unchanged. Every currently shared instruction kind reaches that default; it still calls the same canonical shared binding. Unsupported kinds retain their old no-record behavior. Do not add a duplicate list of eligible instruction kinds, a second encoding policy table or a special string fixture fast path.
+
+This removes a structurally unnecessary lookup from existing explicit encoding handlers while retaining shared no-write policy for the domain it actually owns. It is a performance hypothesis, not a promised speedup, and does not directly optimize ownership's vector event loop. Leave ownership, escape, effect rules, census and compatibility descriptor untouched in this follow-up. A vector event-application redesign is not justified before isolating its actual cost and would widen the proof/architecture surface.
+
+Implementation/acceptance boundaries:
+
+1. ROOT authorizes the one encoding hunk and the exact source-proof successor/test scope in issue6920. Keep the current source/proof/performance epoch immutable. The current497 qualification view remains evidence for the current candidate, not automatic qualification of changed encoding bytes.
+2. Preserve all explicit encoding outcomes, unsupported fallback behavior, canonical shared binding and profile admission. Exercise the existing real encoding suite and relevant portable semantic/AR07 shared-binding controls. Update only the necessary independent source-preservation transport/structural assertions for this precise dispatch move; retain original receipts/preimages and old controls. ROOT selects any further affected registrations from the actual dependency change; do not launch a blanket497 rerun automatically or claim unchanged source pins.
+3. Once the changed source and proof are accepted, make one predeclared paired comparison under the same TypeScript loader, fixtures, six rows, iterations, warmups, checksum guards and five-sample protocol. Preserve the current measurements as the previous candidate. No repetition until green, threshold invention, fixture reduction or cherry-picked sample exclusion. Report both improved and worsened rows; if the move is not useful, retain its evidence and make an explicit delivery decision rather than tune the benchmark.
+
+Suggested issue/PR statement: “AE28 now shares allocation-free static local rules across canonical analyses and the finite evidence checker. Six bounded workloads preserve their actual outputs; four median costs improved, while encoding-small was3.87% and vector-larger2.36% slower in this five-pair run. Equal-speed performance is not established. A bounded encoding dispatch follow-up remains recorded.”
+
+This recommendation concerns this qualified architectural checkpoint. It grants no native parity, general witness completion, legacy retirement or protected-queue release; ROOT retains those decisions.
+
