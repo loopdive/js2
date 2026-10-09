@@ -992,3 +992,45 @@ disagreement. This is a required future control, not a claimed test execution.
 Both entry and composed-acceptance gates remain UNMET. No fixture, failure,
 denominator, source, test, foreign claim, HOLD or queue policy is changed or
 released by this metadata clarification; legacy retirement remains blocked.
+
+### Astra neutral-geometry import specification — 2026-10-09
+
+Planning-only claim `6905:neutral-geometry-import-plan-20261009`, owner
+`ttraenkler/codex-linear-b-geometry-import-astra-20261009`. Astra High reviewed
+this specification; it does not release source implementation or historical
+proof edits. Starting B publication is `6d41eb99a08bcb8505febcb9b7ff4f43b9b2544b`.
+
+C published composed PR6600 head `e8f56680589752d67c83ce80cbb43b1bebf1f056`,
+with exact parents A's boundary dependency
+`b932e3a05e353acc59e7b547ef4e417a5d8637e1` and canonical main
+`616da017ca11cefa61f3f8d71a1c7ac18773491c`. Parent independently verified both
+ancestries and unchanged four geometry source/test blobs and boundary-policy
+blob against b932e. The neutral endpoint
+`src/shared/contracts/linear-memory-layout.ts::LINEAR_VECTOR_ELEMENTS_OFFSET`
+defines16; the IR planner re-exports that same binding. Endpoint SHA256 is
+`08c85d9e8c9891a74b9c0c02a1310b67b16832980849dc0e7b6d511d91350937`.
+Publication is not protected-queue delivery or A's dependency acceptance.
+
+The actual extra import-cycle edge is the initializer leaf's value import into
+the IR planner; an existing runtime-to-planner edge does not absorb a distinct
+file-to-file edge. After A reviews/releases this exact hunk and the dependency
+is composed with its boundary registration, Sol6.1 at appropriate effort should
+change ONLY `src/codegen-linear/runtime/vector-initialization.ts`'s import from
+`../../ir/analysis/linear-memory-plan.js` to
+`../../shared/contracts/linear-memory-layout.js`. Reconfirm canonical ownership
+before editing. No shared source, compiler, allocator, policy or proof changes
+belong to this slice; do not duplicate the numeric offset or alter the builder
+interface to evade the cycle.
+
+Preserve all seven instructions, fresh objects, stride8, f64.store align3/offset16,
+the existing caller, `(f64,i32,i32)->()` ABI, zero locals and registration behavior.
+Qualify baseline/candidate with identical composed dependencies and unchanged
+tests. Retain all eight complete observation witnesses, all25 test statuses,
+complete original failure text and all five full binary witnesses; preserve
+historical comparator and archives unchanged. Keep provenance identities distinct
+and attribute any composed-source differences rather than normalize them away.
+Recheck typing, boundary and import-cycle gates without exceptions or ratchet
+weakening. No composed candidate execution or gate result is asserted here.
+The ordinary positive array failure and public native1.25 acceptance remain;
+this import change alone does not implement native memory or full IR equivalence.
+A retains explicit source release, shared integration and protected queue.
