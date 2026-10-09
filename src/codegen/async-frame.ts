@@ -78,6 +78,7 @@ import {
 } from "./async-scheduler.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
+import { emitScopedClassLocalRebinds, liveBoxedCaptureSpillType } from "./async-frame-binding-continuity.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { closureBagInitInstr } from "./closures/closure-header-layout.js";
 import {
@@ -563,6 +564,7 @@ export function buildAsyncFrameInfo(
         }
       : collectNestedRefsAndAssigns(decl.body);
   const bodyBindingsByName = collectVarDeclsByName(decl);
+  const liveCellInit = new Map<number, number>();
   // The function-body hoist has already chosen concrete local/cell
   // representations before async activation. Prefer that exact contract over
   // checker reconstruction for body destructuring (where minified JS often has
@@ -574,6 +576,12 @@ export function buildAsyncFrameInfo(
       const local = activatingFctx?.localMap.get(name);
       const liveType =
         activatingFctx === undefined || local === undefined ? undefined : getLocalType(activatingFctx, local);
+      const liveCellType = liveBoxedCaptureSpillType(activatingFctx, name, liveType); // (#4618)
+      if (liveCellType !== undefined && local !== undefined) {
+        spillTypes[i] = liveCellType;
+        liveCellInit.set(i, local);
+        continue;
+      }
       if (liveType !== undefined) spillTypes[i] = liveType;
       else if (nestedCaptureType !== undefined) spillTypes[i] = nestedCaptureType;
       continue;
@@ -621,7 +629,7 @@ export function buildAsyncFrameInfo(
       const derivedNames = new Set(derived.map((d) => d.name));
       for (let i = 0; i < spillNames.length; i++) {
         const name = spillNames[i]!;
-        if (!referencedInNested.has(name)) continue;
+        if (!referencedInNested.has(name) || liveCellInit.has(i)) continue;
         const isDerived = derivedNames.has(name);
         const binding = declByName.get(name);
         if (binding === undefined && !isDerived) continue;
@@ -725,7 +733,8 @@ export function buildAsyncFrameInfo(
     spillNames,
     spillTypes,
     spillFieldOffset,
-    derivedSpillInit: derivedSpillInit.size > 0 ? derivedSpillInit : undefined,
+    derivedSpillInit:
+      derivedSpillInit.size + liveCellInit.size > 0 ? new Map([...derivedSpillInit, ...liveCellInit]) : undefined,
     undefWidenedPatternBindings: undefWidenedPatternBindings.size > 0 ? undefWidenedPatternBindings : undefined,
     spillCellInfo: spillCellInfo.size > 0 ? spillCellInfo : undefined,
     tdzCellNames: tdzCellNames.length > 0 ? tdzCellNames : undefined,
@@ -2617,6 +2626,7 @@ export function ensureAsyncResumeFunction(
           }),
     };
   });
+  emitScopedClassLocalRebinds(ctx, resumeFctx, info.decl); // (#4618)
   resumeFctx.body.push(
     buildAsyncFrameDispatch({
       target: { wasi: ctx.wasi, standalone: ctx.standalone },

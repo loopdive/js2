@@ -69,7 +69,7 @@ import { assertedStructFactoryExpression } from "./generic-struct-factory.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { emitVoidOperandSideEffects } from "./expressions/void-operand.js";
 // (#6797) The real functions behind `helpers/core-delegates.ts` — registered below.
-import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
+import { canonicalUndefinedExternInstrs, emitPrimitiveUnionExternToAny } from "./any-helpers.js";
 import { holeSentinelInstrs, holeTestInstrs } from "./array-holes.js";
 import { emitArraySetLengthValidation } from "./array-length-define.js";
 import { clampRelative, integerArg, requireObjectCoercible, resolveSliceDeps } from "./array-slice-native.js";
@@ -966,6 +966,11 @@ function compileExpressionBody(
             return expectedType;
           }
         }
+      }
+      // (#5185) externref → `$AnyValue` for a primitive-only union slot: box
+      // honestly so a boxed number/boolean is not stored as a tag-5 "string".
+      if (result.kind === "externref" && isAnyValue(expectedType, ctx)) {
+        if (emitPrimitiveUnionExternToAny(ctx, fctx, expr)) return expectedType;
       }
       if (result.kind === "i32" && expectedType.kind === "externref") {
         const tsType = ctx.checker.getTypeAtLocation(expr);

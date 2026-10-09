@@ -143,6 +143,7 @@ import { buildNonObjectDeleteArms, reserveCarrierBagDelete } from "./carrier-bag
 import {
   CARRIER_BAG_HAS,
   CARRIER_BAG_OF,
+  bagHasElseAbsent,
   bagHasIfAbsent,
   bagKeysTail,
   buildBagPushKeys,
@@ -985,6 +986,45 @@ export function emitStandaloneArrayConstructor(ctx: CodegenContext, argCount: nu
 
   pushDefinedFunc(ctx, funcIdx, { name: key, typeIdx, locals, body, exported: false });
   return funcIdx;
+}
+
+/**
+ * (#6879) The non-`$Object` arm of `__hasOwnProperty` / `__object_hasOwn` on
+ * the native regime in a JS environment: a receiver that is not a Wasm value
+ * (`ref.test eq` fails — a JS object the export boundary admitted) answers
+ * own-presence through the boundary MOP before the carrier-bag consult. The
+ * host's gOPD returns null for a non-admitted receiver, the undefined box for
+ * an absent key and the (now admitted) descriptor object for a present one, so
+ * "the result is admitted" is exactly "an own property exists". Before, the
+ * arm answered 0 for every JS object, so acorn's
+ * `opts && hasOwn(opts, opt) ? opts[opt] : defaultOptions[opt]` dropped every
+ * caller option. `undefined` (no boundary) leaves the legacy arm untouched.
+ */
+function boundaryOwnPresenceArm(ctx: CodegenContext, gopdIdx: number | undefined): Instr | undefined {
+  const admittedIdx = gopdIdx === undefined ? undefined : ctx.funcMap.get("__boundary_object_is_admitted");
+  if (gopdIdx === undefined || admittedIdx === undefined) return undefined;
+  const EQ_HEAP_TYPE = -19;
+  return {
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      { op: "local.get", index: 2 },
+      { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: gopdIdx },
+          { op: "call", funcIdx: admittedIdx },
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
+        ],
+      },
+      ...bagHasElseAbsent(ctx),
+    ],
+  };
 }
 
 export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
@@ -3696,7 +3736,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         objectTypeIdx,
         findOwnIdx: objFindIdx,
         builtinMetadataIdx: bfnGetMetaIdx,
-        nonObjectArm: bagHasIfAbsent(ctx),
+        nonObjectArm: boundaryOwnPresenceArm(ctx, boundaryObjectGetOwnPropertyDescriptorIdx) ?? bagHasIfAbsent(ctx),
       }),
     ];
     registerNative(
