@@ -1350,3 +1350,60 @@ qualification uses the committed candidate and actual supported CI identities;
 require the existing36-ID/38-envelope receipt, zero skip/fail/todo and unchanged
 input custody. No input pin or local-edit exception is broadened. Parent reviews
 and publishes through normal hooks; A retains integration/queue and HOLDs.
+
+### Astra archive-transport plan and main-composition barrier — 2026-10-09
+
+A's coordination comment6074098309 requests this specification and a normal
+main merge, not permission to insert shared workflow uploaders or change runner
+approval pins. Planning-only claim `6915:ci-archive-upload-plan-20261009` belongs
+to `ttraenkler/codex-linear-b-archive-plan-astra-20261009`. Astra High specifies;
+Sol6.1 at appropriate effort may implement only after explicit owner release.
+Existing implementation claims and HOLDs remain unchanged.
+
+The published predecessor is `6871907a4dbbe168512b7b9ce33500a61430e36c`.
+Canonical main was freshly verified and fetched at
+`616da017ca11cefa61f3f8d71a1c7ac18773491c`. Normal composition preserves both
+histories. Its source tree is `2a8c200cbb4862b6ffdd5952be7f6fa8f9ce1e63`, whereas
+the unchanged strict runner approves `953f74f80cf2f8085b8e1c93489fcdd357929b37`.
+`assertFrozenInputs` therefore refuses the composed source tree before starting
+the child. This is an approval barrier, not a measured compiler regression or
+a completed 36-observation/38-envelope qualification. Do not repin automatically.
+The directly pinned runtime/consumer/integration, test, fixture and execution
+configurations remain unchanged; transitive allocation validation, analyses,
+program DATA and inliner/effects changed. Unchanged leaf hashes do not prove
+unchanged compiler observations. Preserve every original baseline and failure.
+
+Proposed implementation scope is precisely two inserted steps in
+`.github/workflows/ci.yml`: quality, immediately after the complete changed-root
+test step and before required guards; advisory, immediately after `id: tests`
+and before outcome reporting. Use existing `actions/upload-artifact@v6`, with
+`always()` plus a nonempty `hashFiles('.tmp/6915-ci/run-*/**')` condition; advisory
+also requires the exact append-test matrix filename. Upload only
+`.tmp/6915-ci/run-*/`, with `include-hidden-files: true`,
+`if-no-files-found: error`, `overwrite: false` and default retention. Names must
+distinguish quality/advisory, run ID, attempt, and advisory matrix ordinal.
+Preserve each run directory identity and partial failed archives. Never upload
+the whole workspace, unrelated `.tmp` siblings, credentials or unrelated reports.
+Missing archives remain unqualified and pre-archive failures retain job logs.
+
+No commands, runner, permissions, selector, matrix, worker budget, assertions,
+continue-on-error, reporting or guard changes belong to this upload slice.
+Static review must show only those two insertions. Test exact action path
+selection with healthy/partial failures, multiple run directories, hidden files
+and unrelated siblings. Inspect downloaded actual CI bytes, not upload success:
+retain expected.json, command.json, before.json, after.json, stdout.log,
+stderr.log, reporter.json, graphs.ndjson, decoded.v8, diagnostics.json,
+runner-errors.v8 and receipt.json, plus applicable boundary raw reports, previous
+reporters and failure diagnostics. Do not discard extras to enforce twelve files.
+Verify all 36 ordered complete graphs, 38 envelopes, Runtime22's 33 transitions,
+eight same-validator negatives, reporter/completion and actual head/input custody.
+Independently compare complete witnesses with the approved baseline, without
+filtering changed proof fields. Seed archive transport alone is not equality.
+The missing historical CI archive cannot be reconstructed or credited later.
+
+Before composed-main child qualification, A must separately release a reviewed
+source-compatible runner approval successor and its exact owned edit scope.
+Preserve historical manifests unchanged; attribute any actual graph differences
+before accepting a successor baseline. This plan grants neither native memory
+admission, allocator/caller/resource ownership, performance acceptance, legacy
+retirement nor queue submission. A retains shared integration and protected queue.
