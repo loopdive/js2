@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-10-09T07:59:34.105Z",
-  "baseline_generated_at": "2026-10-09T07:59:34.105Z",
-  "baseline_sha": "2d0c31a3e2dbe0a4a46d123226fa1d62f7d4c7aa",
+  "timestamp": "2026-10-09T23:05:59.225Z",
+  "baseline_generated_at": "2026-10-09T23:05:59.226Z",
+  "baseline_sha": "b38ef77ca7b35efb4e9d8c5a889295d8dd8a9771",
   "oracle_version": 14,
   "mode": {
     "target": "standalone",
@@ -1255,8 +1255,8 @@
           "test/language/expressions/dynamic-import/syntax/valid/top-level-import-defer-script-code-valid.js",
           "test/language/expressions/dynamic-import/catch/nested-async-gen-await-import-source-source-text-module.js",
           "test/language/expressions/dynamic-import/syntax/valid/nested-if-import-source-script-code-valid.js",
-          "test/language/expressions/dynamic-import/catch/nested-if-import-catch-import-source-specifier-tostring.js",
-          "test/language/expressions/dynamic-import/syntax/valid/nested-async-gen-await-import-defer-script-code-valid.js"
+          "test/language/expressions/dynamic-import/syntax/valid/nested-async-gen-await-import-defer-script-code-valid.js",
+          "test/language/expressions/dynamic-import/catch/nested-if-import-catch-import-source-specifier-tostring.js"
         ],
         "sample_signatures": [
           "other:L#:## SyntaxError: import.defer(...) is not supported (Stage # proposal — import-defer / source-phase-imports); L#:## 'import.meta' is only allowed in a module",
@@ -1785,15 +1785,15 @@
         "sample_files": [
           "test/language/statements/class/async-gen-method/yield-star-async-next.js",
           "test/language/statements/async-generator/yield-star-return-missing-value-is-awaited.js",
-          "test/language/statements/for-of/head-using-fresh-binding-per-iteration.js",
           "test/language/statements/async-generator/generator-created-after-decl-inst.js",
+          "test/language/statements/for-of/head-using-fresh-binding-per-iteration.js",
           "test/language/expressions/async-generator/yield-star-sync-next.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::__create_async_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_done, env::__gen_result_value, env::__gen_return, env::__gen_set_return, env::__gen_yield_star, env::__gen_y",
           "host_import_leak:standalone target emitted host imports: env::__gen_result_done, env::__gen_result_value_f64, env::__gen_return (##)",
-          "assertion_fail:Test262Error: `f[#]()` returns `obj1` Expected SameValue(«null», «[object Object]») to be true",
           "host_import_leak:standalone target emitted host imports: env::__get_async_generator_prototype (##)",
+          "assertion_fail:Test262Error: `f[#]()` returns `obj1` Expected SameValue(«null», «[object Object]») to be true",
           "host_import_leak:standalone target emitted host imports: env::__gen_result_done, env::__gen_result_value (##)"
         ]
       },
