@@ -45,6 +45,7 @@ import { binderFor, isBindingReferencePosition, sourceFileOf, type Binding, type
 import {
   BUILTIN_NAMES,
   jsTagOfFact,
+  type BindingDeclarationEvidence,
   type JsTag,
   type OracleTypeKey,
   type SignatureFact,
@@ -141,6 +142,11 @@ export class InHouseOracle implements TypeOracle {
 
   declarationsOf(node: ts.Node): readonly ts.Declaration[] {
     return this.bindingOf(node)?.declarations ?? [];
+  }
+
+  bindingDeclarationEvidenceOf(_id: ts.Identifier): BindingDeclarationEvidence {
+    // The lexical binder cannot authenticate the checker's ambient population.
+    return Object.freeze({ kind: "unknown" });
   }
 
   constInitializerOf(id: ts.Node): ts.Expression | undefined {

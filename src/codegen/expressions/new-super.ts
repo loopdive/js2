@@ -31,6 +31,7 @@ import {
   GLOBAL_NON_CONSTRUCTOR_FUNCTION_NAMES,
   objectLiteralMethodWithoutConstruct,
   provablyNonConstructableStatically,
+  recoverAmbientPrototypeConstructorBinding,
   resolvesToAmbientGlobal,
   resolvesToNamedAmbientGlobal,
   resolvesToNonConstructableValue,
@@ -113,7 +114,11 @@ import { linkCompatibleDeclaredStructAncestor } from "../struct-hierarchy-layout
 import { admitBoundValueConstruct, emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
 import { emitOrdinaryFunctionConstructOnNull, emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; // (#4438) §10.2.2, (#6651 W2a)
 import * as bcv from "../builtin-ctor-value-invoke.js"; // (#6713) RegExp / Error-family carriers as values
-import { emitBuiltinArrayConstructOnNull, emitBuiltinPromiseConstructOnNull } from "./builtin-native-dyn-construct.js";
+import {
+  compileNativeConstructArgumentLocals,
+  emitBuiltinArrayConstructOnNull,
+  emitBuiltinPromiseConstructOnNull,
+} from "./builtin-native-dyn-construct.js";
 import {
   emitBuiltinCollectionConstructOnNull,
   tryEmitErrorFamilyValueConstruct,
@@ -3909,7 +3914,10 @@ function tryCompileNativeConstructFromValue(
     !resolvesToConstructableFunctionValue(ctx, calleeExpr) &&
     !resolvesToLateAssignedConstructSignatureValue(ctx, calleeExpr) &&
     !(noJsHost(ctx) && isDefaultExpressionImport(ctx, calleeExpr)) && // (#6720) the snapshot cell's VALUE
-    !admitBoundValueConstruct(ctx, calleeExpr) // (#6651 W2b) `var D = f.bind(…); new D()`
+    !admitBoundValueConstruct(ctx, calleeExpr) && // (#6651 W2b) `var D = f.bind(…); new D()`
+    // Weak identity recovery admits a LIVE value, never a static throw. Keep
+    // this last: the preceding bound admission may reserve driver state.
+    !(noJsHost(ctx) && recoverAmbientPrototypeConstructorBinding(ctx, calleeExpr) !== undefined)
   )
     return undefined;
 
@@ -4033,32 +4041,9 @@ function tryCompileNativeConstructFromValue(
   const protoLocal = allocLocal(fctx, `__nc_proto_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: protoLocal });
 
-  const argLocals: number[] = [];
-  for (const arg of args) {
-    // (#5196 R3-0) A `new <Proxy-constructor value>(target, handler)` site must
-    // lower an object-literal argument to an OPEN `$Object`, exactly as the
-    // syntactic `new Proxy` arm does (`new-builtin-globals.ts`): the closed
-    // typed struct an inline literal defaults to hides its fields from
-    // `__extern_get`, so `__proxy_create` reads every trap as null and the
-    // proxy silently behaves as if the handler were empty.
-    if (proxyCtorValue && ts.isObjectLiteralExpression(arg)) {
-      const openTy = compileObjectLiteralAsExternref(ctx, fctx, arg);
-      if (openTy === null) fctx.body.push({ op: "ref.null.extern" });
-      const openLocal = allocLocal(fctx, `__nc_arg${argLocals.length}_${fctx.locals.length}`, { kind: "externref" });
-      fctx.body.push({ op: "local.set", index: openLocal });
-      argLocals.push(openLocal);
-      continue;
-    }
-    const argTy = compileExpression(ctx, fctx, arg, { kind: "externref" });
-    if (argTy && argTy.kind !== "externref") {
-      coerceType(ctx, fctx, argTy, { kind: "externref" });
-    } else if (argTy === null) {
-      fctx.body.push({ op: "ref.null.extern" });
-    }
-    const argLocal = allocLocal(fctx, `__nc_arg${argLocals.length}_${fctx.locals.length}`, { kind: "externref" });
-    fctx.body.push({ op: "local.set", index: argLocal });
-    argLocals.push(argLocal);
-  }
+  const argLocals = compileNativeConstructArgumentLocals(ctx, fctx, args, proxyCtorValue, {
+    compileObjectLiteralAsExternref,
+  });
 
   // (#6651 W2a) A runtime `%Function%` callee is §20.2.1.1 CreateDynamicFunction:
   // the bare `new Function(<args>)` lowering, chosen by runtime identity. Every
