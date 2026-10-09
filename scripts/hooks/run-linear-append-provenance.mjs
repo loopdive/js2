@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
 import {
   closeSync,
   constants,
@@ -1151,6 +1152,340 @@ function colorlessChildEnv(incoming) {
   return env;
 }
 
+// Private supervision seam: production supplies the unchanged spawn and raw
+// writes. Faults are monotonic; only real close releases the finalization gate.
+function superviseAppendChild({
+  spawnChild,
+  write,
+  notify,
+  saveCapture,
+  errors,
+  receipt,
+  archive,
+  signals = process,
+  schedule = setTimeout,
+  cancel = clearTimeout,
+  now = Date.now,
+  cap = OUTPUT_CAP,
+  deadline = TIMEOUT_MS,
+}) {
+  const streams = Object.fromEntries(
+    ["stdout", "stderr"].map((name) => [
+      name,
+      { observed: 0, captured: 0, discarded: 0, ended: false, closed: false, writeFailed: false },
+    ]),
+  );
+  const faults = new Map(),
+    listeners = [];
+  let child, timer, spawnError, exit, resolveClose;
+  let started = false,
+    closed = false,
+    settled = false,
+    finalized = false;
+  let complete = true,
+    readComplete = true,
+    countersExact = true;
+  let observed = 0,
+    captured = 0,
+    discarded = 0;
+  let stderrFailed = false,
+    archiveFailed = false;
+  const start = now();
+  const closePromise = new Promise((done) => {
+    resolveClose = done;
+  });
+  const status = () => ({
+    started,
+    closed,
+    complete: started && closed && complete && streams.stdout.ended && streams.stderr.ended,
+    observedBytesKnown:
+      started && closed && readComplete && countersExact && streams.stdout.ended && streams.stderr.ended,
+    countersExact,
+    observed,
+    captured,
+    discarded,
+    streams: structuredClone(streams),
+    faults: [...faults].map(([category, entry]) => ({ category, count: entry.count })),
+  });
+  const retain = (category, error) => {
+    const prior = faults.get(category);
+    if (prior) {
+      prior.count = Math.min(Number.MAX_SAFE_INTEGER, prior.count + 1);
+      return false;
+    }
+    const first = error ?? new Error(`6915 parent supervision: ${category}`);
+    faults.set(category, { count: 1, error: first });
+    errors.push(first);
+    return true;
+  };
+  const announce = (category) => {
+    if (!stderrFailed) {
+      // Only bounded primitive metadata; child raw logs never contain this text.
+      try {
+        const message = Buffer.from(
+          `6915 parent: ${category}; archive=${archive.slice(0, 1024)}; pid=${Number.isSafeInteger(child?.pid) ? child.pid : "unknown"}; captured=${captured}; discarded=${discarded}; captureIntact=${complete}; ${started && !closed ? "waiting for natural child close" : closed ? "child closed" : "no child started"}\n`,
+        );
+        for (let offset = 0; offset < message.length; ) {
+          const count = notify(message, offset, message.length - offset);
+          check(
+            Number.isSafeInteger(count) && count > 0 && count <= message.length - offset,
+            "parent notification write stalled",
+          );
+          offset += count;
+        }
+      } catch (failure) {
+        stderrFailed = true;
+        retain("notification-stderr", failure);
+      }
+    }
+  };
+  const persist = (announceFailure = false) => {
+    if (archiveFailed) return;
+    try {
+      saveCapture(status());
+    } catch (error) {
+      archiveFailed = true;
+      retain("notification-archive", error);
+      // A standalone final diagnostic failure also gets a primitive notice;
+      // secondary notification faults are retained without recursive notices.
+      if (announceFailure) announce("notification-archive");
+    }
+  };
+  const fault = (category, error) => {
+    if (!retain(category, error)) return;
+    announce(category);
+    persist();
+  };
+  const add = (value, amount) => {
+    if (Number.isSafeInteger(value + amount)) return value + amount;
+    countersExact = false;
+    complete = false;
+    fault("counter-overflow");
+    return Number.MAX_SAFE_INTEGER;
+  };
+  const listen = (emitter, event, listener, name) => {
+    try {
+      emitter.on(event, listener);
+      listeners.push({ emitter, event, listener, name });
+    } catch (error) {
+      complete = false;
+      readComplete = false;
+      fault(`setup:${name}`, error);
+    }
+  };
+  try {
+    child = spawnChild();
+    started = true;
+  } catch (error) {
+    spawnError = error;
+    complete = false;
+    fault("spawn-error", error);
+    resolveClose();
+  }
+  if (started) {
+    try {
+      listen(
+        child,
+        "close",
+        (code, signal) => {
+          if (closed) return;
+          closed = true;
+          exit = { code, signal };
+          for (const name of ["stdout", "stderr"])
+            if (!streams[name].ended) {
+              complete = false;
+              readComplete = false;
+              fault(`${name}-close`);
+            }
+          resolveClose();
+        },
+        "child-close",
+      );
+      listen(
+        child,
+        "error",
+        (error) => {
+          spawnError ??= error;
+          fault("child-error", error);
+        },
+        "child-error",
+      );
+      for (const [index, name] of ["stdout", "stderr"].entries()) {
+        const state = streams[name];
+        let stream;
+        try {
+          stream = child[name];
+        } catch (error) {
+          complete = false;
+          readComplete = false;
+          fault(`setup:${name}`, error);
+          continue;
+        }
+        listen(
+          stream,
+          "error",
+          (error) => {
+            complete = false;
+            readComplete = false;
+            fault(`${name}-read`, error);
+          },
+          `${name}-error`,
+        );
+        listen(
+          stream,
+          "end",
+          () => {
+            state.ended = true;
+          },
+          `${name}-end`,
+        );
+        listen(
+          stream,
+          "close",
+          () => {
+            state.closed = true;
+            if (!state.ended) {
+              complete = false;
+              readComplete = false;
+              fault(`${name}-close`);
+            }
+          },
+          `${name}-close`,
+        );
+        listen(
+          stream,
+          "data",
+          (chunk) => {
+            try {
+              observed = add(observed, chunk.length);
+              state.observed = add(state.observed, chunk.length);
+              const allowed = Math.min(chunk.length, cap - captured);
+              let offset = 0,
+                writeError;
+              if (!state.writeFailed)
+                try {
+                  while (offset < allowed) {
+                    const count = write(index, chunk, offset, allowed - offset);
+                    check(
+                      Number.isSafeInteger(count) && count > 0 && count <= allowed - offset,
+                      "raw output write stalled",
+                    );
+                    offset += count;
+                    captured += count;
+                    state.captured += count;
+                  }
+                } catch (error) {
+                  state.writeFailed = true;
+                  writeError = error;
+                }
+              const lost = chunk.length - offset;
+              discarded = add(discarded, lost);
+              state.discarded = add(state.discarded, lost);
+              if (lost) complete = false;
+              if (writeError) fault(`${name}-write`, writeError);
+              if (chunk.length > allowed) fault("output-cap");
+            } catch (error) {
+              complete = false;
+              readComplete = false;
+              fault(`${name}-callback`, error);
+            }
+          },
+          `${name}-data`,
+        );
+      }
+      for (const signal of ["SIGINT", "SIGTERM"]) listen(signals, signal, () => fault(`signal:${signal}`), signal);
+      try {
+        timer = schedule(() => fault("timeout"), deadline);
+      } catch (error) {
+        fault("setup:timer", error);
+      }
+    } catch (error) {
+      complete = false;
+      readComplete = false;
+      fault("setup:child", error);
+    }
+  }
+  return {
+    status,
+    async waitForClose() {
+      await closePromise;
+      if (!settled) {
+        settled = true;
+        if (timer !== undefined)
+          try {
+            cancel(timer);
+          } catch (error) {
+            fault("cleanup:timer", error);
+          }
+        for (const { emitter, event, listener, name } of listeners)
+          try {
+            emitter.off(event, listener);
+          } catch (error) {
+            fault(`cleanup:${name}`, error);
+          }
+        Object.assign(receipt, exit ?? {}, {
+          killed: false,
+          bytes: observed,
+          elapsedMs: now() - start,
+          spawnError: spawnError?.stack ?? null,
+        });
+        persist(true);
+      }
+      return exit;
+    },
+    assertSuccess() {
+      check(
+        settled &&
+          started &&
+          closed &&
+          exit.code === 0 &&
+          exit.signal === null &&
+          faults.size === 0 &&
+          status().complete &&
+          errors.length === 0,
+        "strict child exit/timeout/output cap",
+      );
+    },
+    finalize(action) {
+      check(settled && (!started || closed), "finalization before child close");
+      check(!finalized, "duplicate child finalization");
+      finalized = true;
+      return action();
+    },
+    sealReceipt() {
+      check(settled && (!started || closed), "receipt before child close");
+      receipt.failures = errors.map((error) => error.stack);
+      return receipt;
+    },
+    archiveReceipt(saveErrors, saveReceipt) {
+      check(settled && finalized && (!started || closed), "terminal archive before child finalization");
+      let errorsSaved = false;
+      try {
+        saveErrors();
+        errorsSaved = true;
+      } catch (error) {
+        fault("archive:runner-errors", error);
+      }
+      this.sealReceipt();
+      try {
+        saveReceipt();
+      } catch (error) {
+        fault("archive:receipt", error);
+        this.sealReceipt();
+        // Retain a late receipt-write error in the existing detached diagnostic.
+        // Retry neither failed destination; only refresh an earlier success.
+        if (errorsSaved)
+          try {
+            saveErrors();
+          } catch (failure) {
+            fault("archive:runner-errors", failure);
+            this.sealReceipt();
+          }
+      }
+    },
+  };
+}
+
 async function runAppendQualification() {
   const checkout = readApprovedCheckout();
   const directory = join(checkout.root, ".tmp/6915-ci");
@@ -1181,7 +1516,7 @@ async function runAppendQualification() {
   const json = (name, value) => save(name, JSON.stringify(value, null, 2) + "\n");
   const errors = [],
     receipt = { code: null, signal: null, killed: false, bytes: 0, elapsedMs: 0, spawnError: null, failures: [] };
-  let before;
+  let before, supervision;
   const fds = [];
   try {
     json("expected.json", checkout.expected);
@@ -1204,64 +1539,25 @@ async function runAppendQualification() {
     delete env.NODE_OPTIONS;
     delete env.JS2WASM_APPEND_PARENT_MANIFEST;
     for (const name of ["stdout.log", "stderr.log"]) fds.push(openSync(join(archive, name), "wx"));
-    const start = Date.now();
-    let killed = false,
-      bytes = 0,
-      spawnError;
-    const child = spawn("pnpm", ARGV, {
-      cwd: checkout.root,
-      env,
-      shell: false,
-      detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
+    supervision = superviseAppendChild({
+      spawnChild: () =>
+        spawn("pnpm", ARGV, {
+          cwd: checkout.root,
+          env,
+          shell: false,
+          detached: process.platform !== "win32",
+          stdio: ["ignore", "pipe", "pipe"],
+        }),
+      write: (index, chunk, offset, length) => writeSync(fds[index], chunk, offset, length),
+      notify: (chunk, offset, length) => writeSync(2, chunk, offset, length),
+      saveCapture: (capture) => json("capture.json", capture),
+      errors,
+      receipt,
+      archive,
     });
-    const stop = () => {
-      killed = true;
-      try {
-        if (process.platform === "win32") child.kill("SIGKILL");
-        else process.kill(-child.pid, "SIGKILL");
-      } catch (error) {
-        if (error.code !== "ESRCH") spawnError = error;
-      }
-    };
-    const timer = setTimeout(stop, TIMEOUT_MS);
-    const interrupted = () => stop();
-    process.on("SIGINT", interrupted);
-    process.on("SIGTERM", interrupted);
-    for (const [index, stream] of [child.stdout, child.stderr].entries())
-      stream.on("data", (chunk) => {
-        try {
-          bytes += chunk.length;
-          let offset = 0;
-          while (offset < chunk.length) {
-            const written = writeSync(fds[index], chunk, offset, chunk.length - offset);
-            check(written > 0, "raw output write stalled");
-            offset += written;
-          }
-          if (bytes > OUTPUT_CAP) stop();
-        } catch (error) {
-          errors.push(error);
-          stop();
-        }
-      });
-    child.on("error", (error) => {
-      spawnError = error;
-    });
-    const exit = await new Promise((done) => child.on("close", (code, signal) => done({ code, signal })));
-    clearTimeout(timer);
-    process.off("SIGINT", interrupted);
-    process.off("SIGTERM", interrupted);
-    Object.assign(receipt, exit, {
-      killed,
-      bytes,
-      elapsedMs: Date.now() - start,
-      spawnError: spawnError?.stack ?? null,
-    });
+    await supervision.waitForClose();
     try {
-      check(
-        exit.code === 0 && exit.signal === null && !killed && spawnError === undefined,
-        "strict child exit/timeout/output cap",
-      );
+      supervision.assertSuccess();
     } catch (error) {
       errors.push(error);
     }
@@ -1289,50 +1585,62 @@ async function runAppendQualification() {
   } catch (error) {
     errors.push(error);
   } finally {
-    try {
-      const after = assertFrozenInputs(checkout);
-      archiveFrozenInputs(save, "after", after);
-      if (before !== undefined) compareFrozenInputs(before, after);
-    } catch (error) {
-      errors.push(error);
+    // Defensive barrier also covers every handled post-spawn exceptional path.
+    if (supervision !== undefined) await supervision.waitForClose();
+    const finalize = () => {
       try {
-        json("after-failure.json", { error: error.stack });
-      } catch (writeError) {
-        errors.push(writeError);
+        const after = assertFrozenInputs(checkout);
+        archiveFrozenInputs(save, "after", after);
+        if (before !== undefined) compareFrozenInputs(before, after);
+      } catch (error) {
+        errors.push(error);
+        try {
+          json("after-failure.json", { error: error.stack });
+        } catch (writeError) {
+          errors.push(writeError);
+        }
       }
-    }
-    for (const fd of [...fds, lockFd])
+      for (const fd of [...fds, lockFd])
+        try {
+          closeSync(fd);
+        } catch (error) {
+          errors.push(error);
+        }
       try {
-        closeSync(fd);
+        unlinkSync(lock);
       } catch (error) {
         errors.push(error);
       }
-    try {
-      unlinkSync(lock);
-    } catch (error) {
-      errors.push(error);
-    }
+    };
+    if (supervision === undefined) finalize();
+    else supervision.finalize(finalize);
   }
   console.log(`6915 parent: evidence retained at ${archive}`);
   // Native Error serialization is lossy. Serialize only detached plain data,
   // with aggregate members/causes/custom fields and descriptor/reference custody.
   // Raw child graphs remain authoritative. Unevaluated accessor markers are
   // explicitly incomplete parent diagnostics, not captured getter results.
-  try {
-    save("runner-errors.v8", serialize(detachErrors(errors)));
-  } catch (error) {
-    errors.push(error);
-  }
-  receipt.failures = errors.map((error) => error.stack);
-  try {
-    json("receipt.json", receipt);
-  } catch (error) {
-    errors.push(error);
-  }
+  if (supervision === undefined) {
+    try {
+      save("runner-errors.v8", serialize(detachErrors(errors)));
+    } catch (error) {
+      errors.push(error);
+    }
+    receipt.failures = errors.map((error) => error.stack);
+    try {
+      json("receipt.json", receipt);
+    } catch (error) {
+      errors.push(error);
+    }
+  } else
+    supervision.archiveReceipt(
+      () => save("runner-errors.v8", serialize(detachErrors(errors))),
+      () => json("receipt.json", receipt),
+    );
   if (errors.length) throw new AggregateError(errors, "6915 parent qualification failed", { cause: errors[0] });
 }
 
-function selfTest() {
+async function selfTest() {
   let passed = 0;
   const good = (action) => {
     action();
@@ -2312,12 +2620,648 @@ function selfTest() {
     for (const name of Object.keys(process.env)) if (!Object.hasOwn(originalEnv, name)) delete process.env[name];
     Object.assign(process.env, originalEnv);
   }
+  // Exercise the actual production supervisor with inert events, timers and
+  // bounded writes. Every returned child is synthetically closed by its case.
+  const supervised = (options = {}) => {
+    const child = new EventEmitter(),
+      signals = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.pid = 6915;
+    const errors = [],
+      notifications = [],
+      captures = [],
+      output = [[], []],
+      writes = [0, 0],
+      events = [];
+    const receipt = { code: null, signal: null, killed: false, bytes: 0, elapsedMs: 0, spawnError: null, failures: [] };
+    let spawns = 0,
+      terminations = 0,
+      timeout,
+      cancelled = 0;
+    const prohibited = () => {
+      terminations++;
+      assert.fail("termination/abort/destroy/unref attempted");
+    };
+    for (const emitter of [child, child.stdout, child.stderr, signals])
+      for (const name of ["kill", "abort", "destroy", "unref"]) emitter[name] = prohibited;
+    const foreign = () => {};
+    signals.on("SIGINT", foreign);
+    const timer = { unref: prohibited };
+    const handle = superviseAppendChild({
+      spawnChild: () => {
+        spawns++;
+        assert.equal(spawns, 1);
+        if (options.spawnError) throw options.spawnError;
+        if (options.pipeSetupError) {
+          const stream = child.stdout;
+          let first = true;
+          Object.defineProperty(child, "stdout", {
+            get: () => {
+              if (first) {
+                first = false;
+                throw options.pipeSetupError;
+              }
+              return stream;
+            },
+          });
+        }
+        return child;
+      },
+      write: (index, chunk, offset, length) => {
+        writes[index]++;
+        const count = options.write ? options.write(index, chunk, offset, length, writes[index]) : length;
+        if (count > 0 && Buffer.isBuffer(chunk))
+          output[index].push(Buffer.from(chunk.subarray(offset, offset + count)));
+        return count;
+      },
+      notify: (chunk, offset, length) => {
+        notifications.push(chunk.subarray(offset, offset + length).toString());
+        if (options.notifyError) throw options.notifyError;
+        if (options.notifyWrite) return options.notifyWrite(length, notifications.length);
+        return length;
+      },
+      saveCapture: (capture) => {
+        captures.push(capture);
+        if (options.archiveError) throw options.archiveError;
+      },
+      schedule: (callback, ms) => {
+        assert.equal(ms, TIMEOUT_MS);
+        timeout = callback;
+        if (options.setupError) throw options.setupError;
+        return timer;
+      },
+      cancel: (value) => {
+        assert.equal(value, timer);
+        cancelled++;
+        if (options.cancelError) throw options.cancelError;
+      },
+      now: () => 10,
+      signals,
+      errors,
+      receipt,
+      archive: "inert/private/archive",
+      ...(options.cap === undefined ? {} : { cap: options.cap }),
+    });
+    const waiting = handle.waitForClose();
+    let resolved = false;
+    waiting.then(() => {
+      resolved = true;
+    });
+    const data = (name, value) => child[name].emit("data", typeof value === "string" ? Buffer.from(value) : value);
+    const close = async (code = 0, signal = null, ended = [true, true]) => {
+      for (const [index, name] of ["stdout", "stderr"].entries()) {
+        if (ended[index]) child[name].emit("end");
+        child[name].emit("close");
+      }
+      child.emit("close", code, signal);
+      await waiting;
+      handle.sealReceipt();
+      assert.equal(receipt.killed, false);
+      assert.equal(spawns, 1);
+      assert.equal(terminations, 0);
+      assert.equal(cancelled, options.spawnError || options.setupError ? 0 : 1);
+      assert.equal(signals.listenerCount("SIGINT"), 1);
+      assert.equal(signals.listeners("SIGINT")[0], foreign);
+      assert.equal(signals.listenerCount("SIGTERM"), 0);
+      for (const emitter of [child, child.stdout, child.stderr]) assert.deepEqual(emitter.eventNames(), []);
+    };
+    return {
+      child,
+      signals,
+      handle,
+      errors,
+      receipt,
+      output,
+      writes,
+      events,
+      notifications,
+      captures,
+      data,
+      close,
+      timeout: () => timeout(),
+      resolved: () => resolved,
+      bytes: (index) => Buffer.concat(output[index]).toString(),
+    };
+  };
+  const control = async (action) => {
+    await action();
+    passed++;
+  };
+  const rejected = (fixture) => {
+    // Every failure control also has otherwise passing full child witnesses.
+    validateAppendReceipt(records, reporter, expected);
+    fixture.handle.sealReceipt();
+    assert(fixture.errors.length > 0);
+    assert.equal(fixture.receipt.failures.length, fixture.errors.length);
+    assert(fixture.receipt.failures.every((failure) => typeof failure === "string" && failure.length > 0));
+    assert.throws(() => fixture.handle.assertSuccess(), /strict child exit/);
+  };
+  await control(async () => {
+    const f = supervised({ write: (_index, _chunk, _offset, length) => Math.min(2, length) });
+    f.data("stdout", "abc");
+    f.data("stderr", "DE");
+    f.child.emit("exit", 0, null);
+    await Promise.resolve();
+    assert.equal(f.resolved(), false);
+    assert.throws(() => f.handle.finalize(() => f.events.push("terminal")), /before child close/);
+    assert.throws(() => f.handle.sealReceipt(), /before child close/);
+    assert.throws(
+      () =>
+        f.handle.archiveReceipt(
+          () => {},
+          () => {},
+        ),
+      /before child finalization/,
+    );
+    f.data("stdout", "tail");
+    await f.close();
+    assert.deepEqual([f.bytes(0), f.bytes(1)], ["abctail", "DE"]);
+    assert.deepEqual([f.receipt.bytes, f.handle.status().captured, f.handle.status().discarded], [9, 9, 0]);
+    assert.equal(f.handle.status().complete, true);
+    assert.equal(f.handle.status().observedBytesKnown, true);
+    assert.deepEqual(f.receipt.failures, []);
+    f.handle.assertSuccess();
+    validateAppendReceipt(records, reporter, expected);
+    f.handle.finalize(() => f.events.push("terminal"));
+    assert.throws(() => f.handle.finalize(() => {}), /duplicate/);
+    const archived = [];
+    f.handle.archiveReceipt(
+      () => archived.push(serialize(detachErrors(f.errors))),
+      () => archived.push(JSON.stringify(f.receipt)),
+    );
+    assert.equal(deserialize(archived[0]).root.length, 0);
+    assert.deepEqual(JSON.parse(archived[1]).failures, []);
+    assert.equal(archived.length, 2);
+    assert.deepEqual(f.events, ["terminal"]);
+  });
+  await control(async () => {
+    const f = supervised();
+    const resourceRoot = realpathSync(mkdtempSync(join(tmpdir(), "6915-close-barrier-self-test-")));
+    const lockPath = join(resourceRoot, "runner.lock"),
+      logPath = join(resourceRoot, "stdout.log");
+    const lockHandle = openSync(lockPath, "wx"),
+      logHandle = openSync(logPath, "wx");
+    const finalize = () => {
+      f.events.push("after-custody");
+      writeFileSync(join(resourceRoot, "after.json"), "{}\n");
+      closeSync(logHandle);
+      f.events.push("capture-close");
+      closeSync(lockHandle);
+      unlinkSync(lockPath);
+      f.events.push("lock-unlink");
+      writeFileSync(join(resourceRoot, "receipt.json"), JSON.stringify(f.handle.sealReceipt()));
+      f.events.push("terminal");
+    };
+    f.timeout();
+    f.data("stdout", "late");
+    f.data("stderr", "error");
+    f.child.emit("exit", 0, null);
+    await Promise.resolve();
+    assert.equal(f.resolved(), false);
+    assert.throws(() => f.handle.finalize(finalize), /before child close/);
+    assert.deepEqual(f.events, []);
+    assert.equal(existsSync(lockPath), true);
+    assert.equal(fstatSync(logHandle).isFile(), true);
+    assert.equal(fstatSync(lockHandle).isFile(), true);
+    assert.equal(existsSync(join(resourceRoot, "receipt.json")), false);
+    assert.equal(f.captures[0].closed, false);
+    assert(f.notifications[0].includes("waiting for natural child close"));
+    await f.close();
+    rejected(f);
+    f.handle.finalize(finalize);
+    assert.deepEqual(f.events, ["after-custody", "capture-close", "lock-unlink", "terminal"]);
+    assert.equal(existsSync(lockPath), false);
+    assert.deepEqual([f.bytes(0), f.bytes(1)], ["late", "error"]);
+    assert(JSON.parse(readFileSync(join(resourceRoot, "receipt.json"))).failures.length > 0);
+    assert.throws(() => f.handle.finalize(finalize), /duplicate/);
+  });
+  for (const signal of ["SIGINT", "SIGTERM"])
+    await control(async () => {
+      const f = supervised();
+      for (let index = 0; index < 100; index++) f.signals.emit(signal);
+      f.data("stdout", "after signal");
+      f.data("stderr", "still draining");
+      assert.equal(f.errors.length, 1);
+      assert.equal(f.notifications.length, 1);
+      assert.deepEqual(f.handle.status().faults, [{ category: `signal:${signal}`, count: 100 }]);
+      assert(f.errors[0].message.includes(signal));
+      await f.close();
+      rejected(f);
+      assert.equal(f.receipt.signal, null);
+      assert.equal(f.handle.status().complete, true);
+    });
+  for (const size of [OUTPUT_CAP - 1, OUTPUT_CAP, OUTPUT_CAP + 1])
+    await control(async () => {
+      // A write double observes lengths without allocating 256 MiB of data.
+      const f = supervised();
+      f.data("stdout", { length: size });
+      await f.close();
+      assert.deepEqual(
+        [f.receipt.bytes, f.handle.status().captured, f.handle.status().discarded],
+        [size, Math.min(size, OUTPUT_CAP), Math.max(0, size - OUTPUT_CAP)],
+      );
+      if (size > OUTPUT_CAP) rejected(f);
+      else f.handle.assertSuccess();
+    });
+  await control(async () => {
+    const f = supervised({ cap: 5 });
+    f.data("stdout", "abcdefghi");
+    f.data("stderr", "XYZ");
+    await f.close();
+    rejected(f);
+    assert.deepEqual([f.bytes(0), f.bytes(1)], ["abcde", ""]);
+    assert.deepEqual([f.receipt.bytes, f.handle.status().captured, f.handle.status().discarded], [12, 5, 7]);
+    assert.equal(f.writes[1], 0);
+    assert.equal(f.notifications.length, 1);
+    assert.deepEqual(f.handle.status().faults, [{ category: "output-cap", count: 2 }]);
+  });
+  await control(async () => {
+    const f = supervised({ cap: 5 });
+    f.data("stdout", "abc");
+    f.data("stderr", "DEF");
+    f.data("stdout", "G");
+    await f.close();
+    rejected(f);
+    assert.deepEqual([f.bytes(0), f.bytes(1)], ["abc", "DE"]);
+    assert.deepEqual([f.receipt.bytes, f.handle.status().captured, f.handle.status().discarded], [7, 5, 2]);
+  });
+  for (const [index, name] of ["stdout", "stderr"].entries())
+    for (const mode of ["throw", "stall"])
+      await control(async () => {
+        const primary = new Error(`${name} original write failure`);
+        const f = supervised({
+          write: (stream, _chunk, _offset, length, calls) => {
+            if (stream !== index) return length;
+            if (calls === 1) return 2;
+            if (mode === "throw") throw primary;
+            return 0;
+          },
+        });
+        f.data(name, "abcdef");
+        f.data(name, "more");
+        f.data(index === 0 ? "stderr" : "stdout", "OK");
+        assert.equal(f.writes[index], 2);
+        await f.close();
+        rejected(f);
+        assert.equal(f.bytes(index), "ab");
+        assert.equal(f.bytes(1 - index), "OK");
+        assert.deepEqual([f.receipt.bytes, f.handle.status().captured, f.handle.status().discarded], [12, 4, 8]);
+        assert.equal(f.handle.status().complete, false);
+        assert.equal(f.handle.status().observedBytesKnown, true);
+        if (mode === "throw") assert.equal(f.errors[0], primary);
+      });
+  for (const [index, name] of ["stdout", "stderr"].entries()) {
+    await control(async () => {
+      const primary = new Error(`${name} original read failure`),
+        f = supervised();
+      f.child[name].emit("error", primary);
+      f.child[name].emit("error", new Error("repeat"));
+      f.data(index === 0 ? "stderr" : "stdout", "usable");
+      await Promise.resolve();
+      assert.equal(f.resolved(), false);
+      await f.close();
+      rejected(f);
+      assert.equal(f.errors[0], primary);
+      assert.equal(f.errors.length, 1);
+      assert.equal(f.bytes(1 - index), "usable");
+      assert.equal(f.handle.status().complete, false);
+      assert.equal(f.handle.status().observedBytesKnown, false);
+    });
+    await control(async () => {
+      const f = supervised();
+      f.child[name].emit("close");
+      f.data(index === 0 ? "stderr" : "stdout", "usable");
+      await f.close(0, null, index === 0 ? [false, true] : [true, false]);
+      rejected(f);
+      assert.equal(f.bytes(1 - index), "usable");
+      assert.equal(f.handle.status().observedBytesKnown, false);
+    });
+  }
+  await control(async () => {
+    const primary = new Error("synchronous spawn failure"),
+      f = supervised({ spawnError: primary });
+    await f.close();
+    rejected(f);
+    assert.equal(f.errors[0], primary);
+    assert.equal(f.receipt.code, null);
+    assert.equal(f.handle.status().started, false);
+    assert.equal(f.handle.status().closed, false);
+    assert.equal(f.handle.status().complete, false);
+    assert.equal(f.receipt.spawnError, primary.stack);
+  });
+  await control(async () => {
+    const primary = new Error("asynchronous child failure"),
+      f = supervised();
+    f.child.emit("error", primary);
+    f.data("stderr", "spawn diagnostic");
+    await Promise.resolve();
+    assert.equal(f.resolved(), false);
+    assert.throws(() => f.handle.finalize(() => {}), /before child close/);
+    await f.close(-1, null);
+    rejected(f);
+    assert.equal(f.errors[0], primary);
+    assert.equal(f.receipt.code, -1);
+    assert.equal(f.receipt.spawnError, primary.stack);
+  });
+  for (const [code, signal] of [
+    [1, null],
+    [null, "SIGKILL"],
+  ])
+    await control(async () => {
+      const f = supervised();
+      f.data("stdout", "real prefix");
+      await f.close(code, signal);
+      // The production strict-exit catch retains this independent exit error.
+      try {
+        f.handle.assertSuccess();
+      } catch (error) {
+        f.errors.push(error);
+      }
+      rejected(f);
+      assert.equal(f.receipt.code, code);
+      assert.equal(f.receipt.signal, signal);
+    });
+  await control(async () => {
+    const writeError = new Error("write after deadline"),
+      readError = new Error("pipe after cap");
+    const f = supervised({
+      cap: 4,
+      write: (index, _chunk, _offset, length) => {
+        if (index === 1) throw writeError;
+        return length;
+      },
+    });
+    f.timeout();
+    f.data("stderr", "xx");
+    f.data("stdout", "12345");
+    f.child.stderr.emit("error", readError);
+    await f.close();
+    const afterError = new Error("after custody"),
+      archiveError = new Error("graph archive"),
+      closeError = new Error("descriptor close");
+    f.handle.finalize(() => {
+      f.errors.push(afterError, archiveError, closeError);
+    });
+    rejected(f);
+    assert(f.errors.includes(writeError));
+    assert(f.errors.includes(readError));
+    assert.deepEqual(f.errors.slice(-3), [afterError, archiveError, closeError]);
+    assert.equal(f.handle.status().faults[0].category, "timeout");
+    const detached = deserialize(serialize(detachErrors(f.errors)));
+    assert.equal(detached.root.length, f.errors.length);
+  });
+  for (const mode of ["stderr", "archive", "both"])
+    await control(async () => {
+      const notifyError = new Error("parent stderr failure"),
+        archiveError = new Error("fault status archive failure");
+      const f = supervised({
+        ...(mode !== "archive" ? { notifyError } : {}),
+        ...(mode !== "stderr" ? { archiveError } : {}),
+      });
+      f.timeout();
+      f.signals.emit("SIGINT");
+      f.timeout();
+      f.data("stdout", "still captured");
+      await f.close();
+      rejected(f);
+      if (mode !== "archive") {
+        assert(f.errors.includes(notifyError));
+        assert.equal(f.notifications.length, 1);
+      }
+      if (mode !== "stderr") {
+        assert(f.errors.includes(archiveError));
+        assert.equal(f.captures.length, 1);
+      }
+      assert.equal(f.bytes(0), "still captured");
+    });
+  await control(async () => {
+    const setupError = new Error("timer setup"),
+      f = supervised({ setupError });
+    f.data("stdout", "after setup failure");
+    await Promise.resolve();
+    assert.equal(f.resolved(), false);
+    assert.throws(() => f.handle.finalize(() => {}), /before child close/);
+    await f.close();
+    rejected(f);
+    assert.equal(f.errors[0], setupError);
+  });
+  await control(async () => {
+    const primary = new Error("stdout setup getter"),
+      f = supervised({ pipeSetupError: primary });
+    f.data("stderr", "usable pipe after setup failure");
+    await Promise.resolve();
+    assert.equal(f.resolved(), false);
+    assert.throws(() => f.handle.finalize(() => {}), /before child close/);
+    await f.close();
+    rejected(f);
+    assert.equal(f.errors[0], primary);
+    assert.equal(f.bytes(1), "usable pipe after setup failure");
+    assert.equal(f.handle.status().observedBytesKnown, false);
+  });
+  await control(async () => {
+    const cleanupError = new Error("timer cleanup"),
+      f = supervised({ cancelError: cleanupError });
+    await f.close();
+    rejected(f);
+    assert.equal(f.errors[0], cleanupError);
+  });
+  for (const mode of ["errors", "receipt", "refresh", "both"])
+    await control(async () => {
+      const f = supervised(),
+        diagnosticError = new Error("detached diagnostic archive failure"),
+        receiptError = new Error("receipt archive after fields assembled"),
+        refreshError = new Error("late diagnostic refresh failure"),
+        detached = [];
+      let errorWrites = 0,
+        receiptWrites = 0;
+      await f.close();
+      validateAppendReceipt(records, reporter, expected);
+      f.handle.assertSuccess();
+      assert.throws(
+        () =>
+          f.handle.archiveReceipt(
+            () => {},
+            () => {},
+          ),
+        /before child finalization/,
+      );
+      f.handle.finalize(() => {});
+      assert.deepEqual(f.receipt.failures, []);
+      f.handle.archiveReceipt(
+        () => {
+          errorWrites++;
+          if (mode === "errors" || mode === "both") throw diagnosticError;
+          if (mode === "refresh" && errorWrites === 2) throw refreshError;
+          detached.push(deserialize(serialize(detachErrors(f.errors))));
+        },
+        () => {
+          receiptWrites++;
+          if (mode === "errors") assert.deepEqual(f.receipt.failures, [diagnosticError.stack]);
+          else {
+            // Otherwise passing child witnesses and an empty assembled receipt
+            // cannot override a fault occurring in the actual archive operation.
+            if (mode !== "both") assert.deepEqual(f.receipt.failures, []);
+            throw receiptError;
+          }
+        },
+      );
+      rejected(f);
+      assert.equal(receiptWrites, 1);
+      assert.equal(errorWrites, mode === "errors" || mode === "both" ? 1 : 2);
+      const retained =
+        mode === "errors"
+          ? [diagnosticError]
+          : mode === "receipt"
+            ? [receiptError]
+            : mode === "refresh"
+              ? [receiptError, refreshError]
+              : [diagnosticError, receiptError];
+      assert.deepEqual(f.errors, retained);
+      assert.deepEqual(
+        f.receipt.failures,
+        retained.map((error) => error.stack),
+      );
+      if (mode === "receipt") assert.equal(detached[1].root.length, 1);
+      assert.equal(f.receipt.code, 0);
+      assert.equal(f.receipt.killed, false);
+      assert.equal(f.handle.status().complete, true);
+      assert(f.captures.at(-1).faults.some((entry) => entry.category.startsWith("archive:")));
+    });
+  await control(async () => {
+    const f = supervised(),
+      afterError = new Error("post-close custody failure"),
+      fdError = new Error("post-close descriptor close failure");
+    await f.close();
+    validateAppendReceipt(records, reporter, expected);
+    f.handle.finalize(() => {
+      f.errors.push(afterError, fdError);
+    });
+    let diagnostic;
+    f.handle.archiveReceipt(
+      () => {
+        diagnostic = deserialize(serialize(detachErrors(f.errors)));
+      },
+      () => assert.deepEqual(f.receipt.failures, [afterError.stack, fdError.stack]),
+    );
+    rejected(f);
+    assert.equal(diagnostic.root.length, 2);
+    assert.deepEqual(f.errors, [afterError, fdError]);
+  });
+  await control(async () => {
+    const f = supervised({ cap: 4 });
+    f.data("stdout", "prefix beyond cap");
+    await f.close();
+    // Passing complete synthetic witnesses do not override infrastructure loss.
+    validateAppendReceipt(records, reporter, expected);
+    rejected(f);
+    assert.equal(f.handle.status().complete, false);
+  });
+  await control(async () => {
+    const f = supervised();
+    for (const name of ["stdout", "stderr"]) {
+      f.child[name].emit("end");
+      f.child[name].emit("close");
+    }
+    await Promise.resolve();
+    assert.equal(f.resolved(), false);
+    assert.deepEqual(f.errors, []);
+    await f.close();
+    f.handle.assertSuccess();
+    assert.equal(f.handle.status().complete, true);
+  });
+  await control(async () => {
+    const primary = new Error("final capture diagnostic archive failure"),
+      f = supervised({ archiveError: primary });
+    f.data("stdout", "otherwise healthy");
+    await f.close();
+    validateAppendReceipt(records, reporter, expected);
+    rejected(f);
+    assert.equal(f.errors[0], primary);
+    assert.equal(f.captures.length, 1);
+    assert.equal(f.notifications.length, 1);
+    assert(f.notifications[0].includes("notification-archive"));
+    assert.equal(f.handle.status().complete, true);
+  });
+  await control(async () => {
+    const f = supervised({ notifyWrite: (_length, calls) => (calls === 1 ? 2 : 0) });
+    f.timeout();
+    f.signals.emit("SIGTERM");
+    f.data("stdout", "notification stalled only");
+    await f.close();
+    rejected(f);
+    assert.equal(f.notifications.length, 2);
+    assert(f.handle.status().faults.some((entry) => entry.category === "notification-stderr"));
+    assert.equal(f.bytes(0), "notification stalled only");
+  });
+  await control(async () => {
+    // Real pre-child parent route on the existing private inert Git fixture.
+    // An unknown tree fails before physical inputs or the real spawn site.
+    const cwd = process.cwd(),
+      env = { ...process.env },
+      originalLog = console.log;
+    let archivePath,
+      notices = 0;
+    try {
+      process.chdir(sourceRoot);
+      for (const name of Object.keys(process.env))
+        if (
+          name.startsWith("GIT_") ||
+          [
+            "JS2WASM_APPEND_PARENT_MANIFEST",
+            "NODE_OPTIONS",
+            "NODE_V8_COVERAGE",
+            "TEST262_TARGET",
+            "TEST262_RESULT_PREFIX",
+            "VITE_NODE_OPTIONS",
+            "VITEST_COVERAGE",
+          ].includes(name)
+        )
+          delete process.env[name];
+      const head = sourceHeads.get(unknownSourceTree);
+      sourceGit(["update-ref", "refs/6915/source-control", head]);
+      Object.assign(process.env, successorCI, { GITHUB_SHA: head });
+      console.log = (message) => {
+        notices++;
+        archivePath = message.slice("6915 parent: evidence retained at ".length);
+        originalLog(message);
+      };
+      await assert.rejects(
+        runAppendQualification(),
+        (error) =>
+          error instanceof AggregateError &&
+          error.errors.every((item) => item.message.includes("unapproved source tree")),
+      );
+      assert.equal(notices, 1);
+      const rawExpected = readFileSync(join(archivePath, "expected.json")),
+        rawReceipt = readFileSync(join(archivePath, "receipt.json"));
+      assert.equal(JSON.parse(rawExpected).sourceTree, unknownSourceTree);
+      const refused = JSON.parse(rawReceipt);
+      assert.equal(refused.code, null);
+      assert.equal(refused.bytes, 0);
+      assert.equal(refused.killed, false);
+      assert.equal(refused.failures.length, 2);
+      for (const name of ["stdout.log", "stderr.log", "before.json", "capture.json"])
+        assert.equal(existsSync(join(archivePath, name)), false);
+      assert.equal(existsSync(join(sourceRoot, ".tmp/6915-ci/runner.lock")), false);
+      process.env.GITHUB_SHA = "0".repeat(40);
+      await assert.rejects(runAppendQualification(), /CI checkout HEAD differs/);
+      assert.equal(notices, 1);
+      assert.deepEqual(readFileSync(join(archivePath, "expected.json")), rawExpected);
+      assert.deepEqual(readFileSync(join(archivePath, "receipt.json")), rawReceipt);
+    } finally {
+      console.log = originalLog;
+      process.chdir(cwd);
+      for (const name of Object.keys(process.env)) if (!Object.hasOwn(env, name)) delete process.env[name];
+      Object.assign(process.env, env);
+    }
+  });
   console.log(`6915 parent self-test: ${passed} controls passed (no compiler/test execution)`);
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url)
   try {
-    if (process.argv.length === 3 && process.argv[2] === "--self-test") selfTest();
+    if (process.argv.length === 3 && process.argv[2] === "--self-test") await selfTest();
     else {
       check(process.argv.length === 2, "usage: node scripts/hooks/run-linear-append-provenance.mjs [--self-test]");
       await runAppendQualification();
