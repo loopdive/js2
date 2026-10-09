@@ -187,6 +187,8 @@ type Frame = ts.Node;
 /** One recorded definition of a value slot. `expr` absent ⇒ opaque/unknown. */
 interface ValueDef {
   readonly expr?: ts.Expression;
+  /** Exact declaration identity; still opaque to the arithmetic value prover. */
+  readonly functionDeclaration?: FunctionLike;
   /** `x++` / `x -= 1`: JS guarantees a number regardless of the old value. */
   readonly forcedNumeric?: boolean;
   /**
@@ -522,7 +524,7 @@ function buildScopes(sourceFiles: readonly ts.SourceFile[]): ScopeTable {
         const frame = isFunctionLikeWithBody(node.parent) ? node.parent : scopes.frameOf(node);
         for (const name of bindingNames(node.name)) scopes.declare(frame, name, true);
       } else if (ts.isFunctionDeclaration(node) && node.name) {
-        scopes.declare(scopes.frameOf(node), node.name.text, false);
+        scopes.declare(scopes.frameOf(node.parent), node.name.text, false);
       } else if (ts.isCatchClause(node) && node.variableDeclaration) {
         for (const name of bindingNames(node.variableDeclaration.name)) {
           scopes.declare(scopes.frameOf(node), name, false);
@@ -621,6 +623,9 @@ function collectNumericFlowFacts(
           const list = facts.functionsByName.get(name);
           if (list) list.push(node);
           else facts.functionsByName.set(name, [node]);
+        }
+        if (ts.isFunctionDeclaration(node) && node.name) {
+          define(node.parent, node.name.text, { functionDeclaration: node });
         }
       }
 
@@ -854,6 +859,8 @@ interface FixpointSets {
   readonly numericProperties: ReadonlySet<string>;
   readonly numericSlots: ReadonlySet<Slot>;
   readonly numericFunctions: ReadonlySet<string>;
+  /** Local carriers require Number returns, not arithmetic-compatible Boolean returns. */
+  readonly numberCallReturn?: (call: ts.CallExpression) => boolean;
 }
 
 interface Prover {
@@ -1030,6 +1037,7 @@ function makeProver(
   const isNumeric = (expr: ts.Expression, depth: number): boolean => {
     if (depth > MAX_DEPTH) return false;
     const value = unwrap(expr);
+    if (ts.isCallExpression(value) && sets.numberCallReturn) return sets.numberCallReturn(value);
 
     // Fast path for annotated code — never used to demote.
     const fact = host.oracle?.typeFactOf(value);
@@ -1292,15 +1300,147 @@ export interface NumericPropertyAnalysisTarget {
  * prover's OWN call arm, so every property and slot whose proof ran through a
  * predicate call is demoted with it.
  *
- * What that leaves unfiltered, stated rather than hidden: the prover's internal
- * call arm still proves a LOCAL numeric from a boolean-returning call, so
- * `var f = this.pred(x); "" + f` reads `"1"` where JS says `"true"`. That
- * reproduces identically on the pre-#4406 tree — it belongs to the
- * local-carrier oracle, not to this verdict. The property side is already
- * covered: #2847's brand arrives as `excludeNames` and withdraws it there.
+ * Before #6878 L the unfiltered internal call arm also proved a LOCAL numeric
+ * from a boolean-returning call: `var f = this.pred(x); "" + f` read `"1"`
+ * where JS says `"true"`, identically on the pre-#4406 tree. The grounded local
+ * consumer now supplies its separate Number-only call proof; this loop's
+ * arithmetic-compatible verdict remains unfiltered. The property side keeps
+ * #2847's brand: it arrives as `excludeNames` and withdraws the name there.
  */
 function publishNumericFunctions(numericFunctions: ReadonlySet<string>, returnsBoolean: (name: string) => boolean) {
   return new Set([...numericFunctions].filter((name) => !returnsBoolean(name)));
+}
+
+/**
+ * (#6878 L) Number-only call evidence for the grounded LOCAL consumer. The
+ * arithmetic-compatible greatest fixpoint and public return verdict stay intact.
+ * Follow every definition of returned identifiers, including identity parameters;
+ * opaque definitions, ambiguous names and cycles are refusals, never evidence.
+ */
+function makeNumberCallProof(
+  facts: NumericFlowFacts,
+  host: NumericPropertyAnalysisHost,
+  prover: Prover,
+  numericFunctions: ReadonlySet<string>,
+  returnsByFunction: ReadonlyMap<FunctionLike, readonly ts.Expression[] | undefined>,
+): (call: ts.CallExpression) => boolean {
+  const slotsInFlight = new Set<Slot>();
+  const functionsInFlight = new Set<FunctionLike>();
+  const calls = new Map<ts.CallExpression, boolean>();
+  const isNumber = (expr: ts.Expression, depth: number): boolean => {
+    if (depth > 48) return false;
+    const value = unwrap(expr);
+    if (ts.isCallExpression(value)) return callReturnsNumber(value, depth + 1);
+    if (ts.isIdentifier(value)) {
+      const slot = facts.scopes.resolve(value, value.text);
+      if (!slot || !slot.defs.length || slotsInFlight.has(slot)) return false;
+      slotsInFlight.add(slot);
+      try {
+        return slot.defs.every(
+          (def) => def.forcedNumeric === true || (def.expr !== undefined && isNumber(def.expr, depth + 1)),
+        );
+      } finally {
+        slotsInFlight.delete(slot);
+      }
+    }
+    if (ts.isConditionalExpression(value)) {
+      return isNumber(value.whenTrue, depth + 1) && isNumber(value.whenFalse, depth + 1);
+    }
+    if (ts.isBinaryExpression(value)) {
+      const op = value.operatorToken.kind;
+      if (BOOLEAN_BINARY.has(op)) return false;
+      if (op === ts.SyntaxKind.EqualsToken || op === ts.SyntaxKind.CommaToken) {
+        return isNumber(value.right, depth + 1);
+      }
+      if (
+        op === ts.SyntaxKind.PlusToken ||
+        op === ts.SyntaxKind.PlusEqualsToken ||
+        op === ts.SyntaxKind.AmpersandAmpersandToken ||
+        op === ts.SyntaxKind.BarBarToken ||
+        op === ts.SyntaxKind.QuestionQuestionToken
+      )
+        return isNumber(value.left, depth + 1) && isNumber(value.right, depth + 1);
+    }
+    const kind = host.oracle?.typeFactOf(value).kind;
+    return kind !== "boolean" && kind !== "bigint" && !prover.isBooleanish(value) && prover.isNumeric(value);
+  };
+  const callReturnsNumber = (call: ts.CallExpression, depth: number): boolean => {
+    if (depth > 48 || call.questionDotToken) return false;
+    // This existing stratified evidence certifies a declaration's plain f64
+    // result, not the unfiltered name-keyed arithmetic verdict.
+    if (host.provenNumericCallReturn?.(call) === true) return true;
+    const callee = unwrap(call.expression);
+    if (
+      ts.isIdentifier(callee) &&
+      NUMERIC_GLOBAL_CALLS.has(callee.text) &&
+      !facts.scopes.resolve(callee, callee.text) &&
+      !facts.functionsByName.has(callee.text)
+    )
+      return true;
+    const name = ts.isIdentifier(callee)
+      ? callee.text
+      : ts.isPropertyAccessExpression(callee)
+        ? callee.name.text
+        : undefined;
+    const functions = name === undefined ? undefined : facts.functionsByName.get(name);
+    if (functions) {
+      if (functions.length !== 1 || !numericFunctions.has(name!) || host.excludeFunctionNames?.has(name!)) return false;
+      const fn = functions[0]!;
+      if (
+        fn.asteriskToken ||
+        (ts.canHaveModifiers(fn) &&
+          ts.getModifiers(fn)?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword))
+      ) {
+        return false;
+      }
+      if (ts.isIdentifier(callee)) {
+        const binding = facts.scopes.resolve(callee, callee.text);
+        if (!binding?.defs.length || binding !== facts.scopes.resolve(fn.parent, callee.text)) return false;
+        // The scope table pools blocks into function frames. Do not use that
+        // approximation to certify conditional or Annex-B block declarations.
+        if (
+          ts.isFunctionDeclaration(fn) &&
+          !ts.isSourceFile(fn.parent) &&
+          !(ts.isBlock(fn.parent) && isFunctionLikeWithBody(fn.parent.parent) && fn.parent.parent.body === fn.parent)
+        )
+          return false;
+        if (
+          binding.defs.some(
+            (def) => def.functionDeclaration !== fn && (def.expr === undefined || unwrap(def.expr) !== fn),
+          )
+        ) {
+          return false;
+        }
+      } else if (ts.isPropertyAccessExpression(callee)) {
+        const receiver = unwrap(callee.expression);
+        if (ts.isIdentifier(receiver) && NON_INSTANCE_GLOBAL_NAMESPACES.has(receiver.text)) return false;
+      }
+      const returns = returnsByFunction.get(fn);
+      if (!returns?.length || functionsInFlight.has(fn)) return false;
+      functionsInFlight.add(fn);
+      try {
+        return returns.every((expr) => isNumber(expr, depth + 1));
+      } finally {
+        functionsInFlight.delete(fn);
+      }
+    }
+    if (!ts.isPropertyAccessExpression(callee)) return false;
+    const receiver = unwrap(callee.expression);
+    const intrinsic =
+      (ts.isIdentifier(receiver) &&
+        !facts.scopes.resolve(receiver, receiver.text) &&
+        (receiver.text === "Math" || (receiver.text === "Date" && callee.name.text === "now"))) ||
+      STRING_NUMERIC_METHODS.has(callee.name.text) ||
+      ARRAY_NUMERIC_METHODS.has(callee.name.text);
+    return intrinsic && prover.isNumeric(call);
+  };
+  return (call) => {
+    const cached = calls.get(call);
+    if (cached !== undefined) return cached;
+    const result = callReturnsNumber(call, 0);
+    calls.set(call, result);
+    return result;
+  };
 }
 
 /** The verdict shape returned when the analysis declines to run at all. */
@@ -1505,6 +1645,7 @@ export function analyzeNumericPropertyNames(
     numericProperties,
     numericSlots: groundedSlots,
     numericFunctions,
+    numberCallReturn: makeNumberCallProof(facts, host, prover, numericFunctions, returnsByFunction),
   });
   const groundedCandidates = [...numericSlots];
   for (let pass = 0; pass <= groundedCandidates.length; pass++) {

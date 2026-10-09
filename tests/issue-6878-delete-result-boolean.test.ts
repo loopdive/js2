@@ -150,10 +150,12 @@ async function run(body: string, target: "host" | "standalone"): Promise<unknown
   );
   expect(result.success, JSON.stringify(result.errors)).toBe(true);
   expect(result.binary.length).toBeGreaterThan(0);
-  expect(WebAssembly.validate(result.binary)).toBe(true);
+  const binary = new Uint8Array(result.binary);
+  expect(WebAssembly.validate(binary)).toBe(true);
   const imports = result.importObject ?? {};
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  (imports as { __setExports?: (exports: WebAssembly.Exports) => void }).__setExports?.(instance.exports);
+  const { instance } = await WebAssembly.instantiate(binary, imports);
+  // Bind the genuine instance so host struct operations have decoding authority.
+  (imports as { __setInstance?: (instance: WebAssembly.Instance) => void }).__setInstance?.(instance);
   expect(typeof instance.exports.__module_init).toBe("function");
   (instance.exports.__module_init as () => void)();
   return 1;

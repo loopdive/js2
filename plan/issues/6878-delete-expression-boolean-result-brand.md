@@ -5,7 +5,7 @@ status: in-progress
 assignee: ttraenkler/codex-6878-delete-result-boolean-sol61
 sprint: current
 created: 2026-10-06
-updated: 2026-10-07
+updated: 2026-10-10
 priority: high
 horizon: s
 feasibility: medium
@@ -625,3 +625,912 @@ body/profile/oracle change masks them. The full checkpoint remains draft and
 in-progress. Initial receipt67dcffe3 retains the two measured budget failures;
 subsequent grants do not rewrite that history. Fresh final-HEAD mechanical,
 current-candidate36 and normal providers are still required before census seal.
+
+## Root recovery release: with-body function var hoisting
+
+2026-10-09: root read the full frozen 193-line Astra plan below, SHA256
+35d57a21932d6c7131da18ee165e88117eaa7bed672c34f260b0116203cd9360.
+Sol 6.1 High owns only the existing walkStmtForVars body-recursion condition
+and narrow new controls in this dedicated worktree. Root owns this issue,
+all heavy verification and publication. No other production/IR ownership is
+expanded, and the existing 36 registrations remain mandatory and unchanged.
+Historical sentinel102/WAT evidence identifies a real missing hoist but is not
+fresh current-head acceptance. Other seven causes remain UNKNOWN. Required
+paired native validation, exact exception rendering and normal gates still
+precede readiness; no 100% standalone census claim is made.
+
+# Delete-result required failures: bounded next implementation
+
+Frozen source-only Astra plan, 2026-10-09. Root owns canonical issue 6878,
+“Preserve the Boolean result brand of delete expressions at externref
+boundaries,” and execution. No source/test/IR/issue change, compiler, parser,
+typecheck, formatter, build, install, Git mutation or external write was run.
+
+## First release: hoist function vars declared inside with
+
+Implement the missing WithStatement descent in `walkStmtForVars` in
+`src/codegen/index.ts`. Its existing LabeledStatement arm can accept
+`ts.isLabeledStatement(stmt) || ts.isWithStatement(stmt)` and recurse through
+the same `stmt.statement`, then return. This one-condition change reuses the
+normal var allocator and undefined initializer; it does not execute a with
+receiver or initializer during hoisting. Do not traverse the with expression,
+enter nested function bodies, change lexical hoisting, or add generic AST walks.
+
+The standalone pre-RHS capture failure already has a native sentinel, complete
+emitted-body proof, and a matching source omission. No further generic receiver
+diagnostic is needed before this implementation. Its current-head success must
+still be measured; the retained native execution belongs to an earlier epoch.
+
+## Source and record custody
+
+Read-only target checkout:
+`/Users/thomas/Code/js2/.codex-worktrees/6878-delete-result-boolean-sol61`.
+Verified HEAD `56c33d1a3246191cfe8b466d83e937b7c354e475`, branch
+`codex/6878-delete-result-boolean-sol61`, clean status. Relative paths below
+refer to that checkout. Planner output is confined to its separately assigned
+`/Users/thomas/.codex/worktrees/collection-raw-anyref-comparison-plan-astra/js2/.tmp`.
+
+Read the local canonical issue/handoff, fixture, final-current native output,
+rendered control10 capture, and shepherd recovery6 receipt. No GitHub poll.
+PR 6548's required quality 112541913712 is recorded as 28 PASS / 8 FAIL / 36;
+the separate local epoch confirms the same eight full names at the exact head:
+`.tmp/6878-focused-phase2-finalcurrent-candidate.rCaomg/receipt.json`, SHA256
+`f6aeb5802d49aff8590fe059d4ae194b13cea273753378b71d9017784749ea83`.
+Actual terminal exit/close 1, both streams EOF, 36 settled records. Its stdout,
+stderr and vitest.json were read. Every JSON failureMessage is null; stderr
+shows WebAssembly.Exception objects, not decoded assertion sentinels.
+
+Fixture `tests/issue-6878-delete-result-boolean.test.ts` has 288 lines, SHA256
+`454da1999b7be41d56daf6a19c204c2bbc0930cdc2e664f01b361b4d4bfa2773`.
+The existing source diff versus integrated main ab86c902 consists of only:
+DeleteExpression dispatch attaching boolean:true to its i32 result; and
+numeric-property-analysis classifying DeleteExpression as Booleanish. Preserve
+both. Their prior removal/restoration gains are not evidence for these residuals.
+
+## All eight exact remaining row identities
+
+Prefix `#6878 delete Boolean completion`:
+
+1. `(host) successful member delete through externref` — possible sentinels
+   11 (Boolean identity/type) or 12 (presence/read after deletion); actual opaque.
+2. `(host) successful computed delete through externref` — 31 or 32; opaque.
+3. `(host) bare with-identifier delete retains its existing Boolean brand` —
+   91 combines Boolean result and property presence; opaque.
+4. `(host) pre-RHS reference capture writes Boolean while outer binding stays
+   undefined` — 101 or 102; opaque at this head/profile.
+5. `(standalone) pre-RHS reference capture writes Boolean while outer binding
+   stays undefined` — current-head opaque; exact earlier native control10 is 102.
+
+Prefix `#6878 phase-II adjacent runtime`:
+
+6. `(host) property-write delete preserves strict Boolean identity` — 131
+   (holder read's identity/type) or 132 (deletion presence); opaque.
+7. `(standalone) property-write delete preserves strict Boolean identity` —
+   131 or 132; opaque.
+8. `(standalone) ordinary return and parameter keep delete Boolean identity` —
+   141 (result identity/type) or 142 (deletion presence); opaque. Host twin passes.
+
+Those are assertion alternatives from unchanged source, NOT measured payloads.
+An unexpected exception before either sentinel remains possible. Do not merge
+these rows into one causal bucket or infer eight fixes from one hoist patch.
+
+## Concrete native control10 causal chain
+
+Retained source is the exact fixture helper assembly, with:
+
+    var obj: any = { test262id: 1 };
+    with (obj) { var test262id: any = delete obj.test262id; }
+    if (!booleanResult(obj.test262id, true)) return 101;
+    if (test262id !== undefined) return 102;
+
+The unchanged helper compares strict equality AND typeof boolean, calls test
+from deferred top-level initialization and throws `Control result: N` on failure.
+Options: fileName `issue-6878-delete-result-boolean.ts`,
+skipSemanticDiagnostics:true, inferModuleStrictArguments:false,
+deferTopLevelInit:true, target:standalone; no extra IR/engine/source-map override.
+
+Capture `.tmp/6878-control10-render-currentmain-metadata-admitted/receipt.json`
+SHA256 `0d15975df0bd88950e7dc5e873644f9e6bbad58cc9e568b5737fbea6feeaf95f`:
+HEAD `2953fe1f3a4b9493a7550044cfe691f4951542cc`, source set
+`9ba37e0a5cba06b037d706dc4db606875c3a500c4900edea9b1a160bf34aa81f`,
+one native execution, one actual renderer call, all tag/renderer/init
+capabilities present. Actual exception is `Error: Control result: 102`.
+Source SHA `9bd2cecc3d697423b95e1f9ec7c4f37b603d215192cb2e72c82dd55dce793e00`;
+270027-byte control.wasm SHA
+`934bbc9eab8e97f25aa218a54be45c480f95e2c7d550cbf213598702e32187c2`.
+This is native-first standalone, NOT the official auto/default-QuickJS lane.
+
+Complete compiler-returned WAT was read for `$test` at lines 6257–6481;
+file SHA `aa516f8be9cc80354013a8c38e73a4e6c0d472d3b5620c1e4a96d9bf426b861c`.
+It declares `$test262id externref` at local11 and never initializes it at entry.
+It captures HasBinding BEFORE delete, calls real delete154, boxes Boolean65,
+and saves the result in local10. The captured object arm writes local10 through
+setter150; only the alternate fallback arm assigns local11. Boolean guard86
+on obj.test262id passes at runtime (otherwise sentinel101 would have won).
+Next, local11 is tested by undefined predicate232; false selects sentinel102.
+The unset externref local is Wasm default null, not the native undefined singleton.
+These function numbers are this saved module's identities, not future indices.
+
+Current source has precisely the missing precursor:
+
+- `function-body.ts:773/860` calls hoistVarDeclarations for function statements.
+- `index.ts:13967` delegates each statement to walkStmtForVars.
+- `index.ts:14339–14411` handles variable/block/if/while/do/for/for-in/of/labeled/
+  try/catch/finally/switch statements, but no WithStatement.
+- `index.ts:14137` hoistVarDecl allocates the binding; lines 14316–14335 seed
+  externref slots through emitUndefined and local.set.
+- `with-var-decl.ts:80–94` already captures the reference before RHS evaluation
+  and writes through the chosen environment, correctly leaving the outer local
+  untouched when the object binds it. Do not change this behavior.
+
+Read-only diff from captured 2953fe1f to current HEAD shows no changes in this
+hoister, with-var-decl, or assignment emitter. The only index.ts differences
+are an unrelated optionalFieldFlag import/use for struct field registration.
+Thus the source omission survives; the old native result remains dated as old.
+
+## Ownership, blast radius and size
+
+Sol may own only the WithStatement addition to the existing body-recursion
+condition in `src/codegen/index.ts`, plus focused regression additions if needed.
+Root owns canonical issue updates and all execution. Preserve initializer
+lowering, reference capture, boxing, delete helper, IR and scope algorithms.
+The change affects function-scoped var declarations nested in with, including
+unreachable with branches and nested with bodies, as JavaScript hoisting requires.
+It does not make with receiver expressions eager or leak nested-function vars.
+
+Current index.ts is 15360 physical lines, SHA
+`a58542a37a378ea33bb4e2add23b1aecd2b2f28c37b741a3f3c6ee11f17f43d7`.
+Committed LOC baseline lists 15318: raw baseline margin is -42, not spare room.
+walkStmtForVars is 73 lines and has no function-specific baseline entry; it is
+below the standard 300-line ceiling. Extending the existing labeled-body
+condition can keep physical line count unchanged without packing statements,
+deleting comments or a budget grant. Root must run real formatting/budget gates;
+these counts do not certify their effective comparison baseline. No broad
+refactor or shared-baseline edit is needed for a one-condition correction.
+
+## Root validation of this release
+
+Use the unchanged 36-case fixture/options on exact source baseline and candidate.
+Require pre-RHS standalone to pass both assertions; render any remaining native
+exception with the existing actual-instance renderer, preserving the exception
+and result as evidence. Host pre-RHS is a separate outcome, not assumed fixed.
+Revert only this condition for attribution, then restore it; retain every row
+identity and first failure. Expected behavior is canonical undefined seeded at
+function entry, exactly one original RHS/delete evaluation, and the existing
+pre-RHS environment choice. Require no prior PASS loss.
+
+Focused adjacent controls should cover a read before an unreachable with-body
+var declaration; a with receiver with a once-only side effect; nested with;
+and a nested function's var that must not leak to the outer frame. Preserve
+lexical declarations/TDZ and the existing RHS-created-property/unscopables
+controls. Root runs relevant with/hoisting regression tests, normal mechanical
+gates, unchanged official eight and required changed-root gate. Official eight
+previously passed all arms and cannot substitute for the native focused row.
+
+## Remaining rows after this release
+
+Their current stdout/JSON cannot resolve first assertions. A finite exact-row
+exception rendering pass is warranted for the other seven, using the existing
+render-control10 pattern and the actual original fixture assembly/options; no
+rewritten probes or manufactured returns. This can accompany normal root
+validation rather than blocking the supported hoist implementation.
+
+Source leads only, not causal assignments: host delete-aware reads in
+property-access.ts:3004 onward switch to a struct dispatcher while
+__in_module_init is true (the fixture calls test during deferred init), which
+can bypass tombstones; runtime.ts __delete_property / _wasmStructHasOwn already
+own deletion/presence. Property-write dispatch boxes the Boolean before
+member-set's field coercion; numeric-property-analysis already vetoes delete
+writes from numeric properties, so another identical veto is not a justified
+fix. Standalone return/parameter failure needs its actual ABI/value/presence
+join; host success does not license a global return-representation change.
+
+After payload rendering, inspect only the indicated original body and helpers:
+11/31 → result carrier; 12/32 → presence/read; 91 → compare and presence
+separately; 101 → dynamic binding write/read; 131 → holder write/read carrier;
+132/142 → deletion; 141 → remove return, identity parameter/return and consumer.
+Keep unknowns if payload rendering cannot authenticate. No full eight-failure
+repair, PR readiness, CI recovery, canonical ES2015 gain or publication is
+claimed here.
+
+## Root paired hoist execution — 2026-10-09
+
+Root read complete frozen source and handoff; the sole production condition
+adds WithStatement beside LabeledStatement. Parent remains 15,360 lines;
+actual Prettier check passes with no parent reformat. New controls were read
+in full and formatted. Initial focused typecheck 44031 failed on the DOM
+BufferSource generic/instantiate overload; copying emitted bytes into an
+actual new Uint8Array fixes those types without a cast or changed content.
+Focused typecheck 15655 then terminated exit 0.
+
+Candidate session 44129 terminated exit 1, 36P/8F/44, 22.57s; exact report
+.tmp/6878-with-var-candidate-20261009.json. Original fixture separately is
+**30P/6F/36**, versus the historical 28P/8F. New controls separately 6P/2F/8;
+their two host failures remain mandatory and unmasked.
+
+Root removed only the new WithStatement condition for the matched baseline.
+Baseline session 17279 terminated exit 1, **30P/14F/44**, 23.39s; exact report
+.tmp/6878-with-var-baseline-20261009.json. Root independently matched all 44
+unique complete row names: **6 FAIL-to-PASS, 0 PASS losses**. Two fixes are the
+existing host and standalone pre-RHS outer-binding cases; four are the new
+unreachable-var host/standalone and standalone once-only/nested-with controls.
+The two new host-control failures occur on both arms. No assertions, profiles,
+old fixture bytes or compiler options were changed to earn this difference.
+
+Root restored the candidate condition after baseline terminal. Parent SHA256
+4a581c7c8153dec0c8bb3640d34ed2909f69bbc841cf7aa6ee911f32fb8035b1 and original
+36-case fixture SHA256454da1999b7be41d56daf6a19c204c2bbc0930cdc2e664f01b361b4d4bfa2773
+are independently verified. These are native regression gains, not new
+authoritative Test262 verdicts. Six original and two new failures still block
+readiness; actual exception rendering/neighbor controls/mechanical gates and
+official runner checks remain next. No completed/ready/full11778 claim.
+
+## Root authenticated remaining-payload execution — 2026-10-09
+
+Session7604 terminated exit0. The separate diagnostic extracts literal bodies
+and the exact compile template/options from unchanged fixtures; ten normal
+compiles and ten genuine native initializers use returned imports and actual
+exception rendering. No mock imports, changed assertions or fabricated values.
+Retained receipt: `.tmp/6878-remaining-native-render-LcEnN6/receipt.json`;
+source script `.tmp/6878-preparation/render-remaining-native-controls.mts`.
+All three fixture/parent seals stayed identical before and after execution.
+
+Eight reproduced failures render `Error: Control result: N`: member-host12,
+computed-host32, bare-with-host91, property-write-host131,
+property-write-standalone131, return/parameter-standalone141,
+with-receiver-host212 and nested-with-host222. These sentinel values identify
+the original assertion stopping execution; they do not by themselves prove
+one shared cause. The two pre-RHS cases (host and standalone) completed as
+positive controls. Original member/computed failures occur after Boolean
+identity checks; remaining property-write/return failures stop at Boolean
+identity checks. Host with failures still need carrier/store attribution.
+
+Next implementation plan must inspect actual lowering and native helper
+ownership for these unchanged sources before choosing fixes. All eight remain
+required; zero canonical Test262 credit and no PR readiness claimed.
+
+## Root genuine-instance binding attribution — 2026-10-09
+
+Astra inspected current public API and lifecycle adapter: real
+`__setInstance(instance)` establishes data-struct authority; legacy
+`__setExports(raw exports)` explicitly does not. Root separately labelled
+diagnostic binding modes, retaining legacy default and unchanged fixture bytes.
+Only the genuine-instance host arm calls the actual returned lifecycle method
+with the genuine instantiated module; standalone remains unchanged.
+
+Session38674 terminated exit0, ten normal compilations/real native initializers;
+receipt `.tmp/6878-remaining-native-render-aZeXFE/receipt.json`. Root matched all
+ten ordered rows to LcEnN6: exact source hashes/options/tracked template options,
+binary hashes and actual physical binary-byte equality. Three host failures
+become completed: bare-with91, receiver-once212, nested-with222. Both positive
+pre-RHS cases remain completed. Five fail identically: member-host12,
+computed-host32, property-write-host131/standalone131 and return-standalone141.
+
+This attributes three local failures to missing genuine-instance driver wiring,
+not compiler gains. Do not weaken authority checks or claim full-suite credit.
+Preserve original bodies/options and old receipts. Next correct maintained
+driver lifecycle explicitly, pair the whole44 fixture, then implement the five
+remaining lowering defects from authenticated source evidence.
+
+## Astra authenticated remaining-failure implementation plan — 2026-10-09
+
+# 6878: remaining native delete/with failures — source-grounded plan
+
+2026-10-09, Astra planning handoff. Root owns execution, the canonical issue,
+production, tests and publication. This planner wrote only this new scratch
+document. No compiler, test, parser, formatter, typechecker, build, install,
+hook, source edit, commit, push, issue allocation or GitHub operation was run.
+The requested old planner directory was absent; after listing attachments,
+the managed worktree tool created this separate planner checkout at the exact
+source HEAD. Existing changes and other agents' work were not modified.
+
+## Exact source and evidence custody
+
+All source paths/line numbers below refer to the read-only authoritative tree:
+`/Users/thomas/Code/js2/.codex-worktrees/6878-delete-result-boolean-sol61`.
+HEAD independently read as `56c33d1a3246191cfe8b466d83e937b7c354e475`.
+The dirty hoist candidate `src/codegen/index.ts` independently hashes to
+`4a581c7c8153dec0c8bb3640d34ed2909f69bbc841cf7aa6ee911f32fb8035b1`.
+The one-condition WithStatement descent stays in place. Preserve the existing
+DeleteExpression Boolean result brand and numeric-analysis Booleanish veto.
+
+Read the prior frozen 193-line Astra plan and root's subsequent entries in
+`plan/issues/6878-delete-expression-boolean-result-brand.md`, the full two
+fixtures, root's extraction/render script, receipt and retained WAT bodies.
+Root's matched native measurement is baseline 30 PASS/14 FAIL/44 versus hoist
+candidate 36 PASS/8 FAIL/44: six gains, zero losses. These are attributed root
+measurements, not executions by this planner, and carry zero Test262 credit.
+
+Frozen old fixture SHA256:
+`454da1999b7be41d56daf6a19c204c2bbc0930cdc2e664f01b361b4d4bfa2773`.
+New mandatory eight-case fixture SHA256:
+`9df80184aba57401917ab099dac35655743ee73b6fe788a5d2467b4af49d67a3`.
+Root's diagnostic script is
+`.tmp/6878-preparation/render-remaining-native-controls.mts`;
+retained native directory is `.tmp/6878-remaining-native-render-LcEnN6/`.
+Its `receipt.json` records ten actual compiles/initializers, actual returned
+imports, actual native exception rendering, eight failures, two completions.
+The original source and binary SHA256 for every row are in that receipt.
+No synthetic mock import, replacement body, source rewrite or generated return
+value may substitute for these inputs.
+
+Exact retained row IDs and first observed sentinels:
+
+- `0-controls-0-host`: 12; member-delete Boolean assertion 11 passed.
+- `0-controls-2-host`: 32; computed-delete Boolean assertion 31 passed.
+- `0-controls-8-host`: 91; combined result/presence assertion, not split yet.
+- `0-adjacentControls-0-host`: 131; property Boolean identity/type.
+- `0-adjacentControls-0-standalone`: 131; property Boolean identity/type.
+- `0-adjacentControls-1-standalone`: 141; return/parameter result identity/type.
+- `1-controls-1-host`: 212; once-only receiver count/property-value assertion.
+- `1-controls-2-host`: 222; outer function locals must remain undefined.
+- `0-controls-9-host` and `0-controls-9-standalone`: completed; positive controls
+  for the already-fixed pre-RHS reference capture/outer undefined behavior.
+
+Every compile uses the original fixture template, fileName
+`issue-6878-delete-result-boolean.ts`, skipSemanticDiagnostics:true,
+inferModuleStrictArguments:false, deferTopLevelInit:true; standalone alone adds
+target:"standalone". No extra engine/IR/optimization override. The 36-case
+fixture includes six analysis registrations, so distinguish its runtime rows
+from the 44 total registrations when reporting execution counts.
+
+## Release D: genuine-instance binding separates three driver defects
+
+The current fixtures and render script call only
+`importObject.__setExports(instance.exports)` before `__module_init`.
+That is an obsolete/incomplete binding for current struct introspection:
+
+- `src/index.ts:360–371` documents `__setInstance(instance)` as the call that
+  establishes data-struct authority; raw `__setExports` explicitly does not.
+- `src/runtime/instance-lifecycle-adapter.ts:48–68`: setExports calls
+  install(exports,false), whereas setInstance checks the genuine Instance
+  internal slot and calls install(exports,true).
+- `src/runtime.ts:19606–19620`: only that true argument permits establishing
+  the data-struct bridge authority in the prepared export view.
+- The authoritative Test262 driver binds the genuine instance before deferred
+  initialization at `tests/test262-runner.ts:4640` and `:5164–5170`.
+- `tests/issue-6438-raw-exports-struct-decode.test.ts` pins refusal without
+  authority and success with __setInstance; this security contract stays.
+
+Concrete relevance, not just documentation: bare-with WAT uses host
+`__with_has_binding` before delete and to select the assignment target.
+Nested-with WAT initializes both outer locals correctly, puts the outer object
+on the open-object path, but creates the inner object as a closed numeric
+struct; a false inner HasBinding falls through to local.set innerValue, exactly
+the path to sentinel222. Once-only-receiver WAT increments the boxed count once
+and uses HasBinding to choose between writing the struct environment and the
+function local. Its sentinel212 can therefore expose the same missing host
+shape authority.
+
+Root completed that separately labelled driver comparison during planning:
+session38674 exited0, receipt
+`.tmp/6878-remaining-native-render-aZeXFE/receipt.json` (read in full here).
+All ten source/options/tracked-options/binary hashes match LcEnN6; root also
+reports independent physical-byte equality. Each arm uses fresh imports and
+an actual fresh Instance. Under genuine-instance binding, bare-with91,
+once-only-with212 and nested-with222 all complete. The other five failures
+remain12,32,131,131,141; both pre-RHS positive controls still complete.
+This is **three driver corrections, five remaining compiler failures**, not
+three compiler gains. There is no supported with-scope/HasBinding/runtime
+security production change. Source and fixture seals remained unchanged.
+
+Carry those ten retained rows, plus genuine-instance twins of the other relevant
+passing original controls (refused deletes, once-only operand/order,
+RHS-created-property, unscopables). Record every full name, hook presence,
+source/binary hashes and terminal. Preserve both historical driver receipts.
+Never run both binding arms on one Instance/import state: established authority
+can contaminate the other arm. Standalone remains the independent control.
+
+With that matched evidence now present, root may update the two test run helpers to
+the documented genuine-instance hook. Keep every literal body, assertion,
+target, registration and compile option intact, and retain the old fixture
+bytes/receipt as a dated historical baseline. This is an explicit driver
+correction, not a silent rewrite of the frozen test result. Until root adopts
+it, the old fixture remains unchanged and its eight failures remain recorded.
+Do not make __setExports establish authority to turn these tests green.
+
+## Slice R: deferred-init delete reads must observe tombstones
+
+Supported production seam: `tryEmitDeleteAwareDynamicGet`,
+`src/codegen/property-access.ts:3004–3111`.
+In `0-controls-0-host.wat:83` the test calls host delete, boxes Boolean, passes
+booleanResult, then calls __extern_has. The RHS property read branches on the
+module-init flag and directly reads struct field0 as f64, boxing stale17.
+Computed-delete uses the same final `obj.p` read. The source's own comment at
+3066–3068 claims "nothing has been deleted yet" during init; these original
+deferred-init bodies falsify that assumption.
+Runtime `__extern_has` delegates to tombstone-aware `_wasmStructHasOwn`
+(`runtime.ts:4659`, tombstone check precedes shape/sidecar checks), so replacing
+delete result boxing or the in-operator is not supported by these WAT bodies.
+
+Narrow correction: for **deferred** top-level init, do not select the
+start-section-only struct-get bypass. A caller must bind the real Instance
+before deferred init; the normal host __extern_get then has authenticated
+exports and preserves tombstones. One bounded option is to decline reserving
+the init dispatcher when `ctx.deferTopLevelInit` is true, taking the already
+existing bare-get path. Leave standalone and the nondeferred start-section
+fallback unchanged. Preserve receiver evaluation exactly once, existing string
+key pooling and late-import index handling. Do not rewrite the global init flag
+or all dispatchers. Changes to the companion setter are not required to prove
+these two failures and need independent evidence.
+
+Root validation: correctly bound host original member+computed rows pass all
+assertions; standalone twins and refused-delete/strict-TypeError controls keep
+passing. Attribution removes only this guard on the same correctly bound driver
+and reproduces 12/32; restore it. Run `issue-2179.test.ts` and
+`issue-2800-toplevel-new-objlit-init-read.test.ts`, including its nondeferred
+start-section top-level-object-read case. Add a small correctly bound deferred
+init read/delete/read control only if it adds coverage beyond the originals.
+Nondeferred delete-during-start general correctness is not claimed by this
+bounded fix; it would require its own native/helper investigation.
+
+## Slice P: preserve a property's number-to-Boolean write in its carrier
+
+This is separate from R and from the driver defect. Retained host WAT
+`0-adjacentControls-0-host.wat:90` creates holder.result as an f64 field,
+correctly boxes delete with __box_boolean, then the module-init setter
+dispatcher calls __unbox_number and stores f64. The subsequent read boxes a
+number, explaining sentinel131. Changing delete's brand again cannot help.
+
+Standalone WAT `0-adjacentControls-0-standalone.wat:6259` creates holder on open
+$Object storage, correctly boxes delete and stores through native __extern_set
+after its closed-struct candidate misses. Its read nonetheless takes a
+same-property-name f64 result vote; the fallback native read is unboxed and the
+consumer receives a number. Thus storage and read both need consistent field
+facts; a host-only setter patch leaves standalone wrong.
+
+Primary source owner: `collectObjectLiteralAssignedPropertyNames` in
+`src/codegen/declarations/object-shape-widening.ts:103–236`, and its existing
+declaration-keyed consumer `ensureStructForType` in `index.ts:13615–13628`.
+Today indexed writes collect concrete primitive RHS types and union-receiver
+dot writes do so too, but an ordinary dot write with Boolean RHS is neither
+mayCarryObject nor a union receiver. It leaves the literal seed's f64 intact.
+The existing numeric-property DeleteExpression veto prevents one *promotion*;
+it does not widen this already-numeric literal seed.
+
+Bounded implementation: record incompatible direct primitive writes against
+the actual literal property's declaration, reusing the declaration-keyed
+assigned-write map and existing carrier widening. For an any-annotated receiver
+such as the original holder, a property symbol may not resolve: follow the exact
+receiver binding declaration to its object-literal initializer and exact static
+property key, not a name-wide guess. Resolve wrappers and use the existing oracle;
+do not add raw checker queries, fabricate an `any` annotation or treat unrelated
+same-spelled properties as aliases. A narrow helper may own this resolution.
+Unresolvable aliases/receivers stay UNKNOWN/outside this bounded proof; widening
+all numeric fields named result/value is not an acceptable shortcut.
+
+The existing `receivesIndexedCarrier` consumer can then choose externref and
+mark stale scalar checker facts. Both host struct getter/setter and standalone
+candidate vote must see that same widened field. Do not add an independent
+Boolean special case to generic coercion or mutate shared struct fields after
+function emission. Verify emitted evidence before broadening the dispatch code:
+host no longer unboxes the Boolean into an f64 field; standalone does not
+narrow an open-object Boolean read to f64. If its candidate still appears f64,
+identify which registration failed to consume the recorded write first.
+
+Independent controls: original property row in both targets; number-only same
+shape still numeric; a separate same-name property retains its own carrier;
+unannotated direct receiver; literal computed key; strict Boolean identity plus
+typeof, and deliberate unary-plus/arithmetic returns real numbers. Preserve
+unknown-key/alias conservative paths and existing indexed/union carrier tests.
+Root pairs this slice's removal/restoration while R/driver remain fixed. Both
+131 rows must settle beyond the identity assertion; any newly reached132 is a
+separate remaining failure, not a claimed pass.
+
+## Slice L: Boolean call returns must not prove an f64 receiving local
+
+Retained standalone return WAT `0-adjacentControls-1-standalone.wat:6256`:
+`actual` is f64; remove returns the Boolean box correctly (function at83441,
+delete154 → Boolean-box65); identity is inlined as an externref identity; then
+the receiving assignment unboxes that externref to f64 and reboxes a number
+before booleanResult, which fails141. Do not rewrite return/parameter ABI or
+__box_boolean. Host's passing twin is an independent preservation control.
+
+Exact existing source mechanism: `numeric-property-analysis.ts:1103` admits a
+call from its internal numericFunctions set; `isBooleanish:1148` sees direct
+delete but does not follow calls or identifier return chains. The greatest
+fixpoint permits Boolean-compatible arithmetic evidence, and the grounded
+local proof at1503–1562 consumes that unfiltered function set. The explicit
+comment at1284–1300 already documents the unsound local-from-predicate case:
+public function filtering happens only at1602, after the local proof.
+`usage-inference.ts:325–327` then accepts the positive local oracle despite a
+Boolean-observing call use. This is a local-carrier proof defect.
+
+Owner boundary: numeric-property-analysis and a focused helper only if needed;
+do not change the greatest fixpoint/public return-ABI publication boundary.
+That boundary intentionally keeps arithmetic-compatible internal evidence for
+existing consumers, with documented measured performance consequences from
+filtering globally. The local proof needs **number-only** call evidence.
+
+Implementation direction: supply the grounded-local prover a separate admitted
+call-return set whose returns are proved plain Number, including the parameter
+definitions along identity chains. Compute it with conservative finite
+iteration/grounded slots, or add an equivalent transitive Boolean-contamination
+veto scoped solely to local admission. Direct delete/comparison/Boolean literal
+and a call returning any of those cannot authorize an f64 local; identity must
+not launder that fact through its parameter. Cycles/unknown calls/fallthrough/
+same-named ambiguous declarations must not become positive Number proofs. Keep
+the existing genuinely numeric local, arithmetic consumer, recursion and
+call-return-refinement contracts. Before editing, read existing test pins around
+the publication-only filtering and parameterDefinitionsAgree; don't solve this
+by deleting the designed greatest-fixpoint behavior for all consumers.
+
+The exact code algorithm is Sol's bounded implementation choice, but release
+requires the original emitted actual local to retain externref and141 to pass.
+Tests: direct delete-return, one/two identity hops, same-spelled functions in
+separate scopes, mixed Number/Boolean return, unknown/cyclic returns refused,
+and genuine Number identity kept eligible. Reuse `issue-3765-numeric-locals`,
+`issue-4121-interprocedural-proofs`, `issue-4121-numeric-return-carriers`,
+`issue-4121-unboxing-admission` and relevant `issue-4406-ret-unbox-*` pins.
+No claim that a flag-off run is a final fix; removal/restoration attribution
+uses the same original options and bodies. Any newly reached142 stays a real red.
+
+## Sequencing, ownership and gates
+
+D is root-only and first: its completed experiment settles the three with-host
+failures and prevents engineering around under-assembled imports. R, P and L can
+be implemented in isolated Sol 6.1 lanes after root copies this plan into the
+existing issue and hands out exact nonoverlapping ownership. R owns only the
+delete-aware getter; P owns the direct-write declaration pre-pass and narrowly
+necessary carrier plumbing; L owns only number-proof admission for locals.
+Root retains index.ts/hoist and canonical issue ownership. P must request a
+specific index.ts hunk from root if existing consumer reuse is insufficient.
+Root alone serializes all heavy execution and integration; no peer compiler or
+test run while the serial slot is occupied. No numeric issue ID is invented.
+
+Read actual LOC/function gates before implementation. Current physical sizes:
+property-access6939 (committed baseline6924), property-access-dispatch5575
+(5573), numeric-property-analysis1684 (1683), object-shape-widening2781 (2781),
+index15360 (15318). These are counts, not effective gate verdicts or spare
+capacity. Existing issue grants cover only expressions.ts and
+numeric-property-analysis.ts plus compileExpressionInner/makeProver. They do
+not authorize unrelated parent growth or a new analysis function over300 lines.
+Prefer a small semantic change and well-scoped extraction only when needed;
+never pad grants, delete comments, compress statements, alter shared baselines
+or change inventory/schema to evade gates. New helper files need normal flat
+directory, import-cycle, inventory, oracle and function/LOC checks. Root may
+record a narrowly measured grant in this issue only if the actual gate requires
+it and the added code is necessary; no unmeasured grant is requested here.
+
+For each slice keep all44 original registrations mandatory, pair same source
+epoch and same driver on both arms, diff complete row names, report counts and
+first failures, retain actual terminal/stream records. Run meaningful adjacent
+checks once per changed mechanism, then normal typecheck, lint, changed-file
+formatting, LOC/function/inventory/import-cycle/flat-directory/oracle/coercion/
+dead-export/issue-integrity/spec/ID gates and the actual changed-root gate.
+Keep root's unchanged official-eight packet and final source-keyed provider
+admission requirements. No census gain follows from native helper controls;
+full11778 remains a separate, frozen original-input measurement. No readiness,
+merge recovery or100% claim until all required checks actually settle.
+
+## Remaining uncertainty
+
+The genuine-instance diagnostic completed with three driver corrections and
+five unchanged compiler failures. Complete44 verification on the adopted driver
+is still required; ten diagnostics do not replace it. Property and local
+carrier corruption is visible in retained original WAT, but a successful
+implementation must still pass the complete original bodies and show no loss.
+The planner did not execute or certify any candidate. A read-only planner git
+status attempt failed because Git LFS tried to create a shared .git/lfs/tmp
+file under sandbox; no clean-status assertion is made and no filter/config was
+changed. The managed planner checkout itself is not production evidence.
+
+## Root complete44 genuine-instance driver adoption — 2026-10-09
+
+After the byte-identical matched diagnostic, root explicitly updated only the
+two run helpers to call actual `__setInstance(instance)` rather than raw-export
+binding. All literal bodies/assertions/compiler options/targets/registration
+counts remain intact. This is a documented driver correction, not a silent
+claim that the historical frozen fixture was green. Original fixture bytes
+remain recoverable at56c33d1a and old baseline/candidate receipts are preserved.
+New old-fixture SHAabc1dc156dacb63a6c95c4306806f0556adfa5c2ea4fdb381c7c15c6f94a2c93;
+new eight-case SHA14b7501a750a2467efac4739eca9dbd88de2c20f071afa85cc051ee0e30bebf5.
+Production index still4a581c7c8153dec0c8bb3640d34ed2909f69bbc841cf7aa6ee911f32fb8035b1.
+
+Session25207 terminates1, **39P/5F/44**,24.34s. Root independently matched all
+44 full registration names against preceding36P/8F arm: exactly three driver
+corrections, zero PASS losses. Remainingfive are member/computed-host reads,
+property-write Boolean identity host/standalone, return-identity standalone.
+Eight new hoisting controls all pass. Source-level delete/Boolean fixes remain
+unfinished, no canonical credit or completed PR claim.
+
+## Root slice-R native verification — 2026-10-09
+
+Root read the complete source handoff from isolated Sol lane, authenticated
+the exact parent preimage324ddf2409af117921352653354ff66a604ec3c014dfc40895b06a638ae59eb4,
+then integrated only the getter/comment hunk. Parenta0570818152651cbaf770f569e7af5c4eeef8b31adc1d27d6d1eb36f057c5756,
+6938lines, actual Prettier check passes. Deferred init now uses tombstone-aware
+host reads; nondeferred start-section fallback remains. No body/option edits.
+Driver formatting/type session22300 previously terminated0.
+
+Full44 candidate session83422 terminates1, **41P/3F/44**,38.37s. Root matched
+all44 original full names to genuine-instance39P/5F baseline: exactly member
+and computed host FAIL-to-PASS, zero PASS losses. Remainingthree are property
+Boolean identity host/standalone and standalone return/parameter identity.
+Both original semantic reads now pass all assertions, not just compilation.
+Attribution removal/restoration, nondeferred neighbor checks and source types/
+gates remain required. No canonical Test262 or PR completion claim.
+
+Neighbor session31461 terminates1, **11P/1F/12**: all ten issue2179 controls
+pass and issue2800 nondeferred initialization read passes, but its post-delete
+tombstone control observes0 instead of1. Root does not assume unrelatedness:
+temporarily removed ONLY `|| ctx.deferTopLevelInit` for matched baseline
+neighbor session55905. This handle is live; guard restoration must follow its
+terminal result before candidate integration/types/publication. Source comment
+is retained, old fixture/driver/source elsewhere unchanged. Until baseline
+evidence settles, neighbor regression status remains UNKNOWN.
+
+Matched neighbor baseline55905 terminates1, **11P/1F/12**,76.46s. Same
+nondeferred top-level read passes and same post-delete control returns0
+instead of1; all ten issue2179 cases pass. This rejects a new neighbor PASS
+loss from the deferred guard, without declaring the existing failure acceptable.
+The issue2800 helper still manually builds imports and uses legacy raw-export
+wiring, so driver attribution remains separate pending actual experiment.
+Root restored the guard after terminal and reauthenticated parenta0570818...5756.
+
+Root read slice-P handoff and full exact patch from separate Sol worktree.
+Authenticated parent preimage6475ed5fa85f83b1ed7dceea229a62804d0140679d1d5373aec326aa606771f4;
+integrated only object-shape-widening, new object-property-write-target helper,
+and new21-registration carrier fixture. No index/runtime/old-body edits.
+All three actual formatting checks pass (session54565 terminal0).
+Focused source/test types session94352 is LIVE with all three6878 fixtures;
+no runtime/WAT/carrier fix result claimed yet. R guard remains restored.
+New focused fixture seeds result0 as supplemental coverage; retained original
+adjacent source seeds result23 and remains mandatory in full44 execution.
+
+Merge-authorized shepherd's fresh recovery8 audit finds zero eligible owned
+PRs. Published6548 is still56c33d1a with28P/8F/36, not this local41P/3F/44;
+no unpublished gain is a reason to mark that old head ready. Conflict/required
+CI/unfinished scope holds are preserved; no source/queue/PR state mutation.
+
+Focused types94352 terminates1: only DOM BufferSource/instantiate overload
+errors in old/new carrier run helpers. Root fixes them with an actual
+`new Uint8Array(result.binary)` byte copy before real validation/instantiation,
+matching the already-correct hoisting helper; no unsafe cast or byte mutation.
+No test262/source/options/assertions changed. R/P behavior and rechecked types
+remain next; terminal failure is not ignored as a successful gate.
+
+Focused types85747 terminates0 after byte-copy driver corrections. Current
+original fixture SHA86e07e09cf4ff80337679a25e6cce035b88ad10fbc6ed6e48492670c645274d8;
+new property fixture9d4e59430603d668a0cf22981fcd5feee7c53d3c4e800d65d9f63f603d1486f4.
+R parent and P parent/helper match frozen source hashes. Full original44 plus
+new21 candidate session34081 is LIVE, all65 mandatory. No L source integrated
+during this source epoch; any P gain/loss must come from actual complete rows.
+Last goal turn is PROGRESS: authentic R two-gain/zero-loss native comparison,
+three driver corrections and complete original-nine preservation evidence
+changed the next implementation action; full11778 objective remains active.
+
+Full65 P candidate34081 terminates1: **64P/1F/65**,111.97s. Root independently
+matched original44 complete names to R-only41P/3F baseline; originals now
+**43P/1F/44**, exactly two property-write identity gains (host and standalone),
+zero PASS losses. All21 supplemental carrier/resolution registrations pass.
+Remaining original is standalone return/parameter Boolean identity141.
+No original expectation/sourcebody/options were weakened; byte-copy driver
+change preserves actual emitted content. Complete WAT/attribution/neighbor/gates
+remain necessary; this is not a canonical Test262 pass-rate update.
+
+R+P normal native diagnostic26763 terminates0 with ten genuine initializers;
+receipt `.tmp/6878-remaining-native-render-nRruQ8/receipt.json`. Root matched
+all ten IDs/original source hashes/options/tracked template options to aZeXFE.
+Nine complete; only original return/parameter standalone141 throws. Main read
+actual host property WAT: holder.result is externref; setter stores directly
+without numeric unboxing, getter returns externref. Standalone actual store/read
+blocks likewise preserve externref through the closed candidate and open fallback
+before Boolean observer; no numeric unbox. The old standalone actual local
+remains f64 in the sole remaining case. These are emitted/native evidence, not
+manufactured outputs or canonical verdicts.
+
+Root read full isolated Sol slice-L handoff/diff/new24-test fixture and verified
+numeric parent preimage de964d921844e29db567d92c09a4ce3adfd346288f891729cbbff6baa605552f.
+Integrated only its numeric-local proof/new fixture after P terminal. Normal
+formatting gives parent1806lines SHA073843081199509e6f1315ccebd9de4a6cc3a1f04a4b919f9dcba0399f6c574c;
+new fixture151lines SHAece9a4e9df42d387e56ea19a7ccca72a3db896236470ea16e8e2b731c5a9c22f.
+Root applied the same real Uint8Array byte-copy DOM typing fix to its helper,
+not a cast. Focused all-four-fixture types11918 terminates0. Greatest fixpoint,
+field/public-return publication and original bodies/options remain intact.
+Full89 original44+P21+L24 candidate is now live; no L semantic result claimed yet.
+
+Full89 candidate40220 is terminal1: **86P/3F/89**,110.90s. All retained44
+originals and all21 property-carrier registrations pass. Local proof24 has
+21 passes and three failures: literal Number return, Number identity and two
+Number identity hops incorrectly decline their numeric positive proof. All
+six native Boolean controls and actual externref WAT controls pass. These
+positive controls remain mandatory: no assertion weakening or ready/publication
+claim. Reports are `.tmp/6878-RPL-full89-20261009.{stdout,stderr,json}`.
+Source declaration-binding evidence and a narrow proof correction are next.
+
+Declaration-proof correction plan and source epoch: actual `buildScopes`
+registered FunctionDeclaration on `frameOf(node)` (the declaration's own
+function frame), while fact collection never recorded its callable definition.
+Root read all definition consumers; existing value provers require `expr` and
+therefore must continue treating declaration markers as opaque. Astra reviewed
+the proposed parent-owner registration and exact `functionDeclaration` marker,
+including the missing block-scope boundary. The local Number-call proof now
+requires a nonempty actual owning binding and every recorded definition to
+retain the exact function node. Block/conditional/Annex-B declarations remain
+refused because pooled function frames cannot prove their lexical ownership.
+No mutation/shadow/duplicate refusal is waived. Added four negative declaration
+controls and one genuine nested-function positive, preserving all old controls.
+Sol correction dispatch/resume was rejected by agent thread limit; root applied
+this small reviewed correction in its already-owned isolated candidate, not the
+dirty shared checkout. Normal formatting completed. Focused29 execution57686
+is live; no successful semantic result is claimed before terminal evidence.
+
+Focused declaration correction57686 terminates0: **29P/0F/29**, all rows
+independently read from actual JSON. All three old numeric positive failures
+are restored; every old Boolean/refusal/native WAT control and all five added
+declaration ownership controls pass. Source1825lines SHA25132364dd10d0da73a41ea276f28b75f5b6096519f2516fb1af76b27bec8d36;
+fixture162lines SHA9bd53aa4acda12f25b2a962e6d7ccec208ea1fc21f8de57fcff22d79eb77225b.
+Reviewed current normative FunctionDeclarationInstantiation, §10.2.11:
+https://tc39.es/ecma262/multipage/ordinary-and-exotic-objects-behaviours.html#sec-functiondeclarationinstantiation
+Body declarations are instantiated in the containing function environment;
+the conservative analysis still refuses ambiguous/conditional blocks rather
+than claiming exact block-scope modeling. Full94 composed candidate launched
+under identical parent1024/fork3072/pool1/maxWorkers1; broad preservation and
+source gates remain unproven, so PR6548 stays unfinished until measured.
+
+Current measured LOC rationale supersedes no historical gate receipt: against
+actual upstream fork pointab86c902 numeric-property-analysis is1683→1825,
+**+142**, not merely the original single Booleanish line. The same existing
+issue-local path grant is now used for the bounded Number-only local proof,
+exact declaration-definition recording and documented refusal boundaries.
+No property/public-function fixpoint or ABI rewrite is included. The separate
+property-write target helper is grouped under declarations (97lines), while
+object-shape-widening shrinks2781→2750 by moving the reused target scanner.
+No flat codegen file, shared baseline update, comment deletion, line packing
+or unrelated budget allowance is introduced. Function/cycle/inventory results
+must be measured afresh; this rationale is not a passed gate or new permission
+to grow unrelated oversized functions.
+
+Composed execution8125 terminates0: **94P/0F/94**, zero pending/skips.
+Actual JSON contains29 local-call controls,36 original delete controls,
+21 property-write controls and8 hoisting controls, all passed. All old89
+registrations survive plus the five new declaration controls; no missing or
+duplicate name is accepted as coverage. Source remains frozen at25132364...8d36.
+Fresh finite root-serialized source assessment33069 is live (focused types,
+changed-file formatting, LOC/function/oracle/cycle/flat/inventory/coercion/
+dead-export preservation and issue integrity); all output is retained under
+`.tmp/6878-composed-gates-20261009-*`. Numeric neighbors, original Test262,
+removal/restoration and publication remain pending. Full11778 acceptance is
+unchanged and unproven. This goal turn is PROGRESS: actual corrected proof
+and94 complete passing controls changed authoritative implementation evidence.
+
+Finite assessment33069 terminates1 with all eleven child outcomes retained.
+Types/format/LOC/function/oracle/cycles/flat/coercion/issue integrity pass.
+LOC growth is explicitly1683→1825(+142), net+208 across6 changed source files;
+makeProver300→302(+2) remains covered only by this issue's existing exact key.
+Actual import-cycle pass: largestSCC698,4 nontrivialSCCs,10 two-way pairs;
+flat829/829. These are this checkout, not another branch's699/830 counts.
+Inventory fails only unclassified module/target for the new97line helper.
+Root adds its explicit `mixed-needs-split` debt classification, owner6878 and
+prepared binding/property-identity next boundary, preserving active-layer
+floors/allowed edges/architecture debts. This is inventory maintenance, not
+an architecture-complete claim or detector waiver.
+Dead-export preservation actually aborts SIGABRT at1024MiB, explicit native
+`Reached heap limit` diagnostic. It produced no verdict and is NOT green.
+Keep the original failure logs; rerun separately at3072MiB as one serialized
+child, without changing audit semantics or source. All six compiler paths and
+four fixtures remained byte-identical across the original finite assessment.
+
+Classified inventory rerun14735 terminates0. No compiler source or fixture
+changed; only the explicit new helper ownership/debt entry was added. Complete
+architecture remains a separate unproven property. Dead-export3072 rerun is
+now live, preserving1024 abort logs and original audit flags. Next mandatory
+work after its terminal: numeric-local/interprocedural/ABI neighbor controls,
+same-input removal/restoration, fresh source-keyed normal providers and retained
+original Test262 packet. Then normal publication/checks and upstream-main
+integration; no full11778 or ready-PR claim follows from focused94 success.
+
+Dead-export3072 rerun5101 terminates0. Actual output:12/12 observed core-node
+callers (dispatch-cut UNKNOWN),10/10 full and dispatch-cut class-free core-type
+references,6/6 full plus cut preservation witnesses. **Preservation-only PASS**;
+graph OPEN, strict modeled closure FAIL, retirement/deletion NOT CERTIFIED.
+Moved-runtime production-rooted evidence remains incomplete for the existing
+nonliteral imports at optimize412 and platform-capability-adapter151. Do not
+relocate those old unknowns into a full-closure green claim. The1024 abort stays
+retained;3072 changes only resource bound, not audit semantics/source.
+Current eight-file numeric/inference/ABI neighbor execution36185 is live,
+parent1024/fork3072/pool1/maxWorkers1. No compiler mutation during either run.
+
+Numeric/inference/ABI neighbor candidate36185 terminates1:73PASS/4FAIL/77,
+zero skipped/pending. Retained JSON is
+`.tmp/6878-numeric-neighbors-20261009.json`. The four failures concern two
+interprocedural refusal controls, one numeric-return kill-switch control and
+one predicate-call operand control. This is not a ready-publication verdict.
+Root temporarily removes the entire corrected local-number slice from only
+`src/codegen/numeric-property-analysis.ts`, retaining R/P/hoist and all fixtures,
+for identical eight-file pre-L baseline27369. Baseline source SHA256 is
+`de964d921844e29db567d92c09a4ce3adfd346288f891729cbbff6baa605552f`;
+candidate is `25132364dd10d0da73a41ea276f28b75f5b6096519f2516fb1af76b27bec8d36`.
+Both run on HEAD56c33d1a3246191cfe8b466d83e937b7c354e475 with dirty owned
+composed changes, normal Vitest compiler/native harness, identical resource
+bounds and77 unchanged named registrations. Baseline output prefix is
+`.tmp/6878-numeric-neighbors-pre-L-baseline-20261009`. Handle27369 is confirmed
+live on2026-10-10; no source changes are permitted until terminal. Restore the
+full exact candidate after completion, compare every row/error and investigate
+any actual PASS loss without weakening existing assertions or acceptance.
+
+Source-only neighbor investigation identifies the numeric-return kill-switch
+failure at the flag assertion, before its WAT/native ABI assertions. Current
+source has `resetDerivationFlagCache` only in `compileSourceSync`, while
+`compileMulti` routes through `compileMultiSource` directly into `runPipeline`
+without that reset. Sequential linked compiles can therefore retain the prior
+cached enabled value after environment changes. This is a source-supported
+hypothesis; matched pre-L execution is still pending and no regression
+attribution has been made. Astra is reviewing common pipeline epoch ownership,
+all flag readers/adapters and concurrency before a separate Sol implementation.
+Do not change the fixture's OFF assertion, broaden inference, or count a cache
+repair as Test262 conformance without measuring the authoritative originals.
+
+Baseline27369 reaches natural terminal1 on2026-10-10. Full JSON comparison
+requires77 unique identities in each arm and exact set equality: both73PASS,
+4FAIL,0missing,0status delta; all four failure messages are byte-identical.
+Therefore the local-number slice produces zero observed regressions in these
+77 neighboring controls. This does not make existing four failures green.
+Root restores the full corrected candidate immediately after terminal and
+reads back SHA25625132364dd10d0da73a41ea276f28b75f5b6096519f2516fb1af76b27bec8d36.
+Matched source epoch is unchanged HEAD56c33 with retained R/P/hoist. No assertion
+or kill-switch has changed. Next remove only the grounded local-number callback,
+execute the original36+hoist8 fixture packet and restore it to attribute the
+remaining return-value repair; no current-source full Test262 claim yet.
+
+Root now removes only the grounded-local `numberCallReturn` callback assignment
+(all corrected binding/declaration collection and R/P/hoist remain) and launches
+unchanged original36 plus hoist8 at identical parent1024/fork3072/pool1/worker1.
+Retain `.tmp/6878-original44-grounded-call-removed-20261010.*`; no source edits
+during the active run, then restore the exact callback and candidate hash before
+further work. This is attribution, not a ready-publication or full-suite result.
+
+Root fully reads Astra's81-line cache-epoch implementation plan on2026-10-10:
+`/Users/thomas/.codex/worktrees/es2015-fresh-full-census-plan-astra/js2/.tmp/6878-derivation-cache-epoch-plan.md`,
+SHA2567a12970675ded0210cf74610d6634c8dc21b22fac6da0b22429f2a318822fdf4.
+Preferred repair resets at synchronous runPipeline entry but retains the early
+single-source reset because declaration-root seeding reads flags before that
+pipeline. Seven flag keys, slot/verdict dependency, incremental/files/project/
+package paths and separate object-output bypass are enumerated in the plan.
+Root asks whether compiler.ts and compiler/output.ts entry points are currently
+held by other-machine IR work; neither production file may change pending
+reconciliation. A fresh Sol6.1High isolated lane owns only a new real compiler
+lifecycle regression fixture and MD handoff, re-grounded on dbf5b4 main.
+Required tests preserve linked f64-on/externref-off runtime behavior, all seven
+epoch transitions, pre-analysis DTS sequencing and field-verdict safety. No
+manual cache reset between measured compiles, predicate live-read shortcut,
+original expected-value change or unmeasured conformance credit is permitted.
+
+Callback-removal55124 reaches terminal1:42PASS/2FAIL/44 unique registrations.
+Standalone ordinary return/parameter Boolean identity fails as expected, but
+JSON-only error serialization retains null rather than the underlying error.
+The standalone successful-member-delete row also fails with STACK_TRACE_ERROR
+at39497ms, requiring actual reporter/timeout evidence rather than a guessed
+semantic attribution. No unsupported42→44gain claim is made. Root restores the
+callback immediately and verifies full numeric source SHA25132364...8d36.
+Rerun unchanged44 controls on the restored candidate with verbose and JSON
+reporters to preserve actual error details and restoration evidence. Retain
+the entire removal failure packet; never drop its second failed row.
+
+Source-only Sol6.1High cache-lifecycle packet delivered on fresh main dbf5b4 at
+`/Users/thomas/Code/js2/.codex-worktrees/6878-derivation-cache-regressions-sol61`.
+Root fully reads254-line new test and full own MD handoff. Test delivery SHA256
+cc3d64d566aa8dd7fccf06dad0f08ad455f7416b9029d1328f054f28fed30b7f.
+Eight serial registrations,30 intended compile arms, none executed: five
+adapters times four family transitions, three safety-gate, three linked numeric
+carrier/runtime, four genuine declaration-sequencing arms. Reset is confined
+to test-isolation before/after hooks, never between measured compiles. Original
+fixtures and production files are unchanged; object output stays uncovered
+pending ownership. No passing-test or canonical Test262 credit follows.
+Root also assigns a source-only finite full11778 census observer implementation
+from the fully read Astra plan; no heavy execution or stale1870 count is allowed
+in that worker lane. Root remains sole serialized executor and owns publication.
+
+Restoration32409 reaches natural terminal0:44PASS/0FAIL/44, two files,172.93s.
+The exact successful-member-delete and ordinary-return/parameter rows both pass
+on the restored callback. Full numeric source remains25132364...8d36. Preserve
+removal42/2/44 and its error-fidelity caveat; reporter JSON plus verbose gives
+an explicit complete restored result rather than erasing the failed packet.
+Root fully reads the incoming-main Astra preservation plan (SHA256
+2d7c534c44103c178050a36ff4a4f8a6253ca6feaea742260975ff93d4208a2a).
+Checkpoint exact11 owned paths, no temporary removal/scaffolding or peer source;
+then merge pinned current dbf5b4 main normally. Numeric must remain byte-identical,
+both property-write/whole-shape helpers and all three getter routes retained.
+Incoming route-neighbor tests and fresh source-keyed normal providers/originals
+must run in the integrated epoch; historical94/44 passes do not transfer.

@@ -14389,7 +14389,7 @@ function walkStmtForVars(
     walkStmtForVars(ctx, fctx, stmt.statement, reuseExistingModuleGlobals);
     return;
   }
-  if (ts.isLabeledStatement(stmt)) {
+  if (ts.isLabeledStatement(stmt) || ts.isWithStatement(stmt)) {
     walkStmtForVars(ctx, fctx, stmt.statement, reuseExistingModuleGlobals);
     return;
   }

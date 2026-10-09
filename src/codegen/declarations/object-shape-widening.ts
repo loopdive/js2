@@ -29,6 +29,11 @@ import {
   markStandaloneReflectiveWriteTargets,
 } from "../object-model/object-literal-reflective-escape.js"; // (#6770 S2)
 import { readEnv } from "../../env.js";
+import {
+  literalObjectWriteDeclaration,
+  sourceHasObjectPropertyWrite,
+  staticObjectWriteKey,
+} from "./object-property-write-target.js";
 
 function isUnboxedPrimitiveCarrier(type: ValType): boolean {
   return ["f64", "f32", "i64", "i32", "i16", "i8"].includes(type.kind);
@@ -89,7 +94,8 @@ function resolveWidenedPropertyType(ctx: CodegenContext, tsType: ts.Type): ValTy
 }
 
 /**
- * Record properties that receive object-shaped or dynamically typed values.
+ * Record properties that receive object-shaped, dynamically typed or
+ * incompatible primitive values.
  * Closed anonymous structs are shape-specific, while JavaScript properties can
  * later hold a different object shape. The field-registration pass consumes
  * this set before any bodies are emitted and gives matching fields a stable
@@ -97,62 +103,7 @@ function resolveWidenedPropertyType(ctx: CodegenContext, tsType: ts.Type): ValTy
  * through an `any` parameter (ReactDOM's `queue.pending = update`).
  */
 export function collectObjectLiteralAssignedPropertyNames(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
-  // Avoid an AST walk for files that cannot contain a direct property write.
-  // The scanner skips comments and strings, so this is a conservative lexical
-  // preflight: every direct property write has either `. <property-name> =` or
-  // `[<key>] =`. The latter is admitted because a numeric/string literal key
-  // is still a fixed struct field at codegen time.
-  const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, sourceFile.text);
-  let token = scanner.scan();
-  let hasPropertyAssignment = false;
-  while (token !== ts.SyntaxKind.EndOfFileToken) {
-    if (token === ts.SyntaxKind.DotToken) {
-      scanner.scan();
-      const next = scanner.scan();
-      if (next === ts.SyntaxKind.EqualsToken) {
-        hasPropertyAssignment = true;
-        break;
-      }
-      token = next;
-      continue;
-    }
-    if (token === ts.SyntaxKind.OpenBracketToken) {
-      let depth = 1;
-      let next = scanner.scan();
-      while (next !== ts.SyntaxKind.EndOfFileToken && depth > 0) {
-        if (next === ts.SyntaxKind.OpenBracketToken) depth++;
-        else if (next === ts.SyntaxKind.CloseBracketToken) depth--;
-        next = scanner.scan();
-      }
-      if (depth === 0 && next === ts.SyntaxKind.EqualsToken) {
-        hasPropertyAssignment = true;
-        break;
-      }
-      token = next;
-      continue;
-    }
-    token = scanner.scan();
-  }
-  if (!hasPropertyAssignment) return;
-
-  const staticElementKey = (expr: ts.Expression | undefined): string | undefined => {
-    if (!expr) return undefined;
-    while (
-      ts.isParenthesizedExpression(expr) ||
-      ts.isAsExpression(expr) ||
-      ts.isSatisfiesExpression(expr) ||
-      ts.isTypeAssertionExpression(expr) ||
-      ts.isNonNullExpression(expr)
-    ) {
-      expr = expr.expression;
-    }
-    if (ts.isStringLiteralLike(expr)) return expr.text;
-    if (ts.isNumericLiteral(expr)) {
-      const value = Number(expr.text);
-      return Number.isFinite(value) ? String(value) : undefined;
-    }
-    return undefined;
-  };
+  if (!sourceHasObjectPropertyWrite(sourceFile)) return;
 
   const visit = (node: ts.Node): void => {
     if (
@@ -191,7 +142,7 @@ export function collectObjectLiteralAssignedPropertyNames(ctx: CodegenContext, s
           (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Object | ts.TypeFlags.NonPrimitive)) !==
           0;
       const indexedName = ts.isElementAccessExpression(node.left)
-        ? staticElementKey(node.left.argumentExpression)
+        ? staticObjectWriteKey(node.left.argumentExpression)
         : undefined;
       if (indexedName !== undefined && ts.isElementAccessExpression(node.left)) {
         // Indexed writes are the narrow dynamic-carrier case: a closed field
@@ -199,7 +150,9 @@ export function collectObjectLiteralAssignedPropertyNames(ctx: CodegenContext, s
         // later `obj["key"] = rhs`. Record every concrete RHS type so the
         // field-registration pass can widen the slot before any body emits.
         const indexedProperty =
-          ctx.oracle.declarationsOf(node.left.argumentExpression)[0] ?? ctx.oracle.declarationsOf(node.left)[0];
+          ctx.oracle.declarationsOf(node.left.argumentExpression)[0] ??
+          ctx.oracle.declarationsOf(node.left)[0] ??
+          literalObjectWriteDeclaration(ctx.oracle, node.left.expression, indexedName);
         if (indexedProperty && (rhsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) === 0) {
           const writes = ctx.objectLiteralIndexedAssignedPropertyTypes.get(indexedProperty) ?? [];
           writes.push(rhsType);
@@ -207,6 +160,22 @@ export function collectObjectLiteralAssignedPropertyNames(ctx: CodegenContext, s
         }
       }
       if (ts.isPropertyAccessExpression(node.left)) {
+        // Ordinary primitive writes need the same declaration-keyed carrier
+        // facts as indexed writes. In particular an `any` receiver has no
+        // property symbol, so resolve its own literal initializer exactly.
+        const written = ctx.oracle.typeFactOf(rhs).kind;
+        if (["number", "string", "boolean", "bigint", "symbol", "null", "undefined"].includes(written)) {
+          const declaration = literalObjectWriteDeclaration(ctx.oracle, node.left.expression, node.left.name.text);
+          if (declaration) {
+            const writes = ctx.objectLiteralIndexedAssignedPropertyTypes.get(declaration) ?? [];
+            writes.push(rhsType);
+            ctx.objectLiteralIndexedAssignedPropertyTypes.set(declaration, writes);
+            const seed = ctx.oracle.typeFactOf(declaration).kind;
+            if (["number", "string", "boolean", "bigint", "symbol"].includes(seed) && seed !== written) {
+              markIndexedPropertyStale(ctx, declaration);
+            }
+          }
+        }
         // A union receiver can alias an object whose own property type is
         // narrower than the union. Preserve writes on each constituent's
         // declaration, rather than trusting that narrower checker type.
