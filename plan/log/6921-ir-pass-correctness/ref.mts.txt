@@ -1,0 +1,7 @@
+import * as t10 from "./t10.ts"; import * as t11 from "./t11.ts"; import * as t12 from "./t12.ts"; import * as t9 from "./t9.ts";
+const mk = () => { (globalThis as any).__c = 0; return { valueOf() { (globalThis as any).__c++; return 10; } }; };
+console.log("node t10.main", t10.main());
+console.log("node t11.main", t11.main(), "t11.loop(5)", t11.loop(5), "t12.loop(5)", t12.loop(5));
+let o = mk(); console.log("node t9.tonum", t9.tonum(o), "c=" + (globalThis as any).__c);
+o = mk(); console.log("node t9.eqq", t9.eqq(o), "c=" + (globalThis as any).__c);
+o = mk(); console.log("node t9.twice", t9.twice(o), "c=" + (globalThis as any).__c);

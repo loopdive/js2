@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-10-07T21:46:48.275Z",
-  "baseline_generated_at": "2026-10-07T21:46:48.276Z",
-  "baseline_sha": "088046348f71f3fc7a2301dbcff6444fe2967bbc",
+  "timestamp": "2026-10-09T07:59:34.105Z",
+  "baseline_generated_at": "2026-10-09T07:59:34.105Z",
+  "baseline_sha": "2d0c31a3e2dbe0a4a46d123226fa1d62f7d4c7aa",
   "oracle_version": 14,
   "mode": {
     "target": "standalone",
@@ -1255,8 +1255,8 @@
           "test/language/expressions/dynamic-import/syntax/valid/top-level-import-defer-script-code-valid.js",
           "test/language/expressions/dynamic-import/catch/nested-async-gen-await-import-source-source-text-module.js",
           "test/language/expressions/dynamic-import/syntax/valid/nested-if-import-source-script-code-valid.js",
-          "test/language/expressions/dynamic-import/syntax/valid/nested-async-gen-await-import-defer-script-code-valid.js",
-          "test/language/expressions/dynamic-import/catch/nested-if-import-catch-import-source-specifier-tostring.js"
+          "test/language/expressions/dynamic-import/catch/nested-if-import-catch-import-source-specifier-tostring.js",
+          "test/language/expressions/dynamic-import/syntax/valid/nested-async-gen-await-import-defer-script-code-valid.js"
         ],
         "sample_signatures": [
           "other:L#:## SyntaxError: import.defer(...) is not supported (Stage # proposal — import-defer / source-phase-imports); L#:## 'import.meta' is only allowed in a module",
@@ -1461,16 +1461,16 @@
         "sample_files": [
           "test/built-ins/JSON/stringify/replacer-function-result-undefined.js",
           "test/built-ins/JSON/parse/reviver-context-source-object-literal.js",
-          "test/built-ins/JSON/stringify/value-bigint-replacer.js",
           "test/built-ins/JSON/stringify/replacer-array-duplicates.js",
-          "test/built-ins/JSON/parse/reviver-context-source-primitive-literal.js"
+          "test/built-ins/JSON/parse/reviver-context-source-primitive-literal.js",
+          "test/built-ins/JSON/stringify/value-bigint-replacer.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected SameValue(«\"null\"», «undefined») to be true",
           "type_error:TypeError: Cannot convert undefined or null to object",
-          "assertion_fail:Test262Error: Expected SameValue(«\"null\"», «\"\\\"bigint\\\"\"») to be true",
           "assertion_fail:Test262Error: Expected SameValue(«\"{\\\"key\\\":null}\"», «\"{\\\"key\\\":true}\"») to be true",
-          "assertion_fail:Test262Error: Expected SameValue(«#», «null») to be true"
+          "assertion_fail:Test262Error: Expected SameValue(«#», «null») to be true",
+          "assertion_fail:Test262Error: Expected SameValue(«\"null\"», «\"\\\"bigint\\\"\"») to be true"
         ]
       },
       {
@@ -1787,7 +1787,7 @@
           "test/language/statements/async-generator/yield-star-return-missing-value-is-awaited.js",
           "test/language/statements/for-of/head-using-fresh-binding-per-iteration.js",
           "test/language/statements/async-generator/generator-created-after-decl-inst.js",
-          "test/language/expressions/class/elements/async-gen-private-method-static/yield-star-async-next.js"
+          "test/language/expressions/async-generator/yield-star-sync-next.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::__create_async_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_done, env::__gen_result_value, env::__gen_return, env::__gen_set_return, env::__gen_yield_star, env::__gen_y",
@@ -2067,8 +2067,8 @@
         },
         "error_categories": {
           "assertion_fail": 117,
-          "other": 13,
           "type_error": 34,
+          "other": 13,
           "wasm_compile": 1,
           "host_import_leak": 29,
           "runtime_error": 13,
@@ -2077,8 +2077,8 @@
         "by_edition": {
           "ES2017": 21,
           "ES2019": 14,
-          "ES2023": 5,
           "ES2015": 14,
+          "ES2023": 5,
           "Unclassified (untagged)": 48,
           "ES2022": 24,
           "ES2024": 17,
@@ -2093,15 +2093,15 @@
         "sample_files": [
           "test/built-ins/Object/prototype/toString/proxy-function-async.js",
           "test/built-ins/Object/fromEntries/uses-define-semantics.js",
-          "test/built-ins/ShadowRealm/prototype/evaluate/returns-proxy-callable-object.js",
           "test/language/global-code/script-decl-lex.js",
+          "test/built-ins/ShadowRealm/prototype/evaluate/returns-proxy-callable-object.js",
           "test/built-ins/Object/seal/configurable-attribute-all-own-properties-set-from-true-to-false-property-are-unaltered.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: async function proxy Expected SameValue(«\"[object Function]\"», «\"[object AsyncFunction]\"») to be true",
           "assertion_fail:Test262Error: should not trigger setter on Object.prototype",
-          "other:ReferenceError: ShadowRealm is not defined",
           "type_error:TypeError: TypeError: Cannot define property, object is not extensible",
+          "other:ReferenceError: ShadowRealm is not defined",
           "assertion_fail:Test262Error: Expected obj[foo2] to be writable, but was not."
         ]
       },
