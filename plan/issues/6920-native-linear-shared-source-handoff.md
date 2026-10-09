@@ -1781,3 +1781,128 @@ Root independently verified all36 raw artifact pins, exact authored floors/actua
 Root accepted the exact-e734 Astra carrier delta review (`ec35adf5b604c7f22c673c66879ee1ed4d8abae802212edf72a038b0b70801d6`). Carrier/source commit full normal hooks passed56/56. The normal signed merge `1d9a6c8a16de6b393f8c78e0055f52388ab2b6af` has exact parents e734e6331bd4cbdb1d8f9e5abb9b462957ac94de and revalidated canonical main e610189829ad1554b813d6ca224515666b0e2d28; full normal Node25 merge hooks passed70/70. All21 prior candidate file pins and14 canonical dependency file pins remain exact, with clean tree and verified Thomas SSH signature. Merge receipt8080 bytes/SHA256 `c9e8cb8597419fe33102996afddea1ee278ff14655faf2ffd39c89be60719149` retains complete operands and hook/signature artifacts.
 
 Metadata slice6920:session-a-source-handoff-20261009, owner ttraenkler/codex-sol-session-a-source-handoff-20261009, actual in-progress write89995-6v69lqr6, was freshly effect-read for the publication record. This append preserves every prior issue/handoff byte and source/proof epoch. SOURCE_HEAD1d9 is distinguished from the later metadata publication hash, which requires actual remote readback. No source change, B-contract completion, general/native/public admission, equality, retirement, CI acceptance or queue release follows from metadata publication; root retains those decisions.
+
+
+## Shared Linear geometry boundary inventory: adopted bounded dependency plan (2026-10-09)
+
+ROOT adopted the complete Astra High plan below and assigned exactly two policy locations plus this append. Isolated branch `codex/6920-linear-geometry-boundary-20261009` starts at actual published C head `e5b67e2d2ddb92cc2ccd039a5677f476a78bf93f`; fresh REST PR6600 is OPEN, merged:false, HOLD, and canonical main is `7fc2b700eb320e18db213f286350fd1bd56982ef`. C merged main into its branch; geometry is not delivered to main. No C branch/source/test/claim edit is authorized here.
+
+Actual upstream claim `6920:linear-geometry-boundary-inventory-20261009`, owner `ttraenkler/codex-sol-linear-geometry-boundary-20261009`, write `77854-2m6xnnwx`, is in-progress and was independently effect-read before this append. Scope is foundation's one added entry/minimum9→10 and exactly one clean/foundation files row for `src/shared/contracts/linear-memory-layout.ts` in `scripts/compiler-boundaries.json`; no allowedEdges, other rows/history, checker, source, tests, or proof changes. Existing issue custody at the packet's missing files-row finding and Session C continuation reserves this inventory to A/ROOT.
+
+Fresh canonical ledger `df160ab7aedb5fbf11b69f9f8990dc784cc5ee0c` contains2,976 records. Historical D0 `38570-vbf5jpfz` initial detector and foundation `58141-jewit8ch` identity activation remain held; their published bounded delivery is recorded in `plan/agent-context/3518-first-boundary-dispatch-2026-09-07.md`. Named5753 key/object-layout registrations `60976-gs24rmdq`/`80767-mlvveu0a` remain separate (`plan/agent-context/5753-composed-boundary-repair-2026-09-15.md`). ROOT's `41777-d2f5erfl` owns only six allocation-evidence registrations, explicitly preserving geometry policy followup. Proposal `29777-pzvu0tq3`, C `4237-ijwd2prx`, AE28 source `43989-lv9fr4w8`, metadata `44305-2ijq5h0r` and all foreign records remain untouched. No newer competing exact geometry inventory hunk was found. The new claim does not transfer historical owners' scopes.
+
+Before policy editing, actual unmodified C inventory under Node25.9.0 and immutable comparison base C exited1: invalid-inventory, ten errors (one unclassified-module, one unclean-active-layer, six unclassified-target, two forbidden-transitive-path),1,899 tracked source modules, foundation9, architectureComplete:false. Exact raw output/stderr/exit and all2,976 claim records are preserved in the task-private `.tmp/boundary-*` receipts. Candidate evidence is pending; no gate pass, geometry semantic rerun, public admission or architecture completion follows from plan adoption. ROOT authorized the narrow assignment notice in existing PR6583 before policy implementation.
+
+### Complete adopted Astra plan
+
+# Issue 6920 — complete the shared Linear geometry boundary inventory
+
+Private implementation-plan proposal, Codex GPT-6 Astra High, 2026-10-09. ROOT must adopt this plan and assign the exact policy hunks before implementation. This read-only planning task changed no repository, source, tests, issue, claims, Git state, or public comments and ran no checker/test/compiler runtime. The frozen AE28 lane is unrelated and remains untouched.
+
+## Exact checkpoint and custody
+
+GitHub REST-backed connector revalidation of PR6600 returned **open, merged:false**, head `e5b67e2d2ddb92cc2ccd039a5677f476a78bf93f`, base main `7fc2b700eb320e18db213f286350fd1bd56982ef`. C's [comment6073377464](https://github.com/loopdive/js2/pull/6583#issuecomment-6073377464) says main was merged into C's branch; it does not establish that PR6600 was merged into main. Its G24 24/24 and clean typecheck are C's reported measurements, not executions by this planner.
+
+Read the exact remote head's policy, checker and three geometry source files. The local preserved geometry source/checker files independently have the identical Git blob IDs, allowing direct inspection without touching C's checkout:
+
+| File | Exact head Git blob |
+| --- | --- |
+| scripts/compiler-boundaries.json | `47808eea7a41637438ed783d8a35dc18d99c4382` |
+| scripts/check-compiler-boundaries.mjs | `e6758d9cacabfe0a56fe60ec8812bb860355fe27` |
+| src/shared/contracts/linear-memory-layout.ts | `59450b9ad09d7ebf16af04a8a1ab655a5c81b0ee` |
+| src/ir/analysis/contracts/linear-memory-layout.ts | `0dd2108962236a64e2b96479309b5b1e9735c90e` |
+| src/ir/analysis/linear-memory-plan.ts | `3db990eb21e3ed216cd798548af6d076e32ed9e1` |
+
+The old packet is `/private/tmp/js2-ir-b-contract-docs-20261008/plan/log/6920-shared-linear-geometry-20261009/boundaries.patch`, 648 bytes, SHA-256 `8068abcac73db2354db1c0a24bc292ef114f1d04d5b401dbf65d08e4e5a56a59`. It adds the foundation entry and raises its minimum from nine to ten; it contains no `files` classification. C's report that this patch alone retains all ten diagnostics matches the actual checker logic.
+
+Existing issue plan: `plan/issues/6920-native-linear-shared-source-handoff.md`, A-G zero-import geometry plan and the “Session C geometry continuation confirmed” custody section. The broader `/private/tmp/js2-ir-main-boundary-plan-20261008/implementation-plan.md` concerns the separate dirty composition and many other modules; do not import its broad layer changes into this narrow fix.
+
+## Why this module belongs in foundation
+
+The shared module has zero imports/re-exports, including type imports. It owns storage/layout DATA, existing address/header/forwarding constants and pure geometry/key functions over storage kinds and strings. Its single frozen forwarding object is local data. It has no IR instruction identity, allocation registry, ownership/escape solver, target emitter, compiler context, parser, physical resource handle, or host runtime dependency. Classifying this actual closed module as clean foundation is justified by its contents, not merely its filename or the word “shared”. It does not claim that the entire allocation planner is foundational or that the constants are universally target-independent.
+
+The IR contracts file remains clean `ir-analysis`: it re-exports geometry types and imports the needed shared types, while retaining allocation/site/policy records and their canonical IR-analysis dependencies. The larger planner remains at its current classification; its four shared-module references do not justify promoting it. No source move or semantic change is required.
+
+## Exact minimal edit: one policy file, two locations
+
+Only edit `scripts/compiler-boundaries.json`:
+
+1. In the existing `layers` object with `id: "foundation"`, append `"src/shared/contracts/linear-memory-layout.ts"` to `entries` and change `minModules` from `9` to `10`, exactly as the old packet does. Preserve all nine entries, active/required status and roots.
+2. Add exactly one object to the existing `files` array, preferably adjacent to the existing shared-contract classifications:
+
+```json
+{
+  "path": "src/shared/contracts/linear-memory-layout.ts",
+  "state": "clean",
+  "layer": "foundation"
+}
+```
+
+Do not add a second `modules` list: the checker builds its module population from the actual source tree and joins it to `files`. Do not duplicate the existing IR contracts row, which is already `{path:"src/ir/analysis/contracts/linear-memory-layout.ts",state:"clean",layer:"ir-analysis"}`.
+
+**No allowedEdges change is necessary.** The exact head already contains:
+
+```json
+"foundation": ["foundation"],
+"ir-analysis": ["ir-analysis", "foundation", "ir-core", "wasm-model"]
+```
+
+The clean foundation classification makes the real IR-contracts → shared-contract dependency traversable under that existing rule. Do not add a per-file transitive exception, grant foundation → IR, broaden mixed-layer permissions, ignore type-only references, exempt the path, or weaken enforcement. No new layer, external policy, nonModules entry, moves/evidence record, checker code, or activationHistory rewrite is required for this repair. Preserve existing history and all source-evidence denominators; subsequent immutable-base comparison protects the new active entry/minimum.
+
+The `files` row alone is the missing classification needed to resolve the reported errors; the entry/minimum additionally makes this actual tenth foundation module a required activation root. These are separate responsibilities.
+
+## Expected diagnostic mechanism
+
+The checker inventories actual modules at lines412–414, then requires each active-root occupant to be clean in the proper layer at lines417–445. Without the row, the shared file creates `unclassified-module` and `unclean-active-layer`.
+
+At lines545–551, all six imports/re-exports targeting it are recorded as unresolved `unclassified-target`: two type-only references from the contracts file and four references from the planner. The contracts file is enforced. Its two unresolved references become terminal edges at lines591–614; the unresolved terminal has no allowable external-package rule, causing the two `forbidden-transitive-path` diagnostics. They are consequences of missing classification, not evidence that `ir-analysis → foundation` is forbidden.
+
+After classification, those six edges resolve normally. The contracts file's two edges reach clean foundation under the existing direct/transitive allowance, and the shared module has no onward dependencies. The planner is explicitly `unmigrated` in `mixed-needs-split`, whose allowedEdges array is empty. Its four now-resolved shared references therefore become ordinary **unenforced forbiddenEdges debt records**, not clean-layer errors; do not grant an allowance or relabel the planner to hide them. Preserve and report that graph-accounting change. Confirm the actual post-edit report rather than inferring a gate pass solely from this reasoning.
+
+## Composition and ownership constraints
+
+Fresh read-only `issue-assignments` API results:
+
+- C's `6920:c-shared-linear-geometry-source-20261009` is in-progress, assignee `ttraenkler/claude-session-c-geometry-20261009`, write `4237-ijwd2prx`. It owns the three geometry source hunks and `tests/issue-6865-linear-layout-contract.test.ts`. Do not alter these or C's branch/claim.
+- A's old geometry preparation claim is released, write `60707-95hx19zl`; that is not permission to resume competing geometry edits.
+- AE28's canonical local rules claim is in-progress, assignee `ttraenkler/codex-sol-allocation-evidence-checker-20261009`, write `43989-lv9fr4w8`. Its five source files, three authored test files and evidence freeze are not part of this assignment.
+
+The issue and coordination thread reserve compiler-boundary inventory/policy to A/ROOT. Before executable edits, ROOT must effect-read current canonical ownership and publish a narrow policy-hunk assignment under issue6920. A new slice label does not permit overwriting another owner's policy changes. Retain B's provider/native leaves, dirty primary checkout, all historical proof readers/receipts and protected-queue ownership.
+
+Compose against the exact C source or a ROOT-owned successor containing it. Applying this policy to main without the new shared source would instead produce a stale classification and missing activated root. ROOT may hand the exact two hunks to C for its own integration, or prepare its own explicitly coordinated integration branch containing C's source; this plan authorizes neither a foreign-branch edit nor duplicate geometry implementation. Revalidate head/base and merge conflicts before using the rows on a newer checkpoint.
+
+## Validation and acceptance
+
+Run only after ROOT adopts/releases the implementation. First retain the unmodified exact C-head inventory report (including stderr/exit), then run the same command against the composed policy candidate, with the immutable actual pre-edit comparison base pinned:
+
+```sh
+node --max-old-space-size=2048 scripts/check-compiler-boundaries.mjs \
+  --mode inventory --base e5b67e2d2ddb92cc2ccd039a5677f476a78bf93f \
+  > /private/tmp/js2-6920-boundary-candidate.json \
+  2> /private/tmp/js2-6920-boundary-candidate.stderr
+```
+
+Use distinct baseline output names and capture each real exit code. At the final commit/merge-preview checkpoint also run the actual CI form, `node --max-old-space-size=2048 scripts/check-compiler-boundaries.mjs --mode inventory --base HEAD^1`, preserving its JSON/stderr. Do not rely on the default `--base HEAD` for historical activation protection, nor on default mode: default `complete` intentionally remains failing while migration debt exists. If an intervening parent has different actual policy/source, record its full SHA and preserve all its additions rather than forcing this older pin as a substitute.
+
+Required assertions from the real report: inventory mode exits0; `inventoryValid:true`; exactly one clean foundation row for this module; foundation has ten entries/modules and minimum ten on this checkpoint; the new root is visited; all six actual references resolve to that same module with their original syntax/type-only flags; its outgoing reference population is zero; none of the ten reported diagnostics remains and no replacement error appears. Source population/bytes and all unrelated policy state must be unchanged. The expected truthful status is `inventory-valid-architecture-incomplete`, with `architectureComplete:false`; retain remaining debt and normal forbidden-edge reporting. Do not misreport that status as full architecture completion.
+
+Use the existing `tests/issue-3518-compiler-boundaries.test.ts` for normal policy/checker regression coverage if required by ROOT's gate cohort, plus formatting and the ordinary required CI gates. No new test framework or checker implementation is needed for two data hunks. G24's reported result is source-semantic evidence already owned by C; this policy-only change does not independently rerun or supersede it. Keep the actual final main ancestry/content and protected-queue verification with ROOT.
+
+Acceptance is complete canonical inventory registration and the genuine inventory gate result for the composed geometry checkpoint. It confers no JS-host IR admission, no IR/legacy output equality, no native public result, no source migration completion and no legacy retirement. All original issue6920 obligations and historical receipt custody remain intact.
+
+
+
+### Exact composed inventory and detector qualification (2026-10-09)
+
+Actual unchanged checker under Node25.9.0, explicit immutable base `e5b67e2d2ddb92cc2ccd039a5677f476a78bf93f`: baseline exited1 with ten errors; the exact two policy-location candidate exited0, `inventoryValid:true`, status `inventory-valid-architecture-incomplete`, `architectureComplete:false`, zero errors and zero unresolved references. All1,899 tracked source paths/hashes are unchanged. Exactly one clean foundation classification was added; foundation's ten entries/modules/minimum are ten and all ten roots were visited. The shared module has zero outgoing references. Its original six incoming references preserve source/syntax/type-only/line and now resolve to the same foundation module.
+
+All four unknown-edge rows remain unchanged. Forbidden-edge debt increases truthfully from13,817 to13,821: exactly the planner's four formerly unclassified references become unenforced mixed-needs-split→foundation debt; no prior forbidden edge was removed. The planner's classification, allowedEdges, existing activated roots/history, historical evidence and unrelated policy data are unchanged. Candidate policy606,971 bytes/SHA256d32f2d135094d616309588dabdcdfb3af643b87896c0de27c107f5e4e15a1896; exact C policy preimage606,787 bytes/SHA256b5d6c24b2a0c4cdeeb3aabaae8213eb71a1eaa09c399ff693b7939da75bd66e9.
+
+Existing unmodified `tests/issue-3518-compiler-boundaries.test.ts` ran through normal Vitest3.2.4 on Node25.9.0:125/125 passed,0 failed/pending. Prettier's policy check exited0. Raw baseline/candidate JSON, stderr and exits; regression report/log/exit; exact row audit; and fixed original source population are preserved in this lane's `.tmp/boundary-*` review packet. A private audit initially looked for baseline unclassified references in the resolved array; inspection corrected it to actual unresolvedEdges, with that diagnostic retained and no production checker rerun or input mutation.
+
+Authorized preimplementation notice [PR6583 comment6073476414](https://github.com/loopdive/js2/pull/6583#issuecomment-6073476414) records actual claim77854-2m6xnnwx and exact scope. No source/tests/checker/proof changes, geometry semantic rerun, commit, push, queue change or main delivery occurred. ROOT review precedes signed normal dependency delivery for C's existing PR6600. CI-form `--base HEAD^1` belongs to the later actual committed/merge-preview checkpoint; no fabricated successor parent is used here.
+
+
+### ROOT review and bounded dependency delivery release (2026-10-09)
+
+ROOT independently verified every review-packet artifact/file hash, the exact two policy locations and unchanged allowedEdges/other policy data, the complete281162-byte issue prefix and full adopted Astra plan, all1899 source hashes against both actual reports, all six references/no outgoing shared references, every13817 original debt row plus precisely four unenforced planner rows, errors10 to0 and125/125 actual detector test rows with zero pending. ROOT approved normal signed Thomas/Codex GPT-6.1 Sol High dependency commit and fork publication on this separate branch; C must merge the exact dependency into its existing PR6600. Root retains protected-queue ownership and HOLD. Fresh claim77854-2m6xnnwx remains held by the assigned boundary owner; PR6600 remains OPEN/unmerged at exacte5b67e2d2ddb92cc2ccd039a5677f476a78bf93f, canonical main7fc2b700eb320e18db213f286350fd1bd56982ef. No source, test, historical proof or AE28 work is altered. Full normal hooks and postcommit CI-form inventory against the actual first parent remain required; this release is not a claim that those later operations have already passed.
