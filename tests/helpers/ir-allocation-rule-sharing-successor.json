@@ -1,0 +1,936 @@
+{
+  "schema": 1,
+  "kind": "allocation-rule-sharing-successor",
+  "predecessor": "1e388ef647c9827102b87e869f7526f8c928f11e",
+  "provenance": "ROOT-reviewed uncommitted AE28 V2 source; no commit or delivery asserted",
+  "before": [
+    {
+      "path": "src/ir/analysis/ownership.ts",
+      "bytes": 23654,
+      "sha256": "9c622ef53c8c9c1ecbc1c0bc8eee907dfb00da82a5f16c89feecb0c6d918495f",
+      "gitBlob": "af505f4a3db5214b64ef6564c27f26b46c30611d"
+    },
+    {
+      "path": "src/ir/analysis/escape.ts",
+      "bytes": 10829,
+      "sha256": "72d036b3565c778b29425f9c853276d67d48b13e2dfff6d38d8d4afa327e4c53",
+      "gitBlob": "089f59f89b8a68af93babe3f339bdcd11fb7e38a"
+    },
+    {
+      "path": "src/ir/analysis/encoding.ts",
+      "bytes": 10358,
+      "sha256": "e1a4e863db13b51769904457502adcca368cf4a9d8bacf79659daaba34596c23",
+      "gitBlob": "e36f2ad99017ad846772fea08b9565f5741159bc"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/effect-rules.ts",
+      "bytes": 5949,
+      "sha256": "8b59082258a7422a6a7913e3af593aa98b0f2fa57b1cd3b7d9b84f799d7ca761",
+      "gitBlob": "fdee025f15edddb0bc4e14b20e3886361ee43e92"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/census.ts",
+      "bytes": 9853,
+      "sha256": "ed9b780817a6f2521b67b9b748ea9e4b6bb2328ea17539be574b7639b8c57e60",
+      "gitBlob": "fafc3113851c218c78c042d656b50f83b1b342e5"
+    }
+  ],
+  "current": [
+    {
+      "path": "src/ir/analysis/ownership.ts",
+      "bytes": 24007,
+      "sha256": "78d75f3f4327db958731a5387fc349aea11ef912f94cb274a8833b6c68f72998",
+      "gitBlob": "c95cb81c9158b417f3ec9634297b8ea59c84e1a9"
+    },
+    {
+      "path": "src/ir/analysis/escape.ts",
+      "bytes": 11200,
+      "sha256": "9400e82269aa53b73a114e945474c6905b1e75795ca40f6da28be723fd678a5f",
+      "gitBlob": "6c678fd64d3d18f5d4896da3250f5e907de461a3"
+    },
+    {
+      "path": "src/ir/analysis/encoding.ts",
+      "bytes": 10639,
+      "sha256": "1eb7e5ea51c0e54ed105eac8f35e340a0dc0fa25c50cf776a824959fed072b73",
+      "gitBlob": "abdf6e8c932981e2acfcc5a8a376ca362c63daf5"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/effect-rules.ts",
+      "bytes": 8002,
+      "sha256": "56a0a59536d0d12760fc7dc93fae032669b87eb4a741d089847d00d26f30b18d",
+      "gitBlob": "4f5a86f92145c1ac1deab3c8e7b2498798726de8"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/census.ts",
+      "bytes": 10151,
+      "sha256": "fe5f001a13c82b4bbecc6c17143a102ba0f0d90202f9a1fcd44d0cebe8d2774f",
+      "gitBlob": "084972dc79d8f5705ce7d60fac26a0d2fbc2904c"
+    }
+  ],
+  "anchors": [
+    {
+      "path": "tests/helpers/ir-validation-analysis-relocation.json",
+      "bytes": 327660,
+      "sha256": "9a52664fbba6044d168f428f9398e5d2bff923cf7cac1adc6aae04827431e969",
+      "gitBlob": "6a60f93474b57e87ad18acaab8ce85b232dd4128"
+    },
+    {
+      "path": "tests/helpers/ir-allocation-provenance-lookup-successor.json",
+      "bytes": 11637,
+      "sha256": "4528c914b70535665feebbd0f93ed5d43ef0a5fbb9b4a752e056da84f89a2c7d",
+      "gitBlob": "508e4a700348f1adacad3aad0e313c979b333159"
+    },
+    {
+      "path": "tests/helpers/ir-allocation-provenance-lookup-successor.ts",
+      "bytes": 29831,
+      "sha256": "7f818067a0ecb8963f582e232f1692af9d3ca9283b9596f42e9ab8846f1f6443",
+      "gitBlob": "059095d2f9cdb2ca2f0a6c42091e7104b89c3a75"
+    },
+    {
+      "path": "tests/helpers/ir-validation-analysis-relocation.ts",
+      "bytes": 18730,
+      "sha256": "21d909a664c3e0dcd99e52b13c2185d376f8c1fabedb58a2d80b08556a9aca3d",
+      "gitBlob": "48ec07483c7c79c612071becb68bbd18eaacb2e3"
+    }
+  ],
+  "inverse": [
+    {
+      "path": "src/ir/analysis/ownership.ts",
+      "role": "ownership-import",
+      "span": {
+        "start": 1943,
+        "end": 2050,
+        "bytes": 107,
+        "sha256": "ddcc5c3073ddd9468e67c82280b2769ee06ede7e1b169532db592f7e1b208b10",
+        "gitBlob": "a7c9fc9d669760b930ff5f6a94d87b7dcd84d5c0"
+      },
+      "expected": {
+        "text": "import { allocationEvidenceRule, allocationEvidenceOperand } from \"./allocation-evidence/effect-rules.js\";\n",
+        "bytes": 107,
+        "sha256": "ddcc5c3073ddd9468e67c82280b2769ee06ede7e1b169532db592f7e1b208b10",
+        "gitBlob": "a7c9fc9d669760b930ff5f6a94d87b7dcd84d5c0"
+      },
+      "replacement": {
+        "text": "",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      }
+    },
+    {
+      "path": "src/ir/analysis/ownership.ts",
+      "role": "ownership-vector-loop",
+      "span": {
+        "start": 10073,
+        "end": 10593,
+        "bytes": 520,
+        "sha256": "d4ff31cbc8b737e2b32b4a75d418dc4e6de7c3a6da3a370b94f58bc735594e72",
+        "gitBlob": "94f0e7fc6d0015cac96b55b7c2bf6e39aa962fd3"
+      },
+      "expected": {
+        "text": "    case \"vec.len\":\n    case \"vec.set\": {\n      const rule = allocationEvidenceRule(instr);\n      if (rule.kind !== \"effects\") throw new Error(\"allocation rule mismatch: ownership vector effect\");\n      for (let index = 0; index < rule.ownership.length; index++) {\n        const event = rule.ownership[index]!;\n        const value = allocationEvidenceOperand(instr, event.operand);\n        if (event.op === \"escape\") markEscaped(state, value, allocOf);\n        else touch(state, value, allocOf, null, event.op);\n      }\n",
+        "bytes": 520,
+        "sha256": "d4ff31cbc8b737e2b32b4a75d418dc4e6de7c3a6da3a370b94f58bc735594e72",
+        "gitBlob": "94f0e7fc6d0015cac96b55b7c2bf6e39aa962fd3"
+      },
+      "replacement": {
+        "text": "      touch(state, instr.vec, allocOf, null, \"read\");\n",
+        "bytes": 54,
+        "sha256": "14e6e57103cc1fa52dfea38601ca5b9f8a14f617edfe08639551bab15f425ef9",
+        "gitBlob": "3c8050d45267cdce44a9eb9efd081b89df708ea5"
+      }
+    },
+    {
+      "path": "src/ir/analysis/ownership.ts",
+      "role": "ownership-vector-close",
+      "span": {
+        "start": 10606,
+        "end": 10612,
+        "bytes": 6,
+        "sha256": "4893f40e3781eb896c82d046a08067a11e35cdf2f1dfaf26fea90b8db6676413",
+        "gitBlob": "3ae1cd2886c76a48e5d72c97695855074dfad728"
+      },
+      "expected": {
+        "text": "    }\n",
+        "bytes": 6,
+        "sha256": "4893f40e3781eb896c82d046a08067a11e35cdf2f1dfaf26fea90b8db6676413",
+        "gitBlob": "3ae1cd2886c76a48e5d72c97695855074dfad728"
+      },
+      "replacement": {
+        "text": "    case \"vec.len\":\n      touch(state, instr.vec, allocOf, null, \"read\");\n      break;\n",
+        "bytes": 87,
+        "sha256": "361108873200e5ed9bfa4f134815e28666ee30d208fd9f7d70d5eaba1843d7ca",
+        "gitBlob": "c71385dde55160555c93f6bb525adebaf14e67c3"
+      }
+    },
+    {
+      "path": "src/ir/analysis/ownership.ts",
+      "role": "ownership-old-write-removal",
+      "span": {
+        "start": 11547,
+        "end": 11547,
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      },
+      "expected": {
+        "text": "",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      },
+      "replacement": {
+        "text": "      break;\n    case \"vec.set\":\n      touch(state, instr.vec, allocOf, null, \"write\");\n      markEscaped(state, instr.newValue, allocOf);\n",
+        "bytes": 139,
+        "sha256": "29d5843cd8710234fd7679ea00ba6b0a8f231c4993c93346cace9d68a1689e4f",
+        "gitBlob": "e0803b80a1ae6ec57eecee53530cb0237b5a7c2f"
+      }
+    },
+    {
+      "path": "src/ir/analysis/escape.ts",
+      "role": "escape-import",
+      "span": {
+        "start": 1703,
+        "end": 1783,
+        "bytes": 80,
+        "sha256": "620d7d57b187b1c9d185823c212691f0cb3629931b91d5d048b2735a2c1d58d0",
+        "gitBlob": "03aeb3d48a0f3d9be75074a9ebb7dcb1d847e493"
+      },
+      "expected": {
+        "text": "import { allocationEvidenceRule } from \"./allocation-evidence/effect-rules.js\";\n",
+        "bytes": 80,
+        "sha256": "620d7d57b187b1c9d185823c212691f0cb3629931b91d5d048b2735a2c1d58d0",
+        "gitBlob": "03aeb3d48a0f3d9be75074a9ebb7dcb1d847e493"
+      },
+      "replacement": {
+        "text": "",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      }
+    },
+    {
+      "path": "src/ir/analysis/escape.ts",
+      "role": "escape-vector-guard",
+      "span": {
+        "start": 4755,
+        "end": 5046,
+        "bytes": 291,
+        "sha256": "941f922bc49570afc2c94779fe7f70471445ea8d70646a12031d4545e5f9e546",
+        "gitBlob": "7d0ab13a797d9d8d531defb901c9a1898380fe95"
+      },
+      "expected": {
+        "text": "      case \"vec.get\":\n      case \"vec.len\":\n      case \"vec.set\": {\n        const rule = allocationEvidenceRule(instr);\n        if (rule.kind !== \"effects\" || rule.directEscape.length !== 0)\n          throw new Error(\"allocation rule mismatch: vector direct escape\");\n        break;\n      }\n",
+        "bytes": 291,
+        "sha256": "941f922bc49570afc2c94779fe7f70471445ea8d70646a12031d4545e5f9e546",
+        "gitBlob": "7d0ab13a797d9d8d531defb901c9a1898380fe95"
+      },
+      "replacement": {
+        "text": "",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      }
+    },
+    {
+      "path": "src/ir/analysis/encoding.ts",
+      "role": "encoding-import",
+      "span": {
+        "start": 1885,
+        "end": 1965,
+        "bytes": 80,
+        "sha256": "620d7d57b187b1c9d185823c212691f0cb3629931b91d5d048b2735a2c1d58d0",
+        "gitBlob": "03aeb3d48a0f3d9be75074a9ebb7dcb1d847e493"
+      },
+      "expected": {
+        "text": "import { allocationEvidenceRule } from \"./allocation-evidence/effect-rules.js\";\n",
+        "bytes": 80,
+        "sha256": "620d7d57b187b1c9d185823c212691f0cb3629931b91d5d048b2735a2c1d58d0",
+        "gitBlob": "03aeb3d48a0f3d9be75074a9ebb7dcb1d847e493"
+      },
+      "replacement": {
+        "text": "",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      }
+    },
+    {
+      "path": "src/ir/analysis/encoding.ts",
+      "role": "encoding-no-write",
+      "span": {
+        "start": 5664,
+        "end": 5865,
+        "bytes": 201,
+        "sha256": "00d7694b23eccb451adb859e0f02c60268e7f038b08a674276fd719a4aedabea",
+        "gitBlob": "e58179eddc2f764639ac62a7fe6a83c229c393be"
+      },
+      "expected": {
+        "text": "  const rule = allocationEvidenceRule(instr);\n  if (rule.kind === \"effects\") {\n    if (rule.encoding !== \"no-write\") throw new Error(\"allocation rule mismatch: encoding contribution\");\n    return;\n  }\n",
+        "bytes": 201,
+        "sha256": "00d7694b23eccb451adb859e0f02c60268e7f038b08a674276fd719a4aedabea",
+        "gitBlob": "e58179eddc2f764639ac62a7fe6a83c229c393be"
+      },
+      "replacement": {
+        "text": "",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      }
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/effect-rules.ts",
+      "role": "static-rule-definitions",
+      "span": {
+        "start": 743,
+        "end": 2166,
+        "bytes": 1423,
+        "sha256": "11eda26b74158ddc10ca10dfac16f56e869558c0f60c0a89d397999c16218806",
+        "gitBlob": "87692d5fccdc7725008d3fbeeddad3421c0499aa"
+      },
+      "expected": {
+        "text": "type OwnershipRuleEvent =\n  | { readonly op: \"read\" | \"write\"; readonly operand: \"vec\" }\n  | { readonly op: \"escape\"; readonly operand: \"newValue\" };\ntype AllocationEvidenceRule =\n  | { readonly kind: \"unsupported\" }\n  | {\n      readonly kind: \"effects\";\n      readonly ownership: readonly OwnershipRuleEvent[];\n      readonly directEscape: readonly [];\n      readonly encoding: \"no-write\";\n    };\n\nconst UNSUPPORTED_RULE: AllocationEvidenceRule = Object.freeze({ kind: \"unsupported\" });\nconst NO_LOCAL_EFFECT_RULE: AllocationEvidenceRule = Object.freeze({\n  kind: \"effects\",\n  ownership: Object.freeze([] as const),\n  directEscape: Object.freeze([] as const),\n  encoding: \"no-write\",\n});\nconst VECTOR_READ_RULE: AllocationEvidenceRule = Object.freeze({\n  kind: \"effects\",\n  ownership: Object.freeze([Object.freeze({ op: \"read\", operand: \"vec\" } as const)]),\n  directEscape: Object.freeze([] as const),\n  encoding: \"no-write\",\n});\nconst VECTOR_WRITE_RULE: AllocationEvidenceRule = Object.freeze({\n  kind: \"effects\",\n  ownership: Object.freeze([\n    Object.freeze({ op: \"write\", operand: \"vec\" } as const),\n    Object.freeze({ op: \"escape\", operand: \"newValue\" } as const),\n  ]),\n  directEscape: Object.freeze([] as const),\n  encoding: \"no-write\",\n});\n\n/** Shared instruction-local policy. Rule recognition is not finite-profile admission. */\nexport function allocationEvidenceRule(instr: IrInstr): AllocationEvidenceRule {\n",
+        "bytes": 1423,
+        "sha256": "11eda26b74158ddc10ca10dfac16f56e869558c0f60c0a89d397999c16218806",
+        "gitBlob": "87692d5fccdc7725008d3fbeeddad3421c0499aa"
+      },
+      "replacement": {
+        "text": "/** Finite descriptors only. Legacy analysis sharing is a separate source join. */\nexport function allocationEvidenceEffect(instr: IrInstr): AllocationEvidenceEffect {\n",
+        "bytes": 168,
+        "sha256": "afb78f58df6f5903df3d382b64d8d09777f7256b80e5d9d23f0fdc5a38b987bd",
+        "gitBlob": "8e890f38cb0939b1815eb28779a6a17415b76871"
+      }
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/effect-rules.ts",
+      "role": "static-read-return",
+      "span": {
+        "start": 2230,
+        "end": 2261,
+        "bytes": 31,
+        "sha256": "4d4cc2ca3f4a6e9f6417fa405be6f01466967968648c6bb14c43400282ab6713",
+        "gitBlob": "18445afb0d430ecd4c00c6ea2b3baa642f7bf7ed"
+      },
+      "expected": {
+        "text": "      return VECTOR_READ_RULE;\n",
+        "bytes": 31,
+        "sha256": "4d4cc2ca3f4a6e9f6417fa405be6f01466967968648c6bb14c43400282ab6713",
+        "gitBlob": "18445afb0d430ecd4c00c6ea2b3baa642f7bf7ed"
+      },
+      "replacement": {
+        "text": "      return { kind: \"effects\", ownership: [{ value: instr.vec, op: \"read\" }], directEscape: [], encoding: \"no-write\" };\n",
+        "bytes": 121,
+        "sha256": "49a01ac637c832ae75e28a2f7736e3bb25421d86ccaefe2f1d8e7f12031af997",
+        "gitBlob": "b220937efcf2364b7daed1f99254aa1873965e0f"
+      }
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/effect-rules.ts",
+      "role": "static-write-return",
+      "span": {
+        "start": 2281,
+        "end": 2313,
+        "bytes": 32,
+        "sha256": "0beb9365f80c3158e289e5797a4db98d217aa2743acce915cebbb58bd784dd78",
+        "gitBlob": "d609f03d68e99127695b3b4b3befc52dc5170ad5"
+      },
+      "expected": {
+        "text": "      return VECTOR_WRITE_RULE;\n",
+        "bytes": 32,
+        "sha256": "0beb9365f80c3158e289e5797a4db98d217aa2743acce915cebbb58bd784dd78",
+        "gitBlob": "d609f03d68e99127695b3b4b3befc52dc5170ad5"
+      },
+      "replacement": {
+        "text": "      return {\n        kind: \"effects\",\n        ownership: [\n          { value: instr.vec, op: \"write\" },\n          { value: instr.newValue, op: \"escape\" },\n        ],\n        directEscape: [],\n        encoding: \"no-write\",\n      };\n",
+        "bytes": 233,
+        "sha256": "4ee56a1ea603916b6e5a605971b2a3e7e4770f4ce8907cd1c370a723f4c38aec",
+        "gitBlob": "3f11850a9ebd9cc3e37caffeec15bb6da6de8c9c"
+      }
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/effect-rules.ts",
+      "role": "static-binary-guard",
+      "span": {
+        "start": 2332,
+        "end": 2418,
+        "bytes": 86,
+        "sha256": "37856c3ac3b2701a0276e073541c3d9579f629d6086e1cdbc27393ff27b971c1",
+        "gitBlob": "beb5a3bc768e950a85209d9304d6c99c79a0facd"
+      },
+      "expected": {
+        "text": "      if (instr.op !== \"i32.lt_u\" && instr.op !== \"f64.add\") return UNSUPPORTED_RULE;\n",
+        "bytes": 86,
+        "sha256": "37856c3ac3b2701a0276e073541c3d9579f629d6086e1cdbc27393ff27b971c1",
+        "gitBlob": "beb5a3bc768e950a85209d9304d6c99c79a0facd"
+      },
+      "replacement": {
+        "text": "      if (instr.op !== \"i32.lt_u\" && instr.op !== \"f64.add\") return { kind: \"unsupported\" };\n",
+        "bytes": 93,
+        "sha256": "d8862207cf8ce6fc5c858003404409566b098d6b37cbe924341dff12f8633f1d",
+        "gitBlob": "ba83c1f81a5b1821e87c47cdbd82fd68e22e1592"
+      }
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/effect-rules.ts",
+      "role": "static-default",
+      "span": {
+        "start": 2516,
+        "end": 2547,
+        "bytes": 31,
+        "sha256": "9bb98fca49c3e8b6193a20481440c222788cd532dfbea41bc4f73192af3c7856",
+        "gitBlob": "f98d646b30bf11bb0425823a8fa2fee258405290"
+      },
+      "expected": {
+        "text": "      return UNSUPPORTED_RULE;\n",
+        "bytes": 31,
+        "sha256": "9bb98fca49c3e8b6193a20481440c222788cd532dfbea41bc4f73192af3c7856",
+        "gitBlob": "f98d646b30bf11bb0425823a8fa2fee258405290"
+      },
+      "replacement": {
+        "text": "      return { kind: \"unsupported\" };\n",
+        "bytes": 38,
+        "sha256": "4940d4484950dda9044b8b194703eb93faedb83e9729b27d95f781db02473f4c",
+        "gitBlob": "afbebd4a20c3e6436834cfd1f860be37736b92ce"
+      }
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/effect-rules.ts",
+      "role": "resolver-compatibility",
+      "span": {
+        "start": 2551,
+        "end": 3739,
+        "bytes": 1188,
+        "sha256": "fb0bd153f9c16872ab961650d264607f7671f4f16db761743f3f1707ae883599",
+        "gitBlob": "28f7f708777d5a2eb4925b1fc689d87f40ef3384"
+      },
+      "expected": {
+        "text": "  return NO_LOCAL_EFFECT_RULE;\n}\n\n/** Resolve one current operand immediately before its rule event is applied. */\nexport function allocationEvidenceOperand(instr: IrInstr, operand: \"vec\" | \"newValue\"): IrValueId {\n  switch (operand) {\n    case \"vec\":\n      if (instr.kind === \"vec.get\" || instr.kind === \"vec.len\" || instr.kind === \"vec.set\") return instr.vec;\n      break;\n    case \"newValue\":\n      if (instr.kind === \"vec.set\") return instr.newValue;\n      break;\n  }\n  throw new Error(\"allocation rule mismatch: vector operand\");\n}\n\n/** Compatibility descriptor: materialize fresh events without retaining operands. */\nexport function allocationEvidenceEffect(instr: IrInstr): AllocationEvidenceEffect {\n  const rule = allocationEvidenceRule(instr);\n  if (rule.kind === \"unsupported\") return { kind: \"unsupported\" };\n  const ownership: { value: IrValueId; op: OwnershipRuleEvent[\"op\"] }[] = [];\n  for (let index = 0; index < rule.ownership.length; index++) {\n    const event = rule.ownership[index]!;\n    ownership.push({ value: allocationEvidenceOperand(instr, event.operand), op: event.op });\n  }\n  return { kind: \"effects\", ownership, directEscape: [], encoding: rule.encoding };\n",
+        "bytes": 1188,
+        "sha256": "fb0bd153f9c16872ab961650d264607f7671f4f16db761743f3f1707ae883599",
+        "gitBlob": "28f7f708777d5a2eb4925b1fc689d87f40ef3384"
+      },
+      "replacement": {
+        "text": "  return { kind: \"effects\", ownership: [], directEscape: [], encoding: \"no-write\" };\n",
+        "bytes": 85,
+        "sha256": "474a6bd939a45f73f4f7b9d72b4568546ddc6f110e153a8da307a0a304a50363",
+        "gitBlob": "d05d7faaf40f4a9873cf8d07f1611b98f0d43062"
+      }
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/census.ts",
+      "role": "census-import",
+      "span": {
+        "start": 672,
+        "end": 727,
+        "bytes": 55,
+        "sha256": "1db0e458f1c7212d8f081e1ba266d2e26d29728a7a23bd05abac1a34d9332430",
+        "gitBlob": "62086816e335db1883e48e98edd0bc709f091c39"
+      },
+      "expected": {
+        "text": "  allocationEvidenceRule,\n  allocationEvidenceOperand,\n",
+        "bytes": 55,
+        "sha256": "1db0e458f1c7212d8f081e1ba266d2e26d29728a7a23bd05abac1a34d9332430",
+        "gitBlob": "62086816e335db1883e48e98edd0bc709f091c39"
+      },
+      "replacement": {
+        "text": "  allocationEvidenceEffect,\n",
+        "bytes": 28,
+        "sha256": "ab37dbc64644f01a5c0aa27e71b80345a0b6a6c4d107b59b585dd8d336b37c29",
+        "gitBlob": "b4ee640de33ab72fcf0cea5151a53d153383cb1c"
+      }
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/census.ts",
+      "role": "census-facets-loop",
+      "span": {
+        "start": 4656,
+        "end": 5252,
+        "bytes": 596,
+        "sha256": "f2bd884b3617fc0313fe79e64c9e1ca91405db47c49a57376e8f64f701b1c26d",
+        "gitBlob": "60c81ad51cb1718aa8de6955781b1f9cefc31103"
+      },
+      "expected": {
+        "text": "  const rule = allocationEvidenceRule(at.instr);\n  if (rule.kind === \"unsupported\") return uncovered(\"instruction-kind\", at);\n  if (rule.directEscape.length !== 0 || rule.encoding !== \"no-write\") return uncovered(\"instruction-kind\", at);\n  for (let index = 0; index < rule.ownership.length; index++) {\n    const event = rule.ownership[index]!;\n    // Operand/profile checks and the carrier guard prove stored values are unallocated primitives.\n    if (event.op === \"escape\") continue;\n    const value = allocationEvidenceOperand(at.instr, event.operand);\n    const root = state.roots.get(value);\n",
+        "bytes": 596,
+        "sha256": "f2bd884b3617fc0313fe79e64c9e1ca91405db47c49a57376e8f64f701b1c26d",
+        "gitBlob": "60c81ad51cb1718aa8de6955781b1f9cefc31103"
+      },
+      "replacement": {
+        "text": "  const effect = allocationEvidenceEffect(at.instr);\n  if (effect.kind === \"unsupported\") return uncovered(\"instruction-kind\", at);\n  for (const operand of effect.ownership) {\n    if (operand.op === \"escape\") continue; // Stored primitives cannot alias an eligible array.\n    const root = state.roots.get(operand.value);\n",
+        "bytes": 321,
+        "sha256": "f578451a7f7d5d294c0fc7e9e8c8dd26de2df58244bcf32c16093c30bccc6b8b",
+        "gitBlob": "d9718592463783d6b535dd86305e703cf57dc4d6"
+      }
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/census.ts",
+      "role": "census-access-counts",
+      "span": {
+        "start": 5309,
+        "end": 5450,
+        "bytes": 141,
+        "sha256": "902f72ca1e01a30e7f22a0c464cb33edc628b8df90358c44bdd3471a395d0b2c",
+        "gitBlob": "074b2e0a93a49df2c9d02b5509cc2a52bc98dbf3"
+      },
+      "expected": {
+        "text": "    state.allocations.set(root.id, state.allocations.get(root.id)!.with(event.op));\n    if (event.op === \"read\") state.counts.vectorReads++;\n",
+        "bytes": 141,
+        "sha256": "902f72ca1e01a30e7f22a0c464cb33edc628b8df90358c44bdd3471a395d0b2c",
+        "gitBlob": "074b2e0a93a49df2c9d02b5509cc2a52bc98dbf3"
+      },
+      "replacement": {
+        "text": "    state.allocations.set(root.id, state.allocations.get(root.id)!.with(operand.op));\n    if (operand.op === \"read\") state.counts.vectorReads++;\n",
+        "bytes": 145,
+        "sha256": "194c68597314776e93784739e63900dec8206116353345b7c3b0a5689d89a12d",
+        "gitBlob": "ca2aaabf6c352274e4c2d46363affd61fdfcdd2c"
+      }
+    }
+  ],
+  "forward": [
+    {
+      "path": "src/ir/analysis/ownership.ts",
+      "role": "ownership-import",
+      "span": {
+        "start": 1943,
+        "end": 1943,
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      },
+      "expected": {
+        "text": "",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      },
+      "replacement": {
+        "text": "import { allocationEvidenceRule, allocationEvidenceOperand } from \"./allocation-evidence/effect-rules.js\";\n",
+        "bytes": 107,
+        "sha256": "ddcc5c3073ddd9468e67c82280b2769ee06ede7e1b169532db592f7e1b208b10",
+        "gitBlob": "a7c9fc9d669760b930ff5f6a94d87b7dcd84d5c0"
+      }
+    },
+    {
+      "path": "src/ir/analysis/ownership.ts",
+      "role": "ownership-vector-loop",
+      "span": {
+        "start": 9966,
+        "end": 10020,
+        "bytes": 54,
+        "sha256": "14e6e57103cc1fa52dfea38601ca5b9f8a14f617edfe08639551bab15f425ef9",
+        "gitBlob": "3c8050d45267cdce44a9eb9efd081b89df708ea5"
+      },
+      "expected": {
+        "text": "      touch(state, instr.vec, allocOf, null, \"read\");\n",
+        "bytes": 54,
+        "sha256": "14e6e57103cc1fa52dfea38601ca5b9f8a14f617edfe08639551bab15f425ef9",
+        "gitBlob": "3c8050d45267cdce44a9eb9efd081b89df708ea5"
+      },
+      "replacement": {
+        "text": "    case \"vec.len\":\n    case \"vec.set\": {\n      const rule = allocationEvidenceRule(instr);\n      if (rule.kind !== \"effects\") throw new Error(\"allocation rule mismatch: ownership vector effect\");\n      for (let index = 0; index < rule.ownership.length; index++) {\n        const event = rule.ownership[index]!;\n        const value = allocationEvidenceOperand(instr, event.operand);\n        if (event.op === \"escape\") markEscaped(state, value, allocOf);\n        else touch(state, value, allocOf, null, event.op);\n      }\n",
+        "bytes": 520,
+        "sha256": "d4ff31cbc8b737e2b32b4a75d418dc4e6de7c3a6da3a370b94f58bc735594e72",
+        "gitBlob": "94f0e7fc6d0015cac96b55b7c2bf6e39aa962fd3"
+      }
+    },
+    {
+      "path": "src/ir/analysis/ownership.ts",
+      "role": "ownership-vector-close",
+      "span": {
+        "start": 10033,
+        "end": 10120,
+        "bytes": 87,
+        "sha256": "361108873200e5ed9bfa4f134815e28666ee30d208fd9f7d70d5eaba1843d7ca",
+        "gitBlob": "c71385dde55160555c93f6bb525adebaf14e67c3"
+      },
+      "expected": {
+        "text": "    case \"vec.len\":\n      touch(state, instr.vec, allocOf, null, \"read\");\n      break;\n",
+        "bytes": 87,
+        "sha256": "361108873200e5ed9bfa4f134815e28666ee30d208fd9f7d70d5eaba1843d7ca",
+        "gitBlob": "c71385dde55160555c93f6bb525adebaf14e67c3"
+      },
+      "replacement": {
+        "text": "    }\n",
+        "bytes": 6,
+        "sha256": "4893f40e3781eb896c82d046a08067a11e35cdf2f1dfaf26fea90b8db6676413",
+        "gitBlob": "3ae1cd2886c76a48e5d72c97695855074dfad728"
+      }
+    },
+    {
+      "path": "src/ir/analysis/ownership.ts",
+      "role": "ownership-old-write-removal",
+      "span": {
+        "start": 11055,
+        "end": 11194,
+        "bytes": 139,
+        "sha256": "29d5843cd8710234fd7679ea00ba6b0a8f231c4993c93346cace9d68a1689e4f",
+        "gitBlob": "e0803b80a1ae6ec57eecee53530cb0237b5a7c2f"
+      },
+      "expected": {
+        "text": "      break;\n    case \"vec.set\":\n      touch(state, instr.vec, allocOf, null, \"write\");\n      markEscaped(state, instr.newValue, allocOf);\n",
+        "bytes": 139,
+        "sha256": "29d5843cd8710234fd7679ea00ba6b0a8f231c4993c93346cace9d68a1689e4f",
+        "gitBlob": "e0803b80a1ae6ec57eecee53530cb0237b5a7c2f"
+      },
+      "replacement": {
+        "text": "",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      }
+    },
+    {
+      "path": "src/ir/analysis/escape.ts",
+      "role": "escape-import",
+      "span": {
+        "start": 1703,
+        "end": 1703,
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      },
+      "expected": {
+        "text": "",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      },
+      "replacement": {
+        "text": "import { allocationEvidenceRule } from \"./allocation-evidence/effect-rules.js\";\n",
+        "bytes": 80,
+        "sha256": "620d7d57b187b1c9d185823c212691f0cb3629931b91d5d048b2735a2c1d58d0",
+        "gitBlob": "03aeb3d48a0f3d9be75074a9ebb7dcb1d847e493"
+      }
+    },
+    {
+      "path": "src/ir/analysis/escape.ts",
+      "role": "escape-vector-guard",
+      "span": {
+        "start": 4675,
+        "end": 4675,
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      },
+      "expected": {
+        "text": "",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      },
+      "replacement": {
+        "text": "      case \"vec.get\":\n      case \"vec.len\":\n      case \"vec.set\": {\n        const rule = allocationEvidenceRule(instr);\n        if (rule.kind !== \"effects\" || rule.directEscape.length !== 0)\n          throw new Error(\"allocation rule mismatch: vector direct escape\");\n        break;\n      }\n",
+        "bytes": 291,
+        "sha256": "941f922bc49570afc2c94779fe7f70471445ea8d70646a12031d4545e5f9e546",
+        "gitBlob": "7d0ab13a797d9d8d531defb901c9a1898380fe95"
+      }
+    },
+    {
+      "path": "src/ir/analysis/encoding.ts",
+      "role": "encoding-import",
+      "span": {
+        "start": 1885,
+        "end": 1885,
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      },
+      "expected": {
+        "text": "",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      },
+      "replacement": {
+        "text": "import { allocationEvidenceRule } from \"./allocation-evidence/effect-rules.js\";\n",
+        "bytes": 80,
+        "sha256": "620d7d57b187b1c9d185823c212691f0cb3629931b91d5d048b2735a2c1d58d0",
+        "gitBlob": "03aeb3d48a0f3d9be75074a9ebb7dcb1d847e493"
+      }
+    },
+    {
+      "path": "src/ir/analysis/encoding.ts",
+      "role": "encoding-no-write",
+      "span": {
+        "start": 5584,
+        "end": 5584,
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      },
+      "expected": {
+        "text": "",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      },
+      "replacement": {
+        "text": "  const rule = allocationEvidenceRule(instr);\n  if (rule.kind === \"effects\") {\n    if (rule.encoding !== \"no-write\") throw new Error(\"allocation rule mismatch: encoding contribution\");\n    return;\n  }\n",
+        "bytes": 201,
+        "sha256": "00d7694b23eccb451adb859e0f02c60268e7f038b08a674276fd719a4aedabea",
+        "gitBlob": "e58179eddc2f764639ac62a7fe6a83c229c393be"
+      }
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/effect-rules.ts",
+      "role": "static-rule-definitions",
+      "span": {
+        "start": 743,
+        "end": 911,
+        "bytes": 168,
+        "sha256": "afb78f58df6f5903df3d382b64d8d09777f7256b80e5d9d23f0fdc5a38b987bd",
+        "gitBlob": "8e890f38cb0939b1815eb28779a6a17415b76871"
+      },
+      "expected": {
+        "text": "/** Finite descriptors only. Legacy analysis sharing is a separate source join. */\nexport function allocationEvidenceEffect(instr: IrInstr): AllocationEvidenceEffect {\n",
+        "bytes": 168,
+        "sha256": "afb78f58df6f5903df3d382b64d8d09777f7256b80e5d9d23f0fdc5a38b987bd",
+        "gitBlob": "8e890f38cb0939b1815eb28779a6a17415b76871"
+      },
+      "replacement": {
+        "text": "type OwnershipRuleEvent =\n  | { readonly op: \"read\" | \"write\"; readonly operand: \"vec\" }\n  | { readonly op: \"escape\"; readonly operand: \"newValue\" };\ntype AllocationEvidenceRule =\n  | { readonly kind: \"unsupported\" }\n  | {\n      readonly kind: \"effects\";\n      readonly ownership: readonly OwnershipRuleEvent[];\n      readonly directEscape: readonly [];\n      readonly encoding: \"no-write\";\n    };\n\nconst UNSUPPORTED_RULE: AllocationEvidenceRule = Object.freeze({ kind: \"unsupported\" });\nconst NO_LOCAL_EFFECT_RULE: AllocationEvidenceRule = Object.freeze({\n  kind: \"effects\",\n  ownership: Object.freeze([] as const),\n  directEscape: Object.freeze([] as const),\n  encoding: \"no-write\",\n});\nconst VECTOR_READ_RULE: AllocationEvidenceRule = Object.freeze({\n  kind: \"effects\",\n  ownership: Object.freeze([Object.freeze({ op: \"read\", operand: \"vec\" } as const)]),\n  directEscape: Object.freeze([] as const),\n  encoding: \"no-write\",\n});\nconst VECTOR_WRITE_RULE: AllocationEvidenceRule = Object.freeze({\n  kind: \"effects\",\n  ownership: Object.freeze([\n    Object.freeze({ op: \"write\", operand: \"vec\" } as const),\n    Object.freeze({ op: \"escape\", operand: \"newValue\" } as const),\n  ]),\n  directEscape: Object.freeze([] as const),\n  encoding: \"no-write\",\n});\n\n/** Shared instruction-local policy. Rule recognition is not finite-profile admission. */\nexport function allocationEvidenceRule(instr: IrInstr): AllocationEvidenceRule {\n",
+        "bytes": 1423,
+        "sha256": "11eda26b74158ddc10ca10dfac16f56e869558c0f60c0a89d397999c16218806",
+        "gitBlob": "87692d5fccdc7725008d3fbeeddad3421c0499aa"
+      }
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/effect-rules.ts",
+      "role": "static-read-return",
+      "span": {
+        "start": 975,
+        "end": 1096,
+        "bytes": 121,
+        "sha256": "49a01ac637c832ae75e28a2f7736e3bb25421d86ccaefe2f1d8e7f12031af997",
+        "gitBlob": "b220937efcf2364b7daed1f99254aa1873965e0f"
+      },
+      "expected": {
+        "text": "      return { kind: \"effects\", ownership: [{ value: instr.vec, op: \"read\" }], directEscape: [], encoding: \"no-write\" };\n",
+        "bytes": 121,
+        "sha256": "49a01ac637c832ae75e28a2f7736e3bb25421d86ccaefe2f1d8e7f12031af997",
+        "gitBlob": "b220937efcf2364b7daed1f99254aa1873965e0f"
+      },
+      "replacement": {
+        "text": "      return VECTOR_READ_RULE;\n",
+        "bytes": 31,
+        "sha256": "4d4cc2ca3f4a6e9f6417fa405be6f01466967968648c6bb14c43400282ab6713",
+        "gitBlob": "18445afb0d430ecd4c00c6ea2b3baa642f7bf7ed"
+      }
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/effect-rules.ts",
+      "role": "static-write-return",
+      "span": {
+        "start": 1116,
+        "end": 1349,
+        "bytes": 233,
+        "sha256": "4ee56a1ea603916b6e5a605971b2a3e7e4770f4ce8907cd1c370a723f4c38aec",
+        "gitBlob": "3f11850a9ebd9cc3e37caffeec15bb6da6de8c9c"
+      },
+      "expected": {
+        "text": "      return {\n        kind: \"effects\",\n        ownership: [\n          { value: instr.vec, op: \"write\" },\n          { value: instr.newValue, op: \"escape\" },\n        ],\n        directEscape: [],\n        encoding: \"no-write\",\n      };\n",
+        "bytes": 233,
+        "sha256": "4ee56a1ea603916b6e5a605971b2a3e7e4770f4ce8907cd1c370a723f4c38aec",
+        "gitBlob": "3f11850a9ebd9cc3e37caffeec15bb6da6de8c9c"
+      },
+      "replacement": {
+        "text": "      return VECTOR_WRITE_RULE;\n",
+        "bytes": 32,
+        "sha256": "0beb9365f80c3158e289e5797a4db98d217aa2743acce915cebbb58bd784dd78",
+        "gitBlob": "d609f03d68e99127695b3b4b3befc52dc5170ad5"
+      }
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/effect-rules.ts",
+      "role": "static-binary-guard",
+      "span": {
+        "start": 1368,
+        "end": 1461,
+        "bytes": 93,
+        "sha256": "d8862207cf8ce6fc5c858003404409566b098d6b37cbe924341dff12f8633f1d",
+        "gitBlob": "ba83c1f81a5b1821e87c47cdbd82fd68e22e1592"
+      },
+      "expected": {
+        "text": "      if (instr.op !== \"i32.lt_u\" && instr.op !== \"f64.add\") return { kind: \"unsupported\" };\n",
+        "bytes": 93,
+        "sha256": "d8862207cf8ce6fc5c858003404409566b098d6b37cbe924341dff12f8633f1d",
+        "gitBlob": "ba83c1f81a5b1821e87c47cdbd82fd68e22e1592"
+      },
+      "replacement": {
+        "text": "      if (instr.op !== \"i32.lt_u\" && instr.op !== \"f64.add\") return UNSUPPORTED_RULE;\n",
+        "bytes": 86,
+        "sha256": "37856c3ac3b2701a0276e073541c3d9579f629d6086e1cdbc27393ff27b971c1",
+        "gitBlob": "beb5a3bc768e950a85209d9304d6c99c79a0facd"
+      }
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/effect-rules.ts",
+      "role": "static-default",
+      "span": {
+        "start": 1559,
+        "end": 1597,
+        "bytes": 38,
+        "sha256": "4940d4484950dda9044b8b194703eb93faedb83e9729b27d95f781db02473f4c",
+        "gitBlob": "afbebd4a20c3e6436834cfd1f860be37736b92ce"
+      },
+      "expected": {
+        "text": "      return { kind: \"unsupported\" };\n",
+        "bytes": 38,
+        "sha256": "4940d4484950dda9044b8b194703eb93faedb83e9729b27d95f781db02473f4c",
+        "gitBlob": "afbebd4a20c3e6436834cfd1f860be37736b92ce"
+      },
+      "replacement": {
+        "text": "      return UNSUPPORTED_RULE;\n",
+        "bytes": 31,
+        "sha256": "9bb98fca49c3e8b6193a20481440c222788cd532dfbea41bc4f73192af3c7856",
+        "gitBlob": "f98d646b30bf11bb0425823a8fa2fee258405290"
+      }
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/effect-rules.ts",
+      "role": "resolver-compatibility",
+      "span": {
+        "start": 1601,
+        "end": 1686,
+        "bytes": 85,
+        "sha256": "474a6bd939a45f73f4f7b9d72b4568546ddc6f110e153a8da307a0a304a50363",
+        "gitBlob": "d05d7faaf40f4a9873cf8d07f1611b98f0d43062"
+      },
+      "expected": {
+        "text": "  return { kind: \"effects\", ownership: [], directEscape: [], encoding: \"no-write\" };\n",
+        "bytes": 85,
+        "sha256": "474a6bd939a45f73f4f7b9d72b4568546ddc6f110e153a8da307a0a304a50363",
+        "gitBlob": "d05d7faaf40f4a9873cf8d07f1611b98f0d43062"
+      },
+      "replacement": {
+        "text": "  return NO_LOCAL_EFFECT_RULE;\n}\n\n/** Resolve one current operand immediately before its rule event is applied. */\nexport function allocationEvidenceOperand(instr: IrInstr, operand: \"vec\" | \"newValue\"): IrValueId {\n  switch (operand) {\n    case \"vec\":\n      if (instr.kind === \"vec.get\" || instr.kind === \"vec.len\" || instr.kind === \"vec.set\") return instr.vec;\n      break;\n    case \"newValue\":\n      if (instr.kind === \"vec.set\") return instr.newValue;\n      break;\n  }\n  throw new Error(\"allocation rule mismatch: vector operand\");\n}\n\n/** Compatibility descriptor: materialize fresh events without retaining operands. */\nexport function allocationEvidenceEffect(instr: IrInstr): AllocationEvidenceEffect {\n  const rule = allocationEvidenceRule(instr);\n  if (rule.kind === \"unsupported\") return { kind: \"unsupported\" };\n  const ownership: { value: IrValueId; op: OwnershipRuleEvent[\"op\"] }[] = [];\n  for (let index = 0; index < rule.ownership.length; index++) {\n    const event = rule.ownership[index]!;\n    ownership.push({ value: allocationEvidenceOperand(instr, event.operand), op: event.op });\n  }\n  return { kind: \"effects\", ownership, directEscape: [], encoding: rule.encoding };\n",
+        "bytes": 1188,
+        "sha256": "fb0bd153f9c16872ab961650d264607f7671f4f16db761743f3f1707ae883599",
+        "gitBlob": "28f7f708777d5a2eb4925b1fc689d87f40ef3384"
+      }
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/census.ts",
+      "role": "census-import",
+      "span": {
+        "start": 672,
+        "end": 700,
+        "bytes": 28,
+        "sha256": "ab37dbc64644f01a5c0aa27e71b80345a0b6a6c4d107b59b585dd8d336b37c29",
+        "gitBlob": "b4ee640de33ab72fcf0cea5151a53d153383cb1c"
+      },
+      "expected": {
+        "text": "  allocationEvidenceEffect,\n",
+        "bytes": 28,
+        "sha256": "ab37dbc64644f01a5c0aa27e71b80345a0b6a6c4d107b59b585dd8d336b37c29",
+        "gitBlob": "b4ee640de33ab72fcf0cea5151a53d153383cb1c"
+      },
+      "replacement": {
+        "text": "  allocationEvidenceRule,\n  allocationEvidenceOperand,\n",
+        "bytes": 55,
+        "sha256": "1db0e458f1c7212d8f081e1ba266d2e26d29728a7a23bd05abac1a34d9332430",
+        "gitBlob": "62086816e335db1883e48e98edd0bc709f091c39"
+      }
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/census.ts",
+      "role": "census-facets-loop",
+      "span": {
+        "start": 4629,
+        "end": 4950,
+        "bytes": 321,
+        "sha256": "f578451a7f7d5d294c0fc7e9e8c8dd26de2df58244bcf32c16093c30bccc6b8b",
+        "gitBlob": "d9718592463783d6b535dd86305e703cf57dc4d6"
+      },
+      "expected": {
+        "text": "  const effect = allocationEvidenceEffect(at.instr);\n  if (effect.kind === \"unsupported\") return uncovered(\"instruction-kind\", at);\n  for (const operand of effect.ownership) {\n    if (operand.op === \"escape\") continue; // Stored primitives cannot alias an eligible array.\n    const root = state.roots.get(operand.value);\n",
+        "bytes": 321,
+        "sha256": "f578451a7f7d5d294c0fc7e9e8c8dd26de2df58244bcf32c16093c30bccc6b8b",
+        "gitBlob": "d9718592463783d6b535dd86305e703cf57dc4d6"
+      },
+      "replacement": {
+        "text": "  const rule = allocationEvidenceRule(at.instr);\n  if (rule.kind === \"unsupported\") return uncovered(\"instruction-kind\", at);\n  if (rule.directEscape.length !== 0 || rule.encoding !== \"no-write\") return uncovered(\"instruction-kind\", at);\n  for (let index = 0; index < rule.ownership.length; index++) {\n    const event = rule.ownership[index]!;\n    // Operand/profile checks and the carrier guard prove stored values are unallocated primitives.\n    if (event.op === \"escape\") continue;\n    const value = allocationEvidenceOperand(at.instr, event.operand);\n    const root = state.roots.get(value);\n",
+        "bytes": 596,
+        "sha256": "f2bd884b3617fc0313fe79e64c9e1ca91405db47c49a57376e8f64f701b1c26d",
+        "gitBlob": "60c81ad51cb1718aa8de6955781b1f9cefc31103"
+      }
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/census.ts",
+      "role": "census-access-counts",
+      "span": {
+        "start": 5007,
+        "end": 5152,
+        "bytes": 145,
+        "sha256": "194c68597314776e93784739e63900dec8206116353345b7c3b0a5689d89a12d",
+        "gitBlob": "ca2aaabf6c352274e4c2d46363affd61fdfcdd2c"
+      },
+      "expected": {
+        "text": "    state.allocations.set(root.id, state.allocations.get(root.id)!.with(operand.op));\n    if (operand.op === \"read\") state.counts.vectorReads++;\n",
+        "bytes": 145,
+        "sha256": "194c68597314776e93784739e63900dec8206116353345b7c3b0a5689d89a12d",
+        "gitBlob": "ca2aaabf6c352274e4c2d46363affd61fdfcdd2c"
+      },
+      "replacement": {
+        "text": "    state.allocations.set(root.id, state.allocations.get(root.id)!.with(event.op));\n    if (event.op === \"read\") state.counts.vectorReads++;\n",
+        "bytes": 141,
+        "sha256": "902f72ca1e01a30e7f22a0c464cb33edc628b8df90358c44bdd3471a395d0b2c",
+        "gitBlob": "074b2e0a93a49df2c9d02b5509cc2a52bc98dbf3"
+      }
+    }
+  ],
+  "readerBefore": {
+    "path": "tests/helpers/ir-validation-analysis-relocation.ts",
+    "bytes": 18566,
+    "sha256": "69a9f38de63cf98321189e4e2928fa04af784244faa9732961751a66a96da0f1",
+    "gitBlob": "d1b6c888e41c438976e85026c90f823706aa4532"
+  },
+  "readerEdits": [
+    {
+      "path": "tests/helpers/ir-validation-analysis-relocation.ts",
+      "role": "reader-import",
+      "span": {
+        "start": 300,
+        "end": 395,
+        "bytes": 95,
+        "sha256": "302d12e8bca088a24d9f555494f3aa2ea96a9a8dbf24c94ffb7705c3121cfe6b",
+        "gitBlob": "41971f0639c8f49f3946f70ea7b5e10a37048ef5"
+      },
+      "expected": {
+        "text": "import { readBeforeIrAllocationRuleSharing } from \"./ir-allocation-rule-sharing-successor.js\";\n",
+        "bytes": 95,
+        "sha256": "302d12e8bca088a24d9f555494f3aa2ea96a9a8dbf24c94ffb7705c3121cfe6b",
+        "gitBlob": "41971f0639c8f49f3946f70ea7b5e10a37048ef5"
+      },
+      "replacement": {
+        "text": "",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+      }
+    },
+    {
+      "path": "tests/helpers/ir-validation-analysis-relocation.ts",
+      "role": "reader-composition",
+      "span": {
+        "start": 1436,
+        "end": 1581,
+        "bytes": 145,
+        "sha256": "af42bfbd1c4f55810cf1ab7124a9fc1ede0c04c572e047913e5cd5a5cdcb967a",
+        "gitBlob": "c57229df815b2d284be474bf1013e5b607093c2c"
+      },
+      "expected": {
+        "text": "  readBeforeIrAllocationProvenanceLookup(path, (requested) =>\n    readBeforeIrAllocationRuleSharing(requested, readIrValidationAnalysisRaw),\n  );",
+        "bytes": 145,
+        "sha256": "af42bfbd1c4f55810cf1ab7124a9fc1ede0c04c572e047913e5cd5a5cdcb967a",
+        "gitBlob": "c57229df815b2d284be474bf1013e5b607093c2c"
+      },
+      "replacement": {
+        "text": "  readBeforeIrAllocationProvenanceLookup(path, readIrValidationAnalysisRaw);",
+        "bytes": 76,
+        "sha256": "f5e4d19eb32c3ab3c34b923eae0df3e0f104d75e2bc09411d57e8722733fe17a",
+        "gitBlob": "aaf27d015bd5b64c18208327bc397ecf5ea610eb"
+      }
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "executionHead": "a7a337714c77f7b5779e028055feb220adaf7c24",
+  "command": "JS2WASM_APPEND_PARENT_MANIFEST=/private/tmp/js2-6915-linear-append-plan-20261007/.tmp/6915-current-source-20261009/frozen-manifest.json node scripts/hooks/run-linear-append-provenance.mjs",
+  "terminalSession": 43401,
+  "parentExit": 0,
+  "archive": ".tmp/6915-ci/run-0o4HMY",
+  "comparisonExit": 0,
+  "comparisonSession": 74738,
+  "observationsEqual": 36,
+  "completionEqual": true,
+  "envelopes": 38,
+  "filteredFields": [],
+  "childExit": 0,
+  "beforeAfterCustodyEqual": true,
+  "limitation": "One bounded append trial; actual CI archives and full IR equivalence remain pending."
+}

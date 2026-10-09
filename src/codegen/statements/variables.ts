@@ -31,6 +31,7 @@ import { concatCallYieldsDynamicCarrier } from "../array-concat-carrier.js"; // 
 import { filterResultNeedsDynamicCarrier } from "../array-filter-spec-access.js";
 import { emitShapeInferredVecInit } from "../shape-vec-literal-seed.js"; // (#4491) module-global array-carrier seed
 import { rebindWidenedArrayInit } from "../declarations/array-rebind-element-widening.js"; // (#6651 U4)
+import { moduleVarSlotIsUndefinedSeeded } from "../declarations/module-var-undefined-seed.js";
 import {
   compileArrayLiteral,
   arrayLiteralEscapeWidensToExternref,
@@ -89,7 +90,7 @@ import { tryCompileDerivedAsciiCaseBinding as tryAsciiCase } from "../derived-as
 import { detectNullGuardAlias } from "./null-guard-alias.js"; // (#4555) extraction
 import { reusedVarSlotIndex } from "./var-slot-reuse.js"; // (#4555) §10.5 step 8
 import { emitRealmGlobalPrimitiveMethodWriteback } from "../global-environment.js";
-import { isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
+import { chunkDeclarationIsFunctionLocal, isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
 import {
   tryCompileClassExpressionBindingValue,
   tryEmitPromiseSubclassClassExpressionValue,
@@ -1346,7 +1347,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // cannot shadow a module binding in a later source entry: for example, a
     // completed top-level block may have used the same local name before the
     // following source-level `let` must initialize its module global.
-    const hasLocalShadow = !chunkedModuleInit && fctx.localMap.has(name);
+    // (#6877) …unless the declaration is inside an inlined function (IIFE).
+    const hasLocalShadow = fctx.localMap.has(name) && (!chunkedModuleInit || chunkDeclarationIsFunctionLocal(stmt));
     // A lexical declaration nested in a top-level block is still local to that
     // block. `moduleGlobals` is keyed only by name, so an outer Script-level
     // binding with the same name must not make this declaration take the
@@ -1734,14 +1736,13 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         // No initializer: `let x;` at module level — in JS, uninitialized
         // variables are `undefined`. For externref globals, emit __get_undefined()
         // so `x === undefined` works correctly (#737).
+        // (#6894) A `var` whose slot the prologue already seeded is a no-op here.
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
+        const isVarDecl = (stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0;
         if (
           globalDef?.type.kind === "externref" &&
-          !(
-            ctx.standaloneScriptVarBindings &&
-            !ctx.sourceIsModule &&
-            (stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0
-          )
+          !(isVarDecl && ctx.standaloneScriptVarBindings && !ctx.sourceIsModule) &&
+          !(isVarDecl && moduleVarSlotIsUndefinedSeeded(ctx, name))
         ) {
           emitUndefined(ctx, fctx);
           fctx.body.push({ op: "global.set", index: moduleGlobalIdx });

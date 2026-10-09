@@ -5,6 +5,7 @@ import {
 } from "./global-environment.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { unshiftExternGetNativeStringReceiverArm } from "./object-model/extern-get-string-receiver.js"; // (#6875)
+import { unshiftExternGetPropertyKeyArm } from "./symbol-to-primitive-arms.js"; // (#6651 V10d)
 import { ts, forEachChild } from "../ts-api.js";
 import { restPatternParamSlot } from "./resolved-rest-param.js"; // (#6774 S7)
 import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
@@ -306,6 +307,7 @@ import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
 import { fillClosedObjectPrototypeEdges } from "./object-model/closed-object-prototype-edges.js";
+import { fillGeneratorFunctionPrototypeArms } from "./object-model/generator-function-proto-arm.js";
 import { fillClassProtoLookupArm } from "./class-proto-lookup.js"; // (#5195 Step 1.7)
 import { classArmClaimInstrs, classArmTagCondition } from "./class-arm-tag-guard.js"; // (#4618 / #6608) nominal `__tag` arm guard
 import { fillClassPrototypeReadArm } from "./standalone-class-prototype-read.js"; // (#6457)
@@ -720,6 +722,7 @@ import {
 } from "./numeric-property-analysis.js"; // (#3683 S4a)
 import type { NumericPropertyAnalysisHost } from "./numeric-property-analysis.js";
 import { dynamicReadCrossesStandaloneLink } from "./dynamic-read-narrowing.js"; // (#5383)
+import { copiesUnseenWriteBinding } from "./expressions/identifier-receiver-slot.js"; // (#4618)
 import { collectUserMethodNames } from "./user-method-names.js"; // (#3673)
 import {
   registerWasiImports,
@@ -6774,6 +6777,7 @@ export function generateModule(
     // ordinary $Object numeric adapter can box its miss as 0.
     unshiftExternGetStringExoticArm(ctx);
     unshiftExternGetNativeStringReceiverArm(ctx); // (#6875)
+    unshiftExternGetPropertyKeyArm(ctx); // (#6651 V10d) ToPropertyKey ahead of the arms above
 
     // Dynamic-path ArraySetLength-lite + vec-"length" own-ness: splice the
     // `$__vec_base` `"length"` WRITE arm into `__extern_set` and the
@@ -6933,6 +6937,7 @@ export function generateModule(
     fillStandaloneClassInstanceProtoArm(ctx);
     fillVecProtoLinkArms(ctx); // (#2917)
     fillDynamicProtoHelpers(ctx);
+    fillGeneratorFunctionPrototypeArms(ctx); // (#6651 W8) before the side-table arm
     fillClosedObjectPrototypeEdges(ctx, nativeLeafServices);
 
     // A separately compiled runtime-eval provider can invoke caller-owned AOT
@@ -10016,6 +10021,7 @@ function registerReassignedFunctionGlobals(
       const declaration = ctx.topLevelFunctionDeclarations.get(name);
       const canBeReboundByEval = !ctx.sourceIsModule || !declaration || !hasExportModifier(declaration);
       if (canBeReboundByEval && (hasUnknownDynamicSource || mentionedByDynamicSource(name))) {
+        if (!reassigned.has(name)) (ctx.evalOnlyLiveFuncBindings ??= new Set<string>()).add(name);
         reassigned.add(name);
         if (declaration) reassignedDeclarations.add(declaration);
       }
@@ -11458,6 +11464,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-dynamic-forin-vec-arms", () => fillDynamicForinVecArms(ctx));
     profilePhase("unshift-extern-get-string-exotic", () => unshiftExternGetStringExoticArm(ctx));
     profilePhase("unshift-extern-get-string-receiver", () => unshiftExternGetNativeStringReceiverArm(ctx)); // (#6875)
+    profilePhase("unshift-extern-get-property-key", () => unshiftExternGetPropertyKeyArm(ctx)); // (#6651 V10d)
 
     // Dynamic ArraySetLength/own-length semantics must land after the generic
     // vec write arm and before the overlay/typed-view fills that require front
@@ -11532,6 +11539,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-class-instance-proto-arm", () => fillStandaloneClassInstanceProtoArm(ctx));
     profilePhase("fill-vec-proto-link-arms", () => fillVecProtoLinkArms(ctx)); // (#2917)
     profilePhase("fill-dynamic-proto-helpers", () => fillDynamicProtoHelpers(ctx));
+    profilePhase("fill-genfn-proto-arms", () => fillGeneratorFunctionPrototypeArms(ctx)); // (#6651 W8)
     profilePhase("fill-closed-object-prototype-edges", () => fillClosedObjectPrototypeEdges(ctx, nativeLeafServices));
     profilePhase("fill-runtime-eval-callable-get-arm", () => fillRuntimeEvalCallablePropertyGetArm(ctx));
     profilePhase("fill-runtime-eval-intrinsic-own-props", () => fillRuntimeEvalIntrinsicFunctionOwnProps(ctx));
@@ -13914,6 +13922,7 @@ export function varBindingNeedsExternrefForUndefined(
     const isPurelyUndefinedOrVoid = (declType.flags & ~(ts.TypeFlags.Undefined | ts.TypeFlags.Void)) === 0;
     if (isPurelyUndefinedOrVoid && undefinedTypedMemberReadProducesExternref(ctx, init)) return true;
   }
+  if (ctx !== undefined && decl !== undefined && copiesUnseenWriteBinding(ctx, decl, init)) return true; // #4618
   return false;
 }
 

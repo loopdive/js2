@@ -12,6 +12,7 @@ import { restPatternParamSlot } from "./resolved-rest-param.js"; // (#6774 S7)
 import { hoistParameterEvalVars } from "./expressions/eval-param-scope-hoist.js"; // (#6774 S7)
 import ts from "typescript";
 import { hoistFunctionDeclarations } from "./statements/nested-declarations.js";
+import { objectLiteralReadsAmbientRedeclaredVar } from "./module-global-registration.js"; // (#6651 V10b)
 import { isStringType, isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction } from "../ir/types.js";
 import {
@@ -2271,6 +2272,11 @@ export function compileObjectLiteral(
   }
   // (#3633) Foreign eval literals lack checker types and require the open representation.
   if (isForeignEvalNode(expr)) return compileObjectLiteralAsExternref(ctx, fctx, expr);
+  // (#6651 V10b) A literal reading an ambient-redeclaring script var takes the open path.
+  if (objectLiteralReadsAmbientRedeclaredVar(ctx, expr)) {
+    const open = compileObjectLiteralAsExternref(ctx, fctx, expr);
+    if (open !== null) return open;
+  }
   // (#2714) A spread-containing literal evaluated in a NON-SPECIFIC contextual
   // type (`any`/`unknown`/`object`, or no contextual type) must take the host
   // plain-object path, like the empty-`{}` any-context arm below. The struct
@@ -4559,8 +4565,8 @@ export function compileObjectLiteralForStruct(
       // The class-method / getter-setter paths already pass these `extraNodes`
       // (#1161, nested-declarations.ts:128-133); mirror it here for plain object
       // methods (the object-method variants of the `ary-init-iter-close` cluster).
-      const objMethodParamInits = prop.parameters.map((p) => p.initializer).filter((e): e is ts.Expression => !!e);
-      promoteAccessorCapturesToGlobals(ctx, fctx, prop.body, objMethodParamInits);
+      const methodParamInits = prop.parameters.map((p) => p.initializer).filter((e): e is ts.Expression => !!e);
+      promoteAccessorCapturesToGlobals(ctx, fctx, prop.body, methodParamInits, undefined, undefined, undefined, prop);
 
       // Compile method body
       const methodFctxParams: { name: string; type: ValType }[] = [
@@ -5797,15 +5803,14 @@ export function compileArrayLiteral(
     // the hole, because `unwrapObjectLiteralElement` does not resolve an
     // identifier to its initializer.
     //
-    // Standalone / WASI only. The predicate itself is lane-agnostic (it skips
-    // `externref` elements, which is what a string is on the JS-host lane), but
-    // the gate is explicit so the host lane's bytes cannot move: the host lane
-    // has its own, differently-shaped residual for a NUMERIC sibling, which is
-    // filed rather than fixed here (this slice is standalone-scoped).
+    // (#6885) Every lane. #6613 gated this on standalone/WASI believing the
+    // JS-host lane kept a string sibling; it kept the LENGTH but stored the
+    // string as null (`[obj, "s"]` → `[{…}, null]`) and trapped on a number
+    // sibling (`[obj, 5]`). The predicate now also counts a primitive-typed
+    // `externref` element, which is what a host-lane string is.
     if (
       !hasSpread &&
       !hasContextualRefCarrier &&
-      (ctx.standalone || ctx.wasi) &&
       (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
       hasNonStructElementForStructCarrier(ctx, expr, elemWasm)
     ) {

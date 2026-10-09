@@ -1,4 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { reconstructRemainderRuntimeContractReceiptSources as reconstructRuntimeContractReceiptSources } from "./helpers/ir-remainder-runtime-contract-evolution.js";
+import { beforeRemainderRuntimePreparationRelocation as beforeRuntimePreparationRelocation } from "./helpers/ir-remainder-runtime-preparation-relocation.js";
 import { beforeSourceMapProgramValidatorRelocation } from "./helpers/ir-program-validator-relocation.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -8,7 +10,6 @@ import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   authenticateRuntimePreparationRelocation,
-  beforeRuntimePreparationRelocation,
   runtimePreparationRelocationCurrentPaths,
   runtimePreparationRelocationReceiptPath,
 } from "./helpers/ir-runtime-preparation-relocation.js";
@@ -18,10 +19,7 @@ import {
   currentDeclarations,
   historicalIntrinsicSource,
 } from "./helpers/ir-historical-runtime-reconstruction.js";
-import {
-  reconstructRuntimeContractReceiptSources,
-  runtimeContractCurrentPaths,
-} from "./helpers/ir-runtime-contract-evolution.js";
+import { runtimeContractCurrentPaths } from "./helpers/ir-runtime-contract-evolution.js";
 
 const repository = resolve(import.meta.dirname, "..");
 type Reader = (path: string) => string;
@@ -35,12 +33,73 @@ afterEach(async () => {
   await setImmediate();
 });
 
+// Independent finite current-source proof, before the unchanged historical relocation recipe.
+const remainderEdits = [
+  {
+    beforeOffset: 1142,
+    afterOffset: 1142,
+    before: "",
+    after: 'import { irNumberRemainderCallableDeclaration } from "./number-remainder-callables.js";\n',
+  },
+  {
+    beforeOffset: 39459,
+    afterOffset: 39547,
+    before: "                  irOrdinaryObjectCallableDeclaration(declaration.ref))\n",
+    after:
+      "                  irOrdinaryObjectCallableDeclaration(declaration.ref) ||\n                  irNumberRemainderCallableDeclaration(declaration.ref))\n",
+  },
+] as const;
+function priorImplementation(source: string): string {
+  expect(Buffer.byteLength(source)).toBe(49704);
+  expect(hash(source)).toBe("171aa93513aacb9bebf80897f2c67a827b71f082647ced04a689ca17d116ba82");
+  let bytes = Buffer.from(source);
+  for (const edit of [...remainderEdits].reverse()) {
+    const after = Buffer.from(edit.after);
+    expect(bytes.subarray(edit.afterOffset, edit.afterOffset + after.length)).toEqual(after);
+    bytes = Buffer.concat([
+      bytes.subarray(0, edit.afterOffset),
+      Buffer.from(edit.before),
+      bytes.subarray(edit.afterOffset + after.length),
+    ]);
+  }
+  expect(bytes.length).toBe(49541);
+  expect(hash(bytes)).toBe("bd27170fd1df4a9bbad2874e5f2db34bc455fb6807b26523da4be8c182f3622b");
+  return bytes.toString("utf8");
+}
+function currentImplementation(prior: string): string {
+  let bytes = Buffer.from(prior);
+  expect(bytes.length).toBe(49541);
+  expect(hash(bytes)).toBe("bd27170fd1df4a9bbad2874e5f2db34bc455fb6807b26523da4be8c182f3622b");
+  for (const edit of [...remainderEdits].reverse()) {
+    const before = Buffer.from(edit.before);
+    expect(bytes.subarray(edit.beforeOffset, edit.beforeOffset + before.length)).toEqual(before);
+    bytes = Buffer.concat([
+      bytes.subarray(0, edit.beforeOffset),
+      Buffer.from(edit.after),
+      bytes.subarray(edit.beforeOffset + before.length),
+    ]);
+  }
+  expect(bytes.length).toBe(49704);
+  expect(hash(bytes)).toBe("171aa93513aacb9bebf80897f2c67a827b71f082647ced04a689ca17d116ba82");
+  return bytes.toString("utf8");
+}
+function currentCoordinate(priorOffset: number): number {
+  let delta = 0;
+  for (const edit of remainderEdits) {
+    const beforeBytes = Buffer.byteLength(edit.before);
+    if (priorOffset < edit.beforeOffset) break;
+    if (beforeBytes > 0 && priorOffset < edit.beforeOffset + beforeBytes)
+      throw Error("original mutation coordinate enters a replaced current-source span");
+    delta += Buffer.byteLength(edit.after) - beforeBytes;
+  }
+  return priorOffset + delta;
+}
+
 function positive(): Reader {
   const historicalReader = beforeRuntimePreparationRelocation(beforeProgramValidatorRelocation(rawRead));
   expect(Buffer.byteLength(rawRead(support))).toBe(850);
   expect(hash(rawRead(support))).toBe("584322a7384556a6f3b82dc85cc30c2213510fe70f2cd437ccbef97826156351");
-  expect(Buffer.byteLength(rawRead(implementation))).toBe(49541);
-  expect(hash(rawRead(implementation))).toBe("bd27170fd1df4a9bbad2874e5f2db34bc455fb6807b26523da4be8c182f3622b");
+  expect(currentImplementation(priorImplementation(rawRead(implementation)))).toBe(rawRead(implementation));
   expect(Buffer.byteLength(historicalReader(support))).toBe(49626);
   expect(hash(historicalReader(support))).toBe("03e5d583b91a7589481c80e1ca1dd5a621fee3e593f5ca9537f9c573b8925e40");
   return historicalReader;
@@ -99,7 +158,8 @@ describe("fixed runtime preparation source relocation", () => {
           : Buffer.from(segment.afterText!),
       ),
     );
-    expect(replay.equals(Buffer.from(rawRead(implementation)))).toBe(true);
+    expect(replay.toString("utf8")).toBe(priorImplementation(rawRead(implementation)));
+    expect(currentImplementation(replay.toString("utf8"))).toBe(rawRead(implementation));
     expect(historicalReader(implementation)).toBe(rawRead(implementation));
   });
 
@@ -261,8 +321,12 @@ describe("fixed runtime preparation source relocation", () => {
     "refuses changed live bytes in fixed segment $index",
     ({ segment }) =>
       physicalRefusal(implementation, (text) => {
-        const bytes = Buffer.from(text);
-        bytes[segment.afterStart] = bytes[segment.afterStart] === 120 ? 121 : 120;
+        const bytes = Buffer.from(text),
+          prior = Buffer.from(priorImplementation(text)),
+          at = currentCoordinate(segment.afterStart);
+        expect(hash(prior.subarray(segment.afterStart, segment.afterEnd))).toBe(segment.afterSha256);
+        expect(bytes[at]).toBe(prior[segment.afterStart]);
+        bytes[at] = bytes[at] === 120 ? 121 : 120;
         return bytes.toString("utf8");
       }),
   );
@@ -270,12 +334,13 @@ describe("fixed runtime preparation source relocation", () => {
     "refuses wrong module literal at ordinal $ordinal",
     (segment) =>
       physicalRefusal(implementation, (text) => {
-        const bytes = Buffer.from(text);
-        return Buffer.concat([
-          bytes.subarray(0, segment.afterStart),
-          Buffer.from("./wrong.js"),
-          bytes.subarray(segment.afterEnd),
-        ]).toString("utf8");
+        const bytes = Buffer.from(text),
+          start = currentCoordinate(segment.afterStart),
+          end = currentCoordinate(segment.afterEnd);
+        expect(bytes.subarray(start, end)).toEqual(Buffer.from(segment.afterText!));
+        return Buffer.concat([bytes.subarray(0, start), Buffer.from("./wrong.js"), bytes.subarray(end)]).toString(
+          "utf8",
+        );
       }),
   );
   it.each([
@@ -349,6 +414,93 @@ describe("fixed runtime preparation source relocation", () => {
         override(rawRead, support, historicalReader(support) + "\n// historical mutant\n"),
       ),
     ).toThrow("complete source SHA256/length mismatch: " + support);
+  });
+});
+
+describe("finite remainder current-source relocation adapter", () => {
+  it.each([
+    "removed remainder import",
+    "removed remainder predicate",
+    "unrelated body byte",
+    "duplicated new import",
+    "reordered new import",
+  ] as const)("refuses %s in the supplied current source", (kind) => {
+    physicalRefusal(implementation, (source) => {
+      const imported = remainderEdits[0].after;
+      if (kind === "removed remainder import") return replaceOne(source, imported, "");
+      if (kind === "removed remainder predicate")
+        return replaceOne(source, remainderEdits[1].after, remainderEdits[1].before);
+      if (kind === "unrelated body byte") return replaceOne(source, "function mapArray<T>", "function changedArray<T>");
+      if (kind === "duplicated new import") return replaceOne(source, imported, imported + imported);
+      const ordinary = 'import { irOrdinaryObjectCallableDeclaration } from "./ordinary-object-callables.js";\n';
+      return replaceOne(source, imported + ordinary, ordinary + imported);
+    });
+    positive();
+  });
+  it("refuses exact prior49541 bytes as supplied current input", () => {
+    positive();
+    const prior = priorImplementation(rawRead(implementation));
+    expect(() => beforeRuntimePreparationRelocation(override(rawRead, implementation, prior))).toThrow(
+      "complete source SHA256/length mismatch: " + implementation,
+    );
+    positive();
+  });
+  it("freshly refuses changed current source after success and accepts exact restoration", () => {
+    let source = rawRead(implementation);
+    const reader = (path: string) => (path === implementation ? source : rawRead(path));
+    expect(hash(beforeRuntimePreparationRelocation(reader)(support))).toBe(receipt.before.sha256);
+    source += "\n// changed after healthy current capture\n";
+    expect(() => beforeRuntimePreparationRelocation(reader)).toThrow(
+      "complete source SHA256/length mismatch: " + implementation,
+    );
+    source = rawRead(implementation);
+    expect(hash(beforeRuntimePreparationRelocation(reader)(support))).toBe(receipt.before.sha256);
+  });
+  it("delegates later implementation and unknown reads to the original supplied reader", () => {
+    let source = rawRead(implementation);
+    const marker = new Error("supplied late read failure");
+    const reader = beforeRuntimePreparationRelocation((path) => {
+      if (path === implementation) return source;
+      if (path === "unknown") throw marker;
+      return rawRead(path);
+    });
+    source += "\n// late raw implementation mutant\n";
+    expect(reader(implementation)).toBe(source);
+    expect(hash(reader(support))).toBe(receipt.before.sha256);
+    let caught: unknown;
+    try {
+      reader("unknown");
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBe(marker);
+    expect(() =>
+      beforeRuntimePreparationRelocation((path) => (path === implementation ? source : rawRead(path))),
+    ).toThrow("complete source SHA256/length mismatch: " + implementation);
+    positive();
+  });
+  it("refuses nonprimitive current source without coercion", () => {
+    let touched = 0;
+    const source = {
+      toString() {
+        touched++;
+        return rawRead(implementation);
+      },
+    };
+    expect(() =>
+      beforeRuntimePreparationRelocation(override(rawRead, implementation, source as unknown as string)),
+    ).toThrow("missing nonempty source: " + implementation);
+    expect(touched).toBe(0);
+    positive();
+  });
+  it("preserves the exact old relocation helper and immutable receipt bytes", () => {
+    positive();
+    const helper = rawRead("tests/helpers/ir-runtime-preparation-relocation.ts");
+    expect(Buffer.byteLength(helper)).toBe(7007);
+    expect(hash(helper)).toBe("8adf44a0f063d8b7fb7ed413a37e693c2c3e420b5a52cf6f9161cfceb9a901df");
+    expect(rawRead(runtimePreparationRelocationReceiptPath)).toBe(receiptText);
+    expect(Buffer.byteLength(receiptText)).toBe(19505);
+    positive();
   });
 });
 

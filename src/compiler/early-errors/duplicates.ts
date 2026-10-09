@@ -13,6 +13,7 @@ import {
   collectSwitchClauseLexicalNames,
   collectStatementListBoundNames,
   findNameReference,
+  hasAsyncModifier,
   isStrictMode,
 } from "./predicates.js";
 
@@ -254,6 +255,7 @@ export function checkDuplicateDefaultClause(ctx: EarlyErrorContext, caseBlock: t
 export function checkSwitchCaseLexicalDuplicates(ctx: EarlyErrorContext, caseBlock: ts.CaseBlock): void {
   const lexNames = new Map<string, ts.Node>(); // name -> first declaration
   const varNames = new Map<string, ts.Node>(); // name -> first var declaration
+  const fnOnlyNames = new Set<string>(); // first bound by a plain FunctionDeclaration (Annex B)
   for (const clause of caseBlock.clauses) {
     for (const stmt of clause.statements) {
       if (ts.isVariableStatement(stmt)) {
@@ -288,10 +290,17 @@ export function checkSwitchCaseLexicalDuplicates(ctx: EarlyErrorContext, caseBlo
         }
       } else if (ts.isFunctionDeclaration(stmt) && stmt.name) {
         const name = stmt.name.text;
+        // Annex B §B.3.3.5 (the switch twin of the Block rule above): a
+        // sloppy CaseBlock tolerates duplicates bound only by plain
+        // FunctionDeclarations.
+        const isPlain = stmt.asteriskToken === undefined && !hasAsyncModifier(stmt);
         if (lexNames.has(name)) {
-          ctx.addError(stmt.name, `Cannot redeclare block-scoped variable '${name}'`);
+          if (!(isPlain && fnOnlyNames.has(name) && !isStrictMode(stmt.name))) {
+            ctx.addError(stmt.name, `Cannot redeclare block-scoped variable '${name}'`);
+          }
         } else {
           lexNames.set(name, stmt.name);
+          if (isPlain) fnOnlyNames.add(name);
         }
         // Check var/lex conflict
         if (varNames.has(name)) {

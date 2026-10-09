@@ -111,6 +111,8 @@ import { createHostCallImport, isHostCallImportName } from "./runtime/host-call-
 import { createDynamicFunctionImport } from "./runtime/dynamic-function-import.js"; // (#2960/#4650)
 import * as dynamicCodePolicy from "./runtime/dynamic-code-policy.js"; // (#6779)
 import { createBoundaryObjectAdapter } from "./runtime/boundary-object-adapter.js";
+import { isNativeRegimeExports, readNativeRegimeBag } from "./runtime/native-regime-view.js"; // (#6879)
+import { resolveProcessCapability } from "./runtime/process-capability.js"; // (#1490, #6910)
 import { createBoundaryCallbackAdapter } from "./runtime/boundary-callback-adapter.js";
 import { createBoundaryPromiseAdapter } from "./runtime/boundary-promise-adapter.js";
 import {
@@ -7537,7 +7539,7 @@ const _resolveClassMember = createClassMemberResolver({
   marshalBridgeResult: _marshalBridgeResult,
   // (#5237) No reader: the compiled bridges dispatch on the RAW carrier, so an
   // explicit `this` that arrived as a host mirror must be stripped back to it.
-  unwrapReceiver: (value) => _unwrapForHost(value),
+  unwrapReceiver: (value, reader) => _unwrapForHost(value, reader),
 });
 const _invokeClassMethod = createResolvedClassMethodInvoker(_resolveClassMember, _MISS, _unwrapForHost);
 
@@ -8076,7 +8078,7 @@ function _nativeBoundaryVector(values: readonly any[], exports: Record<string, F
 }
 
 function _nativeOpenObjectKeys(obj: any, exports: Record<string, Function> | undefined): string[] {
-  if (!exports || !_isNativeOpenObject(obj, exports)) return [];
+  if (!exports || !(_isNativeOpenObject(obj, exports) || isNativeRegimeExports(exports))) return [];
   const keys = exports.__object_keys as ((value: any) => any) | undefined;
   if (typeof keys !== "function") return [];
   try {
@@ -8198,6 +8200,8 @@ function _resolveHostField(obj: any, key: any, exports: Record<string, Function>
     const v = _resolveClassMember(obj, key, exports);
     if (v !== _MISS) return v;
   }
+  const bagValue = readNativeRegimeBag(obj, key, exports, _nativeBoundaryKey, _nativePrimitiveToHost); // (#6879)
+  if (bagValue !== undefined) return bagValue;
   // (#1712) fnctor instances: resolve through the constructor's vivified
   // prototype object. Accessors run with the live-mirror proxy as the receiver.
   const protoDesc = _fnctorProtoLookup(obj, key, exports);
@@ -11516,7 +11520,8 @@ function resolveImport(
     wrapWasmClosure: (value, arity, boundary) => _wrapPlatformCapabilityClosure(value, arity, boundary, callbackState),
     wrapUnknownCallable: (value) => _maybeWrapCallableUnknownArity(value, callbackState),
   });
-  if (capability) return wrapConsoleForHost(capability, intent, callbackState, _nativePrimitiveToHost, _MISS);
+  if (capability)
+    return wrapConsoleForHost(capability, intent, callbackState, _nativePrimitiveToHost, _MISS, _nativeDynamicFromHost);
   const compatibilitySemantic = resolveCompatibilitySemanticImport(intent, {
     strictEqual: _hostStrictEqual,
     isWasmStruct: _isWasmStruct,
@@ -18799,27 +18804,11 @@ assert._isSameValue = isSameValue;
       if (name === "String_fromCodePoint") return (code: number) => String.fromCodePoint(code);
       if (name === "string_compare") return (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
       if (name === "__toUint32") return (x: number) => x >>> 0;
-      // prettier-ignore
-      const emptyProcessStream = { on() { return this; }, removeListener() { return this; } };
-      if (name === "__get_process")
-        // prettier-ignore
-        return () => typeof process !== "undefined" ? process : { env: {}, platform: "", arch: "", argv: [], stdout: emptyProcessStream, stderr: emptyProcessStream, [Symbol.toStringTag]: "process" };
-      if (name === "__get_process_argv")
-        return () => (typeof process !== "undefined" && process.argv ? process.argv : []);
-      if (name === "__get_process_env") return () => (typeof process !== "undefined" && process.env ? process.env : {});
-      if (name === "__get_process_cwd")
-        return () => {
-          if (typeof process !== "undefined" && typeof process.cwd === "function") {
-            return process.cwd();
-          }
-          return "";
-        };
-      if (name === "__get_process_platform")
-        return () => (typeof process !== "undefined" && process.platform ? process.platform : "");
-      if (name === "__get_process_arch")
-        return () => (typeof process !== "undefined" && (process as any).arch ? (process as any).arch : "");
-      // prettier-ignore
-      if (name === "__get_process_stdout" || name === "__get_process_stderr") return () => typeof process !== "undefined" ? (process as any)[name.endsWith("stdout") ? "stdout" : "stderr"] ?? emptyProcessStream : emptyProcessStream;
+      const processRead = resolveProcessCapability(name, (value) => {
+        const exports = callbackState?.getExports(); // (#6910) the native regime's value boundary
+        return isNativeRegimeExports(exports) ? _nativeDynamicFromHost(value, exports) : value;
+      });
+      if (processRead) return processRead;
       if (name === "__process_exit")
         return (code: number) => {
           // f64 → integer exit code (NaN/Infinity → 0 per spec coercion).

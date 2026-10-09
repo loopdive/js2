@@ -414,8 +414,10 @@ const denoNativeFixtureAdditions = [
   "src/runtime/wasmgc/promise/rejection-event-bodies.ts",
   "src/runtime/wasmgc/promise/resolving-pair-bodies.ts",
 ] as const;
+const remainderLiveFixtureAddition = "src/ir/runtime/number-remainder-callables.ts";
 const liveFixtureGroups = {
   ...validatorLiveFixtureGroups,
+  "ir-runtime": [...validatorLiveFixtureGroups["ir-runtime"], remainderLiveFixtureAddition],
   "native-runtime": [...validatorLiveFixtureGroups["native-runtime"], ...denoNativeFixtureAdditions],
 };
 const liveRequired = Object.values(liveFixtureGroups).flat();
@@ -1087,18 +1089,21 @@ function assertLiveFixtureClosure(r: FixtureRun) {
   expect(new Set(denoNativeFixtureAdditions).size).toBe(3);
   const denoAdded = new Set<string>(denoNativeFixtureAdditions);
   expect(validatorLiveRequired.filter((path) => denoAdded.has(path))).toEqual([]);
-  expect(liveRequired).toHaveLength(208);
-  expect(new Set(liveRequired).size).toBe(208);
-  expect(liveRequired.filter((path) => !denoAdded.has(path))).toEqual(validatorLiveRequired);
+  expect(liveRequired).toHaveLength(208 + 1);
+  expect(new Set(liveRequired).size).toBe(208 + 1);
+  expect(validatorLiveRequired).not.toContain(remainderLiveFixtureAddition);
+  expect(liveRequired.filter((path) => !denoAdded.has(path) && path !== remainderLiveFixtureAddition)).toEqual(
+    validatorLiveRequired,
+  );
   expect(validatorLiveFixtureGroups["native-runtime"]).toHaveLength(48);
   expect(liveFixtureGroups["native-runtime"]).toHaveLength(51);
   for (const [layer, paths] of Object.entries(liveFixtureGroups)) {
-    expect(paths.filter((path) => !denoAdded.has(path))).toEqual(
+    expect(paths.filter((path) => !denoAdded.has(path) && path !== remainderLiveFixtureAddition)).toEqual(
       validatorLiveFixtureGroups[layer as keyof typeof validatorLiveFixtureGroups],
     );
-    expect(paths.filter((path) => !added.has(path) && !denoAdded.has(path))).toEqual(
-      priorLiveFixtureGroups[layer as keyof typeof priorLiveFixtureGroups],
-    );
+    expect(
+      paths.filter((path) => !added.has(path) && !denoAdded.has(path) && path !== remainderLiveFixtureAddition),
+    ).toEqual(priorLiveFixtureGroups[layer as keyof typeof priorLiveFixtureGroups]);
     expect(r.report.counts.byLayer[layer]).toBe(paths.length);
     expect(
       r.report.modules
@@ -1107,25 +1112,49 @@ function assertLiveFixtureClosure(r: FixtureRun) {
         .sort(),
     ).toEqual([...paths].sort());
   }
-  expect(r.report.counts.total).toBe(208);
-  expect(r.report.modules).toHaveLength(208);
+  expect(r.report.counts.total).toBe(208 + 1);
+  expect(r.report.modules).toHaveLength(208 + 1);
   const edges: FixtureEdge[] = r.report.edges;
+  const remainderEdges: FixtureEdge[] = [
+    { from: "src/ir/runtime/callable-declarations.ts", to: remainderLiveFixtureAddition, typeOnly: false },
+    { from: "src/ir/runtime/intrinsic-preparation.ts", to: remainderLiveFixtureAddition, typeOnly: false },
+    { from: remainderLiveFixtureAddition, to: "src/ir/core/callable-bindings.ts", typeOnly: false },
+    { from: remainderLiveFixtureAddition, to: "src/ir/core/value-references.ts", typeOnly: true },
+    { from: remainderLiveFixtureAddition, to: "src/ir/core/types.ts", typeOnly: true },
+    { from: remainderLiveFixtureAddition, to: "src/ir/runtime/callable-declarations.ts", typeOnly: true },
+    { from: remainderLiveFixtureAddition, to: "src/ir/runtime/contracts/manifest.ts", typeOnly: true },
+  ];
+  const orderedEdges = (values: FixtureEdge[]) =>
+    values
+      .map(({ from, to, typeOnly }) => ({ from, to, typeOnly }))
+      .sort((left, right) => left.from.localeCompare(right.from) || left.to!.localeCompare(right.to!));
+  expect(
+    orderedEdges(
+      edges.filter((edge) => edge.from === remainderLiveFixtureAddition || edge.to === remainderLiveFixtureAddition),
+    ),
+  ).toEqual(orderedEdges(remainderEdges));
+  expect(edgePopulation(remainderEdges)).toEqual({ edges: 7, typeOnly: 4, runtime: 3 });
   // This runtime edge is load-bearing: CLI exit zero alone admits its bypass.
   expect(
     edges.filter((edge) => edge.from === "src/ir/program/input.ts" && edge.to === "src/ir/program/validation.ts"),
   ).toEqual([expect.objectContaining({ typeOnly: false })]);
   expect({ edges: r.report.resolvedEdgeCount, ...r.report.counts.resolvedEdgesByType }).toEqual({
-    edges: 988,
-    typeOnly: 480,
-    runtime: 508,
+    edges: 988 + 7,
+    typeOnly: 480 + 4,
+    runtime: 508 + 3,
   });
-  expect(edgePopulation(edges)).toEqual({ edges: 988, typeOnly: 480, runtime: 508 });
+  expect(edgePopulation(edges)).toEqual({ edges: 988 + 7, typeOnly: 480 + 4, runtime: 508 + 3 });
   const validator = new Set(validatorLiveRequired);
   const validatorEdges = edges.filter(
     (edge) => validator.has(edge.from) && edge.to !== undefined && validator.has(edge.to),
   );
   expect(edgePopulation(validatorEdges)).toEqual({ edges: 977, typeOnly: 476, runtime: 501 });
-  const denoEdges = edges.filter((edge) => !validatorEdges.includes(edge));
+  const denoEdges = edges.filter(
+    (edge) =>
+      !validatorEdges.includes(edge) &&
+      edge.from !== remainderLiveFixtureAddition &&
+      edge.to !== remainderLiveFixtureAddition,
+  );
   expect(edgePopulation(denoEdges)).toEqual({ edges: 11, typeOnly: 4, runtime: 7 });
   const expectedDenoEdges = [
     {
@@ -1419,6 +1448,34 @@ describe("semantic verification and provider ownership boundary", () => {
     assertLiveFixtureClosure(fixture().run());
   });
 
+  it("refuses an omitted current remainder leaf at both actual import sites and restores a fresh healthy graph", () => {
+    const f = fixture();
+    assertLiveFixtureClosure(f.run());
+    const copied = readFileSync(resolve(f.root, remainderLiveFixtureAddition));
+    const actual = readFileSync(resolve(repository, remainderLiveFixtureAddition));
+    expect(copied.equals(actual)).toBe(true);
+    try {
+      rmSync(resolve(f.root, remainderLiveFixtureAddition));
+      const missing = f.run();
+      expect(missing.status).toBe(1);
+      expect(missing.report.inventoryValid).toBe(false);
+      for (const owner of ["src/ir/runtime/callable-declarations.ts", "src/ir/runtime/intrinsic-preparation.ts"]) {
+        expect(missing.report.errors).toContainEqual({
+          code: "unresolved-module",
+          detail: owner + ": ./number-remainder-callables.js",
+        });
+      }
+      expect(missing.report.errors.some((error: { code: string }) => error.code === "forbidden-transitive-path")).toBe(
+        true,
+      );
+    } finally {
+      f.put(remainderLiveFixtureAddition, copied.toString("utf8"));
+    }
+    expect(readFileSync(resolve(f.root, remainderLiveFixtureAddition)).equals(copied)).toBe(true);
+    expect(readFileSync(resolve(repository, remainderLiveFixtureAddition)).equals(actual)).toBe(true);
+    assertLiveFixtureClosure(f.run());
+  });
+
   it("rejects bypass of the actual input-to-source-map-validator dependency", () => {
     const f = fixture();
     assertLiveFixtureClosure(f.run());
@@ -1437,7 +1494,9 @@ describe("semantic verification and provider ownership boundary", () => {
         ),
       ).toEqual([]);
       expect({ edges: bypass.report.resolvedEdgeCount, ...bypass.report.counts.resolvedEdgesByType }).toEqual(
-        replacement === "" ? { edges: 987, typeOnly: 480, runtime: 507 } : { edges: 988, typeOnly: 481, runtime: 507 },
+        replacement === ""
+          ? { edges: 987 + 7, typeOnly: 480 + 4, runtime: 507 + 3 }
+          : { edges: 988 + 7, typeOnly: 481 + 4, runtime: 507 + 3 },
       );
       expect(() => assertLiveFixtureClosure(bypass)).toThrow();
       f.put(path, original);
@@ -1710,11 +1769,11 @@ describe("semantic verification and provider ownership boundary", () => {
       expect.objectContaining({ from: path, to: "src/forbidden.ts", typeOnly: true }),
     );
     expect(r.report.transitiveViolations).not.toEqual([]);
-    expect(r.report.counts.total).toBe(209);
+    expect(r.report.counts.total).toBe(209 + 1);
     expect({ edges: r.report.resolvedEdgeCount, ...r.report.counts.resolvedEdgesByType }).toEqual({
-      edges: 989,
-      typeOnly: 481,
-      runtime: 508,
+      edges: 989 + 7,
+      typeOnly: 481 + 4,
+      runtime: 508 + 3,
     });
     f.put(path, original);
     f.p.files.pop();

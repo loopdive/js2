@@ -89,6 +89,7 @@ import { filterResultNeedsDynamicCarrier } from "./array-filter-spec-access.js";
 import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
 import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
+import { jsValueBoundary } from "./context/types.js";
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
 import {
@@ -183,6 +184,7 @@ import { pushProgramAbiModuleInitCallable } from "./program-abi-module-init-plan
 import {
   pushProgramAbiNestedFunctionDeclaration,
   pushProgramAbiTopLevelCallable,
+  sourceFunctionPositionForDeclaration,
 } from "./program-abi-source-callable-planning.js";
 import {
   isolateRuntimeModuleCallableRegistration,
@@ -215,6 +217,7 @@ import {
   registerModuleGlobal,
   registerModulePatternTdzGlobal,
   registerModuleTdzGlobal,
+  scriptVarRedeclaresAmbientGlobal, // (#6651 V10b)
 } from "./module-global-registration.js";
 import { annexBModuleGlobalSeedsFromTopLevel } from "./annexb-global-live-binding.js";
 import { variableSlotHoldsReconstructedFnctorInstance } from "./fnctor-instance-object-slot.js";
@@ -380,6 +383,29 @@ function ensureNativeDynamicBoundaryBridge(ctx: CodegenContext): void {
   }
 
   ensureNativeDynamicBoundaryTag(ctx);
+}
+
+/**
+ * (#6879) `export { parse }` exports a function declared elsewhere in the
+ * file; only `export function` recorded its boundary signature, so on the
+ * native regime the adapter passed such an export's JS arguments through raw
+ * (an un-admitted options object, an un-marshalled string) and acorn's
+ * `parse(input, { ecmaVersion })` lost its options. Gated on the regime's JS
+ * value boundary so the host lane and the host-free targets keep their bytes.
+ */
+function recordExportListSignature(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  localName: string,
+  exportedName: string,
+): void {
+  if (ctx.targetProfile.semanticProviders !== "native-first" || !jsValueBoundary(ctx)) return;
+  if (ctx.exportSignatures.has(exportedName)) return;
+  const decl = sourceFile.statements.find(
+    (s): s is ts.FunctionDeclaration => ts.isFunctionDeclaration(s) && s.name?.text === localName && !!s.body,
+  );
+  if (!decl) return;
+  recordExportSignature(ctx, exportedName, decl, hasAsyncModifier(decl));
 }
 
 function recordExportSignature(
@@ -3159,6 +3185,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           name: "default",
           desc: { kind: "func", index: funcIdx },
         });
+        for (const name of [targetName, "default"]) recordExportListSignature(ctx, sourceFile, targetName, name);
       }
     }
   }
@@ -3185,6 +3212,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         if (func && !func.exported) func.exported = true;
         if (!ctx.mod.exports.some((e) => e.name === exportedName)) {
           ctx.mod.exports.push({ name: exportedName, desc: { kind: "func", index: funcIdx } });
+          recordExportListSignature(ctx, sourceFile, localName, exportedName);
         }
       }
     }
@@ -3402,7 +3430,16 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     if (decl.initializer && ts.isIdentifier(decl.initializer)) {
       return resolveIdentifierType(ctx, decl.initializer);
     }
-    return ctx.checker.getTypeAtLocation(decl);
+    // (#6651 V10b) A SCRIPT `var` that redeclares an ambient lib global
+    // (`var length = {valueOf…}` vs lib.dom's `declare var length: number`)
+    // merges into one checker symbol whose declared type is the LIB's. Typing
+    // the global from it made the binding an f64 global, so the initializer
+    // ran ToNumber (an observable `valueOf` call) at the declaration. The
+    // runtime binding holds whatever the script stores; type it from the
+    // initializer instead.
+    const typedNode =
+      decl.initializer !== undefined && scriptVarRedeclaresAmbientGlobal(ctx, decl) ? decl.initializer : decl;
+    return ctx.checker.getTypeAtLocation(typedNode);
   }
 
   /**
@@ -6179,7 +6216,7 @@ export function compileDeclarations(
     // (#4491 T4) §9.1.1.4.17 — and the `var` twin of the same instantiation
     // step, AFTER the functions so a name declared both ways keeps the function
     // binding GDI actually initialises. See global-var-bindings.ts.
-    emitScriptGlobalVarBindings(ctx, initFctx);
+    emitScriptGlobalVarBindings(ctx, initFctx, sourceFile);
 
     if (ctx.liveFuncBindingGlobals && ctx.liveFuncBindingGlobals.size > 0) {
       const seededGlobals = new Set<number>();
@@ -6254,6 +6291,9 @@ export function compileDeclarations(
         let chunkOrdinal = 0;
         for (const chunk of chunks) {
           const chunkFctx = createModuleInitFunctionContext(true);
+          // (#6651 V10c) Chunks split ONE top-level frame: a raw-lastIndex identity
+          // recorded in chunk N must still suppress the ToPrimitive copy in chunk N+1.
+          chunkFctx.regexpLastIndexIdentityStructTypes = initFctx.regexpLastIndexIdentityStructTypes ??= new Set();
           ctx.currentFunc = chunkFctx;
           for (const initEntry of chunk) compileOrderedModuleInitEntry(chunkFctx, initEntry);
           if (chunkFctx.body.length === 0) continue;
@@ -6371,7 +6411,7 @@ export function compileDeclarations(
       if (stmt.name && stmt.body && lastFnWithBody.get(stmt.name.text) !== stmt) continue;
       const fnName = stmt.name ? stmt.name.text : "default";
       if (stmt.body) {
-        const idx = funcByName.get(fnName);
+        const idx = sourceFunctionPositionForDeclaration(ctx, stmt) ?? funcByName.get(fnName);
         if (idx !== undefined) {
           const func = ctx.mod.functions[idx]!;
           // (#2138/#3521) Skip direct body emission. The compatibility overlay

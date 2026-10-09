@@ -161,6 +161,12 @@ function classifyBuiltin(name: string): HostImportPolicy {
     // PRNG (#1503/#6659).
     return policy("platform-capability", "randomness", 4398, false, "Web Crypto entropy capability");
   }
+  if (name === "__get_process" || name.startsWith("__get_process_")) {
+    // (#1490, #6910) The live Node `process` (and its env/argv/platform/…
+    // members): an environment capability, not ECMAScript semantics. A
+    // host-free build substitutes its stand-in at compile time.
+    return policy("platform-capability", "node", 1490, false, "Node process capability");
+  }
   if (LEGACY_SEMANTIC_BUILTIN_PREFIXES.some((prefix) => name.startsWith(prefix))) {
     return policy("legacy-semantic", "ecmascript-runtime", 4397, false, "implicit JavaScript semantic fallback");
   }
@@ -285,7 +291,10 @@ export function classifyHostImport(descriptor: ImportDescriptor, environment?: C
         ? policy("platform-capability", "clock", 4577, false, "explicit standalone embedder clock capability")
         : policy("platform-capability", "clock", 4398, true, "wall-clock capability");
     case "declared_global":
-      return policy("platform-capability", `global:${intent.name}`, 4398, false, "declared ambient host capability");
+      // (#6890) `global_console` is the console capability read as a VALUE.
+      return intent.name === "console"
+        ? policy("platform-capability", "console", 4398, false, "explicit host console object capability")
+        : policy("platform-capability", `global:${intent.name}`, 4398, false, "declared ambient host capability");
     case "dynamic_import":
       return policy("platform-capability", "module-loader", 4398, false, "dynamic module loading capability");
     case "node_builtin":

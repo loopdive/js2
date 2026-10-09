@@ -51,6 +51,7 @@ import { armExhaustiveForNonCallableMemberLiteral } from "./class-to-primitive.j
 import { isArrayLengthConstructor } from "./array/array-length-holes.js"; // (#6771 S3)
 import { noteArrayCtorThisCall } from "./array/array-ctor-this.js"; // (#6771 S7)
 import { readEnv } from "../env.js";
+import { isBuiltinProtoReparentNode } from "./object-model/native-proto-reparent.js"; // (#6651 V11)
 
 /**
  * Cheap AST pre-scan: set `ctx.usesArrayHoles` when the program contains any
@@ -135,6 +136,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
         if (ts.isPropertyAccessExpression(lhs)) ctx.protoNamedWrittenMembers.add(lhs.name.text);
       }
     }
+    if (isBuiltinProtoReparentNode(node)) ctx.builtinProtoReparentDirty = ctx.protoNamedDirty = true; // (#6651 V11)
     if (!ctx.protoMemberDirty && isProtoMemberValueUse(node)) {
       ctx.protoMemberDirty = true;
     }
@@ -155,6 +157,10 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     // runtime value (the call lowers to Get + apply), so the companion must
     // hold `Symbol.prototype[@@toPrimitive]`.
     if (!ctx.protoMemberDirty && isToPrimitiveMethodCall(node)) ctx.protoMemberDirty = true;
+    // (#6651 V10b) `[][Symbol.iterator]` / `arguments[Symbol.iterator]` read the
+    // Array.prototype method as a runtime VALUE through the vec arm of
+    // `__extern_get`, which needs the seeded Array companion.
+    if (!ctx.protoMemberDirty && isArrayIteratorValueRead(node)) ctx.protoMemberDirty = true;
     if (!ctx.vecAccessorDescriptorDirty && isNonDataDescriptorDefine(node)) {
       ctx.vecAccessorDescriptorDirty = true;
     }
@@ -1503,6 +1509,20 @@ export function joinEmptyElementTest(
       },
     ],
   };
+}
+
+/** (#6651 V10b) `[…][Symbol.iterator]` / `arguments[Symbol.iterator]` read as a value (not called, not written). */
+function isArrayIteratorValueRead(node: ts.Node): boolean {
+  if (!ts.isElementAccessExpression(node)) return false;
+  const key = node.argumentExpression;
+  if (!ts.isPropertyAccessExpression(key) || key.name.text !== "iterator") return false;
+  if (!ts.isIdentifier(key.expression) || key.expression.text !== "Symbol") return false;
+  const recv = node.expression;
+  if (!ts.isArrayLiteralExpression(recv) && !(ts.isIdentifier(recv) && recv.text === "arguments")) return false;
+  const parent = node.parent;
+  if (ts.isCallExpression(parent) && parent.expression === node) return false;
+  if (ts.isDeleteExpression(parent)) return false;
+  return !(ts.isBinaryExpression(parent) && parent.left === node);
 }
 
 /** (#6775 S5) `<expr>[Symbol.toPrimitive](…)`. */

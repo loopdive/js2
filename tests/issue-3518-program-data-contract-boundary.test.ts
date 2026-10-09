@@ -16,7 +16,8 @@ import {
   captureSourceMapSchemaSourceEpoch,
 } from "./helpers/ir-program-validator-relocation.js";
 
-import { beforeRuntimePreparationRelocation } from "./helpers/ir-runtime-preparation-relocation.js";
+import { beforeRemainderRuntimePreparationRelocation as beforeRuntimePreparationRelocation } from "./helpers/ir-remainder-runtime-preparation-relocation.js";
+import { beforeOptionalFieldModuleRecords } from "./helpers/ir-initial-graph-optional-fields-source.js";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -25,10 +26,8 @@ import { dirname, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { historicalIntrinsicSource, liveSourceReader } from "./helpers/ir-historical-runtime-reconstruction.js";
-import {
-  reconstructRuntimeContractReceiptSources,
-  runtimeContractCurrentPaths,
-} from "./helpers/ir-runtime-contract-evolution.js";
+import { runtimeContractCurrentPaths } from "./helpers/ir-runtime-contract-evolution.js";
+import { reconstructRemainderRuntimeContractReceiptSources as reconstructRuntimeContractReceiptSources } from "./helpers/ir-remainder-runtime-contract-evolution.js";
 import {
   programInitialGraphPaths,
   reconstructProgramInitialGraph,
@@ -272,7 +271,9 @@ function fixture(includeOwnership = false) {
     if (source === undefined) throw new Error(`missing authenticated pre-C program source ${path}`);
     return source;
   };
-  const initialProgramSources = reconstructProgramInitialGraph(initialPreCProgramRead);
+  const initialProgramSources = reconstructProgramInitialGraph(
+    beforeOptionalFieldModuleRecords(initialPreCProgramRead),
+  );
   // Each inverse authenticates raw current inputs independently. This source
   // selection applies only to the initial copy, never to later fixture mutants.
   const initialCoreTypeSources = reconstructProgramCoreTypeEvolution(historicalDependencyRead);

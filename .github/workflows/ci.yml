@@ -202,20 +202,28 @@ jobs:
         if: steps.npm_compat.outputs.only != 'true'
         # codegen, ir and frontend form one ~700-file strongly-connected
         # component of the value-import graph, so the layers cannot be
-        # retired one at a time. Fails when the largest SCC, the number of
-        # multi-file SCCs, or any two-way directory edge count (e.g. ir->codegen)
-        # grows vs scripts/import-cycles-baseline.json. Decreases are banked
-        # post-merge (--update-on-decrease in the promote/summary-sync jobs).
-        # Intended growth: `node scripts/check-import-cycles.mjs --update` in
-        # the PR, committed, so review sees it.
-        run: pnpm run check:import-cycles
+        # retired one at a time. CHANGE-SCOPED like check:loc-budget: fails when
+        # the largest SCC, the number of multi-file SCCs, or any two-way
+        # directory edge count (e.g. ir->codegen) is higher at HEAD than at this
+        # change-set's own base (HEAD^1 of the synthetic merge). Intended growth
+        # is granted by an `import-cycles-allow:` frontmatter entry in the PR's
+        # own plan/issues/*.md (`- largestSccSize: 699 # <date> (#N): <why>`);
+        # PRs never edit scripts/import-cycles-baseline.json, which is the
+        # post-merge low-water mark and the no-git fallback only. The fetch
+        # feeds the merge-base fallback for non-synthetic checkouts.
+        run: |
+          git fetch --no-tags --depth=200 origin main 2>/dev/null || true
+          pnpm run check:import-cycles
 
       - name: src/codegen flat-directory budget (#6797)
         if: steps.npm_compat.outputs.only != 'true'
-        # Fails when the number of .ts files directly in src/codegen/ (824 when
-        # #6797 was filed) grows past scripts/flat-dir-budget-baseline.json.
-        # New files go into the existing sub-directories.
-        run: pnpm run check:flat-dir-budget
+        # Fails when this change-set adds top-level .ts files to src/codegen/
+        # (824 when #6797 was filed) beyond those it lists under
+        # `flat-dir-budget-allow:` in its own plan/issues/*.md. New files go
+        # into the existing sub-directories. Same change-scoping as above.
+        run: |
+          git fetch --no-tags --depth=200 origin main 2>/dev/null || true
+          pnpm run check:flat-dir-budget
 
       - name: IR fallback gate (#1376)
         if: steps.npm_compat.outputs.only != 'true'
@@ -613,8 +621,9 @@ jobs:
         # born broken (and touching a rotted one means fixing it — the
         # fix-on-touch ratchet). Root files only; tests/equivalence/ has its
         # own gate (#1659) and linear-*/c-abi/simd* run in `linear-tests`.
-        # Mass edits (>20 files, e.g. a repo-wide reformat) skip with a
-        # warning — the post-merge detector covers them.
+        # Mass edits (>20 files, e.g. a repo-wide reformat) run the first 20
+        # and list the rest as not run (#6783 — they used to skip outright);
+        # `issue-tests-gate` runs every root file once its baseline is seeded.
         if: steps.npm_compat.outputs.only != 'true' && github.event_name == 'pull_request'
         env:
           # Keep this broad, toolchain-light gate on the native engine. The
@@ -624,6 +633,16 @@ jobs:
         run: |
           git fetch --no-tags --depth=200 origin main 2>/dev/null || true
           pnpm run test:changed-root
+
+      - name: Archive Linear append parent evidence (quality)
+        if: always() && hashFiles('.tmp/6915-ci/run-*/**') != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: linear-append-quality-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .tmp/6915-ci/run-*/
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: false
 
       - name: Required guard suite (#3552)
         if: steps.npm_compat.outputs.only != 'true'
@@ -925,9 +944,23 @@ jobs:
           ISSUE_TEST_FILE: ${{ matrix.file }}
         run: |
           # One selected file per isolated runner; preserve the worker flags.
-          pnpm exec vitest run "$ISSUE_TEST_FILE" \
-            --pool=forks --poolOptions.forks.singleFork=false \
-            --poolOptions.forks.maxForks=1 --no-file-parallelism
+          if [ "$ISSUE_TEST_FILE" = "tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts" ]; then
+            node scripts/hooks/run-linear-append-provenance.mjs
+          else
+            pnpm exec vitest run "$ISSUE_TEST_FILE" \
+              --pool=forks --poolOptions.forks.singleFork=false \
+              --poolOptions.forks.maxForks=1 --no-file-parallelism
+          fi
+
+      - name: Archive Linear append parent evidence (advisory)
+        if: always() && matrix.file == 'tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts' && hashFiles('.tmp/6915-ci/run-*/**') != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: linear-append-advisory-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.ordinal }}
+          path: .tmp/6915-ci/run-*/
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: false
 
       - name: Report changed issue-test outcome
         if: always() && !cancelled()
@@ -979,6 +1012,158 @@ jobs:
           }
           console.log(`Pinned issue tests completed; ${files.length} changed file job(s) completed with advisory assertion policy.`);
           NODE
+
+  # #6783 — the WHOLE root suite as a known-failures ratchet: every
+  # tests/*.test.ts (minus linear/c-abi/simd, which `linear-tests` runs, and
+  # the test262 chunk/shard runners) plus tests/ir/*.test.ts — ~4,400 files
+  # that no required check ran. `scripts/known-failures-gate.mjs` scores each
+  # FILE red or green against scripts/issue-tests-baseline.json (the files
+  # red on main): green → red fails, a baseline file gone green is reported
+  # "newly fixed" and banked post-merge (test262-sharded.yml promote-baseline).
+  #
+  # Sharded exactly like equivalence-shard / equivalence-gate (#6785): each
+  # shard gates its own files and uploads a partial; `issue-tests-gate`
+  # merges the eight, and a missing, duplicated or cross-commit partial — or a
+  # file on disk that reached no report — fails it. Each shard runs vitest's
+  # default fork count (3 on a 4-vCPU runner) with a crash-safe reporter: a
+  # worker that dies of OOM no longer erases the shard (it did on 4 of 12
+  # shards of issue-tests.yml run 36962288398); the files it was running are
+  # re-run alone and are red only if they die alone too. A status change
+  # against the baseline is confirmed by a serial re-run before it counts.
+  #
+  # TWO-PHASE ROLLOUT. Until the post-merge bank seeds the baseline from a
+  # complete run on main, the gate is in SEED mode: it prints the proposed
+  # red list and exits 0, and both gate steps are continue-on-error, so a
+  # not-yet-required job can never make a PR UNSTABLE (which `auto-enqueue`
+  # skips, #3878/#3904). From the first seeded commit on, both steps are
+  # fatal, and `issue-tests-gate` is ready to be added to the main ruleset
+  # (scripts/enable-branch-protection.sh REQUIRED_AFTER_SEEDING,
+  # docs/ci-policy.md §7). A PR excuses a file it must leave red with
+  # `known-failures-allow:` in its own issue frontmatter — never by editing
+  # the baseline, which main's bank alone writes.
+  issue-tests-shard:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    env:
+      # Same toolchain-light engine as the changed-root gate in `quality`.
+      JS2WASM_EVAL_ENGINE: interpreter
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # HEAD^1 is the change-set's base: allowances are read from the
+          # issue files this change-set touches (scripts/lib/change-scope.mjs).
+          fetch-depth: 2
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare the Test262 harness inputs and bundles root tests read
+        run: |
+          # Same preparation as the changed-root gate in `quality`: some root
+          # files execute pinned test262 inputs, the compiler/runtime bundles,
+          # or the runtime-eval refusal provider (#4234).
+          git submodule update --init --checkout test262
+          git submodule update --init --checkout test262-fyi/data
+          pnpm run build:compiler-bundle
+          pnpm exec esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
+          node scripts/build-runtime-eval-provider.mjs --refusal-only
+      - name: Seed mode or enforce mode
+        id: mode
+        run: |
+          if [ -f scripts/issue-tests-baseline.json ]; then
+            echo "seeded=true" >> "$GITHUB_OUTPUT"
+            echo "Baseline present — enforcing."
+          else
+            echo "seeded=false" >> "$GITHUB_OUTPUT"
+            echo "No scripts/issue-tests-baseline.json yet — seed mode (advisory, #6783)."
+          fi
+      - name: Run and gate root-suite shard ${{ matrix.shard }}/8
+        continue-on-error: ${{ steps.mode.outputs.seeded != 'true' }}
+        # Below the job budget, so a stuck shard fails THIS step — which seed
+        # mode tolerates — instead of timing out the whole job.
+        timeout-minutes: 100
+        env:
+          SHARD: ${{ matrix.shard }}/8
+          PARTIAL_OUT: issue-tests-partial-${{ matrix.shard }}.json
+          KNOWN_FAILURES_FETCH_BASE: "1"
+        run: node scripts/known-failures-gate.mjs --suite issue-tests
+      - name: Upload shard partial for the merged gate (#6783)
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: issue-tests-partial-${{ matrix.shard }}
+          path: issue-tests-partial-${{ matrix.shard }}.json
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 1
+
+  issue-tests-gate:
+    needs: [changes, issue-tests-shard]
+    if: always() && needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      # The gate needs only node builtins: its own scripts, the baseline, the
+      # test-file population (to name a file that reached no shard's report)
+      # and the issue files (allowances).
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+          sparse-checkout: |
+            scripts/known-failures-gate.mjs
+            scripts/equivalence-gate.mjs
+            scripts/lib/change-scope.mjs
+            scripts/lib/known-failures-reporter.mjs
+            scripts/issue-tests-baseline.json
+            tests/*.test.ts
+            tests/ir/*.test.ts
+            plan/issues/
+          sparse-checkout-cone-mode: false
+      - name: Seed mode or enforce mode
+        id: mode
+        run: |
+          if [ -f scripts/issue-tests-baseline.json ]; then
+            echo "seeded=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "seeded=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Verify every issue-tests shard passed its baseline gate
+        if: steps.mode.outputs.seeded == 'true'
+        env:
+          SHARD_RESULT: ${{ needs.issue-tests-shard.result }}
+        run: |
+          if [ "$SHARD_RESULT" != "success" ]; then
+            echo "::error::one or more issue-tests shards failed their local baseline gate (matrix result: $SHARD_RESULT)"
+            exit 1
+          fi
+          echo "All issue-tests shards passed their local baseline gates."
+      - uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          pattern: issue-tests-partial-*
+          path: issue-tests-partials
+          merge-multiple: true
+      - name: Gate the merged root suite (#6783)
+        continue-on-error: ${{ steps.mode.outputs.seeded != 'true' }}
+        env:
+          MERGE_PARTIALS_DIR: issue-tests-partials
+          KNOWN_FAILURES_FETCH_BASE: "1"
+        run: node scripts/known-failures-gate.mjs --suite issue-tests
+      # The post-merge bank (test262-sharded.yml promote-baseline) downloads
+      # this by name for the SHA that landed on main — the merge_group run's
+      # or the push run's, whichever finished. PR runs keep nothing.
+      - name: Keep the merged partials for the post-merge bank (#6783)
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v6
+        with:
+          name: issue-tests-partials-${{ github.sha }}
+          path: issue-tests-partials/
+          if-no-files-found: ignore
+          retention-days: 3
 
   # #2139 — Execute the linear-backend (linear-memory lowering), C-ABI, and
   # SIMD test suites in CI. These 20 files (tests/linear-*.test.ts,

@@ -48,6 +48,20 @@ export function isModuleInitChunkFunctionContext(fctx: FunctionContext): boolean
   return fctx.moduleInitChunk === true;
 }
 
+/**
+ * (#6877) Is a declaration compiled in a chunk nested inside a FUNCTION (an IIFE
+ * the chunk inlines, react.development.js's whole body)? Such a binding is the
+ * function's hoisted local, never a module global — the bare-name
+ * `moduleGlobals` entry may be another module's top-level `var`
+ * (react.production.js's `assign`), or this module's own outer `var`.
+ */
+export function chunkDeclarationIsFunctionLocal(stmt: ts.Node): boolean {
+  for (let node = stmt.parent; node !== undefined && !ts.isSourceFile(node); node = node.parent) {
+    if (ts.isFunctionLike(node) || ts.isClassStaticBlockDeclaration(node)) return true;
+  }
+  return false;
+}
+
 /** Minimal shape shared by statement and declaration-static init entries. */
 export interface ModuleInitChunkEntry {
   readonly node: ts.Node;
