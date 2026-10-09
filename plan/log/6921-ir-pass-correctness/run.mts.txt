@@ -1,0 +1,27 @@
+// usage: npx tsx .tmp/c-probe/run.mts <file.ts> [fnName] [args-json]
+import { readFileSync } from "node:fs";
+import { compile } from "../../../src/index.ts";
+import { buildImports, instantiateWasm } from "../../../src/runtime.ts";
+const [file, fn = "main", argsJson = "[]"] = process.argv.slice(2);
+const src = readFileSync(file, "utf8");
+const mkArgs = () => (0, eval)(argsJson);
+const lanes: Array<[string, any]> = [
+  ["gc-IR", { experimentalIR: true }],
+  ["gc-legacy", { experimentalIR: false }],
+  ["linear", { target: "linear", fast: true }],
+  ["standalone", { target: "standalone" }],
+];
+for (const [name, opts] of lanes) {
+  try {
+    const r = await compile(src, { ...opts, trackIrOutcomes: true, trackFallbacks: true, fileName: "probe.ts" });
+    if (!r.success) { console.log(name, "COMPILE FAIL", r.errors.slice(0,2).map(e=>e.message).join(" | ").slice(0,300)); continue; }
+    const outs = (r.irOutcomes ?? []).map((o: any) => `${o.displayName}:${o.kind}${o.irBodyEmitted ? "[IR]" : ""}${o.legacyBodyEmitted ? "[legacy]" : ""}${o.kind !== "emitted" && o.kind!=="non-executable" ? "(" + (o.reason ?? o.code ?? o.stage ?? "") + ")" : ""}`);
+    const im = buildImports(r.imports, {}, r.stringPool);
+    const { instance } = await instantiateWasm(r.binary, im.env, im.string_constants);
+    im.setInstance?.(instance); (im as any).setExports?.(instance.exports);
+    const f = (instance.exports as any)[fn];
+    let v; try { v = f(...mkArgs()); } catch (e: any) { v = "THREW " + (e?.message ?? e); }
+    if (typeof v === "number" && Object.is(v, -0)) v = "-0";
+    console.log(name, "=>", typeof v === "string" ? JSON.stringify(v) : v, "c=" + (globalThis as any).__c, "  ", outs.join(" "));
+  } catch (e: any) { console.log(name, "ERR", String(e?.stack ?? e).slice(0, 400)); }
+}
