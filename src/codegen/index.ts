@@ -722,6 +722,7 @@ import {
 } from "./numeric-property-analysis.js"; // (#3683 S4a)
 import type { NumericPropertyAnalysisHost } from "./numeric-property-analysis.js";
 import { dynamicReadCrossesStandaloneLink } from "./dynamic-read-narrowing.js"; // (#5383)
+import { copiesUnseenWriteBinding } from "./expressions/identifier-receiver-slot.js"; // (#4618)
 import { collectUserMethodNames } from "./user-method-names.js"; // (#3673)
 import {
   registerWasiImports,
@@ -13921,6 +13922,7 @@ export function varBindingNeedsExternrefForUndefined(
     const isPurelyUndefinedOrVoid = (declType.flags & ~(ts.TypeFlags.Undefined | ts.TypeFlags.Void)) === 0;
     if (isPurelyUndefinedOrVoid && undefinedTypedMemberReadProducesExternref(ctx, init)) return true;
   }
+  if (ctx !== undefined && decl !== undefined && copiesUnseenWriteBinding(ctx, decl, init)) return true; // #4618
   return false;
 }
 

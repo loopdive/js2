@@ -1,0 +1,11 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-ac7dec7220ff3e780
+
+ ✓ tests/issue-3518-semantic-verification-ownership.test.ts (35 tests) 3791ms
+   ✓ actually compiles legacy/core types, wider runtime features and located negative controls  3408ms
+
+ Test Files  1 passed (1)
+      Tests  35 passed (35)
+   Start at  01:19:32
+   Duration  6.42s (transform 858ms, setup 0ms, collect 2.00s, tests 3.79s, environment 0ms, prepare 117ms)
+
