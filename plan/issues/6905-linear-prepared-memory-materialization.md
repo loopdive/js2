@@ -1183,3 +1183,28 @@ The same Sol6.1 Medium diagnostic owner repairs only its isolated scratch
 instrument, retains the rejected versions, reruns inert controls, and returns
 new exact hashes for fresh parent/Astra review before any child. No baseline
 compiler run has occurred. Initializer source claim and HOLD remain unchanged.
+
+### One composed baseline diagnostic — actual result
+
+The repaired instrument SHA256
+`dcf692c9bbd634c6b9d7133996d7971f07f58f5efa219534d590819ff3059c18`
+cleared parent/Astra review; parent repeated57/57 inert controls and independently
+captured all7903 files/1903 sources, equal to freeze SHA256
+`5847955d2ad1df8cf8cce6e8cc284cb8ef438b8eda161b3243a3f60b1ab02ddc`.
+Parent then authorized and ran exactly one baseline-only diagnostic on
+`cdde1880d00af27156751557739d5e2a4e5dcf35`, source
+`712bfef554321f3fe081f72bb89654d7dc6d8104`. Actual parent and child exit1,
+24/25 assertions passed,1 failed;8 complete ordered observations/5 binaries.
+Custody is unchanged before/after; no signal/timeout/spawn error/truncation or
+secondary errors.30846 raw bytes retained; no automatic termination/retry.
+
+The positive shared allocation test still fails before emission with
+`array-representation-unsupported`, resolver cannot register vector for array
+literal. Whole8 rows equal historical rows, but complete status/failure text
+does not equal the historical combined capture; those actual differences are
+retained without normalization. Preservation/native acceptance remains false.
+Full instruments, rejected originals, freeze, parent approval/terminal and raw
+split streams/reporter/binaries/receipts are published under
+`plan/log/6905-linear-prepared-memory-20261007/geometry-baseline-20261009/`.
+This baseline result does not transfer the initializer writer claim or authorize
+the held one-import candidate, source wiring, native completion or queue action.
