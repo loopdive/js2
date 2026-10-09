@@ -2,10 +2,11 @@
   "id": "6920",
   "slice": "c-shared-linear-geometry-source-20261009",
   "assignee": "ttraenkler/claude-session-c-geometry-20261009",
-  "requested_by": "ttraenkler/claude-session-c-geometry-20261009",
-  "status": "in-progress",
+  "requested_by": "noreply@anthropic.com",
+  "status": "done",
   "branch": "claude/6920-shared-linear-geometry-c",
   "claimed_at": "2026-10-09T00:25:12Z",
-  "updated_at": "2026-10-09T00:25:12Z",
-  "write_id": "4237-ijwd2prx"
+  "updated_at": "2026-10-09T07:58:21Z",
+  "write_id": "495-9v3xp6sw",
+  "released_at": "2026-10-09T07:58:21Z"
 }
