@@ -57,9 +57,16 @@ const SOURCE_APPROVAL_SUCCESSOR = {
   commit: "616da017ca11cefa61f3f8d71a1c7ac18773491c",
   sourceTree: "2a8c200cbb4862b6ffdd5952be7f6fa8f9ce1e63",
 };
+// ROOT-reviewed geometry extraction, release 6077817777; qualification target only.
+const SOURCE_APPROVAL_GEOMETRY = {
+  commit: "2d0c31a3e2dbe0a4a46d123226fa1d62f7d4c7aa",
+  sourceTree: "171606514a3cf6733e82eb11549a659856d68c1a",
+};
 function assertApprovedSourceTree(sourceTree) {
   check(
-    sourceTree === PINS.sourceTree || sourceTree === SOURCE_APPROVAL_SUCCESSOR.sourceTree,
+    sourceTree === PINS.sourceTree ||
+      sourceTree === SOURCE_APPROVAL_SUCCESSOR.sourceTree ||
+      sourceTree === SOURCE_APPROVAL_GEOMETRY.sourceTree,
     "unapproved source tree",
   );
 }
@@ -1433,6 +1440,81 @@ function selfTest() {
       SOURCE_APPROVAL_SUCCESSOR.sourceTree,
     ),
   );
+  good(() => assertApprovedSourceTree(SOURCE_APPROVAL_GEOMETRY.sourceTree));
+  const geometryExpected = buildExpectedProvenance(
+    SOURCE_APPROVAL_GEOMETRY.commit,
+    SOURCE_APPROVAL_GEOMETRY.sourceTree,
+  );
+  good(() => {
+    assert.equal(Object.keys(geometryExpected).length, 9);
+    assert.deepEqual(geometryExpected, {
+      ...expected,
+      head: SOURCE_APPROVAL_GEOMETRY.commit,
+      sourceTree: SOURCE_APPROVAL_GEOMETRY.sourceTree,
+    });
+    assertIdentity(SOURCE_APPROVAL_GEOMETRY.commit, {}, geometryExpected, SOURCE_APPROVAL_GEOMETRY.sourceTree);
+    assert.deepEqual(buildExpectedProvenance(APPROVAL_COMMIT), expected);
+  });
+  const geometryCI = {
+    ...successorCI,
+    GITHUB_SHA: SOURCE_APPROVAL_GEOMETRY.commit,
+  };
+  for (const event of ["pull_request", "merge_group"])
+    good(() =>
+      assertIdentity(
+        SOURCE_APPROVAL_GEOMETRY.commit,
+        { ...geometryCI, GITHUB_EVENT_NAME: event },
+        undefined,
+        SOURCE_APPROVAL_GEOMETRY.sourceTree,
+      ),
+    );
+  for (const head of [undefined, "0".repeat(40)])
+    bad(() =>
+      assertIdentity(
+        SOURCE_APPROVAL_GEOMETRY.commit,
+        { ...geometryCI, GITHUB_SHA: head },
+        undefined,
+        SOURCE_APPROVAL_GEOMETRY.sourceTree,
+      ),
+    );
+  for (const head of [undefined, "malformed HEAD"])
+    bad(() => buildExpectedProvenance(head, SOURCE_APPROVAL_GEOMETRY.sourceTree));
+  bad(() => assertIdentity(SOURCE_APPROVAL_GEOMETRY.commit, {}, undefined, SOURCE_APPROVAL_GEOMETRY.sourceTree));
+  bad(() =>
+    assertIdentity(
+      SOURCE_APPROVAL_GEOMETRY.commit,
+      {},
+      { ...geometryExpected, head: "0".repeat(40) },
+      SOURCE_APPROVAL_GEOMETRY.sourceTree,
+    ),
+  );
+  bad(() =>
+    assertIdentity(SOURCE_APPROVAL_GEOMETRY.commit, geometryCI, geometryExpected, SOURCE_APPROVAL_GEOMETRY.sourceTree),
+  );
+  bad(() =>
+    assertIdentity(
+      SOURCE_APPROVAL_GEOMETRY.commit,
+      { ...geometryCI, GITHUB_EVENT_NAME: "push" },
+      undefined,
+      SOURCE_APPROVAL_GEOMETRY.sourceTree,
+    ),
+  );
+  for (const env of [{ CI: "true" }, { ...geometryCI, GITHUB_ACTIONS: "false" }])
+    bad(() => assertIdentity(SOURCE_APPROVAL_GEOMETRY.commit, env, undefined, SOURCE_APPROVAL_GEOMETRY.sourceTree));
+  for (const [actual, substituted] of [
+    [SOURCE_APPROVAL_GEOMETRY.sourceTree, PINS.sourceTree],
+    [PINS.sourceTree, SOURCE_APPROVAL_GEOMETRY.sourceTree],
+    [SOURCE_APPROVAL_GEOMETRY.sourceTree, SOURCE_APPROVAL_SUCCESSOR.sourceTree],
+    [SOURCE_APPROVAL_SUCCESSOR.sourceTree, SOURCE_APPROVAL_GEOMETRY.sourceTree],
+  ])
+    bad(() =>
+      assertIdentity(
+        SOURCE_APPROVAL_GEOMETRY.commit,
+        {},
+        buildExpectedProvenance(SOURCE_APPROVAL_GEOMETRY.commit, substituted),
+        actual,
+      ),
+    );
   const prop = (key, value) => ({
     key,
     value,
@@ -2146,10 +2228,9 @@ function selfTest() {
   sourceGit(["init", "--quiet"]);
   sourceGit(["symbolic-ref", "HEAD", "refs/6915/source-control"]);
   const sourceHeads = new Map(
-    [PINS.sourceTree, SOURCE_APPROVAL_SUCCESSOR.sourceTree, unknownSourceTree].map((tree) => [
-      tree,
-      sourceGit(["mktree", "--missing"], `040000 tree ${tree}\tsrc\n`),
-    ]),
+    [PINS.sourceTree, SOURCE_APPROVAL_SUCCESSOR.sourceTree, SOURCE_APPROVAL_GEOMETRY.sourceTree, unknownSourceTree].map(
+      (tree) => [tree, sourceGit(["mktree", "--missing"], `040000 tree ${tree}\tsrc\n`)],
+    ),
   );
   const originalCwd = process.cwd(),
     originalEnv = { ...process.env };
@@ -2176,7 +2257,7 @@ function selfTest() {
       process.env.GITHUB_SHA = head;
       return head;
     };
-    for (const tree of [PINS.sourceTree, SOURCE_APPROVAL_SUCCESSOR.sourceTree]) {
+    for (const tree of [PINS.sourceTree, SOURCE_APPROVAL_SUCCESSOR.sourceTree, SOURCE_APPROVAL_GEOMETRY.sourceTree]) {
       const head = selectSource(tree);
       good(() => {
         const observed = readApprovedCheckout();
@@ -2200,6 +2281,10 @@ function selfTest() {
     for (const [beforeTree, afterTree] of [
       [PINS.sourceTree, SOURCE_APPROVAL_SUCCESSOR.sourceTree],
       [SOURCE_APPROVAL_SUCCESSOR.sourceTree, PINS.sourceTree],
+      [SOURCE_APPROVAL_GEOMETRY.sourceTree, PINS.sourceTree],
+      [PINS.sourceTree, SOURCE_APPROVAL_GEOMETRY.sourceTree],
+      [SOURCE_APPROVAL_GEOMETRY.sourceTree, SOURCE_APPROVAL_SUCCESSOR.sourceTree],
+      [SOURCE_APPROVAL_SUCCESSOR.sourceTree, SOURCE_APPROVAL_GEOMETRY.sourceTree],
     ]) {
       selectSource(beforeTree);
       const frozen = readApprovedCheckout();
