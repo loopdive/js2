@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import { readBeforeIrAllocationProvenanceLookup } from "./ir-allocation-provenance-lookup-successor.js";
 
 export const irValidationAnalysisReceiptPath = "tests/helpers/ir-validation-analysis-relocation.json";
 const receiptSha256 = "9a52664fbba6044d168f428f9398e5d2bff923cf7cac1adc6aae04827431e969";
@@ -23,8 +24,10 @@ export const irValidationAnalysisCurrentPaths: readonly string[] = Object.freeze
   "src/ir/program/allocations.ts",
   "src/ir/program/class-layouts.ts",
 ]);
-export const readIrValidationAnalysisActual = (path: string): string =>
+const readIrValidationAnalysisRaw = (path: string): string =>
   readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
+export const readIrValidationAnalysisActual = (path: string): string =>
+  readBeforeIrAllocationProvenanceLookup(path, readIrValidationAnalysisRaw);
 type Reader = typeof readIrValidationAnalysisActual;
 export const irValidationAnalysisSha256 = (source: string | Uint8Array): string =>
   createHash("sha256").update(source).digest("hex");
