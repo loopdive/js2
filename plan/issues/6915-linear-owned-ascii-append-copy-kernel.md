@@ -1663,3 +1663,26 @@ append source-successor qualification, not native completion or performance
 acceptance. New required-quality/advisory CI artifacts must still be retrieved
 and inspected after normal publication through existing PR6593. HOLD remains;
 A retains final integration and queue. No other source approval is implied.
+
+### Actual downloaded CI archives: geometry source refusal — 2026-10-09
+
+Run37904506861/attempt1 on published a672175bea executed actual synthetic
+checkout `340fcf4da0bad7ca8ff02132a638f98685dfcf3a`. Its parents independently
+match canonical b47c6e4 and B a672175; source tree is
+`171606514a3cf6733e82eb11549a659856d68c1a`, outside the deliberately finite
+approved set. Both required-quality113734609514 and selected-advisory113735341401
+preserve parent refusal before spawn, zero child observations. Quality failed;
+advisory wrapper green is not acceptance. No automatic repin or rerun occurred.
+
+Both new uploader steps succeeded. Actual artifacts11603409132/11603983003 were
+downloaded; each2754-byte ZIP digest matches GitHub and parent rehash. Five
+partial files retain their distinct run-hdoGoC/run-8EvXZ2 paths. Full metadata,
+ZIPs, raw logs and extracted evidence are retained under
+`plan/log/6915-linear-append-20261007/ci-current-geometry-20261009/`.
+Expiry is2027-01-07T08:22:00Z, not permanent retention. This proves actual
+partial-failure archive transport, not full passing CI receipt equality.
+
+The next dependency is A's separately reviewed exact geometry-source approval
+contract and bounded qualification authority. Original failed CI epochs remain
+failed; the tested local2a8 result is not relabeled as newer-main equivalence.
+HOLD, native/performance/equivalence limitations and A queue ownership remain.
