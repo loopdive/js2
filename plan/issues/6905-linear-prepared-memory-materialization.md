@@ -1099,3 +1099,51 @@ Original writer handoff, composed identities and measured results remain
 pending. Publish through existing PR6577 with HOLD intact; A owns shared
 integration and protected queue. The separate append source approval does not
 automatically admit this newer geometry source epoch.
+
+### Composed baseline diagnostic plan — 2026-10-09
+
+Parent normally composed verified canonical main
+`cffb28679df96764e295fd2064e0a4ceec643efe` before the released import edit.
+This canonical advance adds benchmark/docs metadata over b47; canonical source
+remains1716065. The clean composed baseline HEAD is
+`cdde1880d00af27156751557739d5e2a4e5dcf35`, source tree
+`712bfef554321f3fe081f72bb89654d7dc6d8104`. Existing initializer SHA829df3,
+both retained test hashes0afcb/8c378 and delivered endpoint08c85d are unchanged.
+No initializer edit or claim transfer occurred. This merge is not qualification.
+
+Astra separately clears an unchanged **baseline-only diagnostic** while the
+writer handoff remains pending. Its new scratch instrument must preserve the
+historical main-845 runner/archive and independently bind the exact HEAD/tree.
+Capture the complete committed source population, modes and physical hashes;
+reject missing/symlink/dirty/untracked source. Bind both unchanged tests and the
+complete package/lock/workspace/TS/Vite/Vitest/concurrency configuration census,
+instrument bytes, actual cwd/command, Node/V8/pnpm and effective environment.
+Require retained absent NODE_OPTIONS/JS2WASM_LINEAR_IR without silently
+overriding incoming settings. Recheck after execution against the original
+freeze, never a freshly selected epoch.
+
+Use the unchanged two-file Vitest command and fork settings, default+JSON
+reporters, serialized execution and fresh output paths. Always retain raw
+streams, reporter, input manifests, terminal receipt and after-custody failures.
+Preserve actual status1 as1; spawn/signal/timeout/custody failure must never be
+classified as an ordinary completed red result or hidden by successful archival.
+Do not predeclare24pass/1fail, force the historical1561-character error, rewrite
+tests, retry failures or manufacture missing observations.
+
+Validate exactly25 named assertions, eight ordered observation IDs with their
+original provenance/population and five complete binary witnesses with matching
+lengths/hashes. Preserve complete unnormalized statuses/errors and all raw
+source rows. Changed diagnostics or missing witnesses block preservation
+acceptance; baseline alone cannot establish candidate equivalence or native1.25.
+
+Before a compiler child, exercise the real custody/receipt predicates with
+inert fixtures: valid snapshot; wrong HEAD/tree; source mutation/missing/extra
+or symlink; each test mutation; missing/changed config; toolchain/environment
+mismatch; after drift; ordinary exit1 distinguished from spawn/signal/timeout;
+missing/duplicate observations/assertions; corrupt binary; secondary cleanup
+failure retained alongside the primary failure. Report only executed counts.
+Sol6.1 Medium may author only the new scratch instrument/evidence in its own
+isolated worktree after its exact baseline-diagnostic claim is effect-read.
+Parent/Astra review precedes the serialized diagnostic; the source-writer claim
+and one-import handoff remain untouched. No implementation-entry/native release,
+append-source approval, HOLD removal, proof repin or queue authority follows.
