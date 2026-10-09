@@ -2,10 +2,11 @@
   "id": "6921",
   "slice": "coercing-dyn-effects",
   "assignee": "ttraenkler/claude-session-c-coercing-dyn-effects-20261008",
-  "requested_by": "ttraenkler/claude-session-c-coercing-dyn-effects-20261008",
-  "status": "in-progress",
+  "requested_by": "noreply@anthropic.com",
+  "status": "done",
   "branch": "claude/ir-migration-completion-lf3fz0",
   "claimed_at": "2026-10-08T21:26:57Z",
-  "updated_at": "2026-10-08T21:26:57Z",
-  "write_id": "24596-8xtxg149"
+  "updated_at": "2026-10-09T03:37:53Z",
+  "write_id": "555-8fdpy0zl",
+  "released_at": "2026-10-09T03:37:53Z"
 }
