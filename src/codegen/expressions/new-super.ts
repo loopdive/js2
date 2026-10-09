@@ -110,8 +110,8 @@ import { resolvePromiseSubclassName } from "./promise-subclass.js"; // (#5197 r3
 import { armExternF64ArgTypeGuard, armExternRefArgTypeGuard } from "../extern-arg-marshal.js"; // (#6615 / #5383 S28, #6619 / #5383 S32)
 import { armConstructIsConstructorGuard, primitiveWrapperConstructThrow } from "../construct-is-constructor-guard.js"; // (#6612 / #5383 S25)
 import { linkCompatibleDeclaredStructAncestor } from "../struct-hierarchy-layout.js";
-import { emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
-import { emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; // (#4438) §10.2.2
+import { admitBoundValueConstruct, emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
+import { emitOrdinaryFunctionConstructOnNull, emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; // (#4438) §10.2.2, (#6651 W2a)
 import * as bcv from "../builtin-ctor-value-invoke.js"; // (#6713) RegExp / Error-family carriers as values
 import { emitBuiltinArrayConstructOnNull, emitBuiltinPromiseConstructOnNull } from "./builtin-native-dyn-construct.js";
 import {
@@ -137,7 +137,15 @@ import {
 } from "./eval-inline.js";
 import { isRuntimeEvalCallableResultExpression } from "./runtime-eval-callable-result.js";
 import { emitToPropertyKeyOnce } from "./computed-member-reference.js"; // (#5153 D) §12.3.5.1 key evaluation
-import { nullishExternTestInstrs } from "../any-helpers.js"; // (#5153 C.1) RequireObjectCoercible on the super base
+import { ensureExternStrictEqHelper, nullishExternTestInstrs } from "../any-helpers.js"; // (#5153 C.1) RequireObjectCoercible on the super base
+import {
+  beginFunctionIntrinsicConstruct,
+  isFunctionIntrinsicValueCallee,
+} from "../closures/function-intrinsic-construct.js"; // (#6651 W2a)
+import {
+  emitStandaloneFunctionIntrinsicValue,
+  emitStandaloneGlobalFunctionPropertyValue,
+} from "../function-intrinsic-carrier.js"; // (#6651 W2a)
 import { ensureNativeIteratorRuntime, externIsObjectInstrs } from "../iterator-native.js"; // (#5267 A) native GetIterator + §7.4 Object test for the collection-ctor drive
 import { buildStandardTryTable } from "../../ir/try-table.js"; // (#5267 A) IteratorClose-on-throw wrapper
 import {
@@ -3870,7 +3878,15 @@ function tryCompileNativeConstructFromValue(
   // proven Proxy-constructor value (`tracesToProxyConstructorValue` already
   // claims `<realm global>.Proxy`); only the identifier form was admitted.
   const memberProxyCtorValue = isMemberProxyConstructorCallee(ctx, calleeExpr);
-  if (!ts.isIdentifier(calleeExpr) && !runtimeEvalCallableResult && !dynamicCtorValue && !memberProxyCtorValue)
+  // (#6651 W2a) `new other.Function()` / `var OF = other.Function; new OF()`.
+  const functionIntrinsicCallee = isFunctionIntrinsicValueCallee(ctx, calleeExpr);
+  if (
+    !ts.isIdentifier(calleeExpr) &&
+    !runtimeEvalCallableResult &&
+    !dynamicCtorValue &&
+    !memberProxyCtorValue &&
+    !functionIntrinsicCallee
+  )
     return undefined;
   // A compiled fnctor for this binding means the typed-struct path owns it.
   if (ts.isIdentifier(calleeExpr) && ctx.funcConstructorMap.has(calleeExpr.text)) return undefined;
@@ -3885,13 +3901,15 @@ function tryCompileNativeConstructFromValue(
     memberProxyCtorValue || (ts.isIdentifier(calleeExpr) && tracesToProxyConstructorValue(ctx, calleeExpr));
   if (
     !runtimeFunctionAlias &&
+    !functionIntrinsicCallee &&
     !runtimeEvalCallableResult &&
     !proxyValue &&
     !proxyCtorValue &&
     !dynamicCtorValue &&
     !resolvesToConstructableFunctionValue(ctx, calleeExpr) &&
     !resolvesToLateAssignedConstructSignatureValue(ctx, calleeExpr) &&
-    !(noJsHost(ctx) && isDefaultExpressionImport(ctx, calleeExpr)) // (#6720) the snapshot cell's VALUE
+    !(noJsHost(ctx) && isDefaultExpressionImport(ctx, calleeExpr)) && // (#6720) the snapshot cell's VALUE
+    !admitBoundValueConstruct(ctx, calleeExpr) // (#6651 W2b) `var D = f.bind(…); new D()`
   )
     return undefined;
 
@@ -3899,7 +3917,15 @@ function tryCompileNativeConstructFromValue(
   // closure struct. Reserve the argv builders + generic apply bridge used by
   // the construct driver's exact marker arm; ordinary function values retain
   // the existing method-dispatch lowering.
-  if (runtimeFunctionAlias || runtimeEvalCallableResult || proxyValue || proxyCtorValue) {
+  const boundValue = ctx.funcMap.has("__construct_bound"); // (#6651 W2b) its driver calls `__apply_closure`
+  if (
+    runtimeFunctionAlias ||
+    functionIntrinsicCallee ||
+    runtimeEvalCallableResult ||
+    proxyValue ||
+    proxyCtorValue ||
+    boundValue
+  ) {
     if (proxyValue || proxyCtorValue) ensureNativeProxyRuntime(ctx);
     // (#5196 R3-0) Arm the driver's proxy-carrier identity test for this module.
     if (proxyCtorValue) ctx.proxyConstructorValueNewSite = true;
@@ -4034,6 +4060,18 @@ function tryCompileNativeConstructFromValue(
     argLocals.push(argLocal);
   }
 
+  // (#6651 W2a) A runtime `%Function%` callee is §20.2.1.1 CreateDynamicFunction:
+  // the bare `new Function(<args>)` lowering, chosen by runtime identity. Every
+  // other callee value takes the unchanged lowering below (the arm's else).
+  const functionIntrinsicArm = functionIntrinsicCallee
+    ? beginFunctionIntrinsicConstruct(ctx, fctx, calleeLocal, {
+        emitIntrinsic: emitStandaloneFunctionIntrinsicValue,
+        emitConstantFunction: (c, f) => tryStaticNewFunction(c, f, args),
+        strictEq: ensureExternStrictEqHelper,
+        emitAlternateIntrinsic: (c, f) => emitStandaloneGlobalFunctionPropertyValue(c, f, calleeExpr),
+      })
+    : undefined;
+
   // (#4626) A `$__ta_ctor` runtime value is NOT an ordinary function value:
   // handing it to the native-construct driver builds a plain object with no
   // TypedArray behavior (`function go(TA) { new TA(2) }` in the
@@ -4095,6 +4133,7 @@ function tryCompileNativeConstructFromValue(
   } else {
     fctx.body.push(...nativeDriverCall);
   }
+  functionIntrinsicArm?.finish();
   return { kind: "externref" };
 }
 
@@ -7491,6 +7530,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       resolvesToDynamicAnyCtorValue(ctx, expr.expression)) ||
     isValueSelectingNewSite(ctx, expr.expression, className) || // (#6738)
     isMemberProxyConstructorCallee(ctx, expr.expression) || // (#6651 U3)
+    isFunctionIntrinsicValueCallee(ctx, expr.expression) || // (#6651 W2a)
     (noJsHost(ctx) && ts.isTaggedTemplateExpression(expr.expression)) // (#6774 S3)
   ) {
     const nativeCtor = tryCompileNativeConstructFromValue(ctx, fctx, expr.expression, expr.arguments ?? []);
@@ -7978,6 +8018,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
           emitBuiltinCollectionConstructOnNull(ctx, fctx, taDescLocal, taArgLocals); // (#6720) Map/Set carrier value
           emitBuiltinArrayConstructOnNull(ctx, fctx, taDescLocal, taArgLocals, builtinNativeConstructServices);
           emitBuiltinPromiseConstructOnNull(ctx, fctx, taDescLocal, taArgLocals, builtinNativeConstructServices);
+          emitOrdinaryFunctionConstructOnNull(ctx, fctx, dynCallee, taDescLocal, taArgLocals); // (#6651 W2a) last
           return { kind: "externref" };
         }
       }

@@ -1,0 +1,15 @@
+function g(a: number): number {
+  a = a * 2;
+  return a + 1;
+}
+export function main(): number {
+  const r = g(3);
+  return r * 10;
+}
+export function loop(n: number): number {
+  let acc = 0;
+  for (let i = 0; i < n; i++) {
+    acc = acc + g(i);
+  }
+  return acc;
+}

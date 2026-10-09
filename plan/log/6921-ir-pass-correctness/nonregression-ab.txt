@@ -1,0 +1,54 @@
+# #6921 non-regression A/B (file-copy swap of src/ir/passes/inline-small.ts + src/ir/analysis/effects.ts), base 8452732f0b, node v22.22.0, 2026-10-08
+
+## 40 targeted files: every test mentioning inlineSmall/deadCode/effectsOf/isSideEffecting/effectsArePure/dyn.to_number, + ir-gvn, cross-backend-diff, issue-3518-lowering-analysis-preservation
+base      {"failed":705,"passed":576}
+candidate {"failed":706,"passed":575}
+set diff (< base only, > candidate only):
+< passed	tests/issue-3518-semantic-verification-ownership.test.ts	semantic implementation preservation preserves every selected 'src/ir/effects.ts' declaration in 'src/ir/analysis/effects.ts'
+> failed	tests/issue-3518-semantic-verification-ownership.test.ts	semantic implementation preservation preserves every selected 'src/ir/effects.ts' declaration in 'src/ir/analysis/effects.ts'
+pre-existing non-passing on base, per file:
+  349 tests/issue-3518-semantic-provider-boundary.test.ts
+  117 tests/issue-3518-core-vocabulary-evolution.test.ts
+  104 tests/issue-3518-program-data-contract-boundary.test.ts
+  55 tests/issue-3518-lowering-analysis-preservation.test.ts
+  53 tests/issue-3518-nested-stackification-policy-evolution.test.ts
+  10 tests/issue-4456.test.ts
+  5 tests/issue-3522-ir-cross-owner-free-function.test.ts
+  4 tests/issue-3518-core-vocabulary-seam.test.ts
+  3 tests/issue-3518-semantic-verification-ownership.test.ts
+  3 tests/issue-4523-type-rule-coverage.test.ts
+  1 tests/issue-2856-inline-small-buffer-caller.test.ts
+  1 tests/issue-3521-r2-withdrawal-telemetry.test.ts
+
+## tests/equivalence (224 files)
+base      {"failed":22,"passed":1764,"todo":3}
+candidate {"failed":22,"passed":1764,"todo":3}
+set diff (< base only, > candidate only):
+(identical)
+pre-existing non-passing on base, per file:
+  6 tests/equivalence/tdz-reference-error.test.ts
+  5 tests/equivalence/null-dereference-guards.test.ts
+  3 tests/equivalence/logical-conditional-identity.test.ts
+  2 tests/equivalence/new-non-constructor.test.ts
+  1 tests/equivalence/arguments-nested-and-loops.test.ts
+  1 tests/equivalence/array-inline-return.test.ts
+  1 tests/equivalence/delete-sentinel.test.ts
+  1 tests/equivalence/misc-small-patterns.test.ts
+  1 tests/equivalence/reflect-api.test.ts
+  1 tests/equivalence/yield-as-expression.test.ts
+  1 tests/equivalence/issue-1205.test.ts
+  1 tests/equivalence/issue-1334.test.ts
+  1 tests/equivalence/issue-1454.test.ts
+
+## WAT byte comparison, 13 website/playground/examples/*.ts x {gc, standalone}
+26/26 identical
+
+## The one flipped test is a source-text preservation receipt, not behaviour
+tests/issue-3518-semantic-verification-ownership.test.ts pins SHA-256 of the
+declaration text of effectsOf / isSideEffecting (lines 65 and 70). Any edit to
+those two functions flips it. Candidate hashes (computed with the test's own
+rule, sha256(node.getFullText().trim())):
+  effectsOf       22e85c1cdc712c8385833a063d55ec991353d2d1d05ad675708ba0051808ea43 -> 41e55ffd4ab4d440969a4b431db300e76f3a4f61fac6403c5fbe3d72de81077a
+  isSideEffecting 668bfd625566b625357bc478188c135642fabc1146803a8968c7816e60d5d1a5 -> 1367e99f4d1fbe57c4bda1b61e16ef5eebc4ee18e61d315d5525390e1be0d00c
+The test file is outside this slice's edit ownership; the receipt update is
+left to the coordinator.
