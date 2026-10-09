@@ -16,6 +16,7 @@ import {
   linkedMallocPrologue,
 } from "./linked-arena.js";
 import { isLinearStringLiteralCacheGlobal } from "./string-literals.js";
+import { checkedArrayAllocationSize, checkedArrayCapacityDoubling } from "./runtime/array-allocation.js";
 
 /**
  * Heap starts at byte offset 1024 (leave low addresses for null/sentinel).
@@ -858,12 +859,8 @@ export function addArrayRuntime(mod: WasmModule): void {
     [{ kind: "i32" }],
     [],
     (local1Idx) => [
-      // Allocate: 16 + cap*8
-      { op: "i32.const", value: 16 },
-      { op: "local.get", index: 0 }, // cap
-      { op: "i32.const", value: 8 },
-      { op: "i32.mul" },
-      { op: "i32.add" },
+      // Check the unsigned capacity before computing the allocation byte size.
+      ...checkedArrayAllocationSize(0),
       { op: "call", funcIdx: mallocIdx },
       { op: "local.set", index: local1Idx },
       // Store tag byte 0x01 (Array) at ptr+0
@@ -907,12 +904,11 @@ export function addArrayRuntime(mod: WasmModule): void {
         { op: "local.get", index: 0 },
         { op: "i32.load", align: 2, offset: 8 },
         { op: "local.set", index: lenLocal },
-        // newCap = *(ptr+12) * 2
+        // Check the old capacity before doubling can wrap or exceed the byte bound.
         { op: "local.get", index: 0 },
         { op: "i32.load", align: 2, offset: 12 },
-        { op: "i32.const", value: 2 },
-        { op: "i32.mul" },
         { op: "local.set", index: newCapLocal },
+        ...checkedArrayCapacityDoubling(newCapLocal),
         // if newCap < minCap: newCap = minCap
         { op: "local.get", index: newCapLocal },
         { op: "local.get", index: 1 },
@@ -939,12 +935,8 @@ export function addArrayRuntime(mod: WasmModule): void {
           ],
           else: [],
         },
-        // newPtr = __malloc(16 + newCap*8)
-        { op: "i32.const", value: 16 },
-        { op: "local.get", index: newCapLocal },
-        { op: "i32.const", value: 8 },
-        { op: "i32.mul" },
-        { op: "i32.add" },
+        // Check the selected capacity, including minCap, before allocation.
+        ...checkedArrayAllocationSize(newCapLocal),
         { op: "call", funcIdx: mallocIdx },
         { op: "local.set", index: newPtrLocal },
         // Header: tag 0x01 (Array), len, newCap

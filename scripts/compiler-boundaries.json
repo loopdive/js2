@@ -2830,6 +2830,11 @@
       "layer": "legacy-linear"
     },
     {
+      "path": "src/codegen-linear/runtime/array-allocation.ts",
+      "state": "unmigrated",
+      "layer": "legacy-linear"
+    },
+    {
       "path": "src/codegen-linear/simd.ts",
       "state": "unmigrated",
       "layer": "legacy-linear"

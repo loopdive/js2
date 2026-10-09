@@ -1,0 +1,6 @@
+{"kind":"array-new","cap":0,"usedBefore":0,"usedAfter":16,"error":"Cannot mix BigInt and other types, use explicit conversions"}
+{"kind":"array-new","cap":4,"usedBefore":16,"usedAfter":64,"error":"Cannot mix BigInt and other types, use explicit conversions"}
+{"kind":"array-new","cap":536870912,"usedBefore":64,"usedAfter":80,"error":"Cannot mix BigInt and other types, use explicit conversions"}
+{"kind":"array-new","cap":536870913,"usedBefore":80,"usedAfter":104,"error":"Cannot mix BigInt and other types, use explicit conversions"}
+{"kind":"array-new","cap":-1,"usedBefore":104,"usedAfter":112,"error":"Cannot mix BigInt and other types, use explicit conversions"}
+{"kind":"array-grow","ptr":1136,"newPtr":1184,"usedBefore":160,"usedAfter":176,"capacity":536870912,"length":1}

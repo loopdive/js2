@@ -1,0 +1,82 @@
+{
+  "baselineSha256": "3f1ca8ace818c004e9c874316146ac506a3678087b1c4f5180f5673ca9d368ba",
+  "candidateSha256": "6fbc8dae3ac37fea79fae6080a3d0d4488d84262c7fe297b17487b4c8b503c6d",
+  "baselineProvenance": {
+    "head": "c0a314636dfcaa437df1468f922bf0d6b0c5bcae",
+    "runtimeSha256": "2a562751f9e2c6291944836681b3bc99b402c2d154a88c429ee16013eaf09e0f",
+    "helperSha256": "absent",
+    "testSha256": "17ae9008f80f9ea969afa5aa9e0305f57ef6fc47ad2936613446f2d65b71bc3f",
+    "node": "v22.23.2",
+    "v8": "12.4.254.21-node.56",
+    "execArgv": ["--max-old-space-size=1024", "--expose-gc", "--conditions", "node", "--conditions", "development"],
+    "nodeOptions": null,
+    "linearIrFlag": "1",
+    "harness": "real-emitted-wasm / nonallocating-malloc-observer / actual-source-IR",
+    "runtimeOptions": {
+      "exposeArenaReset": true
+    },
+    "sourceOptions": {
+      "target": "linear",
+      "optimize": false,
+      "allocator": "arena-reset"
+    },
+    "sourceControlConfigurationNote": "Extra usage-measured configuration: arena-reset and optimize:false; original parent baseline control used the default allocator.",
+    "layout": {
+      "B": 16,
+      "S": 8,
+      "C": 536870909,
+      "H": 268435454
+    },
+    "retainedParentReportingLimitation": "The earlier BigInt reporting/setup error is not an overflow trap."
+  },
+  "candidateProvenance": {
+    "head": "f221a809902cf630c1df433298e59ecc85c492ff",
+    "runtimeSha256": "5e16ee311be08512df56261a3ab4945ad3c5ddc61a750998a00064c0fc41882a",
+    "helperSha256": "f20cd8524e10e7b5ac47ad4686442d0662a4b61245f8965ab013a91b9e9ba3c4",
+    "testSha256": "17ae9008f80f9ea969afa5aa9e0305f57ef6fc47ad2936613446f2d65b71bc3f",
+    "node": "v22.23.2",
+    "v8": "12.4.254.21-node.56",
+    "execArgv": ["--max-old-space-size=1024", "--expose-gc", "--conditions", "node", "--conditions", "development"],
+    "nodeOptions": null,
+    "linearIrFlag": "1",
+    "harness": "real-emitted-wasm / nonallocating-malloc-observer / actual-source-IR",
+    "runtimeOptions": {
+      "exposeArenaReset": true
+    },
+    "sourceOptions": {
+      "target": "linear",
+      "optimize": false,
+      "allocator": "arena-reset"
+    },
+    "sourceControlConfigurationNote": "Extra usage-measured configuration: arena-reset and optimize:false; original parent baseline control used the default allocator.",
+    "layout": {
+      "B": 16,
+      "S": 8,
+      "C": 536870909,
+      "H": 268435454
+    },
+    "retainedParentReportingLimitation": "The earlier BigInt reporting/setup error is not an overflow trap."
+  },
+  "identicalControlRows": [
+    "small-new-0",
+    "small-new-4",
+    "small-grow-0-1",
+    "small-grow-4-5",
+    "small-grow-4-12",
+    "new-C-minus-1",
+    "new-C",
+    "grow-min-C",
+    "grow-old-H",
+    "parent-compile",
+    "parent-run"
+  ],
+  "baseline": {
+    "passed": 10,
+    "failed": 11
+  },
+  "candidate": {
+    "passed": 21,
+    "failed": 0
+  },
+  "rowsPerRun": 23
+}
