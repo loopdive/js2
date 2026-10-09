@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-10-09T02:31:30.725Z",
-  "baseline_generated_at": "2026-10-09T02:31:30.725Z",
-  "baseline_sha": "58994f7b4d2cbc1a239b8fb0c0e3f39644066489",
+  "timestamp": "2026-10-09T03:39:06.873Z",
+  "baseline_generated_at": "2026-10-09T03:39:06.873Z",
+  "baseline_sha": "03984518d985cfd74cb4d207de8989a5611b2ddf",
   "oracle_version": 14,
   "mode": {
     "target": "standalone",
@@ -11,24 +11,24 @@
   },
   "summary": {
     "total": 48232,
-    "pass": 41988,
+    "pass": 41990,
     "fail": 4349,
     "compile_error": 1860,
-    "compile_timeout": 17,
+    "compile_timeout": 15,
     "skip": 18,
-    "compilable": 46337,
-    "host_free_pass": 41988,
+    "compilable": 46339,
+    "host_free_pass": 41990,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
-        "pass": 40945,
+        "pass": 40947,
         "fail": 4320,
         "compile_error": 1846,
-        "compile_timeout": 17,
+        "compile_timeout": 15,
         "skip": 18,
-        "compilable": 45265,
-        "host_free_pass": 40945,
+        "compilable": 45267,
+        "host_free_pass": 40947,
         "stale": 0,
         "label": "ECMAScript current standard"
       },
@@ -58,25 +58,25 @@
       },
       "official": {
         "total": 48232,
-        "pass": 41988,
+        "pass": 41990,
         "fail": 4349,
         "compile_error": 1860,
-        "compile_timeout": 17,
+        "compile_timeout": 15,
         "skip": 18,
-        "compilable": 46337,
-        "host_free_pass": 41988,
+        "compilable": 46339,
+        "host_free_pass": 41990,
         "stale": 0,
         "label": "standard + annex_b (default)"
       },
       "full": {
         "total": 48735,
-        "pass": 42224,
+        "pass": 42226,
         "fail": 4365,
         "compile_error": 2015,
-        "compile_timeout": 17,
+        "compile_timeout": 15,
         "skip": 114,
-        "compilable": 46589,
-        "host_free_pass": 42224,
+        "compilable": 46591,
+        "host_free_pass": 42226,
         "stale": 0,
         "label": "standard + annex_b + proposals"
       }
@@ -84,35 +84,35 @@
   },
   "official_summary": {
     "total": 48232,
-    "pass": 41988,
+    "pass": 41990,
     "fail": 4349,
     "compile_error": 1860,
-    "compile_timeout": 17,
+    "compile_timeout": 15,
     "skip": 18,
-    "compilable": 46337,
-    "host_free_pass": 41988,
+    "compilable": 46339,
+    "host_free_pass": 41990,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
-    "pass": 42224,
+    "pass": 42226,
     "fail": 4365,
     "compile_error": 2015,
-    "compile_timeout": 17,
+    "compile_timeout": 15,
     "skip": 114,
-    "compilable": 46589,
-    "host_free_pass": 42224,
+    "compilable": 46591,
+    "host_free_pass": 42226,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
-    "pass": 39619,
+    "pass": 39621,
     "fail": 4259,
     "compile_error": 1808,
-    "compile_timeout": 17,
+    "compile_timeout": 15,
     "skip": 18,
-    "compilable": 43878,
-    "host_free_pass": 39619,
+    "compilable": 43880,
+    "host_free_pass": 39621,
     "stale": 0
   },
   "scope_summaries": {
@@ -140,13 +140,13 @@
     },
     "standard": {
       "total": 47146,
-      "pass": 40945,
+      "pass": 40947,
       "fail": 4320,
       "compile_error": 1846,
-      "compile_timeout": 17,
+      "compile_timeout": 15,
       "skip": 18,
-      "compilable": 45265,
-      "host_free_pass": 40945,
+      "compilable": 45267,
+      "host_free_pass": 40947,
       "stale": 0
     }
   },
@@ -781,13 +781,13 @@
     {
       "name": "built-ins/Temporal",
       "path": "built-ins/Temporal",
-      "pass": 4498,
+      "pass": 4500,
       "fail": 100,
       "compile_error": 0,
-      "compile_timeout": 5,
+      "compile_timeout": 3,
       "skip": 0,
       "total": 4603,
-      "host_free_pass": 4498
+      "host_free_pass": 4500
     },
     {
       "name": "built-ins/ThrowTypeError",
@@ -1221,8 +1221,8 @@
   },
   "root_cause_map": {
     "target": "standalone",
-    "total_non_pass_non_skip": 6397,
-    "classified": 6397,
+    "total_non_pass_non_skip": 6395,
+    "classified": 6395,
     "unclassified_threshold": null,
     "has_edition_breakdown": true,
     "buckets": [
@@ -1272,14 +1272,14 @@
           "#661"
         ],
         "label": "Temporal proposal/polyfill gap",
-        "count": 105,
+        "count": 103,
         "statuses": {
           "pass": 0,
           "fail": 100,
           "compile_error": 0,
-          "compile_timeout": 5,
+          "compile_timeout": 3,
           "skip": 0,
-          "total": 105,
+          "total": 103,
           "host_free_pass": 0
         },
         "error_categories": {
@@ -1289,7 +1289,7 @@
           "unreachable": 5
         },
         "by_edition": {
-          "ES2026": 105
+          "ES2026": 103
         },
         "sample_files": [
           "test/built-ins/Temporal/Duration/prototype/subtract/precision-no-floating-point-loss.js",
@@ -2217,15 +2217,15 @@
         "sample_files": [
           "test/built-ins/Date/parse/year-zero.js",
           "test/built-ins/Date/prototype/setFullYear/arg-date-to-number.js",
-          "test/built-ins/Date/prototype/toJSON/to-primitive-value-of.js",
           "test/built-ins/Date/S15.9.3.1_A3_T6.2.js",
+          "test/built-ins/Date/prototype/toJSON/to-primitive-value-of.js",
           "test/built-ins/Date/S15.9.3.1_A3_T3.2.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: reject minus zero as extended year Expected SameValue(«-#», «NaN») to be true",
           "assertion_fail:Test262Error: \"this\" value Expected SameValue(«[object Object]», «[object Object]») to be true",
-          "assertion_fail:Test262Error: should not be called",
           "assertion_fail:Test262Error: x1.toString() must return \"[object Date]\" Expected SameValue(«\"Sun Dec # # #:#:# GMT+# (Coordinated Universal Time)\"», «\"[object Date]\"») to be true",
+          "assertion_fail:Test262Error: should not be called",
           "assertion_fail:Test262Error: parse below minimum time value Expected SameValue(«-#», «NaN») to be true"
         ]
       },
