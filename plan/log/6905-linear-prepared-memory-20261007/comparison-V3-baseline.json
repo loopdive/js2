@@ -1,0 +1,159 @@
+{
+  "arms": [
+    {
+      "path": ".tmp/6905-validation/baseline-V2.log",
+      "provenance": {
+        "issue": 6905,
+        "schemaVersion": 1,
+        "kind": "provenance",
+        "head": "609286c99f06ea7abcfed51aebd33ecaec3f454c",
+        "baseline": "609286c99f06ea7abcfed51aebd33ecaec3f454c",
+        "testSha256": "d63ce7141a98425a490405127cbbd63e382f5de857ebb8031c15da2a64ce7d31",
+        "runtimeSha256": "2a562751f9e2c6291944836681b3bc99b402c2d154a88c429ee16013eaf09e0f",
+        "helperSha256": "absent",
+        "source": "export function run(a:number,b:number):number {\n  const values=[a,b]; return values[0]+values[1]+values.length;\n}",
+        "sourceSha256": "c053da974e8cab9281de48771c81301f20b1ff90dda6302f2ce51158a1fbcac5",
+        "scalarSource": "export function run(a:number,b:number):number { return a+b+2; }",
+        "scalarSourceSha256": "05598a8527bcf04b554b932f80bb61e36e8b138a143e68384858f3bd92a33b08",
+        "logicalFile": "./entry.ts",
+        "node": "v22.23.2",
+        "v8": "12.4.254.21-node.56",
+        "execArgv": ["--max-old-space-size=1024", "--expose-gc", "--conditions", "node", "--conditions", "development"],
+        "nodeOptions": "",
+        "options": {
+          "target": "linear",
+          "optimize": false,
+          "sourceMap": false,
+          "moduleName": "issue-6905"
+        },
+        "expectedRows": 8,
+        "sourceRows": 5,
+        "initializerUnitRows": 3
+      },
+      "rows": [
+        {
+          "id": "native",
+          "status": "passed",
+          "phase": "native value"
+        },
+        {
+          "id": "shared-scalar",
+          "status": "passed",
+          "phase": "runtime value"
+        },
+        {
+          "id": "direct-allocation",
+          "status": "passed",
+          "phase": "runtime value"
+        },
+        {
+          "id": "shared-allocation",
+          "status": "failed",
+          "phase": "shared pipeline"
+        },
+        {
+          "id": "overlay-allocation",
+          "status": "passed",
+          "phase": "runtime value"
+        },
+        {
+          "id": "unit-abi",
+          "status": "passed",
+          "phase": "unit ABI"
+        },
+        {
+          "id": "unit-freshness",
+          "status": "passed",
+          "phase": "unit freshness"
+        },
+        {
+          "id": "unit-runtime",
+          "status": "passed",
+          "phase": "unit runtime"
+        }
+      ]
+    },
+    {
+      "path": ".tmp/6905-validation/baseline-V3.log",
+      "provenance": {
+        "issue": 6905,
+        "schemaVersion": 1,
+        "kind": "provenance",
+        "head": "609286c99f06ea7abcfed51aebd33ecaec3f454c",
+        "baseline": "609286c99f06ea7abcfed51aebd33ecaec3f454c",
+        "testSha256": "0afcb36a4cb3e783a06191bfe6356d568d96791d7aeca8249bfcdd580eac8d77",
+        "runtimeSha256": "2a562751f9e2c6291944836681b3bc99b402c2d154a88c429ee16013eaf09e0f",
+        "helperSha256": "absent",
+        "source": "export function run(a:number,b:number):number {\n  const values=[a,b]; return values[0]+values[1]+values.length;\n}",
+        "sourceSha256": "c053da974e8cab9281de48771c81301f20b1ff90dda6302f2ce51158a1fbcac5",
+        "scalarSource": "export function run(a:number,b:number):number { return a+b+2; }",
+        "scalarSourceSha256": "05598a8527bcf04b554b932f80bb61e36e8b138a143e68384858f3bd92a33b08",
+        "logicalFile": "./entry.ts",
+        "node": "v22.23.2",
+        "v8": "12.4.254.21-node.56",
+        "execArgv": ["--max-old-space-size=1024", "--expose-gc", "--conditions", "node", "--conditions", "development"],
+        "nodeOptions": "",
+        "options": {
+          "target": "linear",
+          "optimize": false,
+          "sourceMap": false,
+          "moduleName": "issue-6905"
+        },
+        "expectedRows": 8,
+        "sourceRows": 5,
+        "initializerUnitRows": 3
+      },
+      "rows": [
+        {
+          "id": "native",
+          "status": "passed",
+          "phase": "native value"
+        },
+        {
+          "id": "shared-scalar",
+          "status": "passed",
+          "phase": "runtime value"
+        },
+        {
+          "id": "direct-allocation",
+          "status": "passed",
+          "phase": "runtime value"
+        },
+        {
+          "id": "shared-allocation",
+          "status": "failed",
+          "phase": "shared pipeline"
+        },
+        {
+          "id": "overlay-allocation",
+          "status": "passed",
+          "phase": "runtime value"
+        },
+        {
+          "id": "unit-abi",
+          "status": "passed",
+          "phase": "unit ABI"
+        },
+        {
+          "id": "unit-freshness",
+          "status": "passed",
+          "phase": "unit freshness"
+        },
+        {
+          "id": "unit-runtime",
+          "status": "passed",
+          "phase": "unit runtime"
+        }
+      ]
+    }
+  ],
+  "comparisons": [
+    {
+      "left": ".tmp/6905-validation/baseline-V2.log",
+      "right": ".tmp/6905-validation/baseline-V3.log",
+      "compared": 8,
+      "equal": 8,
+      "differences": []
+    }
+  ]
+}
