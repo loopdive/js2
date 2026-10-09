@@ -2762,3 +2762,153 @@ Root released the serial slot after receiver session29913 TERMINATED exit0
 and authorized this documentation-only follow-up in the SAME draft PR.
 The follow-up changes only this record; it does not recertify unchanged
 implementation, CI, issue acceptance or the unfinished full-suite outcome.
+
+## PR6605 finite shepherd read: corpus setup discrepancy
+
+The resumed dedicated Sol shepherd inspected the actual changed-fixture job
+113991518212 in run37980874245 for synthetic merge
+b47e1560915bfba1b31387555a2ce5375521578f, combining published fd28d315 with
+dbf5b4f main. Its SUCCESS conclusion is advisory, NOT acceptance. The log
+reports140PASS/105FAIL/245, whereas the sealed local epoch42401 was141/104/245.
+The extra failed registration is “retains the exact unchanged nine-original
+manifest, including unresolved proxy-class”: ENOENT reading
+test262/test/built-ins/Function/prototype/toString/proxy-non-callable-throws.js
+at fixture1366. This is a setup failure before its hash assertion, not evidence
+of a new compiler semantic regression and not a passing manifest control.
+
+Root verified the physical fixture1363–1371 still requires all nine exact
+original hashes. The changed-issue matrix in ci.yml914–978 checks out the
+repository and installs dependencies but has no test262 submodule initialization;
+the separate corpus-dependent jobs explicitly initialize that submodule.
+No assertion, workflow, check, expected verdict or source was changed to hide
+the setup failure. Local104-failure preservation must NOT be presented as the
+CI result. Draft status remains justified by the actual unfinished semantic
+and architecture acceptance, independently of advisory check conclusions.
+
+Handoff: retain the corpus-presence/hash control; make any proposed CI-portable
+test input preparation an explicitly planned and separately verified change,
+without silently skipping originals or treating absent inputs as acceptance.
+The authoritative nine-original runner and full11778 remain separate required
+acceptance; this finite shepherd read supplies no new canonical PASS credit.
+This append is local until a documentation checkpoint is published.
+
+## Bounded portable manifest-unit input plan and release
+
+Root fully read Sol's196-line setup triage ac34e6b698044fd9760440eb4178fbeea8f39cb9e0d23b4471583f9d28b02b81
+and Astra's277-line implementation plan a094374d9b440e1b418752d00ae93ae969969e0484378c256842d88d37809af8.
+This subtask remains in existing issue6929; no new allocation is needed.
+The plan changes ONLY the manifest UNIT input/provenance contract, not the
+physical-corpus requirement or verdict logic of the authoritative runner.
+
+Independent root read-only proof: exact dbf gitlink and shared corpus HEAD both
+b363f29d3c43c626dc852744ad64a0b48a003693. For all9 original paths, pinned git
+blobs equal actual physical bytes and unchanged ORIGINALS hashes;6810 bytes.
+Pinned LICENSE equals shared physical LICENSE;2213 bytes, SHA256
+4dd9244dfe8197c75348c4b24ab53d29d3b1cfad143ac76b5a3d8942aa354ce0.
+No copied archive is validated merely by this receipt; written files must
+separately match the independently pinned originals before any execution claim.
+
+Root released the original Sol author in the SAME isolated constructor tree
+to add9 complete .js.archive.txt originals, LICENSE and exact provenance.json
+under tests/fixtures/issue-6929-test262-originals, a nested fixture-only helper,
+and edit ONLY the existing manifest registration plus its import. No compiler,
+workflow, hook, oracle, IR, expectation or score change is authorized.
+All245 registrations and203 semantic source/options specimens remain unchanged.
+
+Implementation plan: ALWAYS require all9 archived real original sources and
+LICENSE against fixed hashes/lengths/pin metadata. Present corpus must compare
+all9 actual originals; partial/drift/broken links/wrong file kinds must refuse.
+Only exact absent or real-empty corpus roots may report UNAVAILABLE, verified0,
+never canonical PASS or corpus presence. Do not populate test262 from archives.
+The preserved receipt still states ROOT REQUIRED; no manifest execution verdicts.
+Four positive plus27 explicitly attributed negative real-filesystem loader
+executions (24 negative families) remain inside the same registration; actual
+workspace load makes32. Shared corpus and its shim must not be mutated by
+negative controls. Missing/error cases must validate precise stage/code/path,
+not merely catch an unrelated harness exception.
+
+Root owns heavy execution and the canonical issue. Before publication: compare
+written archive buffers to pinned blobs, verify31 private controls and both
+actual corpus-present/uninitialized environments, run unchanged full245 and
+compare exact104 failure labels/203 pairs/404 binaries/406 observations with
+the existing projection. Run physical canonical checks separately. Archive
+unit input success cannot replace the known original9 result8PASS/1FAIL or
+the unchanged full11778/all74 requirement. This is an implementation release,
+not a tested fix, canonical gain or PR readiness. This record is local-only.
+
+### Required CI attribution and portable-input source verification
+
+Fresh finite shepherd pass20:06UTC found required quality job113990750224,
+run37980874245, synthetic merge b47e1560915bfba1b31387555a2ce5375521578f:
+Changed root test files must pass (#3008) actually141PASS/104FAIL/245, with
+the physical original manifest reached. This is distinct from the advisory
+job's140/105/245 missing-corpus failure. The fixture is newly added at this PR;
+the pinned-base file endpoint is404 and no identical-fixture base CI evidence
+exists in68/68 available base runs. Preserved local failure parity is NOT a
+grandfathered acceptance waiver. All245 must pass for required readiness.
+Portable inputs cannot clear the104 semantic failures. Astra is assigned
+per-failed-identity implementation planning; proxy-class5269 remains separately
+owned, no takeover/IR conflict/gate weakening authorized.
+
+Sol source-froze the eleven archive files, nested helper and the same existing
+manifest registration. Root fully read143-line handoff616794d7ea03c10b40f25ef02e1be6b809ccb3d31cd00f357d26d5c127eca848
+and complete690-line unformatted helper. Root independently reread all newly
+written buffers against fixed git pin:b363f29d3c43c626dc852744ad64a0b48a003693:
+9/9 original pinned blobs,6810bytes, eleven-file inventory, pinned LICENSE2213
+bytes. No physical corpus bytes or runner verdicts were changed.
+
+Root formatting produced helper703lines,parent1469. Focused types25343 failed
+only duplicated canonicalExecution in receipt object spread. Root retained the
+original canonicalExecution field and explicitly selected inputOrigin/sourcePin/
+archive/corpus fields instead; no runtime semantics or expectations changed.
+Focused types87511 TERMINATED0 with empty output. Manifest75842 TERMINATED0:
+1PASS/244 filtered/245 registrations,12.31seconds. Actual receipt at
+.tmp/6929-constructor-regression-canonical-nine-manifest-pPBIle/manifest.json
+independently has archiveVERIFIED9,corpusVERIFIED9,4positive+27negative actual
+private controls,31unique labels,0canonical executions. Workspace load makes32.
+This verifies input controls, not conformance; full245 present7843 is live at
+this receipt. The genuine uninitialized-worktree full epoch remains pending.
+
+Full present7843 TERMINATED1:141PASS/104FAIL/245,124.81seconds. Root's retained
+.tmp/constructor-portable-pair-parity.mjs independently floors203 ordered pairs,
+404 emitted binary hashes,406 side observations and104 failed label entries
+against .tmp/constructor-oracle-corrected-full-20261009:all equal;22 error stack
+strings move at fixture lines, only first-line error projection is used.
+Source/options/sourceSeals/environment/counts/disposal remain exactly equal.
+This does NOT clear required quality or credit a canonical gain.
+
+Uninitialized epoch23158 is LIVE after validating only this worktree's real
+test262 directory and its exact two shared-test/shared-harness link targets.
+That directory is recoverably moved to the exact previously absent
+.tmp/constructor-test262-shim-portable-20261009; a real-empty test262 directory
+is now used by the same unfiltered245 fixture. An EXIT trap removes only the
+empty directory with rmdir and restores the preserved directory with mv.
+No shared corpus/harness bytes or links are mutated. Logs:
+.tmp/constructor-portable-input-full-uninitialized-20261009.stdout/.stderr.
+Do not restart/restore during the live epoch; inspect the same23158 handle
+until terminal, then verify original link custody and31 controls/UNAVAILABLE0
+from the actual retained manifest. No unavailable-input PASS is inferred here.
+
+Uninitialized23158 subsequently TERMINATED1:141PASS/104FAIL/245,125.90seconds.
+EXIT restoration completed:both actual link targets match the preserved originals
+and the temporary backup path no longer exists. Root independently compared
+present/uninitialized full logs:203ordered pairs,404binary hashes,406observations,
+104failed labels all identical,0changed error stacks. Actual uninitialized
+manifest .tmp/6929-constructor-regression-canonical-nine-manifest-Q4nfEH/manifest.json
+has archive9/6810bytes,corpusUNAVAILABLE root-empty verified0,4positive+27negative
+31unique executed controls,0canonical executions. All31 physical control receipt
+files independently equal the returned rows. No shared corpus was changed.
+Portable inputs now have actual two-environment verification, but required
+quality104 semantic failures,proxy-class and full11778 acceptance remain OPEN.
+Formatted helper703lines,d2b17e50c758dd1392854598e7b22b747354e300a01d849929dde2d245449e9a;
+parent1472lines,85e28556ece8d7fe81ec7d78e9474308f58fb9c212ca38a5c2cfb0b74f161c2e.
+Tracked diff whitespace check is clean. Publication/gates for this checkpoint
+are not yet executed; no merge-readiness or 100% claim follows from this repair.
+
+Serialized pre-commit source-gate epoch76461 TERMINATED0. LOC/function gates
+against exact dbf base,coercion and oracle+0 all pass. Dead-export command uses
+the required preservation-v1 contract:6/6 full/cut witnesses,core-types10/10
+full/cut andcore-nodes12/12 observedcallers pass;dispatch-cut is UNKNOWN.
+It explicitly prints graphOPEN/strict modeledclosureFAIL,moved-runtimeFAIL,
+retirement/deletionNOTCERTIFIED; command exit0 is preservation-only and does
+NOT override those architecture limits. No policy/gate/baseline was edited.

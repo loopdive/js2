@@ -18,6 +18,10 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  loadConstructorOriginalInputs,
+  runConstructorOriginalInputControls,
+} from "./helpers/issue-6929/constructor-original-inputs.js";
 
 const WORKSPACE = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const digest = (value: string | Uint8Array): string => createHash("sha256").update(value).digest("hex");
@@ -1362,10 +1366,18 @@ describe("issue 6929 runtime construction of recovered native-prototype bindings
   });
   it("retains the exact unchanged nine-original manifest, including unresolved proxy-class", () => {
     expect(Object.keys(ORIGINALS)).toHaveLength(9);
-    for (const [name, seal] of Object.entries(ORIGINALS))
-      expect(digest(readFileSync(join(WORKSPACE, "test262/test/built-ins/Function/prototype/toString", name)))).toBe(
-        seal,
-      );
+    const archiveRoot = join(WORKSPACE, "tests/fixtures/issue-6929-test262-originals");
+    const inputs = loadConstructorOriginalInputs({
+      archiveRoot,
+      corpusRoot: join(WORKSPACE, "test262"),
+      expectedOriginals: ORIGINALS,
+    });
+    const validatorControls = runConstructorOriginalInputControls({
+      archiveRoot,
+      scratchRoot: directory("original-input-controls"),
+      expectedOriginals: ORIGINALS,
+    });
+    expect(validatorControls.loaderExecutions + 1).toBe(32);
     writeFileSync(
       join(directory("canonical-nine-manifest"), "manifest.json"),
       JSON.stringify(
@@ -1376,6 +1388,11 @@ describe("issue 6929 runtime construction of recovered native-prototype bindings
           unresolvedProxyClassRetained: true,
           canonicalExecution: "ROOT REQUIRED; no verdicts from this manifest",
           rows: ORIGINALS,
+          inputOrigin: inputs.inputOrigin,
+          sourcePin: inputs.sourcePin,
+          archive: inputs.archive,
+          corpus: inputs.corpus,
+          validatorControls,
         },
         null,
         2,
