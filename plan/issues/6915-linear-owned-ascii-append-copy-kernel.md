@@ -1689,6 +1689,20 @@ HOLD, native/performance/equivalence limitations and A queue ownership remain.
 
 ## Adopted A third-source implementation contract — 2026-10-09
 
+Private implementation checkpoint:
+`e33560ce57c5912fd75cc36c7156b1037828416e`, original authenticated Sol6.1
+runner owner, continuation write `33193-a04x7qa7`. Sole runner change is87264
+bytes, SHA256
+`aefbb190424ca7d9b22ebf11640662f63ff5917bd16553f6a909fcccda65cf3d`.
+Independent Astra High static review cleared the exact bounded diff. Parent
+repeated159/159 inert controls (128 retained,31 added), exit0, and independently
+recovered every predecessor byte with SHA256
+`b6106b0ef3b686bb67d713cf6133d3235a5c4c29666fa889680b531193263e77`.
+The patch is privately integrated; no third-target compiler child has run.
+Committed composition, independent complete input freeze, separate one-trial
+authorization and full original-baseline comparison remain outstanding.
+This review is not runtime equality, source admission, CI or main delivery.
+
 Session A release6077817777 and publication6077956780 were independently
 verified against PR6603 HEAD `1cb483b27c7dc2361871939ecf64218cccfb9a86`.
 The complete normative specification below is31726 UTF-8 bytes, SHA256
