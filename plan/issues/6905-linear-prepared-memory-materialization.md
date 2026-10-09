@@ -1386,3 +1386,55 @@ semantic/facts/demand entry, generic representation and caller implementation,
 full runtime donor/startup closure, attempt-wide revocation wiring and explicit
 file/function releases remain prerequisites. No tests or native acceptance are
 claimed by this reconciliation.
+
+### Actual exact-path initializer candidate comparison — 2026-10-09
+
+After the foreign suite naturally completed, parent independently re-inspected
+the SAME execution root. All7903 selected input records again deep-equal frozen
+candidate9da12b5a, at HEAD0799a907/sourcefd543122, with unchanged toolchain and
+finite environment. An actual process census found no competing local test run.
+Parent authored the exact one-candidate approval binding committed identity,
+capturef676847f and freeze9da12b5a, then ran exactly ONE diagnostic. Actual parent
+tool88053 terminated exit1; child naturally closed code1/signalnull, no timeout,
+spawn/capture/infrastructure errors or truncation. No retry or termination.
+
+Candidate retains25 assertions:24pass and the original positive shared allocation
+failure (`array-representation-unsupported`, resolver cannot register vec for
+array literal). All8 ordered rows and5 complete binary witnesses are retained.
+All30709 observed bytes captured, zero discarded; all7903 before/after records
+are byte-identical. Parent separately recorded the observed terminal and froze
+the exact12-member candidate packet, SHA256
+`86bbe9c0d8a5245aba08ea21dc88a32dc646cfb012df0e5922d0f41c45077837`.
+
+The previously reviewed comparatorc28ef87a actually exited0 against this packet
+and the immutable actual baselinecdde1880/source712bfef5. It requires exact
+equality of all25 ordered full name/status/failureMessages records, all8 complete
+ordered rows, all5 decoded binary byte sequences/lengths/hashes, unnormalized
+split failure text and entire stderr. Those checks passed. Authenticated HEAD
+and initializer-hash provenance joins differ as specified; no observation or
+failure fields were removed. Reporter output paths necessarily differ and are
+reported explicitly. Historical main845 failures remain a separate archive,
+not a substitute baseline or an equality claim.
+
+Complete candidate evidence is sealed at
+`plan/log/6905-linear-prepared-memory-20261007/geometry-pair-trial-20261009/raw-candidate.tar.gz`:
+2629409 compressed bytes, SHA256
+`5ca9cc77db8a5e5a88b4deff96b30d2f1a381eb91bc02edc14b1e6519ea50bbf`.
+Parent read every archive member: one directory and21 regular files,
+8400679 uncompressed bytes, all exactly matching retained originals; no duplicate,
+unsafe or nonregular file entries. The reviewed instruments, immutable pins,
+complete freeze/run packet and parent approval/terminal/comparison are retained.
+
+This is bounded preservation of the released initializer import, NOT native
+shared allocation support, performance evidence, full IR equality, main delivery,
+HOLD release or legacy retirement. Session A retains shared integration and
+protected-queue delivery. The same unchanged positive requirement must eventually
+genuinely execute1.25 through the IR path without overlay/legacy fallback.
+
+Independent Astra High actual-packet review reproduced the reviewed inert
+comparator exit0 with no discrepancy. It independently read all7903 physical
+inputs/1903 source files/131451520 bytes against frozen hashes, committed Git
+blobs and modes, rejecting symlinks and selected extra inputs. All12 candidate
+pins and original baseline pins/tar still match. The exact source delta remains
+one approved import. Actual parentexit1 is separately supplied terminal evidence
+from tool88053, not a conclusion inferred from childreceipt or comparator output.
