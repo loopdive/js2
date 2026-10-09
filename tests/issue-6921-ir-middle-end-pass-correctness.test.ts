@@ -27,6 +27,8 @@ import { IrFunctionBuilder } from "../src/ir/builder.js";
 import { irDynamic, irVal } from "../src/ir/core/types.js";
 import type { IrFunction } from "../src/ir/nodes.js";
 import { deadCode } from "../src/ir/passes/dead-code.js";
+import { inlineSmall } from "../src/ir/passes/inline-small.js";
+import { irUnitFuncRef } from "../src/ir/core/callable-bindings.js";
 import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
 type Target = "gc" | "standalone";
@@ -368,5 +370,44 @@ describe("#6921 D2 — effect classification and deadCode (pass level)", () => {
       expect(instrCount(fn), emit).toBe(2);
       expect(instrCount(deadCode(fn)), emit).toBe(1);
     }
+  });
+});
+
+describe("#6921 D1 — composed #5748 guard: asyncRuntime attachment (pass level)", () => {
+  const identities = createTestIrFunctionIdentityFactory("issue-6921-async-runtime");
+  const F64 = irVal({ kind: "f64" });
+
+  /** One-block regular `const/return` callee plus a caller that calls it once. */
+  function pair(withAttachment: boolean) {
+    const calleeBuilder = new IrFunctionBuilder(identities.next("leaf"), [F64], false);
+    calleeBuilder.openBlock();
+    const seven = calleeBuilder.emitConst({ kind: "f64", value: 7 }, F64);
+    calleeBuilder.terminate({ kind: "return", values: [seven] });
+    const built = calleeBuilder.finish();
+    // Legacy pre-manifest placeholder, allowed for generic-pass fixtures
+    // (src/ir/runtime/contracts/prepared.ts, PreparedIrAsyncRuntimeBase).
+    const callee: IrFunction = withAttachment
+      ? ({ ...built, asyncRuntime: { kind: "standalone-native-wasmgc", adapters: [], states: [] } } as IrFunction)
+      : built;
+    const callerBuilder = new IrFunctionBuilder(identities.next("root"), [F64], true);
+    callerBuilder.openBlock();
+    const result = callerBuilder.emitCall(irUnitFuncRef(callee), [], F64);
+    if (result === null) throw new Error("call must return a value");
+    callerBuilder.terminate({ kind: "return", values: [result] });
+    return { callee, caller: callerBuilder.finish() };
+  }
+
+  const callCount = (fn: IrFunction) =>
+    fn.blocks.reduce((n, block) => n + block.instrs.filter((i) => i.kind === "call").length, 0);
+
+  it("inlines the ordinary callee but keeps the call to an asyncRuntime-attached one", () => {
+    const plain = pair(false);
+    const plainOut = inlineSmall({ functions: [plain.callee, plain.caller] });
+    expect(callCount(plain.caller)).toBe(1);
+    expect(callCount(plainOut.functions.find((f) => f.unitId === plain.caller.unitId)!)).toBe(0);
+
+    const attached = pair(true);
+    const attachedOut = inlineSmall({ functions: [attached.callee, attached.caller] });
+    expect(callCount(attachedOut.functions.find((f) => f.unitId === attached.caller.unitId)!)).toBe(1);
   });
 });

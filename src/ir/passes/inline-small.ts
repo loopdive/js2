@@ -455,11 +455,13 @@ function canInline(
   // #6921 — callee slots are remapped into the caller, which serves only
   // top-level `slot.read` / `slot.write`. The pass does not transfer a
   // captured environment or a suspension protocol, so callees carrying one
-  // are rejected outright (guards composed from #5387 / PR 5748).
+  // are rejected outright (guards composed from #5387 / PR 5748), including a
+  // `PreparedIrFunction.asyncRuntime` backend attachment.
   if (
     callee.generatorBufferSlot !== undefined ||
     callee.closureSubtype !== undefined ||
     callee.asyncPlan !== undefined ||
+    callee.asyncRuntime !== undefined ||
     (callee.funcKind ?? "regular") !== "regular"
   ) {
     return false;

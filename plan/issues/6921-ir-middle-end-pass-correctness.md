@@ -459,8 +459,13 @@ The project lead reassigned `canInline`, the inliner slot splice and the two
 PR 5748's guards verbatim: callees with a generator buffer, a closure
 subtype, an async plan, or a non-regular `funcKind` are refused, as is any
 `closure.cap` in the callee body. Only 5748's slot rejection is replaced by
-the slot remap. 5748's `asyncRuntime` check is dropped because that field
-does not exist on main's `IrFunction`.
+the slot remap. An earlier revision dropped 5748's `asyncRuntime` check claiming the field
+does not exist; that was wrong (A's review, 2026-10-08): the pass imports
+`IrFunction` as `PreparedIrFunction`, which declares `asyncRuntime`
+(`src/ir/runtime/contracts/prepared.ts`). The guard is restored, with a paired
+pass-level control (same callee with and without the legacy placeholder
+attachment: the attached one keeps its call; verified failing without the
+guard).
 
 Final run on the composed source (file-copy A/B against `8452732f0b`, same
 16 files: the #6921 suite, the 3518 semantic pin suite, and every test that

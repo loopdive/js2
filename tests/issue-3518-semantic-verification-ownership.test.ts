@@ -63,13 +63,15 @@ const receipts = [
     rows: [
       ["IrEffects", "78ce9aace2ac6cfb5f1c47ffa5da65ab9076a628a3e37ab65cdaf33605476af6"],
       // #6921 (2026-10-08): dyn.to_number and loose dyn.eq can run user valueOf,
-      // so they are no longer pure. Repinned by project-lead decision; predecessor 22e85c1c…0051808ea43.
+      // so they are no longer pure. Repinned by project-lead decision; predecessor
+      // 22e85c1cdc712c8385833a063d55ec991353d2d1d05ad675708ba0051808ea43.
       ["effectsOf", "41e55ffd4ab4d440969a4b431db300e76f3a4f61fac6403c5fbe3d72de81077a"],
       ["effectsArePure", "7a72d88b8fd3eb93d7be5959c5963ed83699566eeebaecc4cca2b31d1bbf5a62"],
       ["effectsConflict", "bcbfdc351d541bfa5733197fa9d610e06ad96462a47a67ceab20ccc73365a50d"],
       ["EmissionScheduleViolation", "88149696bc4006fd42ca7fbd02c9372384108573a967830722b5444d27056bfa"],
       ["verifyEmissionSchedule", "f03865e896100cd12fbaf6e7118b47cba8c988c771f2a6014262e39ebdcf980a"],
-      // #6921 (2026-10-08): same change; predecessor 668bfd62…e60d5d1a5.
+      // #6921 (2026-10-08): same change; predecessor
+      // 668bfd625566b625357bc478188c135642fabc1146803a8968c7816e60d5d1a5.
       ["isSideEffecting", "1367e99f4d1fbe57c4bda1b61e16ef5eebc4ee18e61d315d5525390e1be0d00c"],
     ],
   },
