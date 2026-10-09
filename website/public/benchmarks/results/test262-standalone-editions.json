@@ -690,8 +690,8 @@
   {
     "edition": "ES2016",
     "pass": 106,
-    "fail": 10,
-    "ce": 8,
+    "fail": 11,
+    "ce": 7,
     "skip": 0,
     "total": 124,
     "pct": 85,
@@ -708,8 +708,8 @@
       {
         "name": "Array.prototype.includes",
         "pass": 26,
-        "fail": 2,
-        "ce": 1,
+        "fail": 3,
+        "ce": 0,
         "skip": 0,
         "total": 29,
         "pct": 90
@@ -744,8 +744,8 @@
       {
         "name": "arrow-function",
         "pass": 1,
-        "fail": 0,
-        "ce": 1,
+        "fail": 1,
+        "ce": 0,
         "skip": 0,
         "total": 2,
         "pct": 50
@@ -762,8 +762,8 @@
       {
         "name": "Reflect",
         "pass": 1,
-        "fail": 0,
-        "ce": 1,
+        "fail": 1,
+        "ce": 0,
         "skip": 0,
         "total": 2,
         "pct": 50
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4605,
+    "pass": 4606,
     "fail": 186,
-    "ce": 130,
+    "ce": 129,
     "skip": 0,
     "total": 4921,
     "pct": 94,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4502,
+        "pass": 4503,
         "fail": 105,
-        "ce": 4,
+        "ce": 3,
         "skip": 0,
         "total": 4611,
         "pct": 98
