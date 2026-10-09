@@ -1147,3 +1147,39 @@ isolated worktree after its exact baseline-diagnostic claim is effect-read.
 Parent/Astra review precedes the serialized diagnostic; the source-writer claim
 and one-import handoff remain untouched. No implementation-entry/native release,
 append-source approval, HOLD removal, proof repin or queue authority follows.
+
+### Baseline instrument review blockers — 2026-10-09
+
+The first scratch candidate SHA256
+`3205ccfad436e7ff012e2548c04d5049e97196576d9d216dafd0dc162551b30b`
+and freeze SHA256
+`c6fbf361b582d438af4ee6d6664724287615183869eb4fe30781ff61306a2a1a`
+passed35 inert controls but received no execution clearance. Parent and Astra
+review identified four demonstrated blockers; preserve these original bytes.
+
+1. Remove automatic process-group SIGKILL. No test-termination authority was
+   supplied. Latch timeout/output failure, notify parent, continue draining and
+   await natural termination; do not finalize a live child or silently retry.
+   A capped/truncated capture remains explicitly unqualified.
+2. Do not archive the entire inherited environment. Freeze an explicit reviewed
+   nonsecret influencing projection, reject unsupported influencing settings
+   without printing values, preserve child inheritance, and exercise sentinel
+   credential exclusion. Prefix filtering alone is not a safe secret boundary.
+3. Preserve both raw output streams: actual Vitest failure details may appear
+   on stderr while summary appears on stdout. Validate split-stream failure
+   evidence without manufacturing an interleaving or normalizing original text.
+4. Inspect both streams for issue6905 records and reject extra, duplicate,
+   malformed or truncated records. Historical combined-log replay alone does
+   not exercise the actual transport; add finite split-stream controls through
+   the same production predicates while retaining all35 earlier controls.
+
+The original baseline checkout remains
+`cdde1880d00af27156751557739d5e2a4e5dcf35`, source
+`712bfef554321f3fe081f72bb89654d7dc6d8104`. Its independently read committed
+source population is1903 paths, not canonical main's1901: B's existing leaves
+are part of this composition. Complete frozen custody reports7903 files;
+these counts are census evidence, not successful compiler observations.
+The same Sol6.1 Medium diagnostic owner repairs only its isolated scratch
+instrument, retains the rejected versions, reruns inert controls, and returns
+new exact hashes for fresh parent/Astra review before any child. No baseline
+compiler run has occurred. Initializer source claim and HOLD remain unchanged.
