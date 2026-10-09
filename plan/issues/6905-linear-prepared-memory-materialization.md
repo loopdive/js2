@@ -1313,3 +1313,40 @@ No candidate compiler child has run. A fresh disjoint instrument slice
 scratch-only capture/comparator implementation by the same Sol6.1 Medium agent.
 Parent/Astra review and independent freeze precede any one candidate execution.
 The measured baseline remains red; no native/retirement/queue acceptance follows.
+
+### Parent candidate-instrument checks (2026-10-09)
+
+Parent inspected the complete comparator and verified the capture delta has
+exactly five bookkeeping substitutions from reviewed baseline v2: HEAD, source
+tree, freeze filename, approval label and fresh output directory. No compiler,
+test, fork, environment, custody or no-kill predicate changes were found.
+Candidate capture SHA256 is
+`f676847ff5593d5c321d87c9473ada3ab9cad45432eaf5a7b449a30f763e3409`;
+comparator SHA256 is
+`c28ef87a82502de4763a7d0b9867e677244e86ecdee3c3cf6fa5a9929853b793`.
+
+Parent separately executed the inert production-predicate controls: capture
+57/57 and comparator28/28, exit0, no compiler child. These establish instrument
+rejection behavior, not candidate execution or native support. The comparator
+also validated the actual pinned baseline packet against its published tar.
+
+Parent invoked the current candidate's read-only inspection at the SAME
+execution root. All7903 selected inputs (1903 source files), full population,
+physical blob/mode custody, environment and toolchain deep-equal its frozen
+snapshot, HEAD0799a907/sourcefd543122. Nodev22.23.2 and pnpm10.30.2 agree.
+Candidate freeze SHA256 is
+`9da12b5abac4ac9c0caf2c26a322dd5113f02b46c0d2996dd1315890d39cd44e`.
+Astra High exact review cleared the enumerated adaptation and full comparison
+joins. Separate Sol6.1 physical audit independently read7903 unique selected
+files/1903 sources, totaling131451520 bytes, with exact Git/physical mode, blob,
+length and SHA256 agreement. Only the released initializer differs; the other
+7902 records match the baseline. Actual toolchain and finite environment also
+match, and the original baseline bundle/instruments remain unchanged.
+
+Candidate execution is deferred for serialization: actual live Vitest parent
+89604 and worker99644 have cwd
+`/Users/thomas/.codex/worktrees/6878-latest-composition/js2`. These are not this
+candidate's processes and are not interrupted or restarted. Recheck actual
+process state before separately approving and starting the one candidate.
+No candidate compiler run, runtime preservation acceptance, HOLD removal or
+queue release is implied by these checks.
