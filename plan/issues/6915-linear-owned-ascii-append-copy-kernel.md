@@ -1591,3 +1591,49 @@ After the full comparison and normal checks pass, publish only through the exist
 The reviewer-owned `.tmp/astra-6915-archive-review-data.json` is8078 bytes/SHA256 `a6954478c6202ad9b7ed17fcabd91584900fdd2c296d37b0e30fc9d1b93e0d68`. It catalogs the exact nontruncated old/current trees and fifteen-path delta, fourteen freshly verified current fixed pins, actual required-job log, original compressed receipts and full archived graph comparison. Files live only under this review lane's `.tmp/b-archive-review-data/`; they are read-only copies/evidence, not implementation or new baseline authorities.
 
 ROOT can adopt/release PartA now as the named two-insertion proposal, with fresh claim/owner acknowledgment and postimplementation review. PartB can be separately released for private runner implementation and later serialized qualification, with acceptance explicitly held on new actual full-witness results. Neither completed archive-plan claim nor the pre-existing advisory-shell claim substitutes for that release. All original missing archives and failed CI epochs remain missing/failed in their historical records. All B/shared source files and claims remain untouched by this review.
+
+### B implementation checkpoint — 2026-10-09
+
+The full normative contract is now published in A's PR #6602 at exact commit
+`89c5974b0f435cf0212fe0af65cc2750b68cd225`; its SHA256 is the unchanged
+`d6f6f6d4d6962dadc24be72059b10fa6ae3747740c60027cca49c20c51fff88c`.
+B adopted it at `5bbbabe13d077a2a2b4fbb0891da7674bfc37203` before source
+authoring. Fresh canonical upstream slice claims separate the two writers:
+`6915:archive-transport-implementation-20261009` (Sol 6.1 Medium) and
+`6915:finite-source-approval-successor-20261009` (Sol 6.1 High).
+
+The private runner commit is `c06afb13f9e62a2b091236bc5698ee925f43c9e5`,
+based on that adoption commit, with the runner as its sole tracked edit.
+Its 128 embedded controls passed in both the implementer's execution and
+the parent repetition: all original 104 remain, with 24 added. Normal fast
+commit hooks, syntax and formatting passed. The private candidate runner is
+83848 bytes/SHA256 `b6106b0ef3b686bb67d713cf6133d3235a5c4c29666fa889680b531193263e77`.
+The implementer's exact reverse-edit proof recovers the original 76845-byte
+runner/SHA256 `3a154510e5f1280cb7dc71f2a89bae77386ba109990fecb71d586531d9c75e54`.
+Independent Astra diff review remains required before integration or trial.
+
+The uploader is separately implemented but not yet committed or accepted.
+Its finite selection/layout controls must use the official action rather
+than a mock. An isolated download into the writer's own ignored `.tmp` is
+authorized; shared dependencies, package files and locks remain unchanged.
+Actual uploaded CI archives remain unexecuted and must subsequently be
+retrieved and inspected, including partial-failure archives.
+
+The parent full-evidence comparator now has 62 passing noncompiler controls.
+It retains exact comparison of every complete observation/completion graph,
+independently validates provenance against the parent freeze and all fourteen
+fixed paths, joins recovered raw-stream envelopes to archived graph bytes,
+and uses the existing reviewed decoder/receipt validator only after verifying
+the imported runner's byte hash. Historical/current provenance substitution,
+nested graph mutations, altered worker flags, missing/mismatched configuration
+pins and prefixed/raw-graph disagreement are rejected. Astra identified the
+raw-stream, complete-freeze and parent-versus-child-exit gaps; these have been
+addressed locally and await final independent review. A child receipt alone
+never proves parent exit success; the actual parent terminal status must be
+retained separately.
+
+No compiler trial, accepted current-source equality, push, CI rerun, hold
+removal, native admission, performance acceptance or migration completion is
+claimed by this checkpoint. C's geometry PR #6600 is verified merged on main
+as `2d0c31a3e2dbe0a4a46d123226fa1d62f7d4c7aa`; that delivery does not broaden
+the finite 616da source approval or release additional shared ownership.
