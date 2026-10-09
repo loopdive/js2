@@ -1289,3 +1289,27 @@ Measured baseline remains24/25 red,8 rows,5 binaries. Its old historical error
 differences stay separate. Candidate preservation cannot establish native1.25,
 full IR equivalence, retirement, HOLD removal or queue authority. No candidate
 compiler run is authorized by this plan adoption alone.
+
+### Private one-import implementation and independent input audit
+
+Authenticated original Sol6.1 Medium writer committed
+`0799a907eb8e6aaee3163420fed09fe0bfc61c3c`, source
+`fd543122e5c4f432ad332f2c617f13f4351b902f`. Sole changed source is the released
+initializer import; reversing its exact string restores every predecessor
+byte. Initializer is673 bytes, SHA256
+`8110f838a039fa4e24729c1f64182ac42dc648cbff27ab6067afb832e78780a0`, Git blob
+`31e34309e5d663f2e7c71621fac7460dbbed33fb`.
+Fresh same-writer continuation write79124-a0jkr95l is effect-read; original
+claim/dirty worktree remain unchanged. Parent reviewed and normally integrated
+the commit at the SAME baseline execution path, preserving every baseline file.
+
+Parent independently audited all7903 retained records/1903 source files against
+actual current committed blobs and physical regular bytes/modes. Exactly one
+input differs: initializer old SHA829df3 to8110f8, with exact import-only reverse
+restoration. Zero mode changes or other retained input mutations were found.
+No candidate compiler child has run. A fresh disjoint instrument slice
+`6905:neutral-geometry-pair-instrument-20261009`, owner
+`ttraenkler/codex-linear-b-geometry-pair-sol61-20261009`, is effect-read for
+scratch-only capture/comparator implementation by the same Sol6.1 Medium agent.
+Parent/Astra review and independent freeze precede any one candidate execution.
+The measured baseline remains red; no native/retirement/queue acceptance follows.
