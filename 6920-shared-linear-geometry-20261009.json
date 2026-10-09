@@ -2,10 +2,11 @@
   "id": "6920",
   "slice": "shared-linear-geometry-20261009",
   "assignee": "ttraenkler/codex-ir-shared-linear-geometry-20261009",
-  "requested_by": "ttraenkler/codex-ir-shared-linear-geometry-20261009",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/6920-shared-linear-geometry-20261009",
   "claimed_at": "2026-10-08T22:53:27Z",
-  "updated_at": "2026-10-08T22:53:27Z",
-  "write_id": "94949-it9b3u84"
+  "updated_at": "2026-10-09T00:45:41Z",
+  "write_id": "60707-95hx19zl",
+  "released_at": "2026-10-09T00:45:41Z"
 }
