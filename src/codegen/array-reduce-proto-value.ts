@@ -100,6 +100,8 @@ export interface VariadicArgs {
   readonly argsLen: number;
   /** `args[i]` when `argc > i`, else the `absent` instructions; leaves an externref. */
   readonly argAt: (i: number, absent: Instr[]) => Instr[];
+  /** `args[i]` for a computed i32 index the caller has bounds-checked; leaves an externref. */
+  readonly argAtDynamic: (index: Instr[]) => Instr[];
 }
 
 /**
@@ -158,5 +160,11 @@ export function emitVariadicArgsUnpack(
       else: absent,
     },
   ];
-  return { argsLen, argAt };
+  const argAtDynamic = (index: Instr[]): Instr[] => [
+    { op: "local.get", index: argsData },
+    { op: "ref.as_non_null" },
+    ...index,
+    { op: "array.get", typeIdx: argsArrTypeIdx },
+  ];
+  return { argsLen, argAt, argAtDynamic };
 }

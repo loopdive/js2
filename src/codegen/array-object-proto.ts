@@ -95,6 +95,7 @@ import { emitArrayLikeNativeMemberBody } from "./array-like-native.js";
 import { emitArrayFillProtoMemberBody, isArrayFillVariadicMember } from "./array/array-fill-proto-value.js";
 import { emitArraySearchProtoMemberBody, isArraySearchVariadicMember } from "./array/array-search-proto-value.js"; // (#6912)
 import { emitArrayGenericValueMemberBody } from "./array/array-generic-value-bodies.js"; // (#6912)
+import { emitArrayCopyMethodMemberBody, isArrayCopyMethodVariadicMember } from "./array/array-copy-methods-value.js"; // (#6912)
 // (#4119) The shared member-body tail: `Object.prototype.toString`'s real
 // §20.1.3.6 runtime classifier, and the graceful catchable-TypeError refusal for
 // every `(brand, member)` whose native body is not wired yet. Aliased to the
@@ -658,6 +659,9 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = Object.assign(
     reduce: 1,
     reverse: 0,
     shift: 0,
+    // (#6912) §23.1.3.33 / .35 — toReversed(), toSpliced(start, skipCount, ...items).
+    toReversed: 0,
+    toSpliced: 2,
     slice: 2,
     splice: 2,
     unshift: 1,
@@ -1013,7 +1017,9 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
   const rs1IterBody = emitArrayProtoIteratorMemberBody(ctx, fctx, member);
   if (rs1IterBody !== undefined) return rs1IterBody;
   const searchBody = // (#6912) indexOf/lastIndexOf/includes, then pop/shift/toString
-    emitArraySearchProtoMemberBody(ctx, fctx, member) ?? emitArrayGenericValueMemberBody(ctx, fctx, member);
+    emitArraySearchProtoMemberBody(ctx, fctx, member) ??
+    emitArrayGenericValueMemberBody(ctx, fctx, member) ??
+    emitArrayCopyMethodMemberBody(ctx, fctx, member);
   if (searchBody !== undefined) return searchBody;
   if (member !== "slice") {
     // Other Array.prototype members: their *FromVecLocal cores land in PR-C; until
@@ -2680,7 +2686,8 @@ function makeGlue(
       (name === "Array" && isArrayReduceVariadicMember(ctx, member)) ||
       (name === "Array" && isArraySpliceVariadicMember(ctx, member)) || // (#6701)
       (name === "Array" && isArrayFillVariadicMember(ctx, member)) ||
-      (name === "Array" && isArraySearchVariadicMember(ctx, member)) || // (#6912)
+      (name === "Array" &&
+        (isArraySearchVariadicMember(ctx, member) || isArrayCopyMethodVariadicMember(ctx, member))) || // (#6912)
       (name === "Array" &&
       (member === "join" ||
         member === "push" ||
