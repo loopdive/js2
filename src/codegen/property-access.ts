@@ -5378,7 +5378,13 @@ export function compileElementAccess(
       // representable; string-exotic-index.ts carries the guard (mirroring
       // #3973's, which already got this right for `any` receivers) and returns
       // `externref`.
-      const exotic = emitStringExoticIndexGet(ctx, fctx, expr.expression, expr.argumentExpression);
+      const exotic = emitStringExoticIndexGet(
+        ctx,
+        fctx,
+        expr.expression,
+        expr.argumentExpression,
+        isStringWrapperType(recvWrapTsType),
+      );
       if (exotic) return exotic;
     }
 

@@ -365,6 +365,11 @@ function syncedPropertyGetTrampolineBody(
           { op: "any.convert_extern" },
           { op: "local.set", index: anyLocal },
         ];
+  // (#6894) Wrapping a callable property in a fresh carrier exists for the
+  // provider crossing only. An in-module read (provider inactive) must return
+  // the raw closure: a per-read carrier breaks identity (`assert.d === assert.d`
+  // false) and a write through it (`assert.d._c = fn`) lands in a throwaway bag.
+  const crossingWraps: Instr[] = [];
   if (carrier.trampolineFuncIdx !== undefined && carrier.propertyGetTrampolineFuncIdx !== undefined) {
     // The shared callable classifier intentionally includes this carrier so
     // `typeof`, apply, and ordinary dynamic calls all see it as a function.
@@ -375,7 +380,7 @@ function syncedPropertyGetTrampolineBody(
     // read back from the shared global object more than once.
     for (const typeIdx of collectClosureBaseWrapperTypeIdxs(ctx)) {
       if (typeIdx === carrier.structTypeIdx) continue;
-      readBody.push(
+      crossingWraps.push(
         { op: "local.get", index: anyLocal },
         { op: "ref.test", typeIdx },
         {
@@ -405,7 +410,7 @@ function syncedPropertyGetTrampolineBody(
     { name: "key_any", type: { kind: "anyref" } as ValType },
   ];
   if (beforeIdx === undefined || afterIdx === undefined || activeGlobalIdx === undefined) {
-    return { locals, body: [...readBody, { op: "local.get", index: resultLocal }] };
+    return { locals, body: [...readBody, ...crossingWraps, { op: "local.get", index: resultLocal }] };
   }
   return {
     locals,
@@ -417,6 +422,7 @@ function syncedPropertyGetTrampolineBody(
         then: [
           { op: "call", funcIdx: beforeIdx },
           ...readBody,
+          ...crossingWraps,
           { op: "call", funcIdx: afterIdx },
           { op: "local.get", index: resultLocal },
         ],

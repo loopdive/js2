@@ -28,9 +28,10 @@
         "src/shared/contracts/ir-unit-inventory.ts",
         "src/shared/contracts/ir-preparation-errors.ts",
         "src/shared/contracts/ir-counted-string-site-id.ts",
-        "src/shared/contracts/string-surrogate.ts"
+        "src/shared/contracts/string-surrogate.ts",
+        "src/shared/contracts/linear-memory-layout.ts"
       ],
-      "minModules": 9
+      "minModules": 10
     },
     {
       "id": "wasm-model",
@@ -125,6 +126,7 @@
       "status": "active",
       "roots": [
         "src/ir/analysis/contracts",
+        "src/ir/analysis/allocation-evidence",
         "src/ir/analysis/alloc-registry.ts",
         "src/ir/analysis/effects.ts",
         "src/ir/analysis/intrinsics.ts",
@@ -153,9 +155,14 @@
         "src/ir/analysis/alloc-verification.ts",
         "src/ir/analysis/nested-stackification.ts",
         "src/ir/analysis/contracts/linear-memory-layout.ts",
-        "src/ir/analysis/backend-legality.ts"
+        "src/ir/analysis/backend-legality.ts",
+        "src/ir/analysis/allocation-evidence/contracts.ts",
+        "src/ir/analysis/allocation-evidence/effect-rules.ts",
+        "src/ir/analysis/allocation-evidence/census.ts",
+        "src/ir/analysis/allocation-evidence/metadata.ts",
+        "src/ir/analysis/allocation-evidence/verify.ts"
       ],
-      "minModules": 14
+      "minModules": 19
     },
     {
       "id": "ir-passes",
@@ -247,9 +254,10 @@
         "src/ir/program/runtime-abi.ts",
         "src/ir/program/runtime-manifest.ts",
         "src/ir/program/runtime-validation.ts",
-        "src/ir/program/validation.ts"
+        "src/ir/program/validation.ts",
+        "src/ir/program/allocation-body-validation.ts"
       ],
-      "minModules": 48
+      "minModules": 49
     },
     {
       "id": "runtime-contracts",
@@ -3491,6 +3499,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/async-frame-binding-continuity.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/async-cps-ast.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -5100,6 +5116,14 @@
     },
     {
       "path": "src/codegen/dynamic-proto.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/expressions/identifier-receiver-slot.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -8881,6 +8905,38 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate context-bound promoted capture lookup and ref-cell type selection from native capture-value instructions."
+    },
+    {
+      "path": "src/codegen/closures/function-intrinsic-construct.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the AST callee-shape admission from the injected %Function% identity-arm instruction assembly."
+    },
+    {
+      "path": "src/codegen/expressions/primitive-newtarget-default.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the AST construct-target classification from the [[SetPrototypeOf]] instruction assembly."
+    },
+    {
+      "path": "src/codegen/expressions/uncalled-shim-eval.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Move the AST-only reachability query into a frontend analysis module."
+    },
+    {
+      "path": "src/codegen/object-model/construct-default-proto.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
       "path": "src/codegen/closures/proxy-trap-closure-return.ts",
@@ -13430,6 +13486,11 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/process-capability.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
       "path": "src/runtime/object-create-class-instance.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
@@ -13569,6 +13630,11 @@
     },
     {
       "path": "src/shared/contracts/identity-values.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/linear-memory-layout.ts",
       "state": "clean",
       "layer": "foundation"
     },
@@ -15720,12 +15786,42 @@
       "layer": "ir-analysis"
     },
     {
+      "path": "src/ir/analysis/allocation-evidence/contracts.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/effect-rules.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/census.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/metadata.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/verify.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
       "path": "src/ir/runtime/verify.ts",
       "state": "clean",
       "layer": "ir-runtime"
     },
     {
       "path": "src/ir/program/allocations.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/allocation-body-validation.ts",
       "state": "clean",
       "layer": "ir-program"
     },

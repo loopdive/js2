@@ -89,11 +89,18 @@ export VITEST_FORK_MAX_OLD_SPACE_SIZE
 index=0
 for test_file in $to_run; do
   index=$((index + 1))
-  if ! pnpm exec vitest run "$test_file" \
+  if [ "$test_file" = "tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts" ]; then
+    node scripts/hooks/run-linear-append-provenance.mjs
+    test_status=$?
+  else
+    pnpm exec vitest run "$test_file" \
     --pool=forks \
     --poolOptions.forks.singleFork=true \
     --dangerouslyIgnoreUnhandledErrors \
-    --no-file-parallelism; then
+    --no-file-parallelism
+    test_status=$?
+  fi
+  if [ "$test_status" -ne 0 ]; then
     echo "changed-root-tests: FAILED: $test_file — stopping at the first failure."
     if [ "$index" -lt "$count" ]; then
       echo "changed-root-tests: NOT RUN ($((count - index)) changed root test file(s) not reached):"
