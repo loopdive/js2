@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-10-07T21:46:48.275Z",
-  "baseline_generated_at": "2026-10-07T21:46:48.276Z",
-  "baseline_sha": "088046348f71f3fc7a2301dbcff6444fe2967bbc",
+  "timestamp": "2026-10-09T01:22:50.349Z",
+  "baseline_generated_at": "2026-10-09T01:22:50.349Z",
+  "baseline_sha": "d2beec5ce7952d1271ce6188422eb8a533845656",
   "oracle_version": 14,
   "mode": {
     "target": "standalone",
@@ -12,22 +12,22 @@
   "summary": {
     "total": 48232,
     "pass": 41989,
-    "fail": 4349,
-    "compile_error": 1861,
+    "fail": 4350,
+    "compile_error": 1860,
     "compile_timeout": 15,
     "skip": 18,
-    "compilable": 46338,
+    "compilable": 46339,
     "host_free_pass": 41989,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
         "pass": 40946,
-        "fail": 4320,
-        "compile_error": 1847,
+        "fail": 4321,
+        "compile_error": 1846,
         "compile_timeout": 15,
         "skip": 18,
-        "compilable": 45266,
+        "compilable": 45267,
         "host_free_pass": 40946,
         "stale": 0,
         "label": "ECMAScript current standard"
@@ -59,11 +59,11 @@
       "official": {
         "total": 48232,
         "pass": 41989,
-        "fail": 4349,
-        "compile_error": 1861,
+        "fail": 4350,
+        "compile_error": 1860,
         "compile_timeout": 15,
         "skip": 18,
-        "compilable": 46338,
+        "compilable": 46339,
         "host_free_pass": 41989,
         "stale": 0,
         "label": "standard + annex_b (default)"
@@ -71,11 +71,11 @@
       "full": {
         "total": 48735,
         "pass": 42225,
-        "fail": 4365,
-        "compile_error": 2016,
+        "fail": 4366,
+        "compile_error": 2015,
         "compile_timeout": 15,
         "skip": 114,
-        "compilable": 46590,
+        "compilable": 46591,
         "host_free_pass": 42225,
         "stale": 0,
         "label": "standard + annex_b + proposals"
@@ -85,33 +85,33 @@
   "official_summary": {
     "total": 48232,
     "pass": 41989,
-    "fail": 4349,
-    "compile_error": 1861,
+    "fail": 4350,
+    "compile_error": 1860,
     "compile_timeout": 15,
     "skip": 18,
-    "compilable": 46338,
+    "compilable": 46339,
     "host_free_pass": 41989,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
     "pass": 42225,
-    "fail": 4365,
-    "compile_error": 2016,
+    "fail": 4366,
+    "compile_error": 2015,
     "compile_timeout": 15,
     "skip": 114,
-    "compilable": 46590,
+    "compilable": 46591,
     "host_free_pass": 42225,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
     "pass": 39620,
-    "fail": 4259,
-    "compile_error": 1809,
+    "fail": 4260,
+    "compile_error": 1808,
     "compile_timeout": 15,
     "skip": 18,
-    "compilable": 43879,
+    "compilable": 43880,
     "host_free_pass": 39620,
     "stale": 0
   },
@@ -141,11 +141,11 @@
     "standard": {
       "total": 47146,
       "pass": 40946,
-      "fail": 4320,
-      "compile_error": 1847,
+      "fail": 4321,
+      "compile_error": 1846,
       "compile_timeout": 15,
       "skip": 18,
-      "compilable": 45266,
+      "compilable": 45267,
       "host_free_pass": 40946,
       "stale": 0
     }
@@ -199,9 +199,9 @@
       "name": "built-ins/Array",
       "path": "built-ins/Array",
       "pass": 2382,
-      "fail": 601,
+      "fail": 602,
       "compile_error": 88,
-      "compile_timeout": 11,
+      "compile_timeout": 10,
       "skip": 0,
       "total": 3082,
       "host_free_pass": 2382
@@ -805,8 +805,8 @@
       "path": "built-ins/TypedArray",
       "pass": 1086,
       "fail": 349,
-      "compile_error": 11,
-      "compile_timeout": 0,
+      "compile_error": 10,
+      "compile_timeout": 1,
       "skip": 0,
       "total": 1446,
       "host_free_pass": 1086
@@ -1461,16 +1461,16 @@
         "sample_files": [
           "test/built-ins/JSON/stringify/replacer-function-result-undefined.js",
           "test/built-ins/JSON/parse/reviver-context-source-object-literal.js",
-          "test/built-ins/JSON/stringify/value-bigint-replacer.js",
           "test/built-ins/JSON/stringify/replacer-array-duplicates.js",
-          "test/built-ins/JSON/parse/reviver-context-source-primitive-literal.js"
+          "test/built-ins/JSON/parse/reviver-context-source-primitive-literal.js",
+          "test/built-ins/JSON/stringify/value-bigint-replacer.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected SameValue(«\"null\"», «undefined») to be true",
           "type_error:TypeError: Cannot convert undefined or null to object",
-          "assertion_fail:Test262Error: Expected SameValue(«\"null\"», «\"\\\"bigint\\\"\"») to be true",
           "assertion_fail:Test262Error: Expected SameValue(«\"{\\\"key\\\":null}\"», «\"{\\\"key\\\":true}\"») to be true",
-          "assertion_fail:Test262Error: Expected SameValue(«#», «null») to be true"
+          "assertion_fail:Test262Error: Expected SameValue(«#», «null») to be true",
+          "assertion_fail:Test262Error: Expected SameValue(«\"null\"», «\"\\\"bigint\\\"\"») to be true"
         ]
       },
       {
@@ -1961,8 +1961,8 @@
         "count": 1357,
         "statuses": {
           "pass": 0,
-          "fail": 1159,
-          "compile_error": 187,
+          "fail": 1160,
+          "compile_error": 186,
           "compile_timeout": 11,
           "skip": 0,
           "total": 1357,
