@@ -108,7 +108,14 @@
  */
 import { forEachChild, ts } from "../ts-api.js";
 import { readEnv } from "../env.js";
-import { analyzeLocalNumberCarriers } from "./analysis/local-number-carrier-proof.js";
+import {
+  analyzeLocalNumberCarriers,
+  makeLocalNumberCarrierDomain,
+  makeLocalNumberCandidateProjection,
+  snapshotLocalNumberParameterWrites,
+  type LocalNumberBroadProof as Prover,
+  type LocalValueDef as ValueDef,
+} from "./analysis/local-number-carrier-proof.js";
 
 /** The host facts this analysis needs; kept tiny so it can run standalone. */
 export interface NumericPropertyAnalysisHost {
@@ -188,18 +195,6 @@ export interface NumericPropertyAnalysisHost {
 type FunctionLike = ts.FunctionLikeDeclaration & { body: ts.ConciseBody };
 /** A function-like body or the source file — the granularity of a value slot. */
 type Frame = ts.Node;
-
-/** One recorded definition of a value slot. `expr` absent ⇒ opaque/unknown. */
-interface ValueDef {
-  readonly expr?: ts.Expression;
-  /** `x++` / `x -= 1`: JS guarantees a number regardless of the old value. */
-  readonly forcedNumeric?: boolean;
-  /**
-   * An inconclusive value forwarded by a direct recursive call cannot be
-   * discarded when agreeing an implicit-any parameter ABI (#3961).
-   */
-  readonly dynamicConflict?: boolean;
-}
 
 /** A resolved (frame, name) variable slot. */
 interface Slot {
@@ -861,15 +856,6 @@ interface FixpointSets {
   readonly numericFunctions: ReadonlySet<string>;
 }
 
-interface Prover {
-  isNumeric(expr: ts.Expression): boolean;
-  isString(expr: ts.Expression): boolean;
-  isBooleanish(expr: ts.Expression): boolean;
-  isOpaqueParamRead(expr: ts.Expression): boolean;
-  withSelf<T>(name: string, run: () => T): T;
-  withoutSelf<T>(name: string, run: () => T): T;
-}
-
 /**
  * Mirror implicit-any call-site ABI agreement for the whole-program carrier
  * fixpoint. A concrete conflicting argument vetoes narrowing. An argument the
@@ -1361,6 +1347,7 @@ export function analyzeNumericPropertyNames(
     }
     return noVerdicts();
   }
+  const parameterWrites = snapshotLocalNumberParameterWrites(sourceFiles, scopes);
   // Seed parameter slots from their call sites, the same way #2847 does: a
   // parameter with no visible call site contributes one opaque definition (so
   // it is never "numeric", but IS still an opaque param read at a property
@@ -1488,29 +1475,39 @@ export function analyzeNumericPropertyNames(
     if (!grounded || anyBoolean) numericProperties.delete(name);
   }
 
+  const localPolicy = {
+    unwrap,
+    isFunctionLikeWithBody,
+    assignmentPropertyName,
+    ownReturnExpressions,
+    BOOLEAN_BINARY,
+    ALWAYS_NUMERIC_BINARY,
+    ALWAYS_NUMERIC_COMPOUND,
+    NUMERIC_GLOBAL_CALLS,
+    STRING_NUMERIC_METHODS,
+    STRING_STRING_METHODS,
+  };
+  const receiverDomain = makeLocalNumberCarrierDomain(host, sourceFiles, localPolicy);
+  const localProjection = makeLocalNumberCandidateProjection(
+    host,
+    sourceFiles,
+    facts,
+    parameterWrites,
+    sets,
+    receiverDomain,
+    (sets) => makeProver(facts, host, stringProperties, sets),
+    (slot, proves) => parameterDefinitionsAgree(slot, host, proves),
+    returnsByFunction,
+    writesByName,
+  );
   const groundedSlots = analyzeLocalNumberCarriers(
     host,
     sourceFiles,
     scopes,
-    numericSlots,
-    (groundedSlots) =>
-      makeProver(facts, host, stringProperties, {
-        numericProperties,
-        numericSlots: groundedSlots,
-        numericFunctions,
-      }),
-    {
-      unwrap,
-      isFunctionLikeWithBody,
-      assignmentPropertyName,
-      ownReturnExpressions,
-      BOOLEAN_BINARY,
-      ALWAYS_NUMERIC_BINARY,
-      ALWAYS_NUMERIC_COMPOUND,
-      NUMERIC_GLOBAL_CALLS,
-      STRING_NUMERIC_METHODS,
-      STRING_STRING_METHODS,
-    },
+    localProjection.candidateSlots,
+    localProjection.makeBroadProof,
+    localPolicy,
+    receiverDomain,
   );
 
   if (debugEnabled()) {

@@ -4,9 +4,16 @@ import { makeLocalNumberReceiverDomain } from "./local-number-receiver-domain.js
 
 type FunctionLike = ts.FunctionLikeDeclaration & { body: ts.ConciseBody };
 
-interface LocalValueDef {
+/** One recorded definition of a value slot. `expr` absent ⇒ opaque/unknown. */
+export interface LocalValueDef {
   readonly expr?: ts.Expression;
+  /** `x++` / `x -= 1`: JS guarantees a number regardless of the old value. */
   readonly forcedNumeric?: boolean;
+  /**
+   * An inconclusive value forwarded by a direct recursive call cannot be
+   * discarded when agreeing an implicit-any parameter ABI (#3961).
+   */
+  readonly dynamicConflict?: boolean;
 }
 
 interface SlotView {
@@ -29,6 +36,8 @@ interface LocalProofHost {
 
 interface BroadProof {
   isNumeric(expr: ts.Expression): boolean;
+  /** Only the original broad view can open the completed legacy route. */
+  isOriginalNumeric?(expr: ts.Expression): boolean;
 }
 
 interface LocalProofPolicy {
@@ -63,6 +72,213 @@ interface StringEffectContext<S extends SlotView> {
 type EffectPrimitive = "string" | "primitive" | "unknown";
 type ReceiverDomain = ReturnType<typeof makeLocalNumberReceiverDomain>;
 type ReceiverQuery = Parameters<Parameters<ReceiverDomain["withQuery"]>[1]>[0];
+
+/** Parent-to-leaf private handshake; one original inventory for both phases. */
+export function makeLocalNumberCarrierDomain(
+  host: LocalProofHost,
+  sourceFiles: readonly ts.SourceFile[],
+  policy: LocalProofPolicy,
+): ReceiverDomain {
+  return makeLocalNumberReceiverDomain(sourceFiles, {
+    ...policy,
+    valueDeclarationOf: (node) => host.oracle?.valueDeclarationOf?.(node),
+  });
+}
+
+interface CandidateSets<S extends SlotView> {
+  readonly numericSlots: ReadonlySet<S>;
+  readonly numericProperties: ReadonlySet<string>;
+  readonly numericFunctions: ReadonlySet<string>;
+}
+
+interface CandidateProver extends BroadProof {
+  isBooleanish(expr: ts.Expression): boolean;
+  isOpaqueParamRead(expr: ts.Expression): boolean;
+  withSelf<T>(name: string, run: () => T): T;
+  withoutSelf<T>(name: string, run: () => T): T;
+}
+
+/** The parent prover's existing private view, shared without changing votes. */
+export interface LocalNumberBroadProof extends CandidateProver {
+  isString(expr: ts.Expression): boolean;
+}
+
+interface CandidateWrite {
+  readonly name: string;
+  readonly value?: ts.Expression;
+  readonly forcedNumeric?: boolean;
+  readonly plusEqualsRhs?: ts.Expression;
+}
+
+interface CandidateFacts<S extends SlotView> {
+  readonly scopes: ScopeView<S> & { allSlots(): S[] };
+  readonly functionsByName: ReadonlyMap<string, readonly FunctionLike[]>;
+  readonly propertyWrites: readonly CandidateWrite[];
+  readonly deletedNames: ReadonlySet<string>;
+}
+
+interface CandidateHost extends LocalProofHost {
+  readonly excludeNames?: ReadonlySet<string>;
+  readonly excludeFunctionNames?: ReadonlySet<string>;
+}
+
+type ParameterWrites<S extends SlotView> = ReadonlyMap<
+  ts.ParameterDeclaration,
+  { readonly slot: S; readonly defs: readonly LocalValueDef[] }
+>;
+
+/** Original local writes only, captured before the parent name-seeds inputs. */
+export function snapshotLocalNumberParameterWrites<S extends SlotView>(
+  sourceFiles: readonly ts.SourceFile[],
+  scopes: ScopeView<S>,
+): ParameterWrites<S> {
+  const captured = new Map<ts.ParameterDeclaration, { readonly slot: S; readonly defs: readonly LocalValueDef[] }>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isParameter(node) && ts.isIdentifier(node.name)) {
+      const slot = scopes.resolve(node, node.name.text);
+      if (slot) captured.set(node, Object.freeze({ slot, defs: Object.freeze([...slot.defs]) }));
+    }
+    forEachChild(node, visit);
+  };
+  sourceFiles.forEach(visit);
+  return captured;
+}
+
+/** Private Number possibilities, never public field/return/String/ABI facts. */
+function supplementalNumberCandidates<S extends SlotView>(
+  facts: CandidateFacts<S>,
+  host: CandidateHost,
+  methodInputs: ReadonlyMap<S, readonly LocalValueDef[]>,
+  makeProof: (sets: CandidateSets<S>) => CandidateProver,
+  agrees: (slot: S, proves: (def: LocalValueDef) => boolean) => boolean,
+  returns: ReadonlyMap<FunctionLike, readonly ts.Expression[] | undefined>,
+  writes: ReadonlyMap<string, readonly CandidateWrite[]>,
+): CandidateSets<S> {
+  const numericSlots = new Set(facts.scopes.allSlots());
+  const numericFunctions = new Set(facts.functionsByName.keys());
+  const numericProperties = new Set(
+    facts.propertyWrites.map((write) => write.name).filter((name) => !facts.deletedNames.has(name)),
+  );
+  const sets = { numericSlots, numericFunctions, numericProperties };
+  const prover = makeProof(sets);
+  const writeAcceptable = (write: CandidateWrite): boolean =>
+    write.forcedNumeric === true ||
+    (write.value !== undefined &&
+      (prover.isNumeric(write.value) ||
+        prover.isOpaqueParamRead(write.value) ||
+        (write.plusEqualsRhs !== undefined && prover.isOpaqueParamRead(write.plusEqualsRhs))));
+  const provesNumeric = (def: LocalValueDef): boolean =>
+    def.forcedNumeric === true || (def.expr !== undefined && prover.isNumeric(def.expr));
+  const provesCarrier = (def: LocalValueDef): boolean =>
+    provesNumeric(def) && (def.expr === undefined || !prover.isBooleanish(def.expr));
+  let changed = true;
+  let safety = numericSlots.size + numericFunctions.size + numericProperties.size + 4;
+  while (changed && safety-- > 0) {
+    changed = false;
+    for (const name of [...numericFunctions]) {
+      const functions = facts.functionsByName.get(name) ?? [];
+      const allNumeric =
+        functions.length > 0 &&
+        functions.every((fn) => {
+          const values = returns.get(fn);
+          return values !== undefined && values.every((value) => prover.isNumeric(value));
+        });
+      if (!allNumeric) {
+        numericFunctions.delete(name);
+        changed = true;
+      }
+    }
+    for (const slot of [...numericSlots]) {
+      const exact = methodInputs.get(slot);
+      const allNumeric =
+        exact !== undefined
+          ? exact.length > 0 && exact.every(provesCarrier)
+          : slot.defs.length > 0 && (slot.isParam ? agrees(slot, provesCarrier) : slot.defs.every(provesNumeric));
+      if (!allNumeric) {
+        numericSlots.delete(slot);
+        changed = true;
+      }
+    }
+    for (const name of [...numericProperties]) {
+      if (!prover.withSelf(name, () => (writes.get(name) ?? []).every(writeAcceptable))) {
+        numericProperties.delete(name);
+        changed = true;
+      }
+    }
+  }
+  for (const name of [...numericProperties]) {
+    const values = writes.get(name) ?? [];
+    const grounded = prover.withoutSelf(name, () =>
+      values.some(
+        (write) => write.forcedNumeric === true || (write.value !== undefined && prover.isNumeric(write.value)),
+      ),
+    );
+    const anyBoolean =
+      host.excludeNames?.has(name) === true ||
+      values.some((write) => write.value !== undefined && prover.isBooleanish(write.value));
+    if (!grounded || anyBoolean) numericProperties.delete(name);
+  }
+  if (host.excludeFunctionNames !== undefined) {
+    for (const name of [...numericFunctions]) {
+      if (
+        host.excludeFunctionNames.has(name) ||
+        (facts.functionsByName.get(name) ?? []).some((fn) =>
+          (returns.get(fn) ?? []).some((value) => prover.isBooleanish(value)),
+        )
+      )
+        numericFunctions.delete(name);
+    }
+  }
+  return sets;
+}
+
+/** Candidate discovery and original/supplemental broad provenance stay private. */
+export function makeLocalNumberCandidateProjection<S extends SlotView>(
+  host: CandidateHost,
+  sourceFiles: readonly ts.SourceFile[],
+  facts: CandidateFacts<S>,
+  parameterWrites: ParameterWrites<S>,
+  originalSets: CandidateSets<S>,
+  receiverDomain: ReceiverDomain,
+  makeProof: (sets: CandidateSets<S>) => CandidateProver,
+  agrees: (slot: S, proves: (def: LocalValueDef) => boolean) => boolean,
+  returns: ReadonlyMap<FunctionLike, readonly ts.Expression[] | undefined>,
+  writes: ReadonlyMap<string, readonly CandidateWrite[]>,
+) {
+  const methodInputs = new Map<S, readonly LocalValueDef[]>();
+  for (const input of receiverDomain.methodInputCandidates()) {
+    const captured = parameterWrites.get(input.parameter);
+    if (
+      !captured ||
+      !ts.isIdentifier(input.parameter.name) ||
+      facts.scopes.resolve(input.parameter, input.parameter.name.text) !== captured.slot ||
+      !sourceFiles.includes(input.parameter.getSourceFile())
+    )
+      continue;
+    methodInputs.set(
+      captured.slot,
+      Object.freeze([...captured.defs, ...input.arguments.map((expr) => Object.freeze({ expr }))]),
+    );
+  }
+  const supplemental =
+    methodInputs.size > 0
+      ? supplementalNumberCandidates(facts, host, methodInputs, makeProof, agrees, returns, writes)
+      : undefined;
+  return {
+    candidateSlots: supplemental
+      ? new Set([...originalSets.numericSlots, ...supplemental.numericSlots])
+      : originalSets.numericSlots,
+    makeBroadProof: (grounded: ReadonlySet<S>): BroadProof => {
+      const original = makeProof({ ...originalSets, numericSlots: grounded });
+      if (!supplemental) return original;
+      const local = makeProof({ ...supplemental, numericSlots: grounded });
+      return {
+        isNumeric: (expr) => original.isNumeric(expr) || local.isNumeric(expr),
+        isOriginalNumeric: (expr) => original.isNumeric(expr),
+      };
+    },
+  };
+}
 
 interface ReceiverEffectBridge {
   primitive(expr: ts.Expression): EffectPrimitive;
@@ -917,6 +1133,7 @@ function makeLocalNumberCarrierProof<S extends SlotView>(
   groundedSlots: ReadonlySet<S>,
   prover: BroadProof,
   policy: LocalProofPolicy,
+  receiverDomain: ReceiverDomain = makeLocalNumberCarrierDomain(host, sourceFiles, policy),
 ): { proves(expr: ts.Expression): boolean; parameterEligible(slot: S): boolean } {
   const {
     unwrap,
@@ -942,10 +1159,6 @@ function makeLocalNumberCarrierProof<S extends SlotView>(
     effectsCompleteWith,
     makeInertCallProof,
   } = makeLocalCallableDomain(host, sourceFiles, scopes, policy);
-  const receiverDomain = makeLocalNumberReceiverDomain(sourceFiles, {
-    ...policy,
-    valueDeclarationOf: (node) => host.oracle?.valueDeclarationOf?.(node),
-  });
   const stableString = (key: string, query?: ReceiverQuery): boolean =>
     query ? keyUntouched(key) : isStringMethodDomainStable(key);
   const both = (left: NumberCarrier, right: NumberCarrier): NumberCarrier =>
@@ -1144,7 +1357,7 @@ function makeLocalNumberCarrierProof<S extends SlotView>(
   return {
     proves: (expr) => {
       if (!prover.isNumeric(expr)) return false;
-      if (prove(expr, 0) === "number") return true;
+      if ((prover.isOriginalNumeric?.(expr) ?? true) && prove(expr, 0) === "number") return true;
       // Raw query value facts never escape this AND. P2's original traversal
       // completes inside the callback; R's independent final scan runs after it.
       let intrinsicCallProof: ((call: ts.CallExpression) => boolean) | undefined;
@@ -1194,6 +1407,7 @@ export function analyzeLocalNumberCarriers<S extends SlotView>(
   candidateSlots: ReadonlySet<S>,
   makeBroadProof: (grounded: ReadonlySet<S>) => BroadProof,
   policy: LocalProofPolicy,
+  receiverDomain?: ReceiverDomain,
 ): Set<S> {
   // (#3765) A GROUNDED slot set, for the one consumer that types a wasm local.
   //
@@ -1220,6 +1434,7 @@ export function analyzeLocalNumberCarriers<S extends SlotView>(
     groundedSlots,
     groundedProver,
     policy,
+    receiverDomain,
   );
   const groundedCandidates = [...candidateSlots];
   for (let pass = 0; pass <= groundedCandidates.length; pass++) {

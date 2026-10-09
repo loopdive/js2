@@ -64,6 +64,16 @@ interface Instance {
   closed: boolean;
 }
 
+/** Structural candidates only: neither Number identity nor effect completion. */
+interface MethodInputCandidate {
+  readonly parameter: ts.ParameterDeclaration;
+  readonly method: ts.FunctionLikeDeclaration;
+  readonly constructor: ts.Declaration;
+  readonly installation: ts.BinaryExpression;
+  readonly calls: readonly ts.CallExpression[];
+  readonly arguments: readonly ts.Expression[];
+}
+
 function isMember(node: ts.Node): node is Member {
   return ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node);
 }
@@ -661,6 +671,63 @@ class ReceiverFacts {
       if (cyclic(callable.fn, new Set(), 0)) callable.closed = false;
     }
   }
+
+  methodInputCandidates(): readonly MethodInputCandidate[] {
+    if (this.unsafeSyntax) return Object.freeze([]);
+    const candidates: MethodInputCandidate[] = [];
+    for (const owner of this.constructors.values()) {
+      if (!owner.closed || this.exported.has(owner.declaration)) continue;
+      for (const method of owner.methods.values()) {
+        if (!method.closed || !plainFunction(method.fn) || method.calls.length === 0) continue;
+        const installation = [...owner.installs].find((node) => this.installation(node)?.fn === method.fn);
+        if (!installation || !this.sourceFiles.includes(method.fn.getSourceFile())) continue;
+        const calls = method.calls.filter((call): call is ts.CallExpression => ts.isCallExpression(call));
+        if (
+          calls.length !== method.calls.length ||
+          calls.some((call) => {
+            const member = this.policy.unwrap(call.expression);
+            return (
+              !this.calls.includes(call) ||
+              !isMember(member) ||
+              member.questionDotToken ||
+              call.questionDotToken ||
+              this.receiver(member.expression) !== owner ||
+              owner.methods.get(this.policy.assignmentPropertyName(member) ?? "") !== method ||
+              call.arguments.length !== method.fn.parameters.length ||
+              call.arguments.some(ts.isSpreadElement)
+            );
+          })
+        )
+          continue;
+        for (const [index, parameter] of method.fn.parameters.entries()) {
+          if (
+            !ts.isIdentifier(parameter.name) ||
+            this.policy.valueDeclarationOf(parameter.name) !== parameter ||
+            this.invalidAssignments.has(parameter) ||
+            !this.nodes.includes(parameter)
+          )
+            continue;
+          const arguments_ = calls.flatMap((call) => {
+            const argument = call.arguments[index];
+            return argument ? [argument] : [];
+          });
+          if (arguments_.length !== calls.length || arguments_.some((argument) => !this.nodes.includes(argument)))
+            continue;
+          candidates.push(
+            Object.freeze({
+              parameter,
+              method: method.fn,
+              constructor: owner.declaration,
+              installation,
+              calls: Object.freeze([...calls]),
+              arguments: Object.freeze(arguments_),
+            }),
+          );
+        }
+      }
+    }
+    return Object.freeze(candidates);
+  }
 }
 
 /** No truth cache: these guards and induction assumptions belong to one query. */
@@ -1088,6 +1155,7 @@ class ReceiverQuery {
 export function makeLocalNumberReceiverDomain(sourceFiles: readonly ts.SourceFile[], policy: ReceiverPolicy) {
   const facts = new ReceiverFacts(sourceFiles, policy);
   return {
+    methodInputCandidates: () => facts.methodInputCandidates(),
     withQuery(proofs: ReceiverProofs, run: (query: ReceiverQuery) => boolean): boolean {
       const query = new ReceiverQuery(facts, proofs);
       try {

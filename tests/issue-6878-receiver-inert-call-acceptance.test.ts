@@ -66,6 +66,7 @@ function inspect(base: string, tail: string) {
   const receiverSpy = vi.spyOn(receiverProof, "makeLocalNumberReceiverDomain").mockImplementation((files, policy) => {
     const domain = factory(files, policy);
     return {
+      ...domain,
       withQuery(proofs, run) {
         const capability = proofs.isInertIntrinsicCall;
         let provisional = false;

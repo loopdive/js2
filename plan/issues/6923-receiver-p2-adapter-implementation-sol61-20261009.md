@@ -863,3 +863,981 @@ c9f02e:272actualinputs/exactRfixture row272. No project gate/config relaxation.
 All heavy validation terminal; root can release sourcefreeze for this reserved
 two-leaf implementation only, after writer reads complete refinedplan and files
 own MD beforeediting. Undefined/neworacle remainsHOLD pending humananswer.
+
+## Astra N plan — exact Number method inputs, source-only 2026-10-09
+
+This append is a plan, not implementation or new execution evidence. The full
+865-line canonical record above was retained byte-for-byte from the adapter
+checkout. Its SHA256 before this append is
+814c5da589d7c3e586c43f04fd27787c8bd3ac99c915dfe9950b6e3f22551112.
+Own isolated checkout: /Users/thomas/.codex/worktrees/6923-exact-method-candidate-plan-astra/js2,
+HEAD 4deaa483edc824dc8d773c6bac0472f207b96a7e. Only this existing canonical
+6923 Markdown file is owned/edited. No second 6923 record, issue allocation,
+GitHub issue, commit, push, feature implementation, parser/compiler/native/test/
+build/types/formatter/gate/install job was performed. Root's Map execution has
+heavy-job priority. The historical absolute memory path was absent; actual
+repository AGENTS, local MEMORY and relevant isolation, shared-structure,
+ownership and narrow-wiring memories were read instead. Peer files are untouched.
+
+### Evidence and preimages
+
+Root reports published PR6604 at this head, base dbf5, with fourteen desired
+failures preserved; adapter124 is123 PASS/1 FAIL, the exact method input.
+Those current counts are root-supplied, not measured here. The retained N
+epoch3 stdout was read directly: original zero-argument source publishes v and
+inc/drive/main with result=true; the step(1) source publishes empty Number sets
+and result=false. Actual receiver resolves to original p declaration, member
+declaration is absent, and original step parameter is present. The separate
+bounded R specimen completes true. This does NOT identify private strict/P2
+votes, and the old18-row instrument's import-cycle failure must not recur.
+
+Source preimages at this plan's immutable HEAD (SHA256):
+
+```text
+9a4542603c069e87b8539dd26fccee19c83cc1558a2ccb0acdccd9381fdca53a  src/codegen/numeric-property-analysis.ts
+10a9baff4337bac1cfaab8d6c3dcbec626acbf7473cd5be070aa67f8068a7a1e  src/codegen/analysis/local-number-carrier-proof.ts
+3c3b4c7d3fa9f245f756d3dafb2d7c614be25eb3165255e09cea911caf304e8a  src/codegen/analysis/local-number-receiver-domain.ts
+ae2924d50975c3dfb31a45da3000777033184fc39b533258b6d96a23144d4114  tests/issue-6878-receiver-p2-adapter.test.ts
+3d68faba7d7d8039394281dd22ab4d4a43d1f7886273c43f95fa7c52878da307  tests/issue-6878-local-conditional-identity.test.ts
+88431b10b083f809a51de0b6921b6d5f54bef5bea5fe84b0fce40df74f90ac3d  tests/issue-6878-local-number-positive-restoration.test.ts
+f385b12faa9066e6b745ea159cae6e3506fee3c77fa6054979c507b01420e305  src/codegen/index.ts
+```
+
+Read-only full status encountered the shared LFS clean-filter permission
+restriction; explicit owned/source-path status was clean. No whole-tree clean
+claim follows. Exact frozen sources, not line numbers from earlier epochs,
+govern the proposed scope.
+
+### Fresh ownership boundary, not a foreign-owner release
+
+Read-only ls-remote observed upstream issue-assignments immutable head
+0d1fefb1045a068ce689fb83d1f58c4a173fc1f8. Contents at that exact head show:
+
+- 3765 done/released, write14492-8t6ssph8.
+- 4121 in-progress, ttraenkler/opus-4121, branch
+  claude/issue-4121-unboxing-admission, write30038-2r5tccti.
+- 4122 reserved, write18176-39702vgy, historical pr_scan degraded.
+- 4218 in-progress, ttraenkler/fable-remote, write2794-sye8cat1.
+- 6922/6923/6924/6925 reserved for this parent lane, writes15950-lx6034xt,
+  16370-d6qqi5pe,16721-bpm7xhrm,17110-xznd8q1s respectively.
+- Historical6878 is separately active delete-result ownership,
+  write49336-skzxz13q; the historical fixture prefix transfers no ownership.
+
+Root owns the private PR6604 proof paths and canonical reservation. The user
+cleared the stated inference/IR area and said the parallel IR work does not
+touch it; that is not a blanket release of every other owner. Before production,
+root must resolve the exact parent numeric-analysis candidate-loop overlap
+with active4121/reserved4122. This plan does not release, claim, message or
+take over either. No new checker/oracle query, inference ABI, IR, mixed-carrier
+helper, index driver or foreign original fixture is required by this route.
+
+### Actual lifecycle and shared-state reader/mutator inventory
+
+In numeric-property-analysis.ts, buildScopes owns one Slot per frame/name and
+creates its defs array once. collectNumericFlowFacts appends initializer,
+assignment, compound/update, uninitialized/destructured/loop/catch opacity to
+that original array. Unnamed/destructured parameters contribute opacity too.
+No later stage should replace Slot or Slot.defs to manufacture exact identity.
+
+facts.parameters is appended only during collection (line669); it currently
+contains slot/owner spelling/index/initializer, not exact callable identity.
+Its only consumer is parameter seeding at1368. facts.calls is populated only
+at642 by callName398 for identifiers/new/this.m, never arbitrary p.inc(1).
+Its only value consumer is that same seed loop. Seeding appends defaults and
+all name-aggregated inputs; if nothing was added, it appends {}. A previously
+recorded parameter assignment affects the before-length rule: do not assume
+every missing population produces a distinguishable final placeholder.
+
+Slot.defs readers in this parent are collectStringProperties (array and String
+grounding,794–812), parameterDefinitionsAgree884 (also called by makeProver's
+String arm), makeProver's String949 and Array1012 recursion, isOpaqueArgShape1338,
+greatest-slot agreement1452, and public isStringLocal1571. The strict leaf also
+reads original defs for const-call identity, primitive/effect String/array/value
+checks, and the least-fixpoint candidate/all-definitions/grounding checks.
+Therefore replacing/appending exact inputs in shared Slot.defs affects much
+more than this one local. It is specifically NOT the proposed repair.
+
+String property collection runs AFTER parameter seed fill at1383. numericSlots,
+numericFunctions and numericProperties then start optimistically full at1386.
+Their only mutations are monotonically deleting failed entries in1431–1470,
+followed by property grounding/Boolean removal. makeProver reads these live
+sets; numericSlots membership is the identifier arm. The surviving numericSlots
+is the actual candidate input to analyzeLocalNumberCarriers1491. Public fields,
+String properties and filtered function names retain these original results.
+
+The strict candidate lifecycle previously cited around1343 is now at1190–1278
+in this sealed carrier leaf: one grounded Set is created; makeBroadProof is
+called once with that SAME Set; strict proof captures the SAME Set; candidates
+are snapshotted with [...candidateSlots] at1224. Each pass temporarily adds its
+current Slot, tests EVERY original definition, removes it in finally, checks an
+independent ground with the assumption absent, and only then permanently adds.
+There is at most candidates.length+1 passes; unchanged pass terminates. An
+existing candidate is revisited when earlier new ground permits it. Adding to
+candidateSlots after the snapshot cannot repair this failure. Neither Set copies
+nor memoized booleans can replace the live factory relationship. Pure/mutual
+cycles, forced-update-only and uninitialized evidence remain insufficient.
+
+Single-source index5422 runs analysis before field-shape reservation, then
+installs the widening oracle. applyNumericPropertyAnalysis publishes all original
+sets but installs locals only with LOCALS on and runtime-eval boundary absent.
+The stratified return refinement1632 rebuilds fresh scopes/facts from the SAME
+original source population, consumes independently computed call-return evidence,
+and republishes ONLY locals; it must never feed its result back into that return
+map. Multi-source index10923 analyzes the entire original sourceFiles array,
+installs symbol-scoped local/String verdicts and retains prior function evidence
+before independent returns/refinement. No per-file cache, cross-run reuse,
+cross-source spelling pool or new driver branch is allowed. Imported/exported
+receiver populations remain incomplete under R's existing rules; the two linked
+HOLD losses are not admission targets for this bounded change.
+
+### Recommended architectural route: a private local candidate projection
+
+Do not broaden callName, delete the broad AND, make all slots candidates with
+an unconditional broad true, change opaque parameter agreement globally, or
+feed completed R truth into the broad proof. Candidate discovery and final
+Number proof remain different obligations. A permanent method-input bail also
+does not meet the original desired positive.
+
+1. After clearance, expose a narrowly typed, non-value candidate-input projection
+   from the existing R inventory to the private carrier/parent handshake. Reuse
+   ReceiverFacts' original declarations and complete population; do not implement
+   a second text-based receiver resolver. It identifies a specific original
+   method parameter, exact owning method/constructor/installation, exact calls
+   and exact argument nodes. It is only candidate data, never Number or effects
+   success. No public host/oracle/PropertyKindVerdicts API is added, no mutable
+   R maps/arrays are borrowed, and no completed query is cached. Original AST
+   objects must be retained in readonly per-analysis records.
+   Construct one receiver inventory before candidate discovery through the
+   existing parent-to-carrier-to-receiver dependency direction, then thread that
+   SAME domain into final strict proof construction. Do not add a reverse import
+   or rescan different source populations for candidate and final proof. Its
+   structural records die with this analysis; query state remains per-query.
+2. Issuing a record requires an original simple nonoptional parameter, exact
+   parameter declaration resolution, original supported prototype installation,
+   exact constructor identity and allocation-bound receiver, closed owner and
+   closed method, nonempty complete call population, valid arity and no spread,
+   invalid writes, exports, escapes, unknown use or cycles. R already collects
+   references including unused function bodies and closes fields before cycles.
+   Use that completed structural inventory, NOT an early pre-closeCalls sample.
+   A missing member declaration at p.inc is expected; proof comes from exact
+   receiver-to-constructor-to-installed-function identity, not its spelling.
+   SourceFiles membership and parameter-to-ScopeTable Slot identity must agree.
+   The candidate projection also declines facts.unsafeSyntax; an unavailable
+   resolver or unresolved population is UNKNOWN, never an empty safe domain.
+3. Leave original collection, name-based seeding, Slot.defs and public fixpoints
+   untouched. Before the final local projection, run an OPTIONAL private copy
+   of the broad candidate computation only when a closed method-input record
+   exists. It uses original Slot identities and separate ephemeral candidate
+   sets. For only a record-matched method parameter, evaluate all exact original
+   call arguments AND its collected local writes, not the legacy name-seeded
+   definitions. Retain a readonly record of those pre-seed local definitions
+   when collecting/seeding; never guess that an arbitrary {} means no-call.
+   Default/rest/destructuring are ineligible, so no default replacement exists.
+   Unknown writes/inputs and Boolean or non-Number conflicts decline this
+   supplemental parameter candidate; no parameterDefinitionsAgree shortcut may
+   silently discard an unknown argument. Its value evaluation remains a broad
+   optimistic computation, not a final semantic certificate.
+4. Reuse/factor the existing candidate-loop mechanics only within this parent
+   after exact-hunk clearance, with explicit original versus local projection
+   inputs. The original invocation must remain byte-equivalent in verdicts.
+   The supplemental loop may retain step, v, inc, drive and result as private
+   possibilities. Its property/function sets are NEVER published or installed
+   into field/ABI/return contexts. Preserve Boolean filters, grounding rules,
+   deleted-name and poisoned/open-world guards. makeProver's existing String/
+   Array readers still see original defs; this is intentionally Number-only
+   supplementation, not a new String/Array parameter analysis.
+5. Construct the final local candidate union BEFORE the leaf's one snapshot.
+   Pass a local broad factory that sees the same live grounded Set and the
+   supplemental private property/function candidate sets. Broad Number-or-Boolean
+   remains an explicit mandatory gate; exact incoming identities do not themselves
+   answer that gate. Retain an original-broad view over the SAME live Set to
+   distinguish newly enabled expression evidence. When an expression requires
+   supplemental broad facts, it MUST use assisted raw strict Number AND original
+   bridged P2 traversal AND R.withQuery final completion; it may not gain access
+   to the legacy early-return merely because candidate discovery improved.
+   Original-broad expressions retain the completed legacy route unchanged.
+   Specifically preserve original broad admission even if the supplemental
+   projection is narrower: the private gate is originalBroad OR supplementalBroad,
+   followed by strict proof, never an OR with a strict/completed R result.
+   The originalBroad boolean determines whether legacy completion is available;
+   if false, supplementalBroad alone only opens the fully assisted path.
+6. The least fixpoint continues reading original Slot.defs and unchanged P2
+   parameterEligible. It does NOT automatically promote the method's step local:
+   the target result can be grounded by the actual completed R call proof, which
+   proves every incoming step argument through query.proveParameter. Broad step
+   candidate membership is not final local membership. This avoids rewriting
+   defs or generalizing strict parameter eligibility simply to fix result.
+   Any later request to promote method parameter storage is separate scope.
+
+This route fulfills the existing result=true obligation for the exact all-known
+Number input shape, subject to measurement, while keeping public field/return
+inference unchanged. A declaration-bound two-call(1,2) population and Number
+inputs through supported closed bindings must also work; a literal1 special case
+is not an implementation. If diagnostics show an additional real seam, refine
+this plan before expanding production scope, not by removing a perimeter.
+
+### Additive diagnostic first, without a production debug API
+
+Root may assign diagnostic-only work now: a new uniquely named fixture under
+tests/issue-6923-*, optional test-local harness, and append to this SAME canonical
+file in the writer's isolated checkout. No original124/303/62 or old18 fixture
+edit. Keep exact N sources, filename, default checker libraries and original
+AST/Set/Slot identities. Import compiler entry before dynamically importing any
+mixed-carrier helper if needed; this diagnostic does not need that helper at all.
+
+First use real call-through interception of existing exported factories to
+record candidate input, original Slot/defs identities, one live grounded Set,
+factory invocation count, broad isNumeric calls/results, candidate iterations,
+composite callback and final withQuery results. Each wrapper calls the original
+exactly once and returns its exact result; no synthetic broad vote or specimen
+callback stands for production. Raw private strict and P2 results cannot be
+deduced from their combined callback false. Record NOT_REACHED distinctly from
+false, and unknown explicitly rather than treating an empty trace as success.
+
+For those private seams, root must approve a bounded TEST-ONLY in-memory module
+transform in the fixture harness (or equivalent nonmutating debugger observation),
+not a public production trace export. Match exact source hashes, module IDs and
+single lexical sites; fail UNKNOWN on zero/multiple matches. Observe the actual
+computed broad/legacy/raw-strict/effectsCompleteWith/final-R booleans without
+extra evaluation, reordered short-circuiting or changed return. Do not replace
+ASTs, resolver outputs, Set arguments, definitions or module dependencies. The
+instrumented code is a diagnostic artifact, not an accepted production build.
+Root compares uninstrumented and instrumented source-matched semantic results
+and requires a positive reached-site control for EVERY reported seam. If an
+instrument cannot meet this, stop at genuine factory evidence and leave the
+private stages UNKNOWN; do not fabricate independent votes.
+
+Minimum separately named rows: exact original zeroarg; exact step(1); paired
+two Number calls; extra Boolean call; extra unknown call in unused body; wrong
+same-named receiver; missing call; escaped method/instance; optional/spread;
+default/rest/destructured; getter/proxy/reflection/export; direct/mutual recursion;
+pure local cycle and initialized Number induction. Include one raw strict denial,
+one raw strict success/P2 denial and one callback success/final-R denial whose
+stage reach is ACTUALLY observed. Existing R140 examples are candidates for
+controls, not proof the private seam was reached. Report inventory and stage
+coverage separately; a final-R veto must not count as a P2 negative test.
+
+Pre-fix step(1) should establish candidate omission from the real factory call;
+private gates can correctly be NOT_REACHED. After a production candidate exists,
+repeat identical diagnostic observations and require candidate-present, local
+broad=true, raw-strict=true, P2=true, final-R=true on the original call; all
+negative controls must retain their own measured denial. This staged test cannot
+pretend to observe an unreachable pre-fix private branch.
+
+### Production scope, acceptance and remaining UNKNOWNs
+
+Needed exact production scopes after clearance: numeric-property-analysis.ts
+private parameter identity/pre-seed definition inventory plus private candidate
+projection and final analyzeLocalNumberCarriers call; carrier leaf's private
+factory/provenance handshake and mandatory assisted route for new broad facts;
+receiver leaf's readonly structural population projection after closure. Root
+must hash-rebase against any parallel PR6604 leaf changes, preserving their
+intrinsic-call capability and transparent ancestry. No new flat production leaf,
+inventory exemption, Slot type/defs mutation, source AST clone, checker/TypeOracle
+query, native/runtime/IR/ABI, original test, public driver, baseline or grant.
+
+Preserve all desired negatives: Boolean/BigInt/String/object/unknown inputs,
+unused bad call population, aliases/exports/reflection/proxy/getters, mutations,
+optional access/call, missing/extra/default/rest/destructured/spread arguments,
+uninitialized fields, invalid call order, recursion/depth and retained-query
+expiry. Read every receiver/argument/RHS subtree and both effect perimeters.
+Positive method input cannot depend on an unchecked oracle annotation assertion.
+
+Root alone validates after fully reading the completed plan and obtaining any
+parent-hunk clearance: exact diagnostic inventory and controls first; original
+124 with its unchanged exact-input expectation; original P2/R/boundary fixtures
+plus current additive populations; exact identity/status/first-error comparisons
+against the actual4deaa483 receipts. Preserve all14 remaining desired failures
+except specifically attributed intended flips. Run the known fixture include
+type check (ordinary source tsconfig excludes tests), source type/format/LOC/
+function/cycle/inventory gates, source-removal/restoration attribution, then
+root-owned native and canonical validation. Do not initiate any of these here.
+
+Native controls must establish actual result carrier and values for Number inputs
+under default plus original four switches, explicitly recording reached visit
+counts, emitted original function bodies and helper inventories. Preserve fields,
+locals, mixed-carrier, numeric-admission and runtime-eval boundaries at their
+existing publication/consumer sites; this plan does not repair another switch.
+For original public sets, require exact before/after equality on each paired
+source, including poisoned/open-world and single/multi source permutations.
+Add same-spelled methods/parameters in different declarations and sources to
+prove identity isolation; imports/exports still decline. No latent global cache.
+
+UNKNOWN until root measures: private pre-fix seam votes/reach; projected exact
+population completeness on all controls; actual new candidate convergence;
+original result restoration; negative perimeter discrimination; costs/gates;
+native representation/switch effects; full conformance; remaining foreign-owner
+parent-hunk clearance. No current source result proves this proposed architecture
+already works. No blanket completion, publication or acceptance claim is made.
+
+## N ownership refinement — exact published hunks, 2026-10-09
+
+This bounded source-only follow-up corrects the earlier overly broad ownership
+warning. An active issue record alone does not establish a whole-file lock or
+an active hunk conflict. The previous306-line append is preserved verbatim;
+root read it fully and authorized genuine factory call-through diagnostics.
+The proposed in-memory module transform is NOT authorized. The next writer must
+start with existing exported factory observations and report unobservable private
+strict/P2 decisions as UNKNOWN, not add that transform or a production trace API.
+
+The ledger was rechecked and still resolves to immutable
+0d1fefb1045a068ce689fb83d1f58c4a173fc1f8. Its4121 entry names only the
+admission branch/owner/status, with no file or function reservation;4122 is
+reserved with an empty branch. Read the canonical plans at HEAD4deaa483:
+4121 SHA256461343226800831b3eaadde0c9ed99acceaa00d4442501f59c18e0a55dcc15de,
+4122 SHA256845be466a91ab4e1388cef8d6eba8b5063a20c5bb0d9937f50b920f26e0ee9b9.
+4121's actual first-slice plan/result is422–745, second-slice plan/result746–1025;
+4122's complete211-line record is marked done, with delivered three-part scope.
+The stale-looking ledger entries are not rewritten or declared released here.
+
+### Published branch and exact change evidence
+
+GitHub's current admission branch is
+6b62b828ea71838af3b16716d0077a83d5e53193, identical to the local object.
+PR4695 is closed/merged2026-08-21T15:07:29Z, base
+d9ef1f76f5f100da36e0565f3e9669811d681188, mergee4075140e6e643aac3e262864d401139d8845dd8.
+Its exact base-to-head source diff has only checker/usage-inference.ts,
+analysis/mixed-assignment-carrier.ts, codegen/index.ts and statements/variables.ts.
+It has NO numeric-property-analysis.ts change. The first-slice plan's old
+parameterDefinitionsAgree/candidate anchor was corrected by its actual result:
+the work implemented collectCandidate/WidenedCarrierOracle, mixed-carrier proof
+override and four slot-minting sites, not incoming-call collection or its seed loop.
+
+The second slice named by the canonical record is separately published at
+f045c75a4debdabea8952d65dc20c858f9a373ac. PR4720 is closed/merged
+2026-08-21T21:31:53Z, base00275a6b65d98cf9713595d3e4ee2f32b7932e17,
+merge540064dfb02e4ff68b21c632aeffbd0aaa669695. Its exact numeric-analysis
+diff has THREE hunks: host.provenNumericCallReturn (old134/new135), makeProver's
+identifier-call fallback (old1017/new1029), and appended
+refineNumericLocalsWithCallReturns (old1485/new1501). At the current9a454260
+preimage these correspond to host176, direct-call1111 and refinement1624–1637.
+No parameters/calls collection, pre-seed inventory, candidate-loop or final
+analyzeLocalNumberCarriers handshake hunk is present in that published slice.
+Its base/head numeric-analysis Git blobs are7fc8512b09c3b3a6235e467aaf9a0376dfeabdbe
+and1dbf3d09b5cacf1bda3248689e9d34789346c204 respectively.
+
+4122's delivered commit378892a38edeecd74b4321b74d7a9cfdb66059ed was re-landed
+by PR4072 (rescue-pr4064-orphan), merged2026-08-03T04:45:23Z as
+e441a2dd66437bc3dde87f0a10843e88bb9ddcf1. Its numeric-analysis diff contains
+the bare-identifier receiver call arm, numericLocalVerdict target/publication,
+and the temporary-self-assumption/withdrawal/independent-ground least fixpoint.
+The postimage Git blob isb3fff714753b6f0cbb9f32c00cb56610fec9ac6e.
+Current mapping: member-call1120–1143, target1281/publication1600, and the
+extracted carrier leaf's least-fixpoint body1232–1278. These are semantic
+dependencies to preserve, but the N plan does not change those call-arm,
+publication, induction or independent-ground rules. It adds candidate inputs
+before that existing loop and a private broad-proof provenance gate.
+
+For ALL THREE published heads, merge-base with4deaa483 equals the entire
+historical head itself; rev-list4deaa483..head is0. Both4121 head-relative
+three-dot diffs are empty. This is positive ancestry evidence, not an empty
+search result: no currently published unmerged hunk on those named branches
+can conflict with N. It does not assert that no unpublished owner work exists.
+
+### Concrete disjoint scope and next step
+
+On the unchanged parent SHA9a454260, N's contemplated private additions are
+NumericFlowFacts547 and collectNumericFlowFacts599/parameter record669;
+read-only pre-seed parameter-write capture around1368; local-only supplemental
+candidate computation around1429–1470; final carrier handshake1491–1514.
+The record/capture additions do not edit original callName398 or alter original
+Slot.defs seeding. The candidate computation can be placed in a separate
+private helper immediately before the final handshake, leaving the original
+greatest-fixpoint loop text intact if factoring would increase review scope.
+That is narrower than restructuring the existing loop just to share its code.
+
+These sites are disjoint from the actual published4121 hunks and from4122's
+delivered member-call/publication/least-fixpoint rule changes. There is no source
+evidence here that they cannot be disjoint. The generic issue goals and broad
+budget allowances do not reserve every inference function. Consequently the
+earlier assertion that production requires a foreign-owner parent-hunk release
+is NOT established by the inspected records and must not be carried forward
+as a blocking prerequisite. Root's existing PR6604 parent/private-proof scope
+and the user's inference/IR clearance apply to these bounded sites. Exact
+unpublished foreign-hunk scope remains UNKNOWN, not a demonstrated conflict
+and not proof of a blanket release. A concrete later overlap would be reported.
+
+Lowest-scope next step: source-only diagnostic fixture design using call-through
+analyzeLocalNumberCarriers and makeLocalNumberReceiverDomain wrappers over the
+actual original inputs; capture candidate membership, actual Slot/defs identity,
+one live grounded Set, real broad results, composite callback and final-R result.
+Preserve independent UNKNOWN/NOT_REACHED fields for raw strict/P2. No private
+module transform, prod API, original18 fixture edit, mixed-helper import, new
+reservation, author contact, source edit or heavy execution is authorized here.
+Root reviews that fixture, runs it when its heavy queue permits, then decides
+whether the measured evidence warrants the bounded production candidate work.
+
+## N exported-factory diagnostic writer scope — 2026-10-09
+
+Writer owns ONLY new tests/issue-6923-exact-method-candidate-diagnostic.test.ts
+and this SAME canonical record in isolated managed checkout
+/Users/thomas/.codex/worktrees/6923-exact-method-candidate-diagnostic-sol61/js2,
+detached exact HEAD4deaa483edc824dc8d773c6bac0472f207b96a7e. The complete
+1268-line approved record was read and faithfully copied before this append;
+its copied SHA8537dbb2722f6cdb769d8d36d162175ab0e7ac0ec062737ac3cadbb47631611f
+matches Astra's frozen record. Historical absolute memories are absent; repository
+AGENTS, local MEMORY and isolation/shared-state/denominator/narrow-wiring memories
+were read. Existing peer files are preserved. No production reservation/adoption,
+private module transform/debug API, original fixture edit or mixed-helper import.
+
+Plan: retain exact original NUMBER/NUMBER_INPUT text, original analysis filename
+and default checker libraries. Run separate normal and call-through analyses over
+the SAME original AST/oracle for public/local verdict parity. Observe only real
+exported carrier/receiver factory inputs and invocations, original Slots/defs,
+the actual live grounded Set passed once to the broad factory, actual broad calls,
+production composite callbacks and final R results. Wrappers invoke their original
+exactly once per normal invocation; no extra proof/callback evaluation, synthetic
+votes, mutated Set/Slot/defs/AST/resolver or replacement return truth. Private raw
+strict/P2 stay UNKNOWN or NOT_REACHED; final-R completion is not private P2 proof.
+Opt-in registrations include positive real-site floors and separate complete-input,
+shape/identity/effect/recursion/grounding controls. Root alone executes every parser,
+compiler/native/types/test/build/format/gate/install job after freeze/review.
+
+## N diagnostic source-only freeze — no execution certificate
+
+New fixture342lines, SHA256
+6ac1d58a0fe20149cade4188926c2a02abb064fa7e8f7323551f1788e984d3b0.
+Only existing exported analyzeLocalNumberCarriers and
+makeLocalNumberReceiverDomain are intercepted. The generic carrier call-through
+forwards original host/source array/scope/candidates/policy, wraps the existing
+broad factory once with its original live Set, and invokes each actual isNumeric
+once. It returns the original grounded Set. The receiver factory invokes its
+original once and forwards the original proofs object/query to the original run
+once per production withQuery; composite/final booleans return unchanged.
+No synthetic broad callback, specimen R proof or independent private stage vote.
+
+Per-source structured receipt includes exact source/filename/context/default
+checker-file inventory/diagnostic codes; plain and intercepted public property/
+String/function plus declaration-specific Number/String local verdict parity;
+actual carrier/receiver/original invocation counts; exact candidate Slot IDs and
+every simple parameter/variable declaration's original resolver declaration,
+Slot/defs-array/definition/expr identities; actual real broad invocation input,
+result and live grounded membership before/after; actual composite callback and
+final withQuery result; original inc receivers/member declarations/arguments.
+Factory count, Slot presence, source/AST/resolver/reader/defs identity and same
+returned live Set assertions prevent empty interception from passing. Positive
+floors require an actual original probe initializer's chronological broad/query
+visit; final-veto control requires observed composite=true/final=false on that
+probe. These are instrument obligations, not predicted successful test outcomes.
+
+Private raw strict/P2 remain UNKNOWN for observed queries. Probe stages are
+NOT_REACHED only when no real broad visit exists for its original initializer;
+otherwise private short-circuit reach remains UNKNOWN. Chronological preceding
+broad association is labeled explicitly, not advertised as independent private
+strict/effect proof. Private iteration counts remain UNKNOWN; actual live Set
+snapshots are reported instead. Boolean strict and Number/effect-denial controls
+do NOT certify their unobservable private stage. The approved exported-only
+instrument therefore intentionally cannot supply the proposed plan's independent
+raw-strict/P2 coverage. Root decides any later scope after actual observations.
+
+Opt-in flag: JS2WASM_6923_EXACT_METHOD_DIAGNOSTIC=1. Default suite is skipped;
+enabled intended population40 unique rows, zero intended skips: inventory1 plus
+39 source controls, each configured for normal+intercepted analysis (78 total).
+Actual parsed counts/statuses/first errors/missing/pending/receipt/site counts
+remain UNKNOWN. Native/compiler/physical representation visits are NOT_REACHED
+by construction (zero configured), not a measured native correctness result.
+
+Expected suite title: #6923 exact method candidate diagnostic (opt-in).
+Inventory row: floors the explicit registration inventory.
+Other rows have prefix: observes original production calls: .
+The39 intended unique suffixes, in source order:
+
+```text
+exact original zero argument
+exact original step(1)
+two Number calls same original receiver
+Number input through closed binding
+extra Boolean call
+extra unknown call in unused body
+same spelled method on different receiver
+missing complete method call population
+missing required argument
+extra argument
+escaped installed method
+escaped instance
+optional call
+optional receiver
+spread argument
+default parameter
+rest parameter
+destructured parameter
+getter installed method
+Proxy receiver
+reflective installation
+exported installed method
+exported constructor
+direct method recursion
+mutual method recursion
+BigInt input
+String input
+object input
+unknown input
+unknown local parameter write
+Boolean local parameter write
+uninitialized field
+call before installation
+extra same spelled parameter in distinct declaration
+pure local cycle original script
+initialized Number induction original script
+Boolean strict obligation original script
+Number success and effect denial obligation
+composite success independent final R denial
+```
+
+Writer manually read the complete fixture and changed call-through/identity
+sections, enumerated39 source labels with rg, checked scoped status and hashes.
+Production parent9a454260/carrier10a9baff/receiver3c3b4c7d and original adapter
+fixtureae2924d5/P2fixture3d68faba/Rfixture88431b10 remain byte-identical to exact
+PR6604 HEAD4deaa483. No production, original fixture, shared structure, AST,
+reader, dependency, policy, runtime, IR, checker or native code changed. No
+parser/compiler/native/types/tests/build/format/gate/install/heavy job, commit,
+push, GitHub issue/action, new reservation or foreign-owner release performed.
+Detached managed checkout remains exact4deaa483; ONLY new fixture and additive
+canonical MD edits are owned. Root may integrate ONLY this new fixture into A
+or its own validation checkout, then format/typecheck with an actual fixture
+include and execute serially after its Map queue. Do not transfer this writer's
+source inventory as execution credit or claim the still-failing exact input fixed.
+Final canonical MD SHA is reported separately; the file cannot seal itself.
+
+## Root executed exported-factory diagnostic
+
+Root integrated only the new fixture into exact PR6604 HEAD4deaa483. Scoped
+lint initially found one arrow-function style violation, repaired only that
+wrapper's syntax; scoped lint then passed (24127d). Focused TS7 config includes
+the fixture and production src: session63478 terminated exit0 (0f689e).
+Formatted fixture SHA256:
+`b579bad547b6aa74cd201bd92045ee0ed406f97cdf8c4a6deb63ed8da1753373`.
+
+Serialized opt-in session57765 terminated exit0 (d0c7c7):40PASS/40registered,
+one inventory plus39unique structured source receipts and78actual analyses.
+Logs `.tmp/6923-exact-method-candidate-20261009.stdout`/`.stderr` in root A.
+All instrument parity/floors passed. Exact original zero-argument result is
+true in normal and observed analysis, with two actual broad and receiver-query
+visits. Exact step(1) result remains false in both analyses, with zero broad,
+receiver-query, composite or final-R visits. This establishes rejection before
+those observed boundaries, not private strict/P2 failure or a fixed positive.
+No production change or canonical gain is inferred. Next action is the approved
+candidate-inventory plan, preserving actual declaration identities and vetoes.
+
+## N implementation writer scope — 2026-10-09
+
+Managed checkout /Users/thomas/.codex/worktrees/6923-exact-method-candidate-fix/js2,
+branch codex/6923-exact-method-candidate-fix at exact4deaa483edc824dc8d773c6bac0472f207b96a7e.
+Read full approved1268-line plan plus diagnostic1269–1420 before implementation.
+Root dispatched bounded production after its40/40 exported-factory diagnostic.
+Historical memory path absent; repository AGENTS/local MEMORY and relevant
+shared-structure/isolation/narrow-wiring references read. Preserve peer work.
+Root alone executes parser/compiler/native/test/type/build/format/gate/install;
+no commit/push/GH/issue allocation. Own only parent private pre-seed capture/
+supplemental candidate helper/final handshake, carrier domain/provenance
+handshake, receiver readonly closed-method projection, new fixture and SAME MD.
+
+One original receiver inventory supplies candidate data and final proof. Exact
+parameters require ALL original arguments and pre-seed local writes. Original
+Slot.defs, strict eligibility/grounding and all public sets remain unchanged.
+Union candidates before one snapshot; same live grounded Set feeds both broad
+views. Original broad alone permits legacy completion; supplemental broad still
+requires raw strict Number AND original P2 effects AND mandatory final R.
+
+Reader/mutator inventory: collection creates/appends original Slot.defs; String/
+Array/parameter-agreement/strict/public-local readers keep exact arrays. Parent
+original fixpoint deletes original public sets; supplemental copies never publish.
+Carrier alone mutates the one grounded Set captured by both broad views/strict.
+ReceiverFacts owns closure/maps; projection freezes copied records/arrays with
+original ASTs, never borrowed mutable state. Published4121/4122 hunks are ancestral/
+disjoint; report concrete new overlap. No new public/oracle/IR/runtime/ABI/grants.
+
+## N source-only implementation freeze — root verification pending
+
+Three production paths plus one new fixture implemented. ReceiverFacts now
+projects frozen copied original parameter/method/constructor/installation/call/
+argument records ONLY after its existing full closure/field/cycle construction;
+unsafe syntax, unclosed owners/methods, empty populations, invalid arity/spread,
+invalid assignments, absent original declaration identity all decline. These
+records carry no Number/effect vote. Parent captures readonly copies of collected
+parameter writes before the UNCHANGED original name-seed loop. Original Slot,
+defs array, definition objects and AST nodes are never replaced or augmented
+with exact inputs. Parent's original greatest-fixpoint loop/publication remains.
+
+An optional separate private greatest-fixpoint helper starts only for at least
+one exact method-input record. Its parameter rule requires every original incoming
+argument AND pre-seed write, with no unknown/Boolean forgiveness for that exact
+slot. Property/return/Boolean/grounding/deleted/open-world guards remain. Its
+sets are never returned, installed or fed to return/field/ABI contexts. Union of
+original/supplemental slot candidates is made before the leaf's single snapshot.
+One live grounded Set feeds both original and supplemental broad views. Broad
+admission is their OR; an original-broad false expression cannot take the legacy
+Number early-return and instead requires assisted raw Number AND P2 effects AND
+mandatory final R completion. Least-fixpoint body, original defs, parameter
+eligibility, temporary-self withdrawal and independent ground remain unchanged.
+
+One receiver inventory is constructed through parent→carrier→receiver before
+candidate projection and passed as optional seventh carrier argument to final
+strict construction. Ordinary six-argument leaf callers retain default creation.
+IMPORTANT instrument compatibility: the old diagnostic's six-argument wrapper
+drops this domain, and its receiver wrapper expects creation inside the active
+carrier call. It therefore cannot certify the new single-inventory handshake;
+its assumptions must be adapted in a NEW reviewed diagnostic epoch. It is not
+edited here, and its old40/40 pre-fix receipt transfers no post-fix credit.
+The new desired fixture forwards the exact seventh argument, observes one domain
+creation, one broad factory, same live returned Set, original AST/resolver/defs
+identities and actual composite/final-R outputs. Raw strict and P2 separately
+remain UNKNOWN; their private decisions are not fabricated by the instrumentation.
+
+New fixture manual registration count59:7 complete-input positives,1 frozen
+identity/public nonpublication control,32 input/shape/escape/recursion negatives,
+4 open/effect/final-R/Boolean controls,5 expiry/no-population/no-resolver/poison/
+cycle-induction rows,5 paired public/String-local equality controls,2 original
+multi-source-order identity controls,3 native rows with5 profiles each. Actual
+unique names/statuses/first errors/skips/pending and15 configured native visits
+remain UNKNOWN. Native rows require an actual drive/result local body and default
+f64 carrier, record actual values/physical carriers/function headers per reached
+visit. Full helper-index absence/attribution is still a separate root obligation;
+this simple header read is not the original validated helper-absence instrument.
+Projection-withheld test-only public equality is not source-removal attribution.
+
+Source-only scope/status/diff/readback/hash checks done; no parser/compiler/
+native/type/test/build/format/gate/install/AST job or commit/push/GH operation.
+Scoped git diff --check reports no whitespace errors; this is not formatting
+or TypeScript acceptance. Original adapter ae2924d5/P2 3d68faba/R 88431b10
+seals rechecked unchanged. No peer/source/IR/checker/policy/baseline/grant edits.
+Root should format and typecheck all4 paths with an explicit new-fixture include,
+execute new59 plus unchanged original124/P2/R/62 and relevant additive suites,
+match exact status/error identities to4deaa483 baseline, run exact-source-removal/
+restoration attribution, then structural/native/full conformance gates. All14
+existing desired failures stay open except an actually attributed intended flip.
+Root sole heavy executor; all measurement and acceptance remains pending.
+
+Frozen source SHA256 (before root formatting):
+
+```text
+f4e827b96f9999988fc6d82e3a2604bac23159f11c16a2ee23cd668346046b2f  src/codegen/numeric-property-analysis.ts
+0818b2358f99b8c99c267fdf615ddf979c55840b1a0d3ec93514a3b36288235b  src/codegen/analysis/local-number-carrier-proof.ts
+4462e30d55e8403f588b71b68baa450193b63ea7693d215e105ca86f18005715  src/codegen/analysis/local-number-receiver-domain.ts
+7392191bd62d72f8b15fe8df8c725a291805f6c4ca381787fb771cba256f270b  tests/issue-6923-exact-method-number-candidates.test.ts
+```
+
+Manual preformat line counts1752parent/1286carrier/1153receiver/339fixture.
+This canonical record faithfully retained the approved1268 lines and complete
+diagnostic1269–1420 before additive implementation scope/freeze. Its final SHA
+is reported separately. Writer freezes all5 owned paths for root review now;
+queued Map work will use a different managed checkout/branch and source scope.
+
+## Root first candidate verification, structural gate still failing
+
+Root read all production changes and the339-line fixture before formatting.
+Formatting applied to4paths; scoped lint found only2new-fixture style errors
+(arrow wrapper and explicit two-space regex), both repaired. Focused TS7 first
+reported only the new native fixture's Uint8Array<ArrayBufferLike> mismatch;
+root repaired with an actual owned newUint8Array copy, not a cast/suppression.
+Scoped lint passed and focused types session47917 exited0 (23d8b1).
+
+First semantic session42720 exited1:180PASS/3FAIL/183. All124 original adapter
+checks passed, but the3new native rows had zero physical visits: typed source
+containing `: any` was mislabeled t.mjs and failed compilation. Root changed
+only that fixture filename to t.ts, preserving source and all desired assertions.
+Second session86395 exited0 (ff1bc3):183PASS/183 in2files,22.96s total.
+Logs `.tmp/6923-number-candidate-ts-native-20261009.stdout`/`.stderr`.
+Actual15unique new native visits preserve expected1/3/2 through all5profiles:
+default result carrierf64; numeric-locals-off externref; remaining3switch-off
+profilesf64. The unchanged124adapter's previously failing exact-input positive
+now passes. This is focused acceptance, not a canonical-original gain.
+
+The actual change-scoped LOC gate at exact4deaa483 base fails (cee4b5 exit1):
+numeric-property-analysis.ts1770 > actualbase1636 (+134). The committed whole-
+tree baseline1683 is not this change's ceiling; the earlier --json command
+only inventoried sizes and did NOT run acceptance. No allowance, shared
+baseline, threshold or workflow changed. Sol must place the bounded private
+candidate implementation in existing under-threshold subsystem modules without
+growing the parent, after its separate Map source freeze. Structural acceptance,
+source-removal/restoration attribution, remaining broad controls, publication
+and full11778canonical verification remain open.
+
+## Bounded private placement repair — second source freeze
+
+Root authorized this source-only extraction after the actual183/183 focused
+semantic receipt and the actual1770>1636 change-scoped parent LOC failure.
+Only `src/codegen/numeric-property-analysis.ts` and existing
+`src/codegen/analysis/local-number-carrier-proof.ts` changed in this repair;
+this SAME canonical record receives the handoff. Receiver-domain source and
+the root-formatted desired fixture remain byte-identical to their first
+verified candidate seals. No new flat module, allowance, threshold, baseline,
+workflow, issue identifier, public oracle/IR/runtime/ABI change or commit.
+
+The carrier leaf now owns the pre-name-seed readonly parameter-write capture,
+exact input projection, private supplemental greatest fixpoint and original/
+supplemental broad bridge. The parent imports the moved original ValueDef
+record/docs and the structurally-identical private Prover view through type-only
+aliases. Sharing the Prover view avoids duplicate method declarations; it does
+not alter a vote or replace any prover. The existing parent parameter agreement
+implementation is called through `(slot, proves) =>
+parameterDefinitionsAgree(slot, host, proves)`, preserving its original dynamic
+conflict/unknown rules for non-exact parameters. Exact method inputs still
+require every original argument and captured local write with no forgiveness.
+
+Reader/mutator inventory for this placement: collection still exclusively
+appends original Slot.defs; the new capture only reads original params/scopes
+and freezes copied arrays of original definition objects, never alters the
+Slot, array, object or AST. It includes simple original parameter declarations;
+only receiver-domain complete closed-method original records can use a capture.
+The parent name-seed loop and all original String/Array/public readers retain
+their original shared arrays. The removed transient parameterSlots collection
+map is replaced by the leaf's original-AST capture map, not a public fact.
+The existing returnsByFunction and writesByName maps are now additionally read
+by the supplemental helper: no mutation/recollection, no new shared-state owner.
+Only supplemental ephemeral sets are deleted by its private convergence loop;
+only the existing carrier least fixpoint mutates the one live grounded Set.
+Both broad provers capture that SAME live Set. Original broad provenance alone
+may take the legacy completed route; supplemental admission STILL needs raw
+strict Number AND original P2 effects AND independent mandatory final R, with
+the same cycle/self-withdrawal/independent-ground rules. One original receiver
+inventory is constructed and forwarded as the optional seventh leaf argument.
+
+Manual source line counts after extraction: parent1633 (exactbase1636, -3),
+carrier1488 (<1500), receiver1153 unchanged. These are read-only `wc -l`
+observations, NOT a formatter or structural-gate acceptance receipt. Root must
+format first, then run actual exactbase LOC gate; no grant or whitespace golfing.
+Source diff readback and scoped git diff --check succeeded. An initially
+unscoped git diff was blocked by a repository LFS clean filter's tmp write;
+scoped read-only diffs used `git -c filter.lfs.process=
+-c filter.lfs.required=false`, without changing repository configuration or files.
+
+Frozen placement SHA256 (before root's second formatting/verification):
+
+```text
+f13932a40e81e037f08b53176d94212250ced6cbf489d0a02c62b393e02c4947  src/codegen/numeric-property-analysis.ts
+3a92b9fdfbf8b93d330bed95de34ba7abac6acacb16b498749cd7c6d082cf388  src/codegen/analysis/local-number-carrier-proof.ts
+f4763dd5a246eb8b20d0bf13d11ee17d4f8d7febacc602387aa07b69ec4a8821  src/codegen/analysis/local-number-receiver-domain.ts
+b4db3a8792a73410951448e0a8f4ebffcceffa2d073cd213017f828ecd301e88  tests/issue-6923-exact-method-number-candidates.test.ts
+```
+
+Root alone should rerun scoped formatting/lint and its existing focused TS7
+configuration including the desired fixture; serial Vitest on new59 plus
+unchanged124; then `LOC_GATE_BASE=4deaa483edc824dc8d773c6bac0472f207b96a7e
+node scripts/check-loc-budget.mjs` (actual gate, not --json). Preserve and compare
+all status identities/native visits to the prior183/183 epoch. Follow with the
+unchanged original P2/R and broader763 controls, exact source-removal/restoration
+attribution, helper-absence physical checks, structure/function/cycle gates and
+canonical full conformance as required by the approved record. None of these
+jobs ran in this child and none of the earlier receipts transfers automatic
+post-extraction credit. All source paths are frozen for root review now.
+
+## Root placement revalidation — 2026-10-09
+
+Root read the full changed parent/carrier diff and placement handoff. Formatter
+reports both paths unchanged; scoped lint passes. First LOC invocation mistakenly
+targeted node_modules/check-loc-budget.mjs and did not execute the gate. Correct
+actual command with LOC_GATE_BASE=4deaa483edc824dc8d773c6bac0472f207b96a7e
+and scripts/check-loc-budget.mjs passes:3changed source paths,net+280LOC,no
+unallowed growth. Parent1633 <=1636base,carrier1488 <1500. No grant/baseline/
+threshold change. Focused TS7 .tmp/6923-candidate-types.json session66055 exit0.
+
+Post-placement semantic session68432 exited0:183PASS/183,2files,24.02s. Same
+desired59 plus unchanged original124 adapter rows, including actual15 native
+visits across five switch profiles. Logs .tmp/6923-candidate-placement-20261009.stdout/.stderr.
+This preserves the focused positive while clearing the real structural blocker;
+not original-test262/full-suite acceptance. Broader original684 plus desired59
+population is now dispatched separately, with its live handle in root tool
+record; actual row/status/error comparison remains pending. The older763
+diagnostic population is NOT falsely represented by these current six files.
+No commit/push/PR mutation yet. All originally failing broader assertions remain.
+
+### First broader receipt — stale observer contract retained
+
+Session34462 terminalexit1, actual743unique registrations537PASS206FAIL0pending.
+193 failures are same TypeError: receiverDomain.methodInputCandidates is not a
+function, all in intrinsic acceptance fixture. Its genuine factory wrapper
+returned ONLY withQuery and dropped the new structural method, so candidate
+projection stopped before assertions. Root read the actual mock and fixed ONLY
+forwarding via spread of the original domain before overriding withQuery.
+No production change, artificial candidate/query verdict or changed expectation.
+The original537/206 receipt remains .tmp/6923-candidate-placement-broader-20261009.json.
+Other13 actual failures retain exact desired native/global expectations. A fresh
+same743 rerun with forwarded observer has its own report; actual result pending.
+
+### Forwarded observer — actual broader outcome
+
+Session73727 terminatedexit1:730PASS/13FAIL/743,zero pending. Full report
+.tmp/6923-candidate-placement-broader-forwarded-20261009.json SHA256
+99d64508248ef1b6efb8665413cfce03c18607bba24630737541ad1abc6141e7.
+Actual counts by unchanged population:inertglobals50/2/52;conditionalidentity
+184/4/188;positive restoration110/5/115;intrinsicacceptance203/2/205;
+adapter124/0/124;newcandidate59/0/59. The193 observer errors vanish solely after
+forwarding the real domain contract. All13 original desired failures retain
+exact first errors from published receipts:undefined proof2,conditional native4,
+field identity/coercion5,intrinsic argument order2. Adapter's formerly failing
+Number-input row nowpasses. This is one actual combined743 population, not the
+earlier separate684 arithmetic or the different763diagnostic population.
+No full canonical gain/regression absence or merge readiness claimed.
+
+## Source-only residual ownership analysis — Sol6.1, 2026-10-09
+
+Root explicitly authorized read-only source/plan analysis plus this distinct
+append AFTER its forwarded-observer execution append was complete. Root owns
+all production/test paths and its live causal-removal/restoration epochs. This
+section changes no source, fixture, policy, grant or ownership record; it is NOT
+an Astra implementation plan, reservation release or implementation dispatch.
+No compiler/parser/type/test/native/formatter/gate/commit/push ran in this lane.
+The thirteen non-observer failures were read from the first broader JSON as
+plain stored data; root's forwarded report independently confirms the same
+identities/first errors. The193 dropped-method observer errors are separate and
+resolved by forwarding, not thirteen production failures of one common cause.
+
+### Two global undefined proof obligations — canonical6924/6927
+
+Both paths of `deferred safe undefined data read requires proven identity`
+(original constructor and matched module literal) expect true but observe false.
+Canonical6924, COMPLETE146-line G record in this checkout, explicitly retained
+these positives as deferred identity obligations. Canonical6923's shared-oracle
+ownership/undefined-measurement sections identify the active4218 overlap and
+reserved4410/4409/4408 contracts, not a cleared owner. Diagnostic-only canonical
+6927 lives in the original adapter checkout, not the selected four-record
+checkpoint manifest; its source/query HOLD is explicit. Earlier82/82 diagnostic
+observations found the actual checker builtin undefined symbol but zero value
+declarations, so an existing declaration-only query cannot convey that proof.
+
+Exact present consumption seams: carrier `makeLocalCallableDomain` at
+local-number-carrier-proof.ts:1019–1041, `standardDeclaration` at881–884 and
+`identifierSafe` at559. `isInertGlobalRead` currently requires both the finite
+NaN/Infinity/undefined spellings AND `isKnownGlobal`; that identity requires an
+actual standard-library declaration. `src/checker/oracle.ts:151` owns the
+declaration-only interface; TsCheckerOracle's432–449 implementation returns a
+symbol's valueDeclaration/declarations[0], not a builtin-symbol identity vote.
+Potential additive identity ownership therefore crosses oracle.ts,
+inhouse-oracle.ts and oracle-backend.ts before any narrow carrier consumption.
+No name-only exception, synthesized declaration or reused type=undefined fact
+is authorized. Next step: root resolves the exact additive query reservation/
+human authority and reviewed Astra plan; the current N fix does not clear it.
+
+### Four conditional native producer obligations — J prerequisite, not N
+
+Exact failing titles: `[J prerequisite] separates lazy selection and identity
+observers` (actual127); retained witness `direct arguments versus any locals`
+(35); `boxed call returns, NaN and negative zero` (83); and `condition and
+selected arm run once` (92). All expect1. Their original188 fixture labels J
+explicitly and keeps its independent local-analysis controls separate.
+
+Narrow present producer is `src/codegen/expressions/misc.ts:41`
+compileConditionalExpression, reached via expressions.ts:1486–1487. Its
+constant-folded arm at54–57 emits only the selected expression; its normal join
+at124–127 labels mixed i32/f64 arms "both numeric" without comparing Boolean
+brand, and its same-kind path at214–216 returns the then arm's type. These are
+concrete source-supported candidate loss boundaries for Boolean/Number joins,
+NOT executed seam attribution for every failure or authority to change them.
+Expected-type/sink and boxed-return routes require their own retained natural
+module evidence: an actual127 guard and actual35/83/92 observers are distinct.
+Historical canonical135 (done) describes heterogeneous ternary joins; canonical
+435 (done) describes logical/conditional identity. Neither is a current approved
+J implementation assignment. No exact new J implementation ownership/approved
+plan was found in this checkout's selected6922–6925 packet. Next step is a
+separate Astra plan plus original-module capture and narrow producer/sink owner
+coordination, not changing the Number-analysis admission to satisfy these rows.
+
+### Five receiver native obligations — four identities plus opaque coercion
+
+Original115 fixture failures: `preserves exact JavaScript field result: Boolean
+identity`, `String identity`, `null identity`, `undefined identity`; and
+`preserves opaque value coercion count and operand evaluation order`. Each actual0
+versus desired1. Four values traverse `new P(value)` -> `this.v = v` ->
+`P.prototype.read` -> local -> strict/category observer. The fifth independently
+uses an object valueOf and RHS side effect, requiring value5/calls1/order21.
+Do not label the fifth a pure identity case or attribute all five to undefined.
+
+Canonical6923/6925 and checkpoint6922 explicitly preserve these five old native
+failures without authorizing runtime/return/ABI changes. Present source areas to
+capture separately are fnctor field derivation in fnctor-escape-gate.ts:1939
+(recordThisField starts1963, checker-derived carrier selection1978+), constructor
+parameter/field agreement in fnctor-ctor-param-types.ts, property read dispatch
+and method allocated return ABI, with final coercion in type-coercion.ts and
+the plus/coercion path for the fifth. Canonical743/3683/4250 cover field/parameter
+inference contracts; canonical4121/4122 cover numeric carrier/assignment contracts.
+They are related boundaries, not approval for a current five-row repair. The
+closed-field undefined union issue6632 is done and scoped to a different
+nullable AnyString/typeof/member-get mechanism; it does not establish this
+untyped fnctor fixture's cause. First wrong seam for these exact original bodies
+is UNKNOWN without their own reachable returned-module capture. Next step:
+Astra split plan and exact per-body field/store/read/return/consumer observations,
+then narrowly released owner reservations. No blanket oracle/ABI/runtime edit.
+
+### Two ignored-argument evaluation obligations — canonical6925/6928
+
+Exact intrinsic acceptance titles `receiver and supplied arguments run once in
+order` actual1265 versus12365 and `ignored conversion argument still runs once`
+actual107 versus1207. Canonical6925's COMPLETE405-line execution record explicitly
+attributes both unchanged first errors to the exact G predecessor (same fixture),
+not the private effect-perimeter repair. It retains the COMPLETE408-line Astra
+argument-evaluation plan seal4b72fcc4... and says source dispatch requires
+function-scoped coordination/original-module evidence. Capture-only canonical
+6928 is retained in the original adapter checkout, absent from this checkout's
+published plan manifest; its observed extra helper bodies are unreachable while
+receiver/index/first effects are inlined into main. That is emitted evidence,
+not an authenticated private compiler branch for every route.
+
+Exact narrow source candidates presently: call-identifier.ts:1166 Number(x)
+arm reads expr.arguments[0] and can return after conversion; native string
+string-ops.ts:2874 charCodeAt arm and2957–2967 flat-string path process only the
+index; host sibling call-receiver-method.ts:3442–3478 likewise compiles receiver
+then only argument0. Dedicated char-code-at-helpers.ts/IR emission are separate
+routes, not authorized by a native-only fix. Full supplied argument evaluation
+must precede conversion, keep original receiver and each argument once/in order,
+and preserve abrupt completion; appending extras after conversion is not a fix.
+Of the residual groups, this already has the closest bounded Astra plan/capture
+handoff for a next dispatch, but canonical6922/6925 still require exact narrow
+source reservations and root/user release. Current source-only task is not that
+release. No change to private admission/effect votes can restore omitted effects.
+
+### Authority and next handoff
+
+The completed N candidate fix is separately root-verified183/183 with real exact
+base LOC/type acceptance; further thirteen-row implementation has NOT been
+authorized by this analysis. Safe ready work is root review/plan routing and
+read-only exact-module evidence for the corresponding producer/argument/field
+seams. Undefined needs shared-query authority; J and receiver native groups
+need separate approved plans/owners; argument staging has a reviewed plan but
+needs narrow dispatch/coordination. No new issue allocation or stale HOLD release
+was inferred. Map is entirely separate: root's authoritative original5 and
+completeness controls pass; its two adjacent native residuals remain unchanged,
+not grounds to broaden Map/runtime/closure scope here.
+
+## Root causal and structural closure of N — 2026-10-09
+
+Only the supplemental-GFP condition was temporarily disabled in the carrier,
+then restored exactly via apply_patch. Original broad votes, receiver inventory,
+Slot.defs/ASTs and all expectations stayed unchanged. Removal session48817
+terminatedexit1:167PASS16FAIL183,zero pending. Exact adapter Number-input positive
+fails again;15 dependent desired checks fail. Three native rows stop at the
+default-profile f64-carrier assertion BEFORE instantiation; zero native-value
+receipts in this removal run, not fifteen native visits inferred from the loop.
+Report .tmp/6923-candidate-removal-20261009.json retains exact titles/first errors.
+
+Restoration session2503 terminatedexit0:183PASS183,zero pending. Report
+.tmp/6923-candidate-restoration-20261009.json. JSON-only reporter emits no native
+console records, so an exploratory count0/all(empty)=true query is explicitly
+NOT a native execution floor. Independent pre-removal verbose session68432 has
+15 actual native receipts, all exact values/carriers verified; source restoration
+is byte-identical carrier3a92b9fdfbf8b93d330bed95de34ba7abac6acacb16b498749cd7c6d082cf388.
+No temporary disabled condition remains.
+
+Session27055 terminatesexit0:actual change-scoped function-budget and flat-dir
+gates pass,flat codegen count830. Import-cycle ratchet passes:largestSCC699,
+4nontrivialSCCs,10two-waypairs,1901files/10518valueedges/3867type-onlyreferences
+skipped. Same exact4debase, no grant/config/ceiling/baseline edit. Broader743
+report has743unique fullNames,730PASS13FAIL0pending as retained above. These
+prove focused repair/causality/structural acceptance, not completion of the
+thirteen native/query residuals or the authoritative full11778 goal.
+
+### Boundary controls and next work
+
+Session29019 exits0 after the current boundary report and unchanged issue3518
+fixture. Actual boundary controls125PASS/125,51.04s, not the older62-row receipt.
+Logs .tmp/6923-placement-boundaries-20261009.stdout/.stderr. The standalone
+boundary report has errors[] and inventoryValid:true, but explicitly
+architectureComplete:false/status inventory-valid-architecture-incomplete;
+its exit0 is NOT completion of the other machine's IR architecture migration.
+No report-size or empty-errors shortcut is used for that separate requirement.
+
+All root heavy validation handles above are terminal. Sol has a new separate
+Map direct-get diagnostic source-only packet from the fully reviewed593-line
+Astra plan; Astra is separately planning canonical6929 constructor alias repair.
+Neither changes this frozen N source. Publication remains unfinished rather
+than claiming the broader13 residual failures fixed or a full canonical score.
