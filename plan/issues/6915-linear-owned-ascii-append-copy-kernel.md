@@ -1924,3 +1924,141 @@ After the one trial and full comparison pass, use existing B PR6593 and ordinary
 Reviewer data is `.tmp/independent-review-data.json`, 31,170 bytes, SHA256 `5592d0b3da474c50afa8701e296e5d54e5fa587a730df9c9f729d5937526da7b`. It includes exact three-path delta, reconstructed source identities, complete fixed-pin table, preserved function lists, independent full-graph/raw-stream/custody comparison, actual downloaded CI archive metadata and per-file raw hashes, and all published blob download identities. Exact ancestry JSON, job logs, claims, blobs and ZIPs are alongside it. The inert inspection script `.tmp/review-data.py` is review tooling only and is not proposed repository production/test code.
 
 The original specification was full-text read; complete G24 source, all changed source bytes, complete 2a8 and baseline graphs, both actual CI partial archives and relevant production runner sections were independently inspected. No archived JavaScript was executed, no runner/compiler/test imported, no v8 payload deserialized, no runtime child spawned, no production fault mutation performed. This review cannot claim third-target36/38 equality, native completion, JS-host IR/native-array admission, performance, full IR equivalence, allocator ownership, legacy retirement or release of B holds. ROOT must adopt/release the bounded plan; B parent must review/freeze/authorize the single trial; final integration and queue remain ROOT's.
+
+## Session A released no-kill contract adoption — 2026-10-09
+
+Coordination comment6079142034 explicitly releases original-owner private
+implementation and inert controls only. The complete independently reviewed
+contract below is21878 UTF-8 bytes including its terminal newline, SHA256
+`c655a3d4e2773f61144d7cf28b2b0a17b268260f7c083d3583567ed3d8af5b6c`.
+Parent independently verified that exact digest from the published comment.
+Original-owner ACK and fresh sameowner serialized continuation effect-read must
+precede writing. Compiler trial, HOLD, protected delivery and other ownership
+remain unreleased. Preserve reviewed geometry predecessor e33560ce and all
+original baseline/failure artifacts. This complete adoption supersedes no
+original evidence obligation.
+
+Original Sol6.1 High runner owner ACKed exact e33560ce HEAD/aefbb190 runner,
+clean worktree and no concurrent source writer. Parent created and directly
+effect-read canonical `6915:no-kill-runner-repair-20261009`, same owner
+`ttraenkler/codex-linear-b-source-approval-sol61-20261009`, write5719-lzuom54e,
+in-progress on `codex/6915-source-approval-20261009`. The worker is dispatched
+only to the released runner supervision/control regions; no compiler child,
+source commit, push, baseline change, hold release or shared edit is authorized
+by that dispatch. Parent owns later exact review/comparator rebinding/refreeze.
+
+# B append runner: bounded no-kill fault handling
+
+Issue 6920 — Native Linear numeric-vector shared source handoff and integration plan. Related issue 6915 — Linear owned-ASCII append: optimize the existing copy kernel.
+
+Independent Codex GPT-6 Astra High review for ROOT adoption, 2026-10-09. This document recommends a private implementation release to the original runner owner. It does not release a compiler trial, terminate anything, transfer ownership, accept the third source, or remove a hold.
+
+## Decision and inspected record
+
+Release the narrow repair after ROOT adopts this complete contract and B acknowledges its original-owner partition. The proposed monotonic fault latch, immediate notification and natural-close drain are sound **only with the bounded capture and close-order requirements below**. Deleting `stop()` or replacing it with a warning alone is insufficient. A timeout remains a qualification failure; only its automatic termination side effect changes.
+
+I read all 1,926 lines of the supplied published issue, then independently retrieved it and the runner from exact PR6593 head `5024648b7f9a64f101ffd327be3bac710a5fc646`. The supplied issue equals the retrieved Git blob byte-for-byte:
+
+| Record | Bytes | SHA256 | Git blob |
+| --- | ---: | --- | --- |
+| Published issue6915 | 157902 | `ef2a239fdc89006194f5ba9162ef8ecda4308774a5c5333fe3024dbb1beed21c` | `064ed20ad36eeea6b36e6bb8c5995881ecb56a45` |
+| Published runner | 83848 | `b6106b0ef3b686bb67d713cf6133d3235a5c4c29666fa889680b531193263e77` | `18a055272a34195e091a601ce6fe003f9c072c61` |
+
+The published runner still has two source targets. The issue separately records the private geometry candidate `e33560ce57c5912fd75cc36c7156b1037828416e`, runner 87264 bytes/SHA256 `aefbb190424ca7d9b22ebf11640662f63ff5917bd16553f6a909fcccda65cf3d`, and 159 controls. Those are published checkpoint records, not private bytes or controls freshly executed by this review. B must identify the exact already-reviewed geometry predecessor when composing this repair; do not mistake the published two-tree runner for that predecessor or overwrite the geometry work.
+
+Actual published `runAppendQualification` starts at line1147. Lines1211–1223 implement `stop()`, set `killed=true`, send SIGKILL to the child on Windows or its process group elsewhere, and wire that action to timeout and SIGINT/SIGTERM. Lines1225–1237 write each full incoming chunk before checking the total cap, and invoke the same termination on cap/write failure. Lines1241–1261 await `close` and derive strict failure partly from `killed`. Lines1289–1307 capture after-state and close handles/unlink the lock. No new execution was needed to establish these source facts.
+
+The repo's `.claude/memory/feedback_ask_before_killing_tests.md` explicitly requires asking the user before killing a test suite. The earlier geometry contract restricted edits to literals, membership and controls; preserving other code was not permission to terminate a test. Its runtime hold is therefore correctly retained pending this separate repair.
+
+Fresh read-only canonical claim-file reads retain:
+
+- Runner owner `ttraenkler/codex-linear-b-source-approval-sol61-20261009`: finite-successor write `62837-vw2me2ho`, geometry-continuation write `33193-a04x7qa7`, both in-progress on `codex/6915-source-approval-20261009`.
+- ROOT owner `ttraenkler/codex-ir-integration-session-a-20261009`: integration write `60335-ngn0jcr6`, in-progress on `codex/6920-geometry-proof-integration-20261009`.
+
+These actual individual records were read; I did not claim to inspect the complete current claim tree. B must obtain the same runner owner's acknowledgement and effect-read its fresh unique no-kill continuation before writing, serializing against that owner's earlier scopes. Existing records are neither transferred nor force-completed. A new slice must not create a second writer. B owns issue6915/evidence adoption; ROOT owns issue6920 adoption and final integration review.
+
+## Exact implementation partition
+
+Only `scripts/hooks/run-linear-append-provenance.mjs` is the worker's implementation file. Permit:
+
+1. The child supervision region of `runAppendQualification`: timeout/signal/error handlers, stream capture accounting, natural-close wait, fault notification, receipt assignment and the cleanup ordering needed to keep the lock and capture handles live until closure.
+2. One small file-local supervision helper extracted from that region if required to exercise the actual production path with inert child/stream/timer doubles. Its dependency seams are private test seams, never environment/CLI overrides or exported extension APIs. Production supplies the unchanged real spawn, timers, fixed bounds and file writes.
+3. Directly related cases in existing `selfTest`. A built-in EventEmitter import and making `selfTest` async with a corresponding `await selfTest()` at the existing CLI call are allowed if needed for actual close-order controls. Do not extract a generic process manager or add test files/frameworks.
+4. Within the same runner, a small fixed parent-only capture-status artifact and its archival calls, if using the recommended `capture.json` below. Existing receipt keys retain their meaning. No child manifest/evidence schema change is needed.
+
+Everything else stays byte-equivalent to the reviewed geometry predecessor, including all approval literals, `PINS`, `CONFIG_PINS`, `EDITABLE`, membership and identity functions, complete `assertFrozenInputs` observation, generated-report handling, `colorlessChildEnv`, command/argv/flags, source/test/fixture, parser, decoder and `validateAppendReceipt`. Keep TIMEOUT_MS=600000 and OUTPUT_CAP=268435456. Preserve actual spawn options, including shell=false, existing platform-dependent detached setting, and ignored stdin/piped stdout/stderr. Workflow, uploader, changed-root shell, dependencies, full-graph comparator implementation, compiler and Native Linear work are outside the runner writer's scope.
+
+B parent separately owns the comparator's exact runner-hash rebinding and its independent freeze; the worker does not rewrite comparator logic or baselines. Normal source/test/policy ownership, allocator4540, ROOT integration and all holds remain unchanged.
+
+## Required behavior
+
+### Faults fail immediately; finalization waits for closure
+
+Use a monotonic infrastructure-failure state. Record timeout, each received signal identity, child error, each stream error, cap exceedance, write failure/stall and notification failure as failures. Never clear the latch because output resumes or the child eventually exits0. The final success conjunction remains real child close with code0/no signal/no spawn error, no infrastructure/cleanup/archive errors, complete capture, unchanged full custody and the unchanged passing receipt validator.
+
+At the 600000ms deadline, latch a descriptive timeout error and notify immediately while leaving the child and both stream consumers running. Keep recording output up to the unchanged cap. No timeout extension, reset, second deadline that kills, `Promise.race` that finalizes early, or hidden retry. A run beyond the deadline cannot later qualify. The timer must not be the only keep-alive: never `unref()` the child or its pipes.
+
+SIGINT/SIGTERM received by the parent record their actual names and latch failure. Do not forward, re-raise, translate into abort, send a softer signal, close a pipe to stop the child, or invoke another termination utility. Receipt `killed` stays false because this runner sends no termination signal; a child actually terminated externally retains its real close `signal` and fails. Do not label a received parent signal as a child kill. Repeat notifications are counted/coalesced, not an unbounded error/log stream.
+
+Install the close promise, child error handler and both pipe error/data handlers immediately around spawn. A synchronous spawn throw has no live returned child and takes the pre-child failure path. A child `error` event does not itself authorize finalization: record it and await its real `close`, including failed-spawn error-then-close ordering. Do not wait only for `exit`; trailing pipe data must remain capturable. A pipe error, or close without normal readable end, marks incomplete capture, continues the other usable pipe, and never invents the lost bytes. Normal pipe end before child close is permitted and must not be falsely rejected. Catch callback failures locally so notification/write errors cannot escape as uncaught exceptions and abandon a live child.
+
+Once a child exists, no handled fault or setup exception may reach after-custody, descriptor closure, lock unlinking or terminal receipt serialization before the real close barrier. Make this explicit in control flow, with a defensive close wait on any post-spawn exceptional path. Then cancel the timer and remove only this invocation's listeners. Preserve the pre-child partial-archive path and all independent cleanup attempts. Do not remove an existing foreign/stale lock to enter a run or delete locks on a timer.
+
+Node documents `close` as following process termination and stdio closure, unlike `exit`; an installed SIGINT/SIGTERM listener removes the default parent exit behavior. These support the proposed ordering. They do not establish that all detached grandchildren with independently closed pipes are gone. This repair preserves the existing supervised pnpm/Vitest boundary; it is not a process-tree census. Sources: [Node child-process lifecycle](https://nodejs.org/api/child_process.html#event-close), [Node 22 signal events](https://nodejs.org/docs/latest-v22.x/api/process.html#signal-events).
+
+### Bounded capture while continuing to consume
+
+Preserve exact bytes already written to stdout.log/stderr.log. Use one combined captured-byte budget across both streams. Before each write, limit it to the remaining OUTPUT_CAP budget; at exactly the cap with no further bytes, no cap-exceeded fault is necessary. The first additional byte latches cap failure. A chunk crossing the boundary contributes only its allowed prefix to disk and its remainder to discarded-byte accounting. No chunk-sized cap overshoot, ring overwrite, truncation of existing files or post-hoc normalization.
+
+Track bytes observed by data callbacks separately from bytes successfully written, per stream and total. Keep existing receipt.bytes as observed bytes; healthy runs retain its current meaning. Continue consuming and discarding excess chunks without storing them, queuing asynchronous writes, or accumulating a buffer. Preserve successful partial writes before a later throw; treat a zero-byte write as a fault rather than a busy loop. After the first write fault on a stream, stop retrying that descriptor and count/discard its remaining data; keep capturing the other healthy stream within the shared bound. Do not repeatedly append the same write exception for every subsequent chunk.
+
+Recommended fixed `capture.json` records started/closed status, completeness, observed/captured/discarded byte counts for stdout/stderr, and finite fault identities/counts. It is parent diagnostics, not source approval or a new child schema. Mark incomplete at the first lost/unreadable byte; never reset it. A stream read error makes total emitted bytes unknown even if observed counters are exact. An unspawned run must not be reported as a complete empty child. This can instead be encoded in clearly named parent receipt additions if exact downstream review proves compatibility; choose one form, not duplicate authorities.
+
+On the first occurrence of each finite fault category, synchronously attempt a bounded primitive diagnostic to the parent's stderr, identifying archive path, child PID if available, reason, capture status and that the runner is waiting for closure. Also attempt to persist the fault status in the unique archive while still running, so a later external runner loss need not erase every reason. This is notification through the existing invocation, not a GitHub/chat message, watcher or separate coordinator. Never write notification text into child raw streams. Notification/archive failure is retained as a secondary error; avoid recursive notification, repeated writes to a failed destination or throwing out of callbacks. Best-effort notification is not claimed delivered if both destinations fail.
+
+Bound state by fixed fault categories and counters: preserve the first actual Error object and cause for each independent category/stream, all separate finite cleanup errors, and repetition counts. Avoid creating a fresh error for every discarded chunk or repeated signal. Detached error serialization keeps its existing reference/descriptor behavior. Final receipt.failures must stay nonempty for every latched fault, even if every subsequently parsed graph and reporter passes.
+
+After close, archive whatever real reporter, decoded graphs/diagnostics and before/after custody can safely be captured, using the unchanged strict parser and validator. A complete-looking prefix or passing reporter cannot repair explicitly incomplete raw capture. Never manufacture missing healthy files, change a failed receipt to success, replace a primary failure with the last cleanup error, or discard old archives. Keep the lock through the child close and existing post-run custody/capture cleanup; terminal-status writing must not be represented as complete while a live child is still being drained.
+
+## Finite regression controls
+
+Controls exercise the extracted real supervision path, not a second implementation of its decisions. Use deterministic inert emitters, timer callbacks and bounded write doubles; no real compiler/test subprocess, real process signal, production disk-full injection, or termination call. Every fixture that returns a child eventually emits synthetic close so the test itself cannot hang. Preserve the predecessor's actual complete existing control population (159 if the independently checked geometry predecessor is used; published502 has128). Report the measured count, never predict a pass total.
+
+Required cases, with exact counters/order and zero termination calls asserted:
+
+1. Healthy stdout/stderr interleaving, partial successful writes, exit0 followed by trailing data then close0. Capture all bytes; do not settle on exit. No faults, normal finalization exactly once and listeners/timer cleaned.
+2. Timeout, more data on both streams, then close0. Notification occurs while live; capture continues; no after snapshot/FD close/lock unlink/terminal receipt occurs before close; result remains failed.
+3. Each of SIGINT and SIGTERM, repeated signal, continued data, then close0. Correct signal identity, bounded repeats, zero forwarding and failed result.
+4. OUTPUT_CAP-1, exact cap, one-byte-over, one chunk crossing cap and cross-stream cap exhaustion. Preserve the exact prefix, correct observed/captured/discarded counters, no cap overshoot, continued data consumption, failure only on excess.
+5. Successful partial write then exception, and zero-byte write, on each stream. Exact prefix retained, that descriptor never retried, other stream still captured, subsequent data drained, incomplete/failing even after close0.
+6. Each stream's error while child remains live; retain original error, incomplete status, continue the other stream and await close. Include no unhandled error event.
+7. Synchronous spawn throw and asynchronous child error then close. Record actual failure; no invented child result; error does not prematurely resolve close waiting.
+8. Child nonzero and child externally signalled close with otherwise healthy capture. Both remain failures with true code/signal and killed=false.
+9. Timeout followed by cap, stream/write failure and close0, plus distinct after-custody/archive/close errors. Preserve primary and subsequent finite failures; none overwrites another.
+10. Parent notification write failure, fault-status archive write failure and their combined failure. No recursion or callback escape; drain/wait and fail remain intact.
+11. Explicit attempt to finalize with child open or only `exit` observed is refused. Prove lock and capture handles retained; close permits exactly one finalization. Validate the real integration of this barrier, not just a boolean in a disconnected fake.
+12. A faulted/incomplete capture containing a syntactically complete passing receipt still fails the parent; the healthy positive control succeeds. Unknown tree and wrong identity still stop before the spawn seam, preserving their partial archive.
+
+Observe termination attempts through doubles that fail the control on child.kill, group/process.kill, abort/destroy/unref or a second spawn. Static inspection additionally verifies production has no alternate termination path. Do not claim a fake emitter validates actual OS process trees; these are deterministic decision/order controls. Syntax, formatting and whitespace checks remain normal. No destructive experiment is needed to demonstrate this repair.
+
+## Review, trial and release
+
+The original owner hands off the complete patch, exact predecessor/candidate bytes and SHA256, actual inert control output and a precise file/function diff. Independent review verifies all excluded regions and the approved geometry patch unchanged; inverse-edit comparison should recover the exact geometry predecessor. In particular, there must be a durable failing error beyond killed=false and cap enforcement must bound physical capture, not merely count bytes after writing. ROOT/B review the result before any real child.
+
+B parent then binds the reviewed comparator to exactly the new runner hash, preserving all comparator code, baseline hashes, full graph0 validation, unfiltered graphs1–37 and raw-stream/custody joins. Verify that its existing parent-terminal and receipt.failures checks reject this repair's faults; an additional diagnostic artifact must never become a means of ignoring nonempty failures. The published issue's comparator hash `03a5a9752ce408297adc87581dae6a2955755e8d901ccd29703f4692ace2bfcc` is a prior geometry checkpoint, not a hash for the new runner binding. This review has not inspected that private comparator's bytes and does not grant its modified version acceptance by narrative.
+
+After exact patch/comparator review, independently freeze a committed isolated B composition containing approved geometry source1716 and unchanged c63 test, all fixed inputs, complete source/config populations, Node/V8/pnpm, command/4096-MiB flags, runner/hook/issue custody, comparator and original graph baseline. ROOT's live integration checkout is not the trial checkout. Keep actual execution identity separate from later publication identity.
+
+Only the existing parent route may separately authorize one serialized third-target trial. This specification itself executes/releases none. No real timeout/cap/signal/disk-fault campaign, parallel run or retry is implied. If the real trial faults, notify and continue awaiting natural close while preserving partial evidence; the parent must seek explicit human authority for any later termination. A worker or scheduling limit is not such authority.
+
+Healthy acceptance remains strict parent terminal exit0, child code0/no signal/no kill/no spawn or infrastructure errors, full before/after equality, complete capture, all38 envelopes, exact36 ordered IDs, reporter36pass/0fail/0pending/0todo, Runtime22's33 transitions and all eight full same-validator negative witnesses. Compare every complete observation and completion graph with the original retained baseline; separately authenticate graph0 and all raw/input joins. Any difference or missing evidence holds acceptance with its actual denominator and complete differing values. No rebaseline, repin, filter, timeout waiver or repaired label for historical failures.
+
+Then publish in existing B PR6593 through normal hooks, with existing required-quality and supported-identity advisory CI and actual downloadable archive inspection. Existing uploader scope is sufficient for extra fixed diagnostic files under the same run directory. Preserve original failing CI archives. No CI rerun/cancellation, hold removal, queue submission, direct-main push, native admission, performance, full IR equality or legacy retirement follows from this plan.
+
+## Remaining limits and review outcome
+
+Natural-close waiting intentionally no longer guarantees bounded wall-clock completion after an infrastructure fault. Draining consumes bounded memory/disk but may wait indefinitely for an uncooperative child; the lock remains held. ROOT's adoption must accept this consequence rather than describe a timeout warning as a finite runtime guarantee. External SIGKILL, Actions job cancellation/host loss, filesystem failure or closed independent descendant pipes can still prevent complete archival; this patch cannot promise otherwise and changes no external policy.
+
+These are release limits, not reasons to introduce a new supervision framework. The concrete unresolved implementation questions are whether the actual patch waits on every handled post-spawn exceptional path, bounds repeated error/notification state, accurately accounts partial writes, and preserves comparator rejection of faults. The finite controls and exact diff review resolve those before trial. No additional user decision is needed merely to write the authorized private repair; only actual termination would need its separate explicit authority.
+
+This review wrote only its private `astra/` directory. It did not import/run the runner, run self-tests/compiler/tests, deserialize V8 evidence, alter live source/claims/issues/foreign branches, send coordination messages, or perform termination/publication. Source inspection establishes the defect and this bounded plan, not an implemented or measured repair.
