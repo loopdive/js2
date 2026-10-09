@@ -1,0 +1,31 @@
+import ts from "typescript";
+import { compile } from "../src/index.js";
+import { buildImports, instantiateWasm } from "../src/runtime.js";
+
+const SRC = `export function eqUsed(o: any): number { return o == 1 ? 1 : 0; }
+export function eqStr(o: any): number { return o == "1" ? 1 : 0; }
+export function nativeObj(): number { const o: any = { a: 1 }; return o == 1 ? 1 : 0; }
+export function nativeStr(): number { const o: any = "1"; return o == 1 ? 1 : 0; }
+export function nativeNum(): number { const o: any = 1; return o == 1 ? 1 : 0; }
+`;
+const js = ts.transpileModule(SRC, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+const node: any = {}; new Function("exports", js)(node);
+const inputs: [string, () => unknown][] = [
+  ["1", () => 1], ["5", () => 5], ['"1"', () => "1"], ['"x"', () => "x"],
+  ["{}", () => ({})], ["{valueOf:()=>1}", () => ({ valueOf: () => 1 })], ["null", () => null], ["undefined", () => undefined], ["true", () => true],
+];
+for (const target of ["gc", "standalone"] as const) {
+  const r = await compile(SRC, { fileName: "probe.ts", trackIrOutcomes: true, ...(target === "standalone" ? { target } : {}) });
+  if (!r.success) { console.log(target, "COMPILE FAIL", r.errors.map((e) => e.message)); continue; }
+  const units = (r.irOutcomes ?? []).map((u: any) => `${u.displayName}:${u.kind}${u.irBodyEmitted ? "+body" : ""}`).join(" ");
+  console.log(`== target=${target} irOutcomes: ${units}`);
+  const imp = buildImports(r.imports, {}, r.stringPool);
+  const { instance } = await instantiateWasm(r.binary, imp.env, imp.string_constants);
+  imp.setExports?.(instance.exports as any);
+  const ex: any = instance.exports;
+  const call = (f: () => unknown) => { try { return JSON.stringify(f()); } catch (e: any) { return `THROW ${e?.constructor?.name}: ${e?.message}`; } };
+  for (const fn of ["eqUsed", "eqStr"]) for (const [label, mk] of inputs)
+    console.log(`  ${fn}(${label}) wasm=${call(() => ex[fn](mk()))} node=${call(() => node[fn](mk()))}`);
+  for (const fn of ["nativeObj", "nativeStr", "nativeNum"])
+    console.log(`  ${fn}() wasm=${call(() => ex[fn]())} node=${call(() => node[fn]())}`);
+}
