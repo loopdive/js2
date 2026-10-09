@@ -121,8 +121,6 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "unbox":
     case "tag.test":
     case "dyn.truthy": // #2949 S5.1 — ToBoolean read on the carrier: pure (no heap/control effect)
-    case "dyn.to_number": // #2949 S5.3 — ToNumber read on the carrier: pure (no heap/control effect)
-    case "dyn.eq": // #2949 S5.2 — equality read over two carriers: pure (no heap/control effect)
     case "coerce.to_externref":
     case "string.concat":
     case "string.eq":
@@ -156,6 +154,13 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "vec.set_length":
       fx.writesHeap = true;
       break;
+    // #6921 — loose `==` with an Object operand runs ToPrimitive (§7.2.14
+    // steps 10-11): call-like. Strict `===` (§7.2.15) never enters user code,
+    // so `loose: false` stays pure (#2949 S5.2).
+    case "dyn.eq":
+      fx.readsHeap = instr.loose;
+      fx.writesHeap = instr.loose;
+      break;
     // Call-like: may read AND write arbitrary heap state. `extern.prop` can
     // trigger a host getter; iterator ops advance host iterator state.
     case "call":
@@ -177,6 +182,10 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     // #3795 — strict dynamic [[Set]] may invoke accessors/proxy-like runtime
     // hooks and always mutates observable heap state.
     case "dyn.member_set":
+    // #6921 — ToNumber on an Object runs ToPrimitive (§7.1.4 step 1), i.e.
+    // user `valueOf` / `toString` / `@@toPrimitive`, and may throw (also
+    // `+Symbol()`, `+1n`). Call-like until operand-tag refinement exists.
+    case "dyn.to_number":
     case "iter.new":
     case "iter.next":
     case "iter.done":
@@ -489,6 +498,12 @@ export function isSideEffecting(i: IrInstr): boolean {
     // operands must seed DCE liveness. The generic null-result keep rule
     // preserves only the instruction itself, not the definitions it uses.
     i.kind === "dyn.member_set" ||
+    // #6921: ToNumber (§7.1.4 → ToPrimitive) and loose `==` with an Object
+    // operand (§7.2.14 steps 10-11) run user `valueOf`/`toString` and may
+    // throw, so an unused result must still execute. Strict `dyn.eq`
+    // (§7.2.15) is observation-free and stays droppable.
+    i.kind === "dyn.to_number" ||
+    (i.kind === "dyn.eq" && i.loose) ||
     i.kind === "forof.vec" ||
     // Slice 6 part 3 (#1182): host-iterator protocol ops mutate iterator
     // state (advance pointer, dispose). DCE must not eliminate them

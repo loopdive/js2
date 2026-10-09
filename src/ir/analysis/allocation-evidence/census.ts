@@ -20,7 +20,8 @@ import type {
   AllocationEvidenceTask as Task,
 } from "./contracts.js";
 import {
-  allocationEvidenceEffect,
+  allocationEvidenceRule,
+  allocationEvidenceOperand,
   primitiveKind,
   profileFunctionExclusion,
   profileInstructionExclusion,
@@ -119,14 +120,18 @@ function registerAllocation(state: State, at: Cursor): AllocationEvidenceFailure
 }
 
 function applyEffects(state: State, at: Cursor): AllocationEvidenceFailure | undefined {
-  const effect = allocationEvidenceEffect(at.instr);
-  if (effect.kind === "unsupported") return uncovered("instruction-kind", at);
-  for (const operand of effect.ownership) {
-    if (operand.op === "escape") continue; // Stored primitives cannot alias an eligible array.
-    const root = state.roots.get(operand.value);
+  const rule = allocationEvidenceRule(at.instr);
+  if (rule.kind === "unsupported") return uncovered("instruction-kind", at);
+  if (rule.directEscape.length !== 0 || rule.encoding !== "no-write") return uncovered("instruction-kind", at);
+  for (let index = 0; index < rule.ownership.length; index++) {
+    const event = rule.ownership[index]!;
+    // Operand/profile checks and the carrier guard prove stored values are unallocated primitives.
+    if (event.op === "escape") continue;
+    const value = allocationEvidenceOperand(at.instr, event.operand);
+    const root = state.roots.get(value);
     if (!root) return uncovered("nonroot-receiver", at);
-    state.allocations.set(root.id, state.allocations.get(root.id)!.with(operand.op));
-    if (operand.op === "read") state.counts.vectorReads++;
+    state.allocations.set(root.id, state.allocations.get(root.id)!.with(event.op));
+    if (event.op === "read") state.counts.vectorReads++;
     else state.counts.vectorWrites++;
   }
   return undefined;
