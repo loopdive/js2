@@ -1208,3 +1208,26 @@ split streams/reporter/binaries/receipts are published under
 `plan/log/6905-linear-prepared-memory-20261007/geometry-baseline-20261009/`.
 This baseline result does not transfer the initializer writer claim or authorize
 the held one-import candidate, source wiring, native completion or queue action.
+
+### Authenticated original initializer writer continuity — 2026-10-09
+
+Parent read the original native delegation history in this same chat, turn
+`01a116b9-e68a-7dd0-b418-0c260cf746f8`, started1791382644. Its initializer
+assignment names receiver `01a115a5-f3e1-7471-baa4-dfad394049b6`, exactly the
+current agent ID, not merely a reused display name. The later native message
+to that same receiver records parent acceptance of initializer extraction
+commit `af5cdbf4bf8af89344a4434336a13fc2ec8c39f5`, no further edits and idle
+state pending shared contracts. This corrects the earlier unavailable-writer
+inference; it does not authenticate any other source owner or transfer a claim.
+
+The original agent now explicitly acknowledges ownership and availability for
+A6077074683's one-import replacement only. Fresh canonical ledger
+`02b092897602b8188ced3e9943f9f47931e5f154` retains original owner
+`ttraenkler/codex-linear-b-vec-initializer-sol61-20261007`, write4467-r35vmfcy.
+Original source worktree remains dirty on609286c99; both source files match
+the accepted AF5 bytes exactly and must not be reset, cleaned or overwritten.
+
+Continue only with that authenticated sole writer in a separate candidate
+worktree after adopting the complete paired-comparison plan. All shared A
+files and allocator4540 stay excluded. Preserve the actual completed-red
+baseline, all fixtures/failures and HOLD. No initializer edit has occurred yet.
