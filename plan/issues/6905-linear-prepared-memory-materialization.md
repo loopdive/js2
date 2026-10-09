@@ -1231,3 +1231,61 @@ Continue only with that authenticated sole writer in a separate candidate
 worktree after adopting the complete paired-comparison plan. All shared A
 files and allocator4540 stay excluded. Preserve the actual completed-red
 baseline, all fixtures/failures and HOLD. No initializer edit has occurred yet.
+
+### Astra candidate implementation and exact paired qualification plan
+
+1. Effect-verify a fresh candidate slice for the authenticated original owner.
+   Create its separate worktree from published2bc9d33a08 after verifying complete
+   source remains712bfef554321f3fe081f72bb89654d7dc6d8104. Sole source edit:
+   initializer import from `../../ir/analysis/linear-memory-plan.js` to
+   `../../shared/contracts/linear-memory-layout.js`. Privately commit/review it.
+   Preserve seven fresh instructions, caller/registration, value-first ABI,
+   stride8, alignment3 and offset16. Verify endpoint08c85d and same-binding
+   re-export. No other source, test, fixture, configuration or proof changes.
+2. After review parent normally merges that candidate into the SAME execution
+   path `/private/tmp/js2-6905-geometry-baseline-20261009`. Preserve every
+   baseline-once artifact, instrument, freeze and receipt. No reset, overwrite
+   or baseline rerun. Independently verify the whole source delta is only the
+   approved import, complete input populations/modes match, only initializer
+   bytes change among selected inputs, both tests/runtime/endpoint/configs and
+   toolchain match, and tracked inputs are clean. A private candidate-worktree
+   run cannot substitute for this exact-path pair.
+3. New scratch candidate instrument copies reviewed v2 without changing it.
+   Enumerated adaptation only: committed HEAD/tree literals, instrument/freeze
+   locations, fresh candidate-once directory, explicit one-candidate approval
+   label and the necessarily changed reporter output destination. ROOT, test
+   argv/fork settings, environment policy, custody predicates and no-kill
+   handling remain unchanged. Record reporter output-path difference explicitly;
+   do not call the whole command byte-identical. Freeze the full actual input
+   population against retained baseline entries, permitting only independently
+   verified initializer blob/hash change. No observed-difference auto-approval.
+   Parent separately authorizes one candidate after exact review/refreeze.
+4. Independent comparator pins the ACTUAL new baseline and candidate packet
+   identities/hashes; older merged-stream data is historical only. Validate
+   each arm's actual HEAD/tree, instrument/freeze/approval joins, complete
+   unchanged before/after custody, terminal status, absence of infrastructure
+   faults/truncation and separately retained parent status. Require25 uniquely
+   named assertions,8 ordered complete rows and5 valid complete binary witnesses;
+   join both raw-stream records to observations and retain full reporter/errors.
+5. Exact paired equality requires all8 complete ordered rows, all5 decoded
+   binary byte sequences/lengths/hashes, all25 full name/status/failureMessages
+   records and both unnormalized split stdout/stderr failure segments. Do not
+   filter cwd, stack, line numbers, source sites or text, or relax order.
+   Candidate HEAD/helper hash are separately joined to its approved snapshot;
+   all other provenance/common inputs match and baseline labels stay historical.
+   Actual tree change is independently tied to the one-hunk delta. Any mismatch
+   stops acceptance, retaining complete values and differing path. No retry,
+   normalization, comparator weakening or replacement baseline.
+6. Retain all57 v2 controls. Add actual-predicate comparator controls: exact
+   duplicate packet positive; authorized identity/helper changes accepted only
+   via provenance joins; wrong HEAD/tree/helper or extra changed input rejected;
+   missing/duplicate assertion/row/binary rejected; nested row/binary mutation
+   rejected; changed status/failure/stack/stdout or stderr failure segment
+   rejected; raw-record/archive mismatch rejected; custody drift/timeout/
+   truncation/infrastructure fault rejected despite matching witnesses; original
+   baseline digest mutation rejected. These are planned, not measured controls.
+
+Measured baseline remains24/25 red,8 rows,5 binaries. Its old historical error
+differences stay separate. Candidate preservation cannot establish native1.25,
+full IR equivalence, retirement, HOLD removal or queue authority. No candidate
+compiler run is authorized by this plan adoption alone.
