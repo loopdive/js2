@@ -1,0 +1,120 @@
+base totals 3699 pass 690 fail 3005 skip 4
+cand totals 3723 pass 817 fail 2902 skip 4
+cross-backend-diff.test.ts                                     base 33p/0f/0s        cand 33p/0f/0s
+issue-3298.test.ts                                             base 5p/0f/0s         cand 5p/0f/0s
+issue-3299.test.ts                                             base 1p/0f/1s         cand 1p/0f/1s
+issue-3300.test.ts                                             base 6p/0f/1s         cand 6p/0f/1s
+issue-3501-empty-array-element-inference.test.ts               base 9p/0f/2s         cand 9p/0f/2s
+issue-3502-string-contract.test.ts                             base 7p/0f/0s         cand 7p/0f/0s
+issue-3518-c1-current-source.test.ts                           base 89p/266f/0s      cand 192p/163f/0s
+issue-3518-canonical-3c6-inventory-successor.test.ts           base 61p/174f/0s      cand 61p/174f/0s
+issue-3518-canonical-489d-inventory-successor.test.ts          base 3p/62f/0s        cand 3p/62f/0s
+issue-3518-current-main-inventory-successor.test.ts            base 60p/82f/0s       cand 60p/82f/0s
+issue-3518-lowering-analysis-owner.test.ts                     base 28p/0f/0s        cand 28p/0f/0s
+issue-3518-lowering-analysis-preservation.test.ts              base 2p/55f/0s        cand 2p/55f/0s
+issue-3518-nested-stackification-policy-evolution.test.ts      base 0p/53f/0s        cand 0p/53f/0s
+issue-3518-number-prerequisite-policy-evolution.test.ts        base 13p/443f/0s      cand 13p/443f/0s
+issue-3518-program-core-type-evolution.test.ts                 base 49p/0f/0s        cand 49p/0f/0s
+issue-3518-program-data-contract-boundary.test.ts              base 1p/104f/0s       cand 1p/104f/0s
+issue-3518-program-data-contract-seam.test.ts                  base 1p/46f/0s        cand 1p/46f/0s
+issue-3518-program-initial-graph-evolution.test.ts             base 6p/123f/0s       cand 6p/123f/0s
+issue-3518-program-ownership-runtime-seam.test.ts              base 12p/10f/0s       cand 12p/10f/0s
+issue-3518-program-pre-a-evolution.test.ts                     base 2p/74f/0s        cand 2p/74f/0s
+issue-3518-program-validator-policy-evolution.test.ts          base 0p/143f/0s       cand 0p/143f/0s
+issue-3518-program-validator-relocation.test.ts                base 54p/8f/0s        cand 54p/8f/0s
+issue-3518-runtime-data-contract-seam.test.ts                  base 72p/75f/0s       cand 72p/75f/0s
+issue-3518-runtime-program-policy-evolution.test.ts            base 33p/171f/0s      cand 33p/171f/0s
+issue-3518-runtime-program-relocation.test.ts                  base 0p/298f/0s       cand 0p/298f/0s
+issue-3518-semantic-provider-boundary.test.ts                  base 5p/349f/0s       cand 5p/349f/0s
+issue-3518-validation-policy-evolution.test.ts                 base 0p/63f/0s        cand 0p/63f/0s
+issue-3518-wasmgc-helper-policy-evolution.test.ts              base 1p/134f/0s       cand 1p/134f/0s
+issue-3518-well-known-symbol-policy-evolution.test.ts          base 13p/141f/0s      cand 13p/141f/0s
+issue-3520-global-type-binding.test.ts                         base 8p/0f/0s         cand 8p/0f/0s
+issue-3525-arraybuffer-isview-main-policy.test.ts              base 0p/56f/0s        cand 0p/56f/0s
+issue-3525-initial-graph-optional-fields-source.test.ts        base 15p/5f/0s        cand 15p/5f/0s
+issue-3525-main-inventory-source-successor.test.ts             base 0p/21f/0s        cand 0p/21f/0s
+issue-3525-presentation-classification-policy.test.ts          base 0p/45f/0s        cand 0p/45f/0s
+issue-3525-source-map-specialization-origins.test.ts           base 17p/0f/0s        cand 17p/0f/0s
+issue-3528-frozen-body-handoff.test.ts                         base 13p/4f/0s        cand 13p/4f/0s
+issue-6865-linear-layout-contract.test.ts                      base absent           cand 24p/0f/0s
+issue-6891-linear-stack-arena-overflow.test.ts                 base 23p/0f/0s        cand 23p/0f/0s
+issue-6893-linear-cabi-array-forwarding.test.ts                base 18p/0f/0s        cand 18p/0f/0s
+issue-6893-linear-ir-read-forwarding.test.ts                   base 30p/0f/0s        cand 30p/0f/0s
+NEW FAILURES 0
+NEW PASSES 103
+   issue-3518-c1-current-source.test.ts :: C1 current-main package script epoch retains full current config refusal for tsconfig.json
+   issue-3518-c1-current-source.test.ts :: C1 current-main package script epoch retains full current config refusal for pnpm-lock.yaml
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses stale predecessor bytes before resolver IO for src/wasm/model/instructions.ts
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses stale predecessor bytes before resolver IO for package.json
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses stale predecessor bytes before resolver IO for pnpm-lock.yaml
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'src/wasm/model/instructions.ts'/+0
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'package.json'/+0
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'package.json'/1
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'package.json'/2
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'package.json'/3
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'package.json'/4
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'package.json'/5
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'package.json'/6
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/+0
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/1
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/2
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/3
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/4
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/5
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/6
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/7
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/8
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/9
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/10
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/11
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/12
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/13
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/14
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/15
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/16
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/17
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/18
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/19
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/20
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/21
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/22
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical omission span 'pnpm-lock.yaml'/23
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical duplicate span 'src/wasm/model/instructions.ts'/+0
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical duplicate span 'package.json'/+0
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical duplicate span 'package.json'/1
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical duplicate span 'package.json'/2
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical duplicate span 'package.json'/3
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical duplicate span 'package.json'/4
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical duplicate span 'package.json'/5
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical duplicate span 'package.json'/6
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical duplicate span 'pnpm-lock.yaml'/+0
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical duplicate span 'pnpm-lock.yaml'/1
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical duplicate span 'pnpm-lock.yaml'/2
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical duplicate span 'pnpm-lock.yaml'/3
+   issue-3518-c1-current-source.test.ts :: C1 named canonical input epoch refuses canonical duplicate span 'pnpm-lock.yaml'/4
+MISSING IN CAND 0
+ADDED IN CAND 24
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract preserves i8 storage and canonical i8 vector geometry => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract preserves i16 storage and canonical i16 vector geometry => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract preserves i32 storage and canonical i32 vector geometry => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract preserves i64 storage and canonical i64 vector geometry => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract preserves f32 storage and canonical f32 vector geometry => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract preserves f64 storage and canonical f64 vector geometry => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract preserves bytes16 storage and canonical v128 vector geometry => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract preserves pointer storage and canonical externref vector geometry => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract keeps string pointer vector identity distinct from scalar pointer => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract keeps nested vector pointer identity including nullability => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract keeps ordered object field semantics in pointer vector identity => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract keeps canonical nominal class identity in pointer vector layout => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract keeps boxed scalar identity in pointer vector layout => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract keeps dynamic pointer vector identity distinct from scalar pointer => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract keeps closure signature identity and rejects canonical support references => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract preserves the independently specified empty record header => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract preserves ordered mixed record slots and both fixed pointer offsets => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract retains the existing eight-byte record slot for bytes16 storage => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract preserves the independently specified UTF-8 byte string layout => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract retains five function bindings through planner and public IR compatibility exports => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract returns fresh mutable layouts and isolates nested array mutations => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract shares one frozen forwarding object with independently specified header bytes => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract has a nonempty shared source owner with zero value or type references and exact IR delegation => passed
+   issue-6865-linear-layout-contract.test.ts :: #6865 — shared Linear byte geometry contract detects injected forbidden IR value and type references with the repository parser => passed
