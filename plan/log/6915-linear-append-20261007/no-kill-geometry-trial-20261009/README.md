@@ -29,7 +29,10 @@ retained input bytes. No duplicate or unsafe member path was accepted.
 
 Independent runner/comparator inverse reviews and physical input audit preceded
 the run. The parent repeated197 supervisor and62 comparison inert controls.
-Independent actual-result review is recorded separately in the issue plan.
+Independent Astra actual-result review found no discrepancy, reproduced the
+inert comparison at exit0, and authenticated1915 inputs/1901 source files against
+all committed blobs/modes. Runtime22 retains33 transitions; all eight complete
+negative witnesses remain. Parent exit0 is separately observed tool evidence.
 
 This proves only the bounded append comparison under the reviewed geometry
 source and runner. It does not establish native arrays, Unicode admission,

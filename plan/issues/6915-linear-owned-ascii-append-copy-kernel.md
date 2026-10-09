@@ -2124,7 +2124,11 @@ Bundle4814625 bytes, SHA256
 `cf6586b69ed9131f7c92f4c7124dc16840186c3c31568aa1d89cd4aecea6918b`:
 all29 regular members/125205696 uncompressed bytes exactly match retained
 inputs. Preserve prior baseline, original failures and partial CI archives.
-Independent actual-result review was requested; normal publication through
+Independent Astra actual-result review found no discrepancy and repeated the
+inert comparator with actual exit0. All1915 physical inputs and committed
+blobs/modes match; Runtime22 retains33 transitions and all eight complete
+negative witnesses. The parent's exit0 remains separately observed tool evidence,
+not something the child receipt proves. Normal publication through
 existing PR6593 remains separate. Publication identity must not replace this
 execution identity. This bounded comparison proves neither native Linear
 completion nor Unicode admission, performance, full IR equality, main delivery,
