@@ -634,6 +634,16 @@ jobs:
           git fetch --no-tags --depth=200 origin main 2>/dev/null || true
           pnpm run test:changed-root
 
+      - name: Archive Linear append parent evidence (quality)
+        if: always() && hashFiles('.tmp/6915-ci/run-*/**') != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: linear-append-quality-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .tmp/6915-ci/run-*/
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: false
+
       - name: Required guard suite (#3552)
         if: steps.npm_compat.outputs.only != 'true'
         # Untouched root test files do NOT run at PR time — the #3008
@@ -941,6 +951,16 @@ jobs:
               --pool=forks --poolOptions.forks.singleFork=false \
               --poolOptions.forks.maxForks=1 --no-file-parallelism
           fi
+
+      - name: Archive Linear append parent evidence (advisory)
+        if: always() && matrix.file == 'tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts' && hashFiles('.tmp/6915-ci/run-*/**') != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: linear-append-advisory-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.ordinal }}
+          path: .tmp/6915-ci/run-*/
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: false
 
       - name: Report changed issue-test outcome
         if: always() && !cancelled()
