@@ -1034,3 +1034,68 @@ weakening. No composed candidate execution or gate result is asserted here.
 The ordinary positive array failure and public native1.25 acceptance remain;
 this import change alone does not implement native memory or full IR equivalence.
 A retains explicit source release, shared integration and protected queue.
+
+### Released geometry import: Astra execution plan — 2026-10-09
+
+A accepted the preceding neutral-geometry plan in coordination comment
+`6077074683`, releasing exactly one initializer import hunk after normal
+composition of delivered PR6600. Verified geometry delivery is protected merge
+`2d0c31a3e2dbe0a4a46d123226fa1d62f7d4c7aa`; endpoint
+`src/shared/contracts/linear-memory-layout.ts` is SHA256
+`08c85d9e8c9891a74b9c0c02a1310b67b16832980849dc0e7b6d511d91350937`.
+This is an offset16 contract, with the IR planner re-exporting the same binding.
+
+Documentation-only claim: `6905:geometry-import-integration-plan-20261009`,
+owner `ttraenkler/codex-linear-b-geometry-import-plan-astra-20261009`.
+The source claim remains `6905:vec-initializer-body-20261007`, recorded owner
+`ttraenkler/codex-linear-b-vec-initializer-sol61-20261007`, write4467-r35vmfcy.
+Its ownership was freshly effect-read. The issue identifies the original writer
+as Faraday, but currently reachable agents cannot authenticate that historical
+writer identity. No source ownership is inferred from a reused display name.
+Obtain an explicit original-writer handoff or a documented owner-coordinated
+recovery before assigning a replacement. No source edit has been made.
+
+Astra's bounded implementation and qualification plan:
+
+1. Confirm sole writer and exact source claim. Parent normally composes freshly
+   verified canonical main containing delivered geometry **before** editing the
+   import. Freeze composed baseline HEAD/source tree, configuration, toolchain,
+   test hashes and geometry endpoint. Keep original evidence untouched.
+2. Candidate differs by exactly one source hunk in
+   `src/codegen-linear/runtime/vector-initialization.ts`: replace the import
+   from `../../ir/analysis/linear-memory-plan.js` with
+   `../../shared/contracts/linear-memory-layout.js`. No copied constant,
+   instruction, caller, ABI, helper registration, source proof or shared edit.
+   Preserve seven fresh instructions, stride8, store alignment3/offset16,
+   `(f64,i32,i32)->()` ABI and zero locals.
+3. Reuse unchanged `tests/issue-6905-linear-prepared-memory-materialization.test.ts`
+   (SHA256 `0afcb36a4cb3e783a06191bfe6356d568d96791d7aeca8249bfcdd580eac8d77`)
+   and `tests/issue-3525-prepared-linear-early-return.test.ts`
+   (SHA256 `8c3787b33a1d38dd42a261a1d8f40fdea10053a37816bef38c064f761387fd3d`).
+   Independently verify both hashes after composition.
+4. Reuse the retained parent pattern in
+   `plan/log/6905-linear-prepared-memory-20261007/main-845/run.mjs.gz` and
+   explicit test-inclusive `tsconfig-test.json.gz` through separately reviewed
+   copies in a new evidence location. Use `compare-rows.mjs` in **two-log mode**,
+   never the historical four-log omission mode. Use the complete population
+   comparator pattern in `main-845/compare-population.mjs`; it resolves archive
+   paths relative to its own location, so do not overwrite historical carriers.
+5. Require equal identically composed dependencies and test bytes, all25 named
+   statuses, all8 complete observations, all5 full binary witnesses, complete
+   unnormalized failure text and unchanged before/after custody. Preserve fresh
+   instruction-object isolation, actual initializer execution and overlay
+   caller/body joins. Historical24pass/1fail and the1561-character failure are
+   retained measurements, not predictions of new results. Attribute any
+   composition-induced difference before accepting the one-hunk comparison.
+6. Recheck normal typing, explicit test-inclusive typing, compiler boundary
+   inventory and import cycles against the actual base, without new allowances
+   or policy weakening. Preserve the ordinary shared-allocation positive
+   failure and unmet public native1.25 requirement. No refusal becomes success;
+   source rows keep their existing hashes/lengths rather than invented full
+   source binary/memory observations.
+
+This is an Astra specification, not a new execution or source qualification.
+Original writer handoff, composed identities and measured results remain
+pending. Publish through existing PR6577 with HOLD intact; A owns shared
+integration and protected queue. The separate append source approval does not
+automatically admit this newer geometry source epoch.
