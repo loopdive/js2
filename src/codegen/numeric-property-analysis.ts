@@ -108,6 +108,7 @@
  */
 import { forEachChild, ts } from "../ts-api.js";
 import { readEnv } from "../env.js";
+import { analyzeLocalNumberCarriers } from "./analysis/local-number-carrier-proof.js";
 
 /** The host facts this analysis needs; kept tiny so it can run standalone. */
 export interface NumericPropertyAnalysisHost {
@@ -117,7 +118,11 @@ export interface NumericPropertyAnalysisHost {
    * prover is skipped. Never consulted to demote — an `any` verdict just means
    * "keep proving syntactically", which is the JS case this analysis targets.
    */
-  readonly oracle?: { typeFactOf(node: ts.Node): { kind: string } };
+  readonly oracle?: {
+    typeFactOf(node: ts.Node): { kind: string };
+    /** Existing identifier-only, import-stopping binding resolution; absent means unknown. */
+    valueDeclarationOf?(node: ts.Node): ts.Declaration | undefined;
+  };
   /**
    * (#2660) Expressions the fnctor receiver-flow map proved to hold a fnctor
    * instance. A computed write through one of these is the sentinel above.
@@ -1483,82 +1488,30 @@ export function analyzeNumericPropertyNames(
     if (!grounded || anyBoolean) numericProperties.delete(name);
   }
 
-  // (#3765) A GROUNDED slot set, for the one consumer that types a wasm local.
-  //
-  // `numericSlots` above is a GREATEST fixpoint: it starts with every slot
-  // optimistically numeric and withdraws. That is right for its own consumer —
-  // the property verdicts apply their own groundedness filter afterwards — but
-  // it lets a pure CYCLE survive with no numeric evidence anywhere in it:
-  //
-  //     var a = b;   // `b` is in the set, so `a` stays
-  //     var b = a;   // `a` is in the set, so `b` stays
-  //
-  // Both are `undefined` at runtime. Promoting either to an f64 local would
-  // read `0`. So the local-typing consumer gets a LEAST fixpoint instead:
-  // start empty and only ever ADD a slot whose every definition is provable
-  // against slots ALREADY admitted. A cycle can never enter, because entering
-  // it requires a member to already be in — which is the definition of
-  // groundedness. The result is by construction a subset of `numericSlots`.
-  const groundedSlots = new Set<Slot>();
-  const groundedProver = makeProver(facts, host, stringProperties, {
-    numericProperties,
-    numericSlots: groundedSlots,
-    numericFunctions,
-  });
-  const groundedCandidates = [...numericSlots];
-  for (let pass = 0; pass <= groundedCandidates.length; pass++) {
-    let added = false;
-    for (const slot of groundedCandidates) {
-      if (groundedSlots.has(slot)) continue;
-      // ANY booleanish definition disqualifies the slot, mirroring the
-      // `anyBoolean` filter on the property path — but for a STRICTER reason.
-      // `isNumeric` deliberately answers true for booleans, which is fine for a
-      // FIELD because #2847 brands boolean fields as i32 and the property path
-      // defers to that brand. A local has no such brand path: an f64 local
-      // holding a comparison result makes `` `${b}` `` print "1" where JS says
-      // "true". Caught by `coercion/tostring > standalone-O > template over
-      // any-boolean`.
-      // (#4122) SELF-REFERENCE. The accumulator `var s = 0; s = s + f();` is the
-      // most common numeric-local shape in ordinary JS, and a plain least
-      // fixpoint can never admit it: proving `s` numeric requires `s` to be
-      // numeric already. So assume the slot numeric while judging its OWN
-      // definitions — the same induction `withSelf` gives the property path
-      // ("if every other write stores a number then the slot always holds
-      // one"), just for a lexical slot instead of a property name.
-      groundedSlots.add(slot);
-      let allNumeric: boolean;
-      try {
-        const provesNumeric = (def: ValueDef): boolean =>
-          def.forcedNumeric === true || (def.expr !== undefined && groundedProver.isNumeric(def.expr));
-        const provesNumericCarrier = (def: ValueDef): boolean =>
-          provesNumeric(def) && (def.expr === undefined || !groundedProver.isBooleanish(def.expr));
-        allNumeric =
-          slot.defs.length > 0 &&
-          (slot.isParam
-            ? parameterDefinitionsAgree(slot, host, provesNumericCarrier)
-            : slot.defs.every(provesNumeric)) &&
-          !slot.defs.some((def) => def.expr !== undefined && groundedProver.isBooleanish(def.expr));
-      } finally {
-        groundedSlots.delete(slot);
-      }
-      if (!allNumeric) continue;
-      // GROUNDEDNESS, re-checked with the assumption withdrawn: at least one
-      // definition must be numeric on its own. Without this, `var s = s + 1;`
-      // — whose only definition reads the slot before anything writes it — is
-      // self-justifying, and an f64 carrier would read 0 where JS says NaN.
-      // This is the slot analogue of the property path's `withoutSelf` pass,
-      // and it is also what keeps a mutual cycle (`var a = b; var b = a;`) out:
-      // the assumption covers a slot's own name, never its partner's.
-      const grounded = slot.defs.some(
-        (def) => def.forcedNumeric === true || (def.expr !== undefined && groundedProver.isNumeric(def.expr)),
-      );
-      if (grounded) {
-        groundedSlots.add(slot);
-        added = true;
-      }
-    }
-    if (!added) break;
-  }
+  const groundedSlots = analyzeLocalNumberCarriers(
+    host,
+    sourceFiles,
+    scopes,
+    numericSlots,
+    (groundedSlots) =>
+      makeProver(facts, host, stringProperties, {
+        numericProperties,
+        numericSlots: groundedSlots,
+        numericFunctions,
+      }),
+    {
+      unwrap,
+      isFunctionLikeWithBody,
+      assignmentPropertyName,
+      ownReturnExpressions,
+      BOOLEAN_BINARY,
+      ALWAYS_NUMERIC_BINARY,
+      ALWAYS_NUMERIC_COMPOUND,
+      NUMERIC_GLOBAL_CALLS,
+      STRING_NUMERIC_METHODS,
+      STRING_STRING_METHODS,
+    },
+  );
 
   if (debugEnabled()) {
     process.stderr.write(
