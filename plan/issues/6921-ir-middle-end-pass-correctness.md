@@ -482,3 +482,26 @@ the 12 #6921 cases plus the effects pin. The 20 shared failures pre-exist.
 regressions. All ratchet gates pass, also with `LOC_GATE_BASE=8452732f0b`;
 `npm run typecheck` is clean. Raw sets are in
 `plan/log/6921-ir-pass-correctness/composed-*.txt`.
+
+## Intrinsics successor grant (2026-10-09)
+
+Implements A's test-only successor grant (PR #6583 comment 6071989772) in
+`tests/issue-3518-semantic-verification-ownership.test.ts`. No `src/` change.
+
+- Why: the reviewed Boolean intrinsic (`c2fb27fe`, parent `041fbe05`) added one
+  signature, one catalog line and one brand guard, which tripped three pins
+  (intrinsics declaration list, `signatureMismatch`, catalog length).
+- Hashes recomputed independently with the suite's own parse/normalization
+  before editing; all six match A: Boolean signature `949c7295…`,
+  `INTRINSIC_DEFINITIONS` `7f139bfe…` → `b763d963…`, `signatureMismatch`
+  `0e587495…` → `38f1214d…`. Core/analysis full-file SHA256 `96b3368a…` /
+  `57af60df…` (equal to `c2fb27fe`).
+- Receipts `[17,7,21,4,6,36,2]` = 93 (original 92 + one reviewed addition);
+  catalog 39. Predecessor hashes kept in comments and re-derived by one new
+  executable control: removing exactly the one catalog line / five-line guard
+  from a test-local copy yields the original hashes; missing, duplicated and
+  changed fragments throw, and an unrelated body mutation misses the
+  predecessor.
+- Tests at `9ae339bf72`: 3 failed / 31 passed (34). After: 35 passed (35) —
+  registration floor 35 (original 34 + the control). #6921 suite 21/21.
+  Raw: `plan/log/6921-ir-pass-correctness/3518-intrinsics-{before-9ae339bf72,after}.txt`.

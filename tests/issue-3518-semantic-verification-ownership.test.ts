@@ -31,6 +31,13 @@ const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 
 // Complete declaration text/docs from b4c116639a7e146e83611a988a8da28d77de9368.
 // This fixed 92-declaration subset supplements the parent's 224/118 ledger.
+// #6921 (2026-10-09): plus ONE reviewed addition, EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE
+// (Boolean intrinsic c2fb27fed2ae2cbe3559b26acd42d53d61da80d0, parent
+// 041fbe05d7465d75094cedfc74c9711dec39c54d; extraction 545923d1c9b0a30476f5a6e0dd7f5078be3c25c0),
+// for 93 rows. Two predecessor declarations (INTRINSIC_DEFINITIONS, signatureMismatch)
+// carry successor pins; their original hashes stay pinned below and are re-derived
+// executably by the predecessor-chain control. Granted by A (suite owner), PR #6583
+// comment 6071989772.
 // No Git history is required at runtime. These are preservation controls, not
 // public-call witnesses, complete preparation closure or native execution proof.
 const receipts = [
@@ -86,6 +93,8 @@ const receipts = [
       ["F64_TO_EXTERNREF_INTRINSIC_SIGNATURE", "f2475943320678df8dad0aaa020bdaba7c70d77b4b99d25b3cf12ab47115b5d0"],
       ["EXTERNREF_TO_F64_INTRINSIC_SIGNATURE", "a54aae6ae02bd4309599b39c6f54423240f07d0621c1619428e01aa13e068815"],
       ["I32_TO_EXTERNREF_INTRINSIC_SIGNATURE", "13da6f7fb63f22146b652102f7307f61d9ea0bb587444fd0ffd1a277ee826d2f"],
+      // #6921 (2026-10-09): the one reviewed addition (c2fb27fed2ae2cbe3559b26acd42d53d61da80d0).
+      ["EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE", "949c72951a3f06475df3834ccc74035bc108d83d020358c1055eaf3c7470de57"],
       ["EXTERNREF_TO_I32_INTRINSIC_SIGNATURE", "67ec09e88f0c9d0f0d25509bf9951de71d7293ad439ca7dd8027cc45d5e20111"],
       ["EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE", "77f4a180e90c11346a16d0848c36736dc43f1df28e4f325c2a418de3eecb1a7f"],
       ["REF_EXTERN_TYPE", "2b452e92e914ce4f191a5787cc23908e3692d7955d9c63d2a6ea70ed1b0f17f5"],
@@ -99,7 +108,10 @@ const receipts = [
       ["F64_UNARY_INTRINSIC_SIGNATURE", "2278eac98202de2cde52deaa38b9f095763bad65b3e4a297796d1c080bff85f6"],
       ["F64_BINARY_INTRINSIC_SIGNATURE", "777c8d438afefd9ad0203debe8cc0d7a71933c30f2a88d567c9ddbe438bd6015"],
       ["definition", "2b3c98f0e94a012ee1f93c052117ad78d3c3bdba29e3ce90ede1eb4f561f8e09"],
-      ["INTRINSIC_DEFINITIONS", "7f139bfe9f6a3b56f9bea3cf7df0e5fc4f2bcba32a7b9964f0e52f4a449cf8b9"],
+      // #6921 (2026-10-09): successor pin after the reviewed js.boolean.unbox catalog
+      // line (c2fb27fe). Full predecessor from b4c116639a7e146e83611a988a8da28d77de9368:
+      // 7f139bfe9f6a3b56f9bea3cf7df0e5fc4f2bcba32a7b9964f0e52f4a449cf8b9 (re-derived below).
+      ["INTRINSIC_DEFINITIONS", "b763d963ec09954cf5d47aa9a95fc4c61312397eaae3061a3f92956a7dfa5108"],
       ["INTRINSIC_ID_SET", "690313663dd754be6b5cbc0b686d966754fc23603c3407f4afedba338c20c7b9"],
       ["isIntrinsicId", "42521a6996c08d57bba1a1fdd21aad6c221785e743cccb7707d2b45903d28af7"],
     ],
@@ -110,7 +122,10 @@ const receipts = [
     rows: [
       ["IntrinsicEffectEvidence", "f1c8a4e5a16e47aa7ed9bf29f02d99bdfdaa4cf2ebe4cf51409e5d0aed07db7a"],
       ["intrinsicEffectEvidence", "76860e587590c5d1560184d1c3ba0911cbf2133b97cf6d5e4299813a041c7fdf"],
-      ["signatureMismatch", "0e58749590b4dbfa116ddeba00d65903f852d0c2040a66b81cd3cefcc5ca87d6"],
+      // #6921 (2026-10-09): successor pin after the reviewed Boolean brand guard
+      // (c2fb27fe). Full predecessor from b4c116639a7e146e83611a988a8da28d77de9368:
+      // 0e58749590b4dbfa116ddeba00d65903f852d0c2040a66b81cd3cefcc5ca87d6 (re-derived below).
+      ["signatureMismatch", "38f1214d1a8b93c91dc85e147ca4c06c6615a257e6558661ed9d75d394df41cd"],
       ["verifyIntrinsicUse", "cc24bee9394079363a79fa561ddcd9f383cffedac47ea74226364865186f7da4"],
     ],
   },
@@ -330,8 +345,9 @@ describe("semantic implementation preservation", () => {
   it.each(receipts)("preserves every selected $oldPath declaration in $path", (receipt) => verifyReceipt(receipt));
 
   it("keeps the fixed denominator and rejects deleted, duplicated and changed implementations", () => {
-    expect(receipts.map((receipt) => receipt.rows.length)).toEqual([17, 7, 20, 4, 6, 36, 2]);
-    expect(receipts.reduce((sum, receipt) => sum + receipt.rows.length, 0)).toBe(92);
+    // Original 92 plus one reviewed addition (#6921); was [17, 7, 20, 4, 6, 36, 2] / 92.
+    expect(receipts.map((receipt) => receipt.rows.length)).toEqual([17, 7, 21, 4, 6, 36, 2]);
+    expect(receipts.reduce((sum, receipt) => sum + receipt.rows.length, 0)).toBe(93);
     const receipt = receipts.find((item) => item.path === "src/ir/analysis/intrinsics.ts")!;
     const source = read(receipt.path);
     const file = parse(receipt.path);
@@ -373,6 +389,72 @@ describe("semantic implementation preservation", () => {
     expect(sha(prefix)).toBe("d93a5baaee36c5c5be52864d1e5c2499f2922f54de44af7b5e78e1943a2ede74");
     expect(fn.body!.statements.at(-1)?.getText()).toBe("return errors;");
   });
+
+  // #6921 (2026-10-09): executable predecessor chain for the two successor pins.
+  // Removing exactly the reviewed Boolean fragment (c2fb27fed2ae2cbe3559b26acd42d53d61da80d0,
+  // parent 041fbe05d7465d75094cedfc74c9711dec39c54d) from a test-local copy must
+  // recover the full original declaration hash from b4c116639a7e146e83611a988a8da28d77de9368
+  // (via extraction 545923d1c9b0a30476f5a6e0dd7f5078be3c25c0). Production is not touched.
+  it("re-derives the original INTRINSIC_DEFINITIONS and signatureMismatch hashes by removing only the reviewed Boolean fragments", () => {
+    const chains = [
+      {
+        path: "src/ir/core/intrinsics.ts",
+        name: "INTRINSIC_DEFINITIONS",
+        fragment: '  "js.boolean.unbox": definition("js.boolean.unbox", EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE),\n',
+        changed: ["EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE),", "EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),"],
+        unrelated: ['"math.pow": definition("math.pow",', '"math.pow": definition("math.atan2",'],
+        predecessor: "7f139bfe9f6a3b56f9bea3cf7df0e5fc4f2bcba32a7b9964f0e52f4a449cf8b9",
+        successor: "b763d963ec09954cf5d47aa9a95fc4c61312397eaae3061a3f92956a7dfa5108",
+      },
+      {
+        path: "src/ir/analysis/intrinsics.ts",
+        name: "signatureMismatch",
+        fragment:
+          "  if (\n" +
+          '    use.id === "js.boolean.unbox" &&\n' +
+          '    (use.resultType.kind !== "val" || use.resultType.val.kind !== "i32" || use.resultType.val.boolean !== true)\n' +
+          "  )\n" +
+          "    return `${use.id} result must preserve its Boolean carrier brand`;\n",
+        changed: ["use.resultType.val.boolean !== true", "use.resultType.val.boolean !== false"],
+        unrelated: ["received ${use.argumentTypes.length}`", "received ${use.argumentTypes.length + 0}`"],
+        predecessor: "0e58749590b4dbfa116ddeba00d65903f852d0c2040a66b81cd3cefcc5ca87d6",
+        successor: "38f1214d1a8b93c91dc85e147ca4c06c6615a257e6558661ed9d75d394df41cd",
+      },
+    ] as const;
+    const count = (text: string, part: string) => text.split(part).length - 1;
+    for (const chain of chains) {
+      const predecessorHash = (text: string) => {
+        // Exactly one actual fragment, inside exactly one named declaration.
+        if (count(text, chain.fragment) !== 1)
+          throw new Error(`${chain.name}: fragment count ${count(text, chain.fragment)}`);
+        const matches = parse(chain.path, text).statements.filter((node) => declarationName(node) === chain.name);
+        if (matches.length !== 1) throw new Error(`${chain.name}: ${matches.length} declarations`);
+        if (count(matches[0]!.getFullText(), chain.fragment) !== 1) throw new Error(`${chain.name}: fragment outside`);
+        const removed = parse(chain.path, text.replace(chain.fragment, "")).statements.filter(
+          (node) => declarationName(node) === chain.name,
+        );
+        if (removed.length !== 1) throw new Error(`${chain.name}: ${removed.length} predecessor declarations`);
+        return sha(preservedText(chain.path, removed[0]!));
+      };
+      const source = read(chain.path);
+      const current = parse(chain.path, source).statements.filter((node) => declarationName(node) === chain.name);
+      expect(current, chain.name).toHaveLength(1);
+      expect(sha(preservedText(chain.path, current[0]!)), chain.name).toBe(chain.successor);
+      expect(chain.successor).not.toBe(chain.predecessor); // a no-op removal cannot pass
+      expect(predecessorHash(source), chain.name).toBe(chain.predecessor);
+      // Refusals: missing, duplicated and changed fragments throw.
+      expect(() => predecessorHash(source.replace(chain.fragment, ""))).toThrow("fragment count 0");
+      expect(() => predecessorHash(source.replace(chain.fragment, chain.fragment + chain.fragment))).toThrow(
+        "fragment count 2",
+      );
+      expect(count(source, chain.changed[0])).toBe(1);
+      expect(() => predecessorHash(source.replace(chain.changed[0], chain.changed[1]))).toThrow("fragment count 0");
+      // An unrelated body mutation survives the removal and must miss the predecessor.
+      expect(count(current[0]!.getFullText(), chain.unrelated[0])).toBe(1);
+      expect(count(chain.fragment, chain.unrelated[0])).toBe(0);
+      expect(predecessorHash(source.replace(chain.unrelated[0], chain.unrelated[1]))).not.toBe(chain.predecessor);
+    }
+  });
 });
 
 describe("canonical export identities and complete catalogs", () => {
@@ -406,7 +488,8 @@ describe("canonical export identities and complete catalogs", () => {
     expect(oldIntrinsics.intrinsicEffectEvidence).toBe(intrinsic.intrinsicEffectEvidence);
     expect(oldIntrinsics.verifyIntrinsicUse).toBe(intrinsic.verifyIntrinsicUse);
     expect(Object.keys(catalog.INTRINSIC_DEFINITIONS)).toEqual(catalog.INTRINSIC_IDS);
-    expect(catalog.INTRINSIC_IDS).toHaveLength(38);
+    // Original 38 plus the reviewed js.boolean.unbox (#6921, c2fb27fe).
+    expect(catalog.INTRINSIC_IDS).toHaveLength(39);
     expect(Object.isFrozen(catalog.INTRINSIC_DEFINITIONS)).toBe(true);
     for (const [id, row] of Object.entries(catalog.INTRINSIC_DEFINITIONS)) {
       expect(row.feature).toBe(id);
