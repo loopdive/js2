@@ -1637,3 +1637,29 @@ removal, native admission, performance acceptance or migration completion is
 claimed by this checkpoint. C's geometry PR #6600 is verified merged on main
 as `2d0c31a3e2dbe0a4a46d123226fa1d62f7d4c7aa`; that delivery does not broaden
 the finite 616da source approval or release additional shared ownership.
+
+### Reviewed single-trial result — 2026-10-09
+
+Both private implementations are integrated, preserving their original commits:
+runner `c06afb13f9e62a2b091236bc5698ee925f43c9e5`, uploader
+`a8441b41d534596e96df3c7c2b51582dc042a1c9`. Astra independently cleared
+the runner's bounded diff and the strengthened full comparison. Parent repeated
+all six official uploader selection/layout controls and all128 runner controls.
+The committed execution head is `a7a337714c77f7b5779e028055feb220adaf7c24`;
+source2a8c200c and all fixed pins remain unchanged.
+
+After freezing 1900 source files and all additional inputs, parent released
+exactly one serialized trial. Actual parent terminal exit0; child exit0, no
+signal/kill/spawn error/failures, 16614ms. Reporter36pass/0fail/0pending/0todo.
+The independent comparator exited0: all36 complete ordered observation graphs
+plus completion exactly equal the original trusted archive,38 envelopes, no
+filtered fields, all provenance/raw-stream/input joins validated, and complete
+before/after custody equal. Full witnesses, failures, original archives and
+baseline remain intact. No retry or successor baseline was used.
+
+Raw evidence, independent freeze and terminal record are retained in
+`plan/log/6915-linear-append-20261007/current-source-20261009/`. This is bounded
+append source-successor qualification, not native completion or performance
+acceptance. New required-quality/advisory CI artifacts must still be retrieved
+and inspected after normal publication through existing PR6593. HOLD remains;
+A retains final integration and queue. No other source approval is implied.
