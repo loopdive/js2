@@ -1,0 +1,11 @@
+compiler-boundaries: invalid-inventory (mode=complete, exit 1)
+  unclassified-module: src/shared/contracts/linear-memory-layout.ts
+  unclean-active-layer: src/shared/contracts/linear-memory-layout.ts
+  unclassified-target: src/shared/contracts/linear-memory-layout.ts
+  unclassified-target: src/shared/contracts/linear-memory-layout.ts
+  unclassified-target: src/shared/contracts/linear-memory-layout.ts
+  unclassified-target: src/shared/contracts/linear-memory-layout.ts
+  unclassified-target: src/shared/contracts/linear-memory-layout.ts
+  unclassified-target: src/shared/contracts/linear-memory-layout.ts
+  forbidden-transitive-path: src/ir/analysis/contracts/linear-memory-layout.ts -> ../../../shared/contracts/linear-memory-layout.js
+  forbidden-transitive-path: src/ir/analysis/contracts/linear-memory-layout.ts -> ../../../shared/contracts/linear-memory-layout.js

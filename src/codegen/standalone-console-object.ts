@@ -35,9 +35,9 @@ import { undefinedExternInstrs } from "./any-helpers.js";
 import { ensureBuiltinFnMetaType, pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import { getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
 import { allocLocal } from "./context/locals.js";
-import { type CodegenContext, type FunctionContext, hostFreeEnvironment } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, hostFreeEnvironment, jsValueBoundary } from "./context/types.js";
 import { runtimeEvalStateMayShadowBinding } from "./direct-eval-environment.js";
-import { flushLateImportShifts } from "./expressions/late-imports.js";
+import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import {
   emitStandaloneStdoutAppendValue,
@@ -45,7 +45,7 @@ import {
   STANDALONE_STDOUT_APPEND_FN,
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
-import { ensureObjectRuntime } from "./object-runtime.js";
+import { ensureBoundaryCallableKind, ensureObjectRuntime } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import { ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
@@ -58,15 +58,15 @@ const METHOD_FN = "__standalone_console_method";
 const OBJECT_FN = "__standalone_console_object";
 
 /**
- * True when `id` is a read of the AMBIENT `console` in a host-free standalone
- * module. A user binding (`var console = …`, a parameter, an eval-introduced
- * name) keeps its ordinary lowering; a linked standalone module reads globals
- * from its owning realm; WASI keeps its `fd_write` path.
+ * True when `id` is a read of the AMBIENT `console` under the native regime. A
+ * user binding (`var console = …`, a parameter, an eval-introduced name) keeps
+ * its ordinary lowering; a linked standalone module reads globals from its
+ * owning realm; WASI keeps its `fd_write` path (excluded by `!ctx.standalone`).
+ * WHICH console the read yields is the environment's question — see
+ * {@link tryEmitStandaloneConsoleValue}.
  */
-function isStandaloneAmbientConsoleRead(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): boolean {
-  // (#6685) A JS environment (native regime included) reads the declared-global
-  // `console` capability instead; WASI is excluded by `!ctx.standalone`.
-  if (!ctx.standalone || !hostFreeEnvironment(ctx) || ctx.standaloneGlobalThisImport !== undefined) return false;
+function isRegimeAmbientConsoleRead(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): boolean {
+  if (!ctx.standalone || ctx.standaloneGlobalThisImport !== undefined) return false;
   if (id.text !== "console") return false;
   if (fctx.localMap.has("console") || (fctx.boxedCaptures?.has("console") ?? false)) return false;
   if (runtimeEvalStateMayShadowBinding(ctx, fctx, "console")) return false;
@@ -286,16 +286,40 @@ function ensureConsoleObjectFunction(ctx: CodegenContext): number | undefined {
   return funcIdx;
 }
 
-/** Lower an ambient `console` value read, or return `null` to decline. */
+/**
+ * Lower an ambient `console` value read, or return `null` to decline.
+ *
+ * `console` is a PLATFORM capability, so the environment decides what it is: a
+ * host-free build gets the Wasm-native console object above (#6671); a
+ * JavaScript environment with the value boundary reads the HOST's console
+ * (#6890) through the declared-global capability `global_console`
+ * (`platform-capability`/`console`). The runtime admits that object at the
+ * boundary, so `console.createTask`, `var c = console; c.log(…)` and
+ * `f(console)` go through the boundary object MOP (`__boundary_object_*`), not
+ * the legacy `__extern_get`. A JS environment without the value bridge keeps
+ * declining (the graceful default) — it has no MOP to read a host object with.
+ */
 export function tryEmitStandaloneConsoleValue(
   ctx: CodegenContext,
   fctx: FunctionContext,
   id: ts.Identifier,
 ): ValType | null {
-  if (!isStandaloneAmbientConsoleRead(ctx, fctx, id)) return null;
+  if (!isRegimeAmbientConsoleRead(ctx, fctx, id)) return null;
+  if (!hostFreeEnvironment(ctx)) return emitHostConsoleCapability(ctx, fctx);
   const funcIdx = ensureConsoleObjectFunction(ctx);
   flushLateImportShifts(ctx, fctx);
   if (funcIdx === undefined) return null;
   fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(OBJECT_FN) ?? funcIdx });
+  return { kind: "externref" };
+}
+
+/** (#6890) The host console object, read through its platform capability. */
+function emitHostConsoleCapability(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
+  if (!jsValueBoundary(ctx) || ctx.strictNoHostImports) return null;
+  ensureBoundaryCallableKind(ctx); // its methods are admitted JS functions: `typeof`, [[Call]]
+  const funcIdx = ensureLateImport(ctx, "global_console", [], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (funcIdx === undefined) return null;
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("global_console") ?? funcIdx });
   return { kind: "externref" };
 }

@@ -70,6 +70,7 @@ import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "./nati
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { protoLinkActive } from "./object-runtime-proxy-chain.js"; // (#6766)
+import { nativeDefineRejectionAsFalse } from "./object-model/define-rejection-channel.js"; // (#6651 W1a)
 
 /** `__create_descriptor`'s attribute bits: writable (0x01) | enumerable (0x02)
  *  | configurable (0x04) — the §7.3.5 CreateDataProperty descriptor. */
@@ -77,6 +78,32 @@ const DESC_FLAGS_ALL = 0x07;
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
+
+/**
+ * (#6651 W1a) `Receiver.[[DefineOwnProperty]](key, desc)` (params 3 / 1, `desc`
+ * left by `descInstrs`) as the walk's boolean: a parked define REJECTION — e.g.
+ * a non-extensible target behind a trapless Proxy receiver — is `false`
+ * (§7.3.5 CreateDataProperty), not a throw.
+ */
+function receiverDefineBool(
+  ctx: CodegenContext,
+  defineFromDescIdx: number,
+  isTruthyIdx: number,
+  scratch: number,
+  descInstrs: Instr[],
+): Instr[] {
+  return nativeDefineRejectionAsFalse(
+    ctx,
+    [
+      { op: "local.get", index: 3 },
+      { op: "local.get", index: 1 },
+      ...descInstrs,
+      { op: "call", funcIdx: defineFromDescIdx },
+      { op: "call", funcIdx: isTruthyIdx },
+    ],
+    scratch,
+  );
+}
 
 /** `(target, key, value, receiver) -> i32`. */
 export const REFLECT_SET_RECEIVER = "__reflect_set_receiver";
@@ -347,13 +374,11 @@ export function fillOrdinarySetWithReceiver(ctx: CodegenContext): number | undef
                 op: "if",
                 blockType: { kind: "empty" },
                 then: [
-                  { op: "local.get", index: 3 },
-                  { op: "local.get", index: 1 },
-                  { op: "local.get", index: 2 },
-                  { op: "i32.const", value: DESC_FLAGS_ALL },
-                  { op: "call", funcIdx: createDescIdx! },
-                  { op: "call", funcIdx: defineFromDescIdx! },
-                  { op: "call", funcIdx: isTruthyIdx },
+                  ...receiverDefineBool(ctx, defineFromDescIdx!, isTruthyIdx, TMP, [
+                    { op: "local.get", index: 2 },
+                    { op: "i32.const", value: DESC_FLAGS_ALL },
+                    { op: "call", funcIdx: createDescIdx! },
+                  ]),
                   { op: "return" },
                 ],
               },
@@ -410,11 +435,7 @@ export function fillOrdinarySetWithReceiver(ctx: CodegenContext): number | undef
               ...keyOf("value"),
               { op: "local.get", index: 2 },
               { op: "call", funcIdx: externSetIdx },
-              { op: "local.get", index: 3 },
-              { op: "local.get", index: 1 },
-              { op: "local.get", index: TMP },
-              { op: "call", funcIdx: defineFromDescIdx! },
-              { op: "call", funcIdx: isTruthyIdx },
+              ...receiverDefineBool(ctx, defineFromDescIdx!, isTruthyIdx, TMP, [{ op: "local.get", index: TMP }]),
               { op: "return" },
             ],
           },

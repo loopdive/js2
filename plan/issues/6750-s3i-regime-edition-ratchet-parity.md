@@ -101,3 +101,13 @@ So: #6748 alone returns ES2026 to parity; ES2023/ES2016 are mostly the
 to bisect; ES5's 62 are small independent semantic gaps (list above) — none
 is a regime regression of something standalone had, they are rows the host
 lane passes through V8.
+
+## Checkpoint (2026-10-07, nightly 37596924980 vs host baseline of the same day)
+
+Regime 41,816 / 48,735 vs host 39,700 (regime 10-06 was 37,286). Per edition:
+ES2026 **+4,228** (was −178; #6748 landed), ES5 −90, ES2016 −3, ES2023 −5,
+every other edition up. Per-test host-pass → regime-not-pass: **2,459**
+(was 5,946). The three remaining ratcheted regressions map to in-flight
+slices: ES5 → #6880 (groups), #6894 (merged into PR #6584), #6898 (the
+#3418 elision re-key); ES2016/ES2023 → #6912 (callable-as-value tail) and
+#6881 (`__js_array_*` leak).
