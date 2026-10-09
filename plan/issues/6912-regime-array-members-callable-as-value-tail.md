@@ -20,7 +20,7 @@ loc-budget-allow:
   # 2026-10-07 (#6912): routing lines for the member closure bodies; the bodies live in src/codegen/array/
   - src/codegen/array-object-proto.ts
 import-cycles-allow:
-  - largestSccSize: 700 # 2026-10-07 (#6912): array/array-search-proto-value.ts (PR A) and array/array-generic-value-bodies.ts (PR B) join the codegen SCC (it is called from array-object-proto.ts and uses shared.js coerceType/ensureLateImport, like array-fill-proto-value.ts); the pure scan core array/array-search-core.ts stays outside it
+  - largestSccSize: 701 # 2026-10-07, re-based on main 699 2026-10-09 (#6912): array/array-search-proto-value.ts (PR A) and array/array-generic-value-bodies.ts (PR B) join the codegen SCC (it is called from array-object-proto.ts and uses shared.js coerceType/ensureLateImport, like array-fill-proto-value.ts); the pure scan core array/array-search-core.ts stays outside it
 ---
 
 # #6912 — finish the array-member closure table
