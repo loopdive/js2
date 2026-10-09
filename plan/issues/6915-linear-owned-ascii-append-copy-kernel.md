@@ -2062,3 +2062,39 @@ Natural-close waiting intentionally no longer guarantees bounded wall-clock comp
 These are release limits, not reasons to introduce a new supervision framework. The concrete unresolved implementation questions are whether the actual patch waits on every handled post-spawn exceptional path, bounds repeated error/notification state, accurately accounts partial writes, and preserves comparator rejection of faults. The finite controls and exact diff review resolve those before trial. No additional user decision is needed merely to write the authorized private repair; only actual termination would need its separate explicit authority.
 
 This review wrote only its private `astra/` directory. It did not import/run the runner, run self-tests/compiler/tests, deserialize V8 evidence, alter live source/claims/issues/foreign branches, send coordination messages, or perform termination/publication. Source inspection establishes the defect and this bounded plan, not an implemented or measured repair.
+
+## B implemented repair and exact comparator rebinding — 2026-10-09
+
+The preceding adopted contract is preserved. Its review-time statements describe
+the specification, not this subsequently implemented checkpoint.
+
+Original owner published private source commit
+`3671c4f0536cafaef31aac3405d944306456a050`; parent integrated it normally at
+`0083aabb867c3bd2bb7c28b612f14ea9c80730fe`. Only the runner changes in the
+source commit (+1031/-87); compiler source tree remains
+`171606514a3cf6733e82eb11549a659856d68c1a`. Runner: 121504 bytes, SHA256
+`ddf52b81471015d7ead47a7fb222292c0ba1c8ca94dbc4a2be6b3440b63d5322`.
+Independent Astra exact-diff review cleared the released scope; inverse proof
+recovers the predecessor and retains all 159 original controls unchanged.
+Parent independently repeated **197/197 inert controls, actual terminal exit0**
+after integration. Missing-tree/src/HEAD diagnostics are retained original
+negative controls; no compiler or Vitest child was executed.
+
+Preserved comparator SHA256 is
+`03a5a9752ce408297adc87581dae6a2955755e8d901ccd29703f4692ace2bfcc`.
+New private comparator `.tmp/6915-no-kill-source-20261009/compare-full-graphs.mjs`
+changes only its single runner-hash literal: 14829 bytes, SHA256
+`4127be624740255181b1339938bc5416e19f2a15905dbea60ee2a9821e598742`.
+Independent Astra forward/inverse whole-file equality passed. Parent repeated
+**62/62 comparison controls, actual terminal exit0**. All graph, raw-stream,
+baseline and custody logic remains byte-unchanged. Nonempty receipt.failures
+rejects acceptance; actual parent terminal exit0 is separately mandatory.
+capture.json is diagnostic only, never acceptance authority.
+
+The old provisional freeze is stale and preserved. Next: independently freeze
+the new committed composition and retained baseline, then execute the separately
+authorized single serialized trial only after the other verified live compiler
+suite releases the test slot. No source equality, native admission, performance,
+full IR completion, main delivery, HOLD removal or retirement follows from these
+inert controls. This checkpoint is local; existing PR6593 publication and A's
+final protected-queue integration remain pending normal gates.
