@@ -43,11 +43,21 @@ export function test(): number {
   try { shift.call(null); } catch (err) { threw = err instanceof TypeError; }
   if (!threw) return 51;
   if (pop.length !== 0 || shift.length !== 0) return 60;
+  // A string receiver's length is non-writable and its indices non-configurable.
+  threw = false;
+  try { pop.call(""); } catch (err) { threw = err instanceof TypeError; }
+  if (!threw) return 61;
+  threw = false;
+  try { shift.call("ab"); } catch (err) { threw = err instanceof TypeError; }
+  if (!threw) return 62;
   const toStr: any = Array.prototype.toString;
   if (toStr.call({ join() { return "J"; } }) !== "J") return 70;
   if (toStr.call({ 0: 1, 1: 2, length: 2, join: Array.prototype.join }) !== "1,2") return 71;
   if (toStr.call({ join: 1 }) !== "[object Object]") return 72;
   if (toStr.call([1, 2]) !== "1,2") return 73;
+  const withUndefJoin: any = [1, 2];
+  withUndefJoin.join = undefined;
+  if (toStr.call(withUndefJoin) !== "[object Array]") return 76;
   threw = false;
   try { toStr.call(undefined); } catch (err) { threw = err instanceof TypeError; }
   if (!threw) return 74;
