@@ -1,0 +1,1 @@
+compiler-boundaries: inventory-valid-architecture-incomplete (mode=complete, exit 1)

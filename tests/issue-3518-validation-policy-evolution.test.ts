@@ -1,4 +1,5 @@
 import { captureDenoPostPositionMainPredecessorPolicySource } from "./helpers/ir-deno-post-position-main-successor.js";
+import { captureGeometryCurrentMainPredecessorPolicySource } from "./helpers/ir-c1-historical-authority.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
 import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
@@ -76,7 +77,9 @@ function actual(): MutablePolicy {
                                         capturePositionClassFieldsMainPredecessorPolicySource(
                                           capturePositionFinallyMainPredecessorPolicySource(
                                             captureDenoPostPositionMainPredecessorPolicySource(
-                                              read("scripts/compiler-boundaries.json"),
+                                              captureGeometryCurrentMainPredecessorPolicySource(
+                                                read("scripts/compiler-boundaries.json"),
+                                              ),
                                             ),
                                           ),
                                         ),

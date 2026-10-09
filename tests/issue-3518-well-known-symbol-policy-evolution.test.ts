@@ -41,7 +41,11 @@ afterEach(async () => {
   // Yield between synchronous source proofs so Vitest can process task-update RPCs.
   await setImmediate();
 });
-import { c1HistoricalArtifactPath, type C1HistoricalLogicalPath } from "./helpers/ir-c1-historical-authority.js";
+import {
+  captureGeometryCurrentMainPredecessorPolicySource,
+  c1HistoricalArtifactPath,
+  type C1HistoricalLogicalPath,
+} from "./helpers/ir-c1-historical-authority.js";
 
 const read = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const historicalPolicyOperandPaths: readonly string[] = [
@@ -79,7 +83,9 @@ const raw = (): string =>
                                   capturePositionClassFieldsMainPredecessorPolicySource(
                                     capturePositionFinallyMainPredecessorPolicySource(
                                       captureDenoPostPositionMainPredecessorPolicySource(
-                                        read("scripts/compiler-boundaries.json"),
+                                        captureGeometryCurrentMainPredecessorPolicySource(
+                                          read("scripts/compiler-boundaries.json"),
+                                        ),
                                       ),
                                     ),
                                   ),

@@ -1,4 +1,5 @@
 import { captureDenoPostPositionMainPredecessorPolicySource } from "./helpers/ir-deno-post-position-main-successor.js";
+import { captureGeometryCurrentMainPredecessorPolicySource } from "./helpers/ir-c1-historical-authority.js";
 import { readRemainderRuntimeContractReceiptSource as readRuntimeContractReceiptSource } from "./helpers/ir-remainder-runtime-contract-evolution.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
@@ -2674,7 +2675,9 @@ function fixtureCaptureInput(epoch: (typeof fixtureCaptureEpochs)[number]): stri
                     capturePositionClassFieldsMainPredecessorPolicySource(
                       capturePositionFinallyMainPredecessorPolicySource(
                         captureDenoPostPositionMainPredecessorPolicySource(
-                          fixtureCaptureRead("scripts/compiler-boundaries.json"),
+                          captureGeometryCurrentMainPredecessorPolicySource(
+                            fixtureCaptureRead("scripts/compiler-boundaries.json"),
+                          ),
                         ),
                       ),
                     ),
@@ -2808,7 +2811,13 @@ describe("#3518 runtime policy fixture capture", () => {
             if (kind === "missing") fixtureCaptureExpectMissing(() => epoch.api(input), path);
             else
               expect(() => epoch.api(input)).toThrow(
-                path === epoch.receiptPath ? /receipt digest mismatch/ : /complete .*prefix changed/,
+                path === epoch.receiptPath
+                  ? /receipt digest mismatch/
+                  : kind === "mutation" &&
+                      path === "tests/helpers/ir-runtime-program-policy-evolution.ts" &&
+                      (epoch.name === "canonical3c6" || epoch.name === "currentMain")
+                    ? "C1 historical authority: full-file pin changed: tests/helpers/ir-runtime-program-policy-evolution.ts geometry current"
+                    : /complete .*prefix changed/,
               );
           });
           expect(fixtureCapturePin(epoch.api(input))).toEqual(epoch.before.source);
@@ -3402,7 +3411,9 @@ function fourStageCaptureInput(epoch: (typeof fourStageCaptureEpochs)[number]): 
                         capturePositionClassFieldsMainPredecessorPolicySource(
                           capturePositionFinallyMainPredecessorPolicySource(
                             captureDenoPostPositionMainPredecessorPolicySource(
-                              fixtureCaptureRead("scripts/compiler-boundaries.json"),
+                              captureGeometryCurrentMainPredecessorPolicySource(
+                                fixtureCaptureRead("scripts/compiler-boundaries.json"),
+                              ),
                             ),
                           ),
                         ),

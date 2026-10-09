@@ -42,6 +42,7 @@ import {
   authenticateRuntimePreparationPolicy,
   beforeRuntimePreparationPolicy,
   beforeRuntimePreparationPolicySource,
+  runtimePreparationRemainderHistoricalSource,
   runtimePreparationPolicyReceiptPath,
   authenticateNumberPrerequisitePolicyEvolution,
   authenticateNumberPrerequisitePolicy,
@@ -84,7 +85,11 @@ vi.mock("node:fs", async (importOriginal) => {
     },
   };
 });
-import { c1HistoricalArtifactPath, type C1HistoricalLogicalPath } from "./helpers/ir-c1-historical-authority.js";
+import {
+  captureGeometryCurrentMainPredecessorPolicySource,
+  c1HistoricalArtifactPath,
+  type C1HistoricalLogicalPath,
+} from "./helpers/ir-c1-historical-authority.js";
 
 const read = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const historicalPolicyOperandPaths: readonly string[] = [
@@ -122,7 +127,9 @@ const raw = (): string =>
                                 capturePositionClassFieldsMainPredecessorPolicySource(
                                   capturePositionFinallyMainPredecessorPolicySource(
                                     captureDenoPostPositionMainPredecessorPolicySource(
-                                      read("scripts/compiler-boundaries.json"),
+                                      captureGeometryCurrentMainPredecessorPolicySource(
+                                        read("scripts/compiler-boundaries.json"),
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -948,6 +955,12 @@ describe("Number prerequisite exact successor of genuine WKS, C1 and B", () => {
 // C2a controls receive authenticated predecessor bytes; the original Number rows keep their historical input.
 describe("C2a exact runtime preparation policy successor", () => {
   const path = "src/ir/runtime/intrinsic-preparation.ts";
+  const readPinnedPreparationOperand = (operandPath: string): string => {
+    const source = readHistoricalPolicyOperand(operandPath);
+    return operandPath === "src/ir/runtime/intrinsic-preparation.ts"
+      ? runtimePreparationRemainderHistoricalSource(source)
+      : source;
+  };
   const currentRaw = (): string =>
     captureDynamicCodePredecessorPolicySource(
       captureHostCarrierPredecessorPolicySource(
@@ -966,7 +979,9 @@ describe("C2a exact runtime preparation policy successor", () => {
                                 capturePositionClassFieldsMainPredecessorPolicySource(
                                   capturePositionFinallyMainPredecessorPolicySource(
                                     captureDenoPostPositionMainPredecessorPolicySource(
-                                      read("scripts/compiler-boundaries.json"),
+                                      captureGeometryCurrentMainPredecessorPolicySource(
+                                        read("scripts/compiler-boundaries.json"),
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -1068,7 +1083,8 @@ describe("C2a exact runtime preparation policy successor", () => {
       },
     ]);
     for (const pin of [...r.sourceInputs, r.numberReceipt]) {
-      expect([Buffer.byteLength(read(pin.path)), sha(read(pin.path))]).toEqual([pin.bytes, pin.sha256]);
+      const source = readPinnedPreparationOperand(pin.path);
+      expect([Buffer.byteLength(source), sha(source)]).toEqual([pin.bytes, pin.sha256]);
     }
     const helper = Buffer.from(read("tests/helpers/ir-runtime-program-policy-evolution.ts"));
     expect(createHash("sha256").update(helper.subarray(0, 40368)).digest("hex")).toBe(
@@ -1077,6 +1093,60 @@ describe("C2a exact runtime preparation policy successor", () => {
     frozen(r);
     accept(p);
   });
+
+  it("successor reader freshly proves current preparation bytes and preserves every other raw operand channel", () => {
+    const actual = readHistoricalPolicyOperand(path);
+    const historical = readPinnedPreparationOperand(path);
+    expect([Buffer.byteLength(actual), sha(actual)]).toEqual([
+      49704,
+      "171aa93513aacb9bebf80897f2c67a827b71f082647ced04a689ca17d116ba82",
+    ]);
+    expect([Buffer.byteLength(historical), sha(historical)]).toEqual([
+      49541,
+      "bd27170fd1df4a9bbad2874e5f2db34bc455fb6807b26523da4be8c182f3622b",
+    ]);
+    expect(historical).not.toBe(actual);
+    for (const pin of [...authority().sourceInputs, authority().numberReceipt]) {
+      if (pin.path !== path) expect(readPinnedPreparationOperand(pin.path)).toBe(readHistoricalPolicyOperand(pin.path));
+    }
+    const helperPath = "tests/helpers/ir-runtime-program-policy-evolution.ts";
+    const helper = readHistoricalPolicyOperand(helperPath);
+    expect(readPinnedPreparationOperand(helperPath)).toBe(helper);
+    expect(Buffer.byteLength(helper)).toBe(93405);
+    expect(createHash("sha256").update(Buffer.from(helper).subarray(0, 40368)).digest("hex")).toBe(
+      "2b6358379b9f9145b54a5287b6a74f61a89ef9deff215ce6fb21a2174ee1845e",
+    );
+    accept(current());
+  });
+
+  it.each([0, 1142, 39547, 49703] as const)(
+    "successor reader freshly refuses actual preparation byte %s after success and restores",
+    (offset) => {
+      const original = readHistoricalPolicyOperand(path);
+      const healthy = readPinnedPreparationOperand(path);
+      const exact = new URL(`../${path}`, import.meta.url).pathname;
+      expect([Buffer.byteLength(healthy), sha(healthy)]).toEqual([
+        49541,
+        "bd27170fd1df4a9bbad2874e5f2db34bc455fb6807b26523da4be8c182f3622b",
+      ]);
+      accept(current());
+      try {
+        intercepted.set(exact, offset);
+        interceptedReads.set(exact, 0);
+        expect(readHistoricalPolicyOperand(path)).not.toBe(original);
+        expect(() => readPinnedPreparationOperand(path)).toThrow(
+          new Error("current main inventory evolution: complete current remainder preparation source changed"),
+        );
+        expect(interceptedReads.get(exact)).toBeGreaterThanOrEqual(2);
+      } finally {
+        intercepted.delete(exact);
+        interceptedReads.delete(exact);
+      }
+      expect(readHistoricalPolicyOperand(path)).toBe(original);
+      expect(readPinnedPreparationOperand(path)).toBe(healthy);
+      accept(current());
+    },
+  );
 
   it("independently subtracts and replays only three deltas through unchanged Number, WKS, C1 and B", () => {
     const p = current(),
@@ -1386,7 +1456,9 @@ describe("dynamic-code inventory successor preserves the C2a policy proof", () =
                               capturePositionClassFieldsMainPredecessorPolicySource(
                                 capturePositionFinallyMainPredecessorPolicySource(
                                   captureDenoPostPositionMainPredecessorPolicySource(
-                                    read("scripts/compiler-boundaries.json"),
+                                    captureGeometryCurrentMainPredecessorPolicySource(
+                                      read("scripts/compiler-boundaries.json"),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -1930,7 +2002,9 @@ describe("host-carrier current-main inventory successor", () => {
                             capturePositionClassFieldsMainPredecessorPolicySource(
                               capturePositionFinallyMainPredecessorPolicySource(
                                 captureDenoPostPositionMainPredecessorPolicySource(
-                                  read("scripts/compiler-boundaries.json"),
+                                  captureGeometryCurrentMainPredecessorPolicySource(
+                                    read("scripts/compiler-boundaries.json"),
+                                  ),
                                 ),
                               ),
                             ),
@@ -2303,7 +2377,9 @@ describe("generator eager-refusal current-main inventory successor", () => {
                           capturePositionClassFieldsMainPredecessorPolicySource(
                             capturePositionFinallyMainPredecessorPolicySource(
                               captureDenoPostPositionMainPredecessorPolicySource(
-                                read("scripts/compiler-boundaries.json"),
+                                captureGeometryCurrentMainPredecessorPolicySource(
+                                  read("scripts/compiler-boundaries.json"),
+                                ),
                               ),
                             ),
                           ),

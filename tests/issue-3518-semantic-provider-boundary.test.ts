@@ -1,4 +1,5 @@
 import { captureDenoPostPositionMainPredecessorPolicySource } from "./helpers/ir-deno-post-position-main-successor.js";
+import { captureGeometryCurrentMainPredecessorPolicySource } from "./helpers/ir-c1-historical-authority.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
 import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
@@ -362,6 +363,7 @@ const sourceMapValidatorFixtureAdditions = {
     "src/ir/program/runtime-abi.ts",
     "src/ir/program/class-layouts.ts",
     "src/ir/program/allocations.ts",
+    "src/ir/program/allocation-body-validation.ts",
     "src/ir/program/runtime-support-dependencies.ts",
     "src/ir/program/runtime-validation.ts",
     "src/ir/program/owner.ts",
@@ -503,7 +505,9 @@ const policy = () => {
                                   capturePositionClassFieldsMainPredecessorPolicySource(
                                     capturePositionFinallyMainPredecessorPolicySource(
                                       captureDenoPostPositionMainPredecessorPolicySource(
-                                        readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"),
+                                        captureGeometryCurrentMainPredecessorPolicySource(
+                                          readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"),
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -1079,18 +1083,18 @@ function assertLiveFixtureClosure(r: FixtureRun) {
   expect(priorLiveRequired).toHaveLength(174);
   expect(new Set(priorLiveRequired).size).toBe(174);
   const additions = Object.values(sourceMapValidatorFixtureAdditions).flat();
-  expect(additions).toHaveLength(31);
-  expect(new Set(additions).size).toBe(31);
+  expect(additions).toHaveLength(31 + 1);
+  expect(new Set(additions).size).toBe(31 + 1);
   const added = new Set(additions);
   expect(priorLiveRequired.filter((path) => added.has(path))).toEqual([]);
-  expect(validatorLiveRequired).toHaveLength(205);
-  expect(new Set(validatorLiveRequired).size).toBe(205);
+  expect(validatorLiveRequired).toHaveLength(205 + 1);
+  expect(new Set(validatorLiveRequired).size).toBe(205 + 1);
   expect(denoNativeFixtureAdditions).toHaveLength(3);
   expect(new Set(denoNativeFixtureAdditions).size).toBe(3);
   const denoAdded = new Set<string>(denoNativeFixtureAdditions);
   expect(validatorLiveRequired.filter((path) => denoAdded.has(path))).toEqual([]);
-  expect(liveRequired).toHaveLength(208 + 1);
-  expect(new Set(liveRequired).size).toBe(208 + 1);
+  expect(liveRequired).toHaveLength(208 + 1 + 1);
+  expect(new Set(liveRequired).size).toBe(208 + 1 + 1);
   expect(validatorLiveRequired).not.toContain(remainderLiveFixtureAddition);
   expect(liveRequired.filter((path) => !denoAdded.has(path) && path !== remainderLiveFixtureAddition)).toEqual(
     validatorLiveRequired,
@@ -1112,8 +1116,8 @@ function assertLiveFixtureClosure(r: FixtureRun) {
         .sort(),
     ).toEqual([...paths].sort());
   }
-  expect(r.report.counts.total).toBe(208 + 1);
-  expect(r.report.modules).toHaveLength(208 + 1);
+  expect(r.report.counts.total).toBe(208 + 1 + 1);
+  expect(r.report.modules).toHaveLength(208 + 1 + 1);
   const edges: FixtureEdge[] = r.report.edges;
   const remainderEdges: FixtureEdge[] = [
     { from: "src/ir/runtime/callable-declarations.ts", to: remainderLiveFixtureAddition, typeOnly: false },
@@ -1139,16 +1143,16 @@ function assertLiveFixtureClosure(r: FixtureRun) {
     edges.filter((edge) => edge.from === "src/ir/program/input.ts" && edge.to === "src/ir/program/validation.ts"),
   ).toEqual([expect.objectContaining({ typeOnly: false })]);
   expect({ edges: r.report.resolvedEdgeCount, ...r.report.counts.resolvedEdgesByType }).toEqual({
-    edges: 988 + 7,
-    typeOnly: 480 + 4,
-    runtime: 508 + 3,
+    edges: 988 + 7 + 6,
+    typeOnly: 480 + 4 + 1,
+    runtime: 508 + 3 + 5,
   });
-  expect(edgePopulation(edges)).toEqual({ edges: 988 + 7, typeOnly: 480 + 4, runtime: 508 + 3 });
+  expect(edgePopulation(edges)).toEqual({ edges: 988 + 7 + 6, typeOnly: 480 + 4 + 1, runtime: 508 + 3 + 5 });
   const validator = new Set(validatorLiveRequired);
   const validatorEdges = edges.filter(
     (edge) => validator.has(edge.from) && edge.to !== undefined && validator.has(edge.to),
   );
-  expect(edgePopulation(validatorEdges)).toEqual({ edges: 977, typeOnly: 476, runtime: 501 });
+  expect(edgePopulation(validatorEdges)).toEqual({ edges: 977 + 6, typeOnly: 476 + 1, runtime: 501 + 5 });
   const denoEdges = edges.filter(
     (edge) =>
       !validatorEdges.includes(edge) &&
@@ -1233,9 +1237,9 @@ function assertLiveFixtureClosure(r: FixtureRun) {
     runtime: 379,
   });
   expect(edgePopulation(validatorEdges.filter((edge) => !priorEdges.includes(edge)))).toEqual({
-    edges: 194,
-    typeOnly: 72,
-    runtime: 122,
+    edges: 194 + 6,
+    typeOnly: 72 + 1,
+    runtime: 122 + 5,
   });
   for (const module of r.report.modules) {
     expect(module.state).toBe("clean");
@@ -1495,8 +1499,8 @@ describe("semantic verification and provider ownership boundary", () => {
       ).toEqual([]);
       expect({ edges: bypass.report.resolvedEdgeCount, ...bypass.report.counts.resolvedEdgesByType }).toEqual(
         replacement === ""
-          ? { edges: 987 + 7, typeOnly: 480 + 4, runtime: 507 + 3 }
-          : { edges: 988 + 7, typeOnly: 481 + 4, runtime: 507 + 3 },
+          ? { edges: 987 + 7 + 6, typeOnly: 480 + 4 + 1, runtime: 507 + 3 + 5 }
+          : { edges: 988 + 7 + 6, typeOnly: 481 + 4 + 1, runtime: 507 + 3 + 5 },
       );
       expect(() => assertLiveFixtureClosure(bypass)).toThrow();
       f.put(path, original);
@@ -1769,11 +1773,11 @@ describe("semantic verification and provider ownership boundary", () => {
       expect.objectContaining({ from: path, to: "src/forbidden.ts", typeOnly: true }),
     );
     expect(r.report.transitiveViolations).not.toEqual([]);
-    expect(r.report.counts.total).toBe(209 + 1);
+    expect(r.report.counts.total).toBe(209 + 1 + 1);
     expect({ edges: r.report.resolvedEdgeCount, ...r.report.counts.resolvedEdgesByType }).toEqual({
-      edges: 989 + 7,
-      typeOnly: 481 + 4,
-      runtime: 508 + 3,
+      edges: 989 + 7 + 6,
+      typeOnly: 481 + 4 + 1,
+      runtime: 508 + 3 + 5,
     });
     f.put(path, original);
     f.p.files.pop();

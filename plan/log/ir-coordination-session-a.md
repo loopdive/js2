@@ -198,3 +198,25 @@ F1's one-line defined-allocation carrier exclusion and five genuine canonical co
 
 This is a bounded generic finite evidence leaf and pure provenance extraction. It does not complete B's memory/resource contracts, native/public admission, J2/J3, the deferred ROOT/full40 cases, a general witness, full equality or legacy retirement. PR6599 remains under root HOLD/CI/queue control until the exact current publication is reviewed. Existing baseline architecture failures and original failed attempts remain recorded. No protected main delivery of this checker is claimed.
 
+
+
+## Session A integration checkpoint — 2026-10-09
+
+This entry preserves the earlier authoring and publication records. It describes a new **local, uncommitted** integration epoch; it is not a published dependency or implementation release to Session B.
+
+- Branch: `codex/6920-geometry-proof-integration-20261009` in `/private/tmp/js2-6920-geometry-proof-integration-20261009`.
+- Exact committed HEAD: `7928f27343a171d8e0de434ea005d630eaf64bf3`. Staged, uncommitted merge parent: `b932e3a05e353acc59e7b547ef4e417a5d8637e1`.
+- Fresh canonical main: `dbf5b4f74b37d67e525b2af36fd1fe49803b1348`, fetched normally. Merge into this checkpoint is pending its normal commit; the sole current path overlap is the issue6920 document.
+- Canonical claim: `6920:geometry-proof-integration-20261009`, owner `ttraenkler/codex-ir-integration-session-a-20261009`, write `60335-ngn0jcr6`, in progress. Exact record was read from ledger `0d1fefb1045a068ce689fb83d1f58c4a173fc1f8`.
+
+ROOT integrates the previously reviewed shared geometry functions in `src/shared/contracts/linear-memory-layout.ts`, the compatibility exports/imports in `src/ir/analysis/{contracts/linear-memory-layout,linear-memory-plan}.ts`, and the matching foundation entry in `scripts/compiler-boundaries.json`. Source geometry ownership remains limited to the already delivered C packet. ROOT owns this composition, independent proof receipt/anchor and fixture authority, publication and protected queue. Authenticated trusted reader76271 and policy caller75863 acknowledgements cover only their recorded acquisition and bounded fixture hunks; they confer no broad donor/checker ownership.
+
+Recorded qualification: C1 415/415; Number 461/461; formatted five-suite cohort 756/756; corrected lowering 68/68; independent runtime-data diagnostic successor147/147. The remaining preflight completed runtime-policy204/204, validation-policy63/63, Wasm143/143, symbols154/154, layout24/24 and geometry15/15; semantic-provider350/354 exposed an omitted actual allocation-validation fixture leaf. The owner supplied its bounded copy-list/count correction and complete354 qualification is running in an isolated physical index copy. Normal commit attempts and every original failure/preimage are preserved; there is no completed new checkpoint commit or ready geometry-proof PR yet.
+
+Private native prerequisites remain separate: actual A1 caller31/31 and P1 proof71/71 passed in an independent full copy; public vector1.25 remains refused pending resource materialization. Three native reader instruments have independent static review; M1 measured18 real resolver requests/72 filesystem observations and retained old16/66. ROOT's literal authority receipt is a private draft, unanchored and unactivated. F1 independent fixture113 authored rows has Astra static clearance and is being copied into its own complete physical qualification epoch; no runtime pass is asserted.
+
+Verified delivery: PR6593 reached canonical main as `f0d9438a41f8c717836c28ea21b06b6304ab85b5`, with exact qualified tree and234 changed-path blobs checked. Its conformance jobs were selector-skipped, so it supplies no new conformance credit. Existing PR6577 remains held at `3e66088d007fc52440fb4602ad3f390b21e8c141`; its original positive shared-allocation preparation failure persists. Existing documentation PR6596 remains held at `7974cae44741a4473d78107ad96ebe7afa1341c5`. Session B synchronization remains [PR6583](https://github.com/loopdive/js2/pull/6583).
+
+No new B memory/resource/body-resolver, allocator4540, Unicode or shared-source file/function release is made here. ROOT will publish exact reviewed tested dependency commits after normal hooks, then agree on explicit disjoint files/functions before B integration. Legacy remains until full tested IR equality. JavaScript-host source/program mode is excluded from IR migration.
+
+Follow-up local evidence: independent F1 normal run65513 completed113/113 with actual exit0. Complete15316 application/29580 dependency file byte/mode audit and2190 contained-link plus full directory/membership scans match, except generated Vitest cache. Native receipt draft has independent Astra static clearance; native caller ownership, activation and composition qualification remain separate. This evidence is still local and conveys no published dependency hash or B release.

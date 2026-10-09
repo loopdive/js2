@@ -4,7 +4,7 @@ title: "Native Linear numeric-vector shared source handoff and integration plan"
 status: in-progress
 sprint: current
 created: 2026-10-08
-updated: 2026-10-08
+updated: 2026-10-09
 priority: high
 horizon: l
 feasibility: hard
@@ -1781,3 +1781,5177 @@ Root independently verified all36 raw artifact pins, exact authored floors/actua
 Root accepted the exact-e734 Astra carrier delta review (`ec35adf5b604c7f22c673c66879ee1ed4d8abae802212edf72a038b0b70801d6`). Carrier/source commit full normal hooks passed56/56. The normal signed merge `1d9a6c8a16de6b393f8c78e0055f52388ab2b6af` has exact parents e734e6331bd4cbdb1d8f9e5abb9b462957ac94de and revalidated canonical main e610189829ad1554b813d6ca224515666b0e2d28; full normal Node25 merge hooks passed70/70. All21 prior candidate file pins and14 canonical dependency file pins remain exact, with clean tree and verified Thomas SSH signature. Merge receipt8080 bytes/SHA256 `c9e8cb8597419fe33102996afddea1ee278ff14655faf2ffd39c89be60719149` retains complete operands and hook/signature artifacts.
 
 Metadata slice6920:session-a-source-handoff-20261009, owner ttraenkler/codex-sol-session-a-source-handoff-20261009, actual in-progress write89995-6v69lqr6, was freshly effect-read for the publication record. This append preserves every prior issue/handoff byte and source/proof epoch. SOURCE_HEAD1d9 is distinguished from the later metadata publication hash, which requires actual remote readback. No source change, B-contract completion, general/native/public admission, equality, retirement, CI acceptance or queue release follows from metadata publication; root retains those decisions.
+
+
+## Shared Linear geometry boundary inventory: adopted bounded dependency plan (2026-10-09)
+
+ROOT adopted the complete Astra High plan below and assigned exactly two policy locations plus this append. Isolated branch `codex/6920-linear-geometry-boundary-20261009` starts at actual published C head `e5b67e2d2ddb92cc2ccd039a5677f476a78bf93f`; fresh REST PR6600 is OPEN, merged:false, HOLD, and canonical main is `7fc2b700eb320e18db213f286350fd1bd56982ef`. C merged main into its branch; geometry is not delivered to main. No C branch/source/test/claim edit is authorized here.
+
+Actual upstream claim `6920:linear-geometry-boundary-inventory-20261009`, owner `ttraenkler/codex-sol-linear-geometry-boundary-20261009`, write `77854-2m6xnnwx`, is in-progress and was independently effect-read before this append. Scope is foundation's one added entry/minimum9→10 and exactly one clean/foundation files row for `src/shared/contracts/linear-memory-layout.ts` in `scripts/compiler-boundaries.json`; no allowedEdges, other rows/history, checker, source, tests, or proof changes. Existing issue custody at the packet's missing files-row finding and Session C continuation reserves this inventory to A/ROOT.
+
+Fresh canonical ledger `df160ab7aedb5fbf11b69f9f8990dc784cc5ee0c` contains2,976 records. Historical D0 `38570-vbf5jpfz` initial detector and foundation `58141-jewit8ch` identity activation remain held; their published bounded delivery is recorded in `plan/agent-context/3518-first-boundary-dispatch-2026-09-07.md`. Named5753 key/object-layout registrations `60976-gs24rmdq`/`80767-mlvveu0a` remain separate (`plan/agent-context/5753-composed-boundary-repair-2026-09-15.md`). ROOT's `41777-d2f5erfl` owns only six allocation-evidence registrations, explicitly preserving geometry policy followup. Proposal `29777-pzvu0tq3`, C `4237-ijwd2prx`, AE28 source `43989-lv9fr4w8`, metadata `44305-2ijq5h0r` and all foreign records remain untouched. No newer competing exact geometry inventory hunk was found. The new claim does not transfer historical owners' scopes.
+
+Before policy editing, actual unmodified C inventory under Node25.9.0 and immutable comparison base C exited1: invalid-inventory, ten errors (one unclassified-module, one unclean-active-layer, six unclassified-target, two forbidden-transitive-path),1,899 tracked source modules, foundation9, architectureComplete:false. Exact raw output/stderr/exit and all2,976 claim records are preserved in the task-private `.tmp/boundary-*` receipts. Candidate evidence is pending; no gate pass, geometry semantic rerun, public admission or architecture completion follows from plan adoption. ROOT authorized the narrow assignment notice in existing PR6583 before policy implementation.
+
+### Complete adopted Astra plan
+
+# Issue 6920 — complete the shared Linear geometry boundary inventory
+
+Private implementation-plan proposal, Codex GPT-6 Astra High, 2026-10-09. ROOT must adopt this plan and assign the exact policy hunks before implementation. This read-only planning task changed no repository, source, tests, issue, claims, Git state, or public comments and ran no checker/test/compiler runtime. The frozen AE28 lane is unrelated and remains untouched.
+
+## Exact checkpoint and custody
+
+GitHub REST-backed connector revalidation of PR6600 returned **open, merged:false**, head `e5b67e2d2ddb92cc2ccd039a5677f476a78bf93f`, base main `7fc2b700eb320e18db213f286350fd1bd56982ef`. C's [comment6073377464](https://github.com/loopdive/js2/pull/6583#issuecomment-6073377464) says main was merged into C's branch; it does not establish that PR6600 was merged into main. Its G24 24/24 and clean typecheck are C's reported measurements, not executions by this planner.
+
+Read the exact remote head's policy, checker and three geometry source files. The local preserved geometry source/checker files independently have the identical Git blob IDs, allowing direct inspection without touching C's checkout:
+
+| File | Exact head Git blob |
+| --- | --- |
+| scripts/compiler-boundaries.json | `47808eea7a41637438ed783d8a35dc18d99c4382` |
+| scripts/check-compiler-boundaries.mjs | `e6758d9cacabfe0a56fe60ec8812bb860355fe27` |
+| src/shared/contracts/linear-memory-layout.ts | `59450b9ad09d7ebf16af04a8a1ab655a5c81b0ee` |
+| src/ir/analysis/contracts/linear-memory-layout.ts | `0dd2108962236a64e2b96479309b5b1e9735c90e` |
+| src/ir/analysis/linear-memory-plan.ts | `3db990eb21e3ed216cd798548af6d076e32ed9e1` |
+
+The old packet is `/private/tmp/js2-ir-b-contract-docs-20261008/plan/log/6920-shared-linear-geometry-20261009/boundaries.patch`, 648 bytes, SHA-256 `8068abcac73db2354db1c0a24bc292ef114f1d04d5b401dbf65d08e4e5a56a59`. It adds the foundation entry and raises its minimum from nine to ten; it contains no `files` classification. C's report that this patch alone retains all ten diagnostics matches the actual checker logic.
+
+Existing issue plan: `plan/issues/6920-native-linear-shared-source-handoff.md`, A-G zero-import geometry plan and the “Session C geometry continuation confirmed” custody section. The broader `/private/tmp/js2-ir-main-boundary-plan-20261008/implementation-plan.md` concerns the separate dirty composition and many other modules; do not import its broad layer changes into this narrow fix.
+
+## Why this module belongs in foundation
+
+The shared module has zero imports/re-exports, including type imports. It owns storage/layout DATA, existing address/header/forwarding constants and pure geometry/key functions over storage kinds and strings. Its single frozen forwarding object is local data. It has no IR instruction identity, allocation registry, ownership/escape solver, target emitter, compiler context, parser, physical resource handle, or host runtime dependency. Classifying this actual closed module as clean foundation is justified by its contents, not merely its filename or the word “shared”. It does not claim that the entire allocation planner is foundational or that the constants are universally target-independent.
+
+The IR contracts file remains clean `ir-analysis`: it re-exports geometry types and imports the needed shared types, while retaining allocation/site/policy records and their canonical IR-analysis dependencies. The larger planner remains at its current classification; its four shared-module references do not justify promoting it. No source move or semantic change is required.
+
+## Exact minimal edit: one policy file, two locations
+
+Only edit `scripts/compiler-boundaries.json`:
+
+1. In the existing `layers` object with `id: "foundation"`, append `"src/shared/contracts/linear-memory-layout.ts"` to `entries` and change `minModules` from `9` to `10`, exactly as the old packet does. Preserve all nine entries, active/required status and roots.
+2. Add exactly one object to the existing `files` array, preferably adjacent to the existing shared-contract classifications:
+
+```json
+{
+  "path": "src/shared/contracts/linear-memory-layout.ts",
+  "state": "clean",
+  "layer": "foundation"
+}
+```
+
+Do not add a second `modules` list: the checker builds its module population from the actual source tree and joins it to `files`. Do not duplicate the existing IR contracts row, which is already `{path:"src/ir/analysis/contracts/linear-memory-layout.ts",state:"clean",layer:"ir-analysis"}`.
+
+**No allowedEdges change is necessary.** The exact head already contains:
+
+```json
+"foundation": ["foundation"],
+"ir-analysis": ["ir-analysis", "foundation", "ir-core", "wasm-model"]
+```
+
+The clean foundation classification makes the real IR-contracts → shared-contract dependency traversable under that existing rule. Do not add a per-file transitive exception, grant foundation → IR, broaden mixed-layer permissions, ignore type-only references, exempt the path, or weaken enforcement. No new layer, external policy, nonModules entry, moves/evidence record, checker code, or activationHistory rewrite is required for this repair. Preserve existing history and all source-evidence denominators; subsequent immutable-base comparison protects the new active entry/minimum.
+
+The `files` row alone is the missing classification needed to resolve the reported errors; the entry/minimum additionally makes this actual tenth foundation module a required activation root. These are separate responsibilities.
+
+## Expected diagnostic mechanism
+
+The checker inventories actual modules at lines412–414, then requires each active-root occupant to be clean in the proper layer at lines417–445. Without the row, the shared file creates `unclassified-module` and `unclean-active-layer`.
+
+At lines545–551, all six imports/re-exports targeting it are recorded as unresolved `unclassified-target`: two type-only references from the contracts file and four references from the planner. The contracts file is enforced. Its two unresolved references become terminal edges at lines591–614; the unresolved terminal has no allowable external-package rule, causing the two `forbidden-transitive-path` diagnostics. They are consequences of missing classification, not evidence that `ir-analysis → foundation` is forbidden.
+
+After classification, those six edges resolve normally. The contracts file's two edges reach clean foundation under the existing direct/transitive allowance, and the shared module has no onward dependencies. The planner is explicitly `unmigrated` in `mixed-needs-split`, whose allowedEdges array is empty. Its four now-resolved shared references therefore become ordinary **unenforced forbiddenEdges debt records**, not clean-layer errors; do not grant an allowance or relabel the planner to hide them. Preserve and report that graph-accounting change. Confirm the actual post-edit report rather than inferring a gate pass solely from this reasoning.
+
+## Composition and ownership constraints
+
+Fresh read-only `issue-assignments` API results:
+
+- C's `6920:c-shared-linear-geometry-source-20261009` is in-progress, assignee `ttraenkler/claude-session-c-geometry-20261009`, write `4237-ijwd2prx`. It owns the three geometry source hunks and `tests/issue-6865-linear-layout-contract.test.ts`. Do not alter these or C's branch/claim.
+- A's old geometry preparation claim is released, write `60707-95hx19zl`; that is not permission to resume competing geometry edits.
+- AE28's canonical local rules claim is in-progress, assignee `ttraenkler/codex-sol-allocation-evidence-checker-20261009`, write `43989-lv9fr4w8`. Its five source files, three authored test files and evidence freeze are not part of this assignment.
+
+The issue and coordination thread reserve compiler-boundary inventory/policy to A/ROOT. Before executable edits, ROOT must effect-read current canonical ownership and publish a narrow policy-hunk assignment under issue6920. A new slice label does not permit overwriting another owner's policy changes. Retain B's provider/native leaves, dirty primary checkout, all historical proof readers/receipts and protected-queue ownership.
+
+Compose against the exact C source or a ROOT-owned successor containing it. Applying this policy to main without the new shared source would instead produce a stale classification and missing activated root. ROOT may hand the exact two hunks to C for its own integration, or prepare its own explicitly coordinated integration branch containing C's source; this plan authorizes neither a foreign-branch edit nor duplicate geometry implementation. Revalidate head/base and merge conflicts before using the rows on a newer checkpoint.
+
+## Validation and acceptance
+
+Run only after ROOT adopts/releases the implementation. First retain the unmodified exact C-head inventory report (including stderr/exit), then run the same command against the composed policy candidate, with the immutable actual pre-edit comparison base pinned:
+
+```sh
+node --max-old-space-size=2048 scripts/check-compiler-boundaries.mjs \
+  --mode inventory --base e5b67e2d2ddb92cc2ccd039a5677f476a78bf93f \
+  > /private/tmp/js2-6920-boundary-candidate.json \
+  2> /private/tmp/js2-6920-boundary-candidate.stderr
+```
+
+Use distinct baseline output names and capture each real exit code. At the final commit/merge-preview checkpoint also run the actual CI form, `node --max-old-space-size=2048 scripts/check-compiler-boundaries.mjs --mode inventory --base HEAD^1`, preserving its JSON/stderr. Do not rely on the default `--base HEAD` for historical activation protection, nor on default mode: default `complete` intentionally remains failing while migration debt exists. If an intervening parent has different actual policy/source, record its full SHA and preserve all its additions rather than forcing this older pin as a substitute.
+
+Required assertions from the real report: inventory mode exits0; `inventoryValid:true`; exactly one clean foundation row for this module; foundation has ten entries/modules and minimum ten on this checkpoint; the new root is visited; all six actual references resolve to that same module with their original syntax/type-only flags; its outgoing reference population is zero; none of the ten reported diagnostics remains and no replacement error appears. Source population/bytes and all unrelated policy state must be unchanged. The expected truthful status is `inventory-valid-architecture-incomplete`, with `architectureComplete:false`; retain remaining debt and normal forbidden-edge reporting. Do not misreport that status as full architecture completion.
+
+Use the existing `tests/issue-3518-compiler-boundaries.test.ts` for normal policy/checker regression coverage if required by ROOT's gate cohort, plus formatting and the ordinary required CI gates. No new test framework or checker implementation is needed for two data hunks. G24's reported result is source-semantic evidence already owned by C; this policy-only change does not independently rerun or supersede it. Keep the actual final main ancestry/content and protected-queue verification with ROOT.
+
+Acceptance is complete canonical inventory registration and the genuine inventory gate result for the composed geometry checkpoint. It confers no JS-host IR admission, no IR/legacy output equality, no native public result, no source migration completion and no legacy retirement. All original issue6920 obligations and historical receipt custody remain intact.
+
+
+
+### Exact composed inventory and detector qualification (2026-10-09)
+
+Actual unchanged checker under Node25.9.0, explicit immutable base `e5b67e2d2ddb92cc2ccd039a5677f476a78bf93f`: baseline exited1 with ten errors; the exact two policy-location candidate exited0, `inventoryValid:true`, status `inventory-valid-architecture-incomplete`, `architectureComplete:false`, zero errors and zero unresolved references. All1,899 tracked source paths/hashes are unchanged. Exactly one clean foundation classification was added; foundation's ten entries/modules/minimum are ten and all ten roots were visited. The shared module has zero outgoing references. Its original six incoming references preserve source/syntax/type-only/line and now resolve to the same foundation module.
+
+All four unknown-edge rows remain unchanged. Forbidden-edge debt increases truthfully from13,817 to13,821: exactly the planner's four formerly unclassified references become unenforced mixed-needs-split→foundation debt; no prior forbidden edge was removed. The planner's classification, allowedEdges, existing activated roots/history, historical evidence and unrelated policy data are unchanged. Candidate policy606,971 bytes/SHA256d32f2d135094d616309588dabdcdfb3af643b87896c0de27c107f5e4e15a1896; exact C policy preimage606,787 bytes/SHA256b5d6c24b2a0c4cdeeb3aabaae8213eb71a1eaa09c399ff693b7939da75bd66e9.
+
+Existing unmodified `tests/issue-3518-compiler-boundaries.test.ts` ran through normal Vitest3.2.4 on Node25.9.0:125/125 passed,0 failed/pending. Prettier's policy check exited0. Raw baseline/candidate JSON, stderr and exits; regression report/log/exit; exact row audit; and fixed original source population are preserved in this lane's `.tmp/boundary-*` review packet. A private audit initially looked for baseline unclassified references in the resolved array; inspection corrected it to actual unresolvedEdges, with that diagnostic retained and no production checker rerun or input mutation.
+
+Authorized preimplementation notice [PR6583 comment6073476414](https://github.com/loopdive/js2/pull/6583#issuecomment-6073476414) records actual claim77854-2m6xnnwx and exact scope. No source/tests/checker/proof changes, geometry semantic rerun, commit, push, queue change or main delivery occurred. ROOT review precedes signed normal dependency delivery for C's existing PR6600. CI-form `--base HEAD^1` belongs to the later actual committed/merge-preview checkpoint; no fabricated successor parent is used here.
+
+
+### ROOT review and bounded dependency delivery release (2026-10-09)
+
+ROOT independently verified every review-packet artifact/file hash, the exact two policy locations and unchanged allowedEdges/other policy data, the complete281162-byte issue prefix and full adopted Astra plan, all1899 source hashes against both actual reports, all six references/no outgoing shared references, every13817 original debt row plus precisely four unenforced planner rows, errors10 to0 and125/125 actual detector test rows with zero pending. ROOT approved normal signed Thomas/Codex GPT-6.1 Sol High dependency commit and fork publication on this separate branch; C must merge the exact dependency into its existing PR6600. Root retains protected-queue ownership and HOLD. Fresh claim77854-2m6xnnwx remains held by the assigned boundary owner; PR6600 remains OPEN/unmerged at exacte5b67e2d2ddb92cc2ccd039a5677f476a78bf93f, canonical main7fc2b700eb320e18db213f286350fd1bd56982ef. No source, test, historical proof or AE28 work is altered. Full normal hooks and postcommit CI-form inventory against the actual first parent remain required; this release is not a claim that those later operations have already passed.
+
+
+## Session A isolated geometry-proof integration continuation, 2026-10-09
+
+Canonical integration claim 6920:geometry-proof-integration-20261009, owner ttraenkler/codex-ir-integration-session-a-20261009, write60335-ngn0jcr6 was read back before checkout/edit. Branch codex/6920-geometry-proof-integration-20261009; worktree /private/tmp/js2-6920-geometry-proof-integration-20261009. HEAD freshly fetched canonical main7928f27343a171d8e0de434ea005d630eaf64bf3; clean normal no-commit merge of published dependency b932e3a05e353acc59e7b547ef4e417a5d8637e1 staged with that MERGE_HEAD. No conflict; no commit/push/queue/delivery claim. All three geometry hashes match reviewed C e5b; published source-proof helper remains18956/253eda01462fad0ab84a940965a083eaf80b0ca8a3e10a4ca012fbafaaf30e99. Old drafts and dirty primary checkout stay untouched. ROOT integration owns receipt/authority/handoff/issue assembly; existing source54017/trusted-adapter76271/caller75863 partitions retain their original A identities. Executable resumption requires an explicit isolated file/function/API dispatch under the adopted plan.
+
+ROOT adopts the complete Astra plan below in this composed checkout. Corrected ownership:76271 owns C1 H1/H2 plus BOTH policy-helper APIs;75863 owns only13caller files/19initial operands. PR6475's old extraction is already delivered. Geometry to4763, separate93-byte forwarding to4670, unchanged52704 donor proof and reciprocal replay are still to implement/test. Current resolver stays actual current. The103 error-text false positives remain rejected as acceptance evidence. This record changes no executable source/helper/test or historical authority.
+
+# Historical geometry preservation: resume A's original D1 owners
+
+Astra High, 2026-10-09. Proposed private implementation specification under existing issue6920, **Native Linear numeric-vector shared source handoff and integration plan**. ROOT adopts it after the active performance window seals. No source, issue, claim, worktree or runtime mutation is authorized by this document alone.
+
+## 1. Provenance and exact ownership
+
+Read together: `/private/tmp/js2-historical-layout-prepared-work-inventory-20261009.md`; the retained proof lane's `.tmp/d1-layout-legality/preservation-integration-readiness/dispatch-map.json`; and the adapters lane's `.tmp/d1-layout-legality/preservation-draft/release-amendment.md`. Their roots are under `/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/3518-layout-legality-{proof,adapters-draft,callers-draft}-20261004`. The same ROOT-authored dispatch appears in issue3518 at the D1 amendment/custody sections beginning lines6460/6472/6531 in the inspected published geometry tree.
+
+These are OUR retained Session A preparations. The inventory records ROOT's fresh confirmation of the three original in-progress claim identities; no transfer, abandoned owner or external B/C permission is inferred:
+
+| Original identity / write | Resumption partition |
+|---|---|
+| `ttraenkler/codex-lowering-analysis-source-proof-20261004` / `54017-blpvz0m8` | Existing source-proof helper and finite geometry/forwarding capture implementation; no C1/policy-helper edits. |
+| `ttraenkler/codex-lowering-analysis-trusted-adapters-20261004` / `76271-0mo0ncgo` | `tests/helpers/ir-c1-current-source.ts`, `ir-c1-historical-authority.ts`, and `ir-runtime-program-policy-evolution.ts`; this includes BOTH policy capture APIs. |
+| `ttraenkler/codex-lowering-analysis-policy-callers-20261004` / `75863-k6ti87wv` | Thirteen existing policy test files / nineteen original initial operands (15 raw, four semantic), as enumerated in the actual dispatch map. No helper/receipt ownership. |
+
+**Scope correction:** “policy owner joins both entrypoints” means the trusted-adapter owner for the helper implementations; it must not silently assign those functions to the thirteen-file caller owner. ROOT retains source/policy receipts, C1 manifest/anchor, current-source/graph tests, preservation-suite integration and final composition. Any renewed source-owner work on the preservation test needs ROOT's explicit bounded delegation, consistent with the earlier portable-test transfer. Copied helper/authority/source files in caller/adapters drafts are assembly inputs, not grants to modify them.
+
+Resume the original addressable owners if available; the inventory found no current handle. ROOT must resolve actual identity/assignment before executable edits rather than invent an agent handle or implicit replacement owner. A fresh isolated successor checkout can be used under that resolved custody; leave all old dirty worktrees, untracked files, staging and `.tmp` evidence intact. Do not merge into or wholesale transplant them.
+
+## 2. Freeze the current composition; do not redo delivered D1
+
+PR6475, **refactor(ir): give linear layout contracts and backend legality canonical owners**, is already delivered: publication `650cb1b0a08df7976662c721e0da884b109fbfe0`, merge `7755320d74de1b52eafedbf6cc5cd37d57c6a081`, 2026-10-04. Its delivered helpers replace old draft epochs as the implementation starting point. In particular, draft helper17637/d7e0dd0c and receipt111561/c21a9577 are preserved history, not current authority.
+
+REST main at this review is `7928f27343a171d8e0de434ea005d630eaf64bf3`. Its source-proof, C1-current and policy-helper blobs equal the inspected C/b932 helper blobs (`c732f2eb22a127714373bc8fa363514bcf7a818b`, `020e91dc1d9bd0646b8b16d9b5224fd513caf861`, `2dbe6d7fa227cb7463d73d20d847c433a933dfbc`). Main's planner/layout remain the 49040/4763-byte pre-geometry files. Geometry is published on C's `e5b67e2d2ddb92cc2ccd039a5677f476a78bf93f`; policy-only dependency `b932e3a05e353acc59e7b547ef4e417a5d8637e1` has that exact parent. Neither fact says geometry is on main.
+
+ROOT first freezes one actual composition of current main plus C's source and b932 policy, after C's publication/coordination. Record every real conflict or changed dependency. The three geometry file pins from the reviewed C checkpoint are:
+
+- shared layout:7580 / `08c85d9e8c9891a74b9c0c02a1310b67b16832980849dc0e7b6d511d91350937`;
+- IR layout contracts:3161 / `83e6b8a07bdc8e8b93fed590bc0aed5c5f779bde98466e9cbbe3feb7a825cb91`;
+- planner:45359 / `08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc`.
+
+Do not invent a merged HEAD or resulting policy hash. If these source pins change in composition, return the exact hunk to ROOT before deriving recipes. Exclude A2/J2 dirty facts work, AE28 frozen lane, B runtime leaves and all production redesign from this preservation task.
+
+## 3. Source owner: add a finite bridge to the existing proof
+
+Use the existing `tests/helpers/ir-lowering-analysis-relocation.ts` reconstruction logic and unchanged `captureLinearLayoutPredecessor`; do not copy its algorithm into another verifier. Preserve its old APIs and explicitly supplied historical-reader semantics. Prefer a bounded append-only current-geometry capture in that same helper, preserving the complete currently published18956-byte body as an authentic predecessor. ROOT and source owner freeze the concrete entrypoint spelling/signature and finite receipt location before edits; this specification does not pretend a new API already exists. The prior adopted contract already requires three closed views: actual current, geometry-before, and lowering-before.
+
+ROOT supplies/reviews the new finite receipt's authority. Keep old `ir-lowering-analysis-relocation.json` at111423 bytes / `dc8241d36da5b2fe29abe12ed6ee348fc456ef22939c61aabe05d09daad92134` and the current helper predecessor18956 / `253eda01462fad0ab84a940965a083eaf80b0ca8a3e10a4ca012fbafaaf30e99`. No overwrite of old source pins/receipt or unrelated `early.return` bridge.
+
+The new capture must authenticate fresh actual planner, contracts and shared owner, plus independently anchored receipt/helper authority. Capture each source once into a closed immutable per-call view; no cross-call success cache, Git read, old checkout fallback or healthy-source substitution. If a caller already supplies planner bytes, require exact equality to that call's actual authority channel before deriving history. Unknown paths, missing/extra owners, mixed epochs or differing repeated source reads reject.
+
+Build exact finite source recipes in this order:
+
+1. Inverse current geometry into the genuine pre-geometry planner49040 / `5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52` and layout4763 / `977e572b62737c3459df08c15e4d3f6ce7f461f9fc5b1aac344ad676690e3754`. Bind the shared owner's actual complete bytes and its absence at the predecessor. Include every moved type/function/constant and exact imports/reexports, scalar-key factoring and both vector adapters. Preserve shared forwarding identity, fresh layout objects and retained IR stack policy by the already-reviewed source contract; this proof changes no production behavior.
+2. Apply the separately named forwarding epoch: genuine `2a98b75de993bdc568e3668a2965c026876fe322`, parent `6c88d157444ea4ae377a7ef1b82b15ef2f4f6603`, exactly93 UTF-8 bytes at2820. Only that step reaches layout4670 / `dba3ca2121063a52b0ae1130f48c0acc70e0f819a9e665a2a2744572eddfae72`. Do not hide this semantic operation arm inside geometry relocation. The planner is unchanged by this step.
+3. Call unchanged `captureLinearLayoutPredecessor` with the proved old planner and closed old-layout reader to obtain the existing genuine52704-byte donor. Its established piece counts and proof logic stay authoritative; new geometry piece counts are measured from the actual authored recipe, never borrowed from D1's129/140 totals.
+4. Independently replay authentic old bytes forward through forwarding and geometry, reconstructing every complete current operand. Consume every source span exactly as declared, check byte coordinates/multiplicities and all full hashes; independent forward payloads must not be silently derived from inverse output. No whole current/predecessor source copies used as a fallback answer.
+
+## 4. Trusted adapters: join before old rejection, preserve current resolution
+
+In `ir-c1-current-source.ts::captureC1CurrentPopulation`, the closure `assertPin` at872 precedes planner proof at880. Authenticate/capture geometry before this old planner rejection, while respecting earlier original receipt/population failure priority. The actual `closure`, observed current pins, TypeScript source files and resolver must retain current geometry text/routes, including the real shared import. Only the historical reconstruction sees proved predecessor text. Do not satisfy the real resolver by substituting the old52704-byte planner. Retain current population versus authority comparisons and the independent caller's helper-body check before accepting imported proof output.
+
+`ir-c1-historical-authority.ts` needs the bounded current closure/resolver successor for this actual source graph. Preserve immutable historical contracts, predecessor pins and unrelated current entries. Reuse its existing current/historical mechanism. Derive new actual resolution observations; the old13 requests/57 operations are a baseline record, not a count to synthesize if the new shared import genuinely changes the graph. Explain every added route, and assert no unrelated route drift.
+
+In `ir-runtime-program-policy-evolution.ts`, `loweringAnalysisRead` (7572) physically pins old files before `authenticateLoweringAnalysisPolicy` (7589) calls the old proof. Capture/authenticate current geometry before that path's old rejection and pass an explicit predecessor reader to the old layout proof. Both `captureLoweringAnalysisPredecessorPolicy` (7767) and `captureLoweringAnalysisPredecessorPolicySource` (7796) must traverse the join. Preserve primitive/descriptor-before-IO ordering, fresh C1 authentication, original receipt/helper-prefix checks and genuine source/authority comparisons. Do not make the physical reader permissively accept arbitrary epochs.
+
+Any changed reader/helper is itself an instrument pinned by C1. ROOT's independently anchored instrument successor must reconstruct the exact published predecessor of each named changed instrument before unchanged historical authentication, then independently replay its complete new bytes. Preserve all historical `beforePins`, immutable receipt bytes, existing recipe domains and untouched instruments. New current authority fields/digests bind actual reviewed candidate bytes only after recipes pass. Never simply replace old historical hashes or compute expected trust from candidate output.
+
+## 5. ROOT/test owner and caller owner: preserve real acquisition and detectors
+
+`tests/issue-3518-lowering-analysis-preservation.test.ts::fixture` currently reads and pins physical old planner/layout before copying them (171 onward). Replace that acquisition premise only: first authenticate current geometry through the real bridge, then materialize exact old fixture operands from its proved historical view. Keep old-stage mutants direct to the unchanged old APIs; do not route them through a current full-hash guard and mistake early rejection for detector preservation. Preserve its independent inverse/forward witness and existing `historicalOwner` early-return bridge. Add separate current-chain controls using the actual new source domain.
+
+Caller75863 first inventories the already-delivered nineteen initial sites against its saved thirteen-file recipes. Do not reapply old wrappers or rewrite later Deno/source-map/current-main successors. Add or adjust only a concretely missing outer acquisition join. Preserve the six hostile semantic factories prepared before the missing-receipt closure, direct deep mutants, exact diagnostics, registration order/duplicates and all subsequent APIs. Report no-op sites as already integrated. Any additional file or helper change returns to ROOT for a bounded scope update.
+
+ROOT separately authenticates the exact b932 policy delta (one foundation entry/minimum and one files row) through the existing current-main policy chain. Preserve all original inventory history/allowedEdges and existing unrelated successors. The current policy contains more history than the old ca11 draft: never substitute draft584010 policy or normalize current policy into an invented old epoch. A missing current-main bridge is a separately named finite prerequisite, not permission to loosen the original policy checks.
+
+## 6. Dependency order and finite acceptance
+
+Dispatch source capture/recipe work and adapter read-only seam preparation after ROOT records the original-owner resumption scopes. Source freeze comes first; adapters consume its exact API/receipt/helper pins; ROOT composes authority/instrument recipes; callers/test owner then use the real accepting joined entries. Keep all source/static/proof/runtime windows separately released. No physical fault test during AE28 performance or another owner's execution window.
+
+Necessary checks, using the existing suites/harness rather than a new framework:
+
+- Genuine current geometry →4763 forwarding→4670 old proof→52704 donor, plus independent full forward replay. Healthy main-before and exact forwarding controls remain separately attributed. Reject missing/duplicate/shifted/altered93-byte insertion, unrelated bytes, mixed epochs, missing/extra shared owner, changed scalar key/vector delegation/offset/pointer policy, malformed coordinates and wrong full authority pins. A forward-only wrong payload must pass inverse diagnostics and then fail actual independent forward equality.
+- Repeat healthy capture then change each supplied source/receipt/helper channel: fail fresh, with recorded read order and no cache. Supplying damaged current text while healthy historical files exist must fail. Distinguish full-hash authentication from deeper structural-rule diagnostics; do not change expected pins just to claim a guard was reached.
+- Actual C1 success before each fault, real current resolver text distinct from historical proof text, both raw/semantic policy entrypoints and real fixture acquisition. Preserve primitive/accessor priority and paired malformed-old-input versus bomb-new-reader controls.
+- Reuse the existing exclusive physical fault/restoration harness for installed helper/receipt missing and inert corruption, cached module and pre-import child. Require healthy-before/after, actual accepting callers, independent caller-owned pin failure, full exit/close and exact restoration; no wrapper intercepts credited to C1, global fs mock or sentinel regex pass.
+- Recollect the actual preservation/current-source/graph suites and affected thirteen old policy cohorts after integration. Freeze literal/derived registration manifests and execute all callbacks with CLI/IPC/error/custody evidence under ROOT's normal protocol. Preserve the original distinct34-development,2254/13-file and2646/17-suite historical records; derive current denominators rather than promise those totals. Run existing G24/semantic compatibility only for an actual production composition change or unresolved concern, not as substitute evidence for proof correctness.
+
+C's recorded103 apparent improvements are specifically old first-error-text matches; they are neither new failures caused by this task nor accepted preservation passes. Keep the full original rows and diagnose genuine positive reach. Do not broaden this finite join into a mandate to repair every unrelated historical failure. A test that still fails before its intended guard is reported blocked at that exact prerequisite, not green.
+
+Acceptance is the actual current joined proof/reader chain with unchanged historical authority and live deep controls. It does not grant native allocation execution, JS-host IR support, legacy equality, performance parity, general witness capability, migration completion or queue release. ROOT retains all publication/HOLD decisions.
+
+
+
+### Session A integration update — verified preflight and unchanged coordination, 2026-10-09
+
+Under A's existing `6920:geometry-proof-integration-20261009` claim (owner `ttraenkler/codex-ir-integration-session-a-20261009`, write `60335-ngn0jcr6`), integration remains on canonical base `7928f27343a171d8e0de434ea005d630eaf64bf3` with the clean staged merge of exact published dependency `b932e3a05e353acc59e7b547ef4e417a5d8637e1`. No C or B branch, claim, hold or owned source was changed.
+
+The separate A-owned AE28 loader preflight was independently reviewed from its actual raw receipts: seal `40139ed7ad266f946f22518938ee3ca66816eee8ccf77036e7e607ce5038821d`, freeze `d665098bf432b307c30527ce9ae9e687a05e6917622d47f664eb717f0153d859`, receipt `6201ee6e02b177bbacb1eff53d1482114d59e18a48e806653184d8db6795b57e`. ROOT rehashed all 18,701 frozen inputs and twelve sealed raw artifacts with zero differences. All four children actually spawned, exited and closed: positive 0, missing-export negative 1, baseline fixtures 0, candidate fixtures 0. The positive observes value 37 and side effect 1. The negative genuinely rejects a used missingValue import. Both arms return identical complete six-row payloads, fixture hashes and scores; timing has not yet run. Sol is preparing the separate timing freeze under the adopted Astra amendment; no second untimed run or source/proof changes are authorized by this instrument step.
+
+A's delivery shepherd independently reconfirmed canonical main and the three held PR heads through REST and remote refs: #6600 `e5b67e2d2ddb92cc2ccd039a5677f476a78bf93f`, #6593 `6871907a4dbbe168512b7b9ce33500a61430e36c`, #6577 `6d41eb99a08bcb8505febcb9b7ff4f43b9b2544b`. No new or edited reply after coordination comment `6074098309` was present. The current #6600 quality job `113649014725` still reports the ten missing shared-module inventory diagnostics. C must publish its integration of the supplied boundary dependency before A reviews queue admission. Existing failures, historical authority and legacy code remain intact. Evidence: `/private/tmp/js2-6598-delivery-shepherd-20261009/coordination-current/snapshot.md` and the AE28 lane's `.tmp/ae28-performance-typescript-loader-20261009/` actual receipts.
+
+Astra is freezing the narrow source-proof capture API under the already adopted historical geometry implementation plan. Source-proof owns the relocation helper; trusted adapters own the C1 helpers and both policy capture APIs; caller ownership is limited to the thirteen caller test files. The original A-owned drafts are retained and will not be copied wholesale. Shared integration and finite root authority remain A responsibilities. No native Linear admission, measured speed, full equality or retirement is claimed here.
+
+
+### Adopted exact geometry capture API before implementation, 2026-10-09
+
+ROOT adopts Astra High amendment 8332 bytes / SHA256 46b7434359eba546d9c47b7941cf80e15000ee22edc7886ce1ef994f2e033016 below. This resumes the original Session A source-proof responsibility under held claim 3518:lowering-analysis-source-proof-20261004 (owner ttraenkler/codex-lowering-analysis-source-proof-20261004, write54017-blpvz0m8); no foreign claim is released or transferred. Implementation must use an isolated current-main plus b932 composition and preserve old dirty drafts. The source-proof implementer owns only the append-only relocation helper. ROOT retains the new authority receipt and trust activation; other adapters/callers are not released by this assignment.
+
+# Geometry source-proof API freeze
+
+Astra High, 2026-10-09. Private amendment to adopted specification114a5a6b. ROOT adopts before executable work. Read-only verification in `/private/tmp/js2-6920-geometry-proof-integration-20261009` confirms the existing helper18956/253eda and all three current geometry pins remain exact. No source/receipt/issue edits or tests performed.
+
+## Exact append-only API
+
+Source owner54017 appends this interface and function to `tests/helpers/ir-lowering-analysis-relocation.ts`, preserving its first18956 bytes (SHA256 `253eda01462fad0ab84a940965a083eaf80b0ca8a3e10a4ca012fbafaaf30e99`) exactly. Existing functions, imports and historical-reader behavior remain unchanged.
+
+```ts
+export interface LinearLayoutGeometryCapture {
+  readonly currentPlanner: string;
+  readonly currentLayout: string;
+  readonly currentShared: string;
+  readonly geometryBeforePlanner: string;
+  readonly geometryBeforeLayout: string;
+  readonly loweringBeforePlanner: string;
+  readonly loweringBeforeLayout: string;
+  readonly originalPlanner: string;
+}
+
+export function captureLinearLayoutGeometry(
+  rawCurrentPlanner: string,
+  readAuthority?: (path: string) => string,
+): LinearLayoutGeometryCapture;
+```
+
+This is the approved-to-implement signature, not an existing callable API. Return one fresh `Object.freeze` object with exactly these eight own data properties in this order. Values are primitive UTF-8 source strings; no methods, Maps, metadata authority object, lazy getter or cache. Equal planner strings in the two predecessor views are intentional: forwarding changes only the layout contract. The new shared owner has no predecessor file; do not return an empty fake old shared source.
+
+Field meanings:
+
+| Fields | Authenticated epoch |
+|---|---|
+| `currentPlanner`, `currentLayout`, `currentShared` | Actual45359/3161/7580-byte C geometry operands, independently pinned by the new receipt and fixed implementation contract. |
+| `geometryBeforePlanner`, `geometryBeforeLayout` | Genuine49040-byte planner and4763-byte layout WITH forwarding, reconstructed from current geometry. |
+| `loweringBeforePlanner`, `loweringBeforeLayout` | Same49040-byte planner and4670-byte layout after the separate genuine93-byte forwarding inverse. |
+| `originalPlanner` | Genuine52704-byte donor returned by unchanged `captureLinearLayoutPredecessor`, not a second implementation or stored answer. |
+
+## Receipt, authority and precise reads
+
+ROOT owns the new finite receipt at **`tests/helpers/ir-linear-layout-geometry-successor.json`**. Use fixed schema spelling `ir-linear-layout-geometry-successor-v1`. ROOT and source owner review its closed keys, actual complete source pins and exact independent inverse/forward recipes before activating the capture. Its byte count/hash are NOT yet known and must not be invented. Source owner embeds the final ROOT-reviewed receipt byte/hash literals only after independent review; no caller-provided expected pin, optional permissive mode or self-repin. During authoring, the unactivated entry must throw before any successful result.
+
+Keep old `ir-lowering-analysis-relocation.json`111423/`dc8241d36da5b2fe29abe12ed6ee348fc456ef22939c61aabe05d09daad92134` unchanged. The new receipt binds the complete current and predecessor geometry/forwarding operands and old receipt/helper predecessor authority; it does not replace the old proof's receipt. Independent accepting callers/tests authenticate the **new complete helper bytes** using ROOT-reviewed literals outside that helper; the immutable18956-byte prefix alone does not authenticate appended executable code. Do not attempt a self-referential full-helper digest.
+
+Validate `rawCurrentPlanner` as a primitive string and the optional reader as callable before IO. Default reader is the existing physical filesystem reader. For a healthy call, external reads are exactly:
+
+1. New geometry receipt; authenticate full bytes before parsing.
+2. `src/ir/analysis/linear-memory-plan.ts`; authenticate actual current bytes and compare byte-for-byte with `rawCurrentPlanner`.
+3. `src/ir/analysis/contracts/linear-memory-layout.ts`; authenticate current bytes.
+4. `src/shared/contracts/linear-memory-layout.ts`; authenticate current bytes.
+5. Old relocation receipt, freshly requested when invoking the old proof below.
+
+These are five ordered external reads plus the supplied planner string. The independent planner read explicitly checks the supplied-current versus authority channel; it is a new geometry-epoch read, not falsely counted as the old D1 trace. C1's earlier supplied planner acquisition remains its own event. Do not coalesce either event or reuse a prior call's reader result. Record this exact delta in adapter tests. Helper-body authentication by the caller is additional and separately counted.
+
+Use separate new-reader validation; the old `read()` whitelist must not be widened. The new capture only requests the four new-stage paths above. Its adapter into the unchanged old proof admits exactly the old receipt path (fresh external read) and old layout path (the proved4670-byte string); any other request throws. There is no historical-file/Git fallback or unknown-path delegation.
+
+## Required implementation sequence
+
+Authenticate/capture all three current sources, apply the exact geometry inverse to49040/4763, then the separately represented forwarding inverse at byte2820 length93 to4670. The bridge is the genuine2a98b75de993bdc568e3668a2965c026876fe322 / parent6c88d157444ea4ae377a7ef1b82b15ef2f4f6603 history already adopted. Independently reconstruct all three current files using genuine predecessor bytes and forward recipes, requiring complete byte equality and exact span consumption. Do not derive the independent forward payloads by copying the inverse's output or return embedded full-file snapshots.
+
+Only after those checks call:
+
+```ts
+captureLinearLayoutPredecessor(loweringBeforePlanner, closedOldProofReader)
+```
+
+The existing proof itself authenticates the old receipt/layout and proves its original donor. Store that actual result as `originalPlanner`. Do not call the old proof with current geometry text, alter its source pins or copy `provePair`. Reuse existing private primitive/hash/pin utilities where their domain permits; keep old APIs and the existing early-return legality bridge untouched.
+
+## Downstream partition and bounded acceptance
+
+- **54017 source proof:** append-only helper implementation and its private finite proof machinery; no production or adapter edits.
+- **ROOT:** new receipt, independent complete-helper trust activation, preservation test/fixture integration and authority assembly. Delegate any test hunk explicitly.
+- **76271 trusted adapters:** C1 H1/H2 and BOTH policy capture APIs. At pre-pin acquisition call the new capture with the actual supplied planner. Keep `.current*` text in current closure/resolution; use `.loweringBefore*` only for old proof channels and `.originalPlanner` where the existing donor result is required. Do not invoke a duplicate old layout proof just to recreate a result already obtained; preserve separately required authority checks. Update instrument-history recipes before old instrument rejection, with historical before-pins unchanged.
+- **75863 policy callers:** only the thirteen tests/nineteen initial inputs, adjusting concrete missing acquisition wrappers; no helper/API ownership.
+
+Acceptance additions are narrowly: exact eight-field frozen fresh result; all five ordered reader calls; healthy current capture/full independent replay; supplied planner mutant with healthy authority refusal; separate layout/shared/receipt mutations; unknown-path rejection; healthy→changed-reader second-call refusal; independently authenticated full appended helper; and actual fixture/C1/both-policy use before old rejection. Retain the adopted forwarding, span, independent-forward-only mutation and historical deep-detector controls. Old explicitly supplied historical readers continue to use the old API directly.
+
+This freezes a finite test-proof API, not a production witness or general source-transform framework. ROOT's staged current-main7928 plus exact b932 composition and all dirty original drafts remain intact. No source migration, native parity, performance or queue acceptance follows from API adoption.
+
+
+### Reviewed source-proof implementation handoff, exact current-main composition
+
+ROOT reviewed complete helper35439/87bf7de1961b821cf303b5d7e686a5e44614b08b7b371ee6afe4a16172a7851e and receipt69621/e4af32c53ea548b693fbcee78c55b3af47b7985e2dc1b340ddf9c28e0a8f573f. Actual Node25 control executes four positives and eleven expected refusals, zero failures. Independent ROOT inverse/forward replay and complete coverage verification use genuine Git predecessor8452732f and forwarding2a98/6c88. The unknown-path mutation is not separately observed through the fixed public API; broader preservation and trusted-adapter integration remain pending. Existing18956-byte helper prefix and111423-byte old receipt are unchanged. ROOT copied only these exact reviewed helper/authority bytes into its integration lane after the source-proof owner completed implementation; no production or foreign branch changes. The following bounded original-owner issue append is transported verbatim, preserving all preceding ROOT and C records.
+
+
+
+### Resumed source-proof finite geometry contract, 2026-10-09
+
+ROOT explicitly resumes its original Session A source-proof responsibility under the unchanged canonical claim `3518:lowering-analysis-source-proof-20261004`, owner `ttraenkler/codex-lowering-analysis-source-proof-20261004`, write `54017-blpvz0m8`. The actual upstream record was read and matches; no claim record was changed. This isolated lane starts at exact b932e3a05e353acc59e7b547ef4e417a5d8637e1 and carries a clean no-commit merge of freshly verified canonical main7928f27343a171d8e0de434ea005d630eaf64bf3. Original dirty drafts and ROOT integration remain intact.
+
+ROOT adopted the append-only eight-field `captureLinearLayoutGeometry` API and the following closed finite receipt before helper edits. Ordered top-level keys are `schema`, `sourceBase`, `currentInputs`, `geometryBeforeInputs`, `sharedAbsentBefore`, `oldAuthority`, `geometry`, `forwarding`. Geometry keys are `inverse`, `inverseCoverage`, `forward`, `forwardCoverage`; output recipes use `path`, `pin`, `pieces`. Piece unions are `copy` with ordered `kind/name/path/offset/length/sourceSha256/outputOffset` and `literal` with `kind/name/text/outputOffset`. Each literal names its local semantic reason and output byte location. Complete donor coverage records enumerate `path/spans`, each span `offset/length/sha256/uses`; zero-use introduced or removed intervals are explicit. Coordinates, complete ordered outputs, source hashes and declared reuse multiplicities are verified. Forward recipes are independently authored from genuine Git predecessor operands; no complete-file literal or fallback source is present.
+
+The forwarding bridge remains separately named, with exact authentic commit/parent, layout path, byte2820/length93, before/after pins and independent inverse/forward literals. The new receipt also binds complete current3 and geometry-before2 source pins, genuine absence of the shared predecessor, immutable helper18956/253eda prefix and old receipt111423/dc8241. ROOT owns authoritative receipt materialization and activation; this lane prepares private recipe data and an entry that fails closed until ROOT reviews the receipt pin. Existing APIs/read whitelist and old receipt are unchanged. Ownership is only the append-only relocation helper plus this bounded issue record; no adapter, caller, policy, production or final authority edits.
+
+Private authored recipe inventory measures inverse pieces37/6 and forward15/9/47, with complete donor coverage17/5/45 and52/6 respectively. Literal byte populations are141/0 inverse and1429/169/589 forward; largest literal1141 bytes represents the new planner import/reexport block. Every unchanged donor line is copied where available, including moved string/storage declarations. These measured populations are new geometry evidence, not the old D1 totals. Source pins remain planner45359/08f84411, IR layout3161/83e6b8a0 and shared7580/08c85d9e. No runtime or preservation pass is claimed; static checks wait for ROOT to seal the concurrent AE28 timing window.
+
+
+The prepared unactivated helper is35346 bytes / SHA256 `e2cb381093f33ae4c361f8fa60f28bd61c52772c231f355fde93aeb0397d40fe`; its first18956 bytes remain exactly253eda01462fad0ab84a940965a083eaf80b0ca8a3e10a4ca012fbafaaf30e99. The unchanged old receipt remains111423/dc8241. Private candidate recipe69621/e4af32c53ea548b693fbcee78c55b3af47b7985e2dc1b340ddf9c28e0a8f573f and provenance2473/43e3b4d15e8ae8b585c639223562f0adc764e157c2cfbabb7064bb9be0f57a9b are provided to ROOT for independent review/materialization; these private pins do not activate receipt trust. Genuine125b geometry parent confirms both predecessor hashes and absence of the shared owner; genuine2a98/6c88 confirms the separate93-byte forwarding step.
+
+After ROOT sealed AE28 timing, actual Node25.9.0 with the established `typescript7` package checked the complete helper under the isolated strict TS7 helper configuration: exit0, zero diagnostics. Complete-helper Prettier check and Biome lint also exited0. No runtime test, physical fault, commit, push, final helper authority or architecture/native parity acceptance was performed. The authoring entry rejects before successful capture until ROOT explicitly reviews/materializes the receipt and supplies its independently anchored pin.
+
+
+ROOT independently replayed both geometry inverses against genuine before operands, all three forward outputs from separately acquired genuine Git sources, complete donor coverage/multiplicities and both authentic93-byte forwarding legs. ROOT then materialized its exact reviewed receipt69621/e4af32c53ea548b693fbcee78c55b3af47b7985e2dc1b340ddf9c28e0a8f573f in this isolated lane and released only the fixed receipt-pin activation. The activated helper is35439 bytes / SHA256 `87bf7de1961b821cf303b5d7e686a5e44614b08b7b371ee6afe4a16172a7851e`, with original18956/253eda prefix and old receipt unchanged. Node25.9 TS7, Prettier and Biome static checks pass after that sole activation.
+
+One authorized private bounded Node25.9 qualification execution imported the actual helper only after independently fixed complete helper/receipt hashes. It recorded4 healthy captures and11 expected refusals,0 failures, process exit0. First healthy capture used physical current operands and observed exactly the ordered five external reads; subsequent captures returned distinct fresh frozen objects with exactly eight own primitive string fields. Geometry-before and lowering-before fields matched separately acquired genuine Git sources, and the genuine old API produced52704-byte donor. Healthy default-reader capture also succeeded. Reader-channel mutants for supplied planner, layout, shared owner, new receipt and old receipt were refused at the exact recorded guards; a healthy call followed by the changed same reader failed freshly. Primitive source, noncallable-reader and combined primitive-priority controls performed0 reads. All6 physical helper/receipt/source operands remained exact; no production edit or physical fault was used. An unknown path cannot separately be requested through this public fixed API; the harness enforced the closed external domain for every observed request and claims no standalone unknown-path negative.
+
+Actual errors, reader traces, field hashes and exit/stdout/stderr remain under this lane's `.tmp/geometry-source-proof/qualification.*`; ROOT's independent recipe evidence is `root-independent-data-replay.json`. No retries, full-preservation-suite/C1/policy/caller acceptance, commit, push, native allocation admission or queue release is claimed. ROOT retains full composition and final complete-helper authority integration.
+
+
+### Reviewed committed geometry API regression suite, 2026-10-09
+
+ROOT fully reviewed and copied exact suite10337/SHA25621ada8ae2e034a777e5f0da46fc69cf9cb751df6c2441a6368444a1546ae68bc after owner implementation completed. Independent complete helper/receipt pins run before the actual helper import. The actual standard Node25/Vitest3.2.4 collection and body each observe all fifteen named registrations, four positive and eleven refusal controls, with zero failures/skips/pending and zero CLI/IPC/observer errors. Root rehashed all seven final receipt artifact pins. All9060 frozen inputs remain unchanged in this qualification epoch; the original raw evidence is preserved in the source-proof lane .tmp/geometry-regressions-runtime. This narrowly validates new public geometry capture, fresh frozen views, exact five-reader order, changed reader channels and primitive-before-IO priority. Unknown-path and deep forward-recipe mutations are not separately observed through this fixed authenticated API and are not credited as covered. Full trusted-adapter/old deep preservation integration remains pending. No retirement, native vector admission, source publication or canonical delivery follows from this suite.
+
+
+### Current C1 closure review: genuine C-ABI source drift remains unjoined
+
+ROOT independently replayed all three trusted-adapter candidate instruments in both directions against their actual b932 published predecessors. Those complete bytes match; this is static source reconstruction, not a runtime-qualified C1 epoch. The unchanged original authority digest is32a15b44ebf42a538cb44ecff4e00b4f3e40b0ca52da3a3559109cca584adfda.
+
+Actual current closure inspection found one additional mismatch: `src/codegen-linear/c-abi.ts` is27454 bytes/SHA256d303abd67069493c08dedc6cd124482f80675c06e0ca1748cea168098fc82d46, while the retained closure expects26965/SHA256fba055c0a5ed1b823b1bb8644c5cb495e0b26bb087bf36b5d746efda708fb308 (blob37eb30e8691a7e30033c74bc03bd386dc08e9d49). The current-source helper checks full closure pins before type resolution. Therefore measured16requests/66host observations and the unchanged13/57prefix do not prove current closure acceptance: resolver existence observations did not authenticate this source body. New authority activation and runtime claims remain held until the genuine bounded C-ABI evolution is reconstructed while preserving actual current type-host text and old historical source proof. No current source may be replaced with a healthy old copy, and the old authority cannot be repinned to conceal this drift.
+
+The trusted-adapter owner is tracing the actual source commit, predecessor and any existing canonical-current-input proof. Its scope is read-only for production C-ABI, keeping all source-owner claims and original helper/receipt/control snapshots intact. No broad repair of unrelated historical failures is released. An initial ROOT inspection guessed a nonexistent manifest filename and failed after the successful instrument reconstruction; the actual manifest path was then resolved from the helper constant. This failed read is not credited as validation.
+
+
+### Adopted bounded C-ABI and policy successor prerequisite plan, 2026-10-09
+
+ROOT fully reviewed and adopts the following Astra High amendment SHA256dda47f5017fced118cd34f9af6e602062e8b6cf4d50e52a4b1070d6fe02f5c80 before implementation. It resumes only original A-owned proof/adapters/caller acquisition responsibilities; production C-ABI remains B-owned under6893:linear-cabi-source-20261007, owner ttraenkler/codex-linear-b-cabi-sol61-20261007/write24114-dys7hnee. No B production edit or claim transfer is authorized. Old receipts, anchor declaration, source helper and deep historical inputs remain authoritative. New private receipt remains unactivated until independently complete reviewed reconstruction.
+
+# Bounded C-ABI and current-main policy prerequisites for geometry preservation
+
+Astra High specification, 2026-10-09. Private amendment for ROOT to adopt in existing issue 6920, **Native Linear numeric-vector shared source handoff and integration plan**, before latest-Sol implementation. This is a proof-integration prerequisite, not a production project. Read-only examination used ROOT's integration checkout at `7928f27343a171d8e0de434ea005d630eaf64bf3` plus its staged geometry composition, and the private trusted-adapter draft. No repository edits, tests, claims, Git mutations or runtime changes were performed for this specification.
+
+## 1. Scope and immutable authority
+
+Keep the adopted historical-geometry resumption specification and eight-field geometry-capture API. The source helper 35439/`87bf7de1961b821cf303b5d7e686a5e44614b08b7b371ee6afe4a16172a7851e` and geometry receipt 69621/`e4af32c53ea548b693fbcee78c55b3af47b7985e2dc1b340ddf9c28e0a8f573f` need no changes. The private three-instrument adapter receipt 67665/`002107f2cbe2530b5dfbbba672134dc5318e493ccda8d8fd562d468e06809bbe` is UNACTIVATED; replace that candidate through reviewed recipes, not any published authority. Keep the old C1 manifest, original anchor declaration, historical before-pins, immutable receipts and original policy APIs byte-for-byte authoritative. ROOT may append the already-planned independent successor anchor only after complete review.
+
+The two observed prerequisites are independent of geometry's source proof:
+
+1. C1's current closure pins old `src/codegen-linear/c-abi.ts`; the actual file has two genuine B-owned production changes. Do not modify that production file or take B's claim `6893:linear-cabi-source-20261007`.
+2. The first existing outer policy acquisition calls `captureDenoPostPositionMainPredecessorPolicySource` with a later policy than its fixed input. Prove the exact current-main history, then geometry's exact delta, without changing that API's historical pins.
+
+Retain legacy and full Native IR scope; no JS-host IR substitution, allocation execution, migration-complete, parity, performance or publication credit follows from these proofs. Do not repair unrelated historical failures merely because the joined harness exposes them.
+
+## 2. Freeze two narrow entrypoints in the existing trusted authority helper
+
+Implement in `tests/helpers/ir-c1-historical-authority.ts`, under original trusted owner 76271's explicit amended scope:
+
+```ts
+export function captureC1LinearCabiPredecessor(
+  rawCurrent: string,
+  readAuthority?: (path: string) => string,
+): string;
+
+export function captureGeometryCurrentMainPredecessorPolicySource(
+  rawCurrent: string,
+  readAuthority?: (path: string) => string,
+): string;
+```
+
+The first returns the exact 26965-byte C-ABI predecessor. The second returns the exact 599721-byte policy accepted by the unchanged Deno-post-position API. Neither calls that downstream policy API. No general path/epoch selector, permissive mode, user-provided pin or new framework. Reuse the existing private finite span-replay primitive; retain the instrument-specific path validation around existing APIs. A narrow internal extraction for reuse is permitted and must itself be covered by the instrument predecessor recipe.
+
+Both validate primitive string and callable reader before IO. Then freshly authenticate the successor anchor/receipt through the existing independent authority mechanism, authenticate the complete supplied current operand, independently read its one fixed physical source path through `readAuthority`, require complete equality with the supplied operand, and derive history. Unknown paths never delegate. Keep each call's captured strings immutable; no cross-call success cache, runtime Git, historical checkout, healthy-source substitution or stored full-file answer. Independent caller-owned complete-helper authentication must precede accepting imported proof results; merely checking the published prefix is insufficient. Preserve the existing trusted-instrument chain rather than making a helper's self-check its sole authority.
+
+These entrypoints accept only their exact current epochs. Historical calls continue through the original APIs and readers. Do not dispatch old inputs by catching a new proof failure, and do not call new readers from old primitive/descriptor validation paths. Preserve paired malformed-old-input versus bomb-new-reader tests.
+
+## 3. One closed, independently anchored candidate receipt
+
+Keep the planned path `tests/helpers/ir-c1-linear-layout-geometry-successor.json` and successor-anchor mechanism; the private candidate is not published history. Amend its schema to `ir-c1-linear-layout-geometry-prerequisites-successor-v1`, with exactly these ordered top-level keys:
+
+`schema`, `predecessorManifestSha256`, `instruments`, `linearOptions`, `cabiSource`, `policySource`.
+
+The existing three instruments retain their original `beforePin`s and order. Recalculate only reviewed candidate `currentPin`s and separately authored inverse/forward recipes after executable hunks are frozen. The new source sections each have exactly `path`, `beforePin`, `currentPin`, `epochs`; each epoch exactly `commit`, `parent`, `beforePin`, `currentPin`, `inverse`, `forward`. Reuse existing closed C1 pin keys and span keys (`inputOffset`, `outputOffset`, `from`, `to`). Epoch lists are oldest-to-newest, exact fixed count/order/identity, with adjacent full pins equal. The final geometry policy epoch is commit `b932e3a05e353acc59e7b547ef4e417a5d8637e1`, actual parent `e5b67e2d2ddb92cc2ccd039a5677f476a78bf93f`. Read-only verification confirms that parent's policy is exactly 606787/`b5d6c24b2a0c4cdeeb3aabaae8213eb71a1eaa09c399ff693b7939da75bd66e9`, equal to ROOT's 7928 pre-geometry policy, and the commit's policy is exactly ROOT's staged 606971/`d32f2d135094d616309588dabdcdfb3af643b87896c0de27c107f5e4e15a1896`. Thus all epoch records share the same six closed keys; no invented main parent or extra generic application metadata is required.
+
+Expected epoch identities and full pins are independently reviewed fixed literals outside the receipt; candidate-derived digests are never their own expectation. Each inverse authenticates full input, every span and coordinates, and full output. Each forward uses separately reviewed payloads obtained from genuine historical bytes, validates full consumption and exact output equality. ROOT independently replays forward from genuine Git objects during authoring; executable proofs never fetch Git. Full predecessor bytes reconstructed by inverse can be forward inputs at runtime only after independent full-pin authentication; forward payloads cannot be synthesized from inverse output. Keep inverse and forward failure stages distinguishable.
+
+No historical snapshot is returned as a substitute for reconstruction. If a historical C-ABI specimen is retained privately for ROOT's independent replay, authenticate it from the genuine object and use it as a comparison/control only, not a production reader fallback.
+
+## 4. C-ABI: exactly two genuine epochs, actual current type host
+
+The trace is in `/private/tmp/js2-6920-geometry-trusted-adapters-resume-20261009/.tmp/read-only-prerequisite-trace/`, including `cabi-source-epochs.json` and two patches. Independently confirmed source history:
+
+| State | Bytes | SHA256 |
+|---|---:|---|
+| Original C1 closure | 26965 | `fba055c0a5ed1b823b1bb8644c5cb495e0b26bb087bf36b5d746efda708fb308` |
+| Array resolution insertion | 27414 | `d0e185f51a5d24b480241375b4a3e7ec6e5cfcab99c00a789cd0a676db81dc3f` |
+| Current imported-function offset correction | 27454 | `d303abd67069493c08dedc6cd124482f80675c06e0ca1748cea168098fc82d46` |
+
+Epoch 1: `867c74ac7aa962f0412e37d842b077a96c6283da`, parent `efa7a96d605914961f0ea2d106093fc967bcd80a`, +449 bytes. Epoch 2: `608edfabf404aba0e69691eeccbda7518ca7988d`, parent `880e9eaa288861eeadc7a6e5936d89bc4d2c35c1`, +40 bytes. Authenticate epoch 2's actual parent bytes as equal to epoch 1's complete result; commit adjacency is not assumed. Preserve both semantic changes in current source: array-return resolution and `numImportFuncs + resolverIndex`.
+
+In `captureC1CurrentPopulation`, recognize the exact successor contract at the C-ABI closure entry before its old pin would reject. Call the new source proof with the actual captured source. Authenticate its returned predecessor against the unchanged original closure pin using the historical authority channel; never compare it only to a pin computed from its own output. Keep a distinct historical predecessor variable/view. Keep `closure`, observed actual source bytes, AST parsing and the real TypeScript host on 27454-byte current text. Do not insert C-ABI into the runtime-relocation donor population: it is a closure dependency, not a newly invented donor. Old exact contracts continue on the original direct pin path without new-source reads.
+
+In H1's `geometryLinearOptions`, change only the C-ABI closure row in addition to the already-approved geometry rows. Match the new row to `cabiSource.currentPin` AND the independent fixed literal; preserve original `predecessorClosureInputs`. Do not widen `beforeCanonicalCurrentInput` to silently accept this file; the two named source epochs require their own proof.
+
+Actual TypeScript 5.9.3 routing remains 16 requests/66 observations with the old 13/57 exact prefix only if freshly reproduced. C-ABI edits introduce no imports, but verify rather than invent the transcript. Routing success alone is not healthy C1 capture or a complete typecheck. Recollect actual accepting C1 after both closure and instrument authentication succeed.
+
+## 5. Policy: twelve real main epochs followed by geometry
+
+Read-only Git tracing proves that `4df421d262239c5b5379382754f2f1d777e30225` has the required 599721/`644219143ca7262a03ae74c559b1dcc9bd20c0bdc6b8f09a059d659523d93d53` policy. Exactly twelve subsequent policy-changing first-parent main epochs reach ROOT's 606787-byte pre-geometry policy. Freeze these commits, their actual first parents and complete input/output pins in the receipt, not twelve synthetic additions:
+
+| Main commit | First parent | Result bytes | Result SHA256 |
+|---|---|---:|---|
+| `5c0129e085c58d295044c5a6a0daebd6d50d4e9f` | `20297ba9ae3537b5bd36f618d77205265f5220ad` | 600520 | `769a24c149005fdbaad682a120d36099d40f3cafa660a2989e30220540d4abf1` |
+| `1156d385765f06d675bc6f6c25caa138501fef58` | `fab22c35ff9bc7dc8cfbdacd2ef86993d8a090d8` | 601510 | `312bb982b2c20ddbc64412adb166fe63a5e4bf6061439acaa9a16d42c62a6150` |
+| `e5edf36d15e1895dbc25c85a0fb2c0966ea15363` | `e7760d1c2af4636ede6a352154d193b234af5fc4` | 602174 | `3c26411dda04b40f68501f6ae65450d22c7b84318bb4b4767240e9a20255da1e` |
+| `534620a636c63c257bc5afb8d543d0306b26928c` | `a5c5689f9c85090d44f940204ae3c65605f01ce5` | 602572 | `1cfa9d85f325bdca79b3818cef6fbe5f7eb97c538f41b45c7cce2c969c7b6e8f` |
+| `3c671f11506f91f4eb91624cf9a8456ca95a6ce8` | `26091eabd4561e5be154741e7e18143070d3ce59` | 602694 | `5c616ef7e4cdc1e7c30a9294254fba72f696d81ca6ba3d60cf270f3e959f61f5` |
+| `522ca55b7cf57fdbe5a5b45cbf0272c9a58e63db` | `6e5a583e56553c6066646591d1637c45c15e99e8` | 603019 | `7e9850c366bdcc5290800d36c0e47da7b8b8b96bc1b5de361273929a696dc042` |
+| `e02ed67eb91bbe0d3ffeec1359a599ad17004ecd` | `6c88d157444ea4ae377a7ef1b82b15ef2f4f6603` | 603481 | `4779cceaf84b38ecd15e148c8a288a7bb4956af609d0104be6cffaf9446b7e6f` |
+| `484c8921649d6a8ee762f50f90bc762bd4c8d572` | `1e9f050e98a25334379c8e8caa46c5e43af307d3` | 603831 | `a36503a8108fe7314b7d7f550301c4e723b1761c8007d7991adcb825f51de3bb` |
+| `3146af9a349bb20a5a398fba37e8b69b16fb4ab9` | `484c8921649d6a8ee762f50f90bc762bd4c8d572` | 603953 | `8f0fb0fd2992784747e5cb5673aec59f3bec7d76b36abe2c504f459bfbb141b1` |
+| `9466fb720b9fed667f84726bcb561e8d5d1b46ca` | `fefc9c0e79f4fbf70191f69ab0fdd76a07cc1206` | 604615 | `8a934171572cd7a255db836fbc9937bbf4bd8200be83175c94959863fec262e0` |
+| `088046348f71f3fc7a2301dbcff6444fe2967bbc` | `c41bca2bc07e9d8fddbb38ca77904dd1f0cac438` | 605605 | `424591ac33717356b1edd6278b7fefc35eec597418911674fb75267093de70da` |
+| `58994f7b4d2cbc1a239b8fb0c0e3f39644066489` | `e610189829ad1554b813d6ca224515666b0e2d28` | 606787 | `b5d6c24b2a0c4cdeeb3aabaae8213eb71a1eaa09c399ff693b7939da75bd66e9` |
+
+Their sum is +7066 bytes. First eleven change only `files` (1874→1892 rows). The final epoch changes `files` (1892→1898) and `layers`: ir-analysis allocation-evidence roots/entries/minimum 14→19 and ir-program allocation-body-validation entry/minimum 48→49. This is genuine main history and cannot be represented as files-only insertion. Every actual parent policy equals the previous row's result despite intervening commits; prove these equalities during receipt authoring.
+
+The thirteenth, separate geometry epoch is exactly +184 bytes to 606971/`d32f2d135094d616309588dabdcdfb3af643b87896c0de27c107f5e4e15a1896`: foundation entry `src/shared/contracts/linear-memory-layout.ts`, foundation minimum 9→10, and that file's clean foundation row (1898→1899). Preserve all other bytes. Inverse this step first, then twelve main epochs newest-to-oldest. Independently replay all thirteen forward.
+
+Require semantic cross-checks by parsing each authenticated raw stage: exact top-level key order; exact ordered changed rows and their neighbors; exact changed layer fields; full policy data equality after replay. For the first eleven, all non-files content stays identical. For the twelfth only the named two layers and six rows change. For geometry only foundation and the one named row change. `allowedEdges`, activation history and unrelated policy content remain identical throughout. Preserve source formatting through raw byte recipes; do not reserialize the policy into an invented epoch.
+
+Caller owner 75863 inserts the new raw acquisition immediately inside each actual outer `captureDenoPostPositionMainPredecessorPolicySource(...)` that currently receives physical current policy. No reapplication of earlier wrappers. Existing semantic callers already parse the output later, so no new semantic API is required. Existing semantic and source policy APIs, including BOTH lowering-analysis APIs, must still run their original validations on the correct historical views. Literal historical inputs and deep mutants go directly to original APIs, never through the new current full-hash gate.
+
+## 6. Ownership, sequence and acceptance
+
+ROOT owns both new source recipe sections, anchor activation, independent review/replay, preservation fixture integration and final instrument recipe regeneration. Original owner 76271 owns the exact three trusted helper files, the two new finite exports, C-ABI closure join and both existing lowering-analysis policy capture joins. Owner 75863 owns the thirteen policy tests and named acquisition joins. Source owner 54017's geometry helper stays unchanged. No production claim is acquired; no A2/J2/AE28 or SourceAnalysis PR lane is touched.
+
+Order: ROOT adopts this amendment and freezes receipt schema/provenance; trusted owner prepares narrowly amended executable hunks; ROOT independently replays source history and all three instrument current↔published-before proofs, then freezes complete pins/anchor; caller owner wires actual acquisitions; ROOT executes integration controls. Keep the successor unactivated until all authority bytes and recipes have been reviewed together. Do not accept a partial candidate merely because its resolver record is correct.
+
+Necessary incremental evidence, using existing suites/harness:
+
+- Healthy C-ABI 27454→27414→26965 and independent full forward replay; healthy policy 606971→606787→all twelve states→599721; downstream unchanged Deno API accepts that last output. Prove main-before/geometry attribution separately.
+- Wrong first or second C-ABI epoch, missing resolver guard, wrong import offset, unrelated byte, wrong intermediate pin, missing/extra/reordered epoch, duplicated/shifted span, and forward-only payload corruption all fail at their intended proof stage. A forward-only control must first demonstrably pass inverse.
+- Policy controls include the allocation-evidence layer changes, geometry foundation count/entry/row independently, each main epoch, wrong neighbor/order, unrelated `allowedEdges`/history, raw-versus-semantic disagreement and forward-only corruption. Raw hash refusal alone does not prove semantic detector reach; retain direct deep stage controls under existing test conventions without shipping an unsafe public bypass.
+- Supplied current source mutation with healthy authority refuses; changed authority after a healthy call refuses freshly; mixed C-ABI/geometry/instrument epochs refuse. Record ordered receipt/source/helper reads and current-versus-historical channels. Current resolver/ASTs see actual current bytes, never reconstructed old files.
+- Preserve old authority priority with direct historical-reader, malformed primitive/accessor, and bomb-new-reader controls. Fresh accepting C1 and both policy APIs must precede installed receipt/helper fault tests. Preserve cached-module and pre-import independent caller authentication and exact restoration under the existing exclusive harness.
+- Recollect the actual preservation/current-source/graph and thirteen-file policy cohorts after joining. Preserve existing original denominators as historical records, derive new counts, execute callbacks and record exact CLI/IPC/errors/custody. Report any later unrelated prerequisite with its exact failure and affected count; do not call a first-error-text match a preservation pass or broaden this amendment to repair thousands of old errors.
+
+ROOT retains publication/HOLD decisions. This amendment supplies only the two proven prerequisites necessary to test the existing geometry integration honestly.
+
+
+### Session A: delivered AE28 and independently replayed geometry prerequisites (2026-10-09)
+
+Fresh canonical GitHub main is `c66bde8f6702854980c7771463293fe902575c79`, the protected-queue merge of ready PR #6601, **feat(ir): share allocation effect rules across analyses**. Exact parents are `7928f27343a171d8e0de434ea005d630eaf64bf3` and published head `28c2cdf0b4249c7047b4cb165647543c22091cab`; full tree `ec99ca7ebd328e7b048402a5638d6ad9d769ae27` equals the source head and contains exactly the reviewed thirteen changed paths. All 102 actual conformance shards and all six required merge-group contexts succeeded. Each conformance lane has 48,735 verdicts and zero explicit exclusions. Standalone passes are 42,225 (high-water 42,226, delta -1 within the existing tolerance); host passes remain 39,700. Broad head jobs include seed-mode red tests and are still being retained; this is neither a full-CI-green nor native-equality certificate. The five-pair performance costs and original proof failure remain recorded above. Legacy stays.
+
+Geometry integration remains unpublished in its isolated lane. The canonical claim read again verifies `6920:geometry-proof-integration-20261009` held by `ttraenkler/codex-ir-integration-session-a-20261009`. The amended private prerequisite receipt is 188,137 bytes, SHA256 `625061bbaa2cf7c6613285225b6092eeaf607b3738fc5909d58dba5db6e8f9df`. ROOT independently replayed all fifteen actual Git source epochs: two existing B-owned C-ABI changes and thirteen policy changes. Actual first parents, complete UTF-8 before/current SHA256 and Git-blob pins, stage adjacency, each inverse, separately supplied forward recipe, and equality to current physical source were checked. Policy top-level order and all non-files/layers content, including allowedEdges, remain unchanged. All three complete trusted instruments also reconstruct their authentic b932 predecessors and independently reproduce their complete current bytes.
+
+The data-only replay receipt is `.tmp/geometry-prerequisites-root-data-replay.json`, 5,424 bytes, SHA256 `d4091c3cb67edd1d97066775d8c9d350da57c10d4f236046f9a9900edb877c9d`. This executed no runtime callbacks, installed no faults, activated no authority, and grants no healthy C1 or deep semantic detector credit. Astra is reviewing the executable authority/reader-priority and semantic controls before ROOT activates the new receipt/anchor. The original caller owner has prepared nineteen thin physical-current-policy acquisition joins in thirteen test files; predecessor wrappers, deep mutants and registrations are unchanged. Those caller joins await the real reviewed exports. No B/C production, claim, branch or hold was changed.
+
+
+### Reviewed geometry authority activation (2026-10-09)
+
+Astra review 11136/edb1f8a7992b75561c767d53a8b0584ffdb7ebc8f79858d7abfa23eccb09eb94 accepts the exact static construction with no blocking finding. ROOT transported the three complete reviewed helpers, materialized the 188137/625061bb prerequisite receipt, appended its independent digest declaration to the unchanged original anchor, and applied the reviewed nineteen caller joins in thirteen files. This isolated composition is uncommitted and unpublished. Fresh healthy captures, caller-owned full authentication and runtime preservation controls remain required before fault testing or publication. No production file, foreign claim or branch was changed.
+
+Post-activation static composition: production TypeScript7 `--noEmit -p tsconfig.ts7.json` exited zero under Node25.9 (actual process99947), and `git diff --check` exited zero. The first invocation stopped before checking because this isolated lane lacked node_modules; ROOT then linked the already existing primary dependency directory without installation or package changes. No test callback or runtime proof credit is inferred from typechecking.
+
+
+### Four caller instruments require a finite proof join (2026-10-09)
+
+Before runtime, the original caller owner identified four modified policy test files that are themselves original C1 currentInstruments: program-data-contract-boundary, runtime-program-policy-evolution, well-known-symbol-policy-evolution and number-prerequisite-policy-evolution. Their nineteen-join patch preserves all original bodies, but C1 currently authenticates those four against the old whole-file pins. The reviewed three-helper successor does not cover these caller instruments. ROOT independently recorded complete before/current byte hashes in `.tmp/geometry-caller-instrument-prerequisites.json`. This is a static prerequisite, not an observed runtime failure. Keep original manifest before-pins immutable; a separate finite inverse and independent forward join for exactly the reviewed caller edits is required before healthy C1 and both policy APIs. Only the two independent healthy new-source captures are eligible for initial preflight; no failure-to-pass shortcut or detector weakening is authorized.
+
+ROOT additionally checked all four owned helpers with an explicit test-inclusive TypeScript7 project (`.tmp/geometry-owned-helpers-ts7.json`, rootDir=repository root, original strict options, noEmit). Actual command exited zero. The initial scratch configuration inherited src-only rootDir and refused the test entrypoints before checking; adjusting only that scratch rootDir resolved the configuration error. Production TS7 success alone was not treated as helper coverage. Current canonical main additionally advanced to 616da017ca11cefa61f3f8d71a1c7ac18773491c; the live compare confirms only thirteen results/publication/budget paths changed after c66b, with no source, test or compiler policy changes. Frozen geometry inputs remain unchanged.
+
+
+### First actual geometry source preflight: preserved failure (2026-10-09)
+
+Stock Vitest collected22 registrations and executed only G01/G02: two entered, zero passed, two failed, twenty unexecuted. Both stopped at `geometryAnchorDigest` own-data descriptor validation before anchor/receipt/source IO. Installed vite-node creates export getters (client.mjs lines360–365), while the guard demands an own data-property binding. This is an observed module-loading contract incompatibility; no source reconstruction acceptance is inferred. No fix or rerun occurred. All2075 frozen physical inputs and six harness components stayed unchanged. Collection CLI exited/closed0; execution CLI exited/closed1. Four actual test-worker fork lifecycles and IPC were recorded; two esbuild close events were not captured, and an independent process check confirmed all related PIDs gone. Seal SHA25610b7b0843bee35267e81d4ddc4e5249d0b00cfb857f0befb2221b942fa5e407f. ROOT independently rehashed every input and archived all eight original trust inputs under `.tmp/geometry-v1-activated-archive` before any successor edits. Astra is specifying a separately evidenced loader/authority correction; no guard weakening is authorized.
+
+### Adopted full four-caller and preservation-fixture implementation amendment
+
+The following exact Astra plan26043/ead96b5e5958ca7bf2751cf98409053affc7d1a1a9c18d9bfe836b748ca84c0c is adopted before Sol implementation. Its construction work may proceed privately; runtime/activation stays held pending the separate loader/authority contract repair and full final review.
+
+# Four caller instruments and ROOT fixture acquisition amendment
+
+Codex GPT-6 Astra High, 2026-10-09. Full private specification for ROOT adoption in existing issue 6920, **Native Linear numeric-vector shared source handoff and integration plan**. This amends the previously adopted 17816-byte specification SHA256 `dda47f5017fced118cd34f9af6e602062e8b6cf4d50e52a4b1070d6fe02f5c80` before Sol implementation. It does not edit ROOT's checkout, claims, source, tests or authority; no runtime callback or fault window was executed.
+
+## 1. Exact blocker and scope
+
+ROOT's frozen integration checkout is `/private/tmp/js2-6920-geometry-proof-integration-20261009`, HEAD `7928f27343a171d8e0de434ea005d630eaf64bf3` plus the reviewed composition. Its activated but unpublished receipt is 188137/`625061bbaa2cf7c6613285225b6092eeaf607b3738fc5909d58dba5db6e8f9df`, and its appended anchor is 303/`78797d01f3ba4d309a0d70bcb4e039b1f0a6b3c2a897890dcdfe707cdeaa7d1d`. Activation alone did not establish accepting C1. The later main publication checkpoint does not refresh these source inputs.
+
+The thirteen policy caller files now have nineteen thin current-policy acquisitions. Four of those callers are also pinned original `currentInstruments` in the immutable C1 manifest. Existing H1 normalizes only three helper instruments; it must reject the four changed caller files against their original full pins. This is an authority-integration prerequisite, not a production defect and not permission to alter the old manifest. ROOT's static record `.tmp/geometry-caller-instrument-prerequisites.json`, SHA256 `1314e9f0cf833ca7cb35ba6293478ea298c6715eac3487a3e65c217621d443c5`, identifies the four exact failures. The caller patch is `/private/tmp/js2-6920-geometry-policy-callers-resume-20261009/.tmp/geometry-policy-callers/caller-acquisitions.patch`, 25186 bytes/SHA256 `370b6d364ae640f6f373c86e939c07fffcfb9a5da2339b6e6bdbdb06f51c4243`; retain these exact bytes during authoring.
+
+Only the following additional work is released by adoption:
+
+- Trusted owner 76271: narrowly extend `tests/helpers/ir-c1-historical-authority.ts` to recognize precisely four additional caller instruments and the revised closed receipt. No edits to either other reviewed helper are needed.
+- ROOT owner 60335: author/review the four receipt recipes, regenerate only the changed H1 instrument recipe/current pin, refreeze the independent root, and update acquisition/qualification in exactly `tests/issue-3518-lowering-analysis-preservation.test.ts` and `tests/issue-3518-c1-current-source.test.ts`.
+- Original owner 75863 retains all thirteen caller files unchanged by this amendment. Their nineteen wraps/imports and complete test bodies remain exactly the reviewed patch. No new caller edit is authorized here.
+
+The two ROOT test files are not original manifest instruments (independently checked). Do not add them to the instrument population; doing so would create unnecessary recursive authority. Original source helper35439/87bf, geometry receipt69621/e4af, three-helper construction, source epoch proofs, all production/B claims and old immutable evidence remain in scope only as fixed dependencies. No later unrelated prerequisite is silently absorbed.
+
+## 2. Receipt and anchor decision
+
+Use the same unpublished path `tests/helpers/ir-c1-linear-layout-geometry-successor.json`, the same `c1GeometrySuccessorSha256` export and the same independent root mechanism. Change the schema to exactly **`ir-c1-linear-layout-geometry-prerequisites-successor-v2`**. Keep the six ordered top-level keys exactly:
+
+`schema`, `predecessorManifestSha256`, `instruments`, `linearOptions`, `cabiSource`, `policySource`.
+
+Expand only `instruments` from three rows to seven, ordered as the original three helpers followed by the four caller rows listed below. Each retains exactly `path`, `beforePin`, `currentPin`, `inverse`, `forward`; pins remain exactly `bytes`, `sha256`, `gitBlob`; directional spans remain exactly `inputOffset`, `outputOffset`, `from`, `to`. No caller selector, runtime Git, broad path map, compatibility mode or further epoch framework.
+
+All seven `beforePin`s must equal the corresponding unchanged original manifest `currentInstruments` pins. The original three helper before-pins never become the intermediate 625061bb candidate's current pins. Current-source44840/ae850773 and policy411837/8575d0f4 remain unchanged with identical current pins and recipes. H1's new final current bytes require its recipe to be regenerated directly against its genuine original44161/0751d41d predecessor. The old v1 candidate,303-byte root and review remain archived private evidence, not alternate accepted authority. Runtime v2 accepts only the final v2 shape; do not accept v1 and v2 opportunistically in one current path.
+
+`linearOptions`, `cabiSource` and `policySource` remain exactly the already reviewed data, including every epoch/parent/span and complete pin. The new root digest is derived only after independently reviewing the complete final seven-row receipt. Replace the unpublished successor declaration's digest with that final digest; do not change the original manifest declaration/prefix or add another root export. Preserve both old and new raw artifacts in ROOT's private evidence. No published history is rewritten.
+
+## 3. Four fixed caller contracts
+
+These complete values were independently read from the immutable manifest/genuine Git blob objects and compared to current ROOT physical files. Freeze the before and current contracts as independent literals in H1 outside the receipt (the fixed helper current self-pin remains anchored by ROOT's complete receipt, as before).
+
+1. `tests/issue-3518-program-data-contract-boundary.test.ts`
+   - before: bytes33595, SHA256 `1a00f71d523da3247ec64ea9affc076e0afda8a2cfcd28842bbaa1b61b5cd217`, Git blob `7f680c042816519f623730cb00da2f7a163d1ed2`.
+   - current: bytes33840, SHA256 `24f0e4dd484bc4fc61cfbb46f875a61615f6c63d448c57b524f58c8f39a84469`, Git blob `18a17efe93db58ab5f6f0322f845c92e86859d41`.
+2. `tests/issue-3518-runtime-program-policy-evolution.test.ts`
+   - before: bytes28811, SHA256 `8989cc94cdef77bb4d1370382ba61ced109d3ebd831f08dd843e4dbded8b9974`, Git blob `f840395586a06c2674db9169e2346f77ec5d3f1c`.
+   - current: bytes29161, SHA256 `a6378da157029b0ae01492dff7f6d24e7056a89781ca608dbc139b95fe3f7bd1`, Git blob `43d2493da1d08c890841f03774f5e664731a82f6`.
+3. `tests/issue-3518-well-known-symbol-policy-evolution.test.ts`
+   - before: bytes29570, SHA256 `913cfae67a28e6c8437d91a1e94428236a0cd6e220b20521a38e4251d0648619`, Git blob `412d3efd1a98e24c65528f246834ff919137832b`.
+   - current: bytes29764, SHA256 `fe80426e28d77a8451d45dc6d07a1a75ec4f73296c231a3d3cc6c85592fa19d4`, Git blob `a009cd0ffbd2f91d971dada7abbf239c557d79d8`.
+4. `tests/issue-3518-number-prerequisite-policy-evolution.test.ts`
+   - before: bytes112437, SHA256 `f0b10a5a3d47772cb497b5dc53f202ce2182b2ee4eb2c5c7d557b7aa8b0bb44f`, Git blob `82c1cc794377b26ff9f41e809c300122133de85a`.
+   - current: bytes113131, SHA256 `81cdd13ea7f9f907c7d9f268cd0ad6dffda4b996671f5ed49721d7e162ae57ae`, Git blob `4be3d8d341b1e42ce0f7ea3dc9799fb0cfe32e84`.
+
+Each inverse removes only that file's new geometry import/acquisition wraps, with reviewed local spans and exact unchanged intervals. Each forward is independently authored from the genuine original Git blob to the complete frozen caller. ROOT independently replays both directions from their genuine source objects, checks full consumed coordinates and output equality, and confirms that callback registration/body content outside those import/wrap changes is unchanged. Do not store or return full caller snapshots as answers. Never use a currentPin computed from an unvalidated caller as its own expectation. The seven fixed paths/order/count, four independent current pins and all original before-pins are enforced by H1.
+
+## 4. H1 algorithm amendment
+
+Extend the existing fixed instrument domain to those seven paths; preserve the original manifest's instrument order and total membership. Reuse the already reviewed bounded span primitive. `captureGeometrySuccessor` validates exact seven-row order and each before pin, and additionally the four fixed caller current pins. No unknown instrument path delegates to a reader. `c1GeometryInstrumentPredecessor` remains a finite primitive/path/reader-checked operation; exact original supplied text may take the existing unchanged historical route. It must not swallow a successor failure and retry as historical.
+
+`captureC1HistoricalAuthority` continues reading the genuine physical instrument once in the original manifest order. For any member of the seven-row successor domain, current bytes must authenticate under that reviewed row, inverse to the original manifest pin and independently forward to the captured current text. All original nonmember instruments stay on their old direct full-pin route. Once any successor row is used, the final coherence check requires **all seven** captured rows to match their current pins. Old helpers with new callers, new helpers with old callers, one old caller among new ones and any mixed receipt epoch refuse. The fully historical supplied instrument population still uses the original route without new-source proof reads. No reconstructed caller is substituted into a physical test runner, runtime reader or current C1 closure.
+
+Directional replay errors for the new caller recipes must identify inverse versus forward and path; retain primitive-before-IO priority. Fresh root/receipt authentication, complete helper authentication outside imported proof code, source epoch functions, geometry contract validation and historical artifact routing remain as specified previously. Do not introduce validation of all actual caller sources into the standalone two new source proofs: those bounded source APIs need the anchored receipt schema, not healthy C1; their two-callback source-only qualification must remain separable.
+
+## 5. ROOT preservation test acquisition
+
+Frozen starting file: `tests/issue-3518-lowering-analysis-preservation.test.ts`, 46395 bytes/SHA256 `cd69ee87ddef38308c364935fd5001dcdb1f481256e71778b29a521ea6952470`. The present `fixture` copies actual planner/layout expecting49040/4670 and `authenticateImplementation` expects18956; both refer to the historical lowering epoch, not physical current geometry. Preserve their old pins as historical facts.
+
+### 5.1 Independent complete implementation authority
+
+Keep the original18956/253eda01 pin, and add ROOT's independently supplied complete35439/87bf geometry helper pin. `authenticateImplementation` must freshly require the complete current helper pin and separately require the original18956-byte prefix pin. A prefix-only pass does not authenticate appended geometry code. This guard remains caller-owned and runs before accepting imported proof results. Update the subprocess's **pre-import** complete length/SHA/Git-blob guard to the same independent complete geometry pin; retain its historical prefix assertion as an additional check. The cached-module fault must still fail at this external guard with zero downstream fixture reads. Do not move external authentication inside the imported module.
+
+### 5.2 Two explicit source views, one proved acquisition
+
+At fixture setup, freshly read/authenticate actual current planner45359/08f84411, layout3161/83e6b8a0, shared7580/08c85d9e, fixed geometry receipt69621/e4af, old source receipt111423/dc8241, and helper35439/87bf. Use a separate exact five-path geometry reader (geometry receipt, planner, layout, shared, old receipt); unknown paths refuse before filesystem delegation. Preserve mode/custody checks. Invoke `captureLinearLayoutGeometry` on the actual supplied planner only after external complete-helper authentication.
+
+Independently validate geometry's actual-current inverse, forwarding step and independently authored forward/coverage recipes against fixed pins in test-owned logic. This can be narrow local test code in the two authorized tests; it must not trust the helper's returned fields as their own expected oracle. Compare all eight returned fields to those independently reconstructed/pinned results. Runtime Git, committed snapshots, a healthy physical-reader fallback and synthetic source answers are forbidden. In particular distinguish `geometryBeforeLayout` (forwarding epoch) from `loweringBeforeLayout`4670, even though both planner predecessor fields are49040. The originalPlanner52704 comparison still uses the old independent99-piece donor reducer; do not delete it because the new API also returns an originalPlanner.
+
+Only after that complete proof succeeds may the old D1 temporary fixture write `loweringBeforePlanner` and `loweringBeforeLayout` under its historical fixture paths. Copy the unchanged adapter/current-owner and old receipt as before. Keep `historicalSourcePins`, `sourcePins`, old donor pins, `operations`, old `independentDonor`, local historical five-path domain and old operation read traces authoritative for this **derived historical fixture**. Label it accurately; these strings are no longer copies of physical current planner/layout. Keep the current acquisition's reads in a separate trace, reset before exercising the old fixture, and do not hide current reads by filtering one combined trace.
+
+The old pure/deep-mutant calls continue directly to `captureLinearLayoutPredecessor`/old legality APIs with those derived old operands/readers. They must not pass through the current full-hash gate: that would stop every mutant too early. Keep malformed primitives/readers, missing old receipt, stale authentic donor, supplied mismatch, no coercions/getter invocation and old exact error/read-order tests on their original APIs. Add separate current-geometry tests for actual source/supplied mutation and the new receipt/reader domain.
+
+### 5.3 Default-reader and installed-fault distinction
+
+The existing default layout-reader test cannot honestly call `captureLinearLayoutPredecessor(derived49040)` with no reader: its default reader sees physical current3161 layout. Do not write old files into ROOT to make it pass, and do not pretend an explicit historical reader is a default physical one. Preserve explicit historical-API default/reader semantics as historical evidence and test the old API on its derived explicit reader. Migrate the **actual installed layout default-reader positive** to `captureLinearLayoutGeometry(actualCurrentPlanner)` and compare `.originalPlanner` to the independent donor. The installed missing-old-receipt control calls that same current API (which traverses the old proof) and retains real ENOENT path/error/restoration assertions. Backend-legality's current default API remains unchanged. Update test names where their actual default target changes, retaining a name mapping to the prior registration; add explicit direct old-API coverage if needed so no original behavior is silently dropped.
+
+Fixture-local faults continue targeting the derived fixture and exercising original validators. Physical geometry/helper faults operate only within the existing exclusive harness after a healthy current control. Preserve all inode/device/mode/hash checks, backups, lock ownership, recovery evidence and failed-restoration retention. The pre-import child with explicit historical fixture reader may retain its old API call after independently authenticating the complete35439-byte helper; it measures original proof behavior under the current implementation and must be labeled accordingly. Add a current-geometry pre-import child if needed for appended-proof coverage; do not claim one as the other.
+
+### 5.4 Real application policy acquisition
+
+In `applicationInput`, insert `captureGeometryCurrentMainPredecessorPolicySource` immediately inside the existing outer `captureDenoPostPositionMainPredecessorPolicySource`, around the one actual physical compiler-boundaries read. Keep every earlier wrapper and the final existing policyCurrentPin/semantic oracles unchanged. Authenticate the complete final H1 implementation externally before accepting that new imported source proof. No new wrap around historical literal/deep-mutant inputs. `normalApplication` must continue invoking actual current C1 and BOTH original raw/semantic lowering policy APIs. Existing malformed raw/descriptor tests call those APIs directly while the helper is absent, preserving guard priority and zero coercion/getter calls.
+
+## 6. ROOT C1 test acquisition
+
+Frozen starting file: `tests/issue-3518-c1-current-source.test.ts`, 156840 bytes/SHA256 `717f6ed659f9ecdac6fa28994514a0162d4a181b36b35193223fb2b69db95860`.
+
+1. Retain `independentFreeze`'s original manifest digest/declaration and194-byte anchor as historical authority. Add a separate ROOT-authored independent current successor freeze with exact final receipt digest, complete303-byte root text/pin and complete current pins for all seven rows. These expectations are literals supplied only after final review, never computed from the candidate at test runtime. Authenticate current anchor and original prefix separately. `manifest()` must still return the unchanged original manifest; never replace `data.linearOptions` or `data.currentInstruments` with a synthetic successor and call it original.
+2. Add narrow test-owned complete receipt/instrument replay. Authenticate the final full receipt and each genuine physical current instrument, inverse to immutable original manifest pins, then forward independently to the captured actual current. The three-helper/four-caller membership and unchanged other rows are explicit. Do not use H1's imported projector to establish H1's own trust. The external complete-helper check must precede acceptance of H1/C1 imported results and remain fresh on warm calls. A dedicated physical-H1/helper fault expectation must assert the appropriate first guard rather than wrapping the code under test in a blanket guard that makes all deeper controls unreachable.
+3. In the existing test `independently inverts every recorded edit and replays exact current bytes`, obtain the **original published current instrument** from the independent successor reconstruction for the applicable members before running `data.instrumentEdits`. Check that first input against `edit.afterPin`; preserve every existing beforePin/span/archived-original assertion. Independently forward old edit then successor, ending at the actual current physical file. Do not compare actual new caller bytes directly with `edit.afterPin`, repin old edits or normalize a deep mutant before testing its intended old validator.
+4. Keep old manifest membership, closed original resolver topology,13 requests/57 observations, config pins, original predecessor closure and historical artifact tests exactly about the old manifest. Add separate current successor contract assertions: original rows plus the approved geometry/C-ABI closure changes,16 requests/66 observations if freshly measured, and unchanged old13/57 prefix. The real accepting `captureC1CurrentPopulation(read, read)` receives current physical bytes and normal host IO. Planner45359, layout3161, shared7580 and C-ABI27454 are actual current; old49040/4670/26965 are derived historical-only views. Do not substitute historical views in its closure, AST or TypeScript host.
+5. Preserve the full original `loweringAnalysisAuthorityTrace` as historical evidence under an explicit historical name; add a distinct measured current trace. Existing current capture assertions use the new entire ordered trace, including H1's root/receipt read when the first successor instrument is seen, new complete geometry helper/source reads, five-path geometry proof, C-ABI root/receipt/source reads and current resolver activity. Repeated helpers/receipts are real reads and must stay visible. Receipt+46 population remains separate; C-ABI/shared/layout and current owner do not become new donors/population members. Never derive the expected trace by copying the trace produced inside the same callback, filtering out additions or merely comparing unordered sets.
+6. Update the two49040 **physical** planner assertions in the guarded-reader and current-owner healthy checks to the exact45359 current pin, and separately assert that the proved lowering predecessor still has49040/5f2f5ded. Do not globally search/replace49040,4670,18956 or historical hashes. Old constants in original manifest, donor profiles and fixture proofs remain unchanged.
+7. For current mutation tests, first establish healthy current capture, then mutate a fragment actually present in its physical current owner file. Geometry moved the `LINEAR_POINTER_BYTES` declaration and some layout members into shared geometry; a failed `replaceOnce` is not a detector result. Preserve the old named deep mutations against the **derived historical** source and original API/reader, and add corresponding current shared/forwarder/planner mutations with measured first guards. Do not delete old rows or redirect all old controls to early current-hash rejection. Record old-to-new registration mapping for any renamed ROOT tests. Other source/owner/policy/canonical mutation rows retain their present actual paths unless separately proved affected.
+8. An explicit test-only historical authority reader may reconstruct exactly the seven original instruments and the specific historical planner/layout/C-ABI views from authenticated current inputs to test the original route. It must be a closed, locally labeled historical control, reject unknown paths and never replace global `read`, `applicationAuthority` or the real current C1 host. Its original anchor is supplied only as original historical data, with original manifest untouched. Do not present such a run as current C1 acceptance or as evidence physical current closure was tested. It must not be applied automatically after a current proof fails.
+9. Existing malformed original population versus supplemental IO priority remains. H1's authority acquisition already precedes population capture; distinguish that existing authority phase from new **source proof** reads. Assert the original primitive/descriptor error and zero new-source reader calls where promised, rather than demanding a false zero for all root/manifest IO. Primitive and descriptor negative tests themselves stay direct and do not pre-run current geometry acquisition on the malformed operand.
+
+The helper35439 pin and geometry receipt can be shared as repeated fixed literals in these two tests. Do not introduce a new general test framework/helper instrument to avoid a few local assertions. Preserve current independent test oracle logic; a small fixed test-only byte replay is preferable to replacing it with the production proof function.
+
+## 7. Qualification and sequence
+
+1. ROOT adopts this full amendment under issue6920 before Sol edits. Freeze exact four caller files/patch and both ROOT test predecessors. No refresh to unrelated newer main input.
+2. Trusted owner prepares only the H1 changes; ROOT author/reviewer independently derives four caller recipes from genuine objects, regenerates H1 original↔final recipe, verifies all seven rows, unchanged source sections/linearOptions, exact caller body/registration preservation and closed v2 schema. Recheck no change to original manifest/anchor prefix, eleven immutable authorities and seven historical artifacts.
+3. ROOT composes the two acquisition changes, reviews complete independent external helper authority and fixture/current separation, then freezes the final v2 receipt/digest/root and test literal pins. This is not authorization to start physical fault tests. The earlier v1 review applies only to its exact bytes; H1/v2 needs new bounded review before acceptance.
+4. The separately released two-callback source-only run may measure new C-ABI reconstruction and new policy reconstruction plus unchanged downstream Deno acceptance. It does not establish healthy C1 or either full lowering policy API and must not be reported as such. This amendment neither adds callbacks to that run nor authorizes a fault window inside it.
+5. After the new review and ROOT's explicit runtime release, first execute current accepting H1/C1, actual resolver/closure and both original lowering policy APIs. Verify new geometry acquisition and historical derived fixture separately. If any later prerequisite fails, preserve exact error/path/callback count and stop the affected qualification; do not repair outside this amendment or relabel an expected first failure as preservation success.
+6. Only after healthy controls pass release narrow four-instrument negatives: any caller changed with healthy receipt, malformed/unknown path before reader IO, one old caller amid current seven, reordered/missing/extra record, incorrect before/current pin, altered span coordinate/contents, duplicated span, forward-only corruption after demonstrated inverse success, changed root/receipt/helper after prior success and restored acceptance. Distinguish direction/path errors and preserve current versus historical channels. No unsafe production bypass for semantic/deep tests.
+7. Recollect and execute actual two ROOT suites/current-source/graph and thirteen caller-file cohort only under ROOT's separate full release. The historical caller floor artifact is348857 bytes/SHA256 `11e085aa1b7932a0a6ea7a4faf318a99435a25f016cde0da1431f0001310eaf6`, containing2254 historical callbacks. It is metadata, not fresh collection or execution. Preserve all thirteen files' original registrations and deep bodies exactly; derive fresh counts, compare names, account for every failure/pending/absent callback and record CLI/IPC/custody. Keep full qualification on HOLD until real controls and denominators exist.
+
+This closes only the observed caller-instrument seal and current-versus-historical test acquisitions. It grants no production change, B ownership, native runtime/parity/performance, migration completion, publication or queue release.
+
+
+### Adopted full namespace-loader diagnosis and conditional configuration plan
+
+Native descriptor-only control imported the genuine303-byte pinned root under Node25.9 and measured both actual exports as own data properties, with zero getter invocation and zero proof callbacks. This is not Vitest or source-proof acceptance. The following full Astra19191/4cb2d75e3c97fea52e07db1a39c3719be85145b475ff1d31fedefd6ffbf999e5 plan is adopted before the paired stock-transform descriptor control. Configuration implementation remains conditional on that measured premise. H1 guard, root, receipts and source epochs stay unchanged for this distinct qualification.
+
+# Native anchor namespace qualification after the actual G01/G02 failure
+
+Codex GPT-6 Astra High, 2026-10-09. Bounded diagnosis and conditional implementation plan for existing issue 6920, **Native Linear numeric-vector shared source handoff and integration plan**. This is separate from the four-caller/v2/fixture amendment26043/`ead96b5e5958ca7bf2751cf98409053affc7d1a1a9c18d9bfe836b748ca84c0c`. That amendment remains valid; its H1 changes may be prepared privately while ROOT retains the unchanged v1 source/anchor for these loader controls. This failure must not be silently mixed into its source changes or receipt generation.
+
+Read-only inspection only: logs, exact source and installed loader implementation. No new callback, module import, transform execution, source/helper/test/config mutation, fault, claim write or retry was performed. The only new files are this lane's private diagnosis/spec and static artifact inventory.
+
+## 1. Actual result and corrected confidence
+
+The frozen stock Vitest3.2.4 epoch collected22 callbacks. Exactly G01 and G02 entered; both failed, none passed, twenty were skipped. Both actual stacks stop at:
+
+`geometryAnchorDigest` → `captureGeometrySuccessor` → `prerequisiteSourceBefore`
+
+with `C1 historical authority: geometry instrument anchor data digest required`, H1 line1343. The first is called by `captureC1LinearCabiPredecessor`, the second by `captureGeometryCurrentMainPredecessorPolicySource`. The callbacks log contains only the two enter events. The source-proof reader cannot have read anchor/receipt/current source at this point: `geometryAnchorDigest(true)` is evaluated before the first `readText(reader, anchorPath)` in `captureGeometrySuccessor`. This is a statement about that proof reader/control flow, not zero filesystem IO: external2075-input authentication and the callback's initial operand read already occurred.
+
+Actual process evidence records collection exit0 and selected run exit1, no success callbacks, preserved originals. ROOT's seal reports2075 inputs rehashed without changes and six harness artifacts unchanged. Do not report either source proof or downstream Deno as accepted. The JSON summary alone is not the diagnosis: the two matching full stacks and inspected branch establish the stop location.
+
+The initial Astra static review did not identify this transformed-module representation requirement. Its byte/Git/recipe and semantic conclusions remain bounded static evidence; it did not establish stock Vitest compatibility. The observed failure supplies a new qualification blocker. It does not establish a C-ABI, policy epoch, recipe or donor defect because neither source reconstruction was reached.
+
+Frozen effective source is ROOT's303-byte anchor, SHA256 `78797d01f3ba4d309a0d70bcb4e039b1f0a6b3c2a897890dcdfe707cdeaa7d1d`, exporting the unchanged manifest string and `c1GeometrySuccessorSha256 = "625061bbaa2cf7c6613285225b6092eeaf607b3738fc5909d58dba5db6e8f9df"`. H1 is94419/`d0c4d38debf1e59407ea94d20587dbb46bd3ff874bf10d04a76ebf0e8603df48`. The trusted writer checkout still has the original unactivated root; do not confuse that with the ROOT path named in the actual stacks and sealed harness.
+
+## 2. Mechanism found in the installed loader
+
+H1's `geometryAnchorDigest` uses `Object.getOwnPropertyDescriptor(c1AuthorityRoot, "c1GeometrySuccessorSha256")`, then requires an own descriptor `value`, primitive string and64-lowercase-hex. A missing property has a separate not-activated path. A getter descriptor fails before invoking the getter; that refusal is deliberate and must remain.
+
+Installed Vite6.4.1, `node_modules/vite/dist/node/chunks/dep-D4NMHUTW.js` lines25650–25654, defines every transformed export using:
+
+```js
+Object.defineProperty(__vite_ssr_exports__, name, {
+  enumerable: true,
+  configurable: true,
+  get() { try { return local } catch {} }
+});
+```
+
+Its ExportNamedDeclaration handling at25722–25731 applies `defineExport` to every variable declarator, including `export const`. This is primary installed implementation evidence, not an inference from a similar error message.
+
+Installed vite-node3.2.4 `dist/client.mjs` lines288–293 makes its synthetic exports object with `Object.create(null)` and a Module toStringTag; lines358–375 inject that same object as `__vite_ssr_exports__` and execute transformed code. `runModule` at385 onward uses `vm.runInThisContext` for an async wrapper. Thus a valid source `export const` has an **accessor** own property on this synthetic namespace. The Module tag/null prototype alone would not prove a genuine native namespace and are not substitutes for the data check.
+
+The preflight config is an ordinary Vitest transform run. `--configLoader native` applies to configuration loading; it does not make the imported test helpers native ESM. The test's awaited `import(...)` of H1 is processed by Vitest/vite-node. Its beforeAll awaits imports before G01/G02 execute, so the recorded path does not indicate an unawaited source proof.
+
+This establishes an implementation-level incompatibility between the expected namespace contract and the stock transform route. The exact failed worker did not log its property descriptor, so label the accessor explanation **source-supported diagnosis pending the descriptor control**, not a measured descriptor value. Do not invoke or accept a getter to make the control print the digest.
+
+## 3. Decision: preserve H1 semantics; qualify an exact native anchor route first
+
+Do not amend `geometryAnchorDigest` to accept an accessor, call a getter, spread/destructure a namespace into a pretend data object, rely on a toStringTag, parse a newly read root as its own independent authority, or silently prefer a current receipt-derived digest. Do not use healthy files as a fallback, bypass root comparison, swallow the failure or repin the original manifest. These alternatives collapse the cached independent-root versus fresh physical-root distinction.
+
+The narrow preferred contract is: **H1 and its consumers continue under normal Vitest transformation; only the inert, exact root module is loaded as genuine native ESM.** The root contains only the two constant strings and no imports, TypeScript-specific syntax, executable authority logic or default export. Native loading preserves the original data descriptor guard instead of changing its policy. This qualifies the intended Node25.9.0 environment; it is not a claim of arbitrary-loader or older-Node portability.
+
+ROOT has now obtained the genuine Node arm described below; obtain its paired stock-transform descriptor evidence without repeating the already measured native arm. Only if it confirms the predicted distinction should ROOT release a configuration-only implementation. No H1/root/receipt byte change is presently justified by this failure. If the control disproves the mechanism or native externalization cannot preserve the exact namespace, stop and return the measured result for a new bounded specification; do not implement any of the rejected fallbacks.
+
+## 4. Authoritative diagnostic control before behavior changes
+
+ROOT has executed the native descriptor-only arm and must separately approve/freeze its stock-Vitest companion, outside the completed G01/G02 epoch. No source proof or physical fault belongs in it. Keep two named arms with exact command, executable/version, input pins, process exit/signal/stdout/stderr, and expected callback denominator.
+
+**N status: already measured by ROOT, independently inspected here.** ROOT's `.tmp/geometry-root-namespace-native-probe-20261009/probe.mjs` is1440 bytes/SHA256 `40e1f99fa2887f991740d5bbcc486e531dc7929d0946a54811cffe70ac812ced`; its actual result is959 bytes/SHA256 `259983a802fbc5f146752778a28240755bc26d37743e916572e30c1a03a2a184`. It independently pins the303-byte root before a genuine file-URL import and rechecks it afterward. ROOT reported exit0. The recorded two descriptors are own data properties, primitive strings equal to the manifest/successor literals, enumerable:true, configurable:false, writable:true, get/set undefined; source-proof API callbacks0/getters invoked0. This establishes the native positive control only. It is sufficient for armN; no duplicate native run is requested merely to add optional diagnostic metadata. Preserve the original control. The following armN contract describes its relevant boundaries; extra metadata is optional, not a reason to redo it.
+
+**N: genuine Node ESM.** In a fresh explicit `/Users/thomas/.nvm/versions/node/v25.9.0/bin/node --input-type=module` process, independently verify the actual303-byte ROOT anchor against the frozen complete pin **before importing it**. Import its actual `file:` URL, with no Vite/Vitest, tsx loader, copied/data-URL module, query-string cache buster or reconstructed namespace. The root is JavaScript-compatible `.ts` source under this pinned Node; acceptance of that exact path is a condition to measure, not assume. Do not import H1 or call a source proof in this arm.
+
+Record `Reflect.ownKeys(namespace)` and `Object.getOwnPropertyDescriptor` results for both named exports. Record descriptor key names, own-value presence, type of data value only if the descriptor owns `value`, primitive value or digest only in that case, and flags. Record prototype, extensibility and tag only as diagnostics. Never evaluate `namespace.c1GeometrySuccessorSha256` or descriptor.get. Expected own data properties hold exactly the two frozen strings; getters/setters are absent. Compare to independent literal expectations, not another read from the namespace.
+
+**V: stock Vitest representation.** Freeze a separate descriptor-only test using the same explicit Node/Vitest versions, pool and root as the failed epoch; keep stock externalization behavior unchanged. Independently authenticate the physical root before its awaited import, then inspect descriptors using the identical noninvoking operations. One callback records the namespace representation; it must not call H1 or source proofs. Expected diagnostic evidence is the two Vite accessor descriptors with no own `value`, and no getter invoked. A data descriptor here falsifies the proposed explanation and requires tracing the exact load identity/cache/mock path before proceeding.
+
+A stand-alone diagnostic assertion of an expected accessor is a diagnostic success, not proof-authority acceptance. ArmN and armV each have their own one-operation/one-callback accounting; do not append them to G01/G02's original2/22 denominator. Hash the source and helpers before/after; keep all originals intact. Actual namespace outputs and actual loader path—not merely runner configuration text—decide the result.
+
+## 5. Conditional configuration implementation after controls confirm
+
+The installed vite-node server provides an adequate narrow native route:
+
+- `dist/server.mjs` `_shouldExternalize`, lines134–152, checks explicit `deps.inline` and `inlineFiles` first, then explicit `deps.external`, **before** its default `.ts` inline rule.
+- `matchExternalizePattern`, lines156–162, treats string patterns as module-directory package names; therefore an absolute path string in external is insufficient. Use a correctly escaped, anchored **RegExp** for exactly the resolved repository root module path.
+- `_fetchModule`, lines337–367, returns `{externalize}` before transformation for that match.
+- `dist/client.mjs` directRequest at the externalize branch invokes `interopedImport`; `importExternalModule` uses native `import(path)`. `shouldInterop` declines interop when the root has no default export, so the native namespace is returned without a proxy or synthetic export copy.
+- Vitest's installed `cli-api` constructs `new ViteNodeServer(server, this.config.server)`; its public configuration field is **`test.server.deps.external`**. Top-level Vite `server.fs.allow` and configLoader are unrelated settings.
+
+Release only ROOT-owned configuration changes: add the exact-root externalization to the existing canonical `vitest.config.ts`, and to the private custom qualification config used by this lane. If later policy/ROOT suite drivers generate independent configs, they must carry this same explicit one-module contract; canonical config changes do not automatically affect an overriding custom config. Do not change the thirteen caller files or other test bodies to work around the loader. No dependency install/version upgrade, blanket helper/test externalization, Vite source patch, custom compiler, new loader framework or different runtime tier.
+
+Resolve the actual file path for the current repository/worktree and normalize it exactly as the installed runner does. Escape regex metacharacters and anchor both ends. If logical and real worktree paths differ, explicitly enumerate only the independently verified logical/real paths for this **same inode/file**, record them and use exact alternatives; never admit every repository's matching basename or a wildcard tests/helpers directory. Verify `.js` import spellings have resolved to the actual `.ts` file before the externalization decision; do not invent a `.js` authority alias. No global/unescaped/stateful RegExp. A simple exact regex suffices once the actual resolved path is observed.
+
+Existing explicit inline options win before external: detect and report any such conflict rather than deleting broad inline rules or assuming external overrode them. Root must not appear in `inlineFiles`. No default export is added. Keep all other dependency/optimizer settings and unit/test262 resource/concurrency settings unchanged. The qualification must confirm actual externalization; the existence of this configuration is not evidence it took effect.
+
+Every relevant runtime environment must demonstrate native import of this exact `.ts` constant module. Pinned Node25.9.0 is the immediate scope. Before publishing a canonical config change, check the actual required CI Node versions and qualify the same one-module control there. If a required version cannot native-import this file, report the incompatibility for a separate plan; do not silently depend on a newer local Node, add tsx globally or change root extension/content under this spec.
+
+## 6. Loader-corrected validation without weakening proof controls
+
+After a separate ROOT release and frozen configuration-only patch:
+
+1. Run a fresh one-callback Vitest descriptor control with exact-root externalization. It must now report the same own data values/descriptor shape as the native arm and zero getter invocation. Confirm the actual root file identity and absence of transform for that one module, with existing read-only loader diagnostics where available. H1, current-source, policy and ordinary suites remain on their normal transform path. A property-copy wrapper that merely makes descriptors look native is prohibited.
+2. Rehash303-byte root,94419-byte H1,188137-byte receipt,2075 frozen inputs and complete authority pins; all source/authority content must remain exactly the failed epoch's bytes. This isolates the loader change as the only treatment. Preserve the failed epoch forever and use a new output directory/freeze for the controlled successor run. Do not overwrite its results.json/callbacks/seal or call it a retry continuation.
+3. Only then, when ROOT releases the existing **two** healthy source callbacks, execute unchanged G01 and G02 with this sole loader treatment. G01 must return the exact26965 C-ABI predecessor and ordered root/receipt/source reads; G02 must return the exact599721 policy predecessor and pass the unchanged Deno proof with its expected592414 result. Retain all full pins/actual rows already specified. If another failure appears, record the new actual stage and stop affected acceptance; no automatic broader repair.
+4. Those two successes would establish the bounded source/API path under qualified Vitest. They do not repair the four-caller currentInstruments blocker, prove healthy C1, either full lowering policy API, twenty skipped callbacks,2254 historical caller callbacks, publication or migration. The v2/fixture amendment remains separately adopted, prepared and reviewed before being composed/qualified under the same exact-root loader contract.
+5. Keep direct malformed primitive/callable-reader guards and external complete helper authentication in the eventual suites; do not front-load new IO on malformed original operands. Getter/accessor namespace rejection remains unchanged because H1 code is unchanged. Existing deep original-policy controls must not be routed through current full-hash acquisition. No skip, expected rejection or descriptor-only callback counts as a source proof pass.
+6. For cached-module and pre-import physical-root/helper controls, native module caching is deliberate. Each proof still independently reads exact physical root text and requires equality with its loaded digest; replacing the file/receipt after success must refuse, and exact restoration must recover. Do not invalidate caches or query-bust imports during the warm controls: that would erase the distinction being tested. Use fresh worker processes only between separately frozen activation epochs (e.g. v1 to v2). Physical fault windows remain held until ROOT's existing healthy/exclusive-harness release; this spec does not release them.
+
+Externalizing only the constant root avoids broad changes to mocks and source proof execution. Ordinary suites that import H1 directly must be run with this canonical contract; success of a native standalone proof alone is not a solution for them. Report `Node25.9.0, Vitest3.2.4/Vite6.4.1, exact-root native ESM; other modules transformed` with measured numbers so this qualification cannot be misquoted as the failed stock-transform configuration passing.
+
+## 7. Ownership and records
+
+ROOT60335 owns adoption, canonical/private runner configuration, diagnostic release, immutable snapshots and final publication decisions. Trusted owner76271 retains H1 and is not authorized to edit it for this loader finding yet. Caller owner75863 and all thirteen current test bodies remain unchanged. The four-caller v2 amendment26043/ead96b5e remains a separate work item; do not regenerate its receipt merely to make a loader change appear to fix source authority.
+
+Append this finding and the two failed actual callback rows to existing issue6920 with the exact limitation. Adopt the diagnosis controls before running them, then adopt the narrow configuration implementation only upon confirming its premises. No new GitHub issue, claim or duplicate lane is required. If the conditional route fails, preserve exact evidence and return to Astra for a new bounded plan instead of weakening the anchor.
+
+Private static evidence inventory: `.tmp/astra-anchor-loader-static-evidence.json`,3406 bytes/SHA256 `0d1f386e1db08003ffdb4fb2a7806013c0d9289ddff65d2c57d285d577d2da40`. It records exact hashes of the failed logs, harness/config, actual ROOT authority and installed Vite/vite-node source. This inventory is static provenance only; this reviewer ran no diagnostic arm. ROOT's subsequently supplied native-arm evidence is recorded separately above; the paired Vitest arm remains pending.
+
+
+### Private v2 reviewed; loader and fixture qualification still held (2026-10-09)
+
+The private final H1 is96713/cc4ef7be19720ccf45e3cdd857ff373a9a770460c81cdc2bf8b1f7460754c8c3; v2 receipt206007/e3a525e598002b43f46bef112dcdbd5222d038ea6ee9d7ddc22f837bc97f21e1. Astra bounded review8683/744837e78a68b137bd4a5228f593e9f940b2f49bebcb363ed665aa0bcf70ec06 finds no blocking static defect. ROOT independently replayed all seven complete instrument pairs against genuine original b932 objects and current physical caller/helper bytes, verified every original manifest before-pin, exact unchanged source sections/linearOptions, and byte-identical namespace guard. ROOT receipt `.tmp/geometry-v2-root-independent-data-review.json`,4120 bytes/SHA2563f25721f8240b5b40b67a42735f88d945ec6565857b5c14c22bee2eb5c266038. This private v2 is not activated; original v1 Root inputs remain fixed for the loader controls. No runtime preservation credit follows from the static review.
+
+Sol owns the separate one-callback stock descriptor control and conditional exact-root loading configuration; ROOT caught a pre-execution lifecycle validator that wrongly required test-fork exit0 instead of accounting for observed normal Tinypool SIGTERM shutdown. The control has not run; its instrument is being corrected/refrozen without changing source semantics. A second Sol owns only the two preservation acquisition tests in an isolated lane. Their final v2 literals/current measured trace remain explicit prerequisites.
+
+The four delivered AE28 slice records remain in-progress with their original agent owners. ROOT attempted normal completion only after actual canonical delivery, but automatic approval review rejected the operation because those records name other owners and the user forbids altering foreign claims. No claim write ran, no workaround was attempted, and all records remain intact. This administrative limitation does not block the separately held ROOT integration claim or its implementation work.
+
+
+### Stock namespace premise measured; strict root guard remains unchanged (2026-10-09)
+
+The separately released stock descriptor control genuinely collected/entered/passed1 callback, with zero failed/skipped/proof callbacks/getter invocations. Both actual exports are own accessor descriptors, whereas the independently measured native Node arm has own data descriptors. Root identity/full303-byte hash remained unchanged. The original driver exited1 at its absolute dump-identifier predicate: actual Vite names this transformed module with the normalized `/tests/helpers/ir-c1-authority-root.ts` ID. ROOT inspected that existing1376-byte getter transform (SHA838d86aede0e3d3d138c1069a9566fc583639049f74569627934569eb996ec9f); its decoded source-map whole303-byte source equals independent root78797d01. No original output, failure or failed:true seal was changed, and no stock rerun occurred.
+
+Read-only post-hoc review3372/502aab1e1a104d641f669cd01d8e068f524e1847262698b559f36d633fdabe9f also validates parent collection/runtime exits0 and all four fork spawn/IPC/explicit observed Tinypool default-SIGTERM/exit/close sequences. Two esbuild close events were not captured; separate ps confirms PIDs gone without claiming their exit codes. All2075 source inputs and41 artifacts remain unchanged. This evidence establishes the conditional loader premise despite the retained driver attribution failure. ROOT released preparation only of the exact-root native externalization config/descriptor successor; its runtime and unchanged healthy G01/G02 remain separately held for complete review. H1 guard and original source authority stay unchanged.
+
+
+### Exact-root native loading successfully measured (2026-10-09)
+
+Selected externalized descriptor epoch genuinely collected/entered/passed1 callback, zero failed/skipped/getters/proof calls; actual driver exited0. Native loader trace and loader dump info identify exactly `/tests/helpers/ir-c1-authority-root.ts` externalized to the genuine303-byte physical root, zero root transforms, and the ordinary test still transformed. Both actual exports are own data properties with independently expected strings and native flags. All2075 frozen source inputs and89 artifacts remained unchanged; successful seal SHA256c640d6fa3998294a8aeca74e3c50207a8cc31b8dbb269c69190962da33cfcb4e. H1/root/receipts/source bytes were not changed to obtain this result.
+
+ROOT corrects an earlier copied-expression diagnostic: its manually copied overescaped regex formula differed from the actual proposed config. Independent evaluation of the actual file declarations confirms the original regex was exact (root accepted, dot-mutant refused); no original config regex defect was demonstrated. The minimal original valid config remains selected;32 data-only predicate controls verify both proposed canonical/private expressions. Optional named-helper drafts remain evidence rather than a bugfix.
+
+ROOT released preparation only of a separate unchanged-G01/G02 source-proof successor under the qualified one-module loading route. Its two callbacks, source/authority bytes and20 held cases stay unchanged; new output/config/observer custody is independently reviewed before runtime. The original two source-proof failures and stock descriptor driver attribution failure remain preserved. Canonical Vitest configuration is not applied or published yet; Node24/required CI version compatibility and full suites remain separate requirements.
+
+
+### First loader-qualified source proof run: one actual pass, one preserved oracle failure
+
+The following measured note is adopted without relabeling the unsuccessful epoch. The canonical config remains unapplied and v2 remains unactivated.
+
+### Actual fresh source control: G01 passed; G02 failed at unchanged Deno length assertion
+
+Existing issue6920, **Native Linear numeric-vector shared source handoff and integration plan**. ROOT released one fresh collection22 plus unchanged G01/G02 source run under freeze682000/`71f1af5b04fc76b9e85f6a346950aa50f72e00c5769695ff973edf9aa5c40953`. Entry was pinned Node25.9.0 plus `healthy-native-control/run.mjs`. Actual process handle49507/chunkdd36c7, driverPID71218; terminal chunk569867 exit1. CollectionCLI71239 exited0/signalnull; selected runtimeCLI71270 exited1/signalnull, both with recorded close. No retry, repair or source/authority/config edit occurred.
+
+Actual denominator: registered22, entered2, passed1, failed1, unexecuted20. G01 passed and emitted full pins. Physical C-ABI27454/SHA256 `d303abd67069493c08dedc6cd124482f80675c06e0ca1748cea168098fc82d46`/Git blob `b7d04be3e51eafc7aa3257d6da808750e4dbaee4` reconstructed predecessor26965/`fba055c0a5ed1b823b1bb8644c5cb495e0b26bb087bf36b5d746efda708fb308`/blob `37eb30e8691a7e30033c74bc03bd386dc08e9d49`. Its exact emitted read order was root.ts,geometry successor receipt,c-abi.ts.
+
+G02 passed its unchanged source predecessor assertion599721/SHA256 `644219143ca7262a03ae74c559b1dcc9bd20c0bdc6b8f09a059d659523d93d53`, followed by the exact root/receipt/compiler-boundaries read-order assertion. It then invoked the unchanged Deno proof and reached the final length assertion at testline23:675: **actual589117 versus expected592414**. This is the first measured failing stage after the loader treatment. The earlier namespace-descriptor guard no longer stopped either callback. The physical current policy source is the frozen606971/`d32f2d135094d616309588dabdcdfb3af643b87896c0de27c107f5e4e15a1896`/blob `da3dbc17db188f312f6dd90e13f7464ed0c995cd`.
+
+G02 emits its full pass pins/Deno read trace only AFTER the failed length assertion. Therefore no full actual Deno SHA256/Git blob/read trace was retained by this unchanged callback, and G02's own pass record is absent. Do not invent these fields or reexecute its API merely to populate them. The raw Vitest row records589117; passing the prior source assertions is separately bounded evidence. No Deno success, overall2/2 pass or new defect attribution is asserted.
+
+Post-hoc read-only audit confirms actual loader info externalized only the genuine physical root.ts, with native client trace and zero root transforms. This test and allfour beforeAll proof helpers remained transformed. All2075 original v1 source inputs plus123 supporting artifacts and allsealed runtime evidence rehashed unchanged. Original failed stock/source epochs, all proposals and v1 root303/H194419/receipt188137 remain intact.
+
+Allfour test forks71253/71268/71284/71373 had recorded spawn/IPC, exact pinned Tinypool default-SIGTERM request/successful kill return, matched exit/close and no child errors. Esbuild services71267/71299 had spawn but no recorded exit/close before parents ended. Separate read-only process check of allnine driver/CLI/fork/service PIDs was empty/exit1 (chunkc64393); no listed process remained, but service exit codes/close events remain unmeasured.
+
+Failure seal5119/`cb28cd410f31c128f2f6158424e5c629021c0740ee48a163e0ae25aea09a9ca1` remains `failed:true`. Rawcallbacks572/`94de05f8555ad24e77f8fae55b4231f8557a012ac8559e23038dc69eb867d5dd`, results7148/`8e3dfc62ac650f91c2054937275a5c37c60599ff776c2be8a43802f5a645efc0`, stderr1862/`6c2e5953bf1b720872d68b927bc1d866fd13c4887909a758e9f92b4aaed079ca`, separate audit5235/`fdffd9b642a0056f377d2ba0fcb03115c7c765f17b53e4965406ddbe14ae2271` retain complete actual rows and limitations.
+
+Return this actual first-stage failure to ROOT/Astra for a new bounded specification. Do not alter592414, Deno/helper/source/authority or retry automatically. G03/P01–P19, current accepting C1/full lowering APIs, v2 activation, Node24, physical/cached faults, migration/publication remain held. ROOT should append this exact1/2 result and missing-record limits to existing issue6920 before any new work is released.
+
+
+ROOT separately authenticated both genuine Deno historical Git blobs and the unchanged return branch, without invoking the helper: `.tmp/geometry-deno-output-oracle-authority.json`,1080/SHA32a69ff394ccf46a64b0f9359412ac6c781461a5c714b806bec15684cfd95cf5. The API validates/discards the592414-byte mainLineage profile and RETURNS the589117-byte mainPredecessor profile (fullSHA58ae19c3c96ecbb3ebe43ec81cfb1d244a0c15e80c7da6000becb58d44834857, blobe775a64483ace95ca46b0d65221cff9cf84c4500). This demonstrates a wrong harness expectation, not a production defect or permission to accept whatever a new return produces. Astra is specifying a G02-only full-independent-pin successor before any assertion change/reexecution. G01 and all original failed epochs remain unchanged.
+
+
+## Coordination reply and watch baseline — 2026-10-09
+
+Task: inspect new/edited replies in the authorized PR6583 coordination thread and continue the existing heartbeat. Actual upstream claim6920:geometry-proof-integration-20261009 remains owned by ttraenkler/codex-ir-integration-session-a-20261009, write60335-ngn0jcr6. Primary dirty worktree preserved.
+
+B comment6076210344 (edited07:17:16Z) publishes held PR6593 head2f8ae6bde384d9f182981c11b94f7230988caa42 with canonical main616da017ca11cefa61f3f8d71a1c7ac18773491c. B requests distinct review/release decisions for two archive-uploader insertion points and a source-compatible runner approval successor. Required quality failed before child execution on unapproved source tree; advisory success is not qualification. Zero child observations and original pins/failures retained. Neither requested implementation scope is released by this watch update.
+
+C comment6076291870 publishes held PR6600 composed heade8f56680589752d67c83ce80cbb43b1bebf1f056 containing signedb932 dependency and main616da. GitHub exact-head revalidation confirms both PRs open/mergeable and both holds intact. C local24/24 G24 and33/33 cross-backend are reported evidence, not independently rerun. Live exact-head CI equivalence and cross-backend succeeded; quality113713590751 and eight broad issue shards remain in progress. Skipped/stub Test262 jobs are not queue conformance delivery.
+
+Updated existing ACTIVE ten-minute heartbeat watch-ir-coordination-with-session-b to both new comments and exact heads. Quiet while unchanged; notify actionable replies, edits, ownership/dependency changes or delivery. No duplicate automation, foreign edits, claim changes, hold removal, or queue action.
+
+## Adopted Astra G02-only oracle correction specification
+
+Full specification13043/SHAf1448ffc15423f2d5c0b0ec88ee9d68ae76c9285af064f90e2de242631f14a0c follows. Implementation release is private harness authoring and preparation only; ROOT must review the new exact patch/freeze before one fresh runtime epoch. No production/helper/receipt/root changes or automatic retry are released.
+
+# G02 return-oracle correction under the qualified native-root loader
+
+Issue 6920 — Native Linear numeric-vector shared source handoff and integration plan.
+
+Codex GPT-6 Astra High; specification only. This is a narrow correction to the G02 expected result in `astra-anchor-loader-qualification-spec.md` (19191 bytes, SHA256 `4cb2d75e3c97fea52e07db1a39c3719be85145b475ff1d31fedefd6ffbf999e5`). ROOT must adopt this full correction in the existing issue before Sol amends the private harness. No helper, production source, receipt, anchor, claimed caller, committed test, loader behavior or fault scope changes are authorized here.
+
+## Correction and independently established cause
+
+My earlier loader plan incorrectly called the 592414-byte `mainLineage` view the return value of `captureDenoPostPositionMainPredecessorPolicySource`. The unchanged function validates that view and discards it, then independently reconstructs and **returns `mainPredecessor`, 589117 bytes**. This is an assertion-oracle error in that plan and the resulting private G02 harness. It is not a reason to modify a proof helper or weaken its validation.
+
+The actual function at ROOT `tests/helpers/ir-deno-post-position-main-successor.ts` lines 2715–2723 is:
+
+```ts
+export function captureDenoPostPositionMainPredecessorPolicySource(
+  raw: string,
+  readAuthority: Reader = defaultRead,
+): string {
+  if (typeof raw !== "string") return fail("raw input must be a primitive string");
+  const receipt = authenticate(readAuthority);
+  beforeRaw(raw, receipt, receipt.mainLineage);
+  return beforeRaw(raw, receipt, receipt.mainPredecessor);
+}
+```
+
+`authenticate` at lines 2603–2612 reads exactly the fixed Deno receipt, verifies its whole bytes/SHA and exact expected profile, and returns it. `beforeRaw` and `beforeSemantic` perform no additional authority-reader calls. They check the full current pin, reconstruct/check the requested before pin, separately replay/check the current bytes, and verify the semantic inverse against the reconstructed raw result. The first projection does not replace `raw` for the second. The expected Deno reader sequence for this public call is therefore exactly one receipt path, not the three reads of the preceding new geometry policy proof.
+
+The inspected ROOT helper is 121685 bytes/SHA256 `18a91889947f5056e3398d2924d2344d552a81843d8404c11c7c21bae3cabf74`, Git blob `667a4527879ba8b52f08f228f30d73ece328e39b`. The fixed Deno receipt is 116203 bytes/SHA256 `c5cc132cfb850bf29da5da8932312547df04a1faa4af60385131550d520c0248`, Git blob `facd5ab8ea4d9db6329066ca86bf3e4fe677901d`. Both entire physical files are byte-identical to their genuine `b932e3a05e353acc59e7b547ef4e417a5d8637e1` Git objects.
+
+Independent expected full pins, read from genuine Git blobs and matched against the fixed receipt and helper literals before specifying the assertion:
+
+| Role | Bytes | SHA256 | Git blob | Policy files |
+| --- | ---: | --- | --- | ---: |
+| Deno input / new geometry-policy predecessor | 599721 | `644219143ca7262a03ae74c559b1dcc9bd20c0bdc6b8f09a059d659523d93d53` | `c24af976b5c991c28e7ccafaf87f0ec656f3fff0` | 1874 |
+| Validated and discarded `mainLineage.before` | 592414 | `3e798a5670fa54a947a11268b8035c2256b91800c3e73c5cff73c95e78dfe20f` | `51244622dc2b35a60237ce300dd93070a36e1416` | 1850 |
+| Returned `mainPredecessor.before` | 589117 | `58ae19c3c96ecbb3ebe43ec81cfb1d244a0c15e80c7da6000becb58d44834857` | `e775a64483ace95ca46b0d65221cff9cf84c4500` | 1840 |
+
+The last blob is additionally bound to the actual tree entry `46d9a47ca00e421572e8ef3a2db4a040af4b84de:scripts/compiler-boundaries.json`; its expected value is not copied from the failed callback. A separate reviewer Python data computation independently inverted and forwarded the fixed receipt's 21 `mainLineage` raw spans and 29 `mainPredecessor` raw spans, compared their entire outputs to those genuine blobs, checked all 24/34 removed rows and neighbors (including end-of-array), reconstructed both complete semantic before views, and replayed each back to the same whole current policy. No JS/TS helper, API or test was imported or executed.
+
+Reviewer data: `.tmp/astra-g02-oracle-correction-data.json`, 3755 bytes/SHA256 `e52fc0f45f97bc39c6e25f9be793a9c2cceae4a88e1a38cf96715362c196bce8`. It pins the actual failed harness/freeze/output artifacts as well as the genuine helper, receipt and source objects. ROOT's independently obtained `.tmp/geometry-deno-output-oracle-authority.json`, 1080 bytes/SHA256 `32a69ff394ccf46a64b0f9359412ac6c781461a5c714b806bec15684cfd95cf5`, is separate supporting evidence; the reasoning above was checked directly.
+
+## Actual old epoch remains failed and immutable
+
+I read the actual `.tmp/healthy-native-control/output/results.json`, `callbacks.ndjson`, stdout/stderr and failure stack in `/private/tmp/js2-6920-anchor-loader-qualification-20261009`. Stock Vitest 3.2.4 collected 22; G01 and G02 entered; G01 passed; G02 failed; twenty were skipped. The exact G02 assertion at private test line 23:675 was `expected 589117 to be 592414`.
+
+The actual G01 callback record contains the full 27454-byte current and 26965-byte predecessor pins and exactly root/geometry-receipt/C-ABI reads. G02 reached its final length assertion only after its 599721-byte/SHA predecessor check and exact ordered root/geometry-receipt/policy-source check completed. Those earlier assertions were before the failed line in the actual unchanged harness. Its `callback-pass` emission followed that failed assertion, so there is no observed G02 returned SHA256, returned Git blob or Deno read array from this old epoch. Do not fill those absent fields with the now-established expected values or claim the old G02 passed. The driver exited 1; the old 1-pass/1-fail epoch remains exactly that.
+
+Keep the original getter-failure two-callback epoch, stock descriptor/driver-attribution failure, qualified loader evidence and this later failed source epoch separately intact. The existing source freeze is 682000 bytes/SHA256 `71f1af5b04fc76b9e85f6a346950aa50f72e00c5769695ff973edf9aa5c40953`. Its 2075 frozen inputs remain the successor's source population; do not refresh inputs against a newer main or substitute private v2 authority. This correction confers no new result on old artifacts.
+
+## Sol implementation boundary: only G02 oracle and its observations
+
+Create a distinct private successor directory under the same loader lane, for example `.tmp/healthy-native-g02-oracle-successor/`, with a new freeze and initially absent `output/`. Retain the existing 22 names and ordering. Keep the entire G01 callback and twenty unselected G03/P01–P19 callback bodies byte-identical. G02 retains its name, real current input acquisition, source-proof API, actual unchanged Deno API, argument ordering, reader, external whole-authority authentication and frozen-input checks. There is no new source projection, alternate Deno route or catch/fallback.
+
+Within G02, replace the incorrect final length-only expectation with the independently established full exact returned pin. Strengthen the existing intermediate pin assertion to include its independently established Git blob. Assert the complete Deno read sequence separately from the source proof's three reads. Use literal expectations, not a runtime receipt-derived expected object and not the returned result itself.
+
+Required oracle fragment (the surrounding existing acquisitions remain unchanged):
+
+```ts
+expect(measure(Buffer.from(before))).toEqual({
+  bytes: 599721,
+  sha256: '644219143ca7262a03ae74c559b1dcc9bd20c0bdc6b8f09a059d659523d93d53',
+  gitBlob: 'c24af976b5c991c28e7ccafaf87f0ec656f3fff0',
+});
+expect(calls).toEqual([
+  'tests/helpers/ir-c1-authority-root.ts',
+  'tests/helpers/ir-c1-linear-layout-geometry-successor.json',
+  'scripts/compiler-boundaries.json',
+]);
+const sourceReads = [...calls];
+calls = [];
+const old = deno.captureDenoPostPositionMainPredecessorPolicySource(before, trace);
+const denoReads = [...calls];
+const denoBefore = measure(Buffer.from(old));
+emit({
+  event: 'callback-observation', name: active,
+  sourceReads, denoReads,
+  current: measure(Buffer.from(raw)),
+  historical: measure(Buffer.from(before)),
+  denoBefore,
+});
+expect(denoBefore).toEqual({
+  bytes: 589117,
+  sha256: '58ae19c3c96ecbb3ebe43ec81cfb1d244a0c15e80c7da6000becb58d44834857',
+  gitBlob: 'e775a64483ace95ca46b0d65221cff9cf84c4500',
+});
+expect(denoReads).toEqual([
+  'tests/helpers/ir-deno-post-position-main-successor.json',
+]);
+emit({
+  event: 'callback-pass', name: active,
+  sourceReads, denoReads,
+  current: measure(Buffer.from(raw)),
+  historical: measure(Buffer.from(before)),
+  denoBefore,
+});
+```
+
+The observation event records what happened before the final assertions and is not a pass, completion, or extra callback. The existing driver counts only enter/pass/fail events and already ignores other event kinds; no counting relaxation is needed. The pass event remains after all assertions. If the Deno API itself throws, preserve the actual stack and stop; this narrow correction does not add a recovery path. No broad inequality, byte-range allowance, SHA omission or weakened semantic oracle is allowed.
+
+The only non-G02 successor harness differences are unavoidable private epoch path rebinding, updated expected harness hashes, and new provenance metadata identifying this adopted oracle correction. Preserve the already qualified exact root externalization predicate, Vite/Vitest/Node versions, transform policy, registration-selection regexp `^G0[12] `, process observer implementation, worker attribution checks, denominator checks and loader dump/native-import checks. Keep the original relative `healthy-native-control.test.ts` filename if that avoids unnecessary driver/config changes. Do not change a loader regexp or observer to address this assertion failure.
+
+Before requesting runtime release, produce a complete delta/packet showing exactly the G02 body change, path-only support changes, unchanged G01/twenty bodies and names, old/new harness pins, this specification pin, and the immutable predecessor freeze/output pins. Use the original fixed source pins, including the unchanged Deno helper/receipt. An independent ROOT read must confirm them before the new freeze is accepted.
+
+## Fixed v1 authority and subsequent release
+
+The successor retains these actual ROOT files, freshly read during this specification:
+
+| File | Bytes | SHA256 |
+| --- | ---: | --- |
+| `ir-c1-historical-authority.ts` | 94419 | `d0c4d38debf1e59407ea94d20587dbb46bd3ff874bf10d04a76ebf0e8603df48` |
+| `ir-c1-current-source.ts` | 44840 | `ae850773522f11dca82cb22f99bc083fb60117ed016fbc7a896061b1507a9474` |
+| `ir-runtime-program-policy-evolution.ts` | 411837 | `8575d0f4f66632cb606caf2f94538bd5cb8ef74e89f655e3c1f8f0930de8038c` |
+| `ir-c1-authority-root.ts` | 303 | `78797d01f3ba4d309a0d70bcb4e039b1f0a6b3c2a897890dcdfe707cdeaa7d1d` |
+| `ir-c1-linear-layout-geometry-successor.json` | 188137 | `625061bbaa2cf7c6613285225b6092eeaf607b3738fc5909d58dba5db6e8f9df` |
+
+All paths above are under ROOT `tests/helpers/`. Neither the private v2 receipt/H1 nor either fixture patch belongs in this epoch. No committed old Deno test or its historical oracle is edited. The G02 correction and fixture F1 diagnostic correction remain separate artifacts and scopes.
+
+After adopting and reviewing the exact Sol patch, ROOT may separately release one fresh successor collection and the same two selected healthy callbacks. This specification itself executes or releases none. Require 22 exact registrations, two entered, two passed, zero failed, twenty unexecuted, genuine process/IPC attribution and the existing before/after source/harness seals. Record the new G02 full returned pin plus both complete ordered read arrays from actual execution. Do not reuse or relabel an old output directory, rerun automatically after another failure, or launch G03/P01–P19, physical faults, v2 activation or full suites as part of this correction.
+
+An actual successor pass would establish only these two source API controls under this exact loader and fixed v1 authority. It would not erase the old oracle failure, qualify all callers/C1/policy APIs, repair missing old service lifecycle measurements, or authorize a later authority activation. Any newly observed failure must remain an exact stage-specific result and requires its own bounded handling.
+
+This specification and its reviewer-owned data artifact are the only writes. No runtime/import/fault/collection, source/test/helper/config/receipt/root/claim/issue change, commit or publication was performed. A local all-history Git lookup encountered an unavailable promisor object; the decisive exact blob/tree reads used already-present objects with lazy fetching disabled. One initial Python neighbor check failed on an end-of-array row before writing data; the corrected data-only computation handles absent neighbors explicitly and completed all comparisons. Neither event executed the proof API or changes the actual runtime record.
+
+
+### Dispatch: review B archive and current-main runner approval scopes
+
+Astra High resumes specification-only under ROOT integration ownership: inspect exact published B6593 head2f8ae6bde384d9f182981c11b94f7230988caa42, issue6915 archive plan and real workflow/runner; assess the two exact uploader insertions separately from source-compatible approval succession. No foreign source/branch/claim/workflow edits, no release by dispatch, no replacement of old approval pins/baselines. Deliver concrete ownership recommendations and a full bounded implementation plan for any safe approval successor, preserving36/38 witness equality, original failures and transitive input custody. ROOT must review before communicating any release in PR6583.
+
+
+### Dispatch: exact-head PR6600 delivery review
+
+Sol6.1 Medium independently reviews C6600 e8f56680589752d67c83ce80cbb43b1bebf1f056 and fresh canonical main, exact diff/parents/signedb932 dependency/actual CI evidence. Read-only ownership, private /private/tmp/js2-6600-delivery-review-20261009 artifacts only. No foreign branch/source/claim/HOLD edits, queue action or comments authorized. ROOT retains integration and queue decision; this reviews the existing publication, not duplicate implementation.
+
+
+ROOT independently read complete1473-byte F1-only fixture delta and rehashed both exact successor test files. Static repair matches reviewed first-guard errors and planner2/CABI1/other7one read accounting, preserving original guards and healthy/restoration checks. Static repair accepted for later integration; no runtime credit or Root copy yet. Keep frozen v1 source epoch unchanged until corrected two-control qualification seals. Final v2 literal pins and measured trace remain required.
+
+
+Authorized coordination acknowledgement6076430239 was published at07:25:01Z and independently read back through GitHub comment record. No release or queue action in that comment. B/C scopes and HOLDs intact. Astra early static finding: two archive steps technically separable from runner changes, but fresh B implementation claim and full plan/ROOT review still required; current-main complete witness equality remains unmeasured.
+
+
+ROOT independently reviewed full G02-only test/config deltas and unchanged complete driver/observer, verified all2075+165 frozen complete pins/modes and old/new prefix/suffix body equality, and confirmed fresh output absent. Freeze695235/SHA9ff183a97a8380217a38035d896aa13573dccd1571ce5ec2a265deb985033d72 accepted. Authoring note and exact inherited failures remain unchanged. Separately release ONE fresh selected G01/G02 source-control run via pinned Node25.9 run.mjs, requiring22registrations/2entered/2pass/0fail/20held, native root only, exact full return and source3/Deno1 ordered reads and complete seals. On any failure preserve and stop; no retry, source/authority/v2/Node24/full-suite/fault scope granted.
+
+
+### Actual corrected v1 source controls — accepted bounded evidence
+
+ROOT executed the separately released single run through pinned Node25.9, actualsession92504 terminalexit0 (chunk4bb529). Fresh22registered/2entered/2passed/0failed/20held. Native physical root only, zero root transforms, four proof helpers remain transformed. G01 reconstructed exact26965-byte CABI predecessor with ordered root/receipt/CABI reads. G02 recorded exact599721/64421914/c24af976 predecessor, then unchanged Deno API returned589117/58ae19c3/e775a644 with separately measured source3 and Deno1 ordered reads. Actual pass remains after full equality assertions. Seal unchanged2075source+165artifactpins, failedfalse. Original1pass1fail oracle epoch preserved; no retroactive missing-field completion or fullC1/caller/runtime/native-admission credit.
+
+Actual artifacts: [{"file": "summary.json", "bytes": 618, "sha256": "4e2b0b0cda74c1ae8e4982baf03de3444b385fc07a9eeed2b270451286b3158e"}, {"file": "callbacks.ndjson", "bytes": 2051, "sha256": "0c015ff9cbfa1831a74ab53d9feace4a0c231e6a298859bd74bd76137cf237ab"}, {"file": "seal.json", "bytes": 5300, "sha256": "30debb4bde6e132ee0a728ef6cdb6c1003d0aed38fe667bd4ae1c0b688e62310"}, {"file": "fork-outcomes.json", "bytes": 713, "sha256": "91015fd3be7ad5698aec5cacb330d2ce24e54971f8e4b03b4101c104e47b52b2"}]
+
+Sol resumes actual-epoch forensic notes and private authoring only for Node24 native/external descriptor compatibility. ROOT reviews packet before execution. No repeated Node25 descriptor, v2 activation or canonical config changes yet.
+
+
+## Adopted independent exact-head C6600 delivery review
+
+# PR 6600 exact-head delivery review
+
+Read-only Sol review for ROOT's issue 6920 “native Linear shared-source handoff”; no repository/source/branch/claim/HOLD/queue/comment mutations and no new runtime jobs. Evidence captured 2026-10-09 (final REST sample approximately 07:30 UTC). All files here are reviewer-owned scratch artifacts.
+
+**Disposition: the reviewed head is ready for ROOT's separate protected-queue decision, with HOLD retained. It is NOT delivered.** Canonical main remains 616da017ca11cefa61f3f8d71a1c7ac18773491c; PR is OPEN, exact REST head e8f56680589752d67c83ce80cbb43b1bebf1f056. Server compare main...head is ahead 4 / behind 0, merge base equals canonical main. Thus main is an ancestor of head; the head is not in main. No final main behavior verification is claimed.
+
+## Ancestry and custody
+
+Head parents are b932e3a05e353acc59e7b547ef4e417a5d8637e1 and 616da017ca11cefa61f3f8d71a1c7ac18773491c. The dependency's first parent is e5b67e2d2ddb92cc2ccd039a5677f476a78bf93f. GitHub reports dependency signature valid and verified; dependency...head is ahead 12 / behind 0, retaining the original commit identity. Head contains an SSH signature, but GitHub says unknown_key (not an unsigned commit). CI merge preview 8988f27d24412df3d8ee2eb01059a6f3d6684e95 has parents main/head and tree e9fdf1f42f3b88377cf0565f5ed06554916c4e37, IDENTICAL to exact head.
+
+Canonical main's complete issue 6920 text is an unchanged prefix of the composed issue. Dependency's suffix from “Exact composed inventory and detector qualification (2026-10-09)” through ROOT's bounded-release appendix remains byte-identical in composed issue. The main compare contains no deletions in the issue, only 123 added lines. This corroborates C's append-conflict account; no source-conflict resolution is visible in the composed diff.
+
+## Complete diff and scope
+
+28 changed files: three source contract/planner paths, one new G24 test, compiler boundary policy, issue 6920, and 22 historical qualification-log files. No workflow, checker implementation, source retirement, queue config, or other codegen path changes. Full three-dot diff is complete-main-diff.patch; GitHub omitted the two large added status-file patches, which were independently downloaded and restored into this review copy. Source review confirms target-neutral shared leaf has no imports, record/string/storage implementations move directly, vector adapter retains canonical scalar and non-scalar identity, and allocation/facts/policy/verifier bodies remain outside the source diff. Boundary policy diff only adds the foundation path, raises minModules 9 to 10, and adds its clean foundation inventory row. No actionable source defect identified in this bounded delivery review; it is not a fresh exhaustive runtime qualification.
+
+## Genuine required contexts
+
+Active ruleset “main: merge queue + required checks” requires exactly:
+
+| Context | Actual job | Final state |
+|---|---:|---|
+| cheap gate (main-ancestor + lint) | 113713591756 | success |
+| merge shard reports | 113713623963 | success |
+| quality | 113713590751 | success |
+| equivalence-gate | 113714344305 | success |
+| check for test262 regressions | 113713623957 | success |
+| cla-check | 113713583314 | success |
+
+Duplicate skipped PR-stub rows were excluded, rather than treated as gate evidence. The real Test262 regression job's log still says test262-shard and test262-shard-mg skipped: these passes satisfy PR gating but do NOT measure conformance. No merge_group population has run for this PR; protected queue will own that evidence. Eight issue-tests-shard jobs were still in progress at the final snapshot (nonrequired by this ruleset); no failure observed. PR REST mergeable_state was unstable while those jobs ran. Do not claim every check has settled. No formal GitHub reviews exist; ROOT's packet acceptance and C's handoff are the available human/agent record.
+
+## Independently read measured evidence
+
+CI checks use the merge preview whose tree equals exact head. G24 log: 1/1 file, 24/24 tests (changed-test job 113714183002; advisory designation does not dilute the actual count, but it is not an enforced context). Cross-backend advisory job 113713590962 genuinely runs tests/cross-backend-diff.test.ts, 1/1 file, 33/33 tests; it is semantic suite evidence, not native performance certification. Quality logs independently give import cycles 1,899 files / 10,514 value edges, 3,867 type-only refs skipped, largest SCC 699, and typecheck/lint/format and ordinary budget/coercion/oracle/dead-export/issue gates complete. Required guard suite is 21/21 files, 261/261 tests.
+
+Downloaded CI compiler-boundaries artifact has sourceRevision 8988f27..., requested base HEAD^1 resolving to canonical main 616da..., inventoryValid true, 0 errors, 0 unresolved edges, 1,899/1,899 tracked modules, foundation 10. Status is inventory-valid-architecture-incomplete, architectureComplete false, graphComplete false. This is a valid bounded inventory gate, NOT architecture completion. Its report is preserved in boundaries-artifact/compiler-boundaries-report.json.
+
+Historical committed A/B evidence is base 8452732f0b88c14c5c7634ece58f83240970ea4c against pre-composition packet, not a fresh A/B of e8f5668 against current main. Raw status rows: base 3,699 = 690 pass / 3,005 fail / 4 skip; candidate 3,723 = 817 pass / 2,902 fail / 4 skip, including 24 G24. Excluding G24 candidate passes are 793. Both status files have 11 repeated display identifiers: unique key counts 3,688 / 3,712. Comparing displayed identifiers gives 0 new failed identifiers, 0 missing, 24 added. This does not disambiguate repeated names; report denominators are original rows. The 103 apparent improvements are stale error-text matching, not semantic progress, as C correctly disclosed. Historical raw JSONs with only SHA receipts are unavailable here. C's composed local 24/24, 33/33 and ordinary-gate claims are corroborated by CI tree-identical work, but historical broad 39-suite A/B is not rerun.
+
+## Holds, claims, and required next action
+
+PR has human-added HOLD (ttraenkler, 2026-10-09T02:05:03Z), no unlabeled event; GraphQL queue sample is isInMergeQueue false / entry null. Current claim registry is nontruncated and retains C source, A boundary inventory, and ROOT geometry-proof-integration claims in progress, with their assignees and branches captured in claim-*.txt. These owners were not displaced. Dispatch is read-only, so no competing write claim is acquired.
+
+PR body remains stale: its known blocker and “this PR does not edit inventory” language predates signed dependency composition. ROOT can adopt this review and, if appropriate, arrange body correction within existing authorization before its distinct queue action. HOLD and queue ownership remain with ROOT. Queue entry must use this exact head, actual merge-group gates must pass, and final delivery must prove fresh canonical main ancestry plus content and relevant behavior after merge. This review alone grants none of those later facts.
+
+
+ROOT accepts this bounded source/delivery review and authorizes correcting the stale PR-body blocker, then fresh exact-head/main revalidation, HOLD release and protected queue admission ofe8f56680589752d67c83ce80cbb43b1bebf1f056 only. This does not change C source/branch/claims or grant broad test/architecture completion. Actual merge-group conformance and canonical delivery remain outstanding.
+
+
+## Adopted full Astra B archive/source-approval implementation plan
+
+# B append CI archive transport and current-source approval successor
+
+Issue 6920 — Native Linear numeric-vector shared source handoff and integration plan. Related existing issue 6915 — Linear owned-ASCII append: optimize the existing copy kernel.
+
+Codex GPT-6 Astra High, static review/specification only. ROOT adopts this complete document in issue6920 before any delegated implementation. No claim, branch, workflow, runner, shared source, test or fixture has been edited by this review. No compiler/test child, runner import, embedded self-test, fault window, commit, comment or publication was executed. Network operations only read exact published GitHub objects and already completed job logs.
+
+## Recommendation and boundary
+
+**Recommend releasing the two exact uploader insertions to B as one bounded transport implementation, independent of the runner approval task.** The proposed locations and narrow payload are compatible with the actual workflow and runner. A new uploader cannot recover the old missing CI artifact, prove full witness equality or turn an advisory test failure into a pass. Preserve ordinary required-quality failure and the separate advisory assertion policy.
+
+**Recommend a separate, staged runner approval-successor implementation/qualification release**, limited to one named existing runner file and its embedded controls, with B's parent owning its issue/evidence. Retain the complete historical source approval and all other pins, add exactly the independently frozen current source tree as a qualification target, and require new actual full-witness comparison before accepting/publishing that source epoch. A direct replacement of `PINS.sourceTree`, automatic approval of actual HEAD, or acceptance on the unchanged three source-file hashes is not acceptable.
+
+There is no static basis to declare current-main 36/38 equality yet. The complete tree contains real transitive compiler changes; qualification must be able to fail. The actual required CI failure is an approval refusal before the child, not evidence of a new compiler regression. Existing B/C HOLDs, allocator4540 ownership, native admission and ROOT's integration/protected queue authority remain unchanged.
+
+## Exact inspected authorities
+
+The requested coordination comment is [6076210344 on existing PR6583](https://github.com/loopdive/js2/pull/6583#issuecomment-6076210344), independently read with actual `updated_at` **2026-10-09T07:17:16Z**. It requests review/release; it does not itself transfer shared ownership.
+
+Exact B PR6593 head: `2f8ae6bde384d9f182981c11b94f7230988caa42`. Git API commit data confirms parents `6871907a4dbbe168512b7b9ce33500a61430e36c` and canonical `616da017ca11cefa61f3f8d71a1c7ac18773491c`; full tree `5e727a2558ba73abca12ab0b28e15a3cc59a1f72`. Both B and canonical tree entries name complete `src` tree `2a8c200cbb4862b6ffdd5952be7f6fa8f9ce1e63`.
+
+Read at that exact B head, independently Git-blob-hashed after retrieving full bytes:
+
+| Path | Bytes | SHA256 | Git blob |
+| --- | ---: | --- | --- |
+| `plan/issues/6915-linear-owned-ascii-append-copy-kernel.md` | 88430 | `daf4fe258f6f3a1ebdf95b08e5b31406cc9de91a5346865857964a2426cb5d34` | `330c1a2cede32bdc18d38c16582b41a7a925b01c` |
+| `.github/workflows/ci.yml` | 67634 | `7ca805dddf26b1312bd669abd4948715da65e1706afb41b1ee0dd5137d678bcf` | `5397cc513cf47858106f2365f25ed6203bcb0b22` |
+| `scripts/hooks/run-linear-append-provenance.mjs` | 76845 | `3a154510e5f1280cb7dc71f2a89bae77386ba109990fecb71d586531d9c75e54` | `3a3e323c4d4d41f5761f4db8ed074d931e1e481d` |
+
+The issue's final archive-transport section at lines1354–1410 is a planning proposal; its preceding exact releases matter. The existing advisory delegation covers only the shell body of `Run changed issue test file (advisory)`, not arbitrary additions to the job. The previous trusted-parent, generated-report and color-transport repairs retain their original release limits and all failed epochs.
+
+Fresh read-only claim records:
+
+| Record | Actual owner | State/write ID | Consequence |
+| --- | --- | --- | --- |
+| `6915` | `ttraenkler/codex-linear-b-append-scope-plan-20261007` | in-progress, `86113-5mk75ms4` | B parent allocation; not blanket shared-workflow authority |
+| `6915:trusted-append-ci-20261008` | `ttraenkler/codex-linear-b-append-ci-sol61-20261008` | done, `96415-pkpzp33k` | old implementation claim is completed, not a fresh runner release |
+| `6915:ci-archive-upload-plan-20261009` | `ttraenkler/codex-linear-b-archive-plan-astra-20261009` | done, `32285-cei5dhpe` | completed planning only |
+| `6915:advisory-parent-command-20261008` | `ttraenkler/codex-linear-b-advisory-command-sol61-20261008` | in-progress, `80796-adzysol8` | existing exact advisory command remains reserved |
+| `3518:runtime-preparation-ci-file-shards-20261002` | `ttraenkler/codex-runtime-preparation-ci-file-shards-20261002` | in-progress, `10279-io1vbvdv` | shared scheduling/shard/aggregate custody remains foreign |
+
+ROOT retains claim60335 integration and final queue review. Before editing, B must publish and effect-read a fresh unique implementation slice and its named Sol owner for each of the following two disjoint scopes; this document does not allocate or complete a claim. ROOT's release must explicitly reserve the two inserted step regions and promise no concurrent edits there, while excluding the existing advisory shell and shared scheduling controls. A common workflow filename does not transfer either existing claim. The runner task likewise needs a fresh bounded runner owner, rather than reopening completed61584 work by inference. B parent retains issue6915 and evidence publication; ROOT retains issue6920 adoption/review. No old owner record is rewritten.
+
+## Part A — exactly two inserted upload steps
+
+Only file `.github/workflows/ci.yml` is implementation scope. Exact anchors at the inspected head:
+
+1. Job `quality`: insert immediately after the entire `Changed root test files must pass (#3008)` step (lines617–636), and before `Required guard suite (#3552)` (line638). Do not edit the changed-root shell, its PR condition, eval environment, history fetch, test command or any required guard.
+2. Job `issue-tests-changed`: insert immediately after the entire `Run changed issue test file (advisory)` step, `id: tests` (lines930–943), and before `Report changed issue-test outcome` (line945). Do not edit its `continue-on-error`, filename dispatch/else argv, matrix/ordinal validation, outcome reporting, aggregate policy or selector.
+
+Concrete inserted steps:
+
+```yaml
+      - name: Archive Linear append parent evidence (quality)
+        if: always() && hashFiles('.tmp/6915-ci/run-*/**') != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: linear-append-quality-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .tmp/6915-ci/run-*/
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: false
+```
+
+```yaml
+      - name: Archive Linear append parent evidence (advisory)
+        if: always() && matrix.file == 'tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts' && hashFiles('.tmp/6915-ci/run-*/**') != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: linear-append-advisory-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.ordinal }}
+          path: .tmp/6915-ci/run-*/
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: false
+```
+
+Omit `retention-days`: use repository-configured default retention, exactly as the published proposal requires. This is expiring Actions storage; parent must inspect/download and retain needed complete evidence before its reported expiration, not describe the default as permanent custody. Record actual artifact ID, name, archive digest, run ID/attempt, job identity, exact checkout SHA and expiration at retrieval. Different job/name/attempt/ordinal identities prevent quality/advisory and rerun collisions; overwrite remains prohibited. No new job, permission, output, environment, compression policy, broad path or workflow framework is needed.
+
+The [upload-artifact action documentation](https://github.com/actions/upload-artifact/tree/v6) establishes hidden-file opt-in, repository-default retention and preservation of the hierarchy after the first wildcard. The `run-*` directory identities must survive download. [GitHub's `hashFiles` documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#hashfiles) establishes that unmatched files produce an empty string. The condition is only a presence trigger, not evidence authentication. Verify the actual action's path layout in the implementation controls; do not flatten multiple archives into one set of filenames.
+
+Failure and custody behavior:
+
+- The action is eligible after a failed test step because of `always()`, including partial archives. Do not require `success()`, `steps.tests.outcome == 'success'`, a `receipt.json` success marker or all twelve healthy files. Those filters would discard the failure evidence this change is intended to retain.
+- Actual runner code creates a unique `run-*` directory, writes `expected.json` and `command.json`, then calls `assertFrozenInputs` before opening streams/spawning the child. The witnessed current-source refusal therefore can leave a meaningful partial archive containing expected/command, after-failure/errors/receipt, without reporter/graphs/stdout. Upload that directory intact. It is not a complete qualification.
+- `readApprovedCheckout`, artifact setup or earlier job failures may occur before any archive exists. An empty glob makes the new step skip; the original failure and job logs remain authoritative and the missing archive stays unqualified. Do not manufacture empty healthy files or infer success from the skipped upload. Abrupt cancellation/runner loss can still prevent upload; `always()` is not a recovery guarantee.
+- If the trigger observes files but the action subsequently finds none, `if-no-files-found: error` fails. Upload failure itself is an infrastructure failure; do not add `continue-on-error` or a trailing success command. Required-quality failure remains failure. The existing advisory *test* policy stays advisory, while inability to retain a requested existing artifact remains visible. The original outcome reporter still reports `steps.tests.outcome`.
+- Upload only `.tmp/6915-ci/run-*/` descendants, including hidden descendants. Do not upload `.tmp/6915-ci/observations.json`, `runner.lock`, other `.tmp` siblings, the workspace, credentials or unrelated reports. The runner already keeps a prior reporter inside its own archive when appropriate; retain it there. Do not delete, rename, rewrite, reserialize or normalize archive payloads to make the upload succeed.
+- For a completed healthy run retain expected/command/before/after, stdout/stderr, reporter, `graphs.ndjson`, `decoded.v8`, diagnostics, detached `runner-errors.v8` and receipt. Retain additional `previous-reporter.json`, boundary-report raw bytes and `after-failure.json` whenever present. Twelve healthy filenames are not an exact-membership rule that deletes legitimate additional failure/custody records.
+
+Post-release finite transport controls must inspect the actual action-compatible selection/layout with a healthy archive, a partial failure archive, two distinct run directories, a hidden descendant, an unrelated sibling and an empty/no-archive case. Keep these inert temporary data fixtures out of the source/worktree/real evidence. A mock uploader or set of expected filenames alone is not evidence of downloaded action bytes. After the exact two-insertion diff is reviewed, a real future CI artifact must be downloaded and checked against its parent archive records. Do not rerun or rewrite the old completed CI job to pretend its missing artifact was recovered. No source qualification is needed merely to demonstrate preservation of a new truthful failed archive.
+
+## Part B — finite source-compatible runner successor
+
+### Actual blocker and complete source delta
+
+The actual required job113711412922 at run37897284301 names the append test, prints `evidence retained at .../.tmp/6915-ci/run-4imC7Q`, then fails at `assertFrozenInputs`, runner line422, `6915 parent: unapproved source tree`. Both pre-run and finally custody checks retain that error, and changed-root exits1. I read the raw job log, not only the coordination summary. The inspected code places this check before child spawn. The advisory outcome remains separate; its reported green job is not a source-qualified child run.
+
+Current runner constants pin the historical source tree `953f74f80cf2f8085b8e1c93489fcdd357929b37`, not current main. The complete recursively read trees are nontruncated: **1894 historical source blobs and1900 current source blobs**. There are exactly fifteen changed paths (nine modifications, six additions), not an unrestricted source difference:
+
+```text
+src/ir/analysis/alloc-verification.ts
+src/ir/analysis/allocation-evidence/census.ts
+src/ir/analysis/allocation-evidence/contracts.ts
+src/ir/analysis/allocation-evidence/effect-rules.ts
+src/ir/analysis/allocation-evidence/metadata.ts
+src/ir/analysis/allocation-evidence/verify.ts
+src/ir/analysis/contracts/allocations.ts
+src/ir/analysis/effects.ts
+src/ir/analysis/encoding.ts
+src/ir/analysis/escape.ts
+src/ir/analysis/ownership.ts
+src/ir/passes/inline-small.ts
+src/ir/program/allocation-body-validation.ts
+src/ir/program/allocations.ts
+src/ir/program/data.ts
+```
+
+The actual patches include allocation lookup/type contract reuse, extracted body/state validation, canonical vector ownership/escape/encoding rule calls, descriptor-only recursive-class screening, effect classification for dynamic ToNumber/loose equality, and slot remapping plus stricter attached-callee guards in the inliner. These are reached through transitive compiler behavior; unchanged runtime/consumer/integration bytes cannot prove all complete observations invariant. Neither this spec nor delivered main correctness establishes append witness equality.
+
+Independent full-byte reads at B head match **all fourteen existing fixed inputs**: runtime, frozen-body consumer, Linear integration, c63 test, original string-hash fixture and all nine `CONFIG_PINS`. The complete source tree, not a manually narrowed dependency list or generated inventory verdict, supplies the transitive source boundary. Preserve the complete config-population equality check, all1900 current source Git-object/worktree comparisons, regular-file/symlink checks, source/test/fixture dirt refusal, exact generated-report exception and before/after snapshot equality. Do not approve only the fifteen changed files while ceasing to observe the other1885 current files.
+
+### Implementation file/function scope
+
+Only `scripts/hooks/run-linear-append-provenance.mjs` may change for this successor. Allow the literal approval section, `buildExpectedProvenance`, `assertIdentity`, `readApprovedCheckout`, the source-tree membership check in `assertFrozenInputs`, and narrowly related existing `selfTest` cases. B parent appends the adopted plan and subsequent evidence to existing issue6915; ROOT owns adoption in issue6920. No hook/YAML/test/fixture/source/decoder/witness validator/command/flag/config changes belong to this runner scope.
+
+Keep the existing `APPROVAL_COMMIT` and entire `PINS` object as the historical immutable contract. Do not replace or rename the old source value into a supposedly current baseline. Add one explicit fixed successor record naming canonical commit `616da017ca11cefa61f3f8d71a1c7ac18773491c` and source tree `2a8c200cbb4862b6ffdd5952be7f6fa8f9ce1e63`, with this adopted review as its authority. The record is a finite execution-qualification target until the later acceptance steps complete. It is not a general registry, environment override, branch-name rule, ancestry wildcard or permission to accept future main trees.
+
+The runtime acceptance predicate is exactly:
+
+```text
+actual committed HEAD:src is historical953f74 OR fixed current2a8c200c;
+expected.sourceTree equals that actual committed tree;
+all common runtime/test/fixture/config pins and the complete source population
+still match committed Git objects and physical bytes, before AND after.
+```
+
+Unknown trees refuse before spawning the child. Missing Git objects/inspection failures refuse; never infer an empty or matching tree. A known HEAD descendant with the same complete source/test/fixture/config inputs may use the matching source contract, preserving the existing source-compatible behavior of docs-only publications and genuine PR/merge-group checkout commits. Do not require a synthetic PR-head identity instead of actual `GITHUB_SHA == HEAD`.
+
+Use one shared narrow membership predicate, invoked by the real `assertFrozenInputs` path and the embedded controls. Change the signature to `buildExpectedProvenance(head, sourceTree = PINS.sourceTree)`, retaining the historical default only for existing historical controls. It emits the **same nine-field manifest** with unchanged common pins/command/flags and that observed source tree. Extend `assertIdentity` with the same final source-tree argument so its local exact-object comparison calls that one provenance builder; existing historical controls retain their default argument. `readApprovedCheckout` obtains actual HEAD and `HEAD:src` itself and passes both explicitly to identity validation and provenance construction. Neither `JS2WASM_APPEND_PARENT_MANIFEST`, child evidence, generated boundary report, branch name nor a command-line option selects/authorizes the source epoch. The local manifest is compared to the independently built exact nine-field expectation. Preserve the original local/CI identity modes, PR/merge-group-only rule, push refusal and rejection of local override in CI.
+
+Keep actual approval enforcement at the original pre-spawn `assertFrozenInputs` barrier and preserve its archive/error path: build/archive the observed expected provenance, then independently require closed membership and equality there, before any source acceptance or spawn. Immediately before the existing actual-tree/equality check, invoke the membership predicate on `expected.sourceTree`. Merely including an observed unknown tree in an `expected.json` diagnostic does not authorize it; that independent fixed-membership guard rejects it while retaining the existing partial archive and finally diagnostics. There must be no code path that substitutes an arbitrary observed tree for approval and relies only on comparing it to itself. A wrong local manifest still fails the existing earlier identity comparison, just as before; it cannot override the fixed membership check in CI or local mode.
+
+`assertFrozenInputs` still re-reads `HEAD:src` before and after the child and compares to the frozen expectation; it must not choose another allowed epoch at the after-snapshot. An old→new or new→old change mid-run is drift even though both are independently known targets. Keep every other custody predicate and all local `EDITABLE` paths byte-equivalent. In particular, a pending `.github/workflows/ci.yml` edit remains unauthorized for local qualification: isolate the runner-only trial or first commit the independently reviewed uploader. Do not add workflows or evidence directories to `EDITABLE` to make a combined dirty checkout pass.
+
+Retain historical provenance inside `validateAppendReceipt`: original baseline commit `c41bca2bc07e9d8fddbb38ca77904dd1f0cac438` and baseline source `68296a0d34ceea94dbc9ca9398f71bc8a1b742b8` do not change. Actual current `head/sourceTree` fields will reflect the new epoch; historical baseline fields remain historical. The fixed c63 test is already parameterized for independently parent-supplied epochs; no test edit is needed. Preserve all104 old embedded controls and add finite controls of this exact production selection/membership path, without invoking the compiler in self-test mode.
+
+Required new controls: accepted historical and exact current tree; unknown shape-valid tree; same direct-file pins with an unknown full tree; a local manifest swapping old/current source against actual checkout; missing/mismatched HEAD; CI local override; retained push refusal; and after-snapshot source switching between the two admitted trees. Retain source/config/test/fixture dirt, symlink, untracked/opaque-report, parser/descriptor/error/losslessness, color-transport and complete38/36 receipt controls. Controls must invoke the real predicates; do not duplicate approval logic inside a test-only mock. Report the actual new count only after execution. No old control is removed or relabeled.
+
+### Original receipts and full-witness acceptance
+
+The original archived `ci-trusted-parent-20261008/expected.json.gz` was read as data. It binds execution HEAD `0d2dfddb4b1145097210f5398e535e550f945f82`, historical tree953f74, all common pins and the exact4096-MiB strict pnpm argv. `receipt.json.gz` records code0, no signal/kill/spawn error/failures,44273883 output bytes,19733ms. Complete `before.json.gz` and `after.json.gz` are identical, with1908 observed files, Nodev22.23.2 and V8 `12.4.254.21-node.56`. These are original recorded results, not new executions.
+
+I independently downloaded and Git-blob-verified the complete archived graph bytes, decoded **only inert JSON**, and compared them with the published repaired-v3 raw log. Both have38 envelopes. All36 ordered complete observation envelopes/graphs and the completion envelope/graph match exactly; only the separate execution-provenance record differs. No graph field was filtered. Trusted graph gzip blob `57d3060ac69f5fbd60d51916b8a94d179f16aa10` expands to44267645 bytes/SHA256 `bb1f7239ff371e6f373d3b45450a458f88c319a2d47b397b080681ce1d8f2b3e`. Repaired-v3 log gzip blob `c364eb251b5d3cdcf7bf63fab5cbc433484ab551` expands to44274012 bytes/SHA256 `e6f7eae8281d208da3e529ba6bcf19c5d9ad8b1853134edf498df198d2a51cb5`. This validates the retained comparison baseline's data identity, not the current compiler.
+
+Before publication of the runner successor, ROOT/B parent must review the exact private diff and independently freeze the new execution manifest, all current source/config/test/fixture hashes and toolchain. Only then separately release one serialized current-main trial under the existing parent/changed-root route. No runtime is released by this specification itself. Use actual committed HEAD for the local manifest, current2a8 tree, the unchanged c63 test and genuine fixture, existing4096 worker flags and strict exit handling. Retain frozen candidate runner bytes separately from later publication commit identity.
+
+Require all36 exact IDs, Runtime22's33 transitions, eight named same-positive-validator mutations with original/corrupted full evidence, source ownership/batch/completed consumer/module/body/defined-helper/call joins, complete artifact and memory bytes, all action/schema/emission channels passed, reporter36pass/0fail/0skip/0todo,38 complete envelopes, passing completion, strict parent and child exit0, and equal full before/after custody. Preserve Node/V8, actual command/flags, dependency lock/config population and complete transitive source files. Any toolchain difference from the old archive is explicitly recorded; it is not a license to erase graph differences.
+
+Independently compare every complete new observation graph and completion graph against the fixed archived baseline. Keep provenance separate and validate its actual epoch/inputs. Do not strip source sites, metadata, body/slot tables, module identities, allocation evidence, error descriptors, undefined/NaN tags, Map/Set contents, buffer/view references, final binaries or negative-witness fields to manufacture equality. Do not replace a baseline with the new output merely because the36 tests passed. The ordinary runner's passing receipt is not itself this cross-epoch equality check; the separately reviewed comparison is mandatory before acceptance/publication.
+
+If any full graph differs, preserve both complete values, exact graph/ID/path and the originating source delta. Stop the source-compatible acceptance. Distinguish an intended, independently reviewable changed compiler observation from a regression or a broken instrument; obtain a separate bounded plan if a successor baseline is actually necessary. This specification authorizes neither a new accepted baseline nor modification of the original instrument to hide a difference. If the trial fails before the child, record zero child observations rather than36 failures or36 passes; keep the new partial archive. Do not automatically retry or broaden the source contract.
+
+After the full comparison and normal checks pass, publish only through the existing B PR6593 with ordinary hooks and reviewed scopes. Actual required-quality and advisory CI under supported identities must then run and their new uploaded archives must be retrieved, joined to exact checkout/run/job/attempt identity and inspected. Compare complete witnesses and receipts from downloaded bytes, not workflow conclusions. Push-event rejection remains an intentional documented boundary. No uploader or source selector change implies hold removal, native admission, append performance acceptance, old-failure erasure, full IR equality or queue submission.
+
+## Review evidence and next ownership step
+
+The reviewer-owned `.tmp/astra-6915-archive-review-data.json` is8078 bytes/SHA256 `a6954478c6202ad9b7ed17fcabd91584900fdd2c296d37b0e30fc9d1b93e0d68`. It catalogs the exact nontruncated old/current trees and fifteen-path delta, fourteen freshly verified current fixed pins, actual required-job log, original compressed receipts and full archived graph comparison. Files live only under this review lane's `.tmp/b-archive-review-data/`; they are read-only copies/evidence, not implementation or new baseline authorities.
+
+ROOT can adopt/release PartA now as the named two-insertion proposal, with fresh claim/owner acknowledgment and postimplementation review. PartB can be separately released for private runner implementation and later serialized qualification, with acceptance explicitly held on new actual full-witness results. Neither completed archive-plan claim nor the pre-existing advisory-shell claim substitutes for that release. All original missing archives and failed CI epochs remain missing/failed in their historical records. All B/shared source files and claims remain untouched by this review.
+
+
+ROOT reviewed full26593-byte spec and accepts separate PartA two-insertion transport release and PartB finite two-tree runner implementation, preserving original PINS/APPROVAL_COMMIT/baselines. B must claim fresh named implementation slices/effect-read actual records, adopt full plan in issue6915, and preserve old advisory80796/shared shard10279 scopes. B parent may independently review/freeze exact implementation then authorize one serialized fixed2a8c200c source qualification, requiring complete36graphs38envelopes equality; any differing witness stops acceptance without repin/retry. No future source approval, native admission/allocator/import rewiring/legacy retirement/HOLD release follows. ROOT owns publication of this contract as a small docs-only PR and final queue review.
+
+
+Dispatch Sol6.1 Medium docs-only contract publication in isolated fresh-main lane. Own appended issue6920 release section and new plan/log/6920-b-ci-contract-release-20261009.md plus appended SessionA handoff only. No source/config/B/C claims/files edits. Fresh unique publication claim; normal signed hooks/fork PR; ROOT owns queue. This intentionally publishes ROOT-owned coordination appendices, not a competing B implementation.
+
+
+Actual C6600 integration hold removed after fresh616da/e8f5668 check and review; normal protectedqueue exactmatch admitted. Read-backGraphQL OPEN/inqueue true/position1QUEUED; actualgroup2d0c31a3e2dbe0a4a46d123226fa1d62f7d4c7aa parents616da/e8f5668/tree identical e9fdf1f42. Requiredgroupchecks and102realconformance not complete; no maindelivery claimed. Sol read-onlyshepherd resumes actualgroup observation. ROOTpublishes separate bounded Bcontract releases in sameauthorizedthread, with fullplan and independentequality conditions; foreignholds/claims unchanged.
+
+
+ROOT prepared data-only final v2 literal authority inputs from the already independently reviewed seven instrument pairs and full206007/e3a525 receipt. Rehashed prior4120/3f25721f independent review, allseven exact physical intended sources (H1privatev2, othersRootcurrent), and unchanged194-byte original anchor prefix. Proposed303-byte root {"bytes": 303, "sha256": "7d3f1a4c93bc2d7c0bafeb203d2e0bfc021a7f3486e5c8c179b7f1adc95f262b", "gitBlob": "5fb4c120e9c8a2403032ab8d2929fe42977500d4"} and full literal freeze live only in .tmp/geometry-v2-final-freeze.proposed.json / geometry-v2-authority-root.proposed.ts. No activation, source/test mutation, import or runtime; actualcurrentC1trace remains unmeasured and failclosed. Wait Node24 compatibility before physicalroot/source replacement to preserve its fixed v1 epoch.
+
+
+ROOT reviewed full nativeNode24 probe/driver and external arm deltas; independently verified all2075+208 completepins/modes including actual116143568-byte binary SHA0429b268de244397f6b8921a938f55151c4469ab70571799780533eae6abfbce, exact callback/observer equality and onlynamedexternaldriver/path/version changes. Freeze706723/4e4576fd accepted, freshoutputs absent. Release ONE native root import control first underNode24.4.1 with NODE_OPTIONS cleared, strictown-dataexports/no-getters/proofAPIzero and unchangedwholepins. Stopifanyfailure. External arm needs separate next release after nativeactualresult; noNode25repeat/v2/canonicalconfig/sourcehelper edits.
+
+Docs publication encountered ordinarypush issue-link integrity failure because Bissue6915 is not yet canonicalmain. No bypass. ROOT released fourthowned .txt carrier containing exact original26593-byte spec, fullreadable.md with onlyoneBissuefilepath reference replaced by validPR6593 authoritylink, signedfollow-up preservingc890 checkpoint; noBissuecopy orcheckerchange.
+
+
+ActualNode24.4.1 nativearm terminalexit0 (chunkf86ebd), one genuinephysicalroot import entered/completed, both own-dataexport strings/nativeflags exact, zero getter/proof/testcallbacks, complete2075+208pins unchanged/failedfalse. ROOTread actualsummary/seal/parent spawn-exit-close. Separatelyrelease ONE externalized descriptorarm with samefrozenpredicate/callback/observer, onecollected/entered/pass/twoexports floor. Stopandpreserve anyfailure; no autorerun/v2/productionconfigchanges.
+
+
+### Controlled v2 authority activation after qualified v1 and Node24 epochs
+
+Freshactualclaim60335 remains ROOT-owned. All Node24 current2283 fullpins and both completedruntime seals/evidence were independently rehashed before any input change; v1 H1/root/receipt fullbytes match preserved8-trust-input archive. ROOT installs only independently reviewed H196713/cc4ef7be, closedseven-instrument receipt206007/e3a525e5 and303-byte native root7d3f1a4c; otherhelpers/callerpins unchanged. No blanket reseal, wholefileanswers, getter relaxation, expectedtrace invention or runtime acceptance credit. Original v1 epochs remain immutable historical inputs; currentsource intentionally advances. Canonical loader patch1333/f9ae94d9 checked against exact oldconfig and will be applied separately. Next newfrozen C1healthy capture must use actualcanonical loader and completev2pins before recording genuinecurrenttrace; fixtures stayfailclosed until measured.
+
+
+Next scoped tasks after v2 activation: Astra High specifies ONE cold accepting C1 capture under the actual canonical Vitest config, complete current literal authority and recorded genuine ordered read/resolver trace (no made-up acceptance trace, no physicalfaults/fullcohort). Sol6.1 High finalizes only the two independently reviewed literal freeze joins in the private two-fixture patch using ROOT .tmp/geometry-v2-final-freeze.proposed.json; measuredtraceplaceholder remainsfailclosed. Separate private ownership, no Root/foreignsource edits or callbacks from fixtureauthor. All originaltests/mutants/receipts preserved.
+
+
+### Published exact B contract checkpoint
+
+Independent Root review confirms ready docsPR6602 exact89c5974b0f435cf0212fe0af65cc2750b68cd225 on codex/6920-b-ci-contract-release-20261009, canonicalbase616da. Fourplan/docs filesonly; both canonicalissue/log prefixes bytepreserved. Normativespec.txt exact26593/d6f6f6d4; fullhuman.md onlydisclosedBissue-reference substitution. Signedfirstc890 checkpoint preserved as published ancestor; signed89followup solves ordinarylinkgate withoutBissuecopy/checkerexemption. Fullnormalhooks reportedpasses, nochildqualificationperformed. Claim94594-m2o7o4g1 ownedSolpublication, notROOTreleased. No maindelivery yet.
+
+Node24externaldescriptor actualsession64065 terminalexit0 (chunkc5aea3):1registered/1entered/1passed/0failed/proof0/getter0. Actualsummaryrootnativeonly/0roottransforms/ordinarytesttransformed; seal2075+208 unchanged/failedfalse. Root independently rehashed BOTHcompletedarms andallevidence BEFOREcontrolledfourfilev2transition. Nativeactual98344 spawn-exit-close0/noSignal. Servicecloseevents remainunmeasured asobservationalsetup; nofullNode24proofsuite claim.
+
+
+ROOT reviewed minimaltwo-literal delta3837/7c9d1061 and independently decoded the JSstring literal via builtin-only data parser: completefreeze object exactlymatches reviewedRoot2720/b1e4c726 data; anchorSource303bytes exact, notescapedwrongly. Fulltwo-test successor106499/8ecdbc40 andtarget65872/aa86f9ed +186197/800f199a independentlyhashed. ExistingRoottwo originals matched genuine46395/cd69ee87 and156840/717f6ed6, archivedbeforecopy. Installedexactreviewedfixture successors; alloriginal/F1 artifacts preserved, onlytwofinalconstant joins newsinceF1. Currentauthoritytrace placeholder remains failclosed; no runtime/proof/fault/fullcohort acceptance credit. ColdC1spec must freeze this currenttwo-fixture activation as separate declaredinput changes beyondthreeauthority+canonicalconfig.
+
+
+## Verified canonical C geometry delivery
+
+# PR 6600 verified delivery
+
+**Delivered through the protected merge queue.** Fresh REST canonical main is `2d0c31a3e2dbe0a4a46d123226fa1d62f7d4c7aa`; PR6600 is merged and its merge commit is that same SHA. This is the actual queue group, whose parents are prior main `616da017ca11cefa61f3f8d71a1c7ac18773491c` and reviewed exact head `e8f56680589752d67c83ce80cbb43b1bebf1f056`. Server compare reviewed head...main is ahead1/behind0 with reviewed head as merge base and **zero changed files**. Main and reviewed head share exact tree `e9fdf1f42f3b88377cf0565f5ed06554916c4e37`. Signed dependency `b932e3a05e353acc59e7b547ef4e417a5d8637e1` remains the reviewed head's first parent, and therefore an ancestor of canonical main. The source, tests, boundary policy, complete canonical issue prefix and unchanged boundary appendix are retained on main.
+
+ROOT alone released its hold and submitted the queue. This shepherd did only GitHub reads and private artifact writes; no source/branch/claim/hold/queue/comment mutation, job restart/cancellation, runtime rerun or bypass occurred.
+
+## Actual queue validation
+
+Actual merge-group runs: CI37900176395, Test26237900176324, CLA37900176411, Differential37900176373. All six enforced contexts for THIS merge-group are terminal SUCCESS:
+
+| Context | Actual job |
+|---|---:|
+| cheap gate (main-ancestor + lint) | 113720631164 |
+| quality | 113720630135 |
+| equivalence-gate | 113721615381 |
+| merge shard reports | 113726152747 |
+| check for test262 regressions | 113726152768 |
+| cla-check | 113720630238 |
+
+All **102/102 actual conformance jobs** completed SUCCESS:20 js-host +82 standalone. Four skipped template shard entries were excluded. This is a job-completion denominator, not an all-tests-pass claim. Post-merge push workflows now share the same SHA and context names; their new running jobs are not substituted for the completed merge-group jobs. Check-run pagination produced a moving population exceeding200 rows, so the verdict is tied to exact original job IDs/run IDs rather than selecting the first matching name.
+
+Merge-group quality's real guard population passed21/21 files,261/261 tests. Equivalence measured1,748 passing/22 failing, all22 known in baseline; gate passed. Import-cycle accounting is1,899 files/10,514 value edges, largest SCC699,3,867 type-only refs skipped. The earlier tree-identical PR preview independently measured G24 at24/24 and cross-backend at33/33. No separate post-landing runtime rerun was started: these executed guards validate the exact commit/tree that is now main. This is bounded geometry-contract delivery, not complete issue6920 acceptance, JS-host IR/native-public-result qualification, retirement, or performance certification.
+
+## Actual test-level population and final regression gate
+
+Downloaded reports identify baseline_sha as actual group2d0c31a..., oracle_version14, semantic_providers auto, official+proposal scope. JSONL counts were independently recomputed:
+
+| Full registered population | Rows | Pass | Fail | Compile error | Compile timeout | Skip |
+|---|---:|---:|---:|---:|---:|---:|
+| js-host |48,735|39,700|8,596|314|11|114|
+| standalone |48,735|42,225|4,365|2,016|15|114|
+
+Official-only (standard + Annex B) denominator48,232:js-host39,376pass/8,520fail/307compile_error/11timeout/18skip; standalone41,989pass/4,349fail/1,861compile_error/15timeout/18skip. The503 proposal rows explain the difference; neither denominator is silently substituted for the other. Existing broad failures remain visible. The earlier39-suite source A/B's103 apparent new passes remain stale-pin/error-text coincidence, not semantic gains.
+
+Actual host diff compares48,735 baseline rows with48,735 candidate rows: **0 pass→other regressions,0 improvements, net0**,0 wasm-change regressions,0 excluded current canary transitions. One existing fail became compile_timeout (`AsyncFromSyncIteratorPrototype/throw/throw-null.js`), so raw timeout population rose10→11 without a pass regression. Baseline record in actual logs is `c66bde8f6702854980c7771463293fe902575c79`,0 test262-relevant commits behind pre-merge main,1 total commit behind. Actual standalone guard: gatePASS/exit0,1 improvement,0 wasm-change regressions,1 compile-timeout flake excluded,net1. That small gate delta is not promoted into a claimed geometry gain.
+
+Performance limit: host shared47,501-test aggregate compile time changed17,109,990ms→19,273,262ms (+12.6%); raw48,433-test aggregate+12.4%. Gate accepted this within its policy, but these timings do not demonstrate a performance improvement. No native/source-native performance claim is made.
+
+## Artifact custody
+
+- `main-queue-final.json`, `pr-queue-final.json`, `main-ancestry.json`, `mergegroup-commit.json`: fresh authoritative delivery/ancestry/content records.
+- `mg-test262-jobs-p1.json` + `mg-test262-jobs-p2.json`: actual102-job population.
+- `mg-checks-final-p*.json`: paginated checks; original IDs above disambiguate later same-SHA push jobs.
+- `mg-quality.log`, `mg-equivalence.log`, `mg-merge-report.log`, `mg-regression.log`: actual merge-group guard and final gate logs.
+- `mg-merged-artifact/*`: artifact11602608970, both full JSONLs and summary/category reports.
+- `mg-regression-artifact/*`: artifact11602861893, exact regression/detail reports.
+- `delivery-evidence-sha256.txt`: hashes for key original review and delivery evidence.
+
+Original `review.md` remains unchanged as the pre-queue record. It correctly described HOLD/unmerged state at its timestamp; this file records the later delivery without rewriting historical red evidence.
+
+
+ROOT has read full exactdelivery proof, actualPR recordmerge07:57:57Z and latestcanonicalb47 descendant. The queuehead2d0 retains reviewedsource/test/policy completee9fdf1f42 tree. No performance/equality/epiccompletion inference. CurrentB6577 metadatahead freshlyverifiedf1cabeb0986964828735a217598883b63c336e12 publishes an existingAstraHigh one-import neutralgeometry plan inissue6905; Root inspectedactualinitializer sevenInstr body andfullplan. Nextdecision concerns only LINEAR_VECTOR_ELEMENTS_OFFSET import path, notrealnativearray/resource/caller acceptance orhistoricalreader edits.
+
+
+Actualnew cold-freeze membership clarification (Astrareadrecords): sixphysicaltransitionfiles comprise exactlythreechangedold2075inputrows, onechangedold208harnessrow (canonicalVitest), and TWO newly addedfixtureinputs that were absentfrombotholdlists. Preserveold2075and explicitlyfreeze2077 withtwofixtures added; no inventedoldmembership orfixture-derived traceoracle.
+
+Freshregistry B6905:vec-initializer-body-20261007 owner ttraenkler/codex-linear-b-vec-initializer-sol61-20261007/write4467-r35vmfcy remainsinprogress. A historicalsourceproof54017 andtrusted-adapters76271 owners unchanged/effect-read. ROOTaccepts existingBpublishedAstraHigh neutral-importplan atf1cabeb for one namedinitializerimport ONLY afterdeliveredC2d dependency composition, requiring unchangedsevenInstr ABI/offset16/freshness andfullretained25statuses/eightwitnesses/fivebinaryproofs. B recordedowner remains solewriter; no claimtransfer/steal orhistoricalreader edits. Nativepositive1.25 andknownarrayfailure remainoriginal acceptancebar.
+
+
+## Adopted full Astra cold C1 canonical acquisition implementation plan
+
+# One cold C1 population acquisition under the installed canonical loader
+
+Status: SPEC ONLY, 2026-10-09. No new imports, callbacks, runtime children, physical faults, resets, retries or source changes were performed for this review. ROOT must adopt this complete plan in issue 6920, **Native Linear numeric-vector shared source handoff and integration plan**, before Sol authors the private harness. ROOT separately reviews the exact authored harness, configuration, command, observer and freeze before releasing one execution epoch. This document is not that release.
+
+Issue: `plan/issues/6920-native-linear-shared-source-handoff.md` in `/private/tmp/js2-6920-geometry-proof-integration-20261009` (ROOT). This is a narrow follow-up to `astra-geometry-caller-instruments-and-fixtures-spec.md`, 26043 bytes, SHA-256 `ead96b5e5958ca7bf2751cf98409053affc7d1a1a9c18d9bfe836b748ca84c0c`. It does not reopen that seven-instrument or two-fixture scope.
+
+## 1. Decision and bounded purpose
+
+Author one new private test containing exactly one registration, named `C1V2 cold current population and authority transcript`. It must call the actual installed `captureC1CurrentPopulation` exactly once. H2 calls the actual installed H1 `captureC1HistoricalAuthority` internally once, before population IO. Do not call H1 separately to obtain an expected trace or contract. Do not use the old G03 body: it emits evidence only after assertions and currently treats a count of 66 as sufficient resolver evidence. Preserve every earlier G01/G02/G03 registration and all old output directories byte-for-byte.
+
+The new callback must obtain actual four-original output text, current physical population pins, historical population text, and a complete ordered transcript of the two supplied reader channels and resolver IO seam. It must persist observations and outputs before checking their semantic assertions. On a thrown proof operation, persist the complete prefix, exact error/stack and absent-return status, then propagate the error. ROOT independently reviews a successful transcript before authorizing its projection into the fixture's `independentCurrentAuthorityTrace` literal. Neither this harness nor its driver may write that fixture constant, silently regenerate expectations or update any source pin.
+
+Use the actual installed canonical configuration through a private adapter. Select the installed Vite's **default bundle config loader** for this epoch by omitting `--configLoader` from both commands. The prior explicit-native private configuration is not evidence for this default path. The single proposed epoch measures default config loading plus canonical root externalization and the one population callback together. It is not a claim that the entire canonical test suite or its parallel scheduling has run. No separate preliminary proof callback is needed. If ROOT instead wants a descriptor-only default-loader arm first, that is a separately frozen/released epoch with proof callback count zero; it is not an implicit fallback or automatic extra phase of this plan.
+
+## 2. Exact inspected state and authority
+
+ROOT path throughout is `/private/tmp/js2-6920-geometry-proof-integration-20261009`. The data-only companion file `astra-c1-cold-acquisition-static-inputs.json` in this document's directory is 45036 bytes, SHA-256 `cb331e89d82d45563fc1a2f0df9e65347033f388aa162bbdfb444a69f7881ac8`. It contains the full independently checked seven-instrument freeze, source pins, exact receipt contract rows, original output pins, historical population pins and the six-file transition comparison. Its observations are **fixed contract data**, not an acquired runtime transcript.
+
+Read and independently pin ROOT's `.tmp/geometry-v2-final-freeze.proposed.json` when authoring. For this specification, I read the installed bytes and verified each of its seven current instrument pins, its complete root text and its complete receipt pin. Required anchors are:
+
+| Object | Bytes | SHA-256 |
+| --- | ---: | --- |
+| H1 `tests/helpers/ir-c1-historical-authority.ts` | 96713 | `cc4ef7be19720ccf45e3cdd857ff373a9a770460c81cdc2bf8b1f7460754c8c3` |
+| H2 `tests/helpers/ir-c1-current-source.ts` | 44840 | `ae850773522f11dca82cb22f99bc083fb60117ed016fbc7a896061b1507a9474` |
+| H3 `tests/helpers/ir-runtime-program-policy-evolution.ts` | 411837 | `8575d0f4f66632cb606caf2f94538bd5cb8ef74e89f655e3c1f8f0930de8038c` |
+| `tests/helpers/ir-c1-linear-layout-geometry-successor.json` | 206007 | `e3a525e598002b43f46bef112dcdbd5222d038ea6ee9d7ddc22f837bc97f21e1` |
+| `tests/helpers/ir-c1-authority-root.ts` | 303 | `7d3f1a4c93bc2d7c0bafeb203d2e0bfc021a7f3486e5c8c179b7f1adc95f262b` |
+| Original `tests/helpers/ir-c1-authority.json` | 424383 | `32a15b44ebf42a538cb44ecff4e00b4f3e40b0ca52da3a3559109cca584adfda` |
+| Original `tests/helpers/ir-runtime-program-relocation.json` | 680099 | `aeeae92fa9c31d8d7ae6aa8805c91862cb1fa2b79486fa4d69cce29d7d065763` |
+| Actual `vitest.config.ts` | 5706 | `dbe27245c2421a912c542870a582a5e6ea14b3b0941c5b387a9af8e619bc4c9d` |
+
+All four caller instruments remain required literal external authority: program-data boundary 33840/`24f0e4dd484bc4fc61cfbb46f875a61615f6c63d448c57b524f58c8f39a84469`; runtime policy 29161/`a6378da157029b0ae01492dff7f6d24e7056a89781ca608dbc139b95fe3f7bd1`; symbol policy 29764/`fe80426e28d77a8451d45dc6d07a1a75ec4f73296c231a3d3cc6c85592fa19d4`; number policy 113131/`81cdd13ea7f9f907c7d9f268cd0ad6dffda4b996671f5ed49721d7e162ae57ae`. Full paths and Git blob hashes are in the companion and ROOT's reviewed freeze. Do not parse current receipt values and then treat those values as independently trusted current pins.
+
+The 303-byte root must equal ROOT's exact reviewed string, including copyright, whitespace and both exported const declarations. Its old manifest digest remains `32a15b44...`; its successor digest is exactly `e3a525e5...`. Preserve the existing H1 own-data-descriptor guard without modification. No getter invocation, namespace-copy adapter, primitive coercion, global module patching, authority mock or old anchor substitution is authorized.
+
+I compared every physical file against the prior Node24 freeze at `/private/tmp/js2-6920-anchor-loader-qualification-20261009/.tmp/node24-compatibility/freeze.json`: exactly three of its 2075 input rows differ (H1, geometry receipt, root), and exactly one of its 208 harness rows differs (canonical Vitest configuration). Neither fixture path occurs in either old array, so four changed prior rows plus two newly frozen fixture paths form the six physical transition files. Do not report five changed rows among the old 2075. The two additional files are `tests/issue-3518-lowering-analysis-preservation.test.ts`, 65872 bytes, SHA-256 `aa86f9ed295d005232a74d07050bdae8ffc463ae5c95c4bd39266aaa42957cac`, and `tests/issue-3518-c1-current-source.test.ts`, 186197 bytes, SHA-256 `800f199a293337fe97ea6f5ec7155f7b055e28733d12f43a90dec23a511736c1`. Both are frozen as physical inputs only; neither is imported or used as an expected-trace oracle. All remaining previously pinned file bytes matched during this static review. Add both fixture paths explicitly to the new source-input domain: 2077 inputs if the original partition is retained. Root's prior archival review supplies their predecessor custody; this old 2075-row manifest does not. This is data verification, not a new runtime seal. Duplicate appearances of an input in any new manifest must agree; update neither the old manifest nor old output seals.
+
+## 3. Derive the actual semantic expectations before execution
+
+H2 lines 811–985 perform the following: capture H1; capture the population receipt and 46 ordered current paths; authenticate old receipt/source requirements; prove source-map, current legality and validator relocations; collect current type/config closure; prove geometry and the current C-ABI predecessor where applicable; inspect actual LinearOptions/program bindings; execute the TypeScript resolver contract; form a historical population; invoke the unchanged four-donor reconstruction; return the captures. Reading this implementation is the basis for the expectations below. Do not infer them from an earlier passing summary.
+
+The successor's `linearOptions` contains **14 closure inputs**, **3 configuration inputs** (17 closure/config rows altogether), **16 resolver requests**, and **66 ordered resolver observations**. These categories are different. There are not 16 closure-input rows. The 66 rows contain 40 `directoryExists`, 23 `fileExists`, 2 `readFile`, and 1 `realpath`. The original 13 request rows and original 57 observation rows are exact prefixes of their successor arrays. The three added requests are planner→shared geometry, planner→IR geometry forwarding contract, and IR forwarding contract→shared geometry. Their nine additional observations each consist of directory, directory, file checks. The two `readFile` operations are repository `package.json` and `typescript-package/package.json`, at their original contract positions. The first resolver observation is `directoryExists` at repository `src/ir`.
+
+These facts were read from the independently digest-bound receipt and checked against the unchanged H2 resolver implementation. They are expected contract floors, **not fresh measured operation counts**. The callback must compare every normalized actual observation, including result/pin/target and repeats, to all 66 fixed rows; mere count equality fails the acceptance criterion. It must retain the raw absolute paths as evidence alongside normalized locations. H2 itself validates each request's actual import/export role, calls `ts.resolveModuleName` and checks the returned target. The public IO seam does not expose request-enter/target-return hooks. Do not invent externally measured request events: report 16 fixed requests enforced by the actual helper on successful return, and 66 externally observed IO operations. Do not monkeypatch TypeScript to add hooks.
+
+Population channel expected order is the original fixed `receiptPath` followed by `currentPaths` (8) and `dependencyPaths` (38), each once: 47 reads total and 46 physical source pins in output. The complete ordered population array is in the original manifest and companion, independent of the new callback. Geometry planner/layout/shared reads and TypeScript metadata remain authority/closure reads, never new population donors. Do not alter the original population count, donor pairs or 91 transfer rows (12 moved, 79 retained).
+
+For `observedCurrentPins`, independently measure the frozen physical 46 files before importing helpers, store that literal expected array in the new frozen input artifact, and compare the returned order and full byte/SHA-256/Git-blob tuples. The reader returns fresh physical contents; this expected array must never supply source bytes to the helper. For `historicalPopulation`, require exactly the same 46 ordered paths and every full pin from the original relocation receipt's `current` + `dependencies` rows. Those historical views are produced only after the actual live seam and geometry proof passes.
+
+The four returned `originals` must have the following exact ordered identities. I independently read each actual Git blob object and verified its complete bytes and SHA-256; this expectation is not copied from a function return:
+
+| Path | Bytes | SHA-256 | Git blob |
+| --- | ---: | --- | --- |
+| `src/ir/program.ts` | 21542 | `3df8deb9d3647466c2381957aa22410c593057cbdd855007b1279ebd755a5510` | `59092bfff8a18c74e30fe9ac35d00336f10fcc19` |
+| `src/ir/program-abi-contracts.ts` | 11056 | `855ce794bc57f152a564c388b0d0c5de3ae056d4382c097fc3182c0a68343fda` | `61792aab44a2e238342140c18206839b0f0503af` |
+| `src/ir/prepared-component-dependencies.ts` | 74563 | `0ea7a1b7d7ce5bf0a035d8b3a4c9c5a65aabd841ddd3c7a7c10bf82b11c9b8a7` | `c75052c6c51a824bc1ad0af99155271fb4d30480` |
+| `src/ir/generator-support.ts` | 8816 | `fbc2d0cb9837ca7a55ac1dc6cef62b0f51a91ccf41a5c4a09c1854599f07a01f` | `b054a6a5a28326a0dc77edb6cf16bfa834d2507a` |
+
+A separate pre-execution data step may save these exact Git blob bytes into the private frozen oracle folder. They may be used for post-return full equality, never as `readPopulation` or `readAuthority` answers. `receiptText` must equal the frozen original relocation receipt in full, not merely parse to equivalent JSON. Preserve all raw successful return strings in output artifacts before these assertions run.
+
+The installed planner is the reviewed physical 45359-byte geometry planner, its IR forwarding contract is 3161 bytes, and shared geometry is 7580 bytes. The current C-ABI is 27454 bytes. The old 49040 planner and 26965 C-ABI remain derived historical operands; they must never replace physical read answers or resolver inputs. Use the fixed complete pins in the reviewed receipt and external input freeze, not only these lengths.
+
+## 4. Private authoring scope and canonical configuration adapter
+
+Sol owns a new uniquely named private directory beneath the loader lane's `.tmp`, for example `/private/tmp/js2-6920-anchor-loader-qualification-20261009/.tmp/c1-v2-cold-canonical-acquisition`. New files may include one test, one configuration adapter, a bounded driver, the already reviewed process observer (exact pinned copy or exact pinned reference), immutable oracle files and a new freeze. No source, helper, receipt, ROOT configuration, existing harness, caller test, claim, shared issue or previous output may be edited as part of authoring. ROOT remains the only integrator. The two-fixture worker's unmeasured trace placeholder remains untouched.
+
+The adapter must statically import the actual ROOT `/vitest.config.ts` default export. It must not import the proposed copy, evaluate a copied regex declaration or replace the original `test.server.deps.external` array. The inspected canonical export is a `defineConfig` object, not an async factory. Fail closed if its expected shape changes. Keep the actual `test.server.deps` object or its exact `external` array reference; there must be exactly its one RegExp, with unchanged source/flags and no `inline`, `fallbackCJS` or broad package/TS predicate. Avoid `mergeConfig` array concatenation: simple explicit object spreads retaining the canonical deps object make the one-rule identity reviewable.
+
+Permitted adapter overrides are only: ROOT `root`; fresh per-command private `cacheDir`; Vite filesystem access to ROOT/private harness/the existing actual dependency root; exact one-file private `include` and empty private `exclude`; `fileParallelism:false`; `maxConcurrency:1`; `singleFork:true`, min/max fork counts 1, retaining the canonical fork `execArgv`; default+JSON reporting to the new output; and `test.server.debug` to fresh dump directories with `loadDumppedModules:false`. Preserve `pool:'forks'`, canonical test timeout 35000, and other canonical settings. Do not introduce setupFiles/globalSetup, mocks, extra projects, includeSource, retry, watch or coverage. An extra timeout or execArgv change needs explicit ROOT review, not silent accommodation.
+
+A private read-only config observer may record the actual imported/exported effective fields and predicate source/flags, together with adapter and canonical pins. It must not affect resolution or add another externalizer. Record the canonical and adapter-selected settings so we do not call the entire configuration unchanged. Exact-path/dot-mutant/neighbor/query/prefix/suffix/case controls must use the actual imported RegExp, not a separately authored equivalent. Retain the earlier exact predicate's valid escaping; no regex defect is presumed. Those are data controls in configuration setup, not proof callbacks. Source text is pinned before this import by the driver. Put configuration evidence in distinct collection/runtime output files to prevent overwrite or confusing two config evaluations.
+
+The executable is `/Users/thomas/.nvm/versions/node/v24.4.1/bin/node`, whose reviewed complete binary is 116143568 bytes, SHA-256 `0429b268de244397f6b8921a938f55151c4469ab70571799780533eae6abfbce`. Pin its actual realpath/mode and the current full CLI/dependency graph. Installed metadata read for this spec: Vitest 3.2.4, Vite 6.4.1, TypeScript 5.9.3. Vite's actual `loadConfigFromFile` defaults `configLoader = "bundle"`. The old G01/G02 driver used explicit `--configLoader native`; do not copy that flag here.
+
+After static adoption, the authored command arrays proposed for ROOT release are exactly two sequential child commands, with absolute frozen paths filled before release:
+
+```
+[node24, root + '/node_modules/vitest/vitest.mjs', 'list',
+ '--config', privateDir + '/vitest.config.mjs', '--json', output + '/collection.json']
+[node24, root + '/node_modules/vitest/vitest.mjs', 'run',
+ '--config', privateDir + '/vitest.config.mjs',
+ '--testNamePattern', '^C1V2 cold current population and authority transcript$']
+```
+
+Cwd must be ROOT. Do not invoke pnpm/npm wrappers or allow PATH to select another Node. No `--configLoader` is supplied, and no env may override that. First require successful exact collection of one registration in the one private file. The collection process must perform zero target helper/root imports and zero proof calls because all target imports are inside the callback. The runtime is a new process and fork, with a distinct empty cache/dump directory. There is no preliminary invocation of this callback and no rerun after failure. If collection or config loading fails, do not run the second command.
+
+Use the previously reviewed process observer protocol for actual fork creation, IPC, exit/close and Tinypool shutdown attribution. Record actual Node version/execPath/execArgv, CLI, cwd, command arrays, effective relevant environment and child lifecycles. Sanitize inherited config-changing/test262/debug settings rather than accidentally inherit another arm. Preserve the explicit observer preload, but do not inherit unrelated `NODE_OPTIONS` loaders/imports. Both process logs must record their chosen environment. Use `DEBUG=vite-node:client:native`, no colors, fresh output/dump/cache variables, and remove unrelated dump switches. Full exact argv/env is review input, not left to operator memory.
+
+## 5. Cold imports and one actual proof call
+
+The test module may statically import only Vitest and necessary standard-library recording/authentication utilities. It must not statically import H1/H2, old test suites, a fixture module, the root module or proof helpers. Its top level registers the one callback; collection cannot accidentally execute proof work. No top-level capture, beforeAll import or module cache warming.
+
+Inside the callback, emit `callback-enter` immediately. Authenticate the complete frozen external source/harness inputs before target imports, including the seven literal instruments, complete root string+pin, original manifest and new receipt. These are physical control preconditions, not negative-test outcomes. Preflight reads go to their own audit stream and are excluded from the proof-channel transcript. Emit the preflight outcome even when it throws.
+
+Then import actual H2 from its exact ROOT file path once; H1 and the inert root are reached through its real imports. Emit target-import-attempt and target-import-return/error around this await. Optionally to inspect the namespace descriptors, import the **same exact physical root** explicitly once after H2 import, obtain descriptors without accessing getters, persist own-key/descriptor metadata, then assert the two own data string values. This optional inspection must be chosen and frozen before release; it is a second explicit import request, not a second evaluation or proof. Recommended authoring includes it: count two explicit target import requests (H2 and root), one native root module identity and one H2 import, never misreport this as one import total. No direct H1 import/capture is necessary. Root descriptor inspection must not wrap, copy or alter what H1 imported.
+
+Emit `proof-call-enter`, increment the top-level proof counter once, then call exactly:
+
+```
+captureC1CurrentPopulation(readPopulation, readAuthority, resolverIO)
+```
+
+Both readers must answer by fresh actual filesystem reads. No historical answer routing, map of cached source texts, local fixture API, imported default reader substitution or prior capture is permitted. The dependency graph may be normally cached within this one module load; there is no cross-operation result reuse because there is only one call. Do not call `reconstructC1CurrentSources` afterward to verify it again. Do not invoke geometry, policy or Deno capture APIs separately. Their nested uses, where present in the real implementation, remain untouched.
+
+## 6. Raw event protocol: attempted work survives failure
+
+Use one append-only, synchronously written NDJSON operation journal with monotonically increasing event sequence and stable operation IDs for all three observed channels. Each attempted operation records an `attempt` event **before** performing IO. A successful operation records a matching `return` event with complete measured result before returning it to the helper. A thrown IO operation records `throw` with name/message/code/stack and then rethrows the original exception. Do not catch and substitute false/empty/stringified values. Do not sort or deduplicate events; repeated root/receipt/helper/metadata reads matter.
+
+Reader attempts record channel `population` or `authority`, the original logical path, actual chosen absolute path, callback/proof identifiers and process identity. Reader returns record primitive string status, UTF-8 byte length, SHA-256 and Git blob hash of the actual returned text, and optionally a content-addressed raw snapshot reference. At minimum preserve every returned output string later; preserving reader-result blobs too is preferred and makes audit independent of a later checkout. Use strict fixed-path/within-root handling and the actual TypeScript package root for `typescript-package/` as H2's reader contract specifies. The genuine package symlink and loaded-package identity are frozen and checked independently. These events cover the supplied reader and resolver-observation seams; helper-internal package-root existence/realpath checks and getCurrentDirectory are not separately intercepted. Do not call this a global filesystem trace or fabricate observations for those internal operations. Never select package files from a mock package.
+
+`resolverIO` is a plain object with enumerable own data-function properties in exact order `fileExists`, `directoryExists`, `realpath`, as required by H2's descriptor validation. Delegate exactly to the default semantics: `existsSync(p) && statSync(p).isFile()`, `existsSync(p) && statSync(p).isDirectory()`, and `realpathSync(p)`. Preserve thrown races/errors. IO attempts retain the original absolute argument; return events retain the actual boolean or absolute target. In addition retain the normalized `{scope,path}` and target location as a projection, not a replacement for raw evidence. Package alias and real package root are recognized before their containing repository, as in H2. Root itself is path `""`, not missing. Unexpected outside-root paths remain visible and fail the observer contract rather than disappearing.
+
+There is no fourth public `readFile` IO method. H2's resolver host calls the supplied authority reader for its readFile operation. Derive resolver readFile rows from the raw journal, not from a second filesystem read or fabricated receipt rows:
+
+1. The first observed resolver-IO attempt marks the resolver segment. The inspected fixed contract begins with directoryExists; all authority prelude reads occur earlier.
+2. Preserve every resolver IO operation and every authority read from this boundary through `proof-call-return` or `proof-call-throw`. Treat authority reads within that segment as resolver readFile observations, in their actual global order. Do not filter by the two expected paths to manufacture a matching sequence.
+3. H2 has no further authority-reader calls after `resolveContract`: it reads its already captured historical text and performs in-memory reconstruction with an explicitly supplied receipt. This static fact justifies the segment rule for these exact frozen helper bytes. Any later unexpected authority read stays in the projection and causes mismatch; the observer must not discard it.
+4. Build normalized observation rows from successful actual return values. Unmatched attempts/throws remain in raw evidence and mean the expected transcript is incomplete. Never pad them to 66. Keep readFile's full measured pin, booleans and realpath target, not merely names.
+
+The **authority fixture projection** is every authority-reader attempt's logical path for the single successful proof call, in order, including the two resolver readFile calls. Do not mix in population reads, pre-import checks, namespace inspection, hash verification or the driver's independent seal reads. Do not prefill this projection from code/receipt. No asserted authority-array length or invented exact path sequence is needed to acquire it; acceptance instead rests on frozen actual code, complete helper success, the independent outputs, the fixed population/resolver assertions, raw evidence and ROOT's later path-by-path review. Unexpected activity is not licensed: retain it for review and withhold binding.
+
+## 7. Persist return evidence before semantic assertions
+
+On successful function return, first emit `proof-call-return` and preserve a raw output index plus:
+
+- Complete `receiptText` string bytes.
+- Every `historicalPopulation` entry in original iteration order, with full text and measured pins.
+- Every `originals` entry in original iteration order, with full text and measured pins.
+- Complete `observedCurrentPins`, preserving key order and all fields.
+- The raw event journal, both reader path projections, and the resolver observation projection, including original absolute locations and explicit normalization data.
+
+Write output evidence exclusively beneath the fresh output directory. Use exclusive creation, deterministic unambiguous filenames, content pin references and full path sanitization. A second conflicting output is a failure, not overwritten evidence. If serialization detects a malformed result, record the available shape and error before throwing; never fabricate missing maps or output text. Synchronous journaling ensures the last observed attempt survives a later assertion/timeout; process termination can still leave an incomplete result, which is reported as incomplete rather than success.
+
+Only after persistence assert: one top-level capture, exact returned receipt bytes, exact 47 population path sequence and full observed read pins, exact 46 current pins, exact 46 historical population pins, four originals in exact order with whole-byte equality to frozen genuine Git operands and all three full-pin fields, and all 66 resolver rows exactly. Confirm the full fixed 16-request contract being used is the externally digest-bound successor, with original 13/57 unchanged. Validate the namespace data descriptors and loader evidence separately; no early checksum or descriptor failure earns accepting source-proof credit.
+
+Emit `callback-pass` only after all callback-owned assertions. In a catch/finally structure, preserve exact callback error, available projections and current counts on failure, then propagate the failure to Vitest. Do not emit `callback-pass` from finally. The parent must audit and seal even when exit code is nonzero. A callback pass alone is not epoch acceptance: loader/process/after-state/closure checks are still required.
+
+## 8. New freeze, loader evidence and custody
+
+Create a fresh immutable freeze from the previous complete 2075-input scope, the two additional installed fixture files (2077 inputs under the same partition), and reviewed 208-row harness/dependency custody, plus new private files/oracles/observer/config and the seven explicit current instruments. Update only the four changed prior rows and add the two declared fixture paths for the intentional six-file physical transition in this successor; keep the predecessor freeze referenced by its complete pin. Detect missing/new/unexpected scoped inputs, conflicting duplicate rows, mode/symlink/realpath drift and unexpected source changes. Do not replace the broad freeze with only seven hashes. The new harness count must be measured and stated honestly; do not continue saying 208 when new files were added. Whole-file rehash before import/launch, after collection, and after the runtime child's complete exit/close must agree with the same new freeze. Package resolution target identity and the explicit Node binary belong to custody as well.
+
+Refuse a preexisting output directory. Use disjoint collection and runtime caches and dumps. Archive all commands, stdout/stderr, JSON collection/results, configuration observations, native import diagnostics, module dump index and transformed modules, process logs, callback journal, raw output strings and oracle provenance. The independent driver finalizer must execute after both successful and failed child outcomes. If sealing itself fails, retain a distinct sealing failure and the original runtime error; do not overwrite the original cause with an unqualified success or a new exception. Seal complete available evidence with byte lengths and SHA-256; references to existing old artifacts retain their original pins and are not rewritten.
+
+Runtime loader acceptance requires the actually dumped externalization mapping for the normalized H1 root import to point to precisely ROOT's physical `tests/helpers/ir-c1-authority-root.ts`; native-client diagnostics must show that physical import; root must have no transformed module body. Attribute dumps through their recorded module IDs/first-line provenance and `info.json`, not filename substring guesses. The new private test, H1 and H2 must have actual transforms, and H1/H2 must not be native-externalized. Every other transitively loaded proof helper must likewise remain normally transformed. There must be no additional TypeScript proof-source externalization; ordinary installed package externalizations are separate dependency entries, not falsely called failures. Preserve the exact full inventory so ROOT can verify these statements.
+
+The descriptor record must show the two own string data exports without getters/setters, and the unchanged H1 guard must actually accept. A root-only native import log is insufficient without these source-proof/output assertions. Conversely, a correct proof output with missing loader attribution is not qualified for canonical-loader claims.
+
+Reuse the corrected actual process lifecycle rules: zero exit/close when normal, or only a fully observed expected Tinypool termination with matching kill request/return/stack/order where that runner uses SIGTERM for worker shutdown. Never relabel an unexplained signal as success merely because JSON says passed. Record collection and runtime worker attribution separately. A process observer failure is a failed/incomplete epoch with preserved proof evidence, not a reason to rerun automatically.
+
+## 9. Acceptance, binding and stop conditions
+
+The one release can produce at most: one actual collection row; zero collection target imports/proof callbacks; one selected/entered/completed test callback; one H2 capture invocation with its genuine internal H1 capture; four exact genuine originals; 47 exact population reads; 46 current pin rows; 46 historical population entries; all 66 resolver observations matching the independently frozen 16-request contract; and one complete acquired authority path projection with raw supporting operations. The projected authority length is deliberately **unmeasured** until this run. Report actual counts, not this expected list as a result. With the recommended descriptor inspection there are two explicit target import requests in the runtime callback; do not collapse those into one.
+
+ROOT must inspect the actual complete logs, first failing operation if any, returned whole texts/pins and all loader/process custody before calling the epoch accepted. ROOT then independently checks each authority path and repetition against the exact H1/H2 and nested helper control flow: original manifest/immutable/instrument/historical artifact prelude, fresh successor root+receipt acquisition, population boundary, source-map/validator/current-legality authority, whole geometry helper/current operands/proof receipts, C-ABI root/receipt/current source, and resolver metadata reads. No operation is removed just because a shorter old fixture trace once passed. Data/hash evidence and actual execution evidence remain distinct.
+
+Only after that review may ROOT adopt the acquired authority projection as an independently frozen future-test literal. A separate literal-binding patch records this epoch's freeze/trace/seal pins, contains the exact array rather than code that reads a mutable output file at runtime, and leaves the old historical trace intact. The fixture worker must not obtain its expected array by calling the same capture inside a test. Binding itself does not qualify the full fixture cohort, deep mutants, physical fault controls, cached controls, policies, source-facts runner or compiler. Those remain separately held.
+
+On any unexpected preflight, collection, import, source-proof, semantic, process or sealing failure, preserve and stop. No source pin refresh, physical fault, helper guard alteration, scope expansion, v2 reset, automatic native-loader retry or second accepting callback follows. ROOT may request a separate diagnosis/spec with the actual failed prefix. Do not fix unrelated later prerequisites while preparing this acquisition.
+
+## 10. Required review packet from Sol before ROOT release
+
+Deliver the complete new test/config/driver/observer/oracle/freeze files and exact hashes, not summaries alone. Include a static diff/scope declaration showing old source/helpers/receipts/config/tests/outputs untouched; the successor freeze's exact four changed prior rows plus two additional fixture paths and complete rehash results; exact command/env arrays; the actual imported canonical configuration reference and preserved predicate identity; the one-registration/no-top-level-target-import proof; the raw event schema and failure paths; independent four-Git-output oracle provenance; and a report of all new or retained custody rows. ROOT reviews this concrete packet before authorizing either child command.
+
+No implementation or execution is performed by this specification. The concrete recommendation is to authorize private authoring within this scope, then review the complete packet and release one cold default-config-loader epoch. No broader testing or trace literal binding is currently implied.
+
+
+ROOT has read/adopted full34982-byte plan and independently hashed its45036-byte staticcompanion. Release private Sol6.1 High authoring/packet/freeze only, ONEregistration/actualcanonical defaultbundleconfig, actual H2 captureonce, complete47population/46outputs/66resolverrows/four genuineGitbloboracles, operationjournal beforeassertions. Oldauthoritytrace remains historical; newtrace is unmeasured and neverfixture-derived. Fresh2077inputdomain preservesold2075+twoexplicitfixtures; requirethreeoldinputchanges/oneoldharnesschange only. No execution/import/proof/fault/tracebinding untilRootreviews concretepacket and separatelyreleases.
+
+
+ROOT exactrefreshed docsreview: head800412bd0f6acbe3daa8b4fb1211e7df4d375fa8 parents89/b47, exactFOURauthorizeddocs paths vs freshcanonicalb47, allnon-docblobs unchanged. Both fullcanonicalb47issue/log prefixes andentireprior89-ownedappend preserved; fullnormspec26593/d6f6f6d4 unchanged. LivePRgates quality113728947978success, cheap113729031696success, report113729031793success, regression113729031809success, CLA113729006865success; equivalence skippedappropriatelyfor docs scope, no source/runtimeequivalencecredit. Authorizeprotectedqueue exactmatch800412 only afterfreshPRhead/base check. No staleheadpush/futuretreeapproval.
+
+
+Existing native-source-facts/J2/J3 task resumes SPECIFICATION ONLY in parallel with coldcapture anddocsqueue. AstraHigh regrounds heldA2draft/original18 andcurrentcanonicalallocation evidence/provenance/programconsumer seams, identifies actualsemantictruth gap and minimal real nativeNumericVector caller/facts handoff needed byB. No newsource/helper/claimwork or bypass ofcanonicalanalyses. Mustpreservepresentundefined-vs-absent refusal, originalmanualencodingundefinedfailure, full1.25publicstandalone/WASI andsourcefreereplay obligations. Plans/ownership scopes inexistingissue6920; unknowncapability staysunsupported, no deadfacade/stub/JShost/legacyretirement.
+
+
+## Verified canonical docs-contract delivery
+
+# Docs PR6602 verified protected-queue delivery
+
+Fresh canonical main is `bb58c562545e4bd08310ab2bfc41bbd88679d958`. REST PR6602 is merged with that same merge SHA. This actual queue group has parents base `b47c6e4b9d64ce848407a80a03a063fb102ffe8b` and reviewed exact docs head `800412bd0f6acbe3daa8b4fb1211e7df4d375fa8`, whose own parents are `89c5974b0f435cf0212fe0af65cc2750b68cd225` and canonical base b47c6e4. Queue/main tree `289da1e9d5e8dfc6ae6a2942e44c106e6bfb4b0e` equals reviewed head tree. Authoritative reviewed-head...main compare is ahead1/behind0 with reviewed head as merge base and **zero changed files**. Delivery therefore retains exact reviewed content, not just a PR merged flag.
+
+Exactly four documentation paths differ from canonical base; all other tracked content is unchanged. Every landed file was separately read from the actual main commit and byte-compared against reviewed-head content:
+
+| Path | Bytes | SHA256 | Byte match |
+|---|---:|---|---|
+| plan/issues/6920-native-linear-shared-source-handoff.md |457737|ee01d4eca3356b3f5a11d4d935ed33e5d420b0cdbbba10185e87b6508cf0bd82|yes|
+| plan/log/6920-b-ci-contract-release-20261009.md |33843|5ff21513c4c621f677319e312a357ee90f93a71b02d3ef54fb2e9e335a799370|yes|
+| plan/log/6920-b-ci-contract-release-20261009.spec.txt |26593|d6f6f6d4d6962dadc24be72059b10fa6ae3747740c60027cca49c20c51fff88c|yes|
+| plan/log/ir-coordination-session-a.md |38683|24deb7cdc17f470e8a225720b90aa896e4a61aee92ca2ebe338f8d729ac2a5eb|yes|
+
+Complete original issue prefix453058 bytes and coordination prefix34036 bytes remain unchanged prefixes; only4679 and4647 bytes respectively were appended. Whole landed files also match reviewed head, preserving its previously approved appendices without alteration.
+
+## Actual required queue checks
+
+Actual merge-group runs: CI37904045667, Test26237904045786, CLA37904045686, Differential37904045546. All six enforced contexts are terminal SUCCESS on the actual group, with these original job IDs:
+
+| Context | Job |
+|---|---:|
+| cheap gate (main-ancestor + lint) |113733099305|
+| quality |113733098113|
+| equivalence-gate |113734152105|
+| merge shard reports |113733193993|
+| check for test262 regressions |113733193882|
+| cla-check |113733097912|
+
+Equivalence actually ran and reported1748 passing/22 failing, all22 known in baseline. Quality's actual required guard suite passed261/261 tests (plus normal checker cohorts13/13,57/57,17/17,6/6). These are ordinary gating evidence, not a new docs-induced runtime qualification.
+
+**Test262 was intentionally not executed for this docs-only change.** Actual merge-report log positively states “merge_group queued only non-test262-relevant changes”; SHARD_SKIP_OK true. Provider and shard templates skipped; actual regression log says test262-shard and test262-shard-mg skipped. Consequently there is **no102-job conformance population** for this docs PR and no new test-level conformance or performance result. PR6600's earlier measured population, failures and performance limits remain in the unchanged parent review directory; none are superseded by docs no-op green checks.
+
+This proves delivery of the reviewed four-doc release/spec packet. It grants no source implementation acceptance, new runtime behavior, closure of issue6920, or protected integration decision beyond the already authorized docs merge.
+
+## Custody and mutations
+
+Evidence in this docs6602 subdirectory includes actual queue/group/head records, base/landed content API responses, exact reviewed file bytes, full four-file compare, fresh PR/main/ancestry records, original required check snapshot, actual detect/merge-report/regression/equivalence/quality logs, and SHA256 manifest. Existing PR6600 proof/artifacts were not edited. Shepherd performed only reads plus writes in this private subdirectory: no source/branch/claim/HOLD/comment/queue mutation and no restart/cancellation/bypass. ROOT retains all integration decisions.
+
+
+NewBcomment6077251918 exactpublishedhead a672175beaa11520bc953d844648ecf6e53475c4 reports fullplanadoption/signedrunner+twoinsertions,128controls(104retained),six official-v6 archivecontrols andONEserialized2a8c200c trial36pass/38envelopes/full36graphs+completion equality. Reportedevidence isnot yetRootindependentlyreviewed. Required/advisoryactualarchives pending; canonicalsrc171606514a3cf6733e82eb11549a659856d68c1a remainsoutsidefiniteapprovedtargets. Dispatch separateAstraHigh exactnewgeometry source-target review/spec; preserveoriginaloldtwoapprovals/configpins/fullgraphs/partialfailures, no blindthirdtree grant. ExistingAstra nativefactsplan proceedsseparately.
+
+
+ROOT read full authoredcoldtest15671/db982fa5, config3988/f7e86cf8,driver12941/0cddcb65,custody1676/67856cda andmetadata-onlyobserverdelta. Independentlyverifiedcompletefreeze3863214/08bf8636, all2077+3741 fullpins/Gitblobs/fileidentities,270 directoryidentities/scopedmemberships,21packetfiles13388/4206232b, fouroracles byteequalgenuineGitblobobjects and47/46/46expectedrowfloors. Newharnesscount3479installed-runtimefilesadded explicitly,86missingoptional/peerstaticrecords areNOTexecuteddependencyclaims. Actualcanonicalconfig retainedexactdeps/RegExp/execArgv references; defaultbundleloaderselected,no fixtureoracle/import orauthoritytraceexpectation. Outputabsent. Release ONEcoldcollection+runtime epoch via pinnedNode24run.mjs; collectionmust1/zero targetimports; runtime1H2/2explicitimports/4originals/all47population+66resolver rows/fullcovarianceoutputseals. Onanyerror preserveactualprefix/stop,no rerun/tracebinding/faultscope/productioncapabilitycredit.
+
+
+### Actual cold C1 canonical capture — preserved first-stage failure
+
+ROOT releasedONEepoch; actualsession84074 terminalexit1, runtime36047/worker36050. {"collection": 1, "entered": 1, "passed": 0, "failed": 1, "H2calls": 1, "explicitImports": 2, "populationReads": 47, "authorityReads": 54, "resolverObservations": 0, "returnedOriginals": 0, "error": "runtime program relocation: length/SHA256: src/ir/program/data.ts", "seal": {"bytes": 35615, "sha256": "b1f64aa962df22fb65283715633390d7d4840099d9700223f2faa951e739582c", "inputs": 2077, "harness": 3741}}
+
+All47population reads returnedphysicalstrings;54authorityreads beforeproofthrow (actualcount inrow), noresolveroperations/returnedoriginals/newauthorityacceptance trace. Native root data exports/descriptors were recorded andaccepted before H2 reachedoldruntime relocation assertion. Driverdidnotreachpost-successloader/lifecycleacceptance, so donotclaim completeepochqualification. Defaultbundleconfig collection succeededexactone; source/harness seal2077+3741 unchangedfailedtrue; originalerror preserved, no rerun/pinrefresh/faults/tracebinding. Nextbounded diagnosis must locate genuine newerprogramData sourceepoch andexisting reviewed successor route before changing H2/proof. OriginalnewRootfixturetrace remains failclosed.
+
+
+### Coordination watcher refreshed after paginated B replies
+
+User requested continued watching of the same authorized PR6583 thread. ROOT read every comment page, including edited timestamps. Latest processed B reply6077513776 (2026-10-09T08:41:36Z) publishes evidence-only PR6593 head75a018957cd83b8c727adc73136ed0f2bf780fad: actual archives retained, geometry source refused before child execution, zero observations, required quality failed. B6077381345 acknowledges the exact one-import release but reports historical initializer-writer identity unavailable; source claim unchanged. PR6577 documentation head80c93a3e1fd6ab47e6deec6db59878cb26e1f721 remains held. No ownership recovery, approval expansion or queue action was taken.
+
+Updated the existing ten-minute heartbeat watch-ir-coordination-with-session-b, preserving its thread and schedule, with these processed replies and verified6600/6602 delivery context. Watcher reads all pages, compares IDs and updated_at, and remains quiet unless a meaningful change affects action. Canonical integration claim effect-read directly from upstream issue-assignments before this append: owner ttraenkler/codex-ir-integration-session-a-20261009, in-progress, write60335-ngn0jcr6.
+
+
+## ROOT full-plan adoption: B third-source bounded release
+
+Full Astra specification independently read and hash-verified: 31726 bytes / SHA256 aa04bdb08792e0dc6db4007462bf982456335068b9dcb75e5f668402af511c58. Private authoring only; execution and authority activation require separately reviewed evidence.
+
+# B append qualification: one additional fixed geometry source target
+
+Issue 6920 — Native Linear numeric-vector shared source handoff and integration plan. Related issue 6915 — Linear owned-ASCII append: optimize the existing copy kernel. This is an independent static review and complete bounded implementation proposal for ROOT adoption. It is not a release, source qualification, permission to execute a child, or permission to remove a hold.
+
+## Decision
+
+Recommend that ROOT separately release private implementation of one additional literal source target in the existing append provenance runner, followed by exact patch review, independent committed-input freezing, and then a separately authorized single serialized qualification. The new target is the delivered geometry source tree `171606514a3cf6733e82eb11549a659856d68c1a`, anchored to canonical geometry merge `2d0c31a3e2dbe0a4a46d123226fa1d62f7d4c7aa`. Preserve historical tree `953f74f80cf2f8085b8e1c93489fcdd357929b37`, the existing fixed successor `2a8c200cbb4862b6ffdd5952be7f6fa8f9ce1e63`, every fixed pin and the original complete baseline.
+
+There is now actual evidence of the third-tree CI refusal, not merely a prediction. Both newly downloaded Actions archives retain the intended pre-child failure. Archive transport is demonstrated for these two partial runs. Neither run contains any child observation or qualifies the third source tree. Required quality remains failed; the advisory job's success is a job policy outcome and does not make the failed test command successful.
+
+Static evidence supports this narrowly staged implementation: the complete source delta is exactly the three geometry paths, with the allocation/facts body unchanged and the moved geometry functions preserved. It does not prove the 36 complete append graphs remain equal under the changed module graph. Acceptance must remain held until that exact comparison is measured. ROOT owns integration and queue; B parent owns append implementation and evidence. All previous missing/failed epochs and B holds remain.
+
+## Inspected authorities and exact identities
+
+The preceding complete normative contract was retrieved from Git blob `70fdc325dbae097c6f6091dc116410efbb4db1e6` at canonical `bb58c562545e4bd08310ab2bfc41bbd88679d958`, path `plan/log/6920-b-ci-contract-release-20261009.spec.txt`: 26,593 bytes, SHA256 `d6f6f6d4d6962dadc24be72059b10fa6ae3747740c60027cca49c20c51fff88c`. This document adds a bounded third target to that contract; it does not supersede its custody, transport or full-witness requirements.
+
+ROOT release comment `6076669715` and B checkpoint comment `6077251918` were read from existing PR6583. The latter was actually updated at `2026-10-09T08:23:16Z`. B PR6593, **fix(ci): preserve trusted Linear append regression custody**, remains open on exact head `a672175beaa11520bc953d844648ecf6e53475c4`, with `hold`. Its full tree is `7962fee876df69522826b1940f1a5f942d2876af`; source tree remains the released 2a8 target. Its parent is trial/evidence execution checkpoint `a7a337714c77f7b5779e028055feb220adaf7c24`.
+
+At the canonical-main read, `main` was `bb58c562545e4bd08310ab2bfc41bbd88679d958`, full tree `289da1e9d5e8dfc6ae6a2942e44c106e6bfb4b0e`, source 1716. The geometry merge `2d0c31a3e2dbe0a4a46d123226fa1d62f7d4c7aa` has parents `616da017ca11cefa61f3f8d71a1c7ac18773491c` and reviewed C head `e8f56680589752d67c83ce80cbb43b1bebf1f056`; its full tree `e9fdf1f42f3b88377cf0565f5ed06554916c4e37` is exactly the C head's full tree. The server-side comparison from geometry merge to inspected main is ahead 5, behind 0. Current main and geometry merge both name source 1716. These are actual tree/ancestry reads, not inference from a PR title.
+
+Actual B CI checkout is synthetic PR commit `340fcf4da0bad7ca8ff02132a638f98685dfcf3a`, full tree `8fa98936536171e64c8013fe09baa9de360ed308`, parents `b47c6e4b9d64ce848407a80a03a063fb102ffe8b` and B head `a672175beaa11520bc953d844648ecf6e53475c4`. Its complete source tree is 1716. Both job logs show that exact fetch/checkout, both archives independently name it, and Git API commit/tree reads agree. Do not substitute the B branch head for this executed checkout.
+
+## Complete source boundary and semantic review
+
+Both recursively retrieved source trees explicitly report `truncated: false`. Independently reconstructing all 59 directory-tree objects from Git's tree encoding reproduces both complete source tree IDs. Old tree has 1,900 regular source blobs; new tree has 1,901. Exactly two modifications and one addition exist; all other 1,898 source blob identities and modes are unchanged.
+
+| Path | Old Git blob | New Git blob |
+| --- | --- | --- |
+| `src/ir/analysis/linear-memory-plan.ts` | `a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c` | `3db990eb21e3ed216cd798548af6d076e32ed9e1` |
+| `src/ir/analysis/contracts/linear-memory-layout.ts` | `280a72ab47f43584f93efb664e3e64b55dc896b5` | `0dd2108962236a64e2b96479309b5b1e9735c90e` |
+| `src/shared/contracts/linear-memory-layout.ts` | absent | `59450b9ad09d7ebf16af04a8a1ab655a5c81b0ee` |
+
+The exact complete bytes of all five old/new blobs were downloaded and Git-blob-hashed. New planner: 45,359 bytes, SHA256 `08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc`; new IR contracts: 3,161 bytes, SHA256 `83e6b8a07bdc8e8b93fed590bc0aed5c5f779bde98466e9cbbe3feb7a825cb91`; new neutral shared contract: 7,580 bytes, SHA256 `08c85d9e8c9891a74b9c0c02a1310b67b16832980849dc0e7b6d511d91350937`.
+
+This is a source-function review, not a constants-only argument:
+
+1. `storageBytes`, `storageAlignment`, `planLinearRecordLayout`, `linearStringLayoutId`, and `planLinearStringLayout` are byte-identical function declarations moved from the old planner into the shared owner. The eight storage widths remain 1/2/4/8/4/8/16/4 for i8/i16/i32/i64/f32/f64/bytes16/pointer. Records keep ordered eight-byte slots, fixed-pointer offsets in field order, alignment 8 and header 8; notably the pre-existing bytes16 field still occupies an eight-byte slot while its own alignment is 16. This review does not silently “repair” that existing contract. String layout keeps UTF-8 identity, no pointers, length 8/elements 12, payload prefix 4 and fresh returned objects.
+2. `planLinearVectorLayout` still calls unchanged `linearStorageForIrType(element)` first. For `kind === "val"`, new `planLinearScalarVectorLayout(storage)` delegates to `planLinearVectorStorageLayout(linearScalarStorageKey(storage), storage)`. That key is exactly the old `scalar:${storage}`. For non-val types, it passes the unchanged `linearIrTypeKey(element)` to the shared storage-level constructor. The latter reproduces the complete old vector object: identity `vector:${elementKey}`, maximum record/storage alignment, element-sized plan with base 16 and minimum 16, length/capacity/elements 8/12/16, matching stride and pointer classification, and fresh `fixedOffsets` array. There is no caching or freezing of returned layouts.
+3. `linearVectorLayoutId` wraps the same IR semantic key with the extracted `vector:${elementKey}` helper. `linearIrTypeKey` changes only its val branch to the same extracted `scalar:${storage}` helper. Its support-ref refusal, string/nested-vector nullability/object field order/nominal class/boxed/dynamic/closure identities remain intact. Non-val pointer types are not collapsed into `vector:scalar:pointer`. Support refs still throw before any vector result.
+4. All 36 other planner function declarations compare byte-for-byte, including `prepareLinearAllocationFacts`, `verifyLinearPreparedAllocationFacts`, `planLinearMemoryFromFrozenFacts`, `planLinearMemory`, `verifyRegistrySnapshot`, allocation-size/layout selection, canonical site/index checks, metadata access, detached equality, interning, module collection, global storage, lifetime and allocator selection. The continuous region from `export interface LinearOpaqueLayoutPlan` through the complete allocation/facts/planning body before the extracted geometry functions also compares byte-for-byte. Allocation policy objects and frozen-facts validation were not rewritten.
+5. IR contract changes move/re-export the storage/layout types through type-only imports/exports. Allocation ownership/escape/encoding and runtime-operation contracts remain in IR. The new shared source has no value or type imports. Planner compatibility exports preserve the five actual shared function bindings and the one frozen forwarding object, with the same forwarding tag/header/pointer fields. The import graph changes, so unchanged function bytes remain a bounded static compatibility argument, not runtime proof.
+
+The delivered G24 test source was read completely from Git blob `8a2cf8e0e411b19cbcfcf2b2350e7cada559092d`. Its 24 cases use independent ABI literals, cover all scalar storages, string/nested/object/class/boxed/dynamic/closure identities and support refusal, empty/mixed/wide records, string geometry, public compatibility binding identity, fresh mutable nested layouts, the one frozen forwarding object with physical bytes, genuine nonempty source ownership/delegation, and parser-positive forbidden value/type imports. These are materially stronger than checking the constants. This review did not execute G24. ROOT's delivered-C record of G24 and the merge-group gates is supporting prior evidence, not a newly claimed run, and cannot replace the append trial.
+
+The out-of-src boundary-policy delta was independently downloaded and read: `scripts/compiler-boundaries.json` adds the single shared leaf to foundation membership, advances that layer's minModules 9→10, and adds its one clean/foundation inventory row. No other policy delta appears between B's old canonical composition and the geometry delivery. That file is not one of the runner's nine execution config pins. Do not add it as an excuse to broaden accepted source/config populations, change a generated-report exception, or grant arbitrary policy trust. The existing policy-gate and generated-report custody contracts remain separate.
+
+## Fixed inputs and population custody
+
+All fourteen fixed inputs were independently fetched as complete Git blobs from the **actual synthetic checkout**, with both Git blob and SHA256 verified against published runner constants. Nine of the fourteen are `CONFIG_PINS`; they are not nine extra paths beyond fourteen.
+
+- Runtime `src/codegen-linear/runtime.ts`: `2a562751f9e2c6291944836681b3bc99b402c2d154a88c429ee16013eaf09e0f`.
+- Frozen consumer `src/ir/backend/frozen-body-consumer.ts`: `262d9866247af2e2fa18a6f8dbdf9d4a07c37c6ae188eb491a312949e6c60404`.
+- Integration `src/ir/backend/linear-integration.ts`: `8bcc7d6507cb6abd1c4333e43fe5fef015f6649dd788221778aa61e6911c1571`.
+- Unchanged append test: `c63e83104b42104c0ea9e7d5d3fb3f6f2cce960a65973cbf342698e8e79d7f8d`.
+- Genuine string-hash fixture: `66a15148fdd960dcbe5d87c25a28d870e8db9d00865483d708f0ca4e6e6e335c`.
+- `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `scripts/test262-concurrency.mjs`, `tsconfig.json`, `tsconfig.ts7.json`, `vite.config.lib.ts`, `vite.config.ts`, `vitest.config.ts`: all nine exact existing CONFIG_PINS, fully enumerated with hashes and Git blobs in the attached review data.
+
+All fourteen match B head and synthetic CI checkout. The other thirteen also match the geometry merge and inspected canonical main. The append test itself is present only on B and the synthetic composition, not yet canonical main. Do not describe the missing canonical test as a pin match or try to qualify a bare canonical checkout that lacks it. The qualification checkout must contain B's published frozen test and runner composed with the delivered source 1716.
+
+The runtime custody loop must keep every one of the 1,901 committed source files, verifying physical regular files against committed Git bytes before and after. The shared leaf is added to the observed source population automatically by the existing complete `ls-tree` loop. Do not replace that loop with three path checks, a dependency guess, a count-only guard or a hand-maintained geometry inventory. Preserve source symlink/mode refusal, source/test/fixture dirt checks, complete execution-config population equality, local edit allowlist, generated-report exception and exact before/after equality. Every new freeze must print actual denominator and file inventory. The previous 1,900-source trial recorded 1,914 custody paths; with identical additional-path population, the third target has 1,915. Counts support the complete path-set check; do not hardcode 1,915 while dropping a different input.
+
+## Actual archive evidence and current blocker
+
+Run `37904506861`, attempt 1, event pull_request, B head a672175. Job log and downloaded archive identities are joined to synthetic checkout340fc and source1716:
+
+| Scope | Job ID/outcome | Artifact ID/name | ZIP SHA256 |
+| --- | --- | --- | --- |
+| Required quality | `113734609514`, failure | `11603409132`, `linear-append-quality-37904506861-1` | `c2c3e4971d36cda51bc55bca1a7c872f7f9009d1d2874fa5e6c606608d0d40aa` |
+| Advisory ordinal 1 append test | `113735341401`, success job / exit1 test step | `11603983003`, `linear-append-advisory-37904506861-1-1` | `7eb9c3922ab6a31d3b0eb31f9f3e82ed6f491d980ea9535199a32d1e4cdb3c7e` |
+
+Both actual ZIPs are 2,754 bytes and match GitHub's archive digest. They were downloaded and inspected without extracting or executing embedded code. Quality retains directory `run-hdoGoC`; advisory retains `run-8EvXZ2`. Each contains exactly five actual files: `command.json`, `expected.json`, `after-failure.json`, `receipt.json`, `runner-errors.v8`. The v8 file was hashed and retained as opaque bytes, never deserialized. There is no stdout, stderr, reporter, graph, decoded witness or complete before snapshot in either archive.
+
+Both expected records have the unchanged nine-field manifest with source1716 and actual340fc HEAD. Both receipts have code null, signal null, killed false, bytes0, elapsedMs0, spawnError null, and two retained errors: original pre-spawn membership refusal and the finally custody refusal. `after-failure.json` also names `unapproved source tree`. The exact published runner places `assertApprovedSourceTree` before physical source checks and child spawn. **Measured third-target results: zero child observations, zero envelopes; not 36 failed tests and not 36 passing tests.** Required changed-root command exited1. Advisory command exited1 under existing continue-on-error behavior, then its uploader succeeded.
+
+Quality artifact created `2026-10-09T08:32:56Z`; advisory created `2026-10-09T08:24:47Z`. Both reported expiration `2027-01-07T08:22:00Z`. Record these expiring-storage identities and retain the downloaded raw bytes with failure history. Do not rerun either historical job to replace it, flatten the run directories, rewrite expected/receipt records or manufacture missing healthy files. This review's copies are under the private review directory; B parent should publish its own custody adoption in the existing evidence area.
+
+At the run snapshot several unrelated test shards were still running. This report does not claim overall run completion. The two named jobs and their specific upload steps were completed and their logs/artifact bytes were available. No polling loop, rerun, cancellation, queue action or status mutation was performed.
+
+## Independent check of the already qualified two-tree epoch
+
+The published current-source archive and fixed older baseline were downloaded as Git blobs. Original trusted graph stream expands to 44,267,645 bytes, SHA256 `bb1f7239ff371e6f373d3b45450a458f88c319a2d47b397b080681ce1d8f2b3e`; the 2a8 current-source stream expands to the same byte count, SHA256 `4ee28d5503aebb5fa83afe0e1d9a792f86c0f81cdefcbe74e50caa1bba4cd094`.
+
+Both contain exactly 38 complete envelopes. The complete ordered 36 observation envelopes and completion envelope are byte-identical line by line, and complete JSON comparison agrees. No graph field, descriptor, metadata, buffer, witness or binary was removed. Only graph0 provenance differs. Its inert JSON descriptor records were joined to actual expected/freeze/before/after head a7a337, source2a8, Node `v22.23.2`, V8 `12.4.254.21-node.56`, common fixed inputs, command, effective flags, fixed 36-ID population and historical baseline/source. All38 complete envelopes recovered independently from raw stdout/stderr equal the archived graph stream. Before/after complete bytes match, both file maps equal the independent freeze's 1,914 paths, and all fourteen fixed input hashes join.
+
+Published receipt records actual child exit0, no signal/kill/spawn error/failures, 44,273,881 output bytes and elapsed16,614ms. Reporter is36 total/36 passed/0 failed/0 pending/0 todo. Separate published parent-terminal record names parent exit0 and the one actual trial. Frozen runner bytes match published a672 runner exactly: SHA256 `b6106b0ef3b686bb67d713cf6133d3235a5c4c29666fa889680b531193263e77`, Git blob `18a055272a34195e091a601ce6fe003f9c072c61`. The current comparator was read as source only; this review did not import it or the runner or deserialize any v8 payload. These independent archived-data checks establish the retained two-tree epoch's full-data equality. They give **no third-tree runtime credit**.
+
+## Ownership and implementation scope
+
+Fresh canonical claim-tree read was nontruncated. Relevant actual records:
+
+| Slice | Actual owner | State/write ID |
+| --- | --- | --- |
+| `6915` | `ttraenkler/codex-linear-b-append-scope-plan-20261007` | in-progress / `86113-5mk75ms4` |
+| `6915:finite-source-approval-successor-20261009` | `ttraenkler/codex-linear-b-source-approval-sol61-20261009` | in-progress / `62837-vw2me2ho` |
+| `6915:archive-transport-implementation-20261009` | `ttraenkler/codex-linear-b-archive-transport-sol61-20261009` | in-progress / `62946-3169olpj` |
+| `6915:advisory-parent-command-20261008` | `ttraenkler/codex-linear-b-advisory-command-sol61-20261008` | in-progress / `80796-adzysol8` |
+| `6915:adopt-reviewed-append-ci-plan-20261009` | `ttraenkler/codex-linear-b-reviewed-ci-plan-astra-20261009` | in-progress / `62842-atpyalla` |
+| `6915:trusted-append-ci-20261008` | `ttraenkler/codex-linear-b-append-ci-sol61-20261008` | done / `96415-pkpzp33k` |
+
+Prefer continuation by the **same existing Sol6.1 runner owner**, preserving its context. The current claim alone covers the earlier released successor; it is not self-authorization for a third source. Before edits, ROOT adopts this full plan in issue6920 and explicitly releases its exact scope; B parent adopts the full plan in issue6915, obtains the existing runner owner's acknowledgement, and publishes/effect-reads a fresh unique continuation slice such as `6915:geometry-source-approval-20261009` with that same named Sol owner. This does not permit two simultaneous runner writers merely because the slice keys differ. B parent must serialize the old and continuation scopes. Do not force, release or complete any foreign/old claim. If the existing owner is unavailable, ROOT/B must reconcile the owner explicitly before choosing a replacement; a new claim is not a collision bypass.
+
+Only implementation file: `scripts/hooks/run-linear-append-provenance.mjs`. Permitted edit regions are the literal approval definitions, `assertApprovedSourceTree`, and directly corresponding cases inside `selfTest`. The earlier implementation already parameterizes `buildExpectedProvenance`, `assertIdentity` and `readApprovedCheckout` correctly and already calls the membership predicate in `assertFrozenInputs`; those functions need **no change** for the third target. Their exact existing behavior must be reviewed/preserved, not gratuitously refactored. No decoder, receipt validator, source, test, fixture, config, workflow, changed-root hook, uploader, reporter parser, command/flags, `EDITABLE`, archival code or generated-report handling edits belong to this release.
+
+B parent owns appended issue6915 adoption/evidence; ROOT owns issue6920 adoption and final review. The prior uploader and advisory-shell owners retain their regions. Native facts, source caller, initializer import, allocator4540 and ROOT's canonical C1 loader/cold-capture work remain wholly outside this task. This review has written only its fresh private review directory and has not mutated any source, repository worktree, claim, branch, PR, hold, comment or queue.
+
+## Exact finite implementation contract
+
+Keep `APPROVAL_COMMIT`, every key/value of `PINS`, and the complete `SOURCE_APPROVAL_SUCCESSOR` record unchanged. Add one separate explicit literal record, recommended spelling:
+
+```js
+// ROOT-reviewed geometry extraction; a finite qualification target only.
+const SOURCE_APPROVAL_GEOMETRY = {
+  commit: "2d0c31a3e2dbe0a4a46d123226fa1d62f7d4c7aa",
+  sourceTree: "171606514a3cf6733e82eb11549a659856d68c1a",
+};
+```
+
+The record's commit is provenance for the independently reviewed source, not a requirement to execute that exact historical commit. Actual execution is on an independently frozen committed composition containing B's frozen test. Extend the existing production predicate by exactly one disjunction:
+
+```js
+sourceTree === PINS.sourceTree ||
+sourceTree === SOURCE_APPROVAL_SUCCESSOR.sourceTree ||
+sourceTree === SOURCE_APPROVAL_GEOMETRY.sourceTree
+```
+
+Keep the same `unapproved source tree` failure and barrier location. Three literal trees are the entire allowed domain. No table populated from files, environment, branch, manifest, current main, ancestry, output or generated inventory; no `.includes(actualTree)` construction that implicitly learns the current tree. No replacement of old constants, registry abstraction, runtime override, source path exceptions or automatic future-main admission.
+
+`readApprovedCheckout` must still obtain actual HEAD and `HEAD:src` from Git. Local exact nine-field manifest is only an independently checked assertion of that actual checkout; it cannot authorize an unknown tree. CI still accepts only real GitHub pull_request/merge_group identities, requires actual HEAD equal GITHUB_SHA and rejects any local override. Push and generic CI remain refused. Unknown source can appear in archived `expected.json` for diagnostics but independently fails the fixed-membership predicate before child execution.
+
+`assertFrozenInputs` must still pin the original actual HEAD and expected source at the start and re-read both after the child. Moving among any two of the three admitted trees mid-run is drift, not permission to reselect a target. All snapshots, full source observations, pins and Git-object/physical-byte checks remain. Missing objects, missing HEAD/src, unknown trees and inspection failures fail closed. A docs-only or synthetic descendant with exactly one approved source tree and all common inputs may retain current source-compatible execution behavior, but ancestry alone authorizes nothing.
+
+Historical baseline inside `validateAppendReceipt` remains `c41bca2bc07e9d8fddbb38ca77904dd1f0cac438`, source `68296a0d34ceea94dbc9ca9398f71bc8a1b742b8`. The separate trusted full-graph baseline remains the original 953f execution stream identified above. The proposed third record is an execution-qualification target pending proof, not a new baseline and not native admission.
+
+## Embedded controls and static acceptance of the patch
+
+Retain all128 existing controls; the earlier104-control population remains inside those128. Add only finite third-target controls through the actual production functions. Do not execute the compiler/test child in self-test mode. Preserve the current private inert Git fixture approach and environment cleanup; no new source imports are necessary.
+
+Required additions:
+
+1. Third tree accepted by the actual membership predicate, with original two positive controls retained. Unknown shape-valid tree still rejected, including an expectation with all direct pins matching.
+2. `buildExpectedProvenance` called with the third tree yields exactly the same nine keys, old common pins/command/flags and the actual third-target HEAD/source. Historical default remains old PINS. Exact local-manifest identity accepts the third target.
+3. Both genuine supported CI event modes accept third-target identity; missing/mismatching GITHUB_SHA, missing/malformed HEAD, local override in CI, push, generic/unsupported CI and missing local manifest retain fail-closed behavior. Existing controls remain; add third-specific exercises where the branch is newly traversed.
+4. Source-substitution pairs third→historical, historical→third, third→successor, successor→third fail exact local identity. Retain the two old pair controls; do not replace them with only new pairs.
+5. Add the third literal to the existing self-test inert source fixture set and accepted checkout-reader loop. Use the actual `readApprovedCheckout`, provenance builder and membership predicate. Missing source objects in these inert fixtures are intentional and are never described as a full custody success or child qualification.
+6. Retain the unknown checkout's archivable expected record and refusal by actual `assertFrozenInputs` before any child. Preserve missing HEAD/src controls and source/config/regular-file/symlink/opaque-report controls.
+7. Exercise all six directed before→after pairs among the three admitted trees: the existing two plus four new pairs. For each use real `assertFrozenInputs` HEAD-drift rejection, isolate its source-equality barrier with the same existing fixture technique, verify the frozen expected source was not reselected, and reject changed complete snapshot source using actual `compareFrozenInputs`. Neither acceptance of both endpoints nor a valid after-source is a pass.
+
+Report the actual control count only after execution; do not estimate it as a measured result. Before parent approval, provide the complete diff and exact runner bytes. Static review must establish that only the two literal/predicate regions and narrowly related selfTest changes occurred; every unowned production function and all old constants/pins/allowlists remain byte-equivalent. Preserve all prior controls rather than replacing their intent with a weaker mock. ROOT/B parent reviews the exact candidate implementation before any runtime authorization.
+
+## One serialized third-target trial and complete acceptance
+
+Implementation release is not trial release. After exact patch review, B parent independently freezes a **committed** execution checkout whose source is exactly1716 and which contains the unchanged c63 append test, genuine fixture, common pins and nine-config population. Do not execute a dirty shared primary checkout or ROOT's ongoing integration checkout. Compose delivered geometry using normal ownership-approved Git integration; do not borrow mutable files from another lane. Freeze actual HEAD/full tree/source tree, Node/V8/pnpm, complete dependency/config population, all1,901 source Git identities and physical hashes, fixture/test, runner/hook/issue custody inputs, command and4096-MiB flags, exact comparator bytes and baseline graph hashes. Preserve the frozen candidate runner bytes separately from later publication identity.
+
+Only after that freeze is reviewed may B parent separately authorize **one** serialized third-target trial under the existing parent route. This document authorizes no new runtime itself. No concurrent trial, hidden retry, fault window, archived-runner execution, baseline replacement or new test case is allowed. Current failed CI archives remain intact. Before-spawn failure means zero child observations; after-spawn failure reports actual counts and preserves partial data.
+
+Healthy acceptance requires strict parent and child exit0, no signal/kill/spawn failure, unchanged full before/after custody, all38 complete envelopes, the exact36 ordered IDs, reporter36pass/0fail/0pending/0todo, completion passed with no missing/duplicate IDs, action/schema/emission channels passing, Runtime22's33 transitions, and all eight named negative same-validator mutations with complete original/corrupted witnesses. Preserve source ownership/batch/consumer completion/module/body/defined-helper/call joins, actual artifact/binary bytes and full memory before/after evidence. Do not infer these from an exit code or status summary.
+
+The separately reviewed comparator must compare **every field of every one of the36 complete ordered observation graphs and the complete completion graph** with the retained original baseline. Graph0 stays separate but must be fully validated against the new frozen epoch and raw streams, not ignored as a wildcard. Join full stdout/stderr to all38 archived envelopes; preserve complete descriptors/undefined/NaN/Map/Set/buffer references, source sites, metadata, body/slot/allocation tables, module identity, error descriptors, negative witnesses and final binaries. No normalization or filtering is permitted to manufacture equality. Record Node/V8 changes explicitly; they do not license deleting differences.
+
+If any graph differs, record exact ID/envelope/graph path with both complete values, originating source delta and raw custody. Stop compatibility acceptance and report the actual result. Distinguish an intended changed observation from a regression or instrument issue only in a separate bounded follow-up. No retry, rebaseline, repin, comparator relaxation or substitution of passing summaries is authorized by this plan. A static expectation of byte equivalence does not overrule a measured difference.
+
+After the one trial and full comparison pass, use existing B PR6593 and ordinary signed hooks for publication in the approved scopes. No direct-main push, hold removal or queue submission is implied. New supported-identity required-quality and advisory CI must then produce actual downloadable archives; independently verify their artifact IDs/names/digests, run/job/attempt, exact executed checkout/source, terminal outcomes, full custody and complete witnesses. A changed synthetic checkout with an unknown fourth tree still refuses and its failure archive must be retained. Existing uploaders already suffice; this release does not modify workflow transport to make a run green. If no archive is produced, report the missing artifact and actual logs without success credit.
+
+## Review artifact and limits
+
+Reviewer data is `.tmp/independent-review-data.json`, 31,170 bytes, SHA256 `5592d0b3da474c50afa8701e296e5d54e5fa587a730df9c9f729d5937526da7b`. It includes exact three-path delta, reconstructed source identities, complete fixed-pin table, preserved function lists, independent full-graph/raw-stream/custody comparison, actual downloaded CI archive metadata and per-file raw hashes, and all published blob download identities. Exact ancestry JSON, job logs, claims, blobs and ZIPs are alongside it. The inert inspection script `.tmp/review-data.py` is review tooling only and is not proposed repository production/test code.
+
+The original specification was full-text read; complete G24 source, all changed source bytes, complete 2a8 and baseline graphs, both actual CI partial archives and relevant production runner sections were independently inspected. No archived JavaScript was executed, no runner/compiler/test imported, no v8 payload deserialized, no runtime child spawned, no production fault mutation performed. This review cannot claim third-target36/38 equality, native completion, JS-host IR/native-array admission, performance, full IR equivalence, allocator ownership, legacy retirement or release of B holds. ROOT must adopt/release the bounded plan; B parent must review/freeze/authorize the single trial; final integration and queue remain ROOT's.
+
+
+## ROOT full-plan adoption: C1 DATA bridge private authoring plan
+
+Full Astra specification independently read and hash-verified: 25476 bytes / SHA256 c0cd7c8a74b0cbe30a5a68d10009bbefd064fd847015912e5e40b42ef9999710. Private authoring only; execution and authority activation require separately reviewed evidence.
+
+# C1 current DATA epoch bridge after the failed cold capture
+
+Author: Codex GPT-6 Astra High. Date: 2026-10-09.
+Status: bounded diagnosis/specification only, for ROOT adoption in existing **6920 — Native Linear numeric-vector shared source handoff and integration plan** before Sol authoring. No source, helper, receipt, fixture, configuration, claim, or shared issue was changed. No import, proof callback, runtime test, fault, or retry was run in this review.
+
+## 1. Actual failure and decision
+
+The one qualified cold C1 acquisition failed at H2's unchanged raw-source fallback, not at the native root namespace guard:
+
+`runtime program relocation: length/SHA256: src/ir/program/data.ts`
+
+Actual stack: `assertRuntimeProgramRelocationSource` at `tests/helpers/ir-runtime-program-relocation.ts:256`, called by `captureC1CurrentPopulation` at `tests/helpers/ir-c1-current-source.ts:878`. The callback recorded one H2 capture and two explicit imports, 47 population reads, 54 authority reads and zero resolver operations. It returned no proof result. The actual Vitest result is one collected/entered, zero passed, one failed, no pending/todo. ROOT reported terminal session84074 exit1. The driver subsequently reported its exit-status assertion; that is secondary to the recorded source-proof failure.
+
+Implement one finite historical bridge for the genuine descriptor-only recursive-class screening epoch in `src/ir/program/data.ts`. Keep actual current DATA text in the captured current population and the native closure. Feed only its independently reconstructed predecessor into the private historical map handed to the immutable old relocation proof. This bridge does not undo the production getter fix, change a baseline pin, or make a claim that the failed run reached type/resolver checks.
+
+Use the existing H2 instrument authority and v2 seven-instrument receipt. No new H1 algorithm, root export, receipt schema, source-map bridge, old relocation helper/receipt, or source pin broadening is required. ROOT must independently bind the changed complete H2 and update only its receipt instrument row plus the existing root successor digest. Preserve all seven original before pins and the six other current rows exactly.
+
+## 2. Inspected records and preserved custody
+
+Failed output directory:
+`/private/tmp/js2-6920-anchor-loader-qualification-20261009/.tmp/c1-v2-cold-canonical-acquisition/output`.
+
+The following full records were inspected; all 101 reader-return snapshots were independently rehashed as whole UTF-8 bytes and matched their recorded length/SHA-256/Git blob:
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| collection.json | 216 | 7fbb882b2142fbc4615790d807763f76a080153a89491a100696a43ddcb539c3 |
+| callback-final.json | 7525 | dc619090aa9f49bccebeac5e05b6ef903b6c348bddd61027683e11e08b57a29f |
+| results.json | 1831 | 0394f11369ef230e8a28961a0f0f743022c5892b3e242b00677f6df3e3d2e818 |
+| operations.ndjson | 119744 | e0d203b692c2a58a9265491bd3106a148b9bb2eedd50d99ad6f206a2d242b62d |
+| seal.json | 35615 | b1f64aa962df22fb65283715633390d7d4840099d9700223f2faa951e739582c |
+
+The journal has 212 event rows, not 212 source reads: 101 attempt/return pairs, import/lifecycle events and the final proof/callback failures. Population operation op-67, return sequence141, records actual data.ts 10831/6010f226…/8f205f87…. The last authority return is op-101 for current `src/ir/program/validation.ts`; the subsequent H2 comparison fails before any resolver operation. The absence of a proof-return event is real failed acquisition, not a zero-length successful trace.
+
+The seal records 2077 rehashed inputs plus 3741 harness entries, unchanged=true and failed=true. Its custody limit remains intact: an unobserved external service closure is not inferred to be zero. The root descriptors actually recorded own data/string values with zero invoked getters; no loader alteration is justified by this failure.
+
+New private static record:
+`/private/tmp/js2-6920-geometry-trusted-adapters-resume-20261009/.tmp/astra-c1-data-epoch-static-record.json`,
+6408 bytes, SHA-256 `06bf0b22586d1264269c04a2cf43bab3b12303506d24c7199d60409845d00d9e`.
+It contains genuine Git parent/current pins, both complete changed declarations, independent whole-file data replay equalities, physical ROOT equality, failed-journal pins and the current source-proof authority/fixture pins. This is a data-only source comparison, not helper execution or proof qualification.
+
+Retain the failed output directory byte-for-byte and retain every earlier v1/v2 loader/source epoch and failure. No output overwrite, reset, root-helper restore, temporary production fault, trace placeholder fill or automatic rerun is authorized by adoption of this plan.
+
+## 3. Genuine source epoch and semantic meaning
+
+The inventory supplied by `/root/sol_c1_data_epoch_inventory` identifies one exact source change:
+
+- Commit `bec8ac003452a63e9a3fa6f8ff57d5f83e69a4af`.
+- Actual first parent `8452732f0b88c14c5c7634ece58f83240970ea4c`.
+- Delivered merge `d2beec5ce7952d1271ce6188422eb8a533845656`, with parents8452732f… and bec8ac….
+- One changed production declaration: `isRecursiveIrClassShape` in `src/ir/program/data.ts`.
+- Associated donor regression: `tests/issue-6865-ir-class-cycle-data.test.ts`.
+- Associated issue: **6918 — Prepared IR recursive class detection must not invoke getters**, at `plan/issues/6918-prepared-ir-recursive-class-getters.md`.
+
+The exact whole source operands, independently read again from genuine Git:
+
+| Operand | Bytes | SHA-256 | Git blob |
+|---|---:|---|---|
+| Genuine parent / immutable old relocation dependency | 10682 | 01cc4349696dca0b0f439e7b639e269a83d99849911a6db963dcc5b4b6ecea16 | fd8693ee3c82d08039b91af4d4a1bda408966176 |
+| Genuine current / actual ROOT / failed journal operand | 10831 | 6010f226a79bef58d1f8a2a84761eca2fa479ca33d5ace96636c75fa58512b06 | 8f205f87ebe7505cac4539de0f0a2bc15f906ebe |
+
+Both declarations begin at UTF-8 byte offset4946. Before ends at5399, length453, SHA-256 `96af5e9bf26518f9389b5e77cbf00dfd28113347c032d256f263b6439f9138a5`. Current ends at5548, length602, SHA-256 `e1a354dfa82e3be7fb905972f2436b9d2607223573a28bfaeed676357a54e367`. These ranges include the closing brace's newline. The prefix before4946 and the corresponding suffix after each declaration are exactly equal. Net source increase149 bytes.
+
+The old predicate reads brand and shape properties directly. The new predicate obtains own property descriptors, consumes a value only when the descriptor owns `value`, snapshots classId once and preserves the brand/string-prefix/name/array conditions. Current source continues to protect both copying and in-place freezing from late getters reached via active cycles. A historical proof reconstruction is not permission to execute the unsafe predecessor in current validation or substitute it in the current native type host.
+
+The actual donor test retains six late-accessor fields through both APIs and two real recursive-cell controls. The published issue records historical baseline12fail/2pass, corrected14pass, plus the selected codec positive. Those are historical donor qualifications, not fresh executions in this review. Preserve donor test/source bytes and their original failures; this bridge needs no production behavior repair.
+
+The explorer found no existing helper for the new current pin/blob/commit. The existing ownership-evolution proof reverses an older caching epoch fd8693…→bbb0e0…, and does not establish this new 10831→10682 edge. Do not invoke that older bridge with a fake operand or redefine its before/current pin. Once the new edge yields exactly fd8693…, the existing old relocation and older downstream proof chain remains usable unchanged.
+
+## 4. Actual H2 route and the precise integration sites
+
+Current H2:
+`tests/helpers/ir-c1-current-source.ts`,
+44840 bytes, SHA-256 `ae850773522f11dca82cb22f99bc083fb60117ed016fbc7a896061b1507a9474`, blob `cea426a82d090ee672f8d69d90ac4e7880ebc919`.
+
+`captureC1CurrentPopulation` currently:
+1. Obtains H1 historical authority.
+2. Acquires receipt plus all46 current paths, with primitive checks.
+3. Authenticates the immutable relocation receipt.
+4. Acquires and authenticates source-map/validator/lowering authorities.
+5. Iterates receipt current+dependency records. It has explicit source-map/types/legality/validator branches but sends data.ts to the final raw-source assertion.
+6. Clones the current map into the closure, conducts the current seam/type-resolution work and finally clones current again into historicalPopulation, overriding only existing predecessor routes.
+7. Calls immutable `reconstructRuntimeProgramRelocationPopulation` on that historical map and returns originals plus actual observed current pins.
+
+The new bridge belongs only at two narrow joins:
+- At the existing record loop, add exact-path data.ts dispatch which validates actual current source, reconstructs its genuine old dependency, and applies `assertRuntimeProgramRelocationSource` against the existing receipt record. Hold that predecessor in a per-call local.
+- When building historicalPopulation after live current seam/resolver checks, require that local to exist and set only `src/ir/program/data.ts` to it, alongside the existing named predecessor overrides.
+
+Do not update `current`, `closure`, the population reader, observedCurrentPins or production data.ts. Do not overwrite the current map during the first comparison loop. Do not obtain a healthy physical authority copy and substitute it for a supplied population mutant. The bytes supplied on the population channel are the operand to be validated and replayed.
+
+The explorer's all46 static receipt-path census found10 full-pin mismatches: nine have existing explicit H2 routes (linear, legality, four source-map paths, two validator facades and types), and data.ts is the only raw-fallback mismatch. This supports the bounded one-path scope. It does not prove the unentered later closure/resolver stages will succeed. Do not widen the patch to speculative future epochs.
+
+## 5. Bridge implementation contract
+
+Implement a private named H2 epoch definition and private reconstruction function, used by that real capture branch. No new public API or general successor framework is necessary. Preserve all existing canonicalInputEpochs entries and the old `beforeCanonicalCurrentInput` behavior.
+
+The new source contract must contain:
+- Exact path and actual Git commit/parent identities above.
+- Literal full before/current byte/SHA-256/Git-blob pins.
+- Exact named declaration/domain membership.
+- Explicit independent inverse and forward replacement recipes for the single changed declaration, with input/output byte coordinates and actual from/to literals.
+- Exact declaration lengths/hashes and unchanged prefix/suffix accounting.
+
+Generate inverse data from genuine current→parent and forward data separately from genuine parent→current. Forward recipes must not be created at runtime by swapping an inverse array or by inspecting its computed result. ROOT must independently compare both recipes against actual Git source operands before accepting helper bytes.
+
+A shared private replay routine may execute both separately stored directions. It must enforce primitive string, round-trip UTF-8, finite integer coordinates, safe ordering/nonoverlap, equal unchanged-gap lengths, exact input membership, target bounds and complete output pins. For this single finite epoch, one whole-declaration replacement per direction is sufficient and preferable to a large character-diff list. Store only the453/602-byte changed declaration operands; the unchanged rest of the file must flow from the supplied source bytes. A full10682/10831-byte cached answer or whole-file literal recipe is forbidden.
+
+Required operation:
+1. Check the supplied source is primitive UTF-8 and matches the fixed complete current pin.
+2. Confirm the current declaration slice at4946–5548 and its exact function membership.
+3. Execute the independently fixed inverse on the supplied current bytes; require complete10682-byte predecessor pin.
+4. Confirm the old declaration slice at4946–5399.
+5. Execute the independently fixed forward on the computed predecessor using its separately authored recipe; require complete10831-byte current pin and byte equality with the original supplied operand.
+6. Return only the10682-byte predecessor.
+
+The current API domain is the one current10831-byte epoch. Do not accept the old10682-byte source as a current-population fast path, allow a hash list of speculative descendants, fall back to Git/filesystem originals, or tolerate a changed same-length declaration. The old direct relocation API retains its separate legitimate historical domain unchanged.
+
+Do not broaden the existing old canonical-input replay helper merely to accommodate this contract: its existing spans and reverse reuse are historical fixed logic with their own authority. Keep this one bridge independently bounded, while sharing only neutral local byte/pin utilities if that leaves old behavior and errors intact.
+
+## 6. Authority and receipt transition — no circular trust
+
+H1 current source remains exactly96713 bytes / SHA-256 `cc4ef7be19720ccf45e3cdd857ff373a9a770460c81cdc2bf8b1f7460754c8c3`. No H1 source edit is needed.
+
+Its existing v2 successor parser accepts exactly seven fixed paths and original before pins, checks all current instrument bytes, replays each inverse and independently forward, and enforces a coherent seven-way current epoch. H2 is one of these instruments. The complete H2 body containing the new inline source contract is therefore independently root-bound before its narrow source operation is credited.
+
+Keep schema `ir-c1-linear-layout-geometry-prerequisites-successor-v2`. No data-source field is added to the receipt; the finite new epoch is within the externally bound H2 implementation. For the H2 instrument row alone:
+- Preserve its genuine original before pin42599 bytes / SHA-256 `3fc1c89329e7e4185f8b86e1b997f801a8681e53614be9d072e464203cd68269` / blob `020e91dc1d9bd0646b8b16d9b5224fd513caf861`.
+- Replace currentPin with the independently reviewed full new H2 pin.
+- Regenerate the complete genuine-original↔new-H2 inverse and independent forward recipes, including every prior geometry hunk and the new finite data-epoch hunk. Do not erase the existing geometry edits or substitute the44840-byte intermediate as the original before endpoint.
+- Preserve the other six instrument row objects exactly, including both directions and pins.
+- Preserve predecessorManifestSha256, linearOptions, cabiSource and policySource byte/value content exactly. No resolver request/observation, source pin or thirteen-policy/two-CABI epoch change is licensed.
+
+ROOT supplies the receipt after independent seven-row replay and supplies the canonical303-byte root with only the existing successor digest literal changed. The old manifest digest, old manifest bytes, original currentInstruments pins, old relocation receipt and all older historical fixtures remain unchanged. H1's own-data namespace guard, fresh physical anchor check, digest comparison and current-instrument mixed-epoch failure remain exact.
+
+This is a new explicitly named authority epoch within the existing unpublished v2 schema, not a silent replacement of its previous receipt. Archive and reference the206007/e3a525e5… receipt,303/7d3f1a4c… root,44840/ae850773… H2 and their failed-run freeze. A running process with the old loaded root must fail after any physical root transition; do not reuse it. Only a separately frozen cold process may evaluate the successor.
+
+Trusted-owner authoring may prepare a candidate H2 and proposed instrument recipes privately. ROOT owns final receipt/root bytes and activation. No helper may read a newly captured receipt or its own source and adopt that digest as independent authority.
+
+## 7. Caller and fixture acquisition implications
+
+Keep the original two fixture bodies, registration names, deep mutants, old API priority controls and historical donor graph. ROOT-owned acquisition constants necessarily follow complete H2/receipt/root changes only after independent review:
+- `tests/issue-3518-lowering-analysis-preservation.test.ts`
+- `tests/issue-3518-c1-current-source.test.ts`
+
+Their current pins are in the static record. Amend only the declared full-authority literals needed to authenticate the new complete helper and final receipt/root. The genuine current data.ts pin already represents10831/6010f226…; do not replace it with the old dependency. HistoricalPopulation should still contain10682/01cc4349… when reconstruction is complete. The original four donor output operands and their full pins remain the unchanged genuine Git originals.
+
+The third measured authority-trace constant remains failclosed until a genuinely successful successor acquisition is captured, independently reviewed and adopted. Do not fill it from expected code order, this failed54-read prefix, either fixture's own values, or a test callback's self-derived expected array.
+
+The program-data historical fixture currently acquires `reconstructC1CurrentSources` before copying even its historical40-path population; it does not supply an alternate successful path around this failure. Retain that acquisition and do not use the new bridge to bypass its full current proof.
+
+No edit release is proposed for the thirteen source-owner policy caller files, donor class-cycle test, runtime relocation test/instrument or other historical proof files. They remain unchanged. If a new complete-H2 literal occurs in another concrete caller, identify the exact file/owner first and return a bounded addition to ROOT rather than performing a broad repin.
+
+## 8. Ownership and concurrency
+
+- Trusted adapter owner remains `ttraenkler/codex-lowering-analysis-trusted-adapters-20261004`, original claim/write76271. It owns H2 implementation and private helper recipe proposal; no authority transfer is implied.
+- ROOT remains `ttraenkler/codex-ir-integration-session-a-20261009`, integration60335-ngn0jcr6. ROOT owns final receipt,303-byte root, independent replay, fixture acquisition constants, freeze and activation.
+- The delivered production getter repair belongs to issue6918, donor `ttraenkler/codex-ir-native-linear-source-facts-sol61-20261008`, recorded original write64498-ih0vkb8o and branch `codex/6865-ir-class-cycle-own-data-20261008`. That historical issue record establishes the source author/custody; it is not a new claim release. No production hunk is edited here.
+- A2/J2/J3 semantic-entry work is a separate source task. The just-written NativeFacts reground plan is not authorization to change current data.ts or related source during this proof epoch.
+- Loader owner may author the separately named successor cold-control packet only after ROOT adopts this plan and authorizes that work. Authoring and execution are separate releases. Existing failed control source/output remains fixed.
+- No foreign claim, shared issue or B lane is changed by this specification.
+
+## 9. Authoring review and qualification requirements
+
+### Static review before any activation
+
+Require exact new helper diff, full pin and genuine-original↔new-H2 independent pair; exact data declaration recipes; full new receipt and canonical root; seven-way current instrument coherence; unchanged old manifest/receipt and unchanged six rows plus source/linearOptions sections. Independently replay every whole instrument pair, not only the new data recipe.
+
+Read the helper diff for both required joins: first validate/store predecessor, later historical-map override. Confirm no mutation of current/closure and no replacement of supplied mutants with healthy copies. Check that old receipt/schema/primitive priorities remain before the narrower branch and that no new source IO occurs from the inline bridge.
+
+Root's production input population remains2077 unless a separately declared real file membership changes. Expect only the declared H2/receipt/root transition plus the two fixture authority-constant updates in source-input scope; private new harness/control files belong to the separately enumerated harness scope. Recompute actual input/harness membership and deltas, not counts by assumption. All other existing source inputs, including current data.ts, H1, H3, source-map component and canonical Vitest configuration, remain fixed.
+
+### Meaningful controls to author privately
+
+All controls below are proposed; no callback is authorized by this specification alone.
+
+1. Genuine source pair: independent Git data-only reconstruction for both directions and exact outside-declaration equality, then the actual full H2 positive capture on frozen successor authority when ROOT permits. Static replay alone earns no executable H2 qualification.
+2. Current source mutation inside the predicate and separately outside it: actual capture must refuse the supplied population operand; no healthy authority substitution. A same-length mutation is also refused. A historical10682-byte data operand at the current population path must refuse.
+3. Primitive/UTF-8 inputs: actual H2 population primitive guard remains before any narrow reconstruction; boxed strings, undefined and malformed UTF-8 cannot be coerced into a predecessor. Reader thrown errors propagate at the actual acquisition point.
+4. Final current/historical distinction: successful capture's observedCurrentPins retains10831/current hash, current closure retains current text, historicalPopulation holds10682/old hash, and all four originals equal independently frozen genuine Git bytes. Do not derive expected pins from returned data.
+5. Complete helper authentication: change only the new inline epoch literal/recipe or append unrelated helper bytes; the externally fixed complete-H2 authority must fail. No edited helper gets a matching digest from its own source. Preserve preimport authentication and cached-import/fresh-authority controls.
+6. Receipt/anchor coherence: old H2 with new receipt, new H2 with old receipt, and mixed other instrument rows fail. Tampered current pin, before pin, incomplete inverse or forward, wrong digest, changed physical anchor after import and accessor root exports remain refusals under the existing authority contract. Use in-memory readers where the existing APIs support them; physical fault windows require a separate explicit release.
+7. Old API and downstream historical preservation: direct original relocation reconstruction still uses its original46-path domain and four genuine originals. Existing historical malformed/priority controls still call their original APIs with fully derived authenticated old operands; they must not claim an early new helper hash failure as their old deeper assertion.
+8. Donor semantic controls remain unchanged. If ROOT includes them in a separately authorized verification epoch, report all14 callbacks and actual outcomes independently from proof qualification. A source-preservation bridge does not replace the current zero-getter regression.
+
+### Successor cold acquisition
+
+After authoring/static acceptance/ROOT activation, ROOT may separately release exactly one successor cold acquisition under the actual canonical Vitest config and inherited reviewed native root externalization. Use a new frozen packet and output directory; preserve the actual failed one. No copied substitute predicate, altered namespace guard or unrelated loader change.
+
+Retain the existing acquisition discipline: preimport independent full-authority pins; one H2 call/two explicit imports; full ordered population/authority/resolver attempt-return journal and snapshots written before assertions; callback-final and sealing even on error; unchanged inputs before/after. Keep four independently pinned genuine originals and current/historical population assertions. The intended successful16-request/66-observation resolver contract is unchanged but remains unmeasured here; do not report it as the failed run's result.
+
+An inline bridge adds no reader IO. Nevertheless do not predict or bind the complete authority trace by extending54 rows by an assumed suffix. Record the genuine successful whole transcript, persist it, independently review it and only then authorize ROOT to bind the fixture literal. If a later actual failure appears, stop/seal/preserve and request the next bounded diagnosis. No automatic retry or speculative all-dependency upgrade.
+
+Full C1 suite, policy cohorts, type qualification, fault windows and NativeFacts runtime work remain held until their own reviewed release. This one source bridge is not proof of all subsequent stages.
+
+## 10. Acceptance and stop condition
+
+Static acceptance requires the exact one-source epoch and both H2 joins, fixed current-source population, independent whole source and instrument replays, and unchanged historical authority. Executable bridge acceptance additionally requires the authorized actual successor positive capture plus the meaningful refusal controls, with genuine current/historical outputs and separate denominators.
+
+Do not declare accepting C1, typed trace success, general source-proof completeness or legacy retirement from this specification or the failed journal. The immediate recommendation is ROOT adoption followed by private H2-only authoring and receipt proposal; activation and the next cold callback remain explicit ROOT decisions.
+
+
+### Effect-verified B third-source contract publication
+
+Published authorized coordination comment6077817777 at2026-10-09T09:02:24Z; effect-read full34369-byte body. Full31726-byte normative specification embedded, private implementation released only to existing serialized B runner owner62837. Fresh canonical maincffb28679df96764e295fd2064e0a4ceec643efe source171606514a3cf6733e82eb11549a659856d68c1a and B head75a018957cd83b8c727adc73136ed0f2bf780fad/HOLD verified before release. Sol docs publication delegated into isolated fresh-main lane under unique6920:b-geometry-contract-publication-20261009 claim; no source, B branch or foreign claim mutation. Separate Sol private C1 DATA bridge candidate authoring delegated, live H2/receipt/root untouched pending independent review.
+
+
+## ROOT full-plan adoption: Native Linear facts and real caller regrounding
+
+Read full43209-byte Astra specification, independently hash-verified f1361ae7df29e83303fc7c5446671e5a330cab86627ed81e74a87685c2b36ee5. Authoring will proceed only as private disjoint candidate proposals while historical source ownership is reconciled; no foreign source/claim transfer. Preserve all original A2 failures and draft.
+
+# Native Linear source facts, J2/J3 semantic entry and B Gate 1 — bounded reground specification
+
+Author: Codex GPT-6 Astra High. Date: 2026-10-09.
+Status: specification and static review ONLY. For ROOT adoption in existing **6920 — Native Linear numeric-vector shared source handoff and integration plan** before Sol implementation. No implementation release, claim transfer, runtime qualification, B dispatch, merge, or publication follows from this document.
+
+## 1. Decision and scope
+
+Proceed with a coherent A2/J2/J3 successor assembled against canonical main, not by transplanting the preserved A2 working tree. The delivered finite allocation-evidence checker can establish body-derived truth for its explicitly covered numeric-vector profile. It is not a general verifier and does not yet authorize a consumer to skip canonical allocation analyses. The missing integration consists of the strict complete-program entry, shared snapshot/facts authority, a clean facts-only planner dependency closure, final producer attachment, and the actual native caller selecting the existing layout-free frontend vector projection.
+
+This work can satisfy A-F's portion of **6905 — Linear Prepared IR memory materialization and ownership handoff**, Gate 1. It does not alone satisfy the remaining A-C, runtime-provider, startup, custody, and concrete caller prerequisites. B's five-function implementation and public 1.25 execution belong to the composed Gate 2; do not demand their completion as a prerequisite to starting B after all six Gate 1 prerequisites are reviewed. Conversely, no unused adapter or caller-only facade counts as the completed source handoff.
+
+Retain generic legacy validation for absent attachments and for semantically unqualified replacement coverage. Reject covered semantic contradictions; never fall back to hide them. Required native allocating entry must refuse uncovered or missing evidence before resource planning. No legacy retirement or new optimization is proposed.
+
+## 2. Exact sources and evidence limits
+
+Canonical main independently read from the upstream ref: `b47c6e4b9d64ce848407a80a03a063fb102ffe8b`. All canonical source reads used that commit's complete Git objects; ROOT's working tree remains an intentionally different frozen proof population. The shared initial cwd is also not canonical source authority.
+
+Companion static record:
+`native-facts-reground-data/reground-record.json`
+14625 bytes, SHA-256 `6fcf130960f2c4fdcbc07c641f67583dc920821a60b7a640116bc2ffb1677161`.
+It contains complete byte/hash/Git-blob pins for 35 inspected canonical files, all 15 preserved A2 dirty/new paths, the historical audit, and the exact B plan. Saved canonical copies equal actual Git bytes independently. These are static reads, not import or runtime evidence.
+
+B plan at exact published head `f1cabeb0986964828735a217598883b63c336e12`:
+`plan/issues/6905-linear-prepared-memory-materialization.md`,
+67232 bytes, SHA-256 `147063763fa9e6aefb3882c47cf30fab750ec2cf1952850ff3c3b861517b9c0e`, Git blob `407610b3402a32b6a49dfb85602ec0edaa5b8dfe`.
+The final Gate 1/Gate 2 and semantic-evidence sections are controlling inputs, not evidence their conditions have been met.
+
+Preserved draft:
+`/private/tmp/js2-ir-native-linear-source-facts-20261008`, HEAD `8452732f0b88c14c5c7634ece58f83240970ea4c`, exactly nine modified plus six untracked files. Its status still exactly matches the historical audit. Every retained row present in that audit's sourceComparisons has equal whole bytes/hash. No draft file was edited.
+
+Historical audit:
+`/private/tmp/js2-6920-geometry-source-proof-resume-20261009/.tmp/geometry-source-proof/native-source-facts-readonly-audit.json`,
+12633 bytes, SHA-256 `c6379514d6bf66e5b338b69d6521cb30230b6c2b478ed4b4b5b0bb01df221bbc`.
+Its canonical endpoint was 7928f273…, not b47c6e4b. It is retained historical evidence, not current proof. The A2 log `.tmp/a2-focused-joined-graph.log` retains 18 callbacks, 17 pass/1 fail/0 skip, including the actual encoding-undefined failure. No tests were executed during this review.
+
+Relevant adopted predecessor specifications remain:
+- J2 extraction: 17100 bytes / SHA-256 `7a81203ee5d306388010749908cc4ca644c4f074118143873b28af76c5017b29`.
+- The full J3 required-entry addendum in existing issue 6920.
+- The original 40 AE registrations, their 22 leaf/18 ROOT partition, J1 provenance/type/state obligations, and B F/G/V/R/public acceptance.
+This document updates their source endpoints and resolves composition, without deleting a requirement or turning historical counts into fresh results.
+
+## 3. What current canonical code actually guarantees
+
+### 3.1 Existing full program allocation validation
+
+`src/ir/program/allocations.ts` is 5638 bytes / SHA-256 `aec062632da95addb294e203514e8218284177bfccd7154f3cbb1d8bdd412c33`.
+It reconstructs the canonical mutable allocation registry, validates snapshot denominator/live identities/aliases/retired entries/metadata rows, runs canonical final provenance, encoding, requested ownership and escape analyses over semantic and support bodies, then compares metadata with property-presence semantics. It also calls the delivered J1 body/type/state helper. No attached-facts shortcut exists on b47.
+
+Encoding is always requested. Ownership is run when ownership or escape evidence is requested; escape is run when requested. Do not confuse these generic namespace rules with the final Linear producer, which deliberately computes complete planning evidence. Unused alias-to-retired behavior on this old generic route must not silently change when the stricter J2 snapshot view is introduced.
+
+The canonical validators, source preparation, codec, acceptance, direct physical planning, runtime reproduction, and body/type/provenance checks remain distinct authorities. Existing prepared-data shape/equality does not authenticate semantic facts.
+
+### 3.2 Delivered J1 authority, reused exactly once
+
+`src/ir/analysis/contracts/allocations.ts` already defines `AllocProvenanceLookup`; the obsolete A2 duplicate proposal must not be applied. `src/ir/analysis/alloc-verification.ts` already consumes that lookup and owns the required-allocation instruction-kind table. Reuse `assertFinalAllocProvenance` / `verifyAllocProvenance`; do not copy the table into A2 or B.
+
+`src/ir/program/allocation-body-validation.ts::assertPreparedIrFunctionAllocationTypesAndStates` reuses final provenance for each async-state carrier, requires its entry block, and checks resolved allocation result types in main and async bodies. Invoke it with the snapshot-backed lookup as well as on the unchanged generic route. Do not paste the older draft's hand-written state/type loop back into `program/allocations.ts`.
+
+Missing required ID, foreign ID, wrong kind, retired ID, invalid async state and mismatched result type stay canonical errors. A facts collector cannot replace these checks: the current collector only records instructions already carrying a defined alloc ID.
+
+### 3.3 Finite body-derived evidence checker
+
+The five files under `src/ir/analysis/allocation-evidence/` are actual main source. `verifyAllocationEvidence` requires an already descriptor-screened complete DATA module, contextual SSA/type validity, a valid snapshot and canonical final provenance. Its result is an ephemeral report, not an authenticated token that can be reused for another graph.
+
+The covered profile is explicitly `single-block-numeric-vector-if-v1`: regular functions; one block with no block arguments; primitive i32/f64 inputs/results; supported primitive constants, i32.lt_u/f64.add, root non-null f64 `vec.new_fixed`, get/len/set, and supported primitive-result if buffers; return/unreachable. No closures/captures, generator/async state, arbitrary slots or unknown opcode is certified by this profile. The implementation walks every function and every nested supported buffer in order, cross-checks direct uses against shared roles, enforces lexical visibility and root vector receiver identity, and counts occurrences rather than using a global visited set.
+
+The checker requires a real live array site and matching result type for each covered vector root, rejects semantic metadata contradictions, and returns not-covered for shapes it cannot establish. Root-site reuse and aliased live operand coverage are finite-profile limitations, not permission to bless the graph. Its own loop does not replace general result arity, full contextual typing, ABI/runtime reproduction or source ownership.
+
+Namespace mode is derived over the whole original snapshot: encoding-only, ownership-only, escape-only, or both. Requested ownership must exactly be body-derived owned/access operations, without a stackCandidate property; requested escape must exactly be local/stackAllocatable true. Encoding on a used numeric-array site is invalid even when its value is undefined. A missing namespace is different from a present undefined namespace. Unused sites, requested namespaces and explicit presence all remain in the comparison domain.
+
+The delivered AE28 joins are present at b47: canonical encoding and relevant ownership/escape vector cases use `allocationEvidenceRule`, as does the census. Preserve those real shared local rules while relocating type declarations. They are a bounded shared rule set, not a newly proved equivalence for every producer-analysis branch.
+
+### 3.4 Current facts consistency gap and planner dependency gap
+
+`src/ir/analysis/linear-memory-plan.ts` is now 45359 bytes / SHA-256 `08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc`. It already imports delivered shared geometry. The old 49040-byte planner is a historical predecessor, not an editing baseline.
+
+`verifyLinearPreparedAllocationFacts` checks denominator, site projection, metadata presence/evidence and ownership/escape projections. It does not compare the direct `fact.encoding` value against the original snapshot value after checking evidence/presence. Add that exact direct-value equality guard at the moved canonical verifier, after existing encoding-presence and encoding-evidence diagnostics. Remove the A2-local duplicate only in the same composed patch. This closes projection consistency; it still does not prove semantic metadata truth.
+
+`planLinearMemoryFromFrozenFacts` makes no solver calls, but its present module imports producer analyses and the mutable registry facade. A no-call claim is weaker than the required clean dependency closure. Extract its actual pure closure and make both old compatibility callers and the real B consumer use it.
+
+## 4. Source organization and minimal coherent patch
+
+Preserve the adopted generic-to-target grouping. Do not introduce a second verifier, obsolete flat snapshot modules, another frontend compiler coordinator, or a new serialized proof/capability.
+
+### J2 — generic snapshot and target facts
+
+Use the already adopted paths:
+- `src/ir/analysis/allocations/snapshot.ts`: generic snapshot indexing, exact detached equality, and the strict snapshot-backed `AllocationSnapshotRead` / `createVerifiedAllocationSnapshot`.
+- `src/ir/analysis/linear/contracts/allocation-facts.ts`: target facts DATA definitions.
+- `src/ir/analysis/linear/allocation-facts.ts`: the moved canonical facts verifier, string-array equality, and the necessary module-allocation/value-type collectors.
+
+Reuse one canonical alias resolver. The strict view rejects malformed denominator/slots/live IDs, alias cycles/unknown/retired resolution and invalid metadata indexing without repairing or filtering the snapshot. It exposes structural lookup methods, not a mutable registry and not an admission token. It assumes screened stable DATA; it must not become an accessor-evaluating alternate screen.
+
+Move generic Ownership/EscapeClass/EscapeInfo declarations into existing `analysis/contracts/allocations.ts`, retaining old import/type identity reexports from lattice/escape. Preserve all delivered AE28 code and comments. Consumers must import DATA without pulling solvers through a facade. Keep exact errors and previous ordering except the specified added encoding-value guard.
+
+One additional exact dependency repair is required by the clean closure: `ALLOC_NAMESPACES` is currently defined in `analysis/alloc-registry.ts`, and the existing verifier plus evidence metadata reader import it through the mutable registry facade. Move that one documented constant unchanged into existing `analysis/contracts/allocations.ts`; direct-reexport the same object from its old definition home so the existing outer facade retains its identity. Target facts and pure planner import the clean contract. The evidence metadata reader may change only that import under its named owner's release. Preserve all four names, including lifetime, and all documentation; no duplicated literal table or registry class refactor. This explicitly extends the old J2 supporting hunks by the constant-definition/reexport and affected import lines, not by general registry implementation authority. Its complete historical proof must be composed with the other moved-source proofs.
+
+The producer's stack pass does not justify deleting the checker's stackCandidate rejection: actual `findStackAllocCandidates` marks only object/refcell/box candidates, not arrays. The covered numeric-vector producer should therefore retain canonical ownership without that marker; a marker added to a numeric vector remains a contradiction. Keep the pass and measure the real producer output.
+
+The old `linear-memory-plan.ts` must use the relocated implementation immediately and reexport the same verifier/equality identities. No source copy remains in the producer file. Use the actual existing `AllocProvenanceLookup` type; do not widen the allocation registry public API or revive a retired helper.
+
+### R3 — complete pure planner extraction
+
+Keep the already explicitly requested path `src/ir/analysis/linear-memory-from-facts.ts`. This is the existing adopted R3 exception to the new Linear subdirectory grouping; changing its spelling now adds no behavior. Keep planner snapshot DATA in the already agreed IR contract owner, with neutral physical geometry remaining in `src/shared/contracts/linear-memory-layout.ts`.
+
+Move actual `LinearMemoryPlan`, `planLinearMemoryFromFrozenFacts`, the facts-only allocator policies and their complete pure helper closure. Preserve private indexes, frozen snapshot behavior, key ordering, operation catalogue, allocation/lifetime/layout rules, class/object/vector/refcell/data/global handling and output identity semantics. Include the genuine transitive layout/module/value-type helpers rather than importing them back from the producer module.
+
+Leave `prepareLinearAllocationFacts` and producer `planLinearMemory` orchestration in the old module. They delegate to the moved planner/verifier. Preserve direct compatibility reexports of public functions/classes/constants; no wrapper class or rebuilt policy object.
+
+Prove the new runtime import closure has no producer analyses, mutable AllocSiteRegistry construction, frontend checker/source loader, physical reservation engine or old producer module. Type-only dependencies must also use the clean contracts. Shared geometry identities stay direct imports/reexports; do not duplicate constants or move neutral geometry back under IR.
+
+### A2 — final source producer and attachment
+
+Port the retained frontend and final producer hunks onto b47, individually. The current main class-cycle descriptor repair and its regression are already delivered; do not reapply them or replace current J1/AE28/geometry source with old whole files.
+
+Retain the frontend-only `linearVectorProjection: "native-f64"` selector and its native target policy preconditions. Reuse actual `buildNativeFamilyLogicalVectors` to produce layout-free f64 logical types for real checker-owned declarations and uses. Do not use function names or the public fixture text as a whitelist. Do not allocate GC vector types as a shortcut.
+
+The existing collector already rejects spread/holes, foreign elements, mutable or uninitialized vector bindings, unrelated function ownership and unsupported initializers. Its capability is broader than the evidence profile; the later semantic gate decides whether the complete resulting final IR is covered. It is not enough to observe that an array syntax node was accepted.
+
+Produce facts only after final source transformations, support allocation handling, optimization/async preparation, and final registry/current body selection. Call the real final analysis producer once for the applicable Linear preparation; keep its canonical analyses and stack analysis. Capture the exact final snapshot and DATA facts, with both ownership and escape evidence for native allocating admission. Do not synthesize owned/local defaults or use caller-supplied metadata as proof.
+
+Add the optional `linear-allocation-facts-v1` attachment to prepared DATA using target DATA-only imports. Preserve absent attachment for historical generic data. Present-own undefined is malformed, not absence. Keep codec-preserved own-property semantics, raw UTF-16 source data and detached snapshots. Authentication is re-established on consumption and replay.
+
+### A1 — meaningful actual public caller
+
+The private existing A1 `src/compiler/native-linear-pipeline.ts` is absent from canonical b47 and currently calls `prepareIrProgramPresentation` without A2's vector selector. Its tests manually supplying the selector do not prove a public caller.
+
+The A1 owner must compose its real coordinator into the public sync/async compile path and pass the selector only after the existing explicit native Linear profile admission succeeds. Reuse its source/checker/request/options identity binding and single-consumption behavior. Do not add an unused adapter or a second compile entrypoint.
+
+Treat “nativeNumericVector” as the bounded capability being implemented; b47 contains no existing symbol by that name. Do not invent a public option, serialize a trust bit, or pretend that a conceptual capability was already wired. The actual input remains source plus the established native backend/target policy and frontend-only selector.
+
+All scalar controls and rejection priorities stay intact: host execution, JS-host allocation, imported memory/custom allocator and unsupported source/ABI/options remain real refusals. No host fallback after a native attempt fails.
+
+## 5. J3 single semantic entry and priority
+
+Implement one shared validation body in `src/ir/program/validation.ts` with explicit generic versus required-Linear-evidence policy, as already adopted. Keep the existing public generic validator. Add the narrow required wrapper used by actual native acceptance and direct native physical planning through the existing validation facade. Never call the whole validator recursively from its allocation hook.
+
+The controlling order is:
+
+1. At each public acquisition entry, inspect the attachment's own descriptor without invoking it. An accessor or own undefined fails immediately. If attached, screen the whole joined prepared graph before any semantic, runtime, allocation or ABI property read. Required native entry also screens the whole graph when the attachment is absent. Keep generic absent compatibility semantics unchanged; do not globally impose the strict snapshot profile on it.
+2. Retain full prepared DATA/schema/population/source map/semantic-support separation and program identity checks. For generic absent data, retain the existing legacy allocation validation at its existing position.
+3. For attached/required entry, finish canonical complete-program validation before trusting facts: class/type invariants, contextual SSA/value/result typing using complete declared signatures/globals, ABI, startup, owner population, support authority and exact runtime projection reproduction. No permissive function-shell reconstruction.
+4. Run strict attachment shape/domain and whole snapshot identity checks; build the J2 lookup; apply canonical final provenance and the delivered J1 main/state/result checks to every authenticated semantic/support/projected body. Do not filter registry entries, drop inactive owners or replace async state bodies with empty carriers.
+5. Validate target facts consistency with the moved canonical verifier for the complete authenticated semantic/support view and each applicable exact selected Linear view. Preserve declared globals/signatures and their property absence. Require exact IDs and owner correspondence, not just sorted allocation sets.
+6. Run the finite body-derived semantic evidence checker on the complete required views using the original full snapshot. A verified report is usable only for this call's screened stable DATA. A covered contradiction is an invariant failure; do not invoke a fallback analyzer to replace the bad evidence. A not-covered report on generic data invokes unchanged canonical semantic allocation validation. A not-covered report on required allocating native entry yields the existing located unsupported result, before planner/resource actions.
+7. Only after requested metadata truth is established, require both ownership and escape namespaces for allocating native completeness. Encoding-only, ownership-only and escape-only graphs can be valid generic modes but are incomplete native planning evidence. Native completeness may not cause a malformed present-undefined or forged active namespace to be mislabeled merely unsupported.
+8. Return checked original module/facts inputs only after all applicable authority succeeds. No identity cache, WeakSet success exemption, persisted verified boolean or detached report confers currentness. A second call after caller mutation must reacquire the graph and revalidate.
+
+Missing attachment on a nonzero allocating native program remains a located unsupported result after safe complete context acquisition and before allocation analyses/resource work. It is not permission to assume absence implies zero allocations. Old scalar programs without an attachment retain the honest generic validation path and its real analysis accounting; do not advertise their old route as a newly measured zero-analysis route.
+
+Malformed canonical IDs/types/ABI/async context must be diagnosed before finite coverage or missing-resource refusals. Well-formed unsupported opcodes remain unsupported for required native entry, not a generic semantic proof. The whole-program checks remain mandatory even for zero allocations and complete equality among all metadata copies.
+
+At `planPhysicalSetup`, insert the required native acquisition before its present first reads of `projection.prepared.functions`, `program.abi.entries` and before `planNativeVectorResources`. At `acceptPreparedIrProgram`, select the appropriate validation policy at the initial entry, not after generic analyses have already run. Repeated existing downstream generic checks may remain where necessary, but qualifying attached graphs must take the same verified covered branch there. A genuine same-binding observer must establish the claimed consumer zero interval.
+
+Codec shape checks are not semantic acceptance. Encode/decode/replay must use the applicable full validator, preserve exact runtime regeneration and compare it to claimed projections. Do not accept a forged semantic body because a forged runtime projection and facts agree with it while bypassing contextual/evidence validation.
+
+## 6. A-owned checked input and executable demand for B
+
+Implement the existing proposed `src/ir/program/linear-allocation-facts.ts::requirePreparedLinearMemoryInput(program, projection)` as the narrow checked join, not a new verifier. It requires the J3 entry above, proves selected projection belongs to the exact program/backend/target, and returns the genuine original complete module/facts pairing. Use exact semantic/support owners and the current authenticated projection function identities, each once. Preserve `declaredSignatures`/`declaredGlobals` values and absence. No source-name allowlist, index-based owner inference, filtered allocation registry or fabricated mini-module.
+
+B receives a fully checked current view and can call the pure planner. It does not import producer analyses, rerun frontend preparation, implement evidence truth, or treat resource lifetime authorization as semantic evidence. The checked view is not a serialized capability and is not a shortcut around validation of a different program.
+
+The A-C-owned `src/ir/program/linear-memory-demand.ts` must derive executable demand from authenticated actual instructions, separately from the unchanged layout operation catalogue and from the provider dependency closure. A vector layout advertising grow does not mean this source executes growth. Conversely, a zero-length fixed vector still requires its real constructor/initializer; get/len require canonical forwarding resolution. Constructor dependencies transitively require allocator, memory and allocator global; internal allocator memory.grow is not evidence of source-level vector growth.
+
+Current consumer gaps are concrete:
+- `planPhysicalSetup` ends with the nonzero Linear allocation blanket resource gap.
+- Primary fill currently constructs a bare LinearEmitter.
+- Generic vector lowering and scratch selection still assume GC array type indices/reference locals.
+- The signature/body resolver needs a real target-discriminated Linear carrier route.
+
+A-C must provide a reviewed concrete caller patch/design covering those exact function seams before Gate 1 release. It must use the actual shared vector resolver contract and correct i32 Linear carriers/scratch without casting a GC resolver, patching local types afterward, or duplicating every vector opcode. Keep the existing GC path intact. This is representation/resource integration already in the handoff, not new optimization scope.
+
+Retain the existing resource gap while B resources are absent. A2/J3 reaching that honest gap is a useful qualified prerequisite and AE40 result, not public native support. Remove that gap only when the real B plan/materialization joins are active and tested.
+
+## 7. B and startup boundaries: disjoint delivery
+
+B owns only the already agreed `src/backend/linear/program/{contracts,memory}.ts` implementation after explicit ROOT release. Preserve all five signatures and phases:
+
+1. `planPreparedLinearMemory({ program, projection, options })`
+2. `reservePreparedLinearMemory(tx, plan, assertEmissionActive)`
+3. `preparedLinearMemoryBindings(tx, pack)` after reservation freeze
+4. `fillPreparedLinearMemory(tx, pack)`
+5. `requireCompletedPreparedLinearMemory(tx, pack)`
+
+A-C owns calls, exact arguments, planning/transaction phases, signature/body bindings, scratch and primary fill. A's private active-emission guard captures the actual accepted program/projection/plan and is passed into reserve. Every binding consult must recheck it. A failure anywhere, including before B reaches its own ledger, and terminal completion revoke access. No retry token, deserialized handles or fallback emission revives it. B completion and required filling precede publication of lifecycle/memory exports.
+
+Require the actual canonical allocator and complete array-constructor provider bodies plus reservation-compatible dependency closure. Published arithmetic helpers alone are insufficient. Retain initializer and forwarding builders and their actual callers; do not copy their bodies into B or harvest physical indices from a throwaway module.
+
+The published forwarding source identity is `runtime/arrays/forwarding-resolver.ts` / `buildArrayForwardingResolverBody`, not the superseded duplicate `runtime/array-forwarding.ts` proposal. Published provider commits and B plan source identities are distinct from canonical b47 delivery: require full actual source/ref/caller closure at release, do not infer presence from a document. Shared geometry being landed does not make the complete constructor landed.
+
+S retains startup ordering and ReferenceError/resource contract repair. Preserve lexical semantics in the failing fixture; never replace const/let with var to make public execution green. A-C and B must agree with S about one memory and allocator/global ownership before resources are reserved.
+
+## 8. Actual owner records and proposed handoff
+
+The current read-only assignment ledger endpoint was `6c85e233aa8c226d520a3037f0bdcca64bd2fd45`. Full fetched records, including lookup errors, are preserved in `native-facts-reground-data/ownership-records.json`. A 404 for a guessed slice spelling is not evidence a file is unclaimed. Existing records remain authoritative until their owners and ROOT explicitly release named hunks.
+
+| Area / exact slices | Recorded owner and write ID | Bounded proposal |
+|---|---|---|
+| A2 source facts, 6865:native-linear-source-facts-20261008 | ttraenkler/codex-ir-native-linear-source-facts-sol61-20261008; 16740-hhm82aur (confirmed in historical audit and prior successful read; later redundant read returned protocol error) | Owner supplies current-base private successor, never edits preserved draft. |
+| J2 verifier extraction, 6865:native-linear-facts-verifier-extraction-20261008 | same A2 owner; 46615-x5dy59lp | Own new snapshot/target facts files and approved old-verifier/type hunks; coordinate pure planner extraction with donor and ROOT. |
+| Allocation donor, 3518:allocation-ownership-runtime | ttraenkler/codex-astra-allocation-ownership-20260908; 34529-rzivb817 | Exact generic contract/type/verifier/planner hunks only; no blanket transfer of registry internals or canonical analyses. |
+| Actual A1 public caller, 6865:native-linear-public-caller-20261008 | ttraenkler/codex-ir-native-linear-public-caller-sol61-20261008; 15614-0ltdxb84 | Existing coordinator/source selector and compiler call-through; preserve profile and one-attempt identity. |
+| J1 provenance context, 6920:allocation-provenance-context-20261009 | ttraenkler/codex-sol-allocation-provenance-context-20261009; 37849-iyihfm2v | Delivered helper reused; no duplicate or unrelated edits. |
+| Evidence checker and AE28 rules | ttraenkler/codex-sol-allocation-evidence-checker-20261009; checker 19199-2n2yketq, AE28 43989-lv9fr4w8 | Delivered finite checker/rule algorithms unchanged. Only the named namespace constant import repair above is proposed; any semantic change needs a separately reviewed demonstrated gap. |
+| Session A source handoff, 6920:session-a-source-handoff-20261009 | ttraenkler/codex-sol-session-a-source-handoff-20261009; 89995-6v69lqr6 | Coordinate J3/A-C ownership; this record alone does not transfer every shared consumer hunk. |
+| ROOT geometry integration, 6920:geometry-proof-integration-20261009 | ttraenkler/codex-ir-integration-session-a-20261009; 60335-ngn0jcr6 | Adoption, exact endpoint review, composed integration, proof/receipt ownership and release remain ROOT's. |
+| B-M, 6905 | ttraenkler/codex-linear-b-prepared-memory-20261007; 64168-17jzm5kj | Only agreed two B files after Gate 1 release; no A validator/lowerer/consumer edits. |
+| Initializer donor, 6905:vec-initializer-body-20261007 | ttraenkler/codex-linear-b-vec-initializer-sol61-20261007; 4467-r35vmfcy | Owner supplies exact real builder/caller source, neutral geometry rewire only under agreed handoff. |
+| Forwarding donor, 6914:linear-forwarding-provider-source-20261007 | ttraenkler/codex-linear-b-forwarding-sol61-20261007; 65589-oamjn90s | Existing canonical source identity, not duplicate implementation. |
+| Physical ledger, 3518:physical-module-completion-kernel | ttraenkler/codex-astra-physical-module-completion-20260908; 19409-8ue0poec | Reuse ledger contract; exact needed hunks require owner agreement. |
+| Shared vector/lowering | 2956:l2-vec, ttraenkler/codex-l2-vec; record has no write_id. Broad Linear issue 4540: ttraenkler/claude-opus; 12703-i71z8kda | ROOT resolves exact lower-contracts/lower-generic/emitter hunk owners before editing. No assumption of broad transfer. |
+| S public WASI startup and safety repair | ttraenkler/codex-ir-native-wasi-startup-sol61-20261008, 74929-veqhe4ti; ttraenkler/codex-6919-wasi-startup-safety-repair-sol-20261008, 40009-2gdqrxx8 | Preserve their separate source scope; compose reviewed startup/resource contract. |
+| Delivered C shared geometry | ttraenkler/claude-session-c-geometry-20261009; 495-9v3xp6sw, done/released | Consume actual shared geometry; no reopened implementation here. |
+
+The original issue6920 planning record 59431-3derzbyp belongs to the Astra plan owner, not ROOT's 60335 integration claim. Do not conflate them.
+
+Disjoint implementation order: ROOT adopts this amendment and records exact hunk releases; A2/J2 owner authors extraction+producer privately; ROOT-assigned J3 owner joins validation/codec/accept/direct plan, serializing shared A2 files; A1 owner authors actual coordinator selector; A-C owner supplies checked demand and concrete call/lifetime/representation patch; donor owners supply runtime/startup endpoints. ROOT reviews the composed A-F/A-C source and proof before B release. B then authors only its two files alongside A-C's real callers; compose before landing. If shared source ownership is unresolved, hold only those hunks rather than silently editing a peer's file.
+
+## 9. Required tests and evidence, without changing old failures
+
+Every execution is a future separately authorized frozen epoch: exact source/harness/config/helper authority, process exit, actual callback registration/entry/result denominators, positive control, raw output, and before/after unchanged-input checks. This specification executes none. Do not infer a count from parameterized source or count a static test name as a runtime callback.
+
+### Preserve original floors and priority controls
+
+- Preserve the original A2 18 test bodies and its 17-pass/1-fail/0-skip receipt. In particular retain the manual `annotate(site.id, "encoding", undefined)` body and its actual “program allocations: site 0 has missing or stale encoding evidence” failure. Its success expectation conflicts with the preserved semantic contract. Do not mark it fails, skip it, delete the annotation, weaken the assertion or call 18/18 achieved. An eventual separately approved oracle successor must preserve this original historical failure; it is not part of this source specification.
+- Add a distinct valid raw-surrogate codec control without forbidden numeric encoding and a distinct expected-rejection control for present-undefined encoding. These do not replace or retroactively repair the original row.
+- Preserve canonical missing/foreign/wrong-kind/retired ID, repeated-validation-after-success, encoding and result-type controls in existing verifier relocation/inline-call suites. Keep original async-state and all source-preservation tests.
+- Keep original 22 leaf AE registrations, site-reuse/carrier controls, J1 obligations, Phase1 thirteen and prior probes separately named and reported. AE28's delivered canonical rule-sharing evidence does not qualify AE29–40 by implication.
+- Retain all J201–J212 requirements. J210 only completes with actual A2 strict adapter composition. J212 observers must see real producer/legacy analysis work before being reset for a purported consumer zero interval.
+- Preserve the full 40 AE requirements. ROOT18 remains AE08/18/21–23/28–40, even though AE28 now has delivered source and its separate evidence. Do not claim all 18 entry requirements completed from leaf passes.
+
+### Exact semantic matrix
+
+Run each relevant negative at generic validation, actual source preparation where meaningful, full codec replay/acceptance and direct required native planning, not solely at the leaf helper.
+
+1. Four namespace modes: encoding-only, ownership-only, escape-only, both. In each, distinguish absence from present undefined. Numeric array encoding present undefined is invalid in all four modes. Active ownership/escape undefined is invalid; entirely absent optional generic namespaces remain absent. Native allocating completeness requires both truthfully present after semantic checks.
+2. Coordinated forgery: change original snapshot metadata AND direct fact projections/evidence to agree while the actual body contradicts them. Use complete encoding/ownership/escape variants, including false access sets, local/owned claims contradicted by a well-typed actual use, wrong stack hints and a dead/foreign owner case. Ensure consistency verification itself passes where intended, then require actual semantic rejection; a disagreement-only test does not cover the attack.
+3. Unsupported but well-typed body outside the finite profile: generic attached and generic absent paths retain genuine canonical semantic analyses; required native returns located unsupported before resources. Also combine an unsupported shape with a canonical malformed ID/type/state to verify canonical defect priority is retained.
+4. Missing/unknown/foreign/wrong-kind/retired ID, aliases/cycles/denominator/live-owner duplicates, main and async-state result type, missing state entry, declaration/signature/global mismatch, wrong result arity, SSA scope/repeated identity and complete function/support ownership.
+5. Revalidation currentness after success: mutate semantic body, runtime projection, facts, registry, support and ABI separately and in coordinated pairs. No cache/identity success bypass; current body determines result.
+6. Whole-graph descriptor safety: absent/present attachment, own undefined, accessors in attachment/facts/registry/semantic/runtime/ABI/support/class cycles; required absent also screens before reads. Getters remain at zero and failure priority is explicit.
+7. Complete runtime reproduction: decoded source-free replay must reconstruct actual canonical runtime projection from semantic/support authority; forged agreement among supplied copies does not authenticate it. Test semantic and projected allocation owner/type drift independently.
+8. Generic absent retains historical handling, including allowed unused alias-to-retired snapshot behavior where applicable. Strict attached snapshot rejects it per J2. Do not make a strict-branch test accidentally assert a generic compatibility regression.
+9. Real final producer for both native targets: actual source and checker, no handmade IR substitute; exact live allocation count and final both-mode facts; original registry/full owner census retained. Supported coverage and output resource refusal must be observed, not assumed from the source syntax.
+10. Positive analysis instrumentation: real encoding/ownership/escape/stack and registry work during preparation or authentic legacy generic control. Reset at the actual public/direct consumer boundary. Covered attached consumption and pure planner require zero consumer registry/solver calls while canonical context/J1/evidence gates execute. An inert spy, renamed solver or borrowed zero result is no proof.
+
+The leaf's original covered 16-occurrence/five-buffer/five-read fixture is not a predicted public-source population. Measure the real public lowered IR and maintain separate denominators. Do not rewrite final source IR to fit a historical fixture.
+
+### Source preservation and dependency closure
+
+J2/R3/A2 edits affect historical proof readers. ROOT must declare exact changed paths and add bounded independently replayable successors before using old proof APIs. Preserve genuine original before objects, full before/after bytes/hash/blob and independently inverse/forward reconstruction; no blind repin or full-file answer substitution. Compose with actual J1, AE28 and delivered C geometry successors, not old 49040 planner bytes. Moving DATA types in lattice/escape must preserve AE28 current source and its existing lineage, not bypass it.
+
+Complete imports and exports must be checked on actual composed source: generic snapshot clean closure, target facts clean closure, pure planner closure, direct old identity reexports and live caller use. Run applicable boundary/LOC/dead-export/type/format checks and required CI only after authorization; no runtime is claimed here.
+
+## 10. Gate 1 packet and final public acceptance
+
+ROOT may release B implementation only with six separately explicit, reviewed prerequisites: A-F complete semantic/facts/support entry and pure planner; A-G canonical geometry plus applicable proofs; A-C checked executable demand and concrete carrier/type/scratch contracts; complete runtime constructor/allocator/provider donors; S/startup and exact ownership agreement; concrete A-C call/lifetime/materialization patch/design. This specification and old receipts do not satisfy that packet by themselves.
+
+Gate 2 requires the single frozen composed actual source head, B plus A-C/A1/S/A-F/A-G/providers and required proofs, with the exact unchanged public source:
+
+```ts
+export function run(a: number, b: number): number {
+  const values = [a, b];
+  return values[0] + values[1] + values.length;
+}
+```
+
+Use real exported compile and compileAsync APIs for native standalone and WASI, execute with 1.5 and -2.25, and require 1.25. Record real live f64 allocation, constructor/initializer/forwarding/malloc dependency reservation, correct typed body/scratch resolution, physical ledger lifetime, exports and memory observations. Prevent constant folding by retaining runtime inputs and witness the allocation/provider path. A JS-host/legacy fallback, overlay returning the number, or a manually manufactured Wasm module is not acceptance.
+
+Require actual source-free encode/decode replay without frontend reexecution, precise fail/complete lifetime revocation, poison/foreign/detached/mutated attempt and resource controls, and the original F/G/V/R matrices (including original V48) with their genuine declared denominators. Preserve B's historical 25 rows, 24 pass/1 fail, including the 17 scalar and eight new rows split, matching observation/binary witnesses, and the old array preparation failure. Preserve A1/S original failures and lexical ReferenceError behavior. Never collapse these historical populations into a fresh green total.
+
+No resource gap is removed before the real implementation is qualified. No old path is retired, cleanup is performed, or broader optimization is smuggled into this work. Any demonstrated defect beyond these entry/extraction/caller seams returns to ROOT as a bounded amendment with actual evidence.
+
+## 11. Release recommendation
+
+Adopt this specification under issue6920, then authorize Sol to prepare the disjoint coherent source successor and its concrete tests. Keep the preserved A2 draft, historical audit and old receipts immutable. Keep B Gate 1 held until the actual six-prerequisite packet is reviewed; current code has not yet established the required semantic entry or clean planner closure. Keep public native-vector support and legacy retirement unclaimed until the full Gate 2 execution and protected delivery are recorded.
+
+This review changed only private specification/data files in the trusted review lane. No production/helper/test/config/receipt/claim/shared issue was edited, and no compiler, proof callback, test or fault was run.
+
+
+### Parallel dispatch scope and tool limit
+
+Active Sol High owns only private C1 DATA bridge candidate artifacts; Sol Medium owns isolated docs publication. Attempts to dispatch an independent J2/R3 private extraction candidate and a C vector seam planner were rejected by the collaboration harness with agent thread limit reached; no agents or code writes were created for those tasks. Their fully adopted source plan remains pending implementation/ownership reconciliation. This is a concurrency tooling limit, not permission to steal historical A2/J2/A1/donor claims or weaken validation. ROOT continues review and publication in its established scope.
+
+
+### Reviewed private DATA bridge candidate and authority assembly
+
+Read full narrow H2 patch: only finite one-declaration source epoch and replay, receipt-loop predecessor validation, and later historicalPopulation override. Candidate53563 bytes/SHAa766bff19e173800163e596d6f0a0adc0c2a7c7c32992dafbd30217135c4e6c1; current/closure/observed current pins remain real10831-byte DATA. ROOT builtin-only assembler independently replayed all seven existing whole instrument inverse/forward pairs against genuine original Git blobs and physical current files, then independently regenerated H2 original-to-candidate and candidate-to-original recipes. Proposed receipt/root are scratch only; no activation or callback retry. Live H2/receipt/root unchanged; preserved failed cold epoch remains the only actual C1 capture.
+
+Ready docs PR6603 exacthead1cb483b27c7dc2361871939ecf64218cccfb9a86/basecffb independently reviewed: four docs only, complete31726-byte specification exactSHAaa04, both canonical issue/handoff prefixes preserved, normal signedfullhooks passed. Specific qualityjob113750330478 positivelylive/inprogress; no queue action yet. Source1716 unchanged.
+
+
+### Independent proposed DATA authority pins — not activated
+
+{"activation": false, "oldReceipt": {"bytes": 206007, "sha256": "e3a525e598002b43f46bef112dcdbd5222d038ea6ee9d7ddc22f837bc97f21e1", "gitBlob": "0eba3f3cd8486452687dcb074c7980d85502e56a"}, "newReceipt": {"bytes": 225765, "sha256": "6282c645887c98e2d7bd2e194d61c9d78e72518510e3e2334b370e3a6837bcd7", "gitBlob": "0f19d3721c377ac1b1469896361c541de662a5a6"}, "oldAnchor": {"bytes": 303, "sha256": "7d3f1a4c93bc2d7c0bafeb203d2e0bfc021a7f3486e5c8c179b7f1adc95f262b", "gitBlob": "5fb4c120e9c8a2403032ab8d2929fe42977500d4"}, "newAnchor": {"bytes": 303, "sha256": "6ff696fc5384e3369112ae585290ee74755c2013d13d644b9fba8ef3e8747842", "gitBlob": "b23d9ff1b6aa2767eb5a191ba9a123e1104f4f95"}, "H2": {"bytes": 53563, "sha256": "a766bff19e173800163e596d6f0a0adc0c2a7c7c32992dafbd30217135c4e6c1", "gitBlob": "f9ec52eac7b94cc9c47287578593e4cb13a19a23"}, "verifiedInstrumentPairs": 7, "unchangedOtherRows": 6, "inverseSpans": 15, "forwardSpans": 15}
+
+All seven current instrument pairs independentlyreplayed; six other rowobjects preserved. Proposed newH2 entirebytes authenticate53563/a766bff1; independently regenerated original42599↔newH2 directions15spans each. Candidate receipt225765/6282c645 and303-byte root6ff696fc remain scratch-only. Whole original/current source recipes contain changed declaration only, no cached wholefile answer. No live authority/root/source transition and no retry.
+
+Published checkpoint comment6077956780 (2026-10-09T09:11:37Z) gives B exactPR6603 head and three artifactlinks; bounded release unchanged.
+
+
+### Static candidate typecheck and protected docs queue
+
+Private newH2 passes actual test-inclusive TypeScript7 check, exit0; independently enumerated171 compiler inputs including exact53563-byte candidate. Source/helper imports are real read-only dependencies, no substitutes; no callback/runtime proof credit. Independently replayed finite DATA inverse/forward from genuine blobs and verified unchanged prefix/suffix and both declarationpins.
+
+PR6603 qualityjob113750330478 completedSUCCESS, freshhead1cb483b27c7dc2361871939ecf64218cccfb9a86/basecffb/stateCLEAN independently read. Exact-match normal protected merge submission reports alreadyqueued; no directmain/admin/hold alteration. Groupresult/main delivery not yet claimed.
+
+
+### B acknowledgement and live protected merge group
+
+B6078106255 updated2026-10-09T09:21:23Z acknowledges FULL31726-byte plan adoption SHAaa04 in existing issue6915; published heldPR6593 headad2891cdc3d1ad871070ffc883e40f6d18b23678. Existing runner owner62837 authenticated and serialized continuation pending effect-read slice. Private implementation only; no third-target child, baseline replacement, HOLD removal or queue action. Baseline diagnostic blockers are B-reported, not A-verified test findings; initializer claim unchanged.
+
+PR6603 positively queueposition1/AWAITING_CHECKS; actualgroupb559fe80fa99a7814077dc5f645dfd15b1df574b parentscffb/1cb483, tree4e5fb9f79cf9ab779c4f955bc889224c267e0f4f EXACT reviewedhead tree. CIrun37910689887 qualityjob113754835493 live; fullgroup equivalence/issue suites running, not delivered. Root independently verified all22 private C1 candidate artifacts remain pinned, full narrowpatch and genuineDATA source pairs, complete seveninstrument assembly; actualC1 callback remains unexecuted.
+
+
+### Reviewed DATA bridge integrated into ROOT lane
+
+Integrated ROOT-delegated private candidate53563/a766bff1 into integration60335 branch only. Original trusted-adapter donor branch/claim76271 unchanged; no foreign branch or ledger mutation. ROOT final authority receipt225765/6282c645 and303-byte root6ff696fc bound after independent seven-row/fullDATA replay. Archived all four previous source files byte-for-byte in .tmp/geometry-v2-failed-data-epoch-archive; failed coldjournal preserved. C1 fixture updates only independent complete-authority literal, measured-trace placeholder staysfailclosed. Six other instrument rows and all old manifest/before pins fixed; production DATA/getter repair unchanged. New actual callback not yet authorized or executed.
+
+
+### DATA successor static validation
+
+Actual live six-file test-inclusive TypeScript7 check exit0; compiler input inventory264 files includes real H2 and both fixtures. Complete new root source/pin equals physicalbytes. Earlier guessed scratch config path was absent and produced TS5058, with no typecheck credit; explicitly created scoped config then performed realcheck. No callback executed. Sol preparing one new cold packet preserving original output/harness and exact protocol. Protected docs group remains positivelylive, actualequivalence1748pass/22knownfails, Test262docs-skipped, qualitypending; no delivery yet.
+
+
+### Verified protected delivery — PR6603
+
+PR #6603 is now **verified delivered to canonical main** as `b559fe80fa99a7814077dc5f645dfd15b1df574b` at2026-10-09T09:31:28Z. ROOT independently verified actual PR merge/main/ref, parentscffb/1cb483, complete tree4e5fb9f79cf9ab779c4f955bc889224c267e0f4f identical to reviewedhead, head ancestry and zero changed files. All four docs/full31726-byte contract are on main. [Canonical contract](https://github.com/loopdive/js2/blob/b559fe80fa99a7814077dc5f645dfd15b1df574b/plan/log/6920-b-geometry-source-release-20261009.md); [exact normative spec](https://github.com/loopdive/js2/blob/b559fe80fa99a7814077dc5f645dfd15b1df574b/plan/log/6920-b-geometry-source-release-20261009.spec.txt). Source remains171606514a3cf6733e82eb11549a659856d68c1a.
+
+Six actual required group checks passed; guard261/261, equivalence1748pass/22knownfail/no new regressions. Test262 matrix intentionally skipped for docs, zero new conformance. Differential116/120 both default/-O3 unchanged baseline. Some nonrequired issue shards were still running at last read; no blanket overall-CI success claimed.
+
+A acknowledges B6078106255 and independently confirms adopted checkpoint PR6593 headad2891cdc3d1ad871070ffc883e40f6d18b23678/HOLD. Same runner owner continuation is acknowledged; existing bounded private implementation/review/freeze/single-trial contract unchanged. No additional diagnostic patch, future source tree, baseline replacement, HOLD removal or B queue action is released by this acknowledgment. Initializer claim remains untouched.
+
+A has integrated the reviewed DATA historical bridge into its own integration lane with independently replayed seven-instrument authority and archived prior files. Static typecheck covers actual helper/both fixtures264inputs, zeroerrors. Production getter fix/current DATA remain unchanged; no foreign branch or claim edited. Sol is authoring a new cold qualification packet; previous failed journal/zero resolver result preserved. Runtime C1 qualification, native resources/caller support and full IR equality remain pending.
+
+Read-only delivery evidence retained in /private/tmp/js2-6920-b-geometry-contract-publication-20261009/.tmp/6603-delivery-proof.*. Originalpublicationowner48581 claim remainsinprogress untilsame-ownercompletion; followuprequestedcompletioncouldnotdispatch whileconcurrencylimitreached, so no claimmutation.
+
+
+### Separately released DATA successor cold qualification
+
+Fullcallback/config/driver review complete: callback only newprivatepath+newsuccessordigest, configpathonly, driver/custody/observer byteexactpreviousprotocol. Independently rehashed all5977unique files (2077source+3900harness),21packetfiles,270directoryidentities and4scopedmemberships; old3741harness rows unchanged, fourdeclaredsource transitions, original153packet/outputfiles preserved. Freeze4025719/a16b52d243e90c1fa325ebc7fd1c1faa13190554923bc9f3c0b60e346c91a45b. Four new oracle strings byteequalgenuineGitblobs and samepath/pin/commandprovenance; newpacket omits oldnonoperational evidence label, not anypin/outputfield. Firstreview assumed identicalmetadata schema and failedKeyError before anyrelease; correctedexplicit schema check then actualoraclesverified. Unchangedpopulation47/current46/historical46/request16/resolver66 tables independently compared tooldpacket. Outputabsent. ROOT releases exactlyONEcollection/runtime driver invocation viaNode24.4.1 after this review. No newexpectedauthoritytrace, nofaults/retries/repin/fullcohort/nativepublicsupport credit. Onanyfailure preserveactualprefix+seal and stop.
+
+
+### Parallel actual Native Linear implementation preparation
+
+AstraHigh now owns concrete generic-vector architecture spec in isolated source-equivalentcffb worktree (source1716, canonicalb559 nowfetched), reusing trusted Solinventory of11sourcefiles. No release toC yet. Sol6.1High delegated private J2/R3 actual extraction candidate while ROOT owns solecoldrun68258; onlyscratchcandidatecopies allowed, no currentfrozeninputs/source/foreignclaims modified. Scope realcanonical snapshot/facts/pureplanner closure and oldidentitydelegation, exactnamespaceconstant import repair andencodingconsistencyguard; A2/J3/A1/C/Bsource excluded. Full43209-byte adoptedplan controls, old15fileA2draft remainsimmutable. Sourceactivation requires exactreview/ownershiphandoff; no unusedfacade, duplicatedanalysis or nativecompletioncredit.
+
+
+### Actual C1 DATA qualification and separately adopted measured trace
+
+Actualdriver68258 terminalexit0: {"status": "one actual qualified C1 DATA successor callback", "parentExit": 0, "actualCallbacks": 1, "passed": 1, "population": 47, "authority": 77, "resolverObservations": 66, "historical": 46, "originals": 4, "allReaderSnapshotsPinned": true, "allOriginalsGenuineGitBytes": true, "sevenInstrumentAuthority": "6282c645887c98e2d7bd2e194d61c9d78e72518510e3e2334b370e3a6837bcd7", "seal": {"bytes": 67456, "sha256": "d562d2fbdc48811b581bcea085849553fb4ffc027f3c7893563750b6b50842c5", "gitBlob": "64a26c3fe1cd330034c9b174174d0f161e0ca52b"}, "unchangedInputs": 2077, "unchangedHarness": 3900, "nativeRootOnly": true, "services": "retain actual unobserved service closure; no inferred zero"}
+
+ROOT independently validated each attempt/return and allreader/returnedstring snapshot pins; complete orderedauthorityPaths77 equality with rawjournal, population47, resolver66, current46/historical46 and4oraclesgenuineGitbytes; nativeRootonly/strict recordedforkclosure valid, externalservice closure remainsunobserved. Full2077+3900 seal unchangedfailedfalse. Aftercompletedseal ROOT binds exactlymeasured77-row authoritytrace into its C1 fixture; oldd211 literal-beforebinding archived. This intentionalfixturetransition is afterqualification, notsource mutationduringrun. No newblanketC1/policy/type/fault/nativepubliccompletion credit; next actualfixture/deepcontrol/cohortqualification remainsrequired.
+
+
+## ROOT full-plan adoption: genuine vector representations and concrete native callers
+
+Full38932-byte latestAstraHigh plan independentlyread/hashverified8090c37a1cdb532d15cc66bd464c8a59e9b6562f09e1f88df728dce0283f587c. Precisecontract/frontend/Porffor compatibility hunks distinguished fromA1/A2/J3/native resource/caller ownedjoins. Freshledger ownersremainunchanged, noexacthunkrelease orclaimtransfer fromspecalone. Cprivateproposal may beprepared whileexactshared2956/4540/frontend ownership is reconciled; no liverefresh/steal basedonnew slice. ROOTowns finalintegrationpolicy/proof.
+
+# Implementation Plan — generic vector representation and concrete native joins
+
+For existing **6920 — Native Linear numeric-vector shared source handoff and integration plan**. Author: Codex GPT-6 Astra High, 2026-10-09. ROOT must adopt this complete amendment before delegation. This is a specification and static review, not implementation release, native execution evidence, B Gate 1 approval, HOLD removal, or legacy retirement.
+
+## Decision
+
+Give C a bounded representation-contract slice after exact hunk releases. Keep one generic vector instruction dispatcher. Resolve a vector into a discriminated physical representation containing its genuine value carrier, data carrier, construction scratch type, and backend handle. The WasmGC branch retains actual registered struct/array indices. The Linear branch carries i32 pointers and real layout/operation descriptors, with no invented GC fields. The generic lowerer allocates correctly typed scratch on its first allocation; no caller repairs locals after lowering.
+
+A-C must separately compose that contract with the actual native program signature resolver, body resolver, bound emitter and B resource transaction. The source-facts/J2/J3 plan already adopted under this issue remains the prerequisite for admitting allocating native bodies. A stand-alone interface or passing overlay test is not the completed native handoff.
+
+This is representation integration, not a new optimization or a new JS-host IR path. Preserve legacy paths until full tested IR equality is established. The separate WasmGC loose-equality illegal-cast finding, runtime-provider body implementations, and general vector/for-of admission are excluded.
+
+## Evidence and source endpoints
+
+The assigned isolated review worktree is `/private/tmp/js2-6920-astra-vector-contract-review-20261009`, branch `codex/6920-vector-contract-plan-20261009`, local HEAD `cffb28679df96764e295fd2064e0a4ceec643efe`. Its verified `HEAD:src` is `171606514a3cf6733e82eb11549a659856d68c1a`, equal to the canonical `b559fe80fa99a7814077dc5f645dfd15b1df574b` source endpoint supplied by ROOT. The local HEAD is an earlier documentation base; source-qualified line references below use this exact source tree. This review does not claim independent local ancestry verification of b559.
+
+Trusted inventory, accepted without repeating its census:
+
+- `/private/tmp/js2-6920-generic-vector-seam-inventory-20261009/inventory.md`: 11,419 bytes, SHA-256 `d196a8920b9bd81cb5e576520cf963e8a3090c0b32bead4b11d9f49fccf4ca35`; its eleven canonical copies and manifest remain intact.
+- Existing full source-facts/J2/J3 dependency: `/private/tmp/js2-6920-geometry-trusted-adapters-resume-20261009/.tmp/astra-native-linear-facts-j2-j3-reground-spec.md`: 43,209 bytes, SHA-256 `f1361ae7df29e83303fc7c5446671e5a330cab86627ed81e74a87685c2b36ee5`. Reuse its complete validation, facts-only planner, checked demand, provider, ownership, Gate 1/Gate 2 and historical-test requirements. Do not replace them with this narrower amendment.
+- `reviewdata/source-pins.json` records 24 exact source/test/budget-file byte counts, SHA-256 hashes and Git blob identities verified against this isolated HEAD. It also records the two inputs above. No dirty primary source file was used, particularly primary `src/ir/backend/lower-contracts.ts`.
+- Fresh read-only canonical ownership endpoint: `02b092897602b8188ced3e9943f9f47931e5f154`. `reviewdata/claim-tree.json` has 2,989 entries and `truncated:false`; twelve selected records were independently downloaded and verified against their Git blob hashes, saved in `reviewdata/ownership-records.json` and individual files. This is a snapshot, not an ownership release.
+- C's actual offer is [the existing PR6583 comment](https://github.com/loopdive/js2/pull/6583#issuecomment-6076900457), updated 2026-10-09T07:58:33Z and saved as `reviewdata/c-offer.json`. It explicitly requests the owner's release for candidate A-C1; it does not authorize implementation itself.
+
+Only the assigned private spec/reviewdata directory was written. No compiler, test, proof callback, provider import, claim operation, commit, push, shared issue edit or external message publication was performed.
+
+## Root cause and invariants
+
+`BackendEmitter` already accepts `IrVecLowering | LinearVecLowering`; this is not a missing second emitter. The broken seam is above it:
+
+1. `lower-contracts.ts:132–150` declares both vector resolvers as GC-only. `lower-generic.ts:950–972` consequently manufactures GC layout handles; its `lowerIrTypeToValType` vec arm at 4016–4027 independently repeats that decision.
+2. `ensureVecDataScratch` at 843–857 always creates `(ref null $array)`, and `vec.new_fixed` at 2353–2370 reads `arrayTypeIdx` unconditionally.
+3. The real Linear overlay's `f64VecHandle` at 1915–1939 returns an intersection with all-zero GC indices. Its outer converter returns i32, while generic scratch remains a reference until `compileLinearIrFunctions:1605–1618` rewrites it. Porffor's real assembler has an equivalent synthetic intersection.
+4. The actual native program path is different: `program-consumer.ts` still uses genuine GC vector reservations in both its signature and body routes; `fillPreparedPrimaryUnit` constructs a bare LinearEmitter and preserves lowerer locals verbatim. Thus fixing only the overlay or only a type alias cannot deliver native vectors.
+
+Required invariants:
+
+- One selected representation determines vector parameter/result slots, SSA temporaries, explicit slots and construction scratch. ABI projection and body lowering must agree before filling an original function slot.
+- Representation is chosen from the accepted backend and genuine resolver resources, never from target spelling, a magic type index, a source name or “i32 therefore array”. Standalone/WASI may use different backends; environment is not representation.
+- Generic opcode evaluation order, scheduling, effects, result arity and coercions remain shared. Only representation-specific emitter primitives differ.
+- Native construction resolves the exact current allocation ID and layout; a missing/foreign/retired/mismatched site cannot select the first allocation of a layout. Type-only and read-only resolution must not invent an allocation site or reserve a constructor.
+- Every runtime operation lookup in the native path is authenticated against the current accepted program/plan/transaction and lifetime. A raw positive function index is not that authentication.
+- The GC branch preserves its historical local ordering/names, type registration order, nullability conventions, struct/array instructions and binary output for unchanged accepted inputs. No fake reference cast and no blanket rejection of GC logical layouts.
+
+## Contract shape and single resolution algorithm
+
+### Keep genuine backend handles, add a discriminated resolved representation
+
+In `src/ir/backend/handles.ts:183–191,453–464`, retain `IrVecLowering` as the genuine GC-specific handle for existing GC preparation/materializers. Do not turn its mandatory GC fields into optional catch-all fields. Retain `LinearVecLowering` as the genuine linear layout/operation handle, adding a required i32 `valueType` if the common handle union needs the existing carrier field. It must contain no `vecStructTypeIdx`, `arrayTypeIdx` or GC field-index compatibility data. Remove both intersection-producing factories when their compatibility joins are applied.
+
+Export one named union for raw handles, for example `IrVecBackendLowering = IrVecLowering | LinearVecLowering`, and one normalized result:
+
+```ts
+type IrVecRepresentation =
+  | {
+      readonly kind: "wasmgc";
+      readonly valueType: ValType;
+      readonly dataType: ValType;             // ref to the real array
+      readonly newFixedScratchType: ValType;  // ref_null to that same array
+      readonly lowering: IrVecLowering;
+    }
+  | {
+      readonly kind: "linear-memory";
+      readonly valueType: I32ValType;
+      readonly dataType: I32ValType;
+      readonly newFixedScratchType: I32ValType;
+      readonly lowering: LinearVecLowering;
+    };
+```
+
+`I32ValType` here denotes the existing ValType i32 member, not a new representation system. The discriminant is mandatory on the normalized result. It is deliberately separate from the unchanged legacy GC handle so canonical GC constructors and GC-only prepared materializers need not all gain metadata to satisfy the generic contract. The native compiler must actually consume this result; do not add it as an unused facade.
+
+Use one small backend-owned module, proposed `src/ir/backend/vector-representation.ts`, for raw-handle narrowing, representation normalization and carrier/data-type projection. It may depend on IR DATA and backend contracts, not the frontend, legacy context, native resource planner, runtime builders or JS host support. Check/register its actual dependency closure under ROOT's boundary policy ownership; do not grant broad allowed edges.
+
+Widen only `IrLowerResolver.resolveVec` and `resolveVecForElement` and their documented return contracts to the raw handle union. Existing GC implementations remain valid narrower implementations. Update the shared reexports and the emitter/conformance/Porffor local union aliases to use this one definition. Existing `prepareIrVectorSupport` inputs remain GC-only: they prepare actual GC layouts/materializers and must never receive a Linear handle by cast.
+
+### Resolution rules
+
+The new helper accepts the active backend, original IrType, already converted element ValType for a logical vec, optional construction alloc ID, the relevant resolver methods, and an explicit resolution purpose: `carrier` or `operation`. Operation resolution returns the complete normalized result above; carrier resolution returns only the same discriminated kind/valueType projection, never a partially populated operation handle. Pass the same active backend to every conversion path. A backend-kind mismatch must fail before emitting a vector primitive or attempting a GC symbolic type lookup.
+
+This purpose distinction is load-bearing for GC preservation: the existing layout-backed type-conversion arm resolves only the carrier once, whereas operation resolution resolves the carrier twice and the data array once. Making every type conversion eagerly build the complete operation handle would add data-type lookups/registration and can change numbering or failure behavior. Keep one representation policy with demand-specific realization; `lowerIrTypeToValType` requests only `carrier`, and vector opcode resolution requests `operation`. Do not introduce eager data-array resolution, allocator binding or resource reservation just to answer a value-type question. Shared kind/carrier decisions live in the one helper rather than duplicated GC/Linear switches at its callers. The carrier result may use a separate `IrVecCarrier` discriminated type; it must not satisfy the operation API through optional/fake fields.
+
+1. **Logical vec with a prepared GC layout, GC backend:** resolve its carrier/data symbolic refs exactly as today. Construct the genuine GC handle with unchanged field indices and element type. Carrier is ref/ref_null according to the existing layout-backed nullable rule, data is non-null ref to the data array, construction scratch is ref_null to that array. Preserve the existing order of `resolveType` calls unless independence has been positively established; registration/resolution may have observable numbering effects.
+2. **Logical layout-free vec, GC backend:** call the genuine `resolveVecForElement(element, alloc)` compatibility route as today. Require a GC handle. Preserve `handle.valueType` when supplied and the historical nullable-aware struct fallback otherwise. Do not tighten unrelated GC fixture/preparation admission in this change.
+3. **Logical layout-free vec, Linear or existing Porffor linear-memory backend:** call the real target resolver with the element type and construction alloc when present. Require a genuine Linear handle with i32 carrier and matching element/layout geometry. Normalize data and scratch to i32. Do not call `resolveType` or request GC vector reservations. Reject unsupported elements using the target's current capability; this plan adds native fixed f64 vectors, not i32/reference/nested-vector construction support.
+4. **Logical vec carrying GC layout into the Linear route:** refuse as a representation mismatch. The actual source producer must select the existing layout-free logical projection. Silently dropping a supplied GC layout would conceal a wrong projection/ABI owner; adapting it by GC index is forbidden.
+5. **Physical val compatibility route:** call `resolveVec(actual ValType)` and authenticate that the returned handle belongs to the selected backend and carrier. GC struct identity comes from its genuine resolver. Linear recognition of an i32 remains the existing target-specific compatibility capability, not a new generic rule that every i32 is a vec. Required native input remains logical and validated; physical fixtures do not widen its admission.
+6. **Unknown, mismatched or missing resources:** return the established unsupported/invariant failure appropriate to the caller. No backend fallback, manufactured zero index, dummy handle, host import or partially emitted success.
+
+Common carrier/data helpers are also used by the frontend compatibility consumers below. Their GC behavior must match current nullability rules exactly. Their Linear behavior must never evaluate a GC fallback expression, even if a helper happens to receive an i32 carrier.
+
+### Allocation and operation details
+
+Keep the existing `linearMemory` layout/allocation/allocate/initializeElement descriptors as the emitter input. They describe real canonical operations; do not embed provider bodies or introduce numeric function indices into the semantic handle. The existing forwarding request in `LinearEmitter.vectorReadResolver` remains the single read resolver operation. Actual function binding stays in `resolveRuntimeOperation` supplied by the owner.
+
+For native `resolveVecForElement(element, undefined)`, derive the type/layout view from the accepted checked plan without choosing an allocation row. It may expose canonical operation descriptors for that layout without reserving or invoking them. For `vec.new_fixed`, require the actual `instr.alloc` at the native resolver boundary, then bind exactly that row, verify layout/type/ownership, and use that row's genuine constructor/initializer operations. Preserve the legacy overlay's separately authorized allocation policy; do not reuse its “first matching allocation” fallback in native code. No constructor binding may be cached across attempts or survive failure/completion.
+
+## C implementation hunks
+
+This table is the requested release boundary, not an ownership transfer. Line numbers refer to the pinned source and must be rebased by named function/field, not pasted blindly.
+
+| File / function | C's bounded change |
+|---|---|
+| `backend/handles.ts` vector declarations | Raw union and normalized representation contract; real Linear carrier; preserve GC-only handle API. |
+| `backend/lower-contracts.ts:132–150` | Vector resolver return types/docs and necessary type imports/reexports only. Preserve ROOT's unrelated dirty fields. |
+| New `backend/vector-representation.ts` | Pure shared normalization/carrier helpers and backend mismatch checks described above. |
+| `backend/{emitter,contract,contract-conformance}.ts` and `lower.ts` exports as needed | Type-only aliases/reexports and precise scratch contract documentation; no new opcode dispatcher. |
+| `lower-generic.ts:950–972` `resolveVecType` | Delegate to the one normalized resolver; every vector arm receives the same representation. |
+| `lower-generic.ts:843–868` scratch helpers | Allocate from `newFixedScratchType`; retain current GC per-array reuse, name and local ordering; reuse Linear i32 scratch by actual type. Element scratch remains element-typed. |
+| `lower-generic.ts:2316–2370,2514` vector arms | Pass `representation.lowering` to existing emitter methods. New-fixed asks for representation scratch; no target switch per opcode. Preserve operand evaluation and integer-length conversion. |
+| `lower-generic.ts:4016–4027` vec type arm and its type-conversion calls | Delegate to the same representation helper for `valueType`; thread the active backend through nested conversions. |
+| `backend/wasm-lowering.ts:21–30` | Pass the actual backend into the shared conversion path. |
+| `backend/linear-emitter.ts:160,164–167,349` | Remove obsolete scratch-index bookkeeping after actual callers no longer need it; retain all vector geometry/runtime algorithms unchanged. |
+| `backend/linear-integration.ts:1915–1939,2175–2183,2362–2378,1605–1618` | Real Linear handle; vector converter uses shared resolution; delete scratch repair and flatten genuine locals directly. Keep all surrounding producer/planner/lifetime logic intact. |
+| `backend/porffor/assembler.ts:1291–1315,522–526`; sink vector type alias/guard | Replace intersection handle with genuine Linear handle and compatible union; retain existing Porffor type converter/operation/assembler algorithms. |
+
+For `lowerIrTypeToValType`, a compatible implementation is an extra trailing active-backend argument defaulting to `wasmgc` for historical explicitly GC callers. `wasmValueTypeConverter` passes its existing backend; every internal call in `lowerIrFunctionBody` passes `emitter.backend`, including local allocation, intermediate/block typing, element recursion, and vector construction. Do not leave one internal default-GC call behind. Non-Wasm TypeConverter metadata still owns its output slots; do not replace Porffor's slot converter with Wasm ValTypes. If a different API shape is chosen, the same backend/representation must reach all these sites without ambient mutable state.
+
+Scratch reuse key is representation plus the full scratch ValType, not alloc ID, element spelling or fake array index. The GC key must preserve current one-local-per-array behavior and `$vec_data_<arrayTypeIdx>` names. Linear construction uses a real i32 local from the start, with `logicalType: irVal(i32)` so final slot conversion remains i32. Do not assign numeric slots in the new representation helper; generic lowering remains the local allocator. This change does not repair or redesign existing multi-slot parameter-index arithmetic.
+
+### Necessary frontend compatibility joins
+
+Widening the resolver return union has real readers outside the five originally offered files. They must be handled in the same composed C contract change or by an explicitly assigned companion, not worked around with `as IrVecLowering`:
+
+- `from-ast.ts:292–335` `ResolvedIrVecType`/`resolveIrVecType`, resolver declarations at 562 onward, and literal carrier projections at 5432–5444 and 5607–5623: use the shared union and genuine carrier helper. Keep existing logical-vector projection and demotion behavior unchanged.
+- `from-ast.ts:354,358` and `array-element-lowering.ts:472`: retain the legacy GC struct-suffixed runtime name only for an authenticated GC physical handle. For Linear physical compatibility, use the existing abstract element-type vector runtime symbol (the Linear resolver already maps that family), never a fake suffix zero/Porffor synthetic GC identity. Logical-vector symbol selection remains unchanged. Cover existing overlay push/sized-construction controls if these sites are reachable there.
+- `array-element-lowering.ts:26` resolver declaration and carrier reads near 401–411: use the shared union and required real carrier, without changing inference/counting/growth algorithms.
+- `from-ast.ts:12138` for-of data slot: project the genuine data carrier from the shared handle (GC ref to array, Linear i32), preserving the GC fallback heuristic only for its old resolver-absent compatibility route. This type join is required to remove the fake fields; it does not expand required native body admission. Keep the finite native evidence profile's existing rejection of for-of, explicit slots, growth, unknown operations and unsupported shapes. Generic `forof.vec` continues its existing lowering and slot contract; no second loop implementation.
+- `prepared-vector-support.ts:33–34,86,139,142` stays GC-only. Its actual canonical GC resolver implementations in `integration.ts:6465–6492` should retain their narrower annotations. Do not widen a GC materializer merely to make assignment typecheck.
+
+These are mechanical representation joins, but some cross broad owner files. ROOT must release the exact listed regions or assign a companion owner. C must not take blanket ownership of `from-ast.ts`, `integration.ts`, `linear-integration.ts`, the Porffor backend, or compiler selection. No facade-only “done” report is valid while these production readers still require a fake GC handle.
+
+## Expected emitted instructions
+
+No new generic opcode semantics are needed. For GC fixed construction retain the existing sequence and its empty-reserved-capacity variant:
+
+```wasm
+;; e0 ... eN were evaluated by the shared lowerer
+array.new_fixed $real_array N
+local.set $vec_data_real_array  ;; ref_null $real_array, as before
+i32.const N
+local.get $vec_data_real_array
+ref.as_non_null
+struct.new $real_vec
+```
+
+For Linear fixed construction retain `LinearEmitter.emitVecNewFixed`'s existing algorithm, now with correctly declared i32 scratch:
+
+```wasm
+;; e0 ... eN remain on the stack
+i32.const max(capacity, actual_layout.minimumCapacity)
+call $bound_canonical_vector_constructor
+local.set $linear_vec_ptr      ;; declared i32 before any emission
+;; consume eN first, preserving the original element positions
+local.get $linear_vec_ptr
+i32.const N_minus_1
+call $bound_canonical_value_first_initializer
+;; repeat existing initializer calls down to index 0
+local.get $linear_vec_ptr
+i32.const N
+i32.store offset=actual_layout.lengthOffset
+local.get $linear_vec_ptr
+```
+
+Get/len retain the actual canonical forwarding call before current-header/data reads, actual geometry offsets/stride, and f64 load for the admitted f64 case. Set retains its f64 element scratch and existing store algorithm. Do not add forwarding, grow, null, bounds, coercion or error behavior as an incidental “cleanup”; a demonstrated residual is routed to ROOT. In particular preserving an existing algorithm is not a claim that all possible operations have been newly admitted or exhaustively validated.
+
+## Required A-C caller implementation, outside C's core ownership
+
+These are concrete required follow-on edits, not optional future work. ROOT assigns their exact hunks independently from A1/A2/J3 and composes them before claiming the handoff complete.
+
+1. **Accepted source/projection:** A1 selects the real layout-free native vector source route; A2 attaches complete final facts; J3 validates complete program/codec/replay/accept/direct planning using the adopted source-facts plan. Preserve complete owner, semantic/support and allocation denominators. C does not replace these stages or make unknown evidence count as true.
+2. **`program-consumer.ts::physicalSignatureConverter` around 809–842:** pass an accepted backend-specific vector type view instead of unconditionally using `nativeVectorPhysicalType`. In the GC branch retain that actual reservation route. In the Linear branch the accepted logical vector maps through the same normalized carrier rule to i32 without reserving GC types. Unsupported vector ABI forms still refuse. Pre-reservation type projection uses checked plan DATA; it must not demand an active constructor binding before resources are frozen.
+3. **`program-consumer.ts::physicalBodyResolver` around 1103–1142:** retain the real GC vector resolver branch. The Linear branch closes over the exact checked B plan/resource pack and active-emission guard. `resolveVecForElement` uses its real accepted geometry; on construction it requires and authenticates the exact allocation row. It supplies genuine handles plus guarded operation lookup, not a cast of `resolveNativeVector` or an overlay context. An arbitrary i32 physical value does not obtain a native vector capability.
+4. **`program-consumer.ts::fillPrimaryBody` around 931 and `program-native-invocation.ts::fillPreparedPrimaryUnit` around 223–262:** carry a genuine bound target emitter or narrowly typed Linear emitter options from the consumer into primary fill. Instantiate `new LinearEmitter({resolveRuntimeOperation: guardedRealLookup, ...onlyAlreadyRequiredOptions})` for actual Linear bodies; preserve `new WasmGcEmitter(resolver)` for GC. Do not construct a bare LinearEmitter for an allocating body or let invocation code synthesize provider indices. Keep the final ABI-equality check and fill the original reserved function slot with correctly typed locals verbatim. A pure scalar Linear body may keep its existing empty-options path when no vector demand exists.
+5. **`program-physical-plan.ts` around 1457–1458 and ROOT's resource orchestration:** keep the honest nonzero-allocation resource gap until B's actual plan/reserve/bind/fill/complete calls and donor bodies are present. A2/J3 reaching this refusal is prerequisite evidence, not native execution. Replace the blanket gap only with the reviewed concrete path, never by deleting the check first or routing to the overlay.
+6. **B joins and lifetime:** use the existing five B operations `planPreparedLinearMemory`, `reservePreparedLinearMemory`, `preparedLinearMemoryBindings`, `fillPreparedLinearMemory`, `requireCompletedPreparedLinearMemory` at their agreed transaction phases. Type projection consumes checked plan DATA; runtime operation lookup consumes frozen reservations after binding, checks lifetime on every use, and resolves only actual demand. Fill providers and all owned source functions before completion/publication. Failure anywhere and terminal completion revoke access; no successful earlier consult, handle cache or regenerated resolver may revive a detached/failed/completed attempt. Keep the physical-ledger donor API; C must not implement another ledger.
+
+The forwarding descriptor, allocation/initializer descriptors and real operation resolver are the binding contract. The canonical provider source identity remains `runtime/arrays/forwarding-resolver.ts::buildArrayForwardingResolverBody`. The complete constructor/allocator/initializer dependency closure comes from the agreed donor owners. This spec does not authorize copying provider bodies, synthesizing import stubs, building a throwaway module to harvest indices, adding JS-host semantic imports, or changing startup memory/global ownership.
+
+Preserve the adopted distinction between executable demand, a layout's operation catalogue and transitive provider dependencies. A layout advertising growth does not justify a source growth capability; internal allocator memory.grow does not admit vector growth. Preserve the predecessor plan's zero-length construction demand contract and original resource tests; do not silently prune initializer/provider ownership during this representation repair.
+
+## Ownership and implementation order
+
+Fresh effect-read records at ledger `02b092897602b8188ced3e9943f9f47931e5f154`:
+
+| Region | Existing owner / write ID / state |
+|---|---|
+| Shared vector 2956:l2-vec | `ttraenkler/codex-l2-vec`; no write_id in record; in-progress |
+| Broad Linear 4540 | `ttraenkler/claude-opus`; `12703-i71z8kda`; in-progress |
+| A1 native public caller | `ttraenkler/codex-ir-native-linear-public-caller-sol61-20261008`; `15614-0ltdxb84`; in-progress |
+| A2 native source facts | same source-facts owner as below; `16740-hhm82aur`; in-progress |
+| J2 facts/verifier extraction | `ttraenkler/codex-ir-native-linear-source-facts-sol61-20261008`; `46615-x5dy59lp`; in-progress |
+| Session A source handoff | `ttraenkler/codex-sol-session-a-source-handoff-20261009`; `89995-6v69lqr6`; in-progress |
+| ROOT integration | `ttraenkler/codex-ir-integration-session-a-20261009`; `60335-ngn0jcr6`; in-progress |
+| B prepared memory | `ttraenkler/codex-linear-b-prepared-memory-20261007`; `64168-17jzm5kj`; in-progress |
+| Startup | `ttraenkler/codex-ir-native-wasi-startup-sol61-20261008`; `74929-veqhe4ti`; in-progress |
+| Allocation donor | `ttraenkler/codex-astra-allocation-ownership-20260908`; `34529-rzivb817`; in-progress |
+| Physical ledger donor | `ttraenkler/codex-astra-physical-module-completion-20260908`; `19409-8ue0poec`; in-progress |
+| Delivered C geometry | `ttraenkler/claude-session-c-geometry-20261009`; `495-9v3xp6sw`; done and released at 07:58:21Z |
+
+These are exact slice keys in `reviewdata/ownership-records.json`; issue numbers here identify scopes, not new task assignments. ROOT does a fresh effect read at implementation dispatch and reconciles named hunks with owners. An old timestamp, missing write_id, completed geometry claim, this proposal, or C's “no claims” statement is not authority to force-release somebody else's shared vector claim. No exact generic-vector claim or transfer has been created by this review.
+
+Recommended order:
+
+1. ROOT adopts the full amendment under existing issue6920, records exact hunk releases and assigns latest Sol6.1 implementation. Preserve primary dirty lower-contracts separately; develop on a fresh isolated current-base branch, not the primary checkout.
+2. C implements the normalized contract, generic consumers, overlay/Porffor/frontend compatibility joins and focused tests as one coherent source change. If a frontend hunk is separately owned, ROOT serializes the companion patch and includes it in the same reviewed composition. Do not ship broken intermediate resolver types.
+3. A-C supplies the exact consumer/signature/emitter/demand/lifetime patch above against the real A1/A2/J3/B contracts. A1 keeps public selection; A2/J2 keeps facts/analysis extraction; J3 keeps complete-program entry; ROOT keeps resource orchestration/integration/proof/release. B remains in its two agreed implementation files after Gate 1 release; C does not absorb B or runtime donors.
+4. ROOT reviews the actual composed source and all six existing Gate 1 prerequisites. Contract-level C evidence alone is insufficient. Actual public native execution is Gate 2 after real B/providers/startup are composed. Preserve HOLD/protected-queue authority and all original historical receipts.
+
+## Tests and acceptance evidence
+
+The following are required future tests, not tests executed by this task. Freeze exact source/harness/config/provider endpoints, keep raw exits and per-callback registration/entry/result denominators, and use positive controls. Preserve original failures/populations from the adopted plan; do not relabel them as fresh passing evidence or weaken a fixture to make this change green.
+
+### C contract and shared-lowering tests
+
+Add focused `tests/issue-6920-vector-representation.test.ts` (name proposed) using the real generic lowerer, real WasmGC/Linear emitters and target converters. Fake emission methods alone are insufficient.
+
+- Same logical layout-free fixed-f64/get/len/set/primitive-if IR intent through both genuine backends. Assert both internal/final carrier slots and scratch types, exact expected opcode families, element evaluation order and actual results. The admitted native profile is still the finite profile; the low-level test must not claim broader public admission.
+- GC before/candidate comparison: genuine canonical GC types, layout-backed and supported legacy layout-free vectors, repeated literals sharing one data scratch, distinct element arrays requiring distinct GC scratches, nullable carriers, empty fixed/reserved-capacity variants and existing for-of data slots. Compare complete emitted body/local/type data and final binary bytes for the unchanged fixture; independent runtime values ensure a byte-comparison harness is not vacuous. Registration/type numbering must match, not merely opcode counts. A genuine recording resolver must also establish that carrier-only conversion does not add the operation path's data-array or duplicate carrier lookup; operation resolution preserves its former demand/order.
+- Linear multiple live f64 literals in one function: no GC fields on actual handles, i32 scratch allocated before assembly, correct alias/independent-vector behavior and distinct allocation IDs, no post-lowering local mutation. Test scratch reuse by actual type without conflating site identity. Repeated resolution must not duplicate type/resource registration.
+- Representation mismatch: Linear rejects a GC layout/GC raw handle before symbolic resolution or emitter output; GC rejects a Linear handle. Wrong scalar carrier, absent element layout, unsupported element construction, wrong allocation layout and missing native construction ID must fail at the intended boundary. Supply a genuine positive resolver control first. A resolver returning null does not count as validating malformed inputs elsewhere.
+- Converter coherence: exercise an actual materialized vector SSA local and real function-signature projection, not only `lowerIrTypeToValType` in isolation. Include primitive `if` results and element scratch. Low-level vector-parameter/result type tests remain low-level if the required native evidence profile does not admit vector ABIs.
+- No duplicate family: inspect resulting source to confirm the single `vec.*`/forof dispatcher calls existing backend methods. Do not add tests that merely count source strings as semantic proof.
+
+Keep and run the relevant original controls after source authorization: `tests/ir-vec-new-fixed.test.ts`, `tests/ir-vec-two-backend.test.ts`, `tests/issue-2956.test.ts`, `tests/issue-6893-linear-ir-read-forwarding.test.ts`, `tests/issue-6893-linear-cabi-array-forwarding.test.ts`, appropriate existing Porffor vector controls, and existing GC IR equivalence coverage. A handwritten memory illustration in `ir-vec-two-backend` is explicitly not actual native caller evidence. Preserve its attribution. The genuine forwarding suite exercises emitted runtime forwarding and must retain that stronger control.
+
+### Actual native caller and resource tests
+
+Under ROOT's composed Gate 2 epoch, compile the unchanged public source through real exported `compile` and `compileAsync`, for actual native standalone and WASI:
+
+```ts
+export function run(a: number, b: number): number {
+  const values = [a, b];
+  return values[0] + values[1] + values.length;
+}
+```
+
+Execute with `1.5, -2.25` and require `1.25`. Preserve runtime parameters so constant folding cannot remove the allocation. Observe a real final live f64 vector site, authenticated facts and projection, actual B constructor/initializer/forwarding/allocator reservation and body use, i32 vector SSA/scratch before function fill, matching original ABI, native memory ownership and completed ledger. Assert no GC vector reservation/instruction, fabricated intersection, overlay fallback, legacy recompile or JS-host IR semantic provider on this path. Check source-free encode/decode replay without rerunning the frontend. A module manufactured in a test does not substitute for this public source.
+
+Add actual allocating-body controls within the supported profile: get/set/get plus len, repeated independent vectors if coverage admits their exact graph, zero-length constructor if coverage admits the source, and supported primitive-if control flow. If the finite checker reports not-covered, record that honestly; do not loosen it under C's scope. Keep rejected for-of/growth/nullable/reference/nested-vector cases as unsupported native controls while retaining original GC success paths.
+
+Exercise real native joins with missing provider demand, missing bound operation, wrong/foreign allocation, wrong plan/program association, GC carrier supplied to Linear, ABI mismatch, stale binding after failure and after completion. Verify failure precedes partial publication and cannot be recovered by rebuilding a resolver. Positive controls must demonstrate the same instrumentation sees actual successful bindings before testing zero/refused calls. Reuse the predecessor lifetime/resource F/G/V/R matrices and original V48; do not substitute a smaller representation-only matrix.
+
+### Boundaries, budgets and preservation
+
+Run typechecking, actual relevant compiler-boundary/dead-export checks, formatting and required CI on the final composed source, plus LOC/function-budget gates against the real PR base. Current budget baselines include `lower-generic.ts` 4247, `linear-integration.ts` 2376, `from-ast.ts` 16761, `program-consumer.ts` 1531, and `makeLinearIrResolver` 356. These are recorded baseline entries, not a measured proposed diff or permission to exceed them. Prefer the small shared vector-representation module and shrinking old duplicate/scratch-rewrite code; do not grow another large target switch or copy planner logic into a caller.
+
+No allowance is pre-granted. If exact growth cannot fit, ROOT records the measured narrow allowance in issue6920 in the implementation PR's actual change-set; a neighboring issue's grant will not exist in CI. New module boundary rows belong to ROOT's policy owner and must classify the true imports without relaxing unrelated edges. Report unchanged controls and real required gates separately from any historical failures.
+
+Representation edits intersect source-proof readers. ROOT must identify the exact affected source pins and prepare independently replayable bounded successors before asserting current proof equality. Preserve genuine before/after objects, full byte/hash/blob endpoints, inverse and forward reconstruction, the original GC instruction equivalence, existing shared geometry lineage and original receipts. No blind repinning, fabricated preimage, whole-file answer substitution or legacy deletion is authorized.
+
+## Completion criteria and explicit limits
+
+C's slice is complete only when its actual production generic/overlay/frontend/Porffor readers use genuine representations, the scratch rewrite is removed, GC byte preservation and relevant compatibility tests pass, and there are no fake GC fields or casts remaining in those joins. C may report this bounded completion even while A-C/B remains blocked; it must not report native program support or the complete source handoff.
+
+The issue's native handoff completes only after A1/A2/J3 and real A-C/B/providers/startup are coherently composed, all existing Gate 1 prerequisites are reviewed, actual Gate 2 public execution/replay/lifetime controls pass, and ROOT records protected delivery. Until then, retain honest resource refusal, existing legacy behavior, original failure records, and the separate source/proof/runtime/claim release boundaries. This document does not itself satisfy any execution or release gate.
+
+
+### Separately reviewed and released twelve in-memory DATA controls
+
+ROOT fullprotocol diff27906/48a810b9 read, original182-line8641-bytecontrols cf122 unchanged. Independently rehashed complete2077+4188 source/harness andpacketpins,270directoryidentities,108installed ownfiledomains, all scopedmemberships; original3900harness/256healthyoutput/153failedscope protected. Oneintentional fixturetrace-binding transition only. SixoraclesbyteequalgenuineGitobjects, expectedpositivepopulation/current/historical/resolver tables unchanged, measured77authoritytrace independently matches. Freeze4752808/1d1e20d4ccf8c17b352b2b1d1170759757c7c87e45b6e8cb0cdf9807cd2f5007. ROOT releases exactlyONEnewdriverinvocation, oneVitestcallback containing12actualcontrols/12H2calls only ifobserved. No physicalfaults, no retries/erroradaptation/repin. ExactnativeRoot/defaultloader/strictlifecycle/seal preserved, added packageownfilepopulation barrier strengthens custody. Onanyfailure stop/preserveactualprefix; no runtimecountcreditbeforeexecution.
+
+
+### Coordination watcher: actionable B replies read in full
+
+ROOT paginated PR6583 and read complete comments6078297996,6078499072,6078626011, with latest peer update2026-10-09T09:56:49Z. B reports authenticated original initializer writer4467, private sole-import0799a907eb8e6aaee3163420fed09fe0bfc61c3c/sourcefd543122e5c4f432ad332f2c617f13f4351b902f and full exact-path paired plan in6577/head197c3bcb4c46781d4f8b1324a45c6c5d2f64006f. B baseline report24/25 with eight whole observations/five binaries remains failure, not native acceptance. Candidate child had not run. Append private geometry patche33560ce57c5912fd75cc36c7156b1037828416e and composition55ac3dfef2402390e3fd844b18237c4eb582a879 are B-reported; original-owner no-kill handler repair requested, full proposal published6593/head5024648b7f9a64f101ffd327be3bac710a5fc646. ROOT must review the complete plan before granting that additional scope; no implicit release, trial, claim transfer, HOLD removal or queue action. Existing ten-minute watcher must retain these actual replies and watch edits/all pages.
+
+Previously authorized controls driver40663 completed exit0: one registered/entered/passed callback, twelve actual DATA controls, twelve H2 capture calls, one return/eleven expected refusals, nativeRootOnly true, zero physical faults. Summary/loader positively observed; complete raw forensics remains pending. This does not qualify full cohorts or native public execution.
+
+
+### Private J2/R3 candidate: actual bounded runtime validation
+
+Sol6.1 High finalized genuineb559-based seven modified/four new source-path proposal in /private/tmp/js2-6920-native-facts-extraction-candidate-20261009. Fullpatch121135/SHAe3c3c838c09d0771d3528ae2ad901e0f31c39a02a4774bc01060a542ad4f15d5; complete33artifactmanifest9112/SHAe80b0c56820504f6c23440f25779a676840d373df6d032e2e354811d426237f3. No live owner-file activation. ROOT inspected all proposed callbacks, snapshot factory/verifier and planner/producer delegation. A followup dispatch was rejected by concurrency limit before action; ROOT performed the bounded private runtime itself. Genuineb559 canonical config, concurrency helper, package and seven original provenance tests copied unchanged. Single actual Node24.4.1 Vitest invocation session16401 completed exit0, two files,18 actual passed callbacks/one explicitly held J210.todo. Eleven new callbacks and seven original provenance callbacks all passed, including real producer/consumer observer and injected forbidden-dependency positive/negative controls. ROOT parsed every JSON assertion and independently rehashed all1913 frozen source/test/config files unchanged. Full outputs and root-result-review.json retained in candidate .tmp/runtime-qualification. This proves bounded private extraction behavior, not live source activation, full source preservation, A2/J3/caller/resource integration, public native equality or canonical delivery. Original3298 typecheck failure remains preserved. Existing owners/claims unchanged; ROOT still must review exact donor hunks and source-proof successors before composition.
+
+
+### Full adopted Astra no-kill runner repair and bounded B release
+
+ROOT read all21878 bytes and independently verified complete SHA. Actual ROOT claim60335 remains in-progress. Release only original authenticated B runner owner62837/serialized continuation33193, after sameowner ACK and fresh unique continuation effect-read. No real trial or termination authorized. Natural-close wait may be indefinite; timeout remains failed and capture bounded. Existing HOLDs/pins/old failures/geometry scope/comparator logic remain.
+
+# B append runner: bounded no-kill fault handling
+
+Issue 6920 — Native Linear numeric-vector shared source handoff and integration plan. Related issue 6915 — Linear owned-ASCII append: optimize the existing copy kernel.
+
+Independent Codex GPT-6 Astra High review for ROOT adoption, 2026-10-09. This document recommends a private implementation release to the original runner owner. It does not release a compiler trial, terminate anything, transfer ownership, accept the third source, or remove a hold.
+
+## Decision and inspected record
+
+Release the narrow repair after ROOT adopts this complete contract and B acknowledges its original-owner partition. The proposed monotonic fault latch, immediate notification and natural-close drain are sound **only with the bounded capture and close-order requirements below**. Deleting `stop()` or replacing it with a warning alone is insufficient. A timeout remains a qualification failure; only its automatic termination side effect changes.
+
+I read all 1,926 lines of the supplied published issue, then independently retrieved it and the runner from exact PR6593 head `5024648b7f9a64f101ffd327be3bac710a5fc646`. The supplied issue equals the retrieved Git blob byte-for-byte:
+
+| Record | Bytes | SHA256 | Git blob |
+| --- | ---: | --- | --- |
+| Published issue6915 | 157902 | `ef2a239fdc89006194f5ba9162ef8ecda4308774a5c5333fe3024dbb1beed21c` | `064ed20ad36eeea6b36e6bb8c5995881ecb56a45` |
+| Published runner | 83848 | `b6106b0ef3b686bb67d713cf6133d3235a5c4c29666fa889680b531193263e77` | `18a055272a34195e091a601ce6fe003f9c072c61` |
+
+The published runner still has two source targets. The issue separately records the private geometry candidate `e33560ce57c5912fd75cc36c7156b1037828416e`, runner 87264 bytes/SHA256 `aefbb190424ca7d9b22ebf11640662f63ff5917bd16553f6a909fcccda65cf3d`, and 159 controls. Those are published checkpoint records, not private bytes or controls freshly executed by this review. B must identify the exact already-reviewed geometry predecessor when composing this repair; do not mistake the published two-tree runner for that predecessor or overwrite the geometry work.
+
+Actual published `runAppendQualification` starts at line1147. Lines1211–1223 implement `stop()`, set `killed=true`, send SIGKILL to the child on Windows or its process group elsewhere, and wire that action to timeout and SIGINT/SIGTERM. Lines1225–1237 write each full incoming chunk before checking the total cap, and invoke the same termination on cap/write failure. Lines1241–1261 await `close` and derive strict failure partly from `killed`. Lines1289–1307 capture after-state and close handles/unlink the lock. No new execution was needed to establish these source facts.
+
+The repo's `.claude/memory/feedback_ask_before_killing_tests.md` explicitly requires asking the user before killing a test suite. The earlier geometry contract restricted edits to literals, membership and controls; preserving other code was not permission to terminate a test. Its runtime hold is therefore correctly retained pending this separate repair.
+
+Fresh read-only canonical claim-file reads retain:
+
+- Runner owner `ttraenkler/codex-linear-b-source-approval-sol61-20261009`: finite-successor write `62837-vw2me2ho`, geometry-continuation write `33193-a04x7qa7`, both in-progress on `codex/6915-source-approval-20261009`.
+- ROOT owner `ttraenkler/codex-ir-integration-session-a-20261009`: integration write `60335-ngn0jcr6`, in-progress on `codex/6920-geometry-proof-integration-20261009`.
+
+These actual individual records were read; I did not claim to inspect the complete current claim tree. B must obtain the same runner owner's acknowledgement and effect-read its fresh unique no-kill continuation before writing, serializing against that owner's earlier scopes. Existing records are neither transferred nor force-completed. A new slice must not create a second writer. B owns issue6915/evidence adoption; ROOT owns issue6920 adoption and final integration review.
+
+## Exact implementation partition
+
+Only `scripts/hooks/run-linear-append-provenance.mjs` is the worker's implementation file. Permit:
+
+1. The child supervision region of `runAppendQualification`: timeout/signal/error handlers, stream capture accounting, natural-close wait, fault notification, receipt assignment and the cleanup ordering needed to keep the lock and capture handles live until closure.
+2. One small file-local supervision helper extracted from that region if required to exercise the actual production path with inert child/stream/timer doubles. Its dependency seams are private test seams, never environment/CLI overrides or exported extension APIs. Production supplies the unchanged real spawn, timers, fixed bounds and file writes.
+3. Directly related cases in existing `selfTest`. A built-in EventEmitter import and making `selfTest` async with a corresponding `await selfTest()` at the existing CLI call are allowed if needed for actual close-order controls. Do not extract a generic process manager or add test files/frameworks.
+4. Within the same runner, a small fixed parent-only capture-status artifact and its archival calls, if using the recommended `capture.json` below. Existing receipt keys retain their meaning. No child manifest/evidence schema change is needed.
+
+Everything else stays byte-equivalent to the reviewed geometry predecessor, including all approval literals, `PINS`, `CONFIG_PINS`, `EDITABLE`, membership and identity functions, complete `assertFrozenInputs` observation, generated-report handling, `colorlessChildEnv`, command/argv/flags, source/test/fixture, parser, decoder and `validateAppendReceipt`. Keep TIMEOUT_MS=600000 and OUTPUT_CAP=268435456. Preserve actual spawn options, including shell=false, existing platform-dependent detached setting, and ignored stdin/piped stdout/stderr. Workflow, uploader, changed-root shell, dependencies, full-graph comparator implementation, compiler and Native Linear work are outside the runner writer's scope.
+
+B parent separately owns the comparator's exact runner-hash rebinding and its independent freeze; the worker does not rewrite comparator logic or baselines. Normal source/test/policy ownership, allocator4540, ROOT integration and all holds remain unchanged.
+
+## Required behavior
+
+### Faults fail immediately; finalization waits for closure
+
+Use a monotonic infrastructure-failure state. Record timeout, each received signal identity, child error, each stream error, cap exceedance, write failure/stall and notification failure as failures. Never clear the latch because output resumes or the child eventually exits0. The final success conjunction remains real child close with code0/no signal/no spawn error, no infrastructure/cleanup/archive errors, complete capture, unchanged full custody and the unchanged passing receipt validator.
+
+At the 600000ms deadline, latch a descriptive timeout error and notify immediately while leaving the child and both stream consumers running. Keep recording output up to the unchanged cap. No timeout extension, reset, second deadline that kills, `Promise.race` that finalizes early, or hidden retry. A run beyond the deadline cannot later qualify. The timer must not be the only keep-alive: never `unref()` the child or its pipes.
+
+SIGINT/SIGTERM received by the parent record their actual names and latch failure. Do not forward, re-raise, translate into abort, send a softer signal, close a pipe to stop the child, or invoke another termination utility. Receipt `killed` stays false because this runner sends no termination signal; a child actually terminated externally retains its real close `signal` and fails. Do not label a received parent signal as a child kill. Repeat notifications are counted/coalesced, not an unbounded error/log stream.
+
+Install the close promise, child error handler and both pipe error/data handlers immediately around spawn. A synchronous spawn throw has no live returned child and takes the pre-child failure path. A child `error` event does not itself authorize finalization: record it and await its real `close`, including failed-spawn error-then-close ordering. Do not wait only for `exit`; trailing pipe data must remain capturable. A pipe error, or close without normal readable end, marks incomplete capture, continues the other usable pipe, and never invents the lost bytes. Normal pipe end before child close is permitted and must not be falsely rejected. Catch callback failures locally so notification/write errors cannot escape as uncaught exceptions and abandon a live child.
+
+Once a child exists, no handled fault or setup exception may reach after-custody, descriptor closure, lock unlinking or terminal receipt serialization before the real close barrier. Make this explicit in control flow, with a defensive close wait on any post-spawn exceptional path. Then cancel the timer and remove only this invocation's listeners. Preserve the pre-child partial-archive path and all independent cleanup attempts. Do not remove an existing foreign/stale lock to enter a run or delete locks on a timer.
+
+Node documents `close` as following process termination and stdio closure, unlike `exit`; an installed SIGINT/SIGTERM listener removes the default parent exit behavior. These support the proposed ordering. They do not establish that all detached grandchildren with independently closed pipes are gone. This repair preserves the existing supervised pnpm/Vitest boundary; it is not a process-tree census. Sources: [Node child-process lifecycle](https://nodejs.org/api/child_process.html#event-close), [Node 22 signal events](https://nodejs.org/docs/latest-v22.x/api/process.html#signal-events).
+
+### Bounded capture while continuing to consume
+
+Preserve exact bytes already written to stdout.log/stderr.log. Use one combined captured-byte budget across both streams. Before each write, limit it to the remaining OUTPUT_CAP budget; at exactly the cap with no further bytes, no cap-exceeded fault is necessary. The first additional byte latches cap failure. A chunk crossing the boundary contributes only its allowed prefix to disk and its remainder to discarded-byte accounting. No chunk-sized cap overshoot, ring overwrite, truncation of existing files or post-hoc normalization.
+
+Track bytes observed by data callbacks separately from bytes successfully written, per stream and total. Keep existing receipt.bytes as observed bytes; healthy runs retain its current meaning. Continue consuming and discarding excess chunks without storing them, queuing asynchronous writes, or accumulating a buffer. Preserve successful partial writes before a later throw; treat a zero-byte write as a fault rather than a busy loop. After the first write fault on a stream, stop retrying that descriptor and count/discard its remaining data; keep capturing the other healthy stream within the shared bound. Do not repeatedly append the same write exception for every subsequent chunk.
+
+Recommended fixed `capture.json` records started/closed status, completeness, observed/captured/discarded byte counts for stdout/stderr, and finite fault identities/counts. It is parent diagnostics, not source approval or a new child schema. Mark incomplete at the first lost/unreadable byte; never reset it. A stream read error makes total emitted bytes unknown even if observed counters are exact. An unspawned run must not be reported as a complete empty child. This can instead be encoded in clearly named parent receipt additions if exact downstream review proves compatibility; choose one form, not duplicate authorities.
+
+On the first occurrence of each finite fault category, synchronously attempt a bounded primitive diagnostic to the parent's stderr, identifying archive path, child PID if available, reason, capture status and that the runner is waiting for closure. Also attempt to persist the fault status in the unique archive while still running, so a later external runner loss need not erase every reason. This is notification through the existing invocation, not a GitHub/chat message, watcher or separate coordinator. Never write notification text into child raw streams. Notification/archive failure is retained as a secondary error; avoid recursive notification, repeated writes to a failed destination or throwing out of callbacks. Best-effort notification is not claimed delivered if both destinations fail.
+
+Bound state by fixed fault categories and counters: preserve the first actual Error object and cause for each independent category/stream, all separate finite cleanup errors, and repetition counts. Avoid creating a fresh error for every discarded chunk or repeated signal. Detached error serialization keeps its existing reference/descriptor behavior. Final receipt.failures must stay nonempty for every latched fault, even if every subsequently parsed graph and reporter passes.
+
+After close, archive whatever real reporter, decoded graphs/diagnostics and before/after custody can safely be captured, using the unchanged strict parser and validator. A complete-looking prefix or passing reporter cannot repair explicitly incomplete raw capture. Never manufacture missing healthy files, change a failed receipt to success, replace a primary failure with the last cleanup error, or discard old archives. Keep the lock through the child close and existing post-run custody/capture cleanup; terminal-status writing must not be represented as complete while a live child is still being drained.
+
+## Finite regression controls
+
+Controls exercise the extracted real supervision path, not a second implementation of its decisions. Use deterministic inert emitters, timer callbacks and bounded write doubles; no real compiler/test subprocess, real process signal, production disk-full injection, or termination call. Every fixture that returns a child eventually emits synthetic close so the test itself cannot hang. Preserve the predecessor's actual complete existing control population (159 if the independently checked geometry predecessor is used; published502 has128). Report the measured count, never predict a pass total.
+
+Required cases, with exact counters/order and zero termination calls asserted:
+
+1. Healthy stdout/stderr interleaving, partial successful writes, exit0 followed by trailing data then close0. Capture all bytes; do not settle on exit. No faults, normal finalization exactly once and listeners/timer cleaned.
+2. Timeout, more data on both streams, then close0. Notification occurs while live; capture continues; no after snapshot/FD close/lock unlink/terminal receipt occurs before close; result remains failed.
+3. Each of SIGINT and SIGTERM, repeated signal, continued data, then close0. Correct signal identity, bounded repeats, zero forwarding and failed result.
+4. OUTPUT_CAP-1, exact cap, one-byte-over, one chunk crossing cap and cross-stream cap exhaustion. Preserve the exact prefix, correct observed/captured/discarded counters, no cap overshoot, continued data consumption, failure only on excess.
+5. Successful partial write then exception, and zero-byte write, on each stream. Exact prefix retained, that descriptor never retried, other stream still captured, subsequent data drained, incomplete/failing even after close0.
+6. Each stream's error while child remains live; retain original error, incomplete status, continue the other stream and await close. Include no unhandled error event.
+7. Synchronous spawn throw and asynchronous child error then close. Record actual failure; no invented child result; error does not prematurely resolve close waiting.
+8. Child nonzero and child externally signalled close with otherwise healthy capture. Both remain failures with true code/signal and killed=false.
+9. Timeout followed by cap, stream/write failure and close0, plus distinct after-custody/archive/close errors. Preserve primary and subsequent finite failures; none overwrites another.
+10. Parent notification write failure, fault-status archive write failure and their combined failure. No recursion or callback escape; drain/wait and fail remain intact.
+11. Explicit attempt to finalize with child open or only `exit` observed is refused. Prove lock and capture handles retained; close permits exactly one finalization. Validate the real integration of this barrier, not just a boolean in a disconnected fake.
+12. A faulted/incomplete capture containing a syntactically complete passing receipt still fails the parent; the healthy positive control succeeds. Unknown tree and wrong identity still stop before the spawn seam, preserving their partial archive.
+
+Observe termination attempts through doubles that fail the control on child.kill, group/process.kill, abort/destroy/unref or a second spawn. Static inspection additionally verifies production has no alternate termination path. Do not claim a fake emitter validates actual OS process trees; these are deterministic decision/order controls. Syntax, formatting and whitespace checks remain normal. No destructive experiment is needed to demonstrate this repair.
+
+## Review, trial and release
+
+The original owner hands off the complete patch, exact predecessor/candidate bytes and SHA256, actual inert control output and a precise file/function diff. Independent review verifies all excluded regions and the approved geometry patch unchanged; inverse-edit comparison should recover the exact geometry predecessor. In particular, there must be a durable failing error beyond killed=false and cap enforcement must bound physical capture, not merely count bytes after writing. ROOT/B review the result before any real child.
+
+B parent then binds the reviewed comparator to exactly the new runner hash, preserving all comparator code, baseline hashes, full graph0 validation, unfiltered graphs1–37 and raw-stream/custody joins. Verify that its existing parent-terminal and receipt.failures checks reject this repair's faults; an additional diagnostic artifact must never become a means of ignoring nonempty failures. The published issue's comparator hash `03a5a9752ce408297adc87581dae6a2955755e8d901ccd29703f4692ace2bfcc` is a prior geometry checkpoint, not a hash for the new runner binding. This review has not inspected that private comparator's bytes and does not grant its modified version acceptance by narrative.
+
+After exact patch/comparator review, independently freeze a committed isolated B composition containing approved geometry source1716 and unchanged c63 test, all fixed inputs, complete source/config populations, Node/V8/pnpm, command/4096-MiB flags, runner/hook/issue custody, comparator and original graph baseline. ROOT's live integration checkout is not the trial checkout. Keep actual execution identity separate from later publication identity.
+
+Only the existing parent route may separately authorize one serialized third-target trial. This specification itself executes/releases none. No real timeout/cap/signal/disk-fault campaign, parallel run or retry is implied. If the real trial faults, notify and continue awaiting natural close while preserving partial evidence; the parent must seek explicit human authority for any later termination. A worker or scheduling limit is not such authority.
+
+Healthy acceptance remains strict parent terminal exit0, child code0/no signal/no kill/no spawn or infrastructure errors, full before/after equality, complete capture, all38 envelopes, exact36 ordered IDs, reporter36pass/0fail/0pending/0todo, Runtime22's33 transitions and all eight full same-validator negative witnesses. Compare every complete observation and completion graph with the original retained baseline; separately authenticate graph0 and all raw/input joins. Any difference or missing evidence holds acceptance with its actual denominator and complete differing values. No rebaseline, repin, filter, timeout waiver or repaired label for historical failures.
+
+Then publish in existing B PR6593 through normal hooks, with existing required-quality and supported-identity advisory CI and actual downloadable archive inspection. Existing uploader scope is sufficient for extra fixed diagnostic files under the same run directory. Preserve original failing CI archives. No CI rerun/cancellation, hold removal, queue submission, direct-main push, native admission, performance, full IR equality or legacy retirement follows from this plan.
+
+## Remaining limits and review outcome
+
+Natural-close waiting intentionally no longer guarantees bounded wall-clock completion after an infrastructure fault. Draining consumes bounded memory/disk but may wait indefinitely for an uncooperative child; the lock remains held. ROOT's adoption must accept this consequence rather than describe a timeout warning as a finite runtime guarantee. External SIGKILL, Actions job cancellation/host loss, filesystem failure or closed independent descendant pipes can still prevent complete archival; this patch cannot promise otherwise and changes no external policy.
+
+These are release limits, not reasons to introduce a new supervision framework. The concrete unresolved implementation questions are whether the actual patch waits on every handled post-spawn exceptional path, bounds repeated error/notification state, accurately accounts partial writes, and preserves comparator rejection of faults. The finite controls and exact diff review resolve those before trial. No additional user decision is needed merely to write the authorized private repair; only actual termination would need its separate explicit authority.
+
+This review wrote only its private `astra/` directory. It did not import/run the runner, run self-tests/compiler/tests, deserialize V8 evidence, alter live source/claims/issues/foreign branches, send coordination messages, or perform termination/publication. Source inspection establishes the defect and this bounded plan, not an implemented or measured repair.
+
+
+
+### Full C1 runtime failure preserved and fixture repair delegated
+
+Actual serialNode24 C1 suite session1122 exit1:359passed/3failed/362 callbacks, zero skipped. Complete7502 source/test bytes/modes/inodes/dev identities before/after independently equal. All fixed-target physical faults restored; no helper/source repairs or retry occurred. Failure1 forwarding import mutation fragment occurs twice(import/reexport) and fixture replaceOnce correctly refuses ambiguous mutation. Failure2 historical DATApre-getter-fix10682 expectation still wrongly compares to current10831; production frozen-current bytes remain unchanged. Failure3 old remainder H3prefix403311 expectation does not independently reverse previously adopted geometry-prefix edits before applying unchanged old inverse. Full results/rawerrors remain .tmp/c1-cohort-qualification-20261009. Sol6.1High owns PRIVATE /private/tmp/js2-6920-c1-fixture-repair-candidate-20261009 only, to propose stronger exact unique fragment and independent genuineGit inverse/forward proofs with paired controls. No blind oldpin rewrite, helper changes, fixture removal or source weakening. Geometry proof15/15 passed separately. All native facts18pass/1held evidence remains private.
+
+
+### Companion preservation suite actual evidence
+
+One serial normalNode24 invocation20641 exit1:67pass/1fail/68. Full7502 source/test beforeafter byte/mode/inode/dev identities unchanged, all fixed-targetfaults restored. Sole failure fixtureline1096 expects /callable/ where unchanged guard returns exact authority reader must be a function. Sol private paired fixture task extended; retain primitivepriority/noIO controls and assert actual exact error, no guardchange. All original failures retained; no blanketgreen claim. Earlier12controlpacket overall custodyFAIL confirmed samepacketauthor read-onlyforensics:5physical reader paths omitted, despite actual12controloutcomes/wholepositivegraph checked. Fullreport33991/SHA16e1b2c327a28a914fb4d07b53376e913d5ba1dcff1a56ebbf5808ba24b50b3e; no retroactive seal credit.
+
+
+### Actual next J3 implementation dispatched in parallel
+
+LatestSol6.1High native subagent sol_j3_joined_validation_candidate_20261009 owns ONLY /private/tmp/js2-6920-j3-joined-validation-candidate-20261009 private code. Fulladopted43209/f1361ae7 contract mandatory. Genuineb559 base with ONLY reviewed11 J2 sourcefiles; actual descriptor-first optionalattachment/complete-context semantic entry/canonical provenance+J1/evidence truth/notcovered genericfallback versus requiredlocatedrefusal before resources, actualprogramprojection module/facts join. Ownedprivateproposalfiles: NEW program/linear-allocation-facts.ts, data.ts attachmenttype, validation.ts realnarrowcallthrough, codec join onlyifneeded. Excludes frontend/sourceproducer/A1/backend/A-C/B/resources. No implementation facade/fakecontext or headertrust. Staticchecks/proposed meaningfultests only pending ROOT callback review; no liveactivation/claimtransfer. Original owners retained. ROOT independently reviewed J2design and actual18/19 boundedqualification; Astra completed independent13930/SHA2a07f83bf70f5735730758f15fa4e31029ab693269b1a621ceeb669e081e204b boundedclearance of exact54 originaldeclarations/all1901sourcebaseline/11changes/33pureclosure, no correctivehunk. Fullsourceproof/ownerapprovedintegration/A2/A1/J3/Gate1/Gate2 remainoutstanding.
+
+
+### Current integration guards and verified wait
+
+NormalNode25 LOC/function/coercion/oracle gates exit0. LOC reports3 changedgeometry srcfiles/net+78 against currentlocal mergebase, not a claim of new NativeIRmain coverage. Compiler-boundary defaultcomplete mode exits1 with inventoryValidtrue/errorsempty/architectureCompletefalse; this is honest globally unfinishedarchitecture. Normal inventorymode separatelyexit0; fullreport retained .tmp/c1-cohort-qualification-20261009/boundary-inventory.json. Thirteen modifiedpolicy suites remain actuallive toolsession68888, OSparent27190 and observedworker43092 actively108percentCPU, not a cachedlock or stoppedprocess; no restart/termination. Dirtyrootpreserved, no sourcefixtureeditsduringthis frozenrun.
+
+
+### B acknowledgement and actual same-owner continuation verified
+
+Fresh fullthreadreply6079222423 at2026-10-09T10:38:13Z acknowledges FULL21878/c655 contract, localunpublishedadoption1e9f0b8f9eecb0a2a4594265f515d47d809549bf. ROOT independently read actualcanonical6915-no-kill-runner-repair-20261009.json and verifies originalrunnerowner ttraenkler/codex-linear-b-source-approval-sol61-20261009, write5719-lzuom54e. B saysSol6.1High nowauthoring onlyreleased supervision/capture/close/inertcontrols frome335/aefbb predecessor. No realtrial/sourcepush/comparatoraccept/HOLDremoval/queue implied. Initializer reviewedpairedinstrument localunpublishedc9f1b26179b8fb070dbe095f1891077b4e79ac15, parent57+28inertcontrols/7903-inputaudit B-reported; candidatechildunexecuted due verifiedlive serializedlocalsuite. Construction-ID/signature joins stillGate1; five memoryAPIs proposednotimplemented. Publishedheadsunchanged. Preserveownershipandexternalwork.
+
+
+### Fixture repair proposal operands remain independently grounded
+
+Sol private DATA declaration operands genuinebec8ac/845273 reproduce10682/01cc434 and10831/6010f226; fullcurrentobservedpin stays current, historicalcomparisongets exact inverse. FullH3geometry inverse current411837/8575d0 to genuineHEAD+MERGE_HEAD409599/e3bd76 then original403311/a38d463 remainderprefix; rawcurrentprefix403311/4897e7 correctly remains refused. Sixpositive/36negative builtin-only staticrecipecontrols measured; proposed12 addedC1 callbacks unexecuted. No helper/source/pintable changes or runtime retry. Candidate fullfixturepatches/typedsource review pending finalhandoff while original13policy run continues.
+
+
+### Exact two-fixture repair independently reviewed; activation waits on actual running epoch
+
+Fullcombined33121/SHAea30312811b0bc88a8b1eda540e406842aa8f4f19ad4c4590d45a26be7aeab3d read as complete diff except unchanged longauthorityliterals separately authenticated with TypeScriptAST. ROOT independently replayed both DATA and H3 recipes from actualcurrentbytes to genuineGit endpoints and separatelyforward, all fourfixture before/candidatepins match. Original completeauthority literal, exact77trace and entireoldremainder initializer/table byte-equivalent. Existing362+68 registrations retained;12newpaired C1cases authored, no runtimecredit. Source/helper/runtimeguards untouched. CandidateC1 208482/78e0b023 andpreservation66214/3cd64cd; TS7actual264inputs/zerodiagnostics. Rootreview .tmp/c1-cohort-qualification-20261009/repair-independent-review.json. Rootowns subsequenttwofixtureactivation underactual60335 ONLY after livepolicy process68888 completes and current7502fullmembership/bytes/modes/identities verified. Do not mutate its activeepoch or blindly retry. Focusedregressions thenfullchangedfixtures required beforecommit; no repetition of unchangedpassingcohorts absentnewconcern.
+
+### J3 precise source partition and hard priority review
+
+PrivateJ3 scope corrected to actual prepared-contracts.ts DATAinterface for optionalattachment, targetfacts types at theiractualcontracts home; data.ts only sharedscreeningprimitives. ROOT permits single newprogram/linear-allocation-validation.ts core to removevalidation/facts valuecycle, no duplicateverifier or largevalidation growth. Narrow checked-inputfacade calls fullrequiredentry+core; canonicalvalidation depends onlycore. Actual notcoverednative+malformedactive metadata priority is being specified bylatestAstra under /private/tmp/js2-6920-j3-priority-astra-review-20261009. Do not silentlyrunlegacy solvers onrequiredroute or relabelmalformedpresentundefined Unsupported; genericfallback retainsoldsemantics. Allprivateownership/sourceproof limits unchanged.
+
+
+### J3 actual private structural check results
+
+Sol reports actualcode nowone sharedcanonical wholevalidator, explicitcoremodule breaks newvaluecycle. StaticTS7 newsource+proposedtests exit0, all11 reviewedJ2sourcefiles byteequal. Genuine1901→candidate1907 sourcefiles:12existingmods/6new includingJ2; all5614originaltestfiles byteequal/onenew proposedtest. Existingproject cyclegraph unchanged(largest699/fourmultinodeSCCs), pureclosure33 same. Actualboundaryinventory FAILS six unclassifiednewfiles and propagated unknown targets, private noGitprovenance FAILS explicitly; these are not hidden, granted or called clean. ROOTowns finalclassification/sourceprovenance/freshgenuinecommit checks. Requirednotcovered/malformedmetadata priority has concrete Astra review pending; no privateJ3completeclaim/runtime credit.
+
+
+### Full adopted Astra J3 metadata priority and private implementation scope
+
+ROOTreadfull13242/SHA749473ec2b76b00954075fe7ea7283f70aa72bc7b3529b334890bba5179e1953 and5873/a5ecproposal. PrivateSolJ3 scope includes sharedmetadata.ts boundedcanonicalDOMAINhelper only, notliveownertransfer19199/AE28. Wholecontext/snapshot/J1 then domain BEFOREmissing/coverage; no required legacyanalyses. Malformeddomaininvalid/establishedcoveredcontradiction invariant; wellformeduncovered truth remainsunknown/requiredunsupported. Extensionnamespacevalue screening preserved; legacygenericfallback originalrestriction remains. Callbackeightfamilies/static/cycle/closure/provenance checks beforequalifiedactivation.
+
+# J3 metadata-domain priority: bounded Astra decision
+
+Status: private implementation proposal, not a source release, test result, or ownership transfer. Task: issue 6920, Native Linear numeric-vector shared source handoff and integration plan. Reviewed by Codex GPT-6 Astra High on 2026-10-09. Only this private review directory was written. No project code, claims, issues, branches, tests, or coordination messages were changed or executed.
+
+## Decision suitable for adoption into the issue
+
+Add one pure canonical metadata DATA-domain helper in `src/ir/analysis/allocation-evidence/metadata.ts`, beside its existing namespace indexing and metadata comparisons. J3 calls that helper after whole-program context, strict snapshot validation and canonical J1, but before a missing-evidence or finite-coverage refusal. Do not run ownership, escape or encoding inference on the required not-covered path. Do not create another body walker or duplicate finite semantic rules in `program/`.
+
+There are three distinct outcomes:
+
+1. A present canonical namespace cell with an invalid DATA value is an invariant error even if every copy agrees and the body is outside finite coverage. Examples: own-present `undefined`, unknown enum, missing required fields, non-boolean escape flag, invalid access operation, duplicate/out-of-order canonical access list, or escape classification/flag contradiction.
+2. A well-shaped claim contradicted by a covered complete view remains an invariant error from the existing finite checker. Inspect all applicable views before acting on a not-covered report, as the candidate already does.
+3. A well-shaped claim whose body is not covered remains unknown. Required allocating native entry returns located unsupported without legacy analyses; generic attached entry uses unchanged canonical legacy validation. Equality among facts and metadata is not semantic proof.
+
+The word “forged” in §5 step 7 cannot mean “every semantically false value on every unsupported program.” Such a requirement would conflict with step 6 and the finite checker boundary. For example, changing ownership `owned` to a well-formed `escaped` record and changing all fact copies in agreement does not by itself prove a contradiction outside coverage. Rejecting every non-owned/non-local value globally would reject valid generic metadata and silently turn a finite profile into a universal rule. Step 7 instead requires domain defects and established covered contradictions to precede the *namespace completeness* refusal. The new domain helper also gives malformed values priority over the separate *coverage* refusal. This distinction must be explicit in the adopted issue.
+
+## Records inspected
+
+The adopted specification is exactly 43,209 bytes, SHA-256 `f1361ae7df29e83303fc7c5446671e5a330cab86627ed81e74a87685c2b36ee5`, from `/private/tmp/js2-6920-geometry-trusted-adapters-resume-20261009/.tmp/astra-native-linear-facts-j2-j3-reground-spec.md`. Its controlling steps are 4–7 in §5. A frozen copy is `evidence/adopted-spec.md`.
+
+I read the actual current private candidate in `/private/tmp/js2-6920-j3-joined-validation-candidate-20261009`, including metadata index/comparison, finite verifier, allocation contracts/lattice, moved facts verifier, strict snapshot lookup, legacy allocations validation, public validation entry, checked-input facade and the newly separated hook core. `inputs.json` records exact byte counts and SHA-256 for 11 frozen inputs; full copies are under `evidence/`. The source was being edited by its owner during review. The proposal is based on those frozen bytes, not a claim about any later version.
+
+Concrete mechanism: `verifyAllocationEvidence` indexes metadata, captures the finite census, and returns a not-covered result immediately when capture fails. It therefore never runs `compareRegistryEvidence` for that view. The moved facts verifier checks agreement with metadata; it does not infer general body truth. In particular, ownership and escape own-present undefined can agree with conservative derived defaults. The J3 core currently checks cell structure but not canonical cell value domains before coverage. That combination explains the priority hole without invoking a test result.
+
+There is also an actual namespace-policy distinction: the finite `indexRegistryEvidence` retains extension namespaces, while historical `program/allocations.ts` explicitly refuses namespaces other than encoding/ownership/escape. The current new J3 `assertSnapshotDomain` copies the legacy allowlist into the attached route. The adopted spec does not authorize inventing that restriction for finite attached validation. Replace this new allowlist with a namespace-string check; preserve the old legacy allowlist exactly. The new domain helper skips extension namespace values, which still undergo whole-graph DATA screening. A covered attached extension is not newly rejected; a generic fallback still has its historical rejection behavior. Extension cells do not satisfy native ownership/escape completeness.
+
+## Exact bounded source proposal
+
+`proposal.patch` contains the two-file proposal against the frozen source, 5,873 bytes, SHA-256 `a5ecb94fe7cae28bb8464dd8966c32d1bf2d2a5d80f945e547c8487c20b407a8`. It has not been applied or tested. `build-proposal.py` records how the patch and evidence copies were constructed; it manipulates text only and does not load or execute project code.
+
+Shared owner scope: `src/ir/analysis/allocation-evidence/metadata.ts`, adding `checkRegistryEvidenceMetadataDomain` and its private value-domain helpers. Reuse the same module's `exactFields`, `exactAccesses`, `RegistryEvidenceIndex`, and existing namespace constants. Use exhaustive type-checked runtime enum-domain tables from canonical `Ownership`, `EscapeClass` and `IrStringEncoding` types. Reuse `AccessSet.full().toArray()` for the canonical access tags and order rather than duplicating that ordering. This is solver-free lattice data, not a call to `analyzeOwnership`. No producer analysis, frontend, backend or mutable allocation registry is imported.
+
+The helper checks only present canonical cells:
+
+- Ownership: exact `{state, ops}` with optional boolean `stackCandidate`; state can be owned, borrowed, shared or escaped; ops are a dense canonical access-set serialization. A present stack marker is allowed by the general DATA domain. The existing finite profile still rejects it with its existing noncanonical-marker rule.
+- Escape: exact `{classification, stackAllocatable}` with any canonical classification and boolean flag equal to `classification === "local"`. That relation is explicitly the `EscapeInfo` contract and producer writeback invariant; it does not infer whether the allocation really escapes.
+- Encoding: one of the three canonical encoding strings. There is no global numeric-vector-only prohibition here; the finite body comparison retains that rule.
+- Missing cells remain missing. The helper does not require namespace completeness, fill values, strip cells, canonicalize a supplied list, or mutate the snapshot. Own-present undefined fails. Unknown namespace names remain outside this helper's authority.
+
+J3 owner scope: `src/ir/program/linear-allocation-validation.ts`, importing the canonical helper/index and calling them once after the all-view J1 loops, before the attachment-absence branch and before finite coverage. Convert a returned invalid result into the existing `PreparedIrProgramInvariantError`. Replace the new `assertSnapshotDomain` namespace allowlist with a string check. Keep complete snapshot shape, row ownership, denominator/alias validation, fact consistency, all-view finite checks, generic fallback, native completeness and located unsupported behavior intact.
+
+Do not change `verify.ts`, census, effect rules, existing covered metadata comparison or result contracts for this priority fix. This preserves the standalone finite endpoint's existing preconditioned contract and exact covered failure codes. The helper is canonical because its sole implementation is owned alongside that endpoint's metadata authority; it is not a second J3 semantic checker. A future direct endpoint requiring stronger arbitrary-DATA screening would be separate work, not necessary here.
+
+The already approved cycle repair is compatible and present in the frozen candidate: `validation.ts` imports only `linear-allocation-validation.ts`; the checked-input facade calls the full required entry; the core does not import the facade or `validation.ts`. Keep one actual hook implementation. Do not move this fix into a second acquisition pipeline.
+
+## Concrete qualification controls for the owners
+
+These are required controls, not executed results. Use actual contextual prepared programs and check the public generic and required entries, not just the helper. Count legacy analyzer calls on the refusal paths, and use positive controls showing that the instrumentation sees the old generic route.
+
+1. Well-contextual unsupported body plus own-present undefined ownership; repeat for escape and encoding. Coordinate registry, facts registry, evidence and derived fact fields so copy consistency is not the rejection mechanism. Required entry must raise invariant with zero legacy analyzer/planner/resource calls. Generic attached entry must also reject, never accept malformed metadata.
+2. Repeat unsupported shape with domain-malformed coordinated payloads: ownership unknown state; ownership invalid access tag; duplicate or out-of-order ops; escape unknown classification; escape non-boolean flag; local/false and opaque/true contradictions; encoding unknown string. Include missing fields and own-undefined optional stack marker. Each must be invariant before native unsupported.
+3. Unsupported body with legitimate broader-domain ownership `escaped`, canonical ops, escape `returned` or `opaque` with false flag, and consistent facts. Domain check must pass. Required must return located unsupported without inference; generic must run actual legacy analysis and decide body truth. Include both an honestly matching record and a well-shaped stale coordinated record; the required path cannot claim either is verified.
+4. Covered numeric-vector body with well-shaped wrong ops, wrong ownership, wrong escape, numeric-array encoding, or a stackCandidate marker. Existing finite contradiction remains invariant; no fallback. Combine one uncovered view and another covered contradictory view to verify all-view priority.
+5. Covered valid encoding-only, ownership-only and escape-only modes remain valid generic modes. Required allocating native entry refuses missing completeness only after all present requested cells are validated. Both valid namespaces succeed. Present undefined must not be confused with absent namespace.
+6. Covered attached program with a string extension namespace, including `lifetime`, preserves finite behavior and does not acquire ownership/escape completeness from that cell. Generic absent and generic not-covered paths retain the historical legacy namespace refusal. A non-string namespace is DATA-domain invalid. Unknown-namespace payload accessors are caught by the initial whole-graph screen, not evaluated.
+7. Unsupported body combined with bad SSA/type/ABI/source ownership, malformed allocation IDs or async state defects must retain the existing complete-program/J1 priority before this metadata helper or coverage. Descriptor/accessor controls must show zero getter invocations.
+8. Required allocating attachment absent: well-formed metadata still gives the existing located unsupported, with no legacy inference. Domain-malformed present cells now give invariant after context/J1. Generic absent must bypass this new hook and retain its old allocation validation and retired-alias domain. Revalidate after coordinated mutations; no identity cache or previous result is authority.
+
+## Ownership and release limits
+
+This report grants no edit authority over the shared checker. Its existing writer `19199-2n2yketq` and AE28 claim `43989-lv9fr4w8` remain with the original checker owner. The J3 implementer may prepare a private composition, but ROOT must obtain an explicit owner handoff or have that owner implement the bounded helper before publishing an integrated source change. Allocation donor writer `34529-rzivb817` is not transferred; this proposal does not edit its producer or lattice files. ROOT integration remains `60335-ngn0jcr6`.
+
+Before source release, read back the current original-owner helper, integrate its exact bytes with the current J3 core, run the bounded controls above and existing affected checks under the established authorization, and re-establish the pure closure and cycle proof from that composition. No runtime, source-fixture, A2 public caller, B emission, or gate acceptance is established by this static priority decision. The outstanding full-source fixture proof remains outstanding.
+
+No broader metadata inference, new namespace protocol, capability token, cache, owner transfer or architecture redesign is required. The only policy clarification is that malformed canonical DATA is distinguishable without finite body coverage, while unknown body truth must remain unknown.
+
+
+
+### Actual J1 semantic closure gap in still-running policy epoch
+
+Current13policy run68888 has finished actualprogram-data-boundary105/105 callbacks and semantic-provider-boundary350pass4fail/354. Four exact failures show unresolved-module src/ir/program/allocations.ts:./allocation-body-validation.js, with forbiddentransitive paths via program/input.ts andvalidation.ts. Originalfullstdout retained, finalJSON/remainingfiles stillpending. No test restart/fixture edit. Newlylanded genuineJ1 allocation-body-validation.ts musthave exact currentpureclosure admitted; neverdeleteactualvalidationcall, weakenforbiddenrule orlowerfloor. LatestAstraHigh reusedas nativeagent toderive fullboundedwholeleaf/currentbeforepopulation+closureproof and pairedomission/mutation/forbiddenfrontend-providercontrols underprivate /private/tmp/js2-6920-j1-semantic-closure-astra-plan-20261009. Rootownsadoption/laterqualifiedtest-helper scopes, sourceownersretaincode. Thisisnewobserveddependency failure, not samefourfixtureexpectationdefects andnot native publiccompletion.
+
+
+### Actual two runtime seam priority failures and bounded private correction
+
+Live13run68888 runtime-data-contract-seam145pass2fail/147. Canonical3c6/currentMain physicalH3 mutations nowhit earlier genuineH1whole-filepin; oldfixtureexpects lower-priority /complete .*prefix changed/. ROOT read actualH1requirePin/fail path and receipt-boundcurrent barrier, authored PRIVATE single eight-line assertion delta in /private/tmp/js2-6920-runtime-priority-fixture-repair-20261009. Exact newError C1 historical authority: full-file pin changed: <actualpath> geometry current, no broadunionmatcher. Receipt branch unchanged; all old rawprofile/span/boxed/stale/missing/mutation/exactrestoration/healthy cases retained; no helpercode/pin/guard changes. No runtime/livecopy whileactiveepoch. Exactsource/pins/patch prepared forknownSol review/format/typecheck beforequalifiedactivation. Newfailures distinctfromfourreviewedC1/preservation fixes and J1semantic missingclosure; wholeoldfailure evidence preserved.
+
+
+## Full adopted J1 semantic closure implementation plan — continuation
+
+Canonical ROOT claim60335-ngn0jcr6 effect-read from upstream issue-assignments before adoption. Exact Astra report16748/SHA84536cecee3f078ee5203681a4610c8bb9c44f80c79db522ec6e061ca021e03f is adopted in full below. Correct unresolvable shorthand6601c66b to independently verified delivery commit c66bde8f6702854980c7771463293fe902575c79; canonical7d9e8ce3c6efcd4ebcfca6e14e8f895a69e9ae18 source tree171606514a3cf6733e82eb11549a659856d68c1a remains explicit. Sol private one-test implementation underway; live test epoch68888 confirmed active by same handle this continuation, no source/test mutation.
+
+# J1 semantic-provider fixture closure admission
+
+Private Astra implementation plan for issue 6920, Native Linear numeric-vector shared source handoff and integration plan. Reviewed 2026-10-09, Codex GPT-6 Astra High. This is a bounded test/proof repair, not an allocation semantics change or a passing runtime result. No live files, claims, tests, processes or coordination messages were changed. ROOT's ongoing cohort is left untouched. The separate runtime-data-contract-seam prefix-priority defect is outside this plan.
+
+## Finding and exact scope
+
+The four semantic-provider failures are real unresolved-closure failures. The actual fixture copies 209 current source files but omits `src/ir/program/allocation-body-validation.ts`, although its copied `src/ir/program/allocations.ts` imports and calls that canonical J1 owner. The detector consequently emits one unresolved-module record and three forbidden-transitive-path records, including the paths through `input.ts` and `validation.ts`. The other three failing callbacks first call the same healthy graph assertion and stop there. They are not evidence that their intended mutations were exercised.
+
+The fix is to admit the complete unchanged J1 leaf and its exact dependency edges into the **current fixture only**, while binding it to the existing whole-source extraction proof. Do not add it to historical 106/174/205 populations, replace its body, remove its call, use a stub, filter unresolved edges, broaden allowed layers, or disable whole-graph checking. There is no need to alter compiler code, the boundary detector, canonical policy, J1 proof helper or J1 receipt.
+
+ROOT-owned implementation file: `tests/issue-3518-semantic-provider-boundary.test.ts`. It already owns current fixture composition, positive graph census, omission controls and dependency mutation controls. Reuse `tests/helpers/ir-allocation-provenance-lookup-successor.ts` and its existing JSON receipt without changing either. Add a small local source-admission assertion in the test that authenticates the helper and invokes its existing reconstruction over actual fixture sources. This is the helper/manifest scope decision: **reuse the existing whole-source helper and manifest, zero edits to their authority**. No new receipt protocol or new independently maintained extraction helper is necessary.
+
+## Actual records and provenance
+
+The raw policy stdout was read at `/private/tmp/js2-6920-geometry-proof-integration-20261009/.tmp/c1-cohort-qualification-20261009/policy-stdout.log`. It reports program-data-boundary 105/105 passing and semantic-provider 354 callbacks, 350 passing and four failing. This review did not rerun either test file. Later cohort results are independent and must be reported from their own records.
+
+The inspected integration checkout is HEAD `7928f27343a171d8e0de434ea005d630eaf64bf3`. Its test is 80,470 bytes, SHA-256 `e9ad8205bc2eeff9be5413bf602563b05249cdc4dc447533c22912cc355a08c8`, Git blob `bb254a3fc3baf3aa6c4fa678fd749cce898d4266`. The genuine HEAD test is 80,225 bytes, SHA-256 `009ab2aec392d3b8e6174637562aa62068a91bbf9cb889ef57acc9283934d4e0`, blob `7ec18a99d2c58b76edaeea268ade631a25a1b388`; the 245-byte current geometry-policy adapter change must be preserved, not mistaken for the J1 repair.
+
+Genuine commit `b1a60eab2158dafa62af87dd39db808c8b2ba0f2` introduces the J1 leaf and the call in allocations.ts. Its parent contains the old inlined checks and no leaf. The actual integration source matches that committed leaf and caller byte-for-byte:
+
+| Record | Bytes | SHA-256 | Git blob |
+|---|---:|---|---|
+| Before allocations.ts | 6602 | e2da59c2bf90e2a833c35206d014e6745f79a94bade7f04c882cdb6495eb7e5f | b04a7b22bba6a98d5265dcfd9c8fcebf5f50fe5f |
+| Current allocations.ts | 5638 | aec062632da95addb294e203514e8218284177bfccd7154f3cbb1d8bdd412c33 | 722430a6adb09e2e4b74802650b29c8207431a25 |
+| Complete J1 leaf | 1864 | d48bf8cec3edbdb89759df63dbb5a8e3f455b7d739b1e990d669a1eceb69430a | 1b7c3e14c934cc118d4c6a85da9adb77204df284 |
+
+The existing source-successor helper is 29,831 bytes, SHA-256 `7f818067a0ecb8963f582e232f1692af9d3ca9283b9596f42e9ab8846f1f6443`. Its receipt is 11,637 bytes, SHA-256 `4528c914b70535665feebbd0f93ed5d43ef0a5fbb9b4a752e056da84f89a2c7d`. That receipt authenticates the four complete current sources (contracts, provenance verifier, allocations caller, new leaf), reconstructs three predecessor sources, proves the moved body and two bound identifier renames, and independently replays to the exact complete current bytes. It retains the old Phase B receipt digest. Its historical provenance string saying uncommitted is archival; do not rewrite it merely because the source subsequently landed.
+
+The dispatch shorthand `6601c66b/main7d/source1716` was not resolvable as a Git revision in this checkout: `git rev-parse 6601c66b` failed. I have not assigned those shorthand values invented provenance or silently equated them with the records above. ROOT should map them to their full actual artifact identities if they describe another required epoch. The complete leaf actually read here is 1,864 bytes. This discrepancy does not prevent the bounded plan against the explicitly supplied integration directory, but no final artifact may claim the unverified shorthand as its source proof.
+
+`inputs.json` and `evidence/` preserve exact current and genuine Git bytes for the test, source leaf/caller, authority and detector records. `static-graph.json` contains all 210 paths, source pins and 1,001 edge rows. `inspect.cjs` only interprets fixed fixture population expressions and parses source imports; it does not execute test callbacks, compiler passes or the boundary checker. For dependency syntax it uses the detector's exported `references` parser, with the detector's CLI entry inactive. The earlier simplified parser census was replaced by this canonical parser census; it is not a runtime detector result.
+
+## Current and predecessor graph accounting
+
+The exact new graph has 210 unique files and 1,001 edges: 485 type-only and 516 runtime. Every parsed relative import target resolves to a member of this file population. Only the `ir-program` population grows, from 42 to 43. Existing group counts remain foundation 9, wasm-model 3, wasm-physical 5, native-runtime 51, ir-core 28, ir-analysis 11, ir-passes 1, ir-runtime 21, runtime-contracts 6, backend-wasmgc 31 and frontend-ts 1.
+
+The addition comprises exactly six edges, one type-only and five runtime:
+
+| From | To | Kind |
+|---|---|---|
+| program/allocations.ts | program/allocation-body-validation.ts | runtime |
+| program/allocation-body-validation.ts | analysis/alloc-verification.ts | runtime |
+| program/allocation-body-validation.ts | analysis/contracts/allocations.ts | type-only |
+| program/allocation-body-validation.ts | core/nodes.ts | runtime (mixed value/type import) |
+| program/allocation-body-validation.ts | program/abi-signatures.ts | runtime |
+| program/allocation-body-validation.ts | program/errors.ts | runtime |
+
+All paths in this table are below `src/ir/`. Removing the leaf and exactly those incident edges leaves the original 209-member fixture population and its 995 edges, 484 type-only and 511 runtime. This projection is a population-preservation assertion, not permission to feed an incomplete current graph to the detector. The old source-map-validator induced graph remains 205 modules and 977 edges (476 type-only, 501 runtime). Deno's 11 edges and the remainder leaf's seven edges remain separately accounted for; do not accidentally count J1's edges in the Deno residual.
+
+`population-hunks.patch` gives exact unexecuted hunks against the frozen 80,470-byte test. It adds the J1 owner only to liveFixtureGroups, updates current totals, asserts the exact six edges, excludes only that fixed addition when comparing historical sets, and adjusts the two existing synthetic-mutation totals. These are the implementation's population edits, not a complete patch: source-proof wiring and the controls below must also be implemented.
+
+The currently failing graph must not become green just by changing a floor. The healthy assertion must retain status zero, empty errors, graphComplete and inventoryValid true, empty unknown/unresolved/forbidden/transitive sets, exact module identities by layer, the mandatory input-to-validation runtime edge, and all old graph decomposition assertions. Require the new allocations-to-J1 runtime edge exactly once, not merely any edge to that path.
+
+## Exact source-proof wiring
+
+Add this import from the existing canonical test helper:
+
+```ts
+import { reconstructBeforeIrAllocationProvenanceLookup }
+  from "./helpers/ir-allocation-provenance-lookup-successor.js";
+```
+
+Add a local `assertJ1FixtureSourceAdmission(root: string)` alongside `assertLiveFixtureClosure`. Its fixed authority checks and source-reader routing are:
+
+```ts
+const helperPath = "tests/helpers/ir-allocation-provenance-lookup-successor.ts";
+const helper = readFileSync(resolve(repository, helperPath));
+expect(helper.byteLength).toBe(29831);
+expect(createHash("sha256").update(helper).digest("hex"))
+  .toBe("7f818067a0ecb8963f582e232f1692af9d3ca9283b9596f42e9ab8846f1f6443");
+const before = reconstructBeforeIrAllocationProvenanceLookup((path) =>
+  readFileSync(resolve(path.startsWith("src/") ? root : repository, path), "utf8"),
+);
+expect([...before.keys()]).toEqual([
+  "src/ir/analysis/contracts/allocations.ts",
+  "src/ir/analysis/alloc-verification.ts",
+  "src/ir/program/allocations.ts",
+]);
+```
+
+The helper already checks the independent fixed receipt and every whole source pin, body role, inverse and forward equality. Do not substitute a caller-created receipt or change the receipt's pins to match a mutation. If ROOT prefers an explicit leaf pin in this local assertion, use the complete 1,864-byte pin above in addition to, not instead of, the existing proof.
+
+Call the local assertion on a newly constructed real fixture before its healthy graph run. Keep `fixture().run()` as the actual boundary detector path for graph-mutation controls; do not put this source-pin check into every `run()` invocation, because doing so would prevent the negative dependency controls from reaching the graph detector. Source mutation and graph mutation are two separately asserted obligations. For omission tests, assert both the source proof refusal and the actual graph failure, then restore and re-prove both on fresh reads.
+
+No mutation of `ir-allocation-provenance-lookup-successor.ts`, its JSON receipt, `ir-c1-authority.json`, `ir-c1-authority-root.ts`, `ir-c1-linear-layout-geometry-successor.json`, `scripts/compiler-boundaries.json`, or any `src/` file is necessary. Current policy already contains the J1 clean file row and the 49-entry ir-program activation in the reviewed prerequisite chain. The bounded fixture derives its own active subset. Widening actual policy here would repair the wrong object.
+
+## Required paired controls
+
+1. **Whole-leaf healthy control.** Construct a fresh fixture, compare its leaf bytes to the actual repository leaf, authenticate the four-source J1 extraction and then run the real detector. Assert the complete 210/1,001/485/516 census and all exact path sets. Preserve source and policy bytes before/after. This is the positive control for every fault family.
+2. **Omission with classification retained.** Delete only the fixture leaf. Assert source acquisition/proof refusal, detector nonzero, inventory invalid, and exact unresolved import `src/ir/program/allocations.ts: ./allocation-body-validation.js`; require the actual transitive paths through allocations, validation and input. Restore exact copied bytes in finally and repeat the healthy proof/detector on fresh acquisition. Never delete the repository source.
+3. **Omission with classification deleted or demoted.** Delete the fixture leaf and its p.files row, keeping independently required roots/activation history; require missing-activated-root and unresolved closure. Separately remove the row without deleting the module. Neither removal nor making the layer debt may cause acceptance. Do not co-edit all fixed population authorities to make the negative fixture disappear.
+4. **Whole-source mutation without graph mutation.** Change an executable J1 comparison or remove its async-state loop while retaining imports; append bytes as another control. `assertJ1FixtureSourceAdmission` must reject the complete leaf pin. The graph may remain structurally healthy: require the source proof's rejection rather than claiming import analysis checks semantics. Also mutate the caller's `assertPreparedIrFunctionAllocationTypesAndStates(fn, registry)` call while keeping its import; the existing J1 source-role and full-byte proof must reject. Restore and reauthenticate.
+5. **Mandatory runtime edge.** Delete the J1 import from allocations.ts, and separately turn it into `import type`. The detector may still exit zero for an otherwise closed graph; require the exact live closure assertion to reject. A removed import gives 1,000 edges / 485 type / 515 runtime; type-only gives 1,001 / 486 / 515. Source proof also rejects both. Never remove the production call to repair a fixture.
+6. **Direct forbidden dependencies.** Add J1 to the existing aliased frontend-type dependency mutation matrix, and add a runtime provider/backend implementation dependency control. Classify the injected target honestly as a forbidden layer. Require detector nonzero and the precise forbidden edge; retain counts and restore/healthy pairing. Native provider implementation belongs to `native-runtime` or `backend-wasmgc`, both excluded from ir-program's allowed destinations; do not incorrectly label the existing allowed provider-policy DATA contract as forbidden.
+7. **Transitive forbidden dependencies.** Make J1 depend on a new fixture intermediary honestly classified as allowed ir-core or foundation, whose type-only/runtime dependency reaches a frontend or provider implementation. Require nonzero and a reported path beginning J1 → intermediary → forbidden owner; also check an originating allocations or validation path when the detector enumerates it. This ensures an admitted file is traversed rather than whitelisted as a terminal. Restore all synthetic source/classification rows and re-run healthy acquisition.
+8. **Unknown/unresolved dependency.** Add J1 to the existing dynamic-import-expression and missing-export-owner controls. Unknown is not closed. Keep the ordinary actual healthy graph beside the mutation; do not credit nonzero alone without matching unknown/unresolved records.
+9. **Authority mutations.** Supply a changed receipt via an isolated reader and require the unchanged fixed digest guard to fail. Mutate a current source consistently with a proposed receipt and still require refusal; expected pins are independent. Retain the earlier historical extraction proof and original-source checks. Do not physically edit the shared helper or receipt while any cohort is running.
+
+Retain all 354 existing callbacks and their mutation intent. New callbacks add to the denominator; they do not replace existing failures with skips. Report exact per-file totals, failures and reasons from the eventual completed run. Do not advertise this static review as 354 passing or the whole 13-file cohort as complete.
+
+## Integration and release sequence
+
+ROOT adopts this plan into the tracked issue and assigns only its test/proof scope. Sol prepares changes in its own private composition while the existing cohort continues. Once the actual running cohort ends and its raw output is preserved, ROOT compares live bytes against the frozen inputs, incorporates the bounded test patch and controls, and checks the final diff for zero source/detector/policy/old-receipt changes. The separate two earlier fixture repairs and the runtime-data-contract-seam priority correction retain their own reviewed scope.
+
+First qualify the healthy graph and new paired controls, then the whole semantic-provider file and affected preservation tests using the existing authorized harness. A healthy graph assertion alone is insufficient; full-source J1 preservation and the new mutation controls must both execute. A fresh final complete cohort is needed for a complete cohort claim after composition. Do not terminate, restart or mutate an active run's source tree to obtain these results.
+
+There is no ownership transfer from J1/metadata/checker writers and no permission to alter their canonical source. This plan repairs the test authority's current closure population around an already delivered semantic check. It preserves fail-closed behavior by admitting real complete bytes and continuing to traverse their dependencies.
+
+
+### J3 snapshot-ID inspection and coordination observation
+
+ROOT read complete actual allocations/snapshot.ts verifier and linear-allocation-validation.ts caller. verifyRegistrySnapshot explicitly rejects non-safe-integer, negative, out-of-range metadata IDs and duplicates before J1/coverage. String ID concern is resolved; no duplicate guard or bug claim warranted. Final independent Astra J3 dispatch was rejected by native thread limit before creating an agent; review is still pending, not silently credited.
+
+Read B comment6079958626 in full: unpublished7ea1ee6e2488649b244874616de609f16ccdfcd2, private runner repair3671c4f0536cafaef31aac3405d944306456a050/integration0083aabb867c3bd2bb7c28b612f14ea9c80730fe, B-reported197/197 supervisor/62 comparator controls and1915-input audit. No independent A acceptance yet. Both candidate trials and published PR holds unchanged; A exact tested source handoff remains required. Existing authorized heartbeat updated with processed ID/timestamp and quiet actionable-only behavior. No foreign edits/claims/queue action.
+
+
+## ROOT bounded J3 seam source review — actual static inspection
+
+# ROOT bounded J3 seam review
+
+Task: issue6920, Native Linear numeric-vector shared source handoff and integration plan.
+Static source inspection only. This is not the outstanding independent Astra final review, runtime qualification, ownership acknowledgment, source preservation proof, or public support credit.
+
+## Inspected behavior
+
+The complete actual allocations/snapshot.ts verifier rejects metadata string/fractional/non-safe IDs, out-of-range IDs and duplicate rows before returning the lookup. The new hook invokes it before J1 and coverage. The earlier ID concern is resolved by an existing check; duplicating the guard is unwarranted.
+
+The target facts verifier checks body-ID census and full site projection, metadata presence and exact detached values, defaulted derived ownership/access/stack/escape values, encoding own-property presence and value, duplicate and missing/extra body IDs. Those are copy/body-join consistency checks; they do not infer metadata semantic truth. The actual J3 hook separately obtains complete canonical context, snapshot/J1, canonical metadata DATA-domain validation and all finite evidence reports. It examines every report for an invalid result before acting on not-covered. Unknown native allocating bodies are refused with located Unsupported; generic not-covered still calls the existing semantic validator. Thus these reads do not expose a new consistency-as-truth shortcut.
+
+The metadata helper reads exact own descriptors, enforces exhaustive canonical value domains and canonical AccessSet order, and does not invoke input-owned ops methods. Domain validation intentionally differs from finite truth validation: broader valid ownership/escape data can pass the DATA domain while body coverage remains unknown. Extension namespace values stay whole-graph-screened; that helper claims no extension semantics.
+
+The checked-input facade delegates to the complete required validator, then refuses missing checked facts; it has no cached success or token. The single hook does not import the complete validator. The full validator keeps the generic-absent old allocation call and places attached/required hook after source/population/class/ABI/body/startup/runtime-reproduction checks.
+
+Strict whole-graph screening does not freeze caller DATA. Native mutable collection slots, executable properties, array shadows/foreign prototypes and unknown symbols are refused; authenticated frozen facade and exact recursive class handling retain their dedicated paths. The broader freeze mode is still separately parameterized and must retain its old behavior.
+
+## Remaining acceptance obligations
+
+No runtime callbacks ran in this review. Full descriptor/getter refusal controls, covered/uncovered mixed-view priority, all main/state/support/class owner fault matrices, codec authority-regeneration controls, and original producer/public entry fixtures still need qualification. The authentic mixed-profile fixture remains held rather than fabricated. The codec and all proposed callback bodies have not received a new independent final review in this ROOT seam inspection.
+
+Canonical module classification/provenance remains an actual failing boundary prerequisite in the private composed candidate. Foreign donor/extraction/checker/AE28 owner handoffs and source-preservation proofs are not implied by this report. B's actual required caller, demands, resource reservation and providers remain separate required implementation. No final clearance or compiler equality is granted.
+
+The existing thirteen-file policy run68888 was observed live by its original tool handle during this review. None of its source/test inputs was edited or restarted.
+
+Exact read-source pins retained in /private/tmp/js2-6920-root-j3-seam-review-20261009/read-source-pins.json.
+
+
+### Physical membership gap discovered in original policy snapshot
+
+ROOT terminal-only custody checker prepared (.tmp/c1-cohort-qualification-20261009/verify-policy-custody.py), syntax checked only; refuses absent final results and independently checks whole physical src/tests membership plus original bytes/SHA/mode/inode/dev. A read-only membership observation while original68888 remains live found7512 actual files vs7502 original before.json records: ten ignored tests/fixtures/npm-resolve/node_modules fixture files omitted. Exact names and current pins are archived in physical-membership-gap-during-policy.json. This is NOT their original before-state proof. Before.json stays untouched. Prior all-source/test custody wording is too broad: at most7502 listed paths can receive terminal identity credit; no complete physical membership credit or inference that the omitted inputs were unmodified/unused. Actual test execution results remain separate. Future qualification must acquire the complete physical population before execution and inspect actual dependency/custody coverage, preserving this original epoch and its failures. Original five historical reader paths are covered by7502, but that does not erase this distinct ten-file gap. No kill/restart/source/test edit. Supervisor27190/currentworker58099 was independently verified live, worker101.6percent CPU at24min elapsed.
+
+
+### J3 whole callback review: nested-facts refusal witness gap and bounded Sol follow-up
+
+ROOT read complete actual proposed tests/issue-6920-j3-joined-validation.test.ts. Existing screens-attached-facts callback replaces TOP linearAllocationFacts accessor for its facts position, repeating prior attachmentaccessor test; it does not witness traversal of a nested facts accessor. This is a test-obligation gap, not a proven production screening failure. Under already adopted full Astra descriptor-screen plan, resumed original Sol6.1High author in place (native followup succeeded) with ONLY its PRIVATE proposed test and .tmp artifacts: retain every original case, add precise complete-program nestedfacts/facts.allocations/evidenceownership-value descriptor controls, zero getter calls across public generic/required/encode/reauth/checked-input seams, genuine positive pairing. Frozen source unchanged. Exact original test beforepin and separate new patch/staticcheck required, then composed artifacts refreshed with preserved original snapshots. NO runtime while ROOT68888 remains active; no claims/foreign changes/commit/push. Authenticmixedview/support/class/state and actualcaller obligations remain held; no fabricated projection or runtime/equality credit. This follow-up is implementation of an existing reviewed requirement, not new migration scope.
+
+
+### New finished Number prerequisite file and concrete source-input mismatch
+
+Original policy68888 remains active and has progressed into current-main inventory. Actual finished Number file456 callbacks455pass1fail, title C2a exact runtime preparation policy successor > pins actual complete current bytes, ordered populations and all new full-file authorities. Final exception/stack stillpending. ROOT independently compared exact actual operands: live src/ir/runtime/intrinsic-preparation.ts49704/SHA171aa93513aacb9bebf80897f2c67a827b71f082647ced04a689ca17d116ba82 vs original sourceInputs49541/SHAbd27170fd1df4a9bbad2874e5f2db34bc455fb6807b26523da4be8c182f3622b. Genuine a41cca746f43604d69dc09a001d51ed76405b922 adds exactly the remainder callable import and demand predicate. Current prepared support remains productioncode; no rollback. Critically, the callback helper prefix uses c1HistoricalArtifactPath mapped frozen93405-byte artifact; its40368-byte prefix DOESmatch2b6358379b9f9145b54a5287b6a74f61a89ef9deff215ce6fb21a2174ee1845e. A comparison against the live411837 or immediate-before409599 H3 would inspect the WRONG operand, not establish failure attribution. Raw diff/inputrecords archived in .tmp/c1-cohort-qualification-20261009/number-prerequisite-*; originaltest/evidence preserved.
+
+Task: obtain bounded Astra implementation plan for exact historical fixture acquisition of the genuine remainder source successor, then original/new Sol test-only implementation. Existing canonical H3 runtimePreparationRemainderHistoricalSource internally authenticates full49704→49541 plus reciprocal replay; exported beforeRemainderRuntimePreparationRelocation returns only support historicalview and preserves liveimplementation on the currentchannel. Do not silently use that wrapper as oldimplementation or add unnecessary sharedexport/duplicateproductioninference. Fixed old49541 pin must remain; independent wholecurrentpin/inverse/forward proof and paired wrongsource/mutation/healthy controls needed. No speculative edit until actualfinalexception is inspected, no liveedit/runrestart. Four finishedfiles total1062 actualcallbacks1055pass7fail; wholecohort incomplete.
+
+ROOT read complete J1 private29433/f06ffa patch, existing sourceguard/helper domain/policy/current edge decomposition and all20 authored new paired cases. Historical106/174/205 populations unchanged, only genuine J1six edges added current210/1001 closure. Candidate staticTSexit1 retains exactly16 mapped originaldiagnostics; this is zero NEWdiagnostics, not green typecheck. Runtime0, final originalauthorpacket pending. No installation or gatecredit yet.
+
+
+### Nested facts test successor reviewed and final Astra work resumed
+
+Original Sol6.1High author delivered test-only successor3008/SHAb918744dc8039104da80624c172aa3f7f26832322fd36370e056e0109b3e8fb7; before34804/4f992378 andcurrent37462/50c9f4b7. ROOT read full actual callback and independently verified exact complete original prefix preservation and all three successorpatchpins. Three new reachable nested accessor cases retain top DATA descriptor and original complete context, pair canonical healthy calls before/after on allfivepublicentries, assert typedInvariant and zero getter executions separately after each faultcall. Production/sourcefiles unchanged; no fakeprojection/runtimeexecution. Private artifacts retained /private/tmp/js2-6920-j3-joined-validation-candidate-20261009/.tmp/j3-nested-facts-accessor-delta-20261009; independent record /private/tmp/js2-6920-root-j3-seam-review-20261009/nested-accessor-independent-review.json. TS7/format/dryrun passed for newtest but runtime0. Original fullpatches preserved; latest69543/68539bbf andcomposed168568/d1634258 explicitly supersede testcontent only.
+
+After originalSol completion, latestAstraHigh native spawn now SUCCEEDED: astra_j3_final_and_number_fixture_plan_20261009, private /private/tmp/js2-6920-astra-j3-number-review-20261009. Owns independent whole final J3 source/callback staticreview and separate bounded Number fixture implementationPLAN, no runtime/source/claim/coordination/git changes. ROOT owns full adoption. Prior failed dispatches granted no review; this actualrunningagent is the first finalreview dispatch. Exact liveNumberinput mismatch and correcthistoricalH3operand supplied. No sourceacceptance or fullIRcompletion inferred.
+
+
+### Six completed policy files: exact failure rows and bounded plan extension
+
+Original68888 samehandle stilllive; rawstdout now includes actual failure arrows. Number exception explicitly compares49704 to49541, confirming independentlyobserved genuine remainder source mismatch. Current-main inventory137pass5fail/142 (one direct historical kernelprefix assertion plus4first-barrierpriorityexpectations); canonical489d60pass5fail/65 (all5 H3fullpin barrier priority expectations). Allsixfinishedfiles1269callbacks1252pass17fail; remaining sevenfile results pending. Rawexacttitles/arrows archived policy-progress-observed.json; no wholecohortcompletion claim.
+
+LatestAstra activeplan extended within ROOTtestfixtureownership to these actualcurrentmain/canonical489d failures. Preserve original142/65cases, old4cf63b/b335kernelpins and fixed5477kernelsplice; authenticate wholegeometrythenremainderhistoricalsource domains before historicalprefixchecks. Immediatebefore409599 H3prefix94641 is1234…, so geometry-onlyinverse is insufficient. Reuse independentlyreviewed C1full6geometry+10remainder sourceproof with DRYtesthelperarchitecture whereappropriate, no hashrebaseline/stubs/production changes. ExactH1 earlier full-file errorliteral must replace only affected oldpriorityexpectations, preservingreceipt/missing/restoration branches. Source code has existing EXPORTED runtimePreparationRemainderHistoricalSource atH3line8986: prior ROOTdescription ofit asprivate is corrected, so no unnecessary newexport or productionduplication is needed. Full actualAstra plan pending, no implementation/liveedit yet. Claim60335 effect-readcanonical beforethisappend.
+
+
+## Actual private J3 runtime qualification release
+
+LatestAstra full9846-byte final source/callback review foundno new boundedcodeblocker and explicitlypermits privatecomposition/separatequalification; fulladoptionnext. ROOT independentlyverified all1907candidate srcfilesregular(no source symlinks), targettest/helpers/configregular, distinctprivatecandidate root, externalnode_modulesonlysharedreadonly dependency. Original68888 stilllive; no overlapping source/test mutable paths. Userauthorizesroutine tests and strongparallelism; ROOTnowreleases fullone-fileJ3 proposedtest qualification in that isolatedprivatecopy, normalNode24/canonicalVitestconfig/onefork/no filtering/no NODE_OPTIONS, leavingpolicyepochintact. Beforestateacquired fullphysicallypresentcandidate src/tests/scripts+rootconfigs in .tmp/j3-root-runtime-qualification-20261009/before.json before execution; externalpackage tree explicitlynotfullyfrozen, no completephysicalinputcustody/nativeequalitycredit. No sourceactivation, ownershiprelease, resource/emitter/materialization or publicsourceproducer acceptance. Currenttest50c9f4b7 andsourcefrozenfinal69543/68539bbf/168568/d163 areactualoperands. Executeactualcompletecallbacks theninspectexactrows/stack/rawoutputs andbeforeafteridentity, notpredictedpasscounts.
+
+
+## Actual completed private J3 runtime result — 52 of 52
+
+ROOT session70834 normalNode24/canonicalVitest/onefork/no filters/no NODE_OPTIONS completed exit0. Full actual JSON has52 assertionrows, all52 passed, zero failed/skipped/todo. Whole source-assembled generic/required/replay/copytruth/unknown/refusal/accessor/body/context/reacquisition tests including three newnestedfacts cases executed; callbacks are not claimed as sourceproduced public/native physical/emitter equality. All7906before-frozen candidate source/test/script/root-config files exact bytes/SHA/mode/inode/dev after, complete same7906scope membership/noadds/removes. External sharedpackage tree notfullyfrozen remains explicitlimit; no complete externalphysicalinputcustodyclaim. Rawstdout/stderr/results/before/after/epoch retained /private/tmp/js2-6920-j3-joined-validation-candidate-20261009/.tmp/j3-root-runtime-qualification-20261009. Originalpolicy68888 untouched and stillactive. No source activation/foreignACK/commit/push/delivery claimed. Authenticmixed-view/support/class/state and actual A2/A1/B resource/caller obligations remain.
+
+
+## Full adopted latest Astra final J3 static review
+
+Exact 9846 bytes/SHAbe1d2fcbdad484593200728b471bc10827efa1cb88b5235aefed732e8deec808. Fullreport follows; boundedqualificationclearance, notnativefullacceptance.
+
+# J3 final composed-source and callback review
+
+Issue 6920 — Native Linear numeric-vector shared source handoff and integration plan.
+Reviewer: Codex GPT-6 Astra High, 2026-10-09. Decision: the bounded J3 source and nested-accessor test successor are suitable for ROOT's private composition and separately authorized qualification. No new source blocker found in the reviewed scope. This is not native admission, full J3 acceptance, owner transfer, a source-preservation qualification, or runtime evidence.
+
+Only this private report directory was written. No candidate or live source, test, claim, policy, git state, or coordination record was modified; no compiler import, test callback, runtime, planner, source-proof callback, or fault was executed. All instructions and relevant memory were read. The review used direct source reads and independent file-byte checks; prior static tool results remain attributed to their authors.
+
+## Exact reviewed state
+
+Candidate: `/private/tmp/js2-6920-j3-joined-validation-candidate-20261009`.
+
+Independent static census confirms all 1907 production source files still match their frozen pins. The complete original census has 7522 file pins; its sole mismatch is the intentionally extended J3 test. The other 5614 test/fixture files match their frozen pins. The original 34804-byte J3 test body remains an exact prefix, with its original closing `describe` delimiter retained after the appended callback. This is byte preservation, not callback registration/execution evidence.
+
+| Artifact | Bytes | SHA256 |
+|---|---:|---|
+| Original `.tmp/j3-delta.patch` | 66827 | `b69ff6369024cb62d7e2791df6c6dd4d91c848d44942a743c20bfa38271933f6` |
+| Nested-accessor `j3-delta-successor.patch` | 69543 | `68539bbf384dacb29416e0ddd18b40e76cbd017adb0728e2c0eab4ca3c2f8f4a` |
+| Nested-accessor `j2-j3-composed-successor.patch` | 168568 | `d1634258729cfd3358f611e1f0463548dac6fe948a6e582c7e18383ab0f48efd` |
+| Current J3 test | 37462 | `50c9f4b73ca6c9d830d5812515b976e0c2175f6821e045659d2ebac4e6af3ac6` |
+
+Complete observed pins, including originals, are in `static-inputs.json`. The reviewed base specification is `/private/tmp/js2-6920-geometry-trusted-adapters-resume-20261009/.tmp/astra-native-linear-facts-j2-j3-reground-spec.md`; its metadata-priority interpretation is `/private/tmp/js2-6920-j3-priority-astra-review-20261009/review.md`. I read the actual composed implementations and the complete current J3 test, including its fixture builders, observers, mutation helpers and every callback body, rather than relying on title counts.
+
+## Source conclusions
+
+1. **Descriptor acquisition and complete graph.** `screenPreparedIrLinearAllocationEntry` reads the own attachment descriptor before schema/ABI/runtime reads, rejects accessors and own undefined, and screens the entire graph for attached or required entry. Strict DATA traversal follows descriptor values, rejects executable functions, foreign array prototypes, shadow fields, noncanonical collection facades, unknown symbols, and cycles outside the existing recursive class-shape exception. It does not freeze caller-owned graphs. Generic absent entry retains the old compatibility route. The native collection cache authenticates internal-slot brand only; it is not a validation-success cache.
+
+2. **Full context precedes evidence.** The one body in `program/validation.ts` preserves population, source-map, support authority, semantic/runtime separation, class layouts, complete ABI planning, callable/global closure, contextual function verification, startup and exact canonical runtime reproduction. The attachment does not substitute matching metadata copies for these checks. Supplied partial declaration tables are compared against complete ABI authority. `projection.prepared` has no separate declaration tables: `completeModule` correctly preserves the original semantic tables and their absence while selecting actual current projected functions. The prior concern about losing nonexistent projection tables does not apply.
+
+3. **J1 and complete registry.** The hook uses the whole original snapshot and the extracted read-only lookup, canonical final provenance, and existing J1 main/state/result checks across semantic/support functions and every runtime projection. It does not copy the mandatory-instruction table or replace state bodies with empty carriers. `allocations/snapshot.ts` already rejects non-safe-integer metadata row IDs; no new missing-ID-domain finding is warranted. The generic absent retired-alias behavior remains with the old validator.
+
+4. **Consistency, truth and refusal remain separate.** The moved target-facts verifier sees semantic/support and all Linear views. Canonical metadata DATA-domain checks precede missing evidence and finite-coverage decisions, without analyzing ownership/escape/encoding. All finite reports are acquired and invalid reports examined before any not-covered fallback. Thus a covered contradiction in a later applicable view cannot be hidden by the first uncovered view. A well-shaped unsupported-body claim remains unknown, even when every metadata copy agrees. Required allocating unknown returns typed `IrUnsupportedError`; generic attached unknown invokes actual legacy allocation validation. Native namespace completeness follows requested truth. Extension strings stay outside the value-domain helper and retain the distinct old generic fallback policy.
+
+5. **Current checked input.** The selected projection must be an original current member before its properties are read. The result pairs original current function objects and target facts; there is no token, success cache, detached verdict, producer inference, registry construction or planner execution on the covered hook path. Required absent scalar handling explicitly retains real legacy analysis. Repeated calls reacquire the program.
+
+6. **Codec and dependency direction.** Attached encoding uses full generic validation; source-free reauthentication preserves facts, reproduces authentic runtime identity, compares the complete persisted projection and re-enters full validation. Raw byte normalization is distinct from semantic acceptance. The narrow core does not import the full validator; the checked-input facade imports the validator and core. The prior static import-graph record reports unchanged largest SCC 699 and four multi-file components. My independent pin check establishes that its source operands remain current; I did not rerun that graph tool and do not equate it with a clean boundary gate. The recorded 99 boundary diagnostics, six unclassified modules and missing archive Git provenance remain ROOT work.
+
+## Actual callback review
+
+The fixture builds complete assembled programs from the canonical codec fixture, uses actual allocation producers, and obtains projections through `prepareWholeProgramRuntimeManifest`. It is an assembled-program fixture, not an A2 source producer. Intentional bad-runtime mutations are negative controls, not fabricated positive runtime projections.
+
+The authored source exercises contextual priority, coordinated consistency-passing metadata falsification, all namespace modes, truthful and stale broader domains, exact current pairing for standalone/WASI, source-free replay, body/facts/registry/ABI/runtime reacquisition, generic absent and uncovered analysis, producer-positive then zero-consumer observations, canonical ID priority, retired-alias compatibility, descriptor/shadow/accessor refusal, foreign projection identity, ABI declaration-table agreement and raw-surrogate preservation. Reading these bodies supports the stated test intent; no pass claim follows.
+
+The original `screens attached facts and nested semantic descriptors with zero getters` callback is retained exactly. Its `facts` arm is only a top-level attachment accessor. The new table-driven callback supplies the missing distinct coverage at `linearAllocationFacts.facts`, `.facts.allocations`, and `.facts.allocations[0].evidence.ownership.value`. It preserves a top-level DATA descriptor and the original full context, then checks generic validation, required validation, public encoding, reauthentication and checked-input acquisition. Every negative must be the invariant type with zero getters; the five healthy calls run before and after the fault. Static reading confirms that the new callback reaches these nested positions without reading the poisoned descriptor during construction. This successor is suitable for qualification as authored.
+
+## Holds and ownership
+
+Authentic mixed-view priority still needs its canonical clock/provider/ABI context: one uncovered semantic view and a covered contradictory reproduced view. Do not substitute a hand-edited positive projection. Full main/async-state, support, class and owner fault matrices at all required acquisition entries remain held. Existing leaf/J1/AE28 cases and the new assembled-program callbacks do not discharge them.
+
+A2 final source production, strict adapters, real A1/native acceptance and direct planning callers before first reads/resources, genuine same-binding zero-work witnesses, full source preservation, normal module classification/LOC gates, startup/one-memory ownership and the complete resource packet remain unqualified. Gate 1 and Gate 2, including real public sync/async standalone/WASI execution, resource/provider/emission witnesses and the 1.25 result, are not satisfied by this review.
+
+Source owner19199, AE2843989 and donor34529 remain with their recorded owners, as do the other delivered claims. The metadata helper requires the recorded owner acknowledgment and preservation successor before activation. ROOT owns adoption, composition and release. Architecture remains normal shared generic IR followed by target lowering, with legacy routes retained and no JS-host substitute.
+
+
+## Full adopted latest Astra NUMBER-FIXTURE-IMPLEMENTATION-PLAN.md
+
+Exact 23090 bytes/SHAba549ab3c56b4a2939ef07e676c3eb888f68572afa7277a02535c8a6f9302913. ROOTownscomposition; originalactive68888 inputsremainuntouched. Privateimplementation maypreparedeclaredscopes againstarchivedfrozenbefore whileactive, liveactivation awaitsoriginalterminal+review+newfullfreeze.
+
+# Exact Number, current-main and canonical489d fixture successor plan
+
+Issue 6920 — Native Linear numeric-vector shared source handoff and integration plan.
+Author: Codex GPT-6 Astra High, 2026-10-09. Scope: a bounded test-only implementation plan for ROOT; no live implementation or runtime qualification performed.
+
+## Decision and diagnosis
+
+Use the **already exported** `runtimePreparationRemainderHistoricalSource` from `tests/helpers/ir-runtime-program-policy-evolution.ts` at the Number callback's exact full-file pin acquisition. Keep every existing historical pin and all 456 original cases. Do not add a new shared export, duplicate the two production changes, or normalize the shared raw mutation reader globally.
+
+The recorded completed Number-prerequisite file population is 456 callbacks, 455 pass and 1 fail. The failing title is `C2a exact runtime preparation policy successor > pins actual complete current bytes, ordered populations and all new full-file authorities`. These are ROOT's retained observations, not results from this reviewer. The actual retained `policy-stdout.log` lines 866–867 now confirm the assertion arrow: `expected [ 49704, …(1) ] to deeply equal [ 49541, …(1) ]`. The complete process terminal exception/stack remains pending; this file's observed mismatch is established without inferring completion of the full run. Leave the live policy process and its source epoch alone until ROOT has its terminal evidence.
+
+The callback at current lines 1028–1090 binds `readHistoricalPolicyOperand`, authenticates the unchanged C2a authority, then directly reads every `sourceInputs` path. Historical routing covers H3 and its other six logical artifacts, but not `src/ir/runtime/intrinsic-preparation.ts`. The loop at lines 1080–1082 therefore compares current remainder source against its fixed pre-remainder pin. The actual authority helper's analogous loop at lines 1191–1201 already authenticates and reverses precisely this remainder change before enforcing the historical pin.
+
+| Operand | Bytes | SHA256 | Git blob |
+|---|---:|---|---|
+| Current preparation implementation | 49704 | `171aa93513aacb9bebf80897f2c67a827b71f082647ced04a689ca17d116ba82` | `f018b105325cdd04934ba538bb5e32ef115b7976` |
+| Fixed historical implementation | 49541 | `bd27170fd1df4a9bbad2874e5f2db34bc455fb6807b26523da4be8c182f3622b` | `d8726293aa8df3f95df1962e4c21df437d37d723` |
+| Current Number test before this plan | 113131 | `81cdd13ea7f9f907c7d9f268cd0ad6dffda4b996671f5ed49721d7e162ae57ae` | `4be3d8d341b1e42ce0f7ea3dc9799fb0cfe32e84` |
+
+The retained genuine change is `a41cca746f43604d69dc09a001d51ed76405b922`. It adds one remainder declaration import and one predicate arm, net 163 bytes. The complete current source, exact two spans, reconstructed whole historical source and full reciprocal replay agree in this review's static byte inspection. This was not a Git read or source-proof callback run; ROOT must preserve the genuine Git donor evidence in the eventual qualified packet.
+
+The H3 operand is the frozen 93405-byte artifact reached through `c1HistoricalArtifactPath`, not the live 411837-byte helper. Its actual first 40368 bytes hash to `2b6358379b9f9145b54a5287b6a74f61a89ef9deff215ce6fb21a2174ee1845e`, exactly the existing assertion. Preserve it. Do not repin this assertion to a live helper prefix.
+
+## Minimal fixture edit
+
+After the current epoch terminates and ROOT authorizes a successor, work on an isolated exact copy of ROOT's frozen integration tree, `/private/tmp/js2-6920-geometry-proof-integration-20261009`.
+
+1. Add `runtimePreparationRemainderHistoricalSource` to an existing import from `./helpers/ir-runtime-program-policy-evolution.js` in the Number test. It is already exported and already consumed by C1 controls; leave its implementation unchanged.
+2. Introduce a local, test-only read function inside the C2a describe or this one callback. It must first read the supplied path through the existing `readHistoricalPolicyOperand`; only if the path equals the fixed literal `src/ir/runtime/intrinsic-preparation.ts` may it pass those actual freshly read bytes through `runtimePreparationRemainderHistoricalSource`. All other paths return the exact raw result. Use that local function solely for this callback's source-input pin loop. Keep the receipt read and historical H3 prefix read on their current channels.
+3. Keep the original expected source-input array, receipt bytes/hash, policy bytes/hash/blob, ordered population/digests, helper prefix pin, frozen-authority assertion and healthy policy acceptance unchanged. Preserve the title and original callback identity; this is a declared acquisition adaptation within the existing case, not deletion/replacement of a failed case. A reviewable narrow diff should consist of the import and the exact local acquisition adjustment, plus separately appended successor controls if needed.
+4. Do not change `readHistoricalPolicyOperand`, `historicalPolicyPhysicalPath`, global filesystem interception, old Number/C1/WKS/B reader channels or live production source. Existing corruption assertions deliberately see raw physical operands before guards reject them.
+
+`beforeRemainderRuntimePreparationRelocation` is not the required function. Its wrapper reconstructs historical **support** source but deliberately delegates reads of the implementation and unknown paths to the live supplied reader. Calling it to fetch this implementation still yields 49704 bytes. Exporting its private `priorCurrentSource` would be redundant when the correct full-source authority already exists in H3.
+
+## Exact whole-source authority
+
+Reuse H3's `remainderPreparationSourceProof` without weakening it. Its fixed spans are:
+
+| Span | Prior byte offset | Current byte offset | Transformation |
+|---|---:|---:|---|
+| Import | 1142 | 1142 | Insert the exact `irNumberRemainderCallableDeclaration` import from `./number-remainder-callables.js` plus newline |
+| Predicate | 39459 | 39547 | Replace the closing ordinary-object predicate with the exact ordinary-object OR remainder predicate |
+
+`runtimePreparationRemainderHistoricalSource` requires a primitive UTF-8 round-tripping string, authenticates the complete current bytes/hash/blob, checks exact span membership/order, reconstructs the complete pinned historical file and replays forward to the full current bytes. Do not use unbounded string replacement, suffix removal, substring-only pins, a copied historical literal, or caller-controlled expected hashes as admission.
+
+For the successor packet, bind both source pins to the genuine before/after Git objects from the named commit and show the complete current file equals the genuine donor after file. Retain the entire donor diff and unchanged complement, not only the two matching snippets. Existing C1 independent inverse/forward controls and its fixed independent proof can be reused as authority; do not copy a production implementation into the Number test. Source-file byte arithmetic in this review is not a replacement for that owned source-proof gate.
+
+## Required whole-file instrument successor
+
+The Number test is one of the seven exact instruments in `ir-c1-linear-layout-geometry-successor.json`; changing even one import invalidates its current full-file authority. A fixture-only edit without the corresponding reviewed authority successor must fail. Preserve the current receipt, root anchor, all seven instrument files and independent current pins as immutable predecessor evidence before authoring the successor. Do not simply replace old pins and call it historical preservation.
+
+ROOT should reuse the existing finite seven-instrument mechanism, with an explicit new whole-file epoch for this narrow adaptation. It already supports complete inverse/forward instrument spans; no new production facility or general-purpose historical reader is needed. For each actually changed instrument, provide its complete before/current bytes, SHA256 and Git blob, fixed exact inverse/forward spans and full reciprocal equality. Preserve its immutable original predecessor pin and all original algorithms. Retain unchanged instruments byte-for-byte. Freeze new pins from the complete final files only after their contents are reviewed.
+
+Expected affected authority surfaces are:
+
+- `tests/issue-3518-number-prerequisite-policy-evolution.test.ts`: actual narrow adaptation and appended controls.
+- `tests/helpers/ir-c1-historical-authority.ts`: the exact Number current caller contract if retained in this successor, and any strictly necessary finite successor admission. This file is itself an instrument and requires its own complete inverse/forward proof when changed.
+- `tests/helpers/ir-c1-linear-layout-geometry-successor.json`: fixed Number/current-instrument records and exact complete transformations; keep the predecessor manifest authority unchanged. Preserve the pre-adaptation complete receipt as the named prior epoch. Whether ROOT publishes a separate finite successor receipt or a newly activated full composed receipt, the old artifact must remain recoverable and independently checked; do not create an unexplained new baseline.
+- `tests/helpers/ir-c1-authority-root.ts`: independently frozen successor receipt digest. Keep the historical manifest digest unchanged.
+- `tests/issue-3518-c1-current-source.test.ts`: separate successor expectation/control for the new complete instrument epoch and anchor, while retaining old expectations as explicit predecessor evidence. Review every actual self-read/ordered trace expectation touched; do not update unrelated policy or production pins.
+
+The current geometry receipt is schema `ir-c1-linear-layout-geometry-prerequisites-successor-v2`, 225765 bytes, SHA256 `6282c645887c98e2d7bd2e194d61c9d78e72518510e3e2334b370e3a6837bcd7`; its root anchor is 303 bytes, SHA256 `6ff696fc5384e3369112ae585290ee74755c2013d13d644b9fba8ef3e8747842`. `static-inputs.json` records complete current pins for the authority surfaces and the frozen H3 artifact. This plan does not invent successor hashes before the code exists.
+
+No new path belongs in the seven historical-artifact routing domain. Do not modify old receipt/source pins in `ir-c1-authority.json`, source baselines, broad policy inventories, or source ownership merely to admit this fixture.
+
+## Healthy and refusal controls
+
+Retain all 456 original Number cases and their order/title/parameter populations. Record the precise allowable source delta for the one amended callback and retain its original full body as predecessor evidence. Append distinct controls; do not count an amended or added case as recovery of an original until that original case runs.
+
+The added acquisition control should prove the actual current implementation is read, reconstructs exactly the pinned historical full file, preserves other raw operand reads, and leaves the historical H3 prefix channel unchanged. Pair healthy-before and healthy-after around each mutation. Exercise the local callback reader and the existing shared authority, not only a detached helper result.
+
+Required refusals: missing remainder import, missing predicate arm, unrelated source-byte mutation, exact stale 49541-byte source supplied as current, missing source, invalid primitive/non-UTF-8 input where applicable, and mismatched before/current span or donor authority. Unknown logical paths must retain existing routing/refusal behavior; there must be no historical fallback on read failure. Existing C1 controls already cover several of these helper-level cases; reuse their exact accepted authority, then add only the missing Number-reader association controls.
+
+For the instrument successor, also test warm mutation after healthy capture and exact restoration for the Number file, new receipt and root anchor; reject an old Number acquisition line under the new epoch, mixed old/new instrument populations, wrong current full-file pin, and any altered inverse/forward span. Use the established intercepted-reader mechanisms where they prove the path; actual file faults require ROOT's separately authorized isolated lock/restore discipline. Do not mutate the currently running checkout.
+
+## Qualification and release limits
+
+First retain the original process terminal report and exact failure stack. Then ROOT freezes a successor epoch, reviews complete source/callback/authority diffs and runs required static checks and full source-preservation proof, followed by the original 456-case Number population plus clearly separated additions and the affected C1/full policy authority cohorts. Every result must identify actual process, frozen input hashes, registered/completed denominator, failures and restored custody. A focused passing callback is not the full protected population. A typecheck or static hash match is not a callback pass.
+
+Reconcile the final stack with the static operand diagnosis; if it identifies another failure, preserve it and investigate before declaring resolution. The parent policy run, all remaining ROOT gates and original source-preservation/authority failures remain independent evidence. This plan adds no J3, native public, resource, architecture-completion or ownership credit. Normal shared generic IR followed by target lowering remains the architecture; legacy routes remain retained and no JS-host substitute is introduced.
+
+## Extended scope from the completed current-main and canonical489d files
+
+ROOT's additional dispatch expands this same plan to two further actual fixture failures. I read the retained `policy-stdout.log` and the exact current test bodies. At that observation, the current-main file completed 142 cases: 137 passed and 5 failed; canonical489d completed 65: 60 passed and 5 failed. ROOT reports the still-active policy process68888 has six finished files totaling 1269 callbacks, 1252 passed and 17 failed. This is a partial process observation, not a terminal aggregate. The three files planned here account for 663 original cases and 11 observed failures; the other failures and all original records remain separate.
+
+The additional exact failed titles are:
+
+- `fixed current-main four-row inventory successor > independently pins the complete current, predecessor, receipt, sources, prefix and fixed four-row domain`.
+- `fixed policy-capture kernel prefix authority > freshly refuses actual policy-capture prefix byte 0 and restores`, and the same title with bytes `5477`, `5585`, and `94640`.
+- `fixed inventory-only canonical 489d successor > freshly refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts through receipt after success`, and the same title through `semantic` and `raw`.
+- `fresh canonical 489d inventory capture authority > fresh capture refuses mutation physical tests/helpers/ir-runtime-program-policy-evolution.ts through semantic after success`, and the same title through `raw`.
+
+The current-main first failure arrow reports actual prefix `7a23cd84…` against fixed `4cf63b34…`. The other nine arrows report that the old helper-prefix error was expected but a `C1 historical authority: full-file pi…` error occurred. The exact new error is established by the actual H1 `geometryInstrumentBefore` → `requirePin` → `fail` source path:
+
+`C1 historical authority: full-file pin changed: tests/helpers/ir-runtime-program-policy-evolution.ts geometry current`
+
+Retain the final full stack when available; do not fabricate its text from the truncated arrows. The literal above is a source-derived exact expectation, consistent with the observed earlier-guard failure.
+
+### Current-main prefix acquisition: two real historical layers
+
+At `tests/issue-3518-current-main-inventory-successor.test.ts:581`, the raw physical H3 prefix is sliced before either historical transform. Applying only the geometry inverse is also insufficient: immediate predecessor409599 has a different first94641 prefix (`1234…`, as reported by ROOT), because remainder-era read changes still precede the kernel proof. The required chain follows the canonical authority's actual order:
+
+1. Authenticate complete current H3: 411837 bytes / SHA256 `8575d0f4f66632cb606caf2f94538bd5cb8ef74e89f655e3c1f8f0930de8038c` / blob `15ae96d3887a5eb61fc6404df098d58f0d96b2f4`.
+2. Independently reverse all six exact geometry spans and replay them forward over the whole source. Recover complete predecessor409599 / SHA256 `e3bd76cbcee13e469f8c5c6ec6bafb08e6fc786efa410bd8572b56f9d5193170` / blob `2dbe6d7fa227cb7463d73d20d847c433a933dfbc`.
+3. Only after complete geometry authentication, acquire its exact403311-byte remainder-era helper prefix, pinned to `a38d46359693dd3b63dfd79642a241385e347273bb4cfb06dad177c063a1c375` / blob `763d42a7d7ab7278149cbc7258f3e90d19371408`. Apply the existing ten-edit inverse and full forward replay. That proof reconstructs the prior402646-byte helper, SHA256 `0ddf7556360e8937b25ba58b23629533c8042e026a4b6e6fc05df3d1263c97b8` / blob `201e131a7a67df8a34256f63ee0205b407794ad1`.
+4. Take94641 bytes from that proved historical helper. Preserve the existing fixed SHA256 `4cf63b340b245b0f4f5ef297dc5a4b56b06507e981a7801ffcfb7e5c101f5103`, blob `b33536a95c8b88e84f8e7c60c3c39bce3e2c7d82`, exact unique newKernel offsets5477–5586, reciprocal oldKernel offsets5477–5857, old380/new109 byte sizes, restored94912-byte prefix and old receipt helperPrefix hash. Do not repin any of these to either newer physical prefix.
+
+The H3 exported preparation-source inverse is for a different source file and cannot perform this helper-history proof. Nor is the frozen93405-byte H3 artifact the94641-byte kernel domain. Do not route the current-main callback to that archive merely because Number correctly uses it.
+
+### Reuse the private independent C1 proof without duplication
+
+The reviewed private repair candidate `/private/tmp/js2-6920-c1-fixture-repair-candidate-20261009` already contains `independentPolicyGeometryEpoch`, `independentlyAcquireRemainderPolicyPrefix`, `independentlyAcquireFixtureEpoch`, and the unchanged old ten-edit remainder proof in its C1 fixture. Its `.tmp/h3-geometry-independent-recipes.json` separately preserves both six-span directions. I inspected the actual recipe and the C1 callback adaptations. Reuse that reviewed fixture-owned authority; do not duplicate production H3's private algorithms into another test.
+
+Preferred implementation: extract only the shared independent H3 geometry/remainder byte proof and its fixed literal recipes into one pure **test helper**, then import it from the C1 fixture and current-main fixture. Keep the test helper independent of production/H1/H3 authentication results and current receipt-derived expected values. Its input is a supplied primitive current source string; its output is the exact reconstructed historical helper after complete current authentication and both reciprocal proofs. It must not read files, execute compiler code, select a live receipt's claimed expected pins, or cache a successful source identity. Avoid moving the unrelated Number preparation source proof merely for symmetry.
+
+Keep the prior independent recipe texts and all six inverse/forward spans plus ten remainder edits exactly represented in the new helper. ROOT reviews an exact relocation/source delta and independently frozen complete helper pin, then adapts the C1 callbacks to the same function while preserving their original assertions and paired controls. Do not import the `.test.ts` file from another test, which would register its cases twice. This is a narrow test-helper extraction, not a new shared production export. If a new helper is added, explicitly include its complete byte/hash/blob and import associations in the successor proof/independent controls; do not silently broaden the fixed seven historical-artifact or geometry-instrument domains.
+
+Add paired controls that reject raw physical first94641 and geometry-only first94641 operands, mutations in current H3 before/inside/after the slice including its tail, the exact stale409599 source supplied as current, and corrupted inverse and forward recipes independently. Prove both healthy acquisition and the unchanged old kernel inverse/forward still succeed before and after each fault. Source-controlled static recipe pins must remain independent from the output being measured.
+
+### Nine error-priority assertion updates
+
+Update only the four current-main kernel mutation expectations and five canonical489d H3 mutation expectations to the exact current H1 geometry-current full-file error. Use a captured `Error.message` equality or an equivalent exact error assertion; do not weaken to a generic `toThrow`, a broad regex, or a union accepting both old and new messages. Keep every original fault path, offset, API, mutation/missing distinction and healthy/restoration check. Receipt mutation expectations remain `receipt digest mismatch`; missing-file expectations remain their existing ENOENT/path checks.
+
+The canonical489d changes belong in the H3 branch of the expectation ternaries at current lines923–925 and969–971 only. They must not replace the receipt branch or change the operations. The current-main changes belong in the existing four-row loop at lines980–1001. The new priority is expected because complete current geometry authority is checked before the historical prefix guard, not because refusal ceased working.
+
+Add a focused literal-priority regression with a valid current source and an actual isolated/intercepted H3 byte fault: the public action must report exactly the new outer error, retain zero acceptance, then pass after exact restoration. Separately preserve the old inner guard's algorithm/pins and exercise its historical fixture-domain controls with authenticated outer layers. Do not bypass or disable the outer guard simply to force the old physical-file error message.
+
+### Combined successor custody and acceptance
+
+Extend the predecessor snapshot and pin inventory to `tests/issue-3518-current-main-inventory-successor.test.ts`, `tests/issue-3518-canonical-489d-inventory-successor.test.ts`, the reviewed C1 repair input, and the new independent test helper if used. The first two are not currently members of the seven geometry instrument records; do not add them there by assumption. Audit their actual fixture/preservation authorities and bind only the necessary successor inputs. The Number change remains inside the existing seven-instrument custody mechanism described above; any C1/H1 authority changes must be composed once into the same exact successor to avoid incompatible intermediate epochs.
+
+Preserve original populations456/142/65, all old full-file authorities, original failure rows, and the independently reviewed C1 private repair. Run each complete original population after the new epoch freezes, with added controls recorded separately, then the affected full C1/policy and source-preservation gates. An unchanged production tree does not excuse test-helper or fixture authority drift. No new runtime execution is authorized by this static review, and active68888 inputs remain untouched.
+
+
+## Full adopted latest Astra NUMBER-CALLER-PROOF-SUPPLEMENT.md
+
+Exact 15704 bytes/SHA4de5537d1ec3f480eee0d018e236671028dd8e457e7d787a9e2e7c76ad408cd7. ROOTownscomposition; originalactive68888 inputsremainuntouched. Privateimplementation maypreparedeclaredscopes againstarchivedfrozenbefore whileactive, liveactivation awaitsoriginalterminal+review+newfullfreeze.
+
+# Number fixed-caller proof and activation supplement
+
+Issue 6920 — Native Linear numeric-vector shared source handoff and integration plan.
+Codex GPT-6 Astra High, 2026-10-09. This is a separate supplement to `NUMBER-FIXTURE-IMPLEMENTATION-PLAN.md`; the original report remains unchanged. Static plan only: no candidate/live source or tests, runtime callbacks, Git state, receipt, root anchor, claims or ownership were changed. ROOT owns every activation step below.
+
+## Mandatory decision
+
+**A naked Number fixture edit is invalid.** H1's `geometryCallerContracts` fixes both its geometry predecessor and accepted current whole-file pin. `captureGeometrySuccessor` validates `record.currentPin` against that literal contract at current lines1435–1436; trusting a newly edited receipt alone cannot admit a repaired Number file. The source must be repaired and proved as one bounded successor together with H1, its instrument recipe, the receipt and independent root digest.
+
+Use the current finite seven-record mechanism with a newly reviewed composed Number/H1 epoch. Preserve the old complete epoch as immutable evidence and prove it as an intermediate. No schema enlargement, path wildcard, alternative-current pin acceptance, optional guard, or mutable expected-hash derivation is needed. A separate successor layer would also be sound if fully specified, but adds machinery without solving a different problem here. This recommendation licenses only the exact reviewed fixture repair, not arbitrary future caller edits.
+
+## Actual fixed boundary
+
+I reread actual ROOT files `tests/helpers/ir-c1-historical-authority.ts`, `tests/helpers/ir-c1-linear-layout-geometry-successor.json` and `tests/helpers/ir-c1-authority-root.ts` under `/private/tmp/js2-6920-geometry-proof-integration-20261009`.
+
+The four fixed caller contracts are exactly:
+
+1. `tests/issue-3518-program-data-contract-boundary.test.ts`.
+2. `tests/issue-3518-runtime-program-policy-evolution.test.ts`.
+3. `tests/issue-3518-well-known-symbol-policy-evolution.test.ts`.
+4. `tests/issue-3518-number-prerequisite-policy-evolution.test.ts`.
+
+Together with H1 (`ir-c1-historical-authority.ts`), H2 (`ir-c1-current-source.ts`) and H3 (`ir-runtime-program-policy-evolution.ts`), these make exactly seven ordered geometry instruments. ROOT's current-main/canonical489d tests, semantic-provider/J1 fixture, runtime-priority fixture and the two ROOT preservation/C1 fixtures are not among those four fixed caller contracts. Their separate edits do not by themselves require a geometry receipt update. Do not expand this authority domain by analogy.
+
+| Named state | Bytes | SHA256 | Git blob |
+|---|---:|---|---|
+| Number geometry predecessor B | 112437 | `f0b10a5a3d47772cb497b5dc53f202ce2182b2ee4eb2c5c7d557b7aa8b0bb44f` | `82c1cc794377b26ff9f41e809c300122133de85a` |
+| Number currently accepted N1 | 113131 | `81cdd13ea7f9f907c7d9f268cd0ad6dffda4b996671f5ed49721d7e162ae57ae` | `4be3d8d341b1e42ce0f7ea3dc9799fb0cfe32e84` |
+| H1 geometry predecessor | 44161 | `0751d41d201981cfa1e74434fd9c7d2c85bdd4a5e8d17a1efa1c31be7457dccc` | `089279974bd786288ed2eb0b6624ea54f59f9f80` |
+| Current H1 H1a | 96713 | `cc4ef7be19720ccf45e3cdd857ff373a9a770460c81cdc2bf8b1f7460754c8c3` | `79854cea40345e4b216cc6781d6193552988531b` |
+| Current receipt R1 | 225765 | `6282c645887c98e2d7bd2e194d61c9d78e72518510e3e2334b370e3a6837bcd7` | `0f19d3721c377ac1b1469896361c541de662a5a6` |
+| Current root A1 | 303 | `6ff696fc5384e3369112ae585290ee74755c2013d13d644b9fba8ef3e8747842` | `b23d9ff1b6aa2767eb5a191ba9a123e1104f4f95` |
+
+Number's existing receipt record has six inverse and six forward spans. They cover its H1 import and five policy acquisition wraps. H1's current record has eight inverse and eight forward spans. Preserve every original recipe and endpoint in R1 exactly; the new recipes will be independently reviewed transformations, not edits to the historical evidence.
+
+The unchanged predecessor manifest digest is `32a15b44ebf42a538cb44ecff4e00b4f3e40b0ca52da3a3559109cca584adfda`. Keep `ir-c1-authority.json`, its root export and all prior source/caller pin authorities immutable.
+
+## Staged construction and proof sequence
+
+1. **Finish and retain the active epoch first.** Do not alter process68888 inputs. ROOT retains its terminal outputs/failures and complete before/after custody, including any unresolved membership differences, before making a new isolated candidate. Snapshot full N1, H1a, R1, A1 and the other five current instrument files by bytes/hash/blob, as well as the original B/H1 predecessor evidence and all original callbacks. Preserve the existing private C1 repair as a separate reviewed input. A successor never retroactively repairs the old record.
+
+2. **Author N2 against exact N1.** Make only the reviewed import/local pin-acquisition adaptation using the existing exported `runtimePreparationRemainderHistoricalSource`, plus any separately reviewed additive controls. Preserve all456 original registrations, tables, titles and original assertions except the explicitly declared operand acquisition. Keep the 49541-byte preparation implementation pin and93405/40368 historical H3 artifact behavior unchanged. Review the complete N1→N2 diff and prove its unchanged complement, not only the matching modified snippets.
+
+3. **Prove the intermediate before composing.** Independently authored fixed inverse must recover complete N1 from actual N2, including all unchanged source bytes; independent forward must reproduce complete actual N2 from N1. Enforce exact primitive UTF-8, full length/SHA256/Git-blob pins, ordered nonoverlapping spans, coordinates, exact fragment membership and complete reciprocal equality. Then apply the archived R1 six-span inverse to N1 and require the original B pin112437/f0b10a5a; replay R1 forward B→N1. B and N1 are separate authorities and cannot be relabeled or inferred from a matching title count.
+
+4. **Create the composed Number record.** Derive a reviewed N2→B inverse and independently authored B→N2 forward for the new receipt, preserving the exact existing `beforePin` B. Keep the old N1↔B record intact in the archived R1 and in independent intermediate controls. Composed spans must obey the existing strict nonoverlap/coordinate checks; if new edits intersect an old span, represent the exact combined source fragment instead of concatenating overlapping recipes or relaxing validation. Verify complete B and N2 endpoint pins and full forward equality. The new Number current pin comes from final N2 bytes after source review, never from an inspected receipt supplied as its own expected authority.
+
+5. **Update only H1's Number current contract.** Once N2 is final, change the Number `currentPin` literal in `geometryCallerContracts` to N2's independently frozen bytes/hash/blob. Keep Number's `beforePin`, all other three caller contracts, ordered seven instrument predecessor pins, helper functions and guard ordering unchanged. In particular retain the `fixed geometry caller current pin` comparison, all exact record-key checks and the complete current epoch check at lines1043–1055. This yields H1b. Prove H1b↔H1a for the exact literal delta, then construct H1b↔original44161 using the archived original H1 recipe plus the reviewed delta. Preserve old H1a and its eight-span record as an intermediate; do not pretend H1b is the old authority.
+
+6. **Build R2 after Number and H1 are final.** Keep schema `ir-c1-linear-layout-geometry-prerequisites-successor-v2`, the six ordered top-level keys and seven instrument paths/order unchanged. Replace only the Number and H1 current pins and their corresponding complete inverse/forward records. The other five instrument records must remain byte/value exact; preserve `predecessorManifestSha256`, `linearOptions`, `cabiSource`, `policySource`, all source proof epochs, resolver domains and all source pins exactly. Compare the complete R1/R2 parsed domain and retained raw unchanged regions; every difference must belong to the two declared instrument records. R2's digest must be computed from the complete final serialized bytes, not a partial receipt or reserialization guessed at runtime.
+
+7. **Bind the independent root last.** Keep the root header and `c1AuthorityManifestSha256` export exactly. Set only `c1GeometrySuccessorSha256` to the independently frozen R2 SHA256; record complete A2 bytes/hash/blob. The acyclic order is N2 → H1b → R2 → A2. Neither N2 nor H1b must embed R2's digest or their own current hash. The existing root/H1 warm-source checks and externally loaded data-export contract remain mandatory. No live guard may automatically derive its expected digest from the receipt it is authenticating.
+
+8. **Update independent expectations as a named successor.** ROOT's C1 fixture must retain the old complete R1/A1/current-instrument literal as explicit predecessor evidence, and introduce the exact R2/A2/current-instrument expectation for the new epoch. Do not merely replace the old literal and erase the historical proof. Reuse the already reviewed C1 fixture repairs and independent geometry/remainder helper as appropriate, composing each change only once. Pin any new pure test-helper file and its caller associations independently. Keep ROOT fixtures out of the fixed seven instrument domain unless a separate actual dependency requires a separately reviewed domain extension.
+
+9. **Review the whole packet before release.** Freeze N2/H1b/R2/A2, other five instruments, all original historical artifacts and changed ROOT/test-helper files together. Require exact original source/membership preservation and a complete review of every source body and callback delta. Publish no new source/current epoch based only on a healthy hash check. ROOT alone can integrate the complete packet after review; source/receipt/root intermediate states must not be used as a supposedly healthy mixed epoch.
+
+## Required healthy and refusal checks
+
+Healthy controls establish both exact transformations independently: N2↔N1↔B and H1b↔H1a↔44161, then compare the final composed receipt's separate inverse/forward against those independently obtained endpoints. Actual public H1 capture must read all seven current instruments and return the same original historical authorities. Record the observed reader paths and whole source bytes; a detached receipt parse is insufficient.
+
+Pair every refusal with healthy-before and exact-restored healthy-after:
+
+- A naked N2 with H1a/R1/A1, a new Number receipt pin under old H1a, and H1b under R1 must all be rejected; identify the actual earliest guard from the run rather than assuming one message for every mixed state.
+- N1 supplied as current under the complete new epoch must fail. N2 with the repaired import or local acquisition individually reverted, or a byte changed outside the repair including its tail, must fail its complete current pin. This proves the amended reader itself belongs to the authenticated caller.
+- A changed H1b Number current pin, removed fixed-caller comparison, changed Number `beforePin`, changed instrument path/order/count, added record key, or modified unrelated source/resolver section must fail the relevant current/full-source or exact-domain guard.
+- Mutate inverse and forward spans independently: coordinate, `from`, `to`, insertion/deletion, duplicate/overlap, missing unchanged bytes and reciprocal mismatch. Both directions need independent controls; inverse success does not imply correct forward proof.
+- Warm mutation after healthy capture of N2, H1b, R2 and A2 must be reread and refused; exact restoration must recover. Mutating the physical root must not be hidden by its already loaded export; mutating the receipt must not be hidden by a cached parsed object. Missing inputs must retain the actual missing-input behavior, without fallback to the archived epoch.
+- Verify the other five complete current instruments and all three untouched caller contracts retain their original exact values. Mixed old/new populations must fail the existing complete-epoch guard.
+
+Run these only under ROOT's separately authorized isolated/intercepted fault discipline, after active process termination and frozen successor review. No runtime execution is authorized by this supplement. Retain456 original Number cases and additive controls separately; the original142/65 current-main/canonical489d populations, C1/preservation populations and all remaining cohort files keep their own obligations.
+
+## Static scan of the seven remaining policy files
+
+The exact thirteen-file population was identified from the retained `caller-acquisitions.patch` named in issue6920, not guessed from filename similarity. Subtracting the six completed files in ROOT's `policy-progress-observed.json` leaves:
+
+| Remaining file | Static observation | Action before any proposed edit |
+|---|---|---|
+| `issue-3518-canonical-3c6-inventory-successor.test.ts` | H3 mutation ternary at line1808 still expects `complete canonical predecessor helper prefix changed` for receipt/semantic/raw APIs. | Read its eventual actual rows/stack and trace the current path; likely priority-review target, not an observed failure in this supplement. |
+| `issue-3518-nested-stackification-policy-evolution.test.ts` | H3 mutation branch at line826 expects `nested stackification policy evolution: complete predecessor helper prefix changed`. | Same bounded actual-result and guard-order review; no blanket replacement. |
+| `issue-3518-program-validator-policy-evolution.test.ts` | H3 mutation branch at line1223 expects `complete predecessor helper prefix changed`. | Same bounded review, preserving receipt/source/manifest/missing branches. |
+| `issue-3518-wasmgc-helper-policy-evolution.test.ts` | H3 mutation branch at line1677 already expects `/full-file pin changed/`; later historical-source strings are recipe data, not necessarily fault expectations. | Do not mechanically replace text occurrences or declare a runtime pass from this static match. |
+| `issue-3518-runtime-program-policy-evolution.test.ts` | One of the four fixed H1 caller contracts; actual historical routing remains present. | Any future edit requires its own exact finite caller current pin/recipe/H1 update. No change requested or failure inferred here. |
+| `issue-3518-well-known-symbol-policy-evolution.test.ts` | Also one of the four fixed H1 caller contracts with historical routing. | Same custody requirement; preserve unchanged unless a concrete failure demands an explicit reviewed addition. |
+| `issue-3518-validation-policy-evolution.test.ts` | Not one of the four fixed contracts; has the reviewed geometry policy acquisition. | Preserve current body and wait for actual evidence; no additional fixed-caller obligation inferred. |
+
+This is a targeted static scan, not a full behavioral review or executed result for these seven files. The actual fixed caller membership is exhaustive in H1; matching an error phrase cannot establish shared root cause or authorize an edit. The already reviewed J1/semantic and runtime-priority private patches do not imply a receipt update because their files are outside these four contracts. A new failure in an unchanged fixed caller would require another bounded source-body proof, not a broad loosening of the Number plan.
+
+All original 68888 failure records remain authoritative for that epoch. The confirmed Number mismatch and nine observed current-main/canonical489d priority rows retain their specific plan; no global error-string replacement is authorized. Full-source proof, normal source/policy gates, actual callback outcomes, custody and ROOT release decisions remain separate from this static supplement.
+
+
+## Disjoint latest Sol implementation ownership for adopted fixture successor
+
+NativeSol6.1High dispatches succeeded afterAstra finished. PRIVATEONLY, ROOT60335 retains sharedintegration/activation/claims/publication/queue. No competingcode/source scope withB.
+
+- sol_fixture_shared_h3_and_priority_20261009 owns /private/tmp/js2-6920-shared-h3-fixture-sol-candidate-20261009: newpuretesthelper containingexistingindependentgeometry/remainderbyteproof, current-main/canonical489d exactpairedfixturefixes, and C1fixture exacthelperextractionassociation against reviewed208482/78e0b023 input. Retainsoldand12newC1 controls plusDATA/forwardingrepairs. DoesnoteditNumber/H1/H2/H3/receipt/root or C1newreceiptliteralexpectations.
+- sol_number_caller_authority_successor_20261009 owns /private/tmp/js2-6920-number-caller-authority-sol-candidate-20261009: Numberfixture exactlocalreader/additivecontrols, H1onlyNumber currentPinliteral, same7recordR2 onlyNumber/H1records, rootindependentdigest. PreservesB/N1/H1a/R1/A1 intermediateevidence; provesindependentinverses+forwards+composedfullfiles; allother5records/source/resolver/policy/manifest32a15 fixed. DoesnoteditC1/helperworker/currentMain/canonical489d. ROOT integratesfinalC1 newexpectations/traces andallreceiptassociatedinputs once bothreviewedexactpacketsready.
+
+Both mustreadfullAstra mainplan+supplement, supplywholepatch/pins/controls/staticresults anddeclare runtime0. No actualcallbacks/helperexecution/faults/livewrites/git/claims/commit/push fromeither. Original68888 epoch remainsuntouched. Newhelperpath notaddedto7instrument/historicalroutingdomains byassumption. Numberworker asksROOTbeforeaddinganyextrahelper outsidedeclaredscope. Narrowfinitewholeproof doesnotloosen exactguards orreplaceoriginalfailurecredit.
+
+
+## Canonical3c6 actual-result plan condition fulfilled and two private packets complete
+
+Original68888 stillactive8finishedfiles1708callbacks1688pass20fail. Newlyfinishedruntime-program-policy204/204 (fixedcallerunchanged), canonical3c6 232pass3fail/235. Exact3 helpermutationreceipt/semantic/rawarrows show oldprefix-error expectation vs actualH1full-filepin guard. ROOT readactual1808ternary/sourcechain and authorized ONLYcanonical3c6 privateH3branch repair underadoptedAstra supplement conditionalrequirement; all235receipt/missing/restoration cases retained. No speculative nested/programvalidator edits.
+
+BothoriginalSol61High implementers completed. Sharedpacket4tests+newpurehelper exact20231/fb0addab helper, C1successor197087/d8ff743a, currentMain51241/e3789701, canonical489d43220/180ca9ec, canonical3c683670/29ca10de. Originalregistrations retained; authoredtotalsC1375/currentMain160/canonical489d65/canonical3c6235. StaticTS7exit0/267inputs; builtin12/12refusals, full2historicalepochs/kernelreplay; actualtargetruntime0. C1receipt/trace oldliterals intentionallypendingROOTfinalcomposition.
+
+Numberpacket4ownedfilesfinal N2116007/546be430, H1b96713/7bbfaf66, R2234263/f0c041143521b640edfab049fe71e97c13430b4c559063c05b857266e61c0126, A2303/c8522cf112584bdcdf0e2184c5cd59a108827ac121c5bdf794d8cecf709dc4ca. Twelve independent/intermediate/composed fullfile byte replay directions; originalB/N1/H1a/R1/A1 plus6/8 oldrecipes preserved. Fiveunchangedrecord/rawlinearOptions+suffix preserved. Number original456+5additions461authored/runtime0. Wholepacket /private/tmp/js2-6920-number-caller-authority-sol-candidate-20261009/.tmp/NUMBER-SUCCESSOR-REVIEW.txt. ROOT fullsource/callbackcomposition remains; latestAstra Numberindependentreview completed boundedclearance, no constructionblocker; fullreportadoptedbelow.
+
+ROOT found potential newsharedtestauthority issue beforeitsruntime: optionalproofparameter suppliescurrent/beforepins directly and exportedepochs onlytype-readonly(asconst), notruntimefrozen. Ordinarycalls usefixedliterals, but negative recipeinput mustneverselectexpectedsourceauthority. LatestAstra resumed toreviewfullsharedpacket and thisboundedfixedpin/immutability concern beforequalification. Originalpacketunchanged; no source/nativeacceptance inference.
+
+
+## Full adopted latest Astra Number successor independent review
+
+Exact 15305 bytes/SHA875835ea387ef8dc9374e1c3da70fa9f83476e8c10e8a932d4a96ceb024f686a. Staticclearance only, remainingqualification/ROOTcontrolsclear.
+
+# Independent Number four-file successor review
+
+Issue 6920 — Native Linear numeric-vector shared source handoff and integration plan.
+Codex GPT-6 Astra High, 2026-10-09.
+
+**Decision: bounded static clearance for the exact four-file packet.** No blocking implementation or receipt-construction defect found. The packet is suitable for ROOT's private composition with its independently authored C1 controls and subsequent separately authorized qualification. It is not ready for an activation/pass claim on the strength of this review alone: cold mixed-epoch checks, several caller-association/domain controls, final C1 expectations and actual callback outcomes remain unimplemented or unexecuted ROOT obligations.
+
+Only `/private/tmp/js2-6920-number-successor-astra-review-20261009` was written. No candidate/live files, source, tests, receipt, root, Git state, claims or coordination records were changed. No project/helper module, test callback, compiler, runtime, file fault or supplied build/verification script was executed. The only execution was independently authored Python standard-library file/JSON/hash/byte arithmetic. That is static evidence, not the owned source-proof gate or runtime qualification.
+
+## Exact reviewed packet
+
+Candidate: `/private/tmp/js2-6920-number-caller-authority-sol-candidate-20261009`.
+
+I read the full `NUMBER-SUCCESSOR-REVIEW.txt`, `HANDOFF-SUMMARY.json`, all actual source deltas, the complete original and amended C2a callback, both added callback templates, their mock/reader/authority context, the entire `ROOT-controls-proposal.ts.txt`, H1's actual acquisition/replay/guard bodies, and all intermediate/archived/composed recipe data. Every one of the 74 span bodies in the twelve instrument directions was decoded and compared against its complete actual input and output bytes. Large embedded H1 fragments were checked as complete source, not reduced to matching snippets. The separate preparation-source proof was checked in both directions too.
+
+| File / state | Bytes | SHA256 | Git blob |
+|---|---:|---|---|
+| Number N2 | 116007 | `546be43029e1e58f2b31fb71e2e64592f954a6b750c6bcc3fa1f1db8dab889ea` | `1fb4a992f18ccad293e3030d9f0d88c40d40d78a` |
+| H1b | 96713 | `7bbfaf6687f7411147f00833380027d3959b743ec7dc033fc9bba8d69849992b` | `c59701cc36595cea2536c35edcc1e42278ba3e5c` |
+| Receipt R2 | 234263 | `f0c041143521b640edfab049fe71e97c13430b4c559063c05b857266e61c0126` | `87ae00a5a9930af9d77af61cecb17894497076cf` |
+| Root A2 | 303 | `c8522cf112584bdcdf0e2184c5cd59a108827ac121c5bdf794d8cecf709dc4ca` | `e404102a8712f058059ca84d068fe0af774deccf` |
+
+The four paths are respectively `tests/issue-3518-number-prerequisite-policy-evolution.test.ts`, `tests/helpers/ir-c1-historical-authority.ts`, `tests/helpers/ir-c1-linear-layout-geometry-successor.json`, and `tests/helpers/ir-c1-authority-root.ts`.
+
+Complete independently measured old/current pins, all reviewed artifact pins, each span's coordinates and full fragment/complement pins, and all direction results are recorded in `independent-byte-review.json`. Its inspector is `inspect_packet.py`, authored here; neither submitted packet script was run.
+
+## Four-file construction
+
+**Number reader.** The import uses the already exported `runtimePreparationRemainderHistoricalSource`. The new describe-local reader first acquires the actual supplied path through the existing `readHistoricalPolicyOperand`, then transforms only the exact preparation implementation path. Every other path returns its raw string. The filesystem interception and global historical routing region is byte-identical to N1. The original C2a callback's sole body change is acquisition in its source-input pin loop. After reversing that exact loop delta, the complete callback equals the separately archived original body. Its policy/receipt/sourceInputs/population assertions, 49541-byte historical implementation pin, H3 archived93405-byte operand and40368-byte prefix pin remain intact.
+
+The complete N2→N1 transformation consists of precisely four reviewed intervals: import addition, local reader, pin-loop acquisition and appended callback block. The fourth interval includes the unchanged following callback header as its exact anchor; complete replay confirms that header/body was retained. All source outside those four intervals is byte-identical. The source preserves the original456-case population and adds one literal callback plus a four-element table; 461 is proposed arithmetic, not a measured runtime registration count in this review.
+
+**H1 fixed contract.** H1b differs from H1a only in the Number `currentPin` literal. Number's geometry `beforePin` remains112437/f0b10a5a/blob82c1cc79. Other caller contracts, exactly seven ordered instrument paths, original predecessor pins, fixed-current-pin comparison, descriptor/schema/duplicate-key checks, full current source authentication, complete epoch check, replay guards and acquisition behavior are unchanged. An edited receipt cannot authorize a different Number file unless this independently source-pinned H1 contract also changes in an owned successor. No new API or alternate-current escape hatch was added.
+
+**R2.** Duplicate-key-aware parsing verifies the same ordered six top-level keys, unchanged schema `ir-c1-linear-layout-geometry-prerequisites-successor-v2`, unchanged historical manifest digest and exactly the same seven ordered record paths. Only records0(H1) and6(Number) change their current pin and transform data. Their `beforePin` values remain exact. Records1–5 are identical in value and raw serialization. The entire raw suffix beginning with `linearOptions` is byte-identical, preserving resolver/source domains, C-ABI epochs, policy epochs and their pins. No extra record field, source-policy change or protocol expansion is hidden in this packet.
+
+**A2.** Its complete303-byte source equals A1 with only the64-character geometry receipt digest changed to the complete R2 hash. The root header and original historical manifest export remain unchanged. The construction is acyclic: final N2 → literal H1b → full R2 → independent A2. Neither H1b nor N2 obtains expected current values from an untrusted receipt under inspection. ROOT must retain this independence when authoring its final C1 literals; the proposal JSON is an input for review, not permission for tests to initialize expected values from the live receipt.
+
+## Twelve full directions independently checked
+
+| Source family | Direction | Spans | Result |
+|---|---|---:|---|
+| Number | N2 → N1 | 4 | Full archived N1 bytes equal |
+| Number | N1 → N2 | 4 | Full actual N2 bytes equal |
+| Number | N1 → B | 6 | Full original112437-byte B equal |
+| Number | B → N1 | 6 | Full archived113131-byte N1 equal |
+| Number | N2 → B, composed | 10 | Full original B equal |
+| Number | B → N2, composed | 10 | Full actual N2 equal |
+| H1 | H1b → H1a | 1 | Full archived H1a equal |
+| H1 | H1a → H1b | 1 | Full actual H1b equal |
+| H1 | H1a → original44161 | 8 | Full original H1 equal |
+| H1 | original44161 → H1a | 8 | Full archived H1a equal |
+| H1 | H1b → original44161, composed | 8 | Full original H1 equal |
+| H1 | original44161 → H1b, composed | 8 | Full actual H1b equal |
+
+Every direction was independently applied from the supplied direction's complete recipe, not generated by reversing the other list. Checks included exact ordered keys; primitive UTF-8 fragments; safe nonnegative and strictly increasing coordinates; nonoverlap; equal unchanged distances; source/target bounds; exact fragment membership; full target length/SHA256/blob; and equality with the separately retained complete endpoint. All unchanged source regions were compared directly.
+
+Number's four new edits occupy the unchanged complement of its old six intervals, allowing the strict ten-span composition. H1's changed current-pin literal is inside the old appended tail; the composed eight-span record changes that full tail payload rather than adding an overlapping ninth interval. The fixed source pins and full forward comparisons bind these recipes to exact source epochs; they grant no acceptance for future source edits.
+
+The preparation implementation retained in the packet is current49704/171aa935/blobf018b105 and historical49541/bd27170/blobd8726293. Its exact two source spans reconstruct the full historical file and replay the whole current file. This independent static equality is consistent with the named genuine donor `a41cca746f43604d69dc09a001d51ed76405b922`; it is not a fresh Git donor/object verification. ROOT retains that separate authentic donor/source-proof obligation.
+
+## Authored callback review
+
+The added positive callback directly reads the current preparation file, asserts the complete current length/SHA, obtains the exact historical output via the new local reader, asserts the old length/SHA and inequality, verifies all other source-input/Number-receipt raw outputs, and checks H3 still uses the93405-byte archive with the exact old40368 prefix. It ends with actual policy acceptance. There is no self-derived expected hash or copied historical implementation pretending to be the current read.
+
+The four added negative cases use the existing same-module filesystem interceptor at offsets0,1142,39547,49703: header, import region, predicate region and final byte. They establish healthy historical acquisition and actual policy acceptance before interception, demonstrate a changed raw read, require the exact `current main inventory evolution: complete current remainder preparation source changed` error, and require at least two intercepted reads. They clear only their map keys in `finally`, then verify exact raw/historical restoration and healthy policy acceptance. The expected error matches actual H3 `currentMainInventoryPin` → `currentMainInventoryFail`. No physical source file is changed by these callbacks.
+
+The source therefore provides meaningful paired reader-association and current-whole-file refusal intentions. It does not establish that the five cases collect or pass under the final module loader. On an assertion failure, interception is still cleared in `finally`; the healthy-after assertions are reached only when the intended refusal assertions succeed, so do not describe failed rows as having completed restoration qualification merely because cleanup ran.
+
+## ROOT proposal gaps: explicit remaining work, not four-file defects
+
+The complete `ROOT-controls-proposal.ts.txt` has executable **proposed** bodies for six-direction checking, stage/composed recipe corruption, warm source/receipt/root rereads, missing inputs, and exact N1-under-N2 rejection. None has been integrated, typechecked or run here. Its unspecified bindings and comments are deliberate handoff obligations, not a completed test suite.
+
+1. **Final independent constants and trace.** ROOT must author and freeze actual `independentlyFrozenSuccessor`, intermediate/old recipes, the final seven-source pins, historical artifact and exact reader trace from the fully composed final epoch. The proposed `independentCurrentAuthorityTraceForN2` is not an actual trace in this packet. Preserve R1/A1/N1/H1a as explicit predecessor evidence. Combine the separate C1 repair and independent H3 helper extraction once; do not replace old expectations with a new unexplained baseline.
+
+2. **Strict replay implementation.** The proposal calls ROOT's existing `independentlyReplaySuccessorSpans` without a target argument. Its comments correctly require additional primitive/UTF-8/safe-order/bounds checks. ROOT must implement those checks using the actual direction target pins or an explicitly equivalent checked wrapper. Merely copying the proposed function call and leaving those constraints in comments would not satisfy this review. Keep full endpoint pins and independent intermediate versus composed equality checks.
+
+3. **Cold mixed epochs.** These are still comments, not callback bodies. A2's export is captured when modules load; presenting A1 through an intercepted reader while H1b/A2 remain loaded exercises a warm root mismatch, not H1a's fixed old Number contract. ROOT must implement its isolated cold loader/harness for the declared old/new H1, Number, receipt and independently frozen root combinations, with actual loaded source bytes, observed read paths, zero acceptance, exact first error and full restoration custody. Use a valid old and valid new loaded epoch as separate healthy controls. No fake export object or generic hash assertion substitutes for the real loader.
+
+4. **Precise caller and guard association.** Reverting only the repaired Number import, local reader and loop, plus changing a byte in the untouched tail, remains a comment obligation. So do actual H1 fixed-comparison/literal, before-pin, path/order/count/key and unrelated resolver/source-domain controls. Implement these as bounded exact faults under ROOT ownership; do not infer them from the current four byte-mutation cases, which mutate the preparation implementation instead of the Number caller source.
+
+5. **Missing and invalid source inputs.** The existing C1 remainder controls cover missing import/predicate, unrelated bytes, stale historical-as-current, non-string/no-coercion and warm source mutation. This packet does not supply concrete complete missing-preparation-source or invalid-UTF-8/lone-surrogate callbacks. ROOT must inspect and retain any actual existing controls, then supply only uncovered cases. A statement that existing tests cover them is not evidence. The proposed warm missing-reader cases need actual execution; if claiming propagation of the identical supplied Error object, assert identity as well as a matcher message.
+
+6. **Runtime and custody.** Normal test-inclusive type/format checks, actual public seven-instrument captures, independent recipe refusals, full original456 Number cases plus the five additions, affected C1/policy/preservation populations, source donor checks and complete physical custody remain required. No source pin or static reconstruction is a runtime result. Record original versus added denominators separately and preserve every original failure row.
+
+These gaps block complete successor qualification and release, while leaving the narrowly reviewed four-file source construction suitable for private integration. No additional production/shared-export change is needed to close them.
+
+## Ownership and adjacent work
+
+ROOT owns final H1/Number/receipt/root composition, C1 independent literal/trace authoring, release and the qualification epoch. The separate shared-helper worker owns independent C1 H3 extraction/current-main/canonical489d and the newly observed canonical3c6 three priority cases; none of those files was changed by this packet. Do not fold unrelated error replacements into the Number current-pin update or expand its four-file ownership implicitly.
+
+The original policy68888 run remains a separately preserved active epoch; this review grants no permission to mutate it. ROOT's separately reported J3 52/52 result with7906 unchanged pins is not Number, C1, native, resource, owner-acknowledgment or full-source qualification. Normal generic IR followed by target lowering, legacy retention and the absence of a JS-host replacement remain unchanged.
+
+
+## 2026-10-09 terminal policy cohort and fixed independent fixture authority repair
+Canonical claim re-read: owner ttraenkler/codex-ir-integration-session-a-20261009, slice6920:geometry-proof-integration-20261009, write60335-ngn0jcr6, in-progress. Original process68888 naturally ended with actual exit1; complete JSON2256 tests,2224 passed,32 failed,0 pending. Original7502 listed inputs unchanged; physical membership7512 includes ten ignored npm fixture files omitted from original before snapshot. This limits complete-custody credit; no retrospective snapshot repair. Complete raw failure rows remain in policy-results.json. Newly observed12 failures: nested-stackification4, program-validator4, WasmGC-helper4. Astra High plans the three isolated fixture repairs against actual pre-action failures; no blanket error replacement.
+
+Sol6.1High resumes only original private shared-helper candidate for the following FULL adopted Astra P1/P2 repair. Helper and dependent C1/current-main custody/control edits only; no production/Number/receipt/root changes, runtime or publication. Original intermediate packet retained. Exact report SHA256 a38587b3ffdcef743dc8cedd71fe2b58ecaba38b630d99fa5b3245ccb223f790.
+
+# Shared H3 fixture packet — independent static review
+
+Decision: **hold qualification for the pure helper repair below**. The exact historical recipes and four fixture successors have valid static whole-byte proofs. The new helper does not yet enforce a fixed independent epoch when an optional proof is supplied, and its exported default authority is mutable at runtime. A second, narrower recipe-order contract gap should be repaired in the same bounded helper successor.
+
+Reviewer: Codex GPT-6 Astra High, 2026-10-09. Candidate: `/private/tmp/js2-6920-shared-h3-fixture-sol-candidate-20261009`. Only this private review directory was written. No candidate source changes, Git operations, module imports, test callbacks, compiler runs, physical fault injection or runtime qualification occurred. Independent evidence uses a small original Python literal reader and builtin byte/hash arithmetic, not any candidate script or helper. `independent-static-evidence.json` contains full independently measured pins and replay results; `inspect_static.py` records that method.
+
+## 1. [P1] Optional proof replaces the supposedly fixed epoch authority
+
+Location: `tests/helpers/ir-independent-policy-history-fixture.ts:304–334`, with exported literal graphs beginning at lines 76 and 166 (both terminated by `as const`).
+
+`independentlyAcquirePolicyGeometryEpoch(current, proof)` uses `proof.currentPin` for current and forward output, `proof.beforePin` for recovered output, and never checks `proof.path`. `independentlyInvertRemainderPolicyBytes` repeats this pattern. This authenticates a caller-selected reversible transformation, not the fixed geometry or remainder epoch promised by these functions. It is an actual test-authority hole even though ordinary current callers default to known literals. It is not evidence of a Native admission defect.
+
+A static counterexample is a proof with path `foreign domain`, current `x`, before `y`, correctly computed length/SHA256/Git-blob pins for those one-byte strings, inverse `{inputOffset:0, outputOffset:0, from:"x", to:"y"}`, and independently supplied forward `{inputOffset:0, outputOffset:0, from:"y", to:"x"}`. All existing checks are satisfied and either wrapper returns `y`. The supplied path is ignored. Full counterexample pin data is recorded in the evidence JSON. No target code was executed to establish this logical path.
+
+The default path is also not immutable: TypeScript `as const` provides no runtime freezing. Both exported epochs, their pin objects, arrays and span objects can be changed by consumers after import. `independentlyAcquireRemainderPolicyPrefix` even takes its slicing length from the mutable exported remainder pin (lines 318–321). C1 holds references to those same pin objects in `remainderIndependentProof.helper`. The whole-file helper pin observes on-disk bytes; it does not detect in-memory literal mutation. Merely comparing supplied proof pins to the same mutable export would leave this route open.
+
+### Bounded repair
+
+1. Preserve the existing independent literal values and all six geometry / ten remainder transformations. Deep-freeze the literal authority graph at construction: top objects, both pin objects, both arrays and every span object. The freezing operation must use locally authored literal data and must not read production helpers, receipts, caller expectations or filesystem state. No successful-source cache.
+2. Make each wrapper explicitly select its own fixed authority. Validate current, before and independently forwarded output against that immutable authority, not against optional proof fields. The prefix length must also come from immutable fixed authority.
+3. Keep the optional proof only as a vehicle for inverse/forward fault recipes. To preserve existing callback bodies, the smallest interface repair is to retain its shape but require its path and both pin records to exactly equal the function's immutable fixed authority before replay. Reject swapped geometry/remainder epochs, changed path, missing/extra authority keys and changed bytes/SHA256/Git-blob fields. Do not simply ignore a changed path/pin while continuing. Check primitive own data values without coercion; do not create a broader receipt-selected or caller-selected protocol. Then pass only its recipe arrays to the replay routine and fixed expected target sizes/pins to validation.
+4. Preserve cloned recipe mutation controls. A caller may supply a detached spread clone with unchanged authority fields and a deliberately damaged inverse or forward array; it must reach the appropriate recipe failure. Do not replace every supplied recipe with the canonical array, and do not make refusal tests pass only because a newly forbidden object shape fails before the intended direction is exercised.
+5. Add paired healthy/refusal controls for both wrappers: each pin field and path changed independently, wrong epoch, coherent foreign one-byte epoch with valid inverse/forward, and attempts to mutate top/nested exported authority. Assert runtime freezing at every nested node. Use `Reflect.set` refusal or the expected strict-mode exception without changing live authority. A healthy default call and detached-identical proof call must still return the exact fixed predecessor before and after controls.
+6. Recompute the helper's full byte/SHA256/Git-blob pin in both C1 and current-main custody callbacks and generate reviewed fixture successors. Preserve this packet's pins as intermediate evidence. No production H1/Number/receipt change is needed for this extraction repair itself: these fixture files are not the four fixed `geometryCallerContracts`. ROOT separately owns final C1 Number/R2 composition.
+
+## 2. [P2] Recipe cursor checks admit duplicate insertion starts
+
+Location: helper lines 38–73, especially 49 and 55. Input positions may equal `inputCursor`; there is no separate strictly increasing prior input/output start check. That is necessary to permit a single zero-width insertion, but it also permits two insertions at the same input position. There is no supplied fixed target bound during replay; output length is checked only afterwards through a pin.
+
+Concrete existing-epoch example: split the first geometry forward insertion at input318/output318 into `" "` at 318/318 and the remaining insertion text at 318/319, followed by the unchanged other five spans. Both input starts are318. Every current cursor, exact-fragment and nonidentity condition holds, and the full output remains byte-identical to current411837 with the unchanged current pin. Independent static byte arithmetic confirmed that endpoint. This is a recipe-schema/order violation, not a claim that the output is wrong. It remains observable after fixing finding1 because the genuine endpoint pins still match.
+
+Repair the routine with separate previous input and output start positions, requiring strict increase in both while retaining nonoverlap checks against consumed input/output ends. Use the wrapper-selected immutable target size to check output coordinates, safe integer arithmetic, replacement ends, unchanged slices and final tail against the target domain. Retain exact span-key checks and primitive UTF-8 strings. The six/ten authored recipes already satisfy stricter input/output monotonicity, nonoverlap and target bounds in the independent review. Add the split-insertion same-endpoint refusal so endpoint hashes alone cannot mask this gap; add a corresponding duplicate-output/deletion case and fixed target-bound refusal. Keep the existing inverse and forward controls and their paired positive proofs.
+
+## Scope that is statically sound in this packet
+
+The actual helper has only the `node:crypto` import, with no filesystem access, production proof import, receipt lookup or success cache. The literal recipes were independently parsed from the actual TypeScript source, not accepted from the author's extracted JSON.
+
+Whole-byte reconstruction checked all four fixture current→before and before→current successors (5+5 current-main spans, 3+3 canonical489d, 10+10 C1, 2+2 canonical3c6), plus all six geometry inverse/forward and all ten remainder inverse/forward spans: 12 directions, 72 spans. All expected whole-file lengths, SHA256 hashes and Git blobs matched. Fixed canonical spans have strict starts and fit their target domains. The kernel's additional inverse/forward was separately reconstructed with the exact 5477–5586 replacement and old 5477–5857 segment.
+
+The genuine historical domains are:
+
+- Full current H3: 411837 bytes, SHA256 `8575d0f4f66632cb606caf2f94538bd5cb8ef74e89f655e3c1f8f0930de8038c`.
+- Six-span geometry predecessor: 409599 bytes, SHA256 `e3bd76cbcee13e469f8c5c6ec6bafb08e6fc786efa410bd8572b56f9d5193170`.
+- Its exact remainder prefix: 403311 bytes, SHA256 `a38d46359693dd3b63dfd79642a241385e347273bb4cfb06dad177c063a1c375`.
+- Ten-span remainder predecessor: 402646 bytes, SHA256 `0ddf7556360e8937b25ba58b23629533c8042e026a4b6e6fc05df3d1263c97b8`.
+- Historical kernel current prefix: 94641 bytes, SHA256 `4cf63b340b245b0f4f5ef297dc5a4b56b06507e981a7801ffcfb7e5c101f5103`, Git blob `b33536a95c8b88e84f8e7c60c3c39bce3e2c7d82`.
+- Kernel inverse prefix: 94912 bytes, SHA256 `8b7b061100ffe195437058401fa904a65ccee3302322a97aae899e51f5d84f68`, Git blob `8e979e9b3f6bb6831df63bf6a65c38a6098e6a85`.
+
+The direct first94641 bytes of either current411837 or intermediate409599 are not the historical kernel domain. The new current-main acquisition correctly performs both complete historical stages first and keeps the old kernel pins and 109/380-byte substitution. No historical hash rebaseline or fabricated production projection was found.
+
+## Callback and priority review
+
+Reviewed complete changed callback bodies, their registration/table context, full helper body, supplied per-file/combined patch contents, and inverse/forward full source differences. The static registered populations are current-main142+18=160, canonical489d65 retained, canonical3c6235 retained, C1 original362 plus twelve previously reviewed additions plus one extraction-custody case=375. These are authored populations, not executed results; all835 callbacks remain pending qualification here.
+
+The four current-main old physical H3 mutation cases and five canonical489d cases now require an actual Error with exact message `C1 historical authority: full-file pin changed: tests/helpers/ir-runtime-program-policy-evolution.ts geometry current`. Canonical3c6 changes the separately observed three matching H3 mutation cases. Both canonical loops have exactly `[receiptPath, helperPath]`, so the final branch selects H3; missing-path and receipt-digest branches remain distinct. This is bounded to the observed priority failures, not a global error-string substitution. Capture/semantic/raw action selection and healthy calls before/after physical faults remain present. `expectExactH3GeometryPriority` explicitly checks that the action did not return normally.
+
+The new current-main18 comprise complete healthy proof; two wrong-domain prefixes; five actual-byte operands; stale409599; two geometry recipe directions; two remainder directions; three nonprimitive/non-UTF8 inputs; one serialized actual H3 byte5477 control; and one complete helper/import/acquisition custody callback. The physical wrapper still owns exact-target allowlisting, lock/recovery state, synchronous mutation, identity/mode checks and finally restoration. New byte5477 is already allowed. The added callback reads the changed physical target, then verifies exact restoration and healthy acceptance; nothing here permits running these controls concurrently with active shared-source readers.
+
+C1 keeps its preparation source inverse and forward proof and production-export comparison. It uses shared geometry acquisition before remainder inversion, and the geometry fault table still supplies separately corrupted inverse and forward arrays. DATA remains on its existing independent DATA helper. Extraction changes no unrelated production runtime behavior.
+
+The complete helper pin and exact textual import/acquisition assertions in current-main, plus C1 helper pin and two-stage acquisition comparison, bind the reviewed on-disk helper and expected source associations. They do not establish loaded-module identity or protect mutable objects after import; finding1 supplies that missing invariant. They also do not replace ROOT's final cold/warm loader/trace qualification.
+
+## Remaining qualification and ownership
+
+Repair and independently re-review the helper and its dependent custody pins before either private helper execution or live adoption. Preserve every original callback and each added callback; add new regression controls rather than substituting them for existing cases. Keep original physical run68888 records untouched. Its reported counts are ROOT observations, not reproduced evidence from this review.
+
+C1's old receipt/manifest/trace literals intentionally still name the earlier root epoch. This packet does not claim to be composed with Number R2/H1b/rootA2. ROOT must independently author/review those final literal, loader trace, fixed domain, reader routing, cold-export and warm-root controls, preserve the original receipts, then qualify the fully composed source under serialized fault custody. The four-file Number source-proof packet and its final root binding remain separately owned by ROOT.
+
+No J3, Native Linear admission, general runtime, foreign A/B ownership, source handoff or ACK credit follows from this review. Production architecture remains normal generic IR to target; no JavaScript-host substitute or legacy removal is introduced.
+
+## Independently measured packet pins
+
+### tests/issue-3518-canonical-489d-inventory-successor.test.ts
+
+- beforePin: 42937 bytes; SHA256 `15023465ee88de3bfcf091a9791403cadac66a86557f93647640ac9304aaa4eb`; Git blob `cd83955a338a698fcd93ca31b09f586c22af1b77`.
+- currentPin: 43220 bytes; SHA256 `180ca9ec83714d3c2d2db80986cd94f389e17a18f8c953f152bd36d237e154b7`; Git blob `667826ee3b8895115e1cd27a3894c834da175c58`.
+### tests/issue-3518-canonical-3c6-inventory-successor.test.ts
+
+- beforePin: 83305 bytes; SHA256 `f4d0616c2bbc8fa4dd348996df8e94bfeb484a5882abeea7c255ff0786d25bc7`; Git blob `3ed97d8cd9a269f4c6935b076cbb6fbc56d3e287`.
+- currentPin: 83670 bytes; SHA256 `29ca10de2a9e9d9deabf83601e92861616863de76b3d4a1575bdb7209a55b5f6`; Git blob `606968701f1bbc89055531ac162130893b81e971`.
+### tests/issue-3518-current-main-inventory-successor.test.ts
+
+- beforePin: 42019 bytes; SHA256 `1604d72756b54a5380579c5b5138c3d230a29a3fb982237ddf4ea5ba99ec125b`; Git blob `71206b51bba68e0f2f4615aa3d7a6062722da88a`.
+- currentPin: 51241 bytes; SHA256 `e3789701cb00d0a07e835a3f67f9d8bacf0a257da37605af13611bad1d603293`; Git blob `c3e76671f6a8aff78cae71d87d92ac41f95e689e`.
+### tests/issue-3518-c1-current-source.test.ts
+
+- beforePin: 208482 bytes; SHA256 `78e0b0239c59cda7298171861db96685d078201ff7e95042e0a34675768d4338`; Git blob `957a2f330355d6afed0000f0a1211d46c9d287fc`.
+- currentPin: 197087 bytes; SHA256 `d8ff743aa2979a7d22c173bfdebeda188abc3fdf6b28bfb0a1f0dbc052b4fc11`; Git blob `96f5d2fbba5b2a02009f55e912019911fc6f8437`.
+
+New pure helper: 20231 bytes; SHA256 `fb0addab5187bf442d3eb832ecd1d69a00f1b14d5f66e6e2580bf4c7fe895c8f`; Git blob `9a41e42c3e6b44e24f02f25436627db5387f665d`.
+
+shared-h3-fixture.patch: 52832 bytes; SHA256 `c16c635fddf578b74b4b304aa281d7af453bee0b674a615d3dcb61f29c0e7f3d`.
+
+canonical3c6-priority.patch: 1488 bytes; SHA256 `3edf051edffe1b727506d193f3ad0ed47d8785723d8bc91540bd9bd333f4041a`.
+
+
+
+## 2026-10-09 Session B published append proof — partial independent audit
+Authorized coordination comment6080983050 read in full. Fresh GitHub PR6593 is OPEN/ready/HOLD at43b4dc5cee11464df973f45d8c0932dbb17e7452, basecffb28679df96764e295fd2064e0a4ceec643efe, behind. No hold, branch, claim, owned file or queue mutation. Downloaded exact remote Gitblob4e5697d78fe8f8a80e107f4436575893dfb781c3:4814625 bytes, SHA256cf6586b69ed9131f7c92f4c7124dc16840186c3c31568aa1d89cd4aecea6918b. Independent builtin tar review found29 payload members/125205696 bytes plus30 AppleDouble metadata files of163 bytes each and one directory. No unsafe extraction or supplied-script execution. Runner/comparator full hashes match peer publication; receipt code0/signalnull/killedfalse/spawnErrornull/failures[], capture44273881/zero discarded/zero stderr, reporter36total36passed0failed0pending0todo, before/after byte-identical. Parent-terminal record distinguishes tested7ea1ee6e from published43b4dc5c. This remains evidence within a peer-authored archive, not independently observed parent terminal or reproduced graph equality. Full original-baseline/comparator/source physical review pending. Exact-head CI equivalence/linear/parity/changed issue passed; quality and general issue shards still live. Test262 PR stubs provide no actual102-shard conformance credit. Existing holds remain. Read-only audit artifacts /private/tmp/js2-6593-session-a-published-review-20261009.
+
+
+Independent B graph comparison addendum: authenticated original baseline blob57d3060ac69f5fbd60d51916b8a94d179f16aa10,44267645 bytes/SHA256bb1f7239ff371e6f373d3b45450a458f88c319a2d47b397b080681ce1d8f2b3e. All36 complete observation envelopes and completion match candidate as full parsed JSON values; provenance differs and requires separate qualification. Independent builtin comparison, no supplied comparator execution. Evidence /private/tmp/js2-6593-session-a-published-review-20261009/independent-full-graph-comparison.json. No hold release.
+
+
+## 2026-10-09 full Astra plan — terminal three-fixture acquisition repair
+Full plan SHA256 b4bf3ed916e12b669beb73c0f2f3d86c70e4100686898f6820868fafeba82bc9. Sol6.1High owns ONLY three private test files listed below, not helper/C1/Number/production. Acquisition-only successor first; callback priority changes require newly reached runtime evidence, separately preserved. ROOT retains integration/qualification.
+
+# Terminal policy fixture failures: bounded implementation plan
+
+Prepared for ROOT adoption into issue 6920, Native Linear numeric-vector shared source handoff and integration plan. Reviewer/planner: Codex GPT-6 Astra High, 2026-10-09.
+
+## Decision and scope
+
+Repair the historical H3 operand acquisition in exactly these three test files:
+
+1. `tests/issue-3518-nested-stackification-policy-evolution.test.ts`
+2. `tests/issue-3518-program-validator-policy-evolution.test.ts`
+3. `tests/issue-3518-wasmgc-helper-policy-evolution.test.ts`
+
+Reuse the separately owned, independently reviewed and repaired `tests/helpers/ir-independent-policy-history-fixture.ts`. Its P1 immutable fixed-authority and P2 strict replay fixes are prerequisites to execution or adoption, not work for this three-file owner. No production/helper/manifest/root/receipt edits, new shared exports, legacy removal, protocol change, Native admission change or JavaScript-host substitute belong in this task. ROOT owns composition and qualification; the other helper worker owns helper/C1/current-main. These three files are not the four fixed H1 geometry caller contracts, so this three-file repair alone does not require a Number caller receipt successor.
+
+This is a plan only. No test callbacks, compiler, target module, fault injection, Git operation or live-source mutation was run. Private artifacts only were written. `STATIC-EVIDENCE.json` preserves original ordered callback records and all twelve complete raw failureMessages from the terminal result, independently measured file pins, historical domains and seven source-map recipe bodies. `static_domains.py` uses original Python literal parsing and builtin byte/hash arithmetic; it does not execute candidate TypeScript.
+
+## Actual terminal evidence and root cause
+
+The authoritative original policy run68888 is terminal exit1. Its saved `policy-results.json` reports2256 callbacks,2224 passed,32 failed. For this bounded scope:
+
+| File | Original callbacks | Passed | Failed | Earliest actual failing frame |
+|---|---:|---:|---:|---|
+| nested-stackification | 53 | 49 | 4 | `withAuthorityFault:475`, SHA comparison before physical action |
+| program-validator | 143 | 139 | 4 | `withAuthorityFault:840`, SHA comparison before physical action |
+| wasmgc-helper | 135 | 131 | 4 | `independentSourceMapPolicyPredecessor:1741`,402646 length assertion, called by `withAuthorityFault:1232` |
+
+All twelve are the H3 helper path crossed with missing/mutation and semantic/raw APIs. They are **preflight authentication failures**. The fault callback was not reached, and its old priority expectation is not the error recorded by this run. Keep the original331 records and twelve failures intact; they are neither ten/twelve new outer-H1 observations nor passing fault controls.
+
+Nested currently computes `original.subarray(0,228005)` directly from current411837 and compares it with the old fixed helperPrefix. Its actual SHA is `d7093254857821daa9dff865bafe091e9a9ecd882711f86354313c4adbb3a04a`; the old expected SHA is `2ccb2f22084b78c45a4550b8b4e3b7048748a1e719b357155883a35e5030bea3`.
+
+Program-validator similarly computes current first254018. Its actual SHA is `c88dd003a09abc17282fcc8356247fe2924174a65d0e3e2db7773e3f15b804f3`; the old expected SHA is `5130184ffe112a67a58081ed9074e5f2097ad9400279390ab8f9a825b4952bbe`.
+
+WasmGC already has an independent seven-edit source-map proof. It intentionally requires a402646-byte historical operand, checks its old hash, then inverts/replays the first390936 bytes to390466 and takes first292423. The wrapper incorrectly gives it current411837 directly. Do not change its402646 requirement to411837, truncate raw current to402646, or delete its proof.
+
+## Exact historical domains to retain
+
+The reviewed pure helper's complete path is:
+
+`physical411837 → six geometry inverse edits → whole409599 → exact403311 prefix → ten remainder inverse edits → whole402646`.
+
+Both forward directions are independently supplied and must reconstruct the exact preceding source; the old helper's current/before fixed pins remain independent of callers and receipts after its separate repair. Whole current411837 must be authenticated before any prefix is sliced. The old409599 intermediate is not admissible as a new current operand.
+
+Then use the following fixture-specific paths:
+
+- Nested: `whole402646 → first228005`, with existing `expected.helperPrefix` length/hash/blob unchanged.
+- Program-validator: `whole402646 → first254018`, with existing `expected.helperPrefix` unchanged. The first source-map outer edit starts254123, after this prefix, so no source-map inversion belongs here.
+- WasmGC: `whole402646 → existing independentSourceMapPolicyPredecessor → first390936 → seven old source-map inverse edits → whole390466 → first292423`. Preserve the original seven edits, both reconstruction loops,402646 and390466 fixed checks and final292423 pin. None of the seven can be omitted merely because only three are within the final292423 prefix: the original proof authenticates the complete390936/390466 domains and must remain whole.
+
+Static arithmetic independently confirmed all these endpoints and both directions of all six/ten/seven recipes. The seven source-map coordinates remain:
+
+| Before | Current |
+|---:|---:|
+|254123|254123|
+|285052|285061|
+|285259|285481|
+|322798|323030|
+|347924|348193|
+|362950|363256|
+|376430|376818|
+
+No production helper result was used as the independent expected source. Complete full pins appear in the appendix/evidence.
+
+## Implementation steps
+
+### A. Freeze ownership, inputs and the dependency
+
+Start a private three-file candidate from the actual originals pinned below, preserving all original bytes in before artifacts. Do not write ROOT's integration directory or the helper worker's packet. Record the exact repaired shared-helper full pin and independent review decision as an external dependency. The currently reviewed unrepaired20231-byte helper is evidence for literal history only; do not execute or ship it. Do not guess its successor hash while its owner is still working.
+
+Require the final shared API `independentlyAcquireHistoricalPolicyHelper(current: string): string` (or the reviewed unchanged equivalent) to authenticate fixed current411837, invert/forward geometry, authenticate fixed403311, invert/forward remainder and return fixed402646. Its default authority graph must be deeply frozen, and optional recipe controls cannot select source/target pins/path. If the owner changes that API, adapt only these three imports/calls after reading the final source; no parallel helper repair.
+
+### B. Add one local acquisition adapter per test file
+
+Import only the existing pure helper API needed by each file. Add a small nonexported local function taking the saved physical `Buffer`, obtaining the402646 historical result via the shared helper, and returning the fixture-specific old prefix. Prefer one local adapter used by both `withAuthorityFault` and the new controls, so the tested acquisition is exactly the wrapper acquisition.
+
+For nested, the adapter calls the pure helper with the original buffer's primitive UTF-8 text, converts the authenticated returned text to a Buffer and takes first228005. For program-validator, do the same with254018. For WasmGC, call the pure helper, convert to Buffer, pass that402646 buffer into the existing `independentSourceMapPolicyPredecessor`, then take292423. Keep `independentSourceMapPolicyPredecessor` and `sourceMapPolicyOuterExpected` byte-for-byte if possible; the missing operation belongs at their caller, not inside their historical contract.
+
+Use exact full-source input, not `raw()` policy JSON, a prefix, receipt-selected expected bytes, a production `readHistorical` projection, or cached successful content. The source is the very same `original = readFileSync(target)` buffer captured under the current wrapper's lock. The shared helper validates primitive UTF-8 and fixed full pins. Optionally assert an exact Buffer→UTF8→Buffer round trip in the adapter, but do not coerce arbitrary inputs or introduce a fallback.
+
+### C. Change only helper-path preflight acquisition in the existing wrappers
+
+Replace each old `authenticated` helper branch with its local adapter. Leave every nonhelper branch, target allowlist, original authority path, original receipt/source pins and the final old prefix comparison intact. Add/retain the old Git-blob comparison for the helper prefix alongside length/SHA if a new local assertion is needed for the controls; never derive that expected blob from the observed current input.
+
+The acquisition result is only evidence permitting a physical fault on an already authenticated current file. It is not the file to back up, mutate, rename or restore. Keep these wrapper variables on the original whole physical buffer:
+
+- `original`, copied `mutated`, physical `target`, mode, inode/device and recovery file;
+- byte0 XOR mutation and exact unchanged tail;
+- missing rename and exact ENOENT witness;
+- re-read/equality checks before fault, after fault and after restoration;
+- synchronous `action()` invocation inside the existing restoration `finally`;
+- cleanup only after verified restoration, and lock/recovery retained on unsafe restore;
+- aggregated operation/recovery exceptions propagated after restoration attempts.
+
+Authenticate once before the physical fault. Do not reacquire a healthy historical fixture from backup inside `action()`, intercept the production reader, or replace the missing/mutated physical source with a synthetic reader result. The production API must observe the actual fault. Do not expand the physical byte allowlist or paths. Existing byte0 controls suffice for execution reachability; extra suffix negatives below are pure in-memory operands.
+
+### D. Preserve original callbacks, tables and behavior assertions
+
+Keep all original53/143/135 titles, ordered parameter populations, healthy policy profiles and before/after action calls. Their original callbacks are the valuable paired production controls. After acquisition repair, all four H3 cases per file must actually enter their original callback; the missing cases must reach exact ENOENT code/path checking and restore full physical identity/bytes before healthy recapture.
+
+The nested callback currently branches to `nested stackification policy evolution: complete predecessor helper prefix changed` for helper mutation. Program-validator uses `complete predecessor helper prefix changed`. Source tracing predicts a newer outer-H1 failure: both production authenticators call `remainderPolicyHistoricalPrefix`, which calls `c1GeometryInstrumentPredecessor` before the unchanged old prefix guard. Its `geometryInstrumentBefore` pins the whole current source at H1 line1502. WasmGC calls `captureC1HistoricalAuthority` first and its callback already accepts `/full-file pin changed/`.
+
+**Do not record these predictions as observed failures.** First produce a reviewable acquisition-only successor; ROOT's authorized isolated qualification should record whether each formerly blocked callback was reached and the exact resulting error. Preserve that intermediate artifact and its observations. A separate bounded priority delta may then change only the helper+mutation branch for the observed semantic/raw cases, with a literal equality assertion against:
+
+`C1 historical authority: full-file pin changed: tests/helpers/ir-runtime-program-policy-evolution.ts geometry current`
+
+Use an assertion helper that proves no normal return, requires an Error and compares `.message` exactly. Keep missing branches, receipt branches, all other authority error checks and physical fault populations unchanged. WasmGC may tighten its two helper-mutation regex assertions to the same literal only after those actual callbacks confirm it. If the actual message differs, stop that priority delta and investigate the exact source/read ordering; never broaden a regex to hide it. This two-stage sequence avoids relabeling twelve preflight failures as twelve priority failures or blindly replacing old strings across the cohort.
+
+### E. Add eight focused, pure acquisition/custody cases per file
+
+Append a new describe group, retaining the original populations. Reuse the local wrapper adapter, saved physical healthy source and fixed independent literals. All refusal cases have the same complete healthy acquisition before and after; no filesystem mutation is necessary for these additions.
+
+1. One healthy case: independently assert full current source pin, exact402646 output pin, and exact fixture prefix length/SHA/Git-blob. For WasmGC also assert the existing390936/390466 seven-edit reciprocal proof and292423 result. Check that input bytes remain unchanged and a second acquisition is equal.
+2. Three wrong-current-epoch cases: pass the independently recovered409599,403311 and402646 stages as if they were current to the local adapter; each must refuse. Obtain these stages through the reviewed fixed APIs or literal independent reconstruction, not by weakening the adapter's entry domain. Use explicit expected lengths and hashes. Stage primitives alone do not authorize a historical input as current.
+3. Two same-size current-byte operand cases: byte0 and final byte411836, changed only in detached buffers; the local adapter must refuse both, including the suffix outside every fixture's final old prefix. Assert same length, exact intended changed byte and unchanged remainder. The suffix refusal proves full current authentication before slicing.
+4. One old-prefix-domain case: show that the old raw physical prefix differs from the unchanged expected prefix, while genuine complete acquisition matches it. For WasmGC additionally show that passing raw411837 to the unchanged402646 source-map function is refused, and the genuine402646 input succeeds. Never install raw prefix hashes as expected authorities.
+5. One complete helper/caller custody case: pin the final reviewed shared-helper file with literal bytes/SHA256/Git blob; verify the exact single import association and the adapter call used in `withAuthorityFault`; authenticate through that adapter. This pins actual dependency source and association, not merely an unused helper import. Avoid generated expected values from the helper's own claims. Any helper successor requires a reviewed new custody pin in these fixtures.
+
+This specifies +8 each: nested61, program-validator151, WasmGC143, total355. Original331 remain identifiable and ordered; new24 do not replace the12 failing records. If legitimate integration needs extra cases, append them and report the new exact denominator rather than preserving this number artificially. The shared helper owner separately owns its inverse/forward recipe faults, changed authority/path tests and deep-freeze regression cases; do not duplicate or weaken that shared implementation here.
+
+## Reviewable handoff and ROOT qualification sequence
+
+1. Provide exactly three candidate test files, exact before/current byte/SHA256/Git-blob pins, isolated acquisition-only patch, and complete independently authored inverse and forward recipes reproducing each whole original/current test source. Preserve all existing fixed literals, source-map recipes and raw/semantic policy proofs. Also provide a structured static callback membership/order diff with original331 plus appended24.
+2. Bind the final shared-helper dependency pin and its actual independently reviewed immutable-authority/replay repair. Read the complete new callback bodies and actual copied targets, not only the summary or patch size. Verify no fourth source file changed and no production/receipt/root edits slipped into the packet.
+3. ROOT alone composes the reviewed candidate into an isolated qualification copy with the exact Number/H1/R2/root and C1 epoch chosen for that run. These three test fixtures cannot infer or repair ROOT's still-pending epoch/trace binding. Record all concrete input pins and load paths before execution; do not count the original terminal records as successor passes.
+4. Run the scoped original plus new cases through the real harness once helper fixes and complete composition are reviewed. Physical fault callbacks must execute serially on an exclusive copy; per-file scratch locks do not serialize different files that mutate the same H3 target. Record each reached callback, exact error, restoration and healthy recapture. No concurrent policy suite/compiler may read the fault target.
+5. If only the predicted nested/program helper-mutation priority assertions newly fail, preserve those raw failures and the acquisition-only source pins, prepare the bounded priority delta from actual messages, independently review it and execute the necessary changed controls with healthy pairing. Do not edit unrelated errors or lose the acquisition-only record.
+6. After scoped checks pass with exact denominators, ROOT determines the complete composed policy cohort rerun required by the broader task. Hashes or static reciprocity do not grant runtime, Native, foreign owner handoff, J3, root-gate or ACK credit. Keep the original2256/2224/32 terminal result immutable evidence.
+
+## Acceptance criteria
+
+All three wrapper helper preflights authenticate full current geometry/remainder history before old prefix checks, with WasmGC retaining its independent seven-edit source-map stage. All old prefix pins/recipes and source-map endpoint pins remain unchanged. Current physical source is still the sole fault/restore target. No source outside the three fixtures changes under this owner. Original331 callback membership, names, ordering and parameter domains remain intact; new controls are appended. Actual source-aware callback priority changes, if required, are separate reviewed deltas backed by newly reached failures. The final dependency source is fully pinned and independently immutable; no future or caller-selected epoch is accepted. Runtime acceptance belongs only to ROOT's later recorded execution.
+
+## Exact original source and historical pins
+
+### tests/issue-3518-nested-stackification-policy-evolution.test.ts
+
+- pin: 38707 bytes; SHA256 `1435370ff85e04e140e55ec10e5be47d657fee26f9b36d3cb34e1cd31e876f78`; Git blob `c188ac97bd74bc90c2c9ac4fa4bd6acf1fcb91a9`.
+- historicalPrefix: 228005 bytes; SHA256 `2ccb2f22084b78c45a4550b8b4e3b7048748a1e719b357155883a35e5030bea3`; Git blob `c762f24f20ba032a081575ac10f04d06967cc538`.
+### tests/issue-3518-program-validator-policy-evolution.test.ts
+
+- pin: 50265 bytes; SHA256 `17e4e350d4c454b380d7d9cc693bdeecfdff50d09b9cae14253f9e07e6d47ff8`; Git blob `4155196f333e74b25840a2a48957e1087f0f830e`.
+- historicalPrefix: 254018 bytes; SHA256 `5130184ffe112a67a58081ed9074e5f2097ad9400279390ab8f9a825b4952bbe`; Git blob `a2ea1676f20284a27c3a24d9d720d3ed53b5ebe0`.
+### tests/issue-3518-wasmgc-helper-policy-evolution.test.ts
+
+- pin: 72237 bytes; SHA256 `900c83234043caabfda42b340f81a1b014c1252ee3a647aa861f034572d5c674`; Git blob `d646ed5b22dd2493ef1e726e6106d80c67289a9c`.
+- historicalPrefix: 292423 bytes; SHA256 `22e2dc2bd4ca495a661708f7ef4591aa77567ac55889bd19fb845788e32d21f4`; Git blob `eb100dc9b4152f493d0d6584aeeb983cb724bc4d`.
+
+### Whole historical stage pins
+
+- 411837 bytes; SHA256 `8575d0f4f66632cb606caf2f94538bd5cb8ef74e89f655e3c1f8f0930de8038c`; Git blob `15ae96d3887a5eb61fc6404df098d58f0d96b2f4`.
+- 409599 bytes; SHA256 `e3bd76cbcee13e469f8c5c6ec6bafb08e6fc786efa410bd8572b56f9d5193170`; Git blob `2dbe6d7fa227cb7463d73d20d847c433a933dfbc`.
+- 403311 bytes; SHA256 `a38d46359693dd3b63dfd79642a241385e347273bb4cfb06dad177c063a1c375`; Git blob `763d42a7d7ab7278149cbc7258f3e90d19371408`.
+- 402646 bytes; SHA256 `0ddf7556360e8937b25ba58b23629533c8042e026a4b6e6fc05df3d1263c97b8`; Git blob `201e131a7a67df8a34256f63ee0205b407794ad1`.
+- 390936 bytes; SHA256 `9ce3265577df5fc340276f25d7edf8c9df5f0f5c2d3803cae14fba47ce68b814`; Git blob `9d1d71f2e4b652608a8ba38745d50858385e954a`.
+- 390466 bytes; SHA256 `bb2d3a7e6bcfb54237cb03fbe4bdc61f128a508ccfb7425bdde6a150d0add55c`; Git blob `c5a6659926bd635a4fe56d7459d120cffa9eeb58`.
+
+Original terminal policy-results.json: 870676 bytes, SHA256 `4b1529f7ab8879a8e454d1a8ca167482c3124b4f5564640d8c84ed2a87e1bde3`, Git blob `9f59d2663d9bfa2614722cf7360e23a056017bdb`.
+
+
+Session B review addendum: all1901 canonical source Git blobs (42152455 bytes/mode100644) authenticated independently and SHA256 matched to peer source records; zero mismatch. Independent JSON data/ref association binds provenance to tested7ea1ee6e/source1716,1915 before/after/freeze records and38 rawstdout envelopes. Required quality and advisory CI archives downloaded, API digest verified: quality4548890/SHA8b4e3ea6a501d52872bd525eda81cda246aae62741adf7801295f61224990581, advisory3460738/SHA7961813eab17e736eab3f08b4622c159a319686f72fecb8eba3d5efceb4a4448. Both36pass0fail0pending0todo; all36 full observations and completion match unchanged original baseline;38 raw JSON envelope joins exact;1915 before/after unchanged. Actual CI checkout651806ef parents freshly verified canonical7d9e8ce3 and exact published43b4dc5c. ToolchainNode25.9/V8 14.1 distinct from B localNode22. Further full validator/source-diff review and general CI shards still pending. No hold release or delivery. Root source vspeer preliminary comparison identified five existing AE28 analysis differences, retained and superseded for canonical correspondence by complete canonical blob audit; no root source overwrite.
+
+
+2026-10-09 CI review completion addendum: independently verified both downloaded quality/advisory artifacts against Actions API ZIP digests and checked all36 full observation envelopes plus completion against the retained original trusted graph baseline. Both exactraw38-envelope joins,1915 before/after equality,36/36 reporter,zero discarded/stderr/faults. Finite JSON provenance/schema/source-config-test joins verified against synthetic checkout651806ef (parents canonical7d9e8ce3 and published43b4dc5c),Node25.9/V8 14.1; all1901 source hashes,nine config hashes,fixed test/fixture equal qualified packet. API quality job113820639859 now completed success; eight general issue shards remain live. No source-diff/normal protected-queue completion implied. Authoritative evidence /private/tmp/js2-6593-session-a-published-review-20261009/{independent-ci-artifact-review.json,independent-ci-provenance-source-joins.json,canonical-source-blob-review.json}. Threefixture plan adopted fully and original Sol6.1High worker resumed ONLY three privatefiles with acquisition-only delta; helperworker remains disjoint.
+
+
+Independent B source-control review: read complete1221-line diff/44512 bytes from genuine e335runner87256/5e41b0d4 to published121504/ddf52b81. Full source approval/decoder/159 oldcontrol body preservation inspected; ANSI literal spelling remains same value. Real close barrier/partial writes/sharedcap/fault latching/archive cleanup inspected; no bounded source defect identified. ROOT repeated exact published runner --self-test Node25.9, actualsession86065 terminalexit0,197 controls passed. Threeexpected Git negative diagnostics retained. No compiler/Vitest child or actualfault/termination trial. Source/control evidence remains independent of CI fullgraphs/provenance. General CI shards remainlive, existingholds retained. Report /private/tmp/js2-6593-session-a-published-review-20261009/runner-independent-review.json.
+
+
+## 2026-10-09 full Astra P1/P2 clearance and isolated qualification release
+Claim60335-ngn0jcr6 re-read in-progress. Full report SHA256 5d2f81da4972d0479dcb17629d767fc0eebc90a9451601d32ce1e4ae61ea7812. Exact helper24394/09bf4df5 now statically cleared for isolated execution and finaldependency pin binding in threefixtures. Runtime0 remains; ROOT will qualify actualmodule/API on privatecopy preserving complete before/after identities. ROOT found the three new custody callbacks used fs.readFileSync(import.meta.url as string), which treats file URI as a path; original Sol owner is correcting only that expression and retaining intermediate packets.
+
+Next task: original Sol6.1High helper owner implements ONLY separate private C1 final Number/H1b/R2/A2 composition using already fully adopted Number implementation plan and caller-proof supplement plus full fourfile Astra review. NewcandidateC1+.tmp only, no helper/Number/H1/root/receipt or otherworker files. Preserve complete R1/A1/N1/H1a epochs, literal/recipe/trace independence, actual cold loader versus warm reread distinction and all original375 cases. No runtime or liveactivation before full review; standalone qualification remains ROOT responsibility.
+
+# Shared H3 P1/P2 repair — independent static re-review
+
+**Bounded static clearance. Both findings from the prior review are closed in this exact repair. No remaining source blocker was found in the three-file repair or its six added callback bodies. Runtime execution remains zero.**
+
+Reviewer: Codex GPT-6 Astra High, 2026-10-09. Candidate: `/private/tmp/js2-6920-shared-h3-fixture-sol-candidate-20261009`. Previous decision: `/private/tmp/js2-6920-shared-h3-astra-review-20261009/REVIEW.md`. This report supplements that review; it does not overwrite its original findings or intermediate pins.
+
+Only this new private review directory was written. No target module import, helper/test callback, compiler, physical fault, live source edit, issue edit, Git operation, claim or ownership change occurred. The author reports a typecheck and independently modeled controls; those are author evidence, not tests rerun by this reviewer. This review inspected the full409-line helper, complete bounded three-path patch, complete three new two-row callback tables and local callback support functions, intermediate/final source bytes and all intermediate/composed inverse/forward recipe bodies.
+
+## P1: immutable, independent expected authority — closed statically
+
+The actual helper is24394 bytes, SHA256 `09bf4df558c226a1291ec07d279f0c6f3172beefff6a61f588395a367231bff7`, Git blob `a3d9aca3efd83bfdecc9001b38d8bf7c84b071ce`.
+
+`freezeEpoch` at lines39–47 freezes every reachable object in these specifically authored literal graphs: both nested pins, each inverse/forward span, both arrays and the top epoch. All other leaves are primitives. Both exports invoke this local freeze at literal construction; they are constant module bindings. There is no omitted nested object in either graph. The operation is intentionally limited to these known literal epochs; it does not freeze caller fault operands.
+
+`fixedRecipes` at lines63–80 checks the exact ordered own top keys, primitive path equality, exact ordered own pin keys and strict equality of each pin field against the locally selected immutable epoch. Since the expected fields are primitive number/strings, strict equality rejects boxed/coercible values without conversion. `ownDataRecord` uses `Reflect.ownKeys`, including symbols and nonenumerable keys, and own data descriptors; it never reads a getter's value. It snapshots the accepted data values into a null-prototype record. Missing, extra, accessor and inherited-instead-of-own authority fields cannot substitute an expected pin. This is an own-data contract, not a claim that arbitrary Proxy reflection has no traps.
+
+Geometry and remainder wrappers at lines370–405 select different fixed local authorities and use only those authorities for current, recovered and forward-result pin checks and both replay target lengths. The optional proof supplies only the two recipe arrays after its metadata matches. The prefix slice at385–390 uses the frozen fixed remainder length and pin. Neither caller fields nor receipt/API results define expected hashes or sizes. The old foreign `x↔y` proof cannot pass the fixed path/pin checks, and mutating an exported default pin cannot change the trusted values.
+
+The legitimate fault mechanism is preserved: detached identical proof objects are accepted structurally; their supplied recipe arrays actually reach `replay`. The repair does not silently replace them with canonical arrays. Independent inverse and forward corruption is therefore still testable. Primitive source validation runs before optional proof inspection, and every successful call independently rechecks full source endpoints. No successful-source cache, filesystem import, production proof dependency or receipt-selected epoch was added. The only helper import remains `node:crypto`.
+
+## P2: strict span starts and immutable target bounds — closed statically
+
+`replay` at81–140 now tracks previous input/output starts independently from consumed ends. It requires strictly increasing starts in both domains, nonoverlap against both consumed ends, safe primitive integer coordinates, input bounds and exact unchanged-output coordinates. This rejects the previous same-input split insertion and the dual same-output split deletion even when their final whole bytes would match the genuine pin.
+
+Every replay receives its target size from the wrapper-selected immutable pin. Output start, unchanged span end, replacement end and final tail are checked against that target, including safe integer arithmetic. Source fragment end is bounded and the exact source bytes must match. Span elements and fields are captured through own data descriptors, exact keys are retained, nonidentity edits remain required, and both input fragment strings remain primitive round-trip UTF-8. Final result validation additionally compares encoded output with the produced buffer, so byte concatenation cannot silently replace invalid UTF-8. The final whole target pin and reciprocal equality remain mandatory.
+
+These stricter checks preserve every canonical six-span geometry and ten-span remainder direction. The literal path, pin and recipe values in the final helper are byte-value identical to the previously reviewed literal data. No current/future source epoch was added and none of the fixed domains was loosened.
+
+## Added callback review
+
+There are three `it.each(["geometry", "remainder"])` tables: six new callbacks. `independentEpochControl` chooses the actual full current source for geometry and the authenticated403311 prefix for remainder. Its paired healthy operation checks the fixed recovered predecessor, accepts a detached identical proof, and reruns the original historical kernel proof. Every refusal/mutation operation receives healthy calls before and after. `expectIndependentProofRefusal` proves no normal return, requires Error and compares the exact intended stage message.
+
+1. **Two authority substitution callbacks:**44 refusal operands each,88 total. They cover path changes; every before/current bytes/SHA256/Git-blob field; missing top fields; extra string/symbol top fields; missing/extra string/symbol pin fields; wrong epoch; the coherent foreign one-byte inverse/forward proof; top/pin getters with a zero-read witness; boxed/coercible pin values with zero-coercion witnesses; and boxed path. These controls do not compute expected valid epoch hashes from the suspect proof. Computed one-byte pins belong only to the deliberately foreign negative operand.
+2. **Two freeze callbacks:**17 geometry nodes and25 remainder nodes,42 total. This exactly enumerates top+two pins+two arrays+all12 or20 spans. Each checks `Object.isFrozen`, unsuccessful `Reflect.set`, unchanged full literal serialization and paired healthy acquisition. The node graph coverage matches the actual literal structure. These assertions remain authored until executed; this review grants no runtime freezing result.
+3. **Two replay callbacks:**12 fault operands each,24 total. The split-insertion forward and split-deletion inverse cases retain metadata and otherwise valid original recipe data, reaching the new strict-input or strict-output guard respectively. The remainder first edit is a replacement; the split still creates the same duplicate-start violation without relying on an empty original fragment. Output-start, unchanged-output, replacement-output and final-tail faults address their named bounds. Both independent directions are separately damaged, and both input/output unsafe integer fields are tested in each direction. Static tracing matches the asserted messages: damaged first replacement shifts the next output coordinate; omitted final inverse edit fails final-tail size; the bound cases stop at their intended ordered checks. None relies on an authority-key refusal to impersonate a recipe-direction failure.
+
+The154 authored operations are nested checks inside six callbacks, not154 extra callbacks. No callback has been executed here. Previously added primitive source, raw/geometry prefix, stale409599, physical byte5477 and original inverse/forward controls remain intact.
+
+## Preservation and whole-byte evidence
+
+An independent Python literal parser read both epoch objects from the actual final helper and compared their complete primitive data with the actual preserved20231-byte helper. Equality holds for both full objects, including all recipe strings and coordinates. The parser then independently reconstructed all complete historical stages and both directions, retaining the old94641/94912 kernel inverse and forward and its fixed hashes.
+
+The independent byte check covered:
+
+- All three intermediate→final and final→intermediate repairs: helper18+18 spans, current-main2+2 spans, C1 one+one span; six directions,42 spans.
+- All four original fixture→final and final→original proofs: eight directions,40 spans.
+- Geometry and remainder independent inverse/forward: four directions,32 spans.
+- Separately, the exact old kernel inverse/forward at5477–5586 and5477–5857.
+
+That is18 full-file/history directions and114 spans, plus the kernel pair. Every endpoint byte length, SHA256 and Git blob matched the independently measured actual file/stage. The complete recipe bodies were read, not inferred from recipe counts. `independent-static-evidence.json` records full pins and counts; `inspect_static.py` records this original builtin-only verification.
+
+C1's complete current source is exactly its preserved intermediate source with only the three custody pin literals changed. Current-main's complete previous source is exactly the prefix of its new source after that same custody substitution; all new support functions and three tables are appended. Thus every previous callback, title, parameter table, actual action body, physical fault wrapper, import/acquisition association and error-priority assertion survives byte-for-byte except the intended helper pin. Both canonical489d and canonical3c6 are byte-identical to the previously reviewed packet. The bounded repair patch contains exactly three paths.
+
+The authored populations are current-main166 (original142+earlier18+new6), C1375 (original362+reviewed12+earlier custody1), canonical489d65 and canonical3c6235:841 total,0/841 executed in this review. Original input/source populations and old68888 terminal results were not modified. `callback-custody-static.json` records the source-preservation checks and derived operation counts.
+
+## Qualification obligations and scope of clearance
+
+ROOT may adopt this exact repair for isolated execution. The helper's immutable fixed authority and replay checks no longer block the three-terminal-fixture author from pinning this exact dependency. That author owns only its three terminal test fixtures and must retain this helper pin, with no helper/source edits.
+
+Runtime qualification still must execute the actual six new callbacks and retained original populations, demonstrate getter/coercion witnesses, runtime freezing, intended recipe direction messages, healthy pairing and source preservation. Physical fault controls must remain serialized on an exclusive copy. Static hashes and modeled byte transformations do not prove loaded-module identity or real fault restoration.
+
+C1's old manifest/receipt/trace literals remain intentionally uncomposed with Number R2/H1b/rootA2 in this packet. ROOT still owns that independent final epoch and reader/trace binding, cold exports/warm root and complete policy/source qualification. This clearance does not authorize silent pin adjustment for a later helper version; any byte change requires a reviewed successor and updated independent custody pins.
+
+No Native admission, full runtime, source-resource equivalence, J3, foreign A/B ownership, handoff/ACK or architecture-completion claim follows. Normal generic IR-to-target architecture and retained legacy remain unchanged.
+
+## Independently measured intermediate and final pins
+
+### tests/helpers/ir-independent-policy-history-fixture.ts
+
+- beforePin: 20231 bytes; SHA256 `fb0addab5187bf442d3eb832ecd1d69a00f1b14d5f66e6e2580bf4c7fe895c8f`; Git blob `9a41e42c3e6b44e24f02f25436627db5387f665d`.
+- currentPin: 24394 bytes; SHA256 `09bf4df558c226a1291ec07d279f0c6f3172beefff6a61f588395a367231bff7`; Git blob `a3d9aca3efd83bfdecc9001b38d8bf7c84b071ce`.
+### tests/issue-3518-current-main-inventory-successor.test.ts
+
+- beforePin: 51241 bytes; SHA256 `e3789701cb00d0a07e835a3f67f9d8bacf0a257da37605af13611bad1d603293`; Git blob `c3e76671f6a8aff78cae71d87d92ac41f95e689e`.
+- currentPin: 60872 bytes; SHA256 `2db4175242f2d1200c1be2470143cafe2c03b9e34da9077e1b8c6783c91d6264`; Git blob `52676a07dd9a36b81e3a702ce0db0c4ebff724e9`.
+### tests/issue-3518-c1-current-source.test.ts
+
+- beforePin: 197087 bytes; SHA256 `d8ff743aa2979a7d22c173bfdebeda188abc3fdf6b28bfb0a1f0dbc052b4fc11`; Git blob `96f5d2fbba5b2a02009f55e912019911fc6f8437`.
+- currentPin: 197087 bytes; SHA256 `0b769473c638eb2e856989f2b5eae58811c73bff911eb6dc04959b5cf4ac03ae`; Git blob `9b3862eaf00ec647cb94adf7b63198d5139a04a0`.
+
+### Complete original fixture proof endpoints
+
+tests/issue-3518-canonical-489d-inventory-successor.test.ts
+
+- beforePin: 42937 bytes; SHA256 `15023465ee88de3bfcf091a9791403cadac66a86557f93647640ac9304aaa4eb`; Git blob `cd83955a338a698fcd93ca31b09f586c22af1b77`.
+- currentPin: 43220 bytes; SHA256 `180ca9ec83714d3c2d2db80986cd94f389e17a18f8c953f152bd36d237e154b7`; Git blob `667826ee3b8895115e1cd27a3894c834da175c58`.
+
+tests/issue-3518-canonical-3c6-inventory-successor.test.ts
+
+- beforePin: 83305 bytes; SHA256 `f4d0616c2bbc8fa4dd348996df8e94bfeb484a5882abeea7c255ff0786d25bc7`; Git blob `3ed97d8cd9a269f4c6935b076cbb6fbc56d3e287`.
+- currentPin: 83670 bytes; SHA256 `29ca10de2a9e9d9deabf83601e92861616863de76b3d4a1575bdb7209a55b5f6`; Git blob `606968701f1bbc89055531ac162130893b81e971`.
+
+tests/issue-3518-current-main-inventory-successor.test.ts
+
+- beforePin: 42019 bytes; SHA256 `1604d72756b54a5380579c5b5138c3d230a29a3fb982237ddf4ea5ba99ec125b`; Git blob `71206b51bba68e0f2f4615aa3d7a6062722da88a`.
+- currentPin: 60872 bytes; SHA256 `2db4175242f2d1200c1be2470143cafe2c03b9e34da9077e1b8c6783c91d6264`; Git blob `52676a07dd9a36b81e3a702ce0db0c4ebff724e9`.
+
+tests/issue-3518-c1-current-source.test.ts
+
+- beforePin: 208482 bytes; SHA256 `78e0b0239c59cda7298171861db96685d078201ff7e95042e0a34675768d4338`; Git blob `957a2f330355d6afed0000f0a1211d46c9d287fc`.
+- currentPin: 197087 bytes; SHA256 `0b769473c638eb2e856989f2b5eae58811c73bff911eb6dc04959b5cf4ac03ae`; Git blob `9b3862eaf00ec647cb94adf7b63198d5139a04a0`.
+
+- shared-h3-p1-p2-repair.patch: 22253 bytes; SHA256 `4836644e9cbac63eb871b806963e5c060560bf3446579ddeb477d40014e269dd`.
+- shared-h3-fixture.patch: 66883 bytes; SHA256 `997ec1e7de62155e8383e2750b80f377f1a0730d2fcc3201dfef2f575e4b6e31`.
+- canonical3c6-priority.patch: 1488 bytes; SHA256 `3edf051edffe1b727506d193f3ad0ed47d8785723d8bc91540bd9bd333f4041a`.
+
+
+
+2026-10-09 ROOT direct helper runtime: exact reviewed24394/09bf4df5 copied with exactcurrentH3411837/8575d0 to isolated /private/tmp/js2-6920-helper-root-runtime-20261009. NativeNode25 direct actualhelperAPI driver qualify.mjs terminalexit0,111 actualcontrols. ROOT identified foreignproof-alone control did not exercise former foreign-source endpoint, retained firstepoch unmodified, added two genuine sourcex+reversiblex/yproof controls in separate qualify-v2.mjs. V2 terminalexit0,113/113 actualcontrols; three copiedinput bytes/hash/mode/inode/device unchanged in each epoch. All42 freeze nodes observed Object.isFrozen/Reflect.set refusal; fixedauthority substitutions/getterread0/coercion0, intended inverse/forward coordinate faults, duplicate input/output starts, fixedbounds, primitive source controls, authentic whole402646 pin. No targetcompiler/Vitest/physicalfault or841-callback credit; externalNode/builtininputs not fullyfrozen. Evidence before/results/after files retained forboth epochs. This supports isolatedhelper behavior only, not source handoff/nativecompletion or main delivery.
+
+
+2026-10-09 actual P1/P2 Vitest qualification: source/test/scripts copied physically into isolated /private/tmp/js2-6920-h3-callback-qualification-20261009, no source/test aliases. Exactfinalhelper24394/09bf and current-main60872/2db installed; oldR1epoch otherwise retained. CanonicalNode24 Vitest onefork NODE_OPTIONS absent, exact six-new-callback name selection: actualtool36423 terminalexit0,6passed/160excluded/166registered. Threepaired callback families (metadata/getters/coercion;42 reachable freeze nodes;strictdirections/bounds) executed. All7894 copiedsource/test/script/config bytes/hash/mode/inode/device and exactphysicalmembership unchanged. Sharedexternalnode_modules/runtime remain outside fullphysicalcustody claim. Full current-main fixture166 launched immediately on unchangedcopy, no namefilter, tool70713 live; do not edit or copy livefaultoperands, restart or terminate. Raw before/results/stdout/stderr evidence in .tmp/actual-six-callbacks and .tmp/full-current-main-callbacks. Other835 packet callbacks notqualified bythissixcase run. OriginalROOT2256/2224/32 untouched. Threefixturefinalreview handed to Astra; SolC1compositionalworker owns ONLY differentprivatefile.
+
+
+## 2026-10-09 full three-fixture acquisition-only clearance and runtime qualification
+Actualclaim60335-ngn0jcr6 revalidated. Fullreview SHA256 ca3d99593c5935e970044613edc0224a43ff1c882df7328561850fb89e11b700. ROOT readfullreview and authorhandoff, previouslyread24callback bodies and fullwrapperdiff; exactURI bugfixed and helperpin bound. ROOT releases actual355 callbacks on a NEW physicallyisolated copy of unchangedROOT oldR1 epoch, distinct from stilllive currentMain166 copy; physical H3faults serialize onefork acrossthreefiles. Preserve all acquisition-only outcomes before any priority repair. No committed/newR2epoch/publichandoff/native or main credit.
+
+# Three terminal policy fixtures — final acquisition-only static review
+
+**Bounded static clearance for the exact three-file packet. No blocker was found. All355 proposed fixture callbacks still require ROOT's isolated runtime qualification.**
+
+Reviewer: Codex GPT-6 Astra High, 2026-10-09. Candidate: `/private/tmp/js2-6920-terminal-policy-fixture-sol-candidate-20261009`. Adopted plan: `/private/tmp/js2-6920-terminal-policy-fixture-astra-plan-20261009/IMPLEMENTATION-PLAN.md`.
+
+Only this private review directory was written. No target module/helper import, callback, test, compiler, physical fault, Git operation, live source or claim edit occurred. Runtime callbacks executed by this review:0. ROOT separately reports direct Node25 helper controls113/113 with three copied inputs unchanged; that is ROOT-owned helper evidence, not355-fixture execution or fault-restoration credit.
+
+## Scope and decision
+
+The candidate contains exactly three test source files: nested-stackification, program-validator and WasmGC helper policy evolution. The complete consolidated patch contains one shared-helper import, one local acquisition adapter, one helper-path preflight replacement and an appended eight-case group per file. No production H3/H1/H2/Number/receipt/root/C1 source is in the patch. There are no predicted-priority edits. All original callback bodies, error assertions, registration populations and old historical prefix pins remain intact.
+
+The final dependency is bound to the previously cleared immutable-authority/strict-replay helper:24394 bytes, SHA256 `09bf4df558c226a1291ec07d279f0c6f3172beefff6a61f588395a367231bff7`, Git blob `a3d9aca3efd83bfdecc9001b38d8bf7c84b071ce`. The retained complete dependency text exactly matches the actual reviewed helper file. No source acquisition uses the earlier20231-byte authority-hole version, a pending zero pin, or caller-selected expected hashes. The retained zero-pin guard is unreachable with the actual bound literal and remains only a fail-closed pending-state guard.
+
+## Full changed wrapper review
+
+All three `acquireFixedPolicyHelperPrefix` adapters require Buffer input and an exact UTF-8 byte round trip, then invoke the independently pinned complete-history helper on the whole captured source. They do not slice physical current bytes before that proof, fall back to a stale epoch or cache a previous success.
+
+The complete valid path remains current411837 → geometry409599 → remainder prefix403311 → remainder predecessor402646. Nested then takes first228005. Program-validator takes first254018. WasmGC passes genuine402646 into its unchanged independent source-map proof and only then takes292423. This correctly fixes the twelve original pre-action failures without redefining their old domains.
+
+Within each `withAuthorityFault`, only the helper-path expression defining `authenticated` changes. Its operand is the original physical buffer already read under that wrapper's lock. The other path branches and their pins are byte-identical. The authenticated historical prefix is compared with the original fixed length/SHA; appended controls also verify the original Git blob. It is never installed as the physical target or recovery content.
+
+The full original physical buffers still drive byte0 XOR, exact unchanged complement, backup, rename, recovery and restoration. The source allowlist and byte allowlist are unchanged. Regular-file/symlink checks, mode/inode/device identity, exact target/recovery-byte checks, synchronous action, missing ENOENT witness, restoration finally, safe cleanup conditions and aggregated failure propagation remain unchanged. No adapter or synthetic historical reader runs inside the production fault callback to conceal a missing/mutated source. The unchanged different per-file scratch locks do not provide cross-file mutual exclusion; ROOT must still serialize these physical fault cases on one exclusive copy.
+
+## Seven-edit source-map proof
+
+The complete `sourceMapPolicyOuterExpected` literal table and `independentSourceMapPolicyPredecessor` function in the final WasmGC file are byte-identical to the original source. It still requires the402646 historical operand with SHA256 `0ddf7556360e8937b25ba58b23629533c8042e026a4b6e6fc05df3d1263c97b8`, takes its390936 prefix, performs all seven inverse edits, verifies390466 with SHA256 `bb2d3a7e6bcfb54237cb03fbe4bdc61f128a508ccfb7425bdde6a150d0add55c`, then independently forwards the complete result back to390936. No edit beyond the final292423 prefix was omitted.
+
+I independently parsed the final reviewed helper's six/ten literal recipes and the final WasmGC seven-edit table, then reconstructed all six historical directions using only builtin byte operations. All fixed stages and three historical prefix lengths/SHA256/Git blobs matched. The new WasmGC healthy callback additionally checks full390936 and390466 three-part pins before comparing292423 with its original expected prefix. The whole402646 entry check was preserved rather than changed to411837 or bypassed through a raw truncation.
+
+## All24 new callback bodies
+
+Every file appends five registration templates expanding to eight callbacks:1 healthy,3 historical-stage negatives,2 byte negatives,1 wrong-prefix-domain case and1 dependency/caller custody case. I read the complete bodies and their common helper functions; this is24 authored cases, not24 executed cases.
+
+- **Healthy:** uses the actual physical helper source, independently fixed411837 pin, unchanged saved input, exact original prefix pin including path and Git blob, repeated identical acquisition, and separate fixed402646 result. WasmGC includes the complete source-map endpoints and292423 equality.
+- **Three historical-stage negatives:** obtains409599,403311 and402646 using the reviewed APIs, checks each against a distinct fixed independent literal pin, then passes it to the exact same adapter used by the fault wrapper as if it were current. Each must refuse, with full healthy acquisition before/after and original-buffer equality. This does not confuse valid historical results with valid current operands.
+- **Two byte negatives:** changes only byte0 or final byte411836 of a detached copy using XOR1, checks original length and both unchanged complements, and requires adapter refusal with paired healthy acquisition. The final-byte case lies beyond every old fixture prefix, making full-source-before-slicing validation observable. It introduces no physical source mutation.
+- **Wrong raw prefix domain:** compares the direct physical old-sized prefix with the genuine acquired fixed prefix, verifies the latter against unchanged original expectation, and requires refusal of the raw prefix as a whole current operand. WasmGC separately rejects current411837 at the old402646 source-map entry and proves the genuine402646 route succeeds.
+- **Custody:** hashes the actual relative dependency `.ts` source against the independently reviewed complete pin; checks unique exact import, complete adapter body and actual wrapper-association strings in the test source; and repeats the same healthy adapter call. The current dependency association is not merely an unused import. All three self-reads correctly use `readFileSync(fileURLToPath(import.meta.url), "utf8")`. The relative dependency is a proper `URL` object. The earlier erroneous raw `import.meta.url` string read is absent from final sources and retained only in the intermediate evidence.
+
+The generic `toThrow` checks in pure old-epoch/byte operand cases are appropriate refusal assertions paired with genuine whole-source positive acquisition; they are not used to broaden the original production API priority assertions. Loaded-module identity, actual import resolution and runtime fault restoration remain qualification obligations despite the source custody checks.
+
+## Original callbacks and priority are preserved
+
+All331 original terminal result records, including their order, titles, statuses and complete twelve raw failureMessages, match the immutable original policy result. The original populations are nested53, program-validator143 and WasmGC135. Full source replay and the complete patch establish that their original callback bodies and tables were not edited.
+
+The final authored populations are nested61, program-validator151 and WasmGC143:355 total. The original twelve failures remain accurately described as preflight failures before action, not observed new H1 priority failures. Nested and program-validator still assert their old helper-prefix mutation messages; WasmGC keeps its old `/full-file pin changed/` branch. This is intentional for acquisition-only staging.
+
+ROOT must execute the formerly blocked callbacks and preserve their newly reached results. If the predicted outer-H1 mutation message appears, a separate bounded helper-mutation priority delta can be reviewed from actual messages. Do not reinterpret the old twelve records or silently change other receipt/missing/source errors. Acquisition-only clearance does not promise all355 pass before that possible observed-priority successor.
+
+## Independent whole-source and intermediate proof
+
+`INDEPENDENT-STATIC-EVIDENCE.json` records independent measurements and an original builtin-only verifier, `inspect_static.py`. I read and reconstructed all independently authored forward/inverse recipe bodies and compared complete actual endpoints, not merely recipe metadata:
+
+- Original→final and final→original for all three fixtures: six directions,24 spans.
+- Retained pre-URI-fix draft↔URI-fixed pending-helper intermediate: six directions,6 spans.
+- URI-fixed pending-helper intermediate↔final reviewed-helper pin binding: six directions,6 spans.
+
+Total18 fixture-source directions and36 spans. Every direction verifies exact ordered span fields, primitive UTF-8 bytes, safe bounded strictly increasing coordinates, nonoverlap, exact source fragment, output coordinate, target size and complete output equality. Every unchanged complement's position, byte count and hash also matches the authored evidence, including empty terminal complements. All before/current whole-file bytes/SHA256/Git blobs match their actual files.
+
+Separately, `INDEPENDENT-HISTORICAL-EVIDENCE.json` and `inspect_historical.py` record six historical directions spanning46 edits: six geometry and ten remainder in both directions, plus seven source-map edits in both directions. These reproduce full411837/409599/403311/402646/390936/390466 domains and the original228005/254018/292423 prefix pins. These static reconstructions do not execute the candidate helper or tests.
+
+## Remaining qualification and ownership
+
+ROOT may compose this exact acquisition-only packet with the selected Number/H1/R2/A2/C1 epoch and the reviewed helper. The disjoint C1 worker retains C1 literal/trace composition ownership. No new receipt/root epoch follows from editing these three noncaller-contract tests, and this packet must not be used to bypass the separately required ROOT epoch checks.
+
+Required next evidence is the real355-callback fixture population on an exclusive copy with physical H3 faults serialized across files. Record actual callback entry, exact newly reached errors, ENOENT path/code, whole physical bytes/identity after restoration and paired healthy recapture. Preserve acquisition-only source pins/results before any observed-priority repair. A later source change requires another exact reviewed successor.
+
+This review grants no full policy cohort, Native, J3, root-gate, source-resource equivalence, architecture completion, foreign ownership or handoff/ACK credit. The original2256 total/2224 passed/32 failed terminal policy result remains immutable evidence.
+
+## Exact independently measured source lineage
+
+### tests/issue-3518-nested-stackification-policy-evolution.test.ts — original-to-final
+
+- beforePin: 38707 bytes; SHA256 `1435370ff85e04e140e55ec10e5be47d657fee26f9b36d3cb34e1cd31e876f78`; Git blob `c188ac97bd74bc90c2c9ac4fa4bd6acf1fcb91a9`.
+- currentPin: 46309 bytes; SHA256 `35046a2249d6834332a65050c26832c3ae046d768666bfe170a3316c2b35c156`; Git blob `52f90e9260e01a28bfee29c9014fdc7027cbd0fd`.
+### tests/issue-3518-program-validator-policy-evolution.test.ts — original-to-final
+
+- beforePin: 50265 bytes; SHA256 `17e4e350d4c454b380d7d9cc693bdeecfdff50d09b9cae14253f9e07e6d47ff8`; Git blob `4155196f333e74b25840a2a48957e1087f0f830e`.
+- currentPin: 57863 bytes; SHA256 `3e0dd33478edb58b6bca57bf717d4b35148481462b1de9756d35a262de3b9de1`; Git blob `f0e7c4bb4a564c90c7c7fcdec6ed6beb69d245cf`.
+### tests/issue-3518-wasmgc-helper-policy-evolution.test.ts — original-to-final
+
+- beforePin: 72237 bytes; SHA256 `900c83234043caabfda42b340f81a1b014c1252ee3a647aa861f034572d5c674`; Git blob `d646ed5b22dd2493ef1e726e6106d80c67289a9c`.
+- currentPin: 80741 bytes; SHA256 `cba44dccf7e1327d5a68ecac6e44575085c71121251f81098cca461287ace5e8`; Git blob `0a7e954fd1d630dfbd7db40e06efa3b2b8c68830`.
+### tests/issue-3518-nested-stackification-policy-evolution.test.ts — CUSTODY-URL-FIX-INTERMEDIATE-PROOF.json
+
+- beforePin: 46226 bytes; SHA256 `4b6e9cd3495e24ac229769f5310645ca53fdccda0df19b59e4d13f9cbe45be18`; Git blob `6c1641d59ee66d0a2fb1a193d25416cdcf1bebc6`.
+- currentPin: 46241 bytes; SHA256 `86e293e5ddc70d8f9c0fb7119d93ca988967dacc3a9b70580a40fc11844dcb8c`; Git blob `2c3523db2c89775660bb61a2f83b39771e115832`.
+### tests/issue-3518-program-validator-policy-evolution.test.ts — CUSTODY-URL-FIX-INTERMEDIATE-PROOF.json
+
+- beforePin: 57780 bytes; SHA256 `dd9fd08e9da747eb38c4f41c67c8b9433d1c37a448b59f72efa6abb6585c7294`; Git blob `925bc47cfb841dce524db561e9175186c25e482b`.
+- currentPin: 57795 bytes; SHA256 `8b18cbab172bac46ddb181b0dc68046658a23058de52b9387c41c58a57a831be`; Git blob `515d19d2b12a928e0bb9a4172e724847f9e6419c`.
+### tests/issue-3518-wasmgc-helper-policy-evolution.test.ts — CUSTODY-URL-FIX-INTERMEDIATE-PROOF.json
+
+- beforePin: 80658 bytes; SHA256 `0e2147cb25cdc4e0c9588cf9f7f837babbc0bd060c823b445c3984419f5a2f04`; Git blob `7a0e33bba32ee53a76801e826bbeae50157bab42`.
+- currentPin: 80673 bytes; SHA256 `b80a2bd466df753ccb92b874b1a4cb9e3dd12d0a7d42eb5c3b38cd50c08b141a`; Git blob `b4902dba6cacbf20a179286a98afbf94a4921ec1`.
+### tests/issue-3518-nested-stackification-policy-evolution.test.ts — REVIEWED-HELPER-PIN-BINDING-PROOF.json
+
+- beforePin: 46241 bytes; SHA256 `86e293e5ddc70d8f9c0fb7119d93ca988967dacc3a9b70580a40fc11844dcb8c`; Git blob `2c3523db2c89775660bb61a2f83b39771e115832`.
+- currentPin: 46309 bytes; SHA256 `35046a2249d6834332a65050c26832c3ae046d768666bfe170a3316c2b35c156`; Git blob `52f90e9260e01a28bfee29c9014fdc7027cbd0fd`.
+### tests/issue-3518-program-validator-policy-evolution.test.ts — REVIEWED-HELPER-PIN-BINDING-PROOF.json
+
+- beforePin: 57795 bytes; SHA256 `8b18cbab172bac46ddb181b0dc68046658a23058de52b9387c41c58a57a831be`; Git blob `515d19d2b12a928e0bb9a4172e724847f9e6419c`.
+- currentPin: 57863 bytes; SHA256 `3e0dd33478edb58b6bca57bf717d4b35148481462b1de9756d35a262de3b9de1`; Git blob `f0e7c4bb4a564c90c7c7fcdec6ed6beb69d245cf`.
+### tests/issue-3518-wasmgc-helper-policy-evolution.test.ts — REVIEWED-HELPER-PIN-BINDING-PROOF.json
+
+- beforePin: 80673 bytes; SHA256 `b80a2bd466df753ccb92b874b1a4cb9e3dd12d0a7d42eb5c3b38cd50c08b141a`; Git blob `b4902dba6cacbf20a179286a98afbf94a4921ec1`.
+- currentPin: 80741 bytes; SHA256 `cba44dccf7e1327d5a68ecac6e44575085c71121251f81098cca461287ace5e8`; Git blob `0a7e954fd1d630dfbd7db40e06efa3b2b8c68830`.
+
+Complete acquisition-only patch: 28882 bytes; SHA256 `7f0b66257c5248b5b8c05a0d47647764d24bbcfc068c8da30aca8293171b6933`; Git blob `68557d116f2722a3948990da7be6170992b7ee1b`.
+
+
+
+2026-10-09 actual threefixture qualification launched: /private/tmp/js2-6920-three-fixture-runtime-20261009 cloned from unchangedROOT source/tests/scripts with regularphysical files;7894 full source/test/script/config inputs frozen, externalnode_modules shared/outsidecompletecustody. Exactreviewed nested46309/35046a22, program-validator57863/3e0dd334, WasmGC80741/cba44dcc and helper24394/09bf installed; oldR1 caller/receipt/root otherwise retained. CanonicalNode24 onefork unfiltered all3files; original331+24 proposed355, acquisition-only assertions retained. Run physicallydisjoint from livecurrentMain166; never copy/edit eitherlivefaulttarget, restart or terminate on observation timeout. Terminal/code/results and fullafteridentity checks pending.
+
+
+2026-10-09 readonly native dependency qualification task: AstraHigh grounds the preserved A2 source-produced18-case cohort against exact reviewed J2/J3 privatecandidate, identifying actual files/imports/dependencies and whether an isolated unmodified18-case qualification is valid now. ScopeONLYnewprivate report, no A2/J3/source/test/claim edits or compiler/runtime execution. Existing J210/nativephysical-admission/ownerACK holds are unchanged; do not fabricate passingadapter/sourcehandoff. ROOT will adoptfull actionableplan beforeany qualification. This task advances genuine nativefacts/validation dependency alongside live166 and355 policy runs; no newmigration scope/legacyretirement/JSHost support.
+
+
+2026-10-09 exact B queue-readiness refinement: gh pr checks6593 --required reports all six named required checks SUCCESS (equivalence-gate, merge shard reports, cheap gate main-ancestor+lint, test262 regression gate, quality, CLA; duplicateCLA context also success). Do not describe the two remaining general issue shards as required branch-protection checks. Exactpublishedworkflow has separately fatal seeded issue-tests-gate waiting for fullshards, and PR mergeStateStatus currentlyUNSTABLE. Retainhold whilethatnormalratchet concludes, withoutCIcancel/rerun or source refresh. FreshPRhead43b4dc5c, MERGEABLE, unqueued/noautomerge; freshcanonicalmain7d9e8ce3. VerifiedCI syntheticparents already7d+43, no additionalmerge basedon stalePRbasecff metadata. ExistingBexplicitready/handoff assignsROOT protectedqueue; no implementationadoption/foreignbranchmodification needed.
+
+
+2026-10-09 terminalqualification: unfilteredcurrentMain70713 exit1,165pass1fail/166; onlycompletecustody fails C1Importassociation because ROOT qualificationclone installedhelper+currentMain but omitted reviewedC1 buddy file. This is ROOT incompletebundle, not helper/codefailure. Preserveepoch1 and correctnewepoch by installingexact reviewedC1197087/0b769473; no assertionweakening. Unfilteredthreefixture32621 exit1,351pass4fail/355,zero pending: nestedsemantic/raw mutations2 andprogramvalidatorsemantic/raw mutations2 nowactuallyreachcallback and receive exact C1 historical authority: full-file pin changed: tests/helpers/ir-runtime-program-policy-evolution.ts geometry current. WasmGC143/143 passed, all24newcases passed and allsixmissingH3 cases reachedpassedENOENT. Both7894 inputs unchangedbytes/hash/mode/inode/device/exactmembership. ROOT adopts previouslyplannedobservedprioritydelta NOWonlyfourreachedmutations, actualError/exactmessage/zeronormalreturn; missing/receipt/sourcebranches preserved. Original12preflight failures remain immutable oldepoch; no reclassification. Sol originalthreefixtureowner ownsprivate2file prioritysuccessor, preserved3fileacquisitionepoch; ROOTqualification afterreview.
+
+
+## Full Astra A2/J3 source qualification plan adopted 2026-10-09
+
+Static specification only; original 18 diagnostic cases remain unchanged. No ownership transfer or native qualification is implied. Plan SHA256 3d45d83b59b72891f6a3fee0032fdf1fb609ff12ef106abe1f766500e695d0aa.
+
+# A2 source facts under the reviewed J3 validator: bounded qualification plan
+
+Issue 6920 — Native Linear numeric-vector shared source handoff and integration plan.
+Author: Codex GPT-6 Astra High. Static source inspection only. Target imports, callbacks, compiler invocations and runtime executions in this review: **0**.
+
+## Decision
+
+**Do not treat copying the unchanged original 18-case A2 test into the unmodified J3 tree as an A2/J3 qualification.** The J3 candidate supplies the reviewed validation consumer, DATA contracts and relocated canonical facts producer, but it does not supply A2's frontend selector, final attachment, native-policy admission dependency or initial direct-physical acquisition. Those are real production prerequisites, not missing test fixtures. A source successor must be composed and independently reviewed before an isolated diagnostic run of the 18 original cases is meaningful.
+
+Even after composition, **18/18 is not the acceptance oracle**. The adopted specification preserves an original success expectation that conflicts with the encoding contract. In addition, the old test treats the codec shape function as semantic acceptance; the reviewed J3 function explicitly has a narrower structural contract. Preserve every original callback and the original 17-pass/1-fail receipt. Record the new unchanged-cohort result without predicting its failure count. Separately qualify the current semantic contract with additive tests. Do not change production validation to make stale expectations pass.
+
+A coherent, separately named A2-on-J3 source successor can qualify genuine source facts and the required validator dependency without implementing B resources or the public A1 compiler coordinator. It cannot qualify public native vector execution, resource materialization, the complete admission matrix, owner acknowledgments, or legacy retirement.
+
+## Evidence and custody
+
+Stable source roots inspected:
+
+- Original A2: `/private/tmp/js2-ir-native-linear-source-facts-20261008`.
+- Reviewed J3: `/private/tmp/js2-6920-j3-joined-validation-candidate-20261009`.
+- Adopted full reground plan: `/private/tmp/js2-6920-geometry-trusted-adapters-resume-20261009/.tmp/astra-native-linear-facts-j2-j3-reground-spec.md` (43,209 bytes, SHA-256 `f1361ae7df29e83303fc7c5446671e5a330cab86627ed81e74a87685c2b36ee5`, blob `3183ea1cccb360cd94108abcb5c0c70b55d0a8e0`). Its A2, A1, J3, ownership and qualification sections control this plan.
+
+`STATIC-GROUNDING.json` contains independently read byte count, SHA-256 and Git-blob arithmetic for 42 relevant paths in both trees, all 13 original direct import specifiers, and the complete original 18-case log. Blob names were calculated from bytes; no Git commands ran. Four `*.comparison.diff` files show the entire current-J3 versus historical-A2 difference for the four source seams. They are evidence, **not an apply-ready patch**.
+
+Original test: `tests/issue-6865-native-linear-source-facts.test.ts`, 12,202 bytes, SHA-256 `2d406fc7aae4b2928dbb8ab099cdb72838c04ccd71d2e52e12de4aab8d64b003`, blob `2b7a77e455dff5342c0afa0b49c1ca81d4f17250`. It is absent from the inspected J3 tree. Original 18-case receipt `.tmp/a2-focused-joined-graph.log`: 3,973 bytes, SHA-256 `b3e594fc53efa181148a1a9539b3d919bceed9b17fc8d01b4eeca63c745f249b`, blob `dbb6fa0d6737ae090ada7e3e5d24052aae8739ec`; it records 17 passed, 1 failed, 0 skipped. Do not substitute the earlier 12-case log.
+
+ROOT reports current J3 52/52 unit controls. This review does not rerun them or convert those assembled-program controls into real frontend producer coverage. Keep their exact test bytes and associated actual receipt bound to the composed source epoch.
+
+No live policy copy, transient fault operand, original A2/J3 source, test, issue, Git state or claim was changed. Only this assigned report directory was written. C1 policy work is disjoint.
+
+## Actual original cohort and routes
+
+The test's `input()` calls real `analyzeMultiSource` on `./entry.ts`, then real `prepareIrProgramSources`, then `captureTypedIrProgramInput`; `prepare()` calls real `prepareTypedIrProgram`. The source is an exported numeric function with `const xs: number[] = [a, b]` and actual get/length operations. Its selector is frontend-only `linearVectorProjection: "native-f64"`; policies are Linear standalone or WASI. It does not call the public native compiler coordinator.
+
+`typedOptions` disables ordinary ownership/escape optimization flags; the final native facts producer still has to perform its genuine required analyses. `replayOptions` merely creates backend options for these calls. Its module also imports consumer/emitter/host adapters transitively, so an import manifest must include that genuine closure; do not claim that no host-related module is imported. These tests do not thereby exercise JavaScript-host execution. There is no reason to replace the helper or its imports.
+
+The unchanged original 18 rows are:
+
+| Rows | Existing bodies and purpose |
+|---|---|
+| 2 | Real numeric array source, standalone and WASI; exact final evidence, codec replay and located physical resource refusal. |
+| 1 | Real scalar source; remove optional attachment and retain historical generic/codec validity. |
+| 3 | Unknown attachment schema, extra field and missing facts; old direct/shape/encode expectations. |
+| 1 | Top-level attachment accessor rejected without evaluation. |
+| 3 | Nested site/evidence/registry accessors rejected without evaluation. |
+| 3 | Joined allocation/runtime/semantic accessors screened before direct physical reads, with healthy paired call. |
+| 1 | Missing, extra and stale facts rejected without recomputation. |
+| 1 | Registry mismatch and missing runtime allocation owner, with old shape-only semantic assertions. |
+| 1 | Allocating historical data without attachment remains explicitly unsupported. |
+| 1 | Raw surrogate plus explicit undefined numeric encoding, expecting success historically. |
+| 1 | Host policy refusal before inventory and whole-program preparation, including empty source. |
+
+The raw-surrogate row manually calls `annotate(site.id, "encoding", undefined)`. Its original failure is `program allocations: site 0 has missing or stale encoding evidence`, through allocations validation → generic program validation → typed preparation, before codec success. The new finite contract also rejects present-undefined encoding on a used numeric array. Preserve that row and failure artifact unchanged. Add a valid surrogate control without this forbidden annotation and a distinct expected-rejection control; neither replaces the original row.
+
+Three schema rows and the registry/population row contain a second, independently visible oracle conflict. J3 `assertPreparedIrProgramShape` screens executable data and checks structural containers; it does not invoke J3's attachment semantic consistency hook at its end. Its own comment delegates allocation/population/runtime semantic acceptance to full validation and replay. Thus one cannot assert that the original 17 old passing rows remain passing. Do not move semantic acceptance into the structural function simply to green this diagnostic cohort. Additional current-contract controls must invoke `assertPreparedIrProgram`, required Linear validation, encode or replay as appropriate. Any eventual oracle successor requires a separate explicit ROOT decision retaining these original bodies and results.
+
+## Exact missing source contracts
+
+1. **Frontend route.** J3 `program-source.ts` has no `linearVectorProjection` selector or A2 selector logic. The existing `buildNativeFamilyLogicalVectors` collector is available, but the real source route does not select it for this profile. A test-only selector value does not create that implementation.
+2. **Final producer attachment.** J3 `program-prepare-ir.ts` performs final transformations, support handling, ABI and runtime projection preparation but snapshots allocations without `linearAllocationFacts`. J3's 6,571-byte `analysis/linear-memory-plan.ts` already exports the canonical `prepareLinearAllocationFacts`; its body performs real encoding, ownership, escape and stack analyses, then snapshots and verifies. Invoke this actual producer at the final point. Do not restore the old 49,040-byte planner file.
+3. **Native admission dependency.** J3 lacks `runtime/target-admission.ts`, `shared/contracts/compile-target-policy.ts` and `compile-target.ts`; its failure union lacks `target-environment-unsupported`. Old A2 source preparation imports the admission leaf, whose type closure uses these shared contracts. Its host-policy row depends on these real early guards in source/whole/typed preparation. Copying only four source files leaves an unresolved/incomplete dependency. ROOT must obtain a reviewed, owned current-base admission successor; the old leaf's existence is not admission qualification.
+4. **Required physical entry.** J3 `planPhysicalSetup` currently starts by reading `projection.prepared.functions` and `program.abi.entries`, then calls vector resource planning. Its downstream checks are generic. Insert the required acquisition at the first native Linear entry, before those reads and any resource work.
+5. **Obsolete A2 helper API.** Historical A2 imports `assertPreparedIrProgramLinearAllocationFacts`, `linearAllocationProjectionMismatch` and `preparedLinearAllocationResourceGap`. They are absent from J3's reviewed `program/linear-allocation-facts.ts`, which instead exposes `requirePreparedLinearMemoryInput`. Do not resurrect the old helper, clone its owner/allocation census, or replace the reviewed 19-line facade. Compose through the existing required validator and canonical owner/provenance APIs.
+
+Reviewed route to preserve: `program-validation.ts` reexports `program/validation.ts::assertPreparedIrProgramLinearAllocationEvidence`; that full entry screens descriptors/joined DATA, validates complete context and runtime reproduction, then invokes `program/linear-allocation-validation.ts`. The core uses J2 snapshot indexing, canonical J1 provenance/type/state checks, the moved facts consistency verifier, and finite all-view metadata truth. Its required unknown/absent/incomplete evidence result is located unsupported; a contradiction is an invariant. Generic uncovered/absent handling retains legacy validation. `requirePreparedLinearMemoryInput` is the narrow strict join for actual allocating memory consumers, not a replacement generic scalar validator.
+
+## Bounded source implementation, after ROOT adoption and ownership release
+
+ROOT must assign the four seams below and coordinate the admission dependency owner. Existing source-owner claims are not transferred by this plan. Historical A2 claim `16740-hhm82aur`, J2 extraction claim `46615-x5dy59lp`, donor `34529-rzivb817`, checker `19199` and AE28 `43989` are context, not new authorization. Preserve delivered J1/AE28, geometry and all reviewed J2/J3 leaves. If a shared hunk is not released, hold that hunk and report the exact blocker.
+
+### A. Frontend and early policy (`program-source.ts`, `program-preparation.ts`)
+
+Rebase only the existing A2 frontend selector and policy preconditions onto current J3. Keep it frontend-only, own-DATA selected, exact `native-f64`, and native Linear-policy constrained. Reuse `buildNativeFamilyLogicalVectors` on actual checker-owned declarations; preserve its rejection of holes, spread, foreign elements, mutable/uninitialized vectors, unrelated owners and unsupported initializers. No fixture text/name allowlist, GC-array substitution, invented public option or serialized trust flag.
+
+Preserve current source/class-cycle handling and complete declaration context. Early host refusal must occur before source inventory, including empty input. The ordinary selected source still travels through normal IR lowering and final validation. Collector success is not finite evidence coverage or native admission success.
+
+### B. Final facts (`program-prepare-ir.ts`)
+
+After all current transformations, optimization/async preparation, support allocation handling, current registry selection and final ABI setup, invoke the real canonical producer once for the applicable native Linear preparation. The module supplied must include the genuine complete final semantic/support body population once, preserving original declared signatures/globals and absence. Do not use only `finalSource.ir` if that omits real support bodies. Do not fabricate async shells, filter registry rows, suppress support or select the first owner as a substitute for complete proof.
+
+Build the optional attachment with `schema: "linear-allocation-facts-v1"` and that producer's facts; use its exact detached registry snapshot as semantic allocations. Preserve source map, startup, ABI, owner identities and semantic freeze before runtime identity authentication. Facts imports used only for DATA must come from the canonical DATA contract leaf; no consumer solver dependency via a facade. Producer analyses remain genuine, regardless of ordinary optimization flags.
+
+Create every actual runtime projection using the existing producer, retain all of them and freeze through existing code. Perform final full generic validation; invoke the required entry with each applicable exact Linear projection to establish native completeness/coverage before handing a qualifying program to strict consumers. Do not call the producer separately for each view or replace projected facts with a second answer. A truthful well-formed unsupported profile is refused through the established located preparation outcome; malformed context or evidence remains invariant. Scope is the covered numeric source, scalar compatibility and explicit refusal; no broad profile expansion.
+
+The old A2 allocating-support precheck and sorted-ID `linearAllocationProjectionMismatch` are not substitutes for J3's complete-program/all-view checks. Do not copy them back. Complete validation must diagnose canonical defects before finite unsupported/missing-resource results. If support coverage cannot be established, preserve that honest refusal without dropping support.
+
+### C. Required direct physical entry (`program-physical-plan.ts`)
+
+Select required native Linear validation using the established options/backend/target policy. Before accessing any prepared-program/projection/ABI fields, call the existing full required facade with the exact supplied projection. It must prove membership and complete context before reads; do not read projection internals merely to choose the branch. Other generic entries retain their existing compatibility behavior.
+
+For an old scalar with no attachment, the required validator's allowed undefined result means retain the genuine scalar/generic route. Do not unconditionally call `requirePreparedLinearMemoryInput`, whose contract refuses an undefined checked input. For an allocating covered program, keep the genuine returned original module/facts pairing for the appropriate consumer; no mini-module or trust cache.
+
+Retain the honest nonzero Linear resource gap while B resources are absent. Locate it from authenticated actual allocation ownership, preserving existing owner/source/location authority. Do not remove the gap or report native execution. Preserve other earlier physical gaps and their priority.
+
+The required validator throws a located `IrUnsupportedError`; the direct physical API returns a located `PhysicalSetupOutcome`. Use a narrowly scoped conversion of only that typed unsupported acquisition result, preserving its code, stage, detail and validated unit/location/source fields. Rethrow invariants and unexpected exceptions. The existing generic `classifyIrFailure` preserves basic error classification but **does not preserve the extra located fields**, so calling it alone is insufficient. Do not catch the entire planner, forge an owner, execute a getter on untrusted DATA, or demote malformed evidence to unsupported. Review the concrete adapter and paired invariant/unsupported controls before execution.
+
+### D. Explicitly separate dependency/public work
+
+A reviewed current-base admission leaf and its type/error-code closure are a prerequisite to the A2 early-policy rows. ROOT can compose the already owned A1 dependency or assign only that closure; do not invent a second admission protocol. Obtain exact before/after pins and whole-source proof for every added/changed leaf. The public `compiler/native-linear-pipeline.ts` is absent in both inspected trees and not imported by the original18. Do not implement a public coordinator just to run this bounded source cohort.
+
+The adopted required entry at `acceptPreparedIrProgram` remains a separate real consumer obligation. A successful source/direct-physical qualification does not discharge it. Preserve its current source pin; ROOT must compose and qualify that owned hunk before claiming the full native acceptance/J210 packet complete. No changes to B resources, emitter representation, allocator, startup, legacy backend or policy fixtures are authorized by this plan.
+
+## Additive qualification controls and denominators
+
+Keep the old test path and all 12,202 bytes unchanged in the new isolated candidate. Add a separately reviewed test file, proposed `tests/issue-6920-a2-j3-source-qualification.test.ts` (before state: absent). Do not mock the checker/lowering, inject prepared functions, attach synthetic facts, mutate instructions to manufacture coverage, use in-memory source overlays, aliases to old A2 modules, alternate verifier implementations or fake projections.
+
+The new file must cover these complete obligations; freeze its actual expanded callback titles/count before execution rather than guessing a total now:
+
+1. Genuine original numeric source in standalone and WASI, with actual selector, final producer, both metadata namespaces, exact canonical final snapshot and selected view. Exercise generic validation, required validation, strict checked join and codec encode/decode/replay on that real program. Verify ownership/allocation identities and complete declaration context. Reaching the retained located resource gap is the expected prerequisite behavior, not execution support.
+2. Real scalar with and without optional attachment, preserving the genuine legacy/generic route and no forced memory-input acquisition.
+3. Valid raw UTF-16 surrogate preservation without illegal numeric encoding; separately, present-undefined numeric encoding is rejected by the applicable full semantic entry. Retain original historical row separately.
+4. Additive current-contract schema/registry/population controls at full semantic entry/encode/replay; retain structural DATA/accessor controls at shape entry. Avoid a permissive shape result being presented as acceptance.
+5. Paired healthy and joined accessor inputs at actual direct physical entry, proving zero accessor evaluation before refusal; absent attachment, incomplete evidence, well-formed uncovered shape and malformed canonical context each have correct typed result/priority. Derive mutations only after a genuine source-produced healthy program, do not use mutation as a substitute for its producer.
+6. J210 actual A2 strict adapter: obtain the genuine pairing from the real prepared source via current strict facade and exact selected projection; verify selected projection mismatch refuses. Keep no-production-mock/import-redirection association and actual original module/facts identity evidence.
+7. J212 same-binding observers: demonstrate positive real producer encoding/ownership/escape/stack/registry work and positive authentic legacy work before reset. Reset at the actual consumer boundary; measure covered attached required/generic/codec/strict consumer intervals separately, while full context/J1/evidence checks still run. Record exact binding/import identity, observed callback counts and boundaries. An inert spy, zero because an earlier failure stopped execution, or parent J3 unit result is not credit. Preserve generic unknown fallback analysis and scalar legacy accounting.
+8. Early actual host-policy refusal through real source and whole preparation, including empty source. This bounded control is not the complete A1 admission matrix.
+
+Any helper necessary only to observe analysis may instrument real bindings without replacing implementations; first prove its positive reachability. If the runner cannot observe an ESM binding reliably, report that limitation and choose a reviewed supported observer; do not claim zero from an unattached spy. Preserve J3's existing52 controls and the original18 as distinct inventories. The new additive denominator is intentionally pending concrete implementation/review.
+
+## Execution and review sequence for ROOT
+
+1. Adopt this full plan under the existing issue and record exact source ownership releases, including the admission dependency. Preserve original A2 source/test/log manifest and all previous J3 receipts immutably. No owner ACK or source claim follows from this report.
+2. Create a new exclusive physical candidate from the stable reviewed J3 source epoch, with complete same-root sources, original helpers and pinned harness. Copy the original18 test byte-for-byte. Do not execute either original tree or any live policy fault copy. Record complete source/test membership and byte pins; reject missing dependencies rather than overlaying them at execution time.
+3. Implement only the assigned source successor and additive tests. Emit exact full patches, before/after file bytes/hash/blob, and complete body-level forward/inverse recipes for historical authority readers affected by these source changes. Keep the preserved A2 bytes as historical donor evidence, not authority for new J3 whole files. ROOT must integrate affected proof readers through finite reviewed source successors, never blind repins. No hypothetical receipt edit is specified here.
+4. Independently review complete composed source, adapter ordering, all new callbacks, and the actual dependency/import closure. Recheck all protected J3/J2/J1/AE28 leaves and old original test bytes. Record the current full harness config/package/lock pins and actual Node/package-manager/runner version when executing; no install/upgrade is implicit. Resolve genuine `.js` imports to same-root `.ts` sources under the existing runner, with no alias or old-tree source redirection.
+5. Run the unchanged18 once as a **historical diagnostic cohort** with complete raw per-title outcomes and stacks, exit status, no skips/xfails, exact denominator18, and source epoch. Preserve the original17/1 receipt alongside it. If collection fails or fewer than18 execute, record collection/infrastructure failure, not source qualification. Do not predict how many old shape/oracle rows will fail.
+6. Run the reviewed additive source qualification inventory and existing exact J3 unit inventory against the same composed source epoch. Record every title, outcome, observed positive-analysis counts and consumer intervals. Do not infer public acceptance/runtime claims. Any change after review invalidates the relevant epoch; review and rerun affected controls on the final bytes.
+7. Read actual first failures before repair. Fix a demonstrated source defect at its assigned seam; do not mass-replace error literals or rewrite the historical cohort. If an original old expectation conflicts with adopted current contract, retain that diagnostic and evaluate the independent additive current-contract control. Any proposed oracle successor is separately approved and preserves all old records.
+8. ROOT records resulting A2 source/strict-dependency evidence, remaining acceptance and A1 admission/public caller gaps, J210/J212 exact qualified portions, source proof integration and pending owner ACKs. B Gate1/full native/foreign acknowledgment remain held unless their separate actual prerequisites are satisfied. This plan supplies no execution credit.
+
+## Static findings versus remaining uncertainty
+
+Static facts establish missing source wiring and old-oracle conflicts; they do not establish whether real checker-produced final numeric IR is covered by the finite checker, whether source ownership/projection reproduction survives exact composition, whether same-binding observer intervals are zero, or whether the final native host refusal priority matches all callers. These questions require the new coherent source composition and actual reviewed execution. No native JS-host fallback, metadata default, incomplete projection or test overlay is an acceptable way to obtain a positive answer.
+
+The narrow next deliverable is a reviewed A2-on-J3 source successor plus additive current-contract tests and exact import/proof custody. Running the old18 unmodified on untouched J3 before that deliverable is available is, at most, an explicitly incomplete diagnostic—not qualification.
+
+## Appendix: independently read before pins
+
+All paths are relative to the stable A2 and J3 roots named above. `ABSENT` is an inspected absence, not an empty file. The complete matrix is retained to distinguish donor bytes from implementation before bytes.
+
+| Path | A2 bytes / SHA-256 / blob | J3 bytes / SHA-256 / blob |
+|---|---|---|
+| `tests/issue-6865-native-linear-source-facts.test.ts` | 12202 / `2d406fc7aae4b2928dbb8ab099cdb72838c04ccd71d2e52e12de4aab8d64b003` / `2b7a77e455dff5342c0afa0b49c1ca81d4f17250` | ABSENT |
+| `tests/helpers/typed-program-fixtures.ts` | 2193 / `33d6c1bf25bd172c8a096403da54e06f99ea3f89fbdf9c241cc4405ca2391f65` / `f31501bc52fd9d119e41f88b94ecf5564e5aac74` | 2193 / `33d6c1bf25bd172c8a096403da54e06f99ea3f89fbdf9c241cc4405ca2391f65` / `f31501bc52fd9d119e41f88b94ecf5564e5aac74` |
+| `tests/helpers/ir-whole-program-replay.ts` | 17246 / `9dc4043d95556f1c035617cd66560677005e42f28716d5e8be721c2b27ea302b` / `2b4380d10e05ab206f4c20032627b1e929ad0090` | 17246 / `9dc4043d95556f1c035617cd66560677005e42f28716d5e8be721c2b27ea302b` / `2b4380d10e05ab206f4c20032627b1e929ad0090` |
+| `src/checker/index.ts` | 64463 / `7dd8d6245e91589a31cc2240bd7d29635df1441690077b813b188e3568467ae9` / `b8f13410dd7f08e74977132e2f4caf34e20019aa` | 64463 / `7dd8d6245e91589a31cc2240bd7d29635df1441690077b813b188e3568467ae9` / `b8f13410dd7f08e74977132e2f4caf34e20019aa` |
+| `src/ir/program-source.ts` | 87882 / `c915942e24a87f80321b7608915f1994ce1c65f7c8eadbebb45f57031ba6a56f` / `2eac3401bc8296ab7e438e52129847e341b5189c` | 85971 / `7d3e66497e281c380afaecfc6f98da5a815d73725d6921caaeb5ac4ae4d1ad38` / `c7523b8c96fe7430cab59f84acf672329bda6a75` |
+| `src/ir/program-preparation.ts` | 4540 / `81c881548cda4d7734f82e88862fe8aa708a9f802f8441de9095bcbd653c748f` / `8145f9f5ef4136ded43ec6e6299803b6a3c91467` | 4369 / `9a99673337562b8e82c840eef46653b4b1f4afa3e7d14e73f30fdc2ae8096d6f` / `2d217a03811b51952d18c46692a2dc9022648a0a` |
+| `src/ir/program-prepare-ir.ts` | 9213 / `0d274459f16568f7e085315099f866e4fae07adf92d1053867ea694f4541eb4d` / `e2d7f1ef5ef52751be5bfecaaa819fdf36358ca8` | 6832 / `211ca16d6c0c3b0378c8347bb0eedc074d237d90aee8f4a45073cbd6cfa480dd` / `1e9f6c0e18fe47d06536d4688516fbf54a565333` |
+| `src/ir/program-physical-plan.ts` | 67955 / `2f24900143b1e32add733ce2445e82682462bf99d9c2f7f43c0edca318389d1a` / `134497df0fb7003c99b9dd0bcd225b8ce950b918` | 67763 / `03518652821dc788a6957422e3c2f1c418bb657baa3a2dded67827da636e6e3a` / `6ecd51f2c0e72c70caf4d58c32d092662053ef49` |
+| `src/ir/program/linear-allocation-facts.ts` | 11633 / `ab303a1b801cf3248d53872c0f2df09b54c48f6eec798ec2e541663ac53c25cc` / `6877293adb806bb39fc410bfae5a7570273fde32` | 1046 / `c7b9cf761dabaa2e3885c4627e100ba96eb0593ef7ebf5d3c54e51dc444fb9a1` / `dd09df02ef06376ad8de83f9a049b0c464247d52` |
+| `src/ir/program/linear-allocation-validation.ts` | ABSENT | 13029 / `5b9ba80c76762865f07f89e445e7c30323052d3249ceebdf2570543b4147e94a` / `ac2263ed2cc859aaee7da05dbd60bfae0d09d5fa` |
+| `src/ir/program-validation.ts` | 236 / `b64454a7c97179e8efdab677049fb0f231ba3b6ce731bff602b231406d2dd098` / `fbcd84648424059795285aa45f85020e564ed2ba` | 285 / `152afa515e9ce7962782f78143013f0a53ad5fb79b6257fb75ef02cc64cf6d2c` / `430fabe1c83cbc5967e3233d6f502fcc762f5a0a` |
+| `src/ir/program/validation.ts` | 45966 / `2c6f7d7693f1fafdb2aacfbfc8052a1dad499d6abc3d20ffa6ba0368eeee1a9b` / `c7e0e38fd895698520411968b133639277cc6937` | 47694 / `c32422bf7b95fe60937180570d4166db6d10cd68695a6e94e25e3903de3ebf3c` / `b02b7311dbf1e3d4bca86be83181da1a409f9dfa` |
+| `src/ir/program/prepared-contracts.ts` | 5239 / `e37869a933275d4876478295d0afd2aab30d0630b2d852ca545520a860f4fdd9` / `1a32da8f3bb4b1a3f2e2237a9361701e259651a9` | 5245 / `959a6664ac23409aeb0eef8d812c45e67ca7ade1367a169a5e22f909d32f6e73` / `ea160df3b8b0f668e3148224c31b0824f07b7fcf` |
+| `src/ir/program-codec.ts` | 31200 / `fee10810a08c8aff41f75b74276ce43cb17fd77cc759ccafe637c18d5d49ff63` / `b635e5e0357b0c7fce11bffa986613bd10a5fcbb` | 31438 / `5818a2940015512b8c245c8f60efffe44d4fdf29ef708b71f34bf0a308c85da0` / `5fc313ea5edd8d2b3b579b0aef08626d79e80486` |
+| `src/ir/program/data.ts` | 10831 / `6010f226a79bef58d1f8a2a84761eca2fa479ca33d5ace96636c75fa58512b06` / `8f205f87ebe7505cac4539de0f0a2bc15f906ebe` | 12515 / `4409fda108be86e6fa8a7c147c7d14b66b8f49646ef1ae2fb9b1f2309afd6886` / `63c1da99a3909cb4deeb68d49cbab19bb2e0dda2` |
+| `src/ir/program/allocations.ts` | 6602 / `e2da59c2bf90e2a833c35206d014e6745f79a94bade7f04c882cdb6495eb7e5f` / `b04a7b22bba6a98d5265dcfd9c8fcebf5f50fe5f` | 5638 / `aec062632da95addb294e203514e8218284177bfccd7154f3cbb1d8bdd412c33` / `722430a6adb09e2e4b74802650b29c8207431a25` |
+| `src/ir/program/allocation-body-validation.ts` | ABSENT | 1864 / `d48bf8cec3edbdb89759df63dbb5a8e3f455b7d739b1e990d669a1eceb69430a` / `1b7c3e14c934cc118d4c6a85da9adb77204df284` |
+| `src/ir/program-logical-types.ts` | 9915 / `2f0dab59522e2f4415b21ec16b0257e60373decf58e4398aee8ba985b2e776b1` / `c83f256be045dbe97062508850c0493b1a18eb9a` | 9915 / `2f0dab59522e2f4415b21ec16b0257e60373decf58e4398aee8ba985b2e776b1` / `c83f256be045dbe97062508850c0493b1a18eb9a` |
+| `src/ir/runtime/target-admission.ts` | 4680 / `276bb9a35c1f62b778c0a962d5c22d7945b39678a33abfe4963350aaad138446` / `7274cd1d867b5962c2388962ed91c6f2434c6046` | ABSENT |
+| `src/shared/contracts/compile-target-policy.ts` | 2913 / `ed74b9af18a25c432fe0f78f54832d1627df917db93fca8ae5a4147c135970b6` / `8f8baf9b5c5e7b5bc8a8d3ecc61d711098b4609b` | ABSENT |
+| `src/shared/contracts/compile-target.ts` | 154 / `4d4a1c586cd3ffc42788de7e275c56dc8e76c5b5878d5a67264d2653923f6ab8` / `fe0581deef82388626795551fbf786f0e527eee0` | ABSENT |
+| `src/shared/contracts/ir-preparation-failure.ts` | 12413 / `5525be0f2d8c588c4045958254c215257898df93f0840cb5400823b6adce5fc7` / `0633ed29be3ce62ffed15c28f14142ff5e8ecd38` | 12376 / `fcdd5e0ce7d47d52ce480f4a66457eeb11591bdea520a31982a2e02ff8adc366` / `5a8b7a8b63f47ca729e1363bbee4129f36570bd2` |
+| `src/shared/contracts/ir-preparation-errors.ts` | 3391 / `b19a1971c578cf72d73e6d26d78f02e6e946b670bdcb69399b870543e14cbbf7` / `0673767d18df9bcae3b17fa0ec1d32fc84f566d9` | 3391 / `b19a1971c578cf72d73e6d26d78f02e6e946b670bdcb69399b870543e14cbbf7` / `0673767d18df9bcae3b17fa0ec1d32fc84f566d9` |
+| `src/ir/analysis/linear-memory-plan.ts` | 49040 / `5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52` / `a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c` | 6571 / `c8a495a72c4b847a5ad3f67b726ba8f2da4ff556a8f05f2afe7a49646fed81ac` / `99eecf2b1b6488a2febb2c26e9aa2d1a189b7dad` |
+| `src/ir/analysis/linear/allocation-facts.ts` | ABSENT | 7413 / `4b6c30a9e0940a795b553cd91e5d3e1df75438565dbcab87a2d96d2228efd378` / `bf5bb314cb5abfca2c4cd2d339bc91792602a929` |
+| `src/ir/analysis/linear/contracts/allocation-facts.ts` | ABSENT | 1519 / `a2ec6d91bba74ef818b56ec16459b6331dcf02bafcbd1401d63d0cb87b8f5fc4` / `afa8aa9c0ce171a8d6661ce693514e87f00a2363` |
+| `src/ir/analysis/allocations/snapshot.ts` | ABSENT | 7410 / `e1e20c2a9996749660818cfbe20fe37793aafdaea0255c813dfc97621960361d` / `916baa073ed82306d4e1b9355de2e3a62e085dab` |
+| `src/ir/analysis/allocation-evidence/metadata.ts` | ABSENT | 8933 / `0d665676cc97be3e0cace51755b47c0bc12a9c296483e95a6d4d6fae23c7d8cf` / `7755e450f05b5e8da9b84ebd9c6769388443d45c` |
+| `src/ir/analysis/allocation-evidence/verify.ts` | ABSENT | 1533 / `eb149576fa70a73c4222cff08d85a24c0b46c6baf1e2a277dcd3556308411ab9` / `06b5e48531f6a49e3b95f15592c24dc49825c042` |
+| `src/ir/runtime-program-producers.ts` | 5488 / `4dbb60fe676fe6143633567b3e26b5b010716e3081d48c0a9cddb6afb2e3c059` / `90da8dcb9dc0fafe28fa9594c3a946a86f1ee6b0` | 5488 / `4dbb60fe676fe6143633567b3e26b5b010716e3081d48c0a9cddb6afb2e3c059` / `90da8dcb9dc0fafe28fa9594c3a946a86f1ee6b0` |
+| `src/ir/program/input.ts` | 6872 / `66f7f3c1b233f889d9e578bbe6532ce2265b4a52feb72d0edf5bb7d417ef5520` / `7518528738b783afbb8e933480f74c5f5965486b` | 6872 / `66f7f3c1b233f889d9e578bbe6532ce2265b4a52feb72d0edf5bb7d417ef5520` / `7518528738b783afbb8e933480f74c5f5965486b` |
+| `src/ir/program/input-contracts.ts` | 2440 / `db4965e7dbd76eb88bb9c9ccbe848d3a7c3a11e3af26032a1751684d086048f8` / `0dbacd92330e06a788088d9db5d3c825a2a4c56d` | 2440 / `db4965e7dbd76eb88bb9c9ccbe848d3a7c3a11e3af26032a1751684d086048f8` / `0dbacd92330e06a788088d9db5d3c825a2a4c56d` |
+| `src/ir/program/runtime-support.ts` | 14807 / `da7e458acb00449fc57e2e6cace2eea5bcd9f781bc63c93baa29e810d537b1f9` / `f92a1ef2653a66dedb9430371ce83d506a32befb` | 14807 / `da7e458acb00449fc57e2e6cace2eea5bcd9f781bc63c93baa29e810d537b1f9` / `f92a1ef2653a66dedb9430371ce83d506a32befb` |
+| `src/ir/program/owner.ts` | 1323 / `3b25543059427df6f91cce6892a7bfb9b0104ec2f078bc41517a1d6c42fb6b19` / `3df5fa0070a4fffd47249cd2e81624ee3b10f5ef` | 1323 / `3b25543059427df6f91cce6892a7bfb9b0104ec2f078bc41517a1d6c42fb6b19` / `3df5fa0070a4fffd47249cd2e81624ee3b10f5ef` |
+| `src/ir/runtime-program-manifest.ts` | 450 / `9d6a11bb96ce4dde466d92baf2945ca2c9a877ee5124a93ebaccac5118e44c56` / `57fa674a5e7368c19cbc10e0ca608711b3889a55` | 450 / `9d6a11bb96ce4dde466d92baf2945ca2c9a877ee5124a93ebaccac5118e44c56` / `57fa674a5e7368c19cbc10e0ca608711b3889a55` |
+| `src/ir/program-consumer.ts` | 70264 / `44e5de9a96cbcda6cb733eb87bf551197ec6bc895aeff65e4641dd2c8ddccaa6` / `9bd13d799c155f348acb0072a1ae28a1869638a3` | 70264 / `44e5de9a96cbcda6cb733eb87bf551197ec6bc895aeff65e4641dd2c8ddccaa6` / `9bd13d799c155f348acb0072a1ae28a1869638a3` |
+| `src/compiler/native-linear-pipeline.ts` | ABSENT | ABSENT |
+| `tests/issue-6920-j3-joined-validation.test.ts` | ABSENT | 37462 / `50c9f4b73ca6c9d830d5812515b976e0c2175f6821e045659d2ebac4e6af3ac6` / `16cefa9fa04fec4a23644c38210f50756373f6f7` |
+| `vitest.config.ts` | 5006 / `2c4e2e3a237278e39d6235aa3e200c5e9e0718315a4f89d5bf3c8ce910b1c53f` / `04d8498432f14c9719f219b0adbacff5d745dec2` | 5006 / `2c4e2e3a237278e39d6235aa3e200c5e9e0718315a4f89d5bf3c8ce910b1c53f` / `04d8498432f14c9719f219b0adbacff5d745dec2` |
+| `package.json` | 29828 / `bc084f6c2a17667e42d0c985330cbe064715984a7007201a5635c1622b10c395` / `e25ea8aa13863815c93d511ba78f5e629b4b4121` | 29828 / `bc084f6c2a17667e42d0c985330cbe064715984a7007201a5635c1622b10c395` / `e25ea8aa13863815c93d511ba78f5e629b4b4121` |
+| `pnpm-lock.yaml` | 292602 / `6a8b59fd4430c6600dc16ac33a749d0f5fed4ef0c100425de8490e43d916f2ac` / `03fbaf3f914c0dcd1ebbda6a1d2bce86491d0e3a` | 292602 / `6a8b59fd4430c6600dc16ac33a749d0f5fed4ef0c100425de8490e43d916f2ac` / `03fbaf3f914c0dcd1ebbda6a1d2bce86491d0e3a` |
+| `tsconfig.json` | 448 / `c520c3a1d8da732e73833cb53571f93609d0c899f6bcf638d752cb91b8c1fa79` / `dd5723f20608733c377fba47189ac638808dd365` | 448 / `c520c3a1d8da732e73833cb53571f93609d0c899f6bcf638d752cb91b8c1fa79` / `dd5723f20608733c377fba47189ac638808dd365` |
+
+## Appendix: original direct import association
+
+| Original specifier | Actual same-root target |
+|---|---|
+| `vitest` | external runner; pin installed Vitest with existing harness |
+| `../src/checker/index.js` | `src/checker/index.ts` |
+| `../src/ir/program-source.js` | `src/ir/program-source.ts` |
+| `../src/ir/program-prepare-ir.js` | `src/ir/program-prepare-ir.ts` |
+| `../src/ir/program-preparation.js` | `src/ir/program-preparation.ts` |
+| `../src/ir/program-validation.js` | `src/ir/program-validation.ts` |
+| `../src/ir/program-codec.js` | `src/ir/program-codec.ts` |
+| `../src/ir/analysis/linear-memory-plan.js` | `src/ir/analysis/linear-memory-plan.ts` |
+| `../src/ir/program-physical-plan.js` | `src/ir/program-physical-plan.ts` |
+| `./helpers/typed-program-fixtures.js` | `tests/helpers/typed-program-fixtures.ts` |
+| `./helpers/ir-whole-program-replay.js` | `tests/helpers/ir-whole-program-replay.ts` |
+| `../src/ir/program/errors.js` | `src/ir/program/errors.ts` |
+| `../src/ir/program/prepared-contracts.js` | `src/ir/program/prepared-contracts.ts` |
+
+
+
+## Current-main complete fixture bundle qualification 2026-10-09
+
+Normal Node24 Vitest process75659 naturally completed exit0:166/166 passed, zero failures/pending. Complete before/after membership and identities for7894 source/test/script/config inputs match, no changed/missing/added files. External node_modules is outside this physical custody claim. Receipt: `/private/tmp/js2-6920-h3-callback-qualification-20261009/.tmp/full-current-main-complete-bundle/after-review.json`. Original process70713 165/166 with omitted C1 buddy remains preserved; the successor installed only the reviewed197087-byte C1 buddy before its freeze. No C1/full-policy/native-public equality claim follows from this one-file suite.
+
+Session B predecessor correction is authenticated: exact e335 blobc4fc4ac4 is87264/SHAaefbb190…, and the former saved87256/5e41 copy differed only at one embedded negative-control escape spelling. Old review/copy preserved, exact1185-line committed diff regenerated and reviewed; original control spelling is unchanged in the candidate. Candidate197 inert controls and full observation/archive evidence remain separately scoped. Correction acknowledged in thread6583 comment6082050609.
+
+Fresh actual source-wiring claims remain foreign in-progress: source-facts16740-hhm82aur, owner `ttraenkler/codex-ir-native-linear-source-facts-sol61-20261008`; admission45545-f08g477d, owner `ttraenkler/codex-ir-runtime-admission-contracts-sol61-20261008`; public-caller15614-0ltdxb84, owner `ttraenkler/codex-ir-native-linear-public-caller-sol61-20261008`. No takeover or broad file release is inferred from the new Astra plan.
+
+
+## Observed four-row priority successor qualification started 2026-10-09
+
+Full reviewed two-file patch retains all355 cases and all24 acquisition controls; only nested/program helper-mutation branches now require one actual action, no normal return, Error class and exact observed geometry full-file error. Private successor pins: nested46975/SHAf443e0ed…, program58557/SHA73c3d954…; WasmGC80741/cba44… unchanged. Complete acquisition-only source/runtime epoch retained. ROOT installed only those two files into its stopped exclusive copy after revalidating all7894 original before identities, froze7894 new inputs, and launched normal unfiltered three-file Vitest process15036. Live process is not a pass.
+
+C1/Number worker reports415 authored cases:375 preserved plus40 additive cold/association/receipt controls. Draft selected TypeScript check passed; no target callback/helper/cold child runtime yet. Full source/recipe/loader review remains required.
+
+Fresh6593 run37930775001 now has only job113821107943 (issue-tests-shard7) live, actual root-suite step in_progress since12:35:14Z. Shard4 naturally completed. No CI restart/cancel or queue admission while normal aggregate gate awaits the live shard.
+
+
+### Original source-owner evidence inventory delegated
+
+Sol6.1High is read-only auditing original R1/A2/A1 handoffs and fixed admission dependency variants under private `/private/tmp/js2-6920-source-owner-evidence-sol-20261009`. It owns only that report directory. Required result: concrete original author ACK/integration authority quotes and exact frozen payload, explicitly separating missing authorization from prior ROOT integration grants. No claim transfer/source modification/test execution is authorized by this inventory. R1 report and A2 issue update contain previous root integration/callsite authorizations requiring contextual reconciliation. New Astra dispatch attempts hit the actual agent-thread limit and did not start; the already adopted full Astra36609 source plan remains authoritative.
+
+
+## Observed priority epoch qualified 2026-10-09
+
+Actual normal three-file process15036 naturally terminated exit0:355/355 tests passed, zero pending. Complete source/test/script/config membership and identities for7894 recorded inputs unchanged; no missing/added/changed input, external dependencies outside that custody claim. Full results/stdout/stderr/before/after preserved in `/private/tmp/js2-6920-three-fixture-runtime-20261009/.tmp/three-fixture-observed-priority/`. The separate original acquisition-only351/355 result remains immutable. This qualifies exact nested46975/f443e0ed, validator58557/73c3d954 and unchangedWasmGC80741/cba44 files under the reviewed helper24394/09bf epoch; no whole13-suite/native/public-path claim.
+
+## Independent initializer published packet comparison 2026-10-09
+
+ROOT authenticated exact6577 publication3e66088d archives through Git blobs: candidate2629409/SHA5ca9cc77/blob8f04bad3; pairedbaseline3913391/SHA5bc5b4a8/blobd870522b. Independent builtin comparison proves all25 complete name/status/failureMessages, all8 complete rows and population, entire stderr and split failure text equal without normalization. Five full Base64 binaries independently decoded and SHA256/wasm-header authenticated (not runtime validation). Both own7903 before/after custody records byte-identical; reported childexit1/no signal/timeout/truncation, capture30846baseline/30709candidate exact rawstream lengths. Actual parent execution, source/provenance joins and CI physical custody remain separate/unproven by this comparison. Real positive shared-allocation failure retained, native support and HOLD release not claimed. Report `/private/tmp/js2-6577-session-a-published-review-20261009/independent-paired-archive-review.json`.
+
+
+## Exact frozen dependency integration scope 2026-10-09
+
+ROOT INTEGRATION GRANTS — FACTUAL CONCLUSION
+Issue 6920 — Native Linear numeric-vector shared source handoff and integration plan
+
+Within the human-authorized ROOT integration scope, ROOT can integrate the existing frozen A1 admission dependency payload as-is into its own exclusive integration candidate. This does not transfer or release an original claim. This conclusion combines the human authorization supplied in this task, R1's explicit ROOT sole integration-writer handoff, A1's frozen owned dependency delivery/ROOT qualification ownership, A2's express test-only use of the same A1 dependencies, and the already adopted current source plan §D: "ROOT can compose the already owned A1 dependency or assign only that closure; do not invent a second admission protocol."
+
+Exact coherent four-leaf A1 payload, all matching frozen707f manifest and all byte-identical in observed A2:
+
+src/ir/runtime/target-admission.ts
+  original frozen donor: /private/tmp/js2-ir-native-linear-public-caller-20261008/.tmp/a1/frozen-707f-source/src/ir/runtime/target-admission.ts
+  bytes 4680; SHA256 276bb9a35c1f62b778c0a962d5c22d7945b39678a33abfe4963350aaad138446; Git blob 7274cd1d867b5962c2388962ed91c6f2434c6046
+
+src/shared/contracts/compile-target-policy.ts
+  original frozen donor: /private/tmp/js2-ir-native-linear-public-caller-20261008/.tmp/a1/frozen-707f-source/src/shared/contracts/compile-target-policy.ts
+  bytes 2913; SHA256 ed74b9af18a25c432fe0f78f54832d1627df917db93fca8ae5a4147c135970b6; Git blob 8f8baf9b5c5e7b5bc8a8d3ecc61d711098b4609b
+
+src/shared/contracts/compile-target.ts
+  original frozen donor: /private/tmp/js2-ir-native-linear-public-caller-20261008/.tmp/a1/frozen-707f-source/src/shared/contracts/compile-target.ts
+  bytes 154; SHA256 4d4a1c586cd3ffc42788de7e275c56dc8e76c5b5878d5a67264d2653923f6ab8; Git blob fe0581deef82388626795551fbf786f0e527eee0
+
+src/shared/contracts/ir-preparation-failure.ts
+  original frozen donor: /private/tmp/js2-ir-native-linear-public-caller-20261008/.tmp/a1/frozen-707f-source/src/shared/contracts/ir-preparation-failure.ts
+  bytes 12413; SHA256 5525be0f2d8c588c4045958254c215257898df93f0840cb5400823b6adce5fc7; Git blob 0633ed29be3ce62ffed15c28f14142ff5e8ecd38
+
+The unchanged shared/contracts/ir-preparation-errors.ts dependency is identical in all four variants. The R1 target-admission and compile-target files are exact equivalent donor bytes; its compile-target-policy differs from A1 (A1 optional backend) and its failure union arm has a different order. Use the named coherent frozen payload identity; the comparison supplies no wholesale target-profile.ts/compiler/public-caller transplant authority and no current closure/type/runtime credit.
+
+Already evidenced narrow callsite authority: A2 saved report says ROOT explicitly resumed completed R1 child scope45545 for only native admission callsites in source/preparation/typed preparation/codec. Those original callsite/import hunks do not need an invented new broad release merely to integrate the preserved, already-owned proposal. This record does not authorize arbitrary current-J3 function rewrites.
+
+Exact current-J3 A2 source-hunk ACK/reconciliation still unestablished in the read evidence:
+1. src/ir/program-source.ts: IrProgramSourceInput.linearVectorProjection, selectNativeLinearVectorProjection, nativeLinearSourceVectors and prepareIrProgramSources selector/collector joins. Existing captureTypedIrProgramInput and current source/class-cycle/context handling must be preserved; this is not blanket permission to rewrite that capture helper. Original A2 functions occur at1134,1146,1630; selector field869 and capture897.
+2. src/ir/program-preparation.ts::prepareWholeIrProgram (original A2 line22): any NEW current-J3 early-policy/selector composition beyond the already resumed admission callsite. The existing saved admission callsite itself at23/25 is covered by the recorded resumption; do not hold that old hunk merely because its original claim remains in-progress.
+3. src/ir/program-prepare-ir.ts::prepareTypedIrProgram (original A2 line58): NEW current-J3 final canonical producer invocation, complete final population/attachment/snapshot handling and all-view required validation. The original old admission guards at65/66 are within the recorded callsite resumption; old facts algorithm/body/source whole-file replacement is not.
+4. src/ir/program-physical-plan.ts::planPhysicalSetup (original A2 line1227): NEW current-J3 required validation before untrusted projection/ABI reads, exact scalar compatibility and narrow conversion of located unsupported acquisition to PhysicalSetupOutcome. Existing old A2 assert at1234 uses the obsolete helper; its existence does not authorize resurrecting it or changing every physical planner function. New adapter is a proposed source hunk needing ROOT's exact author/scope assignment, not an existing owner ACK.
+
+These are function-level mappings of the already adopted four-file source plan, not a new spec. The original active16740 owner record and original A2 proposal remain intact. An as-is frozen dependency integration and a new shared source implementation release are different acts. A1 coordinator/public source selector and acceptPreparedIrProgram remain separate owned obligations; this four-file source task does not grant them.
+
+Original native-agent UUIDs remain unestablished by the216 saved donor evidence files; exact claim assignees/write IDs are established. ROOT can integrate the frozen dependencies without rewriting those identities. Contacting/resuming an original claimant still requires the real original native-agent mapping, not a guessed sidebar handle.
+
+No implementation, tests, imports, claims or original-tree mutation by this inventory.
+
+
+ROOT assigns Sol6.1High only a new exclusive J3-based candidate with the four exact frozen A1 dependency leaves as-is, plus unchanged original18 diagnostic test as an archived operand. No frontend/facts/physical/caller source rewrites or original claim edits; complete source copy proof, all-reference type/value closure and static source typecheck required. No runtime credit or source qualification follows from incomplete source wiring. Candidate `/private/tmp/js2-6920-a2-j3-admission-composition-sol-candidate-20261009`.
+
+## Final C1/Number independent review assigned 2026-10-09
+
+Frozen C1 test499763/SHAea68de66/blob98559835:375 preserved+40added=415 authored;99 cold contexts103 capture phases, zero runtime. Full12caller directions/74spans, fixed old/new source roots/seven-file pins, genuine native loader/warm receipt custody and original Number callback association require independent code review before activation. AstraHigh is reviewing the full final source, patch, cold-runner and all preceding plans in private `/private/tmp/js2-6920-c1-number-composition-astra-review-20261009`. No originalhelper/Number/H1/H2/H3/root/receipt/live changes by that worker. Source growth and normal gates remain explicit review obligations.
+
+
+## Full independent C1/Number review adopted 2026-10-09
+
+# Independent C1/Number composition review
+
+Issue 6920 — Native Linear numeric-vector shared source handoff and integration plan.
+Codex GPT-6 Astra High, 2026-10-09.
+
+**Decision: functional static clearance for the exact frozen `ea68de66…` composition; activation remains held.** I found no additional blocking authority or callback-construction defect in the reviewed composition. ROOT has separately demonstrated a new normal formatting-gate failure, so these exact bytes are not a final qualified packet. Make the bounded formatting successor, preserve all proof values and callback obligations, then review its exact delta and execute the complete qualification on the final physical composition.
+
+This review executed **0 target imports, 0 helpers, 0 callbacks, 0 cold children, 0 compiler/type checks and 0 file faults**. Independently authored Python standard-library byte/JSON/hash arithmetic checked the submitted literal recipes and complete endpoints. It is not runtime qualification. Only this assigned review directory was written; source, tests, helper, receipt, root, Git, claims, live copies and issue files were untouched.
+
+## Reviewed identity and evidence
+
+Candidate: `/private/tmp/js2-6920-c1-number-composition-sol-candidate-20261009`.
+
+| Object | Bytes | SHA-256 | Git blob |
+|---|---:|---|---|
+| C1 original before | 197087 | `0b769473c638eb2e856989f2b5eae58811c73bff911eb6dc04959b5cf4ac03ae` | `9b3862eaf00ec647cb94adf7b63198d5139a04a0` |
+| C1 reviewed final | 499763 | `ea68de66a5ef1c84c6d17bbd8e6c4dfc6862259e62826462b26dfcaffe6bee9b` | `985598354b39e5bf446b8c788d4a4928f31c6f39` |
+| Pure H3 history helper, unchanged | 24394 | `09bf4df558c226a1291ec07d279f0c6f3172beefff6a61f588395a367231bff7` | `a3d9aca3efd83bfdecc9001b38d8bf7c84b071ce` |
+| Number N2 | 116007 | `546be43029e1e58f2b31fb71e2e64592f954a6b750c6bcc3fa1f1db8dab889ea` | `1fb4a992f18ccad293e3030d9f0d88c40d40d78a` |
+| H1b | 96713 | `7bbfaf6687f7411147f00833380027d3959b743ec7dc033fc9bba8d69849992b` | `c59701cc36595cea2536c35edcc1e42278ba3e5c` |
+| Receipt R2 | 234263 | `f0c041143521b640edfab049fe71e97c13430b4c559063c05b857266e61c0126` | `87ae00a5a9930af9d77af61cecb17894497076cf` |
+| Root A2 | 303 | `c8522cf112584bdcdf0e2184c5cd59a108827ac121c5bdf794d8cecf709dc4ca` | `e404102a8712f058059ca84d068fe0af774deccf` |
+
+I inspected the complete frozen C1 bytes, full source patch and source successor, actual code and callback bodies after line4494, all six independent recipe objects, the full cold runner, predecessor/final literals, archived endpoint files, original Number plan and fixed-caller supplement, previous Number review, and actual H1 capture/epoch/guard implementation. Large embedded recipe source bodies were decoded and checked byte-for-byte against full actual endpoint files, with independent reciprocal replay and unchanged-complement accounting; they were not accepted from their summaries or hash labels alone.
+
+`inspect.py` is this review's independently authored inspector. `BYTE-REVIEW.json` records complete source/target pins, every span's coordinates and fragment/complement pins, all12 endpoint equalities, exact patch/additive/runner association, old receipt reconstruction, other-five-record preservation and the16/16 C1 source directions. No supplied packet inspection script was executed. `source-review-view.txt` is only a reading aid with already checked large recipe literals elided; the original full bytes and independent span evidence control the review.
+
+## Preservation and bounded source delta
+
+The entire C1 patch equals the actual before-to-final diff. The separately supplied additive source equals the final appended block; the authored runner equals the exact `String.raw` runner payload in the final test. The C1 source's independently replayed16 inverse and16 forward spans recover the full197087-byte before and full499763-byte after.
+
+Before the appended block, changes are confined to the `pathToFileURL` import, retaining the old freeze under `independentNumberPredecessorFreeze`, adding the new independent final freeze, hardening the existing replay primitive, and supplying its actual fixed target pins at existing call sites. The single old registration body change adds `currentRow.currentPin` to the existing full forward replay. Other existing callback bodies are preserved; original recipes, helper extraction custody, historical manifest and trace controls remain represented. There is no rewrite of old failure literals, deleted protected callback, new skip/xfail, receipt-domain enlargement or production change in this C1 packet.
+
+Source-level authored population is **375 prior +40 new =415**. New cases are17 ordinary composition/reader cases,22 cold cases and1 complete-seven-instrument association case. This is authored registration arithmetic, not an executed denominator. The cold bodies specify99 fresh child contexts and103 capture phases:2 initial healthy contexts;30 for six mixed triples;10 for two H1 faults;55 for eleven receipt-domain faults; and2 three-phase warm contexts. Actual observed values remain0 in this review. The96 recipe fault operands are nested within two callbacks and must not be added as96 extra Vitest cases.
+
+## Independent authority and full source recipes
+
+The final expected receipt/root/seven-source values are literal C1-owned data. Runtime acquisition does not initialize those expected values from the receipt being tested. The old R1/A1 literal is retained separately. Parsing the literals yields the exact physical root source bytes, including real LF characters and quote characters; no escaped-source surrogate is accepted as a loaded root. Both root literals preserve the fixed historical manifest digest.
+
+The six caller proof objects are recursively frozen at construction. `fixedCallerMetadata` requires an own-DATA record with exact ordered keys, fixed path and every field of both fixed pin records, before returning only recipe arrays. The caller domain closes over precisely Number and H1. Changing a caller-supplied expected epoch or hash cannot alter the trusted target. Negative recipe injection stays useful without becoming expected-value injection. The complete source input and all endpoints are checked against the independent constants; no successful object identity is cached.
+
+The replay primitive checks primitive UTF-8 round trips, nonempty arrays, own-DATA indexed spans, exact span key order, safe integer coordinates, strictly increasing starts, nonoverlap, source bounds, fixed target bounds, equal unchanged distances, exact full fragments, changed edits, final-tail length and output UTF-8 equality. Both directions use their supplied independent recipes and explicit fixed target sizes. Whole-result SHA-256/blob/equality assertions remain at callers. No output pin is inferred from the result under test.
+
+| Family | Direction | Spans | Independent static result |
+|---|---|---:|---|
+| Number | N2 → N1 | 4 | Exact archived N1 |
+| Number | N1 → N2 | 4 | Exact final N2 |
+| Number | N1 → B | 6 | Exact original112437-byte Number |
+| Number | B → N1 | 6 | Exact archived N1 |
+| Number | N2 → B | 10 | Exact same original B |
+| Number | B → N2 | 10 | Exact same final N2 |
+| H1 | H1b → H1a | 1 | Exact archived H1a |
+| H1 | H1a → H1b | 1 | Exact final H1b |
+| H1 | H1a → original | 8 | Exact original44161-byte H1 |
+| H1 | original → H1a | 8 | Exact archived H1a |
+| H1 | H1b → original | 8 | Exact same original H1 |
+| H1 | original → H1b | 8 | Exact same final H1b |
+
+All74 full span bodies were checked. Number's four successor intervals compose with the previous six without overlap. H1's changed Number pin lies inside its prior appended tail and is represented by the composed tail payload; there is no overlapping extra edit. Stage/old/composed endpoint agreement is asserted independently at runtime as well as established statically here.
+
+Replacing only records0 and6 of parsed R2 with the separately fixed old H1/Number records and preserving serialization reconstructs **the entire raw R1** exactly, not just its parsed value. Exactly seven ordered records remain; records1–5 are unchanged. Schema, historical manifest authority, linearOptions and both prerequisite-source sections match R1. A1's full303-byte source remains separately pinned; A2 changes the receipt digest only. This source association does not authorize future file edits.
+
+## Actual reader and guard association
+
+`independentlyAcquireNumberComposition` first authenticates current source/receipt/root and all seven instrument recipes. It verifies both caller stage chains, reconstructs old receipt/root authority, pins unchanged instruments, then calls actual `captureC1HistoricalAuthority` via the existing physical-H1 guard. Its reader records exact ordered paths **and the complete supplied text for every operand**. The expected historical trace is fixed literal data, not derived from the observed call. Historical H3 remains the93405-byte archive with fixed40368-byte prefix hash `2b6358379b9f9145b54a5287b6a74f61a89ef9deff215ce6fb21a2174ee1845e`.
+
+The actual N2 reader association is meaningful but deliberately narrower than the Number suite. `numberReaderFromActualSource` freshly full-pins N2, parses actual source, requires exactly one declaration for each of four named reader/routing bindings, binds the nested declaration text to the reviewed stage span, and checks the protected callback's actual pin-loop span. It transpiles those authenticated declaration texts and supplies explicit real `c1HistoricalArtifactPath` and `runtimePreparationRemainderHistoricalSource` exports with the selected read function. It does not pretend to import/register/run the protected Number callback.
+
+The positive reader case tests actual preparation bytes against the independent49704/49541 pins, six historical routing paths and the unchanged raw receipt path. Four additional cases exercise missing source with exact Error identity, lone surrogate, nonprimitive boxed-like operand and undefined, with a single reached read and zero coercion. The other preparation-source corruption controls remain in the retained C1 cohort and five Number additions. The full461 Number cases still need their own run; this extracted-reader control is not a surrogate for them.
+
+Warm supplied-reader mutations for Number, H1, receipt and root prove reread intent after healthy acquisition, exact exception identity for missing inputs, and recovery after restoring the supplied channel. The actual physical H1 authentication wrapper does not replace supplied mutants with healthy bytes. Exact import/local-reader/pin-loop rollbacks, untouched-tail mutation and N1-under-N2 all reach actual H1 whole-source guards. The final original-H1/six-current control reaches the complete-seven-instrument epoch guard. These are distinct from actual physical root/receipt faults in the cold runner.
+
+## Genuine cold loader and captured failure phases
+
+The runner writes owned physical `historical.ts`, `ir-c1-authority-root.ts`, receipt, case and `.mjs` files in a fresh unique directory. It starts a new `process.execPath` process. Its resolve hook routes H1's actual root import to the actual physical root URL and delegates to `nextResolve`; its load hook calls `nextLoad`, observes the returned source and returns the same result. It does not fabricate exports, replace source with a precomputed object, or transpile H1 into an alternate implementation.
+
+Both imports use actual file URLs. Parent assertions require exact two-source URL order, full source text, full measured pins and `module-typescript` format. The root digest comes from an actual namespace own-DATA descriptor with primitive string value. That loaded value is compared to the precise authored root text. Healthy roots are independently fixed A1/A2; deliberately negative receipt-domain roots are explicitly authored negative operands, never promoted to healthy expected pins.
+
+Actual H1 then runs its exported `captureC1HistoricalAuthority(reader)`. H1, root and receipt reads use the just-written physical files; remaining input texts are copied from the authenticated actual reader inputs. Every read path and full operand is retained. The case-file map is a supplied authority-reader snapshot, not fake loaded H1/root code. The reader rejects any undeclared path. A successful capture also reads the genuine historical H3 result before incrementing acceptance. Failure phases require acceptance0 and exact Error name/message, plus complete expected reader trace and operand association.
+
+Guard expectations agree statically with actual H1 order:
+
+- Root warm mismatch stops at the first anchor read.
+- Receipt digest, fixed caller pin, instrument domain/schema and prerequisite-section path faults stop after the initial H1 read and receipt acquisition.
+- Number current-file faults stop after the Number instrument read.
+- Resolver/closure section faults happen after the full current instrument loop but before historical artifact reads.
+- The full final seven-file comparison catches original H1 mixed with six current instruments.
+
+Six mixed old/new H1–receipt/root–Number triples cover every nonhealthy combination of the three binary axes, with old and new healthy epochs on both sides. Two actual loaded H1 source faults change the Number pin literal or remove its fixed comparison. The latter is correctly expected to fail H1's independent complete-source guard; it is not claimed to establish semantic behavior after disabling that guard. Eleven independently bound negative roots drive current/before pin, path/order/count/key, receipt key, CABI source, policy source, resolver and closure faults past only the root-digest check into their intended real guards.
+
+Two warm child contexts retain loaded A2 while replacing physical A2 with old A1 or physical R2 with old R1. They capture healthy, refusal and restored healthy phases; restoration is in `finally`. Parent assertions check full restored bytes, original permissions, regular non-symlink identity, retained loaded digest, and child-reported inode/device equality for the fault target. Root/receipt faults are confined to owned scratch files, not the checkout.
+
+All cold scratch files and stdout/stderr logs remain after success or failure, including downstream phase assertion failures. Log-stream errors and output parsing-limit breaches become errors after natural close; they do not trigger a fabricated result. The16MiB in-memory limit does not truncate the retained log files. No new timeout, kill, abort, cancellation, skip, alternate loader or environment bypass was added. The older unchanged native type-probe callback still contains its prior timeout/process-group code; the whole file must not be described as having none. ROOT must preserve its existing separately authorized execution discipline.
+
+The native loader's actual behavior remains **unqualified**. A Node version/string check, installed-loader source inspection and noEmit success do not prove `nextLoad` exposes the expected format/source in the eventual child environment. Unsupported behavior must fail closed with retained evidence. Do not add a synthetic loader fallback to make the tests green.
+
+## New normal-gate blocker and bounded repair
+
+**G1 — normal formatting failure, demonstrated by ROOT.** ROOT reported the normal Prettier check using the primary `.prettierrc`: frozen final exited1 with style warnings; original197087-byte before exited0. The retained evidence is under `/private/tmp/js2-6920-c1-normal-style-check-20261009`, specifically `stdout.log`, `stderr.log`, `before-stdout.log` and `before-stderr.log`. I did not run that check. This is a real new gate failure, not a speculative style preference. It blocks presenting `ea68de66…` as the ready final packet.
+
+Bounded fix: format only the owned C1 test under the existing repository configuration, retain the frozen reviewed original, and create an explicit formatting-only successor. Verify actual syntax structure, all decoded recipe/literal values, complete cold runner payload, ordered registrations/parameter tables and original assertions before versus after. Preserve original375 callback obligations,40 new cases,99 contexts and103 phases; do not mechanically require unchanged raw spellings where normal formatting changes whitespace or quote representation. Full string values and embedded source snippets must remain exact. Regenerate the C1 whole-file source proof, patch and custody pins from the formatted final bytes; do not repin N2/H1b/R2/A2 or alter their recipes for this C1-only formatting.
+
+C1 is outside H1's seven geometry instruments. A C1-only formatting successor therefore does not itself require changing the four-file receipt/root authority. Any actual change to one of those four files is a different owned successor and must not be hidden in formatting. Run normal formatting/type checks on the final exact composed epoch, then qualify runtime; source pins before formatting do not transfer execution credit after a change.
+
+## Growth and normal budget implications
+
+The test grows by302676 bytes, from197087 to499763. The large part is independent historical/current H1 source payloads embedded in separate old/composed forward and inverse recipes, plus the new controls. This is substantial review/maintenance cost. It is not a new production implementation or a wholesale copied production verifier: one generic replay primitive serves all six proof objects, one cold runner serves22 cases, and one actual-source reader extraction serves the reader controls. The H3 pure helper remains shared and unchanged.
+
+The actual repository `scripts/check-loc-budget.mjs` and `scripts/check-func-budget.mjs` select TypeScript sources under `src/`, excluding `.d.ts`; the latter also filters changed paths with `p.startsWith("src/")`. This file is under `tests/`. Its byte growth alone is not an established violation of those two gates, and this review did not execute either gate. Do not buy a LOC allowance or bypass for a test path merely from the499k figure. Normal formatting applies and has in fact failed. The actual selected-input noEmit report remains static/type evidence only.
+
+A later test-data extraction could reduce literal bulk, but doing it now is not necessary to close a demonstrated soundness defect. Any such extraction must keep fixed independent fixture pins, all74 actual span bodies and both independent direction lists, and bind complete loaded fixture bytes rather than importing receipt-selected expectations. It would create another dependency/custody review; no unrequested broad refactor is recommended as a release prerequisite.
+
+## Remaining ROOT qualification obligations
+
+1. Adopt this report and G1, review the formatting-only successor, and freeze the final complete physical composition with the exact reviewed N2/H1b/R2/A2, unchanged five instruments, immutable archives, pure helper and necessary source operands. Preserve authentic donor/source evidence and original failure records. Parent/worker source pin reports do not replace whole-copy custody.
+2. Confirm actual runtime registration/completion of **415 C1 cases** with the375/40 split and all original titles/order/parameters, plus the separate **461 Number cases** with456 original+5 new. Retain raw per-case outcomes and first failure stacks; collection failures or skips cannot be scored as completed callbacks.
+3. Observe the genuine99 child contexts/103 capture phases on the final bytes, including full loader source/format/URL association, loaded root descriptors, every read trace and complete operand, healthy old/new captures, exact refusal priorities, and restored physical custody. Keep failed scratch and child natural-close logs. Do not extrapolate this from static code or another helper cohort.
+4. Execute all96 recipe-fault operands within their actual callbacks and preserve their paired healthy boundaries. Establish actual extracted-reader errors/read counts/no-coercion and actual Number protected callback behavior separately.
+5. Retain the prior H3 proof/control, original source preservation, preparation donor, normal source-policy/full-authority and unaffected cohort obligations. Exclusive physical-copy fault discipline remains necessary for the retained C1 source-fault callbacks; parallel work in another copy is not ownership of this copy.
+6. If runtime reveals a different first guard or loader behavior, retain the exact result, inspect the actual path and propose a bounded repair. Do not globally replace literals, loosen expected pins, derive expected hashes from observed mutated receipts or introduce cached/fallback acquisition.
+
+No production/shared-helper change is required by this static review. No future source is admitted, no new protocol was introduced, and no source-owner/foreign acknowledgment was transferred. This review grants no full IR, native-public execution, resource, legacy-retirement or JS-host replacement claim. Functional static construction is clear; normal formatting and actual runtime qualification remain the concrete release holds.
+
+### Formatting successor handoff note
+
+After the frozen functional review, ROOT identified a separate495653-byte proposal, SHA prefix `5975acc8`, at `/private/tmp/js2-6920-c1-normal-style-check-20261009/formatted-proposal.ts`. ROOT reports its strict AST identity check does not pass literally:365 property-name nodes change from StringLiteral to Identifier, two parentheses wrap caller-record `as const` expressions, and one ParenthesizedType wraps `typeof names`. These are reported finite syntax differences, **not a formatting successor clearance by this review**. The successor review must account for precisely those node transformations, decoded property-name equivalence/order, array/value identity, and the particular indexed/type expression; it must reject any additional node difference rather than applying broad normalization. Verify all literals/recipe payloads/runner text and registrations independently, retain the exact difference ledger, and pin the full proposal after that check. The present clearance remains scoped to frozen `ea68de66…`.
+
+
+ROOT separately generated, without changing frozen input, the exact normal Prettier proposal495653/SHA5975acc8. Actual strict AST identity is false; its365 quotedproperty-key spellings, two expression parentheses and one typeparenthesis are an explicit difference ledger, not automatically accepted semantic equality. AstraHigh now independently reviews that precise finite formatting delta and all literal/recipe/runner/registration preservation in `/private/tmp/js2-6920-c1-formatting-successor-astra-review-20261009`. Original formattingfailure and source remain preserved. Normal formatting check on the proposal itself now exits0; no runtime credit.
+
+
+### Formatting successor actual normal checks 2026-10-09
+
+Frozenea68 remains unmodified. Separate495653/SHA5975acc8 formatted proposal passes actual normal Prettier check using repository .prettierrc. Separate physical selected-test context contains the exact495653 bytes; actual TS7 noEmit exits0 with259 listed files and positive actual selected-file floor, stderrempty. No target/helper/callback/cold execution. Exact365 property-name spellings and three parenthesis wrappers remain independently reviewed finite-delta obligations; strict AST identity false is retained rather than called equal. Raw stdout/stderr/config/listed-input evidence under `/private/tmp/js2-6920-c1-normal-style-check-20261009/`. No H1/Number/root/receipt source/pin changes or runtime-credit transfer.
+
+
+## Protected queue admission for B append6593 2026-10-09
+
+Session A verified final normal run37930775001 SUCCESS at exact6593 head43b4dc5cee11464df973f45d8c0932dbb17e7452. All8 root-suite shard jobs naturally completed; final issue-tests-gate job113857872827/Gate merged root suite succeeded. Fresh six required protection checks pass; actual PR CLEAN/MERGEABLE/non-draft, canonical main7d9e8ce3 unchanged and no existing queue entry. Exact committed predecessor correction is reconciled and full1185-line diff reviewed; original inaccurate saved copy/report retained.
+
+A released6593 HOLD and submitted exact43b4 via ordinary protected merge queue, no admin/bypass/branch edit. Effect-read queue position1/stateAWAITING_CHECKS; PROPEN/not merged/no main delivery credit. Do not push/refresh the queued head. Merge-group checks and canonical ancestry/content still required. All other B holds/claims and allocator/shared-source scopes remain unchanged.
+
+Parallel A work: Astra gives functional static clearance of frozen C1/Number composition but detected formatting gate remains separately held; exact formatted proposal now normalformat/typecheck passes and finite delta review is underway. Sol composes only four frozen native-admission prerequisite leaves under verified preexisting ROOTintegration grant. New frontend/facts/physical source handoff is not yet published/qualified.
+
+
+## Full finite formatting review adopted 2026-10-09
+
+# Finite C1 formatting successor review
+
+Issue 6920 — Native Linear numeric-vector shared source handoff and integration plan.
+Codex GPT-6 Astra High, 2026-10-09.
+
+**Decision: static clearance for the exact495653-byte formatting proposal, SHA-256 `5975acc87d8dc8cc26bac240b3b101b72b3addf36f7e3a29d2a6f471c68b2be9`.** Its differences from the previously reviewed functional source are precisely the365 property-name spellings and three parentheses described below, plus formatting trivia. No additional AST, literal-value, proof, runner, registration or assertion change was found. ROOT can compose these exact bytes as a new frozen source successor, preserving the original review and failure evidence.
+
+The strict unchanged-AST result remains **false**. This review does not relabel that result. Instead, it verifies a finite equivalence relation at the exact368 observed source-tree locations and rejects any other difference. Runtime qualification remains held:415 C1 cases,461 Number cases,99 child contexts and103 capture phases have not been executed by this reviewer.
+
+Only `/private/tmp/js2-6920-c1-formatting-successor-astra-review-20261009` was written. No frozen candidate, proposal, helper, authority, receipt/root, issue, Git state, claim, J3 source or other worker file was changed. Target imports, target helper/callback execution, compiler/type/formatter runs and file faults in this review: **0**. The permitted TypeScript5.9.3 library was loaded only to parse supplied source as AST data; independently authored standard-library byte scripts supplied the reciprocal source proof. This is static inspection, not a target execution or type qualification.
+
+## Exact source states
+
+| State | Bytes | LF count | SHA-256 | Git blob |
+|---|---:|---:|---|---|
+| Original C1 before composition | 197087 | 4429 | `0b769473c638eb2e856989f2b5eae58811c73bff911eb6dc04959b5cf4ac03ae` | `9b3862eaf00ec647cb94adf7b63198d5139a04a0` |
+| Reviewed functional composition | 499763 | 5672 | `ea68de66a5ef1c84c6d17bbd8e6c4dfc6862259e62826462b26dfcaffe6bee9b` | `985598354b39e5bf446b8c788d4a4928f31c6f39` |
+| Formatted proposal reviewed here | 495653 | 5962 | `5975acc87d8dc8cc26bac240b3b101b72b3addf36f7e3a29d2a6f471c68b2be9` | `7bf8dd5f3fb00eb99132ab977048976a39e0aafe` |
+
+The reviewed functional source is `/private/tmp/js2-6920-c1-number-composition-sol-candidate-20261009/tests/issue-3518-c1-current-source.test.ts`. The proposed successor is `/private/tmp/js2-6920-c1-normal-style-check-20261009/formatted-proposal.ts`. The original is the candidate's `.tmp/inputs/C1.before.ts`.
+
+The supplied2070-line formatting diff was checked against a fresh full before/after diff. Its complete contents after the two filename headers are identical. All three full source files parse without parse diagnostics. The independent traversal compared32034 node pairs, including the three new parenthesized nodes' exact children.
+
+## The exact allowed syntax changes
+
+`EXACT-NODE-DIFFERENCES.json` independently records each changed tree path, decoded name or exact wrapped expression, node kinds and property-name source locations. Its ordered368 path/kind entries equal ROOT's supplied difference ledger. That ledger was used for corroboration after independently detecting the changes, not to omit arbitrary unexplained subtrees.
+
+1. **365 quoted property names become Identifier names.** Both sides of every pair are the `name` of an actual `PropertyAssignment` inside the unchanged object tree. Each old StringLiteral's decoded text equals the new Identifier's text, and the new name is a valid identifier. Property order, parent assignment, initializer, sibling count and all descendants remain unchanged. None is a computed name, shorthand property, method, access expression, string value or declaration reference. The transformation changes source spelling only; it does not change the property key or insertion order used by exact-key checks. The concrete list is finite and recorded; no general property-name normalization was used to excuse other differences.
+2. **Two explicit expression parentheses.** Exact tree paths `root/149/5/2/0/0/1/2` and `root/149/5/2/0/0/1/4/2` wrap respectively `[numberCallerStage, numberCallerOld, numberCallerComposed] as const` and `[h1CallerStage, h1CallerOld, h1CallerComposed] as const`. The old node is an AsExpression over an ArrayLiteralExpression; the new node is a ParenthesizedExpression whose child compares exactly with that old AsExpression. Element order, bindings, `as const` and the containing conditional expression are unchanged.
+3. **One explicit type parenthesis.** Exact tree path `root/153/2/6/0/0/1/3/0/0/2/1/1/0` wraps `typeof names` as `(typeof names)`. Both nodes occupy the same IndexedAccessType position; the new ParenthesizedType contains the identical TypeQuery. This preserves the actual `(typeof names)[number]` type association in the reader declaration extraction. The comparison permits only this exact query at this exact location.
+
+Every other node kind, child count/order, parsed flag and literal/identifier value agrees recursively. This covers actual operators, call targets and arguments, modifiers, conditionals, return paths, assertions, arrays and table rows; no function body is treated as an opaque equal-size/hash proxy. All56 AST-associated comments agree exactly in text and order. Source pragmas/reference directives agree. Comments inside the raw cold-runner template are additionally preserved as part of its exact raw source text.
+
+## Proof and literal preservation
+
+`FORMATTED-LITERAL-VALUES.json` contains values independently decoded from the actual proposal AST, not loaded from a runtime receipt or imported candidate module. All six `numberCallerStage`, `h1CallerStage`, `numberCallerOld`, `h1CallerOld`, `numberCallerComposed` and `h1CallerComposed` objects deeply equal their functional-predecessor values. Object key order is retained. Every fixed path, before/current pin, coordinate and entire `from`/`to` fragment is unchanged.
+
+The decoded historical manifest freeze, R1/A1 predecessor freeze, R2/A2 final freeze and current authority trace strings agree exactly. Whole root-source strings retain their actual LF/quote characters. No expected hash was regenerated from a result under test. The independent source constants remain the authority; formatting does not broaden the accepted epoch.
+
+I then independently applied **all12 caller directions and all74 complete span bodies decoded from the formatted proposal** against the separately archived full endpoints:
+
+| Family | Directions | Span counts |
+|---|---|---|
+| Number stage | N2→N1 / N1→N2 | 4 /4 |
+| Number original | N1→B / B→N1 | 6 /6 |
+| Number composed | N2→B / B→N2 | 10 /10 |
+| H1 stage | H1b→H1a / H1a→H1b | 1 /1 |
+| H1 original | H1a→44161 /44161→H1a | 8 /8 |
+| H1 composed | H1b→44161 /44161→H1b | 8 /8 |
+
+Every result equals the complete separately retained endpoint and its exact byte/SHA-256/blob pin. Checks include strict increasing starts, nonoverlap, full fragment membership, source/target bounds, unchanged distances, full tail, valid UTF-8 and whole endpoint identity. `BYTE-REVIEW.json` retains per-span fragment and unchanged-region evidence. Separate inverse and forward recipe lists remain separate; the formatting did not manufacture a reciprocal direction from another list.
+
+The **complete tagged `String.raw` runner source is byte-for-byte identical**, including the tag, backticks, payload escapes and Git-blob NUL framing. This stronger raw-text check avoids confusing cooked and raw template values. Native loader source acquisition, actual namespace descriptor checking, physical root/receipt rereads, natural-close handling, retained scratch/logs and restoration assertions therefore have exactly the source reviewed previously. No new timeout, kill, bypass or fallback was introduced.
+
+N2/H1b/R2/A2, the other five instrument records and the pure history helper require **no repin** for this C1-only formatting. Their expected values and recipe data are unchanged. C1 is outside H1's seven geometry instruments. The previously reviewed whole source, independent root/receipt construction, reader association and source-domain constraints remain the applicable functional review; this report does not reauthorize unrelated source edits.
+
+## Callback and old-obligation preservation
+
+There are114 registration syntaxes in both the functional and formatted source, versus102 in the original197087-byte source. AST equivalence under only the368 listed changes covers their complete ordered call expressions, titles, parameter expressions/tables, nested loops, callback bodies and assertion operands. It does not execute `.each`, register tests or observe callback completion.
+
+Independently comparing the original102 registration expressions with the reviewed functional predecessor established101 byte-identical expressions. The sole difference is original registration ordinal7, `independently inverts every recorded edit and replays exact current bytes`: its existing `independentlyReplaySuccessorSpans` call gains only the fixed `currentRow.currentPin` target argument. The formatted successor preserves that declared difference and all other old registration structures. A syntax-formatting change is not represented as a new callback or permission to delete an old assertion.
+
+Thus the existing authored populations remain **375 old +40 new =415**, with the original375 obligations intact. The new40 remain17 ordinary composition/reader,22 cold and1 complete-instrument association case. Cold source still specifies99 fresh child contexts and103 capture phases. The96 internal recipe-fault operands remain internal operands, not96 extra tests. Number's separate456+5=461 population is unchanged and remains a separate execution obligation.
+
+The exact authenticated Number declaration extraction and explicit real export bindings are unchanged. It still exercises actual source-extracted reader declarations, not the full protected Number callback; the latter is qualified only by the separate Number runtime population. The format check does not confer any callback credit.
+
+## Complete source successor recipes supplied
+
+Two review-owned JSON proof files provide full literal fragments and exact independent forward/inverse coordinate lists:
+
+- `reviewed-to-formatted-source-proof.json`: **152 inverse spans and152 forward spans**, binding full `ea68de66…` ↔ full `5975acc8…`.
+- `original-to-formatted-source-proof.json`: **17 inverse spans and20 forward spans**, binding full original `0b769473…` ↔ full `5975acc8…` directly.
+
+All four directions were separately constructed from complete endpoint comparisons, independently replayed, and checked against complete expected endpoint bytes/hash/blob. Asymmetric17/20 partitioning is intentional: each direction's comparison can select different matching line regions, while exact fragment membership, strict starts, nonoverlap, unchanged distances and complete target equality prove both directions. No assumption of mirrored interval count is required. The previous reviewed `original ↔ ea68` proof stays preserved; this does not replace or overwrite it.
+
+`reviewed-to-formatted.diff` and `original-to-formatted.diff` are the complete companion source diffs. `BYTE-REVIEW.json` records endpoint pins, all fragment/complement pins, equality results and full supplied-diff association. These are **private proposed source evidence** for ROOT/source-owner integration, not an activated production protocol, receipt epoch or self-generated permission for future source acceptance.
+
+## Normal checks and release bounds
+
+The earlier exact `ea68de66…` formatting failure remains historical evidence. It is not erased by this successor. ROOT separately reports actual normal Prettier success for the exact formatted proposal and actual TS7 noEmit success in its separate physical typecheck copy, with259 listed files and the exact selected495653-byte/SHA5975acc8 file positively established. I read `/private/tmp/js2-6920-c1-normal-style-check-20261009/typecheck-qualified-input.json`; it records exit0 and no runtime execution. Those checks were not run by this reviewer and were not used as a substitute for the finite AST proof above.
+
+The formatted file is4110 bytes smaller than the reviewed functional composition and298566 bytes larger than the original source. Its LF count grows with formatting. As established in the prior review, the actual file/function LOC ratchets select `src/` TypeScript files; this file is under `tests/`. Neither these counts nor this report establishes a LOC-budget failure or permission for an allowance. The normal formatting failure had a concrete scoped repair; no gate bypass or production-file growth is required.
+
+ROOT's next steps are bounded:
+
+1. Preserve the original source, `ea68` candidate, both prior review reports, formatting failure and strict-AST-false ledger. Integrate only the exact cleared proposal into a new owned frozen candidate, with the provided source proofs and fresh whole-copy custody.
+2. Confirm final actual copied bytes equal the full495653/5975acc8/blob7bf8dd5f pin. Reconfirm N2/H1b/R2/A2, independent helper and other instrument/source inputs are unchanged. Update the C1 source packet/handoff pins rather than the four-file geometry authority.
+3. Retain ROOT's actual normal-format/noEmit receipts associated with the final selected bytes and environment. Any further source change requires its own bounded delta review and relevant requalification; this clearance is not for a family of future formatted outputs.
+4. Execute and retain actual415 C1 and461 Number outcomes with all old/new denominators, plus actual99 child contexts/103 phases, reader/loader association, exact first guards, fault cleanup and final source custody under the existing exclusive-copy discipline. Preserve all original failures and incomplete attempts. Unsupported loader behavior must still fail closed.
+
+No additional implementation fix was found in this finite formatting review. The exact proposal is suitable for ROOT's new source successor and subsequent runtime qualification. Full IR/native/public/resource equivalence, legacy retirement, JS-host replacement, owner/foreign acknowledgments and claim transfer remain outside this clearance.
+
+
+ROOT now assigns Sol only a new exclusive final415C1/461Number qualification copy from integration sources, with exact reviewed formattedC1/N2/H1b/R2/A2/sharedhelper and completed fixture successors, complete source/donor/input provenance and protected-source preservation. No runtime until ROOT inspects final custody/commands; no production overlays or simulated Git donors.
+
+## Frozen admission prerequisite implementation handoff adopted 2026-10-09
+
+ADMISSION PREREQUISITE COMPOSITION — PRIVATE REVIEW HANDOFF
+Issue 6920 — Native Linear numeric-vector shared source handoff and integration plan
+Candidate: /private/tmp/js2-6920-a2-j3-admission-composition-sol-candidate-20261009
+Source predecessor: /private/tmp/js2-6920-j3-joined-validation-candidate-20261009
+Scope: existing human/ROOT integration grant and adopted full 36,609-byte Astra A2/J3 plan section D; independently copied source/test/script/config tree, exact frozen A1 admission prerequisite bytes only. Original claims remain intact. No new four-seam source implementation release is inferred.
+
+RESULT AND EXACT PRESERVATION
+The candidate adds only the three absent prerequisite source paths, changes only the failure contract by one target-environment-unsupported union arm, and adds the unmodified original historical diagnostic test. No caller/frontselector/facts/physical/codec/public coordinator/target-profile/consumer/resource/policy/receipt change. Original source/preparation/typed-preparation/physical seams, J3/J2/J1/AE28, compiler boundary config and all old tests are preserved.
+
+Complete physical copy: 15242 predecessor files, 15246 postintegration files; source 1,907 → 1,910, tests 5,605 → 5,606, scripts 373 → 373. Every original copied regular file has a different (device, inode) from its original. No hardlinks/source symlinks, no .git/.tmp/node_modules transplant. All existing nonexcluded top-level project files were copied, including root configs/harness/instructions and static supporting directories. Only node_modules is a read-only-use external symlink to the existing primary dependency directory.
+
+Exactly 15241 predecessor files retain their full byte/SHA256/Git-blob identities. Changed:["src/shared/contracts/ir-preparation-failure.ts"]; added:["src/ir/runtime/target-admission.ts", "src/shared/contracts/compile-target-policy.ts", "src/shared/contracts/compile-target.ts", "tests/issue-6865-native-linear-source-facts.test.ts"]; missing:none. Complete original J3 membership, SHA256/Git-blob, physical identity and mtime remain unchanged after this work. The exact before/after censuses include every regular file outside .git/.tmp/node_modules; generated review artifacts stay separately in .tmp/admission-composition. No Git command, claim update, issue edit, original/ROOT/B mutation or target module/test execution occurred.
+
+Before aggregate SHA256:feb40587cf9b24d15d8498af07de2146eaae40acc048394a9a7308a1de72d536
+After aggregate SHA256:d747c7951eb89c5f4ec696586d824adb117fa3d118804fa5e4929923d5a668fa
+Aggregate definition: SHA256 of compact UTF8 JSON of sorted per-file path/bytes/sha256/gitBlob records, with that key order. Physical-copy identity/mode/mtime evidence is retained separately. Source/test counts here are actual current physical membership, not inferred from an older report's census convention.
+
+FOUR AUTHENTICATED FROZEN LEAVES
+
+src/ir/runtime/target-admission.ts
+Donor:/private/tmp/js2-ir-native-linear-public-caller-20261008/.tmp/a1/frozen-707f-source/src/ir/runtime/target-admission.ts
+Before:{"state": "absent"}
+After:{"bytes": 4680, "sha256": "276bb9a35c1f62b778c0a962d5c22d7945b39678a33abfe4963350aaad138446", "gitBlob": "7274cd1d867b5962c2388962ed91c6f2434c6046"}
+Full candidate bytes equal independent frozen donor:yes
+
+src/shared/contracts/compile-target.ts
+Donor:/private/tmp/js2-ir-native-linear-public-caller-20261008/.tmp/a1/frozen-707f-source/src/shared/contracts/compile-target.ts
+Before:{"state": "absent"}
+After:{"bytes": 154, "sha256": "4d4a1c586cd3ffc42788de7e275c56dc8e76c5b5878d5a67264d2653923f6ab8", "gitBlob": "fe0581deef82388626795551fbf786f0e527eee0"}
+Full candidate bytes equal independent frozen donor:yes
+
+src/shared/contracts/compile-target-policy.ts
+Donor:/private/tmp/js2-ir-native-linear-public-caller-20261008/.tmp/a1/frozen-707f-source/src/shared/contracts/compile-target-policy.ts
+Before:{"state": "absent"}
+After:{"bytes": 2913, "sha256": "ed74b9af18a25c432fe0f78f54832d1627df917db93fca8ae5a4147c135970b6", "gitBlob": "8f8baf9b5c5e7b5bc8a8d3ecc61d711098b4609b"}
+Full candidate bytes equal independent frozen donor:yes
+
+src/shared/contracts/ir-preparation-failure.ts
+Donor:/private/tmp/js2-ir-native-linear-public-caller-20261008/.tmp/a1/frozen-707f-source/src/shared/contracts/ir-preparation-failure.ts
+Before:{"bytes": 12376, "sha256": "fcdd5e0ce7d47d52ce480f4a66457eeb11591bdea520a31982a2e02ff8adc366", "gitBlob": "5a8b7a8b63f47ca729e1363bbee4129f36570bd2"}
+After:{"bytes": 12413, "sha256": "5525be0f2d8c588c4045958254c215257898df93f0840cb5400823b6adce5fc7", "gitBlob": "0633ed29be3ce62ffed15c28f14142ff5e8ecd38"}
+Full candidate bytes equal independent frozen donor:yes
+
+Before mutation, all three added source paths were inspected absent. The entire existing J3 ir-preparation-failure.ts was independently pinned 12,376 / fcdd5e0c…/5a8b7a8b… and compared with the full frozen A1 postimage. They differ only by the 37 UTF8 bytes '  | "target-environment-unsupported"
+' immediately after 'export type IrUnsupportedCode =
+'. Prefix and suffix are exact. No error class/body or any other code member changed. The failure delta is frozen in failure-union-single-member-proof.json, with exact byte position and complement pins.
+
+SOURCE/DIAGNOSTIC PROOF
+Four-leaf prerequisite patch is complete and contains only four source files. The original historical test is in a separate diagnostic-only patch. Ten independently supplied forward/inverse recipes reconstruct every entire source/diagnostic file, retaining actual absent-before states for additions. Expected full bytes are the original J3 preimage and frozen A1/A2 donor operands, not a source answer returned by a target helper or receipt. Fixed byte/SHA256/Git-blob pins, exact fragments, strict starts/nonoverlap, target bounds, reciprocal directions and full reconstruction passed. Independent strict unified-diff application also reconstructed all five final files with zero offsets/fuzz. All 15,246 candidate inputs and 15,242 original inputs were rechecked after static tooling and remain unchanged.
+
+Historical diagnostic: tests/issue-6865-native-linear-source-facts.test.ts is exactly 12,202 / SHA2562d406fc7aae4b2928dbb8ab099cdb72838c04ccd71d2e52e12de4aab8d64b003/blob2b7a77e455dff5342c0afa0b49c1ca81d4f17250. Every original callback/body/expectation remains byte-identical. It is an original 18-row diagnostic operand, not a new runtime denominator or an 18/18 oracle. Original 3,973-byte focused receipt 17 pass / 1 fail / 0 skip is copied under evidence/original-A2-18-receipt.log. No collection/body/target import ran. The four source wiring seams remain absent, and current J3 deliberately has different semantic/shape/encoding contracts; this test is NOT qualified or ready for a meaningful A2/J3 qualification from dependency composition alone.
+
+STATIC ALL-REFERENCE CLOSURE
+AST scanner uses TypeScript 5.9.3 source parsing only, resolving genuine same-root .js→.ts edges under Bundler semantics. It inventories import/export/type-only/mixed/import-type/dynamic-import/require/import-equals edges and nonliteral unknown references; it follows all resolved same-root edges without policy cuts. Only TypeScript tooling and Node builtins are imported by the scanner, never target modules.
+
+Actual admission root: 6 modules, 5 edge occurrences, 4 type-only edges, zero external/unresolved/unknown. Exact module set:
+  src/ir/runtime/target-admission.ts
+  src/runtime/contracts/provider-policy.ts
+  src/shared/contracts/compile-target-policy.ts
+  src/shared/contracts/compile-target.ts
+  src/shared/contracts/ir-preparation-errors.ts
+  src/shared/contracts/ir-preparation-failure.ts
+Profile DATA root: 2 modules / 1 type edge; target DATA and failure DATA each 1 / 0; errors root 2 / 1 type edge. Full member byte/hash/blob and actual edge identities are in STATIC-ADMISSION-CLOSURE.json. Provider policy and existing error class leaf are unchanged original J3 operands. Healthy closures contain no normalization adapter, TypeScript/frontend/checker/compiler/codegen/backend implementation.
+
+Nine positive static scanner forms passed. Two separately supplied in-memory AST text controls add type-only import or type-only reexport of the actual normalization facade to the admission root; each exposes 8 modules / 11 edges and two modules outside the fixed six-module DATA/error closure, including src/target-profile.ts. Both are refused by the fixed closure. Real source bytes were never mutated for these controls. External Node type reference failures from that normalization control are recorded rather than normalized away. These are static instrument controls, not target/helper/test callback runs.
+
+NORMAL SOURCE TYPES
+Exact original package normal command:
+  node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json
+Node 24.4.1; installed TS7 package 7.0.2. Natural terminal exit 0, stdout 0 / stderr 0: zero diagnostics. No config override/filter/alias/noCheck/skip mutation. Additional --listFilesOnly inventory exited 0 and proves 1,908 actual candidate source files, 165 external library/declaration operands, zero candidate test files, with every integrated leaf actually included. The normal source config excludes tests; this is source type evidence only and does not typequalify or execute historical 18. TS7-SOURCE-CHECK.json/TS7-FILE-FLOOR.json retain exact command, timing, floor and raw logs. No installation or dependency mutation.
+
+External node_modules is not physically copied or globally frozen. Read-only tool use is authorized;173 after-tooling read-only tool/binary/resolved-declaration pin observations are recorded, but no complete external before/after custody or immutable package-directory claim follows. The physical candidate source/test/config inputs are fully frozen and rechecked. No global architecture, boundary-policy registration, historical source-proof equality, runtime/native admission, B release, resources, public 1.25, completion or legacy retirement credit is claimed. ROOT retains actual live integration, ownership/review, policy registration, affected historical reader composition and qualification.
+
+REVIEW ARTIFACT INDEX (.tmp/admission-composition)
+HANDOFF-SUMMARY.json; LEAF-PINS.json; HISTORICAL-DIAGNOSTIC-PIN.json.
+four-leaf-prerequisite.patch + four complete diffs; historical-diagnostic-only.patch.
+ORIGINAL-J3-BEFORE/AFTER.json; CANDIDATE-BEFORE/AFTER.json; PHYSICAL-COPY-PROOF.json; COMPLETE-PRESERVATION-PROOF.json.
+PROTECTED-J3-J2-J1-AE28-SEAMS.json:37 explicit protected source/test/harness paths; complete census proves every other unchanged file as well.
+failure-union-single-member-proof.json; INDEPENDENT-FORWARD-INVERSE-RECIPES.json; INDEPENDENT-BYTE-PATCH-PROOF.json; independently reproducible verify-independent-bytes.py.
+STATIC-ADMISSION-CLOSURE.json + reproducible static-admission-closure.cjs.
+TS7-SOURCE-CHECK.json; TS7-FILE-FLOOR.json; exact stdout/stderr/resolved-file logs; EXTERNAL-TOOL-AND-RESOLVED-DECLARATION-PINS.json; external-dependency-limit.json.
+before/: genuine J3 failure contract; frozen-donor/: exact four frozen A1 leaves; historical-diagnostic/: exact original A2 test.
+evidence/: full adopted A2/J3 plan, original A2 focused receipt, original J3 review and nested-accessor handoff.
+
+Source inputs are now frozen. Future source wiring must be separately assigned/reviewed; this candidate supplies the bounded prerequisite composition only. Runtime and target-import invocations in this task: 0.
+
+
+## Exact6593 protected merge-group binding
+
+Queue groupf0d9438a41f8c717836c28ea21b06b6304ab85b5 verifiedparents canonicalmain7d9e8ce3 and reviewed43b4dc5c. Fulltreee146d15899cb220a4432775129d19ab9d93e7b4d identical to actualqualifiedCImerge651806ef. Live merge-group runhandles37942093503,37942093243,37942093366; fourth37942093263 alreadySUCCESS. Main delivery unverified; queuehead frozen. B notified comment6082611273.
+
+
+## Verified canonical delivery6593 2026-10-09
+
+Verified delivery: PR6593 is MERGED on canonical loopdive/js2 main as f0d9438a41f8c717836c28ea21b06b6304ab85b5. Fresh refs/heads/main equals that commit; exact parents7d9e8ce3 and reviewed43b4dc5c. Delivered whole treee146d158 is identical to qualifiedCImerge651806ef. I independently checked all234 PR changed-path blobs against canonical deliveredtree: zero mismatch. No src/ delta.
+
+Protected queue quality113858795094, equivalence113859975656 and final issue-tests-gate113863480325 are actualSUCCESS. GroupCI run37942093243 is overallCANCELLED after merge, so it is not called an overall successful fullrun. Conformance selector skipped compiler shards for this tests/scripts/docs/workflow checkpoint; no new conformance execution credit. Original archives, known failures and legacy remain preserved.
+
+You may mark only your own delivered6593 claims complete after verifying their exact records. All other holds/claims and shared memory/allocator4540 scopes remain intact. A retains integration/protectedqueue. Next A progress: exactfrozen4admission prerequisites composed/typechecked; formattedC1/Number staticreview cleared and final exclusive415/461 qualification copy is being prepared. I recovered original A2 native-agent handle from the actual original spawn metadata and requested precise original-owner reconciliation instead of takeover. No tested shared frontend/facts/resource source contract is published yet; no premature B implementation entry/native completion release.
+
+
+## Authentic original A2 owner handoff adopted 2026-10-09
+
+# Original A2 owner acknowledgement and bounded reconciliation
+
+**ACKNOWLEDGED: ROOT may integrate a separately named A2-on-J3 source successor
+for the four seams below under the adopted source qualification plan.** This is
+my authentic original-owner handoff, limited to my scope. It is not an inferred
+transfer from another agent, a claim release, permission to overwrite the
+original tree, or runtime qualification.
+
+## Identity and claim verification
+
+My current native task identity is
+`/root/sol_native_linear_source_facts_20261008`. The retained task context includes
+my original assignment, authored source/facts callbacks, actual original runtime
+receipts, private handoff work, and the separate DATA fix delivery. ROOT recovered
+the original spawn tool record at `2026-10-08T15:57:42.288Z` naming this exact
+identity. I independently reconciled the preserved authored bytes and own claim
+rather than inventing a replacement owner from a branch name.
+
+The actual upstream assignment ref was read through GitHub's read-only API at
+commit `29d9544c84110ec65d46baf15dfb5e0edd609a92`. The claim was then read at that
+exact immutable commit, not a second moving branch:
+
+- Claim: `6865:native-linear-source-facts-20261008`.
+- Owner: `ttraenkler/codex-ir-native-linear-source-facts-sol61-20261008`.
+- Write ID: `16740-hhm82aur`.
+- Status: `in-progress`.
+- Branch: `codex/6865-native-linear-source-facts-20261008`.
+- Claimed and updated: `2026-10-08T15:59:00Z`.
+
+`claim-api.json` preserves GitHub's contents response; `claim-record.json`
+preserves its decoded exact DATA. The decoded record SHA256 is
+`75500b2c2cfe6e365b9b96f32aa3bd096525f3aaf66c3483c61d368d7d0903a0`.
+No claim, reservation, branch, PR, or Git state was changed.
+
+I reread AGENTS.md, MEMORY.md and the task-relevant coordination memories, then
+read **all 201 lines** of the adopted plan:
+`/private/tmp/js2-6920-a2-j3-qualification-astra-plan-20261009/IMPLEMENTATION-PLAN.md`,
+SHA256 `3d45d83b59b72891f6a3fee0032fdf1fb609ff12ef106abe1f766500e695d0aa`.
+This acknowledgement adopts that bounded successor contract; it does not expand
+its ownership or execution scope.
+
+## Four seams explicitly acknowledged
+
+1. **`src/ir/program-source.ts` — frontend native-f64 route only.** ROOT may
+   reconcile `IrProgramSourceInput.linearVectorProjection`, the own-DATA
+   `selectNativeLinearVectorProjection`, `nativeLinearSourceVectors`, their
+   necessary imports, and the corresponding `prepareIrProgramSources` entry
+   policy/selection and exact declaration collector callsite. Keep the selector
+   frontend-only and constrained to native Linear f64; reuse the actual existing
+   collector on the real checker-owned declaration. Preserve its rejection
+   rules, the existing async-family map, source/class-cycle context, normal
+   lowering, and `captureTypedIrProgramInput` unchanged. This hands off the
+   A-owned collector **callsite**, not the checker or B collector implementation
+   or a new exported B wrapper. The earlier bounded collector-callsite decision
+   and its recorded B notices remain historical custody, not new B authority.
+
+2. **`src/ir/program-preparation.ts::prepareWholeIrProgram` — early policy only.**
+   ROOT may reconcile the native admission assertion for the source policy and
+   selected runtime policies before source inventory/preparation, including
+   empty-source refusal, using the reviewed canonical admission dependency.
+   Preserve all existing duplicate/source-policy, family, formatter, telemetry
+   and preparation behavior. This preserves the earlier explicit R1 own-session
+   resumption of those callsites; it does not transfer the admission helper,
+   shared contracts, target/profile resolver or error taxonomy from A1/R1.
+
+3. **`src/ir/program-prepare-ir.ts::prepareTypedIrProgram` — final producer and
+   validation integration.** ROOT may reconcile the early native policy
+   callsite and invoke the current canonical `prepareLinearAllocationFacts`
+   once at the final preparation point over the genuine complete final semantic
+   **and runtime-support** body population. Preserve declared signatures,
+   globals, absence, owners, source map, startup, ABI and final transformations.
+   Persist the optional `linear-allocation-facts-v1` attachment using its exact
+   final detached registry snapshot as program allocations; freeze semantic
+   DATA before authenticating runtime identities. Retain every real runtime
+   projection and perform the full generic validation plus the current required
+   J3 entry for each applicable exact Linear projection. Preserve malformed
+   evidence/context as invariant and truthful unsupported coverage as a located
+   preparation refusal. Use the reviewed J3 canonical owner/provenance/facts
+   routes. Do not transplant the obsolete A2 helper, sorted-ID projection check,
+   first-support-owner precheck, old 49 KB planner, duplicate evidence solver,
+   filtered support population, or a per-view producer recomputation.
+
+4. **`src/ir/program-physical-plan.ts::planPhysicalSetup` — first required
+   acquisition and narrow outcome adapter.** ROOT may reconcile selection by
+   established options/backend/target policy and call the current full required
+   J3 facade with the exact supplied projection **before program/projection/ABI
+   reads or resource work**. Preserve old scalar compatibility when that
+   required entry legitimately returns undefined; do not force scalar callers
+   through `requirePreparedLinearMemoryInput`. Covered allocating consumers
+   retain the genuine original module/facts pairing. Convert only a typed
+   acquisition `IrUnsupportedError` into the API's located outcome, retaining
+   code, stage, detail and validated unit/location/source fields. Rethrow
+   invariants and unexpected exceptions; do not catch the entire planner or
+   rely on the location-dropping basic classifier alone. Keep the nonzero
+   allocation/memory resource gap and existing earlier-gap priority honest.
+   No vector resources, allocator implementation, emitter representation,
+   startup redesign, or public execution claim is transferred.
+
+Necessary import rewires inside these four seams are included only where they
+use the existing reviewed canonical owners. This acknowledgement is not whole-file
+transplant authority for adjacent J3, source/context, startup, or proof-reader
+changes. The original source remains historical donor evidence. ROOT owns the
+concrete new transaction, finite source-proof forward/inverse recipes, independent
+review and qualification.
+
+## Current bytes and conflicting work
+
+I have no concurrent writer, source edit, staged successor, or conflicting
+in-flight change for these four seams. All four original source hashes match
+my retained earlier own receipts exactly. The original source tree remains
+`/private/tmp/js2-ir-native-linear-source-facts-20261008`; its authored private
+changes are preserved, not discarded or treated as J3 whole-file authority.
+
+| Original owned seam | Bytes | SHA256 |
+| --- | ---: | --- |
+| program-source.ts | 87882 | `c915942e24a87f80321b7608915f1994ce1c65f7c8eadbebb45f57031ba6a56f` |
+| program-preparation.ts | 4540 | `81c881548cda4d7734f82e88862fe8aa708a9f802f8441de9095bcbd653c748f` |
+| program-prepare-ir.ts | 9213 | `0d274459f16568f7e085315099f866e4fae07adf92d1053867ea694f4541eb4d` |
+| program-physical-plan.ts | 67955 | `2f24900143b1e32add733ce2445e82682462bf99d9c2f7f43c0edca318389d1a` |
+
+`PINS.json` records independent byte counts, SHA256 and Git-blob arithmetic for
+these original files, the reviewed J3 versions and the actual admission
+composition. Git-blob names were calculated from bytes; no Git commands or
+mutations were needed. Complete adjacent canonical leaves, original helper and
+harness/test pins are recorded so old donor bytes cannot silently substitute
+for new implementation before-bytes.
+
+## Original tests and evidence remain immutable
+
+The original 18 callbacks are preserved in
+`tests/issue-6865-native-linear-source-facts.test.ts`: 12,202 bytes, SHA256
+`2d406fc7aae4b2928dbb8ab099cdb72838c04ccd71d2e52e12de4aab8d64b003`,
+blob arithmetic `2b7a77e455dff5342c0afa0b49c1ca81d4f17250`.
+
+The complete original `.tmp/a2-focused-joined-graph.log` is 3,973 bytes, SHA256
+`b3e594fc53efa181148a1a9539b3d919bceed9b17fc8d01b4eeca63c745f249b`,
+blob arithmetic `dbb6fa0d6737ae090ada7e3e5d24052aae8739ec`. It records
+**18 executed / 17 passed / 1 failed / 0 skipped**. Both independent hashes match
+my prior retained receipts. No callback, helper or failure artifact was changed
+or rerun in this handoff.
+
+The old raw-surrogate callback's manually annotated present-undefined numeric
+encoding and some shape-only semantic expectations conflict with the adopted
+current contract. Preserve the old callback and historical failure as a separate
+diagnostic inventory; do not green it by weakening J3 or editing its literals.
+The new coherent epoch must report the unchanged old18 without predicting its
+result, and separately qualify additive current-contract controls. In particular,
+use a valid raw-surrogate source-catalog control without the forbidden numeric
+annotation, and a separate expected-rejection control for that annotation.
+J3's structural shape entry must not become semantic acceptance merely to satisfy
+old assertions. ROOT's reported J3 52 controls remain their own inventory; this
+read-only handoff adds no execution credit to them.
+
+## Dependencies and ownership retained
+
+The reviewed J3 owner already supplies canonical DATA, snapshot/provenance/body
+checks, all-view finite evidence and full required/context validation. Preserve
+those delivered J1/J2/J3/AE28 leaves; do not restore my obsolete
+`program/linear-allocation-facts.ts` implementation or my abandoned extraction
+candidate. `assertPreparedIrProgramLinearAllocationEvidence` is the full required
+facade; `requirePreparedLinearMemoryInput` is the narrower allocating consumer
+join. The latter is not a replacement for scalar/generic validation.
+
+The original four A1 dependency bytes are physically present in ROOT's exact
+private composition at
+`/private/tmp/js2-6920-a2-j3-admission-composition-sol-candidate-20261009`:
+
+| Dependency | Bytes | SHA256 |
+| --- | ---: | --- |
+| ir/runtime/target-admission.ts | 4680 | `276bb9a35c1f62b778c0a962d5c22d7945b39678a33abfe4963350aaad138446` |
+| shared/contracts/compile-target-policy.ts | 2913 | `ed74b9af18a25c432fe0f78f54832d1627df917db93fca8ae5a4147c135970b6` |
+| shared/contracts/compile-target.ts | 154 | `4d4a1c586cd3ffc42788de7e275c56dc8e76c5b5878d5a67264d2653923f6ab8` |
+| shared/contracts/ir-preparation-failure.ts | 12413 | `5525be0f2d8c588c4045958254c215257898df93f0840cb5400823b6adce5fc7` |
+
+Their presence and byte identity are independently verified. I do not own those
+leaves and do not grant their handoff or complete A1 admission qualification.
+ROOT retains that owner's exact dependency provenance, whole-source proof and
+review obligations. The public compiler coordinator and acceptPreparedIrProgram
+required-entry integration remain separate A1/consumer obligations; neither is
+discharged by source or direct-physical qualification.
+
+This ACK does **not** release or modify checker `19199`, AE28 `43989`, donor
+`34529-rzivb817`, J2 extraction `46615-x5dy59lp`, R1/A1, source/class-context,
+B resources, allocator4540, startup S, or any other held claim. It does not
+invent owner acknowledgement from plan adoption. No JavaScript-host IR support
+or legacy retirement is introduced. The earlier S-only disjoint-hunk
+acknowledgement remains separate and is not broadened here.
+
+B Gate1, allocator/memory lifecycle, public numeric-vector execution and original
+result1.25, Unicode source binding, optimization/source maps, complete admission,
+J210 strict-consumer and J212 same-binding zero-analysis interval qualification
+remain bounded by their actual separate prerequisites. No artificial facts,
+projection shell, authority token, analysis bypass, fixture text allowlist, old
+source alias, or receipt repin is authorized.
+
+## Actions in this resumed handoff
+
+Only the NEW directory
+`/private/tmp/js2-6920-a2-original-owner-handoff-20261009` was written. Target
+imports, test callbacks, compiler invocations and runtime executions: **0**.
+Source/test/issue/Git/claim/branch/PR mutations: **0**. Read-only exact claim,
+plan and source custody checks support this original-owner ACK; they do not
+qualify a new source epoch. ROOT may now coordinate the assigned four-seam
+successor without taking my scope by assumption, subject to all other owners'
+bounds and the adopted review/qualification sequence.
+
+
+ROOT independently effect-read canonical claim16740 unchanged after recovering exact originalspawn handle from currentthread sessionmetadata. This resolves the identity/ACK gap ONLY for the four namedA2seams; all otherclaims unchanged. ROOT assigns original Sol6.1High owner a new exclusive current-J3/admission-based source successor and additive current-contract controls under the full adopted Astra36609 plan. Preserve original18/17-1 and all J3/J2/J1/AE28/source/context/B leaves; no runtime until independent review/ROOTqualification.
+
+
+### Original owner native dispatch record and source successor assignment
+
+Exact currentthread sessionmetadata recovered original2026-10-08T15:57:42.288Z spawn return naming `/root/sol_native_linear_source_facts_20261008`; no sidebar guess or decrypted message was used. Original Sol6.1High owner resumed, verified exact owncontext/source/claim16740, provided authentic four-seamACK, and ROOT read it fully before source implementation dispatch. New exclusive `/private/tmp/js2-6920-a2-j3-source-successor-sol-candidate-20261009` is assigned only those four source seams plus additive current-contract source-qualification tests under the complete adopted Astra plan. Original18 diagnostic bytes/17-1 receipt, heldclaim, protectedJ3/J2/J1/AE28/capture/class context and allB/shared/resource owners stay intact. No runtime before independent review.
+
+
+### ROOT actual final C1 qualification launch — 2026-10-09
+
+Canonical claim independently reread from `loopdive/js2:issue-assignments/6920-geometry-proof-integration-20261009.json`: owner `ttraenkler/codex-ir-integration-session-a-20261009`, write `60335-ngn0jcr6`, in-progress. ROOT preserved HEAD `7928f27343a171d8e0de434ea005d630eaf64bf3` and staged MERGE_HEAD `b932e3a05e353acc59e7b547ef4e417a5d8637e1`, including every existing unstaged change.
+
+Read complete final setup handoff and normal commands at `/private/tmp/js2-6920-c1-number-final-qualification-sol-20261009/.tmp/QUALIFICATION-SETUP-HANDOFF.txt`. Independent ROOT whole-tree scan matches all 44,809 regular input byte/hash/blob/mode records, 6,311 directories and 2,190 private internal link records, with no hardlinks or escaping link targets. Receipt `.tmp/runtime/root-before-c1.json`. This is the observed installed Vitest 3.2.4 environment, not reproduction of locked 3.2.7; package/lock/dependencies/expected answers unchanged.
+
+Launched the separate unfiltered normal Node25.9 C1 command, tool session `98935`, stdout/stderr/results under `.tmp/runtime/c1/`. It is genuinely live on the last handle poll. Declared 415 cases have no completed denominator credit yet. Number 461 remains unexecuted until C1 naturally terminates and full frozen membership is rechecked. No filter, new timeout, kill, retry or concurrent mutation suite. Original failures and private preparation epochs retained.
+
+
+### C1 actual terminal 415/415 and sequential Number launch
+
+Tool session98935 naturally terminated exit0; actual JSON reporter contains415/415 passed assertions. Raw stdout/stderr and cold scratch remain under exclusive `.tmp/runtime/c1`; independent full-name/cold-receipt audit delegated read-only to original fixture worker. No locked-runner reproduction or complete native migration claim.
+
+ROOT full post-run input scan initially failed exact equality and preserved that failed check. Complete observed delta at `.tmp/runtime/root-after-c1-observed-delta.json`: no added/removed files/directories, all2,190 links unchanged, exactly one generated Vitest cache changed (`node_modules/.vite/vitest/da39a3ee5e6b4b0d3255bfef95601890afd80709/results.json`,43473/SHA3fbe1fdc…→43480/SHA6efc1288…). Remaining44,808 regular inputs are byte/hash/blob/mode-identical. Do not claim all original44,809 remained unchanged.
+
+Recorded distinct actual post-C1/pre-Number epoch `.tmp/runtime/NUMBER-BEFORE-INPUT-MANIFEST.json` with only that observed cache endpoint; original freeze and delta preserved, no source/expectation/package/lock edit. Started separate unfiltered Node25.9 Number command, tool session98247, outputs `.tmp/runtime/number/`. Declared461 remains incomplete until real terminal and current-epoch custody scan.
+
+
+### Reviewed fixture composition integrated into ROOT working tree
+
+Before writes, independently compared every12 reviewed overlay endpoint to current ROOT: all11 existing before pins exact and one new helper absent; no concurrent/foreign change. Preserved full preimages and manifest under `.tmp/final-reviewed-overlay-integration-20261009/` and installed exact reviewed12 paths from the exclusive qualification copy. C1 is actual415/415; shared-current-main actual166/166 and three-fixture actual355/355 evidence remain separate. Number is still live and unqualified; integration is reviewable working-tree preparation, not committed/published/delivered. Source, existing staged merge, all unrelated files and B scopes preserved.
+
+
+### Actual integrated quality checks and bounded style follow-up
+
+Normal ROOT TS7 noEmit process54371 naturally exit0 with empty diagnostics, after all12 reviewed overlays. Normal Prettier12-path check exit1: current-main, canonical3c6, nested-stackification, program-validator and WasmGC successor tests need style fixes. C1/N2/H1b/R2/A2/sharedhelper/canonical489d pass. Original check retained `.tmp/final-reviewed-overlay-integration-20261009/format.log`. Produced separate formatter-only proposals for those5 under `.tmp/five-fixture-normal-format-proposal-20261009/`, preserving fullbefore/final pins and exact originals; no proposal installed and no frozen Number/runtime/source input changed. Full delta/semantic review and any affected authority recipes precede activation; original successful runtime receipts bind original bytes, not these proposals.
+
+
+### Exact source-association consequence of normal formatting
+
+Inspection of the5-file normal-format proposal found current-main exact acquisition association would become stale when Prettier wraps its real acquisition expression. Separate proposal `.tmp/five-fixture-normal-format-proposal-20261009/exact-association-successor/tests/issue-3518-current-main-inventory-successor.test.ts` changes only that expected literal to the complete exact formatted statement including `.subarray(0, 94641);`; original and formatting-only endpoints retained. New61954/SHA8f17d91b…; source occurrence independently exactly1. Existing split-count matcher remains exact; no whitespace normalization, regex, wildcard, source pin rewrite, authority weakening or fixture omission. Full finite semantic/association review precedes installation/execution. Number session98247 remains live in unchanged exclusive qualification copy.
+
+
+### Sealed original-owner A2 successor and full Astra review dispatch
+
+Read complete original-owner packet `/private/tmp/js2-6920-a2-j3-source-successor-sol-candidate-20261009/.tmp/a2-source-successor/REPORT.md`,16483/SHA68e5ea2c39697c2d4f4cce4fd13a381bcf54d1c2b83f08b5624a73ae374d8f93; complete37545/SHA05f8d455… source-and-test.patch. Four source paths plus additive29 authored rows,0runtime. All77 other named function bodies preserved;15242 other project files unchanged. SourceTS/lint0; corrected explicit test-inclusive receipt has exactly2 inherited replay-helper WebAssembly.Tag diagnostics, first excluded-test false-empty receipt preserved. Original18 unchanged diagnostic and source/resource/public completion remain unproven.
+
+Latest AstraHigh agent `astra_a2_source_and_five_style_review_20261009` successfully dispatched fullsource/callback review then finite5formatter/association review. Earlier new-agent dispatch failed thread capacity and did not start; pending-init geometry reviewer was interrupted without any source/test deletion, and its handle remains recoverable. Source author completed and freed actual review slot. Review owns only new private reports; all B/foreign claims and source ownership preserved. ROOT requested explicit DRY assessment of duplicated typed/physical located-Unsupported conversion before any growth allowance; sourcefunction296→301 and physical304→347 are measurements, not granted gate passes.
+
+Five-file finite AST comparison preserved first SourceFile.text comparison failure then corrected only root representation handling:63 quoted property names become same identifiers (excluding __proto__), one intentional full exact acquisition association literal; all other compared syntax matches. Canonical3c6 strict AST identical; no target runtime performed on formatted proposals. Astra must inspect complete actual associations and recipes before activation. Number98247 remains genuinely live; no restart/kill/filter.
+
+
+### Adopted Astra bounded DRY source implementation plan
+
+Canonical6920 integration claim reread unchanged write60335-ngn0jcr6/in-progress before delegation. Astra finds no four-seam correctness blocker but identifies duplicated ~24-line located-refusal adapters. Assign original Sol6.1High native source owner a fresh separate successor copy, with sole responsibility for NEW absent-before `src/ir/program/linear-allocation-outcome.ts`, existing `prepareTypedIrProgram` and `planPhysicalSetup` adapter callsites only, and additive adapter tests. No change to frozen current29/Number candidates, J3 facade, frontend selector, source/ABI/resources, B or foreign ownership.
+
+Implementation: one shared adapter accepting unknown caught error, rethrow identity unless canonical IrUnsupportedError; require cause-owned unitId/location/sourceFile, missing canonical location stays invariant; return frozen located Unsupported preserving code/stage/message/cause/location fields. Import only shared error class and program error/type contracts, no solver/checker/runtime. Both callers use it only inside existing required-facade catches; generic validator/producer/resource planner stay outside. Common invariant message, no configurable general factory. Optional newly-added checked-pair owner traversal may be made private helper if it improves cohesion, no mechanical old-body extraction. Add separate real canonical-refusal field-identity and invariant/unexpected identity/missing-cause controls; keep original29 unchanged. Full source/body/endpoint review and final measured budgets before any grant; all301/347 growth is ungranted.
+
+ROOT read-only source packet/adopted static findings permit diagnostic-only current29 execution before modular successor. Independent whole15247 project scan matches sealed manifest; shared vendor dependencies explicitly outside frozen custody. Normal unfiltered Node25.9 command launched in original private source candidate, results `.tmp/a2-source-successor/runtime/current29/`; no runtime credit transfers automatically to revised helper code.
+
+
+### Actual A2 diagnostic26/29 and Astra freezing defect
+
+Normal current29 session89164 naturally exit1 with26passed/3failed. Complete reporter/streams `.tmp/a2-source-successor/runtime/current29/`; ROOT independent full15247-project afterscan equals sealedmanifest, sharedvendor dependency cache outsidecustody. Two exactObject.is failures on standalone/WASI registryjoin confirm DATA immutableCopy clones sibling allocations and attachment.facts.registry separately. No weaker deep-equality assertion is permitted. Third newly-authored registry-negative callback expected PreparedIrProgramInvariantError but canonical provenance verifier actually throws IrInvariantError allocation-provenance-failure/verify first for dangling alloc0. This is a test taxonomy defect, not missing refusal or a production permission to translate all invariants. Preserve exactoriginaldraft29 and26/29receipt as historical epoch. Original18 remains immutable.
+
+Astra implementation addendum: at owned typed preparation seam freeze complete semantic+facts payload once, then construct final shallow-frozen semantic container whose allocations points to already-frozen attachment.facts.registry. Do not refreeze/reclone afterwards or alter generic DATA/helper/J3. Generic/full-required ordering, produceronce, supportpopulation and every runtime view unchanged. Newmodular candidate must qualify strictregistryidentity and codecjoins separately.
+
+Freshhelperpath src/ir/program/linear-allocation-outcome.ts is absent in canonical main RESTcontents read404, with authenticated canonicalclaim read already verified. ROOT explicitly owns/delegates this freshpath under6920 integration, plus originalowner's twoexistingtyped/physicalcallsite scopes; no otherclaim/filetakeover. New privatecopy retains currentsealedcandidate and all failure artifacts. Exact-current registry-test successor must be separately reviewed and document unchanged negative action plus precisecanonical typedclass/code/stage/fullmessage/cause assertions, no broadError/skip/omission/rebaseline.
+
+
+### Full Astra source review adopted and explicit current-contract test successor
+
+Read full `/private/tmp/js2-6920-a2-source-and-five-style-astra-review-20261009/SOURCE-REVIEW.md`,12711/SHA5c3f2b956f6d9ae7dd09a06230026d48a520985da886f7a7f971935d2ea2acf2. It supersedes provisional no-blocker message. ROOT adopts S1 freeze-once canonical identity repair and S2 one outcome helper exactly as assigned, preserving DATA/J3/provenance priority and all other source ownership.
+
+For S3, ROOT explicitly approves a separately measured NEW unpublished29-contract epoch: originalsealed29file plus26/29receipt immutable; in newmodularcandidate correct only newly-authored registry-negative expectation to canonical IrInvariantError/code allocation-provenance-failure/stage verify/full danglingalloc0 message and exactcause through generic/required/encode/physical. Do not translate canonical errors or accept genericError. Retain original negative mutation, names/population and all other row behavior; shared it.each registry/population callback changes require honest recipe/body accounting rather than claiming both callback bytes unchanged. Existing population PreparedIrProgramInvariantError expectation remains. Original18 untouched. This is a documented test taxonomy correction with stronger precise assertions, not skip/omission/fixture weakening/rebaseline.
+
+Number98247 naturally terminalexit0,461/461 actualreporter. Complete ROOT post-Number scan records44809 inputs/no additions/deletions/directories orlink changes; only generatedVitestcache changed6efc1288…→cbb4d398…, same43480bytes. Remaining44808 inputs unchanged. `.tmp/runtime/root-after-number.json` preserves completecachebefore/after andactualdenominator; no lockedrunner/perfectcustody/nativeclaim. Fullactualorderedname audit remains separate.
+
+
+### Final Astra addendum and formatting plan adopted
+
+Read complete final implementation addendum and five-format report; exact pins:
+
+- IMPLEMENTATION-PLAN-ADDENDUM.md: 7344 / SHA256 e5fa8e467bf17e370135063a08694bbf56bd891c7b5e6bd709584e067a738392
+- FIVE-FORMAT-REVIEW.md: 7166 / SHA256 cbf68a521ff2c020227e581fb1663faa1ebf5d43b5b305f39fd2d81558b521ae
+- CURRENT-MAIN-EXACT-SPAN-REPAIR-PLAN.json: 4973 / SHA256 4dff4e28031568575f91f62dbd51e8d820eb5832626fb9160f50f95f6c97752d
+
+Final SOURCE-REVIEW grew from12711/5c3f2b95 to13551/12d65afc by appended actual-diagnostic readback; original read timestamp/pin retained, later appendix read explicitly, no stale exact-file claim. Authoritative final addendum now supplies exact canonical registrynegative message/cause and five reciprocal current-main repair spans. ROOT adopts full plan as written.
+
+Current-main61954/8f17 proposal is rejected: multilineexpected operand cannot match line-split startsWith. Naive whole-source secondoperand split also self-matchesexpectedliteral. Exact authorized repair includes leading/trailing newline+trueindentation on allfour source statements and exact whole-source splitcount2; proposed61863/SHA7da31162… endpoint needs actualapplication/format/readback. All four other stylefiles staticallyclear, runtime remains prior-byte only. Preserve original/pureformatted/rejected/final endpoints; newprivateformattercandidate owns onlythese5 tests/evidence. Allhelper/authority/source/receiptbytes unchanged.
+
+
+### Parallel modular source and five-style preparation status
+
+Original Sol native source owner authored newexclusive modularidentity candidate: sourceTS0/lint0, explicit2-test inclusion with same2 inheritedTag diagnostics. Measured typedfunction147→134; physical347→315 plusnewprivatechecked-owner15/helper30LOC. Existingbaselinephysical304 andfrontend301 threshold concerns remainungranted. Original frontend/sourcepreparation/DATA/J3/B unchanged. Corrected29 retains18 exact callbackbodies andone changedsharedregistry/populationdefinition; separate4adapterdefinitions/8rows,0executed. Fullpacket finalseal pending, source review/runtime next.
+
+OriginalfixtureSolworker independentlyimplements only5formattedtestpaths innewexclusivecandidate `/private/tmp/js2-6920-five-style-sol-candidate-20261009`, afterreadingfullfinalAstraplan/report/exact5spans. Number461orderednameaudit secondary; no oldqualificationcandidate mutation/runtimecredittransfer. ROOT/sourceworkerswrite disjointprivatecopies.
+
+Effect-read correction: pending-init geometry reviewer interrupt request returnedpreviousstatus pending_init but latest actualagentlist stillpending_init; no actual freedslot/termination is claimed. Later sourceauthor completion freedthe genuine slot usedforAstrareview; preservependinghandle, no furtherinterruptionattempt or unknownworkdeletion.
+
+
+### Final modular source successor sent for runtime-clearance review
+
+OriginalSol sealed newmodular packet REPORT14215/SHAf3f66524a1ef2e7265837498cae548ea8a20a0c560e05b597703050b496cf55c, PINS SHAcd2afd3ac6dbefe460ae4b67529b0ef0533fb58afb5fbdc2c90903ae71410b51. Minimal15488/SHA2d19b645… patch and cumulative44088/SHAf60e35bd… retained; complete source/callback/ownership/preimage/recipe/static audits. New29 correctedepoch + separate8adapterrows =37 authored,0executed; original26/29/sourcepacket unchanged. SourceTS0/lint0/test-inclusive inheritedTag2 explicit; sourcefunction301/physical315 budgetungranted.
+
+ExistingAstra reviewer successfully resumed for full exact successor code/callback review and bounded actual37 runtime clearance, maintaining readonlyreport scope. It will verify freezeonce/join beforeprojection, noaftercopy, narrowadapteridentities/actualclassfields/firstvalidator ordering and honest thresholds; no automatic runtime/public/Bresource claim. Independentfixtureworker stillassemblesexact5style successor; allcopiesdisjoint. Migration remainsactive/incomplete.
+
+
+### Actual modular29+adapter8 and J352 passed
+
+Read full MODULAR-SUCCESSOR-REVIEW.md9973/SHAa1d22608… and adopted boundedruntimeclearance; no grants. ROOT independentscan verifiedentire15249 projectmanifest before actualnormalcurrent37 command. Session63792 naturally terminalexit0: corrected29actual29/29 andseparateadapter8actual8/8, bothunfiltered. CompleteJSON/streams `.tmp/a2-modular-join/runtime/current37/`; postscan entire15249pins unchanged, sharedvendorexternal explicitlyunfrozen. Two strictregistryidentity controls nowpass; old26/29epochuntouched.
+
+CurrentJ3joinedvalidation normalunfiltered session79103 naturallyterminalexit0/52of52passed; report `.tmp/a2-modular-join/runtime/j3-52/`. Started immutableoriginal18 diagnosticseparately underfinalsourceepoch; retainedcurrentfailuresmustnotbequietlyrewritten. Publiccaller/Bresources/native1.25/main delivery stillunproven.
+
+
+### Source integration preflight inventory task
+
+Delegate read-only inventory comparing ROOT working tree to exact finalmodular candidate, all src changes/additions plus original18/J3/new29/adapter tests, with fullbefore/after endpoint hashes and relevant explicit ownerACK/claim records. Purpose: identify exact dependency composition and named ownership before any ROOT source write; preserve primary/stagedmerge/B/foreignfiles. No author may infer blankettransfer from slice names or transplant arbitrary differing subtree. Native publiccaller/A1 routing remainsseparate from bounded37 sourcepreparation/consumer validation. Inventory reports only innewprivatepath; no source/Git/claims/GHmessage changes.
+
+
+### Immutable original18 diagnostic and finalfive normal runtime launch
+
+Original18 diagnostic55156 naturally exit1:13passed/5failedof18 underfinalmodularsource. Three attachmentunknownschema/extra/missingfacts andregistry/projection rows stoponoldshape-onlyassertionexpectations; rawsurrogate+presentundefinednumericencodingrow nowstopsatprecisecanonicalmetadata invariant. Completefullfailuremessages/rawstreams remain `.tmp/a2-modular-join/runtime/original18/`; no fixture/assertion/expectation edit. These are distinct from current29/29,adapter8/8,J352/52; no18/18orcompletequalityclaim. Entire15249projectpins unchanged afterallthreecohorts, sharedvendor notfrozen.
+
+Read full five-styleHANDOFF; independent entire15229project +29580physicaldependencyfiles +2190internallinks match finalsealedmanifests beforefirsttest. All5 endpoints normalformat/lint/sourceTS0,5 inheritedtest-inclusive errors independentlysameas untouchedpreimages. Actualfinalfiveinventories166/235/61/151/143=756authorrows; noprogresscredituntilruntime. Launched first separateunfilteredcurrent-main166 command innewexclusivefive-stylecandidate; normalCLI/nooverrides, outputs `.tmp/runtime/issue-3518-current-main-inventory-successor.test/`. Runeach remainingfileonlyafterpriornaturalcloseandfullscan topreventcommonphysicalauthoritymutationcollisions.
+
+
+### Actual integration inventory adopted; production caller remains absent
+
+Read full `/private/tmp/js2-6920-source-integration-inventory-sol-20261009/REPORT.md` andcomplete31-source matrix:21modified/10added/0deleted. FivepublishedAE28 prerequisites distinct; escapealsoJ2type move. ROOTgeometry planner/contracts matchgenuineJ2/J3 base, so exactextractionmustpreservegeometry, no arbitrarysubtreetransplant. FourA2seams+freshhelper ACK andfrozen4A1dependencygrant established. Original18/J3/current29/adapter8 absentROOT.
+
+Concrete unresolved scopes: J2claim46615/source-extraction handoff, donor34529genericcontractpreservation, checker19199 canonicalmetadatahelper ACK/preservation, J3sharedvalidation/codec/sourceproof integration. Do not reinterpret savedhistoricalrecords asfreshmovingclaimcertification; no sourcewritesgrantedfrommatrixalone. Resolveactualoriginalowners/retainedgrants andcompose exacthunks, neverreleaseforeignclaims.
+
+Zero productioncaller suppliesnative-f64 selector; compiler.ts::runPreparedIrPipelinePresentation preparesinputwithoutit, native-linear-pipeline.ts absent. A1nativecaller/sharedconsumer wiring isseparate task needing itsown exactscopehandoff/plan. Current37/J352 validatesgenuineinternalAPI butdoesNOT unblock Bpubliccaller/result1.25 byitself.
+
+Begin bounded originalJ2 owner reconciliation only: originalA2 owner issame recorded46615assignee, butpriorfour-seamACKexplicitlyexcludedJ2. Obtain exactcurrentclaim andoriginal11-filecontext/ownedfunctions beforeliveintegration; no broadtransfer/no originaltree edits. Other source/proof/publiccaller owners require separate concreteevidence. Useful five-style runtime continues meanwhile.
+
+
+### Final format epoch actual166/166 then235/235
+
+Normal current-main session89114 naturallyexit0/166of166, then canonical3c6 session55959 naturallyexit0/235of235 onfive-style finalepoch. ExactactualJSON/streams `.tmp/runtime/<file>/`, stderr0. ROOT postscan aftereach confirmsall15229projectfilepins/modes unchanged,29580dependency membership/dirs/2190links unchanged, onlygeneratedVitestresultscache differs(initial43576/447da51b→aftercurrent43581/2c6a9f75→aftercanonical43587/c26ff4f7). Fullcacheendpoints retained, noperfectoriginaldependency-byteclaim.
+
+Started separateunfilterednested61 command afterbothnaturalterminalandfullscan; remainingvalidator151/Wasm143 notyetexecuted. Full756formatcohortcompletion unproven. Rootsource/stagedmerge/foreignfiles unchanged. OriginalJ2claimant authenticatesnarrowcorefacts/snapshot/verifieronly; originalJ3authenticatednativehandle resumedreadonly forboundedhunk reconciliation. Originaldonor/checker/A1resumeidentity/sourceauthority remainsunresolved; rootclaimcreationmetadata review isreadonly, no ownership assumption/force release.
+
+
+### Final nested61 passed; validator151 live
+
+Normalnested61 session49992 naturallyterminalexit0/61of61passed. ROOTafter-nested scan fullproject15229pins unchanged; dependencies29580same membership/dirs/all2190links, onlygeneratedVitestcache now43587/SHA8fcd64e1 vsinitial43576/447da51b. Cumulativefinalstyle166+235+61=462passed, not756complete. Started separatesequentialvalidator151 normalcommand; Wasm143 remainsunexecuted. Fullfinalformatactivation/publication pending remainingactualresults.
+
+ReadfulloriginalJ2 authenticatedhandoff10169/b86ec81d andownershipfollowup. Narrow46615ACKcovers snapshot/read-view/factsverifiercollectors plusonlyfacts imports/removals/reexports; doesnot coverdonor34529namespace/types/pureplanner,checker19199metadata/helper/AE28 orOct9privatecreator missinghandle. OriginalJ3nativehandle authenticatedandresumedreadonly; no originalforeignclaim releases orROOTsourcewrites.
+
+
+### Final validator qualified; final WasmGC run and parallel source-plan work
+
+Canonical integration claim effect-read remains owner ttraenkler/codex-ir-integration-session-a-20261009 / write60335-ngn0jcr6, in-progress. Validator session11066 naturally completed151/151, exit0. Whole-input scan after-validator151 confirms15229 project pins unchanged and29580 dependencies unchanged except generated Vitest cache; directories/internal links unchanged. Final format cohort now613/756 passed. Final separate unfiltered WasmGC143 command is running as session63287 in the exclusive five-style candidate; no restart, no runtime credit until terminal JSON.
+
+Read full original J3 handoff12116/SHAf208167c: seven authored source hunks plus additive test acknowledged; foreign metadata/donor/sourcehandoff claim and live proof-reader permissions excluded. Authentic author handoff does not grant blanket source activation.
+
+Astra High now owns only a new private source-proof successor implementation plan/report, including proposed issue addendum and exact reader function scopes. Sol6.1 Medium inventory agent performs bounded published-owner dependency lookup only, no repeated billion-byte rollout scans or foreign modifications. ROOT retains integration and normal protected-queue delivery. Neither task claims public native caller support or retires legacy.
+
+
+### Final five-format756 qualified and exact ROOT activation
+
+Final WasmGC session63287 naturally completed143/143 exit0,146.78s. Actual JSON rows confirmed166/235/61/151/143 =756/756 allpassed, no omissions. Final whole-input scan63741 exit0 confirmsall15229project pins unchanged;29580dependency membership/dirs/2190links unchanged, onlygeneratedVitestcache differs43583/SHA028a51a9 frominitial43576/447da51b. InstalledVitest3.2.4 differslock3.2.7; no lockedrunner reproduction claim. Original failed epochs/fixtures retained.
+
+ROOT verifiedallfive beforepins andreviewedfinalpins, preservedfullpreimages, thenactivatedonlyfive exacttested endpoints. Receipt `.tmp/five-style-root-activation-20261009/activation.json`; no source grants expanded, stagedmerge unchanged. Normal integration format/lint/type checks next. Runtime evidence qualifies exactexclusivecandidate project/toolchain epoch, not a newly run ROOT suite orpublicnativecaller.
+
+
+### ROOT checkpoint checks after five-format activation
+
+Normal sourceTS7 exit0. Changed26TS paths lint0; format initially detectedvitest.config.ts, whose preservedpreimage differsfromfinal onlylinebreak/trailingcomma; semanticAST ts.forEachChild identical. Initial token-inclusiveAST check correctly noticedpunctuationdifference, not a semanticproof; correctedsemanticcomparison retained. Allchanged26 paths nowformat0. LOC/function/coercion/oracle/importcycles gates0. Completecompilerboundary report exit1 remains inventory-valid-architecture-incomplete,errors[]; inheritedbase samearchitectureincomplete status, earlierunclassifiedgeometry diagnostics no longer present understagedpolicy. This is notfullmigrationorcompletearchitecture claim.
+
+
+### Normal hook failure retained; bounded lowering fixture successor
+
+Session96029 naturally terminalexit1, commitnotcreated/HEAD7928unchanged. Normalhook completedC1415,canonical235,canonical489d65,currentmain166 =881passed. Loweringfixture57passed/11failedof68; remaining12files notreached. Completefailedlog retained `.tmp/lowering-hook-blocker-20261009/failed-normal-hook.log`. Ten failures encounterexternalH1 fullpin expectingold96713/cc4ef7be whileinstalledreviewedH1b96713/7bbfaf66; one expects /callable/ though unchanged authenticatedhelper exactdiagnostic is `lowering analysis relocation: authority reader must be a function`. No productiondefect or removalofdeepcontrols inferred.
+
+Canonical60335integrationclaim freshlyeffectread beforefix. ExistingfullNumber N2→H1b→R2→A2 plan grantsROOTexternalexpectation/freezeliterals, with H1a retainedhistory. ROOT independentlyreplayedfullH1b↔H1a using separatelyauthoredfixedinverse/forward at47330, checkedbothfullpinsets andfullarchivedpreimage; source/guard/authorityunchanged. Boundloweringfixtureexternalfreeze toindependentlyreviewedH1bpin, preserveoldfixture/log, andstrengthenednoncallableexpecteddiagnostic tocompleteactualstring withsamearguments/zeroIO/zerocoercion assertions. Exactlytwoassertionvalues change, no guardrelaxation or wholehelper edits. Currentfixtureepoch requiresactual68qualification beforecredit.
+
+CurrentROOTmodelmetadata independentlyreadfromboundedpublicturn_contextfields only: gpt-6.1-sol/medium at2026-10-09T16:35:19.539Z. Correct nextcommit trailer toCodex GPT-6.1 Sol Medium; originalgenericdefaultmessage retained, nocurrentcommit existed.
+
+
+### ROOT adoption — current source proof and authentic caller continuity
+
+The normal hook process is terminal, so ROOT now adopts the full latest Astra High source-proof implementation plan below and the authentic Sol6.1 High caller-owner scope. P1 implementation owns only new helper/receipt/focused tests in its exclusive candidate; trusted reader joins await exact owner acknowledgment. Original caller implementation proceeds only under its authenticated held15614 scope, with the genuine normalized native target/backend request forwarding internal native-f64 automatically; no unnecessary public selector. Candidate issue files track work before code. No new source activation or B ownership transfer is authorized by this adoption.
+
+## Implementation Plan — finite native-source preservation successor
+
+Proposed addendum for issue **6920 — Native Linear numeric-vector shared source handoff and integration plan**. Planning only; ROOT must adopt the exact implementation assignment. This does not authorize foreign source edits, claim release, public native selection, B implementation, or JS-host migration.
+
+### Decision and root cause
+
+Implement one finite test-side source transaction for the exact **21 modified + 10 new + 0 deleted** source operands recorded in `READBACK.json`, then join it at the existing physical acquisition boundaries. The complete ROOT-before and modular-current source endpoints were independently reread: **31/31 before and 31/31 current match the inventory**. The unchanged shared geometry owner is a separate positive guard. Do not create another compiler verifier, allocation analyzer, host implementation, or general source normalizer.
+
+The new source is not a new spelling of the old source. J3 changes the DATA traversal and adds a strict allocation-facts contract; A2 changes typed preparation and physical acquisition; J2 relocates planner/facts/registry declarations. Existing proofs correctly reject those bytes because they authenticate older complete files. In particular:
+
+| Actual old physical input | Before bytes / SHA prefix | Modular current bytes / SHA prefix | Existing rejecting boundary |
+|---|---:|---:|---|
+| `src/ir/program/data.ts` | 10831 / 6010f226 | 12515 / 4409fda1 | H2 `beforeCurrentProgramDataSource`; independent C1 DATA epoch |
+| `src/ir/program/validation.ts` | 45816 / 33cba90b | 47694 / c32422bf | source-map schema inverse, then validator relocation |
+| `src/ir/program-validation.ts` | 236 / b64454a7 | 285 / 152afa51 | old exact facade witness |
+| `src/ir/program/prepared-contracts.ts` | 4915 / 252ad6fb | 5245 / 959a6664 | source-map schema population input |
+| `src/ir/program-codec.ts` | 30714 / 69c988fa | 31438 / 5818a294 | source-map schema source input |
+| `src/ir/program-prepare-ir.ts` | 6832 / 211ca16d | 8637 / fab7c844 | source-map schema source input |
+| `src/ir/analysis/linear-memory-plan.ts` | 45359 / 08f84411 | 6571 / c8a495a7 | current geometry capture and H1/H2 closure pins |
+| `src/ir/analysis/contracts/linear-memory-layout.ts` | 3161 / 83e6b8a0 | 5022 / 56c35799 | current geometry capture and H1/H2 closure pins |
+
+The first eight are the concrete historical reader joins; **all 31** still belong to the source transaction. New modules must have explicit absent-before membership and complete current bytes. It is unsound to preserve only the eight old files while leaving their new dependencies unauthenticated.
+
+### P0 — freeze operands and authority before editing
+
+Use ROOT's final active proof/test composition after its separately reviewed five-file formatting activation. `READBACK.json` is this planner's observation, not a replacement for that final freeze. The source endpoints presently agree with the inventory; if any source changes, stop only that transaction and name the exact delta.
+
+Create an exclusive private candidate for the implementer. Preserve a complete before/source membership manifest and complete copied before/current UTF-8 operands, including ordinary unchanged files and explicit absence. Retain original reports, recipes, fixtures and receipts outside the editable candidate. Keep independently identified source layers: published AE28, J2 extraction atop geometry, J3, four A1 admission leaves, A2 source successor, modular A2 repair. Existing cumulative A2 patches do not start at ROOT; do not apply one as a full integration patch.
+
+Deliver the production-source recipes without activating production source. ROOT composes only independently granted source hunks. This separates implementable preservation work from outstanding donor/checker/source-handoff approvals.
+
+### P1 — smallest new implementation module
+
+ROOT assigns **one new file**, proposed `tests/helpers/ir-native-linear-source-successor.ts`, and its focused new test, proposed `tests/issue-6920-native-linear-source-preservation.test.ts`, to the implementer. ROOT owns the new source receipt, proposed `tests/helpers/ir-native-linear-source-successor.json`, independent instrument receipt/anchor, and final activation. These names are proposals; first verify absence in the final freeze.
+
+Suggested narrow API (not an already existing API):
+
+```ts
+type SourceReader = (path: string) => string;
+interface NativeLinearSourceCapture {
+  current(path: string): string; // only fixed current source members
+  before(path: string): string;  // only members present in ROOT-before
+  // fixed source-epoch association; receipt/helper reads supplied separately
+}
+function captureNativeLinearSourceSuccessor(
+  readCurrent: SourceReader,
+  readAuthority: SourceReader,
+): NativeLinearSourceCapture;
+```
+
+The module is a test-side byte proof. Its implementation imports only node byte/hash utilities and types as needed; do not import compiler/frontend/runtime source, H1/H2/H3 or the new production facts facade. In particular no import cycle back into trusted authority. The adapter caller authenticates the complete new helper before invoking it. The helper checks an independently fixed source-receipt pin, not a hash obtained from the receipt itself. Final trust activation is a separate ROOT step after source and helper review.
+
+Receipt fields have a fixed schema, ordered unique path population, coordinate unit `utf8-bytes`, role/layer, exact before/current presence and complete byte/SHA256/Git-blob pins. For each modified file record independently authored inverse **and forward** changed spans with byte coordinates and explicit unmodified gaps/suffix. For each added file record `before: absent`, full current text, and current import/declaration association. Returning a historical source for an absent path must throw; `""`, undefined-as-success, or a saved full-file fallback is forbidden. Addition replay starts from the explicit absent state and reconstructs the exact new file. Deletion is outside this fixed transaction.
+
+Validate primitive strings and round-trip UTF-8; descriptor-only receipt DATA validation before nested access; exact keys/path order/counts; safe integer coordinates; ordered nonoverlapping segments; exact changed-span text and lengths; unchanged gap/suffix equality; complete input/output sizes and pins. Require at least one real change per modified file. For additions require nonempty complete current source and explicit absent predecessor. Freeze a per-call capture and expose closed methods, not mutable maps. No successful-source cache across calls.
+
+The inverse must derive ROOT-before from the **actual supplied complete current source**. The independently authored forward must consume that derived before and reproduce every complete current byte. Do not obtain expected outputs from a successful helper result. Do not invert by loading a historical checkout or accept a current mutant because the authority channel contains a healthy copy. Where population and authority independently supply the same path, require byte identity before projection. Never insert historical bytes into a current resolver map.
+
+The receipt may document the finite source layers, but the runtime proof need not execute six independent wrappers. A reviewed direct ROOT-before/current recipe is sufficient when it retains the complete real operands and exact layer attribution. Source-preservation evidence does not certify behavioral equivalence of J3/A2; current semantic cohorts supply that evidence separately.
+
+### P2 — minimal existing helper hunks and owners
+
+Line numbers below refer to the observed ROOT helpers, not the old published base. Preserve the current complete helper preimages and give every changed helper an explicit full-file instrument inverse/forward recipe.
+
+**H2: `tests/helpers/ir-c1-current-source.ts` — trusted adapters owner 76271.**
+
+- Keep `beforeCurrentProgramDataSource` (233) and its 10831→10682 DATA declaration recipe unchanged. In `captureC1CurrentPopulation` (970), after original receipt/population acquisition and required earlier diagnostics, authenticate/capture the new source transaction before the first changed old-source rejection.
+- Keep `current`, `closure`, `observedCurrentPins` and `resolveContract` (841) on actual final physical bytes. Only the argument to `beforeCurrentProgramDataSource` becomes proven ROOT-before DATA. The resulting historical population still gets genuine10682 DATA; the observed-current pin is12515/4409fda1.
+- Source-map inputs in `sourceMapPopulationPaths` (47), notably prepared-contracts, use the proven ROOT-before input before unchanged `sourceMapEpoch.before` (1003). Unchanged schema members retain their genuine current input.
+- At validator acquisition (1031), call the unchanged `captureSourceMapProgramValidatorRelocation` with a **closed ROOT-before source reader** plus exact existing receipt/helper channels. Keep a separate actual-current facade value for the raw population-versus-authority equality check; the old capture's `readCurrent` now denotes its explicitly older epoch and must not be compared as though it were final source. Derive old donor bytes only after this equality and proof.
+- At planner proof (1052–1077), invoke unchanged geometry capture on proven ROOT-before planner, ROOT-before IR layout and actual unchanged shared layout. Do not replace the real current closure with those operands. Authenticate both old helper and new proof helper independently before use.
+- No change is needed in `reconstructC1CurrentSources` (1153), the old DATA replay implementation, or resolver algorithm. The new final closure contract belongs to H1.
+
+**H1: `tests/helpers/ir-c1-historical-authority.ts` — trusted adapters owner 76271; new receipts/anchor ROOT.**
+
+- Extend `captureC1HistoricalAuthority` (954) at instrument acquisition (1027 onward) with one finite **outer native-source instrument epoch**, before existing geometry reconstruction. New H1/H2/H3 bytes must first invert to the installed reviewed ROOT epoch, then traverse the unchanged geometry/history proof. Keep the original manifest, artifacts, historical pins and seven geometry instrument records unchanged.
+- Add a bounded native-source instrument acquisition/replay entry. Reuse existing replay validation where possible, with a distinct fixed receipt and explicit predecessor receipt digest. Extend exact anchor-source validation (954, 1387–1404) for the new independently reviewed anchor line; retain both original anchor values. Authenticate new helper full bytes and its source receipt before use. New helper absence is explicit, not an invented old helper hash.
+- `c1GeometryInstrumentPredecessor` (1519) needs only the new outer acquisition seam before its existing fixed-domain historical logic when its supplied operand is the final installed instrument. Preserve its original detached historical-input contract. Physical current entry must require the final epoch, rather than accepting either old or new files independently and allowing mixed instruments.
+- `geometryLinearOptions` (1533) stays the old geometry transformation. Apply a separate final-current closure/resolver contract after that transformation. Do not edit old closure pins to pretend they were always new.
+- Bind actual J2 planner, IR contract and the **new canonical pure-planner module** in the current type-resolution closure. Add the concrete planner `./linear-memory-from-facts.js` reexport/import route and that module's actual shared-geometry dependency as required by the real LinearOptions type graph. Derive the exact requests and observations from the final source/configuration during the later permitted qualification window. Preserve old16-request geometry record as history; do not guess final request/IO counts or assume the full1832 source import closure is the C1 type-resolution closure. Any additional route must have an actual import/type-resolution witness.
+
+**H3: `tests/helpers/ir-runtime-program-policy-evolution.ts` — trusted adapters owner 76271.**
+
+- `authenticateProgramValidatorPolicy` (6213): after its retained receipt/primitive/C1/component checks, acquire the finite new source proof and pass its closed ROOT-before source view to unchanged validator/source-map capture at6246. Existing source-receipt and `readRelocationCurrent` pin checks remain exact.
+- `authenticateLoweringAnalysisPolicy` (7613): acquire new current source proof before old planner rejection; at7678–7694 supply ROOT-before planner/layout to unchanged geometry proof. `loweringAnalysisRead` (7574) must remain the old physical/historical guard for its existing domain; do not make it silently accept the new planner. Either create a local closed predecessor reader at the callsite or name an explicit successor reader. Retain actual mode/regular-file checks in the current physical channel (`loweringAnalysisGeometryRead`,7596).
+- `remainderPolicyHistoricalPrefix` (9003): invert complete final H3 instrument to the installed ROOT H3 before the existing `c1GeometryInstrumentPredecessor` and remainder algorithms. One outer acquisition is sufficient; avoid a second inversion hidden in the geometry function. Preserve exact old prefix/source-map recipes and their failure ordering.
+- Both semantic/raw public policy entries inherit the join through these authentication functions; no blanket rewrite of all policy APIs. Preserve descriptor/primitive-before-IO behavior and original malformed-input versus missing-receipt witnesses.
+
+**Independent H3 fixture authority: `tests/helpers/ir-independent-policy-history-fixture.ts` — ROOT's installed independent repair.**
+
+- Keep its current entire file as a pinned preimage. Add independently authored full final-H3→ROOT-H3 inverse and separate forward literals; do not import H1, H3, the implementation receipt, or any current-source IO into this pure fixture authority.
+- At `independentlyAcquirePolicyGeometryEpoch` (370), expose an explicit new current-acquisition entry that first proves the final-H3 outer epoch and then calls the old function. Preserve the old function and custom-recipe negatives unchanged. The new entry feeds the existing geometry→remainder→historical chain (385–407).
+- Update only caller acquisition associations that read actual H3 to use the new entry; retain direct old-epoch mutation tests on old APIs. Authenticate the new independent helper complete bytes from an independent caller expectation and preserve its own full-file inverse/forward record.
+
+**Leave these existing helpers unchanged:** `ir-program-validator-relocation.ts` (46642/6e32ca20), its immutable relocation/schema receipts, `ir-lowering-analysis-relocation.ts` (35439/87bf7de1), its geometry/old receipts, all older validation/runtime relocation algorithms. They can consume explicitly proved older source through their existing reader arguments. No owner request over their implementations is required for this design. Their test fixture acquisition may need the bounded joins below.
+
+### P3 — fixture acquisition only; retain old and current epochs distinctly
+
+A helper seam alone is insufficient: several tests pin physical old inputs before invoking it. Do not repeatedly run the suite to discover these known sites. The bounded source scan established the following acquisition surfaces:
+
+| File under `tests/` | Exact seam / observed line | Required change |
+|---|---|---|
+| `issue-3518-c1-current-source.test.ts` | current acquisition wrappers635–655; independent DATA tests1316–1408; independent source-map and helper/authority literals | Distinct final-current oracle and independent full source/instrument recipes. Prove12515→10831→10682, never replace old10831 literal. Keep actual current observations separate from older DATA declaration fixture. |
+| `issue-3518-lowering-analysis-preservation.test.ts` | `fixture`448, `independentGeometryViews` acquisition and current-chain controls | Acquire the new current transaction, then materialize genuine geometry-before fixture bytes for the existing old controls. Separate new-current controls exercise the real successor; preserve old geometry receipt and direct deep mutants. |
+| `issue-3518-program-validator-relocation.test.ts` | local `captureProgramValidatorRelocation`852; `beforeProgramValidatorRelocation`871 | Add explicit source-epoch acquisition before unchanged old capture. Preserve local old-component authentication; distinguish final-current facade from old source-map-current facade. |
+| `issue-3518-program-data-contract-boundary.test.ts` | initial fixture `rawRead`/schema input241–265; local `beforeProgramValidatorRelocation`755 | Invert prepared-contracts/codec/typed-preparation/validation before old source-map proof; keep historical copy-only maps out of subsequent mutations. |
+| `issue-3518-provider-verification-ownership.test.ts` | `beforeProgramValidatorRelocation`1216 | Same explicit initial acquisition before old delegate. |
+| `issue-3518-runtime-preparation-relocation.test.ts` | same wrapper582 | Same. |
+| `issue-3518-historical-runtime-reconstruction.test.ts` | same wrapper1052 | Same. |
+| `issue-3518-runtime-data-contract-seam.test.ts` | same wrapper3617 | Same; preserve existing policy acquisition/control factories. |
+| `issue-3518-runtime-contract-evolution.test.ts` | same wrapper819 | Same. |
+| `issue-3518-program-initial-graph-evolution.test.ts` | `beforeC1`38, `historicalControlSource`78 | Prepared-contracts current source must first become ROOT-before before schema inversion. |
+| `issue-3525-initial-graph-optional-fields-source.test.ts` | `beforeC1`43 | Same schema acquisition boundary. |
+| `issue-3525-source-map-validator-proof.test.ts` | `healthy`60 and `reader`45 | Keep old healthy13-read proof and mutants in a genuine proved old-source fixture; add final-current successor tests separately. Physical final source must not be relabeled old. |
+
+These are named reader scopes, not an automatic grant to all twelve files. Existing owner75863 covers original thirteen policy callers, including the boundary and runtime-data files above, but not every listed fixture. ROOT must explicitly assign each additional acquisition seam under its integration/test custody or obtain the actual holder's bounded ACK. The old13-caller/19-operand dispatch is evidence of limited ownership, not a reason to edit all13 again. H3 self-source independent fixture consumers are the installed C1 and maintenance fixtures using `independentlyAcquireHistoricalPolicyHelper`/`independentlyAcquirePolicyGeometryEpoch`; use the exact final five-style import/adapter associations ROOT is activating. Do not regenerate their original inverse spans from a shortened prefix.
+
+Preserve original fixture source and immutable receipts as full artifacts. Any callback requiring a changed current observation becomes a **named successor test epoch** with old/new callback inventory; do not claim original callbacks byte-identical when their acquisition or expectation changes. Keep original failure receipts and direct old-detector controls. Hash-rejection controls and semantic/deep-detector controls require distinct attribution.
+
+### P4 — concrete owner requests and evidenced authority
+
+Already evidenced:
+
+- ROOT60335 owns integration/receipt/anchor/current-source and graph-test composition. Issue6920 lines1920–1937 explicitly retains this partition; later3989 records an actual ROOT-delegated private H2 integration with original76271 claim unchanged.
+- Original trusted adapters76271 owns **H1/H2/H3**, including both policy helper APIs. Issue6920 lines1915,1929–1931 and2239 establish it. The original dispatch-map confirms the partition. It is not the policy-caller owner.
+- Original caller75863 owns thirteen policy files/nineteen named initial operands; the actual saved dispatch map names them. This is a bounded old assignment, not blanket ownership of source-map/validator fixtures.
+- Source-proof54017 owns the geometry/source helper; this plan avoids edits to that helper. No new geometry-helper release is needed if it remains exactly unchanged.
+- The authentic J3 author ACK permits ROOT composition of seven principal source hunks and its test at the stated endpoints. It expressly grants **no reader/callback/pin-table ownership**. A2 modular authority is similarly source-seam-specific. Neither substitutes for trusted-reader custody.
+
+**No exact J3/A2 native-source successor grant over76271 reader hunks was found in the evidence read.** ROOT may immediately assign P1/new test/private receipt proposal; activation of P2 requires recording the bounded trusted-owner ACK or legitimate existing ROOT resumption delegation, with actual endpoints. Ask for this single concrete scope, not a claim release:
+
+> Retain your claim and existing helper ownership. ACK ROOT/assigned implementer composing only H1 outer native-source instrument+current resolver contract, H2 `captureC1CurrentPopulation` source acquisition, H3 `authenticateProgramValidatorPolicy`/`authenticateLoweringAnalysisPolicy`/`remainderPolicyHistoricalPrefix` acquisition, with full original helper preimages, independently reviewed full inverse/forward recipes and unchanged historical algorithms. No source, allocator, checker, B or public caller transfer.
+
+ROOT separately records the short exact fixture seam list and independent helper assignment. If any named fixture remains held, its owner can supply that small hunk while P1 proceeds. Do not force-release54017/76271/75863 or any donor/checker/source-handoff claim. Source grants and proof grants remain separate records.
+
+### P5 — meaningful tests and release gates
+
+**Static/review stage (first deliverable, no runtime):** final full before/current manifest;31 source recipes plus unchanged shared guard; exact import/declaration associations and absence records; independent Python/byte replay output for every source (not a compiler/test run); complete proposed H1/H2/H3 and independent-helper source/preimage recipes; original receipts unmodified; callback/import/context diff inventory; ordinary format/lint/typecheck under ROOT's later permitted static release. New proof file must stay small and single-purpose; do not seek allowances for copied existing algorithms. Source301/physical315 budget issues remain the source lane's unresolved measured requirements.
+
+**Focused proof tests, only after review and ROOT execution clearance:**
+
+1. All31 current members prove exact before and independent current replay, with all10 absent-before results tested as absence. DATA chain12515→10831→10682; validator47694→45816→original schema/relocation donor; facade285→236→old donor; planner6571→45359→49040→52704 while IR layout5022→3161→4763→4670. Shared7580 remains byte-identical. The93-byte forwarding stage remains separately visible.
+2. Mutate prefix, changed span and suffix in each of the eight directly consumed source operands; mutate every new-module full source independently. Missing/duplicate/extra/reordered paths, wrong presence, mixed source layers, nonprimitive/invalid UTF-8, overlapping/shifted coordinates, incomplete source, altered imports and changed remainder must fail the specified stage.
+3. Corrupt only a forward payload while keeping inverse valid; require actual forward replay failure. Independently validate inverse and forward, rather than deriving the second by reversing the first.
+4. Warm healthy call, change source/receipt/helper, call again: fail fresh. Damaged supplied population with a healthy authority copy fails; a genuine older source supplied as final current fails. Preserve reader exceptions and unknown-domain refusals. Verify per-call capture cannot leak mutable maps or be reused as a success cache.
+5. Real H2 source capture keeps actual final source/pins and real resolver text; historical delegates receive only the exact designated older source. Trace both channels; measure new counts from actual reads. No expected trace copied from the helper result. Preserve original receipt-first and malformed-input-before-new-IO priority controls.
+6. Both H3 semantic/raw policy entries exercise real current joins. Every changed instrument must invert complete final bytes to exact installed ROOT bytes, then traverse old geometry/remainder history. Mutate final instrument prefix/body/suffix and independent helper/import/adapter association; require independent caller-owned authentication. Prefix slicing before complete-source authentication fails.
+7. Run old detector mutants directly on the genuine reconstructed old fixture/old APIs and keep original expected diagnostics. A new full-hash failure is not evidence an old deep detector still works. Preserve exact original registrations/duplicates or explicitly itemize a new callback epoch.
+
+**Integrated qualification, sequential exclusive physical mutation window:** freeze final source, helper, authority, fixture and runner membership; run focused new suite then affected existing C1, current-source/source-map/validator/geometry/policy/graph suites through normal unfiltered commands. Use actual collected/executed/pass/fail/skip denominators and full receipts. Physical helper/receipt mutation controls require healthy-before/after, exact restoration, cached-module and fresh child cases, actual close/exit evidence. Never run them concurrently with ROOT's existing mutation suites.
+
+The historical415/415 C1,461 Number, five-style756 and shared helper/fixture results belong to their exact earlier bytes; they do not transfer to new source or changed helpers. The original18/old29/J3/corrected29/adapter8 evidence likewise remains distinct. On a newly composed source head, ROOT chooses affected current semantic requalification, retaining original18 diagnostic13/18 and earlier17/1 and26/29 records. This planner performed zero target imports, callbacks, compiler runs or runtime tests.
+
+**Completion of this bounded packet:** exact final31-source proof works, unchanged old algorithms still detect their direct mutants, actual current H1/H2/H3 paths accept the final physical epoch, necessary fixture acquisitions and independent instrument proof pass, and ordinary source/classification/provenance/budget gates pass on the eventual composition. If a gate exposes a concrete policy entry for a new module, make a separate finite current-policy successor with its exact owner; never update historical policy rows to hide it.
+
+The packet does not require implementing public selection, B resources/providers, emitter/startup/lifetime joins, native1.25, JS-host IR, or full migration. Those remain the original native handoff's later acceptance obligations. Retain legacy until genuine full equivalence; do not turn this proof task into an audit of unrelated history.
+
+
+### 2026-10-09 — authentic original A1 owner continuity ACK (read-only)
+
+Original A1 actor `/root/sol_ir_foundation_telemetry_contracts_20261008` (Codex GPT-6.1 Sol High) confirms the recovered sender mapping and bounded finished-hunk handoff. Fresh canonical issue-assignments tip `0d1fefb1045a068ce689fb83d1f58c4a173fc1f8` retains owner `ttraenkler/codex-ir-native-linear-public-caller-sol61-20261008`, write15614-0ltdxb84, held/in-progress; decoded436-byte record equals original and independently matches API Gitblob `6c1d655bf4ea61814e0b4af49506347691a7f92e`. No release/mutation.
+
+All7,497 retained A1 source/test rows match final49 aggregate `ad54703f65fce3f5096a29745ac24e766ca66bd3b727a315d222a6c3efce310a`; all15 production postimages remain original707f bytes.14 static/36 runtime artifact rows also verify. Final49 authentic qualification remains43pass/6fail/0skip, unchanged originalP registrations and six actual native `error.reference.construct` startup refusals. Old initial test-excluded TS7 claim remains withdrawn; final actual selected-file floor1 typing0 is separately preserved. No new runtime/publication claim.
+
+The owner ACK permits ROOT's bounded review/reuse/composition of exact finished public backend normalizer/options/coordinator/pipeline, presentation admission, object refusal, native SOURCE/PROGRAM guards and scalar consumer seam. Exact per-file hashes and functions are in `/private/tmp/js2-6920-a1-original-owner-handoff-20261009/FINISHED-HUNK-ACK.json`; report/readback/PINS alongside. Claim stays held; ROOT retains protected integration/queue. No whole16-file transplant or foreign allocation/checker/B/S/kernel authority.
+
+Small current-base gap: current A2 candidate actually retains37/37 and J3 52/52 source/facts controls, but has no public explicit-backend/native-f64 coordinator bridge. Its exact source input already supports `linearVectorProjection?: "native-f64"` and canonical linearAllocationFacts. Assign a reviewed public selector/profile/request propagation plus bounded genuine consumer seam on ROOT's exact base; carry selection only from the frozen authentic native caller. Scalar guard still rejects vectors. Useful native-f64/public1.25 requires separately approved A2 publication/proof and B real allocator/resource/emission consume/lowering joins, not just a selector. Separate later donor/checker ACKs remain unresolved by this handoff. Legacy retained; no JavaScript-host SOURCE/PROGRAM IR; compiler-owned library IR remains allowed.
+
+
+### Lowering hook blocker current successor qualified68/68
+
+Separate unfiltered ROOT session45099 naturallycompletedexit0; actualJSON68/68 allpassed,0failed/0pending. Completeprior57/11failedepoch remainsunaltered. CorrectedexternalH1bfullpin is independentlyreplayed, guardstillfailsphysicalmissing/corrupt and cachedfreshpreloads; zeroIO/zerogetterpriority controls nowpincompleteunchangeddiagnostic. H1bsourceactualSHA7bbfaf66restored aftertest. No source/helper/receipt algorithms changed, no fullmigration/retirement credit. Retrynormal signedcommit onlyafterstage exactfixture andissueupdates; normalhook must stillrunfullrequiredchain.
+
+
+## ROOT qualification update — 2026-10-09 actual caller and hook failure
+
+Under ROOT integration claim60335-ngn0jcr6, the complete independent A1/A2/P1 copy first ran the full caller suite with27passed/4failed/31; all four failures were invalid test queries on the root SourceFile, after successful argument-dependent scalar answer42. The full original failed epoch and test are retained. The authentic original A1 owner supplied an exact test-only successor: canonical ts-api import plus genuine answer parameter/source/symbol identity and independently expected Number type. All twelve other callbacks and production source are unchanged. ROOT read the full report, independently authenticated all39 packet pins and the exact test22967/SHA3b03d1b870d308da6a97e4dfb603646c898fca110561d22931ceeab06daa673d, then adopted a named sequential private qualification epoch preserving the old whole manifest, full test preimage and original P1 issue plan.
+
+Actual ROOT normal process48020 naturally exited0:31passed/31, zero skips. Selected source-plus-both-tests typing exits0; format/lint pass. Complete postscan verifies all15,309 application files/modes/directories unchanged against the successor epoch and29,580 physical dependencies plus2,190 contained links; only generated Vitest results cache changed. The earlier separate P1 run25396 naturally exited0:71passed/71 including actual-project-source validation. These prove their stated finite capabilities, not public numeric-vector allocation1.25, source deployment, B release or complete IR equality. Actual Node25.9.0 differs from pinned setup24.4.1; installed Vitest3.2.4 differs from lock3.2.7.
+
+The normal integration commit retry65837 is TERMINAL exit1, with no new commit. Nine prior files passed1,727 tests; runtime-data-contract-seam then passed145/147 and failed exactly two physical H3 mutation diagnostics. Canonical3c6/currentMain expected the older complete-prefix error but the newly composed independent full-file geometry guard rejects earlier with the complete message `C1 historical authority: full-file pin changed: tests/helpers/ir-runtime-program-policy-evolution.ts geometry current`. Seven later files were not reached. Full raw hook log and full fixture preimage remain at `.tmp/runtime-data-hook-blocker-20261009`. No detector, fixture mutation or original failure is weakened.
+
+The actual policy-caller claim75863-k6ti87wv remains held in-progress. A similarly named older C1 agent explicitly denied owning it; no permission was inferred. ROOT is requesting the authentic actor's bounded two-cell diagnostic hunk/ACK while the shared-reader owner implements P2 independently. The latter supplied a fresh exact76271 claim readback and full17438-byte bounded H1/H2/H3 reader ACK, SHA56df3f99311c0a96e60c181c6fefb7713c76ef53161eb4ee361198fa5e6429eb; ROOT read it completely. Same original Sol6.1High now implements only named acquisition seams in a separate candidate, preserving legacy history and actual current-source channels. ROOT retains independent receipt/anchor/fixture authority. No foreign claim release, B source change, hook bypass, commit, PR or new main delivery is credited.
+
+
+## ROOT diagnostic activation and remaining preflight — 2026-10-09
+
+Canonical issue-assignments record60335-ngn0jcr6 independently read from ledger0d1fefb1045a068ce689fb83d1f58c4a173fc1f8 confirms ROOT integration owner unchanged. Authentic policy owner75863 supplied the two-cell diagnostic-only successor; full source and inverse reviewed. Independent immutable-index clone ran the complete147 suite:147 passed, zero failures/skips, actual process97830 terminal0. Postscan15239 index files: source/helpers exact, only intended test/private issue differs. Physical dependency postscan29580 files/2190 contained links/5974 directories matches bytes, modes and membership except generated Vitest results cache; no hardlinks/external links. ROOT now adopts exact180058-byte test SHA2569ac0a263e1f3586150e254244f42b42e5791cd68d75fd14d7b3c581fc30f0a6a. Original145/2 failures and full179660-byte preimage retained.
+
+Remaining normal preflight43113 naturally terminated1: runtime-policy204/204, semantic-provider350 passed4 failed/354, validation-policy63/63, Wasm143/143, well-known-symbol154/154, layout24/24, geometry15/15. No restarted or terminated tests. Semantic failures arise from actual published allocation-body-validation.ts omitted from copied fixture. Authentic75863 owner explicitly released bounded copy-list plus exact current count changes:1 module and6 edges (1 type-only/5 runtime); full4685-byte patch SHA25627cf03a912873f5fc6a336a8854527d49c4c771bc475f79b9accedeae8dfd3a0 reviewed, historical populations/rules/deep controls retained. Independent clone full354 qualification currently live22674; no passing result or ROOT activation claimed. Normal commit retry remains pending full correction qualification.
+
+
+### ROOT independent native resolver and receipt draft review
+
+The M1 reviewed driver performs actual official TypeScript5.9.3 AST parsing and fresh resolveModuleName calls, recording filesystem booleans, full reads and realpaths rather than receipt-derived answers. ROOT independently reread all29 witness source slices across18 requests, complete containing-file pins, UTF8 and UTF16 coordinates and line positions, plus15 closure and3 config whole-file pins. Actual slices and pins match frozen physical source. Two sealed raw measurement records and their full72 ordered observations were previously compared and reviewed; the old16-request/66-observation contract is preserved exactly. ROOT independently replayed all three P2 whole-file inverse/forward span sets with exact input and output offsets and full current/before pins.
+
+Private ROOT-reviewed receipt draft116789 bytes/SHA256e835d16b19ebaf144d8803d742bf47824f88be835c618e621c4c8108e6308248 joins those three reviewed instrument recipes to the literal measured M1 current contract, replacing only the unusable null observation proposal. It remains unanchored/unactivated under .tmp/native-resolver-root-review-20261009; no reader/source/test runtime or B implementation release follows from this draft. F1 independent113-row static packet is under Astra review; runtime qualification pending.
+
+
+### F1 independent Astra review and qualification preparation
+
+Full6606-byte Astra report SHA2568928a62c2d58c2b35d6e99d4effa5029ad79a73a46ebe7a97762e5a48f9c73ed independently verifies all7+7 native,6+6 geometry and10+10 remainder recipe spans with every gap/suffix/full endpoint, all55 packet records and seven source files. Exact old24394-byte helper and six exports remain; 113 authored negative/positive controls include direct old deep guards on proper old operands. No static blocker; explicit clearance is for independent qualification, zero test execution credit. ROOT read the full review and delegated a separate complete physical copy to Sol at /private/tmp/js2-6920-f1-complete-qualification-20261009, using stable QQ inputs and exactly seven reviewed F1 paths, avoiding live semantic qualification22674. Complete source/dependency/mode/link audit and seal required before ROOT runtime. No shared source activation or B ownership release.
+
+
+### Canonical main refresh evidence before checkpoint publication
+
+Normal fetch79647 naturally completed0; upstream/main now freshly equals canonical API dbf5b4f74b37d67e525b2af36fd1fe49803b1348. Comparison to the staged merge parentb932 shows seven upstream production analysis/inliner paths and upstream test/hook/docs changes. The sole path intersection with staged checkpoint changes is this6920 issue file; no source-file overlap detected. This is a path inventory, not merge/equality evidence. Preserve both issue histories when the normal checkpoint commit finishes and main is merged. Fresh-main checks remain required before exact-head protected admission.
+
+
+### Explicit F1 baseline join after authentic absence detection
+
+Sol copied/authenticated all15309 QQ application inputs but correctly stopped before F1 replacement because QQ does not contain the independent historical fixture helper. Its24394-byte ROOT index preimage is therefore not a QQ preimage. ROOT explicitly granted a narrow added baseline authority join in the NEW private F1 clone only: materialize the sealed ROOT-index24394/SHA09bf4df558c226a1291ec07d279f0c6f3172beefff6a61f588395a367231bff7/Gitblob a3d9aca3efd83bfdecc9001b38d8bf7c84b071ce, then replace it by the exact reviewed34174-byte F1 postimage. All seven F1 endpoints are additions relative to QQ; helper is a modification only relative to this named joined authority. Preserve original missing-preimage stop and all six absent destinations. Final application expected15316 files,7586 source/test files. No source/QQ/ROOT/claim/Git changes or runtime; complete dependency seal remains pending. This records genuine absence rather than inventing an inherited preimage.
+
+
+### Updated local Session A publication handoff
+
+ROOT appended current integration branch/HEAD/base/claim, explicit bounded files/functions, actual test results, original failures, private dependencies and existing PR heads to plan/log/ir-coordination-session-a.md. Earlier foreign-owned publication appends are preserved exactly. This new append is uncommitted/unpushed and explicitly supplies no published contract or B release; actual later publication hash must be read from the pushed branch/PR.
+
+
+### F1 actual113 qualification and native receipt static clearance
+
+ROOT read full4330-byte F1 complete-copy report, independently authenticated77 final artifact records and all15316 application/29580 dependency file bytes/modes with2190 contained links. Exact unfiltered F1 run65513 naturally completed0:113/113 passed, zero failures/skips, actualNode25.9.0/Vitest3.2.4 (lock3.2.7, no locked reproduction claim). Complete postscan41935 checks the same file bytes/modes/links; only generated Vitest results cache changed. Membership postscan follows separately; initial diagnostic represented directory records incorrectly as strings and was corrected without runtime/test/source changes. Original missing-baseline and setup failures remain preserved. No ROOT F1 activation yet.
+
+ROOT read full11006-byte native receipt Astra review SHA25689925f1be5207e43ce02edce22e25abe91c6a64fd60a39d63b9cd0ebedf7828f: no static defect in exact116789/e835 draft. Independently verified42 measurement records, literal18/72 contract and preserved16/66, three complete17/9/7 reciprocal reader recipes, tested P1 source/helper pins and acyclic authority graph. Cleared for composition/qualification only. Authentic76271 reader grant is sufficient for these exact endpoints. P3 native caller wrappers still require precise75863 owner acknowledgement, requested read-only from authentic original author; no blanket scope transfer or source activation. Full semantic-provider354 process22674 remains live, unmodified.
+
+F1 corrected complete membership postscan61043 naturally completed0: application/dependency file, directory and link memberships all match the frozen manifest. Combined source/mode/bytes audit remains clean apart from generated Vitest cache.
+
+
+### Parallel current PR delivery audit
+
+Within the existing ROOT protected-delivery task, delegated a bounded read-only exact-head PR/check/hold audit to Sol6.1Medium. Scope is current open IR PR metadata and concrete available delivery actions, with private report only at /private/tmp/js2-6920-ir-delivery-audit-20261009/REPORT.md. No source edits, foreign claims, comments, reruns, hold removals or queue actions delegated; ROOT retains integration and queue. The live semantic-provider worker22674 was independently checked at15:48 elapsed,100.2 percent CPU; no restart or termination.
+
+
+### Native P3 exact owner ACK and two-file implementation dispatch
+
+ROOT read full11191-byte authentic policy-owner report SHA256949c0366a90d9a089b07b004e2e52eceab88047f4ae5f69427e029667a89ecc3. Fresh unchanged75863 claim authenticated; original13 test/19 geometry seams are provenance, not a blanket native grant. New specific ACK covers only program-data-contract-boundary fixture rawRead/schema/initialRuntime bridge plus local beforeProgramValidatorRelocation, and runtime-data-contract-seam local beforeProgramValidatorRelocation/historicalRead. Retain callable-first/full old component guards and actual current H2 reader; authenticate complete P1 helper/receipt before closed designated old-delegate reads; two fresh channels, no successful-source cache/mutant substitution/oldmap current fallback. All ten other P3 fixture surfaces and ROOT-only C1/preservation, foreign helper/source ownership are excluded.
+
+Dispatched Sol6.1High only these two private candidate files under /private/tmp/js2-6920-native-p3-owned-acquisitions-sol-candidate-20261009. Full adopted Astra P3 plan and exact ACK precede code; runtime-data preimage is current reviewed180058/9ac, never overwriting it with old staged179660 source. Full before/current/inverse/forward and unchanged callbacks/deep body accounting required; no runtime/ROOT/production/helper/receipt/anchor/claim/Git changes. ROOT retains composition and normal unfiltered qualification.
+
+Delivery audit full report read: no immediate source PR admission from fifteen current candidates; all outside queue. PR6596 docs contracts DIRTY/held with equivalence skipped; PR6577 initializer held with actual required-quality failure and preserved real positive allocation blocker. PR6590 array forwarding CLEAN with six actual successes still has owner build/registry acceptance hold. No green status substituted for implementation acceptance; no foreign hold removed.
+
+
+### Semantic derived-count correction plan after actual full354 failure
+
+Independent unfiltered semantic22674 naturally completed1:350pass4fail/354,1398.02s. Missing-leaf failures are resolved; all four retained healthy/restore/bypass/backend cases now stop at the same last derived-current-additions assertion (194/72/122 versus actual200/73/127). Preserve this full log and80630-byte candidate. Existing authentic75863 ACK covers exact assertLiveFixtureClosure current census cells. Independently established leaf contributes six edges (one type/five runtime), all from a new validator member absent from the174 prior population; therefore the validator-minus-prior population increases by those exact deltas while prior783/404/379 and all Deno/remainder/historical/control bodies remain fixed. ROOT will add only +6/+1/+5 to this last closed derived population, preserve original constants and full preimages, then apply the reviewed complete fixture successor. Next full354 execution is through the required normal commit hooks, avoiding another duplicate standalone run. No gate bypass or fixture removal.
+
+ROOT complete post-index readback15239 files found zero unexpected source/helper differences after failed semantic22674; only the explicit private issue and two intended test successors differ. Complete bounded semantic correction80642 bytes/SHAe87f07fbb12024821907322d845e685108002ef73c5d99513607aa50917afda0 activated after fixed-list/census review, retaining old194/72/122 constants with exact +6/+1/+5. Formatting and diff whitespace checks pass. Fresh canonical60335 claim still in-progress/exact owner. Next ordinary signed commit retries all required checks, including full354; no passing semantic354 assertion yet. ROOT tracked inputs will remain quiet during hooks.
