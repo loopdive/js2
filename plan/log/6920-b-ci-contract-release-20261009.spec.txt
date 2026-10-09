@@ -1,33 +1,3 @@
-# B CI contract release publication — 2026-10-09
-
-ROOT adopts the complete Astra High specification preserved verbatim below for issue 6920, “Native Linear numeric-vector shared source handoff and integration plan”, and issue 6915, “Linear owned-ASCII append: optimize the existing copy kernel”. Normative release: [ROOT comment 6076669715 on PR 6583](https://github.com/loopdive/js2/pull/6583#issuecomment-6076669715). This publication records that bounded release; it does not execute either implementation or qualification.
-
-## Authoring and ownership handoff
-
-Authoring checkout HEAD/base: `616da017ca11cefa61f3f8d71a1c7ac18773491c`, freshly verified by canonical Git fetch, ls-remote and API. Branch: `codex/6920-b-ci-contract-release-20261009`; lane: `/private/tmp/js2-6920-b-ci-contract-publication-20261009`. The publication commit is established externally after commit/push, never inferred as a self-reference.
-
-Effect-read authoritative record `upstream/issue-assignments`, independently confirmed through the actual JSON record: slice `6920:b-ci-contract-publication-20261009`, owner `ttraenkler/codex-sol-b-ci-contract-publication-20261009`, write `94594-m2o7o4g1`, in-progress. ROOT explicitly delegates only this new document, its exact original `.spec.txt` carrier and appended release/publication sections in `plan/issues/6920-native-linear-shared-source-handoff.md` and `plan/log/ir-coordination-session-a.md`. Existing file prefixes and other lanes' edits are preserved. No production functions belong to this docs claim.
-
-Part A releases exactly two inserted uploader steps in `.github/workflows/ci.yml`: after the complete quality changed-root step and after the complete advisory `id: tests` step. B owns only those inserted regions; ROOT reserves them against concurrent edits. Advisory-shell write `80796-adzysol8` and shard/scheduler write `10279-io1vbvdv` regions stay excluded.
-
-Part B releases only the finite runner successor in `scripts/hooks/run-linear-append-provenance.mjs`: literal approval section, `buildExpectedProvenance`, `assertIdentity`, `readApprovedCheckout`, the source-membership check in `assertFrozenInputs`, and narrowly related existing `selfTest` cases. Historical tree `953f74f80cf2f8085b8e1c93489fcdd357929b37` and fixed current tree `2a8c200cbb4862b6ffdd5952be7f6fa8f9ce1e63`, bound to canonical `616da017ca11cefa61f3f8d71a1c7ac18773491c`, are the only targets. Original `PINS`, `APPROVAL_COMMIT` and baseline remain immutable. Future trees refuse before child spawn.
-
-B must effect-read fresh named implementation claims and adopt the complete plan into existing issue 6915 before editing. B parent reviews the exact private patch and independently freezes committed inputs/toolchain before separately authorizing ONE serialized qualification. Acceptance requires 36 complete ordered observation graphs plus completion to equal the retained baseline, 38 complete envelopes, strict exits and full custody. Any graph difference or refusal stops acceptance with preserved evidence; no automatic retry, repin, filtering or baseline replacement. Actual new CI archives must later be downloaded and inspected. No qualification execution or compiler result is claimed by this publication.
-
-## Current publication limits
-
-[PR 6600, “refactor(linear): publish shared Linear memory geometry contract (6920 A-G)”](https://github.com/loopdive/js2/pull/6600), exact head `e8f56680589752d67c83ce80cbb43b1bebf1f056`, is queued at position 1. ROOT records actual group `2d0c31a3e2dbe0a4a46d123226fa1d62f7d4c7aa`, parents canonical616da/exact e8f5668 and tree identical to the reviewed head; 102 real conformance shards and required gates remain awaited. It is not delivered to main.
-
-[PR 6593, “fix(ci): preserve trusted Linear append regression custody”](https://github.com/loopdive/js2/pull/6593), exact head `2f8ae6bde384d9f182981c11b94f7230988caa42`, remains blocked on source approval and actual full-witness qualification. Existing failed epochs and missing archives remain failed/missing. B HOLDs remain; ROOT retains integration, HOLD decisions and protected queue authority. No future-tree approval, B import rewiring, allocator ownership, native admission, performance acceptance, general witness completion or main delivery is granted.
-
-Docs validation uses explicit Node 25.9.0 and the repository TS7 command `node node_modules/typescript7/lib/tsc.js` through full normal hooks. No source/test/fixture/workflow/runner/receipt changes, runner self-test, compiler child or qualification trial belong to this task. The copied review is historical review evidence with its original first-person statements and inspected heads, not a new execution report.
-
-## Complete adopted Astra High specification — display copy
-
-The [normative original specification](6920-b-ci-contract-release-20261009.spec.txt) preserves all 26,593 original bytes, SHA-256 `d6f6f6d4d6962dadc24be72059b10fa6ae3747740c60027cca49c20c51fff88c`. The human-readable full display copy below substitutes only one absent B-owned issue pathname with its title and existing PR authority so the normal issue-link gate resolves. All other specification text is unchanged. ROOT authorized this fourth docs artifact; signed checkpoint `c890a55c10fceb48149d9116a1ad44c0f89869b5` remains historical and was not published.
-
----
-
 # B append CI archive transport and current-source approval successor
 
 Issue 6920 — Native Linear numeric-vector shared source handoff and integration plan. Related existing issue 6915 — Linear owned-ASCII append: optimize the existing copy kernel.
@@ -52,7 +22,7 @@ Read at that exact B head, independently Git-blob-hashed after retrieving full b
 
 | Path | Bytes | SHA256 | Git blob |
 | --- | ---: | --- | --- |
-| [Issue 6915 — Linear owned-ASCII append: optimize the existing copy kernel, published in PR 6593](https://github.com/loopdive/js2/pull/6593) | 88430 | `daf4fe258f6f3a1ebdf95b08e5b31406cc9de91a5346865857964a2426cb5d34` | `330c1a2cede32bdc18d38c16582b41a7a925b01c` |
+| `plan/issues/6915-linear-owned-ascii-append-copy-kernel.md` | 88430 | `daf4fe258f6f3a1ebdf95b08e5b31406cc9de91a5346865857964a2426cb5d34` | `330c1a2cede32bdc18d38c16582b41a7a925b01c` |
 | `.github/workflows/ci.yml` | 67634 | `7ca805dddf26b1312bd669abd4948715da65e1706afb41b1ee0dd5137d678bcf` | `5397cc513cf47858106f2365f25ed6203bcb0b22` |
 | `scripts/hooks/run-linear-append-provenance.mjs` | 76845 | `3a154510e5f1280cb7dc71f2a89bae77386ba109990fecb71d586531d9c75e54` | `3a3e323c4d4d41f5761f4db8ed074d931e1e481d` |
 
