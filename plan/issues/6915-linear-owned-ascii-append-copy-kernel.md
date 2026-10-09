@@ -2098,3 +2098,34 @@ suite releases the test slot. No source equality, native admission, performance,
 full IR completion, main delivery, HOLD removal or retirement follows from these
 inert controls. This checkpoint is local; existing PR6593 publication and A's
 final protected-queue integration remain pending normal gates.
+
+## Actual single geometry-source trial — 2026-10-09
+
+The other suite completed naturally at12:22:39Z; retained terminal records
+code1/signalnull, complete capture and unchanged custody. Those results are
+slot-release evidence only. No remaining compiler-test process was found before
+B separately authorized and executed **one** append trial at exact committed
+HEAD`7ea1ee6e2488649b244874616de609f16ccdfcd2`, source1716. The immediate
+full-input freeze was byte-identical to the independently reviewed freeze
+SHA256`d5ffb756f02bb16fd44fcf7c051f90d02909d092dd39537b2dc0c478b3899fe6`.
+There was no retry, termination, source edit or fixture change.
+
+Actual parent session69541 terminal exit0; child code0/signalnull/killedfalse,
+spawnErrornull/failures[]. Actual comparator session49800 terminal exit0.
+All38 envelopes are retained. Complete unfiltered36 observation graphs and the
+completion envelope exactly equal the original baseline; graph0 separately
+joins the full manifest and custody. Before/after1915 inputs including1901 source
+files match. Capture44273881 bytes, discarded0, stderr0, no reported faults.
+capture.json remains diagnostic, not parent-terminal or acceptance authority.
+
+Complete raw evidence and instruments are retained in
+`plan/log/6915-linear-append-20261007/no-kill-geometry-trial-20261009/`.
+Bundle4814625 bytes, SHA256
+`cf6586b69ed9131f7c92f4c7124dc16840186c3c31568aa1d89cd4aecea6918b`:
+all29 regular members/125205696 uncompressed bytes exactly match retained
+inputs. Preserve prior baseline, original failures and partial CI archives.
+Independent actual-result review was requested; normal publication through
+existing PR6593 remains separate. Publication identity must not replace this
+execution identity. This bounded comparison proves neither native Linear
+completion nor Unicode admission, performance, full IR equality, main delivery,
+HOLD removal or legacy retirement. A retains final integration and queue.
