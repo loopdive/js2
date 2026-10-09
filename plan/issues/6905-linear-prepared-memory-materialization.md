@@ -1350,3 +1350,13 @@ candidate's processes and are not interrupted or restarted. Recheck actual
 process state before separately approving and starting the one candidate.
 No candidate compiler run, runtime preservation acceptance, HOLD removal or
 queue release is implied by these checks.
+
+The complete reviewed instrument, candidate freeze, immutable pins and author's
+85 control records are sealed in
+`plan/log/6905-linear-prepared-memory-20261007/geometry-pair-instrument-20261009/reviewed-instrument.tar.gz`:
+666847 bytes, SHA256
+`54bbedfb3ca5ad182f70592c3dd004a49bc4bafd2bdde2972ce1589d891ded59`.
+Parent verified exactly six archive members and every byte against current
+reviewed files, without executing the archive. The companion README specifies
+the remaining one-run approval and independent packet-digest steps; this packet
+does not invent candidate runtime evidence.
