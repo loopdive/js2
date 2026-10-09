@@ -1407,3 +1407,187 @@ Preserve historical manifests unchanged; attribute any actual graph differences
 before accepting a successor baseline. This plan grants neither native memory
 admission, allocator/caller/resource ownership, performance acceptance, legacy
 retirement nor queue submission. A retains shared integration and protected queue.
+
+
+### Adopted full A-reviewed archive and approval-successor release — 2026-10-09
+
+A explicitly released the following two disjoint scopes in coordination
+comment6076669715 (updated 2026-10-09T07:41:57Z), against B head2f8ae6bd
+and source tree2a8c200c. Parent verified the full specification:26593 UTF-8
+bytes, SHA256 d6f6f6d4d6962dadc24be72059b10fa6ae3747740c60027cca49c20c51fff88c.
+The full text below is adopted unchanged, including its acceptance limits.
+Planning claim6915:adopt-reviewed-append-ci-plan-20261009 belongs to
+ ttraenkler/codex-linear-b-reviewed-ci-plan-astra-20261009.
+Implementation slices are separately reserved for archive transport and finite
+source approval; their owners must effect-read canonical claims before editing.
+No initializer import/native memory/allocator release follows. Parent reviews
+both patches and freezes inputs before the one separately authorized trial.
+
+# B append CI archive transport and current-source approval successor
+
+Issue 6920 — Native Linear numeric-vector shared source handoff and integration plan. Related existing issue 6915 — Linear owned-ASCII append: optimize the existing copy kernel.
+
+Codex GPT-6 Astra High, static review/specification only. ROOT adopts this complete document in issue6920 before any delegated implementation. No claim, branch, workflow, runner, shared source, test or fixture has been edited by this review. No compiler/test child, runner import, embedded self-test, fault window, commit, comment or publication was executed. Network operations only read exact published GitHub objects and already completed job logs.
+
+## Recommendation and boundary
+
+**Recommend releasing the two exact uploader insertions to B as one bounded transport implementation, independent of the runner approval task.** The proposed locations and narrow payload are compatible with the actual workflow and runner. A new uploader cannot recover the old missing CI artifact, prove full witness equality or turn an advisory test failure into a pass. Preserve ordinary required-quality failure and the separate advisory assertion policy.
+
+**Recommend a separate, staged runner approval-successor implementation/qualification release**, limited to one named existing runner file and its embedded controls, with B's parent owning its issue/evidence. Retain the complete historical source approval and all other pins, add exactly the independently frozen current source tree as a qualification target, and require new actual full-witness comparison before accepting/publishing that source epoch. A direct replacement of `PINS.sourceTree`, automatic approval of actual HEAD, or acceptance on the unchanged three source-file hashes is not acceptable.
+
+There is no static basis to declare current-main 36/38 equality yet. The complete tree contains real transitive compiler changes; qualification must be able to fail. The actual required CI failure is an approval refusal before the child, not evidence of a new compiler regression. Existing B/C HOLDs, allocator4540 ownership, native admission and ROOT's integration/protected queue authority remain unchanged.
+
+## Exact inspected authorities
+
+The requested coordination comment is [6076210344 on existing PR6583](https://github.com/loopdive/js2/pull/6583#issuecomment-6076210344), independently read with actual `updated_at` **2026-10-09T07:17:16Z**. It requests review/release; it does not itself transfer shared ownership.
+
+Exact B PR6593 head: `2f8ae6bde384d9f182981c11b94f7230988caa42`. Git API commit data confirms parents `6871907a4dbbe168512b7b9ce33500a61430e36c` and canonical `616da017ca11cefa61f3f8d71a1c7ac18773491c`; full tree `5e727a2558ba73abca12ab0b28e15a3cc59a1f72`. Both B and canonical tree entries name complete `src` tree `2a8c200cbb4862b6ffdd5952be7f6fa8f9ce1e63`.
+
+Read at that exact B head, independently Git-blob-hashed after retrieving full bytes:
+
+| Path | Bytes | SHA256 | Git blob |
+| --- | ---: | --- | --- |
+| `plan/issues/6915-linear-owned-ascii-append-copy-kernel.md` | 88430 | `daf4fe258f6f3a1ebdf95b08e5b31406cc9de91a5346865857964a2426cb5d34` | `330c1a2cede32bdc18d38c16582b41a7a925b01c` |
+| `.github/workflows/ci.yml` | 67634 | `7ca805dddf26b1312bd669abd4948715da65e1706afb41b1ee0dd5137d678bcf` | `5397cc513cf47858106f2365f25ed6203bcb0b22` |
+| `scripts/hooks/run-linear-append-provenance.mjs` | 76845 | `3a154510e5f1280cb7dc71f2a89bae77386ba109990fecb71d586531d9c75e54` | `3a3e323c4d4d41f5761f4db8ed074d931e1e481d` |
+
+The issue's final archive-transport section at lines1354–1410 is a planning proposal; its preceding exact releases matter. The existing advisory delegation covers only the shell body of `Run changed issue test file (advisory)`, not arbitrary additions to the job. The previous trusted-parent, generated-report and color-transport repairs retain their original release limits and all failed epochs.
+
+Fresh read-only claim records:
+
+| Record | Actual owner | State/write ID | Consequence |
+| --- | --- | --- | --- |
+| `6915` | `ttraenkler/codex-linear-b-append-scope-plan-20261007` | in-progress, `86113-5mk75ms4` | B parent allocation; not blanket shared-workflow authority |
+| `6915:trusted-append-ci-20261008` | `ttraenkler/codex-linear-b-append-ci-sol61-20261008` | done, `96415-pkpzp33k` | old implementation claim is completed, not a fresh runner release |
+| `6915:ci-archive-upload-plan-20261009` | `ttraenkler/codex-linear-b-archive-plan-astra-20261009` | done, `32285-cei5dhpe` | completed planning only |
+| `6915:advisory-parent-command-20261008` | `ttraenkler/codex-linear-b-advisory-command-sol61-20261008` | in-progress, `80796-adzysol8` | existing exact advisory command remains reserved |
+| `3518:runtime-preparation-ci-file-shards-20261002` | `ttraenkler/codex-runtime-preparation-ci-file-shards-20261002` | in-progress, `10279-io1vbvdv` | shared scheduling/shard/aggregate custody remains foreign |
+
+ROOT retains claim60335 integration and final queue review. Before editing, B must publish and effect-read a fresh unique implementation slice and its named Sol owner for each of the following two disjoint scopes; this document does not allocate or complete a claim. ROOT's release must explicitly reserve the two inserted step regions and promise no concurrent edits there, while excluding the existing advisory shell and shared scheduling controls. A common workflow filename does not transfer either existing claim. The runner task likewise needs a fresh bounded runner owner, rather than reopening completed61584 work by inference. B parent retains issue6915 and evidence publication; ROOT retains issue6920 adoption/review. No old owner record is rewritten.
+
+## Part A — exactly two inserted upload steps
+
+Only file `.github/workflows/ci.yml` is implementation scope. Exact anchors at the inspected head:
+
+1. Job `quality`: insert immediately after the entire `Changed root test files must pass (#3008)` step (lines617–636), and before `Required guard suite (#3552)` (line638). Do not edit the changed-root shell, its PR condition, eval environment, history fetch, test command or any required guard.
+2. Job `issue-tests-changed`: insert immediately after the entire `Run changed issue test file (advisory)` step, `id: tests` (lines930–943), and before `Report changed issue-test outcome` (line945). Do not edit its `continue-on-error`, filename dispatch/else argv, matrix/ordinal validation, outcome reporting, aggregate policy or selector.
+
+Concrete inserted steps:
+
+```yaml
+      - name: Archive Linear append parent evidence (quality)
+        if: always() && hashFiles('.tmp/6915-ci/run-*/**') != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: linear-append-quality-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .tmp/6915-ci/run-*/
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: false
+```
+
+```yaml
+      - name: Archive Linear append parent evidence (advisory)
+        if: always() && matrix.file == 'tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts' && hashFiles('.tmp/6915-ci/run-*/**') != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: linear-append-advisory-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.ordinal }}
+          path: .tmp/6915-ci/run-*/
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: false
+```
+
+Omit `retention-days`: use repository-configured default retention, exactly as the published proposal requires. This is expiring Actions storage; parent must inspect/download and retain needed complete evidence before its reported expiration, not describe the default as permanent custody. Record actual artifact ID, name, archive digest, run ID/attempt, job identity, exact checkout SHA and expiration at retrieval. Different job/name/attempt/ordinal identities prevent quality/advisory and rerun collisions; overwrite remains prohibited. No new job, permission, output, environment, compression policy, broad path or workflow framework is needed.
+
+The [upload-artifact action documentation](https://github.com/actions/upload-artifact/tree/v6) establishes hidden-file opt-in, repository-default retention and preservation of the hierarchy after the first wildcard. The `run-*` directory identities must survive download. [GitHub's `hashFiles` documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#hashfiles) establishes that unmatched files produce an empty string. The condition is only a presence trigger, not evidence authentication. Verify the actual action's path layout in the implementation controls; do not flatten multiple archives into one set of filenames.
+
+Failure and custody behavior:
+
+- The action is eligible after a failed test step because of `always()`, including partial archives. Do not require `success()`, `steps.tests.outcome == 'success'`, a `receipt.json` success marker or all twelve healthy files. Those filters would discard the failure evidence this change is intended to retain.
+- Actual runner code creates a unique `run-*` directory, writes `expected.json` and `command.json`, then calls `assertFrozenInputs` before opening streams/spawning the child. The witnessed current-source refusal therefore can leave a meaningful partial archive containing expected/command, after-failure/errors/receipt, without reporter/graphs/stdout. Upload that directory intact. It is not a complete qualification.
+- `readApprovedCheckout`, artifact setup or earlier job failures may occur before any archive exists. An empty glob makes the new step skip; the original failure and job logs remain authoritative and the missing archive stays unqualified. Do not manufacture empty healthy files or infer success from the skipped upload. Abrupt cancellation/runner loss can still prevent upload; `always()` is not a recovery guarantee.
+- If the trigger observes files but the action subsequently finds none, `if-no-files-found: error` fails. Upload failure itself is an infrastructure failure; do not add `continue-on-error` or a trailing success command. Required-quality failure remains failure. The existing advisory *test* policy stays advisory, while inability to retain a requested existing artifact remains visible. The original outcome reporter still reports `steps.tests.outcome`.
+- Upload only `.tmp/6915-ci/run-*/` descendants, including hidden descendants. Do not upload `.tmp/6915-ci/observations.json`, `runner.lock`, other `.tmp` siblings, the workspace, credentials or unrelated reports. The runner already keeps a prior reporter inside its own archive when appropriate; retain it there. Do not delete, rename, rewrite, reserialize or normalize archive payloads to make the upload succeed.
+- For a completed healthy run retain expected/command/before/after, stdout/stderr, reporter, `graphs.ndjson`, `decoded.v8`, diagnostics, detached `runner-errors.v8` and receipt. Retain additional `previous-reporter.json`, boundary-report raw bytes and `after-failure.json` whenever present. Twelve healthy filenames are not an exact-membership rule that deletes legitimate additional failure/custody records.
+
+Post-release finite transport controls must inspect the actual action-compatible selection/layout with a healthy archive, a partial failure archive, two distinct run directories, a hidden descendant, an unrelated sibling and an empty/no-archive case. Keep these inert temporary data fixtures out of the source/worktree/real evidence. A mock uploader or set of expected filenames alone is not evidence of downloaded action bytes. After the exact two-insertion diff is reviewed, a real future CI artifact must be downloaded and checked against its parent archive records. Do not rerun or rewrite the old completed CI job to pretend its missing artifact was recovered. No source qualification is needed merely to demonstrate preservation of a new truthful failed archive.
+
+## Part B — finite source-compatible runner successor
+
+### Actual blocker and complete source delta
+
+The actual required job113711412922 at run37897284301 names the append test, prints `evidence retained at .../.tmp/6915-ci/run-4imC7Q`, then fails at `assertFrozenInputs`, runner line422, `6915 parent: unapproved source tree`. Both pre-run and finally custody checks retain that error, and changed-root exits1. I read the raw job log, not only the coordination summary. The inspected code places this check before child spawn. The advisory outcome remains separate; its reported green job is not a source-qualified child run.
+
+Current runner constants pin the historical source tree `953f74f80cf2f8085b8e1c93489fcdd357929b37`, not current main. The complete recursively read trees are nontruncated: **1894 historical source blobs and1900 current source blobs**. There are exactly fifteen changed paths (nine modifications, six additions), not an unrestricted source difference:
+
+```text
+src/ir/analysis/alloc-verification.ts
+src/ir/analysis/allocation-evidence/census.ts
+src/ir/analysis/allocation-evidence/contracts.ts
+src/ir/analysis/allocation-evidence/effect-rules.ts
+src/ir/analysis/allocation-evidence/metadata.ts
+src/ir/analysis/allocation-evidence/verify.ts
+src/ir/analysis/contracts/allocations.ts
+src/ir/analysis/effects.ts
+src/ir/analysis/encoding.ts
+src/ir/analysis/escape.ts
+src/ir/analysis/ownership.ts
+src/ir/passes/inline-small.ts
+src/ir/program/allocation-body-validation.ts
+src/ir/program/allocations.ts
+src/ir/program/data.ts
+```
+
+The actual patches include allocation lookup/type contract reuse, extracted body/state validation, canonical vector ownership/escape/encoding rule calls, descriptor-only recursive-class screening, effect classification for dynamic ToNumber/loose equality, and slot remapping plus stricter attached-callee guards in the inliner. These are reached through transitive compiler behavior; unchanged runtime/consumer/integration bytes cannot prove all complete observations invariant. Neither this spec nor delivered main correctness establishes append witness equality.
+
+Independent full-byte reads at B head match **all fourteen existing fixed inputs**: runtime, frozen-body consumer, Linear integration, c63 test, original string-hash fixture and all nine `CONFIG_PINS`. The complete source tree, not a manually narrowed dependency list or generated inventory verdict, supplies the transitive source boundary. Preserve the complete config-population equality check, all1900 current source Git-object/worktree comparisons, regular-file/symlink checks, source/test/fixture dirt refusal, exact generated-report exception and before/after snapshot equality. Do not approve only the fifteen changed files while ceasing to observe the other1885 current files.
+
+### Implementation file/function scope
+
+Only `scripts/hooks/run-linear-append-provenance.mjs` may change for this successor. Allow the literal approval section, `buildExpectedProvenance`, `assertIdentity`, `readApprovedCheckout`, the source-tree membership check in `assertFrozenInputs`, and narrowly related existing `selfTest` cases. B parent appends the adopted plan and subsequent evidence to existing issue6915; ROOT owns adoption in issue6920. No hook/YAML/test/fixture/source/decoder/witness validator/command/flag/config changes belong to this runner scope.
+
+Keep the existing `APPROVAL_COMMIT` and entire `PINS` object as the historical immutable contract. Do not replace or rename the old source value into a supposedly current baseline. Add one explicit fixed successor record naming canonical commit `616da017ca11cefa61f3f8d71a1c7ac18773491c` and source tree `2a8c200cbb4862b6ffdd5952be7f6fa8f9ce1e63`, with this adopted review as its authority. The record is a finite execution-qualification target until the later acceptance steps complete. It is not a general registry, environment override, branch-name rule, ancestry wildcard or permission to accept future main trees.
+
+The runtime acceptance predicate is exactly:
+
+```text
+actual committed HEAD:src is historical953f74 OR fixed current2a8c200c;
+expected.sourceTree equals that actual committed tree;
+all common runtime/test/fixture/config pins and the complete source population
+still match committed Git objects and physical bytes, before AND after.
+```
+
+Unknown trees refuse before spawning the child. Missing Git objects/inspection failures refuse; never infer an empty or matching tree. A known HEAD descendant with the same complete source/test/fixture/config inputs may use the matching source contract, preserving the existing source-compatible behavior of docs-only publications and genuine PR/merge-group checkout commits. Do not require a synthetic PR-head identity instead of actual `GITHUB_SHA == HEAD`.
+
+Use one shared narrow membership predicate, invoked by the real `assertFrozenInputs` path and the embedded controls. Change the signature to `buildExpectedProvenance(head, sourceTree = PINS.sourceTree)`, retaining the historical default only for existing historical controls. It emits the **same nine-field manifest** with unchanged common pins/command/flags and that observed source tree. Extend `assertIdentity` with the same final source-tree argument so its local exact-object comparison calls that one provenance builder; existing historical controls retain their default argument. `readApprovedCheckout` obtains actual HEAD and `HEAD:src` itself and passes both explicitly to identity validation and provenance construction. Neither `JS2WASM_APPEND_PARENT_MANIFEST`, child evidence, generated boundary report, branch name nor a command-line option selects/authorizes the source epoch. The local manifest is compared to the independently built exact nine-field expectation. Preserve the original local/CI identity modes, PR/merge-group-only rule, push refusal and rejection of local override in CI.
+
+Keep actual approval enforcement at the original pre-spawn `assertFrozenInputs` barrier and preserve its archive/error path: build/archive the observed expected provenance, then independently require closed membership and equality there, before any source acceptance or spawn. Immediately before the existing actual-tree/equality check, invoke the membership predicate on `expected.sourceTree`. Merely including an observed unknown tree in an `expected.json` diagnostic does not authorize it; that independent fixed-membership guard rejects it while retaining the existing partial archive and finally diagnostics. There must be no code path that substitutes an arbitrary observed tree for approval and relies only on comparing it to itself. A wrong local manifest still fails the existing earlier identity comparison, just as before; it cannot override the fixed membership check in CI or local mode.
+
+`assertFrozenInputs` still re-reads `HEAD:src` before and after the child and compares to the frozen expectation; it must not choose another allowed epoch at the after-snapshot. An old→new or new→old change mid-run is drift even though both are independently known targets. Keep every other custody predicate and all local `EDITABLE` paths byte-equivalent. In particular, a pending `.github/workflows/ci.yml` edit remains unauthorized for local qualification: isolate the runner-only trial or first commit the independently reviewed uploader. Do not add workflows or evidence directories to `EDITABLE` to make a combined dirty checkout pass.
+
+Retain historical provenance inside `validateAppendReceipt`: original baseline commit `c41bca2bc07e9d8fddbb38ca77904dd1f0cac438` and baseline source `68296a0d34ceea94dbc9ca9398f71bc8a1b742b8` do not change. Actual current `head/sourceTree` fields will reflect the new epoch; historical baseline fields remain historical. The fixed c63 test is already parameterized for independently parent-supplied epochs; no test edit is needed. Preserve all104 old embedded controls and add finite controls of this exact production selection/membership path, without invoking the compiler in self-test mode.
+
+Required new controls: accepted historical and exact current tree; unknown shape-valid tree; same direct-file pins with an unknown full tree; a local manifest swapping old/current source against actual checkout; missing/mismatched HEAD; CI local override; retained push refusal; and after-snapshot source switching between the two admitted trees. Retain source/config/test/fixture dirt, symlink, untracked/opaque-report, parser/descriptor/error/losslessness, color-transport and complete38/36 receipt controls. Controls must invoke the real predicates; do not duplicate approval logic inside a test-only mock. Report the actual new count only after execution. No old control is removed or relabeled.
+
+### Original receipts and full-witness acceptance
+
+The original archived `ci-trusted-parent-20261008/expected.json.gz` was read as data. It binds execution HEAD `0d2dfddb4b1145097210f5398e535e550f945f82`, historical tree953f74, all common pins and the exact4096-MiB strict pnpm argv. `receipt.json.gz` records code0, no signal/kill/spawn error/failures,44273883 output bytes,19733ms. Complete `before.json.gz` and `after.json.gz` are identical, with1908 observed files, Nodev22.23.2 and V8 `12.4.254.21-node.56`. These are original recorded results, not new executions.
+
+I independently downloaded and Git-blob-verified the complete archived graph bytes, decoded **only inert JSON**, and compared them with the published repaired-v3 raw log. Both have38 envelopes. All36 ordered complete observation envelopes/graphs and the completion envelope/graph match exactly; only the separate execution-provenance record differs. No graph field was filtered. Trusted graph gzip blob `57d3060ac69f5fbd60d51916b8a94d179f16aa10` expands to44267645 bytes/SHA256 `bb1f7239ff371e6f373d3b45450a458f88c319a2d47b397b080681ce1d8f2b3e`. Repaired-v3 log gzip blob `c364eb251b5d3cdcf7bf63fab5cbc433484ab551` expands to44274012 bytes/SHA256 `e6f7eae8281d208da3e529ba6bcf19c5d9ad8b1853134edf498df198d2a51cb5`. This validates the retained comparison baseline's data identity, not the current compiler.
+
+Before publication of the runner successor, ROOT/B parent must review the exact private diff and independently freeze the new execution manifest, all current source/config/test/fixture hashes and toolchain. Only then separately release one serialized current-main trial under the existing parent/changed-root route. No runtime is released by this specification itself. Use actual committed HEAD for the local manifest, current2a8 tree, the unchanged c63 test and genuine fixture, existing4096 worker flags and strict exit handling. Retain frozen candidate runner bytes separately from later publication commit identity.
+
+Require all36 exact IDs, Runtime22's33 transitions, eight named same-positive-validator mutations with original/corrupted full evidence, source ownership/batch/completed consumer/module/body/defined-helper/call joins, complete artifact and memory bytes, all action/schema/emission channels passed, reporter36pass/0fail/0skip/0todo,38 complete envelopes, passing completion, strict parent and child exit0, and equal full before/after custody. Preserve Node/V8, actual command/flags, dependency lock/config population and complete transitive source files. Any toolchain difference from the old archive is explicitly recorded; it is not a license to erase graph differences.
+
+Independently compare every complete new observation graph and completion graph against the fixed archived baseline. Keep provenance separate and validate its actual epoch/inputs. Do not strip source sites, metadata, body/slot tables, module identities, allocation evidence, error descriptors, undefined/NaN tags, Map/Set contents, buffer/view references, final binaries or negative-witness fields to manufacture equality. Do not replace a baseline with the new output merely because the36 tests passed. The ordinary runner's passing receipt is not itself this cross-epoch equality check; the separately reviewed comparison is mandatory before acceptance/publication.
+
+If any full graph differs, preserve both complete values, exact graph/ID/path and the originating source delta. Stop the source-compatible acceptance. Distinguish an intended, independently reviewable changed compiler observation from a regression or a broken instrument; obtain a separate bounded plan if a successor baseline is actually necessary. This specification authorizes neither a new accepted baseline nor modification of the original instrument to hide a difference. If the trial fails before the child, record zero child observations rather than36 failures or36 passes; keep the new partial archive. Do not automatically retry or broaden the source contract.
+
+After the full comparison and normal checks pass, publish only through the existing B PR6593 with ordinary hooks and reviewed scopes. Actual required-quality and advisory CI under supported identities must then run and their new uploaded archives must be retrieved, joined to exact checkout/run/job/attempt identity and inspected. Compare complete witnesses and receipts from downloaded bytes, not workflow conclusions. Push-event rejection remains an intentional documented boundary. No uploader or source selector change implies hold removal, native admission, append performance acceptance, old-failure erasure, full IR equality or queue submission.
+
+## Review evidence and next ownership step
+
+The reviewer-owned `.tmp/astra-6915-archive-review-data.json` is8078 bytes/SHA256 `a6954478c6202ad9b7ed17fcabd91584900fdd2c296d37b0e30fc9d1b93e0d68`. It catalogs the exact nontruncated old/current trees and fifteen-path delta, fourteen freshly verified current fixed pins, actual required-job log, original compressed receipts and full archived graph comparison. Files live only under this review lane's `.tmp/b-archive-review-data/`; they are read-only copies/evidence, not implementation or new baseline authorities.
+
+ROOT can adopt/release PartA now as the named two-insertion proposal, with fresh claim/owner acknowledgment and postimplementation review. PartB can be separately released for private runner implementation and later serialized qualification, with acceptance explicitly held on new actual full-witness results. Neither completed archive-plan claim nor the pre-existing advisory-shell claim substitutes for that release. All original missing archives and failed CI epochs remain missing/failed in their historical records. All B/shared source files and claims remain untouched by this review.
