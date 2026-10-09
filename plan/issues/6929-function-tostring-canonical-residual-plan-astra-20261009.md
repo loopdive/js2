@@ -2721,3 +2721,44 @@ may be changed to manufacture readiness. Root will not edit these files during
 publication. Preserve all source seals through hooks; inspect any hook rewrite.
 Worker must append publication outcome/link or exact blocker and attach PR.
 Current full11778 goal stays active and unverified; no finished-fix claim.
+
+### Draft checkpoint publication receipt — 2026-10-09
+
+Published checkpoint commit `7b85b9673184c31f7bee34c6fa573f4307a6d016`
+from `ttraenkler/js2:codex/6929-native-function-constructor-fix` to upstream
+`loopdive/js2:main` as [draft PR 6605](https://github.com/loopdive/js2/pull/6605).
+Remote branch and PR head were read back at that exact SHA; `isDraft=true`
+and `mergeStateStatus=BLOCKED`. The PR was attached to this task. No merge,
+ready transition, enqueue or CLA acceptance was requested. The reviewed PR
+body preserves the unchecked CLA and all unfinished acceptance limits.
+
+Commit hook session46338 TERMINATED exit0 using the sanctioned
+`SKIP_SLOW_PRECOMMIT=1`, without hook bypass. Mandatory lint-staged formatting
+and lint, LOC and function gates passed. The unsigned commit is authored and
+committed by Thomas Tränkler, co-authored by Codex, with actual model trailer
+`Model: Codex GPT-6.1 Sol High` and the required checkmark. Exactly the six
+allocated source files, the existing full245 fixture and this issue record
+were committed; no IR, expectation, hook or policy file was changed.
+
+Unbypassed pre-push session38432 TERMINATED exit0. Whole typecheck and lint,
+changed-file formatting, oracle ratchet (both raw-query counts +0), coercion
+ratchet, numeric-local IR parity #3765 (18/18) and issue integrity all passed.
+All eight file seals and all three hook seals were unchanged after both hook
+epochs; the working tree was clean before this local-only receipt append.
+CI readback at publication had checks queued/in progress, not a completed
+green result. Local hook success does not certify the incomplete245 quality
+gate, strict architecture closure or full acceptance.
+
+Root additionally validated the maintained full manifest:11778 real existing
+unique paths, including all74 Intl, SHA256
+`632db3bbecb0d6ea42b0915b13740912bf3fd8e32e2a15a8b28c1f63b6434360`.
+This is manifest validity ONLY, not a new full runner epoch or outcome score.
+The same104 fixture failures, remaining proxy-class canonical failure and
+incomplete architecture remain open. Issue status and all11778 acceptance
+specimens remain unchanged.
+
+This receipt was initially appended locally after the implementation SHA.
+Root released the serial slot after receiver session29913 TERMINATED exit0
+and authorized this documentation-only follow-up in the SAME draft PR.
+The follow-up changes only this record; it does not recertify unchanged
+implementation, CI, issue acceptance or the unfinished full-suite outcome.
