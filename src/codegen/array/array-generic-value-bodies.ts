@@ -74,6 +74,7 @@ function emitArrayToStringBody(ctx: CodegenContext, fctx: FunctionContext): ValT
   const defaultJoin = prepareArrayLikeDefaultJoin(ctx, fctx);
   if (defaultJoin === undefined) return undefined;
   ensureLateImport(ctx, "__extern_is_array", [EXT], [I32]);
+  ensureLateImport(ctx, "__extern_has", [EXT, EXT], [I32]);
   ensureLateImport(ctx, "__extern_get", [EXT, EXT], [EXT]);
   ensureLateImport(ctx, "__apply_closure", [EXT, EXT, EXT], [EXT]);
   ensureLateImport(ctx, "__is_callable", [EXT], [I32]);
@@ -84,12 +85,14 @@ function emitArrayToStringBody(ctx: CodegenContext, fctx: FunctionContext): ValT
   const apply = ctx.funcMap.get("__apply_closure");
   const isCallable = ctx.funcMap.get("__is_callable");
   const isArray = ctx.funcMap.get("__extern_is_array");
+  const hasProp = ctx.funcMap.get("__extern_has");
   if (
     objectToString === undefined ||
     getProp === undefined ||
     apply === undefined ||
     isCallable === undefined ||
-    isArray === undefined
+    isArray === undefined ||
+    hasProp === undefined
   ) {
     return undefined;
   }
@@ -108,10 +111,17 @@ function emitArrayToStringBody(ctx: CodegenContext, fctx: FunctionContext): ValT
       // A real Array whose `join` the dynamic read cannot see (the inherited
       // prototype method is not on the vec's dynamic property path) joins
       // natively with the default separator — what the inherited
-      // `Array.prototype.join` does. Anything else is Object.prototype.toString.
+      // `Array.prototype.join` does. Only when `join` is ABSENT: a present
+      // non-callable `join` (an own `join: undefined`, as on a Proxy target)
+      // is the spec's Object.prototype.toString case.
       else: [
         get(1),
+        ...stringConstantExternrefInstrs(ctx, "join"),
+        { op: "call", funcIdx: hasProp },
+        { op: "i32.eqz" },
+        get(1),
         { op: "call", funcIdx: isArray },
+        { op: "i32.and" },
         {
           op: "if",
           blockType: { kind: "val", type: EXT },
@@ -134,6 +144,7 @@ function emitArrayLikePopShiftBody(ctx: CodegenContext, fctx: FunctionContext, m
   ensureLateImport(ctx, "__extern_has_idx", [EXT, F64], [I32]);
   ensureLateImport(ctx, "__delete_property", [EXT, EXT], [I32]);
   ensureLateImport(ctx, "__box_number", [F64], [EXT]);
+  ensureLateImport(ctx, "__typeof_string", [EXT], [I32]);
   addStringConstantGlobal(ctx, "length");
   flushLateImportShifts(ctx, fctx);
   const names = ["__extern_length", "__extern_get_idx", "__extern_has_idx", "__delete_property", "__box_number"];
@@ -143,7 +154,24 @@ function emitArrayLikePopShiftBody(ctx: CodegenContext, fctx: FunctionContext, m
   const [length, getIdx, hasIdx, del, box] = idx as number[];
   const undef = canonicalUndefinedExternInstrs(ctx);
 
+  const typeofString = ctx.funcMap.get("__typeof_string");
+  if (typeofString === undefined) return undefined;
+
   emitArrayProtoHofReceiverGuard(ctx, fctx, member);
+  // ToObject(string) is a String exotic object: its indices are non-configurable
+  // and its `length` is non-writable, so pop/shift always fail at the first
+  // DeletePropertyOrThrow or Set(O, "length", …, true) — a TypeError
+  // (pop/throws-with-string-receiver.js, shift/throws-when-this-value-length-is-writable-false.js).
+  // The dynamic substrate cannot see those attributes on a primitive, so test it here.
+  fctx.body.push(
+    get(1),
+    { op: "call", funcIdx: typeofString },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: buildThrowJsErrorInstrs(ctx, "TypeError", `Cannot assign to read only property 'length' of string`),
+    },
+  );
   const len = allocLocal(fctx, `__${member}_len_${fctx.locals.length}`, F64);
   const k = allocLocal(fctx, `__${member}_k_${fctx.locals.length}`, F64);
   const res = allocLocal(fctx, `__${member}_res_${fctx.locals.length}`, EXT);
