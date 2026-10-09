@@ -16,6 +16,7 @@ import {
   linkedMallocPrologue,
 } from "./linked-arena.js";
 import { isLinearStringLiteralCacheGlobal } from "./string-literals.js";
+import { buildArrayForwardingResolverBody } from "./runtime/arrays/forwarding-resolver.js";
 
 /**
  * Heap starts at byte offset 1024 (leave low addresses for null/sentinel).
@@ -796,32 +797,9 @@ export function addUint8ArrayRuntime(mod: WasmModule): void {
  */
 function ensureArrayResolveRuntime(mod: WasmModule): void {
   if (mod.functions.some((f) => f.name === "__arr_resolve")) return;
-  addRuntimeFunc(mod, "__arr_resolve", [{ kind: "i32" }], [{ kind: "i32" }], [], () => [
-    {
-      op: "block",
-      blockType: { kind: "empty" },
-      body: [
-        {
-          op: "loop",
-          blockType: { kind: "empty" },
-          body: [
-            // If this is not a forwarding record, break.
-            { op: "local.get", index: 0 },
-            { op: "i32.load8_u", align: 0, offset: LINEAR_ARRAY_FORWARDING.tagOffset },
-            { op: "i32.const", value: LINEAR_ARRAY_FORWARDING.tag },
-            { op: "i32.ne" },
-            { op: "br_if", depth: 1 },
-            // ptr = forwarding replacement pointer
-            { op: "local.get", index: 0 },
-            { op: "i32.load", align: 2, offset: LINEAR_ARRAY_FORWARDING.pointerOffset },
-            { op: "local.set", index: 0 },
-            { op: "br", depth: 0 },
-          ],
-        },
-      ],
-    },
-    { op: "local.get", index: 0 },
-  ]);
+  addRuntimeFunc(mod, "__arr_resolve", [{ kind: "i32" }], [{ kind: "i32" }], [], () =>
+    buildArrayForwardingResolverBody(LINEAR_ARRAY_FORWARDING),
+  );
 }
 
 /**
