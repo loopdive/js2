@@ -42,6 +42,7 @@ export type AllocationEvidenceCoverageReason =
   | "nested-allocation"
   | "nonroot-receiver"
   | "allocation-alias"
+  | "allocation-site-reuse"
   | "async-domain"
   | "resource-limit";
 

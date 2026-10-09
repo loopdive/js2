@@ -1490,3 +1490,226 @@ The exact five-cell finite window is closed. New successor controls16/16; canoni
 Root independently read the final receipt and checked all sixty actual raw artifact byte/SHA pins, exact paired row signatures, all five authored floors, CLI/IPC row counts and child closure. Root also reread and hashed all17391 current operands against after-window custody: zero drift. This is executed preservation evidence, not full IR equivalence or native admission. Original eight/22 controls were not rerun because their production sources did not change; ROOT's deferred18/full40 coverage is not credited.
 
 Final receipt `.tmp/j1-proof-runtime/final-receipt.json`:570970 bytes/SHA256 `fd2653f7c010bbdba90caa21f35415c3089be98199b0ed37054ee57e9e387c8a`. After-window custody3722600 bytes/SHA256 `2ac0e258ee2ba6c07f88e26562c66d33cd2854c66f5ae23cdb4de026e70627a5`. Freeze3793527 bytes/SHA256 `ac4fa1837cd614b342e205f9cd3ffeb90d206bafb181fdea5c25c7514d0e5a77`. Normal full hooks and publication are next; no canonical-main delivery yet. Legacy code retained.
+
+
+### Signed local checkpoint and next-join classification review — 2026-10-09
+
+Signed unpublished checkpoint `b1a60eab2158dafa62af87dd39db808c8b2ba0f2` contains exactly18 reviewed paths, authored Thomas Tränkler with Codex coauthor and Model Codex GPT-6.1 Sol High. Full normal hook chain passed formatting/lint, source/function budgets, changed-root22+8+16 tests and zero-growth oracle ratchet. Initial signing-only failure is preserved; existing authorized SSH agent retry succeeded, without bypass or key/config changes. Root effect-read the actual commit, author/trailers, SSH signature and clean tree. No PR, push or main delivery yet.
+
+Publication remains held for a concrete Astra next-join domain review: mutable/J1 allocation provenance does not reject repeated same-type live allocation-site IDs, whereas strict Linear facts explicitly rejects duplicate body IDs. Canonical registry-aware cloning mints fresh IDs. The finite leaf currently classifies any repeated ID as invalid; a canonical-valid generic input outside its one-occurrence profile should instead be not-covered and preserve ordinary legacy fallback. This is a static contract finding, not an observed public compiler miscompile or an executed duplicate-program witness. Astra is deriving the exact correction/control/descriptor-order plan; source/test edits and runtime qualification await its root-adopted scope. Retain all original snapshot/metadata/provenance defects and strict native fact invariants. Do not infer full IR coverage, native admission or retirement.
+
+Coordination review completed separately: exact repaired6598 `9ae339bf726d28792123ffe170a2d54bdc8f88bb` guard/control accepted; required preservation CI31/34, new suite21/21. The initial three intrinsic-row proposal was incomplete; root published exact additional row/hash/count plus executable predecessor inverse scope in shared-thread6071989772, requiring C update existing6921 issue and preserve original failures. No broad repin, production authority or queue release.
+
+
+### Implementation Plan — Astra-reviewed allocation-site reuse classification
+
+Adopt Astra High's exact source-backed correction received2026-10-09. Base signed local checkpoint b1a60eab2158dafa62af87dd39db808c8b2ba0f2 remains unpublished. Current generic/J1 validation checks known/live/kind/types for each occurrence but does not enforce occurrence uniqueness; registry-aware inlining and specialization mint fresh IDs, while the strict Linear frozen-facts verifier independently rejects duplicates. Do not conflate these contract domains or aggregate reused-site effects.
+
+Source ownership: existing Sol6.1 High checker owner, only `src/ir/analysis/allocation-evidence/contracts.ts` and `census.ts`. Add coverage reason `allocation-site-reuse`. In `registerAllocation`, remove duplicate presence from the stale/kind invalid predicate, then return not-covered for `state.allocations.has(id)` only after the existing live/kind, result-type equality and result non-null checks. All actual malformed provenance/result cases remain invalid; canonical-valid reuse exits the finite profile for ordinary generic fallback. No mutable registry/planner/native adapter/context/solver/proof changes. Preserve original22 registrations, all J1/extraction proofs and binary fixture.
+
+Disjoint test ownership: Sol6.1 High test owner claims a new site-reuse-tests slice before authoring `tests/issue-6920-allocation-evidence-site-reuse.test.ts`, exactly five registrations. Pair same-function and cross-function reused live IDs with genuine generic function verification and the complete retained legacy allocation validator on actual producer fixture views. Do not substitute a helper-only proof or fake registry. Repeated-site wrong result-type remains invalid before coverage refusal; stale/wrong-kind/missing-ID cases remain invalid with live positive controls; distinct IDs retain verified result, exact occurrence census/location and real observer controls. Test-local views may extend the authentic frozen fixture while preserving its original bytes. Explicitly distinguish allocation-contract validity from whole prepared population/ABI/projection authentication; this task does not claim the latter.
+
+Source and test workers author in parallel within these disjoint paths, re-read actual canonical claims and pins first. Static typing/format/lint allowed; collection/body execution requires root review of exact source, five registrations and ordinary positive provenance. Then one bounded collection/body window for original22 plus new5; rerun unrelated historical cohorts only if actual inputs change or a normal hook requires them. All original failures/receipts retained; normal signed follow-up commit, no rewrite or bypass. This classification correction adds no new covered grammar, solver skip, native support or legacy retirement claim. J2/J3/full40/general witness/native standalone/WASI/resource goals remain intact.
+
+
+Frozen Astra addendum independently read in full: `/private/tmp/js2-6920-astra-next-join-review-20261009/site-reuse-classification-addendum.md`,11784 bytes/SHA256 `b16c755a55508a944feead0ab435cbc47963e9079b5b7530bc335a291384bd85`. Adopt the exact two-file fix and SR01–SR05 matrix. Keep the previously assigned new filename `tests/issue-6920-allocation-evidence-site-reuse.test.ts` rather than the alternate proposed filename.
+
+Explicit static control refinement before execution: profile exclusion precedes allocation registration, so changing an instruction's vector result outside the eligible nonnullable f64 profile remains reference-carrier not-covered; this correction does not reorder or broaden that profile. SR04 instead pairs an eligible instruction with a mismatching registry result type for actual canonical/J1 type failure and site-result-type refusal; separately the second reused allocation with a null result must retain lexical-definition refusal before reuse coverage. No optional noncanonical f64-signed fixture is required. SR05 uses genuine independent per-site read/write evidence and changed/swapped/omitted-evidence refusals, not merely two empty rows. Original22 test bytes remain fixed. Authoring/static checks released in disjoint source/test paths; execution remains withheld until root reviews actual controls and claims.
+
+
+### Root adoption of next-join implementation plans — planning only
+
+Root read both frozen Astra High plans in full and adopts their architecture and staged requirements. This records the next real native consumer work; it does not release source edits to the shared planner or claim current Phase1/A2/J1/J2 composition. C retains its exact geometry source/test hunks; one root-appointed composer will authenticate the combined agreed predecessor before snapshot/facts extraction. Required-native descriptor screening, complete context and body-derived evidence remain mandatory before any solver skip, with generic legacy behavior retained. The current two-file classification fix and its five controls remain the immediate publication prerequisite.
+
+
+Frozen plan source: /private/tmp/js2-6920-evidence-implementation-plan-20261009/j2-snapshot-facts-append-proposal.md; 17100 bytes/SHA256 `7a81203ee5d306388010749908cc4ca644c4f074118143873b28af76c5017b29`.
+
+## Implementation Plan — J2 generic snapshot reads, then canonical Linear facts
+
+Implement one canonical extraction with real existing producer/verifier/planner callers. J2 supplies snapshot provenance and target-facts consistency; it supplies neither semantic evidence truth nor a consumer analysis skip. Preserve the twenty-two leaf results, remaining eighteen/full forty obligations, general IR witness, old failures and public standalone/WASI `run(1.5,-2.25) === 1.25` resource objective.
+
+The original A2 `.tmp/a2-addendum/canonical-extraction-handoff.md` and candidate were read, not applied. Its proposed attachment-only early return, blanket34529 donor premise and suggestion that an ownundefined encoding fixture should become semantically accepted are superseded by the adopted truth/custody decisions. Its duplicate declaration of `AllocProvenanceLookup` in alloc-verification is also obsolete: J1 already gives that interface its canonical `analysis/contracts/allocations.ts` home. Do not apply that candidate patch over J1. Preserve original A2's fifteen dirty files and unexecuted thirteen proposed controls.
+
+### Three new canonical homes and their real readers
+
+| New module | Exact responsibility and moved symbols |
+| --- | --- |
+| `src/ir/analysis/allocations/snapshot.ts` | Generic read-only snapshot authority. Move the existing `canonicalIndexFromSnapshot`, `canonicalSiteFromSnapshot`, `snapshotSiteAtCanonicalIndex`, `metadataValue`, `verifyRegistrySnapshot`, and `sameDetachedValue` once from memory-plan. Add the verified read view below; it imports canonical generic allocations/core DATA only. It does not import Linear facts, geometry, program, registry implementation or analyses. |
+| `src/ir/analysis/linear/contracts/allocation-facts.ts` | Move existing `LinearPreparedAllocationFact`, `LinearPreparedAllocationFacts`, `OwnershipMetadata` DATA. Use existing generic AllocSite/AllocRegistrySnapshot/Ownership/EscapeClass/EscapeInfo and core `IrStringEncoding`, with no type import through solver files or memory-plan. |
+| `src/ir/analysis/linear/allocation-facts.ts` | Move `verifyLinearPreparedAllocationFacts`, private `sameStringArray`, `collectModuleAllocationInstructions`, `collectValueTypes`; import the generic snapshot authority and target DATA. Retain existing collector semantics and original error/order behavior except the explicit encoding correction below. No allocator/layout/provider/analysis import. |
+
+Supporting existing hunks: append the existing documented `Ownership`, `EscapeClass`, `EscapeInfo` declarations to `analysis/contracts/allocations.ts` without moving/changing J1's interface; replace their definitions in `analysis/lattice.ts` and `analysis/escape.ts` with imports and identity-preserving type reexports. No rank, lattice, effect, scheduler or solver body changes. Preserve documentation as part of the exact declaration move; do not attach old declaration comments accidentally to an unrelated import or rank table.
+
+`analysis/linear-memory-plan.ts` immediately imports the relocated helpers, collector and facts DATA. Its **existing** `prepareLinearAllocationFacts` calls the relocated verifier and generic reads; its **existing** `planLinearMemoryFromFrozenFacts` and layout walk use the same canonical reads/collector. Preserve public verifier/equality bindings by direct reexports of the identical function objects (`verifyLinearPreparedAllocationFacts`, `sameDetachedValue`) and existing Fact/Facts type exports. No wrapper implementations. Producer analyses, geometry, layout, policy, stack/heap and resource functions stay where they are. Rewire A2 `program/linear-allocation-facts.ts` to the new target verifier and `program/prepared-contracts.ts` to the DATA home only when composing that real A2 source. Canonical845 has no strict program helper; do not manufacture one merely to pass extraction tests.
+
+These are three NEW files plus exact existing hunks, not a three-file total diff. Real memory-plan callers use the extraction in the same source change; no unused-module publication checkpoint is allowed. Generic-to-specific dependency direction is allocations snapshot → Linear facts → existing planner/program adapters, never reversed.
+
+### Minimal generic read interface, one resolver
+
+In the new generic snapshot module propose:
+
+```ts
+interface AllocationSnapshotRead extends AllocProvenanceLookup {
+  canonicalIndex(id: AllocSiteId): number;
+  siteAtCanonicalIndex(index: number): AllocSite;
+  metadata(id: number, namespace: string): {
+    readonly present: boolean;
+    readonly value: unknown;
+  };
+}
+export function createVerifiedAllocationSnapshot(
+  snapshot: AllocRegistrySnapshot,
+): AllocationSnapshotRead;
+```
+
+This is a nonserialized, invocation-local read view over the exact snapshot. The target verifier starts with `const read = createVerifiedAllocationSnapshot(preparedFacts.registry)` in place of its old `verifyRegistrySnapshot` call, then uses `read.canonicalIndex`, `read.siteAtCanonicalIndex`, and `read.metadata` at the exact existing call sites. Thus the new factory is reached by actual production callers immediately. Its J1 `isKnown`/`resolve` methods are available for the later real program provenance join, without importing a target module into generic validation. Do not add the obsolete target-coupled `createVerifiedAllocProvenanceLookup` export merely as an unused compatibility alias: it was a private proposal, not a published binding.
+
+The factory invokes the moved existing strict snapshot verifier first. `isKnown` preserves the existing typed registry range predicate. `resolve` returns null for unknown or directly retired IDs, otherwise delegates to the **same** moved canonical resolver and site accessor; no catch-all converts malformed provenance into null and no second alias walk is authored. Its canonical-index/site/metadata methods delegate to the same moved algorithms. Keep only helpers actually needed by memory-plan exported; site accessor/snapshot verifier can remain private behind the view when no direct caller needs them. `sameDetachedValue` retains its existing function identity through memory-plan's export. Its WeakMap/WeakSet is only local cyclic structural comparison, never persisted truth authority.
+
+The input precondition remains ordinary screened DATA with canonical structural types, stable for the duration of verification. This factory verifies the existing strict provenance/snapshot domain, not a new complete unknown-input schema. Existing producer snapshots satisfy it; J3 must execute Phase1 whole-graph descriptor screening and closed attachment checks before calling it on decoded input. Do not brand `unknown` with casts or read an accessor before those gates. The moved verifier does not by itself enforce all strict program metadata-owner/namespace/closed-field rules: preserve those existing adapter checks. Its historical `linear-memory frozen allocation facts ...` error text may remain in this first generic extraction to preserve diagnostic compatibility; that string creates no target dependency and is not permission to call the algorithm general semantic verification.
+
+Preserve the two actual domains: strict snapshot verification rejects alias cycles, unknown targets and aliases ending at retired entries, including unused aliases. Direct unused retired slots remain legitimate. Legacy mutable reconstruction permits unused alias-to-retired and returns stale/null if an instruction uses it. Do not change the mutable registry or absent-attachment legacy path to use this stricter factory. No promise of solver-free provenance for all legacy inputs is made by J2. Body IDs still receive canonical required-ID/kind/result/state checks through J1; an allocation collector cannot detect a missing required ID.
+
+No new cache, ID renumbering, shortened registry, snapshot mutation or analysis is introduced. Keep the existing algorithms' costs honestly: metadataValue currently searches arrays and alias resolution walks chains; J2 is not a claim of linear whole-program complexity. Optimizing their indexing requires a separately reviewed equivalence change, not a disguised rewrite in this extraction.
+
+### One explicit verifier correction; everything else remains canonical
+
+In the relocated target verifier preserve all existing checks for fact IDs, site equality, ownership/escape metadata, evidence presence, defaults, stack flag, body duplicate/missing/extra IDs, and exact optional encoding property presence. Add only the missing direct-value equality:
+
+```ts
+if (!sameDetachedValue(fact.encoding, encoding.value))
+  throw new Error(`linear-memory frozen allocation fact ${id} disagrees with encoding value`);
+```
+
+Place it **after** the existing encoding own-property/presence check and existing evidence.value equality check. This preserves established diagnostics when presence or evidence already contradicts the registry and rejects only an otherwise-consistent wrong direct encoding value. The older private candidate placed it earlier; do not inherit that incidental error-order change. Once this canonical guard is actually composed, remove A2's redundant local direct-value equality in the same reviewed transaction. Keep its closed DATA schema and own-property rules intact.
+
+Absent encoding, present-undefined encoding and explicit values are distinct DATA states. The target verifier can accept self-consistent present-undefined as a representation/consistency result; the later numeric body-truth endpoint correctly rejects falsely asserted encoding on that body. Therefore the unchanged original fixture which calls `.annotate(site.id, 'encoding', undefined)` does not become semantically valid through J2. Likewise coordinated ownership/escape copies may still pass target consistency; body truth, exact context and canonical provenance remain mandatory before any J3 skip.
+
+Collectors move without broadening: `collectModuleAllocationInstructions` includes block and async-state allocations but carries a display name, and `collectValueTypes` is not a lexical dominance or complete async-body definition proof. J1 and full contextual validity remain independent. Do not claim these collectors authenticate support/projected owner population, SSA or semantic effects.
+
+### Finite extraction controls before J3 wiring
+
+New proposed suite: `tests/issue-6920-allocation-snapshot-facts.test.ts`, exactly twelve new registrations. These do not replace the original18, Phase1 thirteen, A2 planned thirteen, J1 controls or AE21–AE23's complete integration requirements.
+
+1. `J201 actual producer and planner use the relocated authority`: genuine canonical producer facts and frozen-facts planner positive; assert exact before/after results and retained compatibility verifier/equality function identity.
+2. `J202 snapshot lookup and mutable lookup agree on live provenance`: genuine direct-live and alias-to-live snapshots through actual J1 main-body and result/state helpers; no mutable registry constructed during snapshot verification.
+3. `J203 strict and legacy retired-alias domains stay distinct`: unused direct retired accepted, strict alias-to-retired rejected, real unchanged legacy unused alias-to-retired accepted; instruction-use stale error retained.
+4. `J204 strict snapshot defects cannot become null success`: exact denominator/site identity/duplicate metadata/alias cycle/unknown target failures paired with a real valid snapshot; stable canonical diagnostics.
+5. `J205 missing IDs kind and result types remain J1 checks`: exact live positive and required missing ID, mismatching kind, stale ID, resolved type and async-state negative controls on the snapshot view.
+6. `J206 complete Linear fact denominator is preserved`: duplicate, missing, extra fact IDs and changed site projection rejected; original IDs and unused snapshot slots retained.
+7. `J207 direct encoding value cannot disagree with evidence`: genuine encoding positive; change only direct fact.encoding and reject through both canonical and old exported verifier binding.
+8. `J208 encoding presence preserves original failure order`: absent/present-undefined/value cases; change presence and evidence independently, then combined contradictions confirm old presence/evidence errors precede the new value-only error. Semantic undefined fixture is not rewritten.
+9. `J209 ownership escape defaults remain consistency checks`: four globally materialized modes and exact optional/marker values retain existing verifier semantics; coordinated forgery still needs the separate body-truth endpoint, demonstrated with an explicit paired leaf rejection for its covered case.
+10. `J210 descriptor preconditions stay at the actual adapter`: composed A2 strict accessor/ownundefined controls reject with zero getter execution and genuine live positive observer. If A2 is not yet composed, this registration is HELD, not simulated by a fake adapter or counted green.
+11. `J211 sourcefree closure has a live negative control`: parser-derived all-reference closure of the new DATA/snapshot/facts paths excludes program, target geometry/backend, solver and mutable-registry implementation dependencies where specified; inject an actual forbidden edge into the test reader to demonstrate detection. Canonical ALLOC_NAMESPACES currently shares the registry owner module, so the target verifier's allowed namespace-owner import must be reported honestly; do not copy namespace strings or falsely claim it absent.
+12. `J212 genuine observers distinguish producer from consumers`: real constructor/encoding/ownership/escape/stack calls positive during producer or legacy baseline; reset, call generic snapshot and target frozen-facts verification/J1 helpers, require zero constructor/solvers while canonical provenance executes. No fake result or inert import spy.
+
+J201–209/211–212 can qualify the actual extraction on canonical845+J1. J210 completes only with actual A2 helper composition, so a first checkpoint may truthfully report11/12 with1 held. Do not disguise this as complete public sourcefree validation. Runtime, typing, reference closure, LOC/dead-export/boundary and source-preservation checks need root's actual implementation/test release; no tests run here.
+
+### Exact custody, preservation and next real caller
+
+A2 source16740 and verifier-extraction46615 remain the same actual owner `ttraenkler/codex-ir-native-linear-source-facts-sol61-20261008`; root must release the specific new homes/import rewires and physically compose their private proposal with current J1. Existing generic contract/lattice/escape type moves need explicitly assigned source/proof custody, not an inferred34529 permission. The shared `linear-memory-plan.ts` hunk overlaps a physical file with C geometry, but J2 owns only listed facts/snapshot/collector declarations and their imports/reexports. It excludes shared geometry/constants/layout functions and C's pending edits. Freeze a concrete composed predecessor and coordinate those exact byte ranges before either writer proceeds.
+
+Preservation needs a new exact extraction successor, proposed `tests/helpers/ir-allocation-facts-extraction-successor.{ts,json}` and its own test suite, through root's existing source-proof authority. It must authenticate all complete affected donors/new owners and reconstruct the exact pre-J2 J1 contract pin before the retained J1 successor; lattice/escape must reach the unchanged Phase B pins; memory-plan must join the actual agreed geometry epoch and existing lowering preservation chain. Treat the new direct-encoding guard as one explicit reviewed semantic addition with its paired tests, not a falsely byte-identical relocation. Never repin J1/Phase B/geometry receipts, normalize away unknown edits or claim an unproved historical baseline. This paragraph names dependencies, not a new proof implementation assignment.
+
+After J2 and its proofs, J3's real order is unchanged: early descriptor screen; full original population/ABI/contextual SSA/type/support/startup/runtime reproduction; strict attachment and target-facts consistency; this generic snapshot lookup passed to J1 main/state/result provenance; body-derived generic evidence on complete authenticated module/projection views; then generic legacy fallback versus required-native Unsupported or covered zero-analysis acceptance. Keep support0 first capability and all nonzero support/general witness obligations. Required-native entry must occur before `acceptPreparedIrProgram`/`planPhysicalSetup` can reach old generic reanalysis; final resource refusal remains until A-C/S/B actually compose. J2 alone changes no public admission mode or physical resource lifecycle.
+
+Read-only pins for eleven actual/candidate inputs: `j2-source-preimages.json`,2,499 bytes/SHA256 `2eb67d5fab1da604326aa5b58f4211296d9d481cf7c1bc4de1eb4d86109a0046`. The three new path proposal supersedes the private flat target-facts path; no existing public module is renamed silently. Earlier frozen proposals remain unchanged. This private appendix edits no source, tests, issue, claim, Git state or runtime.
+
+
+Frozen plan source: /private/tmp/js2-6920-astra-next-join-review-20261009/required-native-entry-order-addendum.md; 14126 bytes/SHA256 `764814454df1a9932b97829487d1cccece89d5028ff0ec8f04e389670eaa8a90`.
+
+# Required-native entry order and remaining custody
+
+Private read-only follow-on to `site-reuse-classification-addendum.md`, Codex GPT-6 Astra High, 2026-10-09. This is next-join planning, not a prerequisite for its bounded two-file classification fix. No runtime/test execution, source/test/shared issue/Git/claim/public comment change. The exact 17,100-byte J2 proposal and frozen J1/evidence source were read. Source domains below are deliberately distinguished.
+
+## Existing call chain and absent-attachment hole
+
+Phase1 source is `/private/tmp/js2-6920-linear-facts-entry-screen-20261008`, not its `-baseline-` sibling. A2 original is `/private/tmp/js2-ir-native-linear-source-facts-20261008`. Frozen J1/leaf candidate is `/private/tmp/js2-6920-allocation-evidence-checker-20261009`. Do not treat the three as already composed.
+
+In Phase1 `program/validation.ts::assertPreparedIrProgram` (198ff), the first statement calls `screenPreparedIrProgramLinearAllocationFactsInput`. That screen (`program/linear-allocation-facts.ts`, 104ff) examines the own attachment descriptor, rejects an accessor and own-property undefined, and calls `freezePreparedIrRuntimeValue` on the entire program only when attachment is present. Absence returns before screening the remaining graph. The subsequent schema/reconciliation/sealed reads therefore retain historical absent-attachment getter behavior. This is intentional generic compatibility, not a sufficient required-native boundary.
+
+After population, source-map, support and semantic/runtime separation checks, Phase1 still calls the old `assertPreparedIrProgramAllocations` at 209, before class layouts, full ABI/contextual `verifyIrFunction` (363), startup and exact runtime projection reproduction (399). The later strict attachment helper cannot prevent that reanalysis. Original A2 lacks the early screen and likewise has old allocation validation before the attachment helper. Its private candidate attachment-only solver return is not approved evidence truth.
+
+`program-consumer.ts::acceptPreparedIrProgram` first invokes the generic assertion (299). `program-physical-plan.ts::planPhysicalSetup` first invokes only the attachment helper (1234); absence returns immediately, after which it reads projection functions and program ABI and calls `planNativeVectorResources`. That resource entry invokes the generic assertion (287). `planNativeValueResources` also invokes the generic assertion (330). Consequently adding only a late resource failure or modifying only the generic attachment-present branch leaves absent required-native input exposed to getters and/or reanalysis.
+
+`compiler/ir-program-driver.ts::runIrProgramDriver` calls prepare, then accept, then emit. Place the new gate at the actual accepting/direct-planning entries rather than adding a driver-only check; direct physical callers and accepted-plan revalidation would otherwise miss it.
+
+## Minimal placement and caller order
+
+Use the previously proposed single validation body in existing `program/validation.ts`, with a private policy discriminant `generic` versus `required-linear-evidence`. Preserve the public `assertPreparedIrProgram(program, options?)` signature. Add one typed internal required-native wrapper used immediately by actual consumer and direct planner in the same change; reexport through the existing program-validation facade only for those real callers. It may return the existing located `PreparedIrProgramFailure` on missing capability, and throw existing invariant errors on established contradictions. Do not introduce a new public unused API checkpoint, callback that grants validity, boolean success cache, detached token, or second validation body.
+
+At the beginning of that common body, before any program property read:
+
+1. Execute the Phase1 optional attachment screen exactly as today. It preserves the accessor and own-undefined attachment diagnostics without running those getters.
+2. If policy is required-linear-evidence and no own attachment descriptor exists, call the existing `program/data.ts::freezePreparedIrRuntimeValue(program)` unconditionally. Detect absence with `Object.getOwnPropertyDescriptor`, not `program.linearAllocationFacts`. This is the missing whole-graph screen for required-native absence. The generic-absent path still does no added graph screen.
+3. Now run existing schema, population, source map, support and semantic/runtime separation checks. Keep ordinary generic absent-attachment allocation validation at its current position and preserve its error/analysis order. For strict attached input or required-native validation only, defer allocation admission through the complete existing class-layout, ABI declaration, contextual SSA/type, startup, support-dependency and exact runtime reproduction checks. Never call whole `assertPreparedIrProgram` recursively from an allocation hook.
+4. For an actual attachment, execute its closed DATA/schema, namespace-owner and presence rules, target facts consistency, and exact semantic/projection comparison through the composed J2 canonical extraction. J1 main-body final provenance and result/state helpers use J2's verified snapshot view on every authenticated original/projected body. Retain every original slot and ID; no merged module or filtered registry. Full semantic and projection validation must finish before the leaf's result is used.
+5. Run the generic allocation-evidence endpoint on the exact complete original view and each required authenticated Linear projection. Contradictions inside its covered domain are invariant errors. Outside-profile input, including allocation-site reuse, uses unchanged canonical legacy validation for generic acceptance; required native returns located Unsupported before planners/reservation. Namespace presence/completeness is evaluated only after any requested present evidence has been checked. A report over one view is not reusable for another.
+6. Missing attachment with nonzero registry is a required capability refusal before old allocation analysis, not proof that the allocation graph or metadata was valid. Do not feed this legacy-domain snapshot into J2's stricter resolver; unused alias-to-retired is deliberately legal in the generic legacy domain. Preserve the existing zero-registry/absent scalar legacy path, including its validation and honest analysis accounting. Do not advertise every missing-attachment request as zero-analysis. The required-native entry still screens that zero case before reads. Ordinary generic absence remains unchanged.
+
+`freezePreparedIrRuntimeValue` is the existing descriptor walk and in-place freeze; it preserves authenticated identities and permits the established FrozenMap/FrozenSet/class-shape domain. Reuse it rather than a new JSON copy, shallow `Object.freeze`, or accessor-reading recursive walk. This preserves the existing DATA precondition; it is not a claimed defense against arbitrary Proxy traps. No proxy promise is added.
+
+In `acceptPreparedIrProgram`, choose the required wrapper for Linear as the initial program validation; return its existing failure shape immediately. Other backends retain generic validation. In `planPhysicalSetup`, perform the same required wrapper for Linear before reading projection.prepared, program.abi, constructing bodies, or calling resource planners. Preserve exact projection membership and backend/target checks; a valid program does not authenticate a caller-supplied unrelated projection. Existing repeated generic assertions may stay: covered attached generic validation must itself select the proven zero-analysis branch; deleting those checks to obtain zero counters is unsound. A required out-of-profile request returns before those repeated calls. Replayed accepted plans traverse the same real gates on current DATA.
+
+Keep the existing allocation materialization refusal (`preparedLinearAllocationResourceGap`) until resources are genuinely composed. Evidence admission must not convert its absence into successful native emission. The first honest milestone is reaching the same resource gap with measured zero consumer allocation analyses for genuinely covered, attached input.
+
+## Codec remains a real round trip
+
+Phase1 `program-codec.ts::assertPreparedIrProgramShape` begins with the same optional screen. Its normal generic absent behavior stays unchanged. `reauthenticatePreparedIrProgram` first shape-checks, regenerates every runtime projection with `prepareWholeProgramRuntimeManifest`, compares all persisted fields against the regenerated result, freezes it, constructs the reauthenticated program and invokes complete generic validation at the end. Preserve this exact reproduction and identity process; do not use shape validation as acceptance. Encoding and detached decode remain lossless DATA paths; accepted generic decode may legitimately run legacy analyses for an uncovered program. Later native acceptance must still use the required gate.
+
+## Finite next-join controls, assigned to existing ROOT18 requirements
+
+These are required assertions for the real joined entries, not extra fabricated green registrations:
+
+- AE38/AE18: with attachment absent, individually place accessor descriptors at schema, ir, allocations, runtime and runtimeSupport on otherwise real prepared DATA. At actual Linear accept and direct physical setup, every getter counter remains zero and a typed invariant is observed. Include a nested accessor to prove whole-graph coverage. Paired attached controls retain existing accessor/own-undefined attachment diagnostics. A separate deliberately invoked getter proves observer liveness.
+- AE29/AE32/AE39: a genuine nonzero-registry program without attachment reaches required-native located Unsupported before registry construction/encoding/ownership/escape/stack/planners/reservation, with a real same-binding producer/legacy positive then reset. Its unchanged generic validation still takes legacy analysis and reproduces baseline acceptance/errors. A real zero-registry scalar absent control remains accepted by the existing legacy path and is reported separately rather than counted zero-analysis.
+- AE33/AE34/AE35/AE37: alter complete ABI, contextual SSA, support or runtime reproduction in attached input; each original invariant remains fatal even when target copies and leaf metadata agree. The finite leaf never replaces full context. Support0 is the initial capability; illegal current Linear/support remains invariant under the formatter-only WasmGC:standalone rule. General support needs a separate authenticated population join.
+- AE30/AE31/AE36/AE40: actual producer/codec/direct consumer checks with covered input give zero consumer allocation analyses and then the unchanged physical resource gap; actual generic uncovered round trip still runs legacy validation. Present-undefined numeric encoding fixture remains semantically rejected. No fixture is rewritten to make a consistency-only verifier look semantic.
+
+These are not completion claims for eighteen ROOT registrations or the forty full requirements. J2 controls, original18 with its retained encoding failure, Phase1 thirteen, J1 and preservation cohorts keep distinct denominators. Every zero interval needs a live positive using the same instrumented real binding; import-only or stub observers do not count.
+
+## Disjoint custody and source preservation
+
+C's four source/test paths are exactly:
+
+- `src/shared/contracts/linear-memory-layout.ts` — shared geometry DATA/constants/functions.
+- `src/ir/analysis/contracts/linear-memory-layout.ts` — geometry declaration replacements and identity reexports only.
+- `src/ir/analysis/linear-memory-plan.ts` — agreed geometry constants/layout helpers/adapters and geometry imports/reexports only.
+- `tests/issue-6865-linear-layout-contract.test.ts` — C geometry controls.
+
+The recorded coordination is in `/private/tmp/js2-6920-shared-linear-geometry-20261009/.tmp/session-a-thread-watch-20261009.md` and `session-c-geometry-confirmation-20261009.md`; the latter records A's release and C's claim. This is documentary custody context, not a freshly verified claim grant. C does not own allocation facts, semantic evidence, source proof, boundary inventory, registry, or public integration. A retains those duties and their separately assigned workers. No concurrent whole-file replacement of shared linear-memory-plan is permitted.
+
+A's J2 snapshot/facts hunk owns the three new canonical homes specified in the frozen J2 proposal, generic contract/type moves, facts/snapshot/collector definitions/imports/reexports and actual producer/planner caller rewires. Geometry and facts coexist in one physical file: root appoints one composer from a concrete agreed successor, authenticates the complete combined file, and attributes exact hunks. Required-native validation/consumer/physical/codec changes are A integration ownership and outside both the tiny leaf correction and C's geometry release. Existing B/provider/runtime responsibilities remain untouched.
+
+Prerequisites before consumer solver skipping: compose actual Phase1+A2+J1+J2 with original source bytes retained, preserve the fifteen dirty A2 files rather than transplanting its obsolete candidate, and finish actual rule-sharing AE28. A new extraction preservation successor must authenticate all affected donors/new owners and reconstruct the pre-J2 J1 contract before the unchanged J1 successor; lattice/escape continue to Phase B pins. Shared memory-plan must join C's actual geometry epoch and the retained lowering proof chain. Exact semantic additions (encoding value guard and site-reuse classification) need explicit deltas and real negative controls; never normalize them into a false byte-identical relocation or repin historical receipts. Root independently reported J1 326/326; this document does not remeasure or broaden that result.
+
+No fake adapter, no preapproved skip callback, no uncalled public API, no blanket attachment success. General IR witness, all forty obligations, nonzero support, real native resources and public standalone/WASI `run(1.5,-2.25) === 1.25` remain required.
+
+
+### Protected-queue delivery decision — recursive class getter fix
+
+Fresh effective canonical-main rules on2026-10-09 contain only six strict required check contexts plus merge queue; no approving-review rule. The previous formal-review assumption is corrected by the actual rules, not waived. Root read the complete exact6597 diff and C independent review6069386313 at `bec8ac003452a63e9a3fa6f8ff57d5f83e69a4af`; paired controls12fail/2pass baseline versus14/14 fixed, inherited neighbor failures unchanged. Fresh required checks have actual successful rows, with skipped duplicates excluded. Head is signed, current main845 and PR CLEAN/MERGEABLE.
+
+Root released only6597 HOLD and submitted the exact head using ordinary `gh pr merge --match-head-commit`, no admin/bypass/force. Effect-read GraphQL: OPEN, exacthead unchanged, isInMergeQueue=true, position1, stateQUEUED, enqueued_at `2026-10-09T01:05:26Z`. This is queue admission, not main delivery. Real merge-group conformance/checks and canonical ancestry/content remain required. All other holds and foreign branches/claims remain unchanged.
+
+
+### Allocation-site reuse controls — test authorship proposal (2026-10-09)
+
+Authored only the new portable five-registration suite `tests/issue-6920-allocation-evidence-site-reuse.test.ts`, 17068 bytes / SHA256 `0d5d44a9cbdfa8b3c6b444bdb6359506cbb92785d3d6689b7c51e6101623f101`. Fresh canonical test-only claim write `71072-eptamrwm` was effect-read before editing, actual ledger tip `f3d121534ed96a27934a0adad3b8afa4dfb28a37`, owner `ttraenkler/codex-sol-allocation-evidence-site-reuse-tests-20261009`.
+
+The literal SR01–SR05 manifest is `.tmp/allocation-evidence-site-reuse-tests/expected-manifest.json`. Selected TypeScript7 no-emit, format and lint all exited 0; exact source/API/preserved-operand pins and actual call routes are in `.tmp/allocation-evidence-site-reuse-tests/authorship.json`. No collection, test body or runtime helper/probe execution occurred in this task.
+
+Real contextual function verification and the full retained allocation validator are paired with same-function/cross-function reuse, using genuine registry snapshots and original canonical analyses. No helper-only substitute, fake registry or replacement analysis answer is used. SR04 follows the minimum honest type control: nullable registered type versus eligible nonnullable instruction fails resolved-type validation, while an actual repeated null-result occurrence fails lexical definition before reuse. Existing profile exclusions remain unchanged. SR05 uses actual canonical read/write metadata and independent per-site literals, swapping/omitting materialized cells for real negatives; it also consumes the unchanged healthy producer fixture and proves the observer's positive full-caller route before zero leaf counts. Each leaf check and full caller preserves supplied module/snapshot inputs.
+
+This establishes authorship and static compatibility only. These five have a separate denominator and do not replace the original22, J1 eight, sixteen proof controls, original forty/ROOT18, target-facts uniqueness or native/general-IR obligations. Function/allocation-contract validity is not whole prepared population, ABI/projection equality or strict Linear/native admission. No source, original suites, binary bytes, J1/proof files or issue were edited by this lane.
+
+
+Root independently read the entire five-control suite and packet, exactclaim71072-eptamrwm, preserved original22/fixture/J1pins and two-file source patch. Static selectedtyping/format/lint0. Runtime release is limited to one stock collection then qualified body for new5 and original22, with the existing passive observer and exact authored manifests, closed child records and frozen source/tool/fixture/issue custody. No J1/historical rerun in this finite window; normal hooks may execute their unchanged suites later. Body failures remain failures, no retries/kills/edits inside the window. All broader native/general/full40 obligations retained.
+
+
+### Allocation-site reuse qualification — actual closed window
+
+New SR01–SR05 executed5/5 and original leaf22/22, zero failures/skips/errors/instrument/IPC/observer faults. One stock collection and one body per cell; four CLI parents exit0; eight stock worker spawn/exit/close records complete. Genuine contextual/provenance/full allocation-validator positives, malformed error precedence, per-site read/write swaps/omissions, authentic fixture and same-binding constructor/analysis observations all passed. Input validity here is the function/allocation contract, not whole prepared population or native admission. No J1/historical rerun in this finite window.
+
+Root independently read final actual rows/floors/closure, verified all24 raw artifact byte/SHA pins, and reread all9051 current frozen operands against after-window custody: zero drift. Final receipt56213 bytes/SHA256 `9c7b5e55d31dffed65b44050d1c83098691bfc4b1ce6a941af8822ec0ab59981`; after-window custody2020871 bytes/SHA256 `cfa3749397b75e0bbf07e94d849eb9c6dc9c7078a84cc1b62cf5cd5aa7c99b2c`. Source fix and five controls are qualified for normal signed follow-up commit and fork publication through a ready PR. Do not rewrite b1a or claim current native admission/full40/general witness/equality/retirement.

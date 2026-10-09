@@ -108,10 +108,10 @@ function registerAllocation(state: State, at: Cursor): AllocationEvidenceFailure
   if (id === undefined) return invalid("allocation-provenance", at);
   const slot = state.registry.entries[id];
   if (slot?.state === "aliased") return uncovered("allocation-alias", at);
-  if (slot?.state !== "live" || slot.site.kind !== "array" || state.allocations.has(id))
-    return invalid("allocation-provenance", at);
+  if (slot?.state !== "live" || slot.site.kind !== "array") return invalid("allocation-provenance", at);
   if (!instr.resultType || !irTypeEquals(slot.site.type, instr.resultType)) return invalid("site-result-type", at);
   if (instr.result === null) return invalid("lexical-definition", at);
+  if (state.allocations.has(id)) return uncovered("allocation-site-reuse", at);
   state.allocations.set(id, AccessSet.empty());
   state.roots.set(instr.result, { root: at.root, id });
   state.counts.allocations++;
