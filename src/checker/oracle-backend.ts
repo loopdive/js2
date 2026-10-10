@@ -20,6 +20,7 @@
 import type { ts } from "../ts-api.js";
 import {
   TsCheckerOracle,
+  type BindingDeclarationEvidence,
   type JsTag,
   type OracleTypeKey,
   type SignatureFact,
@@ -336,6 +337,15 @@ export class DifferentialOracle implements TypeOracle {
     );
   }
 
+  bindingDeclarationEvidenceOf(id: ts.Identifier): BindingDeclarationEvidence {
+    return this.compare(
+      "bindingDeclarationEvidenceOf",
+      id,
+      (o) => o.bindingDeclarationEvidenceOf(id),
+      describeBindingEvidence,
+    );
+  }
+
   variableDeclarationOf(id: ts.Node): ts.VariableDeclaration | undefined {
     return this.compare("variableDeclarationOf", id, (o) => o.variableDeclarationOf(id), describeOptionalNode);
   }
@@ -344,4 +354,23 @@ export class DifferentialOracle implements TypeOracle {
 function describeOptionalNode(node: ts.Node | undefined): string {
   if (!node) return "undefined";
   return `${node.kind}@${node.pos}`;
+}
+
+function describeBindingEvidence(evidence: BindingDeclarationEvidence): string {
+  if (evidence.kind !== "resolved") return evidence.kind;
+  const declaration = (node: ts.Declaration): object => {
+    const source = node.getSourceFile();
+    return {
+      fileName: source.fileName,
+      ambient: source.isDeclarationFile,
+      kind: node.kind,
+      pos: node.pos,
+      end: node.end,
+    };
+  };
+  return JSON.stringify({
+    kind: evidence.kind,
+    declarations: evidence.declarations.map(declaration),
+    valueDeclaration: evidence.valueDeclaration ? declaration(evidence.valueDeclaration) : null,
+  });
 }

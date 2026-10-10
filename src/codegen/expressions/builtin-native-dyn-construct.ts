@@ -2,7 +2,48 @@
 import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal } from "../context/locals.js";
-import { flushLateImportShifts } from "../shared.js";
+import { coerceType, compileExpression, flushLateImportShifts } from "../shared.js";
+import { ts } from "../../ts-api.js";
+
+/** Prepare the fixed-arity arguments after the parent has stored its callee. */
+export function compileNativeConstructArgumentLocals(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  args: readonly ts.Expression[],
+  proxyCtorValue: boolean,
+  services: {
+    readonly compileObjectLiteralAsExternref: typeof import("../literals.js").compileObjectLiteralAsExternref;
+  },
+): number[] {
+  const { compileObjectLiteralAsExternref } = services;
+  const argLocals: number[] = [];
+  for (const arg of args) {
+    // (#5196 R3-0) A `new <Proxy-constructor value>(target, handler)` site must
+    // lower an object-literal argument to an OPEN `$Object`, exactly as the
+    // syntactic `new Proxy` arm does (`new-builtin-globals.ts`): the closed
+    // typed struct an inline literal defaults to hides its fields from
+    // `__extern_get`, so `__proxy_create` reads every trap as null and the
+    // proxy silently behaves as if the handler were empty.
+    if (proxyCtorValue && ts.isObjectLiteralExpression(arg)) {
+      const openTy = compileObjectLiteralAsExternref(ctx, fctx, arg);
+      if (openTy === null) fctx.body.push({ op: "ref.null.extern" });
+      const openLocal = allocLocal(fctx, `__nc_arg${argLocals.length}_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: openLocal });
+      argLocals.push(openLocal);
+      continue;
+    }
+    const argTy = compileExpression(ctx, fctx, arg, { kind: "externref" });
+    if (argTy && argTy.kind !== "externref") {
+      coerceType(ctx, fctx, argTy, { kind: "externref" });
+    } else if (argTy === null) {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    const argLocal = allocLocal(fctx, `__nc_arg${argLocals.length}_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: argLocal });
+    argLocals.push(argLocal);
+  }
+  return argLocals;
+}
 
 /** Retry an unclaimed dynamic new only for the canonical Array carrier.
  * Argument locals were already evaluated; this neither repeats their effects
