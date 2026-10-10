@@ -2,10 +2,11 @@
   "id": "6905",
   "slice": "prepared-memory-plan-20261007",
   "assignee": "ttraenkler/codex-linear-b-memory-astra-20261007",
-  "requested_by": "ttraenkler/codex-linear-b-memory-astra-20261007",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6905-linear-prepared-memory-plan-20261007",
   "claimed_at": "2026-10-07T13:56:19Z",
-  "updated_at": "2026-10-07T13:56:19Z",
-  "write_id": "78394-x5zb67zk"
+  "updated_at": "2026-10-10T23:38:37Z",
+  "write_id": "12166-1g0hntx2",
+  "released_at": "2026-10-10T23:38:37Z"
 }
