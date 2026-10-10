@@ -1,12 +1,11 @@
 {
   "id": "6896",
   "slice": "linear-array-capacity-tests-20261007",
-  "assignee": "ttraenkler/codex-linear-b-array-capacity-tests-sol61-20261007",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
   "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
-  "status": "released",
+  "status": "in-progress",
   "branch": "codex/6896-linear-array-capacity-tests-20261007",
-  "claimed_at": "2026-10-07T11:51:18Z",
-  "updated_at": "2026-10-10T23:37:20Z",
-  "write_id": "6300-onbuvfuv",
-  "released_at": "2026-10-10T23:37:20Z"
+  "claimed_at": "2026-10-10T23:37:24Z",
+  "updated_at": "2026-10-10T23:37:24Z",
+  "write_id": "6787-31iicatd"
 }
