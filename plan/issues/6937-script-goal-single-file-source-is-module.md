@@ -1,7 +1,7 @@
 ---
 id: 6937
 title: "Script-goal compile of a single file is half-applied: `inferModuleStrictArguments: false` makes function code sloppy, but `ctx.sourceIsModule` still follows the synthetic `export` (Octane crypto `setupEngine`, navier-stokes `checkResult`)"
-status: ready
+status: in-progress
 created: 2026-10-10
 updated: 2026-10-10
 priority: high
@@ -14,6 +14,14 @@ goal: core-semantics
 sprint: current
 related: [874, 833, 6474, 6491, 2119, 4190, 3956]
 assignee: "ttraenkler/claude-session-c-octane-script-goal-20261010"
+# 2026-10-10 (#6937): the fix is one expression in generateModule plus a
+# two-line comment, and the plan-mandated Script-goal doc paragraph on
+# `inferModuleStrictArguments` in the public CompileOptions type.
+loc-budget-allow:
+  - src/codegen/index.ts
+  - src/index.ts
+func-budget-allow:
+  - src/codegen/index.ts::generateModule
 ---
 
 # #6937 — the single-file Script-goal switch stops at function strictness
@@ -272,3 +280,56 @@ uses top-level `this` (`language/global-code/`, `language/statements/variable/
   `ttraenkler/claude-session-c-octane-20261010` (same session, octane-harness
   slice); #6937 reserved for this lane (`pr_scan=degraded`, hand-checked
   above).
+
+## Implementation notes (2026-10-10)
+
+**Change.** `src/codegen/index.ts` `generateModule`: `ctx.sourceIsModule` is now
+`externalModuleIndicator !== undefined && ctx.inferModuleStrictArguments !== false`
+(plan step 1, verbatim). `src/index.ts`: the Script-goal paragraph on
+`inferModuleStrictArguments` (plan step 2). No other compiler file changed —
+every reader of `sourceIsModule` already had a script arm.
+
+**Evidence** (`plan/log/6937-script-goal/`, file-copy A/B of
+`src/codegen/index.ts`, same test file on both sides):
+
+- `issue-6937-test-{base,head}.txt` — `tests/issue-6937.test.ts`, 18 tests:
+  base 3 fail / 15 pass, head 18 pass. The base failures are exactly the
+  goal-switch cases (top-level `this` is the global object, gc + standalone;
+  `var` as a property of top-level `this`, standalone). r1/r2, the exported
+  entry point, and every negative control (default module goal, explicit
+  `"use strict"`, export-free source) pass on both sides.
+- `related-tests-base-vs-head.txt` — the 136 test files that mention
+  `inferModuleStrictArguments` / `sourceIsModule` / `entryScriptGoal` /
+  `#2119` / `#6474` (test262-named files excluded): one difference,
+  fail→pass (`issue-2929-annexb-eval-lifecycle` "keeps host literal indirect
+  Annex-B eval on the established compile-away path", deterministic
+  `expected 0 to be 7` at base). Zero pass→fail. The 154 failures common to
+  both sides are pre-existing in this container (e.g. a missing
+  `scripts/compiler-bundle.mjs`), not touched by this change.
+- `equivalence-gate-head.txt` — `node scripts/equivalence-gate.mjs`: 22
+  failing (all 22 known in the baseline), 1748 passing, no new regressions.
+- typecheck, check-loc-budget / check-func-budget (also against
+  `LOC_GATE_BASE=origin/main` 16deeb3e7f), check-coercion-sites,
+  check:oracle-ratchet, check:dead-exports: green (LOC/func via the
+  allowances in this file's frontmatter).
+
+**Deviation from the acceptance criteria — not all met, so status stays
+`in-progress`:**
+
+1. **r3 on the gc HOST lane still returns `0`, not `1`.** Top-level `this` is
+   now the global object there (asserted), but a top-level `var` is not a
+   property of it, because the host lane never publishes top-level `var`s
+   onto the host global object — `emitScriptGlobalVarBindings`
+   (`src/codegen/global-var-bindings.ts`) returns early unless
+   standalone/WASI. That is independent of this fix: a genuinely export-free
+   script fails the same `this.g` read on the gc host at base. The test pins
+   it with `it.fails` on gc so it flips red when fixed. Needs its own issue.
+2. The `globalThis.g` case (plan's fourth test) does not discriminate: the
+   module goal also reads `7` (pre-fix behaviour). Kept as does-not-regress.
+3. Not run here: the Octane `crypto`/`navier-stokes` progress probe, the
+   `build-quickjs-eval-provider.mjs` canaries, the scoped legacy-runner
+   comparison, and the #874 driver-contract edit (owned by the #874 lane).
+
+**Separate residuals, still open and NOT addressed by this change** (see "Not
+in scope" above): the navier-stokes `set_bnd` trap (`x` reads as null,
+navier-stokes.js:146) and the crypto `octane_run(1)` hang.
