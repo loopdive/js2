@@ -1,0 +1,12 @@
+{
+  "id": "6937",
+  "assignee": "ttraenkler/claude-session-c-octane-script-goal-20261010",
+  "requested_by": "ttraenkler/claude-session-c-octane-script-goal-20261010",
+  "status": "in-progress",
+  "branch": "claude/octane-sloppy-mode",
+  "reserved_at": "2026-10-10T07:02:26Z",
+  "claimed_at": "2026-10-10T07:02:26Z",
+  "updated_at": "2026-10-10T07:02:26Z",
+  "write_id": "14831-rldb8d0s",
+  "pr_scan": "degraded"
+}
