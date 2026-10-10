@@ -1,7 +1,8 @@
 ---
 id: 6950
 title: "A top-level `o.F.prototype.m = …` statement (constructor held in a member, `T.Node = function…`) is dropped by the module-init keep gate on both lanes — `new T.Node().m()` throws `called value is not a function` (Octane splay teardown; #6943 follow-up)"
-status: ready
+status: in-progress
+assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-10-10
 priority: high
@@ -13,6 +14,14 @@ area: compiler
 language_feature: constructor-functions, prototype-chain
 goal: correctness
 related: [874, 6943, 6947, 4618, 2660, 3666, 4394]
+loc-budget-allow:
+  # 2026-10-10 (#6950): +~33 lines — the lane-neutral keep arm + its
+  # predicate helper; the receiver-unwrap loop is shared with
+  # isTopLevelFunctionPropertyReceiver (net -7 there).
+  - src/codegen/declarations.ts
+func-budget-allow:
+  # 2026-10-10 (#6950): +3 lines — one keep arm (predicate lives outside).
+  - src/codegen/declarations.ts::collectDeclarations
 ---
 
 # top-level `o.F.prototype.m = …` is never compiled (module-init keep gate)
