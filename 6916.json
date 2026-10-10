@@ -1,12 +1,11 @@
 {
   "id": "6916",
   "assignee": "ttraenkler/codex-linear-b-remainder-plan-20261007",
-  "requested_by": "ttraenkler/codex-linear-b-remainder-plan-20261007",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "",
-  "reserved_at": "2026-10-07T20:35:11Z",
   "claimed_at": "2026-10-07T20:35:11Z",
-  "updated_at": "2026-10-07T20:35:11Z",
-  "write_id": "96078-7846pxm9",
-  "pr_scan": "ok"
+  "updated_at": "2026-10-10T23:41:53Z",
+  "write_id": "25942-963fgzfn",
+  "released_at": "2026-10-10T23:41:53Z"
 }
