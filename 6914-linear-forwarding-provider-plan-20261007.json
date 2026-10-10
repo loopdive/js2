@@ -1,12 +1,11 @@
 {
   "id": "6914",
   "slice": "linear-forwarding-provider-plan-20261007",
-  "assignee": "ttraenkler/codex-linear-b-forwarding-astra-20261007",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
   "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
-  "status": "released",
+  "status": "in-progress",
   "branch": "codex/6914-linear-forwarding-provider-plan-20261007",
-  "claimed_at": "2026-10-07T17:59:09Z",
-  "updated_at": "2026-10-10T23:40:04Z",
-  "write_id": "16395-0ejibjph",
-  "released_at": "2026-10-10T23:40:04Z"
+  "claimed_at": "2026-10-10T23:40:08Z",
+  "updated_at": "2026-10-10T23:40:08Z",
+  "write_id": "16982-pvx1e2x9"
 }
