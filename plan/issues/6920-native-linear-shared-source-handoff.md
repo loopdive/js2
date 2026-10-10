@@ -8510,3 +8510,39 @@ The first main-first normal signedhook correctly refused453 of486 C1 cases after
 ### Publication blocker repair, 2026-10-10
 
 The normal signed main-first merge `4960ec8e3ada1c45d81c9d885ec3fec53bfd08ff` passed all 16 changed root suites (2880/2880). Its normal push under Node 25.9 passed the numeric-local regression suite (18/18), then issue integrity refused two historical references to a private, unpublished plan. Those references now explicitly identify that private document without claiming a repository file exists; its name, measured digest and historical scope remain recorded. This correction changes documentation only. The fork still pointed at `d212db5cfebe4f76237c5bfaed8c91666abdcb61` on fresh readback; no queue admission or delivery to main is claimed. The standing PR shepherd owns exact-head queue submission after successful publication and required checks.
+
+
+### Finite cloud metadata-domain takeover (2026-10-10)
+
+The user explicitly authorized taking over the blocked metadata-domain helper
+in addition to the CI timeout prerequisite. This continuation adds only the
+three canonical imports and the published
+`checkRegistryEvidenceMetadataDomain` proposal to
+`src/ir/analysis/allocation-evidence/metadata.ts`, plus a separate regression
+suite. The 3240-byte proposal block matches SHA256
+`f192fe3e90beb7920c5b776c23fd532a493e606f4bd4a34fbc2bcb4fe2946bdd`.
+Removing the additions reconstructs the canonical 5550-byte original, SHA256
+`7686bf689b3ff97457e7fcd7c6dc0417ea87e9fa855181b31831d106186b6175`.
+
+The helper checks present ownership, escape and encoding value domains after
+prior DATA/snapshot/context screening; absence remains absent and extension
+namespaces remain outside its authority. It grants neither coverage nor body
+truth. Existing census/comparison algorithms, tests and fixtures are preserved.
+The live prepared-program validator is not wired to this helper by this finite
+change, and private caller composition remains unverified.
+
+PR6626 at `4e9ed97a63dd672971857f443380948af4c9c519` remains draft
+and unmerged. Its initializer experiment and compiler-boundary archives were
+hash-verified as historical evidence, after refreshing all 157 coordination
+comments; they supply no current-main acceptance or broader release. Existing
+claim records remain preserved. The attempted continuation claim was not
+published; Git publication is blocked by HTTP403, permission denied to
+ttraenkler. No merged dependency or complete IR equivalence is claimed.
+
+Local validation: all 51 tests across the new suite and six existing allocation
+evidence suites passed; the final renamed/formatted new suite passed 11/11.
+TS7 typecheck and the import-cycle ratchet passed. The current-source boundary
+inventory remains valid but architecture-incomplete, with graphComplete false;
+it is not full IR acceptance. The original first 50/51 run is retained in
+private evidence, including the explicit-undefined fixture-construction defect
+fixed in the new suite. No existing failure or fixture was rewritten.
