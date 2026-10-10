@@ -1,12 +1,10 @@
 {
   "id": "6947",
-  "assignee": "ttraenkler/claude-session-c-octane-dyn-method-call-inline-closure-arg-20261010",
-  "requested_by": "ttraenkler/claude-session-c-octane-dyn-method-call-inline-closure-arg-20261010",
+  "assignee": "ttraenkler/claude-session-d",
+  "requested_by": "ttraenkler/claude-session-d",
   "status": "in-progress",
-  "branch": "claude/octane-dynamic-objects",
-  "reserved_at": "2026-10-10T07:23:50Z",
-  "claimed_at": "2026-10-10T07:23:50Z",
-  "updated_at": "2026-10-10T07:23:50Z",
-  "write_id": "13547-kriord2p",
-  "pr_scan": "degraded"
+  "branch": "claude/octane-splay-fix",
+  "claimed_at": "2026-10-10T21:22:29Z",
+  "updated_at": "2026-10-10T21:22:29Z",
+  "write_id": "6174-o1mqkr4o"
 }
