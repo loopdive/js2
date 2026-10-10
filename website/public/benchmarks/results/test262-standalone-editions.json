@@ -689,12 +689,12 @@
   },
   {
     "edition": "ES2016",
-    "pass": 106,
+    "pass": 107,
     "fail": 10,
-    "ce": 8,
+    "ce": 7,
     "skip": 0,
     "total": 124,
-    "pct": 85,
+    "pct": 86,
     "features": [
       {
         "name": "exponentiation",
@@ -707,12 +707,12 @@
       },
       {
         "name": "Array.prototype.includes",
-        "pass": 26,
+        "pass": 27,
         "fail": 2,
-        "ce": 1,
+        "ce": 0,
         "skip": 0,
         "total": 29,
-        "pct": 90
+        "pct": 93
       },
       {
         "name": "u180e",
@@ -744,8 +744,8 @@
       {
         "name": "arrow-function",
         "pass": 1,
-        "fail": 0,
-        "ce": 1,
+        "fail": 1,
+        "ce": 0,
         "skip": 0,
         "total": 2,
         "pct": 50
@@ -762,8 +762,8 @@
       {
         "name": "Reflect",
         "pass": 1,
-        "fail": 0,
-        "ce": 1,
+        "fail": 1,
+        "ce": 0,
         "skip": 0,
         "total": 2,
         "pct": 50
@@ -2683,21 +2683,21 @@
   },
   {
     "edition": "ES2023",
-    "pass": 177,
-    "fail": 157,
+    "pass": 190,
+    "fail": 144,
     "ce": 0,
     "skip": 0,
     "total": 334,
-    "pct": 53,
+    "pct": 57,
     "features": [
       {
         "name": "change-array-by-copy",
-        "pass": 60,
-        "fail": 72,
+        "pass": 73,
+        "fail": 59,
         "ce": 0,
         "skip": 0,
         "total": 132,
-        "pct": 45
+        "pct": 55
       },
       {
         "name": "TypedArray",
@@ -2764,12 +2764,12 @@
       },
       {
         "name": "exponentiation",
-        "pass": 0,
-        "fail": 7,
+        "pass": 4,
+        "fail": 3,
         "ce": 0,
         "skip": 0,
         "total": 7,
-        "pct": 0
+        "pct": 57
       },
       {
         "name": "resizable-arraybuffer",
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4605,
+    "pass": 4606,
     "fail": 186,
-    "ce": 130,
+    "ce": 129,
     "skip": 0,
     "total": 4921,
     "pct": 94,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4502,
+        "pass": 4503,
         "fail": 105,
-        "ce": 4,
+        "ce": 3,
         "skip": 0,
         "total": 4611,
         "pct": 98
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4659,
-    "fail": 717,
+    "pass": 4692,
+    "fail": 684,
     "ce": 69,
     "skip": 0,
     "total": 5445,
