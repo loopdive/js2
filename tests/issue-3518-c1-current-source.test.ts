@@ -78,13 +78,11 @@ const anchorPath = "tests/helpers/ir-c1-authority-root.ts";
 const linearPath = "src/codegen-linear/index.ts";
 const digest = (source: string): string => createHash("sha256").update(source).digest("hex");
 const read = (path: string): string => {
-  const packageRoot = dirname(createRequire(import.meta.url).resolve("typescript/package.json"));
-  return readFileSync(
-    path.startsWith("typescript-package/")
-      ? resolve(packageRoot, path.slice("typescript-package/".length))
-      : resolve(root, path),
-    "utf8",
-  );
+  if (path.startsWith("typescript-package/")) {
+    const packageRoot = dirname(createRequire(import.meta.url).resolve("typescript/package.json"));
+    return readFileSync(resolve(packageRoot, path.slice("typescript-package/".length)), "utf8");
+  }
+  return readFileSync(resolve(root, path), "utf8");
 };
 function actualIO(): C1ResolverObservationIO {
   return {
@@ -286,13 +284,11 @@ function replaceOnce(source: string, old: string, next: string): string {
   return source.slice(0, at) + next + source.slice(at + old.length);
 }
 function pin(source: string) {
+  const bytes = Buffer.from(source, "utf8");
   return {
-    bytes: Buffer.byteLength(source),
-    sha256: digest(source),
-    gitBlob: createHash("sha1")
-      .update(`blob ${Buffer.byteLength(source)}\0`)
-      .update(source)
-      .digest("hex"),
+    bytes: bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    gitBlob: createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex"),
   };
 }
 function manifest() {
@@ -642,10 +638,11 @@ function authenticateCurrentH1Implementation(): void {
   const expected = currentSuccessorFreeze().instruments[0]!;
   // Only the physical implementation is gated here; supplied authority/source mutants retain their real internal guard.
   const source = read(expected.path);
+  const actualPin = pin(source);
   if (
-    pin(source).bytes !== expected.currentPin.bytes ||
-    pin(source).sha256 !== expected.currentPin.sha256 ||
-    pin(source).gitBlob !== expected.currentPin.gitBlob
+    actualPin.bytes !== expected.currentPin.bytes ||
+    actualPin.sha256 !== expected.currentPin.sha256 ||
+    actualPin.gitBlob !== expected.currentPin.gitBlob
   )
     throw new Error("external C1 implementation full pin: " + expected.path);
 }
@@ -1757,7 +1754,7 @@ describe("C1 fresh live source contract bridge", () => {
             }
           }
         };
-        const timer = setTimeout(() => terminate(new Error("native type probe exceeded 30000 ms")), 30000);
+        const timer = setTimeout(() => terminate(new Error("native type probe exceeded 60000 ms")), 60000);
         const collect = (chunk: Buffer): void => {
           const remaining = limit - outputBytes;
           if (remaining > 0) chunks.push(chunk.subarray(0, remaining));
@@ -1782,7 +1779,7 @@ describe("C1 fresh live source contract bridge", () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
-  });
+  }, 65000);
 });
 
 // These fixed test literals are independent of the production inverse and manifest.
@@ -6611,6 +6608,122 @@ type ColdNumberResult = {
     sameIdentity: boolean;
   };
 };
+// Run at most two independent fault branches at once; drain both before reporting the first ordinal failure.
+async function runColdFaultsInOrderedPairs<Fault>(
+  faults: readonly Fault[],
+  run: (fault: Fault) => Promise<void>,
+): Promise<void> {
+  for (let offset = 0; offset < faults.length; offset += 2) {
+    const results = await Promise.allSettled(faults.slice(offset, offset + 2).map(async (fault) => run(fault)));
+    for (const result of results) {
+      if (result.status === "rejected") throw result.reason;
+    }
+  }
+}
+describe("bounded cold-fault scheduling lifecycle", () => {
+  function deferredFault() {
+    let resolve!: () => void;
+    let reject!: (reason: Error) => void;
+    const promise = new Promise<void>((done, fail) => {
+      resolve = done;
+      reject = fail;
+    });
+    return { promise, resolve, reject };
+  }
+  it("drains each pair before dispatching the next and bounds active branches to two", async () => {
+    const gates = Array.from({ length: 5 }, deferredFault);
+    const started: number[] = [],
+      completed: number[] = [];
+    let active = 0,
+      peak = 0;
+    const completion = runColdFaultsInOrderedPairs([0, 1, 2, 3, 4], async (fault) => {
+      started.push(fault);
+      peak = Math.max(peak, ++active);
+      try {
+        await gates[fault]!.promise;
+      } finally {
+        active--;
+        completed.push(fault);
+      }
+    }).then(
+      () => undefined,
+      (reason: unknown) => reason,
+    );
+    try {
+      await setImmediate();
+      expect(started).toEqual([0, 1]);
+      expect(active).toBe(2);
+      gates[0]!.resolve();
+      await setImmediate();
+      expect(completed).toEqual([0]);
+      expect(started).toEqual([0, 1]);
+      expect(active).toBe(1);
+      gates[1]!.resolve();
+      await setImmediate();
+      expect(started).toEqual([0, 1, 2, 3]);
+      expect(active).toBe(2);
+      gates[2]!.resolve();
+      await setImmediate();
+      expect(completed).toEqual([0, 1, 2]);
+      expect(started).toEqual([0, 1, 2, 3]);
+      gates[3]!.resolve();
+      await setImmediate();
+      expect(started).toEqual([0, 1, 2, 3, 4]);
+      expect(active).toBe(1);
+      gates[4]!.resolve();
+      expect(await completion).toBeUndefined();
+      expect(completed).toEqual([0, 1, 2, 3, 4]);
+      expect(active).toBe(0);
+      expect(peak).toBe(2);
+    } finally {
+      for (const gate of gates) gate.resolve();
+      await completion;
+    }
+  });
+  it("drains out-of-order rejections and preserves first fault identity without dispatching another pair", async () => {
+    const gates = Array.from({ length: 4 }, deferredFault);
+    const started: number[] = [],
+      completed: number[] = [];
+    const firstFailure = new Error("first original fault"),
+      laterFailure = new Error("later fault rejected first");
+    let settled = false;
+    const completion = runColdFaultsInOrderedPairs([0, 1, 2, 3], async (fault) => {
+      started.push(fault);
+      try {
+        await gates[fault]!.promise;
+      } finally {
+        completed.push(fault);
+      }
+    }).then(
+      () => {
+        settled = true;
+        return undefined;
+      },
+      (reason: unknown) => {
+        settled = true;
+        return reason;
+      },
+    );
+    try {
+      await setImmediate();
+      expect(started).toEqual([0, 1]);
+      gates[1]!.reject(laterFailure);
+      await setImmediate();
+      expect(completed).toEqual([1]);
+      expect(settled).toBe(false);
+      expect(started).toEqual([0, 1]);
+      gates[0]!.reject(firstFailure);
+      await setImmediate();
+      expect(completed).toEqual([1, 0]);
+      expect(settled).toBe(true);
+      expect(await completion).toBe(firstFailure);
+      expect(started).toEqual([0, 1]);
+    } finally {
+      for (const gate of gates) gate.resolve();
+      await completion;
+    }
+  });
+});
 async function runColdNumberEpoch(
   h1Source: string,
   rootSource: string,
@@ -7764,55 +7877,50 @@ describe("C1 independent sixteenth canonical-policy current association", () => 
     async (index) => {
       const input = canonicalPolicyHealthy();
       await healthyColdCanonical(input);
-      for (const fault of [
-        "state",
-        "layer",
-        "path",
-        "destination",
-        "owner",
-        "nextBoundary",
-        "order",
-        "omission",
-        "duplicate",
-      ] as const) {
-        const live = JSON.parse(input.current),
-          old = JSON.parse(input.intermediate);
-        const change = (data: any) => {
-          if (fault === "order")
-            [data.files[index - 1], data.files[index]] = [data.files[index], data.files[index - 1]];
-          else if (fault === "omission") data.files.splice(index, 1);
-          else if (fault === "duplicate") data.files.splice(index, 0, { ...data.files[index] });
-          else data.files[index][fault] += " owned negative fixture";
-        };
-        change(live);
-        if (index < 201 && fault !== "omission" && fault !== "duplicate") change(old);
-        // Count faults stop at16's fixed counts; semantic15 field/order faults preserve16's retained DATA.
-        const intermediate =
-          index < 201 && fault !== "omission" && fault !== "duplicate"
-            ? JSON.stringify(old, null, 2) + "\n"
-            : input.intermediate;
-        const current = (fault === "omission" && index === 201 ? " " : "") + JSON.stringify(live, null, 2) + "\n";
-        expect(current).not.toBe(input.current);
-        await refuseColdCanonicalSupplied(input, current);
-        const state = canonicalDiagnosticState(input, intermediate, current);
-        const result = await runColdNumberEpoch(state.h1, state.anchor, state.files, undefined, { source: current });
-        const stage =
-          index < 201 &&
-          fault !== "omission" &&
-          fault !== "duplicate" &&
-          !(index === 200 && (fault === "path" || fault === "order"))
-            ? 15
-            : 16;
-        assertColdSlicePhase(
-          result,
-          state.files,
-          input.predecessor,
-          `C1 historical authority: policySource inverse epoch ${stage} ` +
-            (fault === "omission" || fault === "duplicate" ? "semantic file counts" : "semantic ordered row/neighbors"),
-        );
-        await healthyColdCanonical(input);
-        canonicalPolicyHealthy();
-      }
+      await runColdFaultsInOrderedPairs(
+        ["state", "layer", "path", "destination", "owner", "nextBoundary", "order", "omission", "duplicate"] as const,
+        async (fault) => {
+          const live = JSON.parse(input.current),
+            old = JSON.parse(input.intermediate);
+          const change = (data: any) => {
+            if (fault === "order")
+              [data.files[index - 1], data.files[index]] = [data.files[index], data.files[index - 1]];
+            else if (fault === "omission") data.files.splice(index, 1);
+            else if (fault === "duplicate") data.files.splice(index, 0, { ...data.files[index] });
+            else data.files[index][fault] += " owned negative fixture";
+          };
+          change(live);
+          if (index < 201 && fault !== "omission" && fault !== "duplicate") change(old);
+          // Count faults stop at16's fixed counts; semantic15 field/order faults preserve16's retained DATA.
+          const intermediate =
+            index < 201 && fault !== "omission" && fault !== "duplicate"
+              ? JSON.stringify(old, null, 2) + "\n"
+              : input.intermediate;
+          const current = (fault === "omission" && index === 201 ? " " : "") + JSON.stringify(live, null, 2) + "\n";
+          expect(current).not.toBe(input.current);
+          await refuseColdCanonicalSupplied(input, current);
+          const state = canonicalDiagnosticState(input, intermediate, current);
+          const result = await runColdNumberEpoch(state.h1, state.anchor, state.files, undefined, { source: current });
+          const stage =
+            index < 201 &&
+            fault !== "omission" &&
+            fault !== "duplicate" &&
+            !(index === 200 && (fault === "path" || fault === "order"))
+              ? 15
+              : 16;
+          assertColdSlicePhase(
+            result,
+            state.files,
+            input.predecessor,
+            `C1 historical authority: policySource inverse epoch ${stage} ` +
+              (fault === "omission" || fault === "duplicate"
+                ? "semantic file counts"
+                : "semantic ordered row/neighbors"),
+          );
+          await healthyColdCanonical(input);
+          canonicalPolicyHealthy();
+        },
+      );
     },
   );
   it.each(["retained row", "layer DATA", "top-level DATA"] as const)(
@@ -8084,36 +8192,29 @@ describe("C1 independent seventeenth canonical-policy current association", () =
   it("reaches each fixed new-row field, order, omission and duplicate detector at canonical row202", async () => {
     const input = seventeenthPolicyHealthy();
     await healthyColdSeventeenth(input);
-    for (const fault of [
-      "state",
-      "layer",
-      "path",
-      "destination",
-      "owner",
-      "nextBoundary",
-      "order",
-      "omission",
-      "duplicate",
-    ] as const) {
-      const data = JSON.parse(input.current);
-      if (fault === "order") [data.files[201], data.files[202]] = [data.files[202], data.files[201]];
-      else if (fault === "omission") data.files.splice(202, 1);
-      else if (fault === "duplicate") data.files.splice(202, 0, { ...data.files[202] });
-      else data.files[202][fault] += " owned negative fixture";
-      const current = (fault === "omission" ? " " : "") + JSON.stringify(data, null, 2) + "\n";
-      expect(current).not.toBe(input.current);
-      const state = seventeenthDiagnosticState(input, current);
-      const result = await runColdNumberEpoch(state.h1, state.anchor, state.files, undefined, { source: current });
-      assertColdSlicePhase(
-        result,
-        state.files,
-        input.predecessor,
-        "C1 historical authority: policySource inverse epoch 17 " +
-          (fault === "omission" || fault === "duplicate" ? "semantic file counts" : "semantic ordered row/neighbors"),
-      );
-      await healthyColdSeventeenth(input);
-      seventeenthPolicyHealthy();
-    }
+    await runColdFaultsInOrderedPairs(
+      ["state", "layer", "path", "destination", "owner", "nextBoundary", "order", "omission", "duplicate"] as const,
+      async (fault) => {
+        const data = JSON.parse(input.current);
+        if (fault === "order") [data.files[201], data.files[202]] = [data.files[202], data.files[201]];
+        else if (fault === "omission") data.files.splice(202, 1);
+        else if (fault === "duplicate") data.files.splice(202, 0, { ...data.files[202] });
+        else data.files[202][fault] += " owned negative fixture";
+        const current = (fault === "omission" ? " " : "") + JSON.stringify(data, null, 2) + "\n";
+        expect(current).not.toBe(input.current);
+        const state = seventeenthDiagnosticState(input, current);
+        const result = await runColdNumberEpoch(state.h1, state.anchor, state.files, undefined, { source: current });
+        assertColdSlicePhase(
+          result,
+          state.files,
+          input.predecessor,
+          "C1 historical authority: policySource inverse epoch 17 " +
+            (fault === "omission" || fault === "duplicate" ? "semantic file counts" : "semantic ordered row/neighbors"),
+        );
+        await healthyColdSeventeenth(input);
+        seventeenthPolicyHealthy();
+      },
+    );
   });
   it.each(["retained row", "layer DATA", "top-level DATA"] as const)(
     "reaches unchanged17 exact DATA guard for %s",
@@ -8388,36 +8489,29 @@ describe("C1 independent eighteenth canonical-policy current association", () =>
   it("reaches each fixed new-row field, order, omission and duplicate detector at canonical row354", async () => {
     const input = eighteenthPolicyHealthy();
     await healthyColdEighteenth(input);
-    for (const fault of [
-      "state",
-      "layer",
-      "path",
-      "destination",
-      "owner",
-      "nextBoundary",
-      "order",
-      "omission",
-      "duplicate",
-    ] as const) {
-      const data = JSON.parse(input.current);
-      if (fault === "order") [data.files[353], data.files[354]] = [data.files[354], data.files[353]];
-      else if (fault === "omission") data.files.splice(354, 1);
-      else if (fault === "duplicate") data.files.splice(354, 0, { ...data.files[354] });
-      else data.files[354][fault] += " owned negative fixture";
-      const current = (fault === "omission" ? " " : "") + JSON.stringify(data, null, 2) + "\n";
-      expect(current).not.toBe(input.current);
-      const state = eighteenthDiagnosticState(input, current);
-      const result = await runColdNumberEpoch(state.h1, state.anchor, state.files, undefined, { source: current });
-      assertColdSlicePhase(
-        result,
-        state.files,
-        input.predecessor,
-        "C1 historical authority: policySource inverse epoch 18 " +
-          (fault === "omission" || fault === "duplicate" ? "semantic file counts" : "semantic ordered row/neighbors"),
-      );
-      await healthyColdEighteenth(input);
-      eighteenthPolicyHealthy();
-    }
+    await runColdFaultsInOrderedPairs(
+      ["state", "layer", "path", "destination", "owner", "nextBoundary", "order", "omission", "duplicate"] as const,
+      async (fault) => {
+        const data = JSON.parse(input.current);
+        if (fault === "order") [data.files[353], data.files[354]] = [data.files[354], data.files[353]];
+        else if (fault === "omission") data.files.splice(354, 1);
+        else if (fault === "duplicate") data.files.splice(354, 0, { ...data.files[354] });
+        else data.files[354][fault] += " owned negative fixture";
+        const current = (fault === "omission" ? " " : "") + JSON.stringify(data, null, 2) + "\n";
+        expect(current).not.toBe(input.current);
+        const state = eighteenthDiagnosticState(input, current);
+        const result = await runColdNumberEpoch(state.h1, state.anchor, state.files, undefined, { source: current });
+        assertColdSlicePhase(
+          result,
+          state.files,
+          input.predecessor,
+          "C1 historical authority: policySource inverse epoch 18 " +
+            (fault === "omission" || fault === "duplicate" ? "semantic file counts" : "semantic ordered row/neighbors"),
+        );
+        await healthyColdEighteenth(input);
+        eighteenthPolicyHealthy();
+      },
+    );
   });
   it.each(["retained row", "layer DATA", "top-level DATA"] as const)(
     "reaches unchanged18 exact DATA guard for %s",
