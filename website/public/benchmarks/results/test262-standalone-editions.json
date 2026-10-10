@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11573,
-    "fail": 119,
+    "pass": 11572,
+    "fail": 120,
     "ce": 12,
     "skip": 0,
     "total": 11704,
@@ -102,8 +102,8 @@
       },
       {
         "name": "Symbol",
-        "pass": 595,
-        "fail": 14,
+        "pass": 594,
+        "fail": 15,
         "ce": 0,
         "skip": 0,
         "total": 609,
@@ -689,12 +689,12 @@
   },
   {
     "edition": "ES2016",
-    "pass": 106,
-    "fail": 11,
+    "pass": 107,
+    "fail": 10,
     "ce": 7,
     "skip": 0,
     "total": 124,
-    "pct": 85,
+    "pct": 86,
     "features": [
       {
         "name": "exponentiation",
@@ -707,12 +707,12 @@
       },
       {
         "name": "Array.prototype.includes",
-        "pass": 26,
-        "fail": 3,
+        "pass": 27,
+        "fail": 2,
         "ce": 0,
         "skip": 0,
         "total": 29,
-        "pct": 90
+        "pct": 93
       },
       {
         "name": "u180e",
@@ -2683,21 +2683,21 @@
   },
   {
     "edition": "ES2023",
-    "pass": 177,
-    "fail": 157,
+    "pass": 195,
+    "fail": 139,
     "ce": 0,
     "skip": 0,
     "total": 334,
-    "pct": 53,
+    "pct": 58,
     "features": [
       {
         "name": "change-array-by-copy",
-        "pass": 60,
-        "fail": 72,
+        "pass": 78,
+        "fail": 54,
         "ce": 0,
         "skip": 0,
         "total": 132,
-        "pct": 45
+        "pct": 59
       },
       {
         "name": "TypedArray",
@@ -2764,12 +2764,12 @@
       },
       {
         "name": "exponentiation",
-        "pass": 0,
-        "fail": 7,
+        "pass": 5,
+        "fail": 2,
         "ce": 0,
         "skip": 0,
         "total": 7,
-        "pct": 0
+        "pct": 71
       },
       {
         "name": "resizable-arraybuffer",
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4659,
-    "fail": 717,
+    "pass": 4697,
+    "fail": 679,
     "ce": 69,
     "skip": 0,
     "total": 5445,
