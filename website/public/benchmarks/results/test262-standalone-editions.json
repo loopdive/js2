@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11562,
-    "fail": 130,
+    "pass": 11573,
+    "fail": 119,
     "ce": 12,
     "skip": 0,
     "total": 11704,
@@ -66,8 +66,8 @@
       },
       {
         "name": "generators",
-        "pass": 2477,
-        "fail": 8,
+        "pass": 2478,
+        "fail": 7,
         "ce": 1,
         "skip": 0,
         "total": 2486,
@@ -84,8 +84,8 @@
       },
       {
         "name": "TypedArray",
-        "pass": 1040,
-        "fail": 10,
+        "pass": 1042,
+        "fail": 8,
         "ce": 0,
         "skip": 0,
         "total": 1050,
@@ -120,21 +120,21 @@
       },
       {
         "name": "Proxy",
-        "pass": 400,
-        "fail": 28,
+        "pass": 403,
+        "fail": 25,
         "ce": 3,
         "skip": 0,
         "total": 431,
-        "pct": 93
+        "pct": 94
       },
       {
         "name": "Reflect.construct",
-        "pass": 399,
-        "fail": 9,
+        "pass": 401,
+        "fail": 7,
         "ce": 7,
         "skip": 0,
         "total": 415,
-        "pct": 96
+        "pct": 97
       },
       {
         "name": "class",
@@ -147,12 +147,12 @@
       },
       {
         "name": "Reflect",
-        "pass": 291,
-        "fail": 32,
+        "pass": 296,
+        "fail": 27,
         "ce": 7,
         "skip": 0,
         "total": 330,
-        "pct": 88
+        "pct": 90
       },
       {
         "name": "Symbol.species",
@@ -183,12 +183,12 @@
       },
       {
         "name": "cross-realm",
-        "pass": 78,
-        "fail": 48,
+        "pass": 84,
+        "fail": 42,
         "ce": 2,
         "skip": 0,
         "total": 128,
-        "pct": 61
+        "pct": 66
       },
       {
         "name": "Symbol.toPrimitive",
@@ -689,12 +689,12 @@
   },
   {
     "edition": "ES2016",
-    "pass": 106,
+    "pass": 107,
     "fail": 10,
-    "ce": 8,
+    "ce": 7,
     "skip": 0,
     "total": 124,
-    "pct": 85,
+    "pct": 86,
     "features": [
       {
         "name": "exponentiation",
@@ -707,12 +707,12 @@
       },
       {
         "name": "Array.prototype.includes",
-        "pass": 26,
+        "pass": 27,
         "fail": 2,
-        "ce": 1,
+        "ce": 0,
         "skip": 0,
         "total": 29,
-        "pct": 90
+        "pct": 93
       },
       {
         "name": "u180e",
@@ -744,8 +744,8 @@
       {
         "name": "arrow-function",
         "pass": 1,
-        "fail": 0,
-        "ce": 1,
+        "fail": 1,
+        "ce": 0,
         "skip": 0,
         "total": 2,
         "pct": 50
@@ -762,8 +762,8 @@
       {
         "name": "Reflect",
         "pass": 1,
-        "fail": 0,
-        "ce": 1,
+        "fail": 1,
+        "ce": 0,
         "skip": 0,
         "total": 2,
         "pct": 50
@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1177,
-    "fail": 687,
+    "pass": 1178,
+    "fail": 686,
     "ce": 153,
     "skip": 18,
     "total": 2035,
@@ -1516,8 +1516,8 @@
     "features": [
       {
         "name": "BigInt",
-        "pass": 643,
-        "fail": 328,
+        "pass": 644,
+        "fail": 327,
         "ce": 77,
         "skip": 0,
         "total": 1048,
@@ -1525,8 +1525,8 @@
       },
       {
         "name": "TypedArray",
-        "pass": 427,
-        "fail": 206,
+        "pass": 428,
+        "fail": 205,
         "ce": 75,
         "skip": 0,
         "total": 708,
@@ -3571,21 +3571,21 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4597,
-    "fail": 187,
-    "ce": 137,
+    "pass": 4607,
+    "fail": 186,
+    "ce": 128,
     "skip": 0,
     "total": 4921,
-    "pct": 93,
+    "pct": 94,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4494,
-        "fail": 106,
-        "ce": 11,
+        "pass": 4504,
+        "fail": 105,
+        "ce": 2,
         "skip": 0,
         "total": 4611,
-        "pct": 97
+        "pct": 98
       },
       {
         "name": "Symbol",
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4659,
-    "fail": 717,
+    "pass": 4692,
+    "fail": 684,
     "ce": 69,
     "skip": 0,
     "total": 5445,

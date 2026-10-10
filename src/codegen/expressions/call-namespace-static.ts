@@ -127,6 +127,7 @@ import {
   tryEmitOrdinaryConstructWithNewTarget,
   tryEmitProxyConstructWithNewTarget,
 } from "./reflect-construct-newtarget.js"; // (#3371 r4)
+import { emitObjectPrototypeDefault, preparePrimitiveNewTargetDefault } from "./primitive-newtarget-default.js"; // (#6651 W2b)
 import { objectPrototypeIsImmutableInstrs } from "../object-proto-proto-accessor.js"; // (#5268 step 1)
 import { definePropertyBooleanFrom } from "../object-model/define-rejection-channel.js"; // (#6770 S4)
 import {
@@ -2493,6 +2494,11 @@ export function compileNamespaceStaticCall(
               )
             : undefined;
         const runtimeNewTargetProto = newTargetRoute !== undefined;
+        // (#6651 W2b) A primitive `NT.prototype` → §10.1.14 step 4's default.
+        const objectProtoDefault =
+          staticNewTargetProto !== undefined &&
+          isDefinitelyPrimitivePrototype(ctx, staticNewTargetProto) &&
+          preparePrimitiveNewTargetDefault(ctx, fctx, unwrapReflectConstructExpr(targetArg));
         const refuseDistinctNewTarget =
           distinctNewTarget && staticNewTargetProto === undefined && !runtimeNewTargetProto;
         let ntValueLocal: number | undefined;
@@ -2534,7 +2540,9 @@ export function compileNamespaceStaticCall(
           ensureObjectRuntime(ctx);
           const createIdx = ctx.funcMap.get("__object_create");
           if (createIdx !== undefined) {
-            fctx.body.push({ op: "ref.null.extern" });
+            fctx.body.push(
+              ...(objectProtoDefault ? canonicalUndefinedExternInstrs(ctx) : [{ op: "ref.null.extern" } as Instr]),
+            );
             fctx.body.push({ op: "call", funcIdx: createIdx });
             return { kind: "externref" };
           }
@@ -2604,6 +2612,7 @@ export function compileNamespaceStaticCall(
 
         const assignedProto = staticNewTargetProto;
         if (assignedProto !== undefined && isDefinitelyPrimitivePrototype(ctx, assignedProto)) {
+          if (objectProtoDefault) emitObjectPrototypeDefault(ctx, fctx);
           return { kind: "externref" };
         }
 

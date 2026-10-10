@@ -436,7 +436,12 @@ function emitArrayLikeReverse(fctx: FunctionContext, deps: ArrayLikeDeps): ValTy
 }
 
 /** Emit `Array.prototype.join` for a dynamic receiver and an args vector. */
-function emitArrayLikeJoin(ctx: CodegenContext, fctx: FunctionContext, deps: ArrayLikeDeps): ValType {
+function emitArrayLikeJoin(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  deps: ArrayLikeDeps,
+  hasArgsVector = true,
+): ValType {
   const repr = nativeStringRepr(ctx);
   if (repr === undefined || ctx.anyStrTypeIdx < 0) {
     // `emitArrayLikeNativeMemberBody` is only selected by the standalone
@@ -456,42 +461,46 @@ function emitArrayLikeJoin(ctx: CodegenContext, fctx: FunctionContext, deps: Arr
   // its optional separator through the same array-like boundary used for the
   // receiver. An omitted argument and an explicit `undefined` both select the
   // default comma; explicit `null` is converted to the string "null".
-  fctx.body.push(
-    { op: "local.get", index: 2 },
-    { op: "call", funcIdx: deps.length },
-    { op: "i32.trunc_sat_f64_s" },
-    { op: "local.set", index: argsLength },
-    { op: "local.get", index: argsLength },
-    { op: "i32.const", value: 0 },
-    { op: "i32.gt_s" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: 2 },
-        { op: "f64.const", value: 0 },
-        { op: "call", funcIdx: deps.getIdx },
-        { op: "local.set", index: separatorArg },
-        { op: "local.get", index: separatorArg },
-        { op: "call", funcIdx: deps.isUndefined },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [...repr.literal(","), { op: "local.set", index: separator }],
-          else: [
-            { op: "local.get", index: separatorArg },
-            { op: "call", funcIdx: deps.toString },
-            { op: "any.convert_extern" },
-            { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-            { op: "local.set", index: separator },
-          ],
-        },
-      ],
-      else: [...repr.literal(","), { op: "local.set", index: separator }],
-    },
-    { op: "local.get", index: separator },
-    { op: "local.set", index: sepTmp },
-  );
+  // (#6912) `toString`'s array fallback has no vector: always the comma.
+  if (!hasArgsVector) {
+    fctx.body.push(...repr.literal(","), { op: "local.set", index: sepTmp });
+  } else
+    fctx.body.push(
+      { op: "local.get", index: 2 },
+      { op: "call", funcIdx: deps.length },
+      { op: "i32.trunc_sat_f64_s" },
+      { op: "local.set", index: argsLength },
+      { op: "local.get", index: argsLength },
+      { op: "i32.const", value: 0 },
+      { op: "i32.gt_s" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 2 },
+          { op: "f64.const", value: 0 },
+          { op: "call", funcIdx: deps.getIdx },
+          { op: "local.set", index: separatorArg },
+          { op: "local.get", index: separatorArg },
+          { op: "call", funcIdx: deps.isUndefined },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [...repr.literal(","), { op: "local.set", index: separator }],
+            else: [
+              { op: "local.get", index: separatorArg },
+              { op: "call", funcIdx: deps.toString },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+              { op: "local.set", index: separator },
+            ],
+          },
+        ],
+        else: [...repr.literal(","), { op: "local.set", index: separator }],
+      },
+      { op: "local.get", index: separator },
+      { op: "local.set", index: sepTmp },
+    );
 
   // ToLength(this.length) and the empty-string accumulator. A transferred
   // generic join must not cast the receiver to a typed Wasm array.
@@ -556,4 +565,28 @@ export function emitArrayLikeNativeMemberBody(
   if (member === "push") return emitArrayLikePush(ctx, fctx, deps);
   if (member === "unshift") return emitArrayLikeUnshift(ctx, fctx, deps);
   return emitArrayLikeReverse(fctx, deps);
+}
+
+/**
+ * (#6912) `[] → [externref]` — §23.1.3.18 `join` with the default separator
+ * over the closure receiver (param 1), for `Array.prototype.toString`'s
+ * fallback when the receiver's inherited `join` cannot be read dynamically.
+ * Registers its helpers (and flushes their index shifts) BEFORE returning the
+ * emitter, so the caller can resolve its own indices afterwards; `undefined`
+ * off the native regime.
+ */
+export function prepareArrayLikeDefaultJoin(ctx: CodegenContext, fctx: FunctionContext): (() => Instr[]) | undefined {
+  const deps = prepareArrayLikeDeps(ctx, fctx);
+  if (deps === undefined || nativeStringRepr(ctx) === undefined || ctx.anyStrTypeIdx < 0) return undefined;
+  return () => {
+    const parent = fctx.body;
+    const out: Instr[] = [];
+    fctx.body = out;
+    try {
+      emitArrayLikeJoin(ctx, fctx, deps, false);
+    } finally {
+      fctx.body = parent;
+    }
+    return out;
+  };
 }
