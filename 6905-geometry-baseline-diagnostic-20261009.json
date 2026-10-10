@@ -2,10 +2,11 @@
   "id": "6905",
   "slice": "geometry-baseline-diagnostic-20261009",
   "assignee": "ttraenkler/codex-linear-b-geometry-baseline-sol61-20261009",
-  "requested_by": "ttraenkler/codex-linear-b-geometry-baseline-sol61-20261009",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6905-geometry-baseline-20261009",
   "claimed_at": "2026-10-09T09:01:33Z",
-  "updated_at": "2026-10-09T09:01:33Z",
-  "write_id": "27870-g18aznfm"
+  "updated_at": "2026-10-10T23:38:06Z",
+  "write_id": "10909-sppzf2vr",
+  "released_at": "2026-10-10T23:38:06Z"
 }
