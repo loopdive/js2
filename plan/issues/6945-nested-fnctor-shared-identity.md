@@ -1,7 +1,7 @@
 ---
 id: 6945
 title: "A function declaration nested in a helper is ONE shared function object across calls — `function Inheriter(){}; Inheriter.prototype = p; new Inheriter()` inside `inherits()` aliases every caller's prototype (Octane deltablue)"
-status: in-progress
+status: wont-fix
 sprint: current
 created: 2026-10-10
 updated: 2026-10-10
@@ -22,8 +22,6 @@ loc-budget-allow:
   # them instead of duplicating the wrapper layout.
   - src/codegen/statements/nested-declarations.ts
   - src/codegen/closures/method-trampolines.ts
-import-cycles-allow:
-  - largestSccSize: 704 # 2026-10-10 (#6945): statements/nested-fnctor-activation.ts, split out of nested-declarations.ts to keep that file and hoistFunctionDeclarations inside their budgets, joins the codegen SCC (called from nested-declarations.ts, uses closures/method-trampolines.ts closureAllocInstrs / ensureFuncClosureSingleton)
 func-budget-allow:
   # 2026-10-10 (#6945): the one-line per-activation binding hook.
   - src/codegen/statements/nested-declarations.ts::hoistFunctionDeclarations
@@ -220,3 +218,13 @@ pass on head; controls (top-level identity on gc + standalone; a call-only
 nested declaration allocates no closure) pass on both; the 5 standalone
 positives are `it.todo`. Octane `deltablue` gc: `run(1) -> 1` (was
 `addConstraint is not a function`).
+
+## Closed — host-lane half dropped (2026-10-10)
+
+`wont-fix`. The project lead is sunsetting the JS host (gc) lane; only
+`--target standalone` is relevant (`.claude/memory/project_standalone_only_js_host_sunset.md`).
+The per-activation function-object fix above was gc-only and was reverted from
+PR https://github.com/loopdive/js2/pull/6624 before merge; its evidence log is
+kept. The standalone defect continues as #6951, which per its plan also makes a
+per-activation closure unnecessary on standalone. The budget grants above
+became unused with the revert.

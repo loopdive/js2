@@ -888,31 +888,10 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
  * recovery after this returns.
  */
 /** (#4437) Narrow a singleton's optional metadata pair into the emit argument. */
-export function fnMetaAllocOf(
-  singleton: FuncClosureSingleton,
-): { allocStructTypeIdx: number; metaInit: Instr[] } | undefined {
+function fnMetaAllocOf(singleton: FuncClosureSingleton): { allocStructTypeIdx: number; metaInit: Instr[] } | undefined {
   return singleton.allocStructTypeIdx !== undefined && singleton.metaInit !== undefined
     ? { allocStructTypeIdx: singleton.allocStructTypeIdx, metaInit: singleton.metaInit }
     : undefined;
-}
-
-/** One fresh closure wrapper for a function value, as an `externref`. */
-export function closureAllocInstrs(
-  trampolineFuncIdx: number,
-  structTypeIdx: number,
-  arity: number,
-  constructible: boolean,
-  meta: { allocStructTypeIdx: number; metaInit: Instr[] } | undefined,
-): Instr[] {
-  return [
-    { op: "ref.func", funcIdx: trampolineFuncIdx },
-    { op: "i32.const", value: arity }, // (#3673) $arity
-    closureBagInitInstr(), // (#4241) $bag
-    ...(constructible ? ([{ op: "i32.const", value: 1 }] satisfies Instr[]) : []),
-    ...(meta ? meta.metaInit : []),
-    { op: "struct.new", typeIdx: meta ? meta.allocStructTypeIdx : structTypeIdx },
-    { op: "extern.convert_any" },
-  ];
 }
 
 function emitLazyClosureCacheAccess(
@@ -926,7 +905,13 @@ function emitLazyClosureCacheAccess(
   meta?: { allocStructTypeIdx: number; metaInit: Instr[] },
 ): void {
   const initBody: Instr[] = [
-    ...closureAllocInstrs(trampolineFuncIdx, structTypeIdx, arity, constructible, meta),
+    { op: "ref.func", funcIdx: trampolineFuncIdx },
+    { op: "i32.const", value: arity }, // (#3673) $arity
+    closureBagInitInstr(), // (#4241) $bag
+    ...(constructible ? ([{ op: "i32.const", value: 1 }] satisfies Instr[]) : []),
+    ...(meta ? meta.metaInit : []),
+    { op: "struct.new", typeIdx: meta ? meta.allocStructTypeIdx : structTypeIdx },
+    { op: "extern.convert_any" },
     { op: "global.set", index: cacheGlobalIdx },
   ];
   fctx.body.push({ op: "global.get", index: cacheGlobalIdx });
