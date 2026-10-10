@@ -2683,21 +2683,21 @@
   },
   {
     "edition": "ES2023",
-    "pass": 177,
-    "fail": 157,
+    "pass": 190,
+    "fail": 144,
     "ce": 0,
     "skip": 0,
     "total": 334,
-    "pct": 53,
+    "pct": 57,
     "features": [
       {
         "name": "change-array-by-copy",
-        "pass": 60,
-        "fail": 72,
+        "pass": 73,
+        "fail": 59,
         "ce": 0,
         "skip": 0,
         "total": 132,
-        "pct": 45
+        "pct": 55
       },
       {
         "name": "TypedArray",
@@ -2764,12 +2764,12 @@
       },
       {
         "name": "exponentiation",
-        "pass": 0,
-        "fail": 7,
+        "pass": 4,
+        "fail": 3,
         "ce": 0,
         "skip": 0,
         "total": 7,
-        "pct": 0
+        "pct": 57
       },
       {
         "name": "resizable-arraybuffer",
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4607,
+    "pass": 4606,
     "fail": 186,
-    "ce": 128,
+    "ce": 129,
     "skip": 0,
     "total": 4921,
     "pct": 94,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4504,
+        "pass": 4503,
         "fail": 105,
-        "ce": 2,
+        "ce": 3,
         "skip": 0,
         "total": 4611,
         "pct": 98

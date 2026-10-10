@@ -839,7 +839,7 @@
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 2494,
+      "passCount": 2507,
       "totalCount": 3161,
       "editionSpread": [
         {
@@ -879,7 +879,7 @@
         },
         {
           "edition": "ES2023",
-          "pass": 81,
+          "pass": 94,
           "total": 131
         },
         {
@@ -1322,7 +1322,7 @@
         "built-ins/Array/prototype/toReversed",
         "built-ins/Array/prototype/toSpliced"
       ],
-      "passCount": 60,
+      "passCount": 73,
       "totalCount": 132
     },
     {
@@ -1564,12 +1564,12 @@
     {
       "name": "Temporal",
       "testCategories": ["built-ins/Temporal"],
-      "passCount": 4501,
+      "passCount": 4500,
       "totalCount": 4603,
       "editionSpread": [
         {
           "edition": "ES2026",
-          "pass": 4501,
+          "pass": 4500,
           "total": 4603
         }
       ]
