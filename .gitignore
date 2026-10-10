@@ -61,6 +61,8 @@ website/public/benchmarks/results/loadtime/binaryen.js
 .codex/symphony/
 .codex/dispatch/
 .test262-cache
+# (#874) pinned Octane sources, fetched by benchmarks/octane/fetch.mjs — never committed (mixed licenses incl. GPL-2)
+.octane-cache/
 output/
 examples/native-messaging/out/
 scripts/compiler-bundle.mjs

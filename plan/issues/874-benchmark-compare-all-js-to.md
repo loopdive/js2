@@ -395,3 +395,96 @@ Kraken subtests; startup / binary-size / RSS dimensions (the JSON schema has
 room: `binaryBytes` now, the rest later); fixing any of the nine js2
 failures (each is its own codegen issue — richards first); Javy/StarlingMonkey/
 JAWSM lanes; publishing to the website; CI.
+
+## Octane harness slice — implementation notes (2026-10-10)
+
+Implemented per the plan above in `benchmarks/octane/` (`manifest.json`,
+`fetch.mjs`, `driver.mjs`, `common.mjs`, `run.mjs`, `worker-{node,js2,porffor}.mjs`,
+`README.md`), `.gitignore` (`.octane-cache/`) and `package.json`
+(`benchmark:octane`, `benchmark:octane:fetch`). No `src/` change, no CI.
+`fetch.mjs` verified all 11 pinned hashes on this container. Deviations from
+the plan, and why:
+
+- **Setup once / TearDown once, not per call.** The plan's epilogue wrapped
+  every `octane_run(reps)` in Setup…TearDown. box2d's TearDown sets
+  `Box2D = null`, so the second call (calibration, warm-up, samples) died with
+  "Cannot read properties of null (reading 'Common')" even on node. Octane's own
+  RunStep does ResetRNG → Setup → many runs → TearDown, so the epilogue now
+  sets up lazily inside the first call and exports `octane_teardown()`, which
+  every worker calls after the samples (a throw there is a `runtime-error`,
+  phase `teardown`).
+- **Calibration discards the first call and takes min-of-2.** Without that,
+  splay / regexp / earley-boyer / box2d calibrated to `reps = 1` because the
+  first call carried Setup and JIT tier-up.
+- **Crypto shim list extended** to every sloppy implicit global in crypto.js
+  (`nValue … coeffValue`, alongside the planned `setupEngine`). With only
+  `setupEngine` declared, both js2 lanes stopped at `ReferenceError: nValue is
+  not defined` — same class, same rule, listed in `manifest.json` `preludeVars`.
+- **Two timeouts.** `--timeout` (compile + instantiate, default 900 s) and
+  `--run-timeout` (default 180 s, armed when the worker prints its READY line).
+  crypto/gc now gets past init and does not finish 22 reps (node: ~38 ms) in
+  180 s; a single budget would have spent 900 s per such row.
+- **Init-phase Wasm exceptions are reported as opaque, with the reason.** A
+  throw from the module's start function leaves no instance, so `__exn_tag`
+  is unreachable; the row says so instead of `[object WebAssembly.Exception]`.
+- **Tamper self-test** (`--tamper`, manifest `tamper` snippet, richards only):
+  node reports `wrong-result` ("Error during execution: queueCount = 2322…"), so
+  a wrong answer cannot score.
+- The plan's step 6 (allocate an id for the richards codegen issue) is left to
+  the coordinator; candidates are listed below.
+
+Results table (all 45 rows + 6 excluded): `benchmarks/octane/README.md`
+§ "Latest committed results". Raw JSON stays gitignored
+(`benchmarks/results/octane-latest.json`).
+
+## Findings — js2 failures (run 2026-10-10T07:28Z, compiler 837fdb3105)
+
+Every row reproduces with
+`pnpm run benchmark:octane -- --only <bench> --lanes <lane>`; the exact driver
+is written to `.tmp/octane/<bench>.module.js` and the binary to
+`.tmp/octane/<bench>.<lane>.wasm`. **Driver line L = bench-file line L − 392**
+(1 prelude line + 390 lines of base.js + separator).
+
+| bench | lane | status | error (driver line:col → bench line) |
+| --- | --- | --- | --- |
+| richards | gc | runtime-error | `TypeError: Cannot access property on null or undefined at 925:3` → richards.js:533 `next.link = this` in `Packet.prototype.addTo` |
+| richards | standalone | runtime-error | `RuntimeError: dereferencing a null pointer` in `__fnctor_TaskControlBlock_new` |
+| deltablue | gc | runtime-error | `TypeError: addConstraint is not a function` (method added through `Object.defineProperty(Object.prototype, "inheritsFrom", …)` prototype rewiring) |
+| deltablue | standalone | runtime-error | `TypeError: called value is not a function` |
+| crypto | gc | skipped (run timeout) | compiles (5.8 s, 317 KB), instantiates, then does not finish 22 reps in 180 s (node: ~38 ms) — hang or ≥ 4000× slowdown |
+| crypto | standalone | runtime-error | `RuntimeError: dereferencing a null pointer` in `rng_get_byte` (crypto.js:1430, `if (rng_state == null) { … rng_state = prng_newstate(); rng_state.init(…)`) |
+| raytrace | gc | runtime-error (init) | opaque Wasm exception from top-level code (Prototype-style `Class.create` / `Object.extend` for-in copy run at load time — suspected, not bisected) |
+| raytrace | standalone | compile-error | `'__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (#1472 Phase B)` |
+| navier-stokes | gc | runtime-error | `Cannot access property on null or undefined at 538:39` → navier-stokes.js:146 col 39 = `x[1]` read in `set_bnd` (writes to `x` on the lines above succeed) |
+| navier-stokes | standalone | runtime-error | `TypeError: uiCallback is not a function` (navier-stokes.js:322/350/369 — closure-captured `var uiCallback` reassigned by `setUICallback`) |
+| splay | gc + standalone | runtime-error | `Error: Key not found: 0.16…` — splay tree keyed by `Math.random()` doubles; lookup after insert misses (numeric key compare / RNG replacement) |
+| regexp | gc + standalone | runtime-error | `Cannot access property on null or undefined at 528:24` → regexp.js:136 `Exec(re0, s0[i])` (closure-scoped `s0` from `computeInputVariants`) |
+| earley-boyer | gc + standalone | invalid-wasm | `sc_jsNew`: `local.tee[0] expected (ref null N), found local.get of type i32` (earley-boyer.js:1867 — `arguments.length` + direct `eval("new c(…)")`) |
+| box2d | gc | invalid-wasm | `__closure_879`: `extern.convert_any[0] expected anyref, found global.get of type i32`; compile 87 s, 1.65 MB |
+| box2d | standalone | runtime-error (init) | opaque Wasm exception from top-level code; compile 257 s, 10.9 MB |
+| all 9 | linear | compile-error | `Unknown property assignment: .name` (constructor-function `this.x = …` in base.js `Benchmark`) — earley-boyer instead: `Octal escape sequences are not allowed` |
+
+### Candidate follow-up codegen issues (ids to be allocated by the coordinator)
+
+1. **Null check passes, field store traps** — richards gc/standalone and crypto
+   standalone (`x == null` reads non-null, the next `x.f = …` / constructor
+   sees null). Blocker for the first js2 Octane score (Richards). Planner's
+   bisect: `.tmp/octane-probe4.mjs` in the planning worktree.
+2. **Invalid Wasm: i32 where a ref is expected** — earley-boyer `sc_jsNew`
+   (`local.tee`) and box2d `__closure_879` (`extern.convert_any` on an i32
+   global). Validator-level codegen bugs; likely two distinct coercion gaps.
+3. **Dynamic prototype methods not callable** — deltablue
+   (`Object.defineProperty(Object.prototype, …)` + `inheritsFrom` rewiring).
+4. **Closure-captured reassigned `var` reads stale/null** — navier-stokes
+   standalone `uiCallback`, regexp `s0` (both lanes), possibly navier-stokes gc.
+5. **Module-init throws on raytrace (gc) and box2d (standalone)** — bisect the
+   top-level statement; plus a harness-side wish: an export to decode a start-
+   function exception (or run top-level code from an exported init function).
+6. **splay: `Key not found`** — Math.random-keyed splay tree misses lookups.
+7. **crypto gc: no completion in 180 s** — hang vs. pathological slowdown in
+   the BigInteger (`am3`, 28-bit digit) path.
+8. **raytrace standalone: `__get_builtin` unsupported** — already tracked as
+   #1472 Phase B; link, do not duplicate.
+9. **linear backend: constructor-function property assignment** (`.name`)
+   blocks all nine — a linear-backend scope question, not a bug, until the
+   backend claims sloppy constructor functions.
