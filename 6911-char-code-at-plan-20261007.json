@@ -2,10 +2,11 @@
   "id": "6911",
   "slice": "char-code-at-plan-20261007",
   "assignee": "ttraenkler/codex-linear-b-char-code-at-astra-20261007",
-  "requested_by": "ttraenkler/codex-linear-b-char-code-at-astra-20261007",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6911-linear-char-code-at-provider-20261007",
   "claimed_at": "2026-10-07T15:39:01Z",
-  "updated_at": "2026-10-07T15:39:01Z",
-  "write_id": "90241-q8kf8hso"
+  "updated_at": "2026-10-10T23:39:25Z",
+  "write_id": "14060-g55uibwk",
+  "released_at": "2026-10-10T23:39:25Z"
 }
