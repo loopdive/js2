@@ -1,7 +1,8 @@
 ---
 id: 6912
 title: "S3-m: the twelve Array.prototype members still refused as callable VALUES on the native regime and standalone (70 rows, 46 of them host passes)"
-status: ready
+status: in-progress
+assignee: ttraenkler/opus-6912
 created: 2026-10-07
 updated: 2026-10-07
 priority: high
@@ -15,6 +16,11 @@ goal: architecture
 sprint: current
 parent: 5385
 related: [6709, 6651, 6750, 6708, 3098]
+loc-budget-allow:
+  # 2026-10-07 (#6912): routing lines for the member closure bodies; the bodies live in src/codegen/array/
+  - src/codegen/array-object-proto.ts
+import-cycles-allow:
+  - largestSccSize: 703 # 2026-10-07, re-based on main 699 2026-10-09 (#6912): array/array-search-proto-value.ts (PR A), array/array-generic-value-bodies.ts (PR B) array/array-copy-methods-value.ts (PR C) and array/array-sort-value.ts (PR D) join the codegen SCC (called from array-object-proto.ts, using shared.js coerceType/ensureLateImport, like array-fill-proto-value.ts); the pure scan core array/array-search-core.ts stays outside it
 ---
 
 # #6912 — finish the array-member closure table
@@ -64,3 +70,97 @@ two or three members is fine; `.length` from `nativeClosureMeta`.
       `undefined`, which counts as present).
 - [ ] Default `gc` byte-identical; standalone high-water floor moves up only.
 - [ ] `check:edition-ratchet --compare` reports no `pass → not-pass` in ES2023.
+
+## Progress
+
+### PR A — `indexOf`, `lastIndexOf`, `includes` (2026-10-07)
+
+- Extracted the AST-free core of the array-like search out of the direct
+  borrow `compileArrayLikePrototypeSearch` (array-prototype-borrow.ts) into
+  `src/codegen/array/array-search-core.ts` (fromIndex clamp, default start,
+  HasProperty-gated scan). The direct `.call` borrow now emits through it
+  (byte-identical: same instructions, same local order), and the new callable
+  VALUE body (`src/codegen/array/array-search-proto-value.ts`) runs the same
+  core, so the two spellings cannot drift.
+- The value closure takes the variadic ABI on the native regime only; the
+  argument-vector unpack was factored out of #6709's reduce body
+  (`emitVariadicArgsUnpack`, array-reduce-proto-value.ts) and is shared.
+  `lastIndexOf`'s fromIndex is presence-tested on `argc` (an explicit
+  `undefined` is present → n = 0). len = 0 returns before fromIndex is
+  converted (§23.1.3.17 step 3); fromIndex goes through the coercion engine
+  (observable `valueOf`).
+- `includes` (1 row) rides along because it shares the core.
+- Deviation from the plan text: no `compileArray<member>FromVecLocal` typed-vec
+  core was written. The rows are array-LIKE receivers; the matching direct
+  lowering is the array-like borrow, and that is the one now shared. The
+  typed-vec `arr.indexOf(x)` fast path is a different receiver class and was
+  left untouched.
+- Default `gc` and `wasi`: probe sha256 identical base vs after
+  (`.tmp/probe-sha.mjs`: indexOf/lastIndexOf/includes `.call` borrows, values,
+  reduce value, typed-vec indexOf/lastIndexOf).
+
+### PR B — `pop`, `shift`, `toString` (2026-10-07)
+
+- `src/codegen/array/array-generic-value-bodies.ts`: spec-literal bodies on
+  the dynamic array-like substrate (`__extern_length` / `__extern_get_idx` /
+  `__extern_has_idx` / `__extern_set_strict` / `__delete_property`). Every
+  Set is Set(O, P, V, true); every delete is DeletePropertyOrThrow (a `false`
+  from `__delete_property` throws a TypeError). `shift` preserves holes.
+- These members take no arguments, so their closures keep the fixed ABI.
+  `pop`/`shift` were missing from `PROTO_METHOD_LENGTH` and had picked up the
+  table's default of 1. They now have their spec `.length` of 0, which also
+  drops the unused argument slot from their native closures.
+- `toString` (§23.1.3.36): `Get(O, "join")`; if it is callable, call it with
+  no arguments; otherwise use `Object.prototype.toString` (the minted
+  `__object_proto_to_string_runtime` classifier). Residual workaround: a dynamic
+  `vec["join"]` read does not see the inherited `Array.prototype.join`
+  (measured: `typeof ([1,2] as any)[k]` with `k = "join"` is not `"function"`
+  on standalone). A real Array whose `join` read misses is therefore joined
+  natively with the default separator (`prepareArrayLikeDefaultJoin`,
+  array-like-native.ts), which is what the inherited method does. An Array
+  whose `Array.prototype.join` was REPLACED is not observed on that path. The
+  missing inherited-method read is a separate gap and is not this issue's.
+- No direct-call core to share: `arr.pop()` / `arr.shift()` lower against the
+  typed vec, a different receiver class, and there is no array-like borrow
+  arm for these members. The closure is the only array-like lowering.
+- Default `gc` / `wasi` probe sha256 identical.
+
+### PR C — `toReversed`, `with`, `toSpliced`, `copyWithin` (2026-10-09)
+
+- `src/codegen/array/array-copy-methods-value.ts`: the ES2023
+  change-array-by-copy members read the array-like receiver through
+  `__extern_length` / `__extern_get_idx` and build the result as the native
+  `$ObjVec` (`__objvec_new` / `__objvec_push`), the same result carrier as the
+  `slice` / `splice` producers. ArrayCreate's length check (RangeError above
+  2^32-1) runs before any element is read. Arguments are converted by the
+  coercion engine.
+- `with` / `toSpliced` / `copyWithin` take the variadic ABI. In `toSpliced`, a
+  missing start means skip 0, start alone means skip to the end, and an explicit
+  `undefined` skipCount is present (it converts to 0). A new length above
+  2^53-1 is a TypeError. `VariadicArgs` gained `argAtDynamic` for the items loop.
+- `copyWithin` delegates to the existing `__arrprod_copyWithin(recv, args)`
+  helper (#6651 H6). That helper is the one shared core for this member; the
+  Proxy-receiver borrow already routes through it.
+- `toReversed` / `toSpliced` get their spec `.length` (0 / 2) in
+  `PROTO_METHOD_LENGTH`.
+- `toSorted` / `sort` are not in this PR: they need a comparator call and a sort
+  on the array-like, which is a separate slice.
+
+### PR D — `sort`, `toSorted` (2026-10-10)
+
+- `src/codegen/array/array-sort-value.ts` implements SortIndexedProperties on
+  the array-like substrate, in spec order:
+  - A comparefn that is neither undefined nor callable is a TypeError, raised
+    before ToObject.
+  - `toSorted` runs ArrayCreate's length check first.
+  - `sort` skips holes (HasProperty); `toSorted` reads through them.
+  - The sort itself is a stable insertion sort over a WasmGC externref array.
+    SortCompare puts undefined last without calling comparefn. The comparefn
+    result goes through ToNumber, and NaN counts as +0. Without a comparefn,
+    values compare by `__str_compare` on their ToString forms.
+  - `sort` writes the result back with Set(O, k, v, true), then deletes
+    `O[itemCount .. len)` with DeletePropertyOrThrow.
+- The comparefn is called through `__apply_closure(fn, undefined, $ObjVec[x, y])`.
+- Both members keep the fixed ABI with `.length` 1. An omitted comparator and an
+  explicit `undefined` behave the same, so presence does not matter here.
+

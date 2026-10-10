@@ -2831,6 +2831,11 @@
       "layer": "legacy-linear"
     },
     {
+      "path": "src/codegen-linear/runtime/string-slice.ts",
+      "state": "unmigrated",
+      "layer": "legacy-linear"
+    },
+    {
       "path": "src/codegen-linear/simd.ts",
       "state": "unmigrated",
       "layer": "legacy-linear"
@@ -3153,6 +3158,46 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/array/array-search-core.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure instruction builders for the array-like search scan; move to the backend once the late-import funcIdx resolution is a backend service."
+    },
+    {
+      "path": "src/codegen/array/array-search-proto-value.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate context-bound argument-vector unpacking and late-import registration from the shared array-like search core."
+    },
+    {
+      "path": "src/codegen/array/array-generic-value-bodies.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate context-bound late-import registration from the reusable array-like pop/shift/toString body construction."
+    },
+    {
+      "path": "src/codegen/array/array-copy-methods-value.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate context-bound argument coercion and late-import registration from the reusable change-array-by-copy body construction."
+    },
+    {
+      "path": "src/codegen/array/array-sort-value.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate context-bound late-import registration and comparator coercion from the reusable array-like sort body construction."
     },
     {
       "path": "src/codegen/array/array-fill-proto-value.ts",
@@ -4356,6 +4401,14 @@
     },
     {
       "path": "src/codegen/closures/closure-header-layout.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/closures/closure-type-sources.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",

@@ -27,7 +27,7 @@ Fable plans in `plan/issues`, Opus implements in isolated worktrees, C's Opus co
 
 Also: an independent review of A's #6597 (merged).
 
-**C currently holds no claims and has no open PRs.**
+**C holds the `874:octane-harness` claim (2026-10-10). Open docs PR #6608 carries this handoff and the 6934–6936 plans.**
 
 ## Open asks / next candidates (none claimed yet)
 
@@ -37,6 +37,17 @@ Asked A in https://github.com/loopdive/js2/pull/6583#issuecomment-6076900457 whi
 2. **Standalone loose `==` "illegal cast" trap.** On `--target standalone`, `o == 1` traps when `o` is a host object passed through `any` and the result is used. Dead-code removal hid it until #6921. Reproduction: see the "Implementation findings" section of `plan/issues/6921-ir-middle-end-pass-correctness.md`. It is in WasmGC lowering, so it is A's scope; it is not filed as an issue yet.
 
 B's stack (#6572, #6577, #6583, #6590) can now retarget geometry imports to the shared contract; that is B's work, not C's.
+
+## Follow-ups filed 2026-10-10 (NightMonkey review)
+
+Chris Fallin's NightMonkey (VMIL 2026) was reviewed in `plan/log/nightmonkey-analysis.md`. Verdict: we do not adopt its IR or code, and we borrow ideas only. The repo has no license, and its contract differs: an embedded SpiderMonkey, linear memory, and bytecode-level codegen. TS types remain hints, not facts (existing policy). New plans, all needing Session A's acknowledgement before implementation:
+
+- `plan/issues/6934-ir-optimistic-track-runtime-fallback.md`: a design spike for a guarded optimistic track plus a boxed generic track, replacing compile-time demotion.
+- `plan/issues/6935-ir-capped-points-to-heap-lattice.md`: an alloc-site < class < union-find region < any heap lattice, as an extension of `alloc-registry`.
+- `plan/issues/6936-build-time-module-init-evaluation.md`: compile-time evaluation of module init to seed the analyses.
+- #874, Octane slice (`874:octane-harness`, claimed by C): an Octane harness comparing node, js2 on the host (gc) target, and js2 standalone, as the measurement base for the three plans above.
+
+The standalone loose-`==` trap from #6921 was filed separately as issue 6931 (PR #6609), not by C.
 
 ## Process rules learned the hard way
 

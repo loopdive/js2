@@ -281,3 +281,35 @@ Regime npm-compat lane expected after the next refresh: clsx, cookie,
 moment, hono, redux, acorn, react measured; prettier pending its `-O4`;
 marked and lit measured since 10-06. S6 (#6708) re-evaluation waits on the
 next nightly that carries #6748, #6882 and #6898.
+
+## 2026-10-08 → 10-10 — second fan-out round
+
+The Opus weekly limit killed three implementers on 10-08; they were resumed
+by agent id after the 10-09 23:00 reset (`SendMessage` to the raw id resumes
+with context intact; a name no longer resolves after a failure).
+
+| issue | PR | state at time of writing | result |
+| --- | --- | --- | --- |
+| #6881 legacy `__js_array_*` leak | #6607 | **merged** | the `includes` arm sent eval-widened externref receivers to the host bridge; regime now takes the native loop. Filed **#6930**: the linked-oracle + native-first worker combination fails every row (`harnessProviderCompileOptions` drops `semanticProviders`) |
+| #6912 A–D array members as callable values | #6594 **merged** (B, carried A; A #6592 closed as superseded), #6610 (C), #6611 (D) open | twelve members covered; per-member tables being posted by the implementer |
+| #6913 `arguments` extras lost with a function expando | #6612 open | a function expression overwrote the per-signature wrapper type's closure facts; new `closures/closure-type-sources.ts`; was wrong code on gc too |
+| #6898 #3418 elision re-keyed to the regime | #6588 **draft**, CLEAN | 321-sample 285 → 288; `map`/`filter` array-like fixes inside; waits on #6612, then un-draft |
+| #6930 linked harness provider under the regime | (in flight, opus-6930) | |
+
+Process facts:
+- **The pre-push LOC hook is broken for every worktree push**: it runs the
+  gate in `CLAUDE_PROJECT_DIR` = `/Users/thomas/Code/js2`, whose checkout sits
+  on a months-old `main` with 133 dirty files, so it flags god-files nobody
+  touched. The lead pushes agents' refs from this worktree (the hook passes
+  here); implementers must NOT use `LOC_BUDGET_SKIP=1`. Needs the stakeholder:
+  clean/sync that checkout or point the hook at `$PWD`.
+- The husky pre-push suite's `issue-3765` numeric-local parity test has a
+  35 s timeout and takes 40–100 s under load 50–400; a push that fails only
+  there is load noise (A/B on 10-10: the #6913 branch ran it in 16.7 s vs
+  49 s on main). Retry rather than diagnose.
+- Background shell jobs that share this worktree queue behind each other for
+  up to an hour; chain pushes in ONE sequential job.
+- Nightly 37596924980 (10-07): regime 41,816 vs host 39,700; ES2026 +4,228;
+  remaining ratcheted regressions ES5 −90 / ES2016 −3 / ES2023 −5, all owned
+  by the slices above. S6 (#6708) item 1 met; items 2–3 pending these merges
+  and the next refresh; item 4 (perf) still needs Node ≥ 24.
