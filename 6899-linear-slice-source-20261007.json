@@ -2,10 +2,11 @@
   "id": "6899",
   "slice": "linear-slice-source-20261007",
   "assignee": "ttraenkler/codex-linear-b-slice-sol61-20261007",
-  "requested_by": "ttraenkler/codex-linear-b-slice-sol61-20261007",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6899-linear-slice-source-20261007",
   "claimed_at": "2026-10-07T13:10:53Z",
-  "updated_at": "2026-10-07T13:10:53Z",
-  "write_id": "32059-6deu68vp"
+  "updated_at": "2026-10-10T23:37:43Z",
+  "write_id": "9318-70uva09i",
+  "released_at": "2026-10-10T23:37:43Z"
 }
