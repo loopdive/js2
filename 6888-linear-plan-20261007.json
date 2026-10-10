@@ -2,10 +2,11 @@
   "id": "6888",
   "slice": "linear-plan-20261007",
   "assignee": "ttraenkler/codex-linear-b-astra-plan-20261007",
-  "requested_by": "ttraenkler/codex-linear-b-astra-plan-20261007",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6888-linear-spec-20261007",
   "claimed_at": "2026-10-07T09:04:45Z",
-  "updated_at": "2026-10-07T09:04:45Z",
-  "write_id": "22703-3p7d2b9h"
+  "updated_at": "2026-10-10T23:34:44Z",
+  "write_id": "85944-7u17q49p",
+  "released_at": "2026-10-10T23:34:44Z"
 }
