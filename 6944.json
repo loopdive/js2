@@ -1,0 +1,12 @@
+{
+  "id": "6944",
+  "assignee": "ttraenkler/claude-session-c-octane-host-fnctor-proto-walk-struct-ancestors-20261010",
+  "requested_by": "ttraenkler/claude-session-c-octane-host-fnctor-proto-walk-struct-ancestors-20261010",
+  "status": "in-progress",
+  "branch": "claude/octane-dynamic-objects",
+  "reserved_at": "2026-10-10T07:23:18Z",
+  "claimed_at": "2026-10-10T07:23:18Z",
+  "updated_at": "2026-10-10T07:23:18Z",
+  "write_id": "13292-6mo9l3ck",
+  "pr_scan": "degraded"
+}
