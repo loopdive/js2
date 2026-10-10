@@ -1,12 +1,11 @@
 {
   "id": "6905",
   "slice": "geometry-import-integration-plan-20261009",
-  "assignee": "ttraenkler/codex-linear-b-geometry-import-plan-astra-20261009",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
   "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
-  "status": "released",
+  "status": "in-progress",
   "branch": "codex/6905-linear-prepared-memory-plan-20261007",
-  "claimed_at": "2026-10-09T08:30:05Z",
-  "updated_at": "2026-10-10T23:38:13Z",
-  "write_id": "11262-byahkl0b",
-  "released_at": "2026-10-10T23:38:13Z"
+  "claimed_at": "2026-10-10T23:38:17Z",
+  "updated_at": "2026-10-10T23:38:17Z",
+  "write_id": "11421-srnuq9m3"
 }
