@@ -19,10 +19,16 @@ loc-budget-allow:
   # lockstep answer (reserved `__fnctor_<Name>` struct or dynamic); see
   # Implementation Notes. No smaller placement keeps it beside the anon lookup.
   - src/codegen/property-access.ts
+  # 2026-10-10 (#6938, coordinator-approved scope extension): +4 lines — the
+  # property-get guard that keeps a non-`this` `__fnctor_*` receiver off the
+  # field-auto-register arm (fixes the #3719 regression step 3 introduced).
+  - src/codegen/property-access-dispatch.ts
 func-budget-allow:
   # 2026-10-10 (#6938): +2 lines — the registration guard that stops the phantom
   # `__anon_N` struct (plan step 2). resolveWasmType shrank by 8 in the same change.
   - src/codegen/index.ts::ensureStructForType
+  # 2026-10-10 (#6938, coordinator-approved scope extension): +4 lines, same guard.
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
 origin: "2026-10-10 — Octane triage (Session C). richards.js is the first Octane benchmark that compiles but does not run on js2."
 ---
 
@@ -220,9 +226,17 @@ So step 3 answers in lockstep with `resolveWasmType` instead: a fnctor instance
 type resolves to the struct `resolveWasmType` lowers it to (reserved
 `__fnctor_<Name>` for an approved standalone fnctor; none on gc/non-approved).
 
-**Open — why this is not merge-ready:**
+**Scope extension (coordinator-approved 2026-10-10):**
+`property-access-dispatch.ts` `finalizeStructAndDynamicMemberGet` now skips the
+field-auto-register arm for a non-`this` `__fnctor_*` receiver
+(`fnctorProtoMemberRead`, beside the #2071 `foreignReturnReceiver` exclusion).
+Reason: it fixes the #3719 "reads a prototype method as a value" regression
+that step 3 introduced (item 1 below, now resolved). `this` receivers keep the
+existing widening behaviour.
 
-1. Regression vs base (standalone): `tests/issue-3719-new-assigned-to-binding.test.ts`
+**Remaining open (issue stays in-progress):**
+
+1. RESOLVED by the scope extension above. Was: regression vs base (standalone): `tests/issue-3719-new-assigned-to-binding.test.ts`
    "reads a prototype method as a value" (`var p; p = new Q(); p.inc ? 1 : 0` → 0).
    With a `__fnctor_Q` name, the property-GET path in
    `property-access-dispatch.ts` (~4704, the "auto-register missing field" arm)
@@ -245,6 +259,16 @@ gc throw → passes, standalone null-deref → #2 above. Related tests (238 file
 mentioning fnctor/anonTypeMap/ensureStructForType/1058): +4 head-only passes
 (#2608 ×3, #5162 ×1), −1 (#3719 above); #5195 skips are test262-file
 existence (`skipIf`), not code. Equivalence gate green (1748 pass, 22 known).
+
+Re-validation after the scope extension (2026-10-10,
+`plan/log/6938-evidence/related-tests-base-vs-head-after-guard.txt`): #3719
+"reads a prototype method as a value" passes again (its other two failures fail
+on base too); related set shows no pass→fail except #3921 "byte-identical when
+disabled", a 35 s timeout under box load that passes on rerun (21 s); #3523 and
+#4653 rows that differ between runs fail identically on base and head when run
+side by side. Remaining skip/pass differences are test262-file availability
+(`skipIf`). New 6938 tests 11/11; equivalence gate green (1748 pass, 22 known);
+all ratchet gates and typecheck green.
 
 ## Acceptance criteria
 
