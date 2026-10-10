@@ -4928,6 +4928,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/declarations/object-property-write-target.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "6878-object-property-write-target",
+      "nextBoundary": "Replace AST/oracle-dependent literal write-target discovery with a prepared binding/property identity contract."
+    },
+    {
       "path": "src/codegen/declarations/object-shape-widening.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
