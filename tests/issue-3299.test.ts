@@ -25,12 +25,7 @@ import {
   type IrType,
 } from "../src/ir/index.js";
 import { LinearEmitter } from "../src/ir/backend/linear-emitter.js";
-import type {
-  IrVecLowering,
-  LinearMemoryFieldLowering,
-  LinearObjectLowering,
-  LinearVecLowering,
-} from "../src/ir/backend/handles.js";
+import type { LinearMemoryFieldLowering, LinearObjectLowering, LinearVecLowering } from "../src/ir/backend/handles.js";
 import { PORFFOR_KIND_NAMES, porfforRendererOutputText, type PorfforNode } from "../src/ir/backend/porffor/compat.js";
 import { lowerIrModuleToPorffor } from "../src/ir/backend/porffor/integration.js";
 import { loadOptionalPorffor } from "../src/ir/backend/porffor/loader.js";
@@ -342,21 +337,12 @@ async function instantiateLinearProof(
     });
     const params = body.params.flatMap((param) => [...param.slots]);
     const results = body.results.flatMap((result) => [...result]);
-    const vecScratch = new Set(emitter.getVecScratchLocalIndices());
+    // #6920: generic lowering declares the vec construction scratch as i32; locals are used verbatim.
     const lowered: WasmFunction = {
       name: body.name,
       typeIdx: internFuncType(wasm, { kind: "func", params, results }),
       locals: body.locals.flatMap((local) =>
-        local.slots.map((type, slot) => {
-          const index =
-            params.length +
-            body.locals.slice(0, body.locals.indexOf(local)).reduce((n, item) => n + item.slots.length, 0) +
-            slot;
-          return {
-            name: slot === 0 ? local.name : `${local.name}$${slot}`,
-            type: vecScratch.has(index) ? ({ kind: "i32" } as const) : type,
-          };
-        }),
+        local.slots.map((type, slot) => ({ name: slot === 0 ? local.name : `${local.name}$${slot}`, type })),
       ),
       body: body.body,
       exported: body.exported,
@@ -385,14 +371,11 @@ function linearResolver(wasm: WasmModule, plan: LinearMemoryPlan, objectHelperId
     if (!found) throw new Error(`missing planned operation for site ${allocation.id as number}`);
     return found;
   };
-  const vec = (alloc?: AllocSiteId): IrVecLowering & LinearVecLowering => {
+  const vec = (alloc?: AllocSiteId): LinearVecLowering => {
     const layout = plan.layoutForVector(F64)!;
     const allocation = allocationFor(layout.id, alloc);
     return {
-      vecStructTypeIdx: 0,
-      lengthFieldIdx: 0,
-      dataFieldIdx: 0,
-      arrayTypeIdx: 0,
+      valueType: { kind: "i32" },
       elementValType: { kind: "f64" },
       linearMemory: {
         allocation,
@@ -451,10 +434,10 @@ function linearResolver(wasm: WasmModule, plan: LinearMemoryPlan, objectHelperId
         },
       };
     },
-    resolveVec(valType: ValType): IrVecLowering | null {
+    resolveVec(valType: ValType): LinearVecLowering | null {
       return valType.kind === "i32" ? vec() : null;
     },
-    resolveVecForElement(elementValType: ValType, alloc?: AllocSiteId): IrVecLowering | null {
+    resolveVecForElement(elementValType: ValType, alloc?: AllocSiteId): LinearVecLowering | null {
       return elementValType.kind === "f64" ? vec(alloc) : null;
     },
   };
