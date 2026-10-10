@@ -2,10 +2,11 @@
   "id": "6915",
   "slice": "advisory-parent-command-20261008",
   "assignee": "ttraenkler/codex-linear-b-advisory-command-sol61-20261008",
-  "requested_by": "ttraenkler/codex-linear-b-advisory-command-sol61-20261008",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6915-linear-append-plan-20261007",
   "claimed_at": "2026-10-08T21:01:47Z",
-  "updated_at": "2026-10-08T21:01:47Z",
-  "write_id": "80796-adzysol8"
+  "updated_at": "2026-10-10T23:40:52Z",
+  "write_id": "22840-nwzodxdy",
+  "released_at": "2026-10-10T23:40:52Z"
 }
