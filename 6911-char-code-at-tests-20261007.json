@@ -2,10 +2,11 @@
   "id": "6911",
   "slice": "char-code-at-tests-20261007",
   "assignee": "ttraenkler/codex-linear-b-char-code-at-tests-sol61-20261007",
-  "requested_by": "ttraenkler/codex-linear-b-char-code-at-tests-sol61-20261007",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6911-linear-char-code-at-tests-20261007",
   "claimed_at": "2026-10-07T15:56:35Z",
-  "updated_at": "2026-10-07T15:56:35Z",
-  "write_id": "48954-spdoxp5u"
+  "updated_at": "2026-10-10T23:39:40Z",
+  "write_id": "14729-v6ah15sr",
+  "released_at": "2026-10-10T23:39:40Z"
 }
