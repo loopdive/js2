@@ -2,10 +2,11 @@
   "id": "6915",
   "slice": "archive-transport-implementation-20261009",
   "assignee": "ttraenkler/codex-linear-b-archive-transport-sol61-20261009",
-  "requested_by": "ttraenkler/codex-linear-b-archive-transport-sol61-20261009",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6915-archive-transport-20261009",
   "claimed_at": "2026-10-09T07:52:33Z",
-  "updated_at": "2026-10-09T07:52:33Z",
-  "write_id": "62946-3169olpj"
+  "updated_at": "2026-10-10T23:41:00Z",
+  "write_id": "23487-9wr9g7lf",
+  "released_at": "2026-10-10T23:41:00Z"
 }
