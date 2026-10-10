@@ -1,12 +1,11 @@
 {
   "id": "6905",
   "assignee": "ttraenkler/codex-linear-b-prepared-memory-20261007",
-  "requested_by": "ttraenkler/codex-linear-b-prepared-memory-20261007",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "",
-  "reserved_at": "2026-10-07T13:55:38Z",
   "claimed_at": "2026-10-07T13:55:38Z",
-  "updated_at": "2026-10-07T13:55:38Z",
-  "write_id": "64168-17jzm5kj",
-  "pr_scan": "ok"
+  "updated_at": "2026-10-10T23:37:58Z",
+  "write_id": "10613-bs7hmf4g",
+  "released_at": "2026-10-10T23:37:58Z"
 }
