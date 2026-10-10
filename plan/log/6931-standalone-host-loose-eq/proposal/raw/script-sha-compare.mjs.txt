@@ -1,0 +1,23 @@
+// node .tmp/sha-compare.mjs base.tsv after.tsv out.tsv — per-binary base vs after sha256
+import { readFileSync, writeFileSync } from "fs";
+const load = (p) =>
+  new Map(
+    readFileSync(p, "utf8").trim().split("\n").slice(1).map((l) => {
+      const [name, target, ok, size, sha] = l.split("\t");
+      return [`${name}\t${target}`, { ok, size: +size, sha }];
+    }),
+  );
+const a = load(process.argv[2]);
+const b = load(process.argv[3]);
+const rows = ["name\ttarget\tbase_size\tafter_size\tdelta\tbase_sha256\tafter_sha256\tidentical"];
+const tally = {};
+for (const [k, v] of a) {
+  const w = b.get(k);
+  const same = w && v.sha === w.sha;
+  const target = k.split("\t")[1];
+  tally[target] ??= { identical: 0, changed: 0 };
+  tally[target][same ? "identical" : "changed"]++;
+  rows.push([k, v.size, w?.size, (w?.size ?? 0) - v.size, v.sha, w?.sha, same ? "yes" : "NO"].join("\t"));
+}
+writeFileSync(process.argv[4], rows.join("\n") + "\n");
+console.log(JSON.stringify(tally));

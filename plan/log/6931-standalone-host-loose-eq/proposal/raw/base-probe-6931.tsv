@@ -1,0 +1,175 @@
+program	target	kind	fn	arg	wasm	node	verdict
+ir	gc	irOutcomes	eqUsed:emitted+body eqStr:emitted+body neUsed:emitted+body isNull:unsupported strictOne:emitted+body <module-init>:non-executable
+ir	gc	scope	eqUsed	1	1	1	match
+ir	gc	scope	eqUsed	5	0	0	match
+ir	gc	scope	eqUsed	1.5	0	0	match
+ir	gc	scope	eqUsed	"1"	1	1	match
+ir	gc	scope	eqUsed	"x"	0	0	match
+ir	gc	scope	eqUsed	{}	0	0	match
+ir	gc	scope	eqUsed	{valueOf:()=>1}	1	1	match
+ir	gc	scope	eqUsed	null	0	0	match
+ir	gc	scope	eqUsed	undefined	0	0	match
+ir	gc	scope	eqUsed	true	1	1	match
+ir	gc	scope	eqStr	1	1	1	match
+ir	gc	scope	eqStr	5	0	0	match
+ir	gc	scope	eqStr	1.5	0	0	match
+ir	gc	scope	eqStr	"1"	1	1	match
+ir	gc	scope	eqStr	"x"	0	0	match
+ir	gc	scope	eqStr	{}	0	0	match
+ir	gc	scope	eqStr	{valueOf:()=>1}	1	1	match
+ir	gc	scope	eqStr	null	0	0	match
+ir	gc	scope	eqStr	undefined	0	0	match
+ir	gc	scope	eqStr	true	1	1	match
+ir	gc	scope	neUsed	1	0	0	match
+ir	gc	scope	neUsed	5	1	1	match
+ir	gc	scope	neUsed	1.5	1	1	match
+ir	gc	scope	neUsed	"1"	0	0	match
+ir	gc	scope	neUsed	"x"	1	1	match
+ir	gc	scope	neUsed	{}	1	1	match
+ir	gc	scope	neUsed	{valueOf:()=>1}	0	0	match
+ir	gc	scope	neUsed	null	1	1	match
+ir	gc	scope	neUsed	undefined	1	1	match
+ir	gc	scope	neUsed	true	0	0	match
+ir	gc	observe	isNull	1	0	0	match
+ir	gc	observe	isNull	5	0	0	match
+ir	gc	observe	isNull	1.5	0	0	match
+ir	gc	observe	isNull	"1"	0	0	match
+ir	gc	observe	isNull	"x"	0	0	match
+ir	gc	observe	isNull	{}	0	0	match
+ir	gc	observe	isNull	{valueOf:()=>1}	0	0	match
+ir	gc	observe	isNull	null	1	1	match
+ir	gc	observe	isNull	undefined	1	1	match
+ir	gc	observe	isNull	true	0	0	match
+ir	gc	observe	strictOne	1	1	1	match
+ir	gc	observe	strictOne	5	0	0	match
+ir	gc	observe	strictOne	1.5	0	0	match
+ir	gc	observe	strictOne	"1"	0	0	match
+ir	gc	observe	strictOne	"x"	0	0	match
+ir	gc	observe	strictOne	{}	0	0	match
+ir	gc	observe	strictOne	{valueOf:()=>1}	0	0	match
+ir	gc	observe	strictOne	null	0	0	match
+ir	gc	observe	strictOne	undefined	0	0	match
+ir	gc	observe	strictOne	true	0	0	match
+ir	standalone	irOutcomes	eqUsed:emitted+body eqStr:emitted+body neUsed:emitted+body isNull:unsupported strictOne:emitted+body <module-init>:non-executable
+ir	standalone	scope	eqUsed	1	1	1	match
+ir	standalone	scope	eqUsed	5	0	0	match
+ir	standalone	scope	eqUsed	1.5	THROW RuntimeError: illegal cast	0	TRAP
+ir	standalone	scope	eqUsed	"1"	THROW RuntimeError: illegal cast	1	TRAP
+ir	standalone	scope	eqUsed	"x"	THROW RuntimeError: illegal cast	0	TRAP
+ir	standalone	scope	eqUsed	{}	THROW RuntimeError: illegal cast	0	TRAP
+ir	standalone	scope	eqUsed	{valueOf:()=>1}	THROW RuntimeError: illegal cast	1	TRAP
+ir	standalone	scope	eqUsed	null	0	0	match
+ir	standalone	scope	eqUsed	undefined	THROW RuntimeError: illegal cast	0	TRAP
+ir	standalone	scope	eqUsed	true	THROW RuntimeError: illegal cast	1	TRAP
+ir	standalone	scope	eqStr	1	1	1	match
+ir	standalone	scope	eqStr	5	0	0	match
+ir	standalone	scope	eqStr	1.5	0	0	match
+ir	standalone	scope	eqStr	"1"	0	1	WRONG
+ir	standalone	scope	eqStr	"x"	0	0	match
+ir	standalone	scope	eqStr	{}	0	0	match
+ir	standalone	scope	eqStr	{valueOf:()=>1}	0	1	WRONG
+ir	standalone	scope	eqStr	null	0	0	match
+ir	standalone	scope	eqStr	undefined	0	0	match
+ir	standalone	scope	eqStr	true	0	1	WRONG
+ir	standalone	scope	neUsed	1	0	0	match
+ir	standalone	scope	neUsed	5	1	1	match
+ir	standalone	scope	neUsed	1.5	THROW RuntimeError: illegal cast	1	TRAP
+ir	standalone	scope	neUsed	"1"	THROW RuntimeError: illegal cast	0	TRAP
+ir	standalone	scope	neUsed	"x"	THROW RuntimeError: illegal cast	1	TRAP
+ir	standalone	scope	neUsed	{}	THROW RuntimeError: illegal cast	1	TRAP
+ir	standalone	scope	neUsed	{valueOf:()=>1}	THROW RuntimeError: illegal cast	0	TRAP
+ir	standalone	scope	neUsed	null	1	1	match
+ir	standalone	scope	neUsed	undefined	THROW RuntimeError: illegal cast	1	TRAP
+ir	standalone	scope	neUsed	true	THROW RuntimeError: illegal cast	0	TRAP
+ir	standalone	observe	isNull	1	0	0	match
+ir	standalone	observe	isNull	5	0	0	match
+ir	standalone	observe	isNull	1.5	0	0	match
+ir	standalone	observe	isNull	"1"	0	0	match
+ir	standalone	observe	isNull	"x"	0	0	match
+ir	standalone	observe	isNull	{}	0	0	match
+ir	standalone	observe	isNull	{valueOf:()=>1}	0	0	match
+ir	standalone	observe	isNull	null	1	1	match
+ir	standalone	observe	isNull	undefined	0	1	WRONG
+ir	standalone	observe	isNull	true	0	0	match
+ir	standalone	observe	strictOne	1	1	1	match
+ir	standalone	observe	strictOne	5	0	0	match
+ir	standalone	observe	strictOne	1.5	0	0	match
+ir	standalone	observe	strictOne	"1"	0	0	match
+ir	standalone	observe	strictOne	"x"	0	0	match
+ir	standalone	observe	strictOne	{}	0	0	match
+ir	standalone	observe	strictOne	{valueOf:()=>1}	0	0	match
+ir	standalone	observe	strictOne	null	0	0	match
+ir	standalone	observe	strictOne	undefined	0	0	match
+ir	standalone	observe	strictOne	true	0	0	match
+legacy	gc	irOutcomes	eqUsed:emitted+body eqStr:emitted+body ident:emitted+body viaStr:emitted+body viaBool:emitted+body viaObj:unsupported viaUndef:unsupported viaStrS:emitted+body exported:emitted+body exportedS:emitted+body <module-init>:non-executable
+legacy	gc	scope	exported	1	1	1	match
+legacy	gc	scope	exported	5	0	0	match
+legacy	gc	scope	exported	1.5	0	0	match
+legacy	gc	scope	exported	"1"	1	1	match
+legacy	gc	scope	exported	"x"	0	0	match
+legacy	gc	scope	exported	{}	0	0	match
+legacy	gc	scope	exported	{valueOf:()=>1}	1	1	match
+legacy	gc	scope	exported	null	0	0	match
+legacy	gc	scope	exported	undefined	0	0	match
+legacy	gc	scope	exported	true	1	1	match
+legacy	gc	scope	exportedS	1	1	1	match
+legacy	gc	scope	exportedS	5	0	0	match
+legacy	gc	scope	exportedS	1.5	0	0	match
+legacy	gc	scope	exportedS	"1"	1	1	match
+legacy	gc	scope	exportedS	"x"	0	0	match
+legacy	gc	scope	exportedS	{}	0	0	match
+legacy	gc	scope	exportedS	{valueOf:()=>1}	1	1	match
+legacy	gc	scope	exportedS	null	0	0	match
+legacy	gc	scope	exportedS	undefined	0	0	match
+legacy	gc	scope	exportedS	true	1	1	match
+legacy	gc	observe	viaStr	()	1	1	match
+legacy	gc	observe	viaBool	()	1	1	match
+legacy	gc	observe	viaObj	()	1	1	match
+legacy	gc	observe	viaUndef	()	0	0	match
+legacy	gc	observe	viaStrS	()	1	1	match
+legacy	gc	observe	ident	1	1	1	match
+legacy	gc	observe	ident	5	5	5	match
+legacy	gc	observe	ident	1.5	1.5	1.5	match
+legacy	gc	observe	ident	"1"	"1"	"1"	match
+legacy	gc	observe	ident	"x"	"x"	"x"	match
+legacy	gc	observe	ident	{}	{}	{}	match
+legacy	gc	observe	ident	{valueOf:()=>1}	{}	{}	match
+legacy	gc	observe	ident	null	null	null	match
+legacy	gc	observe	ident	undefined			match
+legacy	gc	observe	ident	true	true	true	match
+legacy	standalone	irOutcomes	eqUsed:unsupported eqStr:emitted+body ident:emitted+body viaStr:unsupported viaBool:unsupported viaObj:unsupported viaUndef:unsupported viaStrS:emitted+body exported:unsupported exportedS:emitted+body <module-init>:non-executable
+legacy	standalone	scope	exported	1	1	1	match
+legacy	standalone	scope	exported	5	0	0	match
+legacy	standalone	scope	exported	1.5	0	0	match
+legacy	standalone	scope	exported	"1"	0	1	WRONG
+legacy	standalone	scope	exported	"x"	0	0	match
+legacy	standalone	scope	exported	{}	0	0	match
+legacy	standalone	scope	exported	{valueOf:()=>1}	0	1	WRONG
+legacy	standalone	scope	exported	null	0	0	match
+legacy	standalone	scope	exported	undefined	0	0	match
+legacy	standalone	scope	exported	true	0	1	WRONG
+legacy	standalone	scope	exportedS	1	1	1	match
+legacy	standalone	scope	exportedS	5	0	0	match
+legacy	standalone	scope	exportedS	1.5	0	0	match
+legacy	standalone	scope	exportedS	"1"	0	1	WRONG
+legacy	standalone	scope	exportedS	"x"	0	0	match
+legacy	standalone	scope	exportedS	{}	0	0	match
+legacy	standalone	scope	exportedS	{valueOf:()=>1}	0	1	WRONG
+legacy	standalone	scope	exportedS	null	0	0	match
+legacy	standalone	scope	exportedS	undefined	0	0	match
+legacy	standalone	scope	exportedS	true	0	1	WRONG
+legacy	standalone	observe	viaStr	()	1	1	match
+legacy	standalone	observe	viaBool	()	1	1	match
+legacy	standalone	observe	viaObj	()	1	1	match
+legacy	standalone	observe	viaUndef	()	0	0	match
+legacy	standalone	observe	viaStrS	()	1	1	match
+legacy	standalone	observe	ident	1	1	1	match
+legacy	standalone	observe	ident	5	5	5	match
+legacy	standalone	observe	ident	1.5	1.5	1.5	match
+legacy	standalone	observe	ident	"1"	"1"	"1"	match
+legacy	standalone	observe	ident	"x"	"x"	"x"	match
+legacy	standalone	observe	ident	{}	{}	{}	match
+legacy	standalone	observe	ident	{valueOf:()=>1}	{}	{}	match
+legacy	standalone	observe	ident	null	null	null	match
+legacy	standalone	observe	ident	undefined			match
+legacy	standalone	observe	ident	true	true	true	match

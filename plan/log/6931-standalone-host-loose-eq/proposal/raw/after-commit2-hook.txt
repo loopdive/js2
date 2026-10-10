@@ -1,0 +1,33 @@
+[STARTED] Backing up original state...
+[COMPLETED] Backed up original state in git stash (aeab7de7)
+[STARTED] Running tasks for staged files...
+[STARTED] package.json — 1 file
+[STARTED] *.{ts,js,mjs} — 1 file
+[STARTED] *.json — 0 files
+[SKIPPED] *.json — no files
+[STARTED] prettier --write
+[COMPLETED] prettier --write
+[STARTED] biome lint --diagnostic-level=error --max-diagnostics=none --no-errors-on-unmatched
+[COMPLETED] biome lint --diagnostic-level=error --max-diagnostics=none --no-errors-on-unmatched
+[COMPLETED] *.{ts,js,mjs} — 1 file
+[COMPLETED] package.json — 1 file
+[COMPLETED] Running tasks for staged files...
+[STARTED] Applying modifications from tasks...
+[COMPLETED] Applying modifications from tasks...
+[STARTED] Cleaning up temporary files...
+[COMPLETED] Cleaning up temporary files...
+
+> @loopdive/js2@0.71.0 check:loc-budget /home/user/js2/.claude/worktrees/agent-a4022d934675184ae
+> node scripts/check-loc-budget.mjs
+
+
+LOC budget gate: OK — no unallowed growth in 3 changed src file(s) (base: merge-base(origin), net +112 LOC).
+
+> @loopdive/js2@0.71.0 check:func-budget /home/user/js2/.claude/worktrees/agent-a4022d934675184ae
+> node scripts/check-func-budget.mjs
+
+
+Function budget gate: OK — no unallowed growth in 3 changed src file(s) (base: merge-base(origin)).
+pre-commit: fast gates passed (lint-staged + LOC/function budgets); slow checks skipped (SKIP_SLOW_PRECOMMIT=1) — CI still runs them
+[proposal-6931-standalone-host-eq 4c1e8239] refactor(standalone): keep the #6931 refusal message module-private
+ 1 file changed, 1 insertion(+), 1 deletion(-)

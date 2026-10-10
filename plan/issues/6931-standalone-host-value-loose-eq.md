@@ -95,3 +95,17 @@ entry, or give it its own tag.
 - The legacy path's `exported("1")` gets the same decision.
 - `gc` output for both probes stays byte-identical.
 - Test through the public `compile()` API on both targets, with Node as oracle.
+
+## Private fix proposal (2026-10-10)
+
+A proposal patch, not applied to any source file, is in
+`plan/log/6931-standalone-host-loose-eq/proposal/`. The full measurements and
+open questions are in its `6931-proposal.md`.
+
+- **Root cause:** foreign values are tagged as strings, then
+  `ref.cast (ref $AnyString)` traps in `buildStringToNumberPrelude`.
+- **Fix:** on standalone, loose `==` with a host operand throws a deliberate
+  in-module TypeError.
+- **Verified unchanged:** gc output is byte-identical.
+
+A owns the lowering and decides whether it lands.

@@ -1,0 +1,2 @@
+JSON report written to /home/user/js2/.claude/worktrees/agent-a4022d934675184ae/.tmp/6931-out/after-related.json
+EXIT 1

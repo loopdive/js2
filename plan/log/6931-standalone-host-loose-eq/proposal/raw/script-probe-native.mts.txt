@@ -1,0 +1,22 @@
+import { compile } from "../src/index.js";
+import { buildImports, instantiateWasm } from "../src/runtime.js";
+const SRC = `function eqUsed(o: any): number { return o == 1 ? 1 : 0; }
+export function ident(o: any): any { return o; }
+export function viaStr(): number { return eqUsed("1"); }
+export function viaBool(): number { return eqUsed(true); }
+export function viaObj(): number { return eqUsed({ valueOf() { return 1; } }); }
+export function viaUndef(): number { return eqUsed(undefined); }
+export function exported(o: any): number { return eqUsed(o); }
+`;
+const r = await compile(SRC, { fileName: "probe2.ts", trackIrOutcomes: true, target: "standalone", emitWat: true });
+if (!r.success) { console.log("COMPILE FAIL", r.errors.map((e) => e.message)); process.exit(0); }
+console.log((r.irOutcomes ?? []).map((u: any) => `${u.displayName}:${u.kind}${u.irBodyEmitted ? "+body" : ""}`).join(" "));
+const imp = buildImports(r.imports, {}, r.stringPool);
+const { instance } = await instantiateWasm(r.binary, imp.env, imp.string_constants);
+const ex: any = instance.exports;
+const call = (f: () => unknown) => { try { return JSON.stringify(f()); } catch (e: any) { return `THROW ${e?.constructor?.name}: ${e?.message}`; } };
+for (const fn of ["viaStr", "viaBool", "viaObj", "viaUndef"]) console.log(`${fn}() = ${call(() => ex[fn]())}   (node: 1)`.replace("viaUndef() =", "viaUndef() =").replace(/\(node: 1\)$/, fn === "viaUndef" ? "(node: 0)" : "(node: 1)"));
+console.log(`exported("1") = ${call(() => ex.exported("1"))} (node: 1)`);
+console.log(`ident("x") roundtrip = ${call(() => ex.ident("x"))}`);
+console.log("imports:", r.imports.map((i: any) => `${i.module}.${i.name}`).join(", ") || "(none)");
+const wat = r.wat; const m = wat.match(/\(func \$eqUsed[\s\S]*?\n  \)\n/); console.log(m ? m[0] : "no $eqUsed in WAT");
