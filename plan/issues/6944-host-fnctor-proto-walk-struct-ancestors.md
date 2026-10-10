@@ -1,10 +1,11 @@
 ---
 id: 6944
 title: "Prototype chain through a constructor-instance prototype (`Derived.prototype = new Inheriter()`) dead-ends: host `_fnctorProtoLookup` walks with native getPrototypeOf, standalone `__extern_get` stops at a non-`$Object` node (Octane deltablue)"
-status: ready
+status: done
 sprint: current
 created: 2026-10-10
 updated: 2026-10-10
+completed: 2026-10-10
 priority: high
 horizon: m
 feasibility: medium
@@ -15,6 +16,18 @@ language_feature: prototype-chain, constructor-functions
 goal: property-model
 related: [874, 6945, 1712, 2660, 2680, 2739, 3138, 4616, 4480]
 assignee: "ttraenkler/claude-session-c-octane-host-fnctor-proto-walk-struct-ancestors-20261010"
+loc-budget-allow:
+  # 2026-10-10 (#6944): runtime.ts +~17 — the struct-ancestor hop in the two host
+  # walks + the `in` arm's fnctor-chain consult; object-runtime.ts +~36 — helper
+  # reservation/fill wiring and test-before-cast guards at the five
+  # `__fnctor_proto_start` consumers (the re-entry helpers themselves live in
+  # the new src/codegen/fnctor-struct-proto-hop.ts).
+  - src/runtime.ts
+  - src/codegen/object-runtime.ts
+func-budget-allow:
+  # 2026-10-10 (#6944): same wiring, inside the two god-functions that own it.
+  - src/runtime.ts::resolveImport
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
 ---
 
 # #6944 — inherited lookup dead-ends when a prototype is itself a `new F()` instance
@@ -155,3 +168,59 @@ Functions touched: `_fnctorProtoLookup`, `_lookupDescriptorNoProxy`, the
 `__extern_method_call` fnctor-proto arm (runtime.ts); the `__extern_get`
 inherited-walk emission, `fillFnctorPrototypeDispatchArms`, optionally
 `tryCompileFnctorPrototypeAssign` (codegen).
+
+## Implementation notes (2026-10-10, Session C)
+
+Implemented per the plan; deviations and why:
+
+**Host (`src/runtime.ts`)** — plan steps 1-4 as written: `_fnctorProtoLookup`
+advances with `_structUserProto(cur, exports)` and carries a visited `Set`;
+`_lookupDescriptorNoProxy` hops struct nodes through `_structUserProto`
+(16-hop bound, since that chain may cycle); the `__extern_method_call` arm
+passes `exports`. **Added:** the `__extern_has` struct arm now consults
+`_fnctorProtoLookup` after the own-property probe. Without it `"hello" in d`
+stayed `false` on gc (db25 column 3): a dynamic `in` on a fnctor instance never
+consulted the fnctor chain at all — one-level cases only passed because the
+compiler folded them statically.
+
+**Standalone** — the plan's "loop `__fnctor_proto_start` until an `$Object`"
+would skip the struct node's OWN properties (its typed fields and expando bag:
+`Mid.prototype = new Base()` with `this.name` set in `Base`). Instead the
+walkers re-enter on the struct link, which is exactly §10.1.8.1 step 3
+(`parent.[[Get]](P, Receiver)`):
+- `__extern_get` → `__fnctor_struct_proto_get(link, key, receiver)` →
+  `__reflect_get_receiver`, so an accessor further up still gets the ORIGINAL
+  receiver (test `structAncestorOwnFieldsAndReceiver`);
+- `__extern_has` → `__fnctor_struct_proto_has(link, key)` → `__extern_has`;
+- termination: `__fnctor_struct_proto_ok(link)` walks the struct links up front
+  (pure; a struct link always leads to its own ctor's per-NAME global, so a
+  revisit is a cycle) and declines anything that has not reached an `$Object`
+  or a dead end in 16 hops, which also bounds the re-entry depth;
+- the helpers live in the new `src/codegen/fnctor-struct-proto-hop.ts`
+  (reserved before the walkers bake their calls, forwarders filled once
+  `__reflect_get_receiver`/`__extern_has` exist).
+
+The `illegal cast` (db25) was not the walk: three per-key method-cache sites
+`ref.cast` the proto-start answer to `$Object` after only a null check
+(`__method_cache_lookup`, `unshiftExternGetProtoCacheArm`, the
+`fillFnctorPrototypeDispatchArms` inline cache). They now `ref.test` first; a
+struct link is simply never a cache owner. `__extern_has_with_implicit_object_proto`
+had the same cast and now tests. `__isPrototypeOf`'s fnctor seed
+(`prototype-chain-bodies.ts`) steps over struct links to the first `$Object`
+(the target is always an `$Object`, so no struct link can match), which makes
+`leaf instanceof Base` true through two struct links.
+
+**Not done (residual, not needed by the plan's cases or deltablue):**
+- standalone `x instanceof M` where `M.prototype` is ITSELF a struct (the
+  `__isPrototypeOf` target must be an `$Object` today; node: true, js2: false);
+- the standalone `__extern_set` decision walk still ends at a struct link, so a
+  setter / non-writable data property inherited THROUGH one is not honoured on
+  assignment (it inserts an own property instead).
+
+**Validation** — `tests/issue-6944-proto-chain-fnctor-instance.test.ts`, 10
+cases × {gc, standalone}, real source through `compile()` vs node's output:
+base 3/20 pass (standalone `viaVariable`, both `cycleAndNullProtoTerminate`
+controls), head 20/20 (also 20/20 without the #6945 commit). Octane
+`deltablue` (`.tmp/octane-probe.mjs`): gc now runs to completion
+(`run(1) -> 1`) together with #6945; standalone still throws — see #6945's
+residual.

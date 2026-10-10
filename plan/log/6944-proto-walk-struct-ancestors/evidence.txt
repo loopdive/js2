@@ -1,0 +1,33 @@
+#6944 evidence — 2026-10-10, Session C (Claude Opus 5.5 High)
+Base = plan branch claude/octane-dynamic-objects d6c2c74762 + origin/main 449493cd59 (merge 782a04e576).
+A/B by file copy (src files swapped between HEAD and the working tree; never git stash).
+
+tests/issue-6944-proto-chain-fnctor-instance.test.ts (10 cases x {gc, standalone}, compile() vs node output)
+  base:                 3/20 pass (standalone viaVariable; gc+standalone cycleAndNullProtoTerminate)
+  #6944 only:           20/20
+  #6944 + #6945 (head): 20/20
+
+Triage repros (.tmp/run-case.mjs, worktree agent-a325e24998528a47d), head:
+  db12 gc hello2            standalone hello2            (base: gc "value is not callable", sa TypeError)
+  db13 gc hello2,true       standalone hello2,true       (base: gc "value is not callable")
+  db15 both function,hello2,hello2,hello2                (base: undefined,... on both)
+  db18 both function,true,function,true,true,function    (base sa: col 1 undefined)
+  db20 both true,2,1   db21 both true,2,1                (base: addConstraint is not a function / TypeError)
+  db25 both function,function,true,true,function,true    (base: gc col 3 false; sa illegal cast)
+  db1/db5/db6/db11/db14 unchanged (all equal node on gc; db1 standalone still fails -> #6945 residual)
+
+Regression scan: 312 test files touching fnctor / prototype / isPrototypeOf / hoisting, head vs base
+(base run on the 83 files with any failure at head): new failures at head after an isolated
+re-run: 1 file, already failing on base with a different message —
+  tests/issue-3518-prototype-chain-preservation.test.ts: base "prototype chain source mismatch",
+  head "prototype chain builder mismatch" (extraction-receipt test; the receipt is stale on base
+  and hashes the edited prototype-chain-bodies.ts builder too).
+Four other first-run differences (issue-3518-native-prototype-seeder-bindings, issue-3921-alloc-census,
+issue-5254 "passes the two official rows", issue-6484-iterator-prototypes) passed on an isolated
+re-run at head (load-average ~15 on 4 cores during the first run).
+
+node scripts/equivalence-gate.mjs (head): 22 failing, 1748 passing, 22 known-failures; no new regressions.
+
+Octane deltablue (.tmp/octane-probe.mjs deltablue), head (#6944 + #6945):
+  gc:         compile ok, run(1) -> 1 (completes; was "addConstraint is not a function")
+  standalone: RUNTIME TypeError: called value is not a function (#6945 standalone residual)
