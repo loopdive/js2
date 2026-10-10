@@ -1,0 +1,14 @@
+#!/bin/bash
+cd /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+echo "base_sha=dbf5b4f74b37d67e525b2af36fd1fe49803b1348"
+echo "r1_head=293024148ac8528f135655e834268a5f0610bd0b"
+echo "head_sha=$(git rev-parse HEAD)"
+echo "node=$(node --version)"
+echo "pnpm=$(pnpm --version 2>/dev/null)"
+echo "npm=$(npm --version)"
+echo "vitest=$(npx vitest --version 2>/dev/null)"
+echo "pnpm-lock.yaml sha256=$(sha256sum pnpm-lock.yaml | cut -d' ' -f1)"
+if git diff --quiet dbf5b4f74b37d67e525b2af36fd1fe49803b1348 HEAD -- pnpm-lock.yaml; then echo "pnpm-lock.yaml identical at base and HEAD: yes"; else echo "pnpm-lock.yaml identical at base and HEAD: NO"; fi
+echo "nproc=$(nproc)"
+echo "uname=$(uname -sr)"
+echo "recorded_at=$(date -u +%FT%TZ)"

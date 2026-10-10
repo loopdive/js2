@@ -1,0 +1,12 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3501-empty-array-element-inference.test.ts (11 tests | 2 skipped) 1219ms
+   ✓ #3501 empty-array element inference > closes aliases and control-flow joins before selecting the numeric vector type  564ms
+   ✓ #3501 exact landing array-sum source > matches Node through WasmGC and source-derived shared linear IR  370ms
+
+ Test Files  1 passed (1)
+      Tests  9 passed | 2 skipped (11)
+   Start at  23:24:19
+   Duration  28.58s (transform 19.34s, setup 0ms, collect 26.93s, tests 1.22s, environment 0ms, prepare 63ms)
+

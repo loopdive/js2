@@ -1,0 +1,12 @@
+base_sha=dbf5b4f74b37d67e525b2af36fd1fe49803b1348
+r1_head=293024148ac8528f135655e834268a5f0610bd0b
+head_sha=cccd8c087fa90e21860959ddf7ce5decfb556983
+node=v22.22.0
+pnpm=10.30.2
+npm=10.9.4
+vitest=vitest/3.2.7 linux-x64 node-v22.22.0
+pnpm-lock.yaml sha256=6a8b59fd4430c6600dc16ac33a749d0f5fed4ef0c100425de8490e43d916f2ac
+pnpm-lock.yaml identical at base and HEAD: yes
+nproc=4
+uname=Linux 6.18.44-fc-v114
+recorded_at=2026-10-10T22:54:09Z

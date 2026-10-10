@@ -1,0 +1,101 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ × tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > requires the one real leaf activation without widening policy or cleaning the old catalog 18ms
+   → expected { id: 'runtime-contracts', …(5) } to match object { status: 'active', …(4) }
+(1 matching property omitted from actual)
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > binds a nonempty 25-type/14-constant schema, with immutable constant initializers 43ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > visits the actual import-free schema and retains catalog debt, not a retirement verdict 1154ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > resolves allowed policy edges to 'src/shared/contracts/boundary-probe.ts' without changing the real import-free leaf 575ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > resolves allowed policy edges to 'src/wasm/model/boundary-probe.ts' without changing the real import-free leaf 610ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > resolves allowed policy edges to 'src/runtime/contracts/boundary-probe.…' without changing the real import-free leaf 595ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'import' typeOnly=false from the schema to 'src/ir/runtime-host-capabilities.ts' 582ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'import' typeOnly=true from the schema to 'src/ir/runtime-host-capabilities.ts' 582ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'import-type' typeOnly=true from the schema to 'src/ir/runtime-host-capabilities.ts' 556ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'export-from' typeOnly=true from the schema to 'src/ir/runtime-host-capabilities.ts' 537ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'export-star' typeOnly=false from the schema to 'src/ir/runtime-host-capabilities.ts' 631ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'dynamic-import' typeOnly=false from the schema to 'src/ir/runtime-host-capabilities.ts' 648ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'require' typeOnly=false from the schema to 'src/ir/runtime-host-capabilities.ts' 589ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'import-equals' typeOnly=false from the schema to 'src/ir/runtime-host-capabilities.ts' 545ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'import' typeOnly=false from the schema to 'src/ir/core/boundary-probe.ts' 636ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'import' typeOnly=true from the schema to 'src/ir/core/boundary-probe.ts' 605ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'import-type' typeOnly=true from the schema to 'src/ir/core/boundary-probe.ts' 558ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'export-from' typeOnly=true from the schema to 'src/ir/core/boundary-probe.ts' 533ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'export-star' typeOnly=false from the schema to 'src/ir/core/boundary-probe.ts' 610ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'dynamic-import' typeOnly=false from the schema to 'src/ir/core/boundary-probe.ts' 583ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'require' typeOnly=false from the schema to 'src/ir/core/boundary-probe.ts' 551ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'import-equals' typeOnly=false from the schema to 'src/ir/core/boundary-probe.ts' 579ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'import' typeOnly=false from the schema to 'src/frontend/ts/boundary-probe.ts' 589ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'import' typeOnly=true from the schema to 'src/frontend/ts/boundary-probe.ts' 544ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'import-type' typeOnly=true from the schema to 'src/frontend/ts/boundary-probe.ts' 526ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'export-from' typeOnly=true from the schema to 'src/frontend/ts/boundary-probe.ts' 552ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'export-star' typeOnly=false from the schema to 'src/frontend/ts/boundary-probe.ts' 544ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'dynamic-import' typeOnly=false from the schema to 'src/frontend/ts/boundary-probe.ts' 595ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'require' typeOnly=false from the schema to 'src/frontend/ts/boundary-probe.ts' 616ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects 'import-equals' typeOnly=false from the schema to 'src/frontend/ts/boundary-probe.ts' 600ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > also forbids IR core 'import' from depending on the runtime schema 609ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > also forbids IR core 'export-from' from depending on the runtime schema 608ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > reports a nonliteral dynamic-import as unknown, never an empty graph 538ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > reports a nonliteral require as unknown, never an empty graph 549ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > fails closed for a missing literal 'import-type' target 547ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > fails closed for a missing literal 'export-star' target 629ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > fails closed for a missing literal 'dynamic-import' target 558ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > fails closed for a missing literal 'require' target 625ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > fails closed for a missing literal 'import-equals' target 560ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > cannot satisfy the required leaf after delete 558ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > cannot satisfy the required leaf after delete-and-unclassify 585ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > cannot satisfy the required leaf after rename 537ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > rejects malformed canonical source instead of accepting a partial AST 599ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > follows a permitted peer barrel to forbidden or incomplete dependency 'src/ir/runtime-host-capabilities.ts' 613ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > follows a permitted peer barrel to forbidden or incomplete dependency 'src/ir/core/boundary-probe.ts' 594ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > follows a permitted peer barrel to forbidden or incomplete dependency 'src/frontend/ts/boundary-probe.ts' 623ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > follows a permitted peer barrel to forbidden or incomplete dependency '<unknown dependency>' 593ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > follows a permitted peer barrel to forbidden or incomplete dependency './missing.js' 613ms
+ ✓ tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > does not let IR core reach runtime contracts through an otherwise allowed foundation barrel 570ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-capability-schema-boundary.test.ts > #3518 capability schema compiler boundaries > requires the one real leaf activation without widening policy or cleaning the old catalog
+AssertionError: expected { id: 'runtime-contracts', …(5) } to match object { status: 'active', …(4) }
+(1 matching property omitted from actual)
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[33m@@ -2,12 +2,18 @@[39m
+[2m    "entries": [[22m
+[2m      "src/runtime/contracts/host-capability-schema.ts",[22m
+[2m      "src/runtime/contracts/async-provider-schema.ts",[22m
+[2m      "src/runtime/contracts/provider-policy.ts",[22m
+[2m      "src/runtime/contracts/index.ts",[22m
+[31m+     "src/runtime/contracts/timer-capability.ts",[39m
+[31m+     "src/runtime/contracts/builtin-brands.ts",[39m
+[31m+     "src/runtime/contracts/collection-kind.ts",[39m
+[31m+     "src/runtime/contracts/js-value-tags.ts",[39m
+[31m+     "src/runtime/contracts/native-realm-catalog.ts",[39m
+[31m+     "src/runtime/contracts/well-known-symbols.ts",[39m
+[2m    ],[22m
+[32m-   "minModules": 4,[39m
+[31m+   "minModules": 10,[39m
+[2m    "required": true,[22m
+[2m    "roots": [[22m
+[2m      "src/runtime/contracts",[22m
+[2m    ],[22m
+[2m    "status": "active",[22m
+
+ ❯ tests/issue-3518-capability-schema-boundary.test.ts:175:87
+    173| describe("#3518 capability schema compiler boundaries", () => {
+    174|   it("requires the one real leaf activation without widening policy or…
+    175|     expect(productionPolicy.layers.find((layer) => layer.id === "runti…
+       |                                                                                       ^
+    176|       status: "active",
+    177|       roots: ["src/runtime/contracts"],
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 48 passed (49)
+   Start at  22:45:04
+   Duration  29.06s (transform 77ms, setup 0ms, collect 640ms, tests 28.00s, environment 0ms, prepare 82ms)
+

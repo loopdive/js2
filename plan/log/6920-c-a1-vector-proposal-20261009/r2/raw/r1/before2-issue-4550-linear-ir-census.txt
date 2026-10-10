@@ -1,0 +1,11 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-4550-linear-ir-census.test.ts (12 tests) 775ms
+   ✓ #4550 linear IR coverage census > publishes a nonempty exact single-source denominator with compiled and rejected owners  541ms
+
+ Test Files  1 passed (1)
+      Tests  12 passed (12)
+   Start at  23:17:26
+   Duration  27.54s (transform 18.48s, setup 0ms, collect 26.34s, tests 775ms, environment 0ms, prepare 62ms)
+

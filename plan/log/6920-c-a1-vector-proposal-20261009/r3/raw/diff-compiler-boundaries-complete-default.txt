@@ -1,0 +1,673 @@
+6c6
+<   "sourceRevision": "dbf5b4f74b37d67e525b2af36fd1fe49803b1348",
+---
+>   "sourceRevision": "cccd8c087fa90e21860959ddf7ce5decfb556983",
+8c8
+<   "policyHash": "d32f2d135094d616309588dabdcdfb3af643b87896c0de27c107f5e4e15a1896",
+---
+>   "policyHash": "683c0c406519e899e1b578c97dd4f28a9e4f45d5d977258585beedafc4df0cbd",
+11c11
+<     "revision": "dbf5b4f74b37d67e525b2af36fd1fe49803b1348",
+---
+>     "revision": "cccd8c087fa90e21860959ddf7ce5decfb556983",
+13c13
+<     "policyHash": "d32f2d135094d616309588dabdcdfb3af643b87896c0de27c107f5e4e15a1896"
+---
+>     "policyHash": "683c0c406519e899e1b578c97dd4f28a9e4f45d5d977258585beedafc4df0cbd"
+40c40
+<   "dirtyContentFingerprint": "f43ff3a9275c770e09b3d79b6092d84888dc2cf5377b46e5c5932a2a1922eccd",
+---
+>   "dirtyContentFingerprint": "28d35e501cbdaf342f9ec1b8dd60572bb742a186e66bb37862de3322a7bad259",
+42,43c42,43
+<     "total": 1899,
+<     "tracked": 1899,
+---
+>     "total": 1900,
+>     "tracked": 1900,
+47c47
+<       "unmigrated": 1563,
+---
+>       "unmigrated": 1564,
+52c52
+<       "mixed-needs-split": 1484,
+---
+>       "mixed-needs-split": 1485,
+70c70
+<       "import": 14003,
+---
+>       "import": 14010,
+78,79c78,79
+<       "typeOnly": 3902,
+<       "runtime": 10732
+---
+>       "typeOnly": 3905,
+>       "runtime": 10736
+82c82
+<       "import": 14003,
+---
+>       "import": 14010,
+90,91c90,91
+<       "typeOnly": 3902,
+<       "runtime": 10728
+---
+>       "typeOnly": 3905,
+>       "runtime": 10732
+120637c120637
+<       "specifier": "./nodes.js",
+---
+>       "specifier": "./backend/vector-representation.js",
+120641a120642,120651
+>       "to": "src/ir/backend/vector-representation.ts",
+>       "targetLayer": "mixed-needs-split"
+>     },
+>     {
+>       "from": "src/ir/array-element-lowering.ts",
+>       "specifier": "./nodes.js",
+>       "syntax": "import",
+>       "typeOnly": false,
+>       "resolutionMode": 99,
+>       "line": 20,
+120651c120661
+<       "line": 20,
+---
+>       "line": 21,
+120661c120671
+<       "line": 21,
+---
+>       "line": 22,
+120671c120681
+<       "line": 22,
+---
+>       "line": 23,
+121341c121351
+<       "line": 51,
+---
+>       "line": 50,
+121351c121361
+<       "line": 52,
+---
+>       "line": 51,
+121361c121371
+<       "line": 53,
+---
+>       "line": 52,
+121371c121381
+<       "line": 54,
+---
+>       "line": 53,
+121521c121531
+<       "line": 54,
+---
+>       "line": 53,
+122196a122207,122216
+>       "specifier": "./vector-representation.js",
+>       "syntax": "import",
+>       "typeOnly": false,
+>       "resolutionMode": 99,
+>       "line": 182,
+>       "to": "src/ir/backend/vector-representation.ts",
+>       "targetLayer": "mixed-needs-split"
+>     },
+>     {
+>       "from": "src/ir/backend/linear-integration.ts",
+122321c122341
+<       "line": 124,
+---
+>       "line": 125,
+122331c122351
+<       "line": 269,
+---
+>       "line": 277,
+122341c122361
+<       "line": 270,
+---
+>       "line": 278,
+122765a122786,122825
+>       "from": "src/ir/backend/vector-representation.ts",
+>       "specifier": "../nodes.js",
+>       "syntax": "import",
+>       "typeOnly": true,
+>       "resolutionMode": 99,
+>       "line": 22,
+>       "to": "src/ir/nodes.ts",
+>       "targetLayer": "mixed-needs-split"
+>     },
+>     {
+>       "from": "src/ir/backend/vector-representation.ts",
+>       "specifier": "../types.js",
+>       "syntax": "import",
+>       "typeOnly": true,
+>       "resolutionMode": 99,
+>       "line": 23,
+>       "to": "src/ir/types.ts",
+>       "targetLayer": "mixed-needs-split"
+>     },
+>     {
+>       "from": "src/ir/backend/vector-representation.ts",
+>       "specifier": "./handles.js",
+>       "syntax": "import",
+>       "typeOnly": true,
+>       "resolutionMode": 99,
+>       "line": 24,
+>       "to": "src/ir/backend/handles.ts",
+>       "targetLayer": "mixed-needs-split"
+>     },
+>     {
+>       "from": "src/ir/backend/vector-representation.ts",
+>       "specifier": "./legality.js",
+>       "syntax": "import",
+>       "typeOnly": true,
+>       "resolutionMode": 99,
+>       "line": 25,
+>       "to": "src/ir/backend/legality.ts",
+>       "targetLayer": "mixed-needs-split"
+>     },
+>     {
+125867c125927
+<       "specifier": "./identity.js",
+---
+>       "specifier": "./backend/vector-representation.js",
+125871a125932,125941
+>       "to": "src/ir/backend/vector-representation.ts",
+>       "targetLayer": "mixed-needs-split"
+>     },
+>     {
+>       "from": "src/ir/from-ast.ts",
+>       "specifier": "./identity.js",
+>       "syntax": "import",
+>       "typeOnly": false,
+>       "resolutionMode": 99,
+>       "line": 202,
+125881c125951
+<       "line": 208,
+---
+>       "line": 209,
+125891c125961
+<       "line": 210,
+---
+>       "line": 211,
+125901c125971
+<       "line": 216,
+---
+>       "line": 217,
+125911c125981
+<       "line": 223,
+---
+>       "line": 224,
+125921c125991
+<       "line": 224,
+---
+>       "line": 225,
+125931c126001
+<       "line": 225,
+---
+>       "line": 226,
+125941c126011
+<       "line": 226,
+---
+>       "line": 227,
+125951c126021
+<       "line": 227,
+---
+>       "line": 228,
+125961c126031
+<       "line": 236,
+---
+>       "line": 237,
+125971c126041
+<       "line": 249,
+---
+>       "line": 250,
+125981c126051
+<       "line": 250,
+---
+>       "line": 251,
+125991c126061
+<       "line": 259,
+---
+>       "line": 260,
+126001c126071
+<       "line": 280,
+---
+>       "line": 281,
+126011c126081
+<       "line": 281,
+---
+>       "line": 282,
+126021c126091
+<       "line": 282,
+---
+>       "line": 283,
+126031c126101
+<       "line": 288,
+---
+>       "line": 289,
+126041c126111
+<       "line": 9709,
+---
+>       "line": 9708,
+126051c126121
+<       "line": 14087,
+---
+>       "line": 14086,
+126061c126131
+<       "line": 16289,
+---
+>       "line": 16288,
+128517c128587
+<       "specifier": "./backend/handles.js",
+---
+>       "specifier": "./backend/vector-representation.js",
+128519c128589
+<       "typeOnly": true,
+---
+>       "typeOnly": false,
+128522c128592
+<       "to": "src/ir/backend/handles.ts",
+---
+>       "to": "src/ir/backend/vector-representation.ts",
+128531c128601
+<       "line": 51,
+---
+>       "line": 55,
+128541c128611
+<       "line": 57,
+---
+>       "line": 61,
+128551c128621
+<       "line": 58,
+---
+>       "line": 62,
+128561c128631
+<       "line": 77,
+---
+>       "line": 81,
+128571c128641
+<       "line": 85,
+---
+>       "line": 89,
+128581c128651
+<       "line": 86,
+---
+>       "line": 90,
+128591c128661
+<       "line": 87,
+---
+>       "line": 91,
+128601c128671
+<       "line": 88,
+---
+>       "line": 92,
+128611c128681
+<       "line": 89,
+---
+>       "line": 93,
+128621c128691
+<       "line": 90,
+---
+>       "line": 94,
+128631c128701
+<       "line": 91,
+---
+>       "line": 95,
+128641c128711
+<       "line": 92,
+---
+>       "line": 96,
+160864c160934
+<       "hash": "5a032a39858e7fe3eee1e16b139ce5370a53e800ed10dd7fb994272abfc90596",
+---
+>       "hash": "bc395f51402a963ef954040e938400bdd993416d525f0b584613fc922b1f9059",
+161018c161088
+<       "hash": "4f6568eab1656d68efea2637b637a23adcc52ff85f389c226442c98592d27180",
+---
+>       "hash": "0bc633541a61e528179f64dde2504951e8d05b29014e0b900709620fb07f188f",
+161029c161099
+<       "hash": "075641a3808cddd9e186165b6740db0f18ef27995120b7b981c3e0a4c7c1467d",
+---
+>       "hash": "72e8732c7dc77df7ab67d57240b673bd536867be9e0e4e1a213977b84a8693de",
+161040c161110
+<       "hash": "1b66b428e7c172d509753b54c3e244eebfd035a0c3f5c66fc391673c70eabb19",
+---
+>       "hash": "6303c23162ec76e573506e8bc4a9ad60bb910f20468019f04b675c2523c5f4a8",
+161062c161132
+<       "hash": "f6e3f9516befb445947bad64a2f0b023e5f5592e385f04e282eb0848f12e0453",
+---
+>       "hash": "11c8da1cf11575d8bbd81f3bcd2875709e56c205a838a31f8d161579776328d0",
+161084c161154
+<       "hash": "9838de195308ca7a6c5eec8fa235acbd73972561e742536b15a0458f03cfc2a7",
+---
+>       "hash": "bb8dfc0ee04d9670aa8aebfc2388d4859cffc3a7c9a5b61c54644cd027e6df7b",
+161095c161165
+<       "hash": "8bcc7d6507cb6abd1c4333e43fe5fef015f6649dd788221778aa61e6911c1571",
+---
+>       "hash": "f9c9a4b5e4618da0f6a49c20236bef1fc5db0df1208aad83991a29d90f87b4ad",
+161117c161187
+<       "hash": "f174986c105638ca8d06c07d784bf021cd53758b3639589b03ec3bcc63846a8b",
+---
+>       "hash": "f5faecf13d5d42d0bbd1c4911ee527297efe14f01c9288961b917b3620100045",
+161128c161198
+<       "hash": "f61ea35e8f2188572f150829a23089a6ea89ad80a656890af5a116721078a333",
+---
+>       "hash": "51fa747627c6378d6face166b52b4be08ed67a06b1f3e8ac2eb957cc354f4551",
+161172c161242
+<       "hash": "315b24017187aef46615a81f5ee317236339626c935c763966b40baea1a57e3f",
+---
+>       "hash": "721b472726bb7a075f9a0fe0a2905a380370a6c72e4433c2d915992b7218f33c",
+161197a161268,161278
+>       "path": "src/ir/backend/vector-representation.ts",
+>       "state": "unmigrated",
+>       "layer": "mixed-needs-split",
+>       "destination": "ir-core",
+>       "owner": "3518-coordinator",
+>       "nextBoundary": "#6920 A-C1 vector representation policy with type-only imports; consumed by generic lowering, the linear overlay and frontend joins. Certify as pure contract once IR-node and backend-handle type dependencies move to ir-core.",
+>       "realPath": "src/ir/backend/vector-representation.ts",
+>       "hash": "34f1f3cf23fc252f243562e56105b8635bb6d36ea7660cff4f50d4587dc2805d",
+>       "tracked": true
+>     },
+>     {
+161227c161308
+<       "hash": "143e867a3a50039aa8192c4733b7a5eaf50916c4fdefedf3fe9d635913a8550a",
+---
+>       "hash": "0c9a2ec751aae58054f0bb9d24fb207b345177715b1d8a93a4fe88f1c7498eb7",
+161987c162068
+<       "hash": "c6d90bceee5c21b5203816450e81c25281d5b7408bd51e356c9f3b5a7afbbc27",
+---
+>       "hash": "ebaa0a32fa2c89162a6932e67360d6e96d0ae49fdd29309567ee5576518d06e8",
+162262c162343
+<       "hash": "879f23090d77241601bb238362f545241d594bcc5166b18748844a52a26c926b",
+---
+>       "hash": "a8e662c54860eb8c93fb0a9996aeda00c8a43634aed3bab2941905f1354b0ee2",
+162273c162354
+<       "hash": "9ac4813d865a3073f54bf8f9fe047ef5db2bcdf8ba4a5bcfcb1f7727c756e69d",
+---
+>       "hash": "3a53fdb2b67b8e6fe0cf80361541df923148c4f8863aadf171d4861c1813acd6",
+166047c166128
+<   "resolvedEdgeCount": 14630,
+---
+>   "resolvedEdgeCount": 14637,
+311310c311391
+<       "specifier": "./nodes.js",
+---
+>       "specifier": "./backend/vector-representation.js",
+311314a311396,311407
+>       "to": "src/ir/backend/vector-representation.ts",
+>       "targetLayer": "mixed-needs-split",
+>       "reason": "layer mixed-needs-split -> mixed-needs-split",
+>       "enforced": false
+>     },
+>     {
+>       "from": "src/ir/array-element-lowering.ts",
+>       "specifier": "./nodes.js",
+>       "syntax": "import",
+>       "typeOnly": false,
+>       "resolutionMode": 99,
+>       "line": 20,
+311326c311419
+<       "line": 20,
+---
+>       "line": 21,
+311338c311431
+<       "line": 21,
+---
+>       "line": 22,
+311350c311443
+<       "line": 22,
+---
+>       "line": 23,
+312226c312319
+<       "line": 51,
+---
+>       "line": 50,
+312238c312331
+<       "line": 52,
+---
+>       "line": 51,
+312250c312343
+<       "line": 53,
+---
+>       "line": 52,
+312262c312355
+<       "line": 54,
+---
+>       "line": 53,
+312442c312535
+<       "line": 54,
+---
+>       "line": 53,
+313265a313359,313370
+>       "specifier": "./vector-representation.js",
+>       "syntax": "import",
+>       "typeOnly": false,
+>       "resolutionMode": 99,
+>       "line": 182,
+>       "to": "src/ir/backend/vector-representation.ts",
+>       "targetLayer": "mixed-needs-split",
+>       "reason": "layer mixed-needs-split -> mixed-needs-split",
+>       "enforced": false
+>     },
+>     {
+>       "from": "src/ir/backend/linear-integration.ts",
+313426c313531
+<       "line": 124,
+---
+>       "line": 125,
+313438c313543
+<       "line": 269,
+---
+>       "line": 277,
+313450c313555
+<       "line": 270,
+---
+>       "line": 278,
+313960a314066,314113
+>       "from": "src/ir/backend/vector-representation.ts",
+>       "specifier": "../nodes.js",
+>       "syntax": "import",
+>       "typeOnly": true,
+>       "resolutionMode": 99,
+>       "line": 22,
+>       "to": "src/ir/nodes.ts",
+>       "targetLayer": "mixed-needs-split",
+>       "reason": "layer mixed-needs-split -> mixed-needs-split",
+>       "enforced": false
+>     },
+>     {
+>       "from": "src/ir/backend/vector-representation.ts",
+>       "specifier": "../types.js",
+>       "syntax": "import",
+>       "typeOnly": true,
+>       "resolutionMode": 99,
+>       "line": 23,
+>       "to": "src/ir/types.ts",
+>       "targetLayer": "mixed-needs-split",
+>       "reason": "layer mixed-needs-split -> mixed-needs-split",
+>       "enforced": false
+>     },
+>     {
+>       "from": "src/ir/backend/vector-representation.ts",
+>       "specifier": "./handles.js",
+>       "syntax": "import",
+>       "typeOnly": true,
+>       "resolutionMode": 99,
+>       "line": 24,
+>       "to": "src/ir/backend/handles.ts",
+>       "targetLayer": "mixed-needs-split",
+>       "reason": "layer mixed-needs-split -> mixed-needs-split",
+>       "enforced": false
+>     },
+>     {
+>       "from": "src/ir/backend/vector-representation.ts",
+>       "specifier": "./legality.js",
+>       "syntax": "import",
+>       "typeOnly": true,
+>       "resolutionMode": 99,
+>       "line": 25,
+>       "to": "src/ir/backend/legality.ts",
+>       "targetLayer": "mixed-needs-split",
+>       "reason": "layer mixed-needs-split -> mixed-needs-split",
+>       "enforced": false
+>     },
+>     {
+317106c317259
+<       "specifier": "./identity.js",
+---
+>       "specifier": "./backend/vector-representation.js",
+317110a317264,317275
+>       "to": "src/ir/backend/vector-representation.ts",
+>       "targetLayer": "mixed-needs-split",
+>       "reason": "layer mixed-needs-split -> mixed-needs-split",
+>       "enforced": false
+>     },
+>     {
+>       "from": "src/ir/from-ast.ts",
+>       "specifier": "./identity.js",
+>       "syntax": "import",
+>       "typeOnly": false,
+>       "resolutionMode": 99,
+>       "line": 202,
+317122c317287
+<       "line": 208,
+---
+>       "line": 209,
+317134c317299
+<       "line": 210,
+---
+>       "line": 211,
+317146c317311
+<       "line": 216,
+---
+>       "line": 217,
+317158c317323
+<       "line": 223,
+---
+>       "line": 224,
+317170c317335
+<       "line": 224,
+---
+>       "line": 225,
+317182c317347
+<       "line": 225,
+---
+>       "line": 226,
+317194c317359
+<       "line": 226,
+---
+>       "line": 227,
+317206c317371
+<       "line": 227,
+---
+>       "line": 228,
+317218c317383
+<       "line": 236,
+---
+>       "line": 237,
+317230c317395
+<       "line": 249,
+---
+>       "line": 250,
+317242c317407
+<       "line": 250,
+---
+>       "line": 251,
+317254c317419
+<       "line": 259,
+---
+>       "line": 260,
+317266c317431
+<       "line": 280,
+---
+>       "line": 281,
+317278c317443
+<       "line": 281,
+---
+>       "line": 282,
+317290c317455
+<       "line": 282,
+---
+>       "line": 283,
+317302c317467
+<       "line": 288,
+---
+>       "line": 289,
+317314c317479
+<       "line": 9709,
+---
+>       "line": 9708,
+317326c317491
+<       "line": 14087,
+---
+>       "line": 14086,
+317338c317503
+<       "line": 16289,
+---
+>       "line": 16288,
+320442c320607
+<       "specifier": "./backend/handles.js",
+---
+>       "specifier": "./backend/vector-representation.js",
+320444c320609
+<       "typeOnly": true,
+---
+>       "typeOnly": false,
+320447c320612
+<       "to": "src/ir/backend/handles.ts",
+---
+>       "to": "src/ir/backend/vector-representation.ts",
+320458c320623
+<       "line": 51,
+---
+>       "line": 55,
+320470c320635
+<       "line": 57,
+---
+>       "line": 61,
+320482c320647
+<       "line": 58,
+---
+>       "line": 62,
+320494c320659
+<       "line": 77,
+---
+>       "line": 81,
+320506c320671
+<       "line": 85,
+---
+>       "line": 89,
+320518c320683
+<       "line": 86,
+---
+>       "line": 90,
+320530c320695
+<       "line": 87,
+---
+>       "line": 91,
+320542c320707
+<       "line": 88,
+---
+>       "line": 92,
+320554c320719
+<       "line": 89,
+---
+>       "line": 93,
+320566c320731
+<       "line": 90,
+---
+>       "line": 94,
+320578c320743
+<       "line": 91,
+---
+>       "line": 95,
+320590c320755
+<       "line": 92,
+---
+>       "line": 96,
+343047a343213,343220
+>     },
+>     {
+>       "path": "src/ir/backend/vector-representation.ts",
+>       "state": "unmigrated",
+>       "layer": "mixed-needs-split",
+>       "destination": "ir-core",
+>       "owner": "3518-coordinator",
+>       "nextBoundary": "#6920 A-C1 vector representation policy with type-only imports; consumed by generic lowering, the linear overlay and frontend joins. Certify as pure contract once IR-node and backend-handle type dependencies move to ir-core."

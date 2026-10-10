@@ -1,0 +1,28 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3520-vec-support-callable-abi.test.ts > #3520 vec host-bridge Program ABI ownership > classifies only exact core logical and physical vec names 2ms
+ ✓ tests/issue-3520-vec-support-callable-abi.test.ts > #3520 vec host-bridge Program ABI ownership > publishes all six bridges beneath the entry source with fixed ordinals and exact final slots 842ms
+ ✓ tests/issue-3520-vec-support-callable-abi.test.ts > #3520 vec host-bridge Program ABI ownership > keeps the exact reserved allocator objects through final body filling 49ms
+ ✓ tests/issue-3520-vec-support-callable-abi.test.ts > #3520 vec host-bridge Program ABI ownership > keeps collision-free GC, standalone, and WASI binaries byte-identical with tracking 1309ms
+ ✓ tests/issue-3520-vec-support-callable-abi.test.ts > #3520 vec host-bridge Program ABI ownership > strips exact compiler-owned suffixed aliases without deleting standalone or WASI user collisions 990ms
+ ✓ tests/issue-3520-vec-support-callable-abi.test.ts > #3520 vec host-bridge Program ABI ownership > emits no vec bridge for an array-free module 15ms
+ ✓ tests/issue-3520-vec-support-callable-abi.test.ts > #3520 vec host-bridge Program ABI ownership > preserves all six same-labelled public exports while the runtime uses physical vec bridges 107ms
+ ✓ tests/issue-3520-vec-support-callable-abi.test.ts > #3520 vec host-bridge Program ABI ownership > retains exact logical and physical user collisions in standalone and WASI 2187ms
+ ✓ tests/issue-3520-vec-support-callable-abi.test.ts > #3520 vec host-bridge Program ABI ownership > terminates all six prefix-only physical families with the structural helper 132ms
+ ✓ tests/issue-3520-vec-support-callable-abi.test.ts > #3520 vec host-bridge Program ABI ownership > retains exact prefix-only user collisions in standalone and WASI 2065ms
+ ✓ tests/issue-3520-vec-support-callable-abi.test.ts > #3520 vec host-bridge Program ABI ownership > fills sparse physical gaps without rebasing any occupied user descriptor 45ms
+ ✓ tests/issue-3520-vec-support-callable-abi.test.ts > #3520 vec host-bridge Program ABI ownership > does not project an array-free user physical prefix into a logical vec helper 50ms
+ ✓ tests/issue-3520-vec-support-callable-abi.test.ts > #3520 vec host-bridge Program ABI ownership > keeps array-free logical and physical spoof exports public without a vec family 402ms
+ ✓ tests/issue-3520-vec-support-callable-abi.test.ts > #3520 vec host-bridge Program ABI ownership > aborts compilation when structural vec ABI observation fails 62ms
+ ✓ tests/issue-3520-vec-support-callable-abi.test.ts > #3520 vec host-bridge Program ABI ownership > fails closed when a compiler-owned export entry is replaced, duplicated, renamed, retargeted, or loses its function 236ms
+ ✓ tests/issue-3520-vec-support-callable-abi.test.ts > #3520 vec host-bridge Program ABI ownership > fails closed when disabled host-bridge policy retains a compiler-owned descriptor 28ms
+ ✓ tests/issue-3520-vec-support-callable-abi.test.ts > #3520 vec host-bridge Program ABI ownership > strips a cloned descriptor that still resolves to the exact compiler allocator 33ms
+ ✓ tests/issue-3520-vec-support-callable-abi.test.ts > #3520 vec host-bridge Program ABI ownership > keeps captured bridge objects through late-import shifts and dead-import compaction 70ms
+ ✓ tests/issue-3520-vec-support-callable-abi.test.ts > #3520 vec host-bridge Program ABI ownership > keeps tracked output and structural ownership stable across the exact five-entry corpus 5554ms
+
+ Test Files  1 passed (1)
+      Tests  19 passed (19)
+   Start at  19:36:46
+   Duration  49.10s (transform 24.55s, setup 0ms, collect 34.36s, tests 14.18s, environment 0ms, prepare 83ms)
+

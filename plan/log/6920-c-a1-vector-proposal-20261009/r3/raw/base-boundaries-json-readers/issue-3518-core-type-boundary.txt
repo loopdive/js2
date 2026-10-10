@@ -1,0 +1,211 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ × tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > resolves the eight real clean modules while retaining unfinished nodes debt 575ms
+   → [{"code":"unresolved-module","detail":"src/ir/core/types.ts: ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/fnctor-shapes.ts -> src/ir/core/types.ts -> ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/types.ts -> ./binding-key-primitives.js"}]: expected 1 to be +0 // Object.is equality
+ × tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > rejects a type import back edge into the old nodes module 593ms
+   → [{"code":"unresolved-module","detail":"src/ir/core/types.ts: ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/fnctor-shapes.ts -> src/ir/core/types.ts -> ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/types.ts -> ./binding-key-primitives.js"}]: expected 1 to be +0 // Object.is equality
+ × tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > rejects a type query back edge into the old nodes module 641ms
+   → [{"code":"unresolved-module","detail":"src/ir/core/types.ts: ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/fnctor-shapes.ts -> src/ir/core/types.ts -> ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/types.ts -> ./binding-key-primitives.js"}]: expected 1 to be +0 // Object.is equality
+ × tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > rejects a re-export back edge into the old nodes module 564ms
+   → [{"code":"unresolved-module","detail":"src/ir/core/types.ts: ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/fnctor-shapes.ts -> src/ir/core/types.ts -> ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/types.ts -> ./binding-key-primitives.js"}]: expected 1 to be +0 // Object.is equality
+ × tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > rejects a dynamic import back edge into the old nodes module 578ms
+   → [{"code":"unresolved-module","detail":"src/ir/core/types.ts: ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/fnctor-shapes.ts -> src/ir/core/types.ts -> ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/types.ts -> ./binding-key-primitives.js"}]: expected 1 to be +0 // Object.is equality
+ × tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > cannot lose required canonical entry src/ir/core/types.ts 591ms
+   → [{"code":"unresolved-module","detail":"src/ir/core/types.ts: ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/fnctor-shapes.ts -> src/ir/core/types.ts -> ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/types.ts -> ./binding-key-primitives.js"}]: expected 1 to be +0 // Object.is equality
+ × tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > cannot lose required canonical entry src/ir/core/fnctor-shapes.ts 545ms
+   → [{"code":"unresolved-module","detail":"src/ir/core/types.ts: ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/fnctor-shapes.ts -> src/ir/core/types.ts -> ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/types.ts -> ./binding-key-primitives.js"}]: expected 1 to be +0 // Object.is equality
+ × tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > cannot lose required canonical entry src/ir/core/value-references.ts 561ms
+   → [{"code":"unresolved-module","detail":"src/ir/core/types.ts: ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/fnctor-shapes.ts -> src/ir/core/types.ts -> ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/types.ts -> ./binding-key-primitives.js"}]: expected 1 to be +0 // Object.is equality
+ × tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > cannot lose required canonical entry src/ir/core/capability-provenance.ts 550ms
+   → [{"code":"unresolved-module","detail":"src/ir/core/types.ts: ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/fnctor-shapes.ts -> src/ir/core/types.ts -> ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/types.ts -> ./binding-key-primitives.js"}]: expected 1 to be +0 // Object.is equality
+ × tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > cannot lose required canonical entry src/ir/core/tag-refinement.ts 560ms
+   → [{"code":"unresolved-module","detail":"src/ir/core/types.ts: ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/fnctor-shapes.ts -> src/ir/core/types.ts -> ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/types.ts -> ./binding-key-primitives.js"}]: expected 1 to be +0 // Object.is equality
+ × tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > rejects unknown target without claiming closure 567ms
+   → [{"code":"unresolved-module","detail":"src/ir/core/types.ts: ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/fnctor-shapes.ts -> src/ir/core/types.ts -> ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/types.ts -> ./binding-key-primitives.js"}]: expected 1 to be +0 // Object.is equality
+ × tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > rejects missing module without claiming closure 535ms
+   → [{"code":"unresolved-module","detail":"src/ir/core/types.ts: ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/fnctor-shapes.ts -> src/ir/core/types.ts -> ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/types.ts -> ./binding-key-primitives.js"}]: expected 1 to be +0 // Object.is equality
+ × tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > rejects invalid syntax without claiming closure 555ms
+   → [{"code":"unresolved-module","detail":"src/ir/core/types.ts: ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/fnctor-shapes.ts -> src/ir/core/types.ts -> ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/types.ts -> ./binding-key-primitives.js"}]: expected 1 to be +0 // Object.is equality
+ × tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > follows a clean intermediate barrel to the forbidden legacy dependency 586ms
+   → [{"code":"unresolved-module","detail":"src/ir/core/types.ts: ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/fnctor-shapes.ts -> src/ir/core/types.ts -> ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/types.ts -> ./binding-key-primitives.js"}]: expected 1 to be +0 // Object.is equality
+ × tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > pins five actual activations, narrow model access and the unfinished full-node destination 7ms
+   → expected { id: 'ir-core', …(5) } to deeply equal ObjectContaining{…}
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 15 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > resolves the eight real clean modules while retaining unfinished nodes debt
+AssertionError: [{"code":"unresolved-module","detail":"src/ir/core/types.ts: ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/fnctor-shapes.ts -> src/ir/core/types.ts -> ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/types.ts -> ./binding-key-primitives.js"}]: expected 1 to be +0 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 0[39m
+[31m+ 1[39m
+
+ ❯ positive tests/issue-3518-core-type-boundary.test.ts:105:63
+    103| function positive(f: ReturnType<typeof fixture>) {
+    104|   const result = f.run();
+    105|   expect(result.status, JSON.stringify(result.report.errors)).toBe(0);
+       |                                                               ^
+    106|   expect(result.report.counts.total).toBe(9);
+    107|   expect(result.report.resolvedEdgeCount).toBe(12);
+ ❯ tests/issue-3518-core-type-boundary.test.ts:116:12
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/15]⎯
+
+ FAIL  tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > rejects a type import back edge into the old nodes module
+ FAIL  tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > rejects a type query back edge into the old nodes module
+ FAIL  tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > rejects a re-export back edge into the old nodes module
+ FAIL  tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > rejects a dynamic import back edge into the old nodes module
+AssertionError: [{"code":"unresolved-module","detail":"src/ir/core/types.ts: ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/fnctor-shapes.ts -> src/ir/core/types.ts -> ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/types.ts -> ./binding-key-primitives.js"}]: expected 1 to be +0 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 0[39m
+[31m+ 1[39m
+
+ ❯ positive tests/issue-3518-core-type-boundary.test.ts:105:63
+    103| function positive(f: ReturnType<typeof fixture>) {
+    104|   const result = f.run();
+    105|   expect(result.status, JSON.stringify(result.report.errors)).toBe(0);
+       |                                                               ^
+    106|   expect(result.report.counts.total).toBe(9);
+    107|   expect(result.report.resolvedEdgeCount).toBe(12);
+ ❯ tests/issue-3518-core-type-boundary.test.ts:127:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/15]⎯
+
+ FAIL  tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > cannot lose required canonical entry src/ir/core/types.ts
+ FAIL  tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > cannot lose required canonical entry src/ir/core/fnctor-shapes.ts
+ FAIL  tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > cannot lose required canonical entry src/ir/core/value-references.ts
+ FAIL  tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > cannot lose required canonical entry src/ir/core/capability-provenance.ts
+ FAIL  tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > cannot lose required canonical entry src/ir/core/tag-refinement.ts
+AssertionError: [{"code":"unresolved-module","detail":"src/ir/core/types.ts: ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/fnctor-shapes.ts -> src/ir/core/types.ts -> ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/types.ts -> ./binding-key-primitives.js"}]: expected 1 to be +0 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 0[39m
+[31m+ 1[39m
+
+ ❯ positive tests/issue-3518-core-type-boundary.test.ts:105:63
+    103| function positive(f: ReturnType<typeof fixture>) {
+    104|   const result = f.run();
+    105|   expect(result.status, JSON.stringify(result.report.errors)).toBe(0);
+       |                                                               ^
+    106|   expect(result.report.counts.total).toBe(9);
+    107|   expect(result.report.resolvedEdgeCount).toBe(12);
+ ❯ tests/issue-3518-core-type-boundary.test.ts:136:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/15]⎯
+
+ FAIL  tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > rejects unknown target without claiming closure
+ FAIL  tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > rejects missing module without claiming closure
+ FAIL  tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > rejects invalid syntax without claiming closure
+AssertionError: [{"code":"unresolved-module","detail":"src/ir/core/types.ts: ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/fnctor-shapes.ts -> src/ir/core/types.ts -> ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/types.ts -> ./binding-key-primitives.js"}]: expected 1 to be +0 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 0[39m
+[31m+ 1[39m
+
+ ❯ positive tests/issue-3518-core-type-boundary.test.ts:105:63
+    103| function positive(f: ReturnType<typeof fixture>) {
+    104|   const result = f.run();
+    105|   expect(result.status, JSON.stringify(result.report.errors)).toBe(0);
+       |                                                               ^
+    106|   expect(result.report.counts.total).toBe(9);
+    107|   expect(result.report.resolvedEdgeCount).toBe(12);
+ ❯ tests/issue-3518-core-type-boundary.test.ts:147:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/15]⎯
+
+ FAIL  tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > follows a clean intermediate barrel to the forbidden legacy dependency
+AssertionError: [{"code":"unresolved-module","detail":"src/ir/core/types.ts: ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/fnctor-shapes.ts -> src/ir/core/types.ts -> ./binding-key-primitives.js"},{"code":"forbidden-transitive-path","detail":"src/ir/core/types.ts -> ./binding-key-primitives.js"}]: expected 1 to be +0 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 0[39m
+[31m+ 1[39m
+
+ ❯ positive tests/issue-3518-core-type-boundary.test.ts:105:63
+    103| function positive(f: ReturnType<typeof fixture>) {
+    104|   const result = f.run();
+    105|   expect(result.status, JSON.stringify(result.report.errors)).toBe(0);
+       |                                                               ^
+    106|   expect(result.report.counts.total).toBe(9);
+    107|   expect(result.report.resolvedEdgeCount).toBe(12);
+ ❯ tests/issue-3518-core-type-boundary.test.ts:156:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/15]⎯
+
+ FAIL  tests/issue-3518-core-type-boundary.test.ts > #3518 core types retain an enforced dependency boundary > pins five actual activations, narrow model access and the unfinished full-node destination
+AssertionError: expected { id: 'ir-core', …(5) } to deeply equal ObjectContaining{…}
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- ObjectContaining {[39m
+[32m-   "entries": ArrayContaining [[39m
+[31m+ {[39m
+[31m+   "entries": [[39m
+[2m      "src/ir/core/types.ts",[22m
+[2m      "src/ir/core/fnctor-shapes.ts",[22m
+[2m      "src/ir/core/value-references.ts",[22m
+[2m      "src/ir/core/capability-provenance.ts",[22m
+[2m      "src/ir/core/tag-refinement.ts",[22m
+[31m+     "src/ir/core/nodes.ts",[39m
+[31m+     "src/ir/core/dialect/js.ts",[39m
+[31m+     "src/ir/core/async-plan.ts",[39m
+[31m+     "src/ir/core/intrinsic-vocabulary.ts",[39m
+[31m+     "src/ir/core/async-intents.ts",[39m
+[31m+     "src/ir/core/string-types.ts",[39m
+[31m+     "src/ir/core/binding-key-primitives.ts",[39m
+[31m+     "src/ir/core/intrinsic-contracts.ts",[39m
+[31m+     "src/ir/core/intrinsics.ts",[39m
+[31m+     "src/ir/core/callable-bindings.ts",[39m
+[31m+     "src/ir/core/async-callables.ts",[39m
+[31m+     "src/ir/core/vector-runtime.ts",[39m
+[31m+     "src/ir/core/type-references.ts",[39m
+[31m+     "src/ir/core/type-binding-keys.ts",[39m
+[31m+     "src/ir/core/type-key.ts",[39m
+[31m+     "src/ir/core/string-callables.ts",[39m
+[31m+     "src/ir/core/closure-invocation-callables.ts",[39m
+[31m+     "src/ir/core/global-binding-keys.ts",[39m
+[31m+     "src/ir/core/declared-types.ts",[39m
+[31m+     "src/ir/core/fnctor-abi.ts",[39m
+[31m+     "src/ir/core/tag-domain.ts",[39m
+[31m+     "src/ir/core/string-runtime.ts",[39m
+[31m+     "src/ir/core/runtime-symbols.ts",[39m
+[31m+     "src/ir/core/date-callables.ts",[39m
+[2m    ],[22m
+[32m-   "minModules": 12,[39m
+[31m+   "id": "ir-core",[39m
+[31m+   "minModules": 29,[39m
+[31m+   "required": true,[39m
+[31m+   "roots": [[39m
+[31m+     "src/ir/core",[39m
+[31m+   ],[39m
+[2m    "status": "active",[22m
+[2m  }[22m
+
+ ❯ tests/issue-3518-core-type-boundary.test.ts:168:83
+    166|   it("pins five actual activations, narrow model access and the unfini…
+    167|     const policy = JSON.parse(readFileSync(resolve(repository, "script…
+    168|     expect(policy.layers.find((layer: { id: string }) => layer.id === …
+       |                                                                                   ^
+    169|       expect.objectContaining({ status: "active", entries: expect.arra…
+    170|     );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/15]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  15 failed (15)
+   Start at  22:48:56
+   Duration  8.44s (transform 43ms, setup 0ms, collect 45ms, tests 8.01s, environment 0ms, prepare 69ms)
+

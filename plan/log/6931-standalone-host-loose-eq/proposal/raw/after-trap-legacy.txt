@@ -1,0 +1,21 @@
+eqUsed:emitted+body viaStr:emitted+body exported:emitted+body exportedS:emitted+body <module-init>:non-executable
+viaStr "1" 1
+viaStr {} 1
+viaStr undefined 1
+viaStr true 1
+exported "1" undefined 
+ 
+exported {} undefined 
+ 
+exported undefined undefined 
+ 
+exported true undefined 
+ 
+exportedS "1" undefined 
+ 
+exportedS {} undefined 
+ 
+exportedS undefined undefined 
+ 
+exportedS true undefined 
+ 

@@ -1,0 +1,14 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/ir-algorithms-cluster.test.ts (19 tests) 4225ms
+   ✓ #2856 C1 — if / early-return inside body buffers > if (no else) inside a for body  803ms
+   ✓ #2856 C3 — module-scope Map + strict undefined-compare (JS-host lane) > memoized fib through a module-scope Map claims and agrees  324ms
+   ✓ #2856 — whole algorithms.ts component end-to-end > console output identical, component claimed, zero demotions  487ms
+   ✓ #2856 — whole algorithms.ts component end-to-end > standalone / wasi compiles stay clean (host-gated Map arm defers)  1085ms
+
+ Test Files  1 passed (1)
+      Tests  19 passed (19)
+   Start at  22:38:32
+   Duration  28.18s (transform 16.93s, setup 0ms, collect 23.55s, tests 4.22s, environment 0ms, prepare 62ms)
+

@@ -1,0 +1,12 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3526-string-boundary-eq.test.ts (24 tests) 1621ms
+   ✓ #3526 F2-S3 end-to-end behaviour is unchanged > binds the host lane's existing wasm:js-string.equals builtin, in the same position  759ms
+   ✓ #3526 F2-S3 end-to-end behaviour is unchanged > uses the host-free helper on every native-strings lane, with no wasm:js-string import  436ms
+
+ Test Files  1 passed (1)
+      Tests  24 passed (24)
+   Start at  23:16:27
+   Duration  29.15s (transform 19.08s, setup 0ms, collect 27.07s, tests 1.62s, environment 0ms, prepare 59ms)
+

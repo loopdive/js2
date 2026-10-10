@@ -1,0 +1,28 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-6865-lowering-string-operations.test.ts > IR source maps: string operation extraction > preserves operands and evidence for 'string.const' 4ms
+ ✓ tests/issue-6865-lowering-string-operations.test.ts > IR source maps: string operation extraction > preserves operands and evidence for 'string.concat' 1ms
+ ✓ tests/issue-6865-lowering-string-operations.test.ts > IR source maps: string operation extraction > preserves operands and evidence for 'string.repeat' 1ms
+ ✓ tests/issue-6865-lowering-string-operations.test.ts > IR source maps: string operation extraction > preserves operands and evidence for 'string.eq' 0ms
+ ✓ tests/issue-6865-lowering-string-operations.test.ts > IR source maps: string operation extraction > preserves operands and evidence for 'string.len' 1ms
+ ✓ tests/issue-6865-lowering-string-operations.test.ts > IR source maps: string operation extraction > preserves operands and evidence for 'string.char_at' 1ms
+ ✓ tests/issue-6865-lowering-string-operations.test.ts > IR source maps: string operation extraction > preserves operands and evidence for 'string.char_code_at' 1ms
+ ✓ tests/issue-6865-lowering-string-operations.test.ts > IR source maps: string operation extraction > retains absent evidence and immutable concat default without selecting a provider 1ms
+ ✓ tests/issue-6865-lowering-string-operations.test.ts > IR source maps: string operation extraction > does not emit the terminal or later operands after an operand throws 1ms
+ ✓ tests/issue-6865-lowering-string-operations.test.ts > IR source maps: string operation extraction > routes 'string.const' through the root helper and real emitter once 9ms
+ ✓ tests/issue-6865-lowering-string-operations.test.ts > IR source maps: string operation extraction > routes 'string.concat' through the root helper and real emitter once 1ms
+ ✓ tests/issue-6865-lowering-string-operations.test.ts > IR source maps: string operation extraction > routes 'string.repeat' through the root helper and real emitter once 1ms
+ ✓ tests/issue-6865-lowering-string-operations.test.ts > IR source maps: string operation extraction > routes 'string.eq' through the root helper and real emitter once 1ms
+ ✓ tests/issue-6865-lowering-string-operations.test.ts > IR source maps: string operation extraction > routes 'string.len' through the root helper and real emitter once 1ms
+ ✓ tests/issue-6865-lowering-string-operations.test.ts > IR source maps: string operation extraction > routes 'string.char_at' through the root helper and real emitter once 1ms
+ ✓ tests/issue-6865-lowering-string-operations.test.ts > IR source maps: string operation extraction > routes 'string.char_code_at' through the root helper and real emitter once 1ms
+ ✓ tests/issue-6865-lowering-string-operations.test.ts > IR source maps: string operation extraction > preserves the real emitter refusal when the runtime contract is absent 1ms
+ ✓ tests/issue-6865-lowering-string-operations.test.ts > IR source maps: string operation extraction > transpiles the actual generic leaf with no runtime imports 67ms
+ ✓ tests/issue-6865-lowering-string-operations.test.ts > IR source maps: string operation extraction > loads and exercises the actual leaf in a fresh process with a forbidden-target denial control 271ms
+
+ Test Files  1 passed (1)
+      Tests  19 passed (19)
+   Start at  20:27:07
+   Duration  2.01s (transform 475ms, setup 0ms, collect 1.26s, tests 363ms, environment 0ms, prepare 70ms)
+

@@ -1,0 +1,12 @@
+ir-vec-new-fixed exit=0       Tests  10 passed (10)
+ir-vec-two-backend exit=0       Tests  14 passed (14)
+issue-2956 exit=1       Tests  3 failed | 17 passed (20)
+issue-3299 exit=0       Tests  1 passed | 1 skipped (2)
+issue-3482-direct-porffor-js2-ir-ab exit=0       Tests  2 passed | 2 skipped (4)
+issue-3501-empty-array-element-inference exit=0       Tests  9 passed | 2 skipped (11)
+issue-3518-lowering-cycle exit=1       Tests  1 failed | 24 passed (25)
+issue-6893-linear-cabi-array-forwarding exit=0       Tests  18 passed (18)
+issue-6893-linear-ir-read-forwarding exit=0       Tests  30 passed (30)
+issue-6920-vector-representation exit=0       Tests  13 passed (13)
+issue-6921-ir-middle-end-pass-correctness exit=0       Tests  21 passed (21)
+DONE

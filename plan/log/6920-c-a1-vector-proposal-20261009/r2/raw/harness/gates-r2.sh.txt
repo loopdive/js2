@@ -1,0 +1,25 @@
+#!/bin/bash
+# usage: gates-r2.sh <outdir>   — runs every gate bare, records each exit.
+OUT=$1
+B=dbf5b4f74b37d67e525b2af36fd1fe49803b1348
+cd /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+mkdir -p "$OUT"
+: > "$OUT/gate-exits.txt"
+run() {
+  local name=$1; shift
+  "$@" > "$OUT/$name.txt" 2>&1
+  local ec=$?
+  echo "$name exit=$ec cmd: $*" >> "$OUT/gate-exits.txt"
+}
+run typecheck npm run -s typecheck
+run loc-budget node scripts/check-loc-budget.mjs
+run loc-budget-base env LOC_GATE_BASE=$B node scripts/check-loc-budget.mjs
+run func-budget node scripts/check-func-budget.mjs
+run func-budget-base env LOC_GATE_BASE=$B node scripts/check-func-budget.mjs
+run coercion-sites node scripts/check-coercion-sites.mjs
+run oracle-ratchet npm run -s check:oracle-ratchet
+run dead-exports npm run -s check:dead-exports
+run ir-fallbacks pnpm run -s check:ir-fallbacks
+run compiler-boundaries-inventory-base node --max-old-space-size=2048 scripts/check-compiler-boundaries.mjs --mode inventory --base $B
+run lowering-cycle-3518 npx vitest run tests/issue-3518-lowering-cycle.test.ts --reporter=verbose
+echo DONE >> "$OUT/gate-exits.txt"

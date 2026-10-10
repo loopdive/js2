@@ -1,0 +1,10 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/backend-contract.test.ts (9 tests) 12ms
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  22:52:20
+   Duration  539ms (transform 164ms, setup 0ms, collect 217ms, tests 12ms, environment 0ms, prepare 65ms)
+

@@ -1,0 +1,10 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-6920-vector-representation.test.ts (13 tests) 44ms
+
+ Test Files  1 passed (1)
+      Tests  13 passed (13)
+   Start at  23:26:19
+   Duration  25.47s (transform 17.44s, setup 0ms, collect 24.99s, tests 44ms, environment 0ms, prepare 79ms)
+

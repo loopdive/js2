@@ -1,0 +1,12 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3526-string-boundary-len.test.ts (31 tests) 1458ms
+   ✓ #3526 F2-S4 end-to-end behaviour is unchanged > binds the host lane's existing wasm:js-string.length builtin, in the same position  679ms
+   ✓ #3526 F2-S4 end-to-end behaviour is unchanged > reads the carrier field on every native-strings lane, with no wasm:js-string import  409ms
+
+ Test Files  1 passed (1)
+      Tests  31 passed (31)
+   Start at  23:05:41
+   Duration  27.53s (transform 18.13s, setup 0ms, collect 25.69s, tests 1.46s, environment 0ms, prepare 59ms)
+

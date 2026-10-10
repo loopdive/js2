@@ -1,0 +1,48 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > reads relocated length and fractional payload from a stale alias 13ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > reads a changed old in-range entry from the current payload 13ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > follows multiple genuine forwarding hops and resolves again after intervening growth 10ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > keeps memory, allocator and forwarding records unchanged across repeated reads 279ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > preserves no-growth and direct in-bounds fractional stores 7ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > uses a real defined resolver after imports without calling the import namesake 3ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > emitVecLen refuses a missing resolver without changing its supplied buffer 1ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > emitVecLen refuses an invalid binding without changing its supplied buffer 0ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > emitVecDataPtr refuses a missing resolver without changing its supplied buffer 1ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > emitVecDataPtr refuses an invalid binding without changing its supplied buffer 0ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > demands forwarding for allocation-free vec.len 12ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > demands forwarding for allocation-free vec.get 4ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > demands forwarding for allocation-free vec.set 1ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > demands forwarding for allocation-free forof.vec 1ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > discovers forwarding in nested buffers without allocation demand 1ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > does not demand forwarding for scalar-only instructions 1ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > does not demand forwarding for string-only instructions 1ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > production preflight rejects absent type before the frozen-body consumer 673ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > production preflight rejects non-function type before the frozen-body consumer 17ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > production preflight rejects wrong parameter kind before the frozen-body consumer 18ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > production preflight rejects wrong result kind before the frozen-body consumer 15ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > production preflight rejects wrong parameter arity before the frozen-body consumer 27ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > production preflight rejects wrong result arity before the frozen-body consumer 16ms
+stdout | tests/issue-6893-linear-ir-read-forwarding.test.ts > keeps the original 3.75 requirement for aliasScalar31-out-of-scope-A
+vector-forwarding-original {"fixture":"aliasScalar31-out-of-scope-A","owner":"ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000000","actual":3.75,"expected":3.75}
+
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > production preflight rejects a missing defined helper before the frozen-body consumer 14ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > issue 6893: linear IR resolves forwarding before reads > production preflight rejects an import-only namesake before the frozen-body consumer 24ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > keeps the original 3.75 requirement for aliasScalar31-out-of-scope-A 56ms
+stdout | tests/issue-6893-linear-ir-read-forwarding.test.ts > keeps the original 69 requirement for pushed values survive relocation
+vector-forwarding-original {"fixture":"pushed values survive relocation","owner":"ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000000","actual":69,"expected":69}
+
+stdout | tests/issue-6893-linear-ir-read-forwarding.test.ts > keeps the original 40 requirement for aliases observe growth through the forwarding record
+vector-forwarding-original {"fixture":"aliases observe growth through the forwarding record","owner":"ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000000","actual":40,"expected":40}
+
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > keeps the original 69 requirement for pushed values survive relocation 64ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > keeps the original 40 requirement for aliases observe growth through the forwarding record 45ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > preserves unsigned bounds and out-of-bounds numeric zero after growth 32ms
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts > typed production preflight binds the defined resolver after preceding imports and an import namesake 14ms
+
+ Test Files  1 passed (1)
+      Tests  30 passed (30)
+   Start at  19:59:54
+   Duration  38.33s (transform 25.45s, setup 0ms, collect 36.46s, tests 1.36s, environment 0ms, prepare 94ms)
+

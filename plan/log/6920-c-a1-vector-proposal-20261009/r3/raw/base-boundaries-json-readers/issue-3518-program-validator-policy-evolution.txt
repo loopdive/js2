@@ -1,0 +1,604 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > authenticates the independent fixed receipt and complete current profiles 28ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > recovers the exact original raw bytes and independently replays all16 spans 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > detaches semantic operands and proves exact five rows/layer/history reciprocity 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses the stale predecessor while the unchanged old D1 API admits it 9ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic program floor 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic program entry order 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic program root 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic allowed edge 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic history order 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic move order 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic unrelated retained field 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic extra top field 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic new row membership 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic new row duplication 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic new row order 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic new row extra schema 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic new row layer 10ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic extra clean row 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic facade schema 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic facade owner 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic facade neighbor 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic facade duplication 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses a real sparse semantic array rather than an undefined assignment 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw boxed before missing authority with a real positive witness 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw number before missing authority with a real positive witness 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic null before missing authority with a real positive witness 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic boxed before missing authority with a real positive witness 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic undefined before missing authority with a real positive witness 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic array before missing authority with a real positive witness 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic symbol before missing authority with a real positive witness 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic cycle before missing authority with a real positive witness 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic getter before missing authority with a real positive witness 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic hidden before missing authority with a real positive witness 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic bigint before missing authority with a real positive witness 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span0 missing 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span0 duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span0 relocated 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span1 missing 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span1 duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span1 relocated 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span2 missing 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span2 duplicate 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span2 relocated 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span3 missing 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span3 duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span3 relocated 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span4 missing 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span4 duplicate 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span4 relocated 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span5 missing 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span5 duplicate 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span5 relocated 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span6 missing 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span6 duplicate 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span6 relocated 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span7 missing 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span7 duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span7 relocated 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span8 missing 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span8 duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span8 relocated 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span9 missing 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span9 duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span9 relocated 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span10 missing 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span10 duplicate 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span10 relocated 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span11 missing 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span11 duplicate 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span11 relocated 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span12 missing 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span12 duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span12 relocated 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span13 missing 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span13 duplicate 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span13 relocated 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span14 missing 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span14 duplicate 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span14 relocated 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span15 missing 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span15 duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span15 relocated 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses whitespace-only raw drift although parsed current data is unchanged 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing tests/helpers/ir-runtime-program-policy-program-validator.json after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing tests/helpers/ir-runtime-program-policy-program-validator.json after success 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation tests/helpers/ir-runtime-program-policy-program-validator.json after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation tests/helpers/ir-runtime-program-policy-program-validator.json after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing tests/helpers/ir-runtime-program-policy-evolution.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing tests/helpers/ir-runtime-program-policy-evolution.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation tests/helpers/ir-runtime-program-policy-evolution.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation tests/helpers/ir-runtime-program-policy-evolution.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing tests/helpers/ir-runtime-program-policy-nested-stackification.json after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing tests/helpers/ir-runtime-program-policy-nested-stackification.json after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation tests/helpers/ir-runtime-program-policy-nested-stackification.json after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation tests/helpers/ir-runtime-program-policy-nested-stackification.json after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing tests/helpers/ir-program-validator-relocation.json after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing tests/helpers/ir-program-validator-relocation.json after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation tests/helpers/ir-program-validator-relocation.json after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation tests/helpers/ir-program-validator-relocation.json after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing tests/helpers/ir-c1-authority.json after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing tests/helpers/ir-c1-authority.json after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation tests/helpers/ir-c1-authority.json after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation tests/helpers/ir-c1-authority.json after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing src/ir/program-runtime-demands.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing src/ir/program-runtime-demands.ts after success 8ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation src/ir/program-runtime-demands.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation src/ir/program-runtime-demands.ts after success 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing src/ir/program-runtime-abi.ts after success 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing src/ir/program-runtime-abi.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation src/ir/program-runtime-abi.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation src/ir/program-runtime-abi.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing src/ir/runtime-program-manifest.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing src/ir/runtime-program-manifest.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation src/ir/runtime-program-manifest.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation src/ir/runtime-program-manifest.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing src/ir/program-runtime-validation.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing src/ir/program-runtime-validation.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation src/ir/program-runtime-validation.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation src/ir/program-runtime-validation.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing src/ir/program-validation.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing src/ir/program-validation.ts after success 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation src/ir/program-validation.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation src/ir/program-validation.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing src/ir/program/runtime-demands.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing src/ir/program/runtime-demands.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation src/ir/program/runtime-demands.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation src/ir/program/runtime-demands.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing src/ir/program/runtime-abi.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing src/ir/program/runtime-abi.ts after success 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation src/ir/program/runtime-abi.ts after success 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation src/ir/program/runtime-abi.ts after success 8ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing src/ir/program/runtime-manifest.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing src/ir/program/runtime-manifest.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation src/ir/program/runtime-manifest.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation src/ir/program/runtime-manifest.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing src/ir/program/runtime-validation.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing src/ir/program/runtime-validation.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation src/ir/program/runtime-validation.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation src/ir/program/runtime-validation.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing src/ir/program/validation.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing src/ir/program/validation.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation src/ir/program/validation.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation src/ir/program/validation.ts after success 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 143 ⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > authenticates the independent fixed receipt and complete current profiles
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-program-validator-policy-evolution.test.ts:720:19
+ ❯ tests/issue-3518-program-validator-policy-evolution.test.ts:953:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/143]⎯
+
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > recovers the exact original raw bytes and independently replays all16 spans
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-program-validator-policy-evolution.test.ts:720:19
+ ❯ tests/issue-3518-program-validator-policy-evolution.test.ts:959:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/143]⎯
+
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > detaches semantic operands and proves exact five rows/layer/history reciprocity
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-program-validator-policy-evolution.test.ts:720:19
+ ❯ policy tests/issue-3518-program-validator-policy-evolution.test.ts:731:33
+ ❯ tests/issue-3518-program-validator-policy-evolution.test.ts:968:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/143]⎯
+
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses the stale predecessor while the unchanged old D1 API admits it
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-program-validator-policy-evolution.test.ts:720:19
+ ❯ tests/issue-3518-program-validator-policy-evolution.test.ts:986:31
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/143]⎯
+
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic program floor
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic program entry order
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic program root
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic allowed edge
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic history order
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic move order
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic unrelated retained field
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic extra top field
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic new row membership
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic new row duplication
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic new row order
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic new row extra schema
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic new row layer
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic extra clean row
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic facade schema
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic facade owner
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic facade neighbor
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic facade duplication
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-program-validator-policy-evolution.test.ts:720:19
+ ❯ policy tests/issue-3518-program-validator-policy-evolution.test.ts:731:33
+ ❯ tests/issue-3518-program-validator-policy-evolution.test.ts:1109:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/143]⎯
+
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses a real sparse semantic array rather than an undefined assignment
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-program-validator-policy-evolution.test.ts:720:19
+ ❯ policy tests/issue-3518-program-validator-policy-evolution.test.ts:731:33
+ ❯ tests/issue-3518-program-validator-policy-evolution.test.ts:1116:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/143]⎯
+
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw boxed before missing authority with a real positive witness
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw number before missing authority with a real positive witness
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic null before missing authority with a real positive witness
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic boxed before missing authority with a real positive witness
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic undefined before missing authority with a real positive witness
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic array before missing authority with a real positive witness
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic symbol before missing authority with a real positive witness
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic cycle before missing authority with a real positive witness
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic getter before missing authority with a real positive witness
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic hidden before missing authority with a real positive witness
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses semantic bigint before missing authority with a real positive witness
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-program-validator-policy-evolution.test.ts:720:19
+ ❯ tests/issue-3518-program-validator-policy-evolution.test.ts:1158:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/143]⎯
+
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span0 missing
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span0 duplicate
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span0 relocated
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span1 missing
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span1 duplicate
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span1 relocated
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span2 missing
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span2 duplicate
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span2 relocated
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span3 missing
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span3 duplicate
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span3 relocated
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span4 missing
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span4 duplicate
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span4 relocated
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span5 missing
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span5 duplicate
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span5 relocated
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span6 missing
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span6 duplicate
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span6 relocated
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span7 missing
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span7 duplicate
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span7 relocated
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span8 missing
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span8 duplicate
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span8 relocated
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span9 missing
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span9 duplicate
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span9 relocated
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span10 missing
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span10 duplicate
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span10 relocated
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span11 missing
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span11 duplicate
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span11 relocated
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span12 missing
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span12 duplicate
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span12 relocated
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span13 missing
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span13 duplicate
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span13 relocated
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span14 missing
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span14 duplicate
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span14 relocated
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span15 missing
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span15 duplicate
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses raw span15 relocated
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-program-validator-policy-evolution.test.ts:720:19
+ ❯ tests/issue-3518-program-validator-policy-evolution.test.ts:1176:31
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/143]⎯
+
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > refuses whitespace-only raw drift although parsed current data is unchanged
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-program-validator-policy-evolution.test.ts:720:19
+ ❯ tests/issue-3518-program-validator-policy-evolution.test.ts:1193:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/143]⎯
+
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing tests/helpers/ir-runtime-program-policy-program-validator.json after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing tests/helpers/ir-runtime-program-policy-program-validator.json after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation tests/helpers/ir-runtime-program-policy-program-validator.json after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation tests/helpers/ir-runtime-program-policy-program-validator.json after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing tests/helpers/ir-runtime-program-policy-evolution.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing tests/helpers/ir-runtime-program-policy-evolution.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation tests/helpers/ir-runtime-program-policy-evolution.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation tests/helpers/ir-runtime-program-policy-evolution.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing tests/helpers/ir-runtime-program-policy-nested-stackification.json after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing tests/helpers/ir-runtime-program-policy-nested-stackification.json after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation tests/helpers/ir-runtime-program-policy-nested-stackification.json after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation tests/helpers/ir-runtime-program-policy-nested-stackification.json after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing tests/helpers/ir-program-validator-relocation.json after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing tests/helpers/ir-program-validator-relocation.json after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation tests/helpers/ir-program-validator-relocation.json after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation tests/helpers/ir-program-validator-relocation.json after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing tests/helpers/ir-c1-authority.json after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing tests/helpers/ir-c1-authority.json after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation tests/helpers/ir-c1-authority.json after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation tests/helpers/ir-c1-authority.json after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing src/ir/program-runtime-demands.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing src/ir/program-runtime-demands.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation src/ir/program-runtime-demands.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation src/ir/program-runtime-demands.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing src/ir/program-runtime-abi.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing src/ir/program-runtime-abi.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation src/ir/program-runtime-abi.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation src/ir/program-runtime-abi.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing src/ir/runtime-program-manifest.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing src/ir/runtime-program-manifest.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation src/ir/runtime-program-manifest.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation src/ir/runtime-program-manifest.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing src/ir/program-runtime-validation.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing src/ir/program-runtime-validation.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation src/ir/program-runtime-validation.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation src/ir/program-runtime-validation.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing src/ir/program-validation.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing src/ir/program-validation.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation src/ir/program-validation.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation src/ir/program-validation.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing src/ir/program/runtime-demands.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing src/ir/program/runtime-demands.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation src/ir/program/runtime-demands.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation src/ir/program/runtime-demands.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing src/ir/program/runtime-abi.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing src/ir/program/runtime-abi.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation src/ir/program/runtime-abi.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation src/ir/program/runtime-abi.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing src/ir/program/runtime-manifest.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing src/ir/program/runtime-manifest.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation src/ir/program/runtime-manifest.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation src/ir/program/runtime-manifest.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing src/ir/program/runtime-validation.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing src/ir/program/runtime-validation.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation src/ir/program/runtime-validation.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation src/ir/program/runtime-validation.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses missing src/ir/program/validation.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses missing src/ir/program/validation.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh semantic refuses mutation src/ir/program/validation.ts after success
+ FAIL  tests/issue-3518-program-validator-policy-evolution.test.ts > fixed five-owner program validator policy predecessor capture > fresh raw refuses mutation src/ir/program/validation.ts after success
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-program-validator-policy-evolution.test.ts:720:19
+ ❯ tests/issue-3518-program-validator-policy-evolution.test.ts:1208:24
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/143]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  143 failed (143)
+   Start at  22:49:40
+   Duration  1.42s (transform 464ms, setup 0ms, collect 550ms, tests 466ms, environment 0ms, prepare 75ms)
+

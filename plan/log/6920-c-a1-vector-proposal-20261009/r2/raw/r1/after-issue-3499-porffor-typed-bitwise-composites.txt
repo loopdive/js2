@@ -1,0 +1,99 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ❯ tests/issue-3499-porffor-typed-bitwise-composites.test.ts (6 tests | 2 failed | 2 skipped) 834ms
+   ✓ #3499 backend-neutral typed bitwise composites > admits all JS bitwise variants for Porffor while preserving bytecode legality 6ms
+   × #3499 backend-neutral typed bitwise composites > keeps the WasmGC and linear instruction streams byte-for-byte aligned 23ms
+     → expected [ …(6) ] to deeply equal [ …(2) ]
+   ✓ #3499 backend-neutral typed bitwise composites > maps ToInt32, masked shifts, and result signedness without RawC 20ms
+   × #3499 backend-neutral typed bitwise composites > feeds the exact checked-in fib.js bytes through shared linear IR and its memory plan 785ms
+     → expected [] to strictly equal [ 'js.bitor', 'js.bitor' ]
+   ↓ #3499 backend-neutral typed bitwise composites > matches JavaScript for coercion edges and masked shifts under ASan/UBSan
+   ↓ #3499 backend-neutral typed bitwise composites > matches Node for exact fib.js fixed/cold/runtime inputs under ASan/UBSan
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3499-porffor-typed-bitwise-composites.test.ts > #3499 backend-neutral typed bitwise composites > keeps the WasmGC and linear instruction streams byte-for-byte aligned
+AssertionError: expected [ …(6) ] to deeply equal [ …(2) ]
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[33m@@ -13,6 +13,38 @@[39m
+[2m        {[22m
+[2m          "kind": "f64",[22m
+[2m        },[22m
+[2m      ],[22m
+[2m    },[22m
+[31m+   {[39m
+[31m+     "name": "$js_bitwise_i64_bits",[39m
+[31m+     "slots": [[39m
+[31m+       {[39m
+[31m+         "kind": "i64",[39m
+[31m+       },[39m
+[31m+     ],[39m
+[31m+   },[39m
+[31m+   {[39m
+[31m+     "name": "$js_bitwise_i64_e",[39m
+[31m+     "slots": [[39m
+[31m+       {[39m
+[31m+         "kind": "i64",[39m
+[31m+       },[39m
+[31m+     ],[39m
+[31m+   },[39m
+[31m+   {[39m
+[31m+     "name": "$js_bitwise_i64_significand",[39m
+[31m+     "slots": [[39m
+[31m+       {[39m
+[31m+         "kind": "i64",[39m
+[31m+       },[39m
+[31m+     ],[39m
+[31m+   },[39m
+[31m+   {[39m
+[31m+     "name": "$js_bitwise_i64_magnitude",[39m
+[31m+     "slots": [[39m
+[31m+       {[39m
+[31m+         "kind": "i64",[39m
+[31m+       },[39m
+[31m+     ],[39m
+[31m+   },[39m
+[2m  ][22m
+
+ ❯ tests/issue-3499-porffor-typed-bitwise-composites.test.ts:141:27
+    139| 
+    140|     expect(linear).toStrictEqual(wasmGc);
+    141|     expect(wasmGc.locals).toEqual([
+       |                           ^
+    142|       { name: "$js_bitwise_tmp", slots: [{ kind: "f64" }] },
+    143|       { name: "$js_bitwise_rhs", slots: [{ kind: "f64" }] },
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/issue-3499-porffor-typed-bitwise-composites.test.ts > #3499 backend-neutral typed bitwise composites > feeds the exact checked-in fib.js bytes through shared linear IR and its memory plan
+AssertionError: expected [] to strictly equal [ 'js.bitor', 'js.bitor' ]
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- [[39m
+[32m-   "js.bitor",[39m
+[32m-   "js.bitor",[39m
+[32m- ][39m
+[31m+ [][39m
+
+ ❯ tests/issue-3499-porffor-typed-bitwise-composites.test.ts:213:30
+    211|     expect(proof.report.memoryPlan.allocations).toStrictEqual([]);
+    212|     expect(proof.report.irModule.functions.map((func) => func.name)).t…
+    213|     expect(proof.bitwiseOps).toStrictEqual(["js.bitor", "js.bitor"]);
+       |                              ^
+    214|     expect(proof.porfforInput.funcs.filter(Boolean).map((func) => func…
+    215|     expect(proof.linearValues).toStrictEqual(proof.nodeValues);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 2 passed | 2 skipped (6)
+   Start at  22:47:22
+   Duration  26.67s (transform 17.79s, setup 0ms, collect 25.44s, tests 834ms, environment 0ms, prepare 55ms)
+

@@ -1,0 +1,13 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3297.test.ts > #3297 Porffor scalar/control-flow sink > maps the scalar/control-flow family and retains Porffor FX on direct calls 668ms
+ ✓ tests/issue-3297.test.ts > #3297 Porffor scalar/control-flow sink > preserves stable label order and uses identity only to break label collisions 133ms
+ ✓ tests/issue-3297.test.ts > #3297 Porffor scalar/control-flow sink > requires the shared memory plan before heap emission 2ms
+ ↓ tests/issue-3297.test.ts > #3297 JavaScript / linear-Wasm / Porffor-C differential > preserves scalar results and left-to-right call effects in rendered C
+
+ Test Files  1 passed (1)
+      Tests  3 passed | 1 skipped (4)
+   Start at  20:01:49
+   Duration  34.34s (transform 23.66s, setup 0ms, collect 33.05s, tests 805ms, environment 0ms, prepare 74ms)
+

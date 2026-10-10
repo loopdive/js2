@@ -1,0 +1,11 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3297.test.ts (4 tests | 1 skipped) 689ms
+   ✓ #3297 Porffor scalar/control-flow sink > maps the scalar/control-flow family and retains Porffor FX on direct calls  586ms
+
+ Test Files  1 passed (1)
+      Tests  3 passed | 1 skipped (4)
+   Start at  22:28:24
+   Duration  24.94s (transform 16.64s, setup 0ms, collect 23.88s, tests 689ms, environment 0ms, prepare 55ms)
+

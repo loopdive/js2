@@ -1,0 +1,10 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3502-string-hash-four-lane.test.ts (3 tests | 1 skipped) 1302ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed | 1 skipped (3)
+   Start at  22:31:24
+   Duration  26.11s (transform 17.12s, setup 0ms, collect 24.32s, tests 1.30s, environment 0ms, prepare 62ms)
+

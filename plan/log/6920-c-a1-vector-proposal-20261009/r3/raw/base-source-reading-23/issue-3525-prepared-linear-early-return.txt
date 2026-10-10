@@ -1,0 +1,26 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3525-prepared-linear-early-return.test.ts > #3525 genuine prepared Linear early returns > retains all four original application source pins and independent native eight-call oracle 440ms
+ ✓ tests/issue-3525-prepared-linear-early-return.test.ts > #3525 genuine prepared Linear early returns > observes the enabled Linear overlay positive control and restores a preexisting switch exactly 778ms
+ ✓ tests/issue-3525-prepared-linear-early-return.test.ts > #3525 genuine prepared Linear early returns > executes the complete five-function eight-call application through wasmgc prepared and legacy binaries and helpers 6801ms
+ ✓ tests/issue-3525-prepared-linear-early-return.test.ts > #3525 genuine prepared Linear early returns > preserves nested if and loop returns versus fallthrough on wasmgc native and original generated-helper paths 6878ms
+ ✓ tests/issue-3525-prepared-linear-early-return.test.ts > #3525 genuine prepared Linear early returns > preserves callee return does not exit caller on wasmgc native and original generated-helper paths 6777ms
+ ✓ tests/issue-3525-prepared-linear-early-return.test.ts > #3525 genuine prepared Linear early returns > preserves void early return skips later effects on wasmgc native and original generated-helper paths 6825ms
+ ✓ tests/issue-3525-prepared-linear-early-return.test.ts > #3525 genuine prepared Linear early returns > preserves return operand evaluates exactly once on wasmgc native and original generated-helper paths 6886ms
+ ✓ tests/issue-3525-prepared-linear-early-return.test.ts > #3525 genuine prepared Linear early returns > executes the complete five-function eight-call application through linear prepared and legacy binaries and helpers 7052ms
+ ✓ tests/issue-3525-prepared-linear-early-return.test.ts > #3525 genuine prepared Linear early returns > preserves nested if and loop returns versus fallthrough on linear native and original generated-helper paths 7125ms
+ ✓ tests/issue-3525-prepared-linear-early-return.test.ts > #3525 genuine prepared Linear early returns > preserves callee return does not exit caller on linear native and original generated-helper paths 6979ms
+ ✓ tests/issue-3525-prepared-linear-early-return.test.ts > #3525 genuine prepared Linear early returns > preserves void early return skips later effects on linear native and original generated-helper paths 7218ms
+ ✓ tests/issue-3525-prepared-linear-early-return.test.ts > #3525 genuine prepared Linear early returns > preserves return operand evaluates exactly once on linear native and original generated-helper paths 7203ms
+ ✓ tests/issue-3525-prepared-linear-early-return.test.ts > #3525 genuine prepared Linear early returns > accepts healthy deeply nested value and void return controls independently of legality 1ms
+ ✓ tests/issue-3525-prepared-linear-early-return.test.ts > #3525 genuine prepared Linear early returns > deep verifier rejects null operand in value return despite legality admission 1ms
+ ✓ tests/issue-3525-prepared-linear-early-return.test.ts > #3525 genuine prepared Linear early returns > deep verifier rejects i32 operand in void return despite legality admission 0ms
+ ✓ tests/issue-3525-prepared-linear-early-return.test.ts > #3525 genuine prepared Linear early returns > deep verifier rejects f64 operand in value return despite legality admission 0ms
+ ✓ tests/issue-3525-prepared-linear-early-return.test.ts > #3525 genuine prepared Linear early returns > retains unrelated Linear type refusal and non-Linear early-return refusal 1ms
+
+ Test Files  1 passed (1)
+      Tests  17 passed (17)
+   Start at  22:37:38
+   Duration  101.19s (transform 20.82s, setup 0ms, collect 29.71s, tests 70.97s, environment 0ms, prepare 72ms)
+

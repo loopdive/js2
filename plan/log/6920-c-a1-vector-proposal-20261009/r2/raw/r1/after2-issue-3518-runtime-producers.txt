@@ -1,0 +1,11 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-runtime-producers.test.ts (25 tests) 579ms
+   ✓ #3518 complete-program runtime producers > reattaches the runtime in a fresh process with frontend imports blocked  350ms
+
+ Test Files  1 passed (1)
+      Tests  25 passed (25)
+   Start at  23:00:28
+   Duration  23.32s (transform 15.58s, setup 0ms, collect 22.35s, tests 579ms, environment 0ms, prepare 64ms)
+

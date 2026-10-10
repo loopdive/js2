@@ -1,0 +1,33 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > preserves i8 storage and canonical i8 vector geometry 5ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > preserves i16 storage and canonical i16 vector geometry 1ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > preserves i32 storage and canonical i32 vector geometry 1ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > preserves i64 storage and canonical i64 vector geometry 1ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > preserves f32 storage and canonical f32 vector geometry 1ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > preserves f64 storage and canonical f64 vector geometry 1ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > preserves bytes16 storage and canonical v128 vector geometry 1ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > preserves pointer storage and canonical externref vector geometry 0ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > keeps string pointer vector identity distinct from scalar pointer 1ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > keeps nested vector pointer identity including nullability 1ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > keeps ordered object field semantics in pointer vector identity 1ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > keeps canonical nominal class identity in pointer vector layout 1ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > keeps boxed scalar identity in pointer vector layout 0ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > keeps dynamic pointer vector identity distinct from scalar pointer 0ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > keeps closure signature identity and rejects canonical support references 3ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > preserves the independently specified empty record header 0ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > preserves ordered mixed record slots and both fixed pointer offsets 0ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > retains the existing eight-byte record slot for bytes16 storage 0ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > preserves the independently specified UTF-8 byte string layout 0ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > retains five function bindings through planner and public IR compatibility exports 2ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > returns fresh mutable layouts and isolates nested array mutations 1ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > shares one frozen forwarding object with independently specified header bytes 0ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > has a nonempty shared source owner with zero value or type references and exact IR delegation 74ms
+ ✓ tests/issue-6865-linear-layout-contract.test.ts > #6865 — shared Linear byte geometry contract > detects injected forbidden IR value and type references with the repository parser 26ms
+
+ Test Files  1 passed (1)
+      Tests  24 passed (24)
+   Start at  22:28:15
+   Duration  26.11s (transform 18.88s, setup 0ms, collect 25.53s, tests 126ms, environment 0ms, prepare 68ms)
+

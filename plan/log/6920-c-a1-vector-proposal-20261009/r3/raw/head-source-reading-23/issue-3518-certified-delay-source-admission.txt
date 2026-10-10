@@ -1,0 +1,50 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > pins the exact existing source and admits one body without losing either original arrow 652ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > keeps omitted historical lowering and does not certify or pass delay plans 17ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > keeps disabled historical lowering and does not certify or pass delay plans 16ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects invalid projection garbage before source planning 26ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects invalid projection host-executor before source planning 12ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects invalid projection null before source planning 9ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects invalid projection true before source planning 8ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects invalid projection 0 before source planning 8ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects explicit native source selection under 'wasmgc':'host' 11ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects explicit native source selection under 'wasmgc':'wasi' 8ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects explicit native source selection under 'wasmgc':'strict-no-host' 7ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects explicit native source selection under 'linear':'standalone' 6ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects an additional 'wasmgc':'host' runtime projection 6ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects an additional 'wasmgc':'wasi' runtime projection 6ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects an additional 'linear':'standalone' runtime projection 6ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > retains duplicate-policy and missing-source-policy checks 6ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > captures and decodes the complete typed packet without treating transport as prepared authority 313ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > resolves once, keeps same-name source owners distinct, and preserves input-order-independent capture 91ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > does not certify the concise executor near miss 12ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > does not certify the wrong captured value near miss 10ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > does not certify the extra effect near miss 18ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > does not certify the shadowed timer near miss 11ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > does not certify the shadowed Promise near miss 13ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > retains the complete async family and its separate array-parameter limitation 38ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > allows actual string constants and debug names equal to a support ID 17ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects a produced body targeting elided support 10ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects a produced provenance targeting elided support 9ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects a produced direct reference targeting elided support 9ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects a produced nested provider targeting elided support 9ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects a produced derived reference targeting elided support 15ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects a produced map targeting elided support 9ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects a produced set targeting elided support 13ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects a produced fnctor constructorUnitId targeting elided support 9ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects a produced fnctor constructorIdentity.unitId targeting elided support 9ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects a source-produced global binding whose owner points to elided support 15ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects post-lowering certified population mutation: clear all 13ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects post-lowering certified population mutation: remove one owner 12ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects post-lowering certified population mutation: replace plan object 11ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > rejects post-lowering certified population mutation: replace map object 21ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > compares the post-lowering support population against its independently saved original records 9ms
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts > explicit certified native delay source admission > permits a legitimately empty initial certification population 18ms
+
+ Test Files  1 passed (1)
+      Tests  41 passed (41)
+   Start at  22:08:47
+   Duration  32.27s (transform 21.15s, setup 0ms, collect 30.28s, tests 1.52s, environment 0ms, prepare 66ms)
+

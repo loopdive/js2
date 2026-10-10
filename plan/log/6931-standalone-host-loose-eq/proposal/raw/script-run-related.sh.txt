@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Usage: bash .tmp/run-related.sh <label>   (base|after)
+cd "$(dirname "$0")/.."
+label="$1"
+mapfile -t FILES < .tmp/6931-out/raw/related-tests.txt
+timeout 3600 npx vitest run "${FILES[@]}" --maxWorkers=2 --minWorkers=1 \
+  --reporter=json --outputFile=".tmp/6931-out/${label}-related.json" \
+  > ".tmp/6931-out/raw/${label}-related-stdout.txt" 2>&1
+echo "EXIT $?" >> ".tmp/6931-out/raw/${label}-related-stdout.txt"
+node -e '
+const r = require(process.argv[1]);
+const rows = [];
+for (const f of r.testResults) for (const a of f.assertionResults)
+  rows.push([a.status, f.name.replace(process.cwd() + "/", ""), a.fullName].join("\t"));
+rows.sort();
+require("fs").writeFileSync(process.argv[2], "status\tfile\ttest\n" + rows.join("\n") + "\n");
+const fails = rows.filter((x) => x.startsWith("failed"));
+const sum = `files=${r.numTotalTestSuites} tests=${r.numTotalTests} passed=${r.numPassedTests} failed=${r.numFailedTests} pending=${r.numPendingTests} failedSuites=${r.numFailedTestSuites}`;
+require("fs").writeFileSync(process.argv[3], sum + "\n" + fails.join("\n") + "\n");
+console.log(sum);
+' "$PWD/.tmp/6931-out/${label}-related.json" ".tmp/6931-out/raw/${label}-related-tests.tsv" ".tmp/6931-out/raw/${label}-related-failures.txt"

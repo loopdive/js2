@@ -1,0 +1,706 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > pins the authenticated WKS predecessor raw/ordered policy, all independent populations and key order 18ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > freshly checks all nineteen immutable inputs and the entire original helper prefix 119ms
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > independently replays the exact two-row semantic delta and authenticates C1 through real B 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > independently assembles all four fixed raw slices and verifies reciprocal complete-source profiles 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > returns fresh frozen detached current and mutable exact C1 copies across repeated calls 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1769 delete 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1769 duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1769 replace 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1769 reorder 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1769 unknown 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1769 state 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1769 layer 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1769 key-order 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1770 delete 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1770 duplicate 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1770 replace 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1770 reorder 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1770 unknown 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1770 state 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1770 layer 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1770 key-order 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 entry-delete 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 entry-replace 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 entry-duplicate 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 entry-reorder 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 same-count 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 unknown-entry 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 index 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 id 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 root 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 status 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 required 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 floor 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 key-order 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 entry-delete 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 entry-replace 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 entry-duplicate 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 entry-reorder 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 same-count 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 unknown-entry 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 index 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 id 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 root 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 status 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 required 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 floor 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 key-order 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 96 delete 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 96 duplicate 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 96 replace 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 96 reorder 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 96 entry-delete 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 96 entry-duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 96 layer 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 96 floor 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 96 key-order 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 97 delete 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 97 duplicate 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 97 replace 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 97 reorder 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 97 entry-delete 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 97 entry-duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 97 layer 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 97 floor 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 97 key-order 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed file-prefix 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed history-prefix 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer-prefix 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed edge 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed unrelated 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed top-key-order 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed same-count-file 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects top accessors with zero getter calls before serialization, then restores and retries 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects layer accessors with zero getter calls before serialization, then restores and retries 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects file accessors with zero getter calls before serialization, then restores and retries 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects history accessors with zero getter calls before serialization, then restores and retries 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects array-element accessors with zero getter calls before serialization, then restores and retries 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects hidden descriptors or non-JSON data after a warm success without invoking callbacks 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects symbol descriptors or non-JSON data after a warm success without invoking callbacks 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects foreign-prototype descriptors or non-JSON data after a warm success without invoking callbacks 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects sparse descriptors or non-JSON data after a warm success without invoking callbacks 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects inherited descriptors or non-JSON data after a warm success without invoking callbacks 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects extra-array descriptors or non-JSON data after a warm success without invoking callbacks 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects cycle descriptors or non-JSON data after a warm success without invoking callbacks 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects function descriptors or non-JSON data after a warm success without invoking callbacks 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects toJSON descriptors or non-JSON data after a warm success without invoking callbacks 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects undefined descriptors or non-JSON data after a warm success without invoking callbacks 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects bigint descriptors or non-JSON data after a warm success without invoking callbacks 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects nan descriptors or non-JSON data after a warm success without invoking callbacks 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects infinity descriptors or non-JSON data after a warm success without invoking callbacks 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects negative-zero descriptors or non-JSON data after a warm success without invoking callbacks 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects repeated warm mutations and reaccepts the exact authentic data after restoration 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 0 first 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 0 last 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 0 outside 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 0 missing 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 0 duplicate 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 0 reordered 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 1 first 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 1 last 8ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 1 outside 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 1 missing 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 1 duplicate 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 1 reordered 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 2 first 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 2 last 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 2 outside 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 2 missing 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 2 duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 2 reordered 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 3 first 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 3 last 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 3 outside 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 3 missing 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 3 duplicate 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 3 reordered 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects semantically equal raw leading-space 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects semantically equal raw trailing-space 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects semantically equal raw crlf 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects semantically equal raw no-final-newline 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects semantically equal raw extra-final-newline 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > refuses nonprimitive raw without invoking its conversion callback 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed receipt whitespace drift and reaccepts the fresh original 91ms
+ ✓ tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed receipt newline drift and reaccepts the fresh original 61ms
+ ✓ tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed receipt before drift and reaccepts the fresh original 62ms
+ ✓ tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed receipt current drift and reaccepts the fresh original 57ms
+ ✓ tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed receipt inputs drift and reaccepts the fresh original 58ms
+ ✓ tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed receipt prefix drift and reaccepts the fresh original 67ms
+ ✓ tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed receipt census drift and reaccepts the fresh original 57ms
+ ✓ tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed receipt delta drift and reaccepts the fresh original 57ms
+ ✓ tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed receipt files drift and reaccepts the fresh original 57ms
+ ✓ tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed receipt activations drift and reaccepts the fresh original 68ms
+ ✓ tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed receipt edges drift and reaccepts the fresh original 52ms
+ ✓ tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed receipt unknown-field drift and reaccepts the fresh original 60ms
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 0 role mutation 114ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 0 beforeOffset mutation 113ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 0 afterOffset mutation 125ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 0 before mutation 144ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 0 after mutation 108ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 1 role mutation 118ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 1 beforeOffset mutation 116ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 1 afterOffset mutation 120ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 1 before mutation 117ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 1 after mutation 115ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 2 role mutation 120ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 2 beforeOffset mutation 103ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 2 afterOffset mutation 113ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 2 before mutation 114ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 2 after mutation 110ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 3 role mutation 112ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 3 beforeOffset mutation 110ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 3 afterOffset mutation 106ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 3 before mutation 110ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 3 after mutation 112ms
+   → Deno post-position main successor: complete raw source profile mismatch
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 141 ⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > pins the authenticated WKS predecessor raw/ordered policy, all independent populations and key order
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-well-known-symbol-policy-evolution.test.ts:81:39
+ ❯ actual tests/issue-3518-well-known-symbol-policy-evolution.test.ts:102:41
+ ❯ tests/issue-3518-well-known-symbol-policy-evolution.test.ts:157:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/141]⎯
+
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > independently replays the exact two-row semantic delta and authenticates C1 through real B
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-well-known-symbol-policy-evolution.test.ts:81:39
+ ❯ actual tests/issue-3518-well-known-symbol-policy-evolution.test.ts:102:41
+ ❯ tests/issue-3518-well-known-symbol-policy-evolution.test.ts:235:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/141]⎯
+
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > independently assembles all four fixed raw slices and verifies reciprocal complete-source profiles
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-well-known-symbol-policy-evolution.test.ts:81:39
+ ❯ tests/issue-3518-well-known-symbol-policy-evolution.test.ts:253:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/141]⎯
+
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > returns fresh frozen detached current and mutable exact C1 copies across repeated calls
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-well-known-symbol-policy-evolution.test.ts:81:39
+ ❯ actual tests/issue-3518-well-known-symbol-policy-evolution.test.ts:102:41
+ ❯ tests/issue-3518-well-known-symbol-policy-evolution.test.ts:294:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/141]⎯
+
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1769 delete
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1769 duplicate
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1769 replace
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1769 reorder
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1769 unknown
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1769 state
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1769 layer
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1769 key-order
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1770 delete
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1770 duplicate
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1770 replace
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1770 reorder
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1770 unknown
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1770 state
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1770 layer
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new file 1770 key-order
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-well-known-symbol-policy-evolution.test.ts:81:39
+ ❯ actual tests/issue-3518-well-known-symbol-policy-evolution.test.ts:102:41
+ ❯ rejected tests/issue-3518-well-known-symbol-policy-evolution.test.ts:115:18
+ ❯ tests/issue-3518-well-known-symbol-policy-evolution.test.ts:329:9
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/141]⎯
+
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 entry-delete
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 entry-replace
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 entry-duplicate
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 entry-reorder
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 same-count
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 unknown-entry
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 index
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 id
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 root
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 status
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 required
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 floor
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 10 key-order
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 entry-delete
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 entry-replace
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 entry-duplicate
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 entry-reorder
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 same-count
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 unknown-entry
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 index
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 id
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 root
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 status
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 required
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 floor
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer 11 key-order
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-well-known-symbol-policy-evolution.test.ts:81:39
+ ❯ actual tests/issue-3518-well-known-symbol-policy-evolution.test.ts:102:41
+ ❯ rejected tests/issue-3518-well-known-symbol-policy-evolution.test.ts:115:18
+ ❯ tests/issue-3518-well-known-symbol-policy-evolution.test.ts:359:9
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/141]⎯
+
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 96 delete
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 96 duplicate
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 96 replace
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 96 reorder
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 96 entry-delete
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 96 entry-duplicate
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 96 layer
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 96 floor
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 96 key-order
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 97 delete
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 97 duplicate
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 97 replace
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 97 reorder
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 97 entry-delete
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 97 entry-duplicate
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 97 layer
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 97 floor
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects new activation 97 key-order
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-well-known-symbol-policy-evolution.test.ts:81:39
+ ❯ actual tests/issue-3518-well-known-symbol-policy-evolution.test.ts:102:41
+ ❯ rejected tests/issue-3518-well-known-symbol-policy-evolution.test.ts:115:18
+ ❯ tests/issue-3518-well-known-symbol-policy-evolution.test.ts:399:9
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/141]⎯
+
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed file-prefix
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed history-prefix
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed layer-prefix
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed edge
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed unrelated
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed top-key-order
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects changed same-count-file
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-well-known-symbol-policy-evolution.test.ts:81:39
+ ❯ actual tests/issue-3518-well-known-symbol-policy-evolution.test.ts:102:41
+ ❯ rejected tests/issue-3518-well-known-symbol-policy-evolution.test.ts:115:18
+ ❯ tests/issue-3518-well-known-symbol-policy-evolution.test.ts:424:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/141]⎯
+
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects top accessors with zero getter calls before serialization, then restores and retries
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects layer accessors with zero getter calls before serialization, then restores and retries
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects file accessors with zero getter calls before serialization, then restores and retries
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects history accessors with zero getter calls before serialization, then restores and retries
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects array-element accessors with zero getter calls before serialization, then restores and retries
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-well-known-symbol-policy-evolution.test.ts:81:39
+ ❯ actual tests/issue-3518-well-known-symbol-policy-evolution.test.ts:102:41
+ ❯ tests/issue-3518-well-known-symbol-policy-evolution.test.ts:440:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/141]⎯
+
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects hidden descriptors or non-JSON data after a warm success without invoking callbacks
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects symbol descriptors or non-JSON data after a warm success without invoking callbacks
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects foreign-prototype descriptors or non-JSON data after a warm success without invoking callbacks
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects sparse descriptors or non-JSON data after a warm success without invoking callbacks
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects inherited descriptors or non-JSON data after a warm success without invoking callbacks
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects extra-array descriptors or non-JSON data after a warm success without invoking callbacks
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects cycle descriptors or non-JSON data after a warm success without invoking callbacks
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects function descriptors or non-JSON data after a warm success without invoking callbacks
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects toJSON descriptors or non-JSON data after a warm success without invoking callbacks
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects undefined descriptors or non-JSON data after a warm success without invoking callbacks
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects bigint descriptors or non-JSON data after a warm success without invoking callbacks
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects nan descriptors or non-JSON data after a warm success without invoking callbacks
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects infinity descriptors or non-JSON data after a warm success without invoking callbacks
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects negative-zero descriptors or non-JSON data after a warm success without invoking callbacks
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-well-known-symbol-policy-evolution.test.ts:81:39
+ ❯ actual tests/issue-3518-well-known-symbol-policy-evolution.test.ts:102:41
+ ❯ tests/issue-3518-well-known-symbol-policy-evolution.test.ts:501:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/141]⎯
+
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects repeated warm mutations and reaccepts the exact authentic data after restoration
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-well-known-symbol-policy-evolution.test.ts:81:39
+ ❯ actual tests/issue-3518-well-known-symbol-policy-evolution.test.ts:102:41
+ ❯ tests/issue-3518-well-known-symbol-policy-evolution.test.ts:563:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/141]⎯
+
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 0 first
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 0 last
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 0 outside
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 0 missing
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 0 duplicate
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 0 reordered
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 1 first
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 1 last
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 1 outside
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 1 missing
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 1 duplicate
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 1 reordered
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 2 first
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 2 last
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 2 outside
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 2 missing
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 2 duplicate
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 2 reordered
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 3 first
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 3 last
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 3 outside
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 3 missing
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 3 duplicate
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects raw span 3 reordered
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-well-known-symbol-policy-evolution.test.ts:81:39
+ ❯ tests/issue-3518-well-known-symbol-policy-evolution.test.ts:579:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/141]⎯
+
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects semantically equal raw leading-space
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects semantically equal raw trailing-space
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects semantically equal raw crlf
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects semantically equal raw no-final-newline
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects semantically equal raw extra-final-newline
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-well-known-symbol-policy-evolution.test.ts:81:39
+ ❯ tests/issue-3518-well-known-symbol-policy-evolution.test.ts:604:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/141]⎯
+
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > refuses nonprimitive raw without invoking its conversion callback
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-well-known-symbol-policy-evolution.test.ts:81:39
+ ❯ actual tests/issue-3518-well-known-symbol-policy-evolution.test.ts:102:41
+ ❯ accepted tests/issue-3518-well-known-symbol-policy-evolution.test.ts:108:44
+ ❯ tests/issue-3518-well-known-symbol-policy-evolution.test.ts:628:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/141]⎯
+
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 0 role mutation
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 0 beforeOffset mutation
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 0 afterOffset mutation
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 0 before mutation
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 0 after mutation
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 1 role mutation
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 1 beforeOffset mutation
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 1 afterOffset mutation
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 1 before mutation
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 1 after mutation
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 2 role mutation
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 2 beforeOffset mutation
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 2 afterOffset mutation
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 2 before mutation
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 2 after mutation
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 3 role mutation
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 3 beforeOffset mutation
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 3 afterOffset mutation
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 3 before mutation
+ FAIL  tests/issue-3518-well-known-symbol-policy-evolution.test.ts > WKS exact successor of genuine C1 and B > rejects fixed raw receipt span 3 after mutation
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3518-well-known-symbol-policy-evolution.test.ts:81:39
+ ❯ actual tests/issue-3518-well-known-symbol-policy-evolution.test.ts:102:41
+ ❯ accepted tests/issue-3518-well-known-symbol-policy-evolution.test.ts:108:44
+ ❯ tests/issue-3518-well-known-symbol-policy-evolution.test.ts:674:9
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/141]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  141 failed | 13 passed (154)
+   Start at  22:52:30
+   Duration  4.56s (transform 507ms, setup 0ms, collect 587ms, tests 3.54s, environment 0ms, prepare 85ms)
+

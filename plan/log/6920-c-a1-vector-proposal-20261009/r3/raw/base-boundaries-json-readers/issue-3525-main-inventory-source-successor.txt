@@ -1,0 +1,202 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ × tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > independently binds all eight source insertions and eleven exact rows with full before/current replay 14ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > preserves every retained field and row, detaches output and leaves a frozen actual operand unchanged 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses raw tail edit after healthy capture and observes exact restoration 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses raw changed retained field after healthy capture and observes exact restoration 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses raw already historical operand after healthy capture and observes exact restoration 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses semantic omitted added row between genuine healthy captures 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses semantic duplicated added row between genuine healthy captures 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses semantic changed added row owner between genuine healthy captures 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses semantic changed retained row path between genuine healthy captures 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses semantic reordered current rows between genuine healthy captures 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses semantic changed retained top-level field between genuine healthy captures 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses semantic unexpected top-level field between genuine healthy captures 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses top-level getter before authority IO or getter execution 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses row getter before authority IO or getter execution 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses array element getter before authority IO or getter execution 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses sparse array before authority IO or getter execution 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > rejects boxed raw data without coercion or authority IO 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > rejects boxed semantic data without coercion or authority IO 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses a physically corrupt fixed receipt after warm capture and restores exact original bytes 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses a physically missing fixed receipt after warm capture and restores exact original bytes 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-main-inventory-source-successor.test.ts > main inventory successor legacy semantic compatibility > passes authentic semantic bridge output to the unchanged isView consumer with ordinary nested records 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 21 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > independently binds all eight source insertions and eleven exact rows with full before/current replay
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ healthy tests/issue-3525-main-inventory-source-successor.test.ts:315:11
+ ❯ tests/issue-3525-main-inventory-source-successor.test.ts:338:40
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/21]⎯
+
+ FAIL  tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > preserves every retained field and row, detaches output and leaves a frozen actual operand unchanged
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ healthy tests/issue-3525-main-inventory-source-successor.test.ts:315:11
+ ❯ tests/issue-3525-main-inventory-source-successor.test.ts:355:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/21]⎯
+
+ FAIL  tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses raw tail edit after healthy capture and observes exact restoration
+ FAIL  tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses raw changed retained field after healthy capture and observes exact restoration
+ FAIL  tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses raw already historical operand after healthy capture and observes exact restoration
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ healthy tests/issue-3525-main-inventory-source-successor.test.ts:315:11
+ ❯ tests/issue-3525-main-inventory-source-successor.test.ts:370:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/21]⎯
+
+ FAIL  tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses semantic omitted added row between genuine healthy captures
+ FAIL  tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses semantic duplicated added row between genuine healthy captures
+ FAIL  tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses semantic changed added row owner between genuine healthy captures
+ FAIL  tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses semantic changed retained row path between genuine healthy captures
+ FAIL  tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses semantic reordered current rows between genuine healthy captures
+ FAIL  tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses semantic changed retained top-level field between genuine healthy captures
+ FAIL  tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses semantic unexpected top-level field between genuine healthy captures
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ healthy tests/issue-3525-main-inventory-source-successor.test.ts:315:11
+ ❯ tests/issue-3525-main-inventory-source-successor.test.ts:427:25
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/21]⎯
+
+ FAIL  tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses top-level getter before authority IO or getter execution
+ FAIL  tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses row getter before authority IO or getter execution
+ FAIL  tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses array element getter before authority IO or getter execution
+ FAIL  tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses sparse array before authority IO or getter execution
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ healthy tests/issue-3525-main-inventory-source-successor.test.ts:315:11
+ ❯ tests/issue-3525-main-inventory-source-successor.test.ts:434:25
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/21]⎯
+
+ FAIL  tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > rejects boxed raw data without coercion or authority IO
+ FAIL  tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > rejects boxed semantic data without coercion or authority IO
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ healthy tests/issue-3525-main-inventory-source-successor.test.ts:315:11
+ ❯ tests/issue-3525-main-inventory-source-successor.test.ts:472:27
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/21]⎯
+
+ FAIL  tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses a physically corrupt fixed receipt after warm capture and restores exact original bytes
+ FAIL  tests/issue-3525-main-inventory-source-successor.test.ts > fixed main inventory source successor independent proof > refuses a physically missing fixed receipt after warm capture and restores exact original bytes
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ healthy tests/issue-3525-main-inventory-source-successor.test.ts:315:11
+ ❯ tests/issue-3525-main-inventory-source-successor.test.ts:496:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/21]⎯
+
+ FAIL  tests/issue-3525-main-inventory-source-successor.test.ts > main inventory successor legacy semantic compatibility > passes authentic semantic bridge output to the unchanged isView consumer with ordinary nested records
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ tests/issue-3525-main-inventory-source-successor.test.ts:533:13
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/21]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  21 failed (21)
+   Start at  22:52:37
+   Duration  1.09s (transform 469ms, setup 0ms, collect 552ms, tests 84ms, environment 0ms, prepare 89ms)
+

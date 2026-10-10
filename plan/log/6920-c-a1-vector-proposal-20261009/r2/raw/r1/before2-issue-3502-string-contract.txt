@@ -1,0 +1,11 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3502-string-contract.test.ts (7 tests) 943ms
+   ✓ #3502 backend-neutral string contract > claims the untouched landing source with typed append and character IR  690ms
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  23:09:00
+   Duration  28.09s (transform 18.66s, setup 0ms, collect 26.70s, tests 943ms, environment 0ms, prepare 92ms)
+

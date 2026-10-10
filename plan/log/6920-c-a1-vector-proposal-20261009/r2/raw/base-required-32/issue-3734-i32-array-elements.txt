@@ -1,0 +1,39 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (shape) > the array.ts benchmark gets an i32 element vector and widens on read 819ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (shape) > a SAFE narrowed read uses i32 length directly and widens only the in-bounds element 74ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (shape) > a narrowed store costs one conversion FEWER per iteration than the f64 layout 98ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (shape) > legacy already used an i32 element layout for the same source (this closes an IR-only gap) 107ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (narrowing gate) > int-only push loop narrows 57ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (narrowing gate) > `arr[i] = <exact int32>` element store narrows 94ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (narrowing gate) > a bitwise-coerced accumulator is an exact int32 62ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (narrowing gate) > an aliased local is still the same closed group 70ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (narrowing gate) > reading an element inside a larger expression is a READ, not a store 63ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (narrowing gate) > a fractional push keeps f64 45ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (narrowing gate) > ONE fractional element store among int pushes keeps f64 52ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (narrowing gate) > a literal past 2^31 keeps f64 42ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (narrowing gate) > `-0` keeps f64 (an i32 element would collapse it to +0) 42ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (narrowing gate) > a compound element store keeps f64 (the stored value is not modelled) 52ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (narrowing gate) > an element increment keeps f64 56ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (narrowing gate) > escaping into a call keeps f64 (the callee could store anything) 61ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (narrowing gate) > escaping via return keeps f64 45ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (narrowing gate) > escaping into a closure keeps f64 74ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (narrowing gate) > for-of iteration keeps f64 (the loop variable's slot is element-typed) 44ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (IR == legacy == JS) > array.ts benchmark 283ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (IR == legacy == JS) > negative integers 216ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (IR == legacy == JS) > values that wrap past 2^31 via ToInt32 193ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (IR == legacy == JS) > un-narrowed fractional array still agrees 171ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (IR == legacy == JS) > `-0` survives (the array is deliberately NOT narrowed) 184ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (IR == legacy == JS) > element store overwrites 232ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (IR == legacy == JS) > growth past the initial capacity 273ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (IR == legacy == JS) > push in expression position returns the new length 248ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (IR == legacy == JS) > aliased writes are visible through the original binding 197ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (IR == legacy == JS) > a store far past the length grows and zero-fills identically in both lanes 181ms
+ ✓ tests/issue-3734-i32-array-elements.test.ts > #3734 — i32 array elements (IR == legacy == JS) > an out-of-bounds read of a NARROWED array still yields NaN, exactly as the f64 layout does 322ms
+
+ Test Files  1 passed (1)
+      Tests  30 passed (30)
+   Start at  20:11:08
+   Duration  36.00s (transform 22.15s, setup 0ms, collect 31.05s, tests 4.46s, environment 0ms, prepare 70ms)
+

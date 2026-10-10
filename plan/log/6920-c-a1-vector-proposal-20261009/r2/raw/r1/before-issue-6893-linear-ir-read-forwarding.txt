@@ -1,0 +1,20 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+stdout | tests/issue-6893-linear-ir-read-forwarding.test.ts > keeps the original 3.75 requirement for aliasScalar31-out-of-scope-A
+vector-forwarding-original {"fixture":"aliasScalar31-out-of-scope-A","owner":"ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000000","actual":3.75,"expected":3.75}
+
+stdout | tests/issue-6893-linear-ir-read-forwarding.test.ts > keeps the original 69 requirement for pushed values survive relocation
+vector-forwarding-original {"fixture":"pushed values survive relocation","owner":"ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000000","actual":69,"expected":69}
+
+stdout | tests/issue-6893-linear-ir-read-forwarding.test.ts > keeps the original 40 requirement for aliases observe growth through the forwarding record
+vector-forwarding-original {"fixture":"aliases observe growth through the forwarding record","owner":"ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000000","actual":40,"expected":40}
+
+ ✓ tests/issue-6893-linear-ir-read-forwarding.test.ts (30 tests) 965ms
+   ✓ issue 6893: linear IR resolves forwarding before reads > production preflight rejects absent type before the frozen-body consumer  527ms
+
+ Test Files  1 passed (1)
+      Tests  30 passed (30)
+   Start at  22:27:04
+   Duration  24.87s (transform 16.55s, setup 0ms, collect 23.52s, tests 965ms, environment 0ms, prepare 58ms)
+

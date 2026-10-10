@@ -1,0 +1,14 @@
+tests/issue-3299.test.ts(356,11): error TS2339: Property 'instance' does not exist on type 'Instance'.
+tests/issue-3518-lowering-cycle.test.ts(395,42): error TS2345: Argument of type '{ kind: "null"; }' is not assignable to parameter of type 'IrConst'.
+  Property 'ty' is missing in type '{ kind: "null"; }' but required in type '{ readonly kind: "null"; readonly ty: IrType; }'.
+tests/issue-3518-lowering-cycle.test.ts(403,21): error TS2345: Argument of type '{ kind: "null"; }' is not assignable to parameter of type 'IrConst'.
+  Property 'ty' is missing in type '{ kind: "null"; }' but required in type '{ readonly kind: "null"; readonly ty: IrType; }'.
+tests/issue-3518-lowering-cycle.test.ts(511,46): error TS2345: Argument of type 'Uint8Array<ArrayBufferLike>' is not assignable to parameter of type 'BufferSource'.
+  Type 'Uint8Array<ArrayBufferLike>' is not assignable to type 'ArrayBufferView<ArrayBuffer>'.
+    Types of property 'buffer' are incompatible.
+      Type 'ArrayBufferLike' is not assignable to type 'ArrayBuffer'.
+        Type 'SharedArrayBuffer' is not assignable to type 'ArrayBuffer'.
+          Types of property '[Symbol.toStringTag]' are incompatible.
+            Type '"SharedArrayBuffer"' is not assignable to type '"ArrayBuffer"'.
+tests/issue-6920-vector-representation.test.ts(290,11): error TS2339: Property 'instance' does not exist on type 'Instance'.
+exit=1

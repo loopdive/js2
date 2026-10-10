@@ -1,0 +1,36 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 string-concat contract > adds TWO feature rows — one per concat mode 4ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 string-concat contract > mints ONE new signature, and it is the only one whose result is a non-null ref extern 2ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 string-concat contract > is FOUR-armed at the provider level — two authorities times two modes 0ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 string-concat contract > names the F2-S2 wasm:js-string record from BOTH host rows, and the async projection excludes it BY ID 17ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 string-concat contract > carries NO intrinsic instruction — the demand is requested at freeze, per mode 7ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 provider policy > selects the host arm through the central capability record, MODULE included, for both modes 6ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 provider policy > selects the native helper per mode, requesting NO host capability 5ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 provider policy > refuses the arm its caller resolved to unsupported, naming the feature and the policy 13ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 provider policy > defaults an omitted policy closed and publishes the resolved decision 3ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 provider policy > resolves independently of the eq, the len, the compare, and every family-1 arm 2ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 provider policy > adds no row when nothing concatenates 2ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 provider policy > requests NO owned provider for a module that only concatenates immutably 3ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 end-to-end behaviour is unchanged > binds the host lane's existing wasm:js-string.concat builtin for BOTH modes, in the same position 1149ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 end-to-end behaviour is unchanged > calls the mode's native helper on every native-strings lane, with no wasm:js-string import 746ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 end-to-end behaviour is unchanged > leaves the BATCHED many-arity family byte-identical — the F2-S6 fence 273ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 end-to-end behaviour is unchanged > answers +, += and a template exactly as JavaScript does 66ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 end-to-end behaviour is unchanged > compiles the same owner on a native-strings lane and on linear 259ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 end-to-end behaviour is unchanged > still lowers BOTH modes on the linear backend, which ignores the provider 40ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 the resolve arm reads the frozen manifest > consults the prepared string-concat provider, recovering the MODE from the symbol 3ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 the resolve arm reads the frozen manifest > reads NO lane discriminator 3ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 the resolve arm reads the frozen manifest > fails closed rather than falling back to a locally decided symbol 3ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 the resolve arm reads the frozen manifest > still names BOTH concat symbols in its condition 3ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 the resolve arm reads the frozen manifest > partitions an unsupported concat policy owner-locally, naming the policy 3ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 string.concat has ONE emit authority > attaches the mode's callable provider unconditionally, both modes 2ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 string.concat has ONE emit authority > refuses to lower an unattached string.concat instead of re-deciding the lane 1ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 string.concat has ONE emit authority > accepts an already-attached provider in EITHER mode, so the guard is not a blanket refusal 1ms
+ ✓ tests/issue-3526-string-boundary-concat.test.ts > #3526 F2-S5 string.concat has ONE emit authority > keeps the retired fallback's lane read and its private mode mapping out of the emitter 3ms
+
+ Test Files  1 passed (1)
+      Tests  27 passed (27)
+   Start at  20:24:51
+   Duration  33.89s (transform 21.83s, setup 0ms, collect 30.75s, tests 2.62s, environment 0ms, prepare 70ms)
+

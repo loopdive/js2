@@ -1,0 +1,134 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > records exactly the existing frontend debt affected by contracts-only activation 10ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter contracts cannot import frontend-ts debt via type 1099ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter contracts cannot import frontend-ts debt via value 1076ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter contracts cannot import mixed-needs-split debt via type 1106ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter contracts cannot import mixed-needs-split debt via value 1018ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > keeps formatter support contracts and the canonical type factory mandatory 8ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/backend/wasmgc/resources/native-delay-combinator.ts rejects delete after its positive control 1039ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/backend/wasmgc/resources/native-delay-combinator.ts rejects demote after its positive control 1078ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/backend/wasmgc/resources/native-delay-combinator.ts rejects type-import after its positive control 1077ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/backend/wasmgc/resources/native-delay-combinator.ts rejects value-import after its positive control 1069ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/frontend/builtins/contracts.ts rejects delete after its positive control 1070ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/frontend/builtins/contracts.ts rejects demote after its positive control 1046ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/frontend/builtins/contracts.ts rejects type-import after its positive control 1046ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/frontend/builtins/contracts.ts rejects value-import after its positive control 1127ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/ir/core/type-references.ts rejects delete after its positive control 1054ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/ir/core/type-references.ts rejects demote after its positive control 1093ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/ir/core/type-references.ts rejects type-import after its positive control 1128ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/ir/core/type-references.ts rejects value-import after its positive control 1037ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/ir/program/runtime-support.ts rejects delete after its positive control 1045ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/ir/program/runtime-support.ts rejects demote after its positive control 1060ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/ir/program/runtime-support.ts rejects type-import after its positive control 1044ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/ir/program/runtime-support.ts rejects value-import after its positive control 1112ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/ir/program/formatter-support.ts rejects delete after its positive control 1012ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/ir/program/formatter-support.ts rejects demote after its positive control 1055ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/ir/program/formatter-support.ts rejects type-import after its positive control 1041ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/ir/program/formatter-support.ts rejects value-import after its positive control 1099ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/ir/program/native-number-format-requirements.ts rejects delete after its positive control 1132ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/ir/program/native-number-format-requirements.ts rejects demote after its positive control 1262ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/ir/program/native-number-format-requirements.ts rejects type-import after its positive control 1119ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/ir/program/native-number-format-requirements.ts rejects value-import after its positive control 1106ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/backend/wasmgc/program/native-number-format.ts rejects delete after its positive control 1095ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/backend/wasmgc/program/native-number-format.ts rejects demote after its positive control 1041ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/backend/wasmgc/program/native-number-format.ts rejects type-import after its positive control 1113ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/backend/wasmgc/program/native-number-format.ts rejects value-import after its positive control 1046ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/backend/wasmgc/resources/native-number-ryu.ts rejects delete after its positive control 1135ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/backend/wasmgc/resources/native-number-ryu.ts rejects demote after its positive control 1073ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/backend/wasmgc/resources/native-number-ryu.ts rejects type-import after its positive control 1072ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/backend/wasmgc/resources/native-number-ryu.ts rejects value-import after its positive control 1148ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/backend/wasmgc/resources/native-number-format.ts rejects delete after its positive control 1071ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/backend/wasmgc/resources/native-number-format.ts rejects demote after its positive control 1056ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/backend/wasmgc/resources/native-number-format.ts rejects type-import after its positive control 1048ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/backend/wasmgc/resources/native-number-format.ts rejects value-import after its positive control 1039ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-ryu-tables.ts rejects delete after its positive control 1122ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-ryu-tables.ts rejects demote after its positive control 1098ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-ryu-tables.ts rejects type-import after its positive control 1077ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-ryu-tables.ts rejects value-import after its positive control 1039ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-ryu-bodies.ts rejects delete after its positive control 1154ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-ryu-bodies.ts rejects demote after its positive control 1036ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-ryu-bodies.ts rejects type-import after its positive control 1264ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-ryu-bodies.ts rejects value-import after its positive control 1257ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-ryu-digits.ts rejects delete after its positive control 1301ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-ryu-digits.ts rejects demote after its positive control 1319ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-ryu-digits.ts rejects type-import after its positive control 1192ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-ryu-digits.ts rejects value-import after its positive control 1198ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-ryu-to-buffer.ts rejects delete after its positive control 1136ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-ryu-to-buffer.ts rejects demote after its positive control 1156ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-ryu-to-buffer.ts rejects type-import after its positive control 1080ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-ryu-to-buffer.ts rejects value-import after its positive control 1106ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-ryu-signatures.ts rejects delete after its positive control 1074ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-ryu-signatures.ts rejects demote after its positive control 1086ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-ryu-signatures.ts rejects type-import after its positive control 1286ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-ryu-signatures.ts rejects value-import after its positive control 1163ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-format-bodies.ts rejects delete after its positive control 1076ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-format-bodies.ts rejects demote after its positive control 1074ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-format-bodies.ts rejects type-import after its positive control 1080ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-format-bodies.ts rejects value-import after its positive control 1026ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-format-radix-bodies.ts rejects delete after its positive control 1071ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-format-radix-bodies.ts rejects demote after its positive control 1135ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-format-radix-bodies.ts rejects type-import after its positive control 1227ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/number-format-radix-bodies.ts rejects value-import after its positive control 1074ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/string-concat-bodies.ts rejects delete after its positive control 1167ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/string-concat-bodies.ts rejects demote after its positive control 1145ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/string-concat-bodies.ts rejects type-import after its positive control 1156ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/string-concat-bodies.ts rejects value-import after its positive control 1367ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/stdout-bodies.ts rejects delete after its positive control 1088ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/stdout-bodies.ts rejects demote after its positive control 1148ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/stdout-bodies.ts rejects type-import after its positive control 1172ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/values/stdout-bodies.ts rejects value-import after its positive control 1143ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/promise/delay-combinator-layouts.ts rejects delete after its positive control 1097ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/promise/delay-combinator-layouts.ts rejects demote after its positive control 1187ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/promise/delay-combinator-layouts.ts rejects type-import after its positive control 1326ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > formatter boundary src/runtime/wasmgc/promise/delay-combinator-layouts.ts rejects value-import after its positive control 1272ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > visits a nonempty clean graph, real roots and .js-to-.ts type edges 584ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > rejects real forbidden syntax: import { parser } from "../frontend/parser.js"; 544ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > rejects real forbidden syntax: import type { Parsed } from "../frontend/parser.js"; 575ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > rejects real forbidden syntax: type T = import("../frontend/parser.js").Parsed; 577ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > rejects real forbidden syntax: export type { Parsed } from "../frontend/parser.js"; 553ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > rejects real forbidden syntax: import "../frontend/parser.js"; 536ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > rejects real forbidden syntax: import type { Parsed } from "@front/parser"; 553ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > rejects real forbidden syntax: const x = import("../frontend/parser.js"); 531ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > rejects real forbidden syntax: const x = require("../frontend/parser.js"); 595ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > rejects real forbidden syntax: import x = require("../frontend/parser.js"); 533ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > follows a type-only frontend edge through an export-star barrel 524ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > reports nonliteral import(name) as unknown, with unmigrated debt distinct from clean failure 1606ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > reports nonliteral require(name) as unknown, with unmigrated debt distinct from clean failure 1709ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > handles extensionless directory imports and declarations 556ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > uses package exports and enforces external type packages by layer 1125ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > does not permit parser packages in foundations even through an external allow rule 591ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > requires explicit built-in policy and exposes missing external resolution 1644ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > resolves import and require against their distinct package export conditions 627ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > reports a concrete external parser path through a type barrel 610ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > keeps the ts-api wrapper frontend-only even when its current concern label is ambiguous 570ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > visits every supported JS/TS variant including declaration modules 641ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > does not treat a relative escape into node_modules as an allowed package import 543ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > allows exact JSON metadata policy without allowing implementation escapes 1559ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > rejects relative source escapes 565ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > fails closed for missing-module 550ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > fails closed for missing-config 503ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > fails closed for missing-src 595ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > fails closed for extra 586ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > fails closed for duplicate 518ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > fails closed for stale 571ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > stays silent on stderr when the inventory is valid (#6418) 532ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > reports a controlled unreadable file even under privileged runners 502ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > resolves symlinks to their forbidden source layer 527ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > reports planned empty layers as pending and fails the default check 1169ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > cannot shrink an activated root by deleting its source and classification 532ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > cannot demote activation recorded in policy history 481ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > rejects committed demotion and erased history against an independently pinned base 1221ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > rejects committed removal of held evidence against the earlier policy 613ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > distinguishes a verified initial introduction from an unreadable or missing base 1862ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > ignores inherited GIT_DIR, worktree and index when reading fixture provenance 660ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > tracks current source including untracked modules and fingerprints dirty content 1203ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > requires explicit nonmodule rationale and never excludes declarations 1714ms
+ ✓ tests/issue-3518-compiler-boundaries.test.ts > #3518 real compiler boundary detector > preserves all ten held B findings across moves, dummy callers and removed exports 2944ms
+
+ Test Files  1 passed (1)
+      Tests  125 passed (125)
+   Start at  22:21:46
+   Duration  125.61s (transform 85ms, setup 0ms, collect 92ms, tests 125.11s, environment 0ms, prepare 69ms)
+
