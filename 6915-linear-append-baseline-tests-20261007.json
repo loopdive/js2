@@ -2,10 +2,11 @@
   "id": "6915",
   "slice": "linear-append-baseline-tests-20261007",
   "assignee": "ttraenkler/codex-linear-b-append-tests-sol61-20261007",
-  "requested_by": "ttraenkler/codex-linear-b-append-tests-sol61-20261007",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6915-linear-append-tests-20261007",
   "claimed_at": "2026-10-07T20:54:38Z",
-  "updated_at": "2026-10-07T20:54:38Z",
-  "write_id": "56295-npm2trsg"
+  "updated_at": "2026-10-10T23:41:31Z",
+  "write_id": "24894-5v9z7frk",
+  "released_at": "2026-10-10T23:41:31Z"
 }
