@@ -2,10 +2,11 @@
   "id": "6893",
   "slice": "linear-cabi-main-composition-plan-20261007",
   "assignee": "ttraenkler/codex-linear-b-cabi-main-astra-20261007",
-  "requested_by": "ttraenkler/codex-linear-b-cabi-main-astra-20261007",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6893-linear-cabi-main-plan-20261007",
   "claimed_at": "2026-10-07T16:45:13Z",
-  "updated_at": "2026-10-07T16:45:13Z",
-  "write_id": "3203-vkgzc2yi"
+  "updated_at": "2026-10-10T23:36:19Z",
+  "write_id": "98116-1r3rq0m9",
+  "released_at": "2026-10-10T23:36:19Z"
 }
