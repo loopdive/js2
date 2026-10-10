@@ -1,0 +1,12 @@
+{
+  "id": "6934",
+  "assignee": "ttraenkler/claude-session-c-two-track-runtime-fallback-20261010",
+  "requested_by": "ttraenkler/claude-session-c-two-track-runtime-fallback-20261010",
+  "status": "in-progress",
+  "branch": "claude/ir-nightmonkey-followups",
+  "reserved_at": "2026-10-10T06:05:49Z",
+  "claimed_at": "2026-10-10T06:05:49Z",
+  "updated_at": "2026-10-10T06:05:49Z",
+  "write_id": "957-z2zo62xw",
+  "pr_scan": "degraded"
+}
