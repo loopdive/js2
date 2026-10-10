@@ -2,7 +2,10 @@
 
 import { ALLOC_NAMESPACES } from "../alloc-registry.js";
 import type { AllocRegistrySnapshot } from "../contracts/allocations.js";
+import type { EscapeClass } from "../escape.js";
+import { AccessSet, type Ownership } from "../lattice.js";
 import type { AllocSiteId } from "../../core/nodes.js";
+import type { IrStringEncoding } from "../../core/string-types.js";
 import type { AllocationEvidenceCapture } from "./census.js";
 import type { AllocationEvidenceFailure, AllocationEvidenceNamespaceMode } from "./contracts.js";
 
@@ -63,6 +66,75 @@ function exactAccesses(value: unknown, expected: readonly string[]): boolean {
     const entry = descriptors[String(index)];
     return entry !== undefined && "value" in entry && entry.value === access;
   });
+}
+
+// These tables validate serialized value domains; they do not infer body effects.
+const OWNERSHIP_DOMAIN = { owned: true, borrowed: true, shared: true, escaped: true } satisfies Record<Ownership, true>;
+const ESCAPE_DOMAIN = { local: true, returned: true, stored: true, captured: true, opaque: true } satisfies Record<
+  EscapeClass,
+  true
+>;
+const ENCODING_DOMAIN = { ascii: true, "utf8-guaranteed": true, wtf16: true } satisfies Record<IrStringEncoding, true>;
+
+function inDomain(value: unknown, domain: object): boolean {
+  return typeof value === "string" && Object.hasOwn(domain, value);
+}
+
+function ownershipDataDomain(value: unknown): boolean {
+  const marked = value !== null && typeof value === "object" && Object.hasOwn(value, "stackCandidate");
+  const fields = exactFields(value, marked ? ["state", "ops", "stackCandidate"] : ["state", "ops"]);
+  if (!fields || !inDomain(fields.state?.value, OWNERSHIP_DOMAIN)) return false;
+  if (marked && typeof fields.stackCandidate?.value !== "boolean") return false;
+  const ops: unknown = fields.ops?.value;
+  // Reuse the canonical access-set order, without re-running ownership inference.
+  if (!Array.isArray(ops)) return false;
+  const canonical = AccessSet.full().toArray();
+  const descriptors = Object.getOwnPropertyDescriptors(ops);
+  const length = Object.getOwnPropertyDescriptor(ops, "length")?.value;
+  if (!Number.isSafeInteger(length) || length < 0 || length > canonical.length) return false;
+  // Input arrays can shadow ordinary method names with DATA values. Read only
+  // own indexed descriptors; never invoke their includes/iterator methods.
+  const values: unknown[] = [];
+  for (let index = 0; index < length; index++) values.push(descriptors[String(index)]?.value);
+  return exactAccesses(
+    ops,
+    canonical.filter((op) => values.includes(op)),
+  );
+}
+
+function escapeDataDomain(value: unknown): boolean {
+  const fields = exactFields(value, ["classification", "stackAllocatable"]);
+  return (
+    fields !== undefined &&
+    inDomain(fields.classification?.value, ESCAPE_DOMAIN) &&
+    typeof fields.stackAllocatable?.value === "boolean" &&
+    fields.stackAllocatable.value === (fields.classification?.value === "local")
+  );
+}
+
+/**
+ * Only the value domains of present canonical namespace cells. Call after
+ * descriptor/DATA, snapshot, contextual and J1 validation. Absence stays absent;
+ * extension namespaces are outside this helper's authority. Success proves no
+ * relationship between a metadata value and any body and grants no coverage.
+ */
+export function checkRegistryEvidenceMetadataDomain(
+  index: RegistryEvidenceIndex,
+): Extract<AllocationEvidenceFailure, { kind: "invalid" }> | undefined {
+  for (const [site, entries] of index.rows) {
+    for (const [namespace, value] of entries) {
+      const valid =
+        namespace === ALLOC_NAMESPACES.ownership
+          ? ownershipDataDomain(value)
+          : namespace === ALLOC_NAMESPACES.escape
+            ? escapeDataDomain(value)
+            : namespace === ALLOC_NAMESPACES.encoding
+              ? inDomain(value, ENCODING_DOMAIN)
+              : true;
+      if (!valid) return { kind: "invalid", code: "namespace-value", at: { kind: "site", site } };
+    }
+  }
+  return undefined;
 }
 
 function ownershipMismatch(
