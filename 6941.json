@@ -1,0 +1,12 @@
+{
+  "id": "6941",
+  "assignee": "ttraenkler/claude-session-c-octane-box2d-compile-time-20261010",
+  "requested_by": "ttraenkler/claude-session-c-octane-box2d-compile-time-20261010",
+  "status": "in-progress",
+  "branch": "claude/octane-invalid-wasm",
+  "reserved_at": "2026-10-10T07:09:49Z",
+  "claimed_at": "2026-10-10T07:09:49Z",
+  "updated_at": "2026-10-10T07:09:49Z",
+  "write_id": "12696-9tzphi9l",
+  "pr_scan": "degraded"
+}
