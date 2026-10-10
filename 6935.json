@@ -1,0 +1,12 @@
+{
+  "id": "6935",
+  "assignee": "ttraenkler/claude-session-c-capped-points-to-lattice-20261010",
+  "requested_by": "ttraenkler/claude-session-c-capped-points-to-lattice-20261010",
+  "status": "in-progress",
+  "branch": "claude/ir-nightmonkey-followups",
+  "reserved_at": "2026-10-10T06:06:00Z",
+  "claimed_at": "2026-10-10T06:06:00Z",
+  "updated_at": "2026-10-10T06:06:00Z",
+  "write_id": "1050-rryodrcl",
+  "pr_scan": "degraded"
+}
