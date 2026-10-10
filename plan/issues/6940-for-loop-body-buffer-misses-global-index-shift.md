@@ -1,10 +1,11 @@
 ---
 id: 6940
 title: "for-statement body buffer is detached while the incrementor compiles — a string-constant import added there leaves the body's module-global indices stale (Octane box2d `b2BuoyancyController.Step` reads `__argc` as `$__hole`, invalid Wasm)"
-status: ready
+status: done
 sprint: current
 created: 2026-10-10
 updated: 2026-10-10
+completed: 2026-10-10
 priority: high
 horizon: s
 feasibility: easy
@@ -15,6 +16,13 @@ language_feature: for-loop, compiler-internals
 goal: compilable
 related: [874, 1690, 2710, 1384, 2001]
 assignee: "ttraenkler/claude-session-c-octane-loop-body-global-shift-20261010"
+# 2026-10-10: +4 lines in compileForStatement / +2 in compileDoWhileStatement
+# (liveBodies add/delete of the body buffer, #1690 idiom) — bookkeeping that
+# must sit at the exact detach/re-attach points, so it cannot move out.
+loc-budget-allow:
+  - src/codegen/statements/loops.ts
+func-budget-allow:
+  - src/codegen/statements/loops.ts::compileForStatement
 ---
 
 # #6940 — for-loop body misses the module-global index shift fired by its own incrementor
@@ -158,6 +166,34 @@ reachability, no emitted bytes).
    `JS2_HOLE_TRACE` detector used here is the prototype. #2710 (late-bind
    indices) is the structural fix for the whole class; this issue is the
    point fix.
+
+## Implementation notes (2026-10-10, Session C)
+
+Option (a), the #1690 idiom: `compileForStatement` adds `bodyInstrs` to
+`ctx.liveBodies` right after the body compiles and deletes it next to the
+cond/incr deletes once the assembled loop is pushed; `compileDoWhileStatement`
+does the same around its condition window. No emitted-instruction change;
+the walker dedupes (`visitedArrays`/`visitedInstrs`), so a buffer reachable
+twice is never shifted twice. No early return sits between add and delete.
+`compileWhileStatement` compiles its condition BEFORE the body, so its body
+has no detached window (not changed).
+
+Results (file-copy A/B, base = the #6939 commit):
+
+| check | base | head |
+| --- | --- | --- |
+| b2r4 gc: hole-arm `global.get` vs `$__hole` (22) | arms read 20 and 22 | all 22 |
+| do-while twin gc (condition holds the first `nextBody`) | arms read 20 and 22 (**measured: affected too**) | all 22 |
+| b2r4 / do-while run() gc, standalone | 8 / 8 (valid by luck) | 8 / 8 |
+| Octane box2d (+base.js) gc | INVALID `__closure_879` | **VALID** (98 s compile) |
+
+`tests/issue-6940-for-body-global-shift.test.ts`: 6/6 head, the 2 structural
+checks fail on base. `tests/issue-1690.test.ts` and the 18-file focused loop
+suite: failure set identical base vs head.
+
+#2710 (late-binding of global indices) remains the structural fix for the
+class; the optional `fixupModuleGlobalIndices` reachability assertion (plan
+step 6) was not added.
 
 ## Acceptance criteria
 
