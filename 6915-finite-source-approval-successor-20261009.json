@@ -2,10 +2,11 @@
   "id": "6915",
   "slice": "finite-source-approval-successor-20261009",
   "assignee": "ttraenkler/codex-linear-b-source-approval-sol61-20261009",
-  "requested_by": "ttraenkler/codex-linear-b-source-approval-sol61-20261009",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6915-source-approval-20261009",
   "claimed_at": "2026-10-09T07:52:38Z",
-  "updated_at": "2026-10-09T07:52:38Z",
-  "write_id": "62837-vw2me2ho"
+  "updated_at": "2026-10-10T23:41:08Z",
+  "write_id": "23782-v7v3l00j",
+  "released_at": "2026-10-10T23:41:08Z"
 }
