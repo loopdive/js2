@@ -121,8 +121,9 @@ export function arrayMethodReadsProxyOperand(
  * BEFORE the caller's late-import flush: the throw may register its
  * constructor.
  */
-export function arrayLikeLengthLimitGuard(ctx: CodegenContext, fctx: FunctionContext): Instr[] {
-  if (!ctx.standalone || !ctx.proxyDirty) return [];
+export function arrayLikeLengthLimitGuard(ctx: CodegenContext, fctx: FunctionContext, arrayCreate = false): Instr[] {
+  // (#6898) `arrayCreate`: the caller's result IS ArrayCreate(len) (array-like `map`), so any length can throw.
+  if (!ctx.standalone || (!arrayCreate && !ctx.proxyDirty)) return [];
   const lenF64 = allocLocal(fctx, `__vec_lenf_${fctx.locals.length}`, { kind: "f64" });
   const rangeError = buildThrowJsErrorInstrs(ctx, "RangeError", "Invalid array length", { flush: fctx });
   return [
