@@ -112,6 +112,7 @@ import { detectStringBuilders } from "./string-builder.js"; // (#2641/#1210) str
 import type { StringBuilderPresizeInfo } from "./string-builder.js";
 import { compileStringLiteral } from "./string-ops.js";
 import { emitUndefined } from "./expressions/late-imports.js";
+import { uninitialisedFieldSlotOfDeclaration } from "./uninitialised-field-undefined.js"; // (#5312/#6901)
 import { emitLazyClassObjectGet } from "./expressions/extern.js"; // (#5377)
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { emitStandaloneSubclassMethodInstall } from "./standalone-subclass-method-install.js";
@@ -2988,15 +2989,22 @@ function compileClassBodiesInner(
         return;
       }
       for (const member of decl.members) {
-        if (ts.isPropertyDeclaration(member) && member.name && member.initializer && !hasStaticModifier(member)) {
+        if (ts.isPropertyDeclaration(member) && member.name && !hasStaticModifier(member)) {
+          if (!member.initializer && hasDeclareModifier(member)) continue;
           const fieldName = resolveClassMemberName(ctx, member.name);
           if (fieldName === undefined) continue; // dynamic computed name — skip
           const fieldIdx = fields.findIndex((f) => f.name === fieldName);
-          if (fieldIdx !== -1) {
-            fctx.body.push(...classFieldInitReceiver(ctx, className, selfLocal, structTypeIdx)); // (#6754) carrier
-            compileExpression(ctx, fctx, member.initializer, fields[fieldIdx]!.type);
-            fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
-          }
+          if (fieldIdx === -1) continue;
+          // A field with no initializer is DEFINEd as `undefined` (§7.3.33
+          // DefineField step 3), in declaration order. An externref slot's
+          // struct default is `ref.null extern` — JS `null` (#6901). A slot
+          // #5312 claims keeps its null: there `ref.null` IS the `undefined`.
+          if (!member.initializer && fields[fieldIdx]!.type.kind !== "externref") continue;
+          if (!member.initializer && uninitialisedFieldSlotOfDeclaration(ctx, member)) continue;
+          fctx.body.push(...classFieldInitReceiver(ctx, className, selfLocal, structTypeIdx)); // (#6754) carrier
+          if (member.initializer) compileExpression(ctx, fctx, member.initializer, fields[fieldIdx]!.type);
+          else emitUndefined(ctx, fctx);
+          fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
         }
       }
     };

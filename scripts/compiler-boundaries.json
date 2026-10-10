@@ -13397,6 +13397,11 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/extern-method-call-tables.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
       "path": "src/runtime/fixed-extern-method-call.ts",
       "state": "unmigrated",
       "layer": "legacy-host"

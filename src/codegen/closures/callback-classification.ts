@@ -257,7 +257,11 @@ export function isHostCallbackArgument(node: ts.Node, ctx: CodegenContext): bool
     // jest-util/expect-utils isError `test.each` cluster). When the checker
     // can see the invoked value is callable, it is a compiled closure — use
     // the closure-struct path, mirroring the #1300 identifier carve-out.
-    if (ts.isCallExpression(directCallee) && ctx.oracle.signatureOf(directCallee) !== undefined) {
+    // (#6860) A tagged template is the same call-of-call: `test.each\`table\`(name, body)`.
+    if (
+      (ts.isCallExpression(directCallee) || ts.isTaggedTemplateExpression(directCallee)) &&
+      ctx.oracle.signatureOf(directCallee) !== undefined
+    ) {
       return false;
     }
     // Check if the callee is a user-defined function — if so, NOT a host callback

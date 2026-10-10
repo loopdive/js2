@@ -10246,6 +10246,15 @@ export function compileConditionalCallee(
   return resultType;
 }
 
+/** `||` / `&&` / `??` — a callee whose value is chosen at run time (#6902). */
+function isLogicalCalleeOperator(kind: ts.SyntaxKind): boolean {
+  return (
+    kind === ts.SyntaxKind.BarBarToken ||
+    kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+    kind === ts.SyntaxKind.QuestionQuestionToken
+  );
+}
+
 /**
  * Compile a call where the callee is an arbitrary expression that is not a
  * LeftHandSideExpression (e.g. assignment: `(x = fn)()`, logical: `(a || fn)()`).
@@ -10396,6 +10405,15 @@ function compileExpressionCallee(
 
       return matchedClosureInfo.returnType ?? VOID_RESULT;
     }
+  }
+
+  // A LOGICAL callee (`(opt?.fetch || fetch)(url)`) selects its value at run
+  // time; calling the right operand unconditionally (the fallback below) ran
+  // the global `fetch` even when `opt.fetch` was set (#6902). Dispatch on the
+  // value it actually produces.
+  if (ts.isBinaryExpression(calleeExpr) && isLogicalCalleeOperator(calleeExpr.operatorToken.kind)) {
+    const dynamic = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+    if (dynamic !== null) return dynamic;
   }
 
   // Last resort: compile the callee for side effects and try to resolve
