@@ -2,10 +2,11 @@
   "id": "6914",
   "slice": "linear-forwarding-provider-source-20261007",
   "assignee": "ttraenkler/codex-linear-b-forwarding-sol61-20261007",
-  "requested_by": "ttraenkler/codex-linear-b-forwarding-sol61-20261007",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6914-linear-forwarding-provider-source-20261007",
   "claimed_at": "2026-10-07T18:10:17Z",
-  "updated_at": "2026-10-07T18:10:17Z",
-  "write_id": "65589-oamjn90s"
+  "updated_at": "2026-10-10T23:40:12Z",
+  "write_id": "17592-1pjdmt5w",
+  "released_at": "2026-10-10T23:40:12Z"
 }
