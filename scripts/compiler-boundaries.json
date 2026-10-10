@@ -3192,6 +3192,14 @@
       "nextBoundary": "Separate context-bound argument coercion and late-import registration from the reusable change-array-by-copy body construction."
     },
     {
+      "path": "src/codegen/array/array-sort-value.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate context-bound late-import registration and comparator coercion from the reusable array-like sort body construction."
+    },
+    {
       "path": "src/codegen/array/array-fill-proto-value.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
