@@ -2,10 +2,11 @@
   "id": "6905",
   "slice": "prepared-memory-regression-20261007",
   "assignee": "ttraenkler/codex-linear-b-memory-tests-sol61-20261007",
-  "requested_by": "ttraenkler/codex-linear-b-memory-tests-sol61-20261007",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6905-linear-prepared-memory-tests-20261007",
   "claimed_at": "2026-10-07T14:22:54Z",
-  "updated_at": "2026-10-07T14:22:54Z",
-  "write_id": "80557-9wh1s7sf"
+  "updated_at": "2026-10-10T23:38:45Z",
+  "write_id": "12471-7j5ud57l",
+  "released_at": "2026-10-10T23:38:45Z"
 }
