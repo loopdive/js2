@@ -1,10 +1,10 @@
 {
   "id": "6949",
-  "assignee": "ttraenkler/claude-session-c",
-  "requested_by": "ttraenkler/claude-session-c",
+  "assignee": "ttraenkler/claude-session-d",
+  "requested_by": "ttraenkler/claude-session-d",
   "status": "in-progress",
   "branch": "claude/standalone-fnctor-proto-gate",
-  "claimed_at": "2026-10-10T20:55:19Z",
-  "updated_at": "2026-10-10T20:55:19Z",
-  "write_id": "442-z5bregxa"
+  "claimed_at": "2026-10-10T21:22:35Z",
+  "updated_at": "2026-10-10T21:22:35Z",
+  "write_id": "6269-d1zifwst"
 }
