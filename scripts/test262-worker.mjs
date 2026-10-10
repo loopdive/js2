@@ -57,7 +57,13 @@ import {
   temporalProviderDisabled,
   test262TemporalLaneEnabled,
 } from "./test262-temporal.mjs";
-import { test262CompilerBundleHash, test262HarnessProviderCacheDir } from "./test262-harness-cache.mjs";
+import {
+  harnessProviderCompileOptions,
+  harnessProviderMemoKey,
+  test262CompilerBundleHash,
+  test262HarnessProviderCacheDir,
+  test262HarnessProviderLaneCacheDir,
+} from "./test262-harness-cache.mjs";
 
 // ── Bundle hash (#1521) ────────────────────────────────────────────────
 // Each cache entry written below carries a `bundle_hash` field. When the
@@ -1432,36 +1438,22 @@ function harnessProviderWiringAvailable() {
   );
 }
 
-function harnessProviderCompileOptions(target) {
-  // Must match `compileHarnessLinkedBody`'s option set on the consumer side, or
-  // the provider and the body disagree about the ABI they share.
-  // (#6723 D4) Both sides carry the harness's `hostBridge: "always"`, like
-  // every other worker compile site (HARNESS_HOST_BRIDGE): on standalone the
-  // default strips `__stdout_*`, so the provider's `print` (hence `$DONE`'s
-  // completion marker) wrote to a sink nothing could read.
-  return {
-    ...HARNESS_HOST_BRIDGE,
-    allowJs: true,
-    emitWat: false,
-    skipSemanticDiagnostics: true,
-    ...(target ? { target } : {}),
-  };
-}
-
-async function getWorkerHarnessProvider(harnessPrefix, target) {
+async function getWorkerHarnessProvider(harnessPrefix, target, semanticProviders = "auto") {
   if (!harnessProviderWiringAvailable()) {
     announceHarnessProviderUnavailable("bundles do not export the provider wiring — rebuild from the bundle entries");
     return null;
   }
-  const memoKey = `${target ?? "host"}\u0000${harnessPrefix.length}\u0000${harnessPrefix}`;
+  // (#6930) The policy is part of the key: a host-assisted prefix must never be
+  // served to a native-first (regime) body.
+  const memoKey = harnessProviderMemoKey(harnessPrefix, target, semanticProviders);
   const memoised = harnessProviderPromises.get(memoKey);
   if (memoised) return memoised;
   const promise = (async () => {
-    const cacheDir = test262HarnessProviderCacheDir();
+    const cacheDir = test262HarnessProviderLaneCacheDir({ semanticProviders });
     const provider = await compilerBundle.buildHarnessProvider({
       harnessPrefix,
       cacheDir,
-      compileOptions: harnessProviderCompileOptions(target),
+      compileOptions: harnessProviderCompileOptions(target, semanticProviders),
     });
     console.error(
       `[test262-worker] harness provider ${provider.namespace} (${provider.artifact.binary.length} B, ` +
@@ -1671,7 +1663,7 @@ async function doCompile(
       enforceJsEarlyErrors: isNegative && negativePhase !== "resolution",
       ...deferOpt,
     };
-    const provider = await getWorkerHarnessProvider(linkedHarness.harnessPrefix, target);
+    const provider = await getWorkerHarnessProvider(linkedHarness.harnessPrefix, target, semanticProviders);
     if (provider) {
       try {
         const linked = await compilerBundle.compileHarnessLinkedBody(provider, linkedHarness.body, {
