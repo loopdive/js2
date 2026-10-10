@@ -1,5 +1,7 @@
 # Session C (Claude) handoff — IR migration, 2026-10-09
 
+> **Only `--target standalone` is relevant: the JS host (gc) lane is being sunset** (project lead, 2026-10-10). See `.claude/memory/project_standalone_only_js_host_sunset.md`. This session is now **Session D**; a separate Session C exists. D's claims are recorded under `ttraenkler/claude-session-d`.
+
 For the next Claude session joining the three-session IR migration (A = Codex root, B = Codex Linear, C = Claude). Everything below was verified against canonical `loopdive/js2` main at the time of writing. Re-verify before acting: hashes are historical pointers.
 
 ## Where coordination happens
