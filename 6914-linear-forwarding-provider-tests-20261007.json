@@ -2,10 +2,11 @@
   "id": "6914",
   "slice": "linear-forwarding-provider-tests-20261007",
   "assignee": "ttraenkler/codex-linear-b-forwarding-tests-sol61-20261007",
-  "requested_by": "ttraenkler/codex-linear-b-forwarding-tests-sol61-20261007",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6914-linear-forwarding-provider-tests-20261007",
   "claimed_at": "2026-10-07T18:10:10Z",
-  "updated_at": "2026-10-07T18:10:10Z",
-  "write_id": "67259-ma7wrz3z"
+  "updated_at": "2026-10-10T23:40:20Z",
+  "write_id": "18597-x7x24j1o",
+  "released_at": "2026-10-10T23:40:20Z"
 }
