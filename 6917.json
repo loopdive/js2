@@ -1,12 +1,11 @@
 {
   "id": "6917",
   "assignee": "ttraenkler/codex-linear-b-malloc-plan-20261008",
-  "requested_by": "ttraenkler/codex-linear-b-malloc-plan-20261008",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6915-linear-append-plan-20261007",
-  "reserved_at": "2026-10-07T22:33:24Z",
   "claimed_at": "2026-10-07T22:33:24Z",
-  "updated_at": "2026-10-07T22:33:24Z",
-  "write_id": "99221-7kxomu8v",
-  "pr_scan": "ok"
+  "updated_at": "2026-10-10T23:42:09Z",
+  "write_id": "28002-oxzz9xr7",
+  "released_at": "2026-10-10T23:42:09Z"
 }
