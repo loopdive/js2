@@ -16,7 +16,48 @@ import { installCompiledClosureToStringArm } from "./coercion-engine.js";
 import { unshiftCarrierToPrimitiveArms, unshiftDateToStringArm } from "./carrier-to-primitive.js";
 import { unshiftAnyToStringBigIntArm } from "./bigint-primitive-to-string.js"; // (#6642 S62)
 import { stringConstantExternrefInstrs } from "./native-strings.js";
-import { standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js"; // (#5383 S2f R12)
+import { definedIdxs, standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js"; // (#5383 S2f R12)
+
+/**
+ * (#6882) The callable-kind bits of param 0, OR-ed over every terminal this
+ * module has, or undefined when it has none. (#5383 S2f R12) The JS boundary's
+ * `__boundary_object_callable_kind` answers for a host object this instance
+ * admitted; its standalone wasm→wasm twin answers for a value a linked PROVIDER
+ * owns (without it `typeof Temporal.PlainDate` answered "object"). A
+ * native-regime module in a JavaScript environment has BOTH, so it asks both,
+ * peer first; `boundary ?? peer` asked only the boundary, and `typeof` on a
+ * provider class answered "object" there. One family emits its one call. A
+ * factory, because every arm needs its own instruction objects.
+ */
+function callableKindBitsInstrs(ctx: CodegenContext): (() => Instr[]) | undefined {
+  const idxs = definedIdxs(
+    standaloneLinkBoundaryPeerIndex(ctx, "callableKind"),
+    ctx.funcMap.get("__boundary_object_callable_kind"),
+  );
+  if (idxs.length === 0) return undefined;
+  return () =>
+    idxs.flatMap((funcIdx, i): Instr[] => [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx },
+      ...(i > 0 ? ([{ op: "i32.or" }] satisfies Instr[]) : []),
+    ]);
+}
+
+/**
+ * (#3505 harness / #6882) `__typeof_object`'s `$Symbol` exclusion (local 1 =
+ * the anyref param). It must run BEFORE the callable-kind terminal: appended
+ * after it, the arm was unreachable in every module with a JS boundary or a
+ * linked peer, so a Symbol answered "object" there — and the Temporal
+ * polyfill's IsObject accepted a Symbol-valued `options` instead of throwing.
+ */
+function symbolExclusionArm(symbolTypeIdx: number | undefined): Instr[] {
+  if (symbolTypeIdx === undefined) return [];
+  return [
+    { op: "local.get", index: 1 },
+    { op: "ref.test", typeIdx: symbolTypeIdx },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+  ];
+}
 
 /**
  * #1896 — teach the standalone/WASI native `__typeof_function` and
@@ -75,8 +116,7 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   // value a linked PROVIDER owns is answered by the module that can classify
   // it. Without this a provider-minted class value answered `"object"`, so a
   // consumer could never see `typeof Temporal.PlainDate === "function"`.
-  const boundaryCallableKindIdx =
-    ctx.funcMap.get("__boundary_object_callable_kind") ?? standaloneLinkBoundaryPeerIndex(ctx, "callableKind");
+  const callableKindInstrs = callableKindBitsInstrs(ctx);
   // (#4120) A reified builtin CONSTRUCTOR carrier (`Set`, `TypeError`, `Array`,
   // …) is a `$Object` branded `OBJ_FLAG_CALLABLE`, not a closure wrapper — and a
   // module can reify one without ever compiling a closure, so it must keep this
@@ -104,7 +144,7 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
     runtimeEvalCallbackTypeIdx === undefined &&
     !hasBrandedBuiltinCarrier(ctx) &&
     proxyTypeIdx === undefined &&
-    boundaryCallableKindIdx === undefined &&
+    callableKindInstrs === undefined &&
     taCtorTypeIdx === undefined &&
     symbolTypeIdx === undefined &&
     revokerTypeIdx === undefined &&
@@ -183,7 +223,15 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   // i32-predicate arm returns `matchValue` on hit. The class singleton arm is a
   // `typeof` fact, not an IsCallable fact: the two modes share every genuine
   // callable carrier but deliberately split there.
-  const callableI32Arms = (anyLocalIdx: number, matchValue: number, mode: CallableArmMode): Instr[] => {
+  // `beforeTerminal` is spliced just ahead of the boundary/peer callable-kind
+  // arm, which RETURNS unconditionally — anything a caller appends after this
+  // ladder is unreachable whenever that arm exists.
+  const callableI32Arms = (
+    anyLocalIdx: number,
+    matchValue: number,
+    mode: CallableArmMode,
+    beforeTerminal: Instr[] = [],
+  ): Instr[] => {
     const onMatch: Instr[] = [{ op: "i32.const", value: matchValue }, { op: "return" }];
     const arms = buildClosureRefTestArms(ctx, anyLocalIdx, onMatch);
     if (runtimeEvalCallbackTypeIdx !== undefined) {
@@ -230,10 +278,10 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
         { op: "if", blockType: { kind: "empty" }, then: [...onMatch] },
       );
     }
-    if (boundaryCallableKindIdx !== undefined) {
+    arms.push(...beforeTerminal);
+    if (callableKindInstrs !== undefined) {
       arms.push(
-        { op: "local.get", index: 0 },
-        { op: "call", funcIdx: boundaryCallableKindIdx },
+        ...callableKindInstrs(),
         { op: "i32.const", value: mode.boundaryMask },
         { op: "i32.and" },
         // `& 1` was already a boolean. `typeof` must accept a foreign class's
@@ -361,21 +409,9 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
     const lastIdx = b.length - 1;
     const last = b[lastIdx] as { op?: string; value?: number } | undefined;
     if (last && last.op === "i32.const" && last.value === 1) {
-      const exclusionArms: Instr[] = callableI32Arms(1, 0, typeofFunctionMode);
       // (#3505 harness) typeof Symbol() is "symbol", never "object" — exclude
-      // the $Symbol carrier exactly like closures.
-      if (symbolTypeIdx !== undefined) {
-        const symbolArm: Instr[] = [
-          { op: "local.get", index: 1 },
-          { op: "ref.test", typeIdx: symbolTypeIdx },
-          { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
-        ];
-        // (#6894) The boundary callable-kind arm ends the ladder with an
-        // unconditional `return`, so on the native regime a trailing symbol arm
-        // was dead and `typeof sym !== "object"` answered false. Test it first.
-        if (boundaryCallableKindIdx !== undefined) exclusionArms.unshift(...symbolArm);
-        else exclusionArms.push(...symbolArm);
-      }
+      // the $Symbol carrier exactly like closures (see `symbolExclusionArm`).
+      const exclusionArms: Instr[] = callableI32Arms(1, 0, typeofFunctionMode, symbolExclusionArm(symbolTypeIdx));
       b.splice(lastIdx, 0, ...exclusionArms);
     }
   }
@@ -479,10 +515,9 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
           },
         );
       }
-      if (boundaryCallableKindIdx !== undefined) {
+      if (callableKindInstrs !== undefined) {
         valueArms.push(
-          { op: "local.get", index: 0 },
-          { op: "call", funcIdx: boundaryCallableKindIdx },
+          ...callableKindInstrs(),
           // A foreign class carries only [[Construct]] (bit 1) but still has
           // `typeof === "function"`; both bits are therefore tag evidence.
           { op: "i32.const", value: 3 },
