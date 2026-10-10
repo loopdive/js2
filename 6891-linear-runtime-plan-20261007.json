@@ -1,12 +1,11 @@
 {
   "id": "6891",
   "slice": "linear-runtime-plan-20261007",
-  "assignee": "ttraenkler/codex-linear-b-runtime-astra-20261007",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
   "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
-  "status": "released",
+  "status": "in-progress",
   "branch": "codex/6891-linear-runtime-spec-20261007",
-  "claimed_at": "2026-10-07T09:10:28Z",
-  "updated_at": "2026-10-10T23:34:51Z",
-  "write_id": "86570-4wia8m43",
-  "released_at": "2026-10-10T23:34:51Z"
+  "claimed_at": "2026-10-10T23:34:55Z",
+  "updated_at": "2026-10-10T23:34:55Z",
+  "write_id": "86877-2xgczr4z"
 }
