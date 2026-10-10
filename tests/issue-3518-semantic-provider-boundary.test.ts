@@ -1,4 +1,5 @@
 import { captureDenoPostPositionMainPredecessorPolicySource } from "./helpers/ir-deno-post-position-main-successor.js";
+import { captureGeometryCurrentMainPredecessorPolicySource } from "./helpers/ir-c1-historical-authority.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
 import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
@@ -362,6 +363,7 @@ const sourceMapValidatorFixtureAdditions = {
     "src/ir/program/runtime-abi.ts",
     "src/ir/program/class-layouts.ts",
     "src/ir/program/allocations.ts",
+    "src/ir/program/allocation-body-validation.ts",
     "src/ir/program/runtime-support-dependencies.ts",
     "src/ir/program/runtime-validation.ts",
     "src/ir/program/owner.ts",
@@ -415,8 +417,13 @@ const denoNativeFixtureAdditions = [
   "src/runtime/wasmgc/promise/resolving-pair-bodies.ts",
 ] as const;
 const remainderLiveFixtureAddition = "src/ir/runtime/number-remainder-callables.ts";
+const allocationRuleFixtureAdditions = [
+  "src/ir/analysis/allocation-evidence/effect-rules.ts",
+  "src/ir/analysis/allocation-evidence/contracts.ts",
+] as const;
 const liveFixtureGroups = {
   ...validatorLiveFixtureGroups,
+  "ir-analysis": [...validatorLiveFixtureGroups["ir-analysis"], ...allocationRuleFixtureAdditions],
   "ir-runtime": [...validatorLiveFixtureGroups["ir-runtime"], remainderLiveFixtureAddition],
   "native-runtime": [...validatorLiveFixtureGroups["native-runtime"], ...denoNativeFixtureAdditions],
 };
@@ -503,7 +510,9 @@ const policy = () => {
                                   capturePositionClassFieldsMainPredecessorPolicySource(
                                     capturePositionFinallyMainPredecessorPolicySource(
                                       captureDenoPostPositionMainPredecessorPolicySource(
-                                        readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"),
+                                        captureGeometryCurrentMainPredecessorPolicySource(
+                                          readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"),
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -1005,7 +1014,14 @@ function fixture() {
   p.layers = p.layers.map((layer: { id: string; roots: string[] }) => {
     const entries = liveFixtureGroups[layer.id as keyof typeof liveFixtureGroups];
     return entries
-      ? { ...layer, status: "active", required: true, entries, minModules: entries.length }
+      ? {
+          ...layer,
+          roots: layer.id === "ir-analysis" ? [...layer.roots, ...allocationRuleFixtureAdditions] : layer.roots,
+          status: "active",
+          required: true,
+          entries,
+          minModules: entries.length,
+        }
       : { id: layer.id, roots: layer.roots, status: "debt" };
   });
   p.files = Object.entries(liveFixtureGroups).flatMap(([layer, paths]) =>
@@ -1079,30 +1095,44 @@ function assertLiveFixtureClosure(r: FixtureRun) {
   expect(priorLiveRequired).toHaveLength(174);
   expect(new Set(priorLiveRequired).size).toBe(174);
   const additions = Object.values(sourceMapValidatorFixtureAdditions).flat();
-  expect(additions).toHaveLength(31);
-  expect(new Set(additions).size).toBe(31);
+  expect(additions).toHaveLength(31 + 1);
+  expect(new Set(additions).size).toBe(31 + 1);
   const added = new Set(additions);
   expect(priorLiveRequired.filter((path) => added.has(path))).toEqual([]);
-  expect(validatorLiveRequired).toHaveLength(205);
-  expect(new Set(validatorLiveRequired).size).toBe(205);
+  expect(validatorLiveRequired).toHaveLength(205 + 1);
+  expect(new Set(validatorLiveRequired).size).toBe(205 + 1);
   expect(denoNativeFixtureAdditions).toHaveLength(3);
   expect(new Set(denoNativeFixtureAdditions).size).toBe(3);
   const denoAdded = new Set<string>(denoNativeFixtureAdditions);
   expect(validatorLiveRequired.filter((path) => denoAdded.has(path))).toEqual([]);
-  expect(liveRequired).toHaveLength(208 + 1);
-  expect(new Set(liveRequired).size).toBe(208 + 1);
+  expect(allocationRuleFixtureAdditions).toHaveLength(2);
+  expect(new Set(allocationRuleFixtureAdditions).size).toBe(2);
+  const allocationAdded = new Set<string>(allocationRuleFixtureAdditions);
+  expect(validatorLiveRequired.filter((path) => allocationAdded.has(path))).toEqual([]);
+  expect(liveRequired).toHaveLength(208 + 1 + 1 + 2);
+  expect(new Set(liveRequired).size).toBe(208 + 1 + 1 + 2);
   expect(validatorLiveRequired).not.toContain(remainderLiveFixtureAddition);
-  expect(liveRequired.filter((path) => !denoAdded.has(path) && path !== remainderLiveFixtureAddition)).toEqual(
-    validatorLiveRequired,
-  );
+  expect(
+    liveRequired.filter(
+      (path) => !denoAdded.has(path) && !allocationAdded.has(path) && path !== remainderLiveFixtureAddition,
+    ),
+  ).toEqual(validatorLiveRequired);
   expect(validatorLiveFixtureGroups["native-runtime"]).toHaveLength(48);
   expect(liveFixtureGroups["native-runtime"]).toHaveLength(51);
   for (const [layer, paths] of Object.entries(liveFixtureGroups)) {
-    expect(paths.filter((path) => !denoAdded.has(path) && path !== remainderLiveFixtureAddition)).toEqual(
-      validatorLiveFixtureGroups[layer as keyof typeof validatorLiveFixtureGroups],
-    );
     expect(
-      paths.filter((path) => !added.has(path) && !denoAdded.has(path) && path !== remainderLiveFixtureAddition),
+      paths.filter(
+        (path) => !denoAdded.has(path) && !allocationAdded.has(path) && path !== remainderLiveFixtureAddition,
+      ),
+    ).toEqual(validatorLiveFixtureGroups[layer as keyof typeof validatorLiveFixtureGroups]);
+    expect(
+      paths.filter(
+        (path) =>
+          !added.has(path) &&
+          !denoAdded.has(path) &&
+          !allocationAdded.has(path) &&
+          path !== remainderLiveFixtureAddition,
+      ),
     ).toEqual(priorLiveFixtureGroups[layer as keyof typeof priorLiveFixtureGroups]);
     expect(r.report.counts.byLayer[layer]).toBe(paths.length);
     expect(
@@ -1112,8 +1142,8 @@ function assertLiveFixtureClosure(r: FixtureRun) {
         .sort(),
     ).toEqual([...paths].sort());
   }
-  expect(r.report.counts.total).toBe(208 + 1);
-  expect(r.report.modules).toHaveLength(208 + 1);
+  expect(r.report.counts.total).toBe(208 + 1 + 1 + 2);
+  expect(r.report.modules).toHaveLength(208 + 1 + 1 + 2);
   const edges: FixtureEdge[] = r.report.edges;
   const remainderEdges: FixtureEdge[] = [
     { from: "src/ir/runtime/callable-declarations.ts", to: remainderLiveFixtureAddition, typeOnly: false },
@@ -1134,24 +1164,46 @@ function assertLiveFixtureClosure(r: FixtureRun) {
     ),
   ).toEqual(orderedEdges(remainderEdges));
   expect(edgePopulation(remainderEdges)).toEqual({ edges: 7, typeOnly: 4, runtime: 3 });
+  const allocationRuleEdges: FixtureEdge[] = [
+    { from: "src/ir/analysis/encoding.ts", to: allocationRuleFixtureAdditions[0], typeOnly: false },
+    { from: "src/ir/analysis/escape.ts", to: allocationRuleFixtureAdditions[0], typeOnly: false },
+    { from: "src/ir/analysis/ownership.ts", to: allocationRuleFixtureAdditions[0], typeOnly: false },
+    { from: allocationRuleFixtureAdditions[0], to: "src/ir/core/nodes.ts", typeOnly: false },
+    { from: allocationRuleFixtureAdditions[0], to: "src/ir/core/types.ts", typeOnly: true },
+    { from: allocationRuleFixtureAdditions[0], to: allocationRuleFixtureAdditions[1], typeOnly: true },
+    { from: allocationRuleFixtureAdditions[0], to: "src/ir/core/nodes.ts", typeOnly: true },
+    { from: allocationRuleFixtureAdditions[1], to: "src/ir/core/nodes.ts", typeOnly: true },
+    { from: allocationRuleFixtureAdditions[1], to: "src/ir/core/types.ts", typeOnly: true },
+    { from: allocationRuleFixtureAdditions[1], to: "src/shared/contracts/ir-identity.ts", typeOnly: true },
+  ];
+  const actualAllocationRuleEdges = edges.filter(
+    (edge) => allocationAdded.has(edge.from) || (edge.to !== undefined && allocationAdded.has(edge.to)),
+  );
+  expect(orderedEdges(actualAllocationRuleEdges)).toEqual(orderedEdges(allocationRuleEdges));
+  expect(edgePopulation(allocationRuleEdges)).toEqual({ edges: 10, typeOnly: 6, runtime: 4 });
   // This runtime edge is load-bearing: CLI exit zero alone admits its bypass.
   expect(
     edges.filter((edge) => edge.from === "src/ir/program/input.ts" && edge.to === "src/ir/program/validation.ts"),
   ).toEqual([expect.objectContaining({ typeOnly: false })]);
   expect({ edges: r.report.resolvedEdgeCount, ...r.report.counts.resolvedEdgesByType }).toEqual({
-    edges: 988 + 7,
-    typeOnly: 480 + 4,
-    runtime: 508 + 3,
+    edges: 988 + 7 + 6 + 10,
+    typeOnly: 480 + 4 + 1 + 6,
+    runtime: 508 + 3 + 5 + 4,
   });
-  expect(edgePopulation(edges)).toEqual({ edges: 988 + 7, typeOnly: 480 + 4, runtime: 508 + 3 });
+  expect(edgePopulation(edges)).toEqual({
+    edges: 988 + 7 + 6 + 10,
+    typeOnly: 480 + 4 + 1 + 6,
+    runtime: 508 + 3 + 5 + 4,
+  });
   const validator = new Set(validatorLiveRequired);
   const validatorEdges = edges.filter(
     (edge) => validator.has(edge.from) && edge.to !== undefined && validator.has(edge.to),
   );
-  expect(edgePopulation(validatorEdges)).toEqual({ edges: 977, typeOnly: 476, runtime: 501 });
+  expect(edgePopulation(validatorEdges)).toEqual({ edges: 977 + 6, typeOnly: 476 + 1, runtime: 501 + 5 });
   const denoEdges = edges.filter(
     (edge) =>
       !validatorEdges.includes(edge) &&
+      !actualAllocationRuleEdges.includes(edge) &&
       edge.from !== remainderLiveFixtureAddition &&
       edge.to !== remainderLiveFixtureAddition,
   );
@@ -1233,9 +1285,9 @@ function assertLiveFixtureClosure(r: FixtureRun) {
     runtime: 379,
   });
   expect(edgePopulation(validatorEdges.filter((edge) => !priorEdges.includes(edge)))).toEqual({
-    edges: 194,
-    typeOnly: 72,
-    runtime: 122,
+    edges: 194 + 6,
+    typeOnly: 72 + 1,
+    runtime: 122 + 5,
   });
   for (const module of r.report.modules) {
     expect(module.state).toBe("clean");
@@ -1476,6 +1528,40 @@ describe("semantic verification and provider ownership boundary", () => {
     assertLiveFixtureClosure(f.run());
   });
 
+  it.each([
+    [
+      allocationRuleFixtureAdditions[0],
+      ["src/ir/analysis/encoding.ts", "src/ir/analysis/escape.ts", "src/ir/analysis/ownership.ts"],
+      "./allocation-evidence/effect-rules.js",
+    ],
+    [allocationRuleFixtureAdditions[1], [allocationRuleFixtureAdditions[0]], "./contracts.js"],
+  ] as const)(
+    "refuses omitted current allocation-rule dependency %s and restores a fresh healthy graph",
+    (path, owners, request) => {
+      const f = fixture();
+      assertLiveFixtureClosure(f.run());
+      const copied = readFileSync(resolve(f.root, path));
+      const actual = readFileSync(resolve(repository, path));
+      expect(copied.equals(actual)).toBe(true);
+      try {
+        rmSync(resolve(f.root, path));
+        const missing = f.run();
+        expect(missing.status).toBe(1);
+        expect(missing.report.inventoryValid).toBe(false);
+        for (const owner of owners)
+          expect(missing.report.errors).toContainEqual({ code: "unresolved-module", detail: owner + ": " + request });
+        expect(
+          missing.report.errors.some((error: { code: string }) => error.code === "forbidden-transitive-path"),
+        ).toBe(true);
+      } finally {
+        f.put(path, copied.toString("utf8"));
+      }
+      expect(readFileSync(resolve(f.root, path)).equals(copied)).toBe(true);
+      expect(readFileSync(resolve(repository, path)).equals(actual)).toBe(true);
+      assertLiveFixtureClosure(f.run());
+    },
+  );
+
   it("rejects bypass of the actual input-to-source-map-validator dependency", () => {
     const f = fixture();
     assertLiveFixtureClosure(f.run());
@@ -1495,8 +1581,8 @@ describe("semantic verification and provider ownership boundary", () => {
       ).toEqual([]);
       expect({ edges: bypass.report.resolvedEdgeCount, ...bypass.report.counts.resolvedEdgesByType }).toEqual(
         replacement === ""
-          ? { edges: 987 + 7, typeOnly: 480 + 4, runtime: 507 + 3 }
-          : { edges: 988 + 7, typeOnly: 481 + 4, runtime: 507 + 3 },
+          ? { edges: 987 + 7 + 6 + 10, typeOnly: 480 + 4 + 1 + 6, runtime: 507 + 3 + 5 + 4 }
+          : { edges: 988 + 7 + 6 + 10, typeOnly: 481 + 4 + 1 + 6, runtime: 507 + 3 + 5 + 4 },
       );
       expect(() => assertLiveFixtureClosure(bypass)).toThrow();
       f.put(path, original);
@@ -1769,11 +1855,11 @@ describe("semantic verification and provider ownership boundary", () => {
       expect.objectContaining({ from: path, to: "src/forbidden.ts", typeOnly: true }),
     );
     expect(r.report.transitiveViolations).not.toEqual([]);
-    expect(r.report.counts.total).toBe(209 + 1);
+    expect(r.report.counts.total).toBe(209 + 1 + 1 + 2);
     expect({ edges: r.report.resolvedEdgeCount, ...r.report.counts.resolvedEdgesByType }).toEqual({
-      edges: 989 + 7,
-      typeOnly: 481 + 4,
-      runtime: 508 + 3,
+      edges: 989 + 7 + 6 + 10,
+      typeOnly: 481 + 4 + 1 + 6,
+      runtime: 508 + 3 + 5 + 4,
     });
     f.put(path, original);
     f.p.files.pop();

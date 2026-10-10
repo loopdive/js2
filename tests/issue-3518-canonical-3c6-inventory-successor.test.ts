@@ -1,4 +1,5 @@
 import { captureDenoPostPositionMainPredecessorPolicySource } from "./helpers/ir-deno-post-position-main-successor.js";
+import { captureGeometryCurrentMainPredecessorPolicySource } from "./helpers/ir-c1-historical-authority.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
 import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
@@ -1437,7 +1438,9 @@ const raw = (): string => {
                   captureSourceMapPositionInventoryPredecessorPolicySource(
                     capturePositionClassFieldsMainPredecessorPolicySource(
                       capturePositionFinallyMainPredecessorPolicySource(
-                        captureDenoPostPositionMainPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                        captureDenoPostPositionMainPredecessorPolicySource(
+                          captureGeometryCurrentMainPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                        ),
                       ),
                     ),
                   ),
@@ -1468,6 +1471,22 @@ function receiptMutant(change: (r: any) => void): void {
 }
 const physical = (path: string): string => fileURLToPath(new URL(`../${path}`, import.meta.url));
 const physicalFaultAuthorities = [receiptPath, helperPath];
+function expectExactH3GeometryPriority(action: () => unknown): void {
+  let failure: unknown;
+  let accepted = 0;
+  try {
+    action();
+    accepted += 1;
+  } catch (error) {
+    failure = error;
+  }
+  expect(accepted).toBe(0);
+  expect(failure).toBeInstanceOf(Error);
+  expect((failure as Error).message).toBe(
+    "C1 historical authority: full-file pin changed: tests/helpers/ir-runtime-program-policy-evolution.ts geometry current",
+  );
+}
+
 function expectMissingAuthority(action: () => void, path: string): void {
   let failure: unknown;
   try {
@@ -1798,12 +1817,8 @@ describe("fixed inventory-only canonical 3c6 successor", () => {
           };
           withAuthorityFault(path, kind, () => {
             if (kind === "missing") expectMissingAuthority(action, path);
-            else
-              expect(action).toThrow(
-                path === receiptPath
-                  ? "receipt digest mismatch"
-                  : "complete canonical predecessor helper prefix changed",
-              );
+            else if (path === receiptPath) expect(action).toThrow("receipt digest mismatch");
+            else expectExactH3GeometryPriority(action);
           });
           action();
         });

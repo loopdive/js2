@@ -34,9 +34,12 @@ import {
 } from "./helpers/ir-runtime-program-policy-evolution.js";
 import {
   captureLinearLayoutPredecessor,
+  captureLinearLayoutGeometry,
   captureLoweringLegalityPredecessor,
   captureCurrentLoweringLegalityPredecessor,
 } from "./helpers/ir-lowering-analysis-relocation.js";
+
+import { captureGeometryCurrentMainPredecessorPolicySource } from "./helpers/ir-c1-historical-authority.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const receiptPath = "tests/helpers/ir-lowering-analysis-relocation.json";
@@ -137,14 +140,284 @@ function hashes(bytes: Buffer) {
 function pin(bytes: Buffer, expected: { bytes: number; sha256: string; gitBlob: string }) {
   expect(hashes(bytes)).toEqual({ bytes: expected.bytes, sha256: expected.sha256, gitBlob: expected.gitBlob });
 }
+// Independent physical geometry authority. Historical fixtures below are derived only after this replay.
+const geometryReceiptPath = "tests/helpers/ir-linear-layout-geometry-successor.json";
+const sharedGeometryPath = "src/shared/contracts/linear-memory-layout.ts";
+const completeGeometryImplementationPin = {
+  bytes: 35439,
+  sha256: "87bf7de1961b821cf303b5d7e686a5e44614b08b7b371ee6afe4a16172a7851e",
+  gitBlob: "4260f7bdb92344a9b20427b75113020b6d9e31a9",
+};
+const geometryReceiptPin = {
+  bytes: 69621,
+  sha256: "e4af32c53ea548b693fbcee78c55b3af47b7985e2dc1b340ddf9c28e0a8f573f",
+  gitBlob: "2ad1d8ef1c76fb3cfe9dfa951ccf826f4e03c010",
+};
+const actualGeometryPins = [
+  {
+    path: "src/ir/analysis/linear-memory-plan.ts",
+    bytes: 45359,
+    sha256: "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc",
+    gitBlob: "3db990eb21e3ed216cd798548af6d076e32ed9e1",
+  },
+  {
+    path: "src/ir/analysis/contracts/linear-memory-layout.ts",
+    bytes: 3161,
+    sha256: "83e6b8a07bdc8e8b93fed590bc0aed5c5f779bde98466e9cbbe3feb7a825cb91",
+    gitBlob: "0dd2108962236a64e2b96479309b5b1e9735c90e",
+  },
+  {
+    path: "src/shared/contracts/linear-memory-layout.ts",
+    bytes: 7580,
+    sha256: "08c85d9e8c9891a74b9c0c02a1310b67b16832980849dc0e7b6d511d91350937",
+    gitBlob: "59450b9ad09d7ebf16af04a8a1ab655a5c81b0ee",
+  },
+] as const;
+const geometryBeforePins = [
+  {
+    path: "src/ir/analysis/linear-memory-plan.ts",
+    bytes: 49040,
+    sha256: "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",
+    gitBlob: "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",
+  },
+  {
+    path: "src/ir/analysis/contracts/linear-memory-layout.ts",
+    bytes: 4763,
+    sha256: "977e572b62737c3459df08c15e4d3f6ce7f461f9fc5b1aac344ad676690e3754",
+    gitBlob: "280a72ab47f43584f93efb664e3e64b55dc896b5",
+  },
+] as const;
+const forwardingBeforePin = {
+  bytes: 4670,
+  sha256: "dba3ca2121063a52b0ae1130f48c0acc70e0f819a9e665a2a2744572eddfae72",
+  gitBlob: "cac9d1e33659380a6ee8d8e03014af53e1123533",
+};
+const geometryReadOrder = [
+  geometryReceiptPath,
+  ...actualGeometryPins.map((entry) => entry.path),
+  "tests/helpers/ir-lowering-analysis-relocation.json",
+] as const;
+type GeometryPin = { bytes: number; sha256: string; gitBlob: string };
+type GeometryCopy = {
+  kind: "copy";
+  name: string;
+  path: string;
+  offset: number;
+  length: number;
+  sourceSha256: string;
+  outputOffset: number;
+};
+type GeometryLiteral = { kind: "literal"; name: string; text: string; outputOffset: number };
+type GeometryRecipe = { path: string; pin: GeometryPin; pieces: (GeometryCopy | GeometryLiteral)[] };
+type GeometryCoverage = { path: string; spans: { offset: number; length: number; sha256: string; uses: number }[] };
+type GeometryReceipt = {
+  schema: string;
+  sourceBase: string;
+  currentInputs: typeof actualGeometryPins;
+  geometryBeforeInputs: typeof geometryBeforePins;
+  sharedAbsentBefore: boolean;
+  oldAuthority: {
+    helperPrefix: { path: string; bytes: number; sha256: string };
+    receipt: GeometryPin & { path: string };
+  };
+  geometry: {
+    inverse: GeometryRecipe[];
+    inverseCoverage: GeometryCoverage[];
+    forward: GeometryRecipe[];
+    forwardCoverage: GeometryCoverage[];
+  };
+  forwarding: {
+    commit: string;
+    parent: string;
+    path: string;
+    offset: number;
+    length: number;
+    beforePin: GeometryPin;
+    afterPin: GeometryPin;
+    inverseText: string;
+    forwardText: string;
+  };
+};
+function geometryBytePin(bytes: Buffer): GeometryPin {
+  return {
+    bytes: bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    gitBlob: createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex"),
+  };
+}
+function requireGeometryPin(bytes: Buffer, expected: GeometryPin): void {
+  expect(geometryBytePin(bytes)).toEqual({ bytes: expected.bytes, sha256: expected.sha256, gitBlob: expected.gitBlob });
+}
+function independentlyReplayGeometry(
+  recipes: GeometryRecipe[],
+  coverage: GeometryCoverage[],
+  sources: ReadonlyMap<string, Buffer>,
+  expected: readonly (GeometryPin & { path: string })[],
+): Map<string, Buffer> {
+  expect(recipes.map((entry) => entry.path)).toEqual(expected.map((entry) => entry.path));
+  expect(coverage.map((entry) => entry.path)).toEqual([...sources.keys()]);
+  const copied: GeometryCopy[] = [];
+  const outputs = new Map<string, Buffer>();
+  for (const [index, recipe] of recipes.entries()) {
+    expect(recipe.pin).toEqual({
+      bytes: expected[index]!.bytes,
+      sha256: expected[index]!.sha256,
+      gitBlob: expected[index]!.gitBlob,
+    });
+    let cursor = 0;
+    const pieces: Buffer[] = [];
+    for (const piece of recipe.pieces) {
+      expect(piece.outputOffset).toBe(cursor);
+      expect(typeof piece.name).toBe("string");
+      expect(piece.name.length).toBeGreaterThan(0);
+      let value: Buffer;
+      if (piece.kind === "copy") {
+        const donor = sources.get(piece.path);
+        expect(donor).toBeDefined();
+        if (!donor) throw new Error("independent geometry donor outside closed source domain: " + piece.path);
+        expect(Number.isSafeInteger(piece.offset) && piece.offset >= 0).toBe(true);
+        expect(Number.isSafeInteger(piece.length) && piece.length > 0).toBe(true);
+        expect(piece.offset + piece.length).toBeLessThanOrEqual(donor.length);
+        value = donor.subarray(piece.offset, piece.offset + piece.length);
+        expect(createHash("sha256").update(value).digest("hex")).toBe(piece.sourceSha256);
+        copied.push(piece);
+      } else {
+        expect(piece.kind).toBe("literal");
+        value = Buffer.from(piece.text, "utf8");
+        expect(value.toString("utf8")).toBe(piece.text);
+        expect(value.length).toBeGreaterThan(0);
+      }
+      pieces.push(value);
+      cursor += value.length;
+    }
+    const output = Buffer.concat(pieces);
+    requireGeometryPin(output, expected[index]!);
+    expect(outputs.has(recipe.path)).toBe(false);
+    outputs.set(recipe.path, output);
+  }
+  // Every input byte has one explicit coverage interval, including discarded/introduced spans with zero use.
+  for (const row of coverage) {
+    const source = sources.get(row.path)!;
+    let cursor = 0;
+    for (const span of row.spans) {
+      expect(span.offset).toBe(cursor);
+      expect(Number.isSafeInteger(span.length) && span.length > 0).toBe(true);
+      const end = span.offset + span.length;
+      expect(end).toBeLessThanOrEqual(source.length);
+      expect(createHash("sha256").update(source.subarray(span.offset, end)).digest("hex")).toBe(span.sha256);
+      const users = copied.filter(
+        (piece) => piece.path === row.path && piece.offset < end && piece.offset + piece.length > span.offset,
+      );
+      for (const piece of users) {
+        expect(piece.offset).toBeLessThanOrEqual(span.offset);
+        expect(piece.offset + piece.length).toBeGreaterThanOrEqual(end);
+      }
+      expect(users).toHaveLength(span.uses);
+      cursor = end;
+    }
+    expect(cursor).toBe(source.length);
+  }
+  return outputs;
+}
+function independentGeometryViews(readCurrent: (path: string) => string) {
+  const receiptBytes = Buffer.from(readCurrent(geometryReceiptPath));
+  requireGeometryPin(receiptBytes, geometryReceiptPin);
+  const receipt = JSON.parse(receiptBytes.toString("utf8")) as GeometryReceipt;
+  expect(Object.keys(receipt)).toEqual([
+    "schema",
+    "sourceBase",
+    "currentInputs",
+    "geometryBeforeInputs",
+    "sharedAbsentBefore",
+    "oldAuthority",
+    "geometry",
+    "forwarding",
+  ]);
+  expect(receipt.schema).toBe("ir-linear-layout-geometry-successor-v1");
+  expect(receipt.sourceBase).toBe("b932e3a05e353acc59e7b547ef4e417a5d8637e1");
+  expect(receipt.currentInputs).toEqual(actualGeometryPins);
+  expect(receipt.geometryBeforeInputs).toEqual(geometryBeforePins);
+  expect(receipt.sharedAbsentBefore).toBe(true);
+  expect(receipt.oldAuthority.helperPrefix).toEqual({
+    path: "tests/helpers/ir-lowering-analysis-relocation.ts",
+    bytes: 18956,
+    sha256: "253eda01462fad0ab84a940965a083eaf80b0ca8a3e10a4ca012fbafaaf30e99",
+  });
+  const current = new Map(
+    actualGeometryPins.map((entry) => {
+      const source = Buffer.from(readCurrent(entry.path));
+      requireGeometryPin(source, entry);
+      return [entry.path, source] as const;
+    }),
+  );
+  const oldReceipt = Buffer.from(readCurrent(receipt.oldAuthority.receipt.path));
+  requireGeometryPin(oldReceipt, {
+    bytes: 111423,
+    sha256: "dc8241d36da5b2fe29abe12ed6ee348fc456ef22939c61aabe05d09daad92134",
+    gitBlob: "6fee96e10bb22a1f3071ddc41b4a2af39ee96763",
+  });
+  const before = independentlyReplayGeometry(
+    receipt.geometry.inverse,
+    receipt.geometry.inverseCoverage,
+    current,
+    geometryBeforePins,
+  );
+  const forward = independentlyReplayGeometry(
+    receipt.geometry.forward,
+    receipt.geometry.forwardCoverage,
+    before,
+    actualGeometryPins,
+  );
+  for (const [path, source] of current) expect(forward.get(path)).toEqual(source);
+  const forwarding = receipt.forwarding;
+  expect([forwarding.commit, forwarding.parent, forwarding.path, forwarding.offset, forwarding.length]).toEqual([
+    "2a98b75de993bdc568e3668a2965c026876fe322",
+    "6c88d157444ea4ae377a7ef1b82b15ef2f4f6603",
+    "src/ir/analysis/contracts/linear-memory-layout.ts",
+    2820,
+    93,
+  ]);
+  const layout = before.get(forwarding.path)!;
+  requireGeometryPin(layout, geometryBeforePins[1]);
+  expect(forwarding.afterPin).toEqual({
+    bytes: geometryBeforePins[1].bytes,
+    sha256: geometryBeforePins[1].sha256,
+    gitBlob: geometryBeforePins[1].gitBlob,
+  });
+  expect(forwarding.beforePin).toEqual(forwardingBeforePin);
+  const inverseSpan = Buffer.from(forwarding.inverseText);
+  expect(inverseSpan).toHaveLength(93);
+  expect(layout.subarray(2820, 2913)).toEqual(inverseSpan);
+  const loweringLayout = Buffer.concat([layout.subarray(0, 2820), layout.subarray(2913)]);
+  requireGeometryPin(loweringLayout, forwardingBeforePin);
+  // Authored forward operand is read separately; never manufacture it from the inverse result.
+  const forwardSpan = Buffer.from(forwarding.forwardText);
+  expect(forwardSpan).toHaveLength(93);
+  expect(Buffer.concat([loweringLayout.subarray(0, 2820), forwardSpan, loweringLayout.subarray(2820)])).toEqual(layout);
+  return {
+    currentPlanner: current.get(actualGeometryPins[0].path)!.toString("utf8"),
+    currentLayout: current.get(actualGeometryPins[1].path)!.toString("utf8"),
+    currentShared: current.get(actualGeometryPins[2].path)!.toString("utf8"),
+    geometryBeforePlanner: before.get(geometryBeforePins[0].path)!.toString("utf8"),
+    geometryBeforeLayout: layout.toString("utf8"),
+    loweringBeforePlanner: before.get(geometryBeforePins[0].path)!.toString("utf8"),
+    loweringBeforeLayout: loweringLayout.toString("utf8"),
+  };
+}
+
 function authenticateImplementation(): void {
   const physical = join(root, implementationPath);
   if (!existsSync(physical)) throw new Error(`component implementation missing: ${implementationPath}`);
-  const actual = hashes(readFileSync(physical));
+  const source = readFileSync(physical);
+  const actual = hashes(source);
+  const prefix = hashes(source.subarray(0, implementationPin.bytes));
   if (
-    actual.bytes !== implementationPin.bytes ||
-    actual.sha256 !== implementationPin.sha256 ||
-    actual.gitBlob !== implementationPin.gitBlob
+    actual.bytes !== completeGeometryImplementationPin.bytes ||
+    actual.sha256 !== completeGeometryImplementationPin.sha256 ||
+    actual.gitBlob !== completeGeometryImplementationPin.gitBlob ||
+    prefix.bytes !== implementationPin.bytes ||
+    prefix.sha256 !== implementationPin.sha256 ||
+    prefix.gitBlob !== implementationPin.gitBlob
   )
     throw new Error(`component implementation full pin: ${implementationPath}`);
 }
@@ -172,16 +445,41 @@ function fixture(run: (dir: string, read: Reader, trace: string[]) => void): voi
   const dir = mkdtempSync(join(tmpdir(), "js2-d1-source-component-"));
   let completed = false;
   try {
+    authenticateImplementation();
+    const acquisitionTrace: string[] = [];
+    const geometryReader: Reader = (path) => {
+      if (!(geometryReadOrder as readonly string[]).includes(path))
+        throw new Error("unknown geometry fixture path: " + path);
+      acquisitionTrace.push(path);
+      const physical = join(root, path);
+      expect(statSync(physical).mode & 0o777).toBe(0o644);
+      return readFileSync(physical, "utf8");
+    };
+    const expected = independentGeometryViews(geometryReader);
+    expect(acquisitionTrace).toEqual(geometryReadOrder);
+    acquisitionTrace.length = 0;
+    authenticateImplementation();
+    const captured = captureLinearLayoutGeometry(expected.currentPlanner, geometryReader);
+    expect(acquisitionTrace).toEqual(geometryReadOrder);
+    expect(Object.keys(captured)).toEqual([...Object.keys(expected), "originalPlanner"]);
+    expect(Object.isFrozen(captured)).toBe(true);
+    for (const [field, value] of Object.entries(expected)) expect(captured[field as keyof typeof captured]).toBe(value);
     for (const path of allowed) {
       const src = join(root, path),
         dst = join(dir, path);
-      const expected = path === receiptPath ? receiptPin : sourcePins.find((p) => p.path === path)!;
-      pin(readFileSync(src), expected);
-      expect(statSync(src).mode & 0o777).toBe(0o644);
+      const expectedPin = path === receiptPath ? receiptPin : sourcePins.find((entry) => entry.path === path)!;
       mkdirSync(resolve(dst, ".."), { recursive: true });
-      copyFileSync(src, dst);
+      if (path === plannerPath || path === layoutPath) {
+        const historical = path === plannerPath ? expected.loweringBeforePlanner : expected.loweringBeforeLayout;
+        pin(Buffer.from(historical), expectedPin);
+        writeFileSync(dst, historical);
+      } else {
+        pin(readFileSync(src), expectedPin);
+        expect(statSync(src).mode & 0o777).toBe(0o644);
+        copyFileSync(src, dst);
+      }
       chmodSync(dst, 0o644);
-      pin(readFileSync(dst), expected);
+      pin(readFileSync(dst), expectedPin);
     }
     const trace: string[] = [];
     const read: Reader = (path) => {
@@ -189,6 +487,9 @@ function fixture(run: (dir: string, read: Reader, trace: string[]) => void): voi
       trace.push(path);
       return readFileSync(join(dir, path), "utf8");
     };
+    expect(captured.originalPlanner).toBe(independentDonor(read, "planner").toString("utf8"));
+    pin(Buffer.from(captured.originalPlanner), donorPins.planner);
+    trace.length = 0;
     run(dir, read, trace);
     completed = true;
   } finally {
@@ -489,27 +790,33 @@ describe("D1 independent lowering source preservation component", () => {
       expect(accepting(op, raw, read)).toBe(expected);
     });
   });
-  it.each(operations)("default $name reader reconstructs independently pinned donor from installed files", (op) => {
+  it.each(operations)(
+    "installed $name reader reconstructs independently pinned donor through its current API",
+    (op) => {
+      fixture((_dir, read) => {
+        const current = op.name === "linear-layout" ? readFileSync(join(root, plannerPath), "utf8") : read(op.input);
+        const expected = independentDonor(read, op.witness).toString("utf8");
+        authenticateImplementation();
+        const actual =
+          op.name === "linear-layout" ? captureLinearLayoutGeometry(current).originalPlanner : op.call(current);
+        expect(actual).toBe(expected);
+        pin(Buffer.from(actual), donorPins[op.witness]);
+      });
+    },
+  );
+  it.each(operations)("installed $name reader refuses missing old receipt and succeeds after restoration", (op) => {
     fixture((_dir, read) => {
-      const current = read(op.input);
+      const current = op.name === "linear-layout" ? readFileSync(join(root, plannerPath), "utf8") : read(op.input);
       const expected = independentDonor(read, op.witness).toString("utf8");
       authenticateImplementation();
-      const actual = op.call(current);
-      expect(actual).toBe(expected);
-      pin(Buffer.from(actual), donorPins[op.witness]);
-    });
-  });
-  it.each(operations)("default $name reader refuses missing installed receipt and succeeds after restoration", (op) => {
-    fixture((_dir, read) => {
-      const current = read(op.input);
-      const expected = independentDonor(read, op.witness).toString("utf8");
-      authenticateImplementation();
-      expect(op.call(current)).toBe(expected);
+      expect(
+        op.name === "linear-layout" ? captureLinearLayoutGeometry(current).originalPlanner : op.call(current),
+      ).toBe(expected);
       fault(join(root, receiptPath), "missing", () => {
         authenticateImplementation();
         let failure: unknown;
         try {
-          op.call(current);
+          op.name === "linear-layout" ? captureLinearLayoutGeometry(current).originalPlanner : op.call(current);
         } catch (error) {
           failure = error;
         }
@@ -517,7 +824,9 @@ describe("D1 independent lowering source preservation component", () => {
         expect(failure).toMatchObject({ code: "ENOENT", path: join(root, receiptPath) });
       });
       authenticateImplementation();
-      expect(op.call(current)).toBe(expected);
+      expect(
+        op.name === "linear-layout" ? captureLinearLayoutGeometry(current).originalPlanner : op.call(current),
+      ).toBe(expected);
     });
   });
 
@@ -658,11 +967,11 @@ describe("D1 independent lowering source preservation component", () => {
       });
     },
   );
-  it("fresh process refuses a valid inert implementation edit before an accepting import", () => {
+  it("fresh process authenticates complete geometry implementation before explicit historical API import", () => {
     fixture((dir, read) => {
       const raw = read(plannerPath),
         expected = accepting(operations[0], raw, read);
-      const script = `import {readFileSync} from 'node:fs'; import {createHash} from 'node:crypto'; const b=readFileSync(${JSON.stringify(join(root, implementationPath))}); const sha=(x)=>createHash('sha256').update(x).digest('hex'); const blob=createHash('sha1').update(Buffer.from('blob '+b.length+'\\0')).update(b).digest('hex'); if(b.length!==${implementationPin.bytes} || sha(b)!==${JSON.stringify(implementationPin.sha256)} || blob!==${JSON.stringify(implementationPin.gitBlob)}) { console.error('component implementation full pin'); process.exitCode=1; } else { const m=await import(${JSON.stringify(new URL("./helpers/ir-lowering-analysis-relocation.ts", import.meta.url).href)}); const allowed=${JSON.stringify(allowed)}; const read=(p)=>{if(!allowed.includes(p))throw Error('unknown fixture path');return readFileSync(${JSON.stringify(dir)}+'/'+p,'utf8');}; const out=m.captureLinearLayoutPredecessor(read(${JSON.stringify(plannerPath)}),read); console.log(JSON.stringify({bytes:Buffer.byteLength(out),sha256:sha(Buffer.from(out))})); }`;
+      const script = `import {readFileSync} from 'node:fs'; import {createHash} from 'node:crypto'; const b=readFileSync(${JSON.stringify(join(root, implementationPath))}); const sha=(x)=>createHash('sha256').update(x).digest('hex'); const blob=createHash('sha1').update(Buffer.from('blob '+b.length+'\\0')).update(b).digest('hex'); if(b.length!==${completeGeometryImplementationPin.bytes} || sha(b)!==${JSON.stringify(completeGeometryImplementationPin.sha256)} || blob!==${JSON.stringify(completeGeometryImplementationPin.gitBlob)} || sha(b.subarray(0,${implementationPin.bytes}))!==${JSON.stringify(implementationPin.sha256)}) { console.error('component implementation full pin'); process.exitCode=1; } else { const m=await import(${JSON.stringify(new URL("./helpers/ir-lowering-analysis-relocation.ts", import.meta.url).href)}); const allowed=${JSON.stringify(allowed)}; const read=(p)=>{if(!allowed.includes(p))throw Error('unknown fixture path');return readFileSync(${JSON.stringify(dir)}+'/'+p,'utf8');}; const out=m.captureLinearLayoutPredecessor(read(${JSON.stringify(plannerPath)}),read); console.log(JSON.stringify({bytes:Buffer.byteLength(out),sha256:sha(Buffer.from(out))})); }`;
       const invoke = () =>
         spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], {
           cwd: root,
@@ -691,6 +1000,104 @@ describe("D1 independent lowering source preservation component", () => {
       }
       expect(accepting(operations[0], raw, read)).toBe(expected);
     });
+  });
+});
+
+// Current geometry uses its own reader channel; the historical fixture/deep validators above remain direct.
+describe("D1 independently authenticated current geometry acquisition", () => {
+  function actualReader(trace: string[]): Reader {
+    return (path) => {
+      if (!(geometryReadOrder as readonly string[]).includes(path))
+        throw new Error("unknown current geometry path: " + path);
+      trace.push(path);
+      return readFileSync(join(root, path), "utf8");
+    };
+  }
+  function healthy() {
+    authenticateImplementation();
+    const expected = independentGeometryViews(actualReader([]));
+    const trace: string[] = [];
+    const first = captureLinearLayoutGeometry(expected.currentPlanner, actualReader(trace));
+    expect(trace).toEqual(geometryReadOrder);
+    fixture((_dir, historicalRead) => {
+      expect(first).toEqual({
+        ...expected,
+        originalPlanner: independentDonor(historicalRead, "planner").toString("utf8"),
+      });
+    });
+    expect(Object.isFrozen(first)).toBe(true);
+    expect(Object.values(first).every((field) => typeof field === "string")).toBe(true);
+    trace.length = 0;
+    authenticateImplementation();
+    const second = captureLinearLayoutGeometry(expected.currentPlanner, actualReader(trace));
+    expect(second).not.toBe(first);
+    expect(second).toEqual(first);
+    expect(trace).toEqual(geometryReadOrder);
+    return first;
+  }
+  it("proves all eight fresh frozen current/predecessor fields with five ordered reads", () => {
+    healthy();
+  });
+  it.each(geometryReadOrder)("retains fresh current geometry refusal and restoration for %s", (changedPath) => {
+    const before = healthy();
+    const trace: string[] = [];
+    const reader: Reader = (path) => {
+      const text = actualReader(trace)(path);
+      return path === changedPath ? text + "\n// current geometry reader mutation\n" : text;
+    };
+    expect(() => captureLinearLayoutGeometry(before.currentPlanner, reader)).toThrow();
+    expect(trace).toContain(changedPath);
+    expect(healthy()).toEqual(before);
+  });
+  it("keeps supplied current geometry mismatch on the actual public API", () => {
+    const before = healthy(),
+      trace: string[] = [];
+    expect(() => captureLinearLayoutGeometry(before.currentPlanner + "\n", actualReader(trace))).toThrow();
+    expect(trace).toEqual(geometryReadOrder.slice(0, 2));
+    expect(healthy()).toEqual(before);
+  });
+  it("rereads a changed second-call current reader after healthy capture", () => {
+    const before = healthy(),
+      trace: string[] = [];
+    let changed = false;
+    const reader: Reader = (path) => {
+      const source = actualReader(trace)(path);
+      return changed && path === sharedGeometryPath ? source + "\n// second-call geometry mutation\n" : source;
+    };
+    authenticateImplementation();
+    expect(captureLinearLayoutGeometry(before.currentPlanner, reader)).toEqual(before);
+    expect(trace).toEqual(geometryReadOrder);
+    trace.length = 0;
+    changed = true;
+    expect(() => captureLinearLayoutGeometry(before.currentPlanner, reader)).toThrow(
+      "lowering analysis relocation: full pin changed " + sharedGeometryPath,
+    );
+    expect(trace).toEqual(geometryReadOrder.slice(0, 4));
+    changed = false;
+    trace.length = 0;
+    authenticateImplementation();
+    expect(captureLinearLayoutGeometry(before.currentPlanner, reader)).toEqual(before);
+    expect(trace).toEqual(geometryReadOrder);
+  });
+  it("keeps current primitive and reader priority before any authority IO", () => {
+    let io = 0,
+      coercions = 0;
+    const bad = {
+      toString() {
+        coercions++;
+        return "source";
+      },
+    };
+    const reader: Reader = () => {
+      io++;
+      throw new Error("current geometry IO bomb");
+    };
+    expect(() => captureLinearLayoutGeometry(bad as unknown as string, reader)).toThrow(/primitive/);
+    expect(() => captureLinearLayoutGeometry("source", null as unknown as Reader)).toThrow(
+      "lowering analysis relocation: authority reader must be a function",
+    );
+    expect(io).toBe(0);
+    expect(coercions).toBe(0);
   });
 });
 
@@ -734,8 +1141,20 @@ const policyBeforePin = {
   gitBlob: "391b2701b382df0af5a42536fd61a830fd596eb4",
 };
 const policyBeforeDataSha256 = "f7ed5862d447d03557ed0e2a61060d143fcc9f2036e02120ac56839829082a83";
+// ROOT fills this literal only after final v2 authority review; no candidate is accepted as its own expectation.
+const finalPolicyImplementationFreeze: string =
+  '{"bytes":103380,"sha256":"52c3cc6514ae8f1084dd154a94d7dca34c061a6e45baedf1d8bc094aac526b8e","gitBlob":"13581c9dd08696c08ba660fe433bc4a9b0fbe2cf"}';
+function authenticatePolicyImplementation(): void {
+  if (finalPolicyImplementationFreeze.includes("ROOT_FINAL_V2")) throw new Error(finalPolicyImplementationFreeze);
+  const expected = JSON.parse(finalPolicyImplementationFreeze) as GeometryPin;
+  const path = "tests/helpers/ir-c1-historical-authority.ts";
+  const actual = geometryBytePin(readFileSync(join(root, path)));
+  if (actual.bytes !== expected.bytes || actual.sha256 !== expected.sha256 || actual.gitBlob !== expected.gitBlob)
+    throw new Error("external C1 implementation full pin: " + path);
+}
 function applicationInput(entry: ApplicationEntry): string | undefined {
   if (entry === "h2") return undefined;
+  authenticatePolicyImplementation();
   const bytes = Buffer.from(
     capturePresentationClassificationPredecessorPolicySource(
       captureArrayBufferIsViewMainPredecessorPolicySource(
@@ -744,7 +1163,9 @@ function applicationInput(entry: ApplicationEntry): string | undefined {
             capturePositionClassFieldsMainPredecessorPolicySource(
               capturePositionFinallyMainPredecessorPolicySource(
                 captureDenoPostPositionMainPredecessorPolicySource(
-                  readFileSync(join(root, "scripts/compiler-boundaries.json"), "utf8"),
+                  captureGeometryCurrentMainPredecessorPolicySource(
+                    readFileSync(join(root, "scripts/compiler-boundaries.json"), "utf8"),
+                  ),
                 ),
               ),
             ),
@@ -827,6 +1248,28 @@ function requireMissingApplication(
 }
 
 describe("D1 real guarded application implementation authority", () => {
+  it.each(["missing", "corrupt"] as const)(
+    "fresh external policy implementation guard refuses cached final H1 %s and restores acceptance",
+    (action) => {
+      const path = "tests/helpers/ir-c1-historical-authority.ts";
+      const before = applicationInput("policy-raw")!;
+      expect(normalApplication("policy-raw", before, [])).toEqual(policyBeforePin);
+      fault(join(root, path), action, () => {
+        if (action === "missing") {
+          let error: unknown;
+          try {
+            applicationInput("policy-raw");
+          } catch (caught) {
+            error = caught;
+          }
+          expect(error).toMatchObject({ code: "ENOENT", path: join(root, path) });
+        } else expect(() => applicationInput("policy-raw")).toThrow("external C1 implementation full pin: " + path);
+      });
+      expect(applicationInput("policy-raw")).toBe(before);
+      expect(normalApplication("policy-raw", before, [])).toEqual(policyBeforePin);
+    },
+  );
+
   it.each(
     applicationEntries.flatMap((entry) => (["missing", "corrupt"] as const).map((action) => ({ entry, action }))),
   )("$entry refuses cached implementation $action and restores genuine acceptance", ({ entry, action }) => {

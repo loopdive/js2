@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import {
   captureC1HistoricalAuthority,
+  captureC1LinearCabiPredecessor,
   type C1LinearOptionsContract,
   type C1PathPin,
   type C1Pin,
@@ -30,6 +31,7 @@ import {
 } from "./ir-runtime-program-relocation.js";
 
 import {
+  captureLinearLayoutGeometry,
   captureLinearLayoutPredecessor,
   captureCurrentLoweringLegalityPredecessor,
 } from "./ir-lowering-analysis-relocation.js";
@@ -58,6 +60,11 @@ const loweringAnalysisImplementationPin: C1Pin = {
   sha256: "253eda01462fad0ab84a940965a083eaf80b0ca8a3e10a4ca012fbafaaf30e99",
   gitBlob: "c732f2eb22a127714373bc8fa363514bcf7a818b",
 };
+const geometryImplementationPin: C1Pin = {
+  bytes: 35439,
+  sha256: "87bf7de1961b821cf303b5d7e686a5e44614b08b7b371ee6afe4a16172a7851e",
+  gitBlob: "4260f7bdb92344a9b20427b75113020b6d9e31a9",
+};
 const loweringPlannerBeforePin: C1Pin = {
   bytes: 52704,
   sha256: "382cb4acee2de86904da1c0162ecc8b9de4250f9f9cb49dcba57b1a056c1cc3c",
@@ -85,6 +92,165 @@ function assertPin(source: string, expected: C1Pin, label: string): void {
   primitive(source, label);
   if (JSON.stringify(pin(source)) !== JSON.stringify(expected)) fail("full pin mismatch: " + label);
 }
+// One descriptor-only recursive-class epoch; externally authenticated as part of complete H2.
+// Both declaration recipes were authored independently from genuine Git source operands.
+const currentProgramDataEpoch = {
+  path: "src/ir/program/data.ts",
+  commit: "bec8ac003452a63e9a3fa6f8ff57d5f83e69a4af",
+  parent: "8452732f0b88c14c5c7634ece58f83240970ea4c",
+  declaration: "isRecursiveIrClassShape",
+  beforePin: {
+    bytes: 10682,
+    sha256: "01cc4349696dca0b0f439e7b639e269a83d99849911a6db963dcc5b4b6ecea16",
+    gitBlob: "fd8693ee3c82d08039b91af4d4a1bda408966176",
+  },
+  currentPin: {
+    bytes: 10831,
+    sha256: "6010f226a79bef58d1f8a2a84761eca2fa479ca33d5ace96636c75fa58512b06",
+    gitBlob: "8f205f87ebe7505cac4539de0f0a2bc15f906ebe",
+  },
+  beforeDeclaration: {
+    offset: 4946,
+    end: 5399,
+    pin: {
+      bytes: 453,
+      sha256: "96af5e9bf26518f9389b5e77cbf00dfd28113347c032d256f263b6439f9138a5",
+      gitBlob: "3bd6bc3128d078678b6a63bc84f2f03b742864e6",
+    },
+  },
+  currentDeclaration: {
+    offset: 4946,
+    end: 5548,
+    pin: {
+      bytes: 602,
+      sha256: "e1a354dfa82e3be7fb905972f2436b9d2607223573a28bfaeed676357a54e367",
+      gitBlob: "b6b7898cd1d373ff7c698ae1ab6ee84b535b429a",
+    },
+  },
+  unchanged: {
+    prefixBytes: 4946,
+    suffixBytes: 5283,
+  },
+  inverse: [
+    {
+      inputOffset: 4946,
+      outputOffset: 4946,
+      from: 'function isRecursiveIrClassShape(value: object): boolean {\n  const own = (key: PropertyKey): unknown => {\n    const descriptor = Object.getOwnPropertyDescriptor(value, key);\n    return descriptor && Object.hasOwn(descriptor, "value") ? descriptor.value : undefined;\n  };\n  const classId = own("classId");\n  return (\n    own(IR_CLASS_SHAPE_CELL) === true &&\n    typeof classId === "string" &&\n    classId.startsWith("ir-class:v1:") &&\n    typeof own("className") === "string" &&\n    Array.isArray(own("fields")) &&\n    Array.isArray(own("methods")) &&\n    Array.isArray(own("constructorParams"))\n  );\n}\n',
+      to: 'function isRecursiveIrClassShape(value: object): boolean {\n  const candidate = value as Record<PropertyKey, unknown>;\n  return (\n    candidate[IR_CLASS_SHAPE_CELL] === true &&\n    typeof candidate.classId === "string" &&\n    candidate.classId.startsWith("ir-class:v1:") &&\n    typeof candidate.className === "string" &&\n    Array.isArray(candidate.fields) &&\n    Array.isArray(candidate.methods) &&\n    Array.isArray(candidate.constructorParams)\n  );\n}\n',
+    },
+  ],
+  forward: [
+    {
+      inputOffset: 4946,
+      outputOffset: 4946,
+      from: 'function isRecursiveIrClassShape(value: object): boolean {\n  const candidate = value as Record<PropertyKey, unknown>;\n  return (\n    candidate[IR_CLASS_SHAPE_CELL] === true &&\n    typeof candidate.classId === "string" &&\n    candidate.classId.startsWith("ir-class:v1:") &&\n    typeof candidate.className === "string" &&\n    Array.isArray(candidate.fields) &&\n    Array.isArray(candidate.methods) &&\n    Array.isArray(candidate.constructorParams)\n  );\n}\n',
+      to: 'function isRecursiveIrClassShape(value: object): boolean {\n  const own = (key: PropertyKey): unknown => {\n    const descriptor = Object.getOwnPropertyDescriptor(value, key);\n    return descriptor && Object.hasOwn(descriptor, "value") ? descriptor.value : undefined;\n  };\n  const classId = own("classId");\n  return (\n    own(IR_CLASS_SHAPE_CELL) === true &&\n    typeof classId === "string" &&\n    classId.startsWith("ir-class:v1:") &&\n    typeof own("className") === "string" &&\n    Array.isArray(own("fields")) &&\n    Array.isArray(own("methods")) &&\n    Array.isArray(own("constructorParams"))\n  );\n}\n',
+    },
+  ],
+} as const;
+interface ProgramDataEpochSpan {
+  readonly inputOffset: number;
+  readonly outputOffset: number;
+  readonly from: string;
+  readonly to: string;
+}
+function programDataUtf8(source: unknown, label: string): Buffer {
+  primitive(source, label);
+  const bytes = Buffer.from(source, "utf8");
+  if (bytes.toString("utf8") !== source) fail("program DATA epoch UTF-8: " + label);
+  return bytes;
+}
+function replayProgramDataEpoch(
+  source: Buffer,
+  spans: readonly ProgramDataEpochSpan[],
+  target: C1Pin,
+  label: string,
+): Buffer {
+  if (spans.length !== 1 || !Number.isSafeInteger(target.bytes) || target.bytes < 0)
+    fail("program DATA epoch finite domain: " + label);
+  const pieces: Buffer[] = [];
+  let inputEnd = 0;
+  let outputEnd = 0;
+  let previousInput = -1;
+  let previousOutput = -1;
+  for (const span of spans) {
+    if (!Number.isSafeInteger(span.inputOffset) || !Number.isSafeInteger(span.outputOffset))
+      fail("program DATA epoch finite coordinates: " + label);
+    const from = programDataUtf8(span.from, label + " from");
+    const to = programDataUtf8(span.to, label + " to");
+    if (
+      span.inputOffset < inputEnd ||
+      span.outputOffset < outputEnd ||
+      span.inputOffset <= previousInput ||
+      span.outputOffset <= previousOutput ||
+      span.inputOffset - inputEnd !== span.outputOffset - outputEnd ||
+      span.inputOffset + from.length > source.length ||
+      span.outputOffset + to.length > target.bytes ||
+      span.from === span.to ||
+      !source.subarray(span.inputOffset, span.inputOffset + from.length).equals(from)
+    )
+      fail("program DATA epoch span membership/coordinates: " + label);
+    pieces.push(source.subarray(inputEnd, span.inputOffset), to);
+    previousInput = span.inputOffset;
+    previousOutput = span.outputOffset;
+    inputEnd = span.inputOffset + from.length;
+    outputEnd = span.outputOffset + to.length;
+  }
+  if (source.length - inputEnd !== target.bytes - outputEnd)
+    fail("program DATA epoch unchanged suffix length: " + label);
+  pieces.push(source.subarray(inputEnd));
+  const output = Buffer.concat(pieces);
+  const text = output.toString("utf8");
+  if (!programDataUtf8(text, label + " output").equals(output)) fail("program DATA epoch output UTF-8: " + label);
+  assertPin(text, target, label);
+  return output;
+}
+function assertProgramDataDeclaration(
+  source: Buffer,
+  declaration: { readonly offset: number; readonly end: number; readonly pin: C1Pin },
+  label: string,
+): void {
+  const header = Buffer.from(
+    "function " + currentProgramDataEpoch.declaration + "(value: object): boolean {\n",
+    "utf8",
+  );
+  if (
+    !Number.isSafeInteger(declaration.offset) ||
+    !Number.isSafeInteger(declaration.end) ||
+    declaration.offset !== currentProgramDataEpoch.unchanged.prefixBytes ||
+    declaration.end - declaration.offset !== declaration.pin.bytes ||
+    source.length - declaration.end !== currentProgramDataEpoch.unchanged.suffixBytes ||
+    source.indexOf(header) !== declaration.offset ||
+    source.lastIndexOf(header) !== declaration.offset
+  )
+    fail("program DATA epoch named declaration domain: " + label);
+  const bytes = source.subarray(declaration.offset, declaration.end);
+  const text = bytes.toString("utf8");
+  if (!programDataUtf8(text, label + " declaration").equals(bytes))
+    fail("program DATA epoch declaration UTF-8: " + label);
+  assertPin(text, declaration.pin, label + " declaration");
+}
+function beforeCurrentProgramDataSource(source: unknown): string {
+  const epoch = currentProgramDataEpoch;
+  const label = epoch.path;
+  const current = programDataUtf8(source, label);
+  primitive(source, label);
+  assertPin(source, epoch.currentPin, label + " program DATA current");
+  assertProgramDataDeclaration(current, epoch.currentDeclaration, label + " current");
+  const predecessor = replayProgramDataEpoch(current, epoch.inverse, epoch.beforePin, label + " inverse");
+  assertProgramDataDeclaration(predecessor, epoch.beforeDeclaration, label + " predecessor");
+  if (
+    !current
+      .subarray(0, epoch.currentDeclaration.offset)
+      .equals(predecessor.subarray(0, epoch.beforeDeclaration.offset)) ||
+    !current.subarray(epoch.currentDeclaration.end).equals(predecessor.subarray(epoch.beforeDeclaration.end))
+  )
+    fail("program DATA epoch outside declaration equality: " + label);
+  const replay = replayProgramDataEpoch(predecessor, epoch.forward, epoch.currentPin, label + " forward");
+  if (!replay.equals(current)) fail("program DATA epoch independent forward equality: " + label);
+  return predecessor.toString("utf8");
+}
+
 const canonicalInputEpochs = [
   {
     path: "src/wasm/model/instructions.ts",
@@ -828,6 +994,7 @@ export function captureC1CurrentPopulation(
   let validatorRelocation: SourceMapProgramValidatorCapture | undefined;
   let loweringLegalityPredecessor: string | undefined;
   let typesPredecessor: string | undefined;
+  let programDataPredecessor: string | undefined;
   const relocatedDependencies = ["src/ir/program-runtime-abi.ts", "src/ir/program-validation.ts"] as const;
   for (const record of [...receipt.current, ...receipt.dependencies]) {
     if (record.path === linearPath) continue;
@@ -839,11 +1006,25 @@ export function captureC1CurrentPopulation(
     } else if (record.path === "src/ir/types.ts") {
       typesPredecessor = beforeCanonicalCurrentInput(record.path, rawSource);
       assertRuntimeProgramRelocationSource(typesPredecessor, record, record.path);
+    } else if (record.path === currentProgramDataEpoch.path) {
+      programDataPredecessor = beforeCurrentProgramDataSource(rawSource);
+      assertRuntimeProgramRelocationSource(programDataPredecessor, record, record.path);
     } else if (record.path === loweringLegalityPath) {
       // Fresh implementation authentication precedes the first imported source-pair operation.
       const implementation = readAuthority(loweringAnalysisImplementationPath);
       primitive(implementation, loweringAnalysisImplementationPath);
-      assertPin(implementation, loweringAnalysisImplementationPin, loweringAnalysisImplementationPath);
+      assertPin(
+        implementation,
+        Buffer.byteLength(implementation) === loweringAnalysisImplementationPin.bytes
+          ? loweringAnalysisImplementationPin
+          : geometryImplementationPin,
+        loweringAnalysisImplementationPath,
+      );
+      assertPin(
+        Buffer.from(implementation).subarray(0, loweringAnalysisImplementationPin.bytes).toString("utf8"),
+        loweringAnalysisImplementationPin,
+        loweringAnalysisImplementationPath + " historical prefix",
+      );
       loweringLegalityPredecessor = captureCurrentLoweringLegalityPredecessor(rawSource, readAuthority);
       assertRuntimeProgramRelocationSource(loweringLegalityPredecessor, record, record.path);
     } else if (relocatedDependencies.includes(record.path as (typeof relocatedDependencies)[number])) {
@@ -862,6 +1043,7 @@ export function captureC1CurrentPopulation(
   // Three closure inputs reuse the already captured population; nine are genuinely extra reads.
   const closure = new Map(current);
   let predecessorPackage: string | undefined;
+  let historicalCabiSource: string | undefined;
   for (const record of [...contract.closureInputs, ...contract.resolver.configInputs]) {
     let source = closure.get(record.path);
     if (source === undefined) {
@@ -869,18 +1051,49 @@ export function captureC1CurrentPopulation(
       primitive(source, record.path);
       closure.set(record.path, source);
     }
+    if (record.path === loweringPlannerPath) {
+      // Authenticate the actual supplied current planner before any old-epoch rejection.
+      if (record.pin.sha256 === "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52") {
+        assertPin(source, record.pin, record.path);
+        assertPin(
+          captureLinearLayoutPredecessor(source, readAuthority),
+          loweringPlannerBeforePin,
+          record.path + " predecessor",
+        );
+      } else {
+        const implementation = readAuthority(loweringAnalysisImplementationPath);
+        assertPin(implementation, geometryImplementationPin, loweringAnalysisImplementationPath);
+        const geometry = captureLinearLayoutGeometry(source, readAuthority);
+        for (const [path, text] of [
+          ["src/ir/analysis/contracts/linear-memory-layout.ts", geometry.currentLayout],
+          ["src/shared/contracts/linear-memory-layout.ts", geometry.currentShared],
+        ] as const) {
+          const prior = closure.get(path);
+          if (prior !== undefined && prior !== text) fail("source changed during geometry capture: " + path);
+          closure.set(path, text);
+        }
+        assertPin(geometry.originalPlanner, loweringPlannerBeforePin, record.path + " predecessor");
+      }
+    }
+    if (
+      record.path === "src/codegen-linear/c-abi.ts" &&
+      record.pin.sha256 === "d303abd67069493c08dedc6cd124482f80675c06e0ca1748cea168098fc82d46"
+    ) {
+      historicalCabiSource = captureC1LinearCabiPredecessor(source, readAuthority);
+      assertPin(
+        historicalCabiSource,
+        {
+          bytes: 26965,
+          sha256: "fba055c0a5ed1b823b1bb8644c5cb495e0b26bb087bf36b5d746efda708fb308",
+          gitBlob: "37eb30e8691a7e30033c74bc03bd386dc08e9d49",
+        },
+        record.path + " authentic predecessor",
+      );
+    }
     assertPin(source, record.pin, record.path);
     if (record.path === "src/position-map.ts" || record.path === "src/shared/contracts/ir-unit-inventory.ts") {
       // Validate the historical inverse while the native type host retains actual current text.
       sourceMapEpoch.before(record.path, source);
-    }
-    if (record.path === loweringPlannerPath) {
-      // The actual current string stays in closure and therefore in real type resolution.
-      assertPin(
-        captureLinearLayoutPredecessor(source, readAuthority),
-        loweringPlannerBeforePin,
-        record.path + " predecessor",
-      );
     }
     if (
       record.path === "src/wasm/model/instructions.ts" ||
@@ -922,6 +1135,8 @@ export function captureC1CurrentPopulation(
   historicalPopulation.set(linearPath, historical);
   if (typesPredecessor === undefined) fail("missing Boolean types predecessor");
   historicalPopulation.set("src/ir/types.ts", typesPredecessor);
+  if (programDataPredecessor === undefined) fail("missing program DATA predecessor");
+  historicalPopulation.set(currentProgramDataEpoch.path, programDataPredecessor);
   if (loweringLegalityPredecessor === undefined) fail("missing lowering legality predecessor");
   historicalPopulation.set(loweringLegalityPath, loweringLegalityPredecessor);
   if (validatorRelocation === undefined) fail("missing validator relocation capture");
