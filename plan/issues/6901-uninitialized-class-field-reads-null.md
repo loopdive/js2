@@ -15,10 +15,10 @@ area: codegen
 goal: dogfood
 related: [6900]
 loc-budget-allow:
-  # 2026-10-09 (#6901): uninitialized externref field DEFINEd as undefined in the field-init loop (+5)
+  # 2026-10-09 (#6901): uninitialized externref field DEFINEd as undefined in the field-init loop, deferring to #5312-claimed slots (+8 LOC, +7 in compileClassBodiesInner)
   - src/codegen/class-bodies.ts
 func-budget-allow:
-  # 2026-10-09 (#6901): uninitialized externref field DEFINEd as undefined in the field-init loop (+5)
+  # 2026-10-09 (#6901): uninitialized externref field DEFINEd as undefined in the field-init loop, deferring to #5312-claimed slots (+8 LOC, +7 in compileClassBodiesInner)
   - src/codegen/class-bodies.ts::compileClassBodiesInner
 ---
 
