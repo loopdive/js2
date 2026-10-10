@@ -19,15 +19,16 @@
  *      returns a fresh `$ObjVec`.
  *
  * The comparefn is called through `__apply_closure(fn, undefined, args)` with
- * a two-element `$ObjVec` argument carrier. Both members keep the fixed ABI
- * (`(self, this, comparefn)` — `.length` 1); an omitted and an explicit
- * `undefined` comparator are the same. Gated on the native regime.
+ * a two-element `$ObjVec` argument carrier. Both members take the variadic
+ * ABI (`.length` stays 1): under the undefined-singleton regime a padded
+ * fixed slot reads `null` for an omitted comparator, which must be undefined,
+ * while an explicit `null` must throw. Gated on the native regime.
  */
 import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal } from "../context/locals.js";
-import { canonicalUndefinedExternInstrs } from "../any-helpers.js";
-import { emitArrayProtoHofReceiverGuard } from "../array-reduce-proto-value.js";
+import { canonicalUndefinedExternInstrs, undefinedSingletonActive } from "../any-helpers.js";
+import { emitArrayProtoHofReceiverGuard, emitVariadicArgsUnpack } from "../array-reduce-proto-value.js";
 import { prepareArrayLikeToString } from "../array-like-native.js";
 import { buildThrowJsErrorInstrs } from "../js-errors.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
@@ -58,6 +59,11 @@ function loop(exit: Instr[], body: Instr[]): Instr {
       },
     ],
   };
+}
+
+/** sort / toSorted take the packed variadic ABI so an omitted comparator is distinguishable from `null`. */
+export function isArraySortVariadicMember(ctx: CodegenContext, member: string): boolean {
+  return (member === "sort" || member === "toSorted") && (ctx.standalone || ctx.wasi);
 }
 
 const NAMES = [
@@ -124,14 +130,20 @@ export function emitArraySortMemberBody(
   const arrType = getOrRegisterArrayType(ctx, "externref");
   const undef = canonicalUndefinedExternInstrs(ctx);
 
-  const cmpFn = 2;
-  const isUndef = (value: Instr[]): Instr[] => [
-    ...value,
-    { op: "ref.is_null" },
-    ...value,
-    call(fn.__extern_is_undefined!),
-    { op: "i32.or" },
-  ];
+  // The comparator comes from the packed argument vector: an omitted one is
+  // `undefined`, while an explicit `null` stays `null` (a TypeError). A padded
+  // fixed slot would read null for both.
+  const vecArgs = emitVariadicArgsUnpack(ctx, fctx, member);
+  if (vecArgs === undefined) throw new Error(`Array.prototype.${member} value body lacks its argument vector`);
+  const cmpFn = allocLocal(fctx, `__${member}_cmp_${fctx.locals.length}`, EXT);
+  fctx.body.push(...vecArgs.argAt(0, undef), set(cmpFn));
+  // `undefined` only — under the undefined-singleton regime a null externref is
+  // JS `null`, which is NOT undefined: `sort(null)` is a TypeError and a `null`
+  // element sorts by its ToString "null", not last. Without the singleton,
+  // undefined and null share the null externref and `ref.is_null` is the test.
+  const singleton = undefinedSingletonActive(ctx);
+  const isUndef = (value: Instr[]): Instr[] =>
+    singleton ? [...value, call(fn.__extern_is_undefined!)] : [...value, { op: "ref.is_null" }];
   // Step 1: comparefn must be undefined or callable — checked before ToObject.
   fctx.body.push(
     ...isUndef([get(cmpFn)]),
