@@ -1,0 +1,12 @@
+{
+  "id": "6947",
+  "assignee": "ttraenkler/claude-session-c-octane-dyn-method-call-inline-closure-arg-20261010",
+  "requested_by": "ttraenkler/claude-session-c-octane-dyn-method-call-inline-closure-arg-20261010",
+  "status": "in-progress",
+  "branch": "claude/octane-dynamic-objects",
+  "reserved_at": "2026-10-10T07:23:50Z",
+  "claimed_at": "2026-10-10T07:23:50Z",
+  "updated_at": "2026-10-10T07:23:50Z",
+  "write_id": "13547-kriord2p",
+  "pr_scan": "degraded"
+}
