@@ -1,12 +1,11 @@
 {
   "id": "6892",
   "slice": "linear-repeat-paired-plan-20261007",
-  "assignee": "ttraenkler/codex-linear-b-repeat-paired-astra-20261007",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
   "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
-  "status": "released",
+  "status": "in-progress",
   "branch": "codex/6892-repeat-paired-plan-20261007",
-  "claimed_at": "2026-10-07T12:24:06Z",
-  "updated_at": "2026-10-10T23:35:41Z",
-  "write_id": "92628-2okc5nzt",
-  "released_at": "2026-10-10T23:35:41Z"
+  "claimed_at": "2026-10-10T23:35:45Z",
+  "updated_at": "2026-10-10T23:35:45Z",
+  "write_id": "93116-ybxgekam"
 }
