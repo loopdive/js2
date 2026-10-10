@@ -1,12 +1,11 @@
 {
   "id": "6891",
   "slice": "linear-stack-source-20261007",
-  "assignee": "ttraenkler/codex-linear-b-stack-sol61-20261007",
+  "assignee": "ttraenkler/codex-ir-session-b-20261011-01a12827",
   "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
-  "status": "released",
+  "status": "in-progress",
   "branch": "codex/6891-linear-stack-source-20261007",
-  "claimed_at": "2026-10-07T09:15:08Z",
-  "updated_at": "2026-10-10T23:35:00Z",
-  "write_id": "87219-fkz63pp6",
-  "released_at": "2026-10-10T23:35:00Z"
+  "claimed_at": "2026-10-10T23:35:04Z",
+  "updated_at": "2026-10-10T23:35:04Z",
+  "write_id": "87528-dld5lgoy"
 }
