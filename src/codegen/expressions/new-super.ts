@@ -809,6 +809,65 @@ function resolvesToDynamicCallCtorValue(ctx: CodegenContext, calleeExpr: ts.Expr
   return fact.kind === "any" || fact.kind === "unknown" || (fact.kind === "builtin" && fact.name === "Function");
 }
 
+/**
+ * (#6943) `new T.Node(k)` / `new T["Node"](k)` where every declaration of the
+ * member is an ORDINARY user function expression (`T.Node = function (k) {…}`,
+ * `{ Node: function (k) {…} }`) — Octane splay's node constructor. Under
+ * `allowJs` the checker types the member as the function's own type (call +
+ * JS construct signature), so the `any`/`Function` fact check declines it, and
+ * the site fell to the terminal refusal, which the speculative rollback then
+ * swallowed into a silent `undefined`. The value is a runtime closure; the
+ * existing construct drivers (`__construct_closure` host bridge, standalone
+ * `__native_construct_<N>`) perform [[Construct]] on it. Generator / async /
+ * arrow / method values have no [[Construct]] and are NOT claimed here, so
+ * their non-constructor TypeError path is unchanged.
+ */
+function resolvesToMemberHeldUserFunction(
+  ctx: CodegenContext,
+  calleeExpr: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+): boolean {
+  const key = ts.isPropertyAccessExpression(calleeExpr) ? calleeExpr.name : calleeExpr.argumentExpression;
+  if (!ts.isIdentifier(key) && !ts.isPrivateIdentifier(key) && !ts.isStringLiteralLike(key)) return false;
+  const decls = ctx.oracle.declarationsOf(key);
+  if (decls.length === 0) return false;
+  for (const decl of decls) {
+    if (decl.getSourceFile().isDeclarationFile) return false;
+    let init: ts.Expression | undefined;
+    if (ts.isPropertyAssignment(decl)) init = decl.initializer;
+    else if (
+      (ts.isPropertyAccessExpression(decl) || ts.isElementAccessExpression(decl)) &&
+      ts.isBinaryExpression(decl.parent) &&
+      decl.parent.left === decl &&
+      decl.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    )
+      init = decl.parent.right;
+    while (init !== undefined && ts.isParenthesizedExpression(init)) init = init.expression;
+    if (
+      init === undefined ||
+      !ts.isFunctionExpression(init) ||
+      init.asteriskToken !== undefined ||
+      init.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)
+    )
+      return false;
+  }
+  return true;
+}
+
+/** (#6943) The member callee itself, or an identifier initialized from one (`var N = T.Node`). */
+function isMemberHeldUserFunctionNewCallee(ctx: CodegenContext, callee: ts.Expression): boolean {
+  if (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee))
+    return resolvesToMemberHeldUserFunction(ctx, callee);
+  if (!ts.isIdentifier(callee) || ctx.classSet.has(callee.text) || ctx.funcConstructorMap.has(callee.text))
+    return false;
+  let init = ctx.oracle.variableInitializerOf(callee);
+  while (init !== undefined && ts.isParenthesizedExpression(init)) init = init.expression;
+  return (
+    init !== undefined &&
+    (ts.isPropertyAccessExpression(init) || ts.isElementAccessExpression(init)) &&
+    resolvesToMemberHeldUserFunction(ctx, init)
+  );
+}
+
 function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expression): boolean {
   // (#4616) Inline member-access ctor values: `new (Object.getPrototypeOf(arr)
   // .constructor)(n)` (jest-util deepCyclicCopyArray's keepPrototype lane) keeps
@@ -838,7 +897,10 @@ function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expre
     if (declNI && (ts.isClassDeclaration(declNI) || ts.isClassExpression(declNI))) return false;
     const factNI = ctx.oracle.typeFactOf(calleeExpr);
     return (
-      factNI.kind === "any" || factNI.kind === "unknown" || (factNI.kind === "builtin" && factNI.name === "Function")
+      factNI.kind === "any" ||
+      factNI.kind === "unknown" ||
+      (factNI.kind === "builtin" && factNI.name === "Function") ||
+      resolvesToMemberHeldUserFunction(ctx, calleeExpr)
     );
   }
   if (!ts.isIdentifier(calleeExpr)) return false;
@@ -6483,7 +6545,10 @@ function isDefaultExpressionImport(ctx: CodegenContext, expression: ts.Expressio
 
 function usesHostConstructClosureBase(ctx: CodegenContext, expression: ts.Expression): boolean {
   return (
-    !noJsHost(ctx) && (isDefaultExpressionImport(ctx, expression) || resolvesToDynamicAnyCtorValue(ctx, expression))
+    !noJsHost(ctx) &&
+    (isDefaultExpressionImport(ctx, expression) ||
+      resolvesToDynamicAnyCtorValue(ctx, expression) ||
+      isMemberHeldUserFunctionNewCallee(ctx, expression)) // (#6943) `var N = T.Node`
   );
 }
 
@@ -7537,6 +7602,8 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     if (nativeCtor) return nativeCtor;
   }
 
+  if (tryEmitMemberHeldUserFunctionHostNew(ctx, fctx, expr, unwrappedNonId)) return { kind: "externref" }; // (#6943)
+
   // (#2608) Host-only `new this(...)` in a static fnctor method can lack a
   // checker className; route its wrapped callable through the closure bridge.
   // Standalone retains the existing dynamic Construct path and its semantics.
@@ -8540,8 +8607,41 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     ); // (#6775 S10) `var C = nativeErrors[i]; new C(msg)`
     if (r !== undefined) return r;
   }
-  reportError(ctx, expr, `Unsupported new expression for class: ${className}`);
+  reportNewExpressionRefusal(ctx, expr, className);
   return null;
+}
+
+/**
+ * (#6943) The terminal refusal of `compileNewExpression`. Every caller reaches
+ * it through `compileExpression`, whose speculative rollback used to DROP the
+ * diagnostic and substitute `undefined` — a clean `success: true, errors: []`
+ * compile of a program whose `new` never ran. `sticky` keeps the refusal
+ * visible. It is a `degrade`, not an `error`: the build still emits the
+ * `undefined` fallback, because a fatal refusal was measured to regress test262
+ * rows that pass today with the site on a path whose value is never relied on
+ * (built-ins/DataView/proto-from-ctor-realm-sab.js, `new other.Function()`),
+ * and the refusal also fires inside probes whose sibling lowering succeeds.
+ */
+function reportNewExpressionRefusal(ctx: CodegenContext, expr: ts.NewExpression, className: string | undefined): void {
+  reportError(ctx, expr, `Unsupported new expression for class: ${className}`, "degrade", { sticky: true });
+}
+
+/**
+ * (#6943) Host twin of the standalone member-callee admission: a member-held
+ * user function (`new T.Node(k)`) or a binding aliasing one (`var N = T.Node;
+ * new N(k)`) carries the function's own symbol name (`__function`), so the
+ * `!className` dynamic block in `compileNewExpression` never sees it. The
+ * dispatcher's `__construct_closure` no-match base performs IsConstructor +
+ * [[Construct]] on the runtime closure, after the callee and the arguments.
+ */
+function tryEmitMemberHeldUserFunctionHostNew(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.NewExpression,
+  callee: ts.Expression,
+): boolean {
+  if (noJsHost(ctx) || !isMemberHeldUserFunctionNewCallee(ctx, callee)) return false;
+  return emitDynamicNewFallback(ctx, fctx, expr, callee, ts.isIdentifier(callee) ? callee.text : "__unknown");
 }
 
 export { compileClassExpression, compileNewExpression, compileSuperElementMethodCall, compileSuperMethodCall };
