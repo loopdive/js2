@@ -22,6 +22,8 @@ loc-budget-allow:
   # them instead of duplicating the wrapper layout.
   - src/codegen/statements/nested-declarations.ts
   - src/codegen/closures/method-trampolines.ts
+import-cycles-allow:
+  - largestSccSize: 704 # 2026-10-10 (#6945): statements/nested-fnctor-activation.ts, split out of nested-declarations.ts to keep that file and hoistFunctionDeclarations inside their budgets, joins the codegen SCC (called from nested-declarations.ts, uses closures/method-trampolines.ts closureAllocInstrs / ensureFuncClosureSingleton)
 func-budget-allow:
   # 2026-10-10 (#6945): the one-line per-activation binding hook.
   - src/codegen/statements/nested-declarations.ts::hoistFunctionDeclarations

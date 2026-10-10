@@ -303,8 +303,7 @@ function _fnctorProtoLookup(
   if (proto === undefined) return undefined;
   let cur: any = proto;
   let guard = 0;
-  // (#6944) A cyclic user chain (an aliased nested-ctor prototype) must end
-  // the walk with `undefined`, not spin to the hop guard.
+  // (#6944) A cyclic user chain (aliased nested-ctor prototype) ends with `undefined`.
   const seen = new Set<any>();
   while (cur != null && typeof cur === "object" && guard++ < 16 && !seen.has(cur)) {
     seen.add(cur);
@@ -320,9 +319,8 @@ function _fnctorProtoLookup(
     // the native reader.
     const desc = _isWasmStruct(cur) ? _readOwnDescriptor(cur, key, exports) : Object.getOwnPropertyDescriptor(cur, key);
     if (desc) return desc;
-    // (#6944) A struct ancestor (`Derived.prototype = new Inheriter()`) has a
-    // null NATIVE prototype; its user [[Prototype]] is the fnctor ctor link /
-    // explicit setPrototypeOf record, resolved by `_structUserProto`.
+    // (#6944) A struct ancestor (`Derived.prototype = new Inheriter()`) has a null native
+    // prototype; `_structUserProto` resolves its fnctor ctor link / setPrototypeOf record.
     cur = _structUserProto(cur, exports);
     if (cur === Object.prototype) break;
   }
@@ -5954,8 +5952,7 @@ function _lookupDescriptorNoProxy(obj: any, key: PropertyKey): PropertyDescripto
       if (_isUserProxy(cur)) return undefined;
       const d = Object.getOwnPropertyDescriptor(cur, key);
       if (d) return d;
-      // (#6944) Struct nodes resolve their user [[Prototype]] (fnctor ctor
-      // link / setPrototypeOf record); bounded since that chain may cycle.
+      // (#6944) Struct nodes resolve their user [[Prototype]]; bounded, the chain may cycle.
       if (_isWasmStruct(cur)) {
         if (++hops > 16) break;
         cur = _structUserProto(cur);

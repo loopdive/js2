@@ -24,6 +24,8 @@ loc-budget-allow:
   # the new src/codegen/fnctor-struct-proto-hop.ts).
   - src/runtime.ts
   - src/codegen/object-runtime.ts
+flat-dir-budget-allow:
+  - src/codegen/fnctor-struct-proto-hop.ts # 2026-10-10 (#6944): struct-valued [[Prototype]] hop bodies for object-runtime.ts; sits with its flat fnctor-* siblings (fnctor-instance-prototype.ts, fnctor-escape-gate.ts)
 func-budget-allow:
   # 2026-10-10 (#6944): same wiring, inside the two god-functions that own it.
   - src/runtime.ts::resolveImport
