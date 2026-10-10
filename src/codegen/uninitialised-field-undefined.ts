@@ -124,6 +124,19 @@ export function uninitialisedFieldSlot(ctx: CodegenContext, expr: ts.Expression)
   if (declarations.length !== 1) return undefined;
   const declaration = declarations[0]!;
   if (!ts.isPropertyDeclaration(declaration)) return undefined;
+  return uninitialisedFieldSlotOfDeclaration(ctx, declaration);
+}
+
+/**
+ * The declaration-level half of {@link uninitialisedFieldSlot}: the slot whose
+ * `ref.null` IS its `undefined`. The constructor's field-initializer loop
+ * consults it so it does not overwrite that null with a host `undefined` the
+ * observation sites would no longer recognise (#6901).
+ */
+export function uninitialisedFieldSlotOfDeclaration(
+  ctx: CodegenContext,
+  declaration: ts.PropertyDeclaration,
+): UninitialisedFieldSlot | undefined {
   // An initializer supplies a real value at construction; `declare` installs no
   // property at all (an inherited member stays visible through it); a static
   // field is a module global, not a struct slot.
