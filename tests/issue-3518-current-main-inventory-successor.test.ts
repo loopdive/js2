@@ -1,4 +1,13 @@
+import {
+  independentPolicyGeometryEpoch,
+  independentRemainderPolicyEpoch,
+  independentlyAcquirePolicyGeometryEpoch,
+  independentlyAcquireRemainderPolicyPrefix,
+  independentlyInvertRemainderPolicyBytes,
+  independentlyAcquireHistoricalPolicyHelper,
+} from "./helpers/ir-independent-policy-history-fixture.js";
 import { captureDenoPostPositionMainPredecessorPolicySource } from "./helpers/ir-deno-post-position-main-successor.js";
+import { captureGeometryCurrentMainPredecessorPolicySource } from "./helpers/ir-c1-historical-authority.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
 import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
@@ -59,7 +68,9 @@ const raw = (): string =>
                     captureSourceMapPositionInventoryPredecessorPolicySource(
                       capturePositionClassFieldsMainPredecessorPolicySource(
                         capturePositionFinallyMainPredecessorPolicySource(
-                          captureDenoPostPositionMainPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                          captureDenoPostPositionMainPredecessorPolicySource(
+                            captureGeometryCurrentMainPredecessorPolicySource(read("scripts/compiler-boundaries.json")),
+                          ),
                         ),
                       ),
                     ),
@@ -575,7 +586,9 @@ describe("fixed current-main four-row inventory successor", () => {
       expect(sha(source)).toBe(pin.sha256);
       expect(createHash("sha1").update(`blob ${pin.bytes}\0`).update(source).digest("hex")).toBe(pin.gitBlob);
     }
-    const currentPrefix = Buffer.from(read(expected.helperPrefix.path)).subarray(0, 94641);
+    const currentPrefix = Buffer.from(
+      independentlyAcquireHistoricalPolicyHelper(read(expected.helperPrefix.path)),
+    ).subarray(0, 94641);
     expect(currentPrefix.length).toBe(94641);
     expect(createHash("sha256").update(currentPrefix).digest("hex")).toBe(
       "4cf63b340b245b0f4f5ef297dc5a4b56b06507e981a7801ffcfb7e5c101f5103",
@@ -977,6 +990,22 @@ describe("fixed current-main four-row inventory successor", () => {
   }
 });
 
+function expectExactH3GeometryPriority(action: () => unknown): void {
+  let failure: unknown;
+  let accepted = 0;
+  try {
+    action();
+    accepted += 1;
+  } catch (error) {
+    failure = error;
+  }
+  expect(accepted).toBe(0);
+  expect(failure).toBeInstanceOf(Error);
+  expect((failure as Error).message).toBe(
+    "C1 historical authority: full-file pin changed: tests/helpers/ir-runtime-program-policy-evolution.ts geometry current",
+  );
+}
+
 describe("fixed policy-capture kernel prefix authority", () => {
   for (const byte of [0, 5477, 5585, 94640] as const)
     it(`freshly refuses actual policy-capture prefix byte ${byte} and restores`, () => {
@@ -987,13 +1016,412 @@ describe("fixed policy-capture kernel prefix authority", () => {
         path,
         "mutation",
         () => {
-          expect(() => authenticateCurrentMainInventoryEvolution()).toThrow(
-            "current main inventory evolution: complete predecessor helper prefix changed",
-          );
+          expectExactH3GeometryPriority(() => authenticateCurrentMainInventoryEvolution());
         },
         byte,
       );
       expect(read(path)).toBe(original);
       authenticateCurrentMainInventoryEvolution();
     });
+});
+
+function proveIndependentHistoricalKernel(current: string): string {
+  const historical = independentlyAcquireHistoricalPolicyHelper(current);
+  const currentPrefix = Buffer.from(historical).subarray(0, 94641);
+  expect(currentPrefix.length).toBe(94641);
+  expect(createHash("sha256").update(currentPrefix).digest("hex")).toBe(
+    "4cf63b340b245b0f4f5ef297dc5a4b56b06507e981a7801ffcfb7e5c101f5103",
+  );
+  expect(createHash("sha1").update(`blob ${currentPrefix.length}\0`).update(currentPrefix).digest("hex")).toBe(
+    "b33536a95c8b88e84f8e7c60c3c39bce3e2c7d82",
+  );
+  const oldKernel = Buffer.from(
+    "    // defineProperty also preserves a literal __proto__ key as ordinary owned data.\n    const result: Record<string, unknown> = {};\n    for (const key of keys as string[])\n      Object.defineProperty(result, key, {\n        value: capture(descriptors[key]!.value, active),\n        enumerable: true,\n        writable: true,\n        configurable: true,\n      });\n    return result;\n",
+  );
+  const newKernel = Buffer.from(
+    "    return Object.fromEntries(keys.map((key) => [key, capture(descriptors[key as string]!.value, active)]));\n",
+  );
+  expect(oldKernel.length).toBe(380);
+  expect(newKernel.length).toBe(109);
+  expect(currentPrefix.subarray(5477, 5586).equals(newKernel)).toBe(true);
+  expect(currentPrefix.indexOf(newKernel)).toBe(5477);
+  expect(currentPrefix.indexOf(newKernel, 5478)).toBe(-1);
+  const before = Buffer.concat([currentPrefix.subarray(0, 5477), oldKernel, currentPrefix.subarray(5586)]);
+  expect(before.subarray(5477, 5857).equals(oldKernel)).toBe(true);
+  expect(before.length).toBe(94912);
+  expect(createHash("sha256").update(before).digest("hex")).toBe(expected.helperPrefix.sha256);
+  expect(createHash("sha1").update(`blob ${before.length}\0`).update(before).digest("hex")).toBe(
+    expected.helperPrefix.gitBlob,
+  );
+  expect(Buffer.concat([before.subarray(0, 5477), newKernel, before.subarray(5857)]).equals(currentPrefix)).toBe(true);
+  return historical;
+}
+
+describe("independent complete H3 historical kernel acquisition", () => {
+  it("proves both full historical layers before the unchanged kernel inverse and forward", () => {
+    proveIndependentHistoricalKernel(read(expected.helperPrefix.path));
+  });
+  it.each(["physical", "geometry-only"] as const)(
+    "rejects the %s first94641 operand with paired healthy proof",
+    (kind) => {
+      const current = read(expected.helperPrefix.path);
+      proveIndependentHistoricalKernel(current);
+      const operand = kind === "physical" ? current : independentlyAcquirePolicyGeometryEpoch(current);
+      const prefix = Buffer.from(operand).subarray(0, 94641);
+      expect(createHash("sha256").update(prefix).digest("hex")).not.toBe(
+        "4cf63b340b245b0f4f5ef297dc5a4b56b06507e981a7801ffcfb7e5c101f5103",
+      );
+      expect(() => independentlyAcquireHistoricalPolicyHelper(prefix.toString("utf8"))).toThrow(Error);
+      proveIndependentHistoricalKernel(current);
+    },
+  );
+  it.each([0, 5477, 94640, 94641, 411836] as const)(
+    "refuses current H3 byte %s with paired complete healthy proof",
+    (at) => {
+      const current = read(expected.helperPrefix.path);
+      proveIndependentHistoricalKernel(current);
+      const bytes = Buffer.from(current);
+      bytes[at] = bytes[at] === 120 ? 121 : 120;
+      expect(bytes.length).toBe(independentPolicyGeometryEpoch.currentPin.bytes);
+      expect(() => independentlyAcquireHistoricalPolicyHelper(bytes.toString("utf8"))).toThrow(Error);
+      proveIndependentHistoricalKernel(current);
+    },
+  );
+  it("refuses exact stale409599 supplied as current with paired healthy kernel proof", () => {
+    const current = read(expected.helperPrefix.path);
+    proveIndependentHistoricalKernel(current);
+    const stale = independentlyAcquirePolicyGeometryEpoch(current);
+    expect(Buffer.byteLength(stale)).toBe(409599);
+    expect(() => independentlyAcquireHistoricalPolicyHelper(stale)).toThrow(Error);
+    proveIndependentHistoricalKernel(current);
+  });
+  it.each(["inverse", "forward"] as const)(
+    "rejects independently corrupted geometry %s recipe with healthy pairing",
+    (direction) => {
+      const current = read(expected.helperPrefix.path);
+      proveIndependentHistoricalKernel(current);
+      const spans = independentPolicyGeometryEpoch[direction].map((span, index) =>
+        index === 0 ? { ...span, to: "x" + span.to } : span,
+      );
+      expect(() =>
+        independentlyAcquirePolicyGeometryEpoch(current, { ...independentPolicyGeometryEpoch, [direction]: spans }),
+      ).toThrow(Error);
+      proveIndependentHistoricalKernel(current);
+    },
+  );
+  it.each(["inverse", "forward"] as const)(
+    "rejects independently corrupted remainder %s recipe with healthy pairing",
+    (direction) => {
+      const current = read(expected.helperPrefix.path);
+      proveIndependentHistoricalKernel(current);
+      const prefix = independentlyAcquireRemainderPolicyPrefix(current);
+      const spans = independentRemainderPolicyEpoch[direction].map((span, index) =>
+        index === 0 ? { ...span, to: "x" + span.to } : span,
+      );
+      expect(() =>
+        independentlyInvertRemainderPolicyBytes(prefix, { ...independentRemainderPolicyEpoch, [direction]: spans }),
+      ).toThrow(Error);
+      proveIndependentHistoricalKernel(current);
+    },
+  );
+  it.each([new String("source"), "\ud800", undefined] as const)(
+    "refuses a nonprimitive or non-UTF8 complete operand %s with healthy pairing",
+    (invalid) => {
+      const current = read(expected.helperPrefix.path);
+      proveIndependentHistoricalKernel(current);
+      expect(() => independentlyAcquireHistoricalPolicyHelper(invalid as string)).toThrow(Error);
+      proveIndependentHistoricalKernel(current);
+    },
+  );
+  it("reports literal outer H1 geometry priority for an actual H3 byte5477 fault and restores acceptance", () => {
+    const path = expected.helperPrefix.path;
+    const original = read(path);
+    acceptAll();
+    proveIndependentHistoricalKernel(original);
+    withAuthorityFault(
+      path,
+      "mutation",
+      () => {
+        expect(read(path)).not.toBe(original);
+        expectExactH3GeometryPriority(() => authenticateCurrentMainInventoryEvolution());
+      },
+      5477,
+    );
+    expect(read(path)).toBe(original);
+    proveIndependentHistoricalKernel(read(path));
+    acceptAll();
+  });
+});
+
+describe("independent policy history fixture complete custody", () => {
+  it("pins the complete helper and exact C1 and current-main import and acquisition associations", () => {
+    const helper = read("tests/helpers/ir-independent-policy-history-fixture.ts");
+    expect({
+      bytes: Buffer.byteLength(helper),
+      sha256: sha(helper),
+      gitBlob: createHash("sha1")
+        .update(`blob ${Buffer.byteLength(helper)}\0`)
+        .update(helper)
+        .digest("hex"),
+    }).toEqual({
+      bytes: 24394,
+      sha256: "09bf4df558c226a1291ec07d279f0c6f3172beefff6a61f588395a367231bff7",
+      gitBlob: "a3d9aca3efd83bfdecc9001b38d8bf7c84b071ce",
+    });
+    const associations = [
+      [
+        "tests/issue-3518-c1-current-source.test.ts",
+        'import {\n  independentPolicyGeometryEpoch,\n  independentRemainderPolicyEpoch,\n  independentlyAcquirePolicyGeometryEpoch,\n  independentlyAcquireRemainderPolicyPrefix,\n  independentlyInvertRemainderPolicyBytes,\n  independentlyAcquireHistoricalPolicyHelper,\n} from "./helpers/ir-independent-policy-history-fixture.js";',
+        "\n    const recovered = independentlyAcquireRemainderPolicyPrefix(current);\n",
+        "\n    const historical = independentlyInvertRemainderPolicyBytes(recovered);\n",
+      ],
+      [
+        "tests/issue-3518-current-main-inventory-successor.test.ts",
+        'import {\n  independentPolicyGeometryEpoch,\n  independentRemainderPolicyEpoch,\n  independentlyAcquirePolicyGeometryEpoch,\n  independentlyAcquireRemainderPolicyPrefix,\n  independentlyInvertRemainderPolicyBytes,\n  independentlyAcquireHistoricalPolicyHelper,\n} from "./helpers/ir-independent-policy-history-fixture.js";',
+        "\n    const currentPrefix = Buffer.from(\n      independentlyAcquireHistoricalPolicyHelper(read(expected.helperPrefix.path)),\n    ).subarray(0, 94641);\n",
+        "\n  const historical = independentlyAcquireHistoricalPolicyHelper(current);\n",
+      ],
+    ] as const;
+    for (const [path, importText, firstAcquisition, secondAcquisition] of associations) {
+      const source = read(path);
+      expect(source.split(importText)).toHaveLength(2);
+      expect(source.split(firstAcquisition)).toHaveLength(2);
+      expect(source.split(secondAcquisition)).toHaveLength(2);
+    }
+    proveIndependentHistoricalKernel(read(expected.helperPrefix.path));
+  });
+});
+
+function expectIndependentProofRefusal(action: () => unknown, detail: string): void {
+  let failure: unknown;
+  let accepted = 0;
+  try {
+    action();
+    accepted += 1;
+  } catch (error) {
+    failure = error;
+  }
+  expect(accepted).toBe(0);
+  expect(failure).toBeInstanceOf(Error);
+  expect((failure as Error).message).toBe("independent H3 fixture proof: " + detail);
+}
+type MutableFaultEpoch = {
+  path: string;
+  beforePin: { bytes: number; sha256: string; gitBlob: string };
+  currentPin: { bytes: number; sha256: string; gitBlob: string };
+  inverse: { inputOffset: number; outputOffset: number; from: string; to: string }[];
+  forward: { inputOffset: number; outputOffset: number; from: string; to: string }[];
+};
+function independentEpochControl(label: "geometry" | "remainder") {
+  const current = read(expected.helperPrefix.path);
+  const authority = label === "geometry" ? independentPolicyGeometryEpoch : independentRemainderPolicyEpoch;
+  const operand = label === "geometry" ? current : independentlyAcquireRemainderPolicyPrefix(current);
+  const acquire =
+    label === "geometry" ? independentlyAcquirePolicyGeometryEpoch : independentlyInvertRemainderPolicyBytes;
+  const detached = (): MutableFaultEpoch => JSON.parse(JSON.stringify(authority)) as MutableFaultEpoch;
+  const healthy = (): void => {
+    const before = acquire(operand);
+    expect(Buffer.byteLength(before)).toBe(authority.beforePin.bytes);
+    expect(sha(before)).toBe(authority.beforePin.sha256);
+    expect(
+      createHash("sha1")
+        .update(`blob ${Buffer.byteLength(before)}\0`)
+        .update(before)
+        .digest("hex"),
+    ).toBe(authority.beforePin.gitBlob);
+    expect(acquire(operand, detached())).toBe(before);
+    proveIndependentHistoricalKernel(current);
+  };
+  return { current, authority, operand, acquire, detached, healthy };
+}
+
+describe("independent H3 immutable epoch and strict recipe authority", () => {
+  it.each(["geometry", "remainder"] as const)(
+    "refuses every optional %s authority substitution with paired defaults and identical clones",
+    (label) => {
+      const { operand, acquire, detached, healthy } = independentEpochControl(label);
+      const refuse = (proof: unknown, detail: string, source = operand): void => {
+        healthy();
+        expectIndependentProofRefusal(() => acquire(source, proof as MutableFaultEpoch), detail);
+        healthy();
+      };
+      const changedPath = detached();
+      changedPath.path += " foreign";
+      refuse(changedPath, label + " authority path changed");
+      for (const record of ["beforePin", "currentPin"] as const)
+        for (const field of ["bytes", "sha256", "gitBlob"] as const) {
+          const proof = detached();
+          if (field === "bytes") proof[record].bytes += 1;
+          else proof[record][field] = "x" + proof[record][field].slice(1);
+          refuse(proof, label + " " + record + " " + field + " changed");
+        }
+      for (const key of ["path", "beforePin", "currentPin", "inverse", "forward"] as const) {
+        const missing = detached() as unknown as Record<string, unknown>;
+        delete missing[key];
+        refuse(missing, label + " authority keys");
+      }
+      const extra = { ...detached(), extra: true };
+      refuse(extra, label + " authority keys");
+      const symbol = detached();
+      Object.defineProperty(symbol, Symbol("extra authority"), { value: true });
+      refuse(symbol, label + " authority keys");
+      for (const record of ["beforePin", "currentPin"] as const) {
+        for (const field of ["bytes", "sha256", "gitBlob"] as const) {
+          const missing = detached();
+          delete (missing[record] as unknown as Record<string, unknown>)[field];
+          refuse(missing, label + " " + record + " keys");
+        }
+        const extraPin = detached();
+        Object.defineProperty(extraPin[record], "extra", { value: true });
+        refuse(extraPin, label + " " + record + " keys");
+        const symbolPin = detached();
+        Object.defineProperty(symbolPin[record], Symbol("extra pin"), { value: true });
+        refuse(symbolPin, label + " " + record + " keys");
+      }
+      const wrongEpoch = label === "geometry" ? independentRemainderPolicyEpoch : independentPolicyGeometryEpoch;
+      refuse(wrongEpoch, label + " authority path changed");
+      const oneBytePin = (source: string) => ({
+        bytes: Buffer.byteLength(source),
+        sha256: sha(source),
+        gitBlob: createHash("sha1")
+          .update(`blob ${Buffer.byteLength(source)}\0`)
+          .update(source)
+          .digest("hex"),
+      });
+      const foreign = {
+        path: "foreign domain",
+        beforePin: oneBytePin("y"),
+        currentPin: oneBytePin("x"),
+        inverse: [{ inputOffset: 0, outputOffset: 0, from: "x", to: "y" }],
+        forward: [{ inputOffset: 0, outputOffset: 0, from: "y", to: "x" }],
+      };
+      refuse(foreign, label + " authority path changed", "x");
+      let getters = 0,
+        coercions = 0;
+      for (const key of ["path", "beforePin", "currentPin", "inverse", "forward"] as const) {
+        const getter = detached();
+        Object.defineProperty(getter, key, {
+          get: () => {
+            getters += 1;
+            return undefined;
+          },
+        });
+        refuse(getter, label + " authority own data " + key);
+        expect(getters).toBe(0);
+      }
+      for (const record of ["beforePin", "currentPin"] as const)
+        for (const field of ["bytes", "sha256", "gitBlob"] as const) {
+          const getter = detached();
+          Object.defineProperty(getter[record], field, {
+            get: () => {
+              getters += 1;
+              return undefined;
+            },
+          });
+          refuse(getter, label + " " + record + " own data " + field);
+          expect(getters).toBe(0);
+          const boxed = detached();
+          Object.defineProperty(boxed[record], field, {
+            value: {
+              [Symbol.toPrimitive]: () => {
+                coercions += 1;
+                return 0;
+              },
+            },
+          });
+          refuse(boxed, label + " " + record + " " + field + " changed");
+          expect(coercions).toBe(0);
+        }
+      const boxedPath = detached();
+      Object.defineProperty(boxedPath, "path", { value: new String(boxedPath.path) });
+      refuse(boxedPath, label + " authority path changed");
+      expect(getters).toBe(0);
+      expect(coercions).toBe(0);
+    },
+  );
+  it.each(["geometry", "remainder"] as const)(
+    "freezes every top and nested %s authority node against paired mutation attempts",
+    (label) => {
+      const { authority, healthy } = independentEpochControl(label);
+      const nodes: [object, string, unknown][] = [
+        [authority, "path", "foreign domain"],
+        [authority.beforePin, "bytes", 0],
+        [authority.currentPin, "bytes", 0],
+        [authority.inverse, "0", { ...authority.inverse[0], to: "foreign" }],
+        [authority.forward, "0", { ...authority.forward[0], to: "foreign" }],
+        ...authority.inverse.map((span): [object, string, unknown] => [span, "from", "foreign"]),
+        ...authority.forward.map((span): [object, string, unknown] => [span, "from", "foreign"]),
+      ];
+      const before = JSON.stringify(authority);
+      for (const [node, key, value] of nodes) {
+        healthy();
+        expect(Object.isFrozen(node)).toBe(true);
+        expect(Reflect.set(node, key, value)).toBe(false);
+        expect(JSON.stringify(authority)).toBe(before);
+        healthy();
+      }
+    },
+  );
+  it.each(["geometry", "remainder"] as const)(
+    "refuses %s duplicate starts and fixed target violations in the intended recipe direction",
+    (label) => {
+      const { authority, operand, acquire, detached, healthy } = independentEpochControl(label);
+      const refuse = (proof: MutableFaultEpoch, detail: string): void => {
+        healthy();
+        expectIndependentProofRefusal(() => acquire(operand, proof), label + " " + detail);
+        healthy();
+      };
+      const splitInsertion = detached();
+      const firstForward = splitInsertion.forward[0];
+      splitInsertion.forward.splice(
+        0,
+        1,
+        {
+          inputOffset: firstForward.inputOffset,
+          outputOffset: firstForward.outputOffset,
+          from: "",
+          to: firstForward.to.slice(0, 1),
+        },
+        { ...firstForward, outputOffset: firstForward.outputOffset + 1, to: firstForward.to.slice(1) },
+      );
+      refuse(splitInsertion, "forward strictly increasing input starts");
+      const splitDeletion = detached();
+      const firstInverse = splitDeletion.inverse[0];
+      splitDeletion.inverse.splice(
+        0,
+        1,
+        {
+          inputOffset: firstInverse.inputOffset,
+          outputOffset: firstInverse.outputOffset,
+          from: firstInverse.from.slice(0, 1),
+          to: "",
+        },
+        { ...firstInverse, inputOffset: firstInverse.inputOffset + 1, from: firstInverse.from.slice(1) },
+      );
+      refuse(splitDeletion, "inverse strictly increasing output starts");
+      const outputBound = detached();
+      outputBound.inverse[0].outputOffset = authority.beforePin.bytes + 1;
+      refuse(outputBound, "inverse fixed output start bound");
+      const unchangedBound = detached();
+      unchangedBound.inverse[0].inputOffset = authority.currentPin.bytes;
+      unchangedBound.inverse[0].outputOffset = authority.beforePin.bytes;
+      refuse(unchangedBound, "inverse fixed unchanged output bound");
+      const replacementBound = detached();
+      replacementBound.inverse[0].to = "x".repeat(authority.beforePin.bytes + 1);
+      refuse(replacementBound, "inverse fixed replacement output bound");
+      const tailBound = detached();
+      tailBound.inverse.pop();
+      refuse(tailBound, "inverse fixed final tail bound");
+      for (const direction of ["inverse", "forward"] as const) {
+        const damaged = detached();
+        damaged[direction][0].to = "x" + damaged[direction][0].to;
+        refuse(damaged, direction + " output coordinate");
+        for (const field of ["inputOffset", "outputOffset"] as const) {
+          const unsafe = detached();
+          unsafe[direction][0][field] = Number.MAX_SAFE_INTEGER + 1;
+          refuse(unsafe, direction + (field === "inputOffset" ? " input integer" : " output integer"));
+        }
+      }
+    },
+  );
 });
