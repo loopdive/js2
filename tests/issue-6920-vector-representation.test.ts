@@ -29,6 +29,7 @@ import { resolveIrVecRepresentation } from "../src/ir/backend/vector-representat
 import { wasmValueTypeConverter } from "../src/ir/backend/wasm-lowering.js";
 import { WasmGcEmitter } from "../src/ir/backend/wasmgc-emitter.js";
 import { irSupportTypeRef } from "../src/ir/core/type-references.js";
+import { irSupportRef } from "../src/ir/core/types.js";
 import { createIrSourceId } from "../src/ir/identity.js";
 import {
   AllocSiteRegistry,
@@ -604,7 +605,7 @@ describe("#6920 vector representation — mismatches fail at the resolution boun
     const lookups: unknown[] = [];
     expect(() => operation("linear", gcHandle, VEC_F64, undefined, lookups)).toThrow(/vec representation mismatch/);
     const intersection = { ...gcHandle, ...genuineLinear() } as IrVecBackendLowering;
-    expect(() => operation("linear", intersection)).toThrow(/carries WasmGC type indices/);
+    expect(() => operation("linear", intersection)).toThrow(/carries WasmGC field 'vecStructTypeIdx'/);
     const sourceId = createIrSourceId({ kind: "entry", order: 0, sourceKey: "issue-6920-mismatch.ts" });
     const layoutVec: IrType = {
       ...VEC_F64,
@@ -619,6 +620,19 @@ describe("#6920 vector representation — mismatches fail at the resolution boun
       /WasmGC-prepared vector layout/,
     );
     expect(lookups).toEqual([]);
+  });
+
+  it("linear rejects each single GC-only field grafted onto the genuine handle", () => {
+    // Positive control first: the genuine handle itself is accepted.
+    expect(operation("linear", genuineLinear())?.kind).toBe("linear-memory");
+    const lengthOnly = { ...genuineLinear(), lengthFieldIdx: 0 } as unknown as IrVecBackendLowering;
+    expect(() => operation("linear", lengthOnly)).toThrow(/carries WasmGC field 'lengthFieldIdx'/);
+    const dataOnly = { ...genuineLinear(), dataFieldIdx: 1 } as unknown as IrVecBackendLowering;
+    expect(() => operation("linear", dataOnly)).toThrow(/carries WasmGC field 'dataFieldIdx'/);
+    const structOnly = { ...genuineLinear(), vecStructTypeIdx: 0 } as unknown as IrVecBackendLowering;
+    expect(() => operation("linear", structOnly)).toThrow(/carries WasmGC field 'vecStructTypeIdx'/);
+    const arrayOnly = { ...genuineLinear(), arrayTypeIdx: 0 } as unknown as IrVecBackendLowering;
+    expect(() => operation("linear", arrayOnly)).toThrow(/carries WasmGC field 'arrayTypeIdx'/);
   });
 
   it("WasmGC rejects a linear handle", () => {
@@ -678,5 +692,133 @@ describe("#6920 vector representation — mismatches fail at the resolution boun
       lowerIrFunctionBody(func, resolver, emitter, wasmValueTypeConverter("linear", resolver, func.name)),
     ).toThrow(/vec representation mismatch/);
     expect(emitted).toEqual([]);
+  });
+});
+
+describe("#6920 vector representation — outer preflight precedes element conversion", () => {
+  const sourceId = createIrSourceId({ kind: "entry", order: 0, sourceKey: "issue-6920-preflight.ts" });
+  const supportElement = irSupportRef(irSupportTypeRef(sourceId, "vector-element", "__elem"), false);
+  // Linear vec whose OUTER IrType carries a GC layout and whose element is a
+  // ref-typed support type: converting the element first would call resolveType.
+  const gcLayoutVec: IrType = {
+    kind: "vec",
+    elementType: supportElement,
+    nullable: false,
+    layout: {
+      carrierType: irSupportTypeRef(sourceId, "vector-carrier", "__c"),
+      dataType: irSupportTypeRef(sourceId, "vector-data", "__d"),
+      lengthFieldIndex: 0,
+      dataFieldIndex: 1,
+    },
+  };
+  const counting = (): { resolver: IrLowerResolver; calls: string[] } => {
+    const calls: string[] = [];
+    const fail = (name: string) => (): never => {
+      calls.push(name);
+      throw new Error(`unexpected ${name}`);
+    };
+    return {
+      calls,
+      resolver: {
+        resolveFunc: fail("resolveFunc"),
+        resolveGlobal: fail("resolveGlobal"),
+        internFuncType: fail("internFuncType"),
+        resolveType: fail("resolveType"),
+        resolveVec: fail("resolveVec"),
+        resolveVecForElement: fail("resolveVecForElement"),
+      },
+    };
+  };
+
+  it("public converter: lowerIrTypeToValType / wasmValueTypeConverter reject with zero resolver calls", () => {
+    const direct = counting();
+    expect(() => lowerIrTypeToValType(gcLayoutVec, direct.resolver, "f", "linear")).toThrow(
+      /linear backend received a WasmGC-prepared vector layout/,
+    );
+    expect(direct.calls).toEqual([]);
+    const converter = counting();
+    expect(() => wasmValueTypeConverter("linear", converter.resolver, "f").convertType(gcLayoutVec)).toThrow(
+      /linear backend received a WasmGC-prepared vector layout/,
+    );
+    expect(converter.calls).toEqual([]);
+    const porffor = counting();
+    expect(() => lowerIrTypeToValType(gcLayoutVec, porffor.resolver, "f", "porffor")).toThrow(
+      /porffor backend received a WasmGC-prepared vector layout/,
+    );
+    expect(porffor.calls).toEqual([]);
+  });
+
+  const opaqueConverter = {
+    backend: "linear" as const,
+    // Carries a vec as an opaque i32 so parameter projection performs no vector
+    // resolution; only the body's `vec.len` reaches `resolveVecType`.
+    convertType: (type: IrType): readonly ValType[] =>
+      type.kind === "vec" ? [{ kind: "i32" }] : [(type as { val: ValType }).val],
+  };
+  const vecLenOf = (name: string, paramType: IrType): IrFunction => {
+    const fn = new IrFunctionBuilder(identities.next(name), [F64], true);
+    const v = fn.addParam("v", paramType);
+    fn.openBlock();
+    const length = fn.emitVecLen(v);
+    fn.terminate({ kind: "return", values: [length] });
+    return fn.finish();
+  };
+
+  it("generic body route: an f64 vec with an outer GC layout is rejected by the shared preflight, zero calls", () => {
+    const f64LayoutVec: IrType = { ...gcLayoutVec, elementType: F64 } as IrType;
+    const func = vecLenOf("preflightF64", f64LayoutVec);
+    // Backend legality admits f64 vec elements, so lowering reaches resolveVecType.
+    expect(verifyIrBackendLegality(func, "linear")).toEqual([]);
+    const { resolver, calls } = counting();
+    expect(() => lowerIrFunctionBody(func, resolver, new LinearEmitter(), opaqueConverter)).toThrow(
+      /linear backend received a WasmGC-prepared vector layout/,
+    );
+    expect(calls).toEqual([]);
+  });
+
+  it("generic body route: the support-ref-element GC-layout vec never reaches a resolver call", () => {
+    // Linear legality rejects non-f64 vec elements before lowering starts, so the
+    // body route cannot even reach element conversion; the zero-call record is
+    // the observable guarantee on this route.
+    const func = vecLenOf("preflightSupport", gcLayoutVec);
+    const { resolver, calls } = counting();
+    expect(() => lowerIrFunctionBody(func, resolver, new LinearEmitter(), opaqueConverter)).toThrow(
+      /linear backend (legality failed|received a WasmGC-prepared vector layout)/,
+    );
+    expect(calls).toEqual([]);
+  });
+
+  it("GC positives keep the carrier-only and operation lookup order", () => {
+    const sourceRef = createIrSourceId({ kind: "entry", order: 0, sourceKey: "issue-6920-gc-order.ts" });
+    const carrierRef = irSupportTypeRef(sourceRef, "vector-carrier:vec<f64>", "__vec_f64");
+    const dataRef = irSupportTypeRef(sourceRef, "vector-data:vec<f64>", "__arr_f64");
+    const layoutF64: IrType = {
+      kind: "vec",
+      elementType: F64,
+      nullable: false,
+      layout: { carrierType: carrierRef, dataType: dataRef, lengthFieldIndex: 0, dataFieldIndex: 1 },
+    };
+    const lookups: string[] = [];
+    const resolver: IrLowerResolver = {
+      resolveFunc: () => 0,
+      resolveGlobal: () => 0,
+      internFuncType: () => 0,
+      resolveType: (ref: IrTypeRef) => {
+        lookups.push(ref === carrierRef ? "carrier" : ref === dataRef ? "data" : "other");
+        return ref === carrierRef ? 7 : 6;
+      },
+    };
+    expect(wasmValueTypeConverter("wasmgc", resolver, "f").convertType(layoutF64)).toEqual([
+      { kind: "ref", typeIdx: 7 },
+    ]);
+    expect(lookups).toEqual(["carrier"]);
+    lookups.length = 0;
+    expect(
+      resolveIrVecRepresentation(
+        { backend: "wasmgc", type: layoutF64, elementValType: { kind: "f64" }, resolver, where: "f" },
+        "operation",
+      )?.kind,
+    ).toBe("wasmgc");
+    expect(lookups).toEqual(["carrier", "carrier", "data"]);
   });
 });

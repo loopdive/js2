@@ -91,6 +91,9 @@ export function isWasmGcVecLowering(handle: IrVecBackendLowering): handle is IrV
   return !("linearMemory" in handle) && typeof handle.vecStructTypeIdx === "number";
 }
 
+/** Every field that exists only on the WasmGC handle; a linear handle carries none of them. */
+const GC_ONLY_FIELDS = ["vecStructTypeIdx", "arrayTypeIdx", "lengthFieldIdx", "dataFieldIdx"] as const;
+
 function mismatch(where: string, detail: string): never {
   throw new Error(`ir/lower: vec representation mismatch: ${detail} (${where})`);
 }
@@ -107,8 +110,8 @@ function requireLinear(
   alloc: AllocSiteId | undefined,
 ): LinearVecLowering {
   if (!isLinearVecLowering(handle)) mismatch(where, "linear-memory backend received a non-linear vector handle");
-  if ("vecStructTypeIdx" in handle || "arrayTypeIdx" in handle) {
-    mismatch(where, "linear-memory vector handle carries WasmGC type indices");
+  for (const gcField of GC_ONLY_FIELDS) {
+    if (gcField in handle) mismatch(where, `linear-memory vector handle carries WasmGC field '${gcField}'`);
   }
   if (handle.valueType?.kind !== "i32") mismatch(where, "linear-memory vector handle has no i32 carrier");
   const memory = handle.linearMemory;
@@ -172,6 +175,27 @@ export function irVecGcLowering(handle: IrVecBackendLowering): IrVecLowering | n
   return isWasmGcVecLowering(handle) ? handle : null;
 }
 
+/**
+ * Outer representation preflight, shared by every vector resolution path. It
+ * rejects an incompatible outer representation (a WasmGC-prepared layout on a
+ * linear-memory backend) BEFORE the caller converts the element type, so no
+ * element or GC symbolic lookup runs for a vector that cannot be represented.
+ * Returns `null` when the backend has no vector representation at all.
+ */
+export function preflightIrVecRepresentation(
+  backend: IrBackendKind,
+  type: IrType,
+  where: string,
+): IrVecRepresentationKind | null {
+  const kind = irVecRepresentationKindForBackend(backend);
+  if (kind === null) return null;
+  // Rule 4: a prepared GC layout cannot be adapted onto linear memory.
+  if (type.kind === "vec" && type.layout && kind !== "wasmgc") {
+    mismatch(where, `${backend} backend received a WasmGC-prepared vector layout`);
+  }
+  return kind;
+}
+
 export function resolveIrVecRepresentation(
   input: IrVecResolutionInput,
   purpose: "operation",
@@ -188,18 +212,16 @@ export function resolveIrVecRepresentation(
   purpose: IrVecResolutionPurpose,
 ): IrVecRepresentation | IrVecCarrier | null {
   const { backend, type, resolver, where } = input;
-  const kind = irVecRepresentationKindForBackend(backend);
+  const kind = preflightIrVecRepresentation(backend, type, where);
   if (kind === null) return null;
   if (type.kind === "vec") {
     const element = input.elementValType;
     if (!element) return null;
     if (type.layout) {
-      // Rule 4: a prepared GC layout cannot be adapted onto linear memory.
-      if (kind !== "wasmgc") mismatch(where, `${backend} backend received a WasmGC-prepared vector layout`);
-      // Rule 1: symbolic lookups in their historical order.
+      // Rule 1 (the preflight already proved the backend is WasmGC): symbolic lookups in their historical order.
       const refKind = type.nullable ? "ref_null" : "ref";
       if (purpose === "carrier") {
-        return { kind, valueType: { kind: refKind, typeIdx: resolver.resolveType(type.layout.carrierType) } };
+        return { kind: "wasmgc", valueType: { kind: refKind, typeIdx: resolver.resolveType(type.layout.carrierType) } };
       }
       const valueType: ValType = { kind: refKind, typeIdx: resolver.resolveType(type.layout.carrierType) };
       const lowering: IrVecLowering = {

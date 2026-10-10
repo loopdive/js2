@@ -47,7 +47,11 @@ import type { IrLowerResolver, IrLoweredBody, IrLoweredSignature } from "./backe
 import { emitStringOperation, type StringOperationContext } from "./lowering/string-operations.js";
 import type { TypeConverter } from "./backend/contract.js";
 import { type IrBackendKind, verifyIrBackendLegality } from "./backend/legality.js";
-import { type IrVecRepresentation, resolveIrVecRepresentation } from "./backend/vector-representation.js";
+import {
+  type IrVecRepresentation,
+  preflightIrVecRepresentation,
+  resolveIrVecRepresentation,
+} from "./backend/vector-representation.js";
 import {
   emitWasmInt32Coercion,
   emitWasmMathClz32,
@@ -953,6 +957,7 @@ export function lowerIrFunctionBody<S, Slot>(
 
   // #6920: every vector arm receives the one representation resolved for the active backend.
   const resolveVecType = (type: IrType, alloc?: AllocSiteId): IrVecRepresentation | null => {
+    if (preflightIrVecRepresentation(emitter.backend, type, func.name) === null) return null;
     const request = { backend: emitter.backend, type, alloc, resolver, where: func.name };
     const elementValType = type.kind === "vec" ? toValType(type.elementType) : undefined;
     return resolveIrVecRepresentation({ ...request, elementValType }, "operation");
@@ -4007,6 +4012,9 @@ export function lowerIrTypeToValType(
     return sty;
   }
   if (t.kind === "vec") {
+    if (preflightIrVecRepresentation(backend, t, funcName) === null) {
+      throw new Error(`ir/lower: resolver cannot lower vec IrType (${funcName})`);
+    }
     const elementValType = lowerIrTypeToValType(t.elementType, resolver, funcName, backend);
     const carrier = resolveIrVecRepresentation(
       { backend, type: t, elementValType, resolver, where: funcName },
