@@ -34,10 +34,21 @@ export interface InstanceLifecycleAdapterOptions {
   readonly brandedExports: (instance: unknown) => WebAssembly.Exports | undefined;
 }
 
+const enrollmentBrand: unique symbol = Symbol("InstanceLifecycleEnrollment");
+
+/** Brand + adapter ownership only: NOT verified artifact/module provenance. */
+export interface InstanceLifecycleEnrollment {
+  readonly [enrollmentBrand]: true;
+}
+
 export interface InstanceLifecycleAdapter {
   readonly callbackState: InstanceExportCallbackState;
   readonly setExports: (exports: Record<string, Function>) => void;
   readonly setInstance: (instance: WebAssembly.Instance) => void;
+  /** Internal preparation only; does not prepare views, publish, or drain. */
+  readonly enrollInstance: (instance: WebAssembly.Instance) => InstanceLifecycleEnrollment;
+  /** Authenticate this adapter's handle, then perform the legacy installation. */
+  readonly installEnrolledInstance: (enrollment: InstanceLifecycleEnrollment) => void;
 }
 
 /** Own late export wiring and start-section deferral for one import object. */
@@ -45,10 +56,21 @@ export function createInstanceLifecycleAdapter(options: InstanceLifecycleAdapter
   let currentExports: Record<string, Function> | undefined;
   let startExports: Record<string, Function> | undefined;
   const deferred: Array<() => void> = [];
+  const enrollments = new WeakMap<InstanceLifecycleEnrollment, WebAssembly.Exports>();
 
-  const install = (exports: Record<string, Function>, mayEstablishInstanceAuthority: boolean): void => {
+  const prepareAndPublish = (exports: Record<string, Function>, mayEstablishInstanceAuthority: boolean): void => {
+    // Assignment happens only after prepare returns. Its authority/timer/DOM
+    // side effects remain at the original activation point, not enrollment.
     currentExports = options.prepareExports(exports, mayEstablishInstanceAuthority);
+  };
+  const drainDeferred = (): void => {
+    // Preserve shift-before-call, including reentrant installs/queue appends.
+    // A throw leaves the installed view and remaining queue; no fake rollback.
     while (deferred.length > 0) deferred.shift()!();
+  };
+  const install = (exports: Record<string, Function>, mayEstablishInstanceAuthority: boolean): void => {
+    prepareAndPublish(exports, mayEstablishInstanceAuthority);
+    drainDeferred();
   };
 
   return {
@@ -65,6 +87,20 @@ export function createInstanceLifecycleAdapter(options: InstanceLifecycleAdapter
     setInstance: (instance) => {
       const exports = options.brandedExports(instance);
       if (exports === undefined) throw new TypeError("setInstance: expected a genuine WebAssembly.Instance");
+      install(exports as Record<string, Function>, true);
+    },
+    enrollInstance: (instance) => {
+      // The supplied reader is the same trusted internal-slot reader used by
+      // setInstance. Genuineness alone says nothing about the supplying module.
+      const exports = options.brandedExports(instance);
+      if (exports === undefined) throw new TypeError("enrollInstance: expected a genuine WebAssembly.Instance");
+      const enrollment: InstanceLifecycleEnrollment = Object.freeze({ [enrollmentBrand]: true as const });
+      enrollments.set(enrollment, exports);
+      return enrollment;
+    },
+    installEnrolledInstance: (enrollment) => {
+      const exports = enrollments.get(enrollment);
+      if (exports === undefined) throw new TypeError("installEnrolledInstance: foreign or forged enrollment");
       install(exports as Record<string, Function>, true);
     },
   };
