@@ -2,10 +2,11 @@
   "id": "6914",
   "slice": "linear-inventory-proposal-20261007",
   "assignee": "ttraenkler/codex-linear-b-inventory-proposal-sol61-20261007",
-  "requested_by": "ttraenkler/codex-linear-b-inventory-proposal-sol61-20261007",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6914-linear-inventory-proposal-20261007",
   "claimed_at": "2026-10-07T19:39:50Z",
-  "updated_at": "2026-10-07T19:39:50Z",
-  "write_id": "29777-pzvu0tq3"
+  "updated_at": "2026-10-10T23:40:28Z",
+  "write_id": "19545-1jjuagrp",
+  "released_at": "2026-10-10T23:40:28Z"
 }
