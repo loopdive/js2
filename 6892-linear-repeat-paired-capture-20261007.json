@@ -2,10 +2,11 @@
   "id": "6892",
   "slice": "linear-repeat-paired-capture-20261007",
   "assignee": "ttraenkler/codex-linear-b-repeat-capture-sol61-20261007",
-  "requested_by": "ttraenkler/codex-linear-b-repeat-capture-sol61-20261007",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6892-repeat-capture-20261007",
   "claimed_at": "2026-10-07T12:32:06Z",
-  "updated_at": "2026-10-07T12:32:06Z",
-  "write_id": "1337-z55ko8gt"
+  "updated_at": "2026-10-10T23:35:33Z",
+  "write_id": "91300-8oeoed3c",
+  "released_at": "2026-10-10T23:35:33Z"
 }
