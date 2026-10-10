@@ -1,0 +1,28 @@
+#6945 evidence — 2026-10-10, Session C (Claude Opus 5.5 High)
+A/B by file copy against the #6944 commit (method-trampolines.ts + nested-declarations.ts swapped).
+
+tests/issue-6945-nested-fnctor-identity.test.ts
+  #6944 only: gc positives 0/5 (perCallPrototype, constructorIdentity, inheritsFromInCtor,
+              inheritsHelper, inheritsFromAfter); controls 3/3
+  head:       gc positives 5/5; controls 3/3; standalone positives = 5 it.todo (residual)
+
+Triage repros (.tmp/run-case.mjs), gc lane:
+  db30 base B,B,true            -> head A,B,false   (node A,B,false)
+  db19 base addConstraint is not a function -> head true,2,1
+  db27 base addConstraint is not a function -> head true,2,1
+  db28 base value is not callable           -> head true,2,1
+  standalone unchanged: db30 undefined,undefined,true; db19/db27/db28 TypeError: called value is not a function
+
+Standalone blockers measured (not fixed, need a per-function-object prototype slot):
+  .tmp/s2.js  dynamic `ctor.prototype = v` (ctor a parameter) never reaches __fnctor_proto_<F>:
+              node function,true,function,true  standalone function,false,undefined,false
+  .tmp/db30.js per-NAME __fnctor_proto_Inheriter
+Pre-existing gc gaps seen on the way (not this issue):
+  .tmp/s3.js  `new f()` on a function VALUE ignores f.prototype: gc NaN,1  node 1,1
+  .tmp/s1.js  instances re-read the ctor's CURRENT .prototype: gc A,B,B,true  node A,A,B,false
+
+Octane deltablue (.tmp/octane-probe.mjs deltablue), head:
+  gc:         compile ok (139096 bytes), run(1) -> 1, first 1671 ms, min-of-5 1153 ms
+  standalone: compile ok (418249 bytes), RUNTIME TypeError: called value is not a function
+Equivalence gate and the 312-file regression scan: see plan/log/6944-proto-walk-struct-ancestors/evidence.txt
+(run with both commits applied).

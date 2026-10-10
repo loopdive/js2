@@ -1,7 +1,7 @@
 ---
 id: 6945
 title: "A function declaration nested in a helper is ONE shared function object across calls — `function Inheriter(){}; Inheriter.prototype = p; new Inheriter()` inside `inherits()` aliases every caller's prototype (Octane deltablue)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-10-10
 updated: 2026-10-10
@@ -15,6 +15,16 @@ language_feature: function-declarations, closures, prototype-chain
 goal: core-semantics
 related: [874, 6944, 1712, 2660, 4243, 4480, 4653]
 assignee: "ttraenkler/claude-session-c-octane-nested-fnctor-shared-identity-20261010"
+loc-budget-allow:
+  # 2026-10-10 (#6945): one hook line + import in the hoist driver, and the
+  # closure-allocation instrs factored out of the lazy cache access so the
+  # per-activation binding (new statements/nested-fnctor-activation.ts) shares
+  # them instead of duplicating the wrapper layout.
+  - src/codegen/statements/nested-declarations.ts
+  - src/codegen/closures/method-trampolines.ts
+func-budget-allow:
+  # 2026-10-10 (#6945): the one-line per-activation binding hook.
+  - src/codegen/statements/nested-declarations.ts::hoistFunctionDeclarations
 ---
 
 # #6945 — nested function declaration has program-wide identity, so per-call `.prototype` reassignment aliases
@@ -146,3 +156,65 @@ direction. Functions touched: `compileNestedFunctionDeclarationInScope`,
 sibling, not a change to the singleton), `getOrMintFnctorProtoGlobal`,
 `emitFnctorProtoGet`, `tryCompileFnctorPrototypeAssign`,
 `fillFnctorPrototypeDispatchArms`.
+
+## Implementation notes (2026-10-10, Session C) — host lane DONE, standalone OPEN
+
+**Host (gc) — implemented (plan steps 1-2).** A capture-free nested
+declaration is bound to a FRESH closure per activation when its enclosing body
+writes `<name>.prototype = …`:
+- `bindActivationFnctorClosures` (new `src/codegen/statements/nested-fnctor-activation.ts`),
+  called once from `hoistFunctionDeclarations`' top-level post-pass, emits a
+  fresh wrapper (`emitFreshFuncClosure`: the singleton's trampoline + wrapper
+  type via the shared `closureAllocInstrs`, no cache global) into the declaration's hoisted-value local at
+  function entry, marks it materialized and the declaration as
+  `reassignedFunctionDeclarations` so no read site re-materializes the
+  singleton over it (the lazy materializer re-emits only for an unreassigned
+  declaration). Identifier reads, `.prototype` writes and every `new` site then
+  observe this activation's function object; `__register_fnctor_instance`
+  already receives the evaluated constructor value, and the prototype sidecar
+  is keyed by the struct, so nothing else changes on the host.
+- Deviation from the plan's gate: the plan proposed reusing
+  `analyzeFnctorEscapeGate`'s classifier (new / escape / `.prototype` write). I
+  gate syntactically and narrower: a body-level `.prototype` write is required,
+  and every other mention of the name must be in the same body outside nested
+  functions (a nested function would still resolve the per-name singleton), no
+  redeclaration, no direct `eval`, no `arguments`/self-reference inside the
+  declaration. That keeps the "decision shared with every consumer"
+  requirement trivially true — no consumer outside the enclosing body can see
+  the name — without touching `resolveFnctorSymbol` / `arguments-callee.ts` /
+  `global-var-bindings.ts`. Declarations that are only `new`'d (default
+  prototype, no write) keep the singleton: two activations' instances still
+  share one vivified prototype (`Object.getPrototypeOf(mk()) ===
+  Object.getPrototypeOf(mk())` is `true`, node `false`). Widening is a
+  follow-up.
+
+**Standalone — NOT implemented (plan step 3 is architectural).** It needs the
+prototype slot to travel with the function OBJECT (closure meta slot) and every
+fnctor instance to carry its constructor (`$constructor`) so
+`__fnctor_proto_start`, `emitFnctorProtoGet` and
+`tryCompileFnctorPrototypeAssign` resolve per object instead of per NAME —
+new struct layout and a rewrite of the per-name ladder that every
+`__fnctor_proto_start` consumer bakes. Measured blockers on the deltablue shape,
+in order:
+1. a DYNAMIC `ctor.prototype = v` (receiver not a statically resolved fnctor
+   identifier — deltablue's `this.prototype = new Inheriter()`, `.tmp/s2.js`'s
+   `setp(Derived, o)`) lands in the closure's own-property bag, never in
+   `__fnctor_proto_Derived`, so `new Derived()` does not see it
+   (node `function,true,function,true`; standalone `function,false,undefined,false`);
+2. the per-NAME `__fnctor_proto_Inheriter` (this issue) — `.tmp/db30.js` stays
+   `undefined,undefined,true`.
+Both need the per-object prototype slot, so they belong to one design.
+
+**Also observed (pre-existing, not this issue):** gc `new f()` on a function
+VALUE (`var f = get(); new f().t`) ignores `f.prototype` (`NaN` vs node `1`,
+`.tmp/s3.js`); gc instances link to the CONSTRUCTOR and re-read its
+`.prototype` on every lookup instead of snapshotting it at construction
+(§10.1.14), so re-assigning `F.prototype` after `new F()` retargets old
+instances (`.tmp/s1.js`: gc `A,B,B,true`, node `A,A,B,false`).
+
+**Validation** — `tests/issue-6945-nested-fnctor-identity.test.ts`: 5 gc
+positive cases (db30, constructor identity, db19, db27, db28) fail on base and
+pass on head; controls (top-level identity on gc + standalone; a call-only
+nested declaration allocates no closure) pass on both; the 5 standalone
+positives are `it.todo`. Octane `deltablue` gc: `run(1) -> 1` (was
+`addConstraint is not a function`).

@@ -45,6 +45,7 @@ import { popBody, pushBody } from "../context/bodies.js";
 import { recordNestedFunctionBody } from "../context/body-route-audit.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
+import { bindActivationFnctorClosures } from "./nested-fnctor-activation.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "../context/types.js";
 import { installFrameTrap } from "../frame-trap.js";
 import {
@@ -3602,6 +3603,7 @@ export function hoistFunctionDeclarations(
       }
       fctx.annexBExistingDirectFunctionBindings.add(funcName);
     }
+    bindActivationFnctorClosures(ctx, fctx, stmts); // (#6945) per-activation function objects
   }
 }
 
