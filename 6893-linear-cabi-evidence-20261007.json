@@ -2,10 +2,11 @@
   "id": "6893",
   "slice": "linear-cabi-evidence-20261007",
   "assignee": "ttraenkler/codex-linear-b-cabi-evidence-20261007",
-  "requested_by": "ttraenkler/codex-linear-b-cabi-evidence-20261007",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6893-linear-cabi-array-forwarding-20261007",
   "claimed_at": "2026-10-07T10:40:55Z",
-  "updated_at": "2026-10-07T10:40:55Z",
-  "write_id": "95721-tdofpv8r"
+  "updated_at": "2026-10-10T23:36:12Z",
+  "write_id": "97083-97wvkafs",
+  "released_at": "2026-10-10T23:36:12Z"
 }
