@@ -253,7 +253,8 @@ test("workflow keeps fatal pins, exact per-file flags/heaps, isolated checkout, 
   assert.match(changed, /id: tests\n        continue-on-error: true/);
   assert.match(changed, /TEST_OUTCOME: \$\{\{ steps\.tests\.outcome \}\}/);
   assert.match(changed, /\*\) echo "::error::Changed issue test did not execute"; exit 1/);
-  for (const text of [fatal, select, changed, gate]) assert.match(text, /timeout-minutes: 40/);
+  for (const text of [fatal, select, gate]) assert.match(text, /^    timeout-minutes: 40$/m);
+  assert.match(changed, /^    timeout-minutes: 120$/m);
   assert.match(gate, /needs: \[changes, issue-tests-pinned, issue-tests-select, issue-tests-changed\]/);
   assert.match(
     gate,
