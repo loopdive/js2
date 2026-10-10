@@ -1,0 +1,27 @@
+# #6942 Octane regexp status (2026-10-10, Claude Opus 5.5 High)
+# Driver: PRELUDE + base.js + regexp.js + exported octane_run(reps) walking
+# BenchmarkSuite.suites (Setup / run / TearDown), the #874 probe shape, with
+# per-runBlockN sums recorded. Octane checkout: /home/user/chromium/octane.
+# Oracle: node on the same source (benchmark checksum 1666109).
+
+## base (new-super.ts without the #6942 fix, file-copy A/B)
+[gc]         RUNTIME TypeError: Cannot access property on null or undefined at 529:24   (regexp.js:136 `s0[i]`, runBlock0)
+[standalone] RUNTIME WasmExn(TypeError: Cannot access property on null or undefined at 529:24)
+
+## head (fix)
+[gc]         RUNTIME Wrong checksum. lastSum=1666064 blocks=286542,1212124,5398,25173,11932,4500,77835,6108,3200,13263,6849,13140   (varies run to run)
+[standalone] RUNTIME WasmExn(Error: Wrong checksum.) lastSum=1664504 blocks=284533,1212528,5347,25166,11986,4499,77830,6107,3221,13298,6849,13140
+[node]       ok blocks=286139,1212496,5429,25168,11931,4500,77823,6108,3227,13299,6849,13140
+
+## head, RNGPATCH=1 — regexp.js `Math.random()` routed through a plain global
+## seeded by the same base.js generator (isolates the RNG override)
+[standalone] octane_run(1) = 1 blocks=286139,1212496,5429,25168,11931,4500,77823,6108,3227,13299,6849,13140   (== node, checksum OK)
+[gc]         instantiate failed: "computeInputVariants": immutable global cannot be assigned   (probe-only shape; identical on base)
+
+## New first failure: `Math.random = <closure>` is not honored (both lanes)
+Probe:
+  Math.random = (function(){ var s = 1; return function(){ s = (s * 7) % 11; return s / 11; }; })();
+  export function run() { return Math.random() + Math.random(); }
+node 1.0909090909090908 · gc 1.4508855022620373 (native RNG) · standalone 0.6234067344517265 (native RNG)
+base.js BenchmarkSuite.ResetRNG installs its deterministic generator exactly this
+way, so js2 feeds regexp.js different input variants and the checksum differs.

@@ -1,7 +1,8 @@
 ---
 id: 6942
 title: "fnctor constructor twin hoists nested function declarations before `var` locals exist — a ctor local captured by a nested function reads as null/0 (Octane regexp)"
-status: ready
+status: in-progress
+assignee: ttraenkler/claude-session-c-octane-fnctor-twin-hoist-20261010
 sprint: current
 created: 2026-10-10
 updated: 2026-10-10
@@ -191,3 +192,46 @@ standalone (and linear if the harness supports it):
 - No change in any test262 edition count (both ratchets green); the gc/standalone
   outputs for programs whose ctor has no nested capturing declarations stay
   byte-identical.
+
+## Implementation Notes (2026-10-10, Session C — Claude Opus 5.5 High)
+
+**Change.** `compileNewFunctionDeclaration` (`src/codegen/expressions/new-super.ts`)
+now runs `hoistVarDeclarations` → `hoistLetConstWithTdz` before the existing
+`beginNestedFunctionNameScope` + `hoistFunctionDeclarations` block, after every
+other twin prologue step (frame trap, `__self`, `this`, #4139
+`materializeFnctorTwinCaptures`, `arguments`). Both helpers skip names already
+in `localMap`, so params / spills still shadow as before.
+`reifyCurrentDirectEvalBindings` is not called: the twin never sets
+`directEvalBindingNames`, so it would be a no-op. The #2071 comment was
+condensed to cover both hoists so the LOC / function budgets do not grow (no
+allowance needed).
+
+**Why prologue order and not the capture collector.** The plan's step 1 applies
+to every twin shape: `hoistVarDeclarations` allocates each body `var` before
+`compileNestedFunctionDeclaration` reads `localMap`, so `s0`/`k` become real
+captures and the twin registers the correct plan first. The optional defensive
+change in `nested-declarations.ts` (step 2) was not needed.
+
+**Measured (file-copy A/B against the plan-branch base).**
+- `tests/issue-6942-fnctor-twin-var-hoist.test.ts` (9 programs × gc/standalone,
+  compared with node): base 10 fail / 8 pass (the 4 negative controls pass on
+  both) → head 18/18.
+- Triage repros `r1…r32`: every case that differed from node now matches it
+  (r12–r17, r23, r25, r26, r30–r32, r7*, r8). The only remaining mismatch is
+  `r2` standalone (`undefined`), which is unrelated and unchanged.
+- 41 related fnctor test files (#1312, #1712*, #2608, #2660*, #3927*, #3996*,
+  #4155*, #4456, #4464, #4637, #5162, #6689, …): exact same pass/fail set on
+  base and head (326 pass / 45 fail / 15 skip, all failures pre-existing).
+- **Not byte-identical** for twins whose body declares `var`/`let`: locals are
+  allocated in the prologue (index renumbering), and an externref `var` is
+  initialised to `undefined` at entry — the same thing an ordinary function body
+  does. Twins with no body bindings compile byte-identically.
+
+**Octane `regexp.js` (acceptance not yet met).** Evidence:
+`plan/log/6942-octane-regexp/status.txt`. The TypeError is gone on both lanes.
+The run now fails with `Wrong checksum.` because of a **separate defect**:
+`Math.random = <closure>` (base.js `BenchmarkSuite.ResetRNG`) is ignored on gc
+and standalone — calls still reach the native RNG. With regexp.js's RNG routed
+through a plain global, standalone reproduces node's checksum exactly (every
+per-block sum matches). Status stays `in-progress` until that defect lands and
+the full benchmark passes; it needs its own issue.
