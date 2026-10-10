@@ -2831,6 +2831,11 @@
       "layer": "legacy-linear"
     },
     {
+      "path": "src/codegen-linear/runtime/string-slice.ts",
+      "state": "unmigrated",
+      "layer": "legacy-linear"
+    },
+    {
       "path": "src/codegen-linear/simd.ts",
       "state": "unmigrated",
       "layer": "legacy-linear"
