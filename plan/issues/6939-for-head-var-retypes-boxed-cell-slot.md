@@ -1,10 +1,11 @@
 ---
 id: 6939
 title: "`for (var i …)` head re-declaration re-types a boxed ref-cell slot (eval cell / closure capture) to the counter type — invalid Wasm (Octane earley-boyer `sc_jsNew`)"
-status: ready
+status: done
 sprint: current
 created: 2026-10-10
 updated: 2026-10-10
+completed: 2026-10-10
 priority: high
 horizon: s
 feasibility: easy
@@ -15,6 +16,15 @@ language_feature: for-loop, var-hoisting, direct-eval, closures
 goal: compilable
 related: [874, 3396, 1453, 3419]
 assignee: "ttraenkler/claude-session-c-octane-forinit-boxed-retype-20261010"
+# 2026-10-10: +2 call-site lines in compileForStatement (the boxed-head early
+# branch in both declarator arms); the logic lives in three new small helpers
+# (tryStoreBoxedVarHead / liveBoxedVarCell / emitBoxedVarHeadStore) in the same
+# file, ~75 lines, because the plan keeps variables.ts read-only and loops.ts
+# is the only module that lowers a for-head declarator.
+loc-budget-allow:
+  - src/codegen/statements/loops.ts
+func-budget-allow:
+  - src/codegen/statements/loops.ts::compileForStatement
 ---
 
 # #6939 — `for (var i …)` head re-types a boxed cell slot → invalid Wasm
@@ -149,6 +159,42 @@ shared; verify once).
    + exported `octane_run`) yields a `WebAssembly.compile`-valid module on gc and
    standalone. Whether it then *runs* is a separate question (eval is
    deferred-feature); the acceptance here is VALID wasm.
+
+## Implementation notes (2026-10-10, Session C)
+
+- `loops.ts` gained two small helpers next to `emitPromotedI32Increment`:
+  `liveBoxedVarCell` (the `dropStaleBindingBox` liveness rule, inlined so
+  `variables.ts` stays untouched) and `emitBoxedVarHeadStore` (the
+  `boxedForInitStore` null-guarded `struct.set` idiom, cell local re-resolved
+  after the initializer per #4368).
+- General head arm: a live boxed `var` takes an early branch BEFORE type
+  resolution / `detectI32LoopVar` — initializer compiled with the cell's
+  `valType` hint, stored through the cell, `continue`. So no i32 promotion,
+  no slot re-type, no `allocLocal` (which would have re-aimed `localMap`).
+  Unboxed heads are byte-identical to before.
+- Function-expression arm: same store after compiling the closure, instead of
+  overwriting the slot type with the closure type.
+- Evaluation order unchanged: the initializer is still evaluated exactly once,
+  before the first test.
+
+Results (file-copy A/B against `.tmp/base-loops.ts`):
+
+| program | base gc / standalone | head gc / standalone |
+| --- | --- | --- |
+| eb7 | INVALID / INVALID | VALID `1` / VALID `1` |
+| eb8 | INVALID / INVALID | VALID `2` / VALID `2` |
+| eb5, eb6 controls | VALID (runtime-eval provider missing) | unchanged |
+| Octane earley-boyer (+base.js) | INVALID `sc_jsNew` both lanes | **VALID** gc (16 s) + standalone (43 s) |
+
+`tests/issue-6939-for-head-boxed-var.test.ts`: 14/14 on head, 10 fail on base
+(the 4 negative controls pass on both). Focused suite (17 loop/closure/eval
+test files, 185 tests): identical failure set base vs head (19 pre-existing).
+
+Found, NOT fixed (separate pre-existing defects, reproduce with a plain
+`var` statement too, so not this issue): a boxed function-valued `var`
+(`var g = function(){ return typeof h }; var h = function(){}`) yields
+`illegal cast` / wrong `typeof` at runtime; a boxed string `var` read via
+`.length` derefs null on standalone.
 
 ## Acceptance criteria
 
