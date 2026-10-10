@@ -1,12 +1,10 @@
 {
   "id": "6940",
-  "assignee": "ttraenkler/claude-session-c-octane-loop-body-global-shift-20261010",
-  "requested_by": "ttraenkler/claude-session-c-octane-loop-body-global-shift-20261010",
+  "assignee": "ttraenkler/claude-session-d",
+  "requested_by": "ttraenkler/claude-session-d",
   "status": "in-progress",
   "branch": "claude/octane-invalid-wasm",
-  "reserved_at": "2026-10-10T07:09:37Z",
-  "claimed_at": "2026-10-10T07:09:37Z",
-  "updated_at": "2026-10-10T07:09:37Z",
-  "write_id": "12302-mlyfbgyn",
-  "pr_scan": "degraded"
+  "claimed_at": "2026-10-10T21:21:49Z",
+  "updated_at": "2026-10-10T21:21:49Z",
+  "write_id": "3132-mitjmggf"
 }
