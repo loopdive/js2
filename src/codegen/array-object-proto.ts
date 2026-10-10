@@ -96,7 +96,7 @@ import { emitArrayFillProtoMemberBody, isArrayFillVariadicMember } from "./array
 import { emitArraySearchProtoMemberBody, isArraySearchVariadicMember } from "./array/array-search-proto-value.js"; // (#6912)
 import { emitArrayGenericValueMemberBody } from "./array/array-generic-value-bodies.js"; // (#6912)
 import { emitArrayCopyMethodMemberBody, isArrayCopyMethodVariadicMember } from "./array/array-copy-methods-value.js"; // (#6912)
-import { emitArraySortMemberBody } from "./array/array-sort-value.js"; // (#6912)
+import { emitArraySortMemberBody, isArraySortVariadicMember } from "./array/array-sort-value.js"; // (#6912)
 // (#4119) The shared member-body tail: `Object.prototype.toString`'s real
 // §20.1.3.6 runtime classifier, and the graceful catchable-TypeError refusal for
 // every `(brand, member)` whose native body is not wired yet. Aliased to the
@@ -2689,7 +2689,9 @@ function makeGlue(
       (name === "Array" && isArraySpliceVariadicMember(ctx, member)) || // (#6701)
       (name === "Array" && isArrayFillVariadicMember(ctx, member)) ||
       (name === "Array" &&
-        (isArraySearchVariadicMember(ctx, member) || isArrayCopyMethodVariadicMember(ctx, member))) || // (#6912)
+        (isArraySearchVariadicMember(ctx, member) ||
+          isArrayCopyMethodVariadicMember(ctx, member) ||
+          isArraySortVariadicMember(ctx, member))) || // (#6912)
       (name === "Array" &&
       (member === "join" ||
         member === "push" ||
