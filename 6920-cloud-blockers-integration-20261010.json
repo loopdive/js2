@@ -2,10 +2,11 @@
   "id": "6920",
   "slice": "cloud-blockers-integration-20261010",
   "assignee": "ttraenkler/codex-takeover-20261011",
-  "requested_by": "ttraenkler/codex-takeover-20261011",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/6920-cloud-blockers-integration-20261010",
   "claimed_at": "2026-10-10T23:47:32Z",
-  "updated_at": "2026-10-10T23:47:32Z",
-  "write_id": "94365-8184xpj9"
+  "updated_at": "2026-10-10T23:47:58Z",
+  "write_id": "94622-dz2ol941",
+  "released_at": "2026-10-10T23:47:58Z"
 }
