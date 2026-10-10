@@ -1,0 +1,12 @@
+{
+  "id": "6945",
+  "assignee": "ttraenkler/claude-session-c-octane-nested-fnctor-shared-identity-20261010",
+  "requested_by": "ttraenkler/claude-session-c-octane-nested-fnctor-shared-identity-20261010",
+  "status": "in-progress",
+  "branch": "claude/octane-dynamic-objects",
+  "reserved_at": "2026-10-10T07:23:28Z",
+  "claimed_at": "2026-10-10T07:23:28Z",
+  "updated_at": "2026-10-10T07:23:28Z",
+  "write_id": "13376-mmk62xjo",
+  "pr_scan": "degraded"
+}
