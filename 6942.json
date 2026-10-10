@@ -1,12 +1,10 @@
 {
   "id": "6942",
-  "assignee": "ttraenkler/claude-session-c-octane-fnctor-twin-hoist-20261010",
-  "requested_by": "ttraenkler/claude-session-c-octane-fnctor-twin-hoist-20261010",
+  "assignee": "ttraenkler/claude-session-d",
+  "requested_by": "ttraenkler/claude-session-d",
   "status": "in-progress",
   "branch": "claude/octane-regexp-raytrace",
-  "reserved_at": "2026-10-10T07:10:50Z",
-  "claimed_at": "2026-10-10T07:10:50Z",
-  "updated_at": "2026-10-10T07:10:50Z",
-  "write_id": "17276-snvuf1ar",
-  "pr_scan": "degraded"
+  "claimed_at": "2026-10-10T21:22:01Z",
+  "updated_at": "2026-10-10T21:22:01Z",
+  "write_id": "3308-h70ux3du"
 }
