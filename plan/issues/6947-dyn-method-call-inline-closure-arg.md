@@ -1,7 +1,7 @@
 ---
 id: 6947
 title: "An inline `function(){…}` argument to a method call on an `any` receiver is host-wrapped (`__make_callback_ctor`), and the callee's `f(x)` traps `dereferencing a null pointer` instead of taking the host-callable arm (Octane splay `traverse_`)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-10-10
 updated: 2026-10-10
@@ -15,6 +15,11 @@ language_feature: callbacks, closures, dynamic-dispatch
 goal: correctness
 related: [874, 6943, 6946, 1300, 1311, 1712, 1941, 3747, 4394, 4616]
 assignee: "ttraenkler/claude-session-c-octane-dyn-method-call-inline-closure-arg-20261010"
+loc-budget-allow:
+  # 2026-10-10 (#6947) calls.ts +13: the `F.prototype.m = function (cb)`
+  #   holder arm (documented) in `isHostReachableMemberFunction`, next to the
+  #   #4616 object-literal / class-member arms it generalizes.
+  - src/codegen/expressions/calls.ts
 ---
 
 # #6947 — inline callback to an any-receiver method call: wrapped for the host, then null-dereferenced by the compiled callee
@@ -137,3 +142,79 @@ direction. Functions touched: `isHostCallbackArgument`,
 `compileArrowFunction` (no change expected, consumer only), the
 callable-parameter call lowering in `call-identifier.ts` around
 `__callable_param_`/`hostCallFallback`, `calleeMayBeHostCallable`.
+
+## Implementation notes (2026-10-10, Session C)
+
+### Step 1 — the trigger, pinned
+
+`.tmp/sp24.js` passes and `.tmp/sp23.js` (real splay) fails because of the
+**JSDoc on the callee**: splay.js declares `@param {function(SplayTree.Node)} f`
+on `traverse_`. Adding that one comment to sp24 (`.tmp/sp25.js`) reproduces the
+gc trap and the standalone TypeError exactly. With the JSDoc, `f` has a call
+signature, so `f(current)` takes the typed callable-param closure dispatch
+(guarded cast to the wrapper root, funcref ladder); without it `f` is `any` and
+takes the generic dynamic call, which accepts a host function. A temporary
+trace of `isHostCallbackArgument` showed the classification is
+the SAME in both files (every inline callback to `.traverse_` was host-wrapped:
+receiver `any`, or the JS-inferred `SplayTreeNode | undefined` for
+`this.root_`, whose expando method declaration the class-name candidates cannot
+see). The issue's "holding the callback in a variable works" (`p_q`) does not
+hold once the callee is JSDoc-typed (`.tmp/sp26.js` fails on base, gc and
+standalone).
+
+### What landed (gc fixed; each half alone closes the gc trap)
+
+- **Step 2, call site** (`isHostCallbackArgument`,
+  `src/codegen/closures/callback-classification.ts`): a method name that is NOT
+  in `HOST_CALLBACK_METHODS` is a compiled-closure consumer when (a) the
+  receiver is `any`/`unknown` and the program defines that name as a
+  function-valued member (`ctx.userMethodNames`), or (b) the method symbol has
+  a compiled function IMPLEMENTATION declaration
+  (`isCompiledFunctionMemberImplementation`: `X.prototype.m = function…`,
+  object-literal `m: function…`/`m() {}`, a class method with a body —
+  signatures are excluded, they may describe a host API). On the host lane a
+  closure that does reach a host method is still made callable by the
+  `__extern_method_call` bridge (`_maybeWrapCallableUnknownArity`).
+- **Step 3, callee side, gc** (`isHostReachableMemberFunction`, consumed by
+  `calleeMayBeHostCallable`, `src/codegen/expressions/calls.ts`): a param of
+  `F.prototype.m = function (cb) {…}` gets the #1712 host-callable arm, exactly
+  like the object-literal / class members #4616 already covered — so a host
+  function arriving in `cb` dispatches through `__call_function` instead of
+  trapping on `struct.get` of the nulled cast.
+
+Tests: `tests/issue-6947-inline-callback-any-receiver.test.ts` (reduced
+exportKeys/traverse_ pair, JSDoc inline + variable-held on gc, untyped control
+on gc + standalone, host `forEach`/`map`/`find` controls on typed and `any`
+receivers, object-literal user method). Base: 2 fail / 5 pass; head: 7 / 7.
+Regression A/B over 113 test files matching 1311/1300/1712/1941/4616/3747/
+2070/3016/3231/2903/callback/callable/host-call: identical pass/fail sets apart
+from the two new gc cases.
+
+Octane `splay.js` with `SplayTree.Node` rewritten to a function declaration
+(`.tmp/splay-probe.mjs rewritten gc`) now runs to completion on gc
+(`run(1) -> 1`). The ORIGINAL splay.js still fails on gc with
+`traverse_ is not a function` — #6943's follow-up (top-level
+`SplayTree.Node.prototype.traverse_ = …` dropped by the module-init keep gate),
+not this issue.
+
+### Remaining — standalone (why status stays in-progress)
+
+The plan's premise that "the standalone side needs no host arm once step 2
+stops the wrapping" does not hold. With step 2 the callback reaches `traverse_`
+as a genuine closure struct (verified: the root cast succeeds), but the funcref
+ladder of the JSDoc-typed `f(current)` only lists signatures compatible with
+`function(N)` — `(root, ref null $N)` and friends — while an untyped JS
+`function (node) {…}` compiled without a contextual type has `(root,
+externref)`. No arm matches and the ladder's terminal arm throws the
+`TypeError` (`.tmp/sp28.js`: even a TYPED-receiver call `n.run(cb)` with a
+variable-held `cb` throws on standalone; the inline form at a typed call site
+works only because contextual typing gives `node` the type `N`). gc survives
+this because its terminal arm is the #1058 unmatched-closure host call.
+
+The standalone fix belongs in `reserveUnmatchedClosureHostCall`
+(`src/codegen/expressions/unmatched-closure-host-call.ts`), which already emits
+the finalize-time `__apply_closure` arm for standalone — but only for a
+descriptor-accessor callee (#6769 S7c). Admitting a callable param whose type
+comes from JSDoc (or, more broadly, any closure-root callee) there would route
+the unmatched live closure through `__apply_closure`. That file is outside this
+issue's named functions, so it was not changed in this pass.
