@@ -101,6 +101,10 @@ private proposals, narrow releases, or a queue entry as complete migration.
 The JSON parsed successfully before packaging. A bounded scan found no common
 GitHub-token, AWS-access-key or private-key patterns; this is not a comprehensive
 secret audit. Validate gzip round-trip bytes and patch syntax before publication.
-No compiler tests were rerun and no historical results were requalified for
-current main. The branch was based on canonical main
+No historical compiler experiments were rerun or requalified for current main.
+The normal commit hook separately ran three main-history test suites:
+6/6 array-like map/filter, 3/3 dead-binding elision, and 2/2 sort-as-value tests.
+All 11 tests passed; LOC/function budgets and the oracle ratchet passed.
+These hook results do not establish acceptance of the unapplied experiment.
+The branch was based on canonical main
 `449493cd59d6d13abffb91c907fc6f21b5a3bd4c`.
