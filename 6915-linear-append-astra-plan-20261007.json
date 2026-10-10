@@ -2,10 +2,11 @@
   "id": "6915",
   "slice": "linear-append-astra-plan-20261007",
   "assignee": "ttraenkler/codex-linear-b-append-astra-plan-20261007",
-  "requested_by": "ttraenkler/codex-linear-b-append-astra-plan-20261007",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6915-linear-append-plan-20261007",
   "claimed_at": "2026-10-07T20:15:04Z",
-  "updated_at": "2026-10-07T20:15:04Z",
-  "write_id": "34771-b0l80kvm"
+  "updated_at": "2026-10-10T23:41:23Z",
+  "write_id": "24610-roucl5x8",
+  "released_at": "2026-10-10T23:41:23Z"
 }
