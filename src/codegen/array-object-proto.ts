@@ -96,6 +96,7 @@ import { emitArrayFillProtoMemberBody, isArrayFillVariadicMember } from "./array
 import { emitArraySearchProtoMemberBody, isArraySearchVariadicMember } from "./array/array-search-proto-value.js"; // (#6912)
 import { emitArrayGenericValueMemberBody } from "./array/array-generic-value-bodies.js"; // (#6912)
 import { emitArrayCopyMethodMemberBody, isArrayCopyMethodVariadicMember } from "./array/array-copy-methods-value.js"; // (#6912)
+import { emitArraySortMemberBody } from "./array/array-sort-value.js"; // (#6912)
 // (#4119) The shared member-body tail: `Object.prototype.toString`'s real
 // §20.1.3.6 runtime classifier, and the graceful catchable-TypeError refusal for
 // every `(brand, member)` whose native body is not wired yet. Aliased to the
@@ -1019,7 +1020,8 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
   const searchBody = // (#6912) indexOf/lastIndexOf/includes, then pop/shift/toString
     emitArraySearchProtoMemberBody(ctx, fctx, member) ??
     emitArrayGenericValueMemberBody(ctx, fctx, member) ??
-    emitArrayCopyMethodMemberBody(ctx, fctx, member);
+    emitArrayCopyMethodMemberBody(ctx, fctx, member) ??
+    emitArraySortMemberBody(ctx, fctx, member);
   if (searchBody !== undefined) return searchBody;
   if (member !== "slice") {
     // Other Array.prototype members: their *FromVecLocal cores land in PR-C; until

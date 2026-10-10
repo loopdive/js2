@@ -20,7 +20,7 @@ loc-budget-allow:
   # 2026-10-07 (#6912): routing lines for the member closure bodies; the bodies live in src/codegen/array/
   - src/codegen/array-object-proto.ts
 import-cycles-allow:
-  - largestSccSize: 702 # 2026-10-07, re-based on main 699 2026-10-09 (#6912): array/array-search-proto-value.ts (PR A), array/array-generic-value-bodies.ts (PR B) and array/array-copy-methods-value.ts (PR C) join the codegen SCC (called from array-object-proto.ts, using shared.js coerceType/ensureLateImport, like array-fill-proto-value.ts); the pure scan core array/array-search-core.ts stays outside it
+  - largestSccSize: 703 # 2026-10-07, re-based on main 699 2026-10-09 (#6912): array/array-search-proto-value.ts (PR A), array/array-generic-value-bodies.ts (PR B) array/array-copy-methods-value.ts (PR C) and array/array-sort-value.ts (PR D) join the codegen SCC (called from array-object-proto.ts, using shared.js coerceType/ensureLateImport, like array-fill-proto-value.ts); the pure scan core array/array-search-core.ts stays outside it
 ---
 
 # #6912 — finish the array-member closure table
@@ -145,4 +145,22 @@ two or three members is fine; `.length` from `nativeClosureMeta`.
   `PROTO_METHOD_LENGTH`.
 - `toSorted` / `sort` are not in this PR: they need a comparator call and a sort
   on the array-like, which is a separate slice.
+
+### PR D — `sort`, `toSorted` (2026-10-10)
+
+- `src/codegen/array/array-sort-value.ts` implements SortIndexedProperties on
+  the array-like substrate, in spec order:
+  - A comparefn that is neither undefined nor callable is a TypeError, raised
+    before ToObject.
+  - `toSorted` runs ArrayCreate's length check first.
+  - `sort` skips holes (HasProperty); `toSorted` reads through them.
+  - The sort itself is a stable insertion sort over a WasmGC externref array.
+    SortCompare puts undefined last without calling comparefn. The comparefn
+    result goes through ToNumber, and NaN counts as +0. Without a comparefn,
+    values compare by `__str_compare` on their ToString forms.
+  - `sort` writes the result back with Set(O, k, v, true), then deletes
+    `O[itemCount .. len)` with DeletePropertyOrThrow.
+- The comparefn is called through `__apply_closure(fn, undefined, $ObjVec[x, y])`.
+- Both members keep the fixed ABI with `.length` 1. An omitted comparator and an
+  explicit `undefined` behave the same, so presence does not matter here.
 

@@ -590,3 +590,13 @@ export function prepareArrayLikeDefaultJoin(ctx: CodegenContext, fctx: FunctionC
     return out;
   };
 }
+
+/**
+ * (#6912) The §7.1.17 ToString funcIdx the generic array bodies already use,
+ * for a sibling body (Array.prototype.sort's default SortCompare) that needs
+ * the same element-to-string step. Registers the shared helpers and flushes
+ * their index shifts; `undefined` off the native regime.
+ */
+export function prepareArrayLikeToString(ctx: CodegenContext, fctx: FunctionContext): number | undefined {
+  return prepareArrayLikeDeps(ctx, fctx)?.toString;
+}
