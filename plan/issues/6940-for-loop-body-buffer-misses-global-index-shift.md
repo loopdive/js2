@@ -1,7 +1,7 @@
 ---
 id: 6940
 title: "for-statement body buffer is detached while the incrementor compiles — a string-constant import added there leaves the body's module-global indices stale (Octane box2d `b2BuoyancyController.Step` reads `__argc` as `$__hole`, invalid Wasm)"
-status: done
+status: wont-fix
 sprint: current
 created: 2026-10-10
 updated: 2026-10-10
@@ -220,3 +220,12 @@ fixupModuleGlobalIndices` (walker roots, L560–L654), `context/bodies.ts`
   twin. No issue names the body buffer.
 - Open PRs: none modify `statements/loops.ts` (checked via `/pulls/N/files`).
 - Claim ledger: no claim on this id.
+
+## Closed — host lane only (2026-10-10)
+
+`wont-fix`. The project lead is sunsetting the JS host (gc) lane; only
+`--target standalone` is relevant (`.claude/memory/project_standalone_only_js_host_sunset.md`).
+This defect reproduces only on the host lane: standalone box2d is not affected,
+see "Standalone is NOT affected" above. Its fix was reverted from PR
+https://github.com/loopdive/js2/pull/6621 before merge; standalone box2d
+compile time stays with #6941.

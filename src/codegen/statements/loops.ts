@@ -941,9 +941,6 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
   // let/const declarations inside the loop body do not leak into outer scope (#817).
   compileLoopBodyWithShadows(ctx, fctx, stmt.statement);
   const bodyInstrs = fctx.body;
-  // (#6940) The body buffer is detached while the incrementor compiles (`fctx.body = incrInstrs` below);
-  // an import minted there (`M = M.nextBody` → host property-key string) must still shift its globals.
-  ctx.liveBodies.add(bodyInstrs);
 
   // Restore previous safeIndexedArrays (scoped to this loop)
   fctx.safeIndexedArrays = savedSafeIndexed;
@@ -1023,7 +1020,6 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
   // needed by the walker (their contents were spread into `loopBody`).
   ctx.liveBodies.delete(condInstrs);
   ctx.liveBodies.delete(incrInstrs);
-  ctx.liveBodies.delete(bodyInstrs);
 
   // #1589: For pre-emptively boxed `var`/outer-scope names, write the final
   // ref-cell value back to the original unboxed local so post-loop reads of
@@ -1120,7 +1116,6 @@ export function compileDoWhileStatement(ctx: CodegenContext, fctx: FunctionConte
   // Compile body — save/restore block-scoped shadows for let/const (#817).
   compileLoopBodyWithShadows(ctx, fctx, stmt.statement);
   const bodyInstrs = fctx.body;
-  ctx.liveBodies.add(bodyInstrs); // (#6940) detached while the condition compiles
 
   // Compile condition — true means continue looping
   // (#1690) Same liveBodies registration as compileForStatement: the cond
@@ -1155,7 +1150,6 @@ export function compileDoWhileStatement(ctx: CodegenContext, fctx: FunctionConte
 
   // (#1690) The cond Instr objects are now reachable via fctx.body → loop.
   ctx.liveBodies.delete(condInstrs);
-  ctx.liveBodies.delete(bodyInstrs);
 }
 
 export function compileForOfStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ForOfStatement): void {
