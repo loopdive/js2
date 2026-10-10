@@ -1550,7 +1550,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         // (#4227) §10.4.2.2 step 3 — frozen `length` blocks an index at/after it.
         ...nonWritableLengthIndexGuard(rejectionDeps, { comp: 5, i: 7, len: 8, entry: 9 }),
         // (#4227) §10.1.6.3 step 2 — a non-extensible array takes no new index.
-        ...nonExtensibleFreshIndexGuard(ctx, rejectionDeps, { recvLocalIdx: 0, i: 7, len: 8 }),
+        ...nonExtensibleFreshIndexGuard(ctx, rejectionDeps, { recvLocalIdx: 0, keyLocalIdx: 1, i: 7, len: 8 }),
         // if (i >= 0) mark numeric-companion presence (#3673) + seed-if-real-element
         { op: "local.get", index: 7 },
         { op: "i32.const", value: 0 },

@@ -14,6 +14,7 @@ import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
 import { probeCompiledType } from "./context/speculative.js";
 import { emitHoleToUndefined, holeTestInstrs, holeToUndefinedInstrs, joinEmptyElementTest } from "./array-holes.js";
 import { holeSearchReadsUndefined } from "./array/array-length-holes.js"; // (#6771 S3) indexOf skips a hole
+import { vecReceiverIdentityArm } from "./array/vec-receiver-identity.js"; // (#6880) keep receiver identity
 import { emitF64HoleToUndef, f64HolesActive, f64HoleTestInstrs, f64HoleToUndefFor } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4491 T11)
 import {
@@ -142,6 +143,7 @@ const {
   isLocalizedJoin,
 } = tls;
 import { emitFuncRefAsClosure } from "./closures/funcref-as-closure.js";
+import { callbackClosureInfo } from "./closures/closure-type-sources.js"; // (#6913)
 import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // (#3481)
 import { buildSpreadArgList, hasSpreadArgument } from "./spread-arg-list.js"; // (#5361)
 import { canBuildSpreadArgList, isTupleStructType } from "./spread-arg-list.js"; // (#5361)
@@ -2450,15 +2452,15 @@ export function compileArrayMethodCall(
       break;
     }
     case "includes":
-      // A callback capture is deliberately kept as externref even when the
-      // checker narrows it to `string[]`.  The host may hand that capture back
-      // as a proxy/raw externref whose concrete WasmGC vec type is not the
-      // statically inferred one; the native vec loop would then ref.cast and
-      // trap.  Route that dynamic receiver through the existing host method
-      // bridge, which materializes/dispatches the array without a typed cast.
-      result = receiverIsExternref
-        ? compileArrayMethodExtern(ctx, fctx, methodAccess, callExpr, "includes")
-        : compileArrayIncludes(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      // Host lane: an externref receiver (a callback capture, a host proxy) may
+      // not be the inferred vec type, so it takes the host method bridge. (#6881)
+      // The regime has no host array: that bridge's `__js_array_*` builders fail
+      // the native-first gate (eval-widened script vars land here), so it takes
+      // the native vec loop, as `at`/`indexOf` already do.
+      result =
+        receiverIsExternref && !ctx.standalone
+          ? compileArrayMethodExtern(ctx, fctx, methodAccess, callExpr, "includes")
+          : compileArrayIncludes(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "reverse":
       result = shouldUseHostArrayMethod(ctx, receiverIsExternref)
@@ -6820,7 +6822,7 @@ function setupArrayCallback(
 
   if (cbResult && (cbResult.kind === "ref" || cbResult.kind === "ref_null")) {
     closureTypeIdx = (cbResult as { typeIdx: number }).typeIdx;
-    closureInfo = ctx.closureInfoByTypeIdx.get(closureTypeIdx);
+    closureInfo = callbackClosureInfo(ctx, cbArg, closureTypeIdx); // (#6913) a literal keeps its own facts
     if (closureInfo) {
       closureTmp = allocLocal(fctx, `__arr_${tag}_clcb_${fctx.locals.length}`, cbResult);
       fctx.body.push({ op: "local.set", index: closureTmp });
@@ -6980,7 +6982,8 @@ function setupArrayLoop(
   if (receiverIsExternref && receiverType?.kind === "externref") {
     const externTmp = allocLocal(fctx, `__arr_${tag}_extern_${fctx.locals.length}`, { kind: "externref" });
     fctx.body.push({ op: "local.set", index: externTmp });
-    fctx.body.push(...buildVecFromExternref(ctx, fctx, externTmp, vecTypeIdx, { arrTypeIdx, elemType }));
+    const fresh = buildVecFromExternref(ctx, fctx, externTmp, vecTypeIdx, { arrTypeIdx, elemType });
+    fctx.body.push(...vecReceiverIdentityArm(ctx, externTmp, vecTypeIdx, tag, fresh));
     recvExternTmp = externTmp;
   }
 

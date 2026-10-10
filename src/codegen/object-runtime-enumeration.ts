@@ -70,32 +70,44 @@ export interface ObjectEnumerationHelperState {
   objVecPushIdx: number;
   objOrderedIdx: number;
   objOrderedAllIdx: number;
-  boundaryObjectKeysIdx?: number;
-  boundaryObjectForInKeysIdx?: number;
+  /** (#6882) Every "not mine — who can enumerate it?" terminal, asked in order. */
+  boundaryObjectKeysIdxs: readonly number[];
+  boundaryObjectForInKeysIdxs: readonly number[];
   FLAG_ENUMERABLE: number;
   FLAG_TOMBSTONE: number;
 }
 
+/**
+ * (#6882) One "ask, and use the answer only when it is non-null" arm per
+ * terminal (param 0 = receiver), each returning a non-null answer. A
+ * native-regime module in a JavaScript environment owns several families — the
+ * wasm peer (a struct the provider minted), the JS boundary (a host object this
+ * instance admitted), a provider's reverse hop (a carrier its consumer built) —
+ * and each answers for different values, so all are asked, in that order. A
+ * module with one family emits exactly the one arm it had.
+ */
+function nonNullAnswerArms(terminalIdxs: readonly number[], resultLocal: number): Instr[] {
+  return terminalIdxs.flatMap((funcIdx): Instr[] => [
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx },
+    { op: "local.tee", index: resultLocal },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "local.get", index: resultLocal }, { op: "return" }],
+    },
+  ]);
+}
+
 /** Non-$Object for-in snapshot: admitted JS object, or carrier bag + prototype. */
-function nonObjectForInKeysIf(ctx: CodegenContext, boundaryObjectForInKeysIdx?: number): Instr {
+function nonObjectForInKeysIf(ctx: CodegenContext, boundaryObjectForInKeysIdxs: readonly number[]): Instr {
   return {
     op: "if",
     blockType: { kind: "empty" },
     then: [
-      ...(boundaryObjectForInKeysIdx !== undefined
-        ? ([
-            { op: "local.get", index: 0 },
-            { op: "call", funcIdx: boundaryObjectForInKeysIdx },
-            { op: "local.tee", index: 10 },
-            { op: "ref.is_null" },
-            { op: "i32.eqz" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [{ op: "local.get", index: 10 }, { op: "return" }],
-            },
-          ] satisfies Instr[])
-        : []),
+      ...nonNullAnswerArms(boundaryObjectForInKeysIdxs, 10),
       ...buildBagPushKeys(ctx, { vecLocal: 7, includeNonEnum: false }),
       ...protoIndexForInPushInstrs(ctx, 0, 7, 8),
       { op: "local.get", index: 7 },
@@ -271,8 +283,8 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
     objVecPushIdx,
     objOrderedIdx,
     objOrderedAllIdx,
-    boundaryObjectKeysIdx,
-    boundaryObjectForInKeysIdx,
+    boundaryObjectKeysIdxs,
+    boundaryObjectForInKeysIdxs,
     FLAG_ENUMERABLE,
     FLAG_TOMBSTONE,
   } = s;
@@ -310,20 +322,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
         op: "if",
         blockType: { kind: "empty" },
         then: [
-          ...(boundaryObjectKeysIdx !== undefined
-            ? ([
-                { op: "local.get", index: 0 },
-                { op: "call", funcIdx: boundaryObjectKeysIdx },
-                { op: "local.tee", index: 8 },
-                { op: "ref.is_null" },
-                { op: "i32.eqz" },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [{ op: "local.get", index: 8 }, { op: "return" }],
-                },
-              ] satisfies Instr[])
-            : []),
+          ...nonNullAnswerArms(boundaryObjectKeysIdxs, 8),
           ...bagKeysTail(ctx, { vecLocal: 7, includeNonEnum: false }),
         ],
       },
@@ -390,7 +389,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
         { name: "i", type: { kind: "i32" } },
         { name: "e", type: entryRefNull },
         { name: "vec", type: { kind: "externref" } },
-        ...(boundaryObjectKeysIdx !== undefined
+        ...(boundaryObjectKeysIdxs.length > 0
           ? [{ name: "boundaryKeys", type: { kind: "externref" } as ValType }]
           : []),
       ],
@@ -466,7 +465,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       { op: "local.tee", index: 1 },
       { op: "ref.test", typeIdx: objectTypeIdx },
       { op: "i32.eqz" },
-      nonObjectForInKeysIf(ctx, boundaryObjectForInKeysIdx),
+      nonObjectForInKeysIf(ctx, boundaryObjectForInKeysIdxs),
       // cur = cast<$Object>(any)
       { op: "local.get", index: 1 },
       { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -630,7 +629,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
         { name: "vec", type: { kind: "externref" } },
         { name: "seen", type: { kind: "externref" } },
         { name: "keyExt", type: { kind: "externref" } },
-        ...(boundaryObjectForInKeysIdx !== undefined
+        ...(boundaryObjectForInKeysIdxs.length > 0
           ? [{ name: "boundaryKeys", type: { kind: "externref" } as ValType }]
           : []),
       ],

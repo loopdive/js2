@@ -33,12 +33,14 @@ import { closureObservesBindingValue, collectTransitiveCaptureNames } from "../f
 import { valTypesMatch } from "../shared.js";
 import { tryEmitNativeIteratorResultParam } from "../promise-native-iterator-result.js";
 import { materializeHoistedFunctionValueBinding } from "./funcref-as-closure.js";
+import { publishClosureSourceInfo } from "./closure-type-sources.js"; // (#6913)
 import { capturedBindingWriteTest, namesDeclaredInsideClosure } from "./closure-binding-identity.js";
 import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
 // (#4437) per-declaration `name` / §15.1.5 `length` carrier
 import { ensureFnMetaSubtype, fnMetaSlot, registerFnMetaFamily } from "../function-instance-meta.js";
 // (#4440) object-literal accessors / methods — §10.2.9 comes from the property key
 import { fnMetaSlotForMemberDecl } from "../function-instance-meta-methods.js";
+import { nestedCapturesVisibleFrom } from "../nested-function-name-scope.js"; // (#6877)
 import {
   arrowOwnLocals,
   buildCaptureFieldDef,
@@ -666,7 +668,7 @@ export function planClosureCaptures(
   // E.g. if this closure calls g() and g has nestedFuncCaptures {first, second},
   // this closure must also capture first and second so it can pass ref cells to g.
   const transitivelyRequiredNames = collectTransitiveCaptureNames(
-    ctx.nestedFuncCaptures,
+    { get: (name) => nestedCapturesVisibleFrom(ctx, name, arrow) }, // (#6877) not other modules' nested fns
     referencedNames,
     ownLocals,
     (name) => isEnclosingParameterBinding(fctx, name) && !isForwardedDeclarationCapture(ctx, fctx, arrow, name),
@@ -1488,7 +1490,7 @@ export function registerClosureBindingInfo(
   };
 
   // Always register by struct type index (for valueOf coercion and anonymous closures)
-  ctx.closureInfoByTypeIdx.set(structTypeIdx, closureInfo);
+  publishClosureSourceInfo(ctx, arrow, closureInfo); // (#6913) merged on a shared wrapper type
 
   const parent = arrow.parent;
   if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {

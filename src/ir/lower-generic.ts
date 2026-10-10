@@ -44,6 +44,7 @@
 // historically declared now live in `backend/handles.js`.
 import type { BackendEmitter, BackendI32BitwiseOp } from "./backend/emitter.js";
 import type { IrLowerResolver, IrLoweredBody, IrLoweredSignature } from "./backend/lower-contracts.js";
+import { emitStringOperation, type StringOperationContext } from "./lowering/string-operations.js";
 import type { TypeConverter } from "./backend/contract.js";
 import { type IrBackendKind, verifyIrBackendLegality } from "./backend/legality.js";
 import type { IrVecLowering } from "./backend/handles.js";
@@ -1193,6 +1194,8 @@ export function lowerIrFunctionBody<S, Slot>(
     emitInstrTree(d, out);
   };
 
+  const stringOperationContext: StringOperationContext<S> = { emitter, emitValue };
+
   const emitInstrTree = (instr: IrInstr, out: S): void => {
     switch (instr.kind) {
       case "const": {
@@ -1931,51 +1934,15 @@ export function lowerIrFunctionBody<S, Slot>(
         for (const op of dyn.emitMemberSet()) emitter.pushRaw(out, op);
         return;
       }
-      case "string.const": {
-        emitter.emitStringConst(instr.value, instr.alloc, out, instr.storage, instr.materializer);
+      case "string.const":
+      case "string.concat":
+      case "string.repeat":
+      case "string.eq":
+      case "string.len":
+      case "string.char_at":
+      case "string.char_code_at":
+        emitStringOperation(instr, stringOperationContext, out);
         return;
-      }
-      case "string.concat": {
-        emitValue(instr.lhs, out);
-        emitValue(instr.rhs, out);
-        emitter.emitStringConcat(instr.alloc, instr.concatMode ?? "immutable", out, instr.provider);
-        return;
-      }
-      case "string.repeat": {
-        emitValue(instr.value, out);
-        emitValue(instr.count, out);
-        emitter.emitStringRepeat(
-          instr.alloc,
-          instr.encodingEvidence,
-          out,
-          instr.provider,
-          instr.countedStringAppendTripCount,
-        );
-        return;
-      }
-      case "string.eq": {
-        emitValue(instr.lhs, out);
-        emitValue(instr.rhs, out);
-        emitter.emitStringEquals(instr.negate, out, instr.provider);
-        return;
-      }
-      case "string.len": {
-        emitValue(instr.value, out);
-        emitter.emitStringLength(instr.inputEncoding, out, instr.provider);
-        return;
-      }
-      case "string.char_at": {
-        emitValue(instr.value, out);
-        emitValue(instr.index, out);
-        emitter.emitStringCharAt(instr.alloc, instr.inputEncoding, out, instr.provider);
-        return;
-      }
-      case "string.char_code_at": {
-        emitValue(instr.value, out);
-        emitValue(instr.index, out);
-        emitter.emitStringCharCodeAt(instr.inputEncoding, out, instr.provider);
-        return;
-      }
       case "object.new": {
         const obj = resolver.resolveObject?.(instr.shape, instr.alloc);
         if (!obj) {

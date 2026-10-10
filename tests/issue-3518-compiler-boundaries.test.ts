@@ -783,7 +783,19 @@ describe("#3518 real compiler boundary detector", () => {
     expect(absent.exit).toBe(0);
     expect(absent.report.evidence[0]).toMatchObject({ accounted: 10, resolved: 0 });
     expect(absent.report.evidence[0].symbols.every((symbol: any) => symbol.status === "external-unbound")).toBe(true);
-    for (const move of manifest.moves.slice(0, 2)) {
+    const heldOriginalPaths = [...new Set<string>(manifest.evidence[0].symbols.map((item: any) => item.originalPath))];
+    const expectedHeldTargets: Record<string, string> = {
+      "src/codegen/prepared-async-frame-engine.ts": "src/runtime/wasmgc/async/prepared-async-frame-engine.ts",
+      "src/codegen/prepared-async-frame-adapter.ts": "src/backend/wasmgc/async/prepared-async-frame-adapter.ts",
+    };
+    expect([...heldOriginalPaths].sort()).toEqual(Object.keys(expectedHeldTargets).sort());
+    const heldMoves = heldOriginalPaths.map((originalPath) => {
+      const matches = manifest.moves.filter((move: any) => move.from === originalPath);
+      expect(matches).toHaveLength(1);
+      expect(matches[0].to).toBe(expectedHeldTargets[originalPath]);
+      return matches[0];
+    });
+    for (const move of heldMoves) {
       const symbols = manifest.evidence[0].symbols.filter((item: any) => item.originalPath === move.from);
       f.put(
         move.to,
@@ -796,7 +808,9 @@ describe("#3518 real compiler boundary detector", () => {
     expect(moved.report.evidence[0]).toMatchObject({ accounted: 10, resolved: 0 });
     expect(moved.report.evidence[0].symbols.every((symbol: any) => symbol.status === "bound-unresolved")).toBe(true);
     expect(f.run().exit).not.toBe(0);
-    f.put(manifest.moves[0].to, "export {};");
+    const engineMove = heldMoves.find((move: any) => move.from === "src/codegen/prepared-async-frame-engine.ts");
+    expect(engineMove).toBeDefined();
+    f.put(engineMove.to, "export {};");
     expect(codes(f.run("inventory"))).toContain("evidence-symbol-missing");
     f.policy.evidence[0].status = "resolved";
     expect(codes(f.run("inventory"))).toContain("evidence-policy");
