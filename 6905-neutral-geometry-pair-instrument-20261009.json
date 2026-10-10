@@ -2,10 +2,11 @@
   "id": "6905",
   "slice": "neutral-geometry-pair-instrument-20261009",
   "assignee": "ttraenkler/codex-linear-b-geometry-pair-sol61-20261009",
-  "requested_by": "ttraenkler/codex-linear-b-geometry-pair-sol61-20261009",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6905-neutral-geometry-import-20261009",
   "claimed_at": "2026-10-09T09:55:12Z",
-  "updated_at": "2026-10-09T09:55:12Z",
-  "write_id": "90121-76n5l102"
+  "updated_at": "2026-10-10T23:38:29Z",
+  "write_id": "11867-xk17vp3i",
+  "released_at": "2026-10-10T23:38:29Z"
 }
