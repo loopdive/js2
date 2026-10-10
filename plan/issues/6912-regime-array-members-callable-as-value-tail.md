@@ -20,7 +20,7 @@ loc-budget-allow:
   # 2026-10-07 (#6912): routing lines for the member closure bodies; the bodies live in src/codegen/array/
   - src/codegen/array-object-proto.ts
 import-cycles-allow:
-  - largestSccSize: 701 # 2026-10-07, re-based on main 699 2026-10-09 (#6912): array/array-search-proto-value.ts (PR A) and array/array-generic-value-bodies.ts (PR B) join the codegen SCC (it is called from array-object-proto.ts and uses shared.js coerceType/ensureLateImport, like array-fill-proto-value.ts); the pure scan core array/array-search-core.ts stays outside it
+  - largestSccSize: 702 # 2026-10-07, re-based on main 699 2026-10-09 (#6912): array/array-search-proto-value.ts (PR A), array/array-generic-value-bodies.ts (PR B) and array/array-copy-methods-value.ts (PR C) join the codegen SCC (called from array-object-proto.ts, using shared.js coerceType/ensureLateImport, like array-fill-proto-value.ts); the pure scan core array/array-search-core.ts stays outside it
 ---
 
 # #6912 — finish the array-member closure table
@@ -124,4 +124,25 @@ two or three members is fine; `.length` from `nativeClosureMeta`.
   typed vec, a different receiver class, and there is no array-like borrow
   arm for these members. The closure is the only array-like lowering.
 - Default `gc` / `wasi` probe sha256 identical.
+
+### PR C — `toReversed`, `with`, `toSpliced`, `copyWithin` (2026-10-09)
+
+- `src/codegen/array/array-copy-methods-value.ts`: the ES2023
+  change-array-by-copy members read the array-like receiver through
+  `__extern_length` / `__extern_get_idx` and build the result as the native
+  `$ObjVec` (`__objvec_new` / `__objvec_push`), the same result carrier as the
+  `slice` / `splice` producers. ArrayCreate's length check (RangeError above
+  2^32-1) runs before any element is read. Arguments are converted by the
+  coercion engine.
+- `with` / `toSpliced` / `copyWithin` take the variadic ABI. In `toSpliced`, a
+  missing start means skip 0, start alone means skip to the end, and an explicit
+  `undefined` skipCount is present (it converts to 0). A new length above
+  2^53-1 is a TypeError. `VariadicArgs` gained `argAtDynamic` for the items loop.
+- `copyWithin` delegates to the existing `__arrprod_copyWithin(recv, args)`
+  helper (#6651 H6). That helper is the one shared core for this member; the
+  Proxy-receiver borrow already routes through it.
+- `toReversed` / `toSpliced` get their spec `.length` (0 / 2) in
+  `PROTO_METHOD_LENGTH`.
+- `toSorted` / `sort` are not in this PR: they need a comparator call and a sort
+  on the array-like, which is a separate slice.
 
