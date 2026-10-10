@@ -2,10 +2,11 @@
   "id": "6892",
   "slice": "linear-repeat-paired-replay-20261007",
   "assignee": "ttraenkler/codex-linear-b-repeat-replay-sol61-20261007",
-  "requested_by": "ttraenkler/codex-linear-b-repeat-replay-sol61-20261007",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6892-repeat-replay-20261007",
   "claimed_at": "2026-10-07T12:32:14Z",
-  "updated_at": "2026-10-07T12:32:14Z",
-  "write_id": "4302-9daf6sz0"
+  "updated_at": "2026-10-10T23:35:49Z",
+  "write_id": "93857-bvc5rytv",
+  "released_at": "2026-10-10T23:35:49Z"
 }
