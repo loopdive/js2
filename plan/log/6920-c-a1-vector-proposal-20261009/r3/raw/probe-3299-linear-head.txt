@@ -1,0 +1,12 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ .tmp/probe-3299-linear.test.ts > #6920 r3 probe — edited 3299 linear fixture without Porffor > linear-Wasm half of the optional proof runs with the genuine i32 handle and verbatim locals 65ms
+ ✓ .tmp/probe-3299-linear.test.ts > #3299 shared heap/layout plan > binds Porffor Alloc/Load/Store exclusively to planned arena layouts 20ms
+ ↓ .tmp/probe-3299-linear.test.ts > #3299 shared heap/layout plan > executes the same typed SSA through linear-Wasm and Porffor-C with JS semantics
+
+ Test Files  1 passed (1)
+      Tests  2 passed | 1 skipped (3)
+   Start at  21:59:13
+   Duration  31.98s (transform 22.41s, setup 0ms, collect 31.29s, tests 87ms, environment 0ms, prepare 86ms)
+

@@ -1,0 +1,21 @@
+#!/bin/bash
+# usage: run-list-r2.sh <outdir> <listfile>
+# Runs each test file with the verbose reporter; writes <outdir>/<basename>.txt,
+# <outdir>/summary.txt (exit + Tests line) and <outdir>/failing-tests.txt.
+OUT=$1
+L=$2
+cd /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+mkdir -p "$OUT"
+: > "$OUT/summary.txt"
+for t in $(cat "$L"); do
+  b=$(basename "$t" .test.ts)
+  timeout 900 npx vitest run "$t" --reporter=verbose > "$OUT/$b.txt" 2>&1
+  ec=$?
+  line=$(grep -E "^\s+Tests\s" "$OUT/$b.txt" | tail -1)
+  echo "$b exit=$ec $line" >> "$OUT/summary.txt"
+done
+for f in "$OUT"/*.txt; do
+  case "$f" in */summary.txt|*/failing-tests.txt) continue ;; esac
+  sed 's/\x1b\[[0-9;]*m//g' "$f" | grep -E "^ FAIL " | sed 's/ [0-9]*ms$//'
+done | sort -u > "$OUT/failing-tests.txt"
+echo DONE >> "$OUT/summary.txt"

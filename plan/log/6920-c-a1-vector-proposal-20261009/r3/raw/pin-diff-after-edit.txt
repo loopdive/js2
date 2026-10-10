@@ -1,0 +1,9 @@
+pinned modules=34 actual=34 equal=True
+pinned edges=38 actual=38 equal=True
+pinned generic out-edge count=14 actual=14
+modules only in actual: []
+modules only in pin: []
+edges only in actual: []
+edges only in pin: []
+actual modules sorted: True
+actual edge index 6: src/ir/lower-generic.ts -> src/ir/backend/vector-representation.ts; previous: src/ir/core/types.ts -> src/ir/core/binding-key-primitives.ts; next: src/ir/lower-generic.ts -> src/ir/backend/wasm-int32-coercion.ts

@@ -1,0 +1,21 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-4550-linear-ir-census.test.ts > #4550 linear IR coverage census > keeps its browser-safe predicate default-off and exact 2ms
+ ✓ tests/issue-4550-linear-ir-census.test.ts > #4550 linear IR coverage census > publishes a nonempty exact single-source denominator with compiled and rejected owners 674ms
+ ✓ tests/issue-4550-linear-ir-census.test.ts > #4550 linear IR coverage census > is byte/error/export/runtime neutral for single and multi-source compiles 138ms
+ ✓ tests/issue-4550-linear-ir-census.test.ts > #4550 linear IR coverage census > observes overlay-disabled direct mode without reserving or emitting IR runtime bytes 23ms
+ ✓ tests/issue-4550-linear-ir-census.test.ts > #4550 linear IR coverage census > keeps colliding display labels distinct by source and UnitId 9ms
+ ✓ tests/issue-4550-linear-ir-census.test.ts > #4550 linear IR coverage census > prevents a failed pre-generator compile from inheriting prior diagnostics 20ms
+ ✓ tests/issue-4550-linear-ir-census.test.ts > #4550 linear IR coverage census > retains returned failure diagnostics while admitting only its exact completed generation 72ms
+ ✓ tests/issue-4550-linear-ir-census.test.ts > #4550 linear IR coverage census > retains partial exact evidence and the full denominator on a late generation failure 9ms
+ ✓ tests/issue-4550-linear-ir-census.test.ts > #4550 linear IR coverage census > authenticates transactions and rejects missing, duplicate, unknown, and cross-population evidence 11ms
+ ✓ tests/issue-4550-linear-ir-census.test.ts > #4550 linear IR coverage census > rejects source, entry, kind, ordinal, count, and serializable-row mutations 4ms
+ ✓ tests/issue-4550-linear-ir-census.test.ts > #4550 linear IR coverage census > canonicalizes input order, property order, and excludes raw ordinals from persistent digests 4ms
+ ✓ tests/issue-4550-linear-ir-census.test.ts > #4550 linear IR coverage census > keeps the committed baseline byte-exact and refuses implicit missing/malformed seeding 1ms
+
+ Test Files  1 passed (1)
+      Tests  12 passed (12)
+   Start at  22:18:51
+   Duration  32.54s (transform 21.67s, setup 0ms, collect 31.06s, tests 969ms, environment 0ms, prepare 93ms)
+

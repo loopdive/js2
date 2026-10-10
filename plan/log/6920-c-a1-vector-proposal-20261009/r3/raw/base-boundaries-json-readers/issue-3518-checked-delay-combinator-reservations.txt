@@ -1,0 +1,15 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-checked-delay-combinator-reservations.test.ts > preserves the existing planner exports as direct async-resource function identities 3ms
+ ✓ tests/issue-3518-checked-delay-combinator-reservations.test.ts > tracks relocated source admission as explicit mixed debt without clean activation 5ms
+ ✓ tests/issue-3518-checked-delay-combinator-reservations.test.ts > checks real source reservations before allocation, decoded=false, cached=false 9463ms
+ ✓ tests/issue-3518-checked-delay-combinator-reservations.test.ts > checks real source reservations before allocation, decoded=false, cached=true 8812ms
+ ✓ tests/issue-3518-checked-delay-combinator-reservations.test.ts > checks real source reservations before allocation, decoded=true, cached=false 8563ms
+ ✓ tests/issue-3518-checked-delay-combinator-reservations.test.ts > checks real source reservations before allocation, decoded=true, cached=true 8613ms
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  22:45:34
+   Duration  62.47s (transform 18.89s, setup 0ms, collect 26.52s, tests 35.46s, environment 0ms, prepare 69ms)
+
