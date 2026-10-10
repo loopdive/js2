@@ -2,10 +2,11 @@
   "id": "6865",
   "slice": "session-a-b-contract-handoff-publication-20261008",
   "assignee": "ttraenkler/codex-ir-b-contract-docs-sol61-20261008",
-  "requested_by": "ttraenkler/codex-ir-b-contract-docs-sol61-20261008",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/6865-session-a-b-contract-handoff-20261008",
   "claimed_at": "2026-10-08T13:43:49Z",
-  "updated_at": "2026-10-08T13:43:49Z",
-  "write_id": "40378-ror9t78j"
+  "updated_at": "2026-10-10T23:34:36Z",
+  "write_id": "85354-pd37ynte",
+  "released_at": "2026-10-10T23:34:36Z"
 }
