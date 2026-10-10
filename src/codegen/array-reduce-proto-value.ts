@@ -63,24 +63,65 @@ export function emitArrayReduceProtoMemberBody(
   member: string,
 ): ValType | undefined {
   if (!isArrayReduceVariadicMember(ctx, member)) return undefined;
-  const argsParam = fctx.params[2]?.type;
-  if (!argsParam || (argsParam.kind !== "ref" && argsParam.kind !== "ref_null")) return undefined;
-  const argsArrTypeIdx = getArrTypeIdxFromVec(ctx, argsParam.typeIdx);
-  const argsArrDef = ctx.mod.types[argsArrTypeIdx];
-  if (argsArrDef?.kind !== "array" || argsArrDef.element.kind !== "externref") return undefined;
   // Every late-import-adding ensure BEFORE the first body instruction.
+  if (variadicArgsVecType(ctx, fctx) === undefined) return undefined;
   const hofIdx = ensureNativeArrayHof(ctx, member);
   if (hofIdx === undefined) return undefined;
   const undef = canonicalUndefinedExternInstrs(ctx);
 
   emitArrayProtoHofReceiverGuard(ctx, fctx, member);
+  const { argsLen, argAt } = emitVariadicArgsUnpack(ctx, fctx, "reduce")!;
+  fctx.body.push({ op: "local.get", index: 1 }); // receiver (`this`)
+  // An omitted callback is `undefined`, so the helper's IsCallable gate throws.
+  fctx.body.push(...argAt(0, undef));
+  fctx.body.push(...argAt(1, [{ op: "ref.null.extern" }])); // init (unused when !hasInit)
+  // hasInit = argumentsCount >= 2 — presence, not undefined-ness.
+  fctx.body.push({ op: "local.get", index: argsLen }, { op: "i32.const", value: 1 }, { op: "i32.gt_s" });
+  fctx.body.push({ op: "call", funcIdx: hofIdx });
+  return { kind: "externref" };
+}
 
-  const argsLen = allocLocal(fctx, `__reduce_args_len_${fctx.locals.length}`, { kind: "i32" });
-  const argsData = allocLocal(fctx, `__reduce_args_data_${fctx.locals.length}`, {
+/** The packed `(ref null $vec_externref)` argument vector at closure param 2, if the ABI has one. */
+function variadicArgsVecType(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+): { vecTypeIdx: number; arrTypeIdx: number } | undefined {
+  const argsParam = fctx.params[2]?.type;
+  if (!argsParam || (argsParam.kind !== "ref" && argsParam.kind !== "ref_null")) return undefined;
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, argsParam.typeIdx);
+  const argsArrDef = ctx.mod.types[arrTypeIdx];
+  if (argsArrDef?.kind !== "array" || argsArrDef.element.kind !== "externref") return undefined;
+  return { vecTypeIdx: argsParam.typeIdx, arrTypeIdx };
+}
+
+/** The unpacked variadic argument vector: its length local and an `args[i]`-or-`absent` reader. */
+export interface VariadicArgs {
+  /** i32 local holding the argument COUNT (0 for a null vector). */
+  readonly argsLen: number;
+  /** `args[i]` when `argc > i`, else the `absent` instructions; leaves an externref. */
+  readonly argAt: (i: number, absent: Instr[]) => Instr[];
+}
+
+/**
+ * (#6709, shared by #6912) Unpack the receiver-aware variadic closure ABI's
+ * argument vector (param 2) into a count local + data local. Presence-sensitive
+ * arguments (reduce's initialValue, lastIndexOf's fromIndex, ...) test the
+ * count, never undefined-ness. Returns undefined, emitting nothing, when
+ * param 2 is not a packed externref vector.
+ */
+export function emitVariadicArgsUnpack(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  prefix: string,
+): VariadicArgs | undefined {
+  const vec = variadicArgsVecType(ctx, fctx);
+  if (vec === undefined) return undefined;
+  const { vecTypeIdx, arrTypeIdx: argsArrTypeIdx } = vec;
+  const argsLen = allocLocal(fctx, `__${prefix}_args_len_${fctx.locals.length}`, { kind: "i32" });
+  const argsData = allocLocal(fctx, `__${prefix}_args_data_${fctx.locals.length}`, {
     kind: "ref_null",
     typeIdx: argsArrTypeIdx,
   });
-  const vecTypeIdx = argsParam.typeIdx;
   // argsLen = vec == null ? 0 : vec.length ; argsData = vec.data
   fctx.body.push(
     { op: "local.get", index: 2 },
@@ -117,12 +158,5 @@ export function emitArrayReduceProtoMemberBody(
       else: absent,
     },
   ];
-  fctx.body.push({ op: "local.get", index: 1 }); // receiver (`this`)
-  // An omitted callback is `undefined`, so the helper's IsCallable gate throws.
-  fctx.body.push(...argAt(0, undef));
-  fctx.body.push(...argAt(1, [{ op: "ref.null.extern" }])); // init (unused when !hasInit)
-  // hasInit = argumentsCount >= 2 — presence, not undefined-ness.
-  fctx.body.push({ op: "local.get", index: argsLen }, { op: "i32.const", value: 1 }, { op: "i32.gt_s" });
-  fctx.body.push({ op: "call", funcIdx: hofIdx });
-  return { kind: "externref" };
+  return { argsLen, argAt };
 }

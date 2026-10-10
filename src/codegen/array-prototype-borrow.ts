@@ -38,6 +38,11 @@ import { emitArrayLikeHofArm } from "./array-like-hof-arms.js";
 import { compileArrayConcatNativeSpecFromExprs } from "./array-concat-spec.js"; // (#5145)
 import { compileArrayLikeCopyWithinCall, compileProxyReceiverArrayProtoCall } from "./array-proxy-receiver.js"; // (#6651 H6, #6771 S1)
 import { arrayLikeLengthLimitGuard } from "./proxy-array-like.js"; // (#6651 H6)
+import {
+  arraySearchDefaultStartInstrs,
+  arraySearchFromIndexClampInstrs,
+  arraySearchLoopInstrs,
+} from "./array/array-search-core.js"; // (#6912)
 
 /** Methods supported by the array-like (externref receiver) path.
  * NOTE: map/filter/reduce/reduceRight are excluded because:
@@ -1014,106 +1019,13 @@ function compileArrayLikePrototypeSearch(
     }
     if (argType === null) {
       // Failed to compile fromIndex; treat as 0 (forward) or len-1 (backward).
-      if (isLast) {
-        fctx.body.push({ op: "local.get", index: lenTmp });
-        fctx.body.push({ op: "f64.const", value: 1 });
-        fctx.body.push({ op: "f64.sub" });
-      } else {
-        fctx.body.push({ op: "f64.const", value: 0 });
-      }
-      fctx.body.push({ op: "local.set", index: iTmp });
+      fctx.body.push(...arraySearchDefaultStartInstrs(isLast, iTmp, lenTmp));
     } else {
-      // NaN → 0 per spec ToIntegerOrInfinity. f64.ne(x, x) detects NaN.
-      // Stack: [argType_f64]. tee to iTmp, then check NaN.
-      fctx.body.push({ op: "local.tee", index: iTmp });
-      fctx.body.push({ op: "local.get", index: iTmp });
-      fctx.body.push({ op: "f64.ne" });
-      fctx.body.push({
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "f64.const", value: 0 },
-          { op: "local.set", index: iTmp },
-        ],
-      });
-
-      // Spec: ToIntegerOrInfinity truncates toward 0 for finite values; ±Infinity
-      // and NaN are kept as-is (NaN handled above as 0). f64.trunc gives toward-0
-      // truncation; preserves ±Infinity.
-      fctx.body.push({ op: "local.get", index: iTmp });
-      fctx.body.push({ op: "f64.trunc" });
-      fctx.body.push({ op: "local.set", index: iTmp });
-
-      if (isLast) {
-        // If negative, k = len + n. Otherwise k = min(n, len - 1).
-        fctx.body.push({ op: "local.get", index: iTmp });
-        fctx.body.push({ op: "f64.const", value: 0 });
-        fctx.body.push({ op: "f64.lt" });
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "local.get", index: lenTmp },
-            { op: "local.get", index: iTmp },
-            { op: "f64.add" },
-            { op: "local.set", index: iTmp },
-          ],
-          else: [
-            // n >= 0: k = min(n, len - 1)
-            { op: "local.get", index: iTmp },
-            { op: "local.get", index: lenTmp },
-            { op: "f64.const", value: 1 },
-            { op: "f64.sub" },
-            { op: "f64.gt" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                { op: "local.get", index: lenTmp },
-                { op: "f64.const", value: 1 },
-                { op: "f64.sub" },
-                { op: "local.set", index: iTmp },
-              ],
-            },
-          ],
-        });
-      } else {
-        // Forward: if negative, k = max(len + n, 0)
-        fctx.body.push({ op: "local.get", index: iTmp });
-        fctx.body.push({ op: "f64.const", value: 0 });
-        fctx.body.push({ op: "f64.lt" });
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "local.get", index: lenTmp },
-            { op: "local.get", index: iTmp },
-            { op: "f64.add" },
-            { op: "local.tee", index: iTmp },
-            { op: "f64.const", value: 0 },
-            { op: "f64.lt" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                { op: "f64.const", value: 0 },
-                { op: "local.set", index: iTmp },
-              ],
-            },
-          ],
-        });
-      }
+      fctx.body.push(...arraySearchFromIndexClampInstrs(isLast, iTmp, lenTmp)); // (#6912) shared core
     }
   } else {
     // No fromIndex provided: default 0 (forward) or len-1 (backward).
-    if (isLast) {
-      fctx.body.push({ op: "local.get", index: lenTmp });
-      fctx.body.push({ op: "f64.const", value: 1 });
-      fctx.body.push({ op: "f64.sub" });
-    } else {
-      fctx.body.push({ op: "f64.const", value: 0 });
-    }
-    fctx.body.push({ op: "local.set", index: iTmp });
+    fctx.body.push(...arraySearchDefaultStartInstrs(isLast, iTmp, lenTmp));
   }
 
   // #16 — re-resolve the loop helpers from funcMap: compiling the receiver,
@@ -1133,123 +1045,22 @@ function compileArrayLikePrototypeSearch(
       : "__host_eq";
   const cmpFnNow = ctx.funcMap.get(cmpFnName) ?? cmpFn;
 
-  // ── Loop body ────────────────────────────────────────────────────
-  // Outer block: "exit on found".
-  // Inner loop: forward (i++) or backward (i--).
-  // Each iteration:
-  //   1. Loop-exit guard: forward i >= len → break; backward i < 0 → break.
-  //   2. For includes: skip the HasProperty gate; spec uses Get. For
-  //      indexOf/lastIndexOf: gate on __extern_has_idx, missing → skip.
-  //   3. Load element via __extern_get_idx, compare via __host_eq /
-  //      __same_value_zero, on match store result and break.
-  //   4. Increment / decrement index, branch back to loop start.
-
-  // Loop exit guard (f64 indices)
-  const loopExit: Instr[] = isLast
-    ? [{ op: "local.get", index: iTmp }, { op: "f64.const", value: 0 }, { op: "f64.lt" }, { op: "br_if", depth: 1 }]
-    : [
-        { op: "local.get", index: iTmp },
-        { op: "local.get", index: lenTmp },
-        { op: "f64.ge" },
-        { op: "br_if", depth: 1 },
-      ];
-
-  // HasProperty gate (only for indexOf/lastIndexOf) — pass f64 index directly.
-  const hasIdxCheck: Instr[] = [
-    { op: "local.get", index: receiverTmp },
-    { op: "local.get", index: iTmp },
-    { op: "call", funcIdx: hasIdxFnNow },
-  ];
-
-  // Element compare: leaves i32 (0/1) on the stack. Pass f64 index directly.
-  const compareInstrs: Instr[] = [
-    { op: "local.get", index: receiverTmp },
-    { op: "local.get", index: iTmp },
-    { op: "call", funcIdx: getIdxFnNow },
-    { op: "local.get", index: searchTmp },
-    { op: "call", funcIdx: cmpFnNow },
-  ];
-
-  // On-match: write result + break the outer block (depth 3 from inside the
-  // gated `if` body — escape `if` (depth 1) → `loop` (depth 2) → outer block).
-  const onMatchDepthGated = 3;
-  const onMatchDepthUngated = 2;
-  const onMatchInstrs = (depth: number): Instr[] =>
-    isIncludes
-      ? [
-          { op: "i32.const", value: 1 },
-          { op: "local.set", index: resTmp },
-          { op: "br", depth },
-        ]
-      : [
-          // f64 index goes straight to f64 result (no conversion needed).
-          { op: "local.get", index: iTmp },
-          { op: "local.set", index: resTmp },
-          { op: "br", depth },
-        ];
-
-  // Step (i++ / i--) using f64 arithmetic.
-  const stepInstr: Instr[] = isLast
-    ? [
-        { op: "local.get", index: iTmp },
-        { op: "f64.const", value: 1 },
-        { op: "f64.sub" },
-        { op: "local.set", index: iTmp },
-        { op: "br", depth: 0 },
-      ]
-    : [
-        { op: "local.get", index: iTmp },
-        { op: "f64.const", value: 1 },
-        { op: "f64.add" },
-        { op: "local.set", index: iTmp },
-        { op: "br", depth: 0 },
-      ];
-
-  // Per-iteration core (without HasProperty gate)
-  const matchAndBreakInner: Instr[] = [
-    ...compareInstrs,
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: onMatchInstrs(onMatchDepthGated),
-    },
-  ];
-
-  const matchAndBreakUngated: Instr[] = [
-    ...compareInstrs,
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: onMatchInstrs(onMatchDepthUngated),
-    },
-  ];
-
-  // For indexOf/lastIndexOf: gate on HasProperty.
-  // For includes: spec uses Get (visits every index up to len, missing → undefined).
-  const iterationCore: Instr[] = isIncludes
-    ? matchAndBreakUngated
-    : [
-        ...hasIdxCheck,
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: matchAndBreakInner,
-        },
-      ];
-
-  fctx.body.push({
-    op: "block",
-    blockType: { kind: "empty" },
-    body: [
-      {
-        op: "loop",
-        blockType: { kind: "empty" },
-        body: [...loopExit, ...iterationCore, ...stepInstr],
-      },
-    ],
-  });
-
-  fctx.body.push({ op: "local.get", index: resTmp });
+  // (#6912) The scan is the shared AST-free core — the callable-VALUE closure
+  // body runs the same instructions.
+  fctx.body.push(
+    ...arraySearchLoopInstrs({
+      isLast,
+      isIncludes,
+      receiverTmp,
+      lenTmp,
+      searchTmp,
+      iTmp,
+      resTmp,
+      getIdx: getIdxFnNow,
+      hasIdx: hasIdxFnNow,
+      cmp: cmpFnNow,
+    }),
+  );
   return isIncludes ? { kind: "i32" } : { kind: "f64" };
 }
 

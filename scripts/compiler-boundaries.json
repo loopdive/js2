@@ -3160,6 +3160,30 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/array/array-search-core.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Pure instruction builders for the array-like search scan; move to the backend once the late-import funcIdx resolution is a backend service."
+    },
+    {
+      "path": "src/codegen/array/array-search-proto-value.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate context-bound argument-vector unpacking and late-import registration from the shared array-like search core."
+    },
+    {
+      "path": "src/codegen/array/array-generic-value-bodies.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate context-bound late-import registration from the reusable array-like pop/shift/toString body construction."
+    },
+    {
       "path": "src/codegen/array/array-fill-proto-value.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
