@@ -1,12 +1,11 @@
 {
   "id": "6899",
   "assignee": "ttraenkler/codex-linear-b-slice-coordination-20261007",
-  "requested_by": "ttraenkler/codex-linear-b-slice-coordination-20261007",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/codex-ir-session-b-20261011-01a12827",
+  "status": "released",
   "branch": "codex/linear-string-slice-20261007",
-  "reserved_at": "2026-10-07T13:08:16Z",
   "claimed_at": "2026-10-07T13:08:16Z",
-  "updated_at": "2026-10-07T13:08:16Z",
-  "write_id": "74445-tymvyywk",
-  "pr_scan": "ok"
+  "updated_at": "2026-10-10T23:37:28Z",
+  "write_id": "7279-w19rcumu",
+  "released_at": "2026-10-10T23:37:28Z"
 }
