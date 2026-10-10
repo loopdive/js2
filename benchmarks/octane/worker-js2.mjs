@@ -27,10 +27,15 @@ import {
 import { buildDriver } from "./driver.mjs";
 import { MANIFEST, REPO_ROOT } from "./fetch.mjs";
 
+// Octane sources are classic Scripts (sloppy mode): `inferModuleStrictArguments:
+// false` keeps the compiler from treating the driver as a strict module (#6937).
+// Standalone links no runtime-eval provider, so `runtimeEvalProvider: false` makes
+// eval/Function refuse in-module instead of importing the interpreter.
+const SCRIPT_GOAL = { inferModuleStrictArguments: false };
 const LANE_OPTIONS = {
-  gc: {},
-  standalone: { target: "standalone" },
-  linear: { target: "linear" },
+  gc: { ...SCRIPT_GOAL },
+  standalone: { target: "standalone", runtimeEvalProvider: false, ...SCRIPT_GOAL },
+  linear: { target: "linear", ...SCRIPT_GOAL },
 };
 
 const args = parseWorkerArgs();
