@@ -1,7 +1,7 @@
 ---
 id: 6938
 title: "Octane richards: `next.link = this` throws/traps on a non-null receiver — a JSDoc `@param {Packet}` on a function declaration mints a phantom `__anon_N` struct for the fnctor instance type, and the member-store path pins to it"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-10-10
 updated: 2026-10-10
@@ -14,6 +14,15 @@ area: compiler
 language_feature: objects, compiler-internals
 goal: core-semantics
 related: [874, 4155, 1712, 2071, 1058, 2084, 2660]
+loc-budget-allow:
+  # 2026-10-10 (#6938): +9 lines in resolveStructName — the fnctor-instance
+  # lockstep answer (reserved `__fnctor_<Name>` struct or dynamic); see
+  # Implementation Notes. No smaller placement keeps it beside the anon lookup.
+  - src/codegen/property-access.ts
+func-budget-allow:
+  # 2026-10-10 (#6938): +2 lines — the registration guard that stops the phantom
+  # `__anon_N` struct (plan step 2). resolveWasmType shrank by 8 in the same change.
+  - src/codegen/index.ts::ensureStructForType
 origin: "2026-10-10 — Octane triage (Session C). richards.js is the first Octane benchmark that compiles but does not run on js2."
 ---
 
@@ -188,6 +197,54 @@ code for anything that is not a fnctor instance type.
   `node --import tsx .tmp/octane-probe.mjs richards` on gc and standalone runs
   `runRichards()` — the benchmark's own `queueCount`/`holdCount` check throws
   on a wrong result, so a normal return is the oracle.
+
+## Implementation Notes (2026-10-10, senior-dev, WIP — NOT merge-ready)
+
+Plan steps 1-2 implemented as written (`isFnctorInstanceType` in
+fnctor-instance-names.ts shared by `resolveWasmType` and `ensureStructForType`,
+which now never registers a fnctor instance type). Evidence:
+`plan/log/6938-evidence/*.txt`.
+
+**Deviation in step 3 (`resolveStructName`).** The literal plan (decline → no
+struct) regressed standalone: the phantom `__anon_N` was what routed member
+CALLS on an unpinned approved-standalone fnctor receiver into
+`compileCallablePropertyCall`'s #1712 dynamic dispatch. Without any struct name
+the call falls to the graceful tail (`call-tail-dispatch.ts`) and answers
+undefined. Measured: `.tmp/6938/r0c.js` (richards with `{*}` on the two
+`{Packet}` decls) base `1/1` → plan-literal standalone `TypeError … markAsSuspended`;
+minimal `this.s.suspend()` with `/** @param {Sched} s */` base 11 → 0. The same
+graceful-tail defect already exists without any annotation
+(`this.s = new Sched(); this.s.suspend()` → 0 on base standalone).
+
+So step 3 answers in lockstep with `resolveWasmType` instead: a fnctor instance
+type resolves to the struct `resolveWasmType` lowers it to (reserved
+`__fnctor_<Name>` for an approved standalone fnctor; none on gc/non-approved).
+
+**Open — why this is not merge-ready:**
+
+1. Regression vs base (standalone): `tests/issue-3719-new-assigned-to-binding.test.ts`
+   "reads a prototype method as a value" (`var p; p = new Q(); p.inc ? 1 : 0` → 0).
+   With a `__fnctor_Q` name, the property-GET path in
+   `property-access-dispatch.ts` (~4704, the "auto-register missing field" arm)
+   ADDS an `inc` field to `$__fnctor_Q` and reads its null default. Pinned
+   locals never reach that arm because `carrierNameForAccess` only names the
+   carrier for an existing field. Probe: excluding non-`this` `__fnctor_*`
+   receivers from that arm (the #2071 `foreignReturnReceiver` pattern) fixes it
+   with no other 3719 change — but that file is outside this issue's scope.
+2. Octane richards standalone still fails after the store fix:
+   `TypeError: called value is not a function` at `HandlerTask.prototype.run`
+   `packet.addTo(this.v2)`. Pre-existing and independent of this change
+   (minimal `.tmp/6938/m5.js` fails identically on base): with
+   `@param {Packet}` consumers every `new Packet` site classifies `keep-typed`
+   in the fnctor escape gate, so Packet is not approved and its prototype
+   methods are never compiled, but the instances still reach an untyped
+   `packet.addTo()`. Needs its own issue (escape-gate soundness, #4261 family).
+
+Results (base → head): r11 throw/throw → 2/2; r15 throw/throw → 3/3; richards
+gc throw → passes, standalone null-deref → #2 above. Related tests (238 files
+mentioning fnctor/anonTypeMap/ensureStructForType/1058): +4 head-only passes
+(#2608 ×3, #5162 ×1), −1 (#3719 above); #5195 skips are test262-file
+existence (`skipIf`), not code. Equivalence gate green (1748 pass, 22 known).
 
 ## Acceptance criteria
 
