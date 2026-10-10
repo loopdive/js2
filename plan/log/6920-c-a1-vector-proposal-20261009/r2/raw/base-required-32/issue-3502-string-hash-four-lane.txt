@@ -1,0 +1,12 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3502-string-hash-four-lane.test.ts > #3502 untouched string-hash four-lane acceptance > matches Node through JS2 WasmGC and shared linear Wasm 5ms
+ ✓ tests/issue-3502-string-hash-four-lane.test.ts > #3502 untouched string-hash four-lane acceptance > preserves ASCII bounds, NaN, and omitted-index semantics through both Wasm lanes 0ms
+ ↓ tests/issue-3502-string-hash-four-lane.test.ts > #3502 untouched string-hash four-lane acceptance > matches all three lanes in native Porffor C under ASan/UBSan
+
+ Test Files  1 passed (1)
+      Tests  2 passed | 1 skipped (3)
+   Start at  20:05:55
+   Duration  35.34s (transform 23.66s, setup 0ms, collect 33.39s, tests 1.37s, environment 0ms, prepare 101ms)
+

@@ -1,0 +1,35 @@
+[STARTED] Backing up original state...
+[COMPLETED] Backed up original state in git stash (cdee8d51)
+[STARTED] Running tasks for staged files...
+[STARTED] package.json — 16 files
+[STARTED] *.{ts,js,mjs} — 16 files
+[STARTED] *.json — 0 files
+[SKIPPED] *.json — no files
+[STARTED] prettier --write
+[COMPLETED] prettier --write
+[STARTED] biome lint --diagnostic-level=error --max-diagnostics=none --no-errors-on-unmatched
+[COMPLETED] biome lint --diagnostic-level=error --max-diagnostics=none --no-errors-on-unmatched
+[COMPLETED] *.{ts,js,mjs} — 16 files
+[COMPLETED] package.json — 16 files
+[COMPLETED] Running tasks for staged files...
+[STARTED] Applying modifications from tasks...
+[COMPLETED] Applying modifications from tasks...
+[STARTED] Cleaning up temporary files...
+[COMPLETED] Cleaning up temporary files...
+
+> @loopdive/js2@0.71.0 check:loc-budget /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+> node scripts/check-loc-budget.mjs
+
+
+LOC budget gate: OK — no unallowed growth in 15 changed src file(s) (base: merge-base(origin), net +253 LOC).
+
+> @loopdive/js2@0.71.0 check:func-budget /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+> node scripts/check-func-budget.mjs
+
+
+Function budget gate: OK — no unallowed growth in 15 changed src file(s) (base: merge-base(origin)).
+pre-commit: fast gates passed (lint-staged + LOC/function budgets); slow checks skipped (SKIP_SLOW_PRECOMMIT=1) — CI still runs them
+[worktree-agent-a774506d6593a2d93 5f77adb3] refactor(ir): #6920 generic vector representation contract (private A-C1 proposal)
+ 16 files changed, 1076 insertions(+), 141 deletions(-)
+ create mode 100644 src/ir/backend/vector-representation.ts
+ create mode 100644 tests/issue-6920-vector-representation.test.ts

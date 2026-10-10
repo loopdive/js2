@@ -1,0 +1,13 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3526-boolean-boundary-intrinsic.test.ts (16 tests) 1953ms
+   ✓ #3526 F1-S2 front-end migration > lowers the branded carrier to the provider-free intrinsic, with no direct call  502ms
+   ✓ #3526 F1-S2 owner-local demote parity > demotes only the requesting owner when the lane cannot provide the arm  371ms
+   ✓ #3526 F1-S2 owner-local demote parity > demotes the same way on the standalone and WASI lanes  354ms
+
+ Test Files  1 passed (1)
+      Tests  16 passed (16)
+   Start at  22:33:41
+   Duration  28.69s (transform 18.53s, setup 0ms, collect 26.32s, tests 1.95s, environment 0ms, prepare 81ms)
+

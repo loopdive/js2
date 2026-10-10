@@ -1,0 +1,84 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-2856-builtins-component.test.ts > #2856 builtins component > genuinely IR-compiles the playground builtins main 1739ms
+ ✓ tests/issue-2856-builtins-component.test.ts > #2856 builtins component > matches legacy for direct and self-hosted Math methods 283ms
+ ✓ tests/issue-2856-builtins-component.test.ts > #2856 builtins component > matches legacy for ToInt32 bitwise-not edge values 102ms
+ ✓ tests/issue-2856-builtins-component.test.ts > #2856 builtins component > matches legacy for bounded literal toFixed and literal replace 200ms
+ ✓ tests/issue-2856-builtins-component.test.ts > #2856 builtins component > rejects shadowed Math, wrong arities, and unsafe builtin arguments before claim 426ms
+ × tests/issue-2856-builtins-component.test.ts > #2856 builtins component > rejects a literal initialized with a non-string local representation before claim 67ms
+   → expected [ { kind: 'build', …(2) } ] to strictly equal []
+ ✓ tests/issue-2856-builtins-component.test.ts > #2856 builtins component > keeps class methods named like builtins on ordinary class dispatch 189ms
+ ✓ tests/issue-2856-builtins-component.test.ts > #2856 builtins component > rejects invalid annotated numeric initializers before builtin claims 87ms
+ × tests/issue-2856-builtins-component.test.ts > #2856 builtins component > rejects literal replace before claim when the linear planner has no method plan 53ms
+   → expected false to be true // Object.is equality
+ ✓ tests/issue-2856-builtins-component.test.ts > #2856 builtins component > keeps direct ambient Math ops on linear IR without admitting a shadow 43ms
+ ✓ tests/issue-2856-builtins-component.test.ts > #2856 builtins component > preserves typed-string replace fallback in host and native string modes 143ms
+ × tests/issue-2856-builtins-component.test.ts > #2856 builtins component > keeps bounded toFixed out of unsupported representation modes 179ms
+   → expected [ 'fixed' ] to not include 'fixed'
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-2856-builtins-component.test.ts > #2856 builtins component > rejects a literal initialized with a non-string local representation before claim
+AssertionError: expected [ { kind: 'build', …(2) } ] to strictly equal []
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- [][39m
+[31m+ [[39m
+[31m+   {[39m
+[31m+     "func": "annotatedStringReplace",[39m
+[31m+     "kind": "build",[39m
+[31m+     "message": "ir/from-ast: local 'value' annotated as string but initializer is f64 in annotatedStringReplace",[39m
+[31m+   },[39m
+[31m+ ][39m
+
+ ❯ compileSource tests/issue-2856-builtins-component.test.ts:40:42
+     38|   });
+     39|   expect(result.success, result.errors[0]?.message).toBe(true);
+     40|   expect(result.irPostClaimErrors ?? []).toStrictEqual([]);
+       |                                          ^
+     41|   return result;
+     42| }
+ ❯ tests/issue-2856-builtins-component.test.ts:180:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/issue-2856-builtins-component.test.ts > #2856 builtins component > rejects literal replace before claim when the linear planner has no method plan
+AssertionError: expected false to be true // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- true[39m
+[31m+ false[39m
+
+ ❯ tests/issue-2856-builtins-component.test.ts:294:87
+    292|       expect(report?.compiled).not.toContain(name);
+    293|       const rejected = report?.rejected.filter((entry) => entry.func =…
+    294|       expect(rejected.some((entry) => entry.reason === "select:body-sh…
+       |                                                                                       ^
+    295|       expect(rejected.some((entry) => entry.reason === "build")).toBe(…
+    296|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/issue-2856-builtins-component.test.ts > #2856 builtins component > keeps bounded toFixed out of unsupported representation modes
+AssertionError: expected [ 'fixed' ] to not include 'fixed'
+ ❯ tests/issue-2856-builtins-component.test.ts:356:48
+    354|     for (const extra of [{ nativeStrings: true }, { fast: true }, { ta…
+    355|       const result = await compileSource(source, extra);
+    356|       expect(result.irCompiledFuncs ?? []).not.toContain("fixed");
+       |                                                ^
+    357|     }
+    358| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 9 passed (12)
+   Start at  19:44:17
+   Duration  34.98s (transform 21.91s, setup 0ms, collect 30.90s, tests 3.51s, environment 0ms, prepare 74ms)
+

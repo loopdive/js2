@@ -1,0 +1,79 @@
+"""Join base/HEAD probe TSVs into the per-fixture identity table + summary."""
+import sys
+
+raw = sys.argv[1]
+
+
+def load(path):
+    rows = {}
+    with open(path) as f:
+        header = f.readline().rstrip("\n").split("\t")
+        for line in f:
+            cols = line.rstrip("\n").split("\t")
+            rec = dict(zip(header, cols))
+            rows[(rec["fixture"], rec["target"])] = rec
+    return rows
+
+
+base = load(f"{raw}/probe-base.tsv")
+head = load(f"{raw}/probe-head.tsv")
+out = [
+    "\t".join(
+        [
+            "fixture",
+            "target",
+            "base_sha256",
+            "head_sha256",
+            "identical",
+            "ir_vs_legacy_head",
+            "scratch_head",
+            "ir_outcomes_head",
+            "witness_same_as_base",
+        ]
+    )
+]
+summary = {}
+for key in sorted(set(base) | set(head)):
+    b, h = base.get(key), head.get(key)
+    bs = b["sha256"] if b else "MISSING"
+    hs = h["sha256"] if h else "MISSING"
+    same = "yes" if bs == hs else "NO"
+    witness_same = (
+        "yes"
+        if b and h and all(b[c] == h[c] for c in ("ir_vs_legacy", "scratch", "ir_outcomes"))
+        else "NO"
+    )
+    out.append(
+        "\t".join(
+            [
+                key[0],
+                key[1],
+                bs,
+                hs,
+                same,
+                h["ir_vs_legacy"] if h else "-",
+                h["scratch"] if h else "-",
+                h["ir_outcomes"] if h else "-",
+                witness_same,
+            ]
+        )
+    )
+    s = summary.setdefault(key[1], {"rows": 0, "binaries": 0, "nobinary": 0, "identical": 0, "ir_differs": 0, "scratch": 0, "witness_same": 0})
+    s["rows"] += 1
+    if hs not in ("NOBINARY", "MISSING", "THROW"):
+        s["binaries"] += 1
+    else:
+        s["nobinary"] += 1
+    s["identical"] += same == "yes"
+    s["ir_differs"] += bool(h and h["ir_vs_legacy"] == "IR-differs")
+    s["scratch"] += bool(h and h["scratch"] != "-")
+    s["witness_same"] += witness_same == "yes"
+open(f"{raw}/probe-identity.tsv", "w").write("\n".join(out) + "\n")
+lines = ["target\trows\tbinaries\tno_binary\tidentical_sha256\tIR_differs_from_legacy\tvec_scratch_present\twitness_same_as_base"]
+for t in ("gc", "standalone", "linear"):
+    s = summary[t]
+    lines.append(
+        f"{t}\t{s['rows']}\t{s['binaries']}\t{s['nobinary']}\t{s['identical']}\t{s['ir_differs']}\t{s['scratch']}\t{s['witness_same']}"
+    )
+open(f"{raw}/probe-identity-summary.tsv", "w").write("\n".join(lines) + "\n")
+print("\n".join(lines))

@@ -1,0 +1,4 @@
+6c6
+< issue-3518-lowering-cycle exit=0       Tests  25 passed (25)
+---
+> issue-3518-lowering-cycle exit=1       Tests  1 failed | 24 passed (25)

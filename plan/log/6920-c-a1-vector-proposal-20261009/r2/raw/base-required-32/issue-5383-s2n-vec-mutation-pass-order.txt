@@ -1,0 +1,11 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-5383-s2n-vec-mutation-pass-order.test.ts > #5383 S2n R17 — the `$__vec_base` push/pop arm must not depend on pass order > `this.pop()` inside an `extends Array` method truncates under compileProject, not only under compile (standalone) 2100ms
+ ✓ tests/issue-5383-s2n-vec-mutation-pass-order.test.ts > #5383 S2n R17 — the `$__vec_base` push/pop arm must not depend on pass order > `this.push(v)` inside an `extends Array` method appends under compileProject too (standalone) 902ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  20:09:58
+   Duration  33.44s (transform 21.25s, setup 0ms, collect 29.96s, tests 3.00s, environment 0ms, prepare 80ms)
+

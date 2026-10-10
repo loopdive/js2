@@ -1,0 +1,89 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+stdout | tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts
+{"schema":"6915-incomplete-evidence-v1","issue":6915,"kind":"diagnostic","id":null,"passed":false,"actionFailure":null,"schemaFailure":"Error: 6915 evidence: JS2WASM_APPEND_EXPECTED_PROVENANCE is required\n    at requireCondition (/home/user/js2/.claude/worktrees/agent-a774506d6593a2d93/tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:310:25)\n    at text (/home/user/js2/.claude/worktrees/agent-a774506d6593a2d93/tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:316:3)\n    at parseParentIdentity (/home/user/js2/.claude/worktrees/agent-a774506d6593a2d93/tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:795:3)\n    at /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93/tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:1390:16\n    at file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1897:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10)\n    at runHook (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1436:51)\n    at callSuiteHook (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1442:25)\n    at runSuite (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1708:31)","emissionFailure":null}
+
+stdout | tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts
+{"schema":"6915-incomplete-evidence-v1","issue":6915,"kind":"diagnostic","id":null,"passed":false,"actionFailure":null,"schemaFailure":"Error: 6915 evidence: parent identity absent\n    at requireCondition (/home/user/js2/.claude/worktrees/agent-a774506d6593a2d93/tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:310:25)\n    at validateRecord (/home/user/js2/.claude/worktrees/agent-a774506d6593a2d93/tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:1012:3)\n    at /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93/tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:1496:5\n    at file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1897:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10)\n    at runHook (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1436:51)\n    at callSuiteHook (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1442:25)\n    at runSuite (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1738:10)\n    at processTicksAndRejections (node:internal/process/task_queues:105:5)","emissionFailure":null}
+
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime01: empty + empty
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime02: empty + one
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime03: empty + seventeen
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime04: canonical nonempty + empty
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime05: boundary 3+1
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime06: boundary 3+1
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime07: boundary 3+4
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime08: boundary 3+4
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime09: boundary 6+1
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime10: boundary 7+1
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime11: boundary 8+1
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime12: boundary 14+1
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime13: boundary 15+1
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime14: boundary 15+2
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime15: self with spare capacity
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime16: self with growth
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime17: distinct equal content
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime18: ASCII NUL
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime19: bounded long payload
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime20: cached no growth
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime21: cached growth
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Runtime22: all 33 one-byte repeated-growth transitions
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Source01: unchanged string-hash(0)
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Source02: unchanged string-hash(1)
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Source03: unchanged string-hash(100)
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Source04: unchanged string-hash(20000)
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Import01: no growth with function/table import custody
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Import02: growth with function/table import custody
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Negative01: same validator rejects result/payload
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Negative02: same validator rejects owner identity
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Negative03: same validator rejects consumer completion
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Negative04: same validator rejects helper binding
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Negative05: same validator rejects heap delta
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Negative06: same validator rejects header bytes
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Negative07: same validator rejects untouched memory
+ ↓ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts > #6915 independently owned append baseline > Negative08: same validator rejects import binding
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts [ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts ]
+Error: 6915 evidence: JS2WASM_APPEND_EXPECTED_PROVENANCE is required
+ ❯ requireCondition tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:310:25
+    308| }
+    309| function requireCondition(condition: boolean, detail: string): asserts…
+    310|   if (!condition) throw new Error(`6915 evidence: ${detail}`);
+       |                         ^
+    311| }
+    312| function integer(value: unknown, maximum: number, label: string): asse…
+ ❯ text tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:316:3
+ ❯ parseParentIdentity tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:795:3
+ ❯ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:1390:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts [ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts ]
+AggregateError: completion, cleanup and diagnostic errors retained
+ ❯ throwRetained tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:738:32
+    736| function throwRetained(errors: unknown[], message: string): void {
+    737|   if (errors.length === 1) throw errors[0];
+    738|   if (errors.length > 1) throw new AggregateError(errors, message, { c…
+       |                                ^
+    739| }
+    740| async function observation(id: string, action: (journal: Journal) => P…
+ ❯ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:1544:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { errors: [ { stack: 'Error: 6915 evidence: parent identity absent\n    at requireCondition (/home/user/js2/.claude/worktrees/agent-a774506d6593a2d93/tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:310:25)\n    at validateRecord (/home/user/js2/.claude/worktrees/agent-a774506d6593a2d93/tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:1012:3)\n    at /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93/tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:1496:5\n    at file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1897:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10)\n    at runHook (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1436:51)\n    at callSuiteHook (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1442:25)\n    at runSuite (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1738:10)\n    at processTicksAndRejections (node:internal/process/task_queues:105:5)', message: '6915 evidence: parent identity absent', constructor: 'Function<Error>', name: 'Error', toString: 'Function<toString>' }, { message: 'expected [ \'Runtime01\', \'Runtime02\', …(34) ] to deeply equal []', actual: [ 'Runtime01', 'Runtime02', 'Runtime03', 'Runtime04', 'Runtime05', 'Runtime06', 'Runtime07', 'Runtime08', 'Runtime09', 'Runtime10', 'Runtime11', 'Runtime12', 'Runtime13', 'Runtime14', 'Runtime15', 'Runtime16', 'Runtime17', 'Runtime18', 'Runtime19', 'Runtime20', 'Runtime21', 'Runtime22', 'Source01', 'Source02', 'Source03', 'Source04', 'Import01', 'Import02', 'Negative01', 'Negative02', 'Negative03', 'Negative04', 'Negative05', 'Negative06', 'Negative07', 'Negative08' ], expected: [], showDiff: true, operator: 'deepStrictEqual', name: 'AssertionError', ok: false, stack: 'AssertionError: expected [ \'Runtime01\', \'Runtime02\', …(34) ] to deeply equal []\n    at /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93/tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:1522:25\n    at runCleanups (/home/user/js2/.claude/worktrees/agent-a774506d6593a2d93/tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:729:7)\n    at /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93/tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:1517:8\n    at file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1897:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10)\n    at runHook (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1436:51)\n    at callSuiteHook (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1442:25)\n    at runSuite (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1738:10)\n    at processTicksAndRejections (node:internal/process/task_queues:105:5)' }, { message: 'expected [] to have a length of 36 but got +0', actual: +0, expected: 36, showDiff: true, name: 'AssertionError', ok: false, stack: 'AssertionError: expected [] to have a length of 36 but got +0\n    at Proxy.<anonymous> (file:///home/user/js2/node_modules/.pnpm/@vitest+expect@3.2.7/node_modules/@vitest/expect/dist/index.js:1257:20)\n    at Proxy.<anonymous> (file:///home/user/js2/node_modules/.pnpm/@vitest+expect@3.2.7/node_modules/@vitest/expect/dist/index.js:1029:14)\n    at Proxy.methodWrapper (file:///home/user/js2/node_modules/.pnpm/chai@5.3.3/node_modules/chai/index.js:1686:25)\n    at /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93/tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:1528:26\n    at runCleanups (/home/user/js2/.claude/worktrees/agent-a774506d6593a2d93/tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:729:7)\n    at /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93/tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:1517:8\n    at file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1897:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10)\n    at runHook (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1436:51)' }, { message: 'expected [ \'provenance\', \'completion\' ] to deeply equal []', actual: [ 'provenance', 'completion' ], expected: [], showDiff: true, operator: 'deepStrictEqual', name: 'AssertionError', ok: false, stack: 'AssertionError: expected [ \'provenance\', \'completion\' ] to deeply equal []\n    at /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93/tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:1534:32\n    at runCleanups (/home/user/js2/.claude/worktrees/agent-a774506d6593a2d93/tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:729:7)\n    at /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93/tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:1517:8\n    at file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1897:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10)\n    at runHook (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1436:51)\n    at callSuiteHook (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1442:25)\n    at runSuite (file:///home/user/js2/node_modules/.pnpm/@vitest+runner@3.2.7/node_modules/@vitest/runner/dist/chunk-hooks.js:1738:10)\n    at processTicksAndRejections (node:internal/process/task_queues:105:5)' } ] }
+Caused by: Error: 6915 evidence: parent identity absent
+ ❯ requireCondition tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:310:25
+ ❯ validateRecord tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:1012:3
+ ❯ tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts:1496:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  36 skipped (36)
+   Start at  19:56:25
+   Duration  32.57s (transform 22.29s, setup 0ms, collect 32.04s, tests 19ms, environment 0ms, prepare 79ms)
+

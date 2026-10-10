@@ -1,0 +1,14 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts (28 tests | 1 skipped) 5764ms
+   ✓ #3518 lowering relocation keeps the real pushRaw gate connected > accepts the actual old-to-new source diff with both original sites and tags  394ms
+   ✓ #3518 lowering relocation keeps the real pushRaw gate connected > rejects a new untagged escape in src/ir/lower-generic.ts, including untracked files  310ms
+   ✓ #3518 lowering relocation keeps the real pushRaw gate connected > rejects a new untagged escape in src/ir/backend/lower-contracts.ts, including untracked files  307ms
+   ✓ #3518 lowering relocation keeps the real pushRaw gate connected > compares the canonical path with itself after the relocation has landed  341ms
+
+ Test Files  1 passed (1)
+      Tests  27 passed | 1 skipped (28)
+   Start at  22:59:15
+   Duration  6.76s (transform 76ms, setup 0ms, collect 608ms, tests 5.76s, environment 0ms, prepare 70ms)
+

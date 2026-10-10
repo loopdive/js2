@@ -1,0 +1,11 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-vector-construction-nullability.test.ts (7 tests) 609ms
+   ✓ f64 populated: real lowerer bytes execute; removing only the refinement is invalid  507ms
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  22:49:58
+   Duration  22.30s (transform 14.99s, setup 0ms, collect 21.31s, tests 609ms, environment 0ms, prepare 63ms)
+

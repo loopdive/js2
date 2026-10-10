@@ -1,0 +1,8 @@
+// Convert a vitest JSON report into "status\tfull_name" rows.
+const fs = require("fs");
+const [input, output] = process.argv.slice(2);
+const r = JSON.parse(fs.readFileSync(input, "utf8"));
+const rows = [];
+for (const f of r.testResults) for (const a of f.assertionResults) rows.push(`${a.status}\t${a.fullName}`);
+fs.writeFileSync(output, "status\tfull_name\n" + rows.join("\n") + "\n");
+console.log(`total=${r.numTotalTests} passed=${r.numPassedTests} failed=${r.numFailedTests}`);

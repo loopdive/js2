@@ -1,0 +1,11 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-1198.test.ts (19 tests) 1844ms
+   ✓ #1198 pre-size dense arrays — matching patterns > fuses a pure dense fill followed by an i32 sum reduction  740ms
+
+ Test Files  1 passed (1)
+      Tests  19 passed (19)
+   Start at  22:36:34
+   Duration  27.91s (transform 17.92s, setup 0ms, collect 25.64s, tests 1.84s, environment 0ms, prepare 58ms)
+

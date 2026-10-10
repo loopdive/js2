@@ -1,0 +1,28 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-1198.test.ts > #1198 pre-size dense arrays — matching patterns > fuses a pure dense fill followed by an i32 sum reduction 872ms
+ ✓ tests/issue-1198.test.ts > #1198 pre-size dense arrays — matching patterns > keeps allocation-site presizing and direct stores when the array remains observable 105ms
+ ✓ tests/issue-1198.test.ts > #1198 pre-size dense arrays — matching patterns > seals the observable dense-fill vector before body emission 84ms
+ ✓ tests/issue-1198.test.ts > #1198 pre-size dense arrays — matching patterns > keeps the fused run body when a legacy timing wrapper calls it 268ms
+ ✓ tests/issue-1198.test.ts > #1198 pre-size dense arrays — matching patterns > keeps nested unsigned-shift bits native inside another bitwise operation 38ms
+ ✓ tests/issue-1198.test.ts > #1198 pre-size dense arrays — matching patterns > literal-N counted index-assign: const a = []; for (let i = 0; i < 10; i++) a[i] = i*2; 63ms
+ ✓ tests/issue-1198.test.ts > #1198 pre-size dense arrays — matching patterns > identifier-N counted index-assign: function param as bound 59ms
+ ✓ tests/issue-1198.test.ts > #1198 pre-size dense arrays — matching patterns > array-sum benchmark shape: bitwise + arithmetic RHS 50ms
+ ✓ tests/issue-1198.test.ts > #1198 pre-size dense arrays — matching patterns > post-loop length is N (matches grow-on-write semantics) 53ms
+ ✓ tests/issue-1198.test.ts > #1198 pre-size dense arrays — matching patterns > conditional/ternary RHS is allowed 73ms
+ ✓ tests/issue-1198.test.ts > #1198 pre-size dense arrays — matching patterns > loop with i += 1 incrementor 60ms
+ ✓ tests/issue-1198.test.ts > #1198 pre-size dense arrays — matching patterns > zero-iteration case (n = 0) doesn't break 57ms
+ ✓ tests/issue-1198.test.ts > #1198 pre-size dense arrays — non-matching patterns (must fall back to grow-on-write) > body has push instead of [i] = (different pattern, push-detector handles it) 64ms
+ ✓ tests/issue-1198.test.ts > #1198 pre-size dense arrays — non-matching patterns (must fall back to grow-on-write) > does not specialize a push value that observes the array 65ms
+ ✓ tests/issue-1198.test.ts > #1198 pre-size dense arrays — non-matching patterns (must fall back to grow-on-write) > requires binding identity when the loop variable shadows the array 15ms
+ ✓ tests/issue-1198.test.ts > #1198 pre-size dense arrays — non-matching patterns (must fall back to grow-on-write) > body has multiple statements (reject — only single ExprStmt allowed) 68ms
+ ✓ tests/issue-1198.test.ts > #1198 pre-size dense arrays — non-matching patterns (must fall back to grow-on-write) > loop var is not 0-based (reject — non-canonical shape) 47ms
+ ✓ tests/issue-1198.test.ts > #1198 pre-size dense arrays — non-matching patterns (must fall back to grow-on-write) > RHS is element access (reject — could throw / not in allow-list) 58ms
+ ✓ tests/issue-1198.test.ts > #1198 pre-size dense arrays — non-matching patterns (must fall back to grow-on-write) > RHS is function call (reject — could throw) 50ms
+
+ Test Files  1 passed (1)
+      Tests  19 passed (19)
+   Start at  20:12:18
+   Duration  32.95s (transform 21.58s, setup 0ms, collect 30.34s, tests 2.15s, environment 0ms, prepare 71ms)
+

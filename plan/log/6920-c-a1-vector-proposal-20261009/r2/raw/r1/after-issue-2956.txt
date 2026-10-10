@@ -1,0 +1,211 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ❯ tests/issue-2956.test.ts (20 tests | 3 failed) 1341ms
+   ✓ #2956 L1: linear backend consumes IR for claimed numeric functions > flag ON: claimed functions compile via IR (incl. self-recursion) and run correctly  547ms
+   ✓ #2956 L1: linear backend consumes IR for claimed numeric functions > the explicit flag-off escape hatch keeps direct-path value parity 81ms
+   ✓ #2956 L1: linear backend consumes IR for claimed numeric functions > value parity: IR-lowered and direct-path modules agree on results 54ms
+   ✓ #2956 L1: linear backend consumes IR for claimed numeric functions > mutual recursion resolves through the annotation pre-seed 25ms
+   × #2956 L2: selector-claimed vec construction > flag ON lowers fixed number vecs with value, alias, and bounds parity 60ms
+     → expected [ { func: 'vecAlias', …(2) }, …(3) ] to deeply equal []
+   ✓ #2956 L2: selector-claimed vec construction > the default-on vec module is byte-identical to explicit flag-on 40ms
+   ✓ #2956 L2: selector-claimed vec construction > unsupported hintless-empty construction stays on the direct fallback 14ms
+   ✓ #2956 L2: selector-claimed vec MUTATION (element store + push) > flag ON lowers element store and push with direct-path value parity 72ms
+   ✓ #2956 L2: selector-claimed vec MUTATION (element store + push) > the default-on mutation module is byte-identical to explicit flag-on 77ms
+   ✓ #2956 L2: selector-claimed vec MUTATION (element store + push) > multi-arg push stays on the direct fallback (single plain arg only) 10ms
+   ✓ #2956 L2: selector-claimed linear-memory aggregates + ref-cells > lowers object allocation and nested reads with direct-path value parity 57ms
+   ✓ #2956 L2: selector-claimed linear-memory aggregates + ref-cells > preserves mutation and strict aliasing through i32 arena pointers 20ms
+   ✓ #2956 L2: selector-claimed linear-memory aggregates + ref-cells > the default-on aggregate module is byte-identical to explicit flag-on 53ms
+   ✓ #2956 L2: selector-claimed linear-memory aggregates + ref-cells > emits primitive ref-cell allocation and field access through linear-memory handles 0ms
+   × #2956 L3: selector-claimed linear strings > lowers the core i32-pointer string surface with direct-path parity 62ms
+     → expected [ { func: 'greet', …(4) }, …(4) ] to deeply equal []
+   × #2956 L3: selector-claimed linear strings > adds flag-gated UTF-16 charCodeAt capability, including surrogate halves and NaN bounds 26ms
+     → Expected 1 arguments, but got 0.; Codegen error: Unsupported method call: .charCodeAt(); Codegen error: Unsupported method call: .charCodeAt(); Codegen error: Unsupported method call: .charCodeAt(): expected false to be true // Object.is equality
+   ✓ #2956 L3: selector-claimed linear strings > keeps unsupported prototype methods on the direct fallback 14ms
+   ✓ #2956 L3: selector-claimed linear strings > the default-on string module is byte-identical to explicit flag-on 61ms
+   ✓ #2956 L4: default-on overlay + unified fallback ratchet > uses the IR overlay when the environment flag is unset 54ms
+   ✓ #2956 L4: default-on overlay + unified fallback ratchet > reports selector-rejected functions while compiling them on the direct path 13ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-2956.test.ts > #2956 L2: selector-claimed vec construction > flag ON lowers fixed number vecs with value, alias, and bounds parity
+AssertionError: expected [ { func: 'vecAlias', …(2) }, …(3) ] to deeply equal []
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- [][39m
+[31m+ [[39m
+[31m+   {[39m
+[31m+     "detail": undefined,[39m
+[31m+     "func": "vecAlias",[39m
+[31m+     "reason": "select:operand-coercion-unsupported",[39m
+[31m+   },[39m
+[31m+   {[39m
+[31m+     "detail": undefined,[39m
+[31m+     "func": "test",[39m
+[31m+     "reason": "select:call-graph-closure",[39m
+[31m+   },[39m
+[31m+   {[39m
+[31m+     "detail": undefined,[39m
+[31m+     "func": "vecValue",[39m
+[31m+     "reason": "select:call-graph-closure",[39m
+[31m+   },[39m
+[31m+   {[39m
+[31m+     "detail": undefined,[39m
+[31m+     "func": "vecBounds",[39m
+[31m+     "reason": "select:call-graph-closure",[39m
+[31m+   },[39m
+[31m+ ][39m
+
+ ❯ tests/issue-2956.test.ts:140:36
+    138|     const irBinary = await compileLinear(VEC_SRC, true);
+    139|     const report = getLastLinearIrReport();
+    140|     expect(report?.rejected ?? []).toEqual([]);
+       |                                    ^
+    141|     expect([...(report?.compiled ?? [])].sort()).toEqual(["test", "vec…
+    142| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/issue-2956.test.ts > #2956 L3: selector-claimed linear strings > lowers the core i32-pointer string surface with direct-path parity
+AssertionError: expected [ { func: 'greet', …(4) }, …(4) ] to deeply equal []
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- [][39m
+[31m+ [[39m
+[31m+   {[39m
+[31m+     "detail": "ir/linear-string: ASCII encoding proof required for concat result (got wtf16)",[39m
+[31m+     "func": "greet",[39m
+[31m+     "location": {[39m
+[31m+       "column": 1,[39m
+[31m+       "file": "input.ts",[39m
+[31m+       "line": 1,[39m
+[31m+       "sourceId": "ir-source:v1:0000000000000000:entry:input.ts",[39m
+[31m+       "sourceKey": "input.ts",[39m
+[31m+       "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000000",[39m
+[31m+     },[39m
+[31m+     "outcome": {[39m
+[31m+       "code": "string-evidence-unsupported",[39m
+[31m+       "detail": "ir/linear-string: ASCII encoding proof required for concat result (got wtf16)",[39m
+[31m+       "kind": "unsupported",[39m
+[31m+       "stage": "resolve",[39m
+[31m+     },[39m
+[31m+     "reason": "build",[39m
+[31m+   },[39m
+[31m+   {[39m
+[31m+     "detail": "ir/linear-string: ASCII encoding proof required for constant result (got utf8-guaranteed)",[39m
+[31m+     "func": "unicode",[39m
+[31m+     "location": {[39m
+[31m+       "column": 1,[39m
+[31m+       "file": "input.ts",[39m
+[31m+       "line": 4,[39m
+[31m+       "sourceId": "ir-source:v1:0000000000000000:entry:input.ts",[39m
+[31m+       "sourceKey": "input.ts",[39m
+[31m+       "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000001",[39m
+[31m+     },[39m
+[31m+     "outcome": {[39m
+[31m+       "code": "string-evidence-unsupported",[39m
+[31m+       "detail": "ir/linear-string: ASCII encoding proof required for constant result (got utf8-guaranteed)",[39m
+[31m+       "kind": "unsupported",[39m
+[31m+       "stage": "resolve",[39m
+[31m+     },[39m
+[31m+     "reason": "build",[39m
+[31m+   },[39m
+[31m+   {[39m
+[31m+     "detail": "ir/linear-string: ASCII encoding proof required for length input (got wtf16)",[39m
+[31m+     "func": "sliced",[39m
+[31m+     "location": {[39m
+[31m+       "column": 1,[39m
+[31m+       "file": "input.ts",[39m
+[31m+       "line": 11,[39m
+[31m+       "sourceId": "ir-source:v1:0000000000000000:entry:input.ts",[39m
+[31m+       "sourceKey": "input.ts",[39m
+[31m+       "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000003",[39m
+[31m+     },[39m
+[31m+     "outcome": {[39m
+[31m+       "code": "string-evidence-unsupported",[39m
+[31m+       "detail": "ir/linear-string: ASCII encoding proof required for length input (got wtf16)",[39m
+[31m+       "kind": "unsupported",[39m
+[31m+       "stage": "resolve",[39m
+[31m+     },[39m
+[31m+     "reason": "build",[39m
+[31m+   },[39m
+[31m+   {[39m
+[31m+     "detail": "ir/linear-string: ASCII encoding proof required for length input (got unproven)",[39m
+[31m+     "func": "objectString",[39m
+[31m+     "location": {[39m
+[31m+       "column": 1,[39m
+[31m+       "file": "input.ts",[39m
+[31m+       "line": 14,[39m
+[31m+       "sourceId": "ir-source:v1:0000000000000000:entry:input.ts",[39m
+[31m+       "sourceKey": "input.ts",[39m
+[31m+       "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000004",[39m
+[31m+     },[39m
+[31m+     "outcome": {[39m
+[31m+       "code": "string-evidence-unsupported",[39m
+[31m+       "detail": "ir/linear-string: ASCII encoding proof required for length input (got unproven)",[39m
+[31m+       "kind": "unsupported",[39m
+[31m+       "stage": "resolve",[39m
+[31m+     },[39m
+[31m+     "reason": "build",[39m
+[31m+   },[39m
+[31m+   {[39m
+[31m+     "detail": "ir/linear-string: ASCII encoding proof required for length input (got wtf16)",[39m
+[31m+     "func": "test",[39m
+[31m+     "location": {[39m
+[31m+       "column": 1,[39m
+[31m+       "file": "input.ts",[39m
+[31m+       "line": 18,[39m
+[31m+       "sourceId": "ir-source:v1:0000000000000000:entry:input.ts",[39m
+[31m+       "sourceKey": "input.ts",[39m
+[31m+       "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000005",[39m
+[31m+     },[39m
+[31m+     "outcome": {[39m
+[31m+       "code": "string-evidence-unsupported",[39m
+[31m+       "detail": "ir/linear-string: ASCII encoding proof required for length input (got wtf16)",[39m
+[31m+       "kind": "unsupported",[39m
+[31m+       "stage": "resolve",[39m
+[31m+     },[39m
+[31m+     "reason": "build",[39m
+[31m+   },[39m
+[31m+ ][39m
+
+ ❯ tests/issue-2956.test.ts:372:36
+    370|     const irBinary = await compileLinear(STRING_CORE_SRC, true);
+    371|     const report = getLastLinearIrReport();
+    372|     expect(report?.rejected ?? []).toEqual([]);
+       |                                    ^
+    373|     expect([...(report?.compiled ?? [])].sort()).toEqual([
+    374|       "greet",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/issue-2956.test.ts > #2956 L3: selector-claimed linear strings > adds flag-gated UTF-16 charCodeAt capability, including surrogate halves and NaN bounds
+AssertionError: Expected 1 arguments, but got 0.; Codegen error: Unsupported method call: .charCodeAt(); Codegen error: Unsupported method call: .charCodeAt(); Codegen error: Unsupported method call: .charCodeAt(): expected false to be true // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- true[39m
+[31m+ false[39m
+
+ ❯ compileLinear tests/issue-2956.test.ts:29:81
+     27|   else delete process.env[FLAG];
+     28|   const r = await compile(src, { target: "linear" });
+     29|   expect(r.success, r.success ? "" : r.errors.map((e) => e.message).jo…
+       |                                                                                 ^
+     30|   if (!r.success) throw new Error("compile failed");
+     31|   return r.binary;
+ ❯ tests/issue-2956.test.ts:395:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 17 passed (20)
+   Start at  22:43:52
+   Duration  25.44s (transform 16.84s, setup 0ms, collect 23.73s, tests 1.34s, environment 0ms, prepare 56ms)
+
