@@ -4,7 +4,7 @@ title: "host-independence: eliminate JS host object/property ops for standalone 
 status: ready
 pr: 1047
 created: 2026-05-20
-updated: 2026-09-28
+updated: 2026-10-10
 completed: 2026-06-04
 priority: high
 feasibility: medium
@@ -1453,3 +1453,113 @@ axios slice (PR #6114) introduced. The general Phase B table is still open.
   `property-access-dispatch.ts` (two builtin-property reads),
   `fixed-host-method-call.ts`, `call-builtin-static.ts` and
   `expressions/extern.ts`.
+
+## Octane raytrace evidence — `Object.extend` expando on a builtin constructor (Session C, 2026-10-10)
+
+Found by the Octane triage for
+[#874](https://js2wasm.loopdive.com/dashboard/issue.html?slug=874-benchmark-compare-all-js-to).
+Octane `raytrace.js` (pinned Octane commit
+`570ad1ccfe86e3eecba0636c8f932ac08edec517`) does not compile with
+`target: "standalone"` on `origin/main` 01e4888aae:
+
+```
+Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet
+supported in --target standalone (#1472 Phase B). …
+```
+
+(gc host compiles; it fails at RUNTIME instead — see "out of scope" below.)
+This is the "`Object.<non-folded static>(…)`" row of the remaining-shapes list
+above, with a real-world shape attached: Prototype.js 1.5's
+
+```js
+Object.extend = function(destination, source) {       // raytrace.js:41 (top level)
+  for (var property in source) destination[property] = source[property];
+  return destination;
+};
+Flog.RayTracer.Material.Solid.prototype = Object.extend(new Flog.RayTracer.Material.BaseMaterial(), {…}); // :357, :382
+this.options = Object.extend({ … }, options);          // :608, inside a method
+```
+
+### Minimized (standalone; node answers in the right column)
+
+| program | js2 standalone | node |
+|---|---|---|
+| `Object.extend = function(d,s){…}; export function run(){ return Object.extend({}, {a:1}).a; }` | compile error (`__get_builtin` refusal) | `1` |
+| `Object.extend = function(){…}; export function run(){ return typeof Object.extend; }` | `"undefined"` (compiles; the top-level write is DROPPED) | `"function"` |
+| write + call both INSIDE `run()` | compile error (`__get_builtin` refusal) | `1` |
+
+So two separate gaps, both needed for raytrace:
+
+1. **The call.** `Object.extend(a, b)` reaches the generic host-delegated arm
+   (#799 WI3) in `src/codegen/expressions/call-receiver-method.ts` (≈L4799):
+   `isHostResolvedBuiltinReceiver(ctx, "Object", "extend")`
+   (`src/codegen/standalone-unavailable-globals.ts:165`) answers true for every
+   `BUILTIN_CLASS_NAMES` receiver except the two narrow arms already carved out
+   (`Buffer`, `Error.captureStackTrace`), so the receiver is lowered as
+   `__get_builtin("Object")`, which `refuseStandaloneObjectImport`
+   (`src/codegen/expressions/late-imports.ts:112`) turns into the whole-file
+   compile error. The fixed-arity bridge (`fixed-host-method-call.ts`) is
+   host-only and not involved.
+2. **The write.** The top-level `Object.extend = function …` statement is
+   discarded by `collectDeclarations` (`src/codegen/declarations.ts:4438` →
+   `shouldKeepBuiltinReceiverWrite`, `src/codegen/builtin-write-keeps.ts`):
+   the #4199 keep is limited to `EXPANDO_NAMESPACES = {Math, JSON, Reflect}`
+   and excludes `Object`/`Array` because they claim static props. A write
+   inside a function body does land (same as #4199's precondition case), which
+   is why the in-body variant fails only at the call.
+
+### Implementation Plan (standalone only; host/GC output byte-identical)
+
+Owner note: these files are in Session A's WasmGC/shared-IR area; the
+implementation is done by Session C at the project lead's direction. Exact
+functions so A can check overlap:
+
+- `src/codegen/builtin-write-keeps.ts` — `isBuiltinNamespaceExpandoWriteTarget`
+  / `shouldKeepBuiltinReceiverWrite`: also keep a top-level expando write whose
+  receiver is a builtin CONSTRUCTOR carrier (`Object`, `Array`, `Function`,
+  `String`, …, the #3006/#2907 `__builtin_ctor_<N>` set) when the property is
+  NOT on its own static surface (`BUILTIN_STATIC_METHOD_ARITY[ns][prop]`
+  undefined, and not `prototype`/`length`/`name`). `Object.keys = …` stays
+  dropped for the #4199 reason (the static call site never consults the bag);
+  `Object.extend = …` is kept and lands on the carrier through the ordinary
+  property-write arm, which is what the in-body form already does.
+- `src/codegen/standalone-unavailable-globals.ts` —
+  `isHostResolvedBuiltinReceiver`: under `ctx.standalone`, answer false when
+  `BUILTIN_STATIC_METHOD_ARITY[receiver]?.[methodName] === undefined` for a
+  carrier-backed builtin (same test `builtin-static-expando.ts` uses to decide
+  "no modelled value"). The receiver then compiles as the carrier VALUE (the
+  #4639 C2 ordinary [[Get]] in `tryEmitBuiltinStaticExpandoRead` finds the
+  expando), and the call takes the existing dynamic method-call path
+  (`__call_fn_method_N`, receiver = the carrier) — §13.3.6.1 EvaluateCall: a
+  missing expando throws `TypeError: … is not a function` AFTER the arguments
+  are evaluated, not a compile error. Receivers with a modelled static keep
+  their native arm untouched.
+- `src/codegen/expressions/call-receiver-method.ts` (≈L4790–4810): no logic
+  change expected beyond honouring the predicate; verify the
+  `receiverIsBuiltin === false` branch compiles the receiver via
+  `compileExpression` (as it does for `Buffer`).
+
+Regression tests through the public `compile()` vs node
+(`tests/issue-1472-standalone-builtin-ctor-expando.test.ts`): the three rows
+above (expect `1`, `"function"`, `1`); negative controls: `Object.keys({a:1})`
+still takes the native static path (no expando read emitted), `Math.PI = 3`
+still dropped (§21.3.1 non-writable), `Buffer.isBuffer(x)` still
+`ReferenceError`, `Object.nope(1)` throws `TypeError` at runtime (not CE), and
+the gc-host compile of the same programs is byte-identical to before.
+Acceptance for #874: `raytrace.js` + `base.js` compiles with
+`target: "standalone"`.
+
+### Out of scope here (gc-host RUNTIME failures of raytrace, same session)
+
+Both reproduce on the gc host and are NOT #1472 shapes; they need their own
+issues once minimized further:
+
+- `var Class = { create: function(){ return function(){ this.initialize.apply(this, arguments); } } }; var P = Class.create(); P.prototype = { initialize: function(x){ this.x = x; } }; new P(3).x` —
+  gc: `TypeError: Cannot read properties of null (reading 'apply')`
+  (standalone: `… of undefined (reading 'apply')`); node `3`.
+- `var Flog = {}; Flog.RayTracer = {}; Flog.RayTracer.Color = function(r){ this.r = r; }; new Flog.RayTracer.Color(2).r` —
+  gc: Wasm exception; standalone: `TypeError: Cannot access property on null or undefined`; node `2`.
+
+Ledger note: the `1472-getprototypeof-es5` slice claim (codex,
+2026-07-28, `codex/1472-es5-object-getprototypeof`) is for a different slice
+and has been idle since; `pre-dispatch-gate.mjs 1472` reports no live claim.

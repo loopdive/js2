@@ -52,6 +52,8 @@ import {
   getOrRegisterRefCellType,
   getOrRegisterResizableAbType,
   getOrRegisterVecType,
+  hoistLetConstWithTdz,
+  hoistVarDeclarations,
   resolveWasmType,
   TYPED_ARRAY_NAMES,
   typedArrayVecStorage,
@@ -2929,25 +2931,20 @@ function compileNewFunctionDeclaration(
   if (ctorReadsArguments) {
     emitFnctorCtorArgumentsObject(ctx, ctorFctx, funcDecl, userParamOffset, userCtorParams);
   }
-  // (#2071) Hoist the constructor body's own function declarations BEFORE its
-  // statements compile — the same prologue every other function body gets
-  // (`function-body.ts`). Without it a ctor that calls a function declared
-  // later in its own body
-  //
-  //     function FACTORY(){ this.id = func(); function func(){ return "s"; } }
-  //
-  // compiled the call while `func` was still unregistered, so it fell through
-  // to the `ref.null.extern` fallback and the field read back `null`/`NaN`
-  // instead of the returned value (test262 `S13.2.2_A12`). The name scope is
-  // opened and closed around the body for the #4456 reason: the hoisted names
-  // are lexically this constructor's, and a later same-named declaration
-  // elsewhere must not alias this one's compiled function.
+  // (#2071/#6942) The prologue every other function body gets (`function-body.ts`):
+  // hoist `var` and `let`/`const` bindings, THEN function declarations
+  // (§10.2.11 steps 27–28/34 precede 36). Without the declaration hoist a call
+  // to a later-declared `func` read the `ref.null.extern` fallback (test262
+  // `S13.2.2_A12`); without the binding hoists a nested declaration decided its
+  // captures before the ctor's locals existed, dropping them (null/0, Octane
+  // regexp). The name scope is the #4456 one: hoisted names are lexically this
+  // constructor's, so a later same-named declaration must not alias them.
+  hoistVarDeclarations(ctx, ctorFctx, body.statements);
+  hoistLetConstWithTdz(ctx, ctorFctx, body.statements);
   const ctorNameScope = beginNestedFunctionNameScope(ctx);
   try {
     hoistFunctionDeclarations(ctx, ctorFctx, body.statements);
-    for (const stmt of body.statements) {
-      compileStatement(ctx, ctorFctx, stmt);
-    }
+    for (const stmt of body.statements) compileStatement(ctx, ctorFctx, stmt);
   } finally {
     endNestedFunctionNameScope(ctx, ctorNameScope);
   }
