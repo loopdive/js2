@@ -186,7 +186,7 @@ Notes on the measurements:
 None. No baseline, hash-pin or `compiler-boundaries.json` file was touched.
 
 The patch needs no `loc-budget-allow` grant: `binary-ops-typed-dispatch.ts`, which is over
-1,500 lines, nets 0 lines. The issue file `plan/issues/6931-*.md` is not on `dbf5b4f7`,
+1,500 lines, nets 0 lines. The issue file `plan/issues/6931-standalone-host-value-loose-eq.md` is not on `dbf5b4f7`,
 so the patch does not add or touch it.
 
 ## 7. Open questions for A
