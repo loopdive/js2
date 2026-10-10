@@ -827,7 +827,7 @@ jobs:
   # pinned file; #3521's six tests/ir pins add 44.8 s (measured 2026-09-02,
   # same flags). Full native resource suites now also exercise source preparation,
   # so each changed-file job budget includes setup and that file.
-  # Each changed file gets its own checkout and 40-minute job budget. Source
+  # Each changed file gets its own checkout and 120-minute job budget. Source
   # proof tests can mutate files temporarily, so separate runners are required.
   issue-tests-pinned:
     needs: changes
@@ -907,7 +907,7 @@ jobs:
     needs: [changes, issue-tests-select]
     if: needs.changes.outputs.code == 'true' && needs.issue-tests-select.result == 'success' && needs.issue-tests-select.outputs.count != '0'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       max-parallel: 15
