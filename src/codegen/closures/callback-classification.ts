@@ -231,34 +231,6 @@ function receiverHasCompiledImplementationOrigin(
   return false;
 }
 
-/**
- * (#6947) Is `decl` a function-valued member IMPLEMENTATION in the compiled
- * program — `X.prototype.m = function…` / `X.m = function…` (the expando
- * declaration is the assignment's left-hand access), an object-literal
- * `m: function…` / `m() {}`, or a class method with a body? Signatures
- * (interface / ambient `declare` members) are not implementations: they may
- * describe a host API whose callbacks must stay JS-callable.
- */
-function isCompiledFunctionMemberImplementation(ctx: CodegenContext, decl: ts.Declaration): boolean {
-  if (!sourceBelongsToCompiledProgram(ctx, decl.getSourceFile())) return false;
-  const isFn = (e: ts.Expression | undefined): boolean => {
-    while (e !== undefined && ts.isParenthesizedExpression(e)) e = e.expression;
-    return e !== undefined && (ts.isFunctionExpression(e) || ts.isArrowFunction(e));
-  };
-  if (ts.isPropertyAccessExpression(decl) || ts.isElementAccessExpression(decl)) {
-    const parent = decl.parent;
-    return (
-      ts.isBinaryExpression(parent) &&
-      parent.left === decl &&
-      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      isFn(parent.right)
-    );
-  }
-  if (ts.isPropertyAssignment(decl)) return isFn(decl.initializer);
-  if (ts.isMethodDeclaration(decl)) return decl.body !== undefined;
-  return false;
-}
-
 /** Check if an arrow/function expression is used as a callback argument to a call
  *  that targets a HOST import (not a user-defined function). User-defined functions
  *  should receive closures via the GC struct path, not the __make_callback host path. */
@@ -360,30 +332,6 @@ export function isHostCallbackArgument(node: ts.Node, ctx: CodegenContext): bool
           return sourceBelongsToCompiledProgram(ctx, sourceFile);
         });
         if (isCompiledSourceMethod && receiverHasCompiledImplementationOrigin(ctx, propAccess.expression)) return false;
-        // (#6947) A call of a method the PROGRAM implements — `F.prototype.m =
-        // function (f) {…}`, a class / object-literal method — consumes the
-        // callback in compiled Wasm, generalizing #1311 from "user-defined
-        // class" to "user-defined method". Octane splay's
-        // `this.root_.traverse_(function (node) {…})` (receiver `any`, or a
-        // JS-inferred `SplayTreeNode | undefined` whose method is an expando
-        // assignment the class-name candidates below cannot see) was routed
-        // through `__make_callback`; the callee's JSDoc-typed callable param
-        // (`@param {function(SplayTree.Node)} f`) then guard-cast the host
-        // function to the closure root, got null, and trapped on `struct.get`.
-        // Genuine host-callback method names keep the host path, and on the
-        // host lane a closure that does reach a host method is still wrapped
-        // by the `__extern_method_call` bridge (`_maybeWrapCallableUnknownArity`).
-        if (!HOST_CALLBACK_METHODS.has(methodName)) {
-          const recvFact = ctx.oracle.typeFactOf(propAccess.expression);
-          const dynamicReceiver = recvFact.kind === "any" || recvFact.kind === "unknown";
-          if (
-            dynamicReceiver
-              ? ctx.userMethodNames?.has(methodName) === true
-              : methodSymbol?.declarations?.some((d) => isCompiledFunctionMemberImplementation(ctx, d)) === true
-          ) {
-            return false;
-          }
-        }
 
         // Search the receiver type's symbol chain for a class name that
         // matches a user-defined method `${ClassName}_${methodName}`. We

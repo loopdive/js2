@@ -1,11 +1,11 @@
 ---
 id: 6947
 title: "An inline `function(){…}` argument to a method call on an `any` receiver is host-wrapped (`__make_callback_ctor`), and the callee's `f(x)` traps `dereferencing a null pointer` instead of taking the host-callable arm (Octane splay `traverse_`)"
-status: in-progress
+status: backlog
 sprint: current
 created: 2026-10-10
 updated: 2026-10-10
-priority: high
+priority: low
 horizon: m
 feasibility: medium
 reasoning_effort: high
@@ -218,3 +218,14 @@ descriptor-accessor callee (#6769 S7c). Admitting a callable param whose type
 comes from JSDoc (or, more broadly, any closure-root callee) there would route
 the unmatched live closure through `__apply_closure`. That file is outside this
 issue's named functions, so it was not changed in this pass.
+
+## Host-lane fix dropped; standalone remainder parked (2026-10-10)
+
+The JS host (gc) lane is being sunset; only `--target standalone` is relevant
+(`.claude/memory/project_standalone_only_js_host_sunset.md`). The gc fix above
+(`callback-classification.ts`, `calls.ts`) was reverted from PR
+https://github.com/loopdive/js2/pull/6625 before merge. What remains is the
+standalone defect: the closure's `(root, externref)` signature matches no typed
+dispatch entry (`reserveUnmatchedClosureHostCall`). It does not block Octane
+splay on standalone (#6950 does), so it is parked as `backlog`, priority low.
+The budget grants above became unused with the revert.

@@ -2755,19 +2755,6 @@ function isHostReachableMemberFunction(fn: ts.Node): boolean {
   const holder = fn.parent;
   if (holder === undefined) return false;
   if (ts.isPropertyAssignment(holder)) return holder.initializer === fn;
-  // (#6947) `F.prototype.m = function (cb) {…}` — the prototype-method
-  // spelling of the same any-receiver dynamic dispatch target (Octane splay's
-  // `traverse_`): a host function can arrive in `cb` just like it does for the
-  // object-literal / class members above.
-  if (
-    ts.isBinaryExpression(holder) &&
-    holder.right === fn &&
-    holder.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-    ts.isPropertyAccessExpression(holder.left) &&
-    ts.isPropertyAccessExpression(holder.left.expression) &&
-    holder.left.expression.name.text === "prototype"
-  )
-    return true;
   return ts.isPropertyDeclaration(holder) && holder.initializer === fn;
 }
 
