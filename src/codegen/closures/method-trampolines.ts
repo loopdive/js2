@@ -60,6 +60,7 @@ import {
 import { ensureFnMetaSubtype, fnMetaSlot } from "../function-instance-meta.js";
 // (#4440) the METHOD half of the same carrier — class/object-literal members
 import { fnMetaSlotForMemberDecl, fnMetaSlotForMemberName } from "../function-instance-meta-methods.js";
+import { noteFunctionValueInhabitant } from "./closure-type-sources.js"; // (#6913)
 
 /**
  * (#2015) Build the `this`-slot prologue for an object-method trampoline.
@@ -410,6 +411,7 @@ export function emitObjectMethodAsClosure(
   const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, userParams, results);
   if (!wrapperTypes) return null;
   const { structTypeIdx, liftedFuncTypeIdx } = wrapperTypes;
+  noteFunctionValueInhabitant(ctx, structTypeIdx, memberDecl); // (#6913)
   // Object-literal methods share the signature wrapper with ordinary
   // functions. A rest method with a simple identifier rest parameter needs an
   // allocation-specific discriminator so `__call_fn_method_N` can materialize
@@ -1201,6 +1203,7 @@ export function ensureFuncClosureSingleton(
     : getOrCreateFuncRefWrapperTypes(ctx, userParams, results);
   if (!wrapperTypes) return null;
   const { structTypeIdx, liftedFuncTypeIdx } = wrapperTypes;
+  noteFunctionValueInhabitant(ctx, structTypeIdx, ownerDeclaration); // (#6913) shared wrapper source
 
   // (#4133) The trampoline and cache were keyed by the BARE function name, so
   // two modules declaring the same top-level name shared one singleton. The

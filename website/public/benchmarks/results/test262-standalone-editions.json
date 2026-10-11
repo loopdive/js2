@@ -689,12 +689,12 @@
   },
   {
     "edition": "ES2016",
-    "pass": 106,
+    "pass": 107,
     "fail": 10,
-    "ce": 8,
+    "ce": 7,
     "skip": 0,
     "total": 124,
-    "pct": 85,
+    "pct": 86,
     "features": [
       {
         "name": "exponentiation",
@@ -707,12 +707,12 @@
       },
       {
         "name": "Array.prototype.includes",
-        "pass": 26,
+        "pass": 27,
         "fail": 2,
-        "ce": 1,
+        "ce": 0,
         "skip": 0,
         "total": 29,
-        "pct": 90
+        "pct": 93
       },
       {
         "name": "u180e",
@@ -744,8 +744,8 @@
       {
         "name": "arrow-function",
         "pass": 1,
-        "fail": 0,
-        "ce": 1,
+        "fail": 1,
+        "ce": 0,
         "skip": 0,
         "total": 2,
         "pct": 50
@@ -762,8 +762,8 @@
       {
         "name": "Reflect",
         "pass": 1,
-        "fail": 0,
-        "ce": 1,
+        "fail": 1,
+        "ce": 0,
         "skip": 0,
         "total": 2,
         "pct": 50
@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4250,
-    "fail": 1162,
+    "pass": 4251,
+    "fail": 1161,
     "ce": 380,
     "skip": 0,
     "total": 5792,
@@ -2276,8 +2276,8 @@
       },
       {
         "name": "resizable-arraybuffer",
-        "pass": 133,
-        "fail": 269,
+        "pass": 134,
+        "fail": 268,
         "ce": 30,
         "skip": 0,
         "total": 432,
@@ -2348,8 +2348,8 @@
       },
       {
         "name": "TypedArray",
-        "pass": 82,
-        "fail": 45,
+        "pass": 83,
+        "fail": 44,
         "ce": 4,
         "skip": 0,
         "total": 131,
@@ -2683,21 +2683,21 @@
   },
   {
     "edition": "ES2023",
-    "pass": 177,
-    "fail": 157,
+    "pass": 195,
+    "fail": 139,
     "ce": 0,
     "skip": 0,
     "total": 334,
-    "pct": 53,
+    "pct": 58,
     "features": [
       {
         "name": "change-array-by-copy",
-        "pass": 60,
-        "fail": 72,
+        "pass": 78,
+        "fail": 54,
         "ce": 0,
         "skip": 0,
         "total": 132,
-        "pct": 45
+        "pct": 59
       },
       {
         "name": "TypedArray",
@@ -2764,12 +2764,12 @@
       },
       {
         "name": "exponentiation",
-        "pass": 0,
-        "fail": 7,
+        "pass": 5,
+        "fail": 2,
         "ce": 0,
         "skip": 0,
         "total": 7,
-        "pct": 0
+        "pct": 71
       },
       {
         "name": "resizable-arraybuffer",
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4605,
+    "pass": 4607,
     "fail": 186,
-    "ce": 130,
+    "ce": 128,
     "skip": 0,
     "total": 4921,
     "pct": 94,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4502,
+        "pass": 4504,
         "fail": 105,
-        "ce": 4,
+        "ce": 2,
         "skip": 0,
         "total": 4611,
         "pct": 98
@@ -4304,11 +4304,11 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4659,
-    "fail": 717,
-    "ce": 69,
+    "pass": 4712,
+    "fail": 669,
+    "ce": 64,
     "skip": 0,
     "total": 5445,
-    "pct": 86
+    "pct": 87
   }
 ]

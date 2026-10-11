@@ -45,6 +45,7 @@ import {
   getOrCreateFuncRefWrapperTypes,
 } from "./funcref-wrapper-types.js";
 import { hasExplicitThisParameter } from "./func-value-callable-signature.js";
+import { noteFunctionValueInhabitant } from "./closure-type-sources.js"; // (#6913)
 
 /**
  * (#5270 step 1.3) A `__fn_tramp_*` body is a PURE FORWARDER — it re-pushes the
@@ -625,6 +626,7 @@ export function emitFuncRefAsClosure(
       ...(ownerHasRest ? { hasRestParam: true } : {}),
     };
     ctx.closureInfoByTypeIdx.set(structTypeIdx, closureInfo);
+    noteFunctionValueInhabitant(ctx, structTypeIdx, ownerDecl); // (#6913) read via the shared base wrapper
 
     // (#2976) Register the module-level artifacts so every later reference —
     // in this or any other fctx — reuses this ONE struct type + trampoline
@@ -658,6 +660,7 @@ export function emitFuncRefAsClosure(
   if (!wrapperTypes) return null;
 
   const { structTypeIdx, liftedFuncTypeIdx, closureInfo } = wrapperTypes;
+  noteFunctionValueInhabitant(ctx, structTypeIdx, metaDecl); // (#6913)
 
   // Create a trampoline function for THIS specific function.
   // The trampoline takes (self, ...userParams) and calls the original function.

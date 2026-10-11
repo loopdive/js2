@@ -1,5 +1,5 @@
 {
-  "generated": "2026-10-02",
+  "generated": "2026-10-10",
   "threshold": 300,
   "functions": {
     "src/codegen-linear/index.ts::compileBinaryExpression": 417,
@@ -14,7 +14,6 @@
     "src/codegen/array-like-hof-arms.ts::emitArrayLikeHofArm": 700,
     "src/codegen/array-methods.ts::compileArrayMethodCall": 493,
     "src/codegen/array-prototype-borrow.ts::compileArrayLikePrototypeCall": 472,
-    "src/codegen/array-prototype-borrow.ts::compileArrayLikePrototypeSearch": 408,
     "src/codegen/async-cps.ts::planAsyncGenCfg": 303,
     "src/codegen/async-frame.ts::buildStateBody": 368,
     "src/codegen/async-frame.ts::ensureAsyncResumeFunction": 1011,

@@ -33,6 +33,7 @@ import { closureObservesBindingValue, collectTransitiveCaptureNames } from "../f
 import { valTypesMatch } from "../shared.js";
 import { tryEmitNativeIteratorResultParam } from "../promise-native-iterator-result.js";
 import { materializeHoistedFunctionValueBinding } from "./funcref-as-closure.js";
+import { publishClosureSourceInfo } from "./closure-type-sources.js"; // (#6913)
 import { capturedBindingWriteTest, namesDeclaredInsideClosure } from "./closure-binding-identity.js";
 import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
 // (#4437) per-declaration `name` / §15.1.5 `length` carrier
@@ -1489,7 +1490,7 @@ export function registerClosureBindingInfo(
   };
 
   // Always register by struct type index (for valueOf coercion and anonymous closures)
-  ctx.closureInfoByTypeIdx.set(structTypeIdx, closureInfo);
+  publishClosureSourceInfo(ctx, arrow, closureInfo); // (#6913) merged on a shared wrapper type
 
   const parent = arrow.parent;
   if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {

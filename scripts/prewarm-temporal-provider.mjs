@@ -57,6 +57,7 @@ import {
   loadTemporalPolyfillSource,
   temporalCacheDir,
   temporalProviderCompileOptions,
+  withTemporalCompilerFingerprint,
   writeTemporalPrewarmStamp,
 } from "./test262-temporal.mjs";
 
@@ -142,10 +143,12 @@ async function main() {
     const label = semanticProviders === "native-first" ? "host/native-first" : (target ?? "host");
     // The host/standalone lanes keep their pre-#6706 call verbatim; only the
     // native-first lane (#6706) passes its semantic-provider policy.
-    const compileOptions =
+    // (#6882) …plus the compiler's identity, so a stale provider is a miss.
+    const compileOptions = withTemporalCompilerFingerprint(
       semanticProviders === "auto"
         ? temporalProviderCompileOptions(target)
-        : temporalProviderCompileOptions(target, semanticProviders);
+        : temporalProviderCompileOptions(target, semanticProviders),
+    );
     // The key MUST be computed with the same options the build uses, or the
     // stamp certifies an artifact nobody will ask for and the consuming lane
     // refuses with a key mismatch it cannot act on.

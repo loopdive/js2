@@ -23,6 +23,7 @@ import type {
 import { compileMultiSource } from "./compiler.js";
 import type { ProjectModuleResolutions } from "./checker/index.js";
 import { getBarePackageName } from "./resolve.js";
+import { resolveCompileTargetProfile } from "./target-profile.js";
 import { LINKED_IMPORT_GETTER_PREFIX, LINKED_IMPORT_REEXPORT_PREFIX } from "./linked-import-getter-names.js";
 import { defaultCacheDir, getDefaultEnvironment } from "./env.js";
 import { buildCompiledImports } from "./runtime.js";
@@ -1384,10 +1385,12 @@ function topoPackages(packages: Map<string, PackageNode>): { order?: PackageNode
  * imports the `js2wasm:runtime-eval` ABI exactly as a standalone root does,
  * and inherits it from the root import object (`buildProviderImportObject`
  * passes every non-env namespace through). `runtimeEvalProvider: false`
- * (#6676) promises no provider will be linked, so it stays out.
+ * (#6676) promises no provider will be linked, so it stays out. (#6930) The
+ * native-first JS regime (`ctx.standalone`) lowers eval the same way.
  */
 function standaloneProviderRuntimeImports(options: CompileOptions): string[] {
-  return options.target === "standalone" && options.runtimeEvalProvider !== false ? ["js2wasm:runtime-eval"] : [];
+  const regime = options.target === "standalone" || resolveCompileTargetProfile(options).nativeRegime;
+  return regime && options.runtimeEvalProvider !== false ? ["js2wasm:runtime-eval"] : [];
 }
 
 /**

@@ -80,8 +80,18 @@ export interface BuildTemporalProviderOptions {
   /** Directory for the synthetic project and the provider binary cache. */
   cacheDir: string;
   /** Compile options forwarded to the provider compile. */
-  compileOptions?: CompileOptions;
+  compileOptions?: TemporalProviderCompileOptions;
 }
+
+/**
+ * The provider compile options plus (#6882) `compilerFingerprint`: the identity
+ * of the COMPILER doing the build (the test262 lane passes its compiler-bundle
+ * hash). It is not forwarded to the compile; it is folded into the cache key
+ * and the provider directory, so a cache an older compiler built is a miss
+ * instead of a stale provider served after a codegen change. Absent, every key
+ * and directory is unchanged.
+ */
+type TemporalProviderCompileOptions = CompileOptions & { compilerFingerprint?: string };
 
 interface CachedTemporalProvider {
   provider: TemporalProvider;
@@ -121,8 +131,14 @@ function fingerprint(parts: readonly string[]): string {
  * `buildTemporalProvider` at all unless a stamp written by
  * `scripts/prewarm-temporal-provider.mjs` carries this exact key.
  */
-export function temporalProviderCacheKey(options: { polyfillSource: string; compileOptions?: CompileOptions }): string {
-  return fingerprint([providerSource(options), providerOptionFingerprint(options.compileOptions)]);
+export function temporalProviderCacheKey(options: {
+  polyfillSource: string;
+  compileOptions?: TemporalProviderCompileOptions;
+}): string {
+  // (#6882) Neither part names the compiler; see `TemporalProviderCompileOptions`.
+  const compilerFingerprint = options.compileOptions?.compilerFingerprint;
+  const compiler = compilerFingerprint === undefined ? [] : [`compiler:${compilerFingerprint}`];
+  return fingerprint([providerSource(options), providerOptionFingerprint(options.compileOptions), ...compiler]);
 }
 
 /**
@@ -309,12 +325,18 @@ export async function buildTemporalProvider(options: BuildTemporalProviderOption
   // keyed by the source fingerprint, so a bundle bump never reuses stale text.
   const entryPath = materializeTemporalProject(fs, options.cacheDir, key, providerSource(options));
 
+  const { compilerFingerprint, ...compileOptions } = options.compileOptions ?? {};
   const result = await compileProject(entryPath, {
-    ...options.compileOptions,
+    ...compileOptions,
     allowJs: true,
     emitWat: false,
     skipSemanticDiagnostics: true,
-    packageCacheDir: path.join(options.cacheDir, "providers"),
+    // (#6882) The linker's own provider cache keys on the source and options,
+    // not on the compiler, so it gets the compiler's identity as a sub-directory.
+    packageCacheDir:
+      compilerFingerprint === undefined
+        ? path.join(options.cacheDir, "providers")
+        : path.join(options.cacheDir, "providers", `compiler-${compilerFingerprint}`),
   });
   if (!result.success) {
     const errors = (result.errors ?? [])
