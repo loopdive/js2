@@ -176,8 +176,20 @@ const DP_VALUE_NAME = "__vec_dp_value";
 const DP_ACCESSOR_NAME = "__vec_dp_accessor";
 const GOPD_NAME = "__vec_gopd";
 const LOOKUP_NAME = "__vec_overlay_lookup";
+const LOOKUP_NUM_NAME = "__vec_overlay_lookup_num"; // (#6964)
+const MARK_NUM_NAME = "__vec_overlay_mark_num"; // (#6964)
+/**
+ * (#6964) `$Object.flags` bit on a COMPANION: it has been registered in the
+ * numeric-entry table (`__vec_overlay_num_state`). Above the eight bits the
+ * object runtime documents (object-runtime.ts flag table); never set on a
+ * user-visible object, and every reader masks its own bits.
+ */
+const OBJ_FLAG_OVERLAY_NUMERIC = 0x100;
+/** `$Object.flags` field index (object-runtime.ts `objectFields`). */
+const OBJ_FLAGS_FIELD = 4;
 const ENSURE_NAME = "__vec_overlay_ensure";
 const ENSURE_FRESH_NAME = "__vec_overlay_ensure_fresh"; // (#3673 round 15)
+const ENSURE_NEWEST_NAME = "__vec_overlay_ensure_newest"; // (#6964)
 const PRIME_NAME = "__vec_overlay_prime"; // (#3673 round 15)
 
 /** Reserved helper funcIdxs handed to the descriptor-native builders. */
@@ -245,6 +257,10 @@ interface OverlayCore {
    */
   numericFlagGlobalIdx: number;
   lookupIdx: number;
+  /** (#6964) `__vec_overlay_lookup_num` — scans only numeric-entry companions. */
+  lookupNumIdx: number;
+  /** (#6964) `__vec_overlay_mark_num(vec, comp)` — arm the flag + register. */
+  markNumIdx: number;
   ensureIdx: number;
 }
 
@@ -262,6 +278,8 @@ function ensureOverlayCore(ctx: CodegenContext, objectTypeIdx: number, newPlainO
       stateGlobalIdx: ctx.vecOverlayStateGlobalIdx,
       numericFlagGlobalIdx: ctx.vecOverlayNumericGlobalIdx!,
       lookupIdx: existingLookup,
+      lookupNumIdx: ctx.funcMap.get(LOOKUP_NUM_NAME)!,
+      markNumIdx: ctx.funcMap.get(MARK_NUM_NAME)!,
       ensureIdx: ctx.funcMap.get(ENSURE_NAME)!,
     };
   }
@@ -315,16 +333,32 @@ function ensureOverlayCore(ctx: CodegenContext, objectTypeIdx: number, newPlainO
   });
   ctx.vecOverlayNumericGlobalIdx = numericFlagGlobalIdx;
 
+  // (#6964) The numeric-entry table: the same `$__overlay_state` shape, holding
+  // only the `(vec, companion)` pairs whose companion has held a NUMERIC key.
+  // The indexed READ / HAS prologues ask a companion nothing but a numeric key,
+  // so a companion absent here would always miss — scanning only this table is
+  // exact, and it stays small while the full table grows with every sloppy
+  // `arguments` object (own `callee` / `@@iterator`).
+  const numStateGlobalIdx = nextModuleGlobalIdx(ctx);
+  ctx.mod.globals.push({
+    name: "__vec_overlay_num_state",
+    type: { kind: "ref_null", typeIdx: stateTypeIdx },
+    mutable: true,
+    init: [{ op: "ref.null", typeIdx: NONE_HEAP }],
+  });
+
   const objRefNull: ValType = { kind: "ref_null", typeIdx: objectTypeIdx };
 
   // ── __vec_overlay_lookup(anyref vec) -> (ref null $Object) ──────────────
   // params: 0=vec(anyref); locals: 1=st 2=tab 3=i 4=count 5=pair
-  {
-    const sigIdx = addFuncType(ctx, [{ kind: "anyref" }], [objRefNull], `$${LOOKUP_NAME}_type`);
+  // (#6964) Built once per table: `__vec_overlay_lookup` scans every companion,
+  // `__vec_overlay_lookup_num` only the companions that hold a numeric entry.
+  const mintLookup = (name: string, tableGlobalIdx: number): void => {
+    const sigIdx = addFuncType(ctx, [{ kind: "anyref" }], [objRefNull], `$${name}_type`);
     const funcIdx = mintDefinedFunc(ctx);
     const body: Instr[] = [
       // st = state ; if st == null → null (the fast path for overlay-free runs)
-      { op: "global.get", index: stateGlobalIdx },
+      { op: "global.get", index: tableGlobalIdx },
       { op: "local.tee", index: 1 },
       { op: "ref.is_null" },
       {
@@ -400,7 +434,7 @@ function ensureOverlayCore(ctx: CodegenContext, objectTypeIdx: number, newPlainO
       { op: "ref.null", typeIdx: NONE_HEAP },
     ];
     pushDefinedFunc(ctx, funcIdx, {
-      name: LOOKUP_NAME,
+      name,
       typeIdx: sigIdx,
       locals: [
         { name: "st", type: { kind: "ref_null", typeIdx: stateTypeIdx } },
@@ -412,8 +446,10 @@ function ensureOverlayCore(ctx: CodegenContext, objectTypeIdx: number, newPlainO
       body,
       exported: false,
     });
-    ctx.funcMap.set(LOOKUP_NAME, funcIdx);
-  }
+    ctx.funcMap.set(name, funcIdx);
+  };
+  mintLookup(LOOKUP_NAME, stateGlobalIdx);
+  mintLookup(LOOKUP_NUM_NAME, numStateGlobalIdx);
   const lookupIdx = ctx.funcMap.get(LOOKUP_NAME)!;
 
   // Shared append tail for `__vec_overlay_ensure` (post-lookup-miss) and
@@ -421,9 +457,9 @@ function ensureOverlayCore(ctx: CodegenContext, objectTypeIdx: number, newPlainO
   // GUARANTEES the vec is brand-new, e.g. a regex match result right after
   // construction, so a table scan would only ever miss). Built per call so
   // the two natives never share Instr object identities.
-  const buildEnsureAppendBody = (): Instr[] => [
+  const buildEnsureAppendBody = (tableGlobalIdx = stateGlobalIdx, compInstrs?: Instr[]): Instr[] => [
     // st = state ; if null → state = {count: 0, tab: new [4]}
-    { op: "global.get", index: stateGlobalIdx },
+    { op: "global.get", index: tableGlobalIdx },
     { op: "local.tee", index: 2 },
     { op: "ref.is_null" },
     {
@@ -435,7 +471,7 @@ function ensureOverlayCore(ctx: CodegenContext, objectTypeIdx: number, newPlainO
         { op: "array.new_default", typeIdx: tabTypeIdx },
         { op: "struct.new", typeIdx: stateTypeIdx },
         { op: "local.tee", index: 2 },
-        { op: "global.set", index: stateGlobalIdx },
+        { op: "global.set", index: tableGlobalIdx },
       ],
     },
     // count / tab / cap
@@ -481,10 +517,13 @@ function ensureOverlayCore(ctx: CodegenContext, objectTypeIdx: number, newPlainO
         { op: "local.set", index: 3 },
       ],
     },
-    // compNN = fresh $Object (via the plain-object native, cast back down)
-    { op: "call", funcIdx: newPlainObjectIdx },
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: objectTypeIdx },
+    // compNN = fresh $Object (via the plain-object native, cast back down) —
+    // or (#6964) the caller's existing companion for the numeric table.
+    ...(compInstrs ?? [
+      { op: "call", funcIdx: newPlainObjectIdx },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: objectTypeIdx },
+    ]),
     { op: "local.set", index: 7 },
     // tab[count] = {vec, compNN} ; state.count = count + 1
     { op: "local.get", index: 3 },
@@ -573,6 +612,123 @@ function ensureOverlayCore(ctx: CodegenContext, objectTypeIdx: number, newPlainO
     ctx.funcMap.set(ENSURE_FRESH_NAME, funcIdx);
   }
 
+  // ── (#6964) __vec_overlay_ensure_newest(anyref vec) -> (ref $Object) ─────
+  // The NEWEST pair's companion when it belongs to `vec`, else a fresh append
+  // (`__vec_overlay_ensure_fresh`) — never a scan. PRECONDITION: `vec` has no
+  // companion other than possibly the newest one. Only the arguments-object
+  // seed natives call it (arguments-length-brand.ts), for a branded arguments
+  // vec they just built: its first seed appends, the next hits tab[count-1].
+  // params: 0=vec; locals: 1=st 2=count 3=pair
+  {
+    const sigIdx = addFuncType(
+      ctx,
+      [{ kind: "anyref" }],
+      [{ kind: "ref", typeIdx: objectTypeIdx }],
+      `$${ENSURE_NEWEST_NAME}_type`,
+    );
+    const funcIdx = mintDefinedFunc(ctx);
+    pushDefinedFunc(ctx, funcIdx, {
+      name: ENSURE_NEWEST_NAME,
+      typeIdx: sigIdx,
+      locals: [
+        { name: "st", type: { kind: "ref_null", typeIdx: stateTypeIdx } },
+        { name: "count", type: { kind: "i32" } },
+        { name: "pair", type: { kind: "ref_null", typeIdx: pairTypeIdx } },
+      ],
+      body: [
+        { op: "global.get", index: stateGlobalIdx },
+        { op: "local.tee", index: 1 },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 1 },
+            { op: "ref.as_non_null" },
+            { op: "struct.get", typeIdx: stateTypeIdx, fieldIdx: 0 },
+            { op: "local.tee", index: 2 },
+            { op: "i32.const", value: 0 },
+            { op: "i32.gt_s" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: 1 },
+                { op: "ref.as_non_null" },
+                { op: "struct.get", typeIdx: stateTypeIdx, fieldIdx: 1 },
+                { op: "local.get", index: 2 },
+                { op: "i32.const", value: 1 },
+                { op: "i32.sub" },
+                { op: "array.get", typeIdx: tabTypeIdx },
+                { op: "local.tee", index: 3 },
+                { op: "ref.as_non_null" },
+                { op: "struct.get", typeIdx: pairTypeIdx, fieldIdx: 0 },
+                { op: "ref.cast", typeIdx: -19 /* eq */ },
+                { op: "local.get", index: 0 },
+                { op: "ref.cast", typeIdx: -19 /* eq */ },
+                { op: "ref.eq" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: 3 },
+                    { op: "ref.as_non_null" },
+                    { op: "struct.get", typeIdx: pairTypeIdx, fieldIdx: 1 },
+                    { op: "return" },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: ctx.funcMap.get(ENSURE_FRESH_NAME)! },
+      ],
+      exported: false,
+    });
+    ctx.funcMap.set(ENSURE_NEWEST_NAME, funcIdx);
+  }
+
+  // ── (#6964) __vec_overlay_mark_num(anyref vec, (ref null $Object) comp) ──
+  // Called wherever a companion gains a NUMERIC entry (index / canonical
+  // numeric-string define, accessor define, index delete). Arms the global
+  // numeric flag and registers the pair in the numeric table once per
+  // companion (test-and-set of OBJ_FLAG_OVERLAY_NUMERIC — no scan).
+  // params: 0=vec 1=comp; locals: 2=st 3=tab 4=count 5=cap 6=newTab 7=compNN
+  {
+    const sigIdx = addFuncType(ctx, [{ kind: "anyref" }, objRefNull], [], `$${MARK_NUM_NAME}_type`);
+    const funcIdx = mintDefinedFunc(ctx);
+    const flagsOf = (): Instr[] => [
+      { op: "local.get", index: 1 },
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: OBJ_FLAGS_FIELD },
+    ];
+    pushDefinedFunc(ctx, funcIdx, {
+      name: MARK_NUM_NAME,
+      typeIdx: sigIdx,
+      locals: ensureLocals().slice(1),
+      body: [
+        { op: "i32.const", value: 1 },
+        { op: "global.set", index: numericFlagGlobalIdx },
+        ...flagsOf(),
+        { op: "i32.const", value: OBJ_FLAG_OVERLAY_NUMERIC },
+        { op: "i32.and" },
+        { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
+        { op: "local.get", index: 1 },
+        { op: "ref.as_non_null" },
+        ...flagsOf(),
+        { op: "i32.const", value: OBJ_FLAG_OVERLAY_NUMERIC },
+        { op: "i32.or" },
+        { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: OBJ_FLAGS_FIELD },
+        ...buildEnsureAppendBody(numStateGlobalIdx, [{ op: "local.get", index: 1 }]),
+        { op: "drop" },
+      ],
+      exported: false,
+    });
+    ctx.funcMap.set(MARK_NUM_NAME, funcIdx);
+  }
+
   // Fill the reserved `__vec_overlay_prime` placeholder (reserved at regex
   // match-result compile time; no-op body until the core exists).
   {
@@ -588,7 +744,15 @@ function ensureOverlayCore(ctx: CodegenContext, objectTypeIdx: number, newPlainO
     }
   }
 
-  return { stateTypeIdx, stateGlobalIdx, numericFlagGlobalIdx, lookupIdx, ensureIdx: ctx.funcMap.get(ENSURE_NAME)! };
+  return {
+    stateTypeIdx,
+    stateGlobalIdx,
+    numericFlagGlobalIdx,
+    lookupIdx,
+    lookupNumIdx: ctx.funcMap.get(LOOKUP_NUM_NAME)!,
+    markNumIdx: ctx.funcMap.get(MARK_NUM_NAME)!,
+    ensureIdx: ctx.funcMap.get(ENSURE_NAME)!,
+  };
 }
 
 /**
@@ -679,22 +843,36 @@ function buildOwnElementFastSet(
     indexLocal: number;
     lenLocal: number;
     numericFlagGlobalIdx: number;
+    lookupNumIdx: number;
     backedLen: () => Instr[];
     frozenGuard: () => Instr[];
     present: () => Instr[];
   },
 ): Instr[] {
   return [
-    { op: "global.get", index: o.numericFlagGlobalIdx },
-    { op: "i32.eqz" },
     { op: "local.get", index: 1 },
     { op: "any.convert_extern" },
     { op: "ref.test", typeIdx: -20 },
-    { op: "i32.and" },
     {
       op: "if",
       blockType: { kind: "empty" },
       then: [
+        // (#6964) THIS vec has no numeric companion entry: either none exists
+        // anywhere (flag 0, no call) or the numeric table does not list it.
+        { op: "global.get", index: o.numericFlagGlobalIdx },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then: [{ op: "i32.const", value: 1 }],
+          else: [
+            { op: "local.get", index: o.anyLocal },
+            { op: "call", funcIdx: o.lookupNumIdx },
+            { op: "ref.is_null" },
+          ],
+        },
+        { op: "i32.eqz" },
+        { op: "br_if", depth: 0 },
         { op: "local.get", index: 1 },
         { op: "any.convert_extern" },
         { op: "ref.cast", typeIdx: -20 },
@@ -805,7 +983,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
   const vecBaseIdx = getOrRegisterVecBaseType(ctx);
   const core = ensureOverlayCore(ctx, objectTypeIdx, newPlainObjectIdx);
   // (#4658) Fill the reserved brand stubs — needs the overlay core.
-  fillArgumentsLengthBrand(ctx, objectTypeIdx, core.ensureIdx, core.lookupIdx);
+  fillArgumentsLengthBrand(ctx, objectTypeIdx, core.ensureIdx, core.lookupIdx, ctx.funcMap.get(ENSURE_NEWEST_NAME)!);
   fillArraySetLengthRefusal(ctx, core.lookupIdx); // (#6771 S10a) needs the overlay core
   // #4504 only needs this extra logical-own screen in modules that can observe
   // an inherited descriptor. Keep the historical gOPD/hasOwn tree untouched
@@ -1668,8 +1846,10 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
           op: "if",
           blockType: { kind: "empty" },
           then: [
-            { op: "i32.const", value: 1 },
-            { op: "global.set", index: core.numericFlagGlobalIdx },
+            // (#6964) arm the flag + register (vec, comp) in the numeric table.
+            { op: "local.get", index: 4 },
+            { op: "local.get", index: 5 },
+            { op: "call", funcIdx: core.markNumIdx },
             ...clearDeletedIndexMarker({
               comp: 5,
               compExt: 6,
@@ -1710,7 +1890,11 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
             ctx,
             1,
             20,
-            core.numericFlagGlobalIdx,
+            [
+              { op: "local.get", index: 4 },
+              { op: "local.get", index: 5 },
+              { op: "call", funcIdx: core.markNumIdx },
+            ],
             numToStringIdx,
             strFlattenIdx,
             strEqualsIdx,
@@ -1946,9 +2130,10 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
           op: "if",
           blockType: { kind: "empty" },
           then: [
-            // (#3673) numeric-companion presence — see OverlayCore.numericFlagGlobalIdx.
-            { op: "i32.const", value: 1 },
-            { op: "global.set", index: core.numericFlagGlobalIdx },
+            // (#3673/#6964) numeric-companion presence — see OverlayCore.markNumIdx.
+            { op: "local.get", index: 5 },
+            { op: "local.get", index: 6 },
+            { op: "call", funcIdx: core.markNumIdx },
             ...clearDeletedIndexMarker({
               comp: 6,
               compExt: 7,
@@ -1983,7 +2168,11 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
             ctx,
             1,
             13,
-            core.numericFlagGlobalIdx,
+            [
+              { op: "local.get", index: 5 },
+              { op: "local.get", index: 6 },
+              { op: "call", funcIdx: core.markNumIdx },
+            ],
             numToStringIdx,
             strFlattenIdx,
             strEqualsIdx,
@@ -2565,6 +2754,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
               indexLocal,
               lenLocal: fastLenLocal,
               numericFlagGlobalIdx: core.numericFlagGlobalIdx,
+              lookupNumIdx: core.lookupNumIdx,
               backedLen: () => vecBackedLen(anyLocal, fastLenLocal),
               frozenGuard: frozenOwnIndexGuard,
               present: backedIndexIsPresent,
@@ -2792,7 +2982,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         dpValueIdx,
         objFindIdx,
         ensureIdx: core.ensureIdx,
-        numericFlagGlobalIdx: core.numericFlagGlobalIdx,
+        markNumIdx: core.markNumIdx,
         deletedIndexFlags: FLAG_DELETED_INDEX | FLAG_COMPANION_VALUE,
         missExtern,
         parseIndex,
@@ -2843,8 +3033,9 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
               op: "if",
               blockType: { kind: "empty" },
               then: [
+                // (#6964) only numeric-entry companions can answer an index.
                 { op: "local.get", index: pAny },
-                { op: "call", funcIdx: core.lookupIdx },
+                { op: "call", funcIdx: core.lookupNumIdx },
                 { op: "local.tee", index: pComp },
                 { op: "ref.is_null" },
                 { op: "i32.eqz" },
@@ -3189,7 +3380,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         objectTypeIdx,
         propEntryTypeIdx,
         vecBaseIdx,
-        lookupIdx: core.lookupIdx,
+        lookupIdx: core.lookupNumIdx, // (#6964) numeric-key query only
         numericFlagGlobalIdx: core.numericFlagGlobalIdx,
         numToStringIdx,
         objFindIdx,
