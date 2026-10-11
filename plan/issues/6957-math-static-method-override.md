@@ -132,6 +132,11 @@ Math.foo = function () { return 7; }; Math.foo()  // standalone: compile error `
   programs is wanted.
 - **Top-level keep** — `isBuiltinNamespaceExpandoWriteTarget` keeps a top-level
   `Math.<modelled method> = …` (the write now has a reader); constants stay dropped.
+- **IsCallable on the resolved callee (review fix, 2026-10-11)** — the carrier holds whatever
+  the program wrote, so `Math.custom = 1` / `= null` reached `__apply_closure`'s null-sentinel
+  fallback and `Math.custom()` silently returned (node: TypeError). The patched-call arm now
+  calls `__is_callable` on the captured callee after the arguments and before apply, throwing
+  `TypeError` — the same check and order as the generic dynamic call (`calls.ts`, #6420).
 
 ### Pre-existing defects found (not fixed here, reproduce on base)
 - `Math.max = function (a, b) {…}` (top level or in a body) → `Binary emit error: RangeError:

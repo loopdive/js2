@@ -90,6 +90,51 @@ describe("#6957 standalone Math.<method> override", () => {
     expect(await runStandalone(src)).toBe(935981);
   });
 
+  // Review P1: a patched member holding a NON-callable value must throw
+  // TypeError at the call (node: 1), not silently return through the apply
+  // bridge's null fallback (old head: 0 for both rows).
+  it("non-callable override (number) throws TypeError at the call", async () => {
+    const src = `
+      Math.custom = 1;
+      export function main() {
+        try { Math.custom(); return 0; }
+        catch (e) { return e instanceof TypeError ? 1 : 2; }
+      }`;
+    expect(await runStandalone(src)).toBe(1);
+  });
+
+  it("non-callable override (null) throws TypeError at the call", async () => {
+    const src = `
+      Math.custom = null;
+      export function main() {
+        try { Math.custom(); return 0; }
+        catch (e) { return e instanceof TypeError ? 1 : 2; }
+      }`;
+    expect(await runStandalone(src)).toBe(1);
+  });
+
+  it("non-callable override: arguments are evaluated before the IsCallable throw", async () => {
+    const src = `
+      var log = 0;
+      Math.custom = 1;
+      function a() { log = log * 10 + 1; return 0; }
+      export function main() {
+        try { Math.custom(a()); return 0; }
+        catch (e) { return (e instanceof TypeError ? 100 : 200) + log; }
+      }`;
+    expect(await runStandalone(src)).toBe(101);
+  });
+
+  it("callable custom member override is called", async () => {
+    const src = `
+      Math.custom = function () { return 7; };
+      export function main() {
+        try { return Math.custom(); }
+        catch (e) { return e instanceof TypeError ? 1 : 2; }
+      }`;
+    expect(await runStandalone(src)).toBe(7);
+  });
+
   it("control: without a Math write, Math.random() keeps the direct kernel call", async () => {
     const src = `export function main() { var x = Math.random(); return x >= 0 && x < 1 ? 1 : 0; }`;
     expect(await runStandalone(src)).toBe(1);
