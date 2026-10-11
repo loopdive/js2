@@ -1,0 +1,8 @@
+core-node execution gate: PASS (12/12 observed callers; dispatch-cut UNKNOWN)
+core-type gate: PASS (10/10 full, 10/10 dispatch-cut class-free references)
+moved-runtime gate: FAIL (production-rooted evidence incomplete)
+  src/optimize.ts#getBinaryenModule: unknown nonliteral dynamic import module target at line 412
+  src/runtime/platform-capability-adapter.ts#resolvePlatformCapabilityImport: unknown nonliteral dynamic import module target at line 151
+preservation-only PASS: 6/6 full source witnesses, 6/6 cut witnesses
+graph OPEN; strict modeled closure FAIL
+retirement/deletion NOT CERTIFIED

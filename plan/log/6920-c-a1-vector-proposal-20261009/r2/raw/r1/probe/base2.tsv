@@ -1,0 +1,87 @@
+gc	fixedF64	78123c0a5575cb1ba5c5f2c4c7b0a95be3539a26b2d01c41e8724c51f710e8c9 len=1634 success=true errs=0
+standalone	fixedF64	4fa8006b46e2de8a1fe84101bf8de645da904f98dd9766d615f00e69da672464 len=32627 success=true errs=0
+linear	fixedF64	61056645b440750fa2ad84286c6052053043eee8946127156dc0b91564befcac len=5111 success=true errs=0
+gc	repeatedLiterals	3f7853c1b5330a296cec3ec40b9656c98a8a2dcd6768e83f22611c70cbe5a45f len=1701 success=true errs=0
+standalone	repeatedLiterals	97629956f06d691cb215735c3198b2178b512938e68f0ec9db9e2631ac2feb4d len=32694 success=true errs=0
+linear	repeatedLiterals	24338b5b515bcd5a223de645adf447db112a8601aaf56bc815bd5b232741322a len=5206 success=true errs=0
+gc	distinctElems	94b7c9e9df3357c1c5ec675e7a86be5c1ff518d81ec63e3f9d229a32ecfe9359 len=2078 success=true errs=0
+standalone	distinctElems	840d84c195f5c75d5391c55c9cd81b21aa8fe60b8a2e3c53eb7a43b9c34cc652 len=32730 success=true errs=0
+linear	distinctElems	e06d5c57a10d224828a18d8df361d81002d938569ad6bd1f860d66f16622b996 len=5106 success=true errs=0
+gc	i32Elems	1aa0ac60dc120c6f520484c3939d87f004157119d2f7ce76e985fbb1021a4a97 len=2473 success=true errs=0
+standalone	i32Elems	1ab6a3eaf1d2b10650434d793e6c3278a02b228dea6e43ab3097cfdb750170f8 len=32939 success=true errs=0
+linear	i32Elems	5618845f2ddb87698f53bc6b8f13bd28ba440494565874b0b3cda39c5a881263 len=5120 success=true errs=0
+gc	emptyLiteral	1cd465a0d283bb82a6a676b9aa8b5a9becfb8e846a7946832be9f25e05e7227d len=1945 success=true errs=0
+standalone	emptyLiteral	011bca05bf54b389b2bd2ce0d62813f7da2f9c9d505cf1809f84b58d697f7179 len=32772 success=true errs=0
+linear	emptyLiteral	7bbf7b2415ef827ccfb48685898618a86628d912a907d016c06267a2ec0b3aa2 len=4959 success=true errs=0
+gc	emptyReserved	35caf77a26fe5f8947b4baf819fe782810e80074404ab4a1de7b2d2d0d3cb2ed len=2158 success=true errs=0
+standalone	emptyReserved	146895014d0f2d98c53c14d1c7a28b2ec93486bb3ffec602fd437cc74d74bf6b len=32772 success=true errs=0
+linear	emptyReserved	e91b8154b934ec0ad5963f0f37bf7886d36b6358a63b9c0e0190f76c2739f96d len=4993 success=true errs=0
+gc	forOf	0beba82f8084927f9c11f7fa3ed13ddec9884293522bcc6106ca0b993b719614 len=1609 success=true errs=0
+standalone	forOf	10a27e92f01e5e1280a3a92cd7bac97c197941ea5e7fb21d794d5547c18b9bfe len=32602 success=true errs=0
+linear	forOf	4c61dffacfacf38639a557f8db5d2c5786c6079119b32aa089fb756acab765ee len=5736 success=true errs=0
+gc	forOfParam	a62ba023c08f668a949891979418ff01ce73ad39c161adb7340d2f0d39e52315 len=1645 success=true errs=0
+standalone	forOfParam	2bf1f784ca673d3649a461a071776f8183249fac58dd1e75cfbe8737f2aa4b9b len=32614 success=true errs=0
+linear	forOfParam	c1e8dfb0381984e8c9d8bdbf96c7684adf7f8c1a872f17e5759a7f638e480eb9 len=5745 success=true errs=0
+gc	nullableVec	1e5323384ed5b02d3c71db85158d5fbcea0459cedf86a2ada962d2a497fa90eb len=2194 success=true errs=0
+standalone	nullableVec	df6552a605c88ba947ab946fbcfc8af2aa87d20abe5f31d1969c28df037a4829 len=90673 success=true errs=0
+linear	nullableVec	25c017859014ec589c712216c2b527750cc3552311760ac7a1768d57fa5c38f2 len=4986 success=true errs=0
+gc	nestedVec	04660b905278c8930d3f7fa7b1457378b0e969c8222986893a55f24dca18ca96 len=2269 success=true errs=0
+standalone	nestedVec	b0c8cbc753de23160f20f8ae001a064f91907b14f64f596848e71dabd272b61e len=33024 success=true errs=0
+linear	nestedVec	e988fd0fcb70767c720ea0a6d7c0518de35435259659d7db90bb11acf65aee5c len=5828 success=false errs=1
+gc	vecSet	4b2e487063ce423f12a9b96e4313bde79f940b00c91fdcca8cb6cb773f2b20c3 len=2018 success=true errs=0
+standalone	vecSet	64a9827d4b23b779cd7227415f4b36d2b85e643556cc0753c6696594e50a8db0 len=32845 success=true errs=0
+linear	vecSet	42b23b8c87a147a8221ab7e62392496fb0dcf06024df7a3838b90560ce286d9b len=5093 success=true errs=0
+gc	primitiveIf	0815b32c3a77f3c007b70f59f5bf467a4d5e53bafca2cf17584ff8ca48f121fb len=1607 success=true errs=0
+standalone	primitiveIf	b7782d50cdce2041bf979eea701b9b84db6481feb881b04a4335b3b0a6ef8e29 len=32600 success=true errs=0
+linear	primitiveIf	5e7b514e2a43b5faa3083dd1d66988be37c95616d644dc9c70bfa2cc2a5f0dd2 len=5055 success=true errs=0
+gc	native	d54cc1d0f0acf029e103b6b102dd5481e1819cde8dd6200254d200996e8d3697 len=1588 success=true errs=0
+standalone	native	9806d5e46191f3c7aa6d3d65b5c22511ffdc037749c589e272e63f1eb1be04e9 len=32581 success=true errs=0
+linear	native	f70510d6a9d417d53bd5e3763f73745e41097c84ef19869c9c5e1016d178e761 len=5035 success=true errs=0
+gc	stringVec	deef8b8e2a00f09fa26be4e2b923f3e42143b477f93784000cc120617c8e39f7 len=1840 success=true errs=0
+standalone	stringVec	a3202eeb4473656ffb0db30fb8814a05f2d09cfcd1bd65c8f85e2e90ce773c92 len=32942 success=true errs=0
+linear	stringVec	ab4dae447c8ca1680077eff8b224478b1e2e99eb704e5dd864033a92368dd094 len=5808 success=true errs=0
+gc	closureVec	cf78cd2170a0d8a3715355c477ee0813e6e962c51b5810c0a39f5182086c99d1 len=5609 success=true errs=0
+standalone	closureVec	78b9994d82c484e31f342b90bebb94e313e1c6d1badd897aad5fa9c0dfcbfcd0 len=92730 success=true errs=0
+linear	closureVec	NOBINARY success=false errs=2
+gc	multiF64Linear	a8ac39b259e797692670bc682b057b609ca86bd425f8871d72a91197d655a17a len=2015 success=true errs=0
+standalone	multiF64Linear	9cc1e6843db492b72cd192a8f8374569a5165657fd87fa43cecb53e015640906 len=32842 success=true errs=0
+linear	multiF64Linear	13d5008af17a5c2363694cbbf00f6f1fe3b98fae5555b53309cef7e1464e8b0e len=5135 success=true errs=0
+gc	example:website/playground/examples/benchmarks/array.ts	62bcb9f39d1e0f92e846d6258efa9e315989fa07b58315c3a6d78e0ea1941e83 len=6874 success=true errs=0
+standalone	example:website/playground/examples/benchmarks/array.ts	6026ad73b5603ebe070cf330b88fe98b9d45bb3a27bdda19c5af18fd6b59a25d len=113606 success=true errs=0
+linear	example:website/playground/examples/benchmarks/array.ts	NOBINARY success=false errs=5
+gc	example:website/playground/examples/benchmarks/dom.ts	3837f3bde8046a4fe7fb6870ae3d3c80a55f88f809768e2ca963a783c0481024 len=5402 success=true errs=0
+standalone	example:website/playground/examples/benchmarks/dom.ts	73d69d4a4e0acb8074c09d2dc10691123fbef9b25aa15d96c2cf966593d203bd len=113869 success=true errs=0
+linear	example:website/playground/examples/benchmarks/dom.ts	NOBINARY success=false errs=13
+gc	example:website/playground/examples/benchmarks/fib.ts	438a48d97c0533a272c84c4d3edc04c7554ec2c71717441a6b1ec673b73ec914 len=4955 success=true errs=0
+standalone	example:website/playground/examples/benchmarks/fib.ts	267b0d04ecbac571b09fd9cf026eb684a82957aec17cc44d8c03b86a5647534f len=112806 success=true errs=0
+linear	example:website/playground/examples/benchmarks/fib.ts	NOBINARY success=false errs=5
+gc	example:website/playground/examples/benchmarks/helpers.ts	9370c42b30a2cce9661fcd665b501dda73ee6cd446ef522c7fac9a432043de26 len=10004 success=true errs=0
+standalone	example:website/playground/examples/benchmarks/helpers.ts	fd7a84c5b5ba6d73614e3d13e60764428c4b422b90e2d3d008ee4ce0e361a30a len=118871 success=true errs=0
+linear	example:website/playground/examples/benchmarks/helpers.ts	NOBINARY success=false errs=10
+gc	example:website/playground/examples/benchmarks/loop.ts	b4b9b6d45ff849cbe30cae3084a7707f95c4dc3d6b31ef3ebc1a30ec37032c46 len=5233 success=true errs=0
+standalone	example:website/playground/examples/benchmarks/loop.ts	132b41ea87614a5a9b252c54561648cf9dfbf4398e3941abd09e388913c31625 len=113144 success=true errs=0
+linear	example:website/playground/examples/benchmarks/loop.ts	NOBINARY success=false errs=5
+gc	example:website/playground/examples/benchmarks/string.ts	0636b116221792acb45b2ba386de733c702d1df7b5b1806bea30815fa4c44959 len=5036 success=true errs=0
+standalone	example:website/playground/examples/benchmarks/string.ts	f536c571ba6d5d692838661c4dc5bf0bfe248231fbf2c5f21857eba9fadfb635 len=113164 success=true errs=0
+linear	example:website/playground/examples/benchmarks/string.ts	NOBINARY success=false errs=5
+gc	example:website/playground/examples/benchmarks/style.ts	c03c98f4d22c86509d8e22cb54aaaaa0bdfdc7866fde734dac5fc2e9e357a4c0 len=5573 success=true errs=0
+standalone	example:website/playground/examples/benchmarks/style.ts	931eb5e934d24a6bb8bec2cab3452ff29cedd92a9b6c75795309e24262c53071 len=114826 success=true errs=0
+linear	example:website/playground/examples/benchmarks/style.ts	NOBINARY success=false errs=11
+gc	example:website/playground/examples/benchmarks.ts	a4aeb1c48c7bb4b586e224ac7ef09310596cdf8d9c596546ecca0499d03a888d len=10978 success=true errs=0
+standalone	example:website/playground/examples/benchmarks.ts	408cd853e6b7331e3f575b51c7e1d7c79a6ddeeb14db1169655043b62730ce53 len=119506 success=true errs=0
+linear	example:website/playground/examples/benchmarks.ts	NOBINARY success=false errs=26
+gc	example:website/playground/examples/dom/calendar.ts	7fe046f8cee270571821aaa8e0ca0e4e2ad3fd519c6140560ccb83563de3b829 len=13072 success=true errs=0
+standalone	example:website/playground/examples/dom/calendar.ts	0459e72573d840ecc6c2e5a2563abe8be527462649ac41b0d33d1ce6d41322b3 len=54828 success=true errs=0
+linear	example:website/playground/examples/dom/calendar.ts	NOBINARY success=false errs=64
+gc	example:website/playground/examples/js/algorithms.ts	36b33d3909528598f91325ee3cde87f20b13aa46f855eea68a8cd9e676f6994d len=4987 success=true errs=0
+standalone	example:website/playground/examples/js/algorithms.ts	e41f55cb50e2c61b531bc98a496a5c1ba612249e69d0522d9c4c65b41a771262 len=63547 success=true errs=0
+linear	example:website/playground/examples/js/algorithms.ts	NOBINARY success=false errs=11
+gc	example:website/playground/examples/js/async.ts	ab5e08eb0d0f2b55a0fcb4f96f50e6bbd5363a643a5c037c5c30c0936f6217a5 len=11374 success=true errs=0
+standalone	example:website/playground/examples/js/async.ts	485d86589414290c5b3fffbd45af982a00a6b582cbe902e1d9c5a3bf3327b5b3 len=111971 success=true errs=0
+linear	example:website/playground/examples/js/async.ts	NOBINARY success=false errs=14
+gc	example:website/playground/examples/js/builtins.ts	d27a893ee1844c5908ad33df5b95b1096e4b90f2eaf4c422e7b98f9833733b9e len=11208 success=true errs=0
+standalone	example:website/playground/examples/js/builtins.ts	ccf8b2eff079e5c53eda40bb6630a68f964ce63106b766c598f587a6679ec40a len=48323 success=true errs=0
+linear	example:website/playground/examples/js/builtins.ts	NOBINARY success=false errs=26
+gc	example:website/playground/examples/js/classes.ts	0888a61e4cf4cbbb99756af8640be6f5e6efeebaa0a7354b3a2578c11ce34965 len=2133 success=true errs=0
+standalone	example:website/playground/examples/js/classes.ts	594547838387237969e05ee7061f3558afbb04fea470174436069a090e27b370 len=30701 success=true errs=0
+linear	example:website/playground/examples/js/classes.ts	NOBINARY success=false errs=15

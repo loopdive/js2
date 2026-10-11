@@ -1,0 +1,28 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/ir-algorithms-cluster.test.ts > #2856 C1 — if / early-return inside body buffers > if (no else) inside a for body 900ms
+ ✓ tests/ir-algorithms-cluster.test.ts > #2856 C1 — if / early-return inside body buffers > if/else inside a while body (binary search halving) 284ms
+ ✓ tests/ir-algorithms-cluster.test.ts > #2856 C1 — if / early-return inside body buffers > early value return from inside a while loop 117ms
+ ✓ tests/ir-algorithms-cluster.test.ts > #2856 C1 — if / early-return inside body buffers > early bare return from a loop in a void function 108ms
+ ✓ tests/ir-algorithms-cluster.test.ts > #2856 C1 — if / early-return inside body buffers > early return inside try/finally stays on legacy (finally must run) 101ms
+ ✓ tests/ir-algorithms-cluster.test.ts > #2856 C2 — element store arr[i] = v > in-place swap writes (quicksort) — whole component claims 280ms
+ ✓ tests/ir-algorithms-cluster.test.ts > #2856 C2 — element store arr[i] = v > growing store — write past the end grows capacity and length 112ms
+ ✓ tests/ir-algorithms-cluster.test.ts > #2856 C2 — element store arr[i] = v > store through a param (possibly-null vec) round-trips 101ms
+ ✓ tests/ir-algorithms-cluster.test.ts > #2856 C2 — element store arr[i] = v > reassigned vector locals and parameters remain prepared slot values 122ms
+ ✓ tests/ir-algorithms-cluster.test.ts > #2856 C3 — module-scope Map + strict undefined-compare (JS-host lane) > memoized fib through a module-scope Map claims and agrees 409ms
+ ✓ tests/ir-algorithms-cluster.test.ts > #2856 C3 — module-scope Map + strict undefined-compare (JS-host lane) > mixed front-ends share the Map storage slot (IR writer, legacy reader) 175ms
+ ✓ tests/ir-algorithms-cluster.test.ts > #2856 C3 — module-scope Map + strict undefined-compare (JS-host lane) > strict undefined-compare folds on an f64 operand (matches legacy) 43ms
+ ✓ tests/ir-algorithms-cluster.test.ts > #2856 C4 — array literal + C-style loop (retired #1804 guard) > constructed vec read inside a for body 65ms
+ ✓ tests/ir-algorithms-cluster.test.ts > #2856 C4 — array literal + C-style loop (retired #1804 guard) > constructed vec read in a while cond 65ms
+ ✓ tests/ir-algorithms-cluster.test.ts > #2856 C4 — array literal + C-style loop (retired #1804 guard) > vec constructed inside the loop body (fresh per iteration) 78ms
+ ✓ tests/ir-algorithms-cluster.test.ts > #2856 C4 — array literal + C-style loop (retired #1804 guard) > literal-after-loop passed as a ref arg into a ref_null param 93ms
+ ✓ tests/ir-algorithms-cluster.test.ts > #2856 C4 — array literal + C-style loop (retired #1804 guard) > nested loops + do-while over a constructed vec 90ms
+ ✓ tests/ir-algorithms-cluster.test.ts > #2856 — whole algorithms.ts component end-to-end > console output identical, component claimed, zero demotions 498ms
+ ✓ tests/ir-algorithms-cluster.test.ts > #2856 — whole algorithms.ts component end-to-end > standalone / wasi compiles stay clean (host-gated Map arm defers) 1443ms
+
+ Test Files  1 passed (1)
+      Tests  19 passed (19)
+   Start at  19:43:39
+   Duration  37.68s (transform 22.99s, setup 0ms, collect 32.07s, tests 5.09s, environment 0ms, prepare 92ms)
+

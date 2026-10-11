@@ -1,0 +1,34 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > retains all eight public function objects, with no facade implementations 10ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > keeps generic emitter/converter arguments required and the public Wasm default optional 141ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > resolves the real transitive value graph without a wrapper/emitter/facade cycle 170ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > rejects an injected reverse edge through a barrel to src/ir/lower.ts 180ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > rejects an injected reverse edge through a barrel to src/ir/backend/wasm-lowering.ts 100ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > rejects an injected reverse edge through a barrel to src/ir/backend/wasmgc-emitter.ts 94ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > rejects an injected reverse edge through a barrel to src/ir/backend/linear-emitter.ts 96ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > refuses unsupported graph input import(pathFromCaller); 96ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > refuses unsupported graph input import("node:fs"); 87ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > refuses unsupported graph input import("./missing-lowering-module.js"); 88ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > refuses unsupported graph input export { 24ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > lowers a nonempty body in a fresh process that refuses every concrete/wrapper import 452ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > preserves scalar constant case 0 0ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > preserves scalar constant case 1 0ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > preserves scalar constant case 2 0ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > preserves scalar constant case 3 0ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > preserves scalar constant case 4 0ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > preserves scalar constant case 5 0ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > preserves scalar constant case 6 0ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > preserves scalar constant case 7 0ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > preserves exact constant failures and the emitter's separate typed-null path 1ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > keeps default/explicit Wasm wrappers equivalent and signature projection body-free 9ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > retains foreign sinks, slot grouping and loud contract mismatch/empty-slot failures 3ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > assembles multi-slot Wasm names and preserves the sink object at the wrapper seam 2ms
+ ✓ tests/issue-3518-lowering-cycle.test.ts > lowering cycle separation > executes standalone scalar branches and loops through the unchanged public compiler 830ms
+
+ Test Files  1 passed (1)
+      Tests  25 passed (25)
+   Start at  22:05:27
+   Duration  34.18s (transform 22.85s, setup 0ms, collect 31.28s, tests 2.39s, environment 0ms, prepare 106ms)
+
