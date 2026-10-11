@@ -1,8 +1,7 @@
 ---
 id: 6956
 title: "standalone with `runtimeEvalProvider: false`: a direct `eval(nonConstant)` still imports `js2wasm:runtime-eval.{__runtime_direct_eval,__runtime_apply_interpreted}` (only `Function(...)` is refused) — module cannot instantiate (Octane earley-boyer `sc_jsNew`)"
-status: done
-completed: 2026-10-10
+status: in-progress
 assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-10-10
@@ -114,4 +113,27 @@ spread — and before the runtime-eval route is chosen). Deviations from the pla
   real `evalStr += …` build returns `NaN` instead of throwing — harmless for earley-boyer (never called).
 - On `origin/main` alone, earley-boyer's `sc_jsNew` loop also fails validation
   (`local.tee expected (ref null cell), found i32`); fixed by #6955.
+
+## Remaining (2026-10-10) — needs `src/codegen/index.ts`, outside this slice's file release
+
+Measured on a local merge of this branch into `c-octane-integ` (with #6950/#6955), harness flags
+`target: standalone, runtimeEvalProvider: false, inferModuleStrictArguments: false`:
+
+- earley-boyer now **instantiates** (zero imports), but the run is **SIGKILLed** (memory blow-up, ~25 s after
+  compile; `--max-old-space-size` does not turn it into a V8 OOM). The plan's `.tmp/patch-eb-noeval.mjs`
+  measurement did not see this because it deletes the `eval` token; any surviving eval call — direct or
+  indirect `(0, eval)(evalStr)` — triggers it, while `return String(evalStr)` does not.
+- Cause: program-wide runtime-eval pessimizations in `src/codegen/index.ts` stay switched on although no
+  provider can ever run code:
+  - `runtimeEvalConsumer` (`index.ts` ~L9864; sets `ctx.runtimeEvalGlobalFunctionBindings` and keeps script
+    `var` storage representation-neutral) — **this one causes the kill**;
+  - `ctx.runtimeEvalCallableBoundaryEnabled` (`index.ts` ~L5333 and ~L10672, `callableBoundaryRequired`).
+- Local experiment (not committed), adding `&& ctx.runtimeEvalProviderAbsent !== true` to:
+  - `runtimeEvalConsumer` only → `Error: Earley or Boyer did incorrect number of rewrites`;
+  - `runtimeEvalConsumer` and both callable-boundary sites → `TypeError: Cannot read properties of
+    undefined (reading 'appendJSString')`, the expected #6958 blocker (acceptance met);
+  - the callable-boundary sites only → still killed.
+- Follow-up: gate those three `index.ts` sites on `!isRuntimeEvalProviderAbsent(ctx)` (an eval refused
+  in-module cannot observe or replace any binding), then re-measure. Separately, `runtimeEvalConsumer`
+  mode itself blows up on earley-boyer — a provider-present standalone bug.
 
