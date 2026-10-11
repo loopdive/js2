@@ -616,6 +616,115 @@ export function reserveVecOverlayPrime(ctx: CodegenContext): number | undefined 
 }
 
 /**
+ * (#6963) i32: can the `__extern_set` VALUE (param 2) be stored LOSSLESSLY in
+ * the carrier `anyLocal` holds? Mirrors the `__vec_dp_value` write-back rule:
+ * an externref carrier takes anything, an f64 carrier only a strict number
+ * (`$__box_number_struct` or i31); every other carrier answers 0 so the
+ * overlay keeps the kind-incompatible value in its companion.
+ */
+function valueFitsCarrierInstrs(ctx: CodegenContext, carriers: readonly OverlayCarrier[], anyLocal: number): Instr[] {
+  const boxNumTypeIdx = ctx.nativeBoxNumberTypeIdx;
+  const fits = (c: OverlayCarrier): Instr[] => {
+    if (c.kind === "externref") return [{ op: "i32.const", value: 1 }];
+    if (c.kind !== "f64" || boxNumTypeIdx === undefined || boxNumTypeIdx < 0) return [{ op: "i32.const", value: 0 }];
+    return [
+      { op: "local.get", index: 2 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: -20 },
+      { op: "local.get", index: 2 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: boxNumTypeIdx },
+      { op: "i32.or" },
+    ];
+  };
+  let chain: Instr[] = [{ op: "i32.const", value: 0 }];
+  for (const c of [...carriers].reverse()) {
+    chain = [
+      { op: "local.get", index: anyLocal },
+      { op: "ref.test", typeIdx: c.vecTypeIdx },
+      { op: "if", blockType: { kind: "val", type: { kind: "i32" } }, then: fits(c), else: chain },
+    ];
+  }
+  return chain;
+}
+
+/**
+ * (#6963) The `__extern_set` overlay WRITE prologue's front door for an
+ * ORDINARY store into an existing, backed, present element through a
+ * non-negative i31 key (`x[i] = v` with a small integer `i`, which the
+ * computed-store call sites now pass without stringifying).
+ *
+ * Such a store needs no descriptor work when no companion anywhere holds a
+ * numeric entry (`numericFlagGlobalIdx == 0` — the same gate the READ
+ * prologue trusts): the element is an implicit `{w/e/c: true}` data property,
+ * so §10.1.9.2 OrdinarySet reduces to overwriting the slot. The frozen-array
+ * guard still runs first, the value must be representable in the carrier
+ * (else the companion keeps it), and `present` is the slow path's own
+ * `backedIndexIsPresent` (a `$Hole` only counts as absent when the inherited
+ * set decision is active — exactly where the slow path asks it). Every
+ * condition this path tests is one the slow path also tests before reaching
+ * `overlayStore(SEED_FLAGS)`, so the two agree. On a hit it `br`s out of the enclosing whitelisted-
+ * carrier `if` (depth 3 from the innermost arm), falling through to the
+ * `fillExternSetVecArms` numeric arm (unbox → bounds → `array.set`). Before
+ * this, every such store went `__to_property_key` → `__vec_dp_value(SEED)` —
+ * a number→string conversion plus a full defineProperty that created a
+ * companion entry and set the numeric flag, after which every indexed READ in
+ * the module paid the companion scan + string lookup.
+ */
+function buildOwnElementFastSet(
+  ctx: CodegenContext,
+  carriers: readonly OverlayCarrier[],
+  o: {
+    anyLocal: number;
+    indexLocal: number;
+    lenLocal: number;
+    numericFlagGlobalIdx: number;
+    backedLen: () => Instr[];
+    frozenGuard: () => Instr[];
+    present: () => Instr[];
+  },
+): Instr[] {
+  return [
+    { op: "global.get", index: o.numericFlagGlobalIdx },
+    { op: "i32.eqz" },
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: -20 },
+    { op: "i32.and" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: -20 },
+        { op: "i31.get_s" },
+        { op: "local.set", index: o.indexLocal },
+        ...o.backedLen(),
+        { op: "local.get", index: o.indexLocal },
+        { op: "i32.const", value: 0 },
+        { op: "i32.ge_s" },
+        { op: "local.get", index: o.indexLocal },
+        { op: "local.get", index: o.lenLocal },
+        { op: "i32.lt_s" },
+        { op: "i32.and" },
+        ...valueFitsCarrierInstrs(ctx, carriers, o.anyLocal),
+        { op: "i32.and" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...o.frozenGuard(),
+            ...o.present(),
+            { op: "if", blockType: { kind: "empty" }, then: [{ op: "br", depth: 3 }] },
+          ],
+        },
+      ],
+    },
+  ];
+}
+
+/**
  * Finalize fill for the #3251 overlay: real bodies for the reserved
  * `__vec_dp_value` / `__vec_dp_accessor` / `__vec_gopd`, plus the overlay
  * read prologues in `__extern_get_idx` / `__extern_get`. Runs after
@@ -2266,6 +2375,9 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { name: "__ov_set_bag", type: { kind: "externref" } },
         { name: "__ov_set_frozen_len", type: { kind: "i32" } },
       );
+      // (#6963) Backed length for the plain-overwrite fall-through below.
+      const fastLenLocal = 3 + fn.locals.length;
+      fn.locals.push({ name: "__ov_set_fast_len", type: { kind: "i32" } });
       /**
        * (#4491 wave-4) §10.1.9.2 OrdinarySetWithOwnDescriptor step 2.b —
        * a write to an own, BACKED element of a FROZEN array is rejected.
@@ -2448,6 +2560,15 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
           op: "if",
           blockType: { kind: "empty" },
           then: [
+            ...buildOwnElementFastSet(ctx, carriers, {
+              anyLocal,
+              indexLocal,
+              lenLocal: fastLenLocal,
+              numericFlagGlobalIdx: core.numericFlagGlobalIdx,
+              backedLen: () => vecBackedLen(anyLocal, fastLenLocal),
+              frozenGuard: frozenOwnIndexGuard,
+              present: backedIndexIsPresent,
+            }),
             { op: "local.get", index: 1 },
             { op: "call", funcIdx: toPropertyKeyIdx },
             { op: "local.set", index: keyLocal },
@@ -2604,11 +2725,30 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                         {
                           op: "if",
                           blockType: { kind: "empty" },
-                          then: overlayStore(SEED_FLAGS),
+                          // (#6963) A present backed element with no companion
+                          // entry is an implicit all-true data property: a
+                          // representable value overwrites the slot in the
+                          // numeric arm (br 4 leaves the whitelisted-carrier
+                          // arm) instead of seeding a companion entry.
+                          then: [
+                            ...valueFitsCarrierInstrs(ctx, carriers, anyLocal),
+                            { op: "if", blockType: { kind: "empty" }, then: [{ op: "br", depth: 4 }] },
+                            ...overlayStore(SEED_FLAGS),
+                          ],
                           else: resolveThenStore(nullOwnLayer, SEED_FLAGS),
                         },
                       ]
                     : [
+                        // (#6963) Same plain-overwrite fall-through for an
+                        // in-bounds backed element (br 3 leaves the
+                        // whitelisted-carrier arm for the numeric arm).
+                        ...vecBackedLen(anyLocal, fastLenLocal),
+                        { op: "local.get", index: indexLocal },
+                        { op: "local.get", index: fastLenLocal },
+                        { op: "i32.lt_s" },
+                        ...valueFitsCarrierInstrs(ctx, carriers, anyLocal),
+                        { op: "i32.and" },
+                        { op: "if", blockType: { kind: "empty" }, then: [{ op: "br", depth: 3 }] },
                         { op: "local.get", index: 0 },
                         { op: "local.get", index: keyLocal },
                         { op: "local.get", index: 2 },
