@@ -69,19 +69,43 @@ the bag helpers discover slotted instance carriers by the `$bag` field NAME over
 `ctx.structFields`, which the on-demand path already populates. Standalone-only
 (`appendInstanceBagSlot` returns on a non-standalone ctx), so host output is
 byte-identical. Files: `src/codegen/linear-type-reservations.ts` (export + a
-comment), `src/codegen/expressions/new-super.ts` (one call + import).
+comment), `src/codegen/expressions/new-super.ts` (one call + import). Test:
+`tests/issue-6971-ondemand-fnctor-bag-slot.test.ts` (the layout pin fails on
+base; the semantic cases pass on both and match node).
 
 Not done, deliberately: the registry itself stays for the remaining slotless
 carriers (`__Date`, `__StandaloneRegExp`, eval AOT carrier). None of them is
 allocated per-iteration in the measured benchmarks.
 
-## Measurements
+## Measurements (2026-10-11, 4-vCPU box shared with other agents — ±15 % noise)
 
-See the "Results" section (filled in from the measurement run).
+Measured on a throwaway local branch = `c-octane-integ` + #6967/#6968
+(`claude/standalone-raytrace-proto-fixes`) ± this commit, Script goal,
+`inferModuleStrictArguments: false`, `runtimeEvalProvider: false`.
+
+| deltablue standalone             | base             | head               |
+| -------------------------------- | ---------------- | ------------------ |
+| per-rep, 2 / 10 / 30 reps (ms)   | 121 / 137 / 159  | 92 / 112 / 100     |
+| heap after gc, per 5-rep batch   | 6.3→8.2→10.0→11.9 MB (leaks ~0.37 MB/rep) | 4.9 MB flat |
+| `__closure_bag_lookup` self      | 35.3 %           | 6.1 % (no walk)    |
+| harness row (node-calibrated)    | skipped: timeout after 1800 s (658 reps — the registry grows with every rep, so a long run is superlinear) | pass, 703 reps, min 77.5 ms/run, score 79 (node 78047, min 75 µs) |
+
+The harness default `--run-timeout 180` still skips the row (703 × ~80 ms × 6
+calls); the head row above used `--run-timeout 900`.
+
+raytrace is NOT this cause: `__closure_bag_lookup` is not in its profile, and its
+per-rep time is unchanged (base 371/435 ms at 2/6 reps, head 397/470). Its
+real problem is a separate leak — ~29 MB retained per rep, so the harness row
+dies with a V8 heap OOM (SIGABRT). Minimized: a `Class.create`-style
+constructor `function () { this.initialize.apply(this, arguments); }` retains
+~400 B per construction (100 k constructions → +40 MB after gc, time per batch
+growing); `apply(this, [a, b, c])` and `arguments[i]` reads do not leak. Needs
+its own issue.
 
 ## Remaining (not this change)
 
-After the fix the profile is general object-model dispatch: `__extern_get`
+Status stays `in-progress`: the dominant cost and the leak are gone, but deltablue
+is still ~1000x node. After the fix the profile is general object-model dispatch: `__extern_get`
 ~27 % self (recursive prototype walk — deltablue methods live two or three
 `Inheriter` levels up, and each level is a full `__extern_get` dispatch),
 `__obj_find` ~8 %, `__closure_bag_lookup` ~6 % (now the slotted `ref.test`
