@@ -150,3 +150,22 @@ result-array bypass in `regexp-standalone.ts`) was not needed and was left out.
 Pre-existing, unchanged by this fix (seen in the probe, base == head):
 `Object.preventExtensions([])` then `Object.isFrozen` answers false (node: true)
 — the carrier-bag arm uses only the stored bit, no §7.3.15 walk.
+
+### Measured (2026-10-11, 4-core box at load ~8, c-octane-integ 9274689806 ± this fix)
+
+`pnpm run -s benchmark:octane -- --only regexp --lanes node,standalone --timeout 600`:
+
+| | node | standalone |
+|---|---|---|
+| base | pass, 6 reps, 11.6 ms/rep min | **skipped — timeout after 180 s** (6 reps ⇒ > 30 s/rep) |
+| head | pass, 8 reps, 10.6 ms/rep min | **pass**, 8 reps, 492 ms/rep min (556 mean; 3.9–4.8 s per 8-rep call) |
+
+~60x+ per rep; acceptance (≤ 5 s/rep, standalone `ok` within budget) met.
+Standalone is still ~46x node — the remaining cost is the per-exec defines +
+overlay work (Change 2/3 territory), not the integrity bag.
+
+Earley-boyer (asked by the coordinator — growth across consecutive
+`octane_run(1)` calls): NOT this bug. Head still grows 1.6 / 2.4 / 5.0 / 7.4 /
+10.1 s; a profile of the 5th call is 84 % `__extern_get_idx` self time and 11 %
+`__vec_overlay_ensure` — the vec-overlay side table (Change 3), not
+`__integrity_bag`. Needs its own issue.
