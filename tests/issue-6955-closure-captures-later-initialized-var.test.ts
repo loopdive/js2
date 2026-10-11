@@ -111,4 +111,23 @@ describe("#6955 closure captures a var initialized after the closure", () => {
       ),
     ).toBe(106);
   });
+  // Review finding (PR #6630): the closure that boxes `dt` sits in a skipped
+  // arm, so on the false path the cell is never minted. The later initializer
+  // must still land (seed the cell from the pre-box slot, then store).
+  it.each([
+    [0, 3],
+    [1, 3],
+  ])("conditional closure construction: flag %i reads the initializer (%i)", async (flag, expected) => {
+    const src = `/** @param {number} flag */
+function g(flag) {
+  var f;
+  if (flag) { f = function () { return dt; }; }
+  var dt = 3;
+  return flag ? f() : dt;
+}
+/** @returns {number} */
+export function main() { return g(${flag}); }
+`;
+    expect(await runStandalone(src)).toBe(expected);
+  });
 });

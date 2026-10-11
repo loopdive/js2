@@ -18,6 +18,12 @@ related: [874, 6937, 1177, 996, 6942]
 # predicate lives beside closurePrecedesBindingInitializerStore, its only caller.
 loc-budget-allow:
   - src/codegen/closures/arrow-phases.ts
+  # 2026-10-11 (#6955 review fix, PR #6630): +6 lines — the three boxed
+  # initializer stores call emitConditionalCaptureBoxRepair before writing.
+  - src/codegen/statements/variables.ts
+func-budget-allow:
+  # 2026-10-11 (#6955 review fix, PR #6630): +5 lines, same repair calls.
+  - src/codegen/statements/variables.ts::compileVariableStatement
 ---
 
 # Closure capture-by-value of a var initialized after the closure
