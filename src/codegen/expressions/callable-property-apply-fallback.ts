@@ -31,14 +31,13 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { noJsHost } from "../js-errors.js";
-import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
+import { applyClosureAdmitsCall, ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import { standaloneMissingStringArgRead } from "./dispatch-extern-arg-bridge.js";
 import { guardedExternRefResultBridge } from "./dispatch-extern-result-bridge.js";
 import { dispatchVecResultBridge, reserveDispatchVecResultMaterializer } from "./dispatch-vec-result-bridge.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
-const APPLY_CLOSURE_MAX_ARITY = 8;
 
 type ArgView = (local: number) => Instr[] | null;
 
@@ -108,9 +107,8 @@ export function planCallablePropertyApplyFallback(
   expectedReturn: ValType | null,
 ): CallablePropertyApplyFallback | null {
   if (!noJsHost(ctx) || fieldType.kind !== "externref") return null;
-  if (expr.arguments.some((argument) => ts.isSpreadElement(argument))) return null;
+  if (!applyClosureAdmitsCall(expr)) return null;
   const argCount = Math.min(expr.arguments.length, paramTypes.length);
-  if (argCount > APPLY_CLOSURE_MAX_ARITY) return null;
   const views: ArgView[] = [];
   for (let index = 0; index < argCount; index++) {
     const view = argExternView(ctx, paramTypes[index]!);

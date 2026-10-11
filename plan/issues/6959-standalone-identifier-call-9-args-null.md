@@ -1,7 +1,9 @@
 ---
 id: 6959
 title: "standalone: calling an `any`-typed local that holds a function value with 9+ arguments (`var f; f = parse[9]; f(a,…,i)`) answers `undefined` without invoking the callee — stale per-call-site `APPLY_CLOSURE_MAX_ARITY = 8` gates predate the #6655 above-cap `__apply_closure` arm (Octane earley-boyer: Earley returns 0 trees instead of 132)"
-status: ready
+status: done
+completed: 2026-10-11
+assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-10-11
 priority: high
@@ -13,6 +15,12 @@ area: compiler
 language_feature: dynamic-call, arity
 goal: standalone-gap
 related: [874, 6655, 4640, 5148, 4096, 3310, 6949, 6958]
+# 2026-10-11: one shared admission predicate + the n>8 over-application route
+# into an ordinary closure (+26 LOC in the bridge file, +12 in fillApplyClosure).
+loc-budget-allow:
+  - src/codegen/object-runtime.ts
+func-budget-allow:
+  - src/codegen/object-runtime.ts::fillApplyClosure
 ---
 
 # standalone: 9+-argument call through an untyped local never invokes the callee
@@ -171,3 +179,24 @@ level (`.tmp/patch-d10-simfix2.mjs`) earley-boyer passes on standalone: `octane_
 So this issue alone does not turn the benchmark green; the pair does, and the Boyer half has no blocker.
 
 Size: **S** (one 5-line export + five one-line substitutions; step 2 adds ~10 lines).
+
+## Implementation notes (2026-10-11)
+
+- `applyClosureAdmitsCall(expr)` (exported from `src/codegen/object-runtime.ts`, next to
+  `reserveApplyClosure`) replaces every private `APPLY_CLOSURE_MAX_ARITY = 8` call-site cap:
+  `stored-member-closure-call.ts` (x3), `realm-global-member-call.ts`,
+  `function-typed-property-call.ts`, `callable-property-apply-fallback.ts`,
+  `class-instance-member-call.ts`. Spread stays excluded. Monotone: an admitted 9+-arg call
+  previously produced the same `undefined` the bridge produces for an arity it cannot dispatch.
+- **Plan correction (step 2 was not optional).** The plan assumed the above-cap
+  `__call_fn_method_<top>` admits every closure up to `top`; it does not — #6655 mints it with
+  `minHostArity = 9`, so it carries ONLY above-cap closures. A 9-arg call into an 8-formal closure
+  (`n = max(9, 8) = 9`) therefore still answered `null` even in a module that has a 9-formal
+  closure. `fillApplyClosure` now routes `n > 8` with a declared arity in `0..ordinaryTop`
+  (unsigned compare, so the `-1` non-closure probe keeps its old route) to the highest ordinary
+  dispatcher (`__call_fn_method_<=8>`); everything else keeps the #6655 top arm /
+  `armUnsupported`. Known limit: the callee's `arguments` sees `ordinaryTop` values, not all of
+  them (extras past the formals are dropped, as on the top arm).
+- Test: `tests/issue-6959-standalone-identifier-call-9-args.test.ts` (14 rows, module + sloppy
+  script): base 10 fail / 4 pass (the 4 are controls), head 14/14.
+

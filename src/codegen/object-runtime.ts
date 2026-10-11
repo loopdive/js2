@@ -1,3 +1,4 @@
+import ts from "typescript";
 import { installableReceiverInstrs } from "./helpers/undefined-receiver.js";
 import { buildClosureResultBoxing } from "./closures/result-boxing.js";
 import { classifyClosureDispatchRest } from "./closures/closure-dispatch-rest.js";
@@ -6227,6 +6228,19 @@ export function ensureExternRestObject(ctx: CodegenContext): number {
 }
 
 /**
+ * (#6959) Call-site admission for `__apply_closure`. The bridge dispatches
+ * 0..8 per arm and, since #6655, every n > 8 through the module's top minted
+ * `__call_fn_method_<top>`; an n with no dispatcher answers the undefined
+ * sentinel, which is exactly what a declining arm's graceful fallback
+ * produces. Admitting any non-spread argc is therefore monotone: it can only
+ * turn a silent `undefined` into a real invocation. Spread calls lower through
+ * `standalone-dynamic-spread-call.ts` instead.
+ */
+export function applyClosureAdmitsCall(expr: ts.CallExpression): boolean {
+  return !expr.arguments.some((a) => ts.isSpreadElement(a));
+}
+
+/**
  * (#1888 Slice 1) Reserve the `__apply_closure(externref fn, externref recv,
  * externref args) -> externref` arity-bridge funcIdx with a placeholder
  * `unreachable` body, registered in `funcMap`. The real body (an arity switch
@@ -6528,17 +6542,34 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   // An unmatched callee is not lost: the dispatcher's own terminal is the
   // linked-peer apply on the standalone lane, the same destination the
   // fall-through `armUnsupported` has.
-  if (applyClosureTopArity > APPLY_CLOSURE_MAX_ARITY) {
+  //
+  // (#6959) n > 8 into an ORDINARY closure (declared 0..8) is over-application
+  // (§7.3.14: extras are ignored). The above-cap dispatcher carries only
+  // above-cap closures, so such a callee must go to the highest ordinary
+  // dispatcher, which admits every closure up to its arity. `-1` (not a
+  // closure) is huge unsigned and keeps the existing route.
+  let ordinaryTop = APPLY_CLOSURE_MAX_ARITY;
+  while (ordinaryTop >= 0 && callMethod(ordinaryTop) === undefined) ordinaryTop--;
+  let aboveCap = applyClosureTopArity > APPLY_CLOSURE_MAX_ARITY ? buildArm(applyClosureTopArity) : undefined;
+  if (widen.length > 0 && ordinaryTop >= 0) {
+    aboveCap = [
+      { op: "local.get", index: declaredArityLocal },
+      { op: "i32.const", value: ordinaryTop },
+      { op: "i32.le_u" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: buildArm(ordinaryTop),
+        else: aboveCap ?? armUnsupported,
+      },
+    ];
+  }
+  if (aboveCap !== undefined) {
     dispatch = [
       { op: "local.get", index: 3 },
       { op: "i32.const", value: APPLY_CLOSURE_MAX_ARITY },
       { op: "i32.gt_s" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "externref" } },
-        then: buildArm(applyClosureTopArity),
-        else: dispatch,
-      },
+      { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: aboveCap, else: dispatch },
     ];
   }
   for (let n = APPLY_CLOSURE_MAX_ARITY; n >= 0; n--) {
