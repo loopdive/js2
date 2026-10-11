@@ -7340,3 +7340,266 @@ Parallel Terra lanes inspect whether Promise commit `65764586be` is superseded
 upstream and shepherd open upstream PRs 6246/6255 from fresh state. Avoid
 duplicate Promise publication until source reconciliation finishes. The frozen
 93.6492% result remains historical; current integrated conformance is unmeasured.
+
+### 2026-10-02 latest-main matched Promise repair and iterator handoff
+
+The handoff branch integrated upstream `e473d92460af75ced29e9666e7e97cdde8df12ca`
+in `54b8f8fa450105f1e5fc2ac0c95816b36cff954a`, pushed to upstream PR 6420.
+Normal commit and push gates passed, including all 18 numeric-local controls.
+The shared dirty checkout was not changed. PR 6255 was already merged;
+PR 6246 remains unfinished and draft, with its existing shepherd.
+
+Issue 5197 now has a matched authoritative standalone/QuickJS comparison on
+latest main: clean `e473d92460` baseline run `20261002-043328` is **1 pass /
+1 fail of 2**; candidate `92a48cfa947704e992e32d215c5650676fe7a33c`
+run `20261002-043440` is **2 pass / 0 fail of 2**. Both use the unchanged
+two-path manifest (SHA256 `bc7e0dc371cb7dfd8423b6c36d531d1ae5b7efe61d06a7bf89152f7f71dc327b`),
+frozen corpus `b363f29d3c43c626dc852744ad64a0b48a003693`, and QuickJS artifact
+`e9f8d30bc347dbc56f31b3389f7696eb6dedc9f05ea729781fc412f09a3e6b17`.
+Maintained completeness independently confirms two registered verdicts and
+zero exclusions on each side. The original
+`built-ins/Promise/all/resolve-element-function-prototype.js` flips from a
+SameValue(null, Function.prototype) failure to pass; the independent
+`resolve-function-prototype.js` control remains passing. Both originals belong
+to the frozen 11,778-file goal scope. This proves one bounded repair, not a
+new aggregate pass rate or completion of the broader Promise issue.
+
+Durable receipts live under `benchmarks/results` in
+`/Users/thomas/.codex/worktrees/promise-prototype-baseline/js2` (baseline) and
+`/Users/thomas/.codex/worktrees/promise-prototype/js2` (candidate), with the
+run IDs above. JSONL SHA256 values are respectively
+`7fa701d1bffe17808b3b6102daff50937331c60e8e353d1b5d34d74f54e20682` and
+`1fed29670506bc38cdcd68daa4afee6e12e9ec520a68caeeb9dfbc5a6661a3ad`.
+Publication waits for correction of malformed attribution trailers in two
+unpublished local merge commits. The safety reviewer rejected the proposed
+history repair; direct user approval was requested. No retry, public history
+rewrite, or Promise push occurred.
+
+Issue 6739's latest measured focused fixture is **15 pass / 3 fail of 18**.
+The preserved Boolean failure and both captured-state Boolean-input controls
+are red; a no-spread Boolean-return control passes. This does not establish
+iterator ABI loss because the input controls also write a captured local.
+The same Terra owner's subsequent 21-control run is **16 pass / 5 fail**:
+direct no-spread Boolean return and input return-code controls pass, but both
+open and typed-closed strict-spread return-code controls fail. This rules out
+the captured-local explanation without identifying the precise faulty ABI
+edge yet. The log is `/private/tmp/js2-6739-boolean-21.AQ7K4z/focused.log`,
+SHA256 `89a1886ae815ff92d4e7bf15ed66088827a97e246b30b8fdf1718b9ba6b42699`.
+Subsequent source tracing corrects the attribution: these dynamic-call controls
+select `tryEmitStandaloneDynamicSpreadCall` and `buildSpreadArgList`, whose
+standalone opaque-source branch still calls legacy `__array_from_iter_n`;
+native vec/tuple fast paths bypass materialization entirely. They do not test
+the new strict raw reader. Retain all reds as real argument-spread consumer
+defects, not evidence of a Boolean getter ABI defect. The same owner is preparing
+a true strict-consumer control and a plan for correct shared argument-spread
+wiring, preserving evaluation order and late-import index settlement. Swapping
+only the opaque materializer would not fix the vec/tuple bypasses.
+Preserve all red controls; do not change shared IR/runtime representation
+without evidence. Return the lease to the PR 6246 shepherd for its narrow
+checkpoint/integration and explicit-current-main inventory check. No full
+integrated 11,778-file verification has occurred; the goal remains active.
+
+### 2026-10-02 current integration, iterator provenance, and CI handoff
+
+The user's latest upstream merge request is fulfilled locally by
+`2d105d4d1e948ed93d06e3c603c79d14fb94ecc2`, whose second parent is
+`db906b60073de22c91842fbd6d46f5443cb09b7b`. An ancestry check passes and
+there are no tracked working-tree changes or unresolved merge paths. The two
+pre-existing untracked #6724 diagnostic files were preserved. This merge is
+not pushed: PR 6420 still queues the older `54b8f8fa45` snapshot (position 3
+at the subsequent one-shot observation) and has no merge commit. Do not push
+the unpublished handoff tail into that queued snapshot. A follow-up publication
+must verify what actually landed before deciding its base and contents.
+
+The iterator owner measured **27 pass / 2 fail of 29 focused controls** in
+terminal session 9140. Root independently checked the denominator and log
+SHA256 `7815ebf4e3048115eedfc3cf63bc4ddf09b351ef8bea096540658b2338e65d85`
+at `/private/tmp/js2-6739-family-29-rerun.vf5MYy/focused.log`. All five
+historical generic dynamic Boolean-spread failures now pass. The two retained
+reds are `NUMBER_ARRAY_F64_RED_BODY` and
+`STRICT_NUMBER_ARRAY_F64_RED_BODY`; each expects an ordinary Array's live
+iterator override to run, but receives `0` instead of `1`. The receipt
+predates the small lazy-classifier source change, so it is not a current-source
+or original-Test262 acceptance receipt. Re-run before readiness.
+
+Construction-side inspection now establishes a concrete dependency: static
+`new Float64Array([1, 2])` and ordinary `number[]` both allocate canonical
+`__vec_f64`. An iterator-only type test cannot recover the lost identity.
+The same collision exists in float TypedArray static factories and built-in
+subclass construction. A compatible physical TypedArray subtype is being
+planned against the existing arguments/holey-carrier precedents; parent-typed
+slots must preserve it, and base-type dispatch must explicitly exclude it.
+Clone/map/filter producers and IsArray consumers still need provenance audits.
+Excluding all f64 arrays is an acknowledged wrong observable result, not an
+acceptable completed design. No held IR/index/literal/object-runtime edits
+are authorized by this dependency discovery.
+
+The normal #6739 checkpoint retry resolved the existing local pnpm 10.30.2
+with only Node 24 prepended; no dependency install or symlink change occurred.
+Formatting passed, but the unchanged LOC ratchet rejected
+`iterator-native.ts` at **6481 > 6162 (+319)**. No commit was created.
+The owner is extracting a cohesive helper rather than adding an allowance.
+The Intl data-foundation owner has the serialized heavy lease meanwhile;
+its pinned CLDR input ingestion and generator source are not Test262 credit.
+
+PR 6246 remains an unfinished draft at `e6493c36025ab9f93dab7d5e57389b80896f6ebc`.
+The shepherd inspected required quality run `36967435041`, job
+`110714119093`: CI forces the interpreter eval engine, the fixture reports
+the `REFUSAL` tier, and the 15-control run is **1 pass / 14 fail**, each red
+returning `undefined`. This is a separate CI evaluator mismatch, not proof
+that the four retained native-tier semantic diagnostics increased to fourteen.
+Preserve both receipts and all executable diagnostic expectations. Resolve
+the evaluator contract and the numeric-array/tuple semantic gaps before
+calling that PR mergeable; do not remove tests to turn the gate green.
+
+The frozen baseline remains historical **11,030 / 11,778 pass**. No current
+full integrated-source pass rate, no complete Intl surface, and no 100%
+completion are established by these focused or data-foundation steps.
+
+#### Original-cohort and data-foundation evidence correction
+
+The iterator owner's provenance audit establishes that the historical
+**1 pass / 10 fail of 11** was an eleven-control focused Proxy fixture, not
+an eleven-path original Test262 run. No matching original manifest was found.
+Do not reuse that denominator as an original-suite baseline or claim an
+original Test262 gain from its focused improvement. The old #5131
+`spread-sngl-empty.js` / `spread-mult-empty.js` originals are absent from the
+unchanged goal manifest. The fresh original cohort is instead to be frozen
+from all **32** existing goal members matching
+`test/language/expressions/(call|new)/*spread*`: four eval controls plus
+twenty-eight ordinary call/new protocol rows. It requires a new manifest hash,
+current-source baseline/candidate comparison, and maintained completeness.
+
+The strict worktree's stale `test262/test` symlink currently points to an
+inaccessible old dependency worktree. `git -C test262 rev-parse HEAD` falls
+through to the compiler repository and returns `288ca372d9`; this is not a
+corpus revision. Before running originals, verify the preserved frozen corpus
+and repair only the owner's own stale test/harness links, retaining the prior
+targets. Do not repair or overwrite the shared dependency target. Focused
+compiler controls do not prove that original-suite discovery works.
+
+The data foundation now has a generated **510,335-byte** table (SHA256
+`e006613548e176f9bf836067be4de5afac68441acfd8142e4ed4612934c73632`).
+Root independently verified the public CLDR JSON `48.2.0` tag resolves to
+`bb334e8d6250c9363e957e131bf7e6d08ec72f91`. Seven focused checks pass,
+including actual generator CLI rejection of duplicate provenance keys and a
+release-pin mismatch; failed attempts preserve the existing output bytes.
+Formatting and normal publication gates remain outstanding at this record.
+The retained metadata covers 766 available locales, 7,788 likely-subtag rows,
+and 29 Unicode extension keys, not a runtime Intl implementation. Narrow
+formatter exclusions protect the byte-pinned input and generator-owned output;
+the post-hook generator check must still establish that those bytes survived.
+
+### 2026-10-02 post-publication integration and instrument handoff
+
+PR 6420 is now merged at `a93d489420fac74aaba490a249f51251f90584c2`.
+The merge queue regenerated its history: the original submitted head need not
+be an ancestor of main. Root inspected the landed umbrella content rather than
+using the submitted-head ancestry as the completion test. Subsequent local
+handoffs remain a separate follow-up, not a mutation of the merged PR.
+
+Root merged verified upstream main `1f1b0ad61cbc74d0bde3a326e8b7e2e02b7add99`
+into its own branch as `9999a547e155eab815e3dbf777b9b14bbc591e06`, with no
+conflicts. The heavily modified shared primary checkout was not changed;
+the two untracked issue-6724 diagnostics were preserved without staging.
+The handoff-only branch is now `codex/4444-post-6420-handoff`. This merge
+does not establish a current-source Test262 pass rate.
+
+The data foundation PR 6427 is ready at
+`a7bace6c7d227b9ca612b3d6dc0453b5c9c9de14`. A fresh one-shot shepherd audit
+found all listed checks green, both CLA checks passed, zero review threads
+and comments, and an active merge-queue entry at position 5. No push or
+enqueue mutation was performed. The seven focused controls, generator
+byte-integrity checks, and normal publication gates passed. This supersedes
+the earlier outstanding-format/publication note; it remains data-only,
+not a measured original-suite gain or a completed Intl API.
+
+The eval fixture checkpoint `49e6fe1479` explicitly requires an executable
+QuickJS/full-interpreter provider only when the successfully compiled module
+actually imports runtime eval. A fresh canary-verified QuickJS adapter gives
+**11 pass / 4 fail / 15 registered**, preserving all four semantic reds.
+The REFUSAL negative control gives **0 pass / 15 infrastructure failures**,
+and every failure explicitly identifies the absent executable provider.
+Neither denominator is original Test262 credit. TypeScript and normal fast
+commit gates pass. The checkpoint is now published in existing upstream
+draft PR 6246 at `49e6fe14795de20020c2c68901cf184ef308a325`; root verified
+both the fork ref and actual PR head after normal push session 55951 exited
+zero. Typecheck, lint, format, oracle/coercion ratchets, numeric-local controls
+**18/18**, and issue integrity passed without bypassing hooks. The PR body
+now records the executable-provider and negative-control evidence. PR 6246
+remains unfinished, and its CI provider contract still
+requires resolution. Do not remove diagnostics or substitute refusal verdicts
+for semantic measurements to make that PR green.
+
+The iterator owner holds the serialized heavy-validation lease for its
+budget-preserving structural extraction, followed by current upstream
+integration and the new frozen 32-original call/new spread cohort. The prior
+**27/29** focused receipt retains two ordinary numeric-array failures and is
+not a completed fix. Generic tuple acquisition also owns the two inline
+literal eval reds; avoid a conflicting static-eval shortcut in that lane.
+The remaining first-Intl-API integration dependencies are recorded in issue
+6717. Full current-source verification of all **11,778** originals remains
+required; the objective is not achieved.
+
+The next Intl implementation slice is issue 6809 on the separate branch
+`codex/6809-intl-locale-canonicalization`, based on the same verified upstream
+main. Its owner is restricted to generic locale grammar/canonicalization,
+focused controls, and its implementation-plan MD. The completed data PR and
+other owners' namespace, closure, object-runtime, and IR files stay untouched.
+Compiler-consumable data emission and public runtime integration remain
+explicit dependencies, not parser-only completion claims.
+
+### 2026-10-02 current upstream and measured repair handoff
+
+This supersedes the earlier queued-data/publication state above. Intl data
+foundation PR #6427 is merged on upstream main, but no public standalone Intl
+API or original-suite gain follows from that data alone. The pure locale
+kernel is published separately in PR #6436; its concrete directory-budget
+failure is unresolved and its active issue claim is not transferred. Do not
+alter another owner's kernel or the allowance without coordination.
+
+The complete frozen 11,778-original census at `ce663127` finished with
+**11,392 pass / 361 fail / 25 compile errors**, zero skipped/excluded paths,
+and all 16 completion receipts independently audited. The original population
+and manifest hash remain unchanged. Current-main source changes after that
+measurement must not be retroactively credited to it. The completed census
+and detailed source-owner handoff are published in
+[PR #6449](https://github.com/loopdive/js2/pull/6449).
+
+The completed direct TypedArray HOF repair is published independently in
+[PR #6447](https://github.com/loopdive/js2/pull/6447). Matched authoritative
+128-row validation changes **121 pass / 7 fail → 126 pass / 2 fail**, five
+intended gains, no passing-row regressions, and both unrelated Proxy failures
+preserved. All 39 scoped regression tests passed. This is a measured subset
+gain, not a projected current full-suite percentage or a 100% result.
+
+This documentation branch now includes verified upstream main `ff310447`
+through `c56899e205`. The sole metadata conflict was resolved by preserving
+upstream's ES2015 edition field and both Intl implementation handoffs; only
+the existing umbrella and Intl issue documents differ from upstream source.
+The two unrelated issue-6724 diagnostics remain untracked and untouched.
+The native-eval CI checkpoint has been published in draft PR #6435 at
+`16120f29`; its historical 60/67 semantic receipt and seven reds are retained,
+not converted into current semantic success by structural integration.
+
+Remaining Proxy constructor-admission and Symbol-vector boxing repairs require
+the other machine's exact source-area clearance before implementation. All
+74 original Intl diagnostic paths and the complete 11,778-row objective
+remain required. No exclusions, source emulation, or denominator reduction
+are authorized as substitutes for the final zero-failure verification.
+
+Fresh remaining-method diagnostic `20261002-183521`, at published fix source
+`94d8361` in the isolated #6832 worktree: **3 pass / 4 fail / 7 registered**,
+zero compile errors/skips/exclusions. Root independently read all seven
+original verdicts and the settled v2 receipt (7 started, 7 settled, 7 unique
+canonical verdicts), and preflight verified all seven within the unchanged
+frozen manifest. Math.sign.length and both original Intl poison-constructor
+controls pass. `find/get-length-ignores-length-prop.js` and its `findIndex`
+counterpart still fail under Float64Array/makeArray; `join` and `toLocaleString`
+internal-arraylength rows observe a length getter once instead of zero times.
+These four rows are not repaired or credited to the five-HOF change. The
+maintained wrapper rebuilt the current compiler and canary-verified its
+QuickJS adapter; all artifacts remain local under `.tmp/6832` and timestamped
+`benchmarks/results`. Session 51582 reached actual terminal completion and
+the heavy lease was explicitly returned. Separate consumer attribution and
+owner clearance are prerequisites to the next implementation slice.

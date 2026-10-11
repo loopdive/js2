@@ -27,6 +27,11 @@ import {
   vectorCallablePolicyMismatch,
   irVectorCallableDeclaration,
 } from "./vector-callables.js";
+import {
+  irNumberRemainderCallableDeclaration,
+  NUMBER_REMAINDER_RUNTIME_PROVIDERS,
+  numberRemainderProviderMismatch,
+} from "./number-remainder-callables.js";
 import { irNumberConversionCallableDeclaration } from "./number-conversion-callable.js";
 import {
   ORDINARY_OBJECT_RUNTIME_PROVIDERS,
@@ -103,6 +108,7 @@ export function irRuntimeCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableD
         irVectorCallableDeclaration(ref) ??
         irOrdinaryObjectCallableDeclaration(ref) ??
         irNumberConversionCallableDeclaration(ref) ??
+        irNumberRemainderCallableDeclaration(ref) ??
         irClosureInvocationCallableDeclaration(ref));
 }
 
@@ -111,13 +117,15 @@ export const SEMANTIC_CALLABLE_RUNTIME_PROVIDERS: readonly RuntimeProviderDefini
   ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
   ...VECTOR_CALLABLE_RUNTIME_PROVIDERS,
   ...ORDINARY_OBJECT_RUNTIME_PROVIDERS,
+  ...NUMBER_REMAINDER_RUNTIME_PROVIDERS,
 ]);
 
 export function semanticCallableProviderMismatch(provider: RuntimeProviderDefinition): string | undefined {
   return (
     nativeAsyncProviderMismatch(provider) ??
     vectorProviderMismatch(provider) ??
-    ordinaryObjectProviderMismatch(provider)
+    ordinaryObjectProviderMismatch(provider) ??
+    numberRemainderProviderMismatch(provider)
   );
 }
 

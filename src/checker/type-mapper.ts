@@ -74,7 +74,8 @@ export function mapTsTypeToWasm(type: ts.Type, checker: ts.TypeChecker, fast?: b
     // struct-field boxing decision (`buildGetterExtract`) reads `.boolean`.
     return { kind: "i32", boolean: true };
   }
-  if (type.flags & ts.TypeFlags.String || type.flags & ts.TypeFlags.StringLiteral) {
+  if (type.flags & ts.TypeFlags.StringLike) {
+    // (#6868) StringLike also covers template-literal and string-mapping types
     return { kind: "externref" }; // JS string pass-through
   }
   if (type.flags & ts.TypeFlags.Void || type.flags & ts.TypeFlags.Undefined) {
@@ -409,7 +410,7 @@ export function isBooleanType(type: ts.Type): boolean {
 
 /** Check if a ts.Type represents string (including String wrapper object) */
 export function isStringType(type: ts.Type): boolean {
-  if ((type.flags & ts.TypeFlags.String) !== 0 || (type.flags & ts.TypeFlags.StringLiteral) !== 0) {
+  if ((type.flags & ts.TypeFlags.StringLike) !== 0) {
     return true;
   }
   // (#4607) A UNION whose every constituent is a string literal is a string —
@@ -440,7 +441,7 @@ export function isStringType(type: ts.Type): boolean {
 function isStringLiteralUnion(type: ts.Type): boolean {
   if (!type.isUnion()) return false;
   if (type.types.length === 0) return false;
-  return type.types.every((part) => (part.flags & (ts.TypeFlags.String | ts.TypeFlags.StringLiteral)) !== 0);
+  return type.types.every((part) => (part.flags & ts.TypeFlags.StringLike) !== 0);
 }
 
 /** Check if a ts.Type represents the Number wrapper object (e.g. `new Number(1)`) */

@@ -102,6 +102,8 @@ import { buildThrowJsErrorInstrs } from "../js-errors.js";
 import { MAX_NATIVE_CONSTRUCT_ARITY, reserveNativeConstructDriver } from "../native-construct.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { constructorProtoNullToDefaultInstrs } from "../object-model/construct-default-proto.js"; // (#6651 W2b)
+import { isUncalledPropertyShim } from "./uncalled-shim-eval.js"; // (#6651 W2b)
 
 const EXTERNREF: ValType = { kind: "externref" };
 
@@ -140,6 +142,15 @@ export function emitRuntimeNewTargetPrototype(ctx: CodegenContext, fctx: Functio
   const key = stringConstantExternrefInstrs(ctx, "prototype");
   for (let i = 0; i < key.length; i++) fctx.body.push(key[i]!);
   fctx.body.push({ op: "call", funcIdx: getIdx });
+  // (#6651 W2b) A null result must not reach the construct driver as null —
+  // that is its "no NewTarget prototype supplied" signal, which reads the
+  // TARGET's `prototype` instead. §10.1.14 step 4 wants %Object.prototype%.
+  if (constructorProtoNullToDefaultInstrs(ctx, 0).length === 0) return true;
+  const protoLocal = allocLocal(fctx, `__nt_proto_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "local.set", index: protoLocal }, ...constructorProtoNullToDefaultInstrs(ctx, protoLocal), {
+    op: "local.get",
+    index: protoLocal,
+  });
   return true;
 }
 
@@ -377,7 +388,7 @@ export function isUnreassignedOrdinaryFunction(ctx: CodegenContext, value: ts.Ex
   return !isRebound(value.getSourceFile(), value.text);
 }
 
-function isPlainFunctionLike(node: ts.FunctionDeclaration | ts.FunctionExpression): boolean {
+export function isPlainFunctionLike(node: ts.FunctionDeclaration | ts.FunctionExpression): boolean {
   return (
     node.asteriskToken === undefined &&
     !(node.modifiers?.some((m: ts.ModifierLike) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false)
@@ -567,7 +578,7 @@ function isInJSFile(node: ts.Node): boolean {
  * per-annotation measurement that does not generalise, and the refusal costs
  * only an answer this arm never owed.
  */
-function hasDeclaredType(declaration: ts.VariableDeclaration): boolean {
+export function hasDeclaredType(declaration: ts.VariableDeclaration): boolean {
   if (declaration.type !== undefined) return true;
   if (!isInJSFile(declaration)) return false;
   if (ts.getJSDocType(declaration) !== undefined) return true;
@@ -596,7 +607,7 @@ function mentions(node: ts.Node, name: string): boolean {
   return found;
 }
 
-function isRebound(source: ts.SourceFile, name: string): boolean {
+export function isRebound(source: ts.SourceFile, name: string, allowUncalledShimEval = false): boolean {
   let rebound = false;
   const visit = (node: ts.Node): void => {
     if (rebound) return;
@@ -634,7 +645,7 @@ function isRebound(source: ts.SourceFile, name: string): boolean {
     } else if (ts.isWithStatement(node)) {
       rebound = true;
     } else if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "eval") {
-      rebound = true;
+      rebound = !(allowUncalledShimEval && isUncalledPropertyShim(source, node));
     }
     if (!rebound) forEachChild(node, visit);
   };
@@ -716,7 +727,7 @@ export function tryEmitOrdinaryConstructWithNewTarget(
  * This scan looks only at writes, and refuses on any construct whose write set
  * is not enumerable (`with`, direct `eval`, a destructuring or loop target).
  */
-function isWrittenAfterDeclaration(source: ts.SourceFile, name: string): boolean {
+export function isWrittenAfterDeclaration(source: ts.SourceFile, name: string, allowUncalledShimEval = false): boolean {
   let written = false;
   const visit = (node: ts.Node): void => {
     if (written) return;
@@ -739,7 +750,7 @@ function isWrittenAfterDeclaration(source: ts.SourceFile, name: string): boolean
     } else if (ts.isWithStatement(node)) {
       written = true;
     } else if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "eval") {
-      written = true;
+      written = !(allowUncalledShimEval && isUncalledPropertyShim(source, node));
     }
     if (!written) forEachChild(node, visit);
   };
@@ -748,10 +759,10 @@ function isWrittenAfterDeclaration(source: ts.SourceFile, name: string): boolean
 }
 
 /** `new Proxy(<anything>)`, with `Proxy` not shadowed or reassigned in the file. */
-function isNewProxyExpression(value: ts.Expression): boolean {
+export function isNewProxyExpression(value: ts.Expression, allowUncalledShimEval = false): boolean {
   if (!ts.isNewExpression(value)) return false;
   if (!ts.isIdentifier(value.expression) || value.expression.text !== "Proxy") return false;
-  return !isRebound(value.getSourceFile(), "Proxy");
+  return !isRebound(value.getSourceFile(), "Proxy", allowUncalledShimEval);
 }
 
 /**

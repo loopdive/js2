@@ -42,7 +42,10 @@ const { compile, compileProject, entryHasRelativeImports, formatCompileExplanati
   await import("./index.js");
 const { buildDefaultDefines } = await import("./compiler/define-substitution.js");
 
-if (args.includes("--version") || args.includes("-v")) {
+// #6794 — `-V` (capital, the npm/cargo convention) is the short version flag.
+// `-v` used to mean BOTH version and verbose; this check ran first, so
+// `js2wasm x.ts -v` printed the version and compiled nothing.
+if (args.includes("--version") || args.includes("-V")) {
   console.log(getCliVersion());
   process.exit(0);
 }
@@ -54,7 +57,8 @@ if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
 Compile a TypeScript file to WebAssembly (GC proposal).
 
 Options:
-  -o, --out <dir>   Output directory (default: the current working directory)
+  -o, --out <dir>   Output directory (default: the current working directory).
+                    Also accepts --out=<dir>.
   --target <t>      Host/output target — the single host axis (#2736):
                       web   (default) WasmGC / JS-host browser surface (DOM
                             ambient globals in scope);
@@ -132,6 +136,9 @@ Options:
                     off retains monolithic source compilation. Project API
                     calls default to automatic linking with compatibility
                     fallback.
+  --cache-dir <dir> Where --package-linking caches compiled npm provider
+                    modules. Default: the nearest node_modules/.cache/js2wasm,
+                    else the OS user cache directory (never the source tree).
   --emulate <env>   Emulate a host runtime's globals so they type-check without
                     @types/node. 'node' = ambient process/etc.; 'none' = off.
                     Auto-enabled (type-level only) when the source imports a
@@ -163,7 +170,7 @@ Options:
                     frontend (experimental; full migration tracked in #1029).
                     Equivalent to JS2WASM_TS7=1.
   -q, --quiet       Suppress the post-compile "how to run" hint
-  -v, --version     Print version and exit
+  -V, --version     Print version and exit
   -h, --help        Show this help
 
 Output files:
@@ -216,6 +223,8 @@ let strictNoHostImports: boolean | undefined;
 // self-contained inline path for every namespace.
 const linkedNamespaces = new Set<string>();
 let packageLinking: false | "separate" | "merge" | undefined;
+// #6794 — explicit provider cache directory (`CompileOptions.packageCacheDir`).
+let packageCacheDir: string | undefined;
 // #2603 — `--emulate node`: opt into Node API emulation (ambient `process` typing).
 // `emulateExplicit` records that the user passed `--emulate`/`--no-emulate`, so a
 // `node:` import won't auto-enable over an explicit choice.
@@ -236,8 +245,8 @@ let skipSemanticDiagnostics = false;
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i]!;
-  if (arg === "-o" || arg === "--out") {
-    outDir = args[++i];
+  if (arg === "-o" || arg === "--out" || arg.startsWith("--out=")) {
+    outDir = arg.startsWith("--out=") ? arg.slice("--out=".length) : args[++i];
   } else if (arg === "--target" || arg.startsWith("--target=")) {
     // #2736 — `--target` is the SINGLE host/output axis. It accepts:
     //   - the host environments: `web` (default), `node`, `deno` — these select
@@ -323,6 +332,13 @@ for (let i = 0; i < args.length; i++) {
       console.error(`Unknown --package-linking mode: ${mode ?? "(missing)"} (expected separate, merge, or off)`);
       process.exit(1);
     }
+  } else if (arg === "--cache-dir" || arg.startsWith("--cache-dir=")) {
+    const dir = arg.startsWith("--cache-dir=") ? arg.slice("--cache-dir=".length) : args[++i];
+    if (!dir) {
+      console.error("--cache-dir requires a directory argument");
+      process.exit(1);
+    }
+    packageCacheDir = resolve(dir);
   } else if (arg === "--emulate" || arg.startsWith("--emulate=")) {
     // #2603 — opt into (or out of) Node API emulation. `--emulate node` gives the
     // checker an ambient `process` typing so Node globals type-check without
@@ -414,7 +430,9 @@ for (let i = 0; i < args.length; i++) {
 }
 
 if (!inputPath) {
-  console.error("Error: no input file specified");
+  // #6794 — `-v` is --verbose now; point a bare `js2wasm -v` at the version flag.
+  const hint = args.includes("-v") ? " (-v is --verbose; use -V or --version for the version)" : "";
+  console.error(`Error: no input file specified${hint}`);
   process.exit(1);
 }
 
@@ -435,7 +453,18 @@ if (allocator !== undefined && target !== "linear") {
 }
 
 const absInput = resolve(inputPath);
-const source = readFileSync(absInput, "utf-8");
+// #6794 — a missing/unreadable input is a usage error, not a crash: one line,
+// exit 1, instead of Node's `node:fs` stack trace.
+let source: string;
+try {
+  source = readFileSync(absInput, "utf-8");
+} catch (e) {
+  const code = (e as { code?: string }).code;
+  const reason =
+    code === "ENOENT" ? "no such file" : code === "EISDIR" ? "is a directory" : ((e as Error).message ?? String(e));
+  console.error(`Error: cannot read input file ${inputPath}: ${reason}`);
+  process.exit(1);
+}
 
 // #2603 — auto-enable Node API emulation when the source imports a `node:`
 // builtin (e.g. `import { readFile } from "node:fs"` / `require("node:path")`),
@@ -468,6 +497,7 @@ const compileOptions = {
   ...(semanticProviders !== "auto" ? { semanticProviders } : {}),
   ...(linkedNamespaces.size ? { link: [...linkedNamespaces] } : {}),
   ...(packageLinking !== undefined ? { packageLinking } : {}),
+  ...(packageCacheDir ? { packageCacheDir } : {}),
   ...(emulateNode ? { emulateNode: true } : {}),
   ...(skipSemanticDiagnostics ? { skipSemanticDiagnostics: true } : {}),
   ...(platform ? { platform } : {}),
@@ -489,18 +519,32 @@ const result =
     ? await compileProject(absInput, compileOptions)
     : await compile(source, compileOptions);
 
+const printDiagnostic = (e: (typeof result.errors)[number]): void => {
+  const severity = e.severity === "warning" ? "warning" : "error";
+  // #1929 — prefer the diagnostic's own source file when present (multi-file
+  // compiles report errors from imported files, not just the entry).
+  const where = e.file ?? absInput;
+  console.error(`${where}:${e.line}:${e.column} - ${severity}: ${e.message}`);
+};
+
 if (!result.success) {
-  for (const e of result.errors) {
-    const severity = e.severity === "warning" ? "warning" : "error";
-    // #1929 — prefer the diagnostic's own source file when present (multi-file
-    // compiles report errors from imported files, not just the entry).
-    const where = e.file ?? absInput;
-    console.error(`${where}:${e.line}:${e.column} - ${severity}: ${e.message}`);
-  }
+  for (const e of result.errors) printDiagnostic(e);
   process.exit(1);
 }
 
-// Print any warnings (e.g. wasm-opt not available).
+// #6794 — a successful compile can still carry error-severity diagnostics: the
+// compiler TOLERATES type errors codegen does not depend on (e.g. TS2678 on a
+// `switch` case that can never match). They were dropped here, so the CLI
+// wrote its artifacts, printed nothing and exited 0. Print them; the exit code
+// stays 0 because the emitted module is valid (policy documented in docs/cli.md).
+const toleratedErrors = result.errors.filter((e) => e.severity !== "warning");
+for (const e of toleratedErrors) printDiagnostic(e);
+if (toleratedErrors.length > 0) {
+  console.error(`note: ${toleratedErrors.length} error-severity diagnostic(s) above did not block compilation.`);
+}
+
+// Print any warnings (e.g. wasm-opt not available). Error-severity entries
+// were printed above.
 //
 // #2520 — the per-import "Host import "env.X" … not on the dual-mode allowlist"
 // warnings are noise: under --target wasi essentially any program trips ~60 of

@@ -204,7 +204,7 @@ describe("native Promise resource requirements, not whole-family materialization
 
   it("rejects structural clones that lose the retained metadata field type identity", () => {
     const a = reserve();
-    expect(nativePromiseReservationInventory(a.tx, a.pack, a.declaration)).toHaveLength(25);
+    expect(nativePromiseReservationInventory(a.tx, a.pack, a.declaration)).toHaveLength(26);
     const capture = a.pack.types.settleCapture.object;
     if (capture.kind !== "struct") throw new Error("fixture capture struct");
     capture.fields[0]!.type = { ...capture.fields[0]!.type };
@@ -217,18 +217,18 @@ describe("native Promise resource requirements, not whole-family materialization
       mutable = structuredClone(a.plan);
     const declaration = declareNativePromiseResources(mutable, declarationFor(a).dependencies);
     const pack = reserveNativePromiseResources(a.tx, mutable, a.dependencies, declaration);
-    expect(nativePromiseReservationInventory(a.tx, pack, declaration)).toHaveLength(25);
+    expect(nativePromiseReservationInventory(a.tx, pack, declaration)).toHaveLength(26);
     Object.assign(mutable, { anchor: "changed" });
     expect(() => nativePromiseReservationInventory(a.tx, pack, declaration)).toThrow("stale Promise requirements");
   });
-  it("declares the exact 25 resources and 26 operations before any ledger exists", () => {
+  it("declares the exact 26 resources and 27 operations including the shared resolving-pair cell", () => {
     const declaration = declareNativePromiseResources(actual().plan, {
       argumentArrayKey: "external:argv",
       closureRootKey: "external:root",
       settleMetadataKey: "external:meta",
     });
-    expect(declaration.declarations).toHaveLength(25);
-    expect(declaration.reservationSteps).toHaveLength(26);
+    expect(declaration.declarations).toHaveLength(26);
+    expect(declaration.reservationSteps).toHaveLength(27);
     expect(declaration.declarations.map((row) => row.role[1])).toEqual([
       "queue:function-array",
       "queue:head",
@@ -248,6 +248,7 @@ describe("native Promise resource requirements, not whole-family materialization
       "identity-fulfill",
       "identity-reject",
       "resolve-value",
+      "resolving-pair",
       "settle-capture",
       "resolve-closure",
       "reject-closure",
@@ -256,7 +257,7 @@ describe("native Promise resource requirements, not whole-family materialization
       "lookup-then",
       "thenable-job",
     ]);
-    expect(declaration.declarations.filter((row) => row.space === "type")).toHaveLength(5);
+    expect(declaration.declarations.filter((row) => row.space === "type")).toHaveLength(6);
     expect(declaration.declarations.filter((row) => row.space === "global")).toHaveLength(6);
     expect(declaration.declarations.filter((row) => row.space === "function")).toHaveLength(14);
     expect(declaration.reservationSteps[1]).toMatchObject({
@@ -272,7 +273,7 @@ describe("native Promise resource requirements, not whole-family materialization
     expect(a.module).toStrictEqual(b.module);
     const rows = nativePromiseReservationInventory(a.tx, a.pack, a.declaration);
     expect(rows.map((row) => row.key)).toEqual(a.declaration.declarations.map((row) => row.key));
-    expect(rows).toHaveLength(25);
+    expect(rows).toHaveLength(26);
     expect(rows).not.toContain(a.pack.types.arguments);
     const capture = a.pack.types.settleCapture.object,
       meta = a.dependencies.closures.metadata[0]!.binding.type.object;
@@ -294,7 +295,7 @@ describe("native Promise resource requirements, not whole-family materialization
     "rejects %s borrowed-tag substitution without claiming reserve-phase provenance",
     (kind) => {
       const a = reserve();
-      expect(nativePromiseReservationInventory(a.tx, a.pack, a.declaration)).toHaveLength(25);
+      expect(nativePromiseReservationInventory(a.tx, a.pack, a.declaration)).toHaveLength(26);
       const replacement =
         kind === "foreign" ? prerequisites().dependencies.exceptionTag : { ...a.dependencies.exceptionTag };
       Object.assign(a.dependencies, { exceptionTag: replacement });
@@ -306,7 +307,7 @@ describe("native Promise resource requirements, not whole-family materialization
   it.each(["foreign", "copy"] as const)("authenticates an initially %s borrowed tag only after freeze", (kind) => {
     const positive = reserve();
     positive.tx.freezeReservations();
-    expect(nativePromiseReservationInventory(positive.tx, positive.pack, positive.declaration)).toHaveLength(25);
+    expect(nativePromiseReservationInventory(positive.tx, positive.pack, positive.declaration)).toHaveLength(26);
     const a = prerequisites();
     Object.assign(a.dependencies, {
       exceptionTag: kind === "foreign" ? prerequisites().dependencies.exceptionTag : { ...a.dependencies.exceptionTag },
@@ -314,13 +315,13 @@ describe("native Promise resource requirements, not whole-family materialization
     const declaration = declarationFor(a),
       pack = reserveNativePromiseResources(a.tx, a.plan, a.dependencies, declaration);
     // Current association is known here; tag provenance is NOT yet attested.
-    expect(nativePromiseReservationInventory(a.tx, pack, declaration)).toHaveLength(25);
+    expect(nativePromiseReservationInventory(a.tx, pack, declaration)).toHaveLength(26);
     a.tx.freezeReservations();
     expect(() => nativePromiseReservationInventory(a.tx, pack, declaration)).toThrow();
   });
   it.each(["type", "global", "function"] as const)("rejects a deleted %s declaration before allocating", (space) => {
     const positive = reserve();
-    expect(nativePromiseReservationInventory(positive.tx, positive.pack, positive.declaration)).toHaveLength(25);
+    expect(nativePromiseReservationInventory(positive.tx, positive.pack, positive.declaration)).toHaveLength(26);
     const a = prerequisites(),
       declaration = structuredClone(declarationFor(a));
     const index = declaration.declarations.findIndex((row) => row.space === space);
@@ -701,6 +702,7 @@ describe("reservation-only Promise pack controls; missing native dependencies re
         { name: "value", mutable: true },
         { name: "callbacks", mutable: true },
         { name: "$bag", mutable: true },
+        { name: "$handled", type: { kind: "i32" }, mutable: true },
       ],
     });
     expect(pack.types.callback.object).toMatchObject({

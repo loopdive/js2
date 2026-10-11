@@ -1,7 +1,7 @@
 ---
 id: 3423
 title: "Module-global representation: top-level bindings read as undefined under literal harness — ~600 default reclassifications"
-status: in_progress
+status: in-progress
 created: 2026-07-18
 priority: medium
 feasibility: hard

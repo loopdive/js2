@@ -226,6 +226,207 @@ int QJS_EXPORT(qjs_set_allocator)(uint32_t malloc_idx, uint32_t calloc_idx,
 /** How many allocations this file served from libc rather than from the peer. */
 uint32_t QJS_EXPORT(qjs_libc_alloc_count)(void) { return qjs_libc_allocs; }
 
+/* ---------------------- private inactive Script declaration plan v1 --------
+ * Plan IDs are NOT value-handle pointers and must never reach qjs_free_value.
+ * All input handles remain borrowed; name/eval return owned normal value cells.
+ * Scalar failures set a pending exception; count zero only means empty success.
+ * The production adapter neither imports nor calls this capability.
+ */
+enum qjs_script_plan_state { QJS_SCRIPT_READY, QJS_SCRIPT_RUNNING, QJS_SCRIPT_CONSUMED };
+typedef struct qjs_script_plan_node {
+  struct qjs_script_plan_node *next;
+  JSContext *ctx;
+  JSRuntime *rt;
+  JSGlobalScriptPlan *plan;
+  uint32_t id;
+  enum qjs_script_plan_state state;
+} qjs_script_plan_node;
+
+static qjs_script_plan_node *qjs_script_plans;
+static uint32_t qjs_script_plan_next_id = 1;
+#ifdef JS2WASM_SCRIPT_PLAN_TEST
+static uint32_t qjs_script_plan_live_nodes;
+static uint32_t qjs_script_plan_live_buffers;
+/* Test-only fixed observation slots introduce no fallible tracking allocation.
+ * The fixture releases these through its private observer wrapper, which calls
+ * existing qjs_free_value unchanged. Production has neither slots nor hooks. */
+static JSValue *qjs_script_plan_test_cells[1024];
+static uint32_t qjs_script_plan_live_cells;
+#define QJS_SCRIPT_FAIL(site) JS_ScriptPlanTestShouldFail(site)
+#else
+#define QJS_SCRIPT_FAIL(site) 0
+#endif
+
+static qjs_script_plan_node *qjs_script_plan_lookup(JSContext *ctx, uint32_t id) {
+  qjs_script_plan_node *node;
+  for (node = qjs_script_plans; node; node = node->next) {
+    if (node->id != id) continue;
+    if (node->ctx == ctx && node->state != QJS_SCRIPT_RUNNING) return node;
+    break;
+  }
+  JS_ThrowTypeError(ctx, "absent, foreign or running Script plan");
+  return NULL;
+}
+
+static int qjs_script_plan_index(JSContext *ctx, qjs_script_plan_node *node, int32_t index) {
+  if (index >= 0 && index < JS_GlobalScriptPlanCount(node->plan)) return 0;
+  JS_ThrowRangeError(ctx, "Script plan index out of range");
+  return -1;
+}
+
+static void qjs_script_plan_destroy(qjs_script_plan_node *node) {
+  JS_FreeGlobalScriptPlan(node->ctx, node->plan);
+  qjs_shim_free(node);
+#ifdef JS2WASM_SCRIPT_PLAN_TEST
+  qjs_script_plan_live_nodes--;
+#endif
+}
+
+static void qjs_script_plans_release_context(JSContext *ctx) {
+  qjs_script_plan_node **link = &qjs_script_plans;
+  while (*link) {
+    qjs_script_plan_node *node = *link;
+    if (node->ctx != ctx) { link = &node->next; continue; }
+    *link = node->next;
+    qjs_script_plan_destroy(node);
+  }
+}
+
+static void qjs_script_plans_release_runtime(JSRuntime *rt) {
+  qjs_script_plan_node **link = &qjs_script_plans;
+  while (*link) {
+    qjs_script_plan_node *node = *link;
+    if (node->rt != rt) { link = &node->next; continue; }
+    *link = node->next;
+    qjs_script_plan_destroy(node);
+  }
+}
+
+/* Reserve a completion cell BEFORE obtaining any owned value or entering code.
+ * Existing box/refcount/allocator behavior is deliberately not changed. */
+static JSValue *qjs_script_plan_result_cell(JSContext *ctx, int site) {
+  JSValue *cell;
+  if (QJS_SCRIPT_FAIL(site)) cell = NULL;
+  else cell = qjs_shim_malloc(sizeof(*cell));
+  if (!cell) JS_ThrowOutOfMemory(ctx);
+#ifdef JS2WASM_SCRIPT_PLAN_TEST
+  if (cell) {
+    size_t index;
+    for (index = 0; index < 1024 && qjs_script_plan_test_cells[index]; index++) {}
+    if (index == 1024) {
+      qjs_shim_free(cell);
+      JS_ThrowOutOfMemory(ctx);
+      return NULL;
+    }
+    qjs_script_plan_test_cells[index] = cell;
+    qjs_script_plan_live_cells++;
+  }
+#endif
+  return cell;
+}
+
+int32_t QJS_EXPORT(qjs_script_plan_version)(void) { return 1; }
+
+uint32_t QJS_EXPORT(qjs_script_plan_compile)(JSContext *ctx, const char *source, uint32_t len) {
+  char *staged;
+  qjs_script_plan_node *node;
+  JSGlobalScriptPlan *plan;
+  if ((!source && len) || len == UINT32_MAX) {
+    JS_ThrowRangeError(ctx, "invalid Script source buffer length");
+    return 0;
+  }
+  if (qjs_script_plan_next_id == UINT32_MAX) {
+    JS_ThrowRangeError(ctx, "Script plan ID space exhausted");
+    return 0;
+  }
+  if (QJS_SCRIPT_FAIL(3)) staged = NULL;
+  else staged = qjs_shim_malloc((size_t)len + 1);
+  if (!staged) { JS_ThrowOutOfMemory(ctx); return 0; }
+#ifdef JS2WASM_SCRIPT_PLAN_TEST
+  qjs_script_plan_live_buffers++;
+#endif
+  if (len) memcpy(staged, source, len);
+  staged[len] = '\0';
+  plan = JS_CompileGlobalScriptPlan(ctx, staged, len, "<script-plan>");
+  qjs_shim_free(staged);
+#ifdef JS2WASM_SCRIPT_PLAN_TEST
+  qjs_script_plan_live_buffers--;
+#endif
+  if (!plan) return 0;
+  if (QJS_SCRIPT_FAIL(4)) node = NULL;
+  else node = qjs_shim_malloc(sizeof(*node));
+  if (!node) {
+    JS_FreeGlobalScriptPlan(ctx, plan);
+    JS_ThrowOutOfMemory(ctx);
+    return 0;
+  }
+  node->id = qjs_script_plan_next_id++;
+  node->ctx = ctx;
+  node->rt = JS_GetRuntime(ctx);
+  node->plan = plan;
+  node->state = QJS_SCRIPT_READY;
+  node->next = qjs_script_plans;
+  qjs_script_plans = node;
+#ifdef JS2WASM_SCRIPT_PLAN_TEST
+  qjs_script_plan_live_nodes++;
+#endif
+  return node->id;
+}
+
+int32_t QJS_EXPORT(qjs_script_plan_count)(JSContext *ctx, uint32_t id) {
+  qjs_script_plan_node *node = qjs_script_plan_lookup(ctx, id);
+  return node ? JS_GlobalScriptPlanCount(node->plan) : -1;
+}
+int32_t QJS_EXPORT(qjs_script_plan_strict)(JSContext *ctx, uint32_t id) {
+  qjs_script_plan_node *node = qjs_script_plan_lookup(ctx, id);
+  return node ? JS_GlobalScriptPlanStrict(node->plan) : -1;
+}
+int32_t QJS_EXPORT(qjs_script_plan_kind)(JSContext *ctx, uint32_t id, int32_t index) {
+  qjs_script_plan_node *node = qjs_script_plan_lookup(ctx, id);
+  if (!node || qjs_script_plan_index(ctx, node, index)) return -1;
+  return JS_GlobalScriptPlanKind(node->plan, index);
+}
+int32_t QJS_EXPORT(qjs_script_plan_origin)(JSContext *ctx, uint32_t id, int32_t index) {
+  qjs_script_plan_node *node = qjs_script_plan_lookup(ctx, id);
+  if (!node || qjs_script_plan_index(ctx, node, index)) return -1;
+  return JS_GlobalScriptPlanOrigin(node->plan, index);
+}
+qjs_handle QJS_EXPORT(qjs_script_plan_name)(JSContext *ctx, uint32_t id, int32_t index) {
+  JSValue *cell = qjs_script_plan_result_cell(ctx, 5);
+  qjs_script_plan_node *node;
+  if (!cell) return 0;
+  node = qjs_script_plan_lookup(ctx, id);
+  if (!node || qjs_script_plan_index(ctx, node, index)) *cell = JS_EXCEPTION;
+  else *cell = JS_GlobalScriptPlanName(ctx, node->plan, index);
+  return (qjs_handle)(uintptr_t)cell;
+}
+qjs_handle QJS_EXPORT(qjs_script_plan_eval)(JSContext *ctx, uint32_t id) {
+  JSValue *cell = qjs_script_plan_result_cell(ctx, 6);
+  qjs_script_plan_node *node;
+  if (!cell) return 0;
+  node = qjs_script_plan_lookup(ctx, id);
+  if (!node) *cell = JS_EXCEPTION;
+  else if (node->state != QJS_SCRIPT_READY) {
+    *cell = JS_ThrowTypeError(ctx, "Script plan already consumed");
+  } else {
+    node->state = QJS_SCRIPT_RUNNING;
+    *cell = JS_EvalGlobalScriptPlan(ctx, node->plan);
+    node->state = QJS_SCRIPT_CONSUMED;
+  }
+  return (qjs_handle)(uintptr_t)cell;
+}
+int32_t QJS_EXPORT(qjs_script_plan_free)(JSContext *ctx, uint32_t id) {
+  qjs_script_plan_node *node;
+  qjs_script_plan_node **link;
+  if (!id) return 0;
+  node = qjs_script_plan_lookup(ctx, id);
+  if (!node) return -1;
+  for (link = &qjs_script_plans; *link != node; link = &(*link)->next) {}
+  *link = node->next;
+  qjs_script_plan_destroy(node);
+  return 0;
+}
+
 /* ---------------------------------------------------------------- lifecycle */
 
 JSRuntime *QJS_EXPORT(qjs_new_runtime)(void) { return JS_NewRuntime(); }
@@ -260,7 +461,10 @@ double QJS_EXPORT(qjs_malloc_count)(JSRuntime *rt) {
 }
 
 void QJS_EXPORT(qjs_free_runtime)(JSRuntime *rt) {
-  if (rt) JS_FreeRuntime(rt);
+  if (rt) {
+    qjs_script_plans_release_runtime(rt);
+    JS_FreeRuntime(rt);
+  }
 }
 
 JSContext *QJS_EXPORT(qjs_new_context)(JSRuntime *rt) {
@@ -268,7 +472,10 @@ JSContext *QJS_EXPORT(qjs_new_context)(JSRuntime *rt) {
 }
 
 void QJS_EXPORT(qjs_free_context)(JSContext *ctx) {
-  if (ctx) JS_FreeContext(ctx);
+  if (ctx) {
+    qjs_script_plans_release_context(ctx);
+    JS_FreeContext(ctx);
+  }
 }
 
 /* --------------------------------------------------------------- allocation */

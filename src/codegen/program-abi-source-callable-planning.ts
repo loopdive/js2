@@ -169,6 +169,24 @@ export function sourceFunctionHandleForDeclaration(
 }
 
 /**
+ * (#6877) The `ctx.mod.functions` position of one exact source declaration's
+ * own slot. Top-level body emission resolves through this, not the bare name:
+ * the multi-source driver re-binds `funcMap` only for names two TOP-LEVEL
+ * declarations share, so a same-named NESTED declaration of another module
+ * (react.development.js's IIFE vs react.production.js) used to receive the
+ * top-level body. Undefined when no handle was recorded.
+ */
+export function sourceFunctionPositionForDeclaration(
+  ctx: CodegenContext,
+  declaration: ts.FunctionDeclaration,
+): number | undefined {
+  const handle = ctx.sourceFunctionHandleByDeclaration.get(declaration);
+  const fn = handle === undefined ? undefined : definedFuncAt(ctx, handle);
+  const position = fn === undefined ? -1 : ctx.mod.functions.indexOf(fn);
+  return position >= 0 ? position : undefined;
+}
+
+/**
  * Structurally observe one retained direct function-value trampoline and its
  * optional singleton cache.
  *

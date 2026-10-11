@@ -7,7 +7,7 @@
  * vec), answered `index < length` (wrong after `delete arr[i]` or an elision),
  * routed its hole case to the host `__extern_has_idx` (no vec arm: every index
  * absent on the js-host lane), and folded every non-constant key to `false`.
- * `in-array-carrier.ts` now owns the whole question.
+ * `array/in-array-carrier.ts` now owns the whole question.
  *
  * Each source below returns a bitmask (or, js-host only, a JSON string) so one
  * compile checks several answers. Expected values are what node computes for
@@ -163,6 +163,32 @@ describe("#6777 — `in` on array carriers", () => {
       }
     });
   }
+
+  describe("standalone Array(n) composition", () => {
+    it("distinguishes $Hole from an explicitly stored undefined", async () => {
+      expect(
+        await runStandalone(
+          "export function run(): number { const a: any[] = new Array(3); const b: any[] = [undefined]; const c: any[] = Array(2); return (0 in a ? 1 : 0) + (0 in b ? 2 : 0) + (2 in a ? 4 : 0) + (3 in a ? 8 : 0) + (0 in c ? 16 : 0) + (1 in c ? 32 : 0); }",
+        ),
+      ).toBe(2);
+    });
+
+    it("keeps key-first effects and boolean branding on the static hole path", async () => {
+      expect(
+        await runStandalone(
+          "export function run(): number { let order = 0; function a(): any[] { order = order * 10 + 2; return new Array(2); } const absent: any = (order = 1, 0) in a(); return order + (absent === false ? 100 : 0) + (typeof absent === 'boolean' ? 1000 : 0); }",
+        ),
+      ).toBe(1112);
+    });
+
+    it("keeps deletion presence routed through the overlay in a module with length-created holes", async () => {
+      expect(
+        await runStandalone(
+          "export function run(): number { const holes: any[] = new Array(3); const a: number[] = [4, 5, 6]; delete a[0]; return (0 in a ? 1 : 0) + (1 in a ? 2 : 0) + (2 in a ? 4 : 0) + (0 in holes ? 8 : 0); }",
+        ),
+      ).toBe(6);
+    });
+  });
 
   describe("js-host only", () => {
     it("row 1: `[2 in arr]` on a sparse any[] is [true]", async () => {

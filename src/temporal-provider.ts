@@ -42,6 +42,7 @@ import type { CompileOptions, CompileResult, LinkedModuleArtifact } from "./inde
 import { compileMulti, compileProject } from "./index.js";
 import { standaloneIntlShimSource } from "./temporal-intl-shim.js";
 import { getDefaultEnvironment } from "./env.js";
+import { resolveCompileTargetProfile } from "./target-profile.js";
 
 /** npm package name the polyfill bundle is presented to the linker under. */
 export const TEMPORAL_PACKAGE_NAME = "@js-temporal/polyfill";
@@ -79,8 +80,18 @@ export interface BuildTemporalProviderOptions {
   /** Directory for the synthetic project and the provider binary cache. */
   cacheDir: string;
   /** Compile options forwarded to the provider compile. */
-  compileOptions?: CompileOptions;
+  compileOptions?: TemporalProviderCompileOptions;
 }
+
+/**
+ * The provider compile options plus (#6882) `compilerFingerprint`: the identity
+ * of the COMPILER doing the build (the test262 lane passes its compiler-bundle
+ * hash). It is not forwarded to the compile; it is folded into the cache key
+ * and the provider directory, so a cache an older compiler built is a miss
+ * instead of a stale provider served after a codegen change. Absent, every key
+ * and directory is unchanged.
+ */
+type TemporalProviderCompileOptions = CompileOptions & { compilerFingerprint?: string };
 
 interface CachedTemporalProvider {
   provider: TemporalProvider;
@@ -120,8 +131,14 @@ function fingerprint(parts: readonly string[]): string {
  * `buildTemporalProvider` at all unless a stamp written by
  * `scripts/prewarm-temporal-provider.mjs` carries this exact key.
  */
-export function temporalProviderCacheKey(options: { polyfillSource: string; compileOptions?: CompileOptions }): string {
-  return fingerprint([providerSource(options), providerOptionFingerprint(options.compileOptions)]);
+export function temporalProviderCacheKey(options: {
+  polyfillSource: string;
+  compileOptions?: TemporalProviderCompileOptions;
+}): string {
+  // (#6882) Neither part names the compiler; see `TemporalProviderCompileOptions`.
+  const compilerFingerprint = options.compileOptions?.compilerFingerprint;
+  const compiler = compilerFingerprint === undefined ? [] : [`compiler:${compilerFingerprint}`];
+  return fingerprint([providerSource(options), providerOptionFingerprint(options.compileOptions), ...compiler]);
 }
 
 /**
@@ -136,11 +153,34 @@ export function temporalProviderCacheKey(options: { polyfillSource: string; comp
  * module-scoped `Intl` there). Because the KEY is computed from this same text,
  * editing the shim re-keys the standalone artifact: a stale binary can never be
  * served for a changed shim.
+ *
+ * (#6748) The native-first measurement lane's provider gets the shim too. It
+ * is compiled under the native semantic REGIME (`ctx.standalone`), which reads
+ * the bare `Intl` identifier as null exactly like standalone does (the host
+ * `Intl` arm in `expressions/identifiers.ts` is a host-assisted-lane arm), so
+ * without it the provider's `__module_init` threw `TypeError: Cannot access
+ * property on null or undefined` at `ct = Intl.DateTimeFormat` and every
+ * regime Temporal row reported "wasm exception during module init". Provider
+ * and regime consumer now agree: both see the native `Intl`. Reading the HOST
+ * `Intl` from a JavaScript-environment regime build is the declared-global
+ * re-key of #5385 S3-h, not this provider's job.
  */
 function providerSource(options: { polyfillSource: string; compileOptions?: CompileOptions }): string {
   const target = options.compileOptions?.target ?? "gc";
-  if (target !== "standalone" && target !== "wasi") return options.polyfillSource;
+  if (target !== "standalone" && target !== "wasi" && !nativeRegimeProvider(options.compileOptions)) {
+    return options.polyfillSource;
+  }
   return `${standaloneIntlShimSource()}\n${options.polyfillSource}`;
+}
+
+/** (#6748) Does this JavaScript-target provider lower with the native regime? */
+function nativeRegimeProvider(options: CompileOptions | undefined): boolean {
+  if (options?.semanticProviders !== "native-first") return false;
+  return resolveCompileTargetProfile({
+    target: options.target,
+    semanticProviders: options.semanticProviders,
+    hostBridge: options.hostBridge,
+  }).nativeRegime;
 }
 
 function providerOptionFingerprint(options: CompileOptions | undefined): string {
@@ -285,12 +325,18 @@ export async function buildTemporalProvider(options: BuildTemporalProviderOption
   // keyed by the source fingerprint, so a bundle bump never reuses stale text.
   const entryPath = materializeTemporalProject(fs, options.cacheDir, key, providerSource(options));
 
+  const { compilerFingerprint, ...compileOptions } = options.compileOptions ?? {};
   const result = await compileProject(entryPath, {
-    ...options.compileOptions,
+    ...compileOptions,
     allowJs: true,
     emitWat: false,
     skipSemanticDiagnostics: true,
-    packageCacheDir: path.join(options.cacheDir, "providers"),
+    // (#6882) The linker's own provider cache keys on the source and options,
+    // not on the compiler, so it gets the compiler's identity as a sub-directory.
+    packageCacheDir:
+      compilerFingerprint === undefined
+        ? path.join(options.cacheDir, "providers")
+        : path.join(options.cacheDir, "providers", `compiler-${compilerFingerprint}`),
   });
   if (!result.success) {
     const errors = (result.errors ?? [])

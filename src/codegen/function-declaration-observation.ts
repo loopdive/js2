@@ -174,7 +174,7 @@ export function closureObservesBindingValue(closure: ts.ArrowFunction | ts.Funct
 
 /** Expand nested-function capture dependencies to their transitive closure. */
 export function collectTransitiveCaptureNames(
-  nestedCaptures: ReadonlyMap<string, readonly { name: string }[]>,
+  nestedCaptures: Pick<ReadonlyMap<string, readonly { name: string }[]>, "get">,
   referencedNames: Set<string>,
   ownLocals: ReadonlySet<string>,
   isEnclosingParameter: (name: string) => boolean,

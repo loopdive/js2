@@ -51,3 +51,48 @@ exposes.
 Either the match of a realm-aliased `RegExp` (#6713 carriers) or a callback
 reached through `arrayReduce` is the likely non-callable. Bisect with
 `globalThis.__probeStep` markers inside the two entry points, then reduce.
+
+## Root cause located — 2026-10-05
+
+Measured on `b6324ee6d1` + the #6736 re-land + #6861. Module init now
+completes, and the checksum throws from `__call_m_words_1` →
+`__extern_method_call` on the receiver `__pkg`. `__pkg` itself is wrong, not
+`words`.
+
+A probe driver over the same lodash file answers:
+
+- `typeof __pkg` is `"object"`, not `"function"`;
+- `__pkg.words`, `__pkg.kebabCase` and `__pkg.map` are not functions;
+- `__pkg._ !== __pkg`;
+- `Object.keys(__pkg).length` is not above 100.
+
+So the default import is an empty `exports` object. lodash's export never
+reached it.
+
+Reduction: a CJS file imported by default from an ES driver, standalone,
+0 imports.
+
+```js
+;(function() {
+  var freeExports = typeof exports == 'object' && exports && !exports.nodeType && exports;
+  var freeModule = freeExports && typeof module == 'object' && module && !module.nodeType && module;
+  function lodash(v) { return v; }
+  lodash.words = function (s) { return s.split(' '); };
+  var _ = lodash;
+  if (freeModule) { (freeModule.exports = _)._ = _; freeExports._ = _; }   // lodash.js:17251
+}.call(this));
+```
+
+| Export statement | `pkg.words` callable |
+|---|---|
+| `module.exports = _;` | yes |
+| `(freeModule.exports = _)._ = _;` (the alias `freeModule === module`) | **no**: the import sees the empty `exports` |
+
+`freeExports` and `freeModule` are both truthy in both runs. The write goes
+through an alias of `module`, and the CJS interop does not see it, apparently
+because it only recognises the literal `module.exports` spelling. Even with
+`module.exports = _`, `typeof pkg` reads `"object"` instead of `"function"`,
+which is a smaller second defect.
+
+Next step: make the default import read the real `module.exports` slot after
+the CJS body runs, so that any write path, aliased or not, is observed.

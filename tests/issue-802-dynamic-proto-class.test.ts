@@ -86,11 +86,13 @@ describe("#802 Slices B+C — class-instance dynamic prototype (standalone)", ()
            const a = new C();
            const b = new C();
            Object.setPrototypeOf(a, b);
-           Object.setPrototypeOf(b, a); // §10.1.2.1 step 8 refuse
-           return Object.getPrototypeOf(b) === C.prototype ? 1 : 0;
+           let threw = false;
+           try { Object.setPrototypeOf(b, a); }
+           catch (error) { threw = error instanceof TypeError; }
+           return (threw ? 10 : 0) + (Object.getPrototypeOf(b) === C.prototype ? 1 : 0);
          }`,
       ),
-    ).toBe(1);
+    ).toBe(11);
   });
 
   it("multi-level struct→struct→literal chain read", async () => {

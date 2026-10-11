@@ -44,6 +44,7 @@ import type { CodegenContext } from "./context/types.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { ensureExternStrictEqHelper } from "./any-helpers.js";
+import { ensureOwnKeysAllNative } from "./object-model/proxy-own-keys-surfaces.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -101,7 +102,7 @@ export function registerProxyInvariantValidators(
   const isTruthyIdx = ctx.funcMap.get("__is_truthy");
   const isExtIdx = ctx.funcMap.get("__object_isExtensible");
   const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
-  const ownNamesIdx = ctx.funcMap.get("__getOwnPropertyNames");
+  const ownNamesIdx = ensureOwnKeysAllNative(ctx) ?? ctx.funcMap.get("__getOwnPropertyNames"); // (#6770 S7)
   const lengthIdx = ctx.funcMap.get("__extern_length");
   const getIdxIdx = ctx.funcMap.get("__extern_get_idx");
   const typeErrorCtorIdx = ctx.funcMap.get("__new_TypeError");
@@ -626,9 +627,9 @@ export function registerProxyInvariantValidators(
   //   • every non-configurable own key of the target must appear, and
   //   • over a NON-EXTENSIBLE target the two key sets must be equal.
   // Membership is compared with the same strict-equality helper the dispatch's
-  // duplicate check uses. Own SYMBOL keys of the target are outside
-  // `__getOwnPropertyNames` and are therefore not reconciled — a residual, not
-  // a wrong throw: an unlisted symbol key simply goes unchecked.
+  // duplicate check uses. (#6770 S7) The target key set is `__own_keys_all`
+  // — names AND symbols — so a non-configurable SYMBOL key of the target, or
+  // one of a non-extensible target, is reconciled like a string key.
   // params 0=target 1=trapResult ; locals 2=tkeys 3=tlen 4=rlen 5=i 6=j 7=k
   //        8=found 9=extensible 10=td
   const ownKeys = registerNative(

@@ -294,6 +294,50 @@ export function wrapArrayProtoVecAlias(
   ];
 }
 
+/**
+ * (#6774 S20) The inverse of {@link wrapArrayProtoVecAlias}, for a consumer
+ * that compares prototypes by identity (`OrdinaryHasInstance`): when the
+ * externref in `slot` is an `Array.prototype` vec ALIAS, replace it in place
+ * with the `$NativeProto` singleton it stands for. FINALIZE-time (every alias
+ * is minted by then); the alias globals are looked up by name so a late
+ * import-global shift cannot leave a stale index. Empty when none was minted.
+ */
+export function unwrapArrayProtoVecAliasInstrs(ctx: CodegenContext, slot: number): Instr[] {
+  const brand = ctx.builtinBrandMap?.get("Array");
+  const protoGlobal = brand === undefined ? undefined : ctx.nativeProtoGlobals?.get(brand);
+  if (protoGlobal === undefined) return [];
+  const out: Instr[] = [];
+  for (const toIdx of linkState(ctx).aliasGlobals.keys()) {
+    const pos = ctx.mod.globals.findIndex((g) => g.name === `__array_proto_vec_alias_${toIdx}`);
+    if (pos < 0) continue;
+    out.push(
+      { op: "local.get", index: slot },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: toIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: slot },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: toIdx },
+          { op: "global.get", index: ctx.numImportGlobals + pos },
+          { op: "ref.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "global.get", index: protoGlobal },
+              { op: "local.set", index: slot },
+            ],
+          },
+        ],
+      },
+    );
+  }
+  return out;
+}
+
 // ── Finalize ──────────────────────────────────────────────────────────────────
 
 /**

@@ -37,7 +37,7 @@ import {
   test262NeedsTemporalGlobal as sharedTest262NeedsTemporalGlobal,
   test262TemporalLaneEnabled,
 } from "../scripts/test262-temporal.mjs";
-import { hasSelfModuleImport } from "../scripts/test262-fixture-graph.mjs";
+import { discoverFixtureGraph, hasSelfModuleImport } from "../scripts/test262-fixture-graph.mjs";
 import { readTest262ExactManifest } from "../scripts/test262-exact-manifest.mjs";
 // (#4162) ONE import-object finaliser, shared with scripts/test262-worker.mjs
 // and tests/test262-shared.ts. This lane used to instantiate the binary
@@ -4507,7 +4507,11 @@ async function runOriginalHarnessVariant(
         result = await compileWithTemporalGlobal(variant.source, temporal, { ...compileOptions, fileName });
       } else if (selfModuleImport) {
         const entryFile = `./${relTestPath}`;
-        result = await compileMulti({ [entryFile]: variant.source }, entryFile, compileOptions);
+        // (#6651 V6) Link the static `_FIXTURE` modules too (`export * from
+        // './x_FIXTURE.js'`), exactly as the sharded path in test262-shared.ts
+        // does — without them the local verdict lacks the star re-exports.
+        const { fixtureFiles } = discoverFixtureGraph(relTestPath, originalSource);
+        result = await compileMulti({ ...fixtureFiles, [entryFile]: variant.source }, entryFile, compileOptions);
       } else {
         result = await compile(variant.source, { ...compileOptions, fileName });
       }
@@ -4627,6 +4631,7 @@ async function runOriginalHarnessVariant(
       const instantiateStarted = performance.now();
       instance = await instantiateTest262Module(result.binary, imports, {
         target,
+        semanticProviders: parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS),
         providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
         // (#5248) Empty on every non-Temporal row, so the shared finaliser takes
         // its existing path byte-for-byte.

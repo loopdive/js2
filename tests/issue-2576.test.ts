@@ -130,11 +130,13 @@ describe("#2576 (extends #2187) — string method / .length on an any-typed nati
   });
 
   it("an any holding a number does not produce a spurious string length", async () => {
-    // A number value is not a native string → ref.test $AnyString misses → 0,
-    // not a wrong positive length.
+    // A number value is not a native string → ref.test $AnyString misses, so
+    // there is no wrong positive length. (#6736) The miss is now the real Get:
+    // `(5).length` is `undefined`, which the `number` return turns into NaN
+    // (the numeric lowering used to answer 0).
     expect(
       await runStandalone(`export function test(): number { const o:any={n:5}; const x:any=o.n; return x.length; }`),
-    ).toBe(0);
+    ).toBeNaN();
   });
 
   it("statically string-typed receivers are unchanged", async () => {

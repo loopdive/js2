@@ -40,6 +40,10 @@ than calling js2wasm directly.
   optional `--optimize 1|2|3|4` argument runs `wasm-opt` at that level and
   fails rather than silently returning unoptimized output when the optimizer
   is unavailable or rejects the module.
+  The default `--realm shared` requires v8x's context and shared exception
+  provider and defers initialization until the host owns the instance.
+  `--realm isolated` owns its realm and exception tag and executes top-level
+  code at instantiation, for standalone Wasmtime CLI checks.
 - `deno.ts` is the first typed Deno API adapter. It presents the natural
   `Deno.cwd()` object shape and lowers it to two primitive host imports.
 - `v8x-js2wasm.patch` adds the opt-in backend and its rusty_v8 integration test

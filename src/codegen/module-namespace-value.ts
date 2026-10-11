@@ -17,6 +17,8 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { withRuntimeModuleCallableBindings } from "./runtime-module-callable-metadata.js";
 import { coerceType } from "./shared.js";
+import { emitTdzCheckAtGlobal } from "./statements/tdz.js";
+import { markNamespaceBindingInstrs } from "./object-model/module-namespace-exotic.js";
 
 /** §10.4.6.2 module namespace own `Symbol.toStringTag` metadata. */
 const MODULE_NAMESPACE_TO_STRING_TAG = "Module";
@@ -99,6 +101,8 @@ interface NamespaceDefaultExport {
   readonly kind: "default";
   readonly key: string;
   readonly global: GlobalDef;
+  /** (#6651 V6) Set once the default expression has run — the binding's TDZ. */
+  readonly initialized: GlobalDef;
 }
 
 /**
@@ -427,6 +431,13 @@ function moduleSymbolNamespaceExports(
       // arm a single `export const` in the module declined the WHOLE namespace
       // object, and `ns.CONSTANT` trapped even though `ns.fn()` worked.
       const constName = immutableTopLevelConstName(ctx, declarationNode);
+      // (#6651 V6) …unless the const still has a TDZ flag: a self-importing
+      // module can read `ns.X` before the initializer runs, which must throw
+      // (§10.4.6.8 step 12), so the slot needs the live, TDZ-checked getter.
+      if (constName !== undefined && ctx.tdzGlobals.has(constName)) {
+        exports.push({ kind: "live", key: exportedSymbol.getName(), globalName: constName });
+        continue;
+      }
       if (constName !== undefined) {
         exports.push({
           kind: "global",
@@ -439,7 +450,12 @@ function moduleSymbolNamespaceExports(
       if (ts.isExportAssignment(declarationNode) && declarationNode.isExportEquals !== true) {
         const defaultGlobal = ctx.defaultExpressionGlobals?.get(declarationNode);
         if (defaultGlobal === undefined) return undefined;
-        exports.push({ kind: "default", key: exportedSymbol.getName(), global: defaultGlobal.value });
+        exports.push({
+          kind: "default",
+          key: exportedSymbol.getName(),
+          global: defaultGlobal.value,
+          initialized: defaultGlobal.initialized,
+        });
         continue;
       }
       // (#6651 N1) …and a mutable top-level `var`/`let` gets a LIVE getter
@@ -715,12 +731,6 @@ interface NamedGlobalRead {
   readonly name: string;
 }
 
-/** A baked `global.get` over a `GlobalDef` IDENTITY (the default-export cell). */
-interface DefaultGlobalRead {
-  readonly instr: { op: "global.get"; index: number };
-  readonly global: GlobalDef;
-}
-
 /**
  * Re-resolve every `global.get` index baked into the namespace initializer.
  *
@@ -728,18 +738,9 @@ interface DefaultGlobalRead {
  * which shifts the module-global range under indices already emitted. Returns
  * false when a global has vanished, in which case the caller declines.
  */
-function rebaseNamespaceGlobalReads(
-  ctx: CodegenContext,
-  globalReads: readonly NamedGlobalRead[],
-  defaultReads: readonly DefaultGlobalRead[],
-): boolean {
+function rebaseNamespaceGlobalReads(ctx: CodegenContext, globalReads: readonly NamedGlobalRead[]): boolean {
   for (const read of globalReads) {
     const current = ctx.moduleGlobals.get(read.name);
-    if (current === undefined) return false;
-    read.instr.index = current;
-  }
-  for (const read of defaultReads) {
-    const current = absoluteGlobalIndex(ctx, read.global);
     if (current === undefined) return false;
     read.instr.index = current;
   }
@@ -778,53 +779,76 @@ function currentNamespaceFunctionHandle(ctx: CodegenContext, entry: NamespaceFun
 const MODULE_NAMESPACE_LIVE_ACCESSOR_FLAGS = (1 << 4) | (1 << 5) | (1 << 1);
 
 /**
- * Mint a zero-argument getter over the exporting module's global for one live
- * binding, and return its defined-function index.
+ * Mint one zero-argument getter per live binding (`var`/`let`, a TDZ-tracked
+ * `const`, and `export default <expr>`), BEFORE the enclosing namespace object
+ * reserves its own helpers, keyed by export name.
  *
- * The emitted `global.get` index is recorded in `globalReads` exactly like the
- * snapshot arm's: reserving a function-value cache or a string constant adds
- * import globals and shifts the module-global range, so every baked index is
- * re-resolved after the export loop finishes.
+ * (#6651 V6) Each getter is §10.4.6.8 [[Get]] steps 10-12 for its binding:
+ * when the binding still has its TDZ flag clear it throws a ReferenceError
+ * rather than reading the zero-initialized cell. Building the throw may add
+ * imports and string constants, which is why this runs in its own phase — the
+ * same ordering discipline as {@link ensureClassObjectGetters}: every shift
+ * completes before the outer body bakes a single index, and the finished getter
+ * is an ordinary defined function that later shifts repair like any other.
  */
-function mintLiveBindingGetter(
+function ensureLiveBindingGetters(
   ctx: CodegenContext,
-  entry: NamespaceLiveExport,
-  globalReads: { instr: { op: "global.get"; index: number }; name: string }[],
-): number | undefined {
-  const globalIdx = ctx.moduleGlobals.get(entry.globalName);
-  const global = globalIdx === undefined ? undefined : ctx.mod.globals[globalIdx - ctx.numImportGlobals];
-  if (globalIdx === undefined || global === undefined) return undefined;
-
-  const name = `__module_namespace_live_${ctx.mod.functions.length}`;
-  const fctx: FunctionContext = {
-    name,
-    params: [],
-    locals: [],
-    localMap: new Map(),
-    returnType: { kind: "externref" },
-    body: [],
-    blockDepth: 0,
-    breakStack: [],
-    continueStack: [],
-    labelMap: new Map(),
-    savedBodies: [],
-  };
-  const instr = { op: "global.get" as const, index: globalIdx };
-  fctx.body.push(instr);
-  globalReads.push({ instr, name: entry.globalName });
-  if (global.type.kind !== "externref") coerceType(ctx, fctx, global.type, { kind: "externref" });
-
-  const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
-  const funcIdx = mintDefinedFunc(ctx);
-  pushDefinedFunc(ctx, funcIdx, {
-    name,
-    typeIdx,
-    locals: fctx.locals,
-    body: fctx.body,
-    exported: false,
-  });
-  ctx.funcMap.set(name, funcIdx);
-  return funcIdx;
+  exports: readonly NamespaceExport[],
+): Map<string, string> | undefined {
+  const getters = new Map<string, string>();
+  for (const entry of exports) {
+    if (entry.kind !== "live" && entry.kind !== "default") continue;
+    let value: GlobalDef | undefined;
+    let flag: GlobalDef | undefined;
+    if (entry.kind === "default") {
+      value = entry.global;
+      flag = entry.initialized;
+    } else {
+      const globalIdx = ctx.moduleGlobals.get(entry.globalName);
+      value = globalIdx === undefined ? undefined : ctx.mod.globals[globalIdx - ctx.numImportGlobals];
+      const flagIdx = ctx.tdzGlobals.get(entry.globalName);
+      flag = flagIdx === undefined ? undefined : ctx.mod.globals[flagIdx - ctx.numImportGlobals];
+    }
+    if (value === undefined) return undefined;
+    const name = `__module_namespace_live_${ctx.mod.functions.length}`;
+    const fctx: FunctionContext = {
+      name,
+      params: [],
+      locals: [],
+      localMap: new Map(),
+      returnType: { kind: "externref" },
+      body: [],
+      blockDepth: 0,
+      breakStack: [],
+      continueStack: [],
+      labelMap: new Map(),
+      savedBodies: [],
+    };
+    ctx.liveBodies.add(fctx.body);
+    if (flag !== undefined) {
+      const flagIdx = absoluteGlobalIndex(ctx, flag);
+      if (flagIdx === undefined) {
+        ctx.liveBodies.delete(fctx.body);
+        return undefined;
+      }
+      emitTdzCheckAtGlobal(ctx, fctx, flagIdx, entry.key, true);
+    }
+    // Resolved AFTER the check: building the throw can shift the global space.
+    const valueIdx = absoluteGlobalIndex(ctx, value);
+    if (valueIdx === undefined) {
+      ctx.liveBodies.delete(fctx.body);
+      return undefined;
+    }
+    fctx.body.push({ op: "global.get", index: valueIdx });
+    if (value.type.kind !== "externref") coerceType(ctx, fctx, value.type, { kind: "externref" });
+    ctx.liveBodies.delete(fctx.body);
+    const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
+    const funcIdx = mintDefinedFunc(ctx);
+    pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals: fctx.locals, body: fctx.body, exported: false });
+    ctx.funcMap.set(name, funcIdx);
+    getters.set(entry.key, name);
+  }
+  return getters;
 }
 
 /**
@@ -934,6 +958,8 @@ function ensureNamespaceObjectGetter(
   if (nestedGetters === undefined) return undefined;
   const classGetters = ensureClassObjectGetters(ctx, exports);
   if (classGetters === undefined) return undefined;
+  const liveGetters = ensureLiveBindingGetters(ctx, exports);
+  if (liveGetters === undefined) return undefined;
 
   const helpers = reserveNamespaceObjectHelpers(ctx, fctx, exports, moduleNamespaceTag);
   if (helpers === undefined) return undefined;
@@ -962,6 +988,7 @@ function ensureNamespaceObjectGetter(
     moduleNamespaceTag,
     nestedGetters,
     classGetters,
+    liveGetters,
     helpers,
     cacheGlobal,
   });
@@ -1028,7 +1055,7 @@ function reserveNamespaceObjectHelpers(
   // (#6651 N1) The live-binding arm installs accessors, not `__extern_set`
   // values. Reserve its helper in the SAME batch as everything else — one
   // `flushLateImportShifts` runs below and every index is read after it.
-  if (exports.some((entry) => entry.kind === "live")) {
+  if (exports.some((entry) => entry.kind === "live" || entry.kind === "default")) {
     ensureLateImport(
       ctx,
       "__defineProperty_accessor",
@@ -1058,7 +1085,7 @@ function reserveNamespaceObjectHelpers(
   if (finalNewObjectIdx === undefined || finalSetIdx === undefined) {
     return undefined;
   }
-  const hasLiveExport = exports.some((entry) => entry.kind === "live");
+  const hasLiveExport = exports.some((entry) => entry.kind === "live" || entry.kind === "default");
   const finalDefineAccessorIdx = hasLiveExport ? ctx.funcMap.get("__defineProperty_accessor") : undefined;
   if (hasLiveExport && finalDefineAccessorIdx === undefined) return undefined;
   const finalBoxSymbolIdx = moduleNamespaceTag ? ctx.funcMap.get("__box_symbol") : undefined;
@@ -1083,6 +1110,7 @@ interface NamespaceObjectGetterPlan {
   readonly moduleNamespaceTag: boolean;
   readonly nestedGetters: ReadonlyMap<string, string>;
   readonly classGetters: ReadonlyMap<string, string>;
+  readonly liveGetters: ReadonlyMap<string, string>;
   readonly helpers: NamespaceObjectHelpers;
   readonly cacheGlobal: GlobalDef;
 }
@@ -1094,7 +1122,7 @@ interface NamespaceObjectGetterPlan {
  * bakes is final except the global reads, which are rebased at the end.
  */
 function buildNamespaceObjectGetterBody(ctx: CodegenContext, plan: NamespaceObjectGetterPlan): string | undefined {
-  const { cacheKey, exports, moduleNamespaceTag, nestedGetters, classGetters, cacheGlobal } = plan;
+  const { cacheKey, exports, moduleNamespaceTag, nestedGetters, classGetters, liveGetters, cacheGlobal } = plan;
   const {
     objectCreateIdx: finalObjectCreateIdx,
     preventExtensionsIdx: finalPreventExtensionsIdx,
@@ -1157,25 +1185,21 @@ function buildNamespaceObjectGetterBody(ctx: CodegenContext, plan: NamespaceObje
   // read and re-resolve its index once the loop is done — the same treatment
   // the cache global gets below.
   const globalReads: NamedGlobalRead[] = [];
-  const defaultReads: DefaultGlobalRead[] = [];
   for (const entry of exports) {
     let valueType: ValType | null;
-    if (entry.kind === "live") {
+    if (entry.kind === "live" || entry.kind === "default") {
       // Stack: [obj, key, getter, null, flags] — no setter, so the namespace's
       // §10.4.6.9 `[[Set]]` refusal and §10.4.6.10 `[[Delete]]` refusal fall out
       // of the descriptor itself.
-      const getterFuncIdx =
-        finalDefineAccessorIdx === undefined ? undefined : mintLiveBindingGetter(ctx, entry, globalReads);
+      const liveName = liveGetters.get(entry.key);
+      const getterFuncIdx = liveName === undefined ? undefined : ctx.funcMap.get(liveName);
       if (getterFuncIdx === undefined || finalDefineAccessorIdx === undefined) {
         popBody(getterFctx, savedBody);
         return undefined;
       }
       getterFctx.body.push({ op: "local.get", index: objectLocal });
       getterFctx.body.push(...stringConstantExternrefInstrs(ctx, entry.key));
-      if (
-        emitCachedFuncClosureAccess(ctx, getterFctx, `__module_namespace_live_getter_${entry.key}`, getterFuncIdx) ===
-        null
-      ) {
+      if (emitCachedFuncClosureAccess(ctx, getterFctx, `${liveName}_closure`, getterFuncIdx) === null) {
         popBody(getterFctx, savedBody);
         return undefined;
       }
@@ -1183,6 +1207,22 @@ function buildNamespaceObjectGetterBody(ctx: CodegenContext, plan: NamespaceObje
       getterFctx.body.push({ op: "f64.const", value: MODULE_NAMESPACE_LIVE_ACCESSOR_FLAGS });
       getterFctx.body.push({ op: "call", funcIdx: finalDefineAccessorIdx });
       getterFctx.body.push({ op: "drop" });
+      // (#6651 V6) Brand the entry so the native MOP answers §10.4.6.5/6 for it.
+      if (moduleNamespaceTag) {
+        const entryType = ctx.objectRuntimeTypes?.propEntryTypeIdx;
+        const entryLocal =
+          entryType === undefined
+            ? -1
+            : allocLocal(getterFctx, `__module_namespace_entry_${getterFctx.locals.length}`, {
+                kind: "ref_null",
+                typeIdx: entryType,
+              });
+        if (entryLocal >= 0) {
+          getterFctx.body.push(
+            ...markNamespaceBindingInstrs(ctx, objectLocal, stringConstantExternrefInstrs(ctx, entry.key), entryLocal),
+          );
+        }
+      }
       continue;
     }
     if (entry.kind === "namespace") {
@@ -1217,20 +1257,6 @@ function buildNamespaceObjectGetterBody(ctx: CodegenContext, plan: NamespaceObje
       getterFctx.body.push(instr);
       globalReads.push({ instr, name: entry.globalName });
       valueType = global.type;
-    } else if (entry.kind === "default") {
-      // The default cell is a `GlobalDef` identity, not a named module global,
-      // so its absolute index is recomputed from `ctx.mod.globals` here and
-      // again in the post-loop fixup (`defaultReads`) after any late import
-      // has shifted the global range.
-      const index = absoluteGlobalIndex(ctx, entry.global);
-      if (index === undefined) {
-        popBody(getterFctx, savedBody);
-        return undefined;
-      }
-      const instr = { op: "global.get" as const, index };
-      getterFctx.body.push(instr);
-      defaultReads.push({ instr, global: entry.global });
-      valueType = entry.global.type;
     } else if (entry.kind === "host-member") {
       // `__extern_get(__node_<mod>(), "<member>")` — the host module object's
       // own property, so the slot holds the real callable rather than a copy.
@@ -1268,7 +1294,7 @@ function buildNamespaceObjectGetterBody(ctx: CodegenContext, plan: NamespaceObje
     getterFctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_set") ?? finalSetIdx });
   }
   // Global indices may have moved while function-value caches were reserved.
-  if (!rebaseNamespaceGlobalReads(ctx, globalReads, defaultReads)) {
+  if (!rebaseNamespaceGlobalReads(ctx, globalReads)) {
     popBody(getterFctx, savedBody);
     return undefined;
   }

@@ -173,7 +173,16 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
    *  runnable under pure-Wasm engines (wasmtime, wasmer) without a JS host. */
   standalone?: boolean;
   /** Linked zero-argument getter for a canonical standalone realm-global object. */
-  standaloneGlobalThisImport?: { module: string; name: string; call?: string };
+  standaloneGlobalThisImport?: {
+    module: string;
+    name: string;
+    call?: string;
+    exceptionTag?: string;
+    owns?: string;
+    get?: string;
+  };
+  standaloneMicrotaskNotifyImport?: { module: string; name: string };
+  standaloneScriptVarBindings?: boolean;
   /** JS-host direct-eval lowering; see `CompileOptions.directEval`. */
   directEval?: "legacy" | "reified-host";
   runtimeEvalProvider?: boolean; // see CompileOptions.runtimeEvalProvider (#6676)
@@ -965,6 +974,8 @@ export interface FunctionContext {
    * binding) hands `.then` a real `$Promise`. See `async-eager-promise.ts`.
    */
   eagerAsyncPromiseReturn?: boolean;
+  /** (#6417) A `boolean` host callback: an i32 return boxes via `__box_boolean`. */
+  hostBooleanReturn?: boolean;
   asyncDriveReturn?: {
     /** Local holding the frame's result `$Promise` (loaded at resume entry). */
     resultPromiseLocal: number;
@@ -1050,6 +1061,10 @@ export interface FunctionContext {
    * binding so reads that occur before the first arrow remain unchanged.
    */
   lexicalThisCaptureLocal?: number;
+  /** (#6774 S4) Frame slot holding the `new.target` snapshot arrows capture. */
+  newTargetSnapshotLocal?: number;
+  /** (#6774 S4) A fnctor `new F()` body's `new.target` value: the binding naming `F`. */
+  newTargetValueNode?: ts.Expression;
   /** While lowering a compile-time direct-eval Script, an otherwise absent
    * receiver in a sloppy caller denotes the realm global object. This is
    * scoped to the foreign eval AST so ordinary strict/direct-call `this`
@@ -1849,6 +1864,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * (`String.prototype.foo = …`).
    */
   protoNamedDirty: boolean;
+  /** (#6651 V11) Pre-scan: a builtin `.prototype` is re-parented (`object-model/native-proto-reparent.ts`). */
+  builtinProtoReparentDirty?: boolean;
   /**
    * (#4492 wave-5) The MEMBER NAMES behind `protoNamedDirty` — the `<m>` of every
    * `<BrandedBuiltin>.prototype.<m> = …` the pre-scan saw.
@@ -2148,6 +2165,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   structAccessorClosure: Map<string, { getGlobal?: number; setGlobal?: number }>;
   /** Set of "ClassName_propName" for static getter/setter accessor properties */
   staticAccessorSet: Set<string>;
+  /** (#6772 S12) "ClassName_propName" of every INSTANCE class accessor, filled before any accessor key is minted. */
+  classInstanceAccessorKeys: Set<string>;
   /** Set of "ClassName_methodName" for static methods (no self param) */
   staticMethodSet: Set<string>;
   /** Map from "ClassName_propName" → global index for static properties */
@@ -3181,6 +3200,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   reassignedFunctionDeclarations?: WeakSet<ts.FunctionDeclaration>;
   /**
+   * (#6880) Members of {@link liveFuncBindingGlobals} that are live ONLY because
+   * linked runtime eval could rebind them — no source assignment targets them.
+   * The named `.call` receiver trampoline may still serve these: the lowering it
+   * replaces calls the same static function and drops the receiver.
+   */
+  evalOnlyLiveFuncBindings?: Set<string>;
+  /**
    * (#4182) Names bound live at MODULE scope by Annex B B.3.3.2 (a sloppy
    * block/`if`/`switch`-nested `function f` whose enclosing var scope is the
    * SourceFile). Subset discipline: every member is also in
@@ -3405,6 +3431,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   capturedGlobalsOwner?: Map<string, FunctionContext>;
   /** Map from TS symbol name → synthetic class name for class expressions */
   classExprNameMap: Map<string, string>;
+  /** (#6772 S7) Names assigned two DIFFERENT class expressions: never put back in `classExprNameMap`. */
+  classExprAmbiguousNames: Set<string>;
   /** Map from class AST node → synthetic class name (expressions and nested declarations). */
   anonClassExprNames: Map<ts.ClassExpression | ts.ClassDeclaration, string>;
   /** Map from function/class identifier → its ES-spec .name string value */
@@ -4240,7 +4268,16 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  `__str_extern_len`). Implies `nativeStrings === true`. */
   standalone: boolean;
   /** Linked zero-argument getter for the canonical standalone realm-global object. */
-  standaloneGlobalThisImport?: { module: string; name: string; call?: string };
+  standaloneGlobalThisImport?: {
+    module: string;
+    name: string;
+    call?: string;
+    exceptionTag?: string;
+    owns?: string;
+    get?: string;
+  };
+  standaloneMicrotaskNotifyImport?: { module: string; name: string };
+  standaloneScriptVarBindings?: boolean;
   /** (#5383 S2p) True while the outlined `__native_globalThis_ensure` seed body
    *  is under construction, so a re-entrant realm-global read inside the seed
    *  itself takes the legacy inline splice instead of calling a function whose

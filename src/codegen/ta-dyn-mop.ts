@@ -51,7 +51,7 @@ import {
 import { addFuncType, TA_CTOR_KINDS, taCtorIdentityTestInstrs } from "./registry/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
-import { BFN_ID_FIELD_IDX } from "./builtin-fn-meta.js"; // (#5194 r3 F3) refusal-closure filter
+import { BFN_ID_FIELD_IDX, linkedMetaSignatureGuard } from "./builtin-fn-meta.js"; // (#5194 r3 F3) refusal-closure filter
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 // (#3177 slice 3) per-kind `<View>.prototype` identity — the SAME $NativeProto
 // glue singleton a static `<View>.prototype` value read yields.
@@ -61,6 +61,7 @@ import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { buildTaCtorInheritedFromOfGetArm } from "./ta-static-from-of-body.js";
 import { fillHofTaDynViewPresenceBypass } from "./hof-native.js"; // (#6651 E6)
 import { fillOrdinarySetTypedArrayArm } from "./object-runtime-ordinary-set.js"; // (#6651 E6)
+import { taDynViewOwnLengthArm } from "./array/array-like-exotic-arms.js"; // (#6771 S2c)
 import { fillArrayBufferGetPrototypeOfArm } from "./expressions/object-get-prototype-of.js"; // (#6769 S10)
 import { protoWalkConstructorArmInstrs } from "./vec-constructor-carrier.js"; // (#6775 S7)
 
@@ -695,11 +696,13 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
         byFamily.set(superIdx, list);
       }
       const out: Instr[] = [];
+      const valueAny = (): Instr[] => [{ op: "local.get", index: valueLocal }, { op: "any.convert_extern" }];
       for (const list of byFamily.values()) {
         const family = list[0];
         const isOneOf: Instr[] = [];
         list.forEach((idx, i) => {
           isOneOf.push({ op: "local.get", index: aBfnId }, { op: "i32.const", value: idx }, { op: "i32.eq" });
+          isOneOf.push(...linkedMetaSignatureGuard(ctx, idx, valueAny(), family)); // (#6651 V0) linked peer ids
           if (i > 0) isOneOf.push({ op: "i32.or" });
         });
         out.push(
@@ -1093,6 +1096,7 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
     inner.push({ op: "local.get", index: lAny });
     inner.push({ op: "ref.cast", typeIdx: dynIdx });
     inner.push({ op: "local.set", index: lDv });
+    inner.push(...taDynViewOwnLengthArm(ctx, lenFn, lDv, dynIdx)); // (#6771 S2c)
     inner.push({ op: "local.get", index: lDv });
     inner.push({ op: "ref.as_non_null" });
     inner.push({ op: "struct.get", typeIdx: dynIdx, fieldIdx: 3 });

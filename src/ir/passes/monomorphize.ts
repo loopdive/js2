@@ -57,12 +57,14 @@
 import {
   asBlockId,
   forEachInstrDeep,
+  mapNestedBuffers,
   type IrBlock,
   type IrFuncRef,
   type IrFunction,
   type IrInstr,
   type IrModule,
   type IrParam,
+  type IrSiteId,
   type IrType,
   type IrValueId,
 } from "../nodes.js";
@@ -575,6 +577,39 @@ function uniquifyName(base: string, used: ReadonlySet<string>): string {
 // Helpers — clone construction
 // ---------------------------------------------------------------------------
 
+/** Preserve original source donors and assign generated clone sites their actual owner. */
+function specializationSite(site: IrSiteId | undefined, ownerUnitId: IrUnitId): IrSiteId | undefined {
+  const origin = site?.origin;
+  return origin?.kind === "generated" && "ownerUnitId" in origin ? { origin: { ...origin, ownerUnitId } } : site;
+}
+
+/** Fork duplicated allocations parent-first, including admitted nested bodies. */
+function forkSpecializationAllocations(
+  instr: IrInstr,
+  ownerUnitId: IrUnitId,
+  registry: AllocSiteRegistry | undefined,
+): IrInstr {
+  const site = specializationSite(instr.site, ownerUnitId);
+  const located = site === instr.site ? instr : { ...instr, site: site! };
+  let forked: IrInstr;
+  if (registry && located.alloc !== undefined && site?.origin) {
+    const allocation = registry.resolve(located.alloc);
+    forked =
+      allocation === null ? located : { ...located, alloc: registry.fresh(allocation.kind, allocation.type, site) };
+  } else {
+    forked = forkAllocInInstr(located, registry);
+  }
+  return mapNestedBuffers(forked, (body) => {
+    let changed = false;
+    const copied = body.map((child) => {
+      const result = forkSpecializationAllocations(child, ownerUnitId, registry);
+      changed ||= result !== child;
+      return result;
+    });
+    return changed ? copied : body;
+  });
+}
+
 /**
  * Deep-copy `callee` into a new IrFunction with `cloneName`, retyping each
  * parameter to the corresponding entry in `newParamTypes`. Also computes
@@ -606,21 +641,8 @@ function cloneWithParamTypes(
     name: p.name,
   }));
 
-  // Blocks are copied with terminator / instrs untouched. Single-block
-  // invariant guarantees there is exactly one.
+  // Check the single-block return before minting any clone allocations.
   const oldBlock = callee.blocks[0]!;
-  const newBlock: IrBlock = {
-    id: asBlockId(0),
-    blockArgs: oldBlock.blockArgs,
-    blockArgTypes: oldBlock.blockArgTypes,
-    // Fork allocation ids per specialization — a clone is a distinct runtime
-    // allocation set, so its alloc sites must not share the source's ids
-    // (#1586 fork rule). `forkAllocInInstr` is a no-op for non-alloc instrs and
-    // when no registry is wired, preserving the prior shallow-copy behavior.
-    instrs: oldBlock.instrs.map((i) => forkAllocInInstr(i, registry)),
-    terminator: oldBlock.terminator,
-  };
-
   // Compute return type from the (single) return terminator.
   const term = oldBlock.terminator;
   if (term.kind !== "return") {
@@ -631,6 +653,19 @@ function cloneWithParamTypes(
   }
   const returnValueId = term.values[0]!;
   const returnType = deriveReturnType(returnValueId, newParams, oldBlock.instrs, callee);
+
+  const termSite = specializationSite(term.site, cloneUnitId);
+  const newBlock: IrBlock = {
+    id: asBlockId(0),
+    blockArgs: oldBlock.blockArgs,
+    blockArgTypes: oldBlock.blockArgTypes,
+    // Fork allocation ids per specialization — a clone is a distinct runtime
+    // allocation set, so its alloc sites must not share the source's ids
+    // (#1586 fork rule). Preserve origins unless a generated owner changes;
+    // retain child-buffer identities when neither sites nor allocations change.
+    instrs: oldBlock.instrs.map((i) => forkSpecializationAllocations(i, cloneUnitId, registry)),
+    terminator: termSite === term.site ? term : { ...term, site: termSite! },
+  };
 
   const fn: IrFunction = {
     unitId: cloneUnitId,

@@ -63,6 +63,7 @@ import {
 } from "./array-object-proto.js";
 import { emitLazyNativeProtoGet, getBuiltinBrand, getNativeProtoBuiltinGlue } from "./native-proto.js";
 import { resolveStandaloneProtoMemberValueClosure } from "./native-proto-value-read.js";
+import { tryEmitOverriddenProtoMemberRead } from "./object-model/object-proto-to-locale-string.js";
 import { emitBuiltinProtoConstructorValue } from "./builtin-proto-constructor.js";
 import {
   BUILTIN_STATIC_METHOD_ARITY,
@@ -84,6 +85,7 @@ import {
 import { ensureAnyFromExternHelper, ensureAnyHelpers, ensureExternStrictEqHelper } from "./any-helpers.js";
 import { sameValueNumberOps } from "./same-value-number-ops.js";
 import { ensureNativeProxyRuntime, ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
+import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dyn-member.js"; // (#6879)
 import {
   emitStandalonePromiseReject,
   emitStandalonePromiseResolve,
@@ -868,6 +870,9 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
   const resolved = resolveStandaloneProtoMemberValueClosure(ctx, brand, builtinName, member);
   if (!resolved) return undefined;
   const { closure, kind } = resolved;
+  const overridden =
+    kind === "method" ? tryEmitOverriddenProtoMemberRead(ctx, fctx, expr, builtinName, brand) : undefined;
+  if (overridden !== undefined) return overridden; // (#6770 S5)
 
   if (kind === "getter") {
     // (#2885 Site 3) A plain read of `<Builtin>.prototype.<getter>` must INVOKE
@@ -1059,6 +1064,13 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     case "Object.setPrototypeOf":
       ensureObjectRuntime(ctx);
       paramTypes = [{ kind: "externref" }, { kind: "externref" }];
+      returnType = { kind: "externref" };
+      break;
+    // (#6879) esbuild's CJS interop snapshots it (`var uo = Object.getPrototypeOf`)
+    // and calls it from `__toESM` during module init (prettier).
+    case "Object.getPrototypeOf":
+      ensureObjectRuntime(ctx);
+      paramTypes = [{ kind: "externref" }];
       returnType = { kind: "externref" };
       break;
     case "Object.freeze":
@@ -1416,6 +1428,15 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
         { op: "local.get", index: 2 },
         { op: "call", funcIdx: setPrototypeIdx },
       );
+    } else if (key === "Object.getPrototypeOf") {
+      // The generic tail of the direct call (`emitBuiltinGetPrototypeOfFallback`):
+      // the native helper resolves the receiver's prototype at run time.
+      recordStandaloneRuntimeKeyClassMemberRead(ctx, undefined);
+      const gptIdx = ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]);
+      if (gptIdx === undefined) return null;
+      flushLateImportShifts(ctx, closureFctx);
+      closureFctx.body.push({ op: "local.get", index: 1 });
+      closureFctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__getPrototypeOf") ?? gptIdx });
     } else if (key === "Object.freeze" || key === "Object.seal" || key === "Object.preventExtensions") {
       const helperName =
         key === "Object.freeze"

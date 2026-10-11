@@ -141,6 +141,9 @@ function carrierOf(ctx: CodegenContext, node: ts.Expression): ValType {
   return resolveWasmType(ctx, ctx.checker.getTypeAtLocation(node));
 }
 
+/** (#6885) Static JS tags whose values can never inhabit a closed data struct. */
+const PRIMITIVE_JS_TAGS: ReadonlySet<string> = new Set(["string", "number", "boolean", "bigint", "symbol"]);
+
 /**
  * (#6613) Does the literal hold an element that CANNOT inhabit a closed
  * data-struct carrier at all — a number, a boolean, a native string, a nested
@@ -170,9 +173,11 @@ function carrierOf(ctx: CodegenContext, node: ts.Expression): ValType {
  *  - an element whose carrier IS a closed data struct is #4289/#5327's
  *    business (the declared-supertype chain decides), so it is skipped here;
  *  - an `externref`/`anyref` element is the dynamic widenings' business
- *    (`hasDynamicOrCallableElement` and friends) and is skipped too — which is
- *    also why the JS-host lane, where a string element is plain `externref`,
- *    is untouched by this predicate;
+ *    (`hasDynamicOrCallableElement` and friends) and is skipped too — EXCEPT
+ *    a statically PRIMITIVE one (#6885): on the JS-host lane a string lowers
+ *    to plain `externref`, no dynamic widening claims it, and the guard cast
+ *    stored it as `null` (`[obj, "s"]` → `[{…}, null]`, test262
+ *    `Temporal/PlainDate/from/limits.js`);
  *  - a spread, a hole and an `undefined`-like element are skipped exactly as
  *    the proof above skips them.
  */
@@ -189,6 +194,7 @@ export function hasNonStructElementForStructCarrier(
     const elemCarrier = carrierOf(ctx, value);
     // A number or a boolean lowers to a scalar: no cast into a struct exists.
     if (elemCarrier.kind === "f64" || elemCarrier.kind === "i32") return true;
+    if (elemCarrier.kind === "externref" && PRIMITIVE_JS_TAGS.has(ctx.oracle.staticJsTypeOf(value))) return true;
     if (elemCarrier.kind !== "ref" && elemCarrier.kind !== "ref_null") continue;
     if ((elemCarrier as { typeIdx: number }).typeIdx === baseIdx) continue;
     // A closed data struct is the declared-supertype proof's business.

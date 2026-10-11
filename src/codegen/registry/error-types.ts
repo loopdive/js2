@@ -62,6 +62,7 @@ import { CARRIER_BAG_HAS } from "../carrier-bag-visibility.js";
 import { ERROR_PROP_GET } from "../error-props.js";
 import { registerEmitWasiErrorConstructor } from "./error-constructor-delegates.js";
 import { buildErrorSubclassProtoChainArm } from "../error-subclass-proto-chain.js";
+import { isCollectionCarrierClass } from "../classes/standalone-collection-carrier.js"; // (#6754)
 
 // (#2962) `getOrRegisterErrorStructType` moved to registry/types.ts so
 // native-strings.ts can import it without an import cycle (this module imports
@@ -128,12 +129,15 @@ export function isWasiErrorName(name: string): name is WasiErrorName {
  *     through to the legacy multi-dispatch path instead of baking a cast that
  *     can only trap.
  */
-export type ExternrefBackedOwnFieldBacking = "error-struct" | "plain-object";
+export type ExternrefBackedOwnFieldBacking = "error-struct" | "plain-object" | "collection-struct";
 
 export function externrefBackedOwnFieldBacking(
   ctx: CodegenContext,
   className: string,
 ): ExternrefBackedOwnFieldBacking | undefined {
+  // (#6754) A `$Map`-subtype carrier IS the class struct: the ordinary
+  // struct-field path reads/writes it, so neither side-store arm applies.
+  if (isCollectionCarrierClass(ctx, className)) return "collection-struct";
   const ancestor = ctx.classBuiltinParentMap.get(className) ?? className;
   if (ancestor === "Object") return "plain-object";
   if (isWasiErrorName(ancestor) || ancestor === "SuppressedError") return "error-struct";

@@ -1,0 +1,218 @@
+{
+  "baselineProvenance": {
+    "issue": 6893,
+    "kind": "provenance",
+    "revision": "91e519587ec2d383a96cfc7d06f48bac04d2c286",
+    "sourceSha256": "fba055c0a5ed1b823b1bb8644c5cb495e0b26bb087bf36b5d746efda708fb308",
+    "testSha256": "7612ec537bd3876f3a872e029629601442b7593b1150c30cd25d49db7351be62",
+    "node": "v22.23.2",
+    "v8": "12.4.254.21-node.56",
+    "execArgv": ["--max-old-space-size=1024", "--expose-gc", "--conditions", "node", "--conditions", "development"],
+    "nodeOptions": "",
+    "lane": "linear",
+    "abi": "c",
+    "harness": "tests/issue-6893-linear-cabi-array-forwarding.test.ts",
+    "publicOptions": {
+      "target": "linear",
+      "abi": "c",
+      "optimize": false
+    },
+    "flags": {
+      "JS2WASM_LINEAR_IR": "1"
+    },
+    "originalProbeRecord": "plan/log/6893-linear-cabi-20261007/baseline-probes.json"
+  },
+  "candidateProvenance": {
+    "issue": 6893,
+    "kind": "provenance",
+    "revision": "f23aa8afd7d8cc483b3ec92cfde45b525d6d13ae",
+    "sourceSha256": "d303abd67069493c08dedc6cd124482f80675c06e0ca1748cea168098fc82d46",
+    "testSha256": "7612ec537bd3876f3a872e029629601442b7593b1150c30cd25d49db7351be62",
+    "node": "v22.23.2",
+    "v8": "12.4.254.21-node.56",
+    "execArgv": ["--max-old-space-size=1024", "--expose-gc", "--conditions", "node", "--conditions", "development"],
+    "nodeOptions": "",
+    "lane": "linear",
+    "abi": "c",
+    "harness": "tests/issue-6893-linear-cabi-array-forwarding.test.ts",
+    "publicOptions": {
+      "target": "linear",
+      "abi": "c",
+      "optimize": false
+    },
+    "flags": {
+      "JS2WASM_LINEAR_IR": "1"
+    },
+    "originalProbeRecord": "plan/log/6893-linear-cabi-20261007/baseline-probes.json"
+  },
+  "structuredRowsEach": 33,
+  "exactlyEqualKinds": {
+    "public-compile": true,
+    "public-string": true,
+    "public-scalar": true,
+    "runtime-no-growth": true,
+    "no-resolver-string": true,
+    "no-resolver-scalar": true,
+    "public-namesake-compile": true,
+    "public-namesake-imports": true,
+    "public-namesake-invocation": true,
+    "public-namesake-array": true
+  },
+  "rawLogSha256": [
+    "a1fdcec96515cf785e2f368e43e7c2c06e936576c64d2d3fd10e1f9cb8958a88",
+    "78656445ba00011a3ecba10f1fefb2245be90c102a51a36f3c9de2f58493d230"
+  ],
+  "runtimeGrowthKeys": [
+    "issue",
+    "kind",
+    "imports",
+    "stable",
+    "contract",
+    "original",
+    "current",
+    "headers",
+    "links",
+    "capacity",
+    "actual",
+    "alreadyCurrent",
+    "expected",
+    "sentinel",
+    "before",
+    "afterOldest",
+    "afterCurrent",
+    "usedBefore",
+    "usedAfterOldest",
+    "usedAfterCurrent",
+    "hostCalls",
+    "sourceIrAdmissionProof"
+  ],
+  "candidateGrowth": [
+    {
+      "imports": false,
+      "stable": false,
+      "actual": {
+        "pair": [2136, 96],
+        "elements": [
+          1.5, -2.25, 2.25, 3.25, 4.25, 5.25, 6.25, 7.25, 8.25, 9.25, 10.25, 11.25, 12.25, 13.25, 14.25, 15.25, 16.25,
+          17.25, 18.25, 19.25, 20.25, 21.25, 22.25, 23.25, 24.25, 25.25, 26.25, 27.25, 28.25, 29.25, 30.25, 31.25,
+          32.25, 33.25, 34.25, 35.25, 36.25, 37.25, 38.25, 39.25, 40.25, 41.25, 42.25, 43.25, 44.25, 45.25, 46.25,
+          47.25, 48.25, 49.25, 50.25, 51.25, 52.25, 53.25, 54.25, 55.25, 56.25, 57.25, 58.25, 59.25, 60.25, 61.25,
+          62.25, 63.25, 64.25, 65.25, 66.25, 67.25, 68.25, 69.25, 70.25, 71.25, 72.25, 73.25, 74.25, 75.25, 76.25,
+          77.25, 78.25, 79.25, 80.25, 81.25, 82.25, 83.25, 84.25, 85.25, 86.25, 87.25, 88.25, 89.25, 90.25, 91.25,
+          92.25, 93.25, 94.25, 95.25
+        ]
+      }
+    },
+    {
+      "imports": true,
+      "stable": false,
+      "actual": {
+        "pair": [2136, 96],
+        "elements": [
+          1.5, -2.25, 2.25, 3.25, 4.25, 5.25, 6.25, 7.25, 8.25, 9.25, 10.25, 11.25, 12.25, 13.25, 14.25, 15.25, 16.25,
+          17.25, 18.25, 19.25, 20.25, 21.25, 22.25, 23.25, 24.25, 25.25, 26.25, 27.25, 28.25, 29.25, 30.25, 31.25,
+          32.25, 33.25, 34.25, 35.25, 36.25, 37.25, 38.25, 39.25, 40.25, 41.25, 42.25, 43.25, 44.25, 45.25, 46.25,
+          47.25, 48.25, 49.25, 50.25, 51.25, 52.25, 53.25, 54.25, 55.25, 56.25, 57.25, 58.25, 59.25, 60.25, 61.25,
+          62.25, 63.25, 64.25, 65.25, 66.25, 67.25, 68.25, 69.25, 70.25, 71.25, 72.25, 73.25, 74.25, 75.25, 76.25,
+          77.25, 78.25, 79.25, 80.25, 81.25, 82.25, 83.25, 84.25, 85.25, 86.25, 87.25, 88.25, 89.25, 90.25, 91.25,
+          92.25, 93.25, 94.25, 95.25
+        ]
+      }
+    },
+    {
+      "imports": true,
+      "stable": true,
+      "actual": {
+        "pair": [2136, 96],
+        "elements": [
+          1.5, -2.25, 2.25, 3.25, 4.25, 5.25, 6.25, 7.25, 8.25, 9.25, 10.25, 11.25, 12.25, 13.25, 14.25, 15.25, 16.25,
+          17.25, 18.25, 19.25, 20.25, 21.25, 22.25, 23.25, 24.25, 25.25, 26.25, 27.25, 28.25, 29.25, 30.25, 31.25,
+          32.25, 33.25, 34.25, 35.25, 36.25, 37.25, 38.25, 39.25, 40.25, 41.25, 42.25, 43.25, 44.25, 45.25, 46.25,
+          47.25, 48.25, 49.25, 50.25, 51.25, 52.25, 53.25, 54.25, 55.25, 56.25, 57.25, 58.25, 59.25, 60.25, 61.25,
+          62.25, 63.25, 64.25, 65.25, 66.25, 67.25, 68.25, 69.25, 70.25, 71.25, 72.25, 73.25, 74.25, 75.25, 76.25,
+          77.25, 78.25, 79.25, 80.25, 81.25, 82.25, 83.25, 84.25, 85.25, 86.25, 87.25, 88.25, 89.25, 90.25, 91.25,
+          92.25, 93.25, 94.25, 95.25
+        ]
+      }
+    }
+  ],
+  "candidateImportOnly": {
+    "issue": 6893,
+    "kind": "import-only-missing-resolver",
+    "imports": [
+      {
+        "module": "host",
+        "name": "__arr_resolve",
+        "desc": {
+          "kind": "func",
+          "typeIdx": 0
+        }
+      }
+    ],
+    "definedResolverPresent": false,
+    "failure": {
+      "name": "Error",
+      "message": "C-ABI array return for export 'wrapped' is missing required __arr_resolve; register the array runtime before emitting C-ABI wrappers."
+    },
+    "sourceIrAdmissionProof": false
+  },
+  "growthCustody": {
+    "growthRowsEach": [3, 3],
+    "unchangedFields": [
+      "issue",
+      "kind",
+      "imports",
+      "stable",
+      "contract",
+      "original",
+      "current",
+      "headers",
+      "links",
+      "capacity",
+      "alreadyCurrent",
+      "expected",
+      "sentinel",
+      "before",
+      "afterOldest",
+      "afterCurrent",
+      "usedBefore",
+      "usedAfterOldest",
+      "usedAfterCurrent",
+      "hostCalls",
+      "sourceIrAdmissionProof"
+    ],
+    "equal": true
+  },
+  "testResults": {
+    "baseline": {
+      "regression": {
+        "passed": 8,
+        "failed": 10,
+        "total": 18
+      },
+      "controls": {
+        "passed": 78,
+        "failed": 2,
+        "total": 80
+      }
+    },
+    "candidate": {
+      "regression": {
+        "passed": 17,
+        "failed": 1,
+        "total": 18
+      },
+      "controls": {
+        "passed": 78,
+        "failed": 2,
+        "total": 80
+      },
+      "combined": {
+        "passed": 95,
+        "failed": 3,
+        "total": 98
+      }
+    }
+  },
+  "status": "held for A-owned shared IR read and source-return admission; not migration completion"
+}

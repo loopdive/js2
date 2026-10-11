@@ -16,6 +16,8 @@ import {
 import type { Instr, ValType } from "../ir/types.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { lowerAwaitingStatementByHoisting } from "./async-await-hoist.js";
+import { isLeadingReplaySafeAwait } from "./analysis/async-leading-await-replay.js";
+import { isLoopContinueGuard, releaseForOfHeadTdzFlags } from "./analysis/async-for-of-region.js";
 import { collectBindingPatternNames, collectReferencedIdentifiers } from "./closures.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -673,6 +675,36 @@ function replaySafeNestedCallAwait(
 }
 
 /**
+ * (#6846) Suspend on a nested await that is its statement's first observable
+ * step, then recompile the whole statement in the resume state with the
+ * delivered value substituted (see async-leading-await-replay.ts).
+ */
+function replayLeadingAwait(
+  st: LowerState,
+  stmt: ts.Statement,
+  awaitNode: ts.AwaitExpression,
+  awaitInTry: boolean,
+  leadStmts: ts.Statement[],
+  leadInTry: boolean[],
+): boolean {
+  if (!isLeadingReplaySafeAwait(stmt, awaitNode, st.checker)) return false;
+  const isReturn = ts.isReturnStatement(stmt);
+  if (isReturn && awaitInTry && !st.allowReturnInTry) return false;
+  st.segments.push({
+    leadStmts,
+    awaitedExpr: awaitNode.expression,
+    resumeBinding: nestedAwaitBinding(awaitNode),
+    isReturnAwait: false,
+    awaitInTry,
+    leadInTry,
+  });
+  st.lead = [stmt];
+  st.leadInTry = [st.finalizer !== null];
+  if (isReturn) st.sawReturnAwait = true;
+  return true;
+}
+
+/**
  * Split a LINEAR async function body (a flat statement sequence whose awaits all
  * sit at canonical top-level positions) into ordered suspend segments. This is
  * the multi-await generalization of {@link splitBodyAtAwait}: each await must be
@@ -921,7 +953,10 @@ function lowerLinearStatements(
       const decls = stmt.declarationList.declarations;
       if (decls.length !== 1) return false;
       const decl = decls[0]!;
-      if (decl.initializer !== awaitNode || !ts.isIdentifier(decl.name)) return false;
+      if (decl.initializer !== awaitNode || !ts.isIdentifier(decl.name)) {
+        if (replayLeadingAwait(st, stmt, awaitNode, awaitInTry, leadStmts, leadInTry)) continue; // (#6846)
+        return false;
+      }
       st.segments.push({
         leadStmts,
         awaitedExpr: awaitNode.expression,
@@ -976,7 +1011,10 @@ function lowerLinearStatements(
     // dispatcher resolves that exact AwaitExpression from the delivered local.
     if (ts.isReturnStatement(stmt) && stmt.expression !== undefined) {
       const nestedAwait = returnedConstructorAwait(stmt.expression);
-      if (nestedAwait === null || nestedAwait !== awaitNode) return false;
+      if (nestedAwait === null || nestedAwait !== awaitNode) {
+        if (replayLeadingAwait(st, stmt, awaitNode, awaitInTry, leadStmts, leadInTry)) continue; // (#6846)
+        return false;
+      }
       st.segments.push({
         leadStmts,
         awaitedExpr: nestedAwait.expression,
@@ -1032,6 +1070,7 @@ function lowerLinearStatements(
         continue;
       }
     }
+    if (replayLeadingAwait(st, stmt, awaitNode, awaitInTry, leadStmts, leadInTry)) continue; // (#6846)
     return false; // await sits in a non-canonical position within this statement
   }
   return true;
@@ -1826,6 +1865,7 @@ function asyncForOfBodyHasUnsupportedControl(body: ts.Statement): boolean {
   let unsupported = false;
   const walk = (node: ts.Node): void => {
     if (unsupported || isNestedFunctionScope(node)) return;
+    if (node.parent === body && ts.isBlock(body) && isLoopContinueGuard(node as ts.Statement)) return; // (#6847)
     if (
       ts.isBreakStatement(node) ||
       ts.isContinueStatement(node) ||
@@ -1858,6 +1898,7 @@ function lowerRegionBody(
   depth: number,
   hoist: boolean,
   checker?: ts.TypeChecker,
+  inLoopBody = false,
 ): RegionBody | null {
   const items: Array<RegionBody["items"][number]> = [];
   let cursor = 0;
@@ -1865,6 +1906,18 @@ function lowerRegionBody(
   for (let i = 0; i < statements.length; i++) {
     const stmt = statements[i]!;
     const awaitsHere = countAwaitsInStatement(stmt, awaitSet);
+    if (inLoopBody && awaitsHere === 0 && isLoopContinueGuard(stmt)) {
+      // (#6847) `if (c) continue; REST` ≡ `if (c) {} else { REST }`.
+      const pre = lowerChunk(statements.slice(cursor, i), awaitSet, checker);
+      if (pre === null || pre.sawReturnAwait) return null;
+      const rest = lowerRegionBody(statements.slice(i + 1), awaitSet, depth, hoist, checker, true);
+      if (rest === null) return null;
+      items.push(
+        { kind: "chunk", chunk: pre },
+        { kind: "conditional", condition: stmt.expression, whenTrue: { items: [] }, whenFalse: rest },
+      );
+      return hoisted || rest.hoisted === true ? { items, hoisted: true } : { items };
+    }
     if (awaitsHere === 0) continue;
 
     if (ts.isVariableStatement(stmt) || ts.isExpressionStatement(stmt) || ts.isReturnStatement(stmt)) {
@@ -1899,7 +1952,7 @@ function lowerRegionBody(
       const pre = lowerChunk(statements.slice(cursor, i), awaitSet, checker);
       if (pre === null || pre.sawReturnAwait) return null;
       const bodyStatements = ts.isBlock(stmt.statement) ? stmt.statement.statements : [stmt.statement];
-      const loopBody = lowerRegionBody(bodyStatements, awaitSet, depth, hoist, checker);
+      const loopBody = lowerRegionBody(bodyStatements, awaitSet, depth, hoist, checker, true);
       if (loopBody === null || bodySegCount(loopBody) === 0) return null;
       if (loopBody.hoisted === true) hoisted = true;
       items.push(
@@ -2004,7 +2057,17 @@ export function analyzeTryCatchAsync(
   // every await accounted for by the region's chunks (no stray positions).
   // Conditionals reuse the same branch-capable CFG builder as try/catch; no
   // handler region is created when the body contains only `if` branches.
-  if (!bodyHasGroup(region) && !bodyHasConditional(region) && region.hoisted !== true) return null;
+  // (#6847) An awaiting for-of is non-linear too: the linear planner never takes
+  // it, so declining here sent `for (…of…) { await … }` to the synchronous
+  // pass-through, where every `await` is an identity.
+  if (
+    !bodyHasGroup(region) &&
+    !bodyHasConditional(region) &&
+    region.hoisted !== true &&
+    !region.items.some((item) => item.kind === "forOf")
+  ) {
+    return null;
+  }
   if (bodySegCount(region) !== plan.awaitPoints.length) return null;
   return { body: region };
 }
@@ -2233,6 +2296,7 @@ export function planTryCatchCfg(
             return;
           }
           compileForOfDestructuring(ctx, fctx, binding, L.value, valueType, stmt);
+          releaseForOfHeadTdzFlags(fctx, binding); // (#6847)
         };
 
         const entryId = states.length;

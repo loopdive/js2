@@ -45,6 +45,7 @@ import { fileURLToPath } from "node:url";
 // must stay free of top-level `await` because it is loaded through
 // `createRequire` (see the lazy load in runtime-eval-provider.mjs).
 import { makeWasiStub } from "./quickjs-artifact/wasi-stub.mjs";
+import { readScriptPlanPatch } from "./quickjs-artifact/patches/script-plan-v1.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..");
@@ -221,6 +222,7 @@ export const QUICKJS_INIT_REFUSAL = "the quickjs eval engine could not create a 
 export function quickjsArtifactCacheKey() {
   const buildScript = readFileSync(QUICKJS_BUILD_SCRIPT, "utf8");
   const shim = readFileSync(QUICKJS_SHIM_SOURCE, "utf8");
+  const patch = readScriptPlanPatch();
   const pin = (name, fallback) => {
     // build.sh spells its pins `NAME="${NAME:-value}"` — read the DEFAULT, then
     // let a live env override win (the build honours the same precedence).
@@ -239,6 +241,10 @@ export function quickjsArtifactCacheKey() {
     .update(createHash("sha256").update(shim).digest("hex"))
     .update(" ")
     .update(createHash("sha256").update(buildScript).digest("hex"))
+    .update(" script-plan-v1 ")
+    .update(patch.manifestBytes)
+    .update(patch.patchBytes)
+    .update(readFileSync(join(QUICKJS_ARTIFACT_DIR, "patches", "script-plan-v1.mjs")))
     .digest("hex")
     .slice(0, 16);
 }
@@ -257,18 +263,224 @@ export function quickjsAdapterCachePath(cacheDir, key) {
  * Read a built artifact directory (`libquickjs.wasm` + `qjs-abi.json`), or null
  * when either file is absent.
  */
-export function readQuickjsArtifact(dir) {
+export function readQuickjsArtifact(dir, { requiredScriptPlanVersion = 0, allowTestBuild = false } = {}) {
   const wasmPath = join(dir, "libquickjs.wasm");
   const abiPath = join(dir, "qjs-abi.json");
   if (!existsSync(wasmPath) || !existsSync(abiPath)) return null;
   const binary = readFileSync(wasmPath);
   const abi = JSON.parse(readFileSync(abiPath, "utf8"));
-  return {
+  const buildInfoPath = join(dir, "build-info.json");
+  const buildInfo = existsSync(buildInfoPath) ? JSON.parse(readFileSync(buildInfoPath, "utf8")) : null;
+  const artifact = {
     dir,
     binary,
     abi,
+    buildInfo,
+    abiSha256: createHash("sha256").update(readFileSync(abiPath)).digest("hex"),
     sha256: createHash("sha256").update(binary).digest("hex"),
   };
+  assertQuickjsScriptPlanCapability(artifact, requiredScriptPlanVersion, { allowTestBuild });
+  return artifact;
+}
+
+/** Inactive private producer ABI. These are never adapter extern declarations. */
+export const QUICKJS_SCRIPT_PLAN_SIGNATURES = Object.freeze({
+  qjs_script_plan_version: Object.freeze({ params: [], results: ["i32"] }),
+  qjs_script_plan_compile: Object.freeze({ params: ["i32", "i32", "i32"], results: ["i32"] }),
+  qjs_script_plan_count: Object.freeze({ params: ["i32", "i32"], results: ["i32"] }),
+  qjs_script_plan_strict: Object.freeze({ params: ["i32", "i32"], results: ["i32"] }),
+  qjs_script_plan_kind: Object.freeze({ params: ["i32", "i32", "i32"], results: ["i32"] }),
+  qjs_script_plan_origin: Object.freeze({ params: ["i32", "i32", "i32"], results: ["i32"] }),
+  qjs_script_plan_name: Object.freeze({ params: ["i32", "i32", "i32"], results: ["i32"] }),
+  qjs_script_plan_eval: Object.freeze({ params: ["i32", "i32"], results: ["i32"] }),
+  qjs_script_plan_free: Object.freeze({ params: ["i32", "i32"], results: ["i32"] }),
+});
+
+/* Read type/function/import/export sections of this ordinary C Wasm artifact.
+ * Unknown type encodings are errors, never an absent/valid signature. Module
+ * validation happens first. This decoder is not a general compiler ABI parser. */
+function quickjsFunctionExportSignatures(binary) {
+  const bytes = new Uint8Array(binary);
+  let pos = 8,
+    limit = bytes.length;
+  const byte = () => {
+    if (pos >= limit) throw new Error("truncated QuickJS Wasm signature section");
+    return bytes[pos++];
+  };
+  const u32 = () => {
+    let value = 0;
+    for (let shift = 0; shift <= 28; shift += 7) {
+      const b = byte();
+      value += (b & 127) * 2 ** shift;
+      if (!(b & 128) && value <= 0xffffffff) return value;
+    }
+    throw new Error("invalid QuickJS Wasm unsigned LEB");
+  };
+  const vector = (read) => Array.from({ length: u32() }, read);
+  const valueType = () => {
+    const types = { 127: "i32", 126: "i64", 125: "f32", 124: "f64", 112: "funcref", 111: "externref" };
+    const type = types[byte()];
+    if (!type) throw new Error("unsupported QuickJS Wasm value type");
+    return type;
+  };
+  const name = () => {
+    const size = u32();
+    if (pos + size > limit) throw new Error("truncated QuickJS Wasm name");
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(pos, pos + size));
+    pos += size;
+    return text;
+  };
+  let types = [],
+    imports = [],
+    functions = [],
+    exports = [];
+  while (pos < bytes.length) {
+    limit = bytes.length;
+    const id = byte(),
+      size = u32(),
+      end = pos + size;
+    if (end > bytes.length) throw new Error("truncated QuickJS Wasm section");
+    limit = end;
+    if (id === 1)
+      types = vector(() => {
+        if (byte() !== 96) throw new Error("unsupported QuickJS Wasm function type");
+        return { params: vector(valueType), results: vector(valueType) };
+      });
+    else if (id === 2)
+      imports = vector(() => {
+        name();
+        name();
+        if (byte() !== 0) throw new Error("unsupported QuickJS Wasm import kind");
+        return u32();
+      });
+    else if (id === 3) functions = vector(u32);
+    else if (id === 7) exports = vector(() => ({ name: name(), kind: byte(), index: u32() }));
+    else pos = end;
+    if (pos !== end) throw new Error("incomplete QuickJS Wasm signature section");
+  }
+  const indices = [...imports, ...functions];
+  return Object.fromEntries(
+    exports
+      .filter((entry) => entry.kind === 0)
+      .map((entry) => {
+        const signature = types[indices[entry.index]];
+        if (!signature) throw new Error(`unknown QuickJS Wasm function type for ${entry.name}`);
+        return [entry.name, signature];
+      }),
+  );
+}
+
+/** Validate actual exports/signatures/version; absent capability is version0.
+ * The optional instance belongs to the extracting/fixture harness. No code,
+ * contexts, adapter callbacks or Script bodies are entered by this verifier. */
+export function inspectQuickjsScriptPlanCapability(
+  binary,
+  requiredVersion = 0,
+  instance = null,
+  allowTestBuild = false,
+) {
+  if (requiredVersion !== 0 && requiredVersion !== 1) throw new Error("unsupported required Script-plan version");
+  const module = assertQuickjsArtifactStandalone(binary);
+  const exports = new Map(WebAssembly.Module.exports(module).map((entry) => [entry.name, entry.kind]));
+  const names = Object.keys(QUICKJS_SCRIPT_PLAN_SIGNATURES);
+  const present = names.filter((name) => exports.has(name));
+  const testExports = [...exports.keys()].filter((name) => name.startsWith("qjs_script_plan_test_"));
+  if (testExports.length && !allowTestBuild)
+    throw new Error("test-only Script-plan artifact cannot be used in production");
+  if (!present.length) {
+    if (requiredVersion) throw new Error("artifact has no Script-plan capability version1");
+    return { version: 0 };
+  }
+  if (present.length !== names.length || names.some((name) => exports.get(name) !== "function")) {
+    throw new Error("incomplete Script-plan capability exports");
+  }
+  const signatures = quickjsFunctionExportSignatures(binary);
+  for (const [name, expected] of Object.entries(QUICKJS_SCRIPT_PLAN_SIGNATURES)) {
+    if (JSON.stringify(signatures[name]) !== JSON.stringify(expected))
+      throw new Error(`Script-plan signature mismatch for ${name}`);
+  }
+  if (!instance) {
+    let created;
+    const { wasi_snapshot_preview1 } = makeWasiStub(() => created.exports.memory);
+    created = new WebAssembly.Instance(module, { wasi_snapshot_preview1 });
+    created.exports._initialize?.();
+    instance = created;
+  }
+  if (instance.exports.qjs_script_plan_version() !== 1) throw new Error("actual Script-plan version mismatch");
+  return { version: 1, exports: signaturesForScriptPlan(signatures) };
+}
+function signaturesForScriptPlan(signatures) {
+  return Object.fromEntries(Object.keys(QUICKJS_SCRIPT_PLAN_SIGNATURES).map((name) => [name, signatures[name]]));
+}
+
+/** Private artifact validation: required0 keeps old artifact/old adapter valid.
+ * Advertised new capability always requires real binary and patch provenance. */
+export function assertQuickjsScriptPlanCapability(
+  artifact,
+  requiredVersion = 0,
+  { allowTestBuild = false, instance = null } = {},
+) {
+  const actual = inspectQuickjsScriptPlanCapability(artifact.binary, requiredVersion, instance, allowTestBuild);
+  const declared = artifact.abi?.capabilities?.scriptPlan;
+  const declaredVersion = declared === undefined ? 0 : declared.version;
+  if (declaredVersion !== actual.version) throw new Error("advertised Script-plan capability mismatch");
+  if (actual.version === 0) {
+    if (artifact.buildInfo?.script_plan) throw new Error("Script-plan provenance without actual capability");
+    return actual;
+  }
+  if (JSON.stringify(declared.exports) !== JSON.stringify(actual.exports))
+    throw new Error("advertised Script-plan signatures mismatch");
+  const info = artifact.buildInfo;
+  const patch = readScriptPlanPatch();
+  const receipt = { ...patch.manifest, manifestSha256: patch.manifestSha256 };
+  if (!info || !info.script_plan) throw new Error("missing Script-plan build provenance");
+  if (JSON.stringify(info.script_plan.patch) !== JSON.stringify(receipt))
+    throw new Error("Script-plan patch provenance mismatch");
+  if (info.quickjs_ng_ref !== patch.manifest.upstreamCommit) throw new Error("Script-plan build pin mismatch");
+  if (info.script_plan.testBuild !== allowTestBuild) throw new Error("Script-plan build mode mismatch");
+  for (const [field, sourcePath] of [
+    ["shim_sha256", QUICKJS_SHIM_SOURCE],
+    ["build_script_sha256", QUICKJS_BUILD_SCRIPT],
+    ["patch_step_sha256", join(QUICKJS_ARTIFACT_DIR, "patches", "script-plan-v1.mjs")],
+  ]) {
+    if (info.script_plan[field] !== createHash("sha256").update(readFileSync(sourcePath)).digest("hex")) {
+      throw new Error(`Script-plan ${field} source mismatch`);
+    }
+  }
+  if (
+    allowTestBuild &&
+    info.script_plan.test_hooks_sha256 !==
+      createHash("sha256")
+        .update(readFileSync(join(QUICKJS_ARTIFACT_DIR, "probe", "script-plan-test-hooks.c")))
+        .digest("hex")
+  ) {
+    throw new Error("Script-plan test hook source mismatch");
+  }
+  for (const field of ["flags", "link_flags"]) {
+    if (
+      !Array.isArray(info.script_plan[field]) ||
+      !info.script_plan[field].length ||
+      info.script_plan[field].some((flag) => typeof flag !== "string" || !flag.length)
+    ) {
+      throw new Error(`missing or malformed Script-plan ${field} receipt`);
+    }
+  }
+  if (info.script_plan.flags.includes("-DJS2WASM_SCRIPT_PLAN_TEST") !== allowTestBuild) {
+    throw new Error("Script-plan compiler mode receipt mismatch");
+  }
+  for (const value of [
+    info.compiler,
+    info.script_plan.archiver,
+    info.script_plan.ranlib,
+    info.script_plan.nm,
+    info.script_plan.linker,
+  ]) {
+    if (typeof value !== "string" || !value.trim()) throw new Error("missing Script-plan toolchain receipt");
+  }
+  const binaryHash = createHash("sha256").update(artifact.binary).digest("hex");
+  if (info.sha256 !== binaryHash || info.abi_sha256 !== artifact.abiSha256)
+    throw new Error("Script-plan artifact digest mismatch");
+  return actual;
 }
 
 /**

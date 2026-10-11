@@ -1,7 +1,20 @@
+import { captureDenoPostPositionMainPredecessorPolicySource } from "./helpers/ir-deno-post-position-main-successor.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { capturePositionFinallyMainPredecessorPolicySource } from "./helpers/ir-position-finally-main-successor.js";
+import { capturePositionClassFieldsMainPredecessorPolicySource } from "./helpers/ir-position-class-fields-main-successor.js";
+import { captureSourceMapPositionInventoryPredecessorPolicySource } from "./helpers/ir-source-map-position-inventory-successor.js";
+import { captureMainInventoryPredecessorPolicySource } from "./helpers/ir-main-inventory-source-successor.js";
+import {
+  captureArrayBufferIsViewMainPredecessorPolicy,
+  capturePresentationClassificationPredecessorPolicy,
+  captureLoweringAnalysisPredecessorPolicy,
+  captureWasmGcHelperPredecessorPolicy,
+} from "./helpers/ir-runtime-program-policy-evolution.js";
+import { captureProgramValidatorPredecessorPolicy } from "./helpers/ir-runtime-program-policy-evolution.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { setImmediate } from "node:timers/promises";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   authenticateIrValidationPolicy,
   authenticateIrValidationPolicyEvolution,
@@ -11,10 +24,23 @@ import {
   irValidationPolicyReceiptPath,
 } from "./helpers/ir-validation-policy-evolution.js";
 import {
+  captureNestedStackificationPredecessorPolicy,
+  captureCanonical489dPredecessorPolicy,
+  beforeCanonical3c6InventoryPolicy,
   beforeIrRuntimeProgramPolicy,
   beforeWellKnownSymbolPolicy,
+  beforeGeneratorInventoryPolicy,
+  beforeHostCarrierInventoryPolicy,
+  beforeDynamicCodeInventoryPolicy,
+  beforeRuntimePreparationPolicy,
   beforeNumberPrerequisitePolicy,
+  beforeCurrentMainInventoryPolicy,
 } from "./helpers/ir-runtime-program-policy-evolution.js";
+
+afterEach(async () => {
+  // Yield between synchronous source proofs so Vitest can process task-update RPCs.
+  await setImmediate();
+});
 
 interface MutablePolicy {
   layers: { id: string; entries: string[]; roots: string[]; minModules: number; status: string; required: boolean }[];
@@ -29,7 +55,49 @@ const receiptText = read(irValidationPolicyReceiptPath);
 const receipt = authenticateIrValidationPolicyEvolution(receiptText);
 function actual(): MutablePolicy {
   const policy = beforeIrRuntimeProgramPolicy(
-    beforeWellKnownSymbolPolicy(beforeNumberPrerequisitePolicy(JSON.parse(read("scripts/compiler-boundaries.json")))),
+    beforeWellKnownSymbolPolicy(
+      beforeNumberPrerequisitePolicy(
+        beforeRuntimePreparationPolicy(
+          beforeDynamicCodeInventoryPolicy(
+            beforeHostCarrierInventoryPolicy(
+              beforeGeneratorInventoryPolicy(
+                beforeCurrentMainInventoryPolicy(
+                  beforeCanonical3c6InventoryPolicy(
+                    captureCanonical489dPredecessorPolicy(
+                      captureNestedStackificationPredecessorPolicy(
+                        captureProgramValidatorPredecessorPolicy(
+                          captureWasmGcHelperPredecessorPolicy(
+                            captureLoweringAnalysisPredecessorPolicy(
+                              capturePresentationClassificationPredecessorPolicy(
+                                captureArrayBufferIsViewMainPredecessorPolicy(
+                                  JSON.parse(
+                                    captureMainInventoryPredecessorPolicySource(
+                                      captureSourceMapPositionInventoryPredecessorPolicySource(
+                                        capturePositionClassFieldsMainPredecessorPolicySource(
+                                          capturePositionFinallyMainPredecessorPolicySource(
+                                            captureDenoPostPositionMainPredecessorPolicySource(
+                                              read("scripts/compiler-boundaries.json"),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
   ) as MutablePolicy;
   // Every negative begins with a genuinely passing current-policy control.
   authenticateIrValidationPolicy(policy);

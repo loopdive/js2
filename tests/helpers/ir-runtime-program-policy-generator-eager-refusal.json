@@ -1,0 +1,85 @@
+{
+  "schema": "ir-runtime-program-policy-generator-eager-refusal-v1",
+  "kind": "external-main-generator-eager-refusal-inventory-successor",
+  "checkpoint": "6ef874eb31bc70b5c138a6ea51824b24488edbcf",
+  "incomingMain": "092ae4451c68ba1aa5bd9cdf76933d2e0d857fbf",
+  "before": {
+    "source": {
+      "bytes": 568231,
+      "sha256": "f3af1f31d813eaef9bd2b955466390616e9549f36e1e7ffffdcead812a611ac3",
+      "gitBlob": "d61ee74048fa3d16c2986fd3e448d234f4e5594b"
+    },
+    "dataSha256": "89780e5ff7c660518ca92981369dab0e341b77e55f02f8e23d2312b615a97856",
+    "fileCount": 1779,
+    "filesSha256": "ced3f8116817be3978f55f438b657ca6b36ec8d50827db92bd7d708c2940853b",
+    "activationCount": 101,
+    "activationHistorySha256": "9629c457a160096e70c35fc3a986abbd8eca145ac4eb688995194d6c29c83650",
+    "layersSha256": "3f66bbff64c157092a04740c644ae17d476d7d168faa1bd23629f97492e0c4f7",
+    "allowedEdgesSha256": "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7"
+  },
+  "current": {
+    "source": {
+      "bytes": 568552,
+      "sha256": "64103a2fb337874fd435614d461bdd0d46cdfdc8a8dbd61603a4c7cbaf3915ff",
+      "gitBlob": "b9b8b1787cc202906c4e76cebc598cf460a7f0ae"
+    },
+    "dataSha256": "2f35e7e2045dd0d024a13b48c8f413fc7fb9e74c63503fafee4e56993d1da1a6",
+    "fileCount": 1780,
+    "filesSha256": "bcd724252a8ff0cdf6799b01f7e0b9eeceead2c6a3e1f49f9625de233b6710e6",
+    "activationCount": 101,
+    "activationHistorySha256": "9629c457a160096e70c35fc3a986abbd8eca145ac4eb688995194d6c29c83650",
+    "layersSha256": "3f66bbff64c157092a04740c644ae17d476d7d168faa1bd23629f97492e0c4f7",
+    "allowedEdgesSha256": "efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7"
+  },
+  "helperPrefix": {
+    "path": "tests/helpers/ir-runtime-program-policy-evolution.ts",
+    "bytes": 80917,
+    "sha256": "2d33fdce750f57d745344fe9c08ecfdd2236bafaca48935bb2376f57255fce8f"
+  },
+  "hostReceipt": {
+    "path": "tests/helpers/ir-runtime-program-policy-host-carrier.json",
+    "bytes": 4673,
+    "sha256": "30c0912d7868e4da44c083243bb68073e48e70e7eb4b26dbc1b1e73090a5f583"
+  },
+  "addition": {
+    "fileIndex": 1615,
+    "beforeIndex": 1615,
+    "row": {
+      "path": "src/codegen/generator-eager-refusal.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    "previous": {
+      "path": "src/codegen/fnctor-instance-names.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    "next": {
+      "path": "src/codegen/generator-function-dynamic.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    "sourcePin": {
+      "path": "src/codegen/generator-eager-refusal.ts",
+      "bytes": 10619,
+      "sha256": "b44d14368759f11f18b11d75d2a5abb93fc448e0dc5cb7d8501eb0afe6272535"
+    },
+    "rawSpan": {
+      "beforeOffset": 529175,
+      "afterOffset": 529175,
+      "before": "    {\n      \"path\": \"src/codegen/generator-function-dynamic.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n",
+      "after": "    {\n      \"path\": \"src/codegen/generator-eager-refusal.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/generator-function-dynamic.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n",
+      "beforeSha256": "eaa7278e51f6b98fed1c30f4ba59a0db4736a03c489c860549288c0aa3c1ad1d",
+      "afterSha256": "44584a36ba540f0e339e6e15bda22765c85db81114312d418cbec9041f086da3"
+    }
+  }
+}

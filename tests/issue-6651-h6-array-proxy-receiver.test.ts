@@ -108,7 +108,78 @@ describe("#6651 H6 — slice/splice.call on a Proxy value take the array-like al
   });
 });
 
+describe("#6651 H6 — a Proxy binding handed to an Array borrow stays a proxy", () => {
+  it("RED on base: map/filter/concat/slice/splice.call consult @@species through a proxy over an array", async () => {
+    expect(
+      await runModuleScopeJs(`
+      var array = [];
+      var proxy = new Proxy(new Proxy(array, {}), {});
+      var Ctor = function () {};
+      array.constructor = function () {};
+      array.constructor[Symbol.species] = Ctor;
+      var r1, r2, r3;
+      r1 = Array.prototype.map.call(proxy, function () {});
+      r2 = Array.prototype.filter.call(proxy, function () {});
+      r3 = Array.prototype.concat.call(proxy);
+      var r4, r5;
+      r4 = Array.prototype.slice.call(proxy);
+      r5 = Array.prototype.splice.call(proxy);
+      __h6 = (Object.getPrototypeOf(r1) === Ctor.prototype ? 1 : 0) +
+        (Object.getPrototypeOf(r2) === Ctor.prototype ? 2 : 0) +
+        (Object.getPrototypeOf(r3) === Ctor.prototype ? 4 : 0) +
+        (Object.getPrototypeOf(r4) === Ctor.prototype ? 8 : 0) +
+        (Object.getPrototypeOf(r5) === Ctor.prototype ? 16 : 0);`),
+    ).toBe(31);
+  });
+
+  it("RED on base (trap at the declaration): a trapped length of 2**32 is ArrayCreate's RangeError", async () => {
+    expect(
+      await runModuleScopeJs(`
+      var array = [];
+      var sets = 0;
+      var handler = {
+        get: function (_, name) { return name === "length" ? Math.pow(2, 32) : array[name]; },
+        set: function () { sets += 1; return true; },
+      };
+      var p1 = new Proxy(array, handler);
+      var p2 = new Proxy(array, handler);
+      var p3 = new Proxy(array, handler);
+      function rangeError(f) { try { f(); return 0; } catch (e) { return e instanceof RangeError ? 1 : 2; } }
+      __h6 = rangeError(function () { Array.prototype.slice.call(p1); }) +
+        rangeError(function () { Array.prototype.splice.call(p2, 0); }) * 10 +
+        rangeError(function () { Array.prototype.map.call(p3, function () {}); }) * 100 + sets * 1000;`),
+    ).toBe(111);
+  });
+
+  it("RED on base (TypeError): copyWithin.call runs a proxy's has / deleteProperty traps", async () => {
+    expect(
+      await runModuleScopeJs(`
+      var p1 = new Proxy({ 0: 42, length: 1 }, { has: function () { throw new RangeError("has"); } });
+      var p2 = new Proxy({ 42: true, length: 43 }, {
+        deleteProperty: function (t, k) { if (k === "42") { throw new RangeError("delete"); } return true; },
+      });
+      function rangeError(f) { try { f(); return 0; } catch (e) { return e instanceof RangeError ? 1 : 2; } }
+      __h6 = rangeError(function () { Array.prototype.copyWithin.call(p1, 0, 0); }) +
+        rangeError(function () { Array.prototype.copyWithin.call(p2, 42, 0); }) * 10;`),
+    ).toBe(11);
+  });
+});
+
 describe("#6651 H6 — guards: receivers that are not proxies answer as before", () => {
+  it("Object.getPrototypeOf of a genuine array in a species-observable module", async () => {
+    expect(
+      await runModuleScopeJs(`
+      var a = [1, 2];
+      a.constructor = {};
+      var m;
+      m = [3].map(function (x) { return x; });
+      var s = [4, 5].slice(1);
+      __h6 = (Object.getPrototypeOf(a) === Array.prototype ? 1 : 0) +
+        (Object.getPrototypeOf(m) === Array.prototype ? 2 : 0) +
+        (Object.getPrototypeOf(s) === Array.prototype ? 4 : 0);`),
+    ).toBe(7);
+  });
+
   it("an array-like object through map/slice/splice.call", async () => {
     expect(
       await runModuleScopeJs(`

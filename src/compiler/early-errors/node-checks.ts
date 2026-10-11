@@ -488,7 +488,10 @@ on([ts.SyntaxKind.ClassDeclaration], (ctx, node) => {
 on([ts.SyntaxKind.LabeledStatement], (ctx, node) => {
   if (ts.isLabeledStatement(node)) {
     const parent = node.parent;
-    if (parent && isStatementPosition(parent, node)) {
+    // Only the OUTERMOST label's position matters (§13.7.1.1 IsLabelledFunction
+    // is asked of the iteration/if body Statement); it already walks its inner
+    // labels. `l1: l2: function f(){}` at top level is legal sloppy Annex B.
+    if (parent && !ts.isLabeledStatement(parent) && isStatementPosition(parent, node)) {
       // Check if the innermost statement (through label nesting) is a function/class declaration
       let inner: ts.Statement = node.statement;
       while (ts.isLabeledStatement(inner)) inner = inner.statement;
@@ -597,6 +600,18 @@ on([ts.SyntaxKind.SwitchStatement], (ctx, node) => {
 on([ts.SyntaxKind.CaseClause], (ctx, node) => {
   if (ts.isCaseClause(node) && nodeIsParserSynthesizedMissing(node.expression)) {
     ctx.addError(node, "Expression expected: a case clause requires a test expression");
+  }
+});
+
+// (#6864) Parentheses require an expression, even when TS1109 is tolerated.
+on([ts.SyntaxKind.ParenthesizedExpression], (ctx, node) => {
+  if (ts.isParenthesizedExpression(node) && nodeIsParserSynthesizedMissing(node.expression)) {
+    ctx.errors.push({
+      message: "Expression expected: a parenthesized expression requires an expression",
+      ...ctx.pos(node),
+      severity: "error",
+      file: ctx.sourceFile.fileName,
+    });
   }
 });
 

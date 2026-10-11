@@ -1,12 +1,11 @@
 ---
 id: 6777
 title: "codegen: `in` on array carriers — type-confused lowering (invalid module on `any[]`), wrong answers on holes/`delete`, non-boolean result"
-status: done
+status: in-progress
 sprint: Backlog
 created: 2026-09-30
-updated: 2026-10-01
-completed: 2026-10-01
-assignee: "ttraenkler/claude-dev-6777"
+updated: 2026-10-11
+assignee: "ttraenkler/pr6383-repair"
 branch: "claude/issue-6777-in-array-carrier"
 priority: critical
 horizon: m
@@ -171,3 +170,175 @@ average ~20 on 4 cores; alone it passes 28/28 in 24 s. Related suites
 #2741, #2856, #3920, #4062, #4369, #4491-wave4, #4515, #6485, #6670, #2001-s1,
 #6482-r7, es5 holes): 12 failures, the identical 12 on the base (file-copy
 revert, same box) — none touched by this change.
+
+## PR repair (2026-10-11)
+
+The user explicitly authorized transfer of the original claim and the finite
+PR 6383 conflict/inventory repair. The transferred claim is held by
+`ttraenkler/pr6383-repair`; the isolated repair checkout is
+`.claude/worktrees/codex-6777-pr6383-repair-20261011`.
+
+Current canonical main is `324df7ca23c734d8acb3aa46b14a60e202f56d98`;
+PR head is `ee3eaeb5035eb6a23f7f2f7f2f96fc64e460cd7b`. Preserve
+main's `vecStaticIndexPresenceInstrs` path for standalone externref `$Hole`
+slots using the receiver's compiled type. Keep deletion, accessor, inherited
+index and dynamic-code cases on their presence-helper routes: physical
+backing presence alone cannot answer those cases. Keep the PR's key-first
+evaluation and boolean result. Registry inventory entry awaits coordinator
+ACK; no policy/edge allowances or gate changes are authorized. The source
+repair is validated locally but is not ready for queue admission.
+
+Two exploratory write-after-`Array(n)` probes still return 7 instead of 2
+and 6 instead of 2 with canonical main's exact `binary-ops-in.ts`, and
+with the repair. Those store/representation defects are outside this finite
+conflict repair; the retained composition controls separate an untouched
+length-created hole from a stored `undefined`, and check deletion on an
+ordinary array in a module that also contains `Array(n)`.
+
+### Repair validation and publication state
+
+Source composition is main `324df7ca23c734d8acb3aa46b14a60e202f56d98`
+plus PR head `ee3eaeb5035eb6a23f7f2f7f2f96fc64e460cd7b`, with the
+static `$Hole` check restored in `in-array-carrier.ts`. Both operands still
+run key-first; the static check consumes exactly one receiver and leaves
+one boolean-branded i32. No deletion/accessor/prototype/dynamic-code route
+is bypassed.
+
+- Node 25.9.0, normal Vitest configuration, one worker: **92/92** scoped
+  tests pass across five files: issue-6777 (**39/39**, original 36 plus three
+  composition controls), issue-6771 (**29/29**), issue-2741 (**10/10**),
+  in-operator-edge-cases (**9/9**), in-operator-prototype-methods (**5/5**).
+- Required `test:guard`, unchanged manifest/configuration, Node 25.9.0:
+  **261/261** tests pass across 21 files.
+- The adjacent issue-2130-delete-in-presence suite passes **4/7**. Its same
+  three failures reproduce using canonical main's exact binary-ops-in.ts:
+  sibling property after delete, object-rest presence, and delete/re-add.
+  This is a measured main control, not a new failure attributed to the repair.
+- Type checking, LOC/function budgets against the canonical main SHA,
+  coercion-site ratchet, oracle ratchet and dead-export check all exit **0**.
+- Inventory mode exits **1**, only `unclassified-module` and
+  `unclassified-target` for `src/codegen/in-array-carrier.ts`. The registry
+  has not been edited while its shared owner acknowledgment is pending.
+
+Logs are worktree-local `.tmp/node25-scoped.log`, `.tmp/guard-suite.log`,
+`.tmp/main-2130.log`, `.tmp/typecheck.log` and
+`.tmp/boundaries-before-ack.log`. Earlier Node 24.4.1 runs required the
+Vitest worker argument `--poolOptions.forks.execArgv=--experimental-wasm-exnref`
+(the parent-node flag did not reach configured forks). Final Node 25 evidence
+uses neither that flag nor modified test expectations.
+
+**Not published or queued.** Before publication: receive the coordinator's
+ACK for the single unmigrated inventory row, add that row without policy
+relaxations, integrate fresh canonical main, rerun relevant required gates,
+verify the PR head/ancestry and push normally. Keep this claim active until
+that finite pending work is complete or explicitly handed off.
+
+### Additional blockers discovered after source validation
+
+The normal checkpoint commit ran lint-staged and both unconditional budget
+hooks successfully, then failed with exit 128 because the configured SSH
+signing key `/Users/thomas/.ssh/id_ed25519` is encrypted and no authentication
+agent is connected (`ssh-add -l`: could not open a connection). Signing and
+hooks were not bypassed. HEAD remains the original PR SHA; the resolved merge
+with main 324df7 is staged and its MERGE_HEAD is retained.
+
+Two newer required source gates also reject the original PR's new module:
+`check-import-cycles` against main 324df7 reports largest SCC 703 → 704,
+and `check-flat-dir-budget` against the same base rejects the new top-level
+`src/codegen/in-array-carrier.ts` entry. No allowance, baseline or gate was
+changed. These are additional blockers beyond the original two handoff items.
+A source-scope decision is needed for a genuine fix, for example relocating
+the new module into the existing array directory and cutting its runtime
+import cycle by explicit dependency injection; the registry proposal would
+then need the corresponding exact destination path and owner approval.
+
+Portable patches remain in `.tmp/pr6383-source-on-main-324df7.patch`
+(source/tests against canonical main) and
+`.tmp/pr6383-incremental-source-repair.patch` (new source/test changes relative
+to the original PR). The pending single-row inventory proposal is
+`.tmp/pr6383-inventory-row-proposal.patch`, with its full proposed config in
+`.tmp/compiler-boundaries-pr6383-proposed.json`. The ordinary detector accepts
+that alternate proposed config (`inventoryValid: true`, exit 0); this is
+proposal validation only, and the tracked registry remains unchanged/red.
+Additional logs: `.tmp/source-checkpoint-commit.log`,
+`.tmp/import-cycles-main-base.log`, `.tmp/flat-dir-budget-main-base.log` and
+`.tmp/proposed-inventory-validation.log`. No PR push or queue request occurred.
+
+### Current finite CI remedy (2026-10-11; supersedes the two source-gate blockers)
+
+Within the user-authorized finite PR repair, the new helper now lives at
+`src/codegen/array/in-array-carrier.ts`. It has only type imports. Its existing
+`binary-ops-in.ts` caller supplies the same concrete codegen operations through
+an `ArrayCarrierInDependencies` object: no runtime registry, facade, new
+semantic behavior, budget allowance or gate relaxation. The shared delegates
+are ordinary exported wrapper functions, so passing those functions retains
+late registration rather than capturing their private implementations.
+
+The compiled-type `$Hole` check and its overlay exclusions remain unchanged.
+The existing codegen caller owns dependency construction; the array leaf owns
+the actual emission algorithm. No foreign IR source or claim was touched.
+
+On canonical main 324df7, after this refactor:
+
+- `check-import-cycles`: **exit 0**, largest SCC remains **703**, 4 nontrivial
+  SCCs and 10 two-way directory pairs. The added helper is outside the SCC.
+- `check-flat-dir-budget`: **exit 0**, `src/codegen/*.ts` remains **830**.
+- LOC/function budgets: **exit 0**, no allowance added.
+- Type checking: **exit 0**.
+- Node 25.9.0, unchanged Vitest expectations/configuration, one worker:
+  **92/92** across the same five scoped suites pass again.
+
+Current registry proposal supersedes the earlier top-level-path proposal:
+`src/codegen/array/in-array-carrier.ts`, state `unmigrated`, layer
+`mixed-needs-split`, destination `backend-wasmgc`, owner `3518-coordinator`,
+next boundary "Separate AST/context-driven generation, physical resources
+and generated native runtime." It adds only that row next to existing array
+records and preserves all existing bytes/order/metadata. Ordinary inventory
+validation against the proposed config exits **0**; the tracked registry is
+still unchanged and requires scope approval.
+
+Original proposal and source logs are retained. Current logs use the
+`.tmp/relocated-*` prefix. The active proposal/portable patch paths retain
+their names and now describe the relocated helper. Commit signing remains
+blocked as described above; no unsigned exception is assumed and no push
+or queue operation has occurred.
+
+Final relocated-source validation also passes the required unchanged guard
+manifest again (**261/261**, 21 files), coercion and oracle ratchets (no
+vocabulary growth, checker calls **−1**), dead-export check and scoped
+Prettier formatting (all exit **0**). Source/test patches are staged and
+saved. Tracked shared policy has not been altered; signing/one-row inventory
+approval and a fresh-main integration still precede any publication.
+
+### Explicit publication authorizations (2026-10-11)
+
+The human explicitly authorized **this one inventory entry** for
+`src/codegen/array/in-array-carrier.ts` without waiting for the coordinator
+ACK, and separately authorized **unsigned commits here for PR 6383 only**.
+Both are bounded exceptions for this repair. Every existing registry row,
+ordering, history, top-level metadata, edge policy and baseline stays intact.
+No foreign claim is transferred. The unsigned exception uses only per-command
+`git -c commit.gpgsign=false`; configured signing and all normal hooks remain
+in place. Original failed signing/proposal logs are preserved.
+
+The validated eight-line inventory proposal is now applied to the tracked
+registry. Source, inventory and merge validation are in progress; the issue
+is not marked complete and no queue action has been taken by this agent.
+
+The full precommit slow hook on the pending merge selected 20 inherited-main
+root tests because HEAD still had the old PR ancestry. It stopped at
+`issue-3518-c1-current-source`: **265 failed / 90 passed**, first error
+`runtime program relocation: length/SHA256: src/ir/program/data.ts`.
+A separate untouched detached main 324df7 checkout, Node 25.9.0, reproduces
+**the same 265 failure names and 90 passes**. Its tracked state stayed clean.
+The candidate's data.ts and that inherited test were byte-identical to main.
+This repair does not change those source fixtures or their certificates.
+
+The repository-sanctioned `SKIP_SLOW_PRECOMMIT=1` variant may finalize this
+pending merge with its unconditional normal fast hooks, supported by the
+manual scoped **39/39** changed-root suite, **92/92** related suites,
+**261/261** guards and oracle/source/inventory checks. After the merge commit
+exists, rerun the ordinary full changed-root hook with correct ancestry;
+no hook/script/baseline/expectation is weakened. Logs and exact failure-name
+comparison are `.tmp/publication-commit.log`, `.tmp/main-c1-control.log` and
+`.tmp/precommit-main-control-comparison.json`.

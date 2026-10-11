@@ -1,4 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import {
+  reconstructRemainderRuntimeContractReceiptSources as reconstructRuntimeContractReceiptSources,
+  readRemainderRuntimeContractReceiptSource as readRuntimeContractReceiptSource,
+} from "./helpers/ir-remainder-runtime-contract-evolution.js";
+import { createHash } from "node:crypto";
+import { beforeSourceMapProgramValidatorRelocation } from "./helpers/ir-program-validator-relocation.js";
 
 import { resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
@@ -16,22 +22,22 @@ import {
   type SourceReader,
 } from "./helpers/ir-historical-runtime-reconstruction.js";
 
-import {
-  readRuntimeContractReceiptSource,
-  reconstructRuntimeContractReceiptSources,
-  runtimeContractCurrentPaths,
-} from "./helpers/ir-runtime-contract-evolution.js";
+import { runtimeContractCurrentPaths } from "./helpers/ir-runtime-contract-evolution.js";
+
+import { beforeRemainderRuntimePreparationRelocation as beforeRuntimePreparationRelocation } from "./helpers/ir-remainder-runtime-preparation-relocation.js";
 
 const rawRead = liveSourceReader(resolve(import.meta.dirname, ".."));
-const read: SourceReader = (path) => readRuntimeContractReceiptSource(path, rawRead);
+const read: SourceReader = (path) =>
+  readRuntimeContractReceiptSource(path, beforeRuntimePreparationRelocation(beforeProgramValidatorRelocation(rawRead)));
 function currentHistoricalRead(): SourceReader {
   // One fresh authenticated capture per top-level proof, before any historical mutant.
-  const sources = reconstructRuntimeContractReceiptSources(rawRead);
+  const beforePreparation = beforeRuntimePreparationRelocation(beforeProgramValidatorRelocation(rawRead));
+  const sources = reconstructRuntimeContractReceiptSources(beforePreparation);
   if (sources.size !== runtimeContractCurrentPaths.length) throw Error("missing runtime historical population");
   for (const path of runtimeContractCurrentPaths)
     if (!sources.has(path)) throw Error("missing required runtime historical source " + path);
   return (path) => {
-    if (!runtimeContractCurrentPaths.includes(path)) return rawRead(path);
+    if (!runtimeContractCurrentPaths.includes(path)) return beforePreparation(path);
     const source = sources.get(path);
     if (source === undefined) throw Error("missing required runtime historical source " + path);
     return source;
@@ -1029,3 +1035,22 @@ describe("historical runtime receipts after checked extension reconstruction fro
     },
   );
 });
+
+// Fresh whole component authentication precedes each explicit source-epoch bridge.
+function assertSourceMapValidatorComponent(readLive: (path: string) => string): void {
+  const path = "tests/helpers/ir-program-validator-relocation.ts";
+  const text = readLive(path);
+  if (typeof text !== "string" || text.length === 0)
+    throw new Error("program validator relocation: nonempty primitive text required: " + path);
+  if (
+    Buffer.byteLength(text) !== 46642 ||
+    createHash("sha256").update(text).digest("hex") !==
+      "6e32ca208775e8eeae765bf3345cdd3cb1e0f40a1784f684afd9c4dff3a4cfe0"
+  )
+    throw new Error("program validator relocation: complete source pin mismatch: " + path);
+}
+function beforeProgramValidatorRelocation(readLive: (path: string) => string): (path: string) => string {
+  if (typeof readLive !== "function") throw new Error("program validator relocation: physical reader required");
+  assertSourceMapValidatorComponent(readLive);
+  return beforeSourceMapProgramValidatorRelocation(readLive);
+}

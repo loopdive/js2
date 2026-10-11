@@ -8,10 +8,11 @@
 // the array's first element where the whole rest vec belonged. Record the rest
 // info from the resolved vec so call sites pack and pass it like any other.
 
-import type { ts } from "../ts-api.js";
+import { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { getVecInfo } from "./type-coercion.js";
+import { getOrRegisterVecType } from "./registry/types.js";
 
 export function registerResolvedRestParam(
   ctx: CodegenContext,
@@ -31,4 +32,24 @@ export function registerResolvedRestParam(
     arrayTypeIdx: vecInfo.arrTypeIdx,
     vecTypeIdx: restType.typeIdx,
   });
+}
+
+/**
+ * (#6774 S7) A generator's rest parameter whose target is a BINDING PATTERN
+ * (`function* g(...[a]) {}`): `lowerParamType` lowers it to the pattern's tuple
+ * shape, so the call site never packs the extras and the prologue destructures
+ * a null carrier. Lower it to the rest vec the plain-function path uses.
+ */
+export function restPatternParamVecType(
+  ctx: CodegenContext,
+  param: ts.ParameterDeclaration,
+  vecOf: (elemType: ValType) => number,
+): ValType | undefined {
+  if (!ctx.standalone || param.dotDotDotToken === undefined || ts.isIdentifier(param.name)) return undefined;
+  return { kind: "ref_null", typeIdx: vecOf({ kind: "externref" }) };
+}
+
+/** `restPatternParamVecType` over the shared externref vec, else `slot` unchanged. */
+export function restPatternParamSlot(ctx: CodegenContext, param: ts.ParameterDeclaration, slot: ValType): ValType {
+  return restPatternParamVecType(ctx, param, (t) => getOrRegisterVecType(ctx, "externref", t)) ?? slot;
 }

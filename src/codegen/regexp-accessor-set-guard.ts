@@ -82,7 +82,7 @@ import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { standaloneRegExpStructTypeIdx } from "./regexp-standalone.js";
-import { STRING_EXOTIC_HASOWN_FN } from "./string-exotic-own-props.js";
+import { STRING_EXOTIC_HASOWN_FN, installStringExoticMutationGuards } from "./string-exotic-own-props.js";
 import { addFuncType } from "./registry/types.js";
 
 /** §22.2.6 — the getter-only members of `RegExp.prototype`. */
@@ -240,6 +240,9 @@ export function unshiftRegExpAccessorSetGuard(ctx: CodegenContext): void {
     // §10.1.10 OrdinaryDelete step 4 — a non-configurable own property answers
     // `false`; the operator's own lowering turns that into the `delete` result.
     unshiftPredicateGuard(ctx, "__delete_property", strExoIdx, 0);
+    // (#6651 W1a) …and `false` / TypeError from Reflect.set, strict [[Set]]
+    // and an incompatible [[DefineOwnProperty]] (§10.4.3.2).
+    installStringExoticMutationGuards(ctx);
   }
   const funcIdx = registerRegExpGetterOnlySet(ctx);
   if (funcIdx === undefined) return;

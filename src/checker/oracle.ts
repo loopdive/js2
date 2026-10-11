@@ -489,7 +489,7 @@ export class TsCheckerOracle implements TypeOracle {
     if (f & ts.TypeFlags.Unknown) return { kind: "unknown" };
     if (f & (ts.TypeFlags.Number | ts.TypeFlags.NumberLiteral)) return { kind: "number" };
     if (f & (ts.TypeFlags.Boolean | ts.TypeFlags.BooleanLiteral)) return { kind: "boolean" };
-    if (f & (ts.TypeFlags.String | ts.TypeFlags.StringLiteral)) return { kind: "string" };
+    if (f & ts.TypeFlags.StringLike) return { kind: "string" }; // (#6868) incl. template-literal / string-mapping types
     if (f & (ts.TypeFlags.BigInt | ts.TypeFlags.BigIntLiteral)) return { kind: "bigint" };
     if (f & (ts.TypeFlags.ESSymbol | ts.TypeFlags.UniqueESSymbol)) return { kind: "symbol" };
     if (f & ts.TypeFlags.Undefined) return { kind: "undefined" };

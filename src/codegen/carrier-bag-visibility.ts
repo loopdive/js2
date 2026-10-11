@@ -100,6 +100,8 @@ import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 import { ensureExternStrictEqHelper } from "./any-helpers.js"; // (#5268 review R2-1) key de-dup
+import { fnIntrinsicKeyPhases } from "./object-model/object-own-key-order.js"; // (#6770 S3) function key order
+import { CARRIER_BAG_HAS } from "./object-model/native-names.js"; // (#6770) leaf-shared name
 
 /** #3468 closure-own-property side table (`closure-props.ts`). */
 const IS_CLOSURE_PROP_CARRIER = "__is_closure_prop_carrier";
@@ -122,7 +124,7 @@ const ERROR_PROP_BAG_LOOKUP = "__error_prop_bag_lookup";
 /** `(externref obj) -> externref` — the receiver's bag as a screened `$Object`, or null. */
 export const CARRIER_BAG_OF = "__carrier_bag_of";
 /** `(externref obj, externref key) -> i32` — 1 iff the bag holds a live entry. */
-export const CARRIER_BAG_HAS = "__carrier_bag_has";
+export { CARRIER_BAG_HAS }; // (#6770) defined in object-model/native-names.ts
 /** `(externref obj, externref key) -> externref` — descriptor, or **null = not handled**. */
 export const CARRIER_BAG_GOPD = "__carrier_bag_gopd";
 /** `(externref obj, externref vec, i32 includeNonEnum) -> i32` — 1 iff a bag existed. */
@@ -670,6 +672,18 @@ function fillCarrierBagPushKeys(d: {
   const KEY = 9; // (#5268 review R2-1) the bag key, held across the de-dup scan
   const SEEN_I = 10;
   const SEEN_N = 11;
+  const PHASE = 12; // (#6770 S3)
+  const IS_FN = 13;
+  const phases = fnIntrinsicKeyPhases(ctx, {
+    phaseLocal: PHASE,
+    fnLocal: IS_FN,
+    entryLocal: E,
+    propEntryTypeIdx,
+  }) ?? {
+    init: [{ op: "i32.const", value: 2 } as Instr, { op: "local.set", index: PHASE } as Instr],
+    keep: [{ op: "i32.const", value: 1 } as Instr],
+    next: [{ op: "br", depth: 1 } as Instr],
+  };
   const orderedCall = (idx: number): Instr[] => [
     { op: "local.get", index: BAG },
     { op: "any.convert_extern" },
@@ -720,6 +734,8 @@ function fillCarrierBagPushKeys(d: {
       { name: "key", type: EXT },
       { name: "seenI", type: I32 },
       { name: "seenN", type: I32 },
+      { name: "phase", type: I32 },
+      { name: "isFn", type: I32 },
     ],
     [
       ...loadBag(BAG, [{ op: "i32.const", value: 0 }, { op: "return" }]),
@@ -752,8 +768,8 @@ function fillCarrierBagPushKeys(d: {
       { op: "ref.as_non_null" },
       { op: "array.len" },
       { op: "local.set", index: CAP },
-      { op: "i32.const", value: 0 },
-      { op: "local.set", index: I },
+      // (#6770 S3) a function's `length`/`name` entries lead — see fnIntrinsicKeyPhases
+      ...phases.init,
       {
         op: "block",
         blockType: { kind: "empty" },
@@ -762,74 +778,91 @@ function fillCarrierBagPushKeys(d: {
             op: "loop",
             blockType: { kind: "empty" },
             body: [
-              { op: "local.get", index: I },
-              { op: "local.get", index: CAP },
-              { op: "i32.ge_s" },
-              { op: "br_if", depth: 1 },
-              { op: "local.get", index: ARR },
-              { op: "ref.as_non_null" },
-              { op: "local.get", index: I },
-              { op: "array.get", typeIdx: propMapTypeIdx },
-              { op: "local.tee", index: E },
-              { op: "ref.is_null" },
-              { op: "br_if", depth: 1 },
-              // (#4194) skip the #4098 tombstone marker — a deleted declared
-              // field must not reappear as an own key of the bag.
-              ...buildBagMarkerTestInstrs(ctx, { entryLocal: E, bagLocal: BAG, tmpAnyLocal: V }),
-              { op: "i32.eqz" },
-              // (#6651 H4) …AND the key-kind screen. Folded into the marker
-              // `if`'s condition rather than added as a `br_if` or an extra
-              // wrapping `if` on purpose: `buildBagKeyDedupeSkip` below bakes
-              // LITERAL branch depths (0=its own if … 4=the key loop), so one
-              // more enclosing block would silently retarget its `br 4` and
-              // turn the de-dup `continue` into something else. Widening this
-              // condition leaves every depth exactly where it was.
-              ...bagKeyKindKeep,
-              { op: "i32.and" },
+              { op: "i32.const", value: 0 },
+              { op: "local.set", index: I },
               {
-                op: "if",
+                op: "block",
                 blockType: { kind: "empty" },
-                then: [
-                  { op: "local.get", index: E },
-                  { op: "ref.as_non_null" },
-                  { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
-                  { op: "extern.convert_any" },
-                  { op: "local.set", index: KEY },
-                  // (#5268 review R2-1) §10.1.11 OrdinaryOwnPropertyKeys is a
-                  // key LIST, and a list has no duplicates. The caller has
-                  // already pushed the carrier's STATIC own keys, so a bag
-                  // entry that merely re-describes one of them — which is what
-                  // `Object.defineProperty(o, <existing key>, …)` records,
-                  // because a closed struct field has no attribute slots —
-                  // must not be listed a second time.
-                  //
-                  // Measured before this guard, on this tree AND on
-                  // `origin/main`: `Reflect.defineProperty({a:1,b:2}, "a", d)`
-                  // made `Reflect.ownKeys(o)` read `a,b,a` and
-                  // `getOwnPropertyNames(o).length` 3. A second define of the
-                  // same key did NOT grow it again, which is what identifies
-                  // the defect as this MERGE rather than the bag insert (the
-                  // bag itself de-duplicates).
-                  ...buildBagKeyDedupeSkip({
-                    externLengthIdx,
-                    externGetIdxIdx,
-                    strictEqIdx,
-                    vecParam: 1,
-                    keyLocal: KEY,
-                    seenILocal: SEEN_I,
-                    seenNLocal: SEEN_N,
-                    outerIndexLocal: I,
-                  }),
-                  { op: "local.get", index: 1 }, // vec
-                  { op: "local.get", index: KEY },
-                  { op: "call", funcIdx: objVecPushIdx },
+                body: [
+                  {
+                    op: "loop",
+                    blockType: { kind: "empty" },
+                    body: [
+                      { op: "local.get", index: I },
+                      { op: "local.get", index: CAP },
+                      { op: "i32.ge_s" },
+                      { op: "br_if", depth: 1 },
+                      { op: "local.get", index: ARR },
+                      { op: "ref.as_non_null" },
+                      { op: "local.get", index: I },
+                      { op: "array.get", typeIdx: propMapTypeIdx },
+                      { op: "local.tee", index: E },
+                      { op: "ref.is_null" },
+                      { op: "br_if", depth: 1 },
+                      // (#4194) skip the #4098 tombstone marker — a deleted declared
+                      // field must not reappear as an own key of the bag.
+                      ...buildBagMarkerTestInstrs(ctx, { entryLocal: E, bagLocal: BAG, tmpAnyLocal: V }),
+                      { op: "i32.eqz" },
+                      // (#6651 H4) …AND the key-kind screen. Folded into the marker
+                      // `if`'s condition rather than added as a `br_if` or an extra
+                      // wrapping `if` on purpose: `buildBagKeyDedupeSkip` below bakes
+                      // LITERAL branch depths (0=its own if … 4=the key loop), so one
+                      // more enclosing block would silently retarget its `br 4` and
+                      // turn the de-dup `continue` into something else. Widening this
+                      // condition leaves every depth exactly where it was.
+                      ...bagKeyKindKeep,
+                      { op: "i32.and" },
+                      ...phases.keep,
+                      { op: "i32.and" },
+                      {
+                        op: "if",
+                        blockType: { kind: "empty" },
+                        then: [
+                          { op: "local.get", index: E },
+                          { op: "ref.as_non_null" },
+                          { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
+                          { op: "extern.convert_any" },
+                          { op: "local.set", index: KEY },
+                          // (#5268 review R2-1) §10.1.11 OrdinaryOwnPropertyKeys is a
+                          // key LIST, and a list has no duplicates. The caller has
+                          // already pushed the carrier's STATIC own keys, so a bag
+                          // entry that merely re-describes one of them — which is what
+                          // `Object.defineProperty(o, <existing key>, …)` records,
+                          // because a closed struct field has no attribute slots —
+                          // must not be listed a second time.
+                          //
+                          // Measured before this guard, on this tree AND on
+                          // `origin/main`: `Reflect.defineProperty({a:1,b:2}, "a", d)`
+                          // made `Reflect.ownKeys(o)` read `a,b,a` and
+                          // `getOwnPropertyNames(o).length` 3. A second define of the
+                          // same key did NOT grow it again, which is what identifies
+                          // the defect as this MERGE rather than the bag insert (the
+                          // bag itself de-duplicates).
+                          ...buildBagKeyDedupeSkip({
+                            externLengthIdx,
+                            externGetIdxIdx,
+                            strictEqIdx,
+                            vecParam: 1,
+                            keyLocal: KEY,
+                            seenILocal: SEEN_I,
+                            seenNLocal: SEEN_N,
+                            outerIndexLocal: I,
+                          }),
+                          { op: "local.get", index: 1 }, // vec
+                          { op: "local.get", index: KEY },
+                          { op: "call", funcIdx: objVecPushIdx },
+                        ],
+                      },
+                      { op: "local.get", index: I },
+                      { op: "i32.const", value: 1 },
+                      { op: "i32.add" },
+                      { op: "local.set", index: I },
+                      { op: "br", depth: 0 },
+                    ],
+                  },
                 ],
               },
-              { op: "local.get", index: I },
-              { op: "i32.const", value: 1 },
-              { op: "i32.add" },
-              { op: "local.set", index: I },
-              { op: "br", depth: 0 },
+              ...phases.next,
             ],
           },
         ],

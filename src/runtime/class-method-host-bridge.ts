@@ -25,7 +25,7 @@ export interface ClassMethodHostBridgeDeps {
    * dispatch on. Used only to honour an explicit `this`; when absent the
    * bridges keep their historical bound-receiver behaviour.
    */
-  unwrapReceiver?(value: any): any;
+  unwrapReceiver?(value: any, reader?: ClassMethodCallbackState): any;
 }
 
 /**
@@ -54,6 +54,38 @@ function selectBridgeReceiver(
   const raw = unwrap(thisArg);
   if (raw === bound || raw == null || typeof raw !== "object") return bound;
   return accepts(raw) ? raw : bound;
+}
+
+/**
+ * (#6884) Strip host mirrors off the ARGUMENTS a compiled method bridge is
+ * called with, the same way #5237 strips the receiver.
+ *
+ * `__extern_method_call` wraps every argument for host visibility before it
+ * dispatches (`_wrapForHost`: a compiled struct becomes a Proxy). That is right
+ * when the callee is a host function, but a class-method bridge forwards the
+ * values straight into a compiled `__class_call_*` export, which then sees the
+ * PROXY instead of its own struct: `arg instanceof C` is false and every field
+ * read goes through the host mirror. The Temporal polyfill's
+ * `d.subtract(c)` (two `TimeDuration`s, `d` untyped) read `c.totalNs` off the
+ * mirror and handed JSBI a carrier without its class members —
+ * "__digit is not a function".
+ */
+function unwrapBridgeArgs(
+  args: any[],
+  deps: ClassMethodHostBridgeDeps,
+  callbackState: ClassMethodCallbackState,
+): any[] {
+  const unwrap = deps.unwrapReceiver;
+  if (unwrap === undefined || args.length === 0) return args;
+  let out: any[] | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const raw = unwrap(args[i], callbackState);
+    if (raw !== args[i]) {
+      out ??= args.slice();
+      out[i] = raw;
+    }
+  }
+  return out ?? args;
 }
 
 export function invokeResolvedClassMethod(
@@ -163,7 +195,7 @@ export function createClassMemberResolver(
         let fn = bridges.get(key);
         if (!fn) {
           fn = function externrefClassVarargHostBridge(this: any, ...args: any[]) {
-            return deps.marshalBridgeResult(restFn(obj, args), callbackState);
+            return deps.marshalBridgeResult(restFn(obj, unwrapBridgeArgs(args, deps, callbackState)), callbackState);
           };
           Object.defineProperty(fn, "name", { value: key, configurable: true });
           bridges.set(key, fn);
@@ -179,7 +211,8 @@ export function createClassMemberResolver(
         }
         let fn = bridges.get(key);
         if (!fn) {
-          fn = function externrefClassMethodHostBridge(this: any, ...args: any[]) {
+          fn = function externrefClassMethodHostBridge(this: any, ...hostArgs: any[]) {
+            const args = unwrapBridgeArgs(hostArgs, deps, callbackState);
             // Prefer the declaration whose arity covers the call, while
             // retaining the smallest declaration for omitted/default args.
             const selected =
@@ -258,9 +291,12 @@ export function createClassMemberResolver(
       };
       fn = function classMethodHostBridge(this: any, ...args: any[]) {
         const recv = selectBridgeReceiver(this, obj, acceptsReceiver, deps.unwrapReceiver);
-        if (hasRest) return deps.marshalBridgeResult(callFn(recv, args), callbackState);
+        const rawArgs = unwrapBridgeArgs(args, deps, callbackState);
+        if (hasRest) return deps.marshalBridgeResult(callFn(recv, rawArgs), callbackState);
         const callArgs =
-          args.length < declaredArity ? args.concat(new Array(declaredArity - args.length).fill(undefined)) : args;
+          rawArgs.length < declaredArity
+            ? rawArgs.concat(new Array(declaredArity - rawArgs.length).fill(undefined))
+            : rawArgs;
         return deps.marshalBridgeResult(callFn(recv, ...callArgs), callbackState);
       };
       Object.defineProperty(fn, "name", { value: key, configurable: true });

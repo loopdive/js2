@@ -1179,6 +1179,38 @@ export function hostStringBridgeUsable(ctx: CodegenContext): boolean {
   return !hostFreeEnvironment(ctx) && !ctx.strictNoHostImports; // (#6685) environment, not regime
 }
 
+/**
+ * (#6879) Grow the bridge's scratch memory to hold `len` UTF-16 code units
+ * before a copy. The memory starts at one page, so any string over 32,767 code
+ * units trapped out of bounds in the Wasm copy loop (the host side already
+ * refused the oversize write silently) — acorn's perf lane passes its own
+ * 230 KB bundle. `scratch` is an i32 local the caller overwrites afterwards.
+ * Only where a JS host serves the bridge; the host-free lanes keep their bytes.
+ */
+function growStrMemFor(ctx: CodegenContext, lenLocal: number, scratch: number): Instr[] {
+  if (!hostStringBridgeUsable(ctx)) return [];
+  return [
+    // scratch = ceil(len * 2 / 64 KiB) - memory.size ; if (scratch > 0) memory.grow(scratch)
+    { op: "local.get", index: lenLocal },
+    { op: "i32.const", value: 1 },
+    { op: "i32.shl" },
+    { op: "i32.const", value: 0xffff },
+    { op: "i32.add" },
+    { op: "i32.const", value: 16 },
+    { op: "i32.shr_u" },
+    { op: "memory.size" },
+    { op: "i32.sub" },
+    { op: "local.tee", index: scratch },
+    { op: "i32.const", value: 0 },
+    { op: "i32.gt_s" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "local.get", index: scratch }, { op: "memory.grow" }, { op: "drop" }],
+    },
+  ];
+}
+
 export function ensureNativeStringExternBridge(ctx: CodegenContext): void {
   ensureNativeStringHelpers(ctx);
   if (ctx.nativeStrExternBridgeEmitted) return;
@@ -1267,6 +1299,7 @@ export function ensureNativeStringExternBridge(ctx: CodegenContext): void {
       { op: "local.get", index: FLAT_LOCAL },
       { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 },
       { op: "local.set", index: 3 },
+      ...growStrMemFor(ctx, 1, 2),
       { op: "i32.const", value: 0 },
       { op: "local.set", index: 2 },
       {
@@ -1329,6 +1362,7 @@ export function ensureNativeStringExternBridge(ctx: CodegenContext): void {
       { op: "local.get", index: 0 },
       { op: "call", funcIdx: externLenIdx },
       { op: "local.set", index: 1 },
+      ...growStrMemFor(ctx, 1, 3),
       { op: "local.get", index: 0 },
       { op: "i32.const", value: 0 },
       { op: "call", funcIdx: toMemIdx },

@@ -164,6 +164,18 @@ export interface NativeProtoBuiltinGlue {
    */
   symbolTag?: string;
   /**
+   * (#6771 S5) Well-known-symbol-keyed own DATA properties whose value is built
+   * by an instruction recipe (`Array.prototype[@@unscopables]`, §23.1.3.41).
+   * Seeded into the brand companion like `symbolTag`, with the given descriptor
+   * word, and reported own by `__nproto_hasown` alongside the `@@<id>` members.
+   * `value` runs inside the seeder; `undefined` skips the entry.
+   */
+  symbolDataProps?: ReadonlyArray<{
+    readonly id: number;
+    readonly flags: number;
+    readonly value: (ctx: CodegenContext, seedFctx: FunctionContext) => Instr[] | undefined;
+  }>;
+  /**
    * (#5156) String-keyed own DATA properties whose value is a plain string
    * constant — `Error.prototype.name` / `.message` and the NativeError
    * equivalents (§20.5.3.2/.3). They cannot join `memberCsv`: every consumer of
@@ -173,7 +185,7 @@ export interface NativeProtoBuiltinGlue {
    * `{writable:true, enumerable:false, configurable:true}` and answered as a
    * string constant by the static value read.
    */
-  dataProps?: ReadonlyArray<readonly [string, string | number] | readonly [string, string | number, number]>;
+  dataProps?: ReadonlyArray<readonly [string, string | number]>;
   /**
    * (#5194 step 1) Brand of this prototype's own `[[Prototype]]` — the parent
    * level of the builtin prototype CHAIN. `Uint8Array.prototype`'s parent is
@@ -541,6 +553,7 @@ export function seededNativeProtoOwnMembersByBrand(ctx: CodegenContext): Readonl
     // (#5156) Seeded string DATA properties are companion entries too, so
     // `delete Error.prototype.message` / a redefinition must be observable.
     for (const [key] of glue.dataProps ?? []) members.push(key);
+    if (glue.name === "Array" && ctx.funcMap.has("__box_number")) members.push("length"); // (#6651 U3)
     // (#5269 D-1) Same reasoning as dataProps: the accessor lives in the
     // companion, so `hasOwnProperty` / `delete` / gOPD must see it — but only
     // once the accessor seeder is actually available.
@@ -577,13 +590,16 @@ export function seededNativeProtoSymbolMembersByBrand(ctx: CodegenContext): Read
   const out = new Map<number, readonly number[]>();
   for (const [brand, seederName] of nativeProtoSeederRegistry(ctx)) {
     if (ctx.funcMap.get(seederName) === undefined) continue;
+    const glue = getNativeProtoBuiltinGlue(ctx, brand);
     const members =
-      getNativeProtoBuiltinGlue(ctx, brand)
-        ?.memberCsv.split(",")
+      glue?.memberCsv
+        .split(",")
         .map((member) => member.trim())
         .filter((member) => member.startsWith("@@"))
         .map((member) => nativeProtoMemberSymbolId(member))
         .filter((id): id is number => id !== undefined) ?? [];
+    // (#6771 S5) Symbol-keyed data props are own companion entries too.
+    for (const { id } of glue?.symbolDataProps ?? []) members.push(id);
     if (members.length > 0) out.set(brand, members);
   }
   return out;
@@ -619,6 +635,36 @@ export function seededNativeProtoSymbolMembersByBrand(ctx: CodegenContext): Read
  * table is strictly better than none (the missing member reads `undefined`,
  * exactly as today).
  */
+/**
+ * (#6771 S5) Seed `glue.symbolDataProps` into the companion (param 0 of the
+ * seeder). The value recipe runs FIRST — it may register natives — and the
+ * symbol box / define natives are resolved by name after it. Returns the count
+ * installed.
+ */
+function seedSymbolDataProps(
+  ctx: CodegenContext,
+  seedFctx: FunctionContext,
+  glue: NativeProtoBuiltinGlue,
+  defineValueIdx: number,
+): number {
+  let installed = 0;
+  for (const prop of glue.symbolDataProps ?? []) {
+    ensureSymbolCarrier(ctx);
+    const value = prop.value(ctx, seedFctx);
+    const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+    const defineIdx = ctx.funcMap.get("__defineProperty_value") ?? defineValueIdx;
+    if (value === undefined || boxSymbolIdx === undefined) continue;
+    seedFctx.body.push(
+      ...buildPrototypeSeedReceiver(),
+      ...buildPrototypeSeedSymbolKey(prop.id, boxSymbolIdx),
+      ...value,
+      ...buildPrototypeSeedDataTail(defineIdx, prop.flags),
+    );
+    installed++;
+  }
+  return installed;
+}
+
 export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: number): string | undefined {
   if (!ctx.standalone) return undefined;
   const registry = nativeProtoSeederRegistry(ctx);
@@ -739,7 +785,7 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
   // (#5194 step 1) A NUMERIC value is `<View>.prototype.BYTES_PER_ELEMENT`
   // (§23.2.7.1), whose attributes are all-false — not §17's — so the numeric
   // arm boxes the constant and uses `PROTO_CONST_DEFINE_FLAGS`.
-  for (const [key, value, flags] of glue.dataProps ?? []) {
+  for (const [key, value] of glue.dataProps ?? []) {
     const defineIdx = ctx.funcMap.get("__defineProperty_value") ?? defineValueIdx;
     if (defineIdx === undefined) continue;
     const boxNumberIdx = typeof value === "number" ? ctx.funcMap.get("__box_number") : undefined;
@@ -754,7 +800,28 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
       addStringConstantGlobal(ctx, value);
       body.push(...stringConstantExternrefInstrs(ctx, value));
     }
-    body.push(...buildPrototypeSeedDataPropertyTail(typeof value === "number" ? "number" : "string", defineIdx, flags));
+    body.push(...buildPrototypeSeedDataPropertyTail(typeof value === "number" ? "number" : "string", defineIdx));
+    installed++;
+  }
+
+  // (#6651 U3) §23.1.3: %Array.prototype% is itself an Array exotic object
+  // whose own `length` is 0 {w:T, e:F, c:F}. Without the companion entry the
+  // DYNAMIC chain consults (`__extern_has` / `__extern_get` on
+  // `Object.create(Array.prototype)`, and `with` HasBinding through them) saw
+  // the methods but no `length`.
+  const arrayLengthBoxIdx = glue.name === "Array" ? ctx.funcMap.get("__box_number") : undefined;
+  if (arrayLengthBoxIdx !== undefined) {
+    const body = seedFctx.body;
+    body.push(...buildPrototypeSeedReceiver());
+    addStringConstantGlobal(ctx, "length");
+    body.push(...stringConstantExternrefInstrs(ctx, "length"));
+    body.push(...buildPrototypeSeedNumberValue(0, arrayLengthBoxIdx));
+    body.push(
+      ...buildPrototypeSeedDataTail(
+        ctx.funcMap.get("__defineProperty_value") ?? defineValueIdx,
+        PROTOTYPE_SEED_FLAGS.arrayLength,
+      ),
+    );
     installed++;
   }
 
@@ -802,6 +869,7 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
       installed++;
     }
   }
+  installed += seedSymbolDataProps(ctx, seedFctx, glue, defineValueIdx);
 
   if (installed === 0) {
     registry.delete(brand);

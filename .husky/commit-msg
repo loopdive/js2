@@ -7,7 +7,7 @@
 #
 # Scope: rejects when the AUTHOR ident matches Claude/Anthropic patterns.
 # A Claude co-author trailer in the message is the desired convention and is
-# never rejected here. `--no-verify` bypasses this like any hook — and is
+# never rejected here. Bypassing the hooks skips this like any other — and is
 # already forbidden for commits by project convention (CLAUDE.md / memory).
 
 msg_file="$1"

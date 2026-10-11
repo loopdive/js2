@@ -58,6 +58,7 @@ import { emitStandaloneIndirectEvalRuntime, ensureRuntimeEvalCallableCarrier } f
 import { emitUndefined } from "./expressions/late-imports.js";
 import { isRuntimeEvalProviderAbsent } from "./expressions/standalone-dynamic-code.js";
 import { generatorFunctionIntrinsicGlobals } from "./generator-function-intrinsic.js";
+import { emitRegisterDynamicGeneratorFunction } from "./object-model/generator-function-proto-arm.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
@@ -294,6 +295,7 @@ function emitClaimedSite(
   fctx.body.push({ op: "local.get", index: vecLocal }, { op: "call", funcIdx: applyIdx });
   emitRuntimeEvalInterpretedCallableAdapter(ctx, fctx);
   seedGeneratorPrototype(ctx, fctx, intrinsics.generatorPrototype);
+  emitRegisterDynamicGeneratorFunction(ctx, fctx); // (#6651 W8) its [[Prototype]]
   return EXTERNREF;
 }
 

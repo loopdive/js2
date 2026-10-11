@@ -33,6 +33,8 @@ export interface ObjectGetBindings {
   readonly objectTerminalAllowsImplicitProtoIdx: FuncHandle;
   readonly templateRaw: TemplateRawReadBinding | undefined;
   readonly boundaryGet: FuncHandle | undefined;
+  /** (#6748) A regime consumer's wasm peer read, consulted before `boundaryGet`. */
+  readonly peerGetFirst?: FuncHandle;
   readonly reversePeer: ReversePeerReadBinding | undefined;
   readonly instance: InstanceReadBinding | undefined;
   readonly missingPrototype: VecOrClosureReadBinding;
@@ -141,21 +143,14 @@ function buildGetEntryAndCursor(d: ObjectGetBindings): Instr[] {
         // this one: here `null` means "not the peer's", while a consumer bag
         // field whose VALUE is `null` arrives as the same `ref.null.extern`,
         // and collapsing the two answers `undefined` for a present null.
-        ...(d.boundaryGet !== undefined
-          ? ([
-              { op: "local.get", index: 0 },
-              { op: "local.get", index: 1 },
-              { op: "call", funcIdx: d.boundaryGet! },
-              { op: "local.tee", index: 6 },
-              { op: "ref.is_null" },
-              { op: "i32.eqz" },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [{ op: "local.get", index: 6 }, { op: "return" }],
-              },
-            ] satisfies Instr[])
-          : buildReversePeerRead(d.reversePeer, 6)),
+        // (#6748) A native-regime module in a JavaScript environment has BOTH
+        // families: the wasm peer for a struct the provider minted (asked
+        // first — a JS-owned receiver is never the peer's) and the JS boundary
+        // for an admitted host object; a regime PROVIDER keeps its reverse hop
+        // after the boundary arm. Every other module has at most one.
+        ...(d.peerGetFirst !== undefined ? nullMissReadArm(d.peerGetFirst) : []),
+        ...(d.boundaryGet !== undefined ? nullMissReadArm(d.boundaryGet) : []),
+        ...buildReversePeerRead(d.reversePeer, 6),
         // (#4194) The receiver is not a `$Object`. Consult the instance
         // expando bag FIRST — an own property shadows the prototype chain
         // (§7.3.2), and this position (rather than inside the miss arm below)
@@ -397,5 +392,22 @@ function buildGetTerminalMiss(d: ObjectGetBindings): Instr[] {
             else: d.terminalMiss,
           },
         ] satisfies Instr[])),
+  ];
+}
+
+/** A boundary/peer read whose `null` answer means "not mine" (local 6 holds the result). */
+function nullMissReadArm(funcIdx: FuncHandle): Instr[] {
+  return [
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx },
+    { op: "local.tee", index: 6 },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "local.get", index: 6 }, { op: "return" }],
+    },
   ];
 }

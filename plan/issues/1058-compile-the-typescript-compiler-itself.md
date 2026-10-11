@@ -1,7 +1,7 @@
 ---
 id: 1058
 title: "Compile the TypeScript compiler itself to Wasm — self-hosting stress test"
-status: in_progress
+status: in-progress
 created: 2026-04-11
 updated: 2026-09-24
 priority: high

@@ -50,6 +50,7 @@ import {
 import {
   assertQuickjsArtifactExports,
   assertQuickjsArtifactStandalone,
+  assertQuickjsScriptPlanCapability,
   buildQuickjsAdapterSource,
   QUICKJS_ADAPTER_CANARY_EXPECTATIONS,
   QUICKJS_ADAPTER_CANARY_SOURCE,
@@ -142,6 +143,7 @@ function acquireArtifact(cacheDir) {
       );
     }
     assertQuickjsArtifactStandalone(supplied.binary);
+    assertQuickjsScriptPlanCapability(supplied, 0);
     if (from !== keyedDir) {
       mkdirSync(keyedDir, { recursive: true });
       for (const name of ["libquickjs.wasm", "qjs-abi.json", "build-info.json"]) {
@@ -158,6 +160,7 @@ function acquireArtifact(cacheDir) {
   const cached = readQuickjsArtifact(keyedDir);
   if (cached) {
     assertQuickjsArtifactStandalone(cached.binary);
+    assertQuickjsScriptPlanCapability(cached, 0);
     console.log(
       `[quickjs-eval-provider] artifact cache HIT — key ${akey}, sha256 ${cached.sha256.slice(0, 16)} at ${keyedDir}`,
     );
@@ -182,6 +185,7 @@ function acquireArtifact(cacheDir) {
   const fresh = readQuickjsArtifact(keyedDir);
   if (!fresh) throw new Error(`build.sh reported success but ${keyedDir} has no libquickjs.wasm + qjs-abi.json`);
   assertQuickjsArtifactStandalone(fresh.binary);
+  assertQuickjsScriptPlanCapability(fresh, 0);
   console.log(
     `[quickjs-eval-provider] artifact built in ${Date.now() - started}ms — ` +
       `sha256 ${fresh.sha256.slice(0, 16)}, ${fresh.binary.length} bytes`,
@@ -214,6 +218,7 @@ function verifyQuickjsPair(adapterBinary, artifact) {
     }
   }
   const quickjsModule = assertQuickjsArtifactStandalone(artifact.binary);
+  assertQuickjsScriptPlanCapability(artifact, 0);
   // A cached artifact that predates the current qjs_shim.c would otherwise fail
   // as a bare LinkError inside the canary, with nothing pointing at the shim.
   assertQuickjsArtifactExports(quickjsModule);

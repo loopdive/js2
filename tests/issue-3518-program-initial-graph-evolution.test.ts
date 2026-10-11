@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { setImmediate } from "node:timers/promises";
 import ts from "typescript";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { beforeOptionalFieldModuleRecords } from "./helpers/ir-initial-graph-optional-fields-source.js";
+import { captureSourceMapSchemaSourceEpoch } from "./helpers/ir-program-validator-relocation.js";
 import {
   assertProgramInitialGraphPin,
   assertProgramInitialGraphRecipe,
@@ -21,25 +24,44 @@ import {
 import { programPreAReceiptPath, reconstructProgramPreA } from "./helpers/ir-program-pre-a-evolution.js";
 
 import {
-  reconstructRuntimeProgramRelocationSources,
   runtimeProgramRelocationPairs,
   runtimeProgramRelocationPopulationPaths,
   runtimeProgramRelocationReceiptPath,
 } from "./helpers/ir-runtime-program-relocation.js";
+import { beforeCanonicalInstructionsSource, reconstructC1CurrentSources } from "./helpers/ir-c1-current-source.js";
+
+afterEach(async () => {
+  // Yield between synchronous source proofs so Vitest can process task-update RPCs.
+  await setImmediate();
+});
 
 function beforeC1(readLive: (path: string) => string = actual, captureCalls?: string[]): (path: string) => string {
-  const sources = reconstructRuntimeProgramRelocationSources((path) => {
+  const sources = reconstructC1CurrentSources((path) => {
     captureCalls?.push(path);
     return readLive(path);
   });
-  return (path) => {
+  const epoch = captureSourceMapSchemaSourceEpoch(readLive);
+  const beforeDonorsAndInstructions = (path: string): string => {
     if (runtimeProgramRelocationPairs.some(([donor]) => donor === path)) {
       const source = sources.get(path as Parameters<typeof sources.get>[0]);
       if (source === undefined) throw new Error(`missing checked C1 output: ${path}`);
       return source;
     }
-    return readLive(path);
+    const source = readLive(path);
+    return path === "src/wasm/model/instructions.ts" ? beforeCanonicalInstructionsSource(source) : source;
   };
+  const beforeSourceEpoch = (path: string): string => {
+    const source = beforeDonorsAndInstructions(path);
+    return [
+      "src/ir/program/input-contracts.ts",
+      "src/ir/program/prepared-contracts.ts",
+      "src/ir/program/input.ts",
+      "src/shared/contracts/ir-unit-inventory.ts",
+    ].includes(path)
+      ? epoch.before(path, source)
+      : source;
+  };
+  return beforeOptionalFieldModuleRecords(beforeSourceEpoch);
 }
 
 function actual(path: string): string {
@@ -53,6 +75,11 @@ const input = "src/ir/program/input.ts";
 const handles = "src/wasm/physical/function-handles.ts";
 const inputContract = "src/ir/program/input-contracts.ts";
 const preparedContract = "src/ir/program/prepared-contracts.ts";
+function historicalControlSource(path: string): string {
+  if (![input, inputContract, preparedContract].includes(path))
+    throw new Error("historical control source: expected one of three fixed source paths");
+  return captureSourceMapSchemaSourceEpoch(actual).before(path, actual(path));
+}
 function changed(read: (path: string) => string, path: string, text: string | undefined): ProgramInitialGraphReader {
   return (requested) => (requested === path ? text : read(requested));
 }
@@ -195,30 +222,34 @@ const mutations: readonly [string, string, () => string][] = [
   [
     "callee live operand",
     input,
-    () => replaceOnce(actual(input), "  fields(\n    captured,", "  foreignFields(\n    captured,"),
+    () => replaceOnce(historicalControlSource(input), "  fields(\n    captured,", "  foreignFields(\n    captured,"),
   ],
   [
     "receiver live operand",
     input,
-    () => replaceOnce(actual(input), "  fields(\n    captured,", "  fields(\n    input,"),
+    () => replaceOnce(historicalControlSource(input), "  fields(\n    captured,", "  fields(\n    input,"),
   ],
   [
     "required field live operand",
     input,
     () =>
       replaceOnce(
-        actual(input),
+        historicalControlSource(input),
         '["inventory", "ir", "derivedUnits", "startup", "callables", "globals", "allocations"]',
         '["inventory", "ir", "derivedUnits", "startup", "callables", "globals"]',
       ),
   ],
-  ["later optional operand", input, () => replaceOnce(actual(input), '["runtimeSupport"],', '["foreignSupport"],')],
+  [
+    "later optional operand",
+    input,
+    () => replaceOnce(historicalControlSource(input), '["runtimeSupport"],', '["foreignSupport"],'),
+  ],
   [
     "later validation body",
     input,
     () =>
       replaceOnce(
-        actual(input),
+        historicalControlSource(input),
         "assertIrRuntimeSupport(captured, captured.runtimeSupport)",
         "assertIrRuntimeSupport(input, captured.runtimeSupport)",
       ),
@@ -226,42 +257,47 @@ const mutations: readonly [string, string, () => string][] = [
   [
     "retained input body",
     input,
-    () => replaceOnce(actual(input), "assertGlobalStorage(captured)", "assertGlobalStorage(input)"),
+    () => replaceOnce(historicalControlSource(input), "assertGlobalStorage(captured)", "assertGlobalStorage(input)"),
   ],
   [
     "later validation deletion",
     input,
-    () => replaceOnce(actual(input), "    assertIrRuntimeSupport(captured, captured.runtimeSupport);\n", ""),
+    () =>
+      replaceOnce(
+        historicalControlSource(input),
+        "    assertIrRuntimeSupport(captured, captured.runtimeSupport);\n",
+        "",
+      ),
   ],
   [
     "input runtime-support import",
     input,
-    () => replaceOnce(actual(input), '"./runtime-support.js"', '"./foreign-support.js"'),
+    () => replaceOnce(historicalControlSource(input), '"./runtime-support.js"', '"./foreign-support.js"'),
   ],
   [
     "input readonly member",
     inputContract,
-    () => replaceOnce(actual(inputContract), "readonly runtimeSupport?:", "runtimeSupport?:"),
+    () => replaceOnce(historicalControlSource(inputContract), "readonly runtimeSupport?:", "runtimeSupport?:"),
   ],
   [
     "input optional member",
     inputContract,
-    () => replaceOnce(actual(inputContract), "runtimeSupport?:", "runtimeSupport:"),
+    () => replaceOnce(historicalControlSource(inputContract), "runtimeSupport?:", "runtimeSupport:"),
   ],
   [
     "prepared readonly member",
     preparedContract,
-    () => replaceOnce(actual(preparedContract), "readonly runtimeSupport?:", "runtimeSupport?:"),
+    () => replaceOnce(historicalControlSource(preparedContract), "readonly runtimeSupport?:", "runtimeSupport?:"),
   ],
   [
     "prepared optional member",
     preparedContract,
-    () => replaceOnce(actual(preparedContract), "runtimeSupport?:", "runtimeSupport:"),
+    () => replaceOnce(historicalControlSource(preparedContract), "runtimeSupport?:", "runtimeSupport:"),
   ],
   [
     "retained contract member",
     inputContract,
-    () => replaceOnce(actual(inputContract), "readonly globals:", "globals:"),
+    () => replaceOnce(historicalControlSource(inputContract), "readonly globals:", "globals:"),
   ],
   ["foreign appended executable", handles, () => `${actual(handles)}\nexport const foreign = true;\n`],
   ["shifted allocator coordinates", handles, () => `\n${actual(handles)}`],

@@ -354,6 +354,38 @@ export function ensureObjectProtoProtoSetNative(ctx: CodegenContext): number {
 }
 
 /**
+ * (#6770 S5) The pair's synthetic glue member names. The Object glue seeds
+ * `__proto__` as a real ACCESSOR entry of the `%Object.prototype%` companion
+ * (`accessorProps`, the #5269 D-1 kind), so the RUNTIME own-property surfaces
+ * — `hasOwnProperty`, gOPD through a stored builtin, gOPN, `delete`, `in` — see
+ * the §B.2.2.1 property `propertyHelper.js`'s `verifyProperty` interrogates.
+ */
+export const OBJECT_PROTO_GETTER_MEMBER = "get __proto__";
+export const OBJECT_PROTO_SETTER_MEMBER = "set __proto__";
+
+/**
+ * The seeded closures' bodies (glue member ABI: local 1 = `this`, local 2 =
+ * the value) — the same two natives the reflective closures forward to. Null,
+ * with nothing emitted, for any other member or a missing native.
+ */
+export function emitObjectProtoProtoMemberBody(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  member: string,
+): ValType | null {
+  if (!ctx.standalone) return null;
+  const half = member === OBJECT_PROTO_GETTER_MEMBER ? "get" : member === OBJECT_PROTO_SETTER_MEMBER ? "set" : null;
+  if (half === null) return null;
+  const nativeIdx = half === "get" ? ensureObjectProtoProtoGetNative(ctx) : ensureObjectProtoProtoSetNative(ctx);
+  const resolvedIdx = ctx.funcMap.get(half === "get" ? "__object_proto_get" : "__object_proto_set");
+  if (nativeIdx < 0 || resolvedIdx === undefined) return null;
+  fctx.body.push({ op: "local.get", index: 1 });
+  if (half === "set") fctx.body.push({ op: "local.get", index: 2 });
+  fctx.body.push({ op: "call", funcIdx: resolvedIdx });
+  return EXTERNREF;
+}
+
+/**
  * The identity-stable reflective closure for one half of the accessor.
  *
  * Shaped exactly like `ensureStandaloneSpeciesGetterClosure`

@@ -75,6 +75,12 @@ export interface FieldDef {
    * cost 252 bytes of every AST node — roughly half the object.
    */
   presenceBit?: number;
+  /**
+   * (#6867) The source property is declared optional (`k?: T`). A typed-ref
+   * coercion from a shape that lacks this field may complete it with
+   * `undefined` instead of failing its guarded downcast to null.
+   */
+  optional?: true;
 }
 
 export interface WasmFunction {

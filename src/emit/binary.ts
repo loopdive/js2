@@ -685,63 +685,51 @@ function encodeFunction(f: WasmFunction, enc: WasmEncoder): void {
   enc.bytes(bodyBytes);
 }
 
-/** Encode a function body, tracking instruction offsets for source maps */
+interface SourceMapRecordingContext {
+  readonly encoder: WasmEncoder;
+  readonly entries: { instrOffset: number; sourcePos: SourcePos }[];
+  readonly activeArrays: Set<Instr[]>;
+}
+// Scoped to the actual function-body encoder; ordinary cached emission has no recorder.
+let sourceMapRecording: SourceMapRecordingContext | undefined;
+
+/** Encode a function body, tracking actual instruction offsets at every nesting level. */
 function encodeFunctionWithSourceMap(
   f: WasmFunction,
   enc: WasmEncoder,
-  _bodyStartInSection: number,
+  bodyStartInSection: number,
   entries: { bodyOffset: number; instrOffset: number; sourcePos: SourcePos }[],
 ): void {
   const body = new WasmEncoder();
-
-  // Locals: group consecutive same-type locals
   const localGroups = groupLocals(f.locals);
   body.vector(localGroups, (group, e) => {
     e.u32(group.count);
     encodeValType(group.type, e);
   });
-
-  // Body instructions — track positions for instructions with sourcePos
-  for (const instr of f.body) {
-    encodeInstrWithSourceMap(instr, body, entries, _bodyStartInSection, enc);
+  const recording: SourceMapRecordingContext = { encoder: body, entries: [], activeArrays: new Set() };
+  const previousRecording = sourceMapRecording;
+  sourceMapRecording = recording;
+  try {
+    encodeInstrArray(f.body, body);
+    body.byte(OP.end);
+  } finally {
+    sourceMapRecording = previousRecording;
   }
-  body.byte(OP.end);
-
   const bodyBytes = body.finish();
-  // The function body in the code section is: u32(bodyBytes.length) + bodyBytes
-  // We need to account for the u32 prefix length when computing absolute offsets
   const u32PrefixSize = leb128UnsignedSize(bodyBytes.length);
-
-  // Adjust all entries' instrOffset: add the position of the function body data within the section
-  // entries that were just added have instrOffset relative to the body encoder
-  // We need to adjust them to be relative to the section start
-  for (const entry of entries) {
-    if (entry.bodyOffset === _bodyStartInSection) {
-      // This entry belongs to this function — adjust its instrOffset
-      entry.instrOffset = _bodyStartInSection + u32PrefixSize + entry.instrOffset;
-    }
-  }
-
+  for (const entry of recording.entries)
+    entries.push({
+      bodyOffset: bodyStartInSection,
+      instrOffset: bodyStartInSection + u32PrefixSize + entry.instrOffset,
+      sourcePos: entry.sourcePos,
+    });
   enc.u32(bodyBytes.length);
   enc.bytes(bodyBytes);
 }
 
-/** Encode instruction and collect source positions */
-function encodeInstrWithSourceMap(
-  instr: Instr,
-  enc: WasmEncoder,
-  entries: { bodyOffset: number; instrOffset: number; sourcePos: SourcePos }[],
-  bodyStartInSection: number,
-  _sectionEnc: WasmEncoder,
-): void {
-  // Record source position before encoding the instruction
-  if (instr.sourcePos) {
-    entries.push({
-      bodyOffset: bodyStartInSection,
-      instrOffset: enc.length, // position within the body encoder
-      sourcePos: instr.sourcePos,
-    });
-  }
+/** Record immediately before the real opcode, then use the ordinary serializer. */
+function encodeInstrWithSourceMap(instr: Instr, enc: WasmEncoder, recording: SourceMapRecordingContext): void {
+  if (instr.sourcePos) recording.entries.push({ instrOffset: enc.length, sourcePos: instr.sourcePos });
   encodeInstr(instr, enc);
 }
 
@@ -1023,6 +1011,7 @@ export function encodeBlockType(bt: BlockType, enc: WasmEncoder): void {
  */
 function makeInstrArrayEmitCache(root: Instr[]): InstrArrayEmitCache {
   const parentCounts = new Map<Instr[], number>();
+  parentCounts.set(root, 1);
   const visited = new Set<Instr[]>();
   const pending = [root];
   const recordChild = (child: Instr[]): void => {
@@ -1078,6 +1067,18 @@ function finishInstrArrayUse(cache: InstrArrayEmitCache, instrs: Instr[]): void 
 
 /** Encode one instruction array, reusing bytes only for shared DAG nodes. */
 function encodeInstrArray(instrs: Instr[], enc: WasmEncoder): void {
+  const recording = sourceMapRecording;
+  if (recording?.encoder === enc) {
+    if (recording.activeArrays.has(instrs))
+      throw new Error("Codegen error: cyclic instruction-array graph cannot be emitted");
+    recording.activeArrays.add(instrs);
+    try {
+      for (const instr of instrs) encodeInstrWithSourceMap(instr, enc, recording);
+    } finally {
+      recording.activeArrays.delete(instrs);
+    }
+    return;
+  }
   const cache = instrArrayEmitCache;
   if (!cache || !cache.shared.has(instrs)) {
     for (const instr of instrs) encodeInstr(instr, enc);

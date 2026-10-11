@@ -110,6 +110,14 @@ export function rewriteCjsRequireWithMap(
   const directDefaultExport = tryRewriteSingleModuleExportsAssignment(sf);
   if (directDefaultExport) rewrites.push(directDefaultExport);
 
+  // (#6876) `require('<literal>')` inside module-scope control flow — the
+  // `process.env.NODE_ENV` idiom (`if (…) { module.exports = require('./a') }
+  // else { … require('./b') }`) every React-family package uses. Hoist each
+  // distinct specifier to one module-scope default import (the same binding
+  // the top-level `const x = require('…')` rewrite produces) and replace the
+  // call with it. Evaluation becomes eager at module init, as under a bundler.
+  const hoistedImports = collectInBranchRequireHoists(sf, rewrites);
+
   // A static require rewrite turns a CommonJS file into an ESM file. Surface
   // its `module.exports` value explicitly before that happens, including
   // assignment expressions nested in a UMD wrapper. Otherwise TypeScript no
@@ -140,11 +148,13 @@ export function rewriteCjsRequireWithMap(
     return { source, positionMap: PositionMap.identity() };
   }
 
-  const modulePrelude = wrapModuleExports
-    ? "/** @type {any} */ let __cjs_default_export = Object.create(Object.prototype);\n" +
-      "/** @type {any} */ const exports = __cjs_default_export;\n" +
-      "/** @type {any} */ const module = {};\n"
-    : "";
+  const modulePrelude =
+    hoistedImports +
+    (wrapModuleExports
+      ? "/** @type {any} */ let __cjs_default_export = Object.create(Object.prototype);\n" +
+        "/** @type {any} */ const exports = __cjs_default_export;\n" +
+        "/** @type {any} */ const module = {};\n"
+      : "");
   // Export the binding, not an `export default <expression>` snapshot. CommonJS
   // is allowed to replace `module.exports` while the module executes; importers
   // must observe that final/live cell rather than the empty object seeded by the
@@ -459,6 +469,48 @@ function tryRenderRequireImport(decl: ts.VariableDeclaration): string | null {
 
   // Array destructuring or other patterns — leave alone.
   return null;
+}
+
+/**
+ * (#6876) Find `require('<literal>')` calls nested in module-scope control
+ * flow (not inside functions or classes, and not inside a statement another
+ * rewrite already replaces), register a call-site rewrite to a hoisted
+ * binding for each, and return the import lines to prepend. One import per
+ * distinct specifier.
+ */
+function collectInBranchRequireHoists(sf: ts.SourceFile, rewrites: RequireRewrite[]): string {
+  const taken = rewrites.map((r) => ({ start: r.start, end: r.end }));
+  const covered = (start: number, end: number): boolean => taken.some((t) => start >= t.start && end <= t.end);
+  const bindingBySpec = new Map<string, string>();
+  const lines: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionLike(node) || ts.isClassLike(node)) return;
+    if (ts.isCallExpression(node)) {
+      const raw = extractRequireSpecifier(node);
+      if (raw !== null) {
+        const start = node.getStart(sf);
+        if (covered(start, node.end)) return;
+        const moduleSpec = isNodeBuiltin(raw) && !raw.startsWith("node:") ? `node:${normalizeNodeBuiltin(raw)}` : raw;
+        let name = bindingBySpec.get(moduleSpec);
+        if (name === undefined) {
+          name = `__cjs_hoisted_require_${bindingBySpec.size}`;
+          bindingBySpec.set(moduleSpec, name);
+          lines.push(`import ${name} from ${JSON.stringify(moduleSpec)};`);
+        }
+        rewrites.push({ start, end: node.end, text: name });
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  for (const stmt of sf.statements) {
+    // Top-level variable statements are the existing rewrite's domain: the
+    // ones it declines (reassigned bindings, rest patterns, default
+    // initializers) stay as written, by design (#1279).
+    if (ts.isVariableStatement(stmt) || covered(stmt.getStart(sf), stmt.end)) continue;
+    visit(stmt);
+  }
+  return lines.length === 0 ? "" : `${lines.join("\n")}\n`;
 }
 
 /**

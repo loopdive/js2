@@ -4,6 +4,7 @@ import { AllocSiteRegistry, copyIrPreparationData } from "../analysis/alloc-regi
 import { preparedIrDataMismatch } from "./data.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
 import type { TypedIrProgramInput, TypedIrProgramOptions } from "./input-contracts.js";
+import { assertPreparedSourceMap } from "./validation.js";
 import { assertIrRuntimeSupport } from "./runtime-support.js";
 
 function invalid(detail: string): never {
@@ -80,7 +81,7 @@ export function ownTypedIrProgramInput(input: TypedIrProgramInput): {
   fields(
     captured,
     ["inventory", "ir", "derivedUnits", "startup", "callables", "globals", "allocations"],
-    ["runtimeSupport"],
+    ["runtimeSupport", "sourceMap"],
   );
   fields(captured.inventory, ["sources", "classes", "allUnits", "terminalUnits"]);
   for (const values of [
@@ -112,6 +113,7 @@ export function ownTypedIrProgramInput(input: TypedIrProgramInput): {
     if (captured.runtimeSupport === undefined) invalid("typed input must omit absent runtime support");
     assertIrRuntimeSupport(captured, captured.runtimeSupport);
   }
+  assertPreparedSourceMap(captured);
   // Joint restoration retains sharing between IR, sites, and metadata values.
   const restored = AllocSiteRegistry.restorePreparationData(captured.allocations, captured);
   return { input: restored.data, allocations: restored.allocations };

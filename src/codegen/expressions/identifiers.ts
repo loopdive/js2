@@ -1006,7 +1006,7 @@ function compileExactAmbientShadowedModuleBinding(
   const declaration = findUserBindingDecl(id);
   if (!declaration || !ts.isVariableDeclaration(declaration)) return undefined;
   const binding = ctx.programAbiGlobals?.moduleBinding(declaration);
-  if (!binding) return undefined;
+  if (!binding) return hoistedScriptVarRead(ctx, fctx, declaration);
   const localIdx = ctx.mod.globals.indexOf(binding.value);
   if (localIdx < 0) return undefined;
   if (binding.tdz) {
@@ -1021,6 +1021,34 @@ function compileExactAmbientShadowedModuleBinding(
   }
   fctx.body.push({ op: "global.get", index: ctx.numImportGlobals + localIdx });
   return binding.value.type;
+}
+
+/**
+ * (#6651 U2) The #2176 read above for a script-level `var` that is NESTED in a
+ * statement (`for (…) { var name = … }`). Its global is registered by name only
+ * (`registerVarDeclListGlobals` observes no declaration), so the exact lookup
+ * misses it and the read fell to the lib global (`globalThis.name`, undefined —
+ * `harness/testTypedArray.js`). Only reached in script mode, where every
+ * top-level `var` of the program shares one global environment, so the
+ * name-keyed module global IS this binding. A `var` inside a function is a
+ * local and never gets here.
+ */
+function hoistedScriptVarRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  declaration: ts.VariableDeclaration,
+): ValType | undefined {
+  const list = declaration.parent;
+  if (!ts.isVariableDeclarationList(list) || (list.flags & ts.NodeFlags.BlockScoped) !== 0) return undefined;
+  if (ts.isVariableStatement(list.parent) && ts.isSourceFile(list.parent.parent)) return undefined;
+  let scope: ts.Node = list.parent;
+  while (!ts.isSourceFile(scope)) {
+    if (ts.isFunctionLike(scope) || ts.isClassLike(scope)) return undefined;
+    scope = scope.parent;
+  }
+  const name = (declaration.name as ts.Identifier).text;
+  if (!ctx.moduleGlobals.has(name)) return undefined;
+  return emitLiveIdentifierGlobalRead(ctx, fctx, ctx.moduleGlobals, name);
 }
 
 /** The non-`with` identifier lowering (locals, globals, funcs, builders,

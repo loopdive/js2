@@ -1,10 +1,11 @@
 ---
 id: 6732
 title: "standalone axios: the #4586 O4 `--skip-pass=flatten` retry runs far past wasm-opt's 600 s timeout, and the retry's failure text is truncated away"
-status: ready
+status: done
 sprint: current
 created: 2026-09-28
-updated: 2026-09-28
+updated: 2026-09-29
+completed: 2026-09-29
 priority: medium
 horizon: m
 feasibility: medium
@@ -13,7 +14,7 @@ task_type: bug
 area: compiler
 goal: standalone
 requested_by: ttraenkler/sendev-standalone
-related: [1032, 4157, 4586, 6714]
+related: [1032, 4157, 4586, 6714, 6742]
 ---
 
 # #6732 — axios standalone-dynamic: O4 retry without Flatten times out
@@ -66,3 +67,22 @@ reason is cut off.
    #4157 inline-cache hints and the module size (9.2 MB raw). Either bring it
    under the budget, or give the standalone-dynamic lane a documented O4 → O3
    fallback on timeout. O3 does not run Flatten.
+
+## Implementation Plan (executed, with #6742)
+
+1. Diagnostics: `src/optimize.ts` `wasmOptFailure()` drops Binaryen.js's
+   source-line dump, the caret line and the JS stack. It names a timeout
+   (`wasm-opt timed out after N ms`). The retry's failure is written first
+   (`retry without flatten failed: …`), ahead of the first run's text.
+2. Time: the standalone lanes no longer insist on `-O4` for every module.
+   [#6742](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6742-npm-compat-standalone-budget-aware-wasm-opt-level)
+   plans the level from the raw size (axios, 9.26 MB → `-O2`) and steps down
+   4 → 2 → 1 on a failure or timeout. The level used is recorded on the lane.
+
+## Resolution
+
+Fixed by #6742. The measurements, and the axios before/after lane, are in
+that issue and its PR. Regression test: `tests/issue-6742-wasm-opt-budget.test.ts`
+("#6732 — optimizer failure text"). Both tests fail with the parent
+`src/optimize.ts`: the timeout is not named, and the retry text is lost
+behind the source dump.

@@ -141,15 +141,19 @@ export function invalidPreparedData(detail: string): never {
 }
 
 function isRecursiveIrClassShape(value: object): boolean {
-  const candidate = value as Record<PropertyKey, unknown>;
+  const own = (key: PropertyKey): unknown => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && Object.hasOwn(descriptor, "value") ? descriptor.value : undefined;
+  };
+  const classId = own("classId");
   return (
-    candidate[IR_CLASS_SHAPE_CELL] === true &&
-    typeof candidate.classId === "string" &&
-    candidate.classId.startsWith("ir-class:v1:") &&
-    typeof candidate.className === "string" &&
-    Array.isArray(candidate.fields) &&
-    Array.isArray(candidate.methods) &&
-    Array.isArray(candidate.constructorParams)
+    own(IR_CLASS_SHAPE_CELL) === true &&
+    typeof classId === "string" &&
+    classId.startsWith("ir-class:v1:") &&
+    typeof own("className") === "string" &&
+    Array.isArray(own("fields")) &&
+    Array.isArray(own("methods")) &&
+    Array.isArray(own("constructorParams"))
   );
 }
 

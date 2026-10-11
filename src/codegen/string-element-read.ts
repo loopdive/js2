@@ -18,7 +18,7 @@ import { ensureNativeStringHelpers } from "./native-strings.js";
 import { buildTaDynViewElementGetDispatch } from "./dataview-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
-import { compileExpression, ensureLateImport, flushLateImportShifts, skipTransparentExpressions } from "./shared.js";
+import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { ensureExternIsUndefinedImport } from "./expressions/late-imports.js";
 
 /**
@@ -73,9 +73,9 @@ export function emitGuardedNativeStringElementGet(
   // undefined singleton.  This helper owns the fallback arm for `any[i]`, so
   // it must enforce RequireObjectCoercible on the captured receiver before
   // either string probing or the dynamic index read.
-  const receiverExpr = skipTransparentExpressions(recvExpr);
-  const isUndefinedIdx =
-    ctx.standalone && !ts.isIdentifier(receiverExpr) ? ensureExternIsUndefinedImport(ctx) : undefined;
+  // Identifier locals can hold the undefined singleton too, including a
+  // string | undefined union. A null-only check cannot recognize that value.
+  const isUndefinedIdx = ctx.standalone ? ensureExternIsUndefinedImport(ctx) : undefined;
   flushLateImportShifts(ctx, fctx);
   fctx.body.push({ op: "local.set", index: recvLocal });
   const receiverTypeError = (): Instr[] =>

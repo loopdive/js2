@@ -1,0 +1,11 @@
+function g(a: number): number {
+  let x = a;
+  x = x * 2;
+  return x + 1;
+}
+export function main(): number {
+  let s = 100;
+  s = s + 5;
+  const r = g(3);
+  return s * 1000 + r;
+}

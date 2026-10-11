@@ -187,7 +187,9 @@ const CONTROLS: ReadonlyArray<readonly [string, string]> = [
   // the linked case answering `false` is that gap and not this slice's. Named
   // as a residual in the issue.
   ["Object.getPrototypeOf(Sub) === NS.Base", "false"],
-  ["Object.getPrototypeOf(LocalDerived) === LocalBase", "false"],
+  // (#6772 S6) The LOCAL case is fixed: a derived class spelled by an unwritten
+  // binding answers its parent's class object (§10.1.13 / §15.7.14 step 8).
+  ["Object.getPrototypeOf(LocalDerived) === LocalBase", "true"],
 ];
 
 describe("#6644 — standalone static inheritance and `instanceof` across a provider link", () => {

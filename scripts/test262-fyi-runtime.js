@@ -36,22 +36,29 @@ var $262 = {
     var realmGlobal = {
       Array: globalThis.Array,
       ArrayBuffer: globalThis.ArrayBuffer,
+      Boolean: globalThis.Boolean,
+      DataView: globalThis.DataView,
       Date: globalThis.Date,
       Function: globalThis.Function,
       Iterator: globalThis.Iterator,
+      Map: globalThis.Map,
       Math: globalThis.Math,
-      // NO `Object: globalThis.Object` forward — measured 2026-08-23 (PR
-      // #4794 merge_group park): ANY compiled read of `globalThis.Object` /
-      // `globalThis["Object"]` in this prelude (which compiles into EVERY
-      // test) changes how js-host dynamic `import()` rejections construct
-      // their error — `error.constructor` degrades TypeError → Error,
-      // regressing test/language/expressions/dynamic-import/
-      // assignment-expression/import-meta.js from pass. Isolated by shim
-      // bisection: dropping ONLY this entry restores the pass; every other
-      // forward is inert. Re-add only together with a compiler-side fix and
-      // that test in the validation list.
+      Number: globalThis.Number,
+      // (#6651 U1) The `Object` forward was held back after the 2026-08-23
+      // PR #4794 merge_group park (js-host `dynamic-import/assignment-
+      // expression/import-meta.js` lost its TypeError). Lane S1 re-measured
+      // 2026-09-26: that row passes WITH the forward on current main, and the
+      // 196-row cross-realm bucket changed 0 host statuses. U1 re-checked the
+      // row on both lanes before re-adding it.
+      Object: globalThis.Object,
+      Promise: globalThis.Promise,
       Proxy: globalThis.Proxy,
+      RegExp: globalThis.RegExp,
+      Set: globalThis.Set,
+      String: globalThis.String,
       Symbol: globalThis.Symbol,
+      WeakMap: globalThis.WeakMap,
+      WeakSet: globalThis.WeakSet,
       eval: globalThis.eval,
       parseInt: globalThis.parseInt,
       Error: mkerr(),

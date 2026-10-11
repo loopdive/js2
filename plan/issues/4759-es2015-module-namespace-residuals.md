@@ -1,7 +1,7 @@
 ---
 id: 4759
 title: "ES2015 module namespace Test262 residuals"
-status: in_progress
+status: in-progress
 created: 2026-08-26
 updated: 2026-09-20
 priority: critical

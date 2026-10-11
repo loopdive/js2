@@ -30,6 +30,9 @@ import { allocLocal } from "./context/locals.js";
 import { addFuncType, getOrRegisterArrayType } from "./registry/types.js";
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
+import { exportPromiseHandlerBoundary } from "./registry/promise-handler-boundary.js";
+import { exportOneMicrotaskDrain } from "./registry/microtask-drain-boundary.js";
+import { registerMicrotaskNotification } from "./registry/microtask-notification.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stable handles never shift
 // (#3125) Thenable-assimilation helpers use the physical wrapper registry and
@@ -55,6 +58,11 @@ import { CARRIER_BAG_HAS } from "./carrier-bag-visibility.js";
 // module; the inline hooks in this file (settle-body note, Promise.reject mint)
 // call these two. `ensureUnhandledRejectionReporter` is imported by index.ts.
 import { ensureUnhandledRejectionTracking, buildNoteUnhandledRejection } from "./unhandled-rejection.js";
+import {
+  buildPromiseRejectionEvent,
+  buildPromiseReactionHandled,
+} from "../runtime/wasmgc/promise/rejection-event-bodies.js";
+import { promiseRejectionDispatcher } from "./registry/promise-rejection-dispatch.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { tryEmitObservablePromiseFinally } from "./promise-finally-invoke.js"; // (#6651 D7)
 import {
@@ -99,6 +107,19 @@ import {
   buildDrainBody,
   type PreparedNativeMicrotaskReservations,
 } from "../runtime/wasmgc/async/microtask-queue-bodies.js";
+
+/** Bind native rejection emission without resolving the dispatcher eagerly. */
+export function createPromiseRejectionEmissionBindings(ctx: CodegenContext): {
+  resolvePromiseRejectionDispatcher: () => ReturnType<typeof promiseRejectionDispatcher>;
+  buildPromiseRejectionEvent: typeof buildPromiseRejectionEvent;
+  buildPromiseReactionHandled: typeof buildPromiseReactionHandled;
+} {
+  return {
+    resolvePromiseRejectionDispatcher: () => promiseRejectionDispatcher(ctx),
+    buildPromiseRejectionEvent,
+    buildPromiseReactionHandled,
+  };
+}
 
 const DENO_PROMISE_HOOK_DISPATCH = "__v8x_dispatch_promise_hook";
 
@@ -148,6 +169,7 @@ function bindPromiseSettleResources(
     promiseTypeIdx,
     callbackTypeIdx,
     resolveHook,
+    rejectionDispatchFuncIdx: promiseRejectionDispatcher(ctx),
     unhandledHeadGlobalIdx: state.unhandledHeadGlobalIdx,
     unhandledNodeTypeIdx: state.unhandledNodeTypeIdx,
     enqueueFuncIdx: state.enqueueFuncIdx,
@@ -416,12 +438,13 @@ export type CodegenContextWithScheduler = CodegenContext & { asyncScheduler?: As
 
 /**
  * #1326 — Get or register the `$Promise` WasmGC struct type. The struct
- * has four fields:
+ * has five fields:
  *   - state: i32 (0=pending, 1=fulfilled, 2=rejected)
  *   - value: externref (fulfilled value or rejection reason)
  *   - callbacks: externref (nullable `$PromiseCallback` linked list for
  *     pending `.then` continuations)
  *   - $bag: externref (nullable own-property bag, allocated on first expando)
+ *   - $handled: i32 slot 4 (persistent handling state, not a JS property)
  *
  * Returns the registered struct's typeIdx, cached for re-use.
  */
@@ -437,6 +460,7 @@ export function getOrRegisterPromiseType(ctx: CodegenContext): number {
       { name: "value", type: { kind: "externref" }, mutable: true },
       { name: "callbacks", type: { kind: "externref" }, mutable: true },
       closureBagField(),
+      { name: "$handled", type: { kind: "i32" }, mutable: true },
     ],
   });
   // Mirror the bookkeeping that other struct registrations do so the
@@ -448,6 +472,7 @@ export function getOrRegisterPromiseType(ctx: CodegenContext): number {
     { name: "value", type: { kind: "externref" as const }, mutable: true },
     { name: "callbacks", type: { kind: "externref" as const }, mutable: true },
     closureBagField(),
+    { name: "$handled", type: { kind: "i32" as const }, mutable: true },
   ]);
   state.promiseTypeIdx = typeIdx;
   return typeIdx;
@@ -514,6 +539,7 @@ function getOrRegisterThenCapsType(ctx: CodegenContext): number {
 export function ensureMicrotaskQueue(ctx: CodegenContext): void {
   const state = getOrInitState(ctx as CodegenContextWithScheduler);
   if (state.enqueueFuncIdx !== -1) return; // already registered
+  const notification = registerMicrotaskNotification(ctx);
 
   // 1. Type registration.
   //    Args/captures arrays share `__arr_externref` (already registered for
@@ -633,7 +659,7 @@ export function ensureMicrotaskQueue(ctx: CodegenContext): void {
       "$__mt_enqueue_type",
     ),
     locals: [],
-    body: buildEnqueueBody(queueResources),
+    body: [...buildEnqueueBody(queueResources), ...notification],
     exported: false,
   });
   ctx.funcMap.set("__microtask_enqueue", state.enqueueFuncIdx);
@@ -776,6 +802,7 @@ export interface PromiseExecutorClosures {
    * capture. Every read/write of the capture derives from this, never a literal.
    */
   capPromiseFieldIdx: number;
+  guardTypeIdx: number;
   /**
    * (#5197 Slice B) The `$__promise_settle_meta` typeIdx — the shared
    * builtin-function metadata subtype (`{name: "", length: 1}`) both settle
@@ -803,8 +830,9 @@ export function buildPromiseSettleClosureInstrs(
   closures: PromiseExecutorClosures,
   clFuncIdx: number,
   promiseInstrs: readonly Instr[],
+  guardInstrs: readonly Instr[] = [],
 ): Instr[] {
-  return buildPromiseSettleClosureValue(closures, clFuncIdx, promiseInstrs);
+  return buildPromiseSettleClosureValue(closures, clFuncIdx, promiseInstrs, guardInstrs);
 }
 
 /**
@@ -860,6 +888,12 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
   );
   const capMetaFields = (ctx.mod.types[capMetaTypeIdx] as { fields: FieldDef[] }).fields;
   const capPromiseFieldIdx = capMetaFields.length;
+  const guardTypeIdx = ctx.mod.types.length;
+  ctx.mod.types.push({
+    kind: "struct",
+    name: "$__promise_resolving_pair",
+    fields: [{ name: "alreadyResolved", type: { kind: "i32" }, mutable: true }],
+  });
   const capTypeIdx = ctx.mod.types.length;
   ctx.mod.types.push({
     kind: "struct",
@@ -869,6 +903,7 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
       // header + `bfnstate` + `bfnid`); the capture is appended after them.
       ...capMetaFields.map((f) => ({ ...f })),
       { name: "cap_promise", type: { kind: "ref", typeIdx: promiseTypeIdx }, mutable: false },
+      { name: "cap_guard", type: { kind: "ref", typeIdx: guardTypeIdx }, mutable: false },
     ],
     superTypeIdx: capMetaTypeIdx,
   });
@@ -881,17 +916,27 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
   // Body: recover captured promise from self (downcast to the cap subtype),
   // then settle it with the incoming value. resolve routes through
   // __promise_resolve_value (assimilation: resolve(aPromise) chains); reject
-  // routes through __promise_reject. The already-settled guard lives in the
-  // settle helpers (buildPromiseSettleBody), so double-settle / settle-after-
-  // throw is a spec-correct no-op by construction.
-  const makeBody = (settleFuncIdx: number): Instr[] =>
-    buildPromiseSettleClosureBody({ capTypeIdx, capMetaTypeIdx, capPromiseFieldIdx }, settleFuncIdx);
+  // routes through __promise_reject. The shared resolving-pair latch is set
+  // before either helper runs: pending adoption is already resolved even
+  // though the Promise's settlement state has not changed yet.
+  const makeBody = (settleFuncIdx: number, duplicateEvent: 2 | 3): Instr[] =>
+    buildPromiseSettleClosureBody(
+      {
+        capTypeIdx,
+        capMetaTypeIdx,
+        capPromiseFieldIdx,
+        guardTypeIdx,
+        rejectionDispatchFuncIdx: promiseRejectionDispatcher(ctx),
+        duplicateEvent,
+      },
+      settleFuncIdx,
+    );
 
   pushDefinedFunc(ctx, resolveClFuncIdx, {
     name: "__promise_resolve_cl",
     typeIdx: wrapper.liftedFuncTypeIdx,
     locals: [],
-    body: makeBody(resolveValueFuncIdx),
+    body: makeBody(resolveValueFuncIdx, 3),
     exported: false,
   });
   ctx.funcMap.set("__promise_resolve_cl", resolveClFuncIdx);
@@ -900,7 +945,7 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
     name: "__promise_reject_cl",
     typeIdx: wrapper.liftedFuncTypeIdx,
     locals: [],
-    body: makeBody(rejectFuncIdx),
+    body: makeBody(rejectFuncIdx, 2),
     exported: false,
   });
   ctx.funcMap.set("__promise_reject_cl", rejectClFuncIdx);
@@ -910,6 +955,7 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
     rejectClFuncIdx,
     capTypeIdx,
     capPromiseFieldIdx,
+    guardTypeIdx,
     capMetaTypeIdx,
     promiseTypeIdx,
     rejectFuncIdx,
@@ -1089,6 +1135,7 @@ function buildPromiseResolveValueBody(
   const thenStringInstrs = hasOwnThenArm ? stringConstantExternrefInstrs(ctx, "then") : [];
   const thenGetStringInstrs = hasOwnThenArm ? stringConstantExternrefInstrs(ctx, "then") : [];
   return buildResolutionBody({
+    rejectionDispatchFuncIdx: promiseRejectionDispatcher(ctx),
     target: { wasi: ctx.wasi, standalone: ctx.standalone },
     state,
     promiseTypeIdx,
@@ -1594,10 +1641,26 @@ export function emitDrainMicrotasks(ctx: CodegenContext, fctx: FunctionContext):
 export function exportDrainMicrotasksIfRegistered(ctx: CodegenContext): void {
   const state = (ctx as CodegenContextWithScheduler).asyncScheduler;
   if (!state || state.drainFuncIdx === -1 || state.drainExported) return;
+  exportOneMicrotaskDrain(ctx, state, MICROTASK_QUEUE_INITIAL_SLOTS);
   ctx.mod.exports.push({
     name: "__drain_microtasks",
     desc: { kind: "func", index: state.drainFuncIdx },
   });
+  // Native embedders must observe quiescence rather than guessing that a
+  // drain of one graph did not enqueue work in another graph or host queue.
+  const pendingIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, pendingIdx, {
+    name: "__microtasks_pending",
+    typeIdx: addFuncType(ctx, [], [{ kind: "i32" }], "$__mt_pending_type"),
+    locals: [],
+    body: [
+      { op: "global.get", index: state.microtaskTailGlobalIdx },
+      { op: "global.get", index: state.microtaskHeadGlobalIdx },
+      { op: "i32.sub" },
+    ],
+    exported: false,
+  });
+  ctx.mod.exports.push({ name: "__microtasks_pending", desc: { kind: "func", index: pendingIdx } });
   state.drainExported = true;
 }
 
@@ -1628,6 +1691,7 @@ export function exportPromiseBoundaryIfRegistered(ctx: CodegenContext): void {
   if (ctx.mod.exports.some((entry) => entry.name === "__promise_boundary_state")) return;
 
   const promiseTypeIdx = state.promiseTypeIdx;
+  exportPromiseHandlerBoundary(ctx, promiseTypeIdx, state.markRejectionHandledFuncIdx);
   const stateFuncIdx = mintDefinedFunc(ctx);
   pushDefinedFunc(ctx, stateFuncIdx, {
     name: "__promise_boundary_state",
@@ -1740,6 +1804,7 @@ export function exportPromiseBoundaryIfRegistered(ctx: CodegenContext): void {
       { op: "any.convert_extern" },
       { op: "ref.cast", typeIdx: promiseTypeIdx },
       { op: "local.set", index: 2 },
+      ...buildPromiseReactionHandled(promiseRejectionDispatcher(ctx), promiseTypeIdx, 2),
       { op: "local.get", index: 1 },
       { op: "struct.new", typeIdx: capsTypeIdx },
       { op: "extern.convert_any" },
@@ -1802,7 +1867,8 @@ export function exportPromiseBoundaryIfRegistered(ctx: CodegenContext): void {
  * async frame driver reuses them rather than forking a parallel scheduler.
  */
 export interface AsyncDriveRuntime {
-  /** `$Promise` struct typeIdx (`{state i32, value externref, callbacks externref, $bag externref}`). */
+  rejectionDispatchFuncIdx?: number;
+  /** `$Promise` struct typeIdx (`{state i32, value externref, callbacks externref, $bag externref, $handled i32}`). */
   promiseTypeIdx: number;
   /** `$PromiseCallback` reaction-node typeIdx ({@link getOrRegisterPromiseCallbackTypeIdx}). */
   callbackTypeIdx: number;
@@ -1845,6 +1911,7 @@ export function ensureAsyncDriveRuntime(ctx: CodegenContext): AsyncDriveRuntime 
     enqueueFuncIdx: state.enqueueFuncIdx,
     drainFuncIdx: state.drainFuncIdx,
     markRejectionHandledFuncIdx: state.markRejectionHandledFuncIdx,
+    rejectionDispatchFuncIdx: promiseRejectionDispatcher(ctx),
   };
 }
 
@@ -3554,7 +3621,7 @@ export function getRunLoopFuncIdxForWasiStart(ctx: CodegenContext): number | nul
  *   - <valueInstrs>                (value = caller's pushed externref)
  *   - ref.null extern              (callbacks placeholder — Phase 1C-B
  *                                   will upgrade to a typed pending list)
- *   - struct.new $Promise          (consumes 4 stack values, including null `$bag`)
+ *   - struct.new $Promise          (consumes 5 stack values, including null `$bag` and zero `$handled`)
  *   - extern.convert_any           (lift (ref $Promise) → externref so
  *                                   downstream consumers keep working)
  *
@@ -3583,6 +3650,7 @@ export function emitStandalonePromiseResolve(ctx: CodegenContext, fctx: Function
     for (const instr of valueInstrs) fctx.body.push(instr);
     fctx.body.push({ op: "ref.null.extern" });
     fctx.body.push(closureBagInitInstr());
+    fctx.body.push({ op: "i32.const", value: 0 });
     fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
     fctx.body.push({ op: "extern.convert_any" });
     return;
@@ -3617,6 +3685,7 @@ export function emitStandalonePromiseResolve(ctx: CodegenContext, fctx: Function
       { op: "ref.null.extern" },
       { op: "ref.null.extern" },
       closureBagInitInstr(),
+      { op: "i32.const", value: 0 },
       { op: "struct.new", typeIdx: promiseTypeIdx },
       { op: "local.set", index: pLocal },
       ...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_INIT, [{ op: "local.get", index: pLocal }]),
@@ -3647,6 +3716,7 @@ export function emitStandalonePromiseReject(ctx: CodegenContext, fctx: FunctionC
   for (const instr of reasonInstrs) fctx.body.push(instr);
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push(closureBagInitInstr());
+  fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: pLocal });
   fctx.body.push(
@@ -3658,6 +3728,17 @@ export function emitStandalonePromiseReject(ctx: CodegenContext, fctx: FunctionC
       fctx.body.push(instr);
     }
   }
+  fctx.body.push(
+    ...buildPromiseRejectionEvent(
+      promiseRejectionDispatcher(ctx),
+      0,
+      [{ op: "local.get", index: pLocal }],
+      [
+        { op: "local.get", index: pLocal },
+        { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
+      ],
+    ),
+  );
   fctx.body.push({ op: "local.get", index: pLocal });
   fctx.body.push({ op: "extern.convert_any" });
 }
@@ -3783,6 +3864,7 @@ export function emitStandalonePromiseThen(
   const nativeBody: Instr[] = [];
   fctx.savedBodies.push(outerBody);
   fctx.body = nativeBody;
+  fctx.body.push(...buildPromiseReactionHandled(promiseRejectionDispatcher(ctx), promiseTypeIdx, promiseLocal));
 
   // Chained promise starts pending with no callbacks.
   const mintChained: Instr[] = [
@@ -3790,6 +3872,7 @@ export function emitStandalonePromiseThen(
     { op: "ref.null.extern" },
     { op: "ref.null.extern" },
     closureBagInitInstr(),
+    { op: "i32.const", value: 0 },
     { op: "struct.new", typeIdx: promiseTypeIdx },
     { op: "local.set", index: chainedLocal },
   ];
@@ -3862,8 +3945,8 @@ export function emitStandalonePromiseThen(
           else: [
             // Pending receiver: push a callback node in front of the current
             // callback list. This preserves every continuation needed for
-            // chaining. FIFO append can be added later without changing the
-            // node shape; simple chains have one pending callback per promise.
+            // chaining. Settlement reverses multi-node lists before enqueueing
+            // to restore registration order without changing immutable nodes.
             { op: "local.get", index: promiseLocal },
             { op: "ref.func", funcIdx: fulfillWrapperFuncIdx },
             { op: "local.get", index: fulfilledCapsLocal },
@@ -4123,6 +4206,7 @@ function ensurePromiseFinallyRuntime(ctx: CodegenContext): void {
       { op: "struct.new", typeIdx: callbackTypeIdx },
       { op: "extern.convert_any" },
       closureBagInitInstr(),
+      { op: "i32.const", value: 1 },
       { op: "struct.new", typeIdx: promiseTypeIdx },
       { op: "local.set", index: 5 },
       ...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_INIT, [{ op: "local.get", index: 5 }]),
@@ -4434,6 +4518,7 @@ export function emitStandalonePromiseFinally(
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push(closureBagInitInstr());
+  fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: chainedLocal });
   fctx.body.push(
@@ -4454,6 +4539,7 @@ export function emitStandalonePromiseFinally(
   fctx.body.push({ op: "struct.new", typeIdx: capsTypeIdx });
   fctx.body.push({ op: "extern.convert_any" });
   fctx.body.push({ op: "local.set", index: capsLocal });
+  fctx.body.push(...buildPromiseReactionHandled(promiseRejectionDispatcher(ctx), promiseTypeIdx, promiseLocal));
 
   fctx.body.push(
     { op: "local.get", index: promiseLocal },

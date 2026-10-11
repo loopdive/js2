@@ -228,6 +228,8 @@ export class CompilerPool {
       fixtureFiles?: Record<string, string>;
       /** Virtual entry path used to resolve `fixtureFiles` imports. */
       entryFile?: string;
+      /** Explicit request for a revalidated entry-only value self-import graph. */
+      requiresEntrySelfImportGraph?: boolean;
       wasmPath?: string;
       metaPath?: string;
       label?: string;
@@ -281,6 +283,7 @@ export class CompilerPool {
         asyncTest: opts.asyncTest || false,
         fixtureFiles: opts.fixtureFiles,
         entryFile: opts.entryFile,
+        requiresEntrySelfImportGraph: opts.requiresEntrySelfImportGraph,
         wasmPath: opts.wasmPath,
         metaPath: opts.metaPath,
         target: opts.target,

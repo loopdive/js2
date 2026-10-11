@@ -37,6 +37,7 @@ import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import type { PreparedIrProgram, PreparedIrProgramRuntimeProjection } from "./program/prepared-contracts.js";
 import { preparedIrDraftAbiLookup } from "./program-abi-contracts.js";
 import { irProgramRuntimeDemands } from "./program-runtime-demands.js";
+import { assertPreparedSourceMap } from "./program/validation.js";
 import { assertPreparedIrProgram } from "./program-validation.js";
 import { prepareWholeProgramRuntimeManifest } from "./runtime-program-manifest.js";
 
@@ -438,6 +439,7 @@ export function reauthenticatePreparedIrProgram(persisted: PreparedIrProgram): P
     derivedUnits: persisted.derivedUnits,
     startup: persisted.startup,
     allocations: persisted.allocations,
+    ...(persisted.sourceMap === undefined ? {} : { sourceMap: persisted.sourceMap }),
     ...(persisted.runtimeSupport === undefined ? {} : { runtimeSupport: persisted.runtimeSupport }),
     runtime: Object.freeze(runtime),
     reconciliation: persisted.reconciliation,
@@ -622,4 +624,5 @@ export function assertPreparedIrProgramShape(value: unknown): asserts value is P
     }
     requireMap(prepared.providers, `program.runtime[${index}].prepared.providers`);
   }
+  if (Object.hasOwn(program, "sourceMap")) assertPreparedSourceMap(value as PreparedIrProgram);
 }

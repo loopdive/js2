@@ -58,7 +58,6 @@ import {
   buildPromiseSettleClosureInstrs,
   isStandalonePromiseActive,
 } from "./async-scheduler.js";
-import { buildSettlePairUnresolvedInstrs } from "../runtime/wasmgc/promise/resolution-bodies.js"; // (#5197 r3)
 
 /**
  * #2959 — Emit the native standalone `new Promise(executor)` lowering.
@@ -125,7 +124,16 @@ export function emitStandalonePromiseFromExecutor(
     ctx.liveBodies.delete(execInstrs);
     return false;
   }
-  const { resolveClFuncIdx, rejectClFuncIdx, promiseTypeIdx, rejectFuncIdx } = closures;
+  const { resolveClFuncIdx, rejectClFuncIdx, promiseTypeIdx } = closures;
+  const guardLocal = allocLocal(fctx, `__pexec_pair_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: closures.guardTypeIdx,
+  });
+  fctx.body.push(
+    { op: "i32.const", value: 0 },
+    { op: "struct.new", typeIdx: closures.guardTypeIdx },
+    { op: "local.set", index: guardLocal },
+  );
 
   // 2. Allocate the pending $Promise: {state: PENDING, value: null, callbacks: null}.
   const pLocal = allocLocal(fctx, `__pexec_p_${fctx.locals.length}`, { kind: "ref", typeIdx: promiseTypeIdx });
@@ -133,6 +141,7 @@ export function emitStandalonePromiseFromExecutor(
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push(closureBagInitInstr());
+  fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: pLocal });
   fctx.body.push(...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_INIT, [{ op: "local.get", index: pLocal }]));
@@ -142,7 +151,14 @@ export function emitStandalonePromiseFromExecutor(
   //    upcast to externref. (#5197) The metadata slots make the escaped
   //    `resolve`/`reject` real §27.2.1.3 function objects.
   const emitSettleValue = (clFuncIdx: number, dst: number): void => {
-    fctx.body.push(...buildPromiseSettleClosureInstrs(closures, clFuncIdx, [{ op: "local.get", index: pLocal }]));
+    fctx.body.push(
+      ...buildPromiseSettleClosureInstrs(
+        closures,
+        clFuncIdx,
+        [{ op: "local.get", index: pLocal }],
+        [{ op: "local.get", index: guardLocal }],
+      ),
+    );
     fctx.body.push({ op: "extern.convert_any" });
     fctx.body.push({ op: "local.set", index: dst });
   };
@@ -202,22 +218,11 @@ export function emitStandalonePromiseFromExecutor(
         payloadType: { kind: "externref" },
         body: [
           { op: "local.set", index: reasonLocal },
-          // (#5197 r3) [[AlreadyResolved]]: a throw after resolve/reject ran is ignored.
-          ...buildSettlePairUnresolvedInstrs(
-            closures.capTypeIdx,
-            [{ op: "local.get", index: rvLocal }],
-            [{ op: "local.get", index: rjLocal }],
-          ),
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: pLocal },
-              { op: "local.get", index: reasonLocal },
-              { op: "call", funcIdx: rejectFuncIdx },
-              { op: "drop" },
-            ],
-          },
+          { op: "local.get", index: rjLocal },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: closures.capTypeIdx },
+          { op: "local.get", index: reasonLocal },
+          { op: "call", funcIdx: rejectClFuncIdx },
         ],
       },
     ]),
@@ -283,7 +288,16 @@ export function emitStandalonePromiseFromExecutorValue(
   const exnTag = ensureExnTag(ctx);
   const closures = ensurePromiseExecutorClosures(ctx);
   if (!closures) return false;
-  const { resolveClFuncIdx, rejectClFuncIdx, promiseTypeIdx, rejectFuncIdx } = closures;
+  const { resolveClFuncIdx, rejectClFuncIdx, promiseTypeIdx } = closures;
+  const guardLocal = allocLocal(fctx, `__pexecv_pair_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: closures.guardTypeIdx,
+  });
+  fctx.body.push(
+    { op: "i32.const", value: 0 },
+    { op: "struct.new", typeIdx: closures.guardTypeIdx },
+    { op: "local.set", index: guardLocal },
+  );
 
   // Open-`any` closure bridge + the boxed-any args vec builders.
   ensureObjectRuntime(ctx);
@@ -318,13 +332,21 @@ export function emitStandalonePromiseFromExecutorValue(
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push(closureBagInitInstr());
+  fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: pLocal });
   fctx.body.push(...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_INIT, [{ op: "local.get", index: pLocal }]));
 
   // 3. resolve / reject as capturing closure VALUES (externref), capturing p.
   const emitSettleValue = (clFuncIdx: number, dst: number): void => {
-    fctx.body.push(...buildPromiseSettleClosureInstrs(closures, clFuncIdx, [{ op: "local.get", index: pLocal }]));
+    fctx.body.push(
+      ...buildPromiseSettleClosureInstrs(
+        closures,
+        clFuncIdx,
+        [{ op: "local.get", index: pLocal }],
+        [{ op: "local.get", index: guardLocal }],
+      ),
+    );
     fctx.body.push({ op: "extern.convert_any" });
     fctx.body.push({ op: "local.set", index: dst });
   };
@@ -360,22 +382,11 @@ export function emitStandalonePromiseFromExecutorValue(
         payloadType: { kind: "externref" },
         body: [
           { op: "local.set", index: reasonLocal },
-          // (#5197 r3) [[AlreadyResolved]]: a throw after resolve/reject ran is ignored.
-          ...buildSettlePairUnresolvedInstrs(
-            closures.capTypeIdx,
-            [{ op: "local.get", index: rvLocal }],
-            [{ op: "local.get", index: rjLocal }],
-          ),
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: pLocal },
-              { op: "local.get", index: reasonLocal },
-              { op: "call", funcIdx: rejectFuncIdx },
-              { op: "drop" },
-            ],
-          },
+          { op: "local.get", index: rjLocal },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: closures.capTypeIdx },
+          { op: "local.get", index: reasonLocal },
+          { op: "call", funcIdx: rejectClFuncIdx },
         ],
       },
     ]),

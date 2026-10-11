@@ -79,6 +79,7 @@ import {
   standaloneRegExpStructTypeIdx,
 } from "./regexp-standalone.js";
 import { ensureExnTag } from "./registry/imports.js";
+import { installRegExpLastIndexReflectionArms } from "./object-model/object-own-key-order.js"; // (#6770 S3)
 import { addFuncType } from "./registry/types.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
@@ -393,6 +394,13 @@ export function installRegExpLastIndexCarrierArms(ctx: CodegenContext): void {
   const readIdx = registerRead(ctx, d);
   const writeIdx = registerWrite(ctx, d);
   const defineIdx = registerDefine(ctx, d, readIdx);
+  // (#6770 S3) …and on gOPN / gOPD, the reflective key surfaces.
+  installRegExpLastIndexReflectionArms(ctx, {
+    reTypeIdx,
+    keyIdx,
+    readIdx,
+    nonWritableField: RE_FIELD_LASTINDEX_NONWRITABLE,
+  });
 
   unshiftKeyArm(ctx, "__extern_get", keyIdx, [
     { op: "local.get", index: 0 },
@@ -417,6 +425,24 @@ export function installRegExpLastIndexCarrierArms(ctx: CodegenContext): void {
       { op: "return" },
     ]);
   }
+  // (#6772 S10) [[GetOwnProperty]]: §22.2.3.3 — a non-enumerable,
+  // non-configurable data property, writable until defined otherwise.
+  const createDescIdx = ctx.funcMap.get("__create_descriptor");
+  if (createDescIdx !== undefined) {
+    unshiftKeyArm(ctx, "__getOwnPropertyDescriptor", keyIdx, [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: readIdx },
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: reTypeIdx },
+      { op: "struct.get", typeIdx: reTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_NONWRITABLE },
+      { op: "i32.eqz" }, // flag bit 0 = writable
+      { op: "call", funcIdx: createDescIdx },
+      { op: "return" },
+    ]);
+  }
+  // §10.1.10 OrdinaryDelete step 4: non-configurable — `delete` answers false.
+  unshiftKeyArm(ctx, "__delete_property", keyIdx, [{ op: "i32.const", value: 0 }, { op: "return" }]);
   if (defineIdx !== undefined) {
     unshiftKeyArm(ctx, "__defineProperty_value", keyIdx, [
       { op: "local.get", index: 0 },

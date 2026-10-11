@@ -170,7 +170,12 @@ export const PLATFORM_CAPABILITY_REGISTRY: Readonly<Record<string, PlatformCapab
     "randomness",
     ["random:read"],
     [
-      provider("js-host", ["javascript"], "env", [{ name: "Math_random", kind: "func", params: [], results: ["f64"] }]),
+      provider("js-host", ["javascript"], "env", [
+        { name: "Math_random", kind: "func", params: [], results: ["f64"] },
+        // (#6749) Web Crypto entropy; no native fallback (#1503/#6659).
+        { name: "__crypto_get_random_values", kind: "func", params: ["externref"], results: ["externref"] },
+        { name: "__crypto_random_uuid", kind: "func", params: [], results: ["externref"] },
+      ]),
       provider("wasi-preview1", ["wasi", "none"], "wasi_snapshot_preview1", [
         { name: "random_get", kind: "func", params: ["i32", "i32"], results: ["i32"] },
       ]),

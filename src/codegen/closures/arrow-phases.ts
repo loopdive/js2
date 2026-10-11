@@ -13,6 +13,7 @@
  * every cross-module binding is used only inside function bodies, which run long
  * after module initialization.
  */
+import { NEW_TARGET_LEXICAL_LOCAL, arrowCapturesNewTarget } from "../expressions/new-target-value.js";
 import { ts, forEachChild } from "../../ts-api.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import type { Instr, ValType } from "../../ir/types.js";
@@ -25,17 +26,21 @@ import {
   closureBagInitInstr,
   getOrCreateConstructibleFuncRefWrapperTypes,
   getOrCreateFuncRefWrapperTypes,
+  ensureRestFnWrapSubtype,
 } from "./funcref-wrapper-types.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { closureObservesBindingValue, collectTransitiveCaptureNames } from "../function-declaration-observation.js";
 import { valTypesMatch } from "../shared.js";
 import { tryEmitNativeIteratorResultParam } from "../promise-native-iterator-result.js";
 import { materializeHoistedFunctionValueBinding } from "./funcref-as-closure.js";
+import { publishClosureSourceInfo } from "./closure-type-sources.js"; // (#6913)
+import { capturedBindingWriteTest, namesDeclaredInsideClosure } from "./closure-binding-identity.js";
 import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
 // (#4437) per-declaration `name` / §15.1.5 `length` carrier
 import { ensureFnMetaSubtype, fnMetaSlot, registerFnMetaFamily } from "../function-instance-meta.js";
 // (#4440) object-literal accessors / methods — §10.2.9 comes from the property key
 import { fnMetaSlotForMemberDecl } from "../function-instance-meta-methods.js";
+import { nestedCapturesVisibleFrom } from "../nested-function-name-scope.js"; // (#6877)
 import {
   arrowOwnLocals,
   buildCaptureFieldDef,
@@ -211,6 +216,11 @@ function canBoxBindingInDominatingParent(
   let owner: ts.Node | undefined = closure.parent;
   while (owner && !ts.isFunctionLike(owner)) owner = owner.parent;
   if (!owner || ts.isSourceFile(owner)) return false;
+  // An inlined IIFE's preceding declarations live in its detached block,
+  // not in the caller's activation-entry buffer. Moving the cell there
+  // would read the raw slot before initialization and leave the initializer
+  // writing behind the cell's back. Keep construction-site boxing instead.
+  if (fctx.inlinedIifeNodes?.has(owner)) return false;
   const ownerBody = (owner as ts.FunctionLikeDeclarationBase).body;
   if (!ownerBody || !ts.isBlock(ownerBody)) return false;
   let region: ts.Node = closure;
@@ -438,6 +448,33 @@ function referencedBindingDeclaration(
 }
 
 /**
+ * (#6651 V5) True when `closure` references `name` and NO such reference binds
+ * to a declaration — the name is free (a global / unresolvable reference), so a
+ * same-spelled slot in the enclosing frame belongs to a block that has already
+ * been left (§14.2.2 restores the outer environment on block exit) and must
+ * not be resurrected as a capture.
+ */
+function closureReferencesOnlyUnboundName(
+  ctx: CodegenContext,
+  closure: ts.ArrowFunction | ts.FunctionExpression,
+  name: string,
+): boolean {
+  let seen = false;
+  let bound = false;
+  const visit = (node: ts.Node): void => {
+    if (bound) return;
+    if (ts.isIdentifier(node) && node.text === name && isCaptureValueReference(node)) {
+      seen = true;
+      if (ctx.oracle.valueDeclarationOf(node)) bound = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  visit(closure);
+  return seen && !bound;
+}
+
+/**
  * True when a declaration is owned directly by an emitted TypeScript
  * namespace/module block rather than by a nested function inside it.
  * Runtime-namespace bindings have dedicated module globals and must remain
@@ -464,8 +501,11 @@ function removeClosureOwnedBlockBindingCollisions(
   ownLocals: ReadonlySet<string>,
   referencedNames: Set<string>,
 ): void {
+  // (#6872) Also names the closure declares whose outer slot left `localMap`.
+  let declaredInside: ReadonlySet<string> | undefined;
   for (const name of [...referencedNames]) {
-    if (ownLocals.has(name) || !fctx.localMap.has(name)) continue;
+    if (ownLocals.has(name)) continue;
+    if (!fctx.localMap.has(name) && !(declaredInside ??= namesDeclaredInsideClosure(closure)).has(name)) continue;
     if (!hasReferenceOutsideClosure(ctx, closure, name)) referencedNames.delete(name);
   }
 }
@@ -491,7 +531,7 @@ function collectClosureParameterReferences(
  * outer assignment. Declaration identity comes from the checker; ancestry is
  * used only to establish the evaluation ordering within that declaration.
  */
-function closurePrecedesBindingInitializerStore(
+export function closurePrecedesBindingInitializerStore(
   closure: ts.ArrowFunction | ts.FunctionExpression,
   declaration: ts.Declaration | undefined,
 ): boolean {
@@ -586,6 +626,7 @@ export function planClosureCaptures(
   ) {
     referencedNames.add("this");
   }
+  if (arrowCapturesNewTarget(ctx, fctx, arrow)) referencedNames.add(NEW_TARGET_LEXICAL_LOCAL); // (#6774 S4)
 
   // (#3040) Parameter DEFAULT initializers can reference enclosing-scope names
   // that appear NOWHERE in the body — e.g. `f = async function*([x] = iter)`
@@ -627,7 +668,7 @@ export function planClosureCaptures(
   // E.g. if this closure calls g() and g has nestedFuncCaptures {first, second},
   // this closure must also capture first and second so it can pass ref cells to g.
   const transitivelyRequiredNames = collectTransitiveCaptureNames(
-    ctx.nestedFuncCaptures,
+    { get: (name) => nestedCapturesVisibleFrom(ctx, name, arrow) }, // (#6877) not other modules' nested fns
     referencedNames,
     ownLocals,
     (name) => isEnclosingParameterBinding(fctx, name) && !isForwardedDeclarationCapture(ctx, fctx, arrow, name),
@@ -694,17 +735,22 @@ export function planClosureCaptures(
         if (outerBody) {
           // Collect writes in the outer body, excluding the closure body itself
           const outerWrites = new Set<string>();
+          const writesCapturedBinding = capturedBindingWriteTest(
+            ctx,
+            name,
+            referencedBindingDeclaration(ctx, arrow, name, true),
+          );
           const collectOuterWrites = (node: ts.Node): void => {
             // Skip the closure body itself
             if (node === arrow) return;
             // Check for assignments
             if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-              if (ts.isIdentifier(node.left) && node.left.text === name) {
+              if (ts.isIdentifier(node.left) && writesCapturedBinding(node.left)) {
                 outerWrites.add(name);
               }
             }
             if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
-              if (ts.isIdentifier(node.operand) && node.operand.text === name) {
+              if (ts.isIdentifier(node.operand) && writesCapturedBinding(node.operand)) {
                 outerWrites.add(name);
               }
             }
@@ -714,7 +760,7 @@ export function planClosureCaptures(
               node.operatorToken.kind >= ts.SyntaxKind.PlusEqualsToken &&
               node.operatorToken.kind <= ts.SyntaxKind.CaretEqualsToken
             ) {
-              if (ts.isIdentifier(node.left) && node.left.text === name) {
+              if (ts.isIdentifier(node.left) && writesCapturedBinding(node.left)) {
                 outerWrites.add(name);
               }
             }
@@ -757,6 +803,7 @@ export function planClosureCaptures(
     // The ordinary-function lexical-this path materializes a private local
     // without changing the frame's normal `this` binding (see closures.ts).
     if (localIdx === undefined && name === "this") localIdx = fctx.lexicalThisCaptureLocal;
+    if (localIdx === undefined && name === NEW_TARGET_LEXICAL_LOCAL) localIdx = fctx.newTargetSnapshotLocal; // (#6774 S4)
     let tdzFlagIdxFromScan: number | undefined;
     if (localIdx === undefined) {
       // (#3121) A localMap miss can ALSO mean the name was PROMOTED to a
@@ -778,6 +825,8 @@ export function planClosureCaptures(
       // the slot still exists in fctx.locals — find it by name. This restores
       // the ability of closures constructed inside the block to capture the
       // hoisted slot, which is essential for TDZ-through-closure to fire.
+      // (#6651 V5) A FREE name has no hoisted slot — the same-spelled local is from a left block.
+      if (closureReferencesOnlyUnboundName(ctx, arrow, name)) continue;
       for (let i = 0; i < fctx.locals.length; i++) {
         const slot = fctx.locals[i]!;
         if (slot.name === name) {
@@ -795,6 +844,10 @@ export function planClosureCaptures(
     // `ctx.moduleGlobals` is active for this whole closure compilation, so
     // leave the name uncaptured and let the lifted body read that live global.
     if (ctx.moduleGlobals.has(name) && isDirectRuntimeModuleVariableBinding(bindingDeclaration)) continue;
+    // (#6651 V10d) A read-only closure must not box the `__module_init` shadow of a module global:
+    // later top-level writes (other init chunks, other functions) reach only the global, never that cell.
+    const readsShadow = fctx.moduleBindingShadowLocals?.get(name) === localIdx && ctx.moduleGlobals.has(name);
+    if (readsShadow && !writtenInClosure.has(name)) continue;
     // A lexical capture can share its spelling with a function declaration
     // already registered in funcMap (for example `{ dispatch }` beside a
     // module-local `dispatch`).  The old spelling-only guard dropped every
@@ -982,6 +1035,27 @@ export function mintClosureStructTypes(
       liftedFuncTypeIdx = wrapperTypes.liftedFuncTypeIdx;
       liftedSelfTypeIdx = wrapperTypes.liftedSelfTypeIdx;
       liftedParams = [{ kind: "ref", typeIdx: liftedSelfTypeIdx }, ...arrowParams];
+      // Rest and ordinary array formals can share a Wasm signature, but not
+      // their calling convention. Preserve the existing rest marker at the
+      // allocation site, as function-declaration singletons already do.
+      if (
+        opts.decl &&
+        (ts.isArrowFunction(opts.decl) || ts.isFunctionExpression(opts.decl)) &&
+        runtimeParameters(opts.decl).some((param) => param.dotDotDotToken !== undefined)
+      ) {
+        structTypeIdx = ensureRestFnWrapSubtype(ctx, structTypeIdx);
+        if (constructible) ctx.constructibleClosureTypeIdxs.add(structTypeIdx);
+        return {
+          structTypeIdx,
+          liftedFuncTypeIdx,
+          liftedSelfTypeIdx,
+          liftedParams,
+          meta: {
+            allocTypeIdx: (metaSlot && ensureFnMetaSubtype(ctx, structTypeIdx)) ?? structTypeIdx,
+            init: [{ op: "f64.const", value: 0 }, ...(metaSlot?.init ?? [])],
+          },
+        };
+      }
       // (#4437) Shared wrapper ⇒ the metadata slot needs a per-base subtype.
       const allocTypeIdx = metaSlot ? ensureFnMetaSubtype(ctx, structTypeIdx) : undefined;
       if (metaSlot && allocTypeIdx !== undefined) {
@@ -1275,7 +1349,10 @@ export function emitClosureConstruction(
     const entryBody = fctx.activationEntryBody;
     if (!entryBody) continue;
     const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.type);
-    const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, { kind: "ref", typeIdx: refCellTypeIdx });
+    const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}@cell:${fctx.params.length + fctx.locals.length}`, {
+      kind: "ref",
+      typeIdx: refCellTypeIdx,
+    });
     entryBody.push(
       { op: "local.get", index: cap.localIdx },
       { op: "struct.new", typeIdx: refCellTypeIdx },
@@ -1310,7 +1387,10 @@ export function emitClosureConstruction(
         fctx.body.push({ op: "local.get", index: cap.localIdx });
         fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
         // Also box the outer local so subsequent reads/writes go through the ref cell
-        const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, { kind: "ref_null", typeIdx: refCellTypeIdx });
+        const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}@cell:${fctx.params.length + fctx.locals.length}`, {
+          kind: "ref_null",
+          typeIdx: refCellTypeIdx,
+        });
         // Duplicate: we need the ref cell for the closure struct AND for the outer local
         fctx.body.push({ op: "local.tee", index: boxedLocalIdx });
         // Re-register the original name to point to the boxed local
@@ -1410,7 +1490,7 @@ export function registerClosureBindingInfo(
   };
 
   // Always register by struct type index (for valueOf coercion and anonymous closures)
-  ctx.closureInfoByTypeIdx.set(structTypeIdx, closureInfo);
+  publishClosureSourceInfo(ctx, arrow, closureInfo); // (#6913) merged on a shared wrapper type
 
   const parent = arrow.parent;
   if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {

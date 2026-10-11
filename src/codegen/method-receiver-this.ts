@@ -138,14 +138,28 @@ export function methodValueWrapperResults(
   };
 }
 
-/** The first non-arrow function that owns `thisNode` is a method of an object literal. */
-function thisOwnedByObjectLiteralMethod(thisNode: ts.Node): boolean {
+/**
+ * The first non-arrow function that owns `thisNode` is a method of an object
+ * literal — or, (#6774 S9) standalone only, an INSTANCE method / accessor of a
+ * class. A class method's `this` is typed to the instance struct too, so a
+ * call whose receiver is not a `$C` (`C.prototype.m()`, `super.m()` from such
+ * a call — the caller published the receiver, super-receiver-publish.ts)
+ * leaves it null where §10.2.1.2 binds the receiver.
+ */
+function thisOwnedByReceiverMethod(thisNode: ts.Node, standalone: boolean): boolean {
   let child: ts.Node = thisNode;
   for (let current = thisNode.parent; current; child = current, current = current.parent) {
     if (ts.isArrowFunction(current)) return false;
     if (ts.isFunctionLike(current) || ts.isClassLike(current) || ts.isSourceFile(current)) {
+      if (!ts.isMethodDeclaration(current) && !ts.isAccessor(current)) return false;
       // A computed key belongs to the scope AROUND the method.
-      return ts.isMethodDeclaration(current) && ts.isObjectLiteralExpression(current.parent) && child !== current.name;
+      if (child === current.name) return false;
+      if (ts.isMethodDeclaration(current) && ts.isObjectLiteralExpression(current.parent)) return true;
+      return (
+        standalone &&
+        ts.isClassLike(current.parent) &&
+        !current.modifiers?.some((m: ts.ModifierLike) => m.kind === ts.SyntaxKind.StaticKeyword)
+      );
     }
   }
   return false;
@@ -165,7 +179,7 @@ export function tryEmitObjectLiteralMethodReceiverValue(
 ): boolean {
   if (expectedType?.kind !== "externref") return false;
   if (selfType.kind !== "ref" && selfType.kind !== "ref_null") return false;
-  if (!thisOwnedByObjectLiteralMethod(expr)) return false;
+  if (!thisOwnedByReceiverMethod(expr, ctx.standalone)) return false;
 
   const saved = pushBody(fctx);
   if (fctx.localMap.has("__gen_self") || ctx.currentThisGlobalIdx < 0) {

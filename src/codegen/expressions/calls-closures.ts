@@ -15,6 +15,7 @@ import { dispatchVecResultBridge, reserveDispatchVecResultMaterializer } from ".
 import { planCallablePropertyApplyFallback } from "./callable-property-apply-fallback.js";
 import { ts } from "../../ts-api.js";
 import { widenJsDefaultGuessSymbolSlot } from "../js-default-param-type-guess.js";
+import { storedClosureWidensOmittableParam } from "./callable-property-omittable-param.js"; // (#6417)
 import { isVoidType, isPromiseType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { callablePropertyIsExtractedHostBuiltin } from "./callable-property-host-value.js"; // (#5342)
@@ -1623,7 +1624,8 @@ export function compileCallablePropertyCall(
   const sigParamWasmTypes: ValType[] = [];
   for (let i = 0; i < sigParamCount; i++) {
     const paramType = ctx.checker.getTypeOfSymbol(sigParameters[i]!);
-    sigParamWasmTypes.push(widenJsDefaultGuessSymbolSlot(sigParameters[i], resolveWasmType(ctx, paramType)));
+    const slot = widenJsDefaultGuessSymbolSlot(sigParameters[i], resolveWasmType(ctx, paramType));
+    sigParamWasmTypes.push(storedClosureWidensOmittableParam(ctx, sigParameters[i]) ? { kind: "externref" } : slot);
   }
   const pushMissingCallablePropertyArgument = (index: number, type: ValType): void => {
     const declaration = sigParameters[index]?.valueDeclaration;
@@ -2483,7 +2485,10 @@ export function tryExternClassMethodOnAny(
   // + the #3139 prototype-inclusive `__extern_length`/`__extern_get_idx`/
   // `__extern_has_idx` handlers) resolve inherited length/elements correctly.
   // `indexOf`/`lastIndexOf` are String∩Array-ambiguous exactly like `.slice`.
+  // (#4526) `includes` too — and the first ambient match is DOM's
+  // `IDBKeyRange.includes`, so `actual.includes(x)` on an array answered false.
   if (
+    methodName === "includes" ||
     methodName === "forEach" ||
     methodName === "some" ||
     methodName === "every" ||

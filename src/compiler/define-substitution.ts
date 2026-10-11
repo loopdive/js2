@@ -9,6 +9,7 @@
  * Also handles `typeof <identifier>` forms: `typeof process` can be replaced
  * with `"undefined"` to eliminate environment-detection branches.
  */
+import type { IrSourceMapTextStage } from "../shared/contracts/ir-unit-inventory.js";
 import { PositionMap, type SourceEdit } from "../position-map.js";
 
 /**
@@ -34,6 +35,7 @@ export function applyDefineSubstitutions(source: string, defines: Record<string,
 export function applyDefineSubstitutionsWithMap(
   source: string,
   defines: Record<string, string>,
+  captureStage?: (stage: IrSourceMapTextStage) => void,
 ): { source: string; positionMap: PositionMap } {
   if (!defines || Object.keys(defines).length === 0) {
     return { source, positionMap: PositionMap.identity() };
@@ -66,6 +68,7 @@ export function applyDefineSubstitutionsWithMap(
     }
     if (edits.length === 0) continue; // no match this pass — map unchanged
     out += current.slice(last);
+    if (captureStage) captureStage(new PositionMap(edits).captureSourceMapStage("define", current, out));
     current = out;
     // This pass maps current-output → its input; the prior `composed` maps that
     // input → original. compose() chains them.

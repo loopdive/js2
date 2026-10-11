@@ -8,7 +8,7 @@
 import { isTopLevelClassPrototypeWrite } from "./class-proto-toplevel-write.js";
 import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 import { collectScopeLocalDeclNames } from "./scope-local-decl-names.js";
-import { registerResolvedRestParam } from "./resolved-rest-param.js"; // (#1058)
+import { registerResolvedRestParam, restPatternParamVecType } from "./resolved-rest-param.js"; // (#1058)
 import { widenUndefinedDefaultParamSlot } from "./destructuring-params.js";
 import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
 import { functionReturnsWidenedProperty } from "./declarations/widened-property-return.js";
@@ -72,6 +72,9 @@ import {
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
 import { shouldCollectTopLevelClassForRuntimeHeritage } from "./class-expression-identity.js";
 import { classHasUnresolvedComputedMemberName, classHierarchyHasDynamicMember } from "./class-dynamic-keys.js"; // (#5195 Step 1 / R2-3)
+import { classHasComputedKeyAssignment } from "./class-member-keys.js"; // (#6772 S5)
+import { standaloneCommaHeritage } from "./classes/class-heritage-comma.js"; // (#6772 S6)
+import { heritagePrototypeGetTarget } from "./classes/class-heritage-runtime-get.js"; // (#6772 S11)
 import { routeTopLevelClassBodies } from "./prepared-class-body-cutover.js";
 import {
   collectBindingPatternNames,
@@ -86,6 +89,7 @@ import { filterResultNeedsDynamicCarrier } from "./array-filter-spec-access.js";
 import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
 import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
+import { jsValueBoundary } from "./context/types.js";
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
 import {
@@ -180,6 +184,7 @@ import { pushProgramAbiModuleInitCallable } from "./program-abi-module-init-plan
 import {
   pushProgramAbiNestedFunctionDeclaration,
   pushProgramAbiTopLevelCallable,
+  sourceFunctionPositionForDeclaration,
 } from "./program-abi-source-callable-planning.js";
 import {
   isolateRuntimeModuleCallableRegistration,
@@ -208,9 +213,11 @@ import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { mintUntypedRegExpReceiverMembers } from "./regexp-untyped-receiver.js";
 import {
   prepareModuleTdzGlobals,
+  prepareSelfImportingModuleTdzGlobals,
   registerModuleGlobal,
   registerModulePatternTdzGlobal,
   registerModuleTdzGlobal,
+  scriptVarRedeclaresAmbientGlobal, // (#6651 V10b)
 } from "./module-global-registration.js";
 import { annexBModuleGlobalSeedsFromTopLevel } from "./annexb-global-live-binding.js";
 import { variableSlotHoldsReconstructedFnctorInstance } from "./fnctor-instance-object-slot.js";
@@ -376,6 +383,29 @@ function ensureNativeDynamicBoundaryBridge(ctx: CodegenContext): void {
   }
 
   ensureNativeDynamicBoundaryTag(ctx);
+}
+
+/**
+ * (#6879) `export { parse }` exports a function declared elsewhere in the
+ * file; only `export function` recorded its boundary signature, so on the
+ * native regime the adapter passed such an export's JS arguments through raw
+ * (an un-admitted options object, an un-marshalled string) and acorn's
+ * `parse(input, { ecmaVersion })` lost its options. Gated on the regime's JS
+ * value boundary so the host lane and the host-free targets keep their bytes.
+ */
+function recordExportListSignature(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  localName: string,
+  exportedName: string,
+): void {
+  if (ctx.targetProfile.semanticProviders !== "native-first" || !jsValueBoundary(ctx)) return;
+  if (ctx.exportSignatures.has(exportedName)) return;
+  const decl = sourceFile.statements.find(
+    (s): s is ts.FunctionDeclaration => ts.isFunctionDeclaration(s) && s.name?.text === localName && !!s.body,
+  );
+  if (!decl) return;
+  recordExportSignature(ctx, exportedName, decl, hasAsyncModifier(decl));
 }
 
 function recordExportSignature(
@@ -1817,7 +1847,10 @@ function registerBodylessFunctionDeclaration(
     params = [];
     for (let i = 0; i < stmt.parameters.length; i++) {
       const param = stmt.parameters[i]!;
-      params.push(lowerParamType(ctx, param, name, i, stmt, sourceFile));
+      params.push(
+        restPatternParamVecType(ctx, param, (t) => getOrRegisterVecType(ctx, "externref", t)) ??
+          lowerParamType(ctx, param, name, i, stmt, sourceFile),
+      );
     }
     if (noJsHost(ctx)) registerResolvedRestParam(ctx, name, stmt, params); // (#6651 A10) rest packs like a plain function
     const nativeGenerator = registerNativeGenerator(ctx, stmt, name, params);
@@ -2482,7 +2515,11 @@ function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, st
   // it: that predicate is `!ctx.standalone && …`, so it never fires here.)
   if (
     ts.isClassDeclaration(statement) &&
-    (classHasUnresolvedComputedMemberName(ctx, statement) || topLevelClassInheritsRuntimeKeys(ctx, statement))
+    (classHasUnresolvedComputedMemberName(ctx, statement) ||
+      classHasComputedKeyAssignment(statement) || // (#6772 S5) a folded key's write runs at definition
+      standaloneCommaHeritage(ctx, statement) !== undefined || // (#6772 S6) so does a comma heritage's prefix
+      heritagePrototypeGetTarget(ctx, statement) !== undefined || // (#6772 S11) and Get(superclass, "prototype")
+      topLevelClassInheritsRuntimeKeys(ctx, statement))
   ) {
     ctx.moduleInitStatements.push(statement);
     return true;
@@ -2665,7 +2702,12 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // Also map the LHS identifier to the synthetic name so `new C()` resolves
         if (nameHint) {
           const syntheticName = ctx.anonClassExprNames.get(rhs);
-          if (syntheticName) {
+          // (#6772 S7) a second, DIFFERENT class bound to the name makes it dynamic
+          const prior = ctx.classExprNameMap.get(nameHint);
+          if (syntheticName && prior !== undefined && prior !== syntheticName) {
+            ctx.classExprNameMap.delete(nameHint);
+            ctx.classExprAmbiguousNames.add(nameHint);
+          } else if (syntheticName && !ctx.classExprAmbiguousNames.has(nameHint)) {
             ctx.classExprNameMap.set(nameHint, syntheticName);
           }
         }
@@ -2810,7 +2852,11 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         for (const decl of stmt.declarationList.declarations) {
           if (ts.isIdentifier(decl.name) && decl.initializer && ts.isClassExpression(decl.initializer)) {
             const syntheticName = ctx.anonClassExprNames.get(decl.initializer);
-            if (syntheticName && !ctx.classExprNameMap.has(decl.name.text)) {
+            if (
+              syntheticName &&
+              !ctx.classExprNameMap.has(decl.name.text) &&
+              !ctx.classExprAmbiguousNames.has(decl.name.text)
+            ) {
               ctx.classExprNameMap.set(decl.name.text, syntheticName);
             }
           }
@@ -2941,7 +2987,10 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         params = [];
         for (let i = 0; i < stmt.parameters.length; i++) {
           const param = stmt.parameters[i]!;
-          params.push(lowerParamType(ctx, param, name, i, stmt, sourceFile));
+          params.push(
+            restPatternParamVecType(ctx, param, (t) => getOrRegisterVecType(ctx, "externref", t)) ??
+              lowerParamType(ctx, param, name, i, stmt, sourceFile),
+          );
         }
         if (noJsHost(ctx)) registerResolvedRestParam(ctx, name, stmt, params); // (#6651 A10) rest packs like a plain function
         const nativeGenerator = registerNativeGenerator(ctx, stmt, name, params);
@@ -3136,6 +3185,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           name: "default",
           desc: { kind: "func", index: funcIdx },
         });
+        for (const name of [targetName, "default"]) recordExportListSignature(ctx, sourceFile, targetName, name);
       }
     }
   }
@@ -3162,6 +3212,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         if (func && !func.exported) func.exported = true;
         if (!ctx.mod.exports.some((e) => e.name === exportedName)) {
           ctx.mod.exports.push({ name: exportedName, desc: { kind: "func", index: funcIdx } });
+          recordExportListSignature(ctx, sourceFile, localName, exportedName);
         }
       }
     }
@@ -3379,7 +3430,16 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     if (decl.initializer && ts.isIdentifier(decl.initializer)) {
       return resolveIdentifierType(ctx, decl.initializer);
     }
-    return ctx.checker.getTypeAtLocation(decl);
+    // (#6651 V10b) A SCRIPT `var` that redeclares an ambient lib global
+    // (`var length = {valueOf…}` vs lib.dom's `declare var length: number`)
+    // merges into one checker symbol whose declared type is the LIB's. Typing
+    // the global from it made the binding an f64 global, so the initializer
+    // ran ToNumber (an observable `valueOf` call) at the declaration. The
+    // runtime binding holds whatever the script stores; type it from the
+    // initializer instead.
+    const typedNode =
+      decl.initializer !== undefined && scriptVarRedeclaresAmbientGlobal(ctx, decl) ? decl.initializer : decl;
+    return ctx.checker.getTypeAtLocation(typedNode);
   }
 
   /**
@@ -4126,7 +4186,9 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       const hasRuntimeKeyedClassExpression = stmt.declarationList.declarations.some((declaration) => {
         const init = declaration.initializer;
         if (init === undefined || !ts.isClassExpression(init)) return false;
-        if (classHasUnresolvedComputedMemberName(ctx, init)) return true;
+        if (classHasUnresolvedComputedMemberName(ctx, init) || classHasComputedKeyAssignment(init)) return true; // (#6772 S5)
+        if (standaloneCommaHeritage(ctx, init) !== undefined) return true; // (#6772 S6)
+        if (heritagePrototypeGetTarget(ctx, init) !== undefined) return true; // (#6772 S11)
         const className = ctx.anonClassExprNames.get(init);
         return className !== undefined && classHierarchyHasDynamicMember(ctx, className);
       });
@@ -5838,6 +5900,7 @@ export function compileDeclarations(
     forEachChild(node, compileAnonymousClassBodiesInNode);
   }
 
+  prepareSelfImportingModuleTdzGlobals(ctx, sourceFile); // (#6651 V6) a class body may build `ns` first
   compileClassesFromStatements(sourceFile.statements);
 
   // Compile away TDZ tracking for definite-assignment top-level let/const
@@ -6153,7 +6216,7 @@ export function compileDeclarations(
     // (#4491 T4) §9.1.1.4.17 — and the `var` twin of the same instantiation
     // step, AFTER the functions so a name declared both ways keeps the function
     // binding GDI actually initialises. See global-var-bindings.ts.
-    emitScriptGlobalVarBindings(ctx, initFctx);
+    emitScriptGlobalVarBindings(ctx, initFctx, sourceFile);
 
     if (ctx.liveFuncBindingGlobals && ctx.liveFuncBindingGlobals.size > 0) {
       const seededGlobals = new Set<number>();
@@ -6228,6 +6291,9 @@ export function compileDeclarations(
         let chunkOrdinal = 0;
         for (const chunk of chunks) {
           const chunkFctx = createModuleInitFunctionContext(true);
+          // (#6651 V10c) Chunks split ONE top-level frame: a raw-lastIndex identity
+          // recorded in chunk N must still suppress the ToPrimitive copy in chunk N+1.
+          chunkFctx.regexpLastIndexIdentityStructTypes = initFctx.regexpLastIndexIdentityStructTypes ??= new Set();
           ctx.currentFunc = chunkFctx;
           for (const initEntry of chunk) compileOrderedModuleInitEntry(chunkFctx, initEntry);
           if (chunkFctx.body.length === 0) continue;
@@ -6345,7 +6411,7 @@ export function compileDeclarations(
       if (stmt.name && stmt.body && lastFnWithBody.get(stmt.name.text) !== stmt) continue;
       const fnName = stmt.name ? stmt.name.text : "default";
       if (stmt.body) {
-        const idx = funcByName.get(fnName);
+        const idx = sourceFunctionPositionForDeclaration(ctx, stmt) ?? funcByName.get(fnName);
         if (idx !== undefined) {
           const func = ctx.mod.functions[idx]!;
           // (#2138/#3521) Skip direct body emission. The compatibility overlay

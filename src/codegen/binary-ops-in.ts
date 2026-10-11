@@ -11,7 +11,10 @@
  */
 import { ts } from "../ts-api.js";
 // (#6777) Array-carrier `in`: compiled-type carrier, hole-aware presence, boolean.
-import { compileArrayCarrierIn, emitKeyFirstExternHas, isPlainArrayCarrierType } from "./in-array-carrier.js";
+import { compileArrayCarrierIn, emitKeyFirstExternHas, isPlainArrayCarrierType } from "./array/in-array-carrier.js";
+import { vecStaticIndexPresenceInstrs } from "./array/array-length-holes.js";
+import { getArrTypeIdxFromVec, isVecBaseSubtype } from "./registry/types.js";
+import type { ArrayCarrierInDependencies } from "./array/in-array-carrier.js";
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
@@ -44,6 +47,19 @@ import {
   inReceiverIsObjectShaped,
   objectPrototypeInheritsInName,
 } from "./object-proto-name-in.js";
+
+// Keep the owned array helper outside the legacy runtime import cycle.
+const arrayCarrierInDependencies: ArrayCarrierInDependencies = {
+  ensureLateImport,
+  allocTempLocal,
+  releaseTempLocal,
+  getArrTypeIdxFromVec,
+  isVecBaseSubtype,
+  coerceType,
+  compileExpression,
+  flushLateImportShifts,
+  vecStaticIndexPresenceInstrs,
+};
 
 /**
  * (#3714) `emitThrowTypeError` pushes directly onto `fctx.body`; to nest its
@@ -389,7 +405,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     const typeIdx = (rightWasm as { typeIdx: number }).typeIdx;
     const structDef = ctx.mod.types[typeIdx];
     if (structDef?.kind === "struct") {
-      if (isPlainArrayCarrierType(ctx, typeIdx)) {
+      if (isPlainArrayCarrierType(ctx, typeIdx, arrayCarrierInDependencies)) {
         isArrayCarrier = true;
       } else {
         structFieldNames = publicPhysicalFieldNames(rightType, structDef.fields);
@@ -490,7 +506,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       : leftType.isNumberLiteral()
         ? String(leftType.value)
         : null;
-    const carrierIn = compileArrayCarrierIn(ctx, fctx, expr, staticKey ?? literalKey);
+    const carrierIn = compileArrayCarrierIn(ctx, fctx, expr, staticKey ?? literalKey, arrayCarrierInDependencies);
     if (carrierIn !== undefined) return carrierIn;
   }
 
@@ -817,5 +833,5 @@ function emitRuntimeExternHas(
     recordStandaloneRuntimeKeyClassMemberRead(ctx, undefined);
   }
   // (#2741) Key-first evaluation order — see `emitKeyFirstExternHas`.
-  return emitKeyFirstExternHas(ctx, fctx, expr.left, expr.right);
+  return emitKeyFirstExternHas(ctx, fctx, expr.left, expr.right, arrayCarrierInDependencies);
 }

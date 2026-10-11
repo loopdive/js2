@@ -23,7 +23,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import { getClosureFuncSelfTypeIdx } from "./closures/funcref-wrapper-types.js";
 import type { CodegenContext } from "./context/types.js";
-import { BFN_ID_FIELD_IDX } from "./builtin-fn-meta.js";
+import { BFN_ID_FIELD_IDX, linkedMetaSignatureGuard } from "./builtin-fn-meta.js";
 
 /** A rest callback can share the builtin's signature, but not its identity. */
 function variadicBuiltinIdentity(ctx: CodegenContext): Instr[] {
@@ -45,6 +45,8 @@ function variadicBuiltinIdentity(ctx: CodegenContext): Instr[] {
           { op: "struct.get", typeIdx, fieldIdx: BFN_ID_FIELD_IDX },
           { op: "i32.const", value: typeIdx },
           { op: "i32.eq" },
+          // (#6651 V0) linked modules: a peer closure can carry our id.
+          ...linkedMetaSignatureGuard(ctx, typeIdx, [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }]),
         ],
         else: [{ op: "i32.const", value: 0 }],
       },

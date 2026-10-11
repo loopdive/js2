@@ -89,6 +89,15 @@ import {
   referencesPromotedI32Slot,
 } from "./analysis/i32-slots.js";
 import { IrFunctionBuilder } from "./builder.js";
+import type { IrSiteId } from "./core/nodes.js";
+import type { IrSourceId } from "../shared/contracts/ir-identity.js";
+import type {
+  IrSourceMapOrigin,
+  IrSourceMapSpan,
+  IrSourceMapSource,
+  IrSourceMapPoint,
+  IrSourceMapDerivedSource,
+} from "../shared/contracts/ir-unit-inventory.js";
 import { irFnctorShapeEquals } from "./fnctor-abi.js";
 import { emitNumberRemainder } from "./remainder-fast-path.js";
 import { sameIrGlobalBinding } from "./abi-bindings.js";
@@ -825,7 +834,277 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   dynamicCarrierIsExternref?(): boolean;
 }
 
+export type IrSourceMapNodeProjection =
+  | {
+      readonly kind: "source";
+      readonly site: Extract<IrSiteId, { readonly origin: Extract<IrSourceMapOrigin, { readonly kind: "source" }> }>;
+    }
+  | {
+      readonly kind: "generated-text";
+      readonly sourceId: IrSourceId;
+      readonly analyzed: IrSourceMapSpan;
+      readonly stageIndex: number;
+      readonly editIndex: number;
+    }
+  | { readonly kind: "unmapped"; readonly sourceId: IrSourceId; readonly unitId?: IrUnitId; readonly detail: string };
+
+/** Requested frontend references; none of these callbacks enters prepared wire data. */
+export interface IrFunctionSourceMapContext {
+  readonly source: IrSourceMapSource;
+  readonly donorUnitId: IrUnitId;
+  readonly project: (node: ts.Node) => IrSourceMapNodeProjection;
+}
+
+interface FrontendSourceMapState {
+  readonly active: WeakMap<IrFunctionBuilder, ts.Node>;
+  readonly causes: WeakMap<IrFunctionBuilder, IrSourceMapPoint>;
+  readonly generated: Set<string>;
+  readonly synthetic: WeakMap<
+    ts.Node,
+    { readonly cause: ts.Node; readonly role: "binding-scaffold" | "implicit-return" }
+  >;
+  readonly derived: IrSourceMapDerivedSource[];
+}
+
+interface FrontendSourceScope {
+  readonly builder: IrFunctionBuilder;
+  readonly sourceMap?: IrFunctionSourceMapContext;
+  readonly sourceMapState?: FrontendSourceMapState;
+  readonly sourceMapBuilderUnitId?: IrUnitId;
+  readonly sourceMapFunctionNode?: ts.Node;
+}
+
+function sourceMapLoweringUnsupported(detail: string): never {
+  throw new IrUnsupportedError("body-shape-rejected", "build", `ir/from-ast: source map ${detail}`);
+}
+
+function frontendSourceProjection(scope: FrontendSourceScope, node: ts.Node): IrSourceMapNodeProjection {
+  const context = scope.sourceMap!;
+  const synthetic = scope.sourceMapState!.synthetic.get(node);
+  if (synthetic) return frontendSourceProjection(scope, synthetic.cause);
+  // Original links cannot turn a foreign clone into an authenticated snapshot member.
+  const projection = context.project(node);
+  const seen = new Set<ts.Node>();
+  let actual = node;
+  while (Object.hasOwn(actual, "original")) {
+    if (seen.has(actual)) return sourceMapLoweringUnsupported("cyclic original-node relation");
+    seen.add(actual);
+    const descriptor = Object.getOwnPropertyDescriptor(actual, "original");
+    if (!descriptor || !("value" in descriptor)) return sourceMapLoweringUnsupported("invalid original-node relation");
+    if (descriptor.value === undefined) break;
+    const original: ts.Node = descriptor.value;
+    if (original.kind !== actual.kind || original.pos !== actual.pos || original.end !== actual.end)
+      return sourceMapLoweringUnsupported("unmapped transformed-node relation");
+    context.project(original);
+    actual = original;
+  }
+  if (projection.kind === "unmapped")
+    return sourceMapLoweringUnsupported(`${projection.sourceId}: ${projection.detail}`);
+  const sourceId = projection.kind === "source" ? projection.site.origin.point.sourceId : projection.sourceId;
+  if (sourceId !== context.source.sourceId) return sourceMapLoweringUnsupported("cross-source context");
+  return projection;
+}
+
+function withGeneratedSourcePoint<T>(
+  scope: FrontendSourceScope,
+  role: "binding-scaffold" | "implicit-return" | "control-scaffold",
+  cause: IrSourceMapPoint | undefined,
+  run: () => T,
+): T {
+  const previous = scope.sourceMapState!.causes.get(scope.builder);
+  if (cause) scope.sourceMapState!.causes.set(scope.builder, cause);
+  else scope.sourceMapState!.causes.delete(scope.builder);
+  try {
+    return scope.builder.withSourceSite(
+      {
+        origin: {
+          kind: "generated",
+          phase: "frontend",
+          role,
+          ownerUnitId: scope.sourceMapBuilderUnitId!,
+          ...(cause ? { cause } : {}),
+        },
+      },
+      run,
+    );
+  } finally {
+    if (previous) scope.sourceMapState!.causes.set(scope.builder, previous);
+    else scope.sourceMapState!.causes.delete(scope.builder);
+  }
+}
+
+function withGeneratedSourceSite<T>(
+  scope: FrontendSourceScope,
+  role: "binding-scaffold" | "implicit-return" | "control-scaffold",
+  cause: ts.Node | undefined,
+  run: () => T,
+): T {
+  const projection = cause ? frontendSourceProjection(scope, cause) : undefined;
+  return withGeneratedSourcePoint(
+    scope,
+    role,
+    projection?.kind === "source" ? projection.site.origin.point : undefined,
+    run,
+  );
+}
+
+/** Basic CFG routing is compiler-created; source condition/value instructions keep their own scopes. */
+function selectFrontendControlScopes(scope: FrontendSourceScope): void {
+  const terminate = scope.builder.terminate.bind(scope.builder);
+  scope.builder.terminate = (terminator) => {
+    if (terminator.kind === "br" || terminator.kind === "br_if")
+      return withGeneratedSourcePoint(scope, "control-scaffold", scope.sourceMapState!.causes.get(scope.builder), () =>
+        terminate(terminator),
+      );
+    return terminate(terminator);
+  };
+}
+
+/** Only actual assignment/update syntax owns these user operations, never a fabricated parent span. */
+function sourceMapMutationNode(node: ts.Expression): ts.Node {
+  const parent = node.parent;
+  if (
+    parent &&
+    ts.isBinaryExpression(parent) &&
+    parent.left === node &&
+    parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+  )
+    return parent;
+  if (
+    parent &&
+    (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+    parent.operand === node &&
+    (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken)
+  )
+    return parent;
+  return node;
+}
+
+function withMutationSourceSite<T>(scope: FrontendSourceScope, node: ts.Expression, run: () => T): T {
+  const operation = sourceMapMutationNode(node);
+  if (operation === node) return sourceMapLoweringUnsupported("mutation lacks its actual assignment/update syntax");
+  return withNodeSourceSite(scope, operation, run, node);
+}
+
+function withGeneratedBindingOperation<T>(scope: FrontendSourceScope, key: string, run: () => T): T {
+  const state = scope.sourceMapState!;
+  state.generated.add(key);
+  try {
+    return withGeneratedSourcePoint(scope, "binding-scaffold", state.causes.get(scope.builder), run);
+  } finally {
+    state.generated.delete(key);
+  }
+}
+
+function withClosureCreationSite<T>(scope: FrontendSourceScope, declaration: ts.Node, run: () => T): T {
+  let valueNode = declaration;
+  let parent = valueNode.parent;
+  const wrappers = new Set<ts.Node>();
+  while (
+    parent &&
+    (ts.isParenthesizedExpression(parent) ||
+      ts.isAsExpression(parent) ||
+      ts.isTypeAssertionExpression(parent) ||
+      ts.isNonNullExpression(parent)) &&
+    parent.expression === valueNode
+  ) {
+    if (wrappers.has(parent)) return sourceMapLoweringUnsupported("cyclic closure evaluation wrappers");
+    wrappers.add(parent);
+    valueNode = parent;
+    parent = valueNode.parent;
+  }
+  const invoke = (): T => {
+    const previous = scope.sourceMapState!.active.get(scope.builder);
+    scope.sourceMapState!.active.set(scope.builder, declaration);
+    try {
+      return run();
+    } finally {
+      if (previous) scope.sourceMapState!.active.set(scope.builder, previous);
+      else scope.sourceMapState!.active.delete(scope.builder);
+    }
+  };
+  if (ts.isFunctionDeclaration(declaration)) {
+    if (!parent || !ts.isBlock(parent))
+      return sourceMapLoweringUnsupported("nested function lacks an actual lexical block cause");
+    const cause = frontendSourceProjection(scope, parent);
+    if (cause.kind !== "source" || cause.site.origin.point.donorUnitId !== scope.sourceMap!.donorUnitId)
+      return sourceMapLoweringUnsupported("nested function binding has a foreign lexical cause");
+    return withGeneratedSourceSite(scope, "binding-scaffold", parent, invoke);
+  }
+  const evaluation =
+    parent &&
+    ((ts.isVariableDeclaration(parent) && parent.initializer === valueNode) ||
+      (ts.isCallExpression(parent) && parent.arguments.some((argument) => argument === valueNode)) ||
+      (ts.isPropertyAssignment(parent) && parent.initializer === valueNode) ||
+      (ts.isReturnStatement(parent) && parent.expression === valueNode) ||
+      (ts.isBinaryExpression(parent) &&
+        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        parent.right === valueNode) ||
+      (ts.isArrayLiteralExpression(parent) && parent.elements.some((element) => element === valueNode)) ||
+      (ts.isConditionalExpression(parent) && (parent.whenTrue === valueNode || parent.whenFalse === valueNode)) ||
+      (ts.isObjectLiteralExpression(parent) && parent.properties.some((property) => property === valueNode)) ||
+      (ts.isParameter(parent) && parent.initializer === valueNode))
+      ? parent
+      : undefined;
+  if (!evaluation) return sourceMapLoweringUnsupported("closure has no admitted enclosing evaluation category");
+  const projection = frontendSourceProjection(scope, evaluation);
+  if (projection.kind !== "source" || projection.site.origin.point.donorUnitId !== scope.sourceMap!.donorUnitId)
+    return sourceMapLoweringUnsupported("closure creation has a foreign evaluation donor");
+  return withNodeSourceSite(scope, evaluation, invoke);
+}
+
+function withNodeSourceSite<T>(scope: FrontendSourceScope, node: ts.Node, run: () => T, activeNode = node): T {
+  if (
+    ts.isFunctionDeclaration(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node)
+  ) {
+    const declaration = frontendSourceProjection(scope, node);
+    if (declaration.kind === "source" && declaration.site.origin.point.donorUnitId !== scope.sourceMap!.donorUnitId)
+      return withClosureCreationSite(scope, node, run);
+  }
+  const synthetic = scope.sourceMapState!.synthetic.get(node);
+  const previous = scope.sourceMapState!.active.get(scope.builder);
+  const previousCause = scope.sourceMapState!.causes.get(scope.builder);
+  scope.sourceMapState!.active.set(scope.builder, activeNode);
+  try {
+    if (synthetic) return withGeneratedSourceSite(scope, synthetic.role, synthetic.cause, run);
+    const projection = frontendSourceProjection(scope, node);
+    if (projection.kind === "source") {
+      scope.sourceMapState!.causes.set(scope.builder, projection.site.origin.point);
+      return scope.builder.withSourceSite(projection.site, run);
+    }
+    if (projection.kind !== "generated-text") return sourceMapLoweringUnsupported("unmapped source node");
+    const stage = scope.sourceMap!.source.projection.stages[projection.stageIndex];
+    const edit = stage?.edits[projection.editIndex];
+    if (!edit || edit.kind !== "generated-insertion" || edit.input.start !== edit.input.end || !edit.inserted)
+      return sourceMapLoweringUnsupported("unjoined generated insertion");
+    scope.sourceMapState!.causes.delete(scope.builder);
+    return scope.builder.withSourceSite(
+      {
+        origin: {
+          kind: "generated",
+          phase: "frontend",
+          role: "insertion",
+          ownerUnitId: scope.sourceMapBuilderUnitId!,
+        },
+      },
+      run,
+    );
+  } finally {
+    if (previousCause) scope.sourceMapState!.causes.set(scope.builder, previousCause);
+    else scope.sourceMapState!.causes.delete(scope.builder);
+    if (previous) scope.sourceMapState!.active.set(scope.builder, previous);
+    else scope.sourceMapState!.active.delete(scope.builder);
+  }
+}
+
 export interface AstToIrOptions {
+  readonly sourceMap?: IrFunctionSourceMapContext;
   readonly exported?: boolean;
   /** Explicit string-typed unary numeric conversion; omission keeps historical lowering. */
   readonly stringNumericCoercion?: "number-boundary";
@@ -1008,6 +1287,7 @@ export interface AstToIrOptions {
  * BuiltFns that get fresh funcIdx slots.
  */
 export interface LoweredFunctionResult {
+  readonly sourceMapDerivedSources?: readonly IrSourceMapDerivedSource[];
   readonly main: IrFunction;
   readonly lifted: readonly IrFunction[];
   /** Exact allocation-side provenance for `lifted`, joined by ID rather than array position. */
@@ -1042,6 +1322,166 @@ function moduleInitContainsNestedVar(statements: readonly ts.Statement[]): boole
   return statements.some((statement) => !isDirectSourceVarStatement(statement) && findVarDecl(statement));
 }
 
+function nestedSourceScope(
+  cx: LowerCtx,
+  builder: IrFunctionBuilder,
+  unitId: IrUnitId,
+  declaration: ts.Node,
+): FrontendSourceScope | undefined {
+  if (!cx.sourceMap) return undefined;
+  const projection = frontendSourceProjection(cx, declaration);
+  if (projection.kind !== "source") return sourceMapLoweringUnsupported("nested declaration has no source donor");
+  return {
+    builder,
+    sourceMap: { ...cx.sourceMap, donorUnitId: projection.site.origin.point.donorUnitId },
+    sourceMapState: cx.sourceMapState,
+    sourceMapBuilderUnitId: unitId,
+    sourceMapFunctionNode: declaration,
+  };
+}
+
+function recordSourceMapDerived(cx: LowerCtx, identity: IrFunctionIdentity, declaration: ts.Node): void {
+  if (!cx.sourceMap) return;
+  const projection = frontendSourceProjection(cx, declaration);
+  if (projection.kind !== "source") {
+    sourceMapLoweringUnsupported("derived declaration has no source donor");
+    return;
+  }
+  const donorUnitId = projection.site.origin.point.donorUnitId;
+  if (donorUnitId === identity.unitId) return;
+  const provenance = cx.liftedUnitProvenance.find((row) => row.id === identity.unitId);
+  if (!provenance) {
+    sourceMapLoweringUnsupported("unjoined derived source identity");
+    return;
+  }
+  const prior = cx.sourceMapState!.derived.find((row) => row.unitId === identity.unitId);
+  if (prior && prior.donorUnitId !== donorUnitId) {
+    sourceMapLoweringUnsupported("conflicting derived source donor");
+    return;
+  }
+  if (!prior) cx.sourceMapState!.derived.push(Object.freeze({ unitId: identity.unitId, donorUnitId }));
+}
+
+function sourceMapResult(scope: FrontendSourceScope) {
+  return scope.sourceMapState?.derived.length
+    ? { sourceMapDerivedSources: Object.freeze([...scope.sourceMapState.derived]) }
+    : undefined;
+}
+function lowerMutableParameterStorage(
+  param: { name: string; type: IrType; value: IrValueId },
+  options: AstToIrOptions,
+  name: string,
+  scope: Map<string, ScopeBinding>,
+  builder: IrFunctionBuilder,
+): void {
+  if (options.logicalVectorTypes !== undefined && param.type.kind === "vec") {
+    logicalVectorMismatch(name, "mutable vector parameter storage is not part of this logical projection");
+  }
+  const representation = resolveIrSlotRepresentation(param.type, options.resolver, name);
+  if (!representation) {
+    demoteToLegacy(
+      "param-shape-rejected",
+      `ir/from-ast: mutable parameter "${param.name}" has no slot representation (${name})`,
+    );
+  }
+  const slotIndex = builder.declareSlot(param.name, representation.storageType);
+  builder.emitSlotWrite(slotIndex, param.value);
+  scope.set(param.name, {
+    kind: "slot",
+    slotIndex,
+    type: representation.bindingType,
+    ...(representation.asType ? { asType: representation.asType } : {}),
+  });
+}
+
+function lowerGeneratorPrologue(options: AstToIrOptions, name: string, builder: IrFunctionBuilder): number {
+  // (#3565 contract) The generator prologue below needs the HOST-ONLY import
+  // `env.__gen_create_buffer`. In host-free modes (standalone / wasi /
+  // strictNoHostImports) that import is deliberately never registered — the
+  // legacy path lowers generators to the native `__GenState` state machine
+  // instead (see tests/issue-680). Claiming such a function here would emit a
+  // reference to an import that does not exist in the module, which the exact
+  // import resolver reports as a HARD `unknown-function-ref` invariant at the
+  // `lower` stage — where `unsupported` is not expressible. So refuse at BUILD
+  // stage, which demotes the function to legacy as designed rather than
+  // failing the whole compile.
+  if (options.resolver?.jsHostExterns?.() === false) {
+    throw new IrUnsupportedError(
+      "imported-call-planning-unsupported",
+      "build",
+      `ir/from-ast: generator ${name} needs host-only env.__gen_create_buffer; host-free targets lower generators via the legacy native state machine`,
+    );
+  }
+  builder.setFuncKind("generator");
+  const generatorBufferSlot = builder.declareSlot("__gen_buffer", { kind: "externref" });
+  builder.setGeneratorBufferSlot(generatorBufferSlot);
+  const buf = builder.emitCall(irImportFuncRef("env", "__gen_create_buffer"), [], irVal({ kind: "externref" }));
+  if (buf === null) {
+    // invariant (producer-promise): a compiler-support helper declared non-void must produce an SSA value — #4502.
+    throw new Error(`ir/from-ast: __gen_create_buffer call must produce a value (${name})`);
+  }
+  builder.emitSlotWrite(generatorBufferSlot, buf);
+  return generatorBufferSlot;
+}
+
+function lowerClosureCaptureBindings(
+  captures: readonly NestedCapture[],
+  captureFieldTypes: readonly IrType[],
+  selfV: IrValueId,
+  builder: IrFunctionBuilder,
+  scope: Map<string, ScopeBinding>,
+): void {
+  for (let i = 0; i < captures.length; i++) {
+    const cap = captures[i]!;
+    const fieldType = captureFieldTypes[i]!;
+    const v = builder.emitClosureCap(selfV, i, fieldType);
+    if (cap.withField) {
+      scope.set(cap.name, {
+        kind: "withField",
+        receiver: v,
+        name: cap.withField.name,
+        type: cap.withField.type,
+      });
+    } else {
+      scope.set(cap.name, { kind: "local", value: v, type: fieldType });
+    }
+  }
+}
+
+function lowerClosureDefaultBinding(
+  pending: { name: string; rawValue: IrValueId; type: IrType; initializer: ts.Expression },
+  builder: IrFunctionBuilder,
+  innerCx: LowerCtx,
+  scope: Map<string, ScopeBinding>,
+  liftedName: string,
+): void {
+  if (asVal(pending.type)?.kind !== "f64") {
+    demoteToLegacy(
+      "body-shape-rejected",
+      `ir/from-ast: closure default parameter must use the f64 carrier (${liftedName})`,
+    );
+  }
+  const rawBits = builder.emitUnary("i64.reinterpret_f64", pending.rawValue, IR_I64);
+  const sentinelBits = builder.emitConst({ kind: "i64", value: LEGACY_EXPRESSION_DEFAULT_F64_SENTINEL_BITS }, IR_I64);
+  const missing = builder.emitBinary("i64.eq", rawBits, sentinelBits, IR_I32);
+  const fallback = lowerExpr(pending.initializer, innerCx, pending.type);
+  if (!irTypeAssignable(builder.typeOf(fallback), pending.type)) {
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: closure default initializer type mismatch (${liftedName})`);
+  }
+  const resolved = builder.emitSelect(missing, fallback, pending.rawValue, pending.type);
+  scope.set(pending.name, { kind: "local", value: resolved, type: pending.type });
+}
+
+function terminateImplicitSourceReturn(scope: FrontendSourceScope, values: readonly IrValueId[]): void {
+  if (!scope.sourceMap) {
+    scope.builder.terminate({ kind: "return", values });
+    return;
+  }
+  withGeneratedSourceSite(scope, "implicit-return", scope.sourceMapFunctionNode, () =>
+    scope.builder.terminate({ kind: "return", values }),
+  );
+}
+
 function lowerConstructorBody(
   builder: IrFunctionBuilder,
   statements: readonly ts.Statement[],
@@ -1058,7 +1498,11 @@ function lowerConstructorBody(
       // invariant (producer-promise): the prepared implicit-ctor plan promised the parent shape — #4502.
       throw new Error(`ir/from-ast: implicit constructor parent shape mismatch (${name})`);
     }
-    builder.emitClassSuperInit(options.implicitConstructorParentShape, thisValue, parameterValues);
+    if (cx.sourceMap)
+      withGeneratedSourceSite(cx, "binding-scaffold", cx.sourceMapFunctionNode, () =>
+        builder.emitClassSuperInit(options.implicitConstructorParentShape!, thisValue, parameterValues),
+      );
+    else builder.emitClassSuperInit(options.implicitConstructorParentShape, thisValue, parameterValues);
     lowerConstructorFieldInitializers(fieldInitializers, thisValue, cx);
   } else if (parentShape && fieldInitializers.length > 0) {
     // Selection admits explicit derived constructors only with one leading
@@ -1074,7 +1518,7 @@ function lowerConstructorBody(
     lowerConstructorFieldInitializers(fieldInitializers, thisValue, cx);
     for (const statement of statements) lowerStmt(statement, cx);
   }
-  builder.terminate({ kind: "return", values: [thisValue] });
+  terminateImplicitSourceReturn(cx, [thisValue]);
 }
 
 /** Preserve explicit numeric projections across top-level and lifted contexts. */
@@ -1215,13 +1659,35 @@ export function lowerFunctionAstToIr(
     };
   });
 
+  const sourceMapState: FrontendSourceMapState | undefined = options.sourceMap
+    ? {
+        active: new WeakMap(),
+        causes: new WeakMap(),
+        generated: new Set(),
+        synthetic: new WeakMap(),
+        derived: [],
+      }
+    : undefined;
+
   // Slice 14 (#1228) — void functions have zero result types; pass `[]`.
   const builder = new IrFunctionBuilder(
     { unitId: options.ownerUnitId, name },
     returnType === null ? [] : [returnType],
     options.exported ?? false,
     options.allocRegistry,
+    undefined,
+    options.sourceMap !== undefined,
   );
+  const sourceScope: FrontendSourceScope | undefined = options.sourceMap
+    ? {
+        builder,
+        sourceMap: options.sourceMap,
+        sourceMapState,
+        sourceMapBuilderUnitId: options.ownerUnitId,
+        ...(options.moduleInitUnit ? {} : { sourceMapFunctionNode: fn }),
+      }
+    : undefined;
+  if (sourceScope) selectFrontendControlScopes(sourceScope);
   const mutatedLets = collectMutatedLetNames(fn);
   const dynamicStringLocals = collectDynamicStringLocalWidening(
     fn,
@@ -1280,24 +1746,15 @@ export function lowerFunctionAstToIr(
   // backend's canonical carrier, so every accepted type has an exact slot
   // representation.
   for (const param of pendingMutableParams) {
-    if (options.logicalVectorTypes !== undefined && param.type.kind === "vec") {
-      logicalVectorMismatch(name, "mutable vector parameter storage is not part of this logical projection");
-    }
-    const representation = resolveIrSlotRepresentation(param.type, options.resolver, name);
-    if (!representation) {
-      demoteToLegacy(
-        "param-shape-rejected",
-        `ir/from-ast: mutable parameter "${param.name}" has no slot representation (${name})`,
+    if (sourceScope) {
+      const parameter = fn.parameters.find(
+        (parameter) => ts.isIdentifier(parameter.name) && parameter.name.text === param.name,
       );
-    }
-    const slotIndex = builder.declareSlot(param.name, representation.storageType);
-    builder.emitSlotWrite(slotIndex, param.value);
-    scope.set(param.name, {
-      kind: "slot",
-      slotIndex,
-      type: representation.bindingType,
-      ...(representation.asType ? { asType: representation.asType } : {}),
-    });
+      if (!parameter) return sourceMapLoweringUnsupported("missing mutable parameter cause");
+      withGeneratedSourceSite(sourceScope, "binding-scaffold", parameter, () =>
+        lowerMutableParameterStorage(param, options, name, scope, builder),
+      );
+    } else lowerMutableParameterStorage(param, options, name, scope, builder);
   }
 
   // Slice 7a (#1169f): generator prologue — allocate the `__gen_buffer`
@@ -1314,32 +1771,11 @@ export function lowerFunctionAstToIr(
     builder.setFuncKind("async");
   }
   if (isGenerator) {
-    // (#3565 contract) The generator prologue below needs the HOST-ONLY import
-    // `env.__gen_create_buffer`. In host-free modes (standalone / wasi /
-    // strictNoHostImports) that import is deliberately never registered — the
-    // legacy path lowers generators to the native `__GenState` state machine
-    // instead (see tests/issue-680). Claiming such a function here would emit a
-    // reference to an import that does not exist in the module, which the exact
-    // import resolver reports as a HARD `unknown-function-ref` invariant at the
-    // `lower` stage — where `unsupported` is not expressible. So refuse at BUILD
-    // stage, which demotes the function to legacy as designed rather than
-    // failing the whole compile.
-    if (options.resolver?.jsHostExterns?.() === false) {
-      throw new IrUnsupportedError(
-        "imported-call-planning-unsupported",
-        "build",
-        `ir/from-ast: generator ${name} needs host-only env.__gen_create_buffer; host-free targets lower generators via the legacy native state machine`,
-      );
-    }
-    builder.setFuncKind("generator");
-    generatorBufferSlot = builder.declareSlot("__gen_buffer", { kind: "externref" });
-    builder.setGeneratorBufferSlot(generatorBufferSlot);
-    const buf = builder.emitCall(irImportFuncRef("env", "__gen_create_buffer"), [], irVal({ kind: "externref" }));
-    if (buf === null) {
-      // invariant (producer-promise): a compiler-support helper declared non-void must produce an SSA value — #4502.
-      throw new Error(`ir/from-ast: __gen_create_buffer call must produce a value (${name})`);
-    }
-    builder.emitSlotWrite(generatorBufferSlot, buf);
+    generatorBufferSlot = sourceScope
+      ? withGeneratedSourceSite(sourceScope, "binding-scaffold", fn, () =>
+          lowerGeneratorPrologue(options, name, builder),
+        )
+      : lowerGeneratorPrologue(options, name, builder);
   }
 
   const stmts = fn.body.statements;
@@ -1362,6 +1798,7 @@ export function lowerFunctionAstToIr(
     options.oracle ?? (options.checker ? new TsCheckerOracle(options.checker) : undefined),
   );
   const cx: LowerCtx = {
+    ...sourceScope,
     builder,
     booleanReturnBuilder: options.booleanReturnBoundary === fn ? builder : undefined,
     scope,
@@ -1441,9 +1878,9 @@ export function lowerFunctionAstToIr(
       // A top-level break/continue can't appear (no enclosing loop — the
       // selector rejects it), so no dead-code guard is needed.
     }
-    builder.terminate({ kind: "return", values: [] });
+    terminateImplicitSourceReturn(cx, []);
     checkLogicalVectorConsumption(cx);
-    return { main: builder.finish(), lifted, liftedUnitProvenance };
+    return { main: builder.finish(), lifted, liftedUnitProvenance, ...sourceMapResult(cx) };
   }
 
   if (isCtor) {
@@ -1451,10 +1888,10 @@ export function lowerFunctionAstToIr(
     // the exact instance as its final parameter and owns all source writes.
     lowerConstructorBody(builder, stmts, options, constructorInitSelf!, parameterValues, cx, name);
     checkLogicalVectorConsumption(cx);
-    return { main: builder.finish(), lifted, liftedUnitProvenance };
+    return { main: builder.finish(), lifted, liftedUnitProvenance, ...sourceMapResult(cx) };
   }
 
-  if (stmts.length === 0 && emptyVoidBody) builder.terminate({ kind: "return", values: [] });
+  if (stmts.length === 0 && emptyVoidBody) terminateImplicitSourceReturn(cx, []);
   else lowerStatementList(stmts, cx);
   checkLogicalVectorConsumption(cx);
   const expectedCountedStringAppends = [...(options.countedStringAppends?.values() ?? [])].filter(
@@ -1473,6 +1910,7 @@ export function lowerFunctionAstToIr(
 
   return {
     main: builder.finish(),
+    ...sourceMapResult(cx),
     lifted,
     liftedUnitProvenance,
     ...(cx.consumedCountedStringAppends.length > 0
@@ -1490,7 +1928,15 @@ export function lowerImplicitConstructorAstToIr(
     ts.factory.createParameterDeclaration(undefined, undefined, `__arg${index}`, undefined, undefined, undefined),
   );
   const synthetic = ts.factory.createConstructorDeclaration(undefined, parameters, ts.factory.createBlock([]));
-  return lowerFunctionAstToIr(synthetic, options);
+  if (!options.sourceMap) return lowerFunctionAstToIr(synthetic, options);
+  // These factory-owned objects have an exact creation cause, never a source range.
+  const syntheticNodes = new Set<ts.Node>([synthetic, synthetic.body!, ...parameters]);
+  const context = options.sourceMap;
+  const sourceMap: IrFunctionSourceMapContext = {
+    ...context,
+    project: (node) => context.project(syntheticNodes.has(node) ? declaration : node),
+  };
+  return lowerFunctionAstToIr(synthetic, { ...options, sourceMap });
 }
 
 /**
@@ -1688,7 +2134,7 @@ function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void 
   if (stmts.length < 1) {
     if (cx.returnType !== null)
       demoteToLegacy("body-shape-rejected", `ir/from-ast: empty statement list in ${cx.funcName}`);
-    cx.builder.terminate({ kind: "return", values: [] });
+    terminateImplicitSourceReturn(cx, []);
     return;
   }
   const denseReduction = denseArrayReductionPlan(stmts);
@@ -1703,272 +2149,23 @@ function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void 
         );
       }
       const value = lowerAsI32(denseReduction.fillValue, bodyCx, "wrap");
-      const accumulatorRead = bodyCx.builder.emitSlotRead(accumulator.slotIndex);
-      const accumulatorI32 =
-        accumulator.i32Storage === true
-          ? accumulatorRead
-          : bodyCx.builder.emitUnary("i32.trunc_sat_f64_s", accumulatorRead, IR_I32);
-      const sum = bodyCx.builder.emitBinary("i32.add", accumulatorI32, value, IR_I32);
-      bodyCx.builder.emitSlotWrite(
-        accumulator.slotIndex,
-        accumulator.i32Storage === true ? sum : bodyCx.builder.emitUnary("f64.convert_i32_s", sum, IR_F64),
-      );
+      if (bodyCx.sourceMap) {
+        const reduction = stmts[3]!;
+        if (!ts.isForStatement(reduction)) sourceMapLoweringUnsupported("dense reduction lost actual reduction loop");
+        const statement = ts.isBlock(reduction.statement) ? reduction.statement.statements[0] : reduction.statement;
+        if (!statement || !ts.isExpressionStatement(statement))
+          sourceMapLoweringUnsupported("dense reduction lost actual accumulation expression");
+        withNodeSourceSite(bodyCx, statement.expression, () => accumulateDenseReduction(accumulator, value, bodyCx));
+      } else accumulateDenseReduction(accumulator, value, bodyCx);
     });
     lowerTail(denseReduction.returnStatement, cx);
     return;
   }
   for (let i = 0; i < stmts.length - 1; i++) {
-    const s = stmts[i]!;
-    if (ts.isVariableStatement(s)) {
-      lowerVarDecl(s, cx);
-      continue;
-    }
-    // Slice 3 (#1169c): nested function declaration. Adds a
-    // `nestedFunc` scope binding and lifts the body to a top-level IR
-    // function in `cx.lifted`.
-    if (ts.isFunctionDeclaration(s)) {
-      lowerNestedFunctionDeclaration(s, cx);
-      continue;
-    }
-    if (ts.isClassDeclaration(s) && s.name && cx.classShapes?.has(s.name.text)) {
-      // The bounded nested-class selector proved ClassDefinitionEvaluation is
-      // effect-free and Program ABI preparation already installed every body.
-      // No runtime instruction is required; retain the lexical name only in
-      // the selector's class-shape registry.
-      continue;
-    }
-    // Slice 3 (#1169c): bare call expression statement — lower the
-    // call, drop the result. Lets `inc(); inc(); inc();` work.
-    //
-    // Slice 4 (#1169d): also accept `<obj>.<field> = <expr>;` — lowered
-    // as `class.set` or `object.set` based on the receiver's IrType.
-    if (ts.isExpressionStatement(s)) {
-      if (ts.isCallExpression(s.expression)) {
-        if (cx.resolver?.preparedObjectCreateCall?.(s.expression) === "null") {
-          void lowerCall(s.expression, cx, /* statementPosition */ true);
-          continue;
-        }
-        // (#2856) Method-shaped statement calls go through lowerMethodCall
-        // in STATEMENT position so void extern/console methods are legal
-        // (`host.appendChild(box);`, `console.log("…");`). Expression
-        // position keeps throwing on void — only this flag differs.
-        if (ts.isPropertyAccessExpression(s.expression.expression) && !s.expression.questionDotToken) {
-          void lowerMethodCallWithSourcePlan(s.expression, cx, /* statementPosition */ true);
-          continue;
-        }
-        // The result SSA value is unused; DCE strips it if pure.
-        // closure.call and call are flagged side-effecting in dead-code
-        // so they stay live. (#2856 C4) Statement position — a VOID direct
-        // call (`quicksort(arr, lo, p - 1);`) is legal here.
-        void lowerCall(s.expression, cx, /* statementPosition */ true);
-        continue;
-      }
-      // Slice 7a (#1169f): `yield <expr>;` as a top-level statement.
-      // Selected only inside `function*` (the selector enforces this
-      // at the function-claim level; if a non-generator function
-      // somehow surfaces a yield here, `lowerYield` throws).
-      if (ts.isYieldExpression(s.expression)) {
-        lowerYield(s.expression, cx);
-        continue;
-      }
-      // (#5163) The mutating shapes this issue adopted — chained assignment,
-      // member compound assignment, and `++`/`--`. Placed BEFORE the
-      // single-target `=` arms because a chain's outer LHS matches those arms
-      // while its RHS is itself an assignment they cannot lower.
-      if (lowerAdoptedMutatingStatement(s.expression, cx)) continue;
-      if (
-        ts.isBinaryExpression(s.expression) &&
-        s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        ts.isIdentifier(s.expression.left)
-      ) {
-        lowerIdentifierAssignment(s.expression.left, s.expression.right, cx);
-        continue;
-      }
-      if (
-        ts.isBinaryExpression(s.expression) &&
-        s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        ts.isPropertyAccessExpression(s.expression.left)
-      ) {
-        lowerPropertyAssignment(s.expression, cx);
-        continue;
-      }
-      // (#2856 C2) element store `arr[i] = v;` as a non-tail statement —
-      // quicksort's post-partition swap writes live here (outside any loop).
-      if (
-        ts.isBinaryExpression(s.expression) &&
-        s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        ts.isElementAccessExpression(s.expression.left)
-      ) {
-        lowerElementStore(s.expression.left, s.expression.right, cx);
-        continue;
-      }
-      // #3787 / #2856 — a body-level compound assignment followed by a
-      // return has the same slot semantics as the already-supported form
-      // inside loop/body buffers. Reuse the shared lowering instead of
-      // requiring the assignment to be nested in a block-owning statement.
-      if (
-        ts.isBinaryExpression(s.expression) &&
-        (s.expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken ||
-          s.expression.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken ||
-          s.expression.operatorToken.kind === ts.SyntaxKind.AsteriskEqualsToken ||
-          s.expression.operatorToken.kind === ts.SyntaxKind.SlashEqualsToken) &&
-        ts.isIdentifier(s.expression.left)
-      ) {
-        lowerCompoundAssignment(s.expression.left, s.expression.operatorToken.kind, s.expression.right, cx);
-        continue;
-      }
-      // (#4459) Value-discarding statement — `x + 1;`, `x;`, `1;`,
-      // `cond ? a : b;`. The expression evaluates for its effects and its
-      // SSA result is simply never consumed (a discarded ternary becomes an
-      // `if.stmt`, so only the taken arm evaluates). The selector's
-      // `isPhase1DiscardedExpr` admits exactly this set. Every MUTATING
-      // shape has a dedicated arm above and is refused by that selector arm,
-      // so one reaching here is a real selector↔builder divergence and must
-      // still surface as an unsupported shape rather than being lowered as
-      // an ordinary value.
-      if (!expressionStatementMutatesAtTopLevel(s.expression)) {
-        lowerDiscardedExpression(s.expression, cx);
-        continue;
-      }
-      demoteToLegacy("body-shape-rejected", `ir/from-ast: unsupported ExpressionStatement shape in ${cx.funcName}`);
-    }
-    if (ts.isWithStatement(s)) {
-      lowerWithStatement(s, cx);
-      continue;
-    }
-    // Slice 6 part 2 (#1181): for-of statement (always non-tail). The
-    // body is shape-checked by `isPhase1ForOf` and lowered via a
-    // separate `lowerStmt` body-statement dispatcher (no nested
-    // closures, no nested function decls).
-    if (ts.isForOfStatement(s)) {
-      lowerForOfStatement(s, cx);
-      continue;
-    }
-    if (ts.isForInStatement(s)) {
-      lowerForInStatement(s, cx);
-      continue;
-    }
-    // Slice 12 (#1280): generic structured `while (cond) body` and
-    // `for (init; cond; update) body` loops. Both lower to a
-    // declarative `{while,for}.loop` IR instr which the lowerer
-    // emits as `block { loop { <cond>; i32.eqz; br_if 1; <body>;
-    // <update?>; br 0 } }`.
-    if (ts.isWhileStatement(s)) {
-      lowerWhileStatement(s, cx);
-      continue;
-    }
-    if (ts.isForStatement(s)) {
-      lowerForStatement(s, cx);
-      continue;
-    }
-    // #2952 slice 1: `do { body } while (cond)` (post-test loop).
-    if (ts.isDoStatement(s)) {
-      lowerDoStatement(s, cx);
-      continue;
-    }
-    // #2952 slice 3: `lbl: <loop>` as a non-tail statement.
-    if (ts.isLabeledStatement(s)) {
-      lowerLabeledStatement(s, cx);
-      continue;
-    }
-    // #2952 slice 4: `switch (...)` as a non-tail statement.
-    if (ts.isSwitchStatement(s)) {
-      lowerSwitchStatement(s, cx);
-      continue;
-    }
-    // Slice 9 (#1169h): throw / try as a non-tail statement.
-    if (ts.isThrowStatement(s)) {
-      lowerThrowStatement(s, cx);
-      continue;
-    }
-    if (ts.isTryStatement(s)) {
-      lowerTryStatement(s, cx);
-      continue;
-    }
-    // (#2856 calendar residual) A non-tail `if/else` whose arms are plain
-    // body statements is a converging statement, not a tail CFG split. Reuse
-    // the existing structured `if.stmt` lowering, then continue with the
-    // trailing statements. The selector admits exactly the body shapes this
-    // helper can lower, so returns that would need CFG termination stay on the
-    // legacy path.
-    if (ts.isIfStatement(s) && s.elseStatement) {
-      lowerIfBodyStatement(s, cx);
-      continue;
-    }
-    // Phase 2: early-return `if` with no else + subsequent statements.
-    // Structurally: `if (cond) <tail>; <rest>` ≡ `if (cond) <tail> else { <rest> }`.
-    // The then-arm lowers to its own block that terminates in `return`
-    // (lowerTail enforces that); the else-arm opens a reserved block and
-    // recursively lowers the remaining statements.
-    if (ts.isIfStatement(s) && !s.elseStatement) {
-      // Whether the then-arm unconditionally terminates decides the shape:
-      // a terminating then-arm permits the early-return rewrite
-      // (`if (cond) <tail> else { <rest> }`); a non-terminating one is just a
-      // side-effecting guard and `<rest>` must run afterwards either way. (#1979)
-      const terminates = thenArmTerminates(s.thenStatement);
-
-      // #1043: compile-time constant fold. After --define substitution of
-      // process.env.NODE_ENV (etc.), the condition may be a literal-vs-literal
-      // comparison. Skip the dead arm so dev-only code never reaches codegen.
-      const constResult = evaluateConstantCondition(s.expression);
-      if (constResult !== undefined) {
-        if (constResult) {
-          if (terminates) {
-            // Then-arm taken and terminating: the rest is unreachable, stop.
-            lowerTail(s.thenStatement, { ...cx, scope: new Map(cx.scope) });
-            return;
-          }
-          // Then-arm taken but non-terminating: run its side effects, then
-          // fall through to the rest in the same block / scope.
-          const takenCx: LowerCtx = { ...cx, scope: new Map(cx.scope) };
-          lowerStmt(s.thenStatement, takenCx);
-          joinScopeStringEncodingFacts(cx.scope, [takenCx.scope]);
-          continue;
-        }
-        // Then-arm dead: skip it and continue with the remaining statements
-        // in the same block / scope.
-        continue;
-      }
-
-      // A non-terminating guard is already representable by the structured
-      // statement-if used inside loop/body buffers. Keep it in the current
-      // statement list so the condition is evaluated exactly once and the
-      // trailing statements are emitted once, rather than building a CFG
-      // continuation that the Wasm structurizer must duplicate into both
-      // arms.
-      if (!terminates) {
-        lowerIfBodyStatement(s, cx);
-        continue;
-      }
-
-      const rawCond = lowerExpr(s.expression, cx, irVal({ kind: "i32" }));
-      // The move-only selector already admits dynamic conditions and the
-      // structured-if path below uses this same canonical ToBoolean bridge.
-      // Apply it before the early-return CFG split as well.
-      const cond = coerceLoopCondToBool(rawCond, s.expression, cx, "if");
-      const rest = stmts.slice(i + 1);
-
-      // Early-return rewrite: `if (cond) <tail> else { <rest> }`.
-      const thenId = cx.builder.reserveBlockId();
-      const elseId = cx.builder.reserveBlockId();
-      cx.builder.terminate({
-        kind: "br_if",
-        condition: cond,
-        ifTrue: { target: thenId, args: [] },
-        ifFalse: { target: elseId, args: [] },
-      });
-
-      cx.builder.openReservedBlock(thenId);
-      lowerTail(s.thenStatement, { ...cx, scope: new Map(cx.scope) });
-
-      cx.builder.openReservedBlock(elseId);
-      lowerStatementList(rest, { ...cx, scope: new Map(cx.scope) });
-      return;
-    }
-    demoteToLegacy(
-      "body-shape-rejected",
-      `ir/from-ast: unexpected statement before tail (got ${ts.SyntaxKind[s.kind]} in ${cx.funcName})`,
-    );
+    const done = cx.sourceMap
+      ? withNodeSourceSite(cx, stmts[i]!, () => lowerStatementListPrefix(stmts, i, cx))
+      : lowerStatementListPrefix(stmts, i, cx);
+    if (done) return;
   }
   lowerTail(stmts[stmts.length - 1]!, cx);
 }
@@ -1980,7 +2177,285 @@ function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void 
  * incorrectly treated that absence as a value-use error; the same bug affected
  * early returns nested in loop/body buffers.
  */
+
+function accumulateDenseReduction(
+  accumulator: Extract<ScopeBinding, { kind: "slot" }>,
+  value: IrValueId,
+  bodyCx: LowerCtx,
+): void {
+  const accumulatorRead = bodyCx.builder.emitSlotRead(accumulator.slotIndex);
+  const accumulatorI32 =
+    accumulator.i32Storage === true
+      ? accumulatorRead
+      : bodyCx.builder.emitUnary("i32.trunc_sat_f64_s", accumulatorRead, IR_I32);
+  const sum = bodyCx.builder.emitBinary("i32.add", accumulatorI32, value, IR_I32);
+  bodyCx.builder.emitSlotWrite(
+    accumulator.slotIndex,
+    accumulator.i32Storage === true ? sum : bodyCx.builder.emitUnary("f64.convert_i32_s", sum, IR_F64),
+  );
+}
+
+function lowerStatementListPrefix(stmts: readonly ts.Statement[], i: number, cx: LowerCtx): boolean {
+  const s = stmts[i]!;
+  if (ts.isVariableStatement(s)) {
+    lowerVarDecl(s, cx);
+    return false;
+  }
+  // Slice 3 (#1169c): nested function declaration. Adds a
+  // `nestedFunc` scope binding and lifts the body to a top-level IR
+  // function in `cx.lifted`.
+  if (ts.isFunctionDeclaration(s)) {
+    lowerNestedFunctionDeclaration(s, cx);
+    return false;
+  }
+  if (ts.isClassDeclaration(s) && s.name && cx.classShapes?.has(s.name.text)) {
+    // The bounded nested-class selector proved ClassDefinitionEvaluation is
+    // effect-free and Program ABI preparation already installed every body.
+    // No runtime instruction is required; retain the lexical name only in
+    // the selector's class-shape registry.
+    return false;
+  }
+  // Slice 3 (#1169c): bare call expression statement — lower the
+  // call, drop the result. Lets `inc(); inc(); inc();` work.
+  //
+  // Slice 4 (#1169d): also accept `<obj>.<field> = <expr>;` — lowered
+  // as `class.set` or `object.set` based on the receiver's IrType.
+  if (ts.isExpressionStatement(s)) {
+    if (ts.isCallExpression(s.expression)) {
+      if (cx.resolver?.preparedObjectCreateCall?.(s.expression) === "null") {
+        void lowerCall(s.expression, cx, /* statementPosition */ true);
+        return false;
+      }
+      // (#2856) Method-shaped statement calls go through lowerMethodCall
+      // in STATEMENT position so void extern/console methods are legal
+      // (`host.appendChild(box);`, `console.log("…");`). Expression
+      // position keeps throwing on void — only this flag differs.
+      if (ts.isPropertyAccessExpression(s.expression.expression) && !s.expression.questionDotToken) {
+        void lowerMethodCallWithSourcePlan(s.expression, cx, /* statementPosition */ true);
+        return false;
+      }
+      // The result SSA value is unused; DCE strips it if pure.
+      // closure.call and call are flagged side-effecting in dead-code
+      // so they stay live. (#2856 C4) Statement position — a VOID direct
+      // call (`quicksort(arr, lo, p - 1);`) is legal here.
+      void lowerCall(s.expression, cx, /* statementPosition */ true);
+      return false;
+    }
+    // Slice 7a (#1169f): `yield <expr>;` as a top-level statement.
+    // Selected only inside `function*` (the selector enforces this
+    // at the function-claim level; if a non-generator function
+    // somehow surfaces a yield here, `lowerYield` throws).
+    if (ts.isYieldExpression(s.expression)) {
+      lowerYield(s.expression, cx);
+      return false;
+    }
+    // (#5163) The mutating shapes this issue adopted — chained assignment,
+    // member compound assignment, and `++`/`--`. Placed BEFORE the
+    // single-target `=` arms because a chain's outer LHS matches those arms
+    // while its RHS is itself an assignment they cannot lower.
+    if (lowerAdoptedMutatingStatement(s.expression, cx)) return false;
+    if (
+      ts.isBinaryExpression(s.expression) &&
+      s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(s.expression.left)
+    ) {
+      lowerIdentifierAssignment(s.expression.left, s.expression.right, cx);
+      return false;
+    }
+    if (
+      ts.isBinaryExpression(s.expression) &&
+      s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(s.expression.left)
+    ) {
+      lowerPropertyAssignment(s.expression, cx);
+      return false;
+    }
+    // (#2856 C2) element store `arr[i] = v;` as a non-tail statement —
+    // quicksort's post-partition swap writes live here (outside any loop).
+    if (
+      ts.isBinaryExpression(s.expression) &&
+      s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isElementAccessExpression(s.expression.left)
+    ) {
+      lowerElementStore(s.expression.left, s.expression.right, cx);
+      return false;
+    }
+    // #3787 / #2856 — a body-level compound assignment followed by a
+    // return has the same slot semantics as the already-supported form
+    // inside loop/body buffers. Reuse the shared lowering instead of
+    // requiring the assignment to be nested in a block-owning statement.
+    if (
+      ts.isBinaryExpression(s.expression) &&
+      (s.expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken ||
+        s.expression.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken ||
+        s.expression.operatorToken.kind === ts.SyntaxKind.AsteriskEqualsToken ||
+        s.expression.operatorToken.kind === ts.SyntaxKind.SlashEqualsToken) &&
+      ts.isIdentifier(s.expression.left)
+    ) {
+      lowerCompoundAssignment(s.expression.left, s.expression.operatorToken.kind, s.expression.right, cx);
+      return false;
+    }
+    // (#4459) Value-discarding statement — `x + 1;`, `x;`, `1;`,
+    // `cond ? a : b;`. The expression evaluates for its effects and its
+    // SSA result is simply never consumed (a discarded ternary becomes an
+    // `if.stmt`, so only the taken arm evaluates). The selector's
+    // `isPhase1DiscardedExpr` admits exactly this set. Every MUTATING
+    // shape has a dedicated arm above and is refused by that selector arm,
+    // so one reaching here is a real selector↔builder divergence and must
+    // still surface as an unsupported shape rather than being lowered as
+    // an ordinary value.
+    if (!expressionStatementMutatesAtTopLevel(s.expression)) {
+      lowerDiscardedExpression(s.expression, cx);
+      return false;
+    }
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: unsupported ExpressionStatement shape in ${cx.funcName}`);
+  }
+  if (ts.isWithStatement(s)) {
+    lowerWithStatement(s, cx);
+    return false;
+  }
+  // Slice 6 part 2 (#1181): for-of statement (always non-tail). The
+  // body is shape-checked by `isPhase1ForOf` and lowered via a
+  // separate `lowerStmt` body-statement dispatcher (no nested
+  // closures, no nested function decls).
+  if (ts.isForOfStatement(s)) {
+    lowerForOfStatement(s, cx);
+    return false;
+  }
+  if (ts.isForInStatement(s)) {
+    lowerForInStatement(s, cx);
+    return false;
+  }
+  // Slice 12 (#1280): generic structured `while (cond) body` and
+  // `for (init; cond; update) body` loops. Both lower to a
+  // declarative `{while,for}.loop` IR instr which the lowerer
+  // emits as `block { loop { <cond>; i32.eqz; br_if 1; <body>;
+  // <update?>; br 0 } }`.
+  if (ts.isWhileStatement(s)) {
+    lowerWhileStatement(s, cx);
+    return false;
+  }
+  if (ts.isForStatement(s)) {
+    lowerForStatement(s, cx);
+    return false;
+  }
+  // #2952 slice 1: `do { body } while (cond)` (post-test loop).
+  if (ts.isDoStatement(s)) {
+    lowerDoStatement(s, cx);
+    return false;
+  }
+  // #2952 slice 3: `lbl: <loop>` as a non-tail statement.
+  if (ts.isLabeledStatement(s)) {
+    lowerLabeledStatement(s, cx);
+    return false;
+  }
+  // #2952 slice 4: `switch (...)` as a non-tail statement.
+  if (ts.isSwitchStatement(s)) {
+    lowerSwitchStatement(s, cx);
+    return false;
+  }
+  // Slice 9 (#1169h): throw / try as a non-tail statement.
+  if (ts.isThrowStatement(s)) {
+    lowerThrowStatement(s, cx);
+    return false;
+  }
+  if (ts.isTryStatement(s)) {
+    lowerTryStatement(s, cx);
+    return false;
+  }
+  // (#2856 calendar residual) A non-tail `if/else` whose arms are plain
+  // body statements is a converging statement, not a tail CFG split. Reuse
+  // the existing structured `if.stmt` lowering, then continue with the
+  // trailing statements. The selector admits exactly the body shapes this
+  // helper can lower, so returns that would need CFG termination stay on the
+  // legacy path.
+  if (ts.isIfStatement(s) && s.elseStatement) {
+    lowerIfBodyStatement(s, cx);
+    return false;
+  }
+  // Phase 2: early-return `if` with no else + subsequent statements.
+  // Structurally: `if (cond) <tail>; <rest>` ≡ `if (cond) <tail> else { <rest> }`.
+  // The then-arm lowers to its own block that terminates in `return`
+  // (lowerTail enforces that); the else-arm opens a reserved block and
+  // recursively lowers the remaining statements.
+  if (ts.isIfStatement(s) && !s.elseStatement) {
+    // Whether the then-arm unconditionally terminates decides the shape:
+    // a terminating then-arm permits the early-return rewrite
+    // (`if (cond) <tail> else { <rest> }`); a non-terminating one is just a
+    // side-effecting guard and `<rest>` must run afterwards either way. (#1979)
+    const terminates = thenArmTerminates(s.thenStatement);
+
+    // #1043: compile-time constant fold. After --define substitution of
+    // process.env.NODE_ENV (etc.), the condition may be a literal-vs-literal
+    // comparison. Skip the dead arm so dev-only code never reaches codegen.
+    const constResult = evaluateConstantCondition(s.expression);
+    if (constResult !== undefined) {
+      if (constResult) {
+        if (terminates) {
+          // Then-arm taken and terminating: the rest is unreachable, stop.
+          lowerTail(s.thenStatement, { ...cx, scope: new Map(cx.scope) });
+          return true;
+        }
+        // Then-arm taken but non-terminating: run its side effects, then
+        // fall through to the rest in the same block / scope.
+        const takenCx: LowerCtx = { ...cx, scope: new Map(cx.scope) };
+        lowerStmt(s.thenStatement, takenCx);
+        joinScopeStringEncodingFacts(cx.scope, [takenCx.scope]);
+        return false;
+      }
+      // Then-arm dead: skip it and continue with the remaining statements
+      // in the same block / scope.
+      return false;
+    }
+
+    // A non-terminating guard is already representable by the structured
+    // statement-if used inside loop/body buffers. Keep it in the current
+    // statement list so the condition is evaluated exactly once and the
+    // trailing statements are emitted once, rather than building a CFG
+    // continuation that the Wasm structurizer must duplicate into both
+    // arms.
+    if (!terminates) {
+      lowerIfBodyStatement(s, cx);
+      return false;
+    }
+
+    const rawCond = lowerExpr(s.expression, cx, irVal({ kind: "i32" }));
+    // The move-only selector already admits dynamic conditions and the
+    // structured-if path below uses this same canonical ToBoolean bridge.
+    // Apply it before the early-return CFG split as well.
+    const cond = coerceLoopCondToBool(rawCond, s.expression, cx, "if");
+    const rest = stmts.slice(i + 1);
+
+    // Early-return rewrite: `if (cond) <tail> else { <rest> }`.
+    const thenId = cx.builder.reserveBlockId();
+    const elseId = cx.builder.reserveBlockId();
+    cx.builder.terminate({
+      kind: "br_if",
+      condition: cond,
+      ifTrue: { target: thenId, args: [] },
+      ifFalse: { target: elseId, args: [] },
+    });
+
+    cx.builder.openReservedBlock(thenId);
+    lowerTail(s.thenStatement, { ...cx, scope: new Map(cx.scope) });
+
+    cx.builder.openReservedBlock(elseId);
+    lowerStatementList(rest, { ...cx, scope: new Map(cx.scope) });
+    return true;
+  }
+  demoteToLegacy(
+    "body-shape-rejected",
+    `ir/from-ast: unexpected statement before tail (got ${ts.SyntaxKind[s.kind]} in ${cx.funcName})`,
+  );
+
+  return false;
+}
+
 function lowerDiscardedExpression(expr: ts.Expression, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr) {
+    withNodeSourceSite(cx, expr, () => lowerDiscardedExpression(expr, cx));
+    return;
+  }
   if (ts.isParenthesizedExpression(expr)) {
     lowerDiscardedExpression(expr.expression, cx);
     return;
@@ -2058,6 +2533,10 @@ function lowerDiscardedExpression(expr: ts.Expression, cx: LowerCtx): void {
  * tail, or `if (<cond>) <tail> else <tail>`.
  */
 function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
+    withNodeSourceSite(cx, stmt, () => lowerTail(stmt, cx));
+    return;
+  }
   if (ts.isReturnStatement(stmt)) {
     // Slice 7a/7b (#1169f): generator return. Match the legacy semantics
     // (`compileReturnStatement` in `codegen/statements/control-flow.ts`
@@ -2390,7 +2869,7 @@ interface NestedCapture {
   readonly withField?: { readonly name: string; readonly type: IrType };
 }
 
-interface LowerCtx {
+interface LowerCtx extends FrontendSourceScope {
   readonly builder: IrFunctionBuilder;
   /** Builder identity prevents a main-body proof leaking into lifted/nested bodies. */
   readonly booleanReturnBuilder?: IrFunctionBuilder;
@@ -3091,6 +3570,8 @@ function promotedI32Probe(cx: LowerCtx): IsPromotedI32 {
 }
 
 function lowerNarrowedI32Element(value: ts.Expression, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== value)
+    return withNodeSourceSite(cx, value, () => lowerNarrowedI32Element(value, cx));
   return lowerNarrowedI32ElementWith(value, cx, promotedI32Probe(cx), (expression) =>
     lowerAsI32(expression, cx, "canon"),
   );
@@ -3139,6 +3620,8 @@ function readPromotedI32Slot(slotIndex: number, cx: LowerCtx): IrValueId {
  * `lower.ts` applies its usual `emitJsToInt32`.
  */
 function lowerBitwiseOperand(e: ts.Expression, parent: ts.BinaryExpression | null, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== e)
+    return withNodeSourceSite(cx, e, () => lowerBitwiseOperand(e, parent, cx));
   if (isFusedI32Lowerable(e, cx) || isNestedBitwiseResult(e)) return lowerAsI32(e, cx, "wrap");
   const v = lowerExpr(e, cx, IR_F64);
   // Taking the fused path means we bypassed `lowerBinary`'s operand-shape
@@ -3179,6 +3662,8 @@ function lowerBitwiseOperand(e: ts.Expression, parent: ts.BinaryExpression | nul
  * emitting an approximation.
  */
 function lowerAsI32(expr: ts.Expression, cx: LowerCtx, mode: "canon" | "wrap"): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerAsI32(expr, cx, mode));
   const inner = peelExpr(expr);
 
   const lit = i32LiteralValue(inner);
@@ -3238,6 +3723,8 @@ function lowerAsI32(expr: ts.Expression, cx: LowerCtx, mode: "canon" | "wrap"): 
  * ToInt32 and consumes exactly these bits.
  */
 function lowerBitwiseAsI32(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerBitwiseAsI32(expr, cx));
   const k = expr.operatorToken.kind;
   // `x | 0` / `x ^ 0` — OR/XOR with 0 is the identity on the ToInt32 bit
   // pattern, so when `x` is already i32-lowerable the operator disappears
@@ -3262,6 +3749,10 @@ function lowerBitwiseAsI32(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
 
 /** Invariant W — store `rhs` into an i32-promoted slot. */
 function writePromotedI32Slot(slotIndex: number, rhs: ts.Expression, cx: LowerCtx, targetName?: string): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== rhs) {
+    withNodeSourceSite(cx, rhs, () => writePromotedI32Slot(slotIndex, rhs, cx, targetName));
+    return;
+  }
   const promoted = promotedI32Probe(cx);
   const exactI32 = (id: ts.Identifier): boolean => promoted(id) || cx.i32PureNames.has(id.text);
   // (#3907) `i = i + <int literal>` — the desugared spelling of the `i += <lit>`
@@ -3308,6 +3799,10 @@ function lowerPromotedI32CompoundAssignment(
   rhs: ts.Expression,
   cx: LowerCtx,
 ): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
+    withMutationSourceSite(cx, id, () => lowerPromotedI32CompoundAssignment(id, slotIndex, compoundOp, rhs, cx));
+    return;
+  }
   const bitwiseToken = COMPOUND_TO_BITWISE_TOKEN[compoundOp as keyof typeof COMPOUND_TO_BITWISE_TOKEN];
   if (bitwiseToken !== undefined) {
     const lhs = cx.builder.emitSlotRead(slotIndex);
@@ -3347,6 +3842,8 @@ function lowerPromotedI32CompoundAssignment(
  * Returns `null` when nothing applies (the caller continues unchanged).
  */
 function tryLowerFusedI32Binary(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: LowerCtx): IrValueId | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => tryLowerFusedI32Binary(expr, op, cx));
   const promoted = promotedI32Probe(cx);
 
   // (0) `x | 0` / `x ^ 0` is the identity on the ToInt32 bit pattern, so the
@@ -3492,6 +3989,10 @@ function bindOrdinaryDescriptorCapture(
   inferred: IrType,
   cx: LowerCtx,
 ): boolean {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== declaration)
+    return withNodeSourceSite(cx, declaration, () =>
+      bindOrdinaryDescriptorCapture(declaration, name, value, inferred, cx),
+    );
   if (!cx.mutatedLets.has(name) || !cx.checker || !isCapturedByOrdinaryDescriptor(declaration, cx.checker))
     return false;
   const scalar = asVal(inferred);
@@ -3502,303 +4003,14 @@ function bindOrdinaryDescriptorCapture(
 }
 
 function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
+    withNodeSourceSite(cx, stmt, () => lowerVarDecl(stmt, cx));
+    return;
+  }
   const isConst = !!(stmt.declarationList.flags & ts.NodeFlags.Const);
   for (const d of stmt.declarationList.declarations) {
-    // Slice 8a (#1169g): destructuring binding patterns (selector restricts
-    // to const, no rest, no defaults, no nesting). Lower the initializer
-    // ONCE into an SSA value, then walk the pattern emitting one
-    // `object.get` (object pattern) or `vec.get` (array pattern) per leaf
-    // and binding each leaf as a `local` ScopeBinding.
-    if (ts.isObjectBindingPattern(d.name) || ts.isArrayBindingPattern(d.name)) {
-      if (!d.initializer) {
-        demoteToLegacy(
-          "module-init-legacy-coupling",
-          `ir/from-ast: binding pattern requires an initializer (${cx.funcName})`,
-        );
-      }
-      // (#3142 Slice 2) Top-level destructuring in the module-init unit:
-      // the leaves are module globals on the legacy path, but the pattern
-      // lowerer binds them as plain locals — demote instead of splitting
-      // the storage.
-      if (cx.moduleBindings) {
-        const leafIsModuleBinding = (pattern: ts.BindingPattern): boolean => {
-          for (const element of pattern.elements) {
-            if (ts.isOmittedExpression(element)) continue;
-            if (ts.isIdentifier(element.name)) {
-              if (cx.moduleBindings!.has(element.name.text)) return true;
-            } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
-              if (leafIsModuleBinding(element.name)) return true;
-            }
-          }
-          return false;
-        };
-        if (leafIsModuleBinding(d.name)) {
-          demoteToLegacy(
-            "module-init-legacy-coupling",
-            `ir/from-ast: module-level destructuring declaration not in module-init Slice 2 scope (${cx.funcName})`,
-          );
-        }
-      }
-      // Hint: pass an externref so the initializer's actual IrType (object,
-      // class, vec ref, etc.) flows through unchanged. The pattern lowerer
-      // dispatches on the inferred IrType.
-      const initValue = lowerExpr(d.initializer, cx, irVal({ kind: "externref" }));
-      lowerBindingPattern(d.name, initValue, cx);
-      continue;
-    }
-    if (!ts.isIdentifier(d.name)) {
-      demoteToLegacy(
-        "body-shape-rejected",
-        `ir/from-ast: destructuring declarations not supported in Phase 1 (${cx.funcName})`,
-      );
-    }
-    const name = d.name.text;
-    if (cx.scope.has(name)) {
-      demoteToLegacy("body-shape-rejected", `ir/from-ast: redeclaration of '${name}' in ${cx.funcName}`);
-    }
-    if (!d.initializer) {
-      demoteToLegacy(
-        "body-shape-rejected",
-        `ir/from-ast: Phase 1 requires an initializer for '${name}' in ${cx.funcName}`,
-      );
-    }
-    if (
-      ts.isClassExpression(d.initializer) &&
-      isConst &&
-      preparedLocalClassExpressionBinding(d.initializer, name, cx)
-    ) {
-      // Selection proved the class definition inert and the exact Program ABI
-      // component already installed every constructor/method body. The class
-      // binding is a compile-time constructor identity in this bounded family.
-      continue;
-    }
-    // (#3142 Slice 2) A module-scope binding initialized with a
-    // function-like value: the legacy path stores its closure where other
-    // functions can reach it (closureMap / the `__mod_<name>` global), and
-    // the IR closure binding below would keep it purely local to the init
-    // body — the observable storage would never be written. Demote.
-    const moduleBinding = cx.moduleBindings?.get(name);
-    if (moduleBinding) requireMatchingModuleBindingOwner(moduleBinding, cx.ownerUnitId, cx.funcName);
-    if (moduleBinding && (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer))) {
-      demoteToLegacy(
-        "module-init-legacy-coupling",
-        `ir/from-ast: module-level closure binding '${name}' not in module-init Slice 2 scope (${cx.funcName})`,
-      );
-    }
-    // Slice 3 (#1169c): closure-literal initializer. Lifted to a
-    // top-level IR function and bound in scope as an IrType.closure
-    // value (so `lowerCall` dispatches via `closure.call`).
-    if (isConst && (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer))) {
-      const value = lowerClosureExpression(d.initializer, cx);
-      cx.scope.set(name, { kind: "local", value, type: cx.builder.typeOf(value) });
-      continue;
-    }
-    // Slice 2 (#1169b): non-primitive type annotations on locals
-    // (TypeLiteral / TypeReference) can't be resolved to an IrType
-    // here without a TS checker. Defer those to inference from the
-    // initializer — `typeNodeToIr` only fires for primitive type
-    // keywords; everything else falls through to inference.
-    const declaredVector = logicalVectorDeclarationType(d, d.initializer, name, cx);
-    let annotated: IrType | undefined =
-      declaredVector ??
-      (d.type && isPrimitiveTypeNode(d.type) ? typeNodeToIr(d.type, `local ${name} of ${cx.funcName}`) : undefined);
-    // (#2856) `number[]` annotation → resolve the f64-element vec and use its
-    // struct ref as the annotated type. This is what gives an EMPTY literal
-    // initializer (`const arr: number[] = []`) the vec-typed hint
-    // `lowerArrayLiteral` needs to type its `vec.new_fixed`. Parity: the
-    // selector's `isPhase1TypeNode` accepts exactly this shape (ArrayTypeNode
-    // with a NumberKeyword element), so every claim reaches a hint here. A
-    // resolver that can't register the vec throws → clean demote to legacy.
-    if (annotated === undefined && d.type && ts.isArrayTypeNode(d.type)) {
-      // (#3734) An ANNOTATED `const arr: number[] = []` reaches the vec type
-      // through this arm, not through the inference arm below — so the i32
-      // element narrowing has to be consulted here too, or the exact shape the
-      // landing-page `array.ts` benchmark uses would never narrow.
-      const elementValType = annotatedArrayElementValType(d, cx);
-      const vec = cx.resolver?.resolveVecForElement?.(elementValType);
-      if (!vec) {
-        demoteToLegacy(
-          "body-shape-rejected",
-          `ir/from-ast: resolver cannot register vec for number[] annotation on '${name}' (${cx.funcName})`,
-        );
-      }
-      annotated = irVec(irVal(elementValType), true);
-    }
-    let inferredEmptyArrayHint: IrType | undefined;
-    if (annotated === undefined && ts.isArrayLiteralExpression(d.initializer) && d.initializer.elements.length === 0) {
-      const inference = cx.emptyArrayInference.resultForLiteral(d.initializer);
-      if (inference?.kind === "rejected") {
-        demoteToLegacy("body-shape-rejected", emptyArrayInferenceDiagnostic(inference, cx.funcName));
-      }
-      if (inference?.kind === "resolved") {
-        const elementValType = emptyLiteralElementValType(d.initializer, cx);
-        const vec = cx.resolver?.resolveVecForElement?.(elementValType);
-        if (!vec) {
-          demoteToLegacy(
-            "body-shape-rejected",
-            `ir/from-ast: resolver cannot register inferred number[] vec for '${name}' (${cx.funcName})`,
-          );
-        }
-        inferredEmptyArrayHint = irVec(irVal(elementValType), true);
-      }
-    }
-    // (#3142 Slice 2) A module binding's hint is its GLOBAL's type — the
-    // storage slot is fixed by the legacy allocation, so the initializer
-    // must land on exactly that representation (checked below).
-    // (#3741) Native-i32 slot storage. Decided BEFORE the initializer is
-    // lowered — lowering it twice (once f64 for the proof gates, once i32 for
-    // the slot) would double-evaluate any side effect in `let s = f() | 0`.
-    // Every other hint source wins: an explicit annotation, an empty-array
-    // inference and a module binding each pin the representation.
-    const widenDynamic = cx.dynamicStringLocals.has(name) || moduleBinding?.type.kind === "dynamic";
-    const promoteI32Slot =
-      annotated === undefined &&
-      inferredEmptyArrayHint === undefined &&
-      moduleBinding === undefined &&
-      !widenDynamic &&
-      !isConst &&
-      cx.mutatedLets.has(name) &&
-      cx.i32Slots?.has(d) === true &&
-      d.initializer !== undefined &&
-      isCanonI32Lowerable(d.initializer, promotedI32Probe(cx));
-    const hint: IrType =
-      annotated ??
-      inferredEmptyArrayHint ??
-      moduleBinding?.type ??
-      (widenDynamic ? irDynamic() : promoteI32Slot ? IR_I32 : irVal({ kind: "f64" }));
-    let value = promoteI32Slot
-      ? lowerAsI32(d.initializer as ts.Expression, cx, "canon")
-      : lowerExpr(d.initializer, cx, hint);
-    if (widenDynamic && cx.builder.typeOf(value).kind !== "dynamic") {
-      const boxed = boxConcreteToDynamic(value, cx.builder.typeOf(value), d.initializer, cx);
-      if (boxed === null) {
-        throw new IrUnsupportedError(
-          "operand-coercion-unsupported",
-          "build",
-          `ir/from-ast: proven dynamic binding '${name}' initializer has no supported carrier (${cx.funcName})`,
-        );
-      }
-      value = boxed;
-    }
-    const inferred = cx.builder.typeOf(value);
-    validateVectorInitializer(declaredVector, inferred, name, isConst, moduleBinding, cx);
-    const stringEncoding = inferred.kind === "string" ? inferStringEncoding(d.initializer, cx) : undefined;
-    if (annotated) {
-      // Slice 1 (#1169a): the IrType discriminator includes a `string` arm
-      // alongside `val`, so use `irTypeEquals` for a structural match
-      // rather than `asVal`-only kind comparison (which silently drops
-      // the string case).
-      if (!irTypeAssignable(inferred, annotated)) {
-        demoteToLegacy(
-          "body-shape-rejected",
-          `ir/from-ast: local '${name}' annotated as ${describeIrType(annotated)} but initializer is ${describeIrType(inferred)} in ${cx.funcName}`,
-        );
-      }
-    }
-    // #2782 (hybrid Row 5) + #2790 (i32 arm) — no-box NUMBER-local proof gate.
-    // The bindings below keep an `f64` / `i32`-typed local UNBOXED (as a `local`
-    // SSA value or a numeric `slot`). Per the Hybrid Invariant that no-box
-    // specialization must be discharged by a proof on the TS *type*, never the
-    // lowered Wasm kind: `number` / `boolean` / `symbol` all collapse to `f64` /
-    // `i32`, so the kind alone cannot tell a genuine numeric local from an `any`
-    // / union one a scalar hint coerced opaquely. Prove the local's TS type is a
-    // pure number — or (i32 only, #2790) a pure `boolean`, the other sound
-    // tag-determinable i32 brand that boxes via `__box_boolean` (#2785) —
-    // (`proveUnboxedNumberLocal`, reusing #2781's `classifyPrimitiveProof`);
-    // anything unprovable — `any` / `unknown` / a MIXED `number | string` union —
-    // demotes to the SAFE boxed legacy lowering (which carries the dynamic tag).
-    // No checker → unchanged (#2780 / #2781's no-checker arm). `inferred` is the
-    // bound representation here (an `annotated` mismatch already threw above),
-    // and `d.name` is an Identifier (non-identifier decls threw earlier).
-    const scalarVecValue =
-      cx.resolver?.isVecValueExpression?.(d.initializer) === true ||
-      cx.emptyArrayInference.isResolvedVectorExpression(d.initializer);
-    // A checker-certified Date snapshot is deliberately carried as raw f64
-    // milliseconds. The snapshot resolver proves this exact `const` has no
-    // aliases, writes, escapes, or uses outside the three supported getters,
-    // so it has a closed representation contract even though its TS type is
-    // `Date`, not `number`. Keep the general scalar proof gate for every other
-    // f64 local.
-    const hostDateSnapshotCarrier =
-      ts.isNewExpression(d.initializer) && cx.hostDateSnapshots?.has(d.initializer) === true;
-    if (!scalarVecValue && !hostDateSnapshotCarrier && !proveUnboxedNumberLocal(d, inferred, cx)) {
-      const boundKind = asVal(inferred)?.kind === "i32" ? "i32" : "f64";
-      // (#3784) Typed `unsupported`, never a plain `Error` — an untyped throw is
-      // classified `invariant` and hard-fails, defeating the demotion below.
-      throw new IrUnsupportedError(
-        "unboxed-number-local-unprovable",
-        "build",
-        `ir/from-ast: local '${name}' is bound as an unboxed ${boundKind} but its TS type is not ` +
-          `provably a pure number${boundKind === "i32" ? " or boolean" : ""} — keeping the no-box ` +
-          `number representation is unsound (the ${boundKind} Wasm kind conflates number / boolean / ` +
-          `any); demote to the SAFE boxed legacy lowering in ${cx.funcName} (#2782/#2790)`,
-      );
-    }
-    // (#3142 Slice 2) Module-scope binding: write the legacy-allocated
-    // `__mod_<name>` global (symbolic ref — the lowerer's `resolveGlobal`
-    // maps it to the concrete index) and bind as `moduleGlobal` so body
-    // reads/writes route through global.get/set. Mutation needs no slot —
-    // the global IS the mutable storage. Mirrors legacy `emitTdzInit`: when
-    // a TDZ flag global exists for the name, set it to 1 AFTER the value
-    // write so cross-function TDZ checks observe initialization.
-    if (moduleBinding) {
-      if (!moduleStorageCompatible(inferred, moduleBinding.type)) {
-        demoteToLegacy(
-          "module-init-legacy-coupling",
-          `ir/from-ast: module binding '${name}' initializer is ${describeIrType(inferred)} but its global is ` +
-            `${describeIrType(moduleBinding.type)} in ${cx.funcName}`,
-        );
-      }
-      cx.builder.emitGlobalSet(moduleBinding.globalRef, value);
-      if (moduleBinding.tdzGlobalRef) {
-        const one = cx.builder.emitConst({ kind: "i32", value: 1 }, irVal({ kind: "i32" }));
-        cx.builder.emitGlobalSet(moduleBinding.tdzGlobalRef, one);
-      }
-      cx.scope.set(name, {
-        kind: "moduleGlobal",
-        globalRef: moduleBinding.globalRef,
-        type: moduleBinding.type,
-        ...(stringEncoding ? { stringEncoding } : {}),
-      });
-      continue;
-    }
-    if (bindOrdinaryDescriptorCapture(d, name, value, inferred, cx)) continue;
-    // Slice 6 part 2 (#1181): mutable `let` bindings whose name is
-    // reassigned anywhere in the function body bind as a `slot`
-    // ScopeBinding instead of `local`. The slot is a Wasm-local that
-    // survives across for-of iterations, and reads/writes go through
-    // `slot.read` / `slot.write` instead of carrying the SSA value
-    // through the scope.
-    //
-    // Logical string, dynamic, and vector values use resolver-selected
-    // backend storage while identifier reads retain their logical IR type.
-    if (!isConst && cx.mutatedLets.has(name)) {
-      const representation = resolveMutableLocalRepresentation(inferred, widenDynamic, cx);
-      if (representation) {
-        const slotIndex = cx.builder.declareSlot(name, representation.storageType);
-        cx.builder.emitSlotWrite(slotIndex, value);
-        if (promoteI32Slot) {
-          // (#3741) The Wasm slot is i32; the BINDING's logical type stays f64
-          // so every identifier read produces the same f64-typed SSA value it
-          // did before the promotion (invariant R — `readPromotedI32Slot`).
-          cx.scope.set(name, { kind: "slot", slotIndex, type: IR_F64, i32Storage: true });
-          continue;
-        }
-        cx.scope.set(name, {
-          kind: "slot",
-          slotIndex,
-          type: representation.bindingType,
-          ...(representation.asType ? { asType: representation.asType } : {}),
-          ...(stringEncoding ? { stringEncoding } : {}),
-        });
-        continue;
-      }
-      // Fall through only for representations without a concrete ValType.
-      // A later assignment then remains an invariant: the mutation pre-pass
-      // promised that every mutable binding with a slot representation was
-      // materialized above.
-    }
-    cx.scope.set(name, { kind: "local", value, type: inferred, ...(stringEncoding ? { stringEncoding } : {}) });
+    if (cx.sourceMap) withNodeSourceSite(cx, d, () => lowerVariableDeclaration(d, isConst, cx));
+    else lowerVariableDeclaration(d, isConst, cx);
   }
 }
 
@@ -3833,6 +4045,10 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
  * required for correctness.
  */
 function lowerBindingPattern(pattern: ts.BindingPattern, source: IrValueId, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== pattern) {
+    withNodeSourceSite(cx, pattern, () => lowerBindingPattern(pattern, source, cx));
+    return;
+  }
   if (ts.isObjectBindingPattern(pattern)) {
     lowerObjectPattern(pattern, source, cx);
     return;
@@ -3846,7 +4062,305 @@ function lowerBindingPattern(pattern: ts.BindingPattern, source: IrValueId, cx: 
  * instances and externref-typed sources fall through to a clean throw,
  * landing the function back on legacy.
  */
+function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, cx: LowerCtx): void {
+  // Slice 8a (#1169g): destructuring binding patterns (selector restricts
+  // to const, no rest, no defaults, no nesting). Lower the initializer
+  // ONCE into an SSA value, then walk the pattern emitting one
+  // `object.get` (object pattern) or `vec.get` (array pattern) per leaf
+  // and binding each leaf as a `local` ScopeBinding.
+  if (ts.isObjectBindingPattern(d.name) || ts.isArrayBindingPattern(d.name)) {
+    if (!d.initializer) {
+      demoteToLegacy(
+        "module-init-legacy-coupling",
+        `ir/from-ast: binding pattern requires an initializer (${cx.funcName})`,
+      );
+    }
+    // (#3142 Slice 2) Top-level destructuring in the module-init unit:
+    // the leaves are module globals on the legacy path, but the pattern
+    // lowerer binds them as plain locals — demote instead of splitting
+    // the storage.
+    if (cx.moduleBindings) {
+      const leafIsModuleBinding = (pattern: ts.BindingPattern): boolean => {
+        for (const element of pattern.elements) {
+          if (ts.isOmittedExpression(element)) continue;
+          if (ts.isIdentifier(element.name)) {
+            if (cx.moduleBindings!.has(element.name.text)) return true;
+          } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
+            if (leafIsModuleBinding(element.name)) return true;
+          }
+        }
+        return false;
+      };
+      if (leafIsModuleBinding(d.name)) {
+        demoteToLegacy(
+          "module-init-legacy-coupling",
+          `ir/from-ast: module-level destructuring declaration not in module-init Slice 2 scope (${cx.funcName})`,
+        );
+      }
+    }
+    // Hint: pass an externref so the initializer's actual IrType (object,
+    // class, vec ref, etc.) flows through unchanged. The pattern lowerer
+    // dispatches on the inferred IrType.
+    const initValue = lowerExpr(d.initializer, cx, irVal({ kind: "externref" }));
+    lowerBindingPattern(d.name, initValue, cx);
+    return;
+  }
+  if (!ts.isIdentifier(d.name)) {
+    demoteToLegacy(
+      "body-shape-rejected",
+      `ir/from-ast: destructuring declarations not supported in Phase 1 (${cx.funcName})`,
+    );
+  }
+  const name = d.name.text;
+  if (cx.scope.has(name)) {
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: redeclaration of '${name}' in ${cx.funcName}`);
+  }
+  if (!d.initializer) {
+    demoteToLegacy(
+      "body-shape-rejected",
+      `ir/from-ast: Phase 1 requires an initializer for '${name}' in ${cx.funcName}`,
+    );
+  }
+  if (ts.isClassExpression(d.initializer) && isConst && preparedLocalClassExpressionBinding(d.initializer, name, cx)) {
+    // Selection proved the class definition inert and the exact Program ABI
+    // component already installed every constructor/method body. The class
+    // binding is a compile-time constructor identity in this bounded family.
+    return;
+  }
+  // (#3142 Slice 2) A module-scope binding initialized with a
+  // function-like value: the legacy path stores its closure where other
+  // functions can reach it (closureMap / the `__mod_<name>` global), and
+  // the IR closure binding below would keep it purely local to the init
+  // body — the observable storage would never be written. Demote.
+  const moduleBinding = cx.moduleBindings?.get(name);
+  if (moduleBinding) requireMatchingModuleBindingOwner(moduleBinding, cx.ownerUnitId, cx.funcName);
+  if (moduleBinding && (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer))) {
+    demoteToLegacy(
+      "module-init-legacy-coupling",
+      `ir/from-ast: module-level closure binding '${name}' not in module-init Slice 2 scope (${cx.funcName})`,
+    );
+  }
+  // Slice 3 (#1169c): closure-literal initializer. Lifted to a
+  // top-level IR function and bound in scope as an IrType.closure
+  // value (so `lowerCall` dispatches via `closure.call`).
+  if (isConst && (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer))) {
+    const value = lowerClosureExpression(d.initializer, cx);
+    cx.scope.set(name, { kind: "local", value, type: cx.builder.typeOf(value) });
+    return;
+  }
+  // Slice 2 (#1169b): non-primitive type annotations on locals
+  // (TypeLiteral / TypeReference) can't be resolved to an IrType
+  // here without a TS checker. Defer those to inference from the
+  // initializer — `typeNodeToIr` only fires for primitive type
+  // keywords; everything else falls through to inference.
+  const declaredVector = logicalVectorDeclarationType(d, d.initializer, name, cx);
+  let annotated: IrType | undefined =
+    declaredVector ??
+    (d.type && isPrimitiveTypeNode(d.type) ? typeNodeToIr(d.type, `local ${name} of ${cx.funcName}`) : undefined);
+  // (#2856) `number[]` annotation → resolve the f64-element vec and use its
+  // struct ref as the annotated type. This is what gives an EMPTY literal
+  // initializer (`const arr: number[] = []`) the vec-typed hint
+  // `lowerArrayLiteral` needs to type its `vec.new_fixed`. Parity: the
+  // selector's `isPhase1TypeNode` accepts exactly this shape (ArrayTypeNode
+  // with a NumberKeyword element), so every claim reaches a hint here. A
+  // resolver that can't register the vec throws → clean demote to legacy.
+  if (annotated === undefined && d.type && ts.isArrayTypeNode(d.type)) {
+    // (#3734) An ANNOTATED `const arr: number[] = []` reaches the vec type
+    // through this arm, not through the inference arm below — so the i32
+    // element narrowing has to be consulted here too, or the exact shape the
+    // landing-page `array.ts` benchmark uses would never narrow.
+    const elementValType = annotatedArrayElementValType(d, cx);
+    const vec = cx.resolver?.resolveVecForElement?.(elementValType);
+    if (!vec) {
+      demoteToLegacy(
+        "body-shape-rejected",
+        `ir/from-ast: resolver cannot register vec for number[] annotation on '${name}' (${cx.funcName})`,
+      );
+    }
+    annotated = irVec(irVal(elementValType), true);
+  }
+  let inferredEmptyArrayHint: IrType | undefined;
+  if (annotated === undefined && ts.isArrayLiteralExpression(d.initializer) && d.initializer.elements.length === 0) {
+    const inference = cx.emptyArrayInference.resultForLiteral(d.initializer);
+    if (inference?.kind === "rejected") {
+      demoteToLegacy("body-shape-rejected", emptyArrayInferenceDiagnostic(inference, cx.funcName));
+    }
+    if (inference?.kind === "resolved") {
+      const elementValType = emptyLiteralElementValType(d.initializer, cx);
+      const vec = cx.resolver?.resolveVecForElement?.(elementValType);
+      if (!vec) {
+        demoteToLegacy(
+          "body-shape-rejected",
+          `ir/from-ast: resolver cannot register inferred number[] vec for '${name}' (${cx.funcName})`,
+        );
+      }
+      inferredEmptyArrayHint = irVec(irVal(elementValType), true);
+    }
+  }
+  // (#3142 Slice 2) A module binding's hint is its GLOBAL's type — the
+  // storage slot is fixed by the legacy allocation, so the initializer
+  // must land on exactly that representation (checked below).
+  // (#3741) Native-i32 slot storage. Decided BEFORE the initializer is
+  // lowered — lowering it twice (once f64 for the proof gates, once i32 for
+  // the slot) would double-evaluate any side effect in `let s = f() | 0`.
+  // Every other hint source wins: an explicit annotation, an empty-array
+  // inference and a module binding each pin the representation.
+  const widenDynamic = cx.dynamicStringLocals.has(name) || moduleBinding?.type.kind === "dynamic";
+  const promoteI32Slot =
+    annotated === undefined &&
+    inferredEmptyArrayHint === undefined &&
+    moduleBinding === undefined &&
+    !widenDynamic &&
+    !isConst &&
+    cx.mutatedLets.has(name) &&
+    cx.i32Slots?.has(d) === true &&
+    d.initializer !== undefined &&
+    isCanonI32Lowerable(d.initializer, promotedI32Probe(cx));
+  const hint: IrType =
+    annotated ??
+    inferredEmptyArrayHint ??
+    moduleBinding?.type ??
+    (widenDynamic ? irDynamic() : promoteI32Slot ? IR_I32 : irVal({ kind: "f64" }));
+  let value = promoteI32Slot
+    ? lowerAsI32(d.initializer as ts.Expression, cx, "canon")
+    : lowerExpr(d.initializer, cx, hint);
+  if (widenDynamic && cx.builder.typeOf(value).kind !== "dynamic") {
+    const boxed = boxConcreteToDynamic(value, cx.builder.typeOf(value), d.initializer, cx);
+    if (boxed === null) {
+      throw new IrUnsupportedError(
+        "operand-coercion-unsupported",
+        "build",
+        `ir/from-ast: proven dynamic binding '${name}' initializer has no supported carrier (${cx.funcName})`,
+      );
+    }
+    value = boxed;
+  }
+  const inferred = cx.builder.typeOf(value);
+  validateVectorInitializer(declaredVector, inferred, name, isConst, moduleBinding, cx);
+  const stringEncoding = inferred.kind === "string" ? inferStringEncoding(d.initializer, cx) : undefined;
+  if (annotated) {
+    // Slice 1 (#1169a): the IrType discriminator includes a `string` arm
+    // alongside `val`, so use `irTypeEquals` for a structural match
+    // rather than `asVal`-only kind comparison (which silently drops
+    // the string case).
+    if (!irTypeAssignable(inferred, annotated)) {
+      demoteToLegacy(
+        "body-shape-rejected",
+        `ir/from-ast: local '${name}' annotated as ${describeIrType(annotated)} but initializer is ${describeIrType(inferred)} in ${cx.funcName}`,
+      );
+    }
+  }
+  // #2782 (hybrid Row 5) + #2790 (i32 arm) — no-box NUMBER-local proof gate.
+  // The bindings below keep an `f64` / `i32`-typed local UNBOXED (as a `local`
+  // SSA value or a numeric `slot`). Per the Hybrid Invariant that no-box
+  // specialization must be discharged by a proof on the TS *type*, never the
+  // lowered Wasm kind: `number` / `boolean` / `symbol` all collapse to `f64` /
+  // `i32`, so the kind alone cannot tell a genuine numeric local from an `any`
+  // / union one a scalar hint coerced opaquely. Prove the local's TS type is a
+  // pure number — or (i32 only, #2790) a pure `boolean`, the other sound
+  // tag-determinable i32 brand that boxes via `__box_boolean` (#2785) —
+  // (`proveUnboxedNumberLocal`, reusing #2781's `classifyPrimitiveProof`);
+  // anything unprovable — `any` / `unknown` / a MIXED `number | string` union —
+  // demotes to the SAFE boxed legacy lowering (which carries the dynamic tag).
+  // No checker → unchanged (#2780 / #2781's no-checker arm). `inferred` is the
+  // bound representation here (an `annotated` mismatch already threw above),
+  // and `d.name` is an Identifier (non-identifier decls threw earlier).
+  const scalarVecValue =
+    cx.resolver?.isVecValueExpression?.(d.initializer) === true ||
+    cx.emptyArrayInference.isResolvedVectorExpression(d.initializer);
+  // A checker-certified Date snapshot is deliberately carried as raw f64
+  // milliseconds. The snapshot resolver proves this exact `const` has no
+  // aliases, writes, escapes, or uses outside the three supported getters,
+  // so it has a closed representation contract even though its TS type is
+  // `Date`, not `number`. Keep the general scalar proof gate for every other
+  // f64 local.
+  const hostDateSnapshotCarrier =
+    ts.isNewExpression(d.initializer) && cx.hostDateSnapshots?.has(d.initializer) === true;
+  if (!scalarVecValue && !hostDateSnapshotCarrier && !proveUnboxedNumberLocal(d, inferred, cx)) {
+    const boundKind = asVal(inferred)?.kind === "i32" ? "i32" : "f64";
+    // (#3784) Typed `unsupported`, never a plain `Error` — an untyped throw is
+    // classified `invariant` and hard-fails, defeating the demotion below.
+    throw new IrUnsupportedError(
+      "unboxed-number-local-unprovable",
+      "build",
+      `ir/from-ast: local '${name}' is bound as an unboxed ${boundKind} but its TS type is not ` +
+        `provably a pure number${boundKind === "i32" ? " or boolean" : ""} — keeping the no-box ` +
+        `number representation is unsound (the ${boundKind} Wasm kind conflates number / boolean / ` +
+        `any); demote to the SAFE boxed legacy lowering in ${cx.funcName} (#2782/#2790)`,
+    );
+  }
+  // (#3142 Slice 2) Module-scope binding: write the legacy-allocated
+  // `__mod_<name>` global (symbolic ref — the lowerer's `resolveGlobal`
+  // maps it to the concrete index) and bind as `moduleGlobal` so body
+  // reads/writes route through global.get/set. Mutation needs no slot —
+  // the global IS the mutable storage. Mirrors legacy `emitTdzInit`: when
+  // a TDZ flag global exists for the name, set it to 1 AFTER the value
+  // write so cross-function TDZ checks observe initialization.
+  if (moduleBinding) {
+    if (!moduleStorageCompatible(inferred, moduleBinding.type)) {
+      demoteToLegacy(
+        "module-init-legacy-coupling",
+        `ir/from-ast: module binding '${name}' initializer is ${describeIrType(inferred)} but its global is ` +
+          `${describeIrType(moduleBinding.type)} in ${cx.funcName}`,
+      );
+    }
+    cx.builder.emitGlobalSet(moduleBinding.globalRef, value);
+    if (moduleBinding.tdzGlobalRef) {
+      const one = cx.builder.emitConst({ kind: "i32", value: 1 }, irVal({ kind: "i32" }));
+      cx.builder.emitGlobalSet(moduleBinding.tdzGlobalRef, one);
+    }
+    cx.scope.set(name, {
+      kind: "moduleGlobal",
+      globalRef: moduleBinding.globalRef,
+      type: moduleBinding.type,
+      ...(stringEncoding ? { stringEncoding } : {}),
+    });
+    return;
+  }
+  if (bindOrdinaryDescriptorCapture(d, name, value, inferred, cx)) return;
+  // Slice 6 part 2 (#1181): mutable `let` bindings whose name is
+  // reassigned anywhere in the function body bind as a `slot`
+  // ScopeBinding instead of `local`. The slot is a Wasm-local that
+  // survives across for-of iterations, and reads/writes go through
+  // `slot.read` / `slot.write` instead of carrying the SSA value
+  // through the scope.
+  //
+  // Logical string, dynamic, and vector values use resolver-selected
+  // backend storage while identifier reads retain their logical IR type.
+  if (!isConst && cx.mutatedLets.has(name)) {
+    const representation = resolveMutableLocalRepresentation(inferred, widenDynamic, cx);
+    if (representation) {
+      const slotIndex = cx.builder.declareSlot(name, representation.storageType);
+      cx.builder.emitSlotWrite(slotIndex, value);
+      if (promoteI32Slot) {
+        // (#3741) The Wasm slot is i32; the BINDING's logical type stays f64
+        // so every identifier read produces the same f64-typed SSA value it
+        // did before the promotion (invariant R — `readPromotedI32Slot`).
+        cx.scope.set(name, { kind: "slot", slotIndex, type: IR_F64, i32Storage: true });
+        return;
+      }
+      cx.scope.set(name, {
+        kind: "slot",
+        slotIndex,
+        type: representation.bindingType,
+        ...(representation.asType ? { asType: representation.asType } : {}),
+        ...(stringEncoding ? { stringEncoding } : {}),
+      });
+      return;
+    }
+    // Fall through only for representations without a concrete ValType.
+    // A later assignment then remains an invariant: the mutation pre-pass
+    // promised that every mutable binding with a slot representation was
+    // materialized above.
+  }
+  cx.scope.set(name, { kind: "local", value, type: inferred, ...(stringEncoding ? { stringEncoding } : {}) });
+}
+
 function lowerObjectPattern(pattern: ts.ObjectBindingPattern, source: IrValueId, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== pattern) {
+    withNodeSourceSite(cx, pattern, () => lowerObjectPattern(pattern, source, cx));
+    return;
+  }
   const sourceType = cx.builder.typeOf(source);
   // #1372 — destructuring a class instance ({ x, y }: Vec2) is identical at
   // the IR level to destructuring an object literal: each leaf reads one
@@ -3927,6 +4441,10 @@ function lowerObjectPattern(pattern: ts.ObjectBindingPattern, source: IrValueId,
  * else (string, externref, class) routes to legacy via a clean throw.
  */
 function lowerArrayPattern(pattern: ts.ArrayBindingPattern, source: IrValueId, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== pattern) {
+    withNodeSourceSite(cx, pattern, () => lowerArrayPattern(pattern, source, cx));
+    return;
+  }
   const sourceType = cx.builder.typeOf(source);
   const resolved = resolveIrVecType(sourceType, cx);
   if (!resolved) {
@@ -4158,6 +4676,8 @@ function lowerResolvedModuleBindingRead(name: string, binding: ModuleBindingGlob
 }
 
 function lowerHostDateSnapshotExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId | undefined {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerHostDateSnapshotExpression(expr, cx));
   const plan = cx.hostDateSnapshots?.get(expr);
   if (!plan) return undefined;
   requireMatchingLoweringPlanOwner("host Date snapshot", plan.ownerUnitId, cx.ownerUnitId, cx.funcName);
@@ -4168,6 +4688,8 @@ function lowerHostDateSnapshotExpression(expr: ts.NewExpression, cx: LowerCtx): 
 }
 
 function lowerHostDateGetterCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId | undefined {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerHostDateGetterCall(expr, cx));
   const plan = cx.hostDateGetters?.get(expr);
   if (!plan) return undefined;
   requireMatchingLoweringPlanOwner("host Date getter", plan.ownerUnitId, cx.ownerUnitId, cx.funcName);
@@ -4263,6 +4785,8 @@ function checkLogicalVectorConsumption(cx: LowerCtx): void {
 //   3. Externref-shaped operand → `await` instr; lower.ts decides per lane
 //      (native-`$Promise` carrier: one-level unwrap; JS-host: identity).
 function lowerAwaitExpression(expr: ts.AwaitExpression, cx: LowerCtx, hint: IrType): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerAwaitExpression(expr, cx, hint));
   if (cx.funcKind !== "async") {
     demoteToLegacy("body-shape-rejected", `ir/from-ast: await outside an async function (${cx.funcName})`);
   }
@@ -4330,6 +4854,8 @@ function lowerAwaitExpression(expr: ts.AwaitExpression, cx: LowerCtx, hint: IrTy
 }
 
 function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerExpr(expr, cx, hint));
   if (cx.logicalVectorTypes === undefined) return lowerExprUnchecked(expr, cx, hint);
   const fact = cx.logicalVectorTypes.get(expr);
   const value = lowerExprUnchecked(expr, cx, hint);
@@ -4343,6 +4869,8 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
 }
 
 function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerExprUnchecked(expr, cx, hint));
   if (ts.isParenthesizedExpression(expr)) {
     return lowerExpr(expr.expression, cx, hint);
   }
@@ -4839,6 +5367,8 @@ function denseFillPlanForLoop(loop: ts.ForStatement): DenseFillPlan | null {
  * boxes each element) — this mirrors #2766's prove-then-specialize shape.
  */
 function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: IrType): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerArrayLiteral(expr, cx, hint));
   if (cx.logicalVectorTypes !== undefined) {
     const fact = requireLogicalVector(expr, cx);
     const elements = expr.elements.map((element) => {
@@ -5102,6 +5632,8 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
  * as `TypeError: Invalid flags 'null'`.
  */
 function lowerRegExpLiteral(expr: ts.Expression, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerRegExpLiteral(expr, cx));
   const { pattern, flags } = parseRegExpLiteralText(expr.getText());
   return cx.builder.emitRegExpLiteral(pattern, flags);
 }
@@ -5136,6 +5668,8 @@ function parseRegExpLiteralText(text: string): { pattern: string; flags: string 
  * constant-folder may collapse trivial empty-concats downstream.
  */
 function lowerTemplateExpression(expr: ts.TemplateExpression, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerTemplateExpression(expr, cx));
   let acc = cx.builder.emitStringConst(expr.head.text);
   for (const span of expr.templateSpans) {
     // The expected type stays `string`: a string-family substitution lowers
@@ -5192,6 +5726,8 @@ function lowerNumericSubstitutionToString(
   source: ts.Expression,
   cx: LowerCtx,
 ): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== source)
+    return withNodeSourceSite(cx, source, () => lowerNumericSubstitutionToString(value, type, source, cx));
   const scalar = type.kind === "val" ? type.val.kind : undefined;
   if (scalar === "i32" && checkerOperandFamily(source, cx) === "boolean") {
     throw new IrUnsupportedError(
@@ -5311,6 +5847,8 @@ function lowerExactDynamicPrimitiveTypeof(
  * tag dispatch for a two-family primitive dynamic carrier.
  */
 function lowerTypeOf(expr: ts.TypeOfExpression, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerTypeOf(expr, cx));
   const inner = lowerExpr(expr.expression, cx, irVal({ kind: "f64" }));
   const innerType = cx.builder.typeOf(inner);
   const tag = staticTypeOfFor(innerType);
@@ -5518,6 +6056,8 @@ function irPrivateFieldName(name: ts.Identifier | ts.PrivateIdentifier): string 
  * containing function falls back to legacy.
  */
 function lowerPreparedOrdinaryPropertyRead(expr: ts.PropertyAccessExpression, cx: LowerCtx): IrValueId | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerPreparedOrdinaryPropertyRead(expr, cx));
   const ordinary = cx.resolver?.preparedOrdinaryPropertyRead?.(expr);
   if (ordinary) {
     const result = ordinary.resultType;
@@ -5551,6 +6091,8 @@ function lowerPreparedOrdinaryPropertyRead(expr: ts.PropertyAccessExpression, cx
 }
 
 function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerPropertyAccess(expr, cx));
   const ordinary = lowerPreparedOrdinaryPropertyRead(expr, cx);
   if (ordinary !== null) return ordinary;
   // #3000 — private-field read (`this.#x`). A PrivateIdentifier is not an
@@ -5846,6 +6388,8 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
  * value list is reordered to match.
  */
 function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerObjectLiteral(expr, cx));
   // #4471 — an empty literal is admitted only when the selector proved it
   // INERT (`isInertEmptyObjectLiteral`), and lowers to a zero-field
   // `object.new`. The property loop below is already a no-op at zero
@@ -5957,6 +6501,8 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
 
 /** Install descriptors in source order; creating a getter never invokes it. */
 function lowerOrdinaryDescriptorLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerOrdinaryDescriptorLiteral(expr, cx));
   const external = irVal({ kind: "externref" });
   const object = cx.builder.emitCall(irIntrinsicFuncRef("js.object.create-default"), [], external);
   if (object === null) throw new Error("ordinary object constructor returned no value");
@@ -6023,6 +6569,8 @@ function lowerOrdinaryDescriptorLiteral(expr: ts.ObjectLiteralExpression, cx: Lo
  * open preserves its already-certified dynamic protocol and ABI.
  */
 function lowerOrdinaryToPrimitiveObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrValueId | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerOrdinaryToPrimitiveObjectLiteral(expr, cx));
   const properties: {
     name: "valueOf" | "toString";
     initializer: ts.FunctionExpression | ts.MethodDeclaration;
@@ -6136,6 +6684,10 @@ function isProvenInBoundsIr(expr: ts.ElementAccessExpression, cx: LowerCtx): boo
  * types that don't coerce to the element type.
  */
 function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== lhs) {
+    withMutationSourceSite(cx, lhs, () => lowerElementStore(lhs, rhs, cx));
+    return;
+  }
   if (lhs.questionDotToken) {
     demoteToLegacy(
       "element-store-unsupported",
@@ -6317,6 +6869,10 @@ function lowerElementCompound(
   rhs: ts.Expression | null,
   cx: LowerCtx,
 ): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== lhs) {
+    withMutationSourceSite(cx, lhs, () => lowerElementCompound(lhs, compoundOp, rhs, cx));
+    return;
+  }
   if (lhs.questionDotToken) {
     throw new IrUnsupportedError(
       "element-store-unsupported",
@@ -6431,6 +6987,8 @@ function lowerElementCompound(
 }
 
 function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerElementAccess(expr, cx));
   // #2713 — `a?.[i]` carries a `questionDotToken`: on a `null`/`undefined`
   // receiver the access must short-circuit to `undefined`, not index it.
   // The element-access lowering below ignores the token and emits an
@@ -6712,6 +7270,10 @@ function requireSuperParentShape(cx: LowerCtx): IrClassShape {
 }
 
 function emitExpressionDefaultMissingF64(expected: IrType, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && !cx.sourceMapState!.generated.has(`${cx.sourceMapBuilderUnitId}:emitExpressionDefaultMissingF64`))
+    return withGeneratedBindingOperation(cx, `${cx.sourceMapBuilderUnitId}:emitExpressionDefaultMissingF64`, () =>
+      emitExpressionDefaultMissingF64(expected, cx),
+    );
   if (asVal(expected)?.kind !== "f64") {
     demoteToLegacy(
       "param-shape-rejected",
@@ -6727,6 +7289,10 @@ function importedMissingArgument(
   optional: IrImportedOptionalParamPlan | undefined,
   cx: LowerCtx,
 ): IrValueId {
+  if (cx.sourceMap && !cx.sourceMapState!.generated.has(`${cx.sourceMapBuilderUnitId}:importedMissingArgument`))
+    return withGeneratedBindingOperation(cx, `${cx.sourceMapBuilderUnitId}:importedMissingArgument`, () =>
+      importedMissingArgument(expected, optional, cx),
+    );
   const constant = optional?.constantDefault;
   if (constant?.kind === "f64") {
     return cx.builder.emitConst({ kind: "f64", value: constant.value }, expected);
@@ -6776,6 +7342,8 @@ function lowerImportedCall(
   cx: LowerCtx,
   statementPosition: boolean,
 ): IrValueId | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerImportedCall(expr, plan, cx, statementPosition));
   requireMatchingLoweringPlanOwner("imported call", plan.ownerUnitId, cx.ownerUnitId, cx.funcName);
   requireValidImportedCallTarget(plan);
   if (expr.arguments.length > plan.params.length || expr.arguments.some(ts.isSpreadElement)) {
@@ -6845,6 +7413,8 @@ function makePromiseDelayLoweringHost(cx: LowerCtx): IrPromiseDelayLoweringHost 
 
 /** Evaluate the complete argument list before the observable conversion. */
 function lowerPreparedNumberCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerPreparedNumberCall(expr, cx));
   if (expr.questionDotToken || expr.arguments.some(ts.isSpreadElement))
     throw new IrInvariantError(
       "selection-preparation-mismatch",
@@ -6869,6 +7439,8 @@ function lowerPreparedNumberCall(expr: ts.CallExpression, cx: LowerCtx): IrValue
 }
 
 function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerCall(expr, cx, statementPosition));
   if (cx.resolver?.preparedObjectCreateCall?.(expr) === "null") {
     if (!isDirectObjectCreateNullCall(expr))
       throw new IrInvariantError(
@@ -7389,6 +7961,8 @@ function lowerNestedFuncCall(
  * calls dispatch correctly.
  */
 function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerNewExpression(expr, cx));
   const promiseDelay = tryLowerPromiseDelayConstruction(expr, cx.promiseDelays, () => makePromiseDelayLoweringHost(cx));
   if (promiseDelay !== undefined) return promiseDelay;
   const primitiveWrapper = lowerPrimitiveWrapperConstruction(expr, cx);
@@ -7574,6 +8148,8 @@ function primitiveWrapperConstructorName(
  * substitute the constructor argument as an AST shortcut.
  */
 function lowerPrimitiveWrapperConstruction(expr: ts.NewExpression, cx: LowerCtx): LoweredPrimitiveWrapper | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerPrimitiveWrapperConstruction(expr, cx));
   const kind = primitiveWrapperConstructorName(expr, cx);
   if (kind === null) return null;
   const args = expr.arguments ?? [];
@@ -7644,6 +8220,10 @@ function lowerPrimitiveWrapperConstruction(expr: ts.NewExpression, cx: LowerCtx)
  * extern-class signatures we deal with.
  */
 function emitDefaultExternArg(cx: LowerCtx, expected: ValType): IrValueId {
+  if (cx.sourceMap && !cx.sourceMapState!.generated.has(`${cx.sourceMapBuilderUnitId}:emitDefaultExternArg`))
+    return withGeneratedBindingOperation(cx, `${cx.sourceMapBuilderUnitId}:emitDefaultExternArg`, () =>
+      emitDefaultExternArg(cx, expected),
+    );
   switch (expected.kind) {
     case "externref":
       return cx.builder.emitConst({ kind: "null", ty: irVal(expected) }, irVal(expected));
@@ -7824,6 +8404,8 @@ function lowerHostFreeConsoleArgument(value: IrValueId, cx: LowerCtx, methodName
  * two. Statement-position only, so there is no value to return.
  */
 function lowerHostFreeConsoleCall(argExpr: ts.Expression, cx: LowerCtx, methodName: string): null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== argExpr)
+    return withNodeSourceSite(cx, argExpr, () => lowerHostFreeConsoleCall(argExpr, cx, methodName));
   const argVal = lowerExpr(argExpr, cx, { kind: "string" });
   const rendered = lowerHostFreeConsoleArgument(argVal, cx, methodName);
   const line = cx.builder.emitStringConcat(rendered, cx.builder.emitStringConst("\n"));
@@ -7856,6 +8438,10 @@ function tryLowerConsoleMethodCall(
   statementPosition: boolean,
   receiverIsDirectModuleBinding: boolean,
 ): null | undefined {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () =>
+      tryLowerConsoleMethodCall(expr, cx, methodName, statementPosition, receiverIsDirectModuleBinding),
+    );
   if (!ts.isPropertyAccessExpression(expr.expression)) return undefined;
   // A source-bound prepared target is symbolic: it needs neither a host
   // console import nor a materialized native sink at frontend preparation.
@@ -7961,6 +8547,8 @@ function tryLowerNumberToStringCall(
   recv: IrValueId,
   recvType: IrType,
 ): IrValueId | undefined {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => tryLowerNumberToStringCall(expr, cx, methodName, recv, recvType));
   if (methodName === "toString") {
     const target = cx.resolver?.preparedAsyncNumberToStringTarget?.(expr);
     if (target) {
@@ -8031,6 +8619,8 @@ function lowerPreparedAsyncDateNow(
   methodName: string,
   receiverIdentifier: ts.Identifier | undefined,
 ): IrValueId | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerPreparedAsyncDateNow(expr, cx, methodName, receiverIdentifier));
   const target = cx.resolver?.preparedAsyncDateNowTarget?.(expr) ?? null;
   if (target === null) return null;
   if (methodName !== "now" || receiverIdentifier?.text !== "Date" || expr.arguments.length !== 0) {
@@ -8049,6 +8639,8 @@ function lowerReceiverFirstDynamicMethod(
   plan: { readonly receiverGlobal: IrGlobalRef; readonly funcName: string },
   description: string,
 ): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerReceiverFirstDynamicMethod(expr, cx, plan, description));
   const receiver = cx.builder.emitGlobalGet(plan.receiverGlobal, irVal({ kind: "externref" }));
   const args: IrValueId[] = [receiver];
   for (const argument of expr.arguments) {
@@ -8122,6 +8714,8 @@ function tryLowerNativeMapMethodCall(
   receiverIdentifier: ts.Identifier | undefined,
   cx: LowerCtx,
 ): IrValueId | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => tryLowerNativeMapMethodCall(expr, methodName, receiverIdentifier, cx));
   if (methodName !== "get" && methodName !== "set") return null;
   const resolved = nativeMapModuleBinding(receiverIdentifier, cx);
   if (resolved === null) return null;
@@ -8173,6 +8767,8 @@ function tryLowerNativeMapMethodCall(
  * is drift rather than an unsupported source.
  */
 function tryLowerNativeMapConstruction(expr: ts.NewExpression, cx: LowerCtx): IrValueId | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => tryLowerNativeMapConstruction(expr, cx));
   // Every cheap, PURE rejection first. Only a proven ambient `new Map()` may
   // reach the materializing resolver call below — see
   // `ensureNativeMapStorageType` for what asking too early cost.
@@ -8192,6 +8788,8 @@ function lowerMethodCallWithSourcePlan(
   cx: LowerCtx,
   statementPosition = false,
 ): IrValueId | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerMethodCallWithSourcePlan(expr, cx, statementPosition));
   if (!ts.isPropertyAccessExpression(expr.expression)) {
     demoteToLegacy("method-call-unsupported", `ir/from-ast: malformed method call in ${cx.funcName}`);
   }
@@ -9215,6 +9813,8 @@ function lowerStringMethodCall(
   args: ts.NodeArray<ts.Expression>,
   cx: LowerCtx,
 ): IrValueId | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== receiverExpr)
+    return withNodeSourceSite(cx, receiverExpr, () => lowerStringMethodCall(methodName, recv, receiverExpr, args, cx));
   // The signature table is a plain object, so inherited Object.prototype
   // names (notably `toString` and `valueOf`) must not masquerade as
   // StringMethodSig entries. Such names are selector-owned unsupported
@@ -9473,6 +10073,10 @@ function immutableLiteralStringValue(
  * falls back to legacy.
  */
 function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr) {
+    withNodeSourceSite(cx, expr, () => lowerPropertyAssignment(expr, cx));
+    return;
+  }
   const lhs = expr.left;
   // #3000 — private-field write (`this.#x = v`). Same mangling as the read
   // path so the write targets the identical legacy struct slot.
@@ -9647,6 +10251,10 @@ function lowerPropertyCompound(
   rhs: ts.Expression | null,
   cx: LowerCtx,
 ): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== lhs) {
+    withNodeSourceSite(cx, lhs, () => lowerPropertyCompound(lhs, compoundOp, rhs, cx));
+    return;
+  }
   if (lhs.questionDotToken !== undefined) {
     throw new IrUnsupportedError(
       "property-write-unsupported",
@@ -9733,6 +10341,8 @@ function lowerPropertyCompound(
  * matches those arms, but its RHS is itself an assignment they cannot lower.
  */
 function lowerAdoptedMutatingStatement(expr: ts.Expression, cx: LowerCtx): boolean {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerAdoptedMutatingStatement(expr, cx));
   if (ts.isBinaryExpression(expr)) {
     const op = expr.operatorToken.kind;
     // S3 — `a = b = e;`.
@@ -9815,6 +10425,10 @@ type IrChainTarget =
  * exact i32) and element targets all demote TYPED to the legacy body.
  */
 function lowerChainedAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr) {
+    withNodeSourceSite(cx, expr, () => lowerChainedAssignment(expr, cx));
+    return;
+  }
   const chain = peelAssignmentChain(expr);
   if (chain === null) {
     // invariant (producer-promise): the selector admitted a chain here — #4502.
@@ -9946,6 +10560,10 @@ function lowerCheckedClassFieldSet(
   expression: ts.Expression,
   cx: LowerCtx,
 ): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expression) {
+    withNodeSourceSite(cx, expression, () => lowerCheckedClassFieldSet(receiver, shape, fieldName, expression, cx));
+    return;
+  }
   const field = shape.fields.find((candidate) => candidate.name === fieldName);
   if (!field) {
     demoteToLegacy(
@@ -9985,7 +10603,11 @@ function lowerConstructorFieldInitializers(
       throw new Error(`ir/from-ast: constructor field plan is not in source order (${cx.funcName})`);
     }
     priorOrdinal = initializer.sourceOrdinal;
-    lowerCheckedClassFieldSet(receiver, receiverType.shape, initializer.fieldName, initializer.expression, cx);
+    if (cx.sourceMap)
+      withNodeSourceSite(cx, initializer.declaration, () =>
+        lowerCheckedClassFieldSet(receiver, receiverType.shape, initializer.fieldName, initializer.expression, cx),
+      );
+    else lowerCheckedClassFieldSet(receiver, receiverType.shape, initializer.fieldName, initializer.expression, cx);
   }
 }
 
@@ -10036,6 +10658,10 @@ function lowerConstructorFieldInitializers(
  * fall-back to legacy rather than malformed Wasm.
  */
 function lowerYield(expr: ts.YieldExpression, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr) {
+    withNodeSourceSite(cx, expr, () => lowerYield(expr, cx));
+    return;
+  }
   if (cx.funcKind !== "generator") {
     demoteToLegacy("body-shape-rejected", `ir/from-ast: yield outside generator function in ${cx.funcName}`);
   }
@@ -10128,6 +10754,8 @@ function lowerYield(expr: ts.YieldExpression, cx: LowerCtx): void {
  * declared results) pass through unchanged.
  */
 function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts.Expression): IrValueId {
+  if (sourceExpression && cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== sourceExpression)
+    return withNodeSourceSite(cx, sourceExpression, () => coerceReturnValue(value, cx, sourceExpression));
   const declared = cx.returnType;
   const supportActual = cx.builder.typeOf(value);
   if (declared?.kind === "support-ref" || supportActual.kind === "support-ref") {
@@ -10236,6 +10864,10 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
  * the element slot with the right ValType.
  */
 function lowerForOfStatement(stmt: ts.ForOfStatement, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
+    withNodeSourceSite(cx, stmt, () => lowerForOfStatement(stmt, cx));
+    return;
+  }
   // 1. Lower the iterable. Pass an externref hint — the actual IR type
   //    is inferred from the lowered value.
   const iterableV = lowerExpr(stmt.expression, cx, irVal({ kind: "externref" }));
@@ -10340,6 +10972,10 @@ function lowerForOfStatement(stmt: ts.ForOfStatement, cx: LowerCtx): void {
  * already shipped by the earlier #2952 slices.
  */
 function lowerForInStatement(stmt: ts.ForInStatement, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
+    withNodeSourceSite(cx, stmt, () => lowerForInStatement(stmt, cx));
+    return;
+  }
   const plan = cx.resolver?.dynamicForInPlan?.();
   if (!plan) {
     throw new IrUnsupportedError(
@@ -10475,6 +11111,8 @@ function lowerToBooleanForCondition(
   conditionExpr: ts.Expression,
   cx: LowerCtx,
 ): IrValueId | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== conditionExpr)
+    return withNodeSourceSite(cx, conditionExpr, () => lowerToBooleanForCondition(condValue, conditionExpr, cx));
   const irType = cx.builder.typeOf(condValue);
   if (irType.kind === "dynamic") {
     // Full JS truthiness on the boxed-any carrier: one ToBoolean engine (D4).
@@ -10534,6 +11172,8 @@ function coerceLoopCondToBool(
   cx: LowerCtx,
   loopKind: "while" | "for" | "do" | "if",
 ): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== conditionExpr)
+    return withNodeSourceSite(cx, conditionExpr, () => coerceLoopCondToBool(condValue, conditionExpr, cx, loopKind));
   // (#4512) Shared §7.1.2 ToBoolean. A raw host externref returns null (no
   // cheap host-free ToBoolean) — demote rather than emit a wrong truthiness.
   const result = lowerToBooleanForCondition(condValue, conditionExpr, cx);
@@ -10542,6 +11182,10 @@ function coerceLoopCondToBool(
 }
 
 function lowerWhileStatement(stmt: ts.WhileStatement, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
+    withNodeSourceSite(cx, stmt, () => lowerWhileStatement(stmt, cx));
+    return;
+  }
   // #2952 slice 3 — a labeled loop adopts the pre-allocated id (consumed
   // here; cleared below so nested loops mint their own).
   const loopLabel = cx.pendingLoopLabel ?? cx.builder.freshLoopLabel();
@@ -10598,6 +11242,10 @@ function lowerWhileStatement(stmt: ts.WhileStatement, cx: LowerCtx): void {
  * multi-exit-free subset and never reaches a demote channel post-claim.
  */
 function lowerDoStatement(stmt: ts.DoStatement, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
+    withNodeSourceSite(cx, stmt, () => lowerDoStatement(stmt, cx));
+    return;
+  }
   // #2952 slice 3 — adopt a labeled statement's pre-allocated id when set.
   const loopLabel = cx.pendingLoopLabel ?? cx.builder.freshLoopLabel();
   const loopCx: LowerCtx = {
@@ -10748,6 +11396,8 @@ function literalCounterEntry(stmt: ts.ForStatement, cx: LowerCtx): { value: numb
  * guarded helpers' i32 index arg already used.
  */
 function lowerCharReadIndexI32(indexExpr: ts.Expression, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== indexExpr)
+    return withNodeSourceSite(cx, indexExpr, () => lowerCharReadIndexI32(indexExpr, cx));
   if (ts.isIdentifier(indexExpr)) {
     const binding = cx.scope.get(indexExpr.text);
     if (binding !== undefined && binding.kind === "slot" && binding.i32Storage === true) {
@@ -10774,6 +11424,8 @@ function lowerCharReadIndexI32(indexExpr: ts.Expression, cx: LowerCtx): IrValueI
  * effect, and the ONLY expression the recogniser admits).
  */
 function emitProvenCharReadI32(call: ts.CallExpression, proof: CharReadProof, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== call)
+    return withNodeSourceSite(cx, call, () => emitProvenCharReadI32(call, proof, cx));
   const receiverExpr = (call.expression as ts.PropertyAccessExpression).expression;
   const indexExpr = call.arguments[0]!;
   if (proof.hoist) {
@@ -10807,6 +11459,8 @@ function emitProvenCharReadI32(call: ts.CallExpression, proof: CharReadProof, cx
  * plan. Refuse-loud, never miscompile.
  */
 function installCanonicalCharReadProof(stmt: ts.ForStatement, cx: LowerCtx): CharReadProof | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt)
+    return withNodeSourceSite(cx, stmt, () => installCanonicalCharReadProof(stmt, cx));
   const plan = cx.resolver?.charReadPlan?.() ?? null;
   if (!plan) return null;
   const oracle = cx.oracle;
@@ -10881,6 +11535,8 @@ function installCanonicalCharReadProof(stmt: ts.ForStatement, cx: LowerCtx): Cha
  * half-applied one.
  */
 function hoistCharReadLengthI32(recvIdent: ts.Identifier, recv: IrValueId, cx: LowerCtx): number | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== recvIdent)
+    return withNodeSourceSite(cx, recvIdent, () => hoistCharReadLengthI32(recvIdent, recv, cx));
   const rawLen = cx.builder.emitStringLen(recv, inferStringEncoding(recvIdent, cx));
   const lenKind = asVal(cx.builder.typeOf(rawLen))?.kind;
   // The length intrinsic is f64-typed on every current carrier; convert ONCE,
@@ -10908,6 +11564,8 @@ function provenIndexSlotReadI32(indexName: string, cx: LowerCtx): IrValueId | nu
 
 /** Consume one exact #3518 plan before generic loop lowering can emit work. */
 function lowerPreparedCountedStringAppend(stmt: ts.ForStatement, cx: LowerCtx): boolean {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt)
+    return withNodeSourceSite(cx, stmt, () => lowerPreparedCountedStringAppend(stmt, cx));
   const loweringPlan = cx.countedStringAppends?.get(stmt);
   if (!loweringPlan) return false;
   requireMatchingLoweringPlanOwner("counted string append", loweringPlan.ownerUnitId, cx.ownerUnitId, cx.funcName);
@@ -11007,6 +11665,10 @@ function lowerPreparedCountedStringAppend(stmt: ts.ForStatement, cx: LowerCtx): 
 }
 
 function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (bodyCx: LowerCtx) => void): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
+    withNodeSourceSite(cx, stmt, () => lowerForStatement(stmt, cx, bodyOverride));
+    return;
+  }
   if (!bodyOverride && lowerPreparedCountedStringAppend(stmt, cx)) return;
   // #2952 slice 3 — adopt a labeled statement's pre-allocated id when set
   // (consumed here; cleared so init/body contexts don't leak it inward).
@@ -11019,6 +11681,8 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (
       // Synthesize a VariableStatement so we can re-use lowerVarDecl.
       // The flags carry let/const-ness (already validated by the selector).
       const synthStmt = ts.factory.createVariableStatement(undefined, stmt.initializer);
+      if (cx.sourceMap)
+        cx.sourceMapState!.synthetic.set(synthStmt, { cause: stmt.initializer, role: "binding-scaffold" });
       lowerVarDecl(synthStmt, innerCx);
     } else {
       // Expression init — lower as a value, drop the result.
@@ -11049,7 +11713,11 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (
     // `for (; true; )` form, whose `TrueKeyword` arm emits the same const.
     const cond = stmt.condition;
     if (!cond) {
-      condResult = loopCx.builder.emitConst({ kind: "bool", value: true }, irVal({ kind: "i32" }));
+      condResult = loopCx.sourceMap
+        ? withGeneratedSourceSite(loopCx, "control-scaffold", stmt, () =>
+            loopCx.builder.emitConst({ kind: "bool", value: true }, irVal({ kind: "i32" })),
+          )
+        : loopCx.builder.emitConst({ kind: "bool", value: true }, irVal({ kind: "i32" }));
       return;
     }
     // (#4517) The recognised char-read loop's condition is `i < recv.length`
@@ -11172,6 +11840,10 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (
  * drops the result.
  */
 function lowerForUpdateExpr(expr: ts.Expression, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr) {
+    withNodeSourceSite(cx, expr, () => lowerForUpdateExpr(expr, cx));
+    return;
+  }
   // (#5164 S2) Comma incrementor — mirrors `isPhase1ForUpdateExpr`'s comma arm:
   // each side is its own update clause, lowered left to right through THIS
   // dispatcher so both keep the mutation lowerings (`lowerIncrementDecrement`,
@@ -11224,6 +11896,12 @@ function lowerForOfIterFromExternrefValue(
   loopVarName: string,
   alreadyExternref: boolean,
 ): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
+    withNodeSourceSite(cx, stmt, () =>
+      lowerForOfIterFromExternrefValue(stmt, cx, iterableV, loopVarName, alreadyExternref),
+    );
+    return;
+  }
   let iterableExt = iterableV;
   if (!alreadyExternref) {
     iterableExt = cx.builder.emitCoerceToExternref(iterableV);
@@ -11276,6 +11954,10 @@ function lowerForOfIterFromExternrefValue(
  * `resolver.resolveString()` at emit time.
  */
 function lowerForOfString(stmt: ts.ForOfStatement, cx: LowerCtx, strV: IrValueId, loopVarName: string): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
+    withNodeSourceSite(cx, stmt, () => lowerForOfString(stmt, cx, strV, loopVarName));
+    return;
+  }
   // Native-strings mode requires the resolver's `resolveString()` to
   // produce a `(ref $AnyString)` ValType. If the resolver is absent,
   // the function falls back to legacy via the throw — same outcome
@@ -11434,6 +12116,10 @@ function lowerForOfVec(
   loopVarName: string,
   headPattern: ts.ArrayBindingPattern | null = null,
 ): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
+    withNodeSourceSite(cx, stmt, () => lowerForOfVec(stmt, cx, iterableV, iterableType, loopVarName, headPattern));
+    return;
+  }
   // Slice 6 part 4 refactor (#1185): ask the resolver for the vec
   // shape rather than hard-coding `f64` element / `vecTypeIdx - 1`
   // data-array assumptions. The resolver inspects the actual
@@ -11619,6 +12305,10 @@ function inferVecDataValTypeFromContext(valTy: ValType, _cx: LowerCtx): ValType 
  * sense inside a non-terminating loop body.
  */
 function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
+    withNodeSourceSite(cx, stmt, () => lowerStmt(stmt, cx));
+    return;
+  }
   if (ts.isBlock(stmt)) {
     const childCx: LowerCtx = { ...cx, scope: new Map(cx.scope) };
     for (const s of stmt.statements) {
@@ -11779,6 +12469,10 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
  * writes remain invocation-time object operations after this statement exits.
  */
 function lowerWithStatement(stmt: ts.WithStatement, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
+    withNodeSourceSite(cx, stmt, () => lowerWithStatement(stmt, cx));
+    return;
+  }
   if (!ts.isObjectLiteralExpression(stmt.expression) || !ts.isBlock(stmt.statement)) {
     demoteToLegacy(
       "body-shape-rejected",
@@ -11813,6 +12507,10 @@ function lowerWithStatement(stmt: ts.WithStatement, cx: LowerCtx): void {
  * sub-buffer with a cloned scope (arm-local `let`s don't leak).
  */
 function lowerIfBodyStatement(stmt: ts.IfStatement, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
+    withNodeSourceSite(cx, stmt, () => lowerIfBodyStatement(stmt, cx));
+    return;
+  }
   const raw = lowerExpr(stmt.expression, cx, irVal({ kind: "i32" }));
   // Coerce through the shared ToBoolean path used by loop conditions.
   const cond = coerceLoopCondToBool(raw, stmt.expression, cx, "if");
@@ -11843,6 +12541,10 @@ function lowerIfBodyStatement(stmt: ts.IfStatement, cx: LowerCtx): void {
  * binds its own name to the same id.
  */
 function lowerLabeledStatement(stmt: ts.LabeledStatement, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
+    withNodeSourceSite(cx, stmt, () => lowerLabeledStatement(stmt, cx));
+    return;
+  }
   const label = cx.pendingLoopLabel ?? cx.builder.freshLoopLabel();
   const labelEnv = new Map(cx.labelEnv ?? []);
   labelEnv.set(stmt.label.text, label);
@@ -11906,6 +12608,10 @@ function lowerLabeledStatement(stmt: ts.LabeledStatement, cx: LowerCtx): void {
  * guarantees the name is bound by an enclosing claimed labeled loop.
  */
 function lowerBreakContinueStatement(stmt: ts.BreakStatement | ts.ContinueStatement, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
+    withNodeSourceSite(cx, stmt, () => lowerBreakContinueStatement(stmt, cx));
+    return;
+  }
   const kind = ts.isBreakStatement(stmt) ? "break" : "continue";
   if (stmt.label) {
     const target = cx.labelEnv?.get(stmt.label.text);
@@ -11944,6 +12650,10 @@ function lowerBreakContinueStatement(stmt: ts.BreakStatement | ts.ContinueStatem
  * are dead and skipped (verifier requires br.label last-in-buffer).
  */
 function lowerSwitchStatement(stmt: ts.SwitchStatement, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
+    withNodeSourceSite(cx, stmt, () => lowerSwitchStatement(stmt, cx));
+    return;
+  }
   const clauses = stmt.caseBlock.clauses;
   const stringTestTexts = clauses.map((clause) =>
     ts.isCaseClause(clause) ? stringLiteralCaseTestValue(clause.expression) : null,
@@ -12045,6 +12755,8 @@ function lowerStringSwitchDispatch(
   cx: LowerCtx,
   stringTestTexts: readonly (string | null)[],
 ): { readonly disc: IrValueId } {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt)
+    return withNodeSourceSite(cx, stmt, () => lowerStringSwitchDispatch(stmt, cx, stringTestTexts));
   const i32 = irVal({ kind: "i32" });
   const discV = lowerExpr(stmt.expression, cx, { kind: "string" });
   const discKind = cx.builder.typeOf(discV).kind;
@@ -12112,6 +12824,10 @@ function numericLiteralValue(expr: ts.Expression): number | null {
  * unwinds the enclosing loop blocks natively.
  */
 function lowerEarlyReturn(stmt: ts.ReturnStatement, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
+    withNodeSourceSite(cx, stmt, () => lowerEarlyReturn(stmt, cx));
+    return;
+  }
   if (cx.funcKind === "generator") {
     // A generator's `return` routes through __gen_set_return / the buffer
     // epilogue — a plain Wasm return would skip the generator wrap. The
@@ -12154,6 +12870,10 @@ function lowerEarlyReturn(stmt: ts.ReturnStatement, cx: LowerCtx): void {
  * pre-pass should have flagged the name.
  */
 function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
+    withMutationSourceSite(cx, id, () => lowerIdentifierAssignment(id, rhs, cx));
+    return;
+  }
   const binding = cx.scope.get(id.text);
   if (!binding) {
     const readable = cx.resolver?.resolveModuleBinding?.(id);
@@ -12289,6 +13009,10 @@ function compoundF64Binop(compoundOp: ts.SyntaxKind): IrBinop | null {
  * assignment is rare and deferred.
  */
 function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, rhs: ts.Expression, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
+    withMutationSourceSite(cx, id, () => lowerCompoundAssignment(id, compoundOp, rhs, cx));
+    return;
+  }
   const binding = cx.scope.get(id.text);
   if (!binding) {
     demoteToLegacy(
@@ -12420,6 +13144,10 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
  * i32. The binop dispatches on the slot ValType.
  */
 function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
+    withMutationSourceSite(cx, id, () => lowerIncrementDecrement(id, op, cx));
+    return;
+  }
   const binding = cx.scope.get(id.text);
   if (!binding) {
     demoteToLegacy(
@@ -12552,6 +13280,8 @@ function convertMixedPrimitiveArm(
   arm: "then" | "else",
   cx: LowerCtx,
 ): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expression)
+    return withNodeSourceSite(cx, expression, () => convertMixedPrimitiveArm(expression, family, kind, arm, cx));
   const expected = family === "string" ? ({ kind: "string" } as const) : irVal({ kind: "f64" });
   const value = lowerExpr(expression, cx, expected);
   const type = cx.builder.typeOf(value);
@@ -12590,6 +13320,8 @@ function convertMixedPrimitiveArm(
 }
 
 function tryLowerExactMixedPrimitiveWrapperCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => tryLowerExactMixedPrimitiveWrapperCall(expr, cx));
   const proof = proveExactMixedPrimitiveWrapperCall(expr, cx);
   if (proof === null) return null;
   try {
@@ -12754,6 +13486,8 @@ function boxMixedConditionalArm(
 }
 
 function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerConditional(expr, cx));
   const mixedProof = requireMixedPrimitiveConditionalProof(expr, "mixed conditional", cx);
   if (mixedProof !== null) {
     try {
@@ -12977,6 +13711,8 @@ function emitUnaryToNumber(
 }
 
 function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerPrefixUnary(expr, cx));
   // #2135 — capability-table invariant, mirroring `lowerBinary`. A deferred
   // prefix op post-claim is a selector↔table disagreement (compiler bug).
   assertNotDeferred(
@@ -13383,6 +14119,8 @@ function findClassMember(
  * construction rather than by a re-implementation.
  */
 function lowerDynamicLaneIn(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerDynamicLaneIn(expr, cx));
   const externref = irVal({ kind: "externref" });
   const rawKey = lowerExpr(expr.left, cx, externref);
   const key =
@@ -13406,6 +14144,8 @@ function lowerDynamicLaneIn(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId 
 }
 
 function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerInstanceOf(expr, cx));
   if (!ts.isIdentifier(expr.right)) {
     demoteToLegacy(
       "operand-coercion-unsupported",
@@ -13555,6 +14295,8 @@ function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
  * bounded, not inferred from composing other values.
  */
 function emitI32PureExpr(e: ts.Expression, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== e)
+    return withNodeSourceSite(cx, e, () => emitI32PureExpr(e, cx));
   const inner = peelParensExpr(e);
   if (ts.isBinaryExpression(inner)) {
     const k = inner.operatorToken.kind;
@@ -13592,6 +14334,8 @@ function collectPreparedConcatOperands(expression: ts.Expression, out: ts.Expres
 }
 
 function lowerPreparedAsyncConcat(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerPreparedAsyncConcat(expr, cx));
   const target = cx.resolver?.preparedAsyncConcatFiveTarget?.(expr) ?? null;
   if (target === null) return null;
   const operands: ts.Expression[] = [];
@@ -14106,6 +14850,8 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
  * both the `null` and `undefined` cases the spec requires.
  */
 function lowerNullish(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerNullish(expr, cx, hint));
   // Lower the lhs with the caller's hint so a reference-shaped consumer
   // (e.g. an externref slot / return) propagates the right carrier type.
   const lhs = lowerExpr(expr.left, cx, hint);
@@ -14172,6 +14918,8 @@ function lowerNullish(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): Ir
  * runs it) and the two arms are combined with a structured `IrInstrIf`.
  */
 function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerLogicalAndOr(expr, op, cx));
   const isAnd = op === ts.SyntaxKind.AmpersandAmpersandToken;
   const opName = isAnd ? "&&" : "||";
 
@@ -14256,6 +15004,8 @@ function checkerProvesExactNumericExponentOperand(expr: ts.Expression, cx: Lower
 }
 
 function lowerExactNumericExponentiation(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerExactNumericExponentiation(expr, cx));
   const plan = IR_MATH_METHOD_TABLE.pow;
   if (plan.intrinsic !== "math.pow") {
     throw new IrInvariantError(
@@ -14371,6 +15121,8 @@ function typeOfValue(v: IrValueId, cx: LowerCtx): IrType {
  * need a runtime null check this slice doesn't emit.
  */
 function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: LowerCtx): IrValueId | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => tryLowerUndefinedCompare(expr, op, cx));
   const isStrictEq = op === ts.SyntaxKind.EqualsEqualsEqualsToken;
   const isStrictNeq = op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
   if (!isStrictEq && !isStrictNeq) return null;
@@ -14478,6 +15230,8 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
 }
 
 function tryFoldNullCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: LowerCtx): IrValueId | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => tryFoldNullCompare(expr, op, cx));
   const isEq = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsToken;
   const isNeq = op === ts.SyntaxKind.ExclamationEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken;
   if (!isEq && !isNeq) return null;
@@ -14590,6 +15344,8 @@ function tryLowerDynamicEq(
   rt: IrType,
   cx: LowerCtx,
 ): IrValueId | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => tryLowerDynamicEq(expr, op, lhs, rhs, lt, rt, cx));
   const wrapperLooseEq = tryLowerPrimitiveWrapperLooseEquality(expr, op, lhs, rhs, lt, rt, cx);
   if (wrapperLooseEq !== null) return wrapperLooseEq;
   if (lt.kind !== "dynamic" && rt.kind !== "dynamic") return null;
@@ -14625,6 +15381,8 @@ function tryLowerPrimitiveWrapperLooseEquality(
   rt: IrType,
   cx: LowerCtx,
 ): IrValueId | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => tryLowerPrimitiveWrapperLooseEquality(expr, op, lhs, rhs, lt, rt, cx));
   if (op !== ts.SyntaxKind.EqualsEqualsToken && op !== ts.SyntaxKind.ExclamationEqualsToken) return null;
   const leftKind = primitiveWrapperConstructorName(expr.left, cx);
   const rightKind = primitiveWrapperConstructorName(expr.right, cx);
@@ -14683,6 +15441,8 @@ function tryLowerPrimitiveWrapperLooseEquality(
  * mis-tagging (e.g. a boxed boolean must carry tag-4, never the number default).
  */
 function boxConcreteToDynamic(v: IrValueId, t: IrType, operand: ts.Expression, cx: LowerCtx): IrValueId | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== operand)
+    return withNodeSourceSite(cx, operand, () => boxConcreteToDynamic(v, t, operand, cx));
   if (t.kind === "string") {
     return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.String));
   }
@@ -15063,6 +15823,8 @@ function assertUndefinedOnlyVoidClosure(expr: IrClosureLiteral, cx: LowerCtx): v
 }
 
 function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => lowerClosureExpression(expr, cx));
   // Inference is owned by the actual checker and confined to descriptor
   // literals and their nested closures. Other closure admission is unchanged.
   let descriptorOwner: ts.Node | undefined = expr.parent;
@@ -15224,6 +15986,10 @@ function lowerClosureExpressionWithSignature(
   cx: LowerCtx,
   exact?: ExactClosureLoweringOptions,
 ): IrValueId {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () =>
+      lowerClosureExpressionWithSignature(expr, signature, expectedReadonlyCaptures, cx, exact),
+    );
   const defaultParamStart = closureDefaultParamStart(expr.parameters, cx.funcName, cx);
   if ((signature.defaultParamStart ?? signature.params.length) !== defaultParamStart) {
     // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
@@ -15334,6 +16100,7 @@ function lowerClosureExpressionWithSignature(
     exact?.domCallbackAuthority,
   );
   cx.lifted.push(lifted);
+  recordSourceMapDerived(cx, liftedIdentity, expr);
 
   return cx.builder.emitClosureNew(liftedTarget, signature, captureFieldTypes, captureArgs, {
     ...(exact?.hostOneShot === true ? { hostOneShot: true } : {}),
@@ -15348,6 +16115,10 @@ function lowerClosureExpressionWithSignature(
  * Direct call: `call $lifted` with capture args first, then user args.
  */
 function lowerNestedFunctionDeclaration(fn: ts.FunctionDeclaration, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== fn) {
+    withNodeSourceSite(cx, fn, () => lowerNestedFunctionDeclaration(fn, cx));
+    return;
+  }
   if (!fn.name || !fn.body) {
     demoteToLegacy("body-shape-rejected", `ir/from-ast: nested function without name or body in ${cx.funcName}`);
   }
@@ -15380,6 +16151,7 @@ function lowerNestedFunctionDeclaration(fn: ts.FunctionDeclaration, cx: LowerCtx
 
   const lifted = liftNestedFunction(liftedIdentity, fn, signature, captures, cx);
   cx.lifted.push(lifted);
+  recordSourceMapDerived(cx, liftedIdentity, fn);
 
   // Add to the OUTER scope.
   cx.scope.set(innerName, { kind: "nestedFunc", target: irUnitFuncRef(liftedIdentity), signature, captures });
@@ -15405,7 +16177,16 @@ function liftNestedFunction(
       `ir/from-ast: void nested function signatures are outside slice 3 (${liftedName})`,
     );
   }
-  const builder = new IrFunctionBuilder(liftedIdentity, [signature.returnType], false, cx.allocRegistry);
+  const builder = new IrFunctionBuilder(
+    liftedIdentity,
+    [signature.returnType],
+    false,
+    cx.allocRegistry,
+    undefined,
+    cx.sourceMap !== undefined,
+  );
+  const sourceScope = nestedSourceScope(cx, builder, liftedIdentity.unitId, fn);
+  if (sourceScope) selectFrontendControlScopes(sourceScope);
   const scope = new Map<string, ScopeBinding>();
 
   // Prepend capture params before the user's params.
@@ -15427,6 +16208,7 @@ function liftNestedFunction(
   builder.openBlock();
 
   const innerCx: LowerCtx = {
+    ...sourceScope,
     builder,
     scope,
     funcName: liftedName,
@@ -15516,7 +16298,11 @@ function liftClosureBody(
     signature.returnType === null ? [] : [signature.returnType],
     false,
     cx.allocRegistry,
+    undefined,
+    cx.sourceMap !== undefined,
   );
+  const sourceScope = nestedSourceScope(cx, builder, liftedIdentity.unitId, expr);
+  if (sourceScope) selectFrontendControlScopes(sourceScope);
   const scope = new Map<string, ScopeBinding>();
 
   const selfType: IrType = { kind: "closure", signature };
@@ -15552,23 +16338,14 @@ function liftClosureBody(
 
   // Read each capture out of __self. captureFieldTypes is parallel to
   // captures; lifted body sees captures at index 0..N-1.
-  for (let i = 0; i < captures.length; i++) {
-    const cap = captures[i]!;
-    const fieldType = captureFieldTypes[i]!;
-    const v = builder.emitClosureCap(selfV, i, fieldType);
-    if (cap.withField) {
-      scope.set(cap.name, {
-        kind: "withField",
-        receiver: v,
-        name: cap.withField.name,
-        type: cap.withField.type,
-      });
-    } else {
-      scope.set(cap.name, { kind: "local", value: v, type: fieldType });
-    }
-  }
+  if (sourceScope)
+    withGeneratedSourceSite(sourceScope, "binding-scaffold", expr, () =>
+      lowerClosureCaptureBindings(captures, captureFieldTypes, selfV, builder, scope),
+    );
+  else lowerClosureCaptureBindings(captures, captureFieldTypes, selfV, builder, scope);
 
   const innerCx: LowerCtx = {
+    ...sourceScope,
     builder,
     scope,
     funcName: liftedName,
@@ -15618,21 +16395,11 @@ function liftClosureBody(
   };
 
   for (const pending of pendingDefaults) {
-    if (asVal(pending.type)?.kind !== "f64") {
-      demoteToLegacy(
-        "body-shape-rejected",
-        `ir/from-ast: closure default parameter must use the f64 carrier (${liftedName})`,
+    if (sourceScope)
+      withGeneratedSourceSite(sourceScope, "binding-scaffold", pending.initializer, () =>
+        lowerClosureDefaultBinding(pending, builder, innerCx, scope, liftedName),
       );
-    }
-    const rawBits = builder.emitUnary("i64.reinterpret_f64", pending.rawValue, IR_I64);
-    const sentinelBits = builder.emitConst({ kind: "i64", value: LEGACY_EXPRESSION_DEFAULT_F64_SENTINEL_BITS }, IR_I64);
-    const missing = builder.emitBinary("i64.eq", rawBits, sentinelBits, IR_I32);
-    const fallback = lowerExpr(pending.initializer, innerCx, pending.type);
-    if (!irTypeAssignable(builder.typeOf(fallback), pending.type)) {
-      demoteToLegacy("body-shape-rejected", `ir/from-ast: closure default initializer type mismatch (${liftedName})`);
-    }
-    const resolved = builder.emitSelect(missing, fallback, pending.rawValue, pending.type);
-    scope.set(pending.name, { kind: "local", value: resolved, type: pending.type });
+    else lowerClosureDefaultBinding(pending, builder, innerCx, scope, liftedName);
   }
 
   for (const pending of pendingDestructures) {
@@ -15645,7 +16412,7 @@ function liftClosureBody(
         demoteToLegacy("body-shape-rejected", `ir/from-ast: void host callbacks must be block-bodied (${liftedName})`);
       }
       lowerDiscardedExpression(body, innerCx);
-      builder.terminate({ kind: "return", values: [] });
+      terminateImplicitSourceReturn(innerCx, []);
       return builder.finish({
         signature,
         captureFieldTypes: [...captureFieldTypes],
@@ -15662,7 +16429,11 @@ function liftClosureBody(
         `ir/from-ast: closure body type ${describeIrType(builder.typeOf(v))} != declared return ${describeIrType(signature.returnType)} (${liftedName})`,
       );
     }
-    builder.terminate({ kind: "return", values: [v] });
+    if (sourceScope)
+      withGeneratedSourceSite(sourceScope, "implicit-return", body, () =>
+        builder.terminate({ kind: "return", values: [v] }),
+      );
+    else builder.terminate({ kind: "return", values: [v] });
   } else {
     if (!ts.isBlock(body)) {
       demoteToLegacy(
@@ -15848,6 +16619,10 @@ function collectBindingNames(name: ts.BindingName, out: Set<string>): void {
  * implicitly catches the unreachability).
  */
 function lowerThrowStatement(stmt: ts.ThrowStatement, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
+    withNodeSourceSite(cx, stmt, () => lowerThrowStatement(stmt, cx));
+    return;
+  }
   if (!stmt.expression) {
     demoteToLegacy("throw-value-unsupported", `ir/from-ast: bare 'throw' not in slice 9 (${cx.funcName})`);
   }
@@ -15894,6 +16669,10 @@ function lowerThrowStatement(stmt: ts.ThrowStatement, cx: LowerCtx): void {
  * Wasm-emit side, not the IR layer.
  */
 function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
+    withNodeSourceSite(cx, stmt, () => lowerTryStatement(stmt, cx));
+    return;
+  }
   // A catch/finally entry may observe state from any preceding throw point,
   // not only the normal end of the try body. Summarize all possible writes so
   // stale ASCII evidence cannot cross an exceptional edge.

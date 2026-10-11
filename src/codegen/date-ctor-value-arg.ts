@@ -25,8 +25,6 @@ import { ts } from "../ts-api.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import { emitNativeDateParse } from "./date-parse-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
-import { stringConstantExternrefInstrs } from "./native-strings.js";
-import { addStringConstantGlobal } from "./registry/imports.js";
 import { coerceType, compileExpression } from "./shared.js";
 
 /** `new Date(<invalid>)`'s stored sentinel — the same i64 the ctor writes. */
@@ -76,8 +74,9 @@ export function tryEmitStandaloneDateCtorValueArg(
   const primitive = allocTempLocal(fctx, { kind: "externref" });
   const slot = allocTempLocal(fctx, { kind: "i64" });
 
-  addStringConstantGlobal(ctx, "default");
-  const defaultHint: Instr[] = [...stringConstantExternrefInstrs(ctx, "default")];
+  // (#6774 S19) The IMPLICIT default hint (null): an explicit "default" string
+  // tells `__to_primitive` to keep a Symbol result, which ToNumber must reject.
+  const defaultHint: Instr[] = [{ op: "ref.null.extern" }];
 
   // Step 4.a — a Date argument: copy [[DateValue]] without any method call.
   // The invalid sentinel must survive as NaN rather than becoming a huge

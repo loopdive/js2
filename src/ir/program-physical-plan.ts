@@ -83,6 +83,10 @@ import {
   type PreparedIrProgramRuntimeProjection,
 } from "./program.js";
 import type { ValType } from "./types.js";
+import {
+  irNumberRemainderCallableDeclaration,
+  NUMBER_REMAINDER_RUNTIME_PROVIDERS,
+} from "./runtime/number-remainder-callables.js";
 import { deriveNativeVectorResourcePlan, type NativeVectorResourcePlan } from "./program/native-vector-resources.js";
 import { assertPreparedIrProgram } from "./program-validation.js";
 import {
@@ -187,12 +191,67 @@ export interface PhysicalExceptionTag {
   readonly shared: boolean;
 }
 
+/** Exact demanded canonical Number remainder ABI and its concrete physical variant. */
+export interface PhysicalNumberRemainder {
+  readonly bindingId: IrBindingId;
+  readonly referenceKey: string;
+  readonly symbol: string;
+  readonly earlyMagnitude: boolean;
+  readonly params: readonly ValType[];
+  readonly results: readonly ValType[];
+}
+
+function planNumberRemainders(
+  program: PreparedIrProgram,
+  projection: PreparedIrProgramRuntimeProjection,
+): readonly PhysicalNumberRemainder[] {
+  const resources: PhysicalNumberRemainder[] = [];
+  const keys = new Set<string>();
+  for (const { plan, contract } of program.abi.entries) {
+    if (plan.slotPolicy !== "required" || contract.kind !== "callable") continue;
+    const declaration = irNumberRemainderCallableDeclaration(contract.ref);
+    if (!declaration) continue;
+    const key = irCallableBindingKey(contract.ref.binding);
+    const canonical = NUMBER_REMAINDER_RUNTIME_PROVIDERS.find((provider) => provider.feature === declaration.feature);
+    const providers = projection.prepared.manifest.providers.filter(
+      (provider) => provider.feature === declaration.feature,
+    );
+    if (
+      !canonical ||
+      providers.length !== 1 ||
+      preparedIrDataMismatch(providers[0], canonical) !== undefined ||
+      preparedIrDataMismatch(contract.params, declaration.params) !== undefined ||
+      preparedIrDataMismatch(contract.results, declaration.results) !== undefined ||
+      plan.id !== preparedIrRuntimeCallableBindingId(program.inventory, declaration.ref) ||
+      plan.slotSpace !== "function" ||
+      plan.structuralReferenceKey !== key ||
+      keys.has(key) ||
+      declaration.ref.binding.kind !== "intrinsic"
+    )
+      throw new PreparedIrProgramInvariantError(
+        "invalid-prepared-data",
+        "number remainder has a contradictory ABI/provider resource join",
+      );
+    keys.add(key);
+    resources.push({
+      bindingId: plan.id,
+      referenceKey: key,
+      symbol: declaration.ref.binding.symbol,
+      earlyMagnitude: declaration.ref.binding.symbol === "__fmod_early_magnitude",
+      params: [{ kind: "f64" }, { kind: "f64" }],
+      results: [{ kind: "f64" }],
+    });
+  }
+  return resources;
+}
+
 /** Everything emission will reserve, in the order it will reserve it. Deep-frozen. */
 export interface PhysicalSetupPlan {
   readonly backend: PreparedIrBackendOptions["backend"];
   readonly target: PreparedIrBackendOptions["target"];
   readonly exceptionTag: PhysicalExceptionTag;
   readonly vectors: NativeVectorResourcePlan;
+  readonly numberRemainders: readonly PhysicalNumberRemainder[];
   readonly sourceClosures?: Omit<NativeSourceClosureRequirements, "demands">;
   readonly nativeInvocation?: NativeInvocationPhysicalSetup;
   readonly nativeRealm?: NativeRealmDescription;
@@ -1231,6 +1290,8 @@ export function planPhysicalSetup(
   const convert = physicalSignatureConverter(program, vectors, gaps, nativeStrings, dynamic.units, sourceClosures);
 
   const functions = planPhysicalFunctionSlots(physical, entries, convert, dynamic.units, gaps);
+  const numberRemainders = planNumberRemainders(program, projection);
+  const remainderIds = new Set(numberRemainders.map((resource) => resource.bindingId));
 
   // 2. Every other required slot: imports, globals, or a gap. Exports are resolved to their space.
   const importedFunctions: PhysicalImportedFunction[] = [];
@@ -1257,7 +1318,7 @@ export function planPhysicalSetup(
       continue;
     }
     if (plan.slotPolicy !== "required") continue;
-    if (nativeIds.has(plan.id)) continue;
+    if (nativeIds.has(plan.id) || remainderIds.has(plan.id)) continue;
     if (contract.kind === "callable") {
       const binding = contract.ref.binding;
       if (binding.kind === "unit") {
@@ -1329,6 +1390,7 @@ export function planPhysicalSetup(
     ...functions.map((slot) => irCallableBindingKey({ kind: "unit", unitId: slot.unitId })),
     ...importedFunctions.map((fn) => fn.referenceKey),
     ...(vectors.helper ? [vectors.helper.referenceKey] : []),
+    ...numberRemainders.map((resource) => resource.referenceKey),
     ...nativeBindings.filter((row) => row.reference.kind === "func").map((row) => nativeReferenceKey(row.reference)),
   ]);
   const reservedGlobals = new Set<string>([
@@ -1430,6 +1492,7 @@ export function planPhysicalSetup(
     target: options.target,
     exceptionTag: { required: exceptionRequired || options.sharedExceptionTag, shared: options.sharedExceptionTag },
     vectors,
+    numberRemainders,
     ...(sourceClosures
       ? {
           sourceClosures: {

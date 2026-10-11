@@ -2,6 +2,7 @@
 import { forEachChild, ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
 import { tracesToProxyConstructorValue } from "../proxy-value-provenance.js"; // (#5196 R3-0)
+import { arrayMethodReadsProxyOperand } from "../proxy-array-like.js"; // (#6651 H6)
 export { variableStatementContainsPromiseSubclass } from "../expressions/promise-subclass.js";
 
 /**
@@ -261,13 +262,32 @@ export function isDescriptorAccessorRead(init: ts.Expression): boolean {
  * which fails and replaces the value with `ref.null` — the receiver then
  * misreads as "null or undefined" for every dynamic read the callee does.
  */
+/**
+ * (#6770 S8) `obj.method(…)` whose `method` is written in THIS source file —
+ * `assert.sameValue = function (actual, expected) {…}`, the harness shape every
+ * Proxy row passes its proxy through (`assert.sameValue(receiver, proxy)`). Its
+ * untyped parameter reads dynamically exactly like a plain function's, and a
+ * declined widening kept the binding in its target's closed struct: the
+ * assignment snapshotted the proxy by `[[Get]]`-ing every field (firing the
+ * get trap with a foreign receiver before any operation ran) and `receiver ===
+ * proxy` was false forever after. `.call` / `.apply` / `.bind` stay excluded
+ * (#2615: argument zero is a receiver), and so does every lib-declared method.
+ */
+function isSourceDeclaredMethodCallee(ctx: CodegenContext, call: ts.CallExpression): boolean {
+  const callee = call.expression;
+  if (!ts.isPropertyAccessExpression(callee) || ["call", "apply", "bind"].includes(callee.name.text)) return false;
+  const decls = ctx.oracle.declarationsOf(callee.name);
+  const sourceFile = call.getSourceFile();
+  return decls.length > 0 && decls.every((d) => d.getSourceFile() === sourceFile);
+}
+
 function calleeParamIsUntyped(
   ctx: CodegenContext,
   parent: ts.CallExpression | ts.NewExpression,
   outer: ts.Expression,
 ): boolean {
-  if (!ts.isCallExpression(parent) || !ts.isIdentifier(parent.expression)) return false;
-  if (parent.arguments === undefined) return false;
+  if (!ts.isCallExpression(parent) || parent.arguments === undefined) return false;
+  if (!ts.isIdentifier(parent.expression) && !isSourceDeclaredMethodCallee(ctx, parent)) return false;
   const argIndex = parent.arguments.indexOf(outer);
   if (argIndex < 0) return false;
   const sig = ctx.oracle.signatureOf(parent.expression);
@@ -292,6 +312,8 @@ function expressionIsEscapingArgument(ctx: CodegenContext, expression: ts.Expres
   // parameter carries no type annotation reads dynamically too — see
   // `calleeParamIsUntyped` for why this cannot reopen #2615.
   if (calleeParamIsUntyped(ctx, parent, outer)) return false;
+  // (#6651 H6) A standalone Array borrow/concat that reads the operand via the MOP.
+  if (arrayMethodReadsProxyOperand(ctx, parent, outer)) return false;
 
   // (#6775 S2) `get.call(p)` / `set.call(p, v)` where the callee binding is an
   // accessor pulled off a descriptor (`Object.getOwnPropertyDescriptor(o, k)

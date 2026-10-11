@@ -2,7 +2,7 @@
 
 import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
-import { BFN_ID_FIELD_IDX } from "../builtin-fn-meta.js";
+import { BFN_ID_FIELD_IDX, linkedSignatureGuard } from "../builtin-fn-meta.js"; // (#6651 V0) guard shared with every bfnid site
 import { buildClosureResultBoxing } from "./result-boxing.js";
 import { getArrTypeIdxFromVec } from "../registry/types.js";
 
@@ -167,6 +167,7 @@ export function buildTransferredNativeProtoOwnedBitInstrs(
           { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: BFN_ID_FIELD_IDX },
           { op: "i32.const", value: entry.typeIdx },
           { op: "i32.eq" },
+          ...linkedSignatureGuard(ctx, entry, [{ op: "local.get", index: fnLocal }, { op: "any.convert_extern" }]),
         ],
         else: [{ op: "i32.const", value: 0 }],
       },
@@ -262,6 +263,7 @@ export function buildTransferredNativeProtoCallInstrs(
           { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: BFN_ID_FIELD_IDX },
           { op: "i32.const", value: entry.typeIdx },
           { op: "i32.eq" },
+          ...linkedSignatureGuard(ctx, entry, [{ op: "local.get", index: anyLocal }]),
           {
             op: "if",
             blockType: { kind: "empty" },
@@ -401,6 +403,7 @@ export function buildTransferredNativeProtoVariadicApplyInstrs(
           { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: BFN_ID_FIELD_IDX },
           { op: "i32.const", value: entry.typeIdx },
           { op: "i32.eq" },
+          ...linkedSignatureGuard(ctx, entry, [{ op: "local.get", index: slots.anyLocal }]),
           {
             op: "if",
             blockType: { kind: "empty" },

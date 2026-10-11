@@ -270,6 +270,27 @@ export function fillClosurePrototypeEdge(ctx: CodegenContext): void {
   if (edges.length === 0) return;
 
   const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object");
+  const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
+
+  /**
+   * (#6771 S7) §10.2.5 MakeConstructor step 5: the vivified prototype owns
+   * `constructor` = the function — the value this edge matched by identity.
+   * `emitFnctorProtoGet` installs it when a STATIC site vivifies first; a
+   * dynamic `Get(F, "prototype")` (`Array.from.call(C, …)`'s Construct) that
+   * vivified first left it absent for good (`from/iter-cstm-ctor.js`).
+   */
+  const constructorInstall = (edge: PrototypeEdge): Instr[] =>
+    defineValueIdx === undefined
+      ? []
+      : [
+          { op: "global.get", index: edge.protoGlobalIdx },
+          ...nativeStringLiteralInstrs(ctx, "constructor"),
+          { op: "extern.convert_any" },
+          { op: "global.get", index: edge.valueGlobalIdx },
+          { op: "f64.const", value: 0x01 | 0x04 }, // {writable, !enumerable, configurable}
+          { op: "call", funcIdx: defineValueIdx },
+          { op: "drop" },
+        ];
 
   /** Leave the edge's prototype object on the stack, vivifying if asked. */
   const loadProto = (edge: PrototypeEdge): Instr[] => {
@@ -284,6 +305,7 @@ export function fillClosurePrototypeEdge(ctx: CodegenContext): void {
           then: [
             { op: "call", funcIdx: newPlainObjectIdx },
             { op: "global.set", index: edge.protoGlobalIdx },
+            ...constructorInstall(edge),
           ],
         },
       );
@@ -416,6 +438,15 @@ function lazyMakeConstructorInstrs(
           { op: "f64.const", value: PROTOTYPE_OWN_FLAGS },
           { op: "call", funcIdx: defineValueIdx },
           { op: "drop" }, // the helper returns its target
+          // (#6771 S7) §10.2.5 step 5: `prototype.constructor = F`
+          // {writable, !enumerable, configurable} — F is the receiver itself.
+          { op: "local.get", index: protoSlot },
+          ...nativeStringLiteralInstrs(ctx, "constructor"),
+          { op: "extern.convert_any" },
+          { op: "local.get", index: recvSlot },
+          { op: "f64.const", value: 0x01 | 0x04 },
+          { op: "call", funcIdx: defineValueIdx },
+          { op: "drop" },
           { op: "local.get", index: protoSlot },
           { op: "return" },
         ],

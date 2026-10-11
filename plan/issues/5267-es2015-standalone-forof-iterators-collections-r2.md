@@ -2082,7 +2082,7 @@ reopening or a source/test/runner change. The issue remains historically
 `done`; the slice-lock status check for `#5267:array-iterator-deletion-triage`
 was unassigned, but no claim was taken because the parent issue is closed. A
 lead must explicitly reopen/allocate a source slice before anyone changes this
-area.
+   area.
 
 **Measured original identity, not a population claim.** The frozen ES2015
 manifest run on source `f924650c6c26237f62b08a362d7003d4d2b1e12d` recorded
@@ -2146,3 +2146,892 @@ note).**
    the deletion-slot readers and mutators before selecting one genuine-array
    admission point. No `src/ir/**` routing change, shared global semantic
    change, or ownership claim follows from this handoff.
+
+## 2026-10-05 allocated slice — no-catch finally self-reentry (provisional)
+
+**Reservation and scope.** Parent expressly allocated
+`src/codegen/statements/exceptions.ts::compileTryStatement`'s no-catch finally
+path to Codex GPT-6.1 Sol High. This is a local issue-MD reservation, not a
+GitHub assignment or reopening of every historical #5267 slice. The reviewed
+ownership ledger is `06689ca363ec1f99c88cc5148cad5143c39b6d05`. No allocator,
+context schema, iterator, generator, inference, runner, provider, oracle,
+foreign IR migration, or other source file is in scope.
+
+**Fresh candidate base.** The dedicated worktree is
+`/Users/thomas/Code/js2/.codex-worktrees/5267-finally-once-sol61`, branch
+`codex/5267-finally-once-sol61`, based on parent-verified latest upstream main
+`4d42eec28e0aafbf242bb37150ca5ecac02136f0`. The exception emitter is unchanged
+from the earlier `40797360d6268c329b9a4aadcb48f100af1dcff4` baseline (pre-edit
+SHA256 `04fac10ebd0e1d38dd8c93a7dda8bb465b0a20ecbb6e204254a004f49787c6d8`).
+Other compiler/IR presentation files changed between those commits; the old
+measurement is causal evidence, **not** a matched candidate A/B result.
+
+**Required immutable design pin.** Astra's complete planning-worktree issue
+MD, including its private-marker refinement at lines 2265–2358, has SHA256
+`bc527ef86e39fc05a0276fc97aad1cd3b9a70411bf84c565c55a0ba23601597b`.
+The implementation follows that refinement: reserve an ordinary private i32
+local named `finally@entered$<absolute-index>` before compiling finally;
+append directly to locals, never source-name maps or reusable temporary pools.
+Each fresh clone (including depth-adjusted and zero-extra-depth clones)
+prepends set-one. Reset is outside the protected try after restoring the outer
+body/depths. The standardized handler saves its incoming payload first and
+throws that same payload if already entered. The legacy catch_all uses
+`rethrow 1` inside its one-label guard and retains the original `rethrow 0`
+after the ordinary handler clone. Catch-bearing paths retain their existing
+behavior. No label wraps a finally clone, and no shared lowering helper changes.
+
+**Actual old-baseline first loss.** The frozen worktree
+`5267-finally-reentry-sol61` and its reviewed programs/artifacts are untouched.
+Its one executed official original was
+`language/statements/for-of/throw-from-finally.js`, SHA256
+`58fc041b3b0d9602667d9c6676562145b6e5ae010debf7786d8e61760b1c193b`.
+The maintained original harness, standalone target, auto semantic providers,
+primary-first/conditional-strict workflow produced an actual reached-test
+runtime FAIL: `Expected SameValue(«2», «1») to be true`.
+Its captured 400997-byte binary has SHA256
+`80fc77571da07bfd6086bdd9eeb6f9c6873ced2597b4e939aa93b7e4c362bfd9`.
+The original runtime wrapper subsequently failed its separate default WAT
+diagnostic; the old receipt remains incomplete, not relabeled complete.
+
+A separately authorized `wasm-dis --all-features` diagnostic decoded that
+same binary without compiling or executing again. Its WAT has SHA256
+`f8421b86370268a6b59c1fa4833e44f371d11b1e33c3e1d521b5a491e496f25e`.
+In `$__closure_68`, the inner protected normal clone increments counter
+global 31 then throws carrier global 32 (lines 210539–210552). Its own handler
+stores that payload in local 10 then increments the same counter AGAIN and
+throws the same carrier (210557–210569). The second increment at 210557 is
+the first wrong observable effect; IteratorClose occurs later at
+210639–210670 and is not the repair seam. Diagnostic receipt SHA256:
+`a0c1fbf1e8ade9e3a5cf7f875b1df34ed9dca47fc8073fea8739144f968a174d`.
+
+**Authored acceptance coverage (NOT_RUN).** The new focused test file is
+`tests/issue-5267-finally-reentry.test.ts`. Its 66 declared cases cover both
+gc/legacy and standalone/standardized EH: normal/throw/return/break/continue
+try completions, normal/throwing finally, plain/nested-if abrupt sites,
+ordered effects, exact pending/replacement object identity, loop-entry reset,
+nested finalizers, recursion, nested-loop branch depths, finally
+return/break/continue overriding a pending throw, legitimate similarly named
+source variables with closure/literal-direct-eval reads, and generator close
+exactly once. Four structural cases pin private map/free-list absence, reset
+placement, fresh clone writes, distinct slots, payload preservation, legacy
+rethrow depths, numeric remapping and speculative-local rollback. Two host
+cases pin actual foreign JS exception identity from try/finally and one
+finalizer execution. These are authored expectations, not verified passes.
+
+**Remaining gates.** Execution is NOT_RUN on this latest-base candidate.
+The two old-baseline official controls (`throw-from-catch.js`, `throw.js`) and
+two plain diagnostics remain pending in the frozen recovery packet; do not
+rerun the already captured first target. Before publication require a fresh
+matched latest-main baseline/candidate build and original-harness comparison,
+removal/restoration attribution, focused suite and #2061/#4249/#4716 controls,
+finite non-vacuous abrupt-for-of/try family coverage, and normal repository
+gates under a separate heavy-work grant. No PR, score improvement, finished
+issue claim, build/cache receipt reuse across source changes, or global
+population claim is justified by pure authoring.
+
+### 2026-10-06 measured latest-main comparison and fixture correction
+
+Both measurement arms now use base
+`4d42eec28e0aafbf242bb37150ca5ecac02136f0`: clean baseline worktree
+`5267-finally-latest-baseline-sol61` and candidate `5267-finally-once-sol61`.
+Each has its own ordinary compiler/runtime bundles and maintained keyed native
+provider cache. Four normal commands passed with actual exit/close/EOF and
+source-input equality; command 3 alone used the documented three-file native
+artifact selector, command 4 used normal `--require-cache` HIT and linked-pair
+verification. Baseline build `5267-build.qDmIcG` postflight SHA256
+`2d97fcf68ca385679c3fa5ea959a6815ecc7a0150bbf08babae1e6ae7468dfe7`;
+candidate build `5267-build.96svYu` postflight SHA256
+`4c6ea0cba982884bcd85b14ffb6b6ecb59b573459dfca696cabb19952075806d`.
+
+Maintained original-harness standalone/auto, unchanged metadata/bodies and
+primary/conditional-strict processing measured exactly three official bodies
+plus two plain diagnostics per arm (all strict-neutral, 3+2 variants). Baseline
+`5267-originals.OD48S2` receipt SHA256
+`a543396cfcb629919db1f77e29ee42d82dc2285ccec55208aacada75006dd84f`:
+`throw-from-finally.js` FAIL, `throw-from-catch.js` PASS, `throw.js` PASS,
+plain normal-finally PASS, plain throwing-finally FAIL. Both failures are
+counter 2 instead of 1. Candidate `5267-originals.EdvAW1` receipt SHA256
+`b2cdb772b398b62ea25c4c82d1f53b6306a1a3570ff7dd0590f057e7e9b11b39`:
+ALL FIVE PASS. All ten workers have one ready/send/result, actual successful
+exit/close, both stream EOF/close, executed WASM/meta matched to the owning
+compiler bundle, no observation deadlines, and no transport errors. Each
+physical floor and before/after input proof is complete. This is one official
+flip plus one diagnostic flip, not a global goal-score claim.
+
+The initial exact focused run (`5267-focused.NQYSjQ`) executed all 66 unique
+expected titles: 64 PASS, 2 FAIL, no excluded/duplicate/missing titles. Receipt
+SHA256 `42296ddf095fa9ce8dc282e5e79d5d54d8d07277f7e30a8d34f4ca637ca7d587`.
+Both failures are the combined global-source-name/closure/literal-eval fixture
+(expected 18, observed 0). The exact original test file is preserved privately
+as `.tmp/5267-original-focused-test.ts`, SHA256
+`945c7fda61ad1dfb8fcd4f80c1c18a9ca4413e5a42b7b382afd2724c89e6b816`.
+Its unchanged fixture source/options were then run on BOTH latest arms in
+BOTH gc and standalone: all four reproduce 0 instead of 18. Therefore these
+are inherited fixture dependencies, not a production-patch regression.
+The original failed receipts remain immutable. Vitest 3.2.4's JSON reporter
+does not include an unhandled-error field: the receipt records unavailable,
+not a fabricated zero; complete raw streams are retained.
+
+Bounded first-loss diagnosis `5267-fixture-diagnosis.gORaPL` ran four transparent
+probes in each lane, eight total, without production changes. In both lanes,
+the closure-only global read gives 9; stage tracking completes the closure
+read, reaches stage 2, then the literal global eval throws before stage 3.
+The global-eval-only probe fails too. The combined function-local version
+gives 18 and additionally confirms exactly one finalizer execution and the
+identity of its replacement sentinel. **Residual handoff:** global/module-init
+literal-eval binding reads in this fixture are a separate existing capability
+gap; no eval/helper/IR repair is part of this finally slice.
+
+Only the own focused fixture is corrected to use function-local bindings,
+retaining both similarly named user variables, closure read, literal direct
+eval and expected 18; wrong exception identity or duplicate execution now
+returns explicit failure values. The private marker's absence from source
+lookup/free lists and numeric remapping/rollback remain independently pinned
+by the four real-emitter structural tests. The production patch is unchanged.
+The corrected exact suite and normal contribution gates remain pending at
+this note's creation; no full-suite or publication claim follows yet.
+
+Corrected exact focused validation is now complete: all 66 unique expected
+titles PASS, zero missing/unexpected/duplicate titles, zero skipped/todo cases,
+zero suite errors, and an actual empty unhandled-error array from Vitest's
+maintained blob reporter. `pnpm typecheck` (the repository's normal TS7 check)
+and `pnpm lint` also PASS; lint checked 6836 files without fixes. All three
+processes have successful actual exit/close and both stream EOF/close. Source
+and test inputs remained byte-equal before/after throughout.
+`5267-corrected-gates.qqDIpZ/receipt.json` SHA256
+`d1e85b0dce8c82c712a1312357a58cba3e8c6f9d64c3c0f6bf4536367ec0b173`;
+input proof SHA256
+`1f2cd17cf37b68183c8deb3377fc27eacb9b9a7616110f7d3b1312a99305d258`.
+`npm test`, explicit removal/restoration attribution, broader finite
+abrupt-for-of/try controls and publication remain pending; the heavy-work
+lease was released after actual terminal, not a tool timeout.
+
+### 2026-10-06 isolated locked-dependency validation and attribution
+
+This is completion of the allocated no-catch finally slice only, not a new
+completion claim for the historical iterator/collection issue or the whole
+ES2015 population. Both matched arms used upstream
+`ee5dd9deb2a13f5af6043525c45ab855b384bfcc`, Node 24.19.0, pnpm 10.30.2,
+one compiler/fork worker and 3072 MiB Node heaps. Each arm received its own
+ordinary frozen-lock install, private modules/store/cache and full graph
+readback: 45 roots, 996 snapshots, 825 physical packages, 171 explained
+platform omissions and 1636 dependency links. Vitest's eight-package family
+is 3.2.7, matching lock SHA256
+`6a8b59fd4430c6600dc16ac33a749d0f5fed4ef0c100425de8490e43d916f2ac`.
+Both normal installer processes exited/closed successfully with both stream
+EOFs; shared modules and manifest/lock bytes remained unchanged. This is
+installer-integrity/metadata evidence, not attestation of every package byte.
+
+Each arm's four normal build commands passed. The first two invoke maintained
+pnpm bundle scripts; command 3 alone uses the documented three-file native
+artifact acquisition selector, and command 4 verifies the normal keyed cache
+and linked canary. No provider/bundle adapter, forced key or cached verdict is
+substituted. An earlier attempted build invoked the newly installed native
+esbuild executable through Node and failed before compilation; its failed
+packet remains preserved separately, not relabeled successful.
+
+The exact named 124-case floor is 18 numeric-local controls, 66 own regression
+cases and 40 neighboring finally/eval/IteratorClose cases. Baseline measured
+97 PASS / 27 FAIL; candidate measured **124 PASS / 0 FAIL**. Both reports have
+the exact expected title multiplicities, no missing/unexpected/skip/todo
+rows, no suite errors and an actual empty maintained-blob unhandled-error
+array. Candidate receipt SHA256:
+`8d16f4b991ca0a53f5370fb91c6ddd4b9dcf0ac631fab55b99f19a1eb1294685`.
+Baseline receipt SHA256:
+`7d553232fa2aef946430920607774296238e1e9a820076499af44a732578917c`.
+
+Maintained original-harness, standalone/auto-provider validation retained
+nine official bodies and two plain diagnostics per arm. All official bodies
+are actually strict-neutral, so each arm executed exactly 11 variants, not
+an assumed 18. Baseline: official `throw-from-finally.js` FAIL, the other eight
+official controls PASS, plain normal-finally PASS and throwing-finally FAIL.
+Candidate: all eleven PASS. Every variant reached its test, has one
+ready/send/result and successful physical exit/close/both EOFs, matching
+executed WASM/meta/compiler provenance, and no ambient imports. This is
+**one official flip and one diagnostic flip**, with no selected control loss.
+Baseline receipt SHA256:
+`39bdfe93255795c0d4f53fc64044c35372e60f637c0fa6786c61474763153642`;
+candidate receipt SHA256:
+`cb33fec66a254a77bde7b5dde17d42c54bc59ac6b0f3bdc9edecb3e1a59472b6`.
+
+Explicit attribution removed only the private-entry mechanism, restoring the
+exception emitter's exact baseline bytes. Fresh normal builds and the three
+official/two-diagnostic packet then reproduced the same two failures and
+three control passes (receipt SHA256
+`400d57a8485c3e613ec7cd157417c28ac3a757da16959fbc7a3a026ed0830f5a`).
+Exact-byte restoration reproduced the accepted complete 8502-input source
+inventory, followed by fresh normal builds and **all five PASS** (receipt
+SHA256 `eb032c95eefabd373de9bf63dc55975b328fe9a2aa66e1818297265f7ee00889`).
+All ten attribution workers settled physically; original accepted packets
+and removed/restored build artifacts are retained independently.
+
+Normal quality validation executed all fifteen commands to physical terminal
+with unchanged frozen inputs. Twelve passed, including typecheck, lint,
+LOC/function budgets, oracle/coercion checks and issue/conformance checks.
+Two formatting checks identified only the two owned TypeScript files; normal
+Prettier corrected them. Parsed node structure, decoded identifiers/literals,
+declaration flags and every test assertion/source literal are unchanged.
+Formatted growth is 29 lines (function 465 to 494; file 816 to 845), covered
+by this issue's scoped allowances. The complete architecture gate failed
+`inventory-valid-architecture-incomplete`, with no inventory errors; the same
+unchanged clean baseline independently reproduces that failure. Actual CI
+uses inventory mode, which must be checked separately: complete architecture
+is **not** certified by this slice. The done-status safety-net reported its
+unavailable network/cache citation source and skipped that check, as its
+maintained policy allows; this is not a fabricated citation-verification pass.
+
+The owned branch was safely fast-forwarded to current upstream
+`76e559f46687617b8e103560818fbea2a9eadc46`; its only delta from measured
+`ee5dd9` is six generated npm reports. Compiler, dependencies, configuration,
+test bodies and this emitter's upstream bytes are unchanged. Old receipts
+remain labeled with their measured epoch. Final formatted-byte builds,
+focused/native replay, inventory-mode and ordinary local hooks remain the
+publication checks; no prior byte receipt is silently adopted as that replay.
+
+**Full npm limitation, not a green suite.** Original full-run session 77309
+was user-authorized to retire a healthy obsolete `4d42eec`/Vitest 3.2.4 epoch.
+Its status is **STOPPED_INCOMPLETE**, not stalled, timed out or passed. The
+owned process terminated gracefully with actual exit/close/EOF evidence,
+partial raw output and unchanged source/generated artifact audit preserved
+(receipt SHA256
+`e62fe776f4fe6e1aa6d2810ff5203476cb35674ca0a92b80bccfff4b36ccf050`).
+No final full-suite JSON/blob/aggregate exists. The legacy Phase-2 wrapper's
+missing-precompile-cache labels are synthetic infrastructure outcomes, not
+executed source failures or ES2015 score measurements. Current private lock
+installation does not repair that distinct producer/reader cache-key gap.
+Current full npm is NOT_RUN; no cache/harness/IR repair or fake full-suite
+success is included in this bounded fix.
+
+### Final formatted-byte publication checks (2026-10-06)
+
+On source-equivalent upstream `76e559f466`, final emitter SHA256 is
+`6f15a9229975145f96a01cdb04a5e3f076fe078b3447bfc5c50c32db897b60b5`;
+the unchanged-assertion, normally formatted 66-case test SHA256 is
+`9cd37fcdc90a0bb617a0cf7f82141c230b3cff88d79ea026dfcb2277709fff13`.
+Fresh four-command build postflight SHA256:
+`1a6cbc2961d18fa2bd3bc7e57f497ff89b489c699f18b4025b7066e3e53b3c8e`.
+The final exact **124/124 PASS** replay has all five authored floors intact,
+zero missing/unexpected/other/suite errors and an empty maintained-blob
+unhandled-error array; receipt SHA256:
+`0f4258470599f7c40e2f7a156aa692e516430953c324c497c2ca85f120e76b5e`.
+The fresh three-original/two-diagnostic replay is **5/5 PASS**, with matching
+WASM/meta, reached-test evidence and physical barriers; receipt SHA256:
+`13b6ae9a66f7eb7ed499227ac74aba981cebeb84acea9c740846c7098dfa31ea`.
+
+Final normal typecheck, lint, changed/whole-tree formatting, flat-directory,
+LOC/function, oracle/coercion, dead-export, issue/spec coverage and conformance
+checks pass with unchanged frozen inputs and actual exit/close/both EOFs.
+The done-status citation safety-net retains its unavailable-source skip.
+One faulty own invocation forwarded a literal `--` through pnpm to the
+inventory parser and failed before checking; that complete failed receipt is
+preserved. The actual CI direct command
+`node scripts/check-compiler-boundaries.mjs --mode inventory --base HEAD^1`
+then passed independently (exit/close 0, both EOFs, input equality,
+inventoryValid true, errors empty). ArchitectureComplete remains false,
+explicitly distinct from inventory-mode success. No policy or gate was edited.
+Normal pre-commit/pre-push remain the final ordinary publication operations;
+their results are not assumed here. Only these three owned files may be
+committed, authored by Thomas Tränkler with Codex GPT-6.1 Sol High attribution.
+### 2026-10-06 — Separate current-main finally baseline preparation (runtime HOLD)
+
+Root reviewed Astra's PR6515/U4 reconciliation plan (planner lines 3097–3251),
+and this lane read the complete plan before preparing a separate baseline.
+Its normal newly created worktree is
+`/Users/thomas/Code/js2/.codex-worktrees/5267-finally-main-baseline-sol61`, branch
+`codex/5267-finally-main-baseline-sol61`, at freshly authoritative upstream
+`47f186384c99840a11dc035b92d2f5b73ee708f5`. Creation handle 10597 physically
+exited zero. Thomas's Git identity and normal `.husky` hook selection were
+verified before Git mutations. No source merge, queued-branch push, conflict
+resolution, compiler build or runtime test was performed. Published PR6515
+head `052e9c9daa39de459f5bec71d80da698e3029f36` remains untouched.
+
+The five moved source/test files exactly match the plan's 47f SHA-256 pins:
+`exceptions.ts` d6746e9d…451f, `finally-ran-guard.ts` aa784382…f754,
+`context/locals.ts` 8dc36097…04f, `ir/lower-generic.ts` 45d0108b…769,
+and `issue-6651-u4-forof-collections.test.ts` 9e452c7d…0970.
+The landed guard and IR implementation were not edited. This is baseline
+setup, not evidence that its guard is behaviorally equivalent to PR6515.
+
+Private dependency preparation completed with normal lifecycle scripts,
+frozen lock, explicit package-copy method and own store/cache. The copied
+complete Node24.19 runtime has 8,615 verified regular files; its executable
+SHA-256 remains `7f9f8346011946e63956e45d1860cc409631802529e8cb18a0c86eed2ff5bf2e`.
+Only previously absent own `test262/test` and `test262/harness` mounts were
+created, resolving to the existing canonical corpus. Runtime-copy receipt
+SHA-256 is `545fe64744efacb39b246fad63219d91fbc03a822367d9449194922422053208`.
+
+Installer handle 6963 / child 62541 completed exit zero, close zero, both
+stream end/close barriers true, zero errors and no signal. Its receipt is
+`.tmp/5267-private-deps.QOILPF/receipt.json`, SHA-256
+`f1abe0c43a4da56ad8f26e70ea1aca3283498d191e91ef1df0119a66542153ad`.
+Shared dependency links/metadata and own manifest/lock/workspace inputs
+remained unchanged. Normal hooks were configured by the maintained prepare
+script, without bypass. The maintained workspace policy reports the existing
+ignored `unrs-resolver` build; no new approval-policy change was made.
+
+Unchanged accepted graph-readback logic (handle 41756, actual exit zero)
+checked **45 root importers / 996 snapshots / 825 physical packages /
+171 explained platform omissions / 1,636 required-peer-alias links** and all
+eight Vitest-family packages at **3.2.7**, with errors empty and pending builds
+empty. `.tmp/5267-private-deps.QOILPF/graph-readback-r2.json` SHA-256 is
+`8ca696ce00e50fdfac39dcf40bce585e3d2ed16c90be0ba63407d62fbb47c199`.
+Wanted/installed lock SHA-256 is
+`6a8b59fd4430c6600dc16ac33a749d0f5fed4ef0c100425de8490e43d916f2ac`.
+This is installation/graph identity evidence, not full package-byte integrity
+or compiler/runtime validation.
+
+The original published 66-case test is retained byte-identically in ignored
+`.tmp/5267-preserved-inputs/issue-5267-finally-reentry.test.ts`, SHA-256
+`9cd37fcdc90a0bb617a0cf7f82141c230b3cff88d79ea026dfcb2277709fff13`.
+No published assertion was rewritten or added to tracked baseline tests.
+Pure registration-only metadata expanded the actual unchanged loops and titles
+while leaving every test callback uninvoked. It verified **136 named cases**:
+18 numeric-local, 66 retained, 6 clone-depth, 22 eval/finally, 12 IteratorClose
+and all 12 landed U4 cases. The retained 66 explicitly partition into
+**60 semantic + 2 foreign-host identity + 4 old-layout diagnostics**. The
+IteratorClose title multiplicity remains two for each of six names, retaining
+the host/standalone lanes rather than silently deduplicating them.
+
+`.tmp/5267-prepared-inputs.receipt.json` SHA-256 is
+`4146b035a2777e039296beca74f65cce4926c1e2def596d8459c077ffee02f8c`.
+An initial preparation attempt selected the historical final three-original
+attribution contract and correctly rejected the required nine-original floor;
+its helper is preserved as `5267-prepared-inputs.before-contract-selection.mjs`.
+The corrected finite preparation uses the existing nine-original current-r2
+contract, retaining all nine exact official body hashes and two plain-body
+hashes. This was a metadata selection correction, not a conformance rerun.
+
+All ten maintained metadata/harness leaves remain byte-identical to the
+accepted dedicated-census metadata receipt. Scope/origin rows are reused from
+that immutable receipt with physical body and leaf hash checks; no fresh
+compiler import or conformance credit is implied. Separate fresh maintained
+default-harness assembly (strict override unset) actually verifies **9 official
++ 2 plain = 11 strict-neutral variants**, not an assumed 18 or 22 jobs.
+Its receipt SHA-256 is
+`720be4813306b7723eda174e3dc88a5775de029779bf3d4e3c5a2c20dc4fd2fb`.
+The census receipt's explicit `always` variants remain separately labeled;
+they are not silently used as the default execution population.
+
+The runtime lease remains with the dedicated census. Fresh normal builds,
+official/diagnostic execution, unchanged-66 diagnostic execution and the full
+136-case replay are **NOT_RUN**. Admission of a source-neutral reconciliation
+or review/replacement of the four old-layout assertions still requires root
+GO and actual current-main measurements. No shared guard/allocator/IR owner
+edit, global score, conformance gain, PR readiness or publication is claimed.
+
+Final read-only preservation checked all **1,839 tracked source files** against
+the selected HEAD, with zero mismatches, and verified published052e9 emitter
+and test bytes equal their Git blobs. Source-preservation receipt SHA-256 is
+`4bcaaab693639d1fbad7292b342251d3fb97eafc539111d313ed94bc68239c43`.
+All owned preparation handles are terminal; no compiler/native job is live.
+
+### 2026-10-06 — actual five-record helper-only confirmation on 47f
+
+Root admitted the separately bounded helper experiment after the planner's
+3252–3459 allocator/reader audit and optional helper-only plan were read in
+full. This uses only the owned `codex/5267-finally-main-baseline-sol61`
+checkout at `47f186384c99840a11dc035b92d2f5b73ee708f5`. The frozen459 census
+and published052e9 branch were not touched. No compiler, provider, Vitest,
+Wasm, parser/checker/CreateProgram work, installer, subprocess wrapper,
+whole-source JavaScript reproducer or Test262 execution was performed.
+
+One direct canonical Node **24.19.0** launch with
+`--max-old-space-size=1024`, `JS2WASM_TS7=0`, and no NODE_OPTIONS/NODE_PATH
+executed the actual helpers through native TS stripping and `registerHooks`.
+The imported repo closure was exactly six files: finally-ran-guard,
+context/locals, ts-api, frontend/typescript, walk-instructions, and
+wasm/model/instruction-walk. All six expected pre/post hashes matched.
+The private TypeScript5 package was **5.9.3**, realpath inside this checkout's
+`.pnpm/typescript@5.9.3/node_modules/typescript`, package SHA256
+`822ef7ca6452205657b6288b066481ecf508bfbf43455d715cf7d3ec457561e6`,
+entry SHA256
+`3ae902c92cc44dace175c0e69e13a4b0899f6983c6121d76b9ab8dd5795e7675`.
+Its observed built-in imports were perf_hooks/fs/path/os/crypto; the script
+also preloaded its pinned Node instrumentation built-ins. Every resolved and
+loaded URL is retained. Unexpected imports fail closed and are checked even
+if a package catches a resolver exception: actual rejected-import count **0**.
+The injected statement was only `{parent: undefined}`, so no TS predicate
+or program parser was called by the guard's parent walk.
+
+Actual floor **5 unique named records**, all retained with source maps,
+parameter/local slots and instruction bodies before/after:
+
+- `safe-user-positive`: source slot/map stayed **1**, guard slot **2**;
+  finalized reset/mark writes remained **2**, distinct from source read **1**.
+  An unrelated duplicate temporary actually compacted. Safety invariant true.
+- `plain-i32-local-collision`: source `__finally_ran_1` mapped **1 → 2**
+  on real guard allocation; actual dedup merged guard2 into source1 and
+  redirected both reset/mark writes to **1**, the explicit source-read slot.
+  Safety invariant **false**, diagnostic reproduction expectation met.
+- `boolean-branded-i32-local-collision`: identical actual map overwrite and
+  write/read aliasing with source `{kind: "i32", boolean: true}`. The brand
+  did not prevent actual name/type-key dedup. Safety invariant **false**.
+- `parameter-collision`: zero locals and parameter `__finally_ran_0`
+  originally mapped **0**; guard allocation returned **1** and changed the
+  name map to **1**. No dedup invoked. Safety invariant **false**.
+- `snapshot-rollback-positive`: fresh collision-seeded context, all seeded
+  capture/TDZ/memo/eval maps, tentative body discarded before actual
+  restore, no intervening dedup. Exact original state restored, stale free
+  index pruned, guard re-emission retained valid references and the same
+  allocation shape. Safety invariant true **for rollback only**; re-emission
+  still contains the separately demonstrated collision, not safe allocation.
+
+Thus **2 safety-invariant true / 3 false**, not five conformance passes.
+Diagnostic expectations were met in **5/5** and the direct execution tool
+returned actual exit **0**, terminal (no live session), in **0.336 seconds**
+with all output drained. The complete tool return and stdout are retained.
+No child-process wrapper was admitted, so a distinct ChildProcess `close`
+callback/EOF event timestamp was **not separately instrumented**; terminal
+transport completion must not be embellished as that additional event receipt.
+No retry or native-loader fallback occurred.
+
+Artifacts, all in the owned ignored `.tmp/5267-helper-confirmation-47f/`:
+
+- `confirm.mjs`: SHA256
+  `4b5fe2e5dc9c83d424c24ab39e2f0c5a11b9d10fc2704ac5e9edd047aa4694d1`.
+- `receipt.json`: SHA256
+  `2045149c2f70c110e31bc50338a9a1ce5a88b8b1a794951d6893b7c89336c8b1`.
+- `terminal-tool-result.json`: SHA256
+  `ca558f3c5bdc2bb125d055b5d018e7f3b1d1c56854bcf547d958b378f99a0fe3`.
+
+Package.json, wanted/installed locks, modules metadata and the already accepted
+private graph receipt were pinned before/after with no change; the graph
+receipt remains `8ca696ce…c199`. This is graph/source stability evidence,
+not a new graph scan or package-file integrity certification. No tracked
+source/test/scripts/hooks/manifest/lock bytes changed. The whole JavaScript
+frame/emitted path/runtime effect, four replacement tests, behavioral floor
+and official originals remain unmeasured on47f. A narrow repair still requires
+U4 guard-owner agreement and root admission; no allocator, reader, capture,
+IR twin, async policy or published assertion was changed here.
+
+### 2026-10-06 — private allocator candidate and first seven-record helper result
+
+Root admitted only two production paths after the full Astra appendix3461–3628
+was read (planner document SHA256
+`8582289689147aa00d537f1144fabd8bac89b8ff4fd0e98ac696a607517fbab1`).
+Owned branch remains `codex/5267-finally-main-baseline-sol61`, Git HEAD
+`47f186384c99840a11dc035b92d2f5b73ee708f5`; its working source is now the
+explicit candidate delta below, **not** an unchanged47f runtime baseline.
+Published052e9 and the census checkout remain untouched.
+
+Production delta: new10-line `src/codegen/statements/finally-private-local.ts`
+type-imports only FunctionContext/ValType, appends the exact supplied type
+at `params.length + locals.length`, names it `finally@private$<absolute-index>`,
+and returns the index without changing maps, reusable pools or global state.
+`exceptions.ts` adds its import and substitutes only the factory's fourth
+argument (now line436). It does not move factory/reset timing or change
+guard/handler/payload semantics. The separately allocated no-catch and inner
+wrapper payloads remain ordinary allocLocal at their unchanged statements.
+Shared finally-ran-guard, context/locals and all IR files are byte-unchanged
+against HEAD; no tests, other sources, installer or configuration changed.
+
+Candidate source hashes:
+`exceptions.ts` = `134f950290b797d53ef9cd72ce9f4d50537ec2a56b7f06788340b721671fe6f2`;
+new private leaf = `60d0da5027c4f525bdd138f33b6788635966968add54b9ee8d41ef87f6240086`.
+The ignored candidate byte snapshots have those exact same hashes.
+The original five-record script/receipt remain byte-exact
+`4b5fe2e5…4694d1` / `2045149c…36c8b1`; neither was relabeled or rewritten.
+
+Separate utility `.tmp/5267-private-allocation-candidate-47f/confirm.mjs`,
+**311 lines**, SHA256
+`ed5e889ecb6eed6a5db1950d37fc3c5021d54a50b769dab904dadd7472fa1a4c`,
+was fully reviewed and pinned by root before its first execution. It requires
+explicit private/baseline mode, the exact caller argument and whole-file hash,
+and (private mode only) the pinned leaf load. Baseline mode excludes the leaf
+from permitted imports; it does not assert the leaf's filesystem absence.
+Private mode permits exactly the original
+six repo imports plus the new type-import-only leaf, pinned own TypeScript5,
+and audited Node built-ins. exceptions.ts itself is read/pinned, never imported.
+This confirms caller-source agreement, not execution of statement lowering.
+
+Root separately admitted **FIRST CANDIDATE ONLY**. One direct canonical Node
+24.19 process,1024 MiB, TS7=0, NODE_OPTIONS/NODE_PATH/inspector variables absent,
+ran private mode with stdout/stderr redirected only into owned ignored files.
+Actual terminal tool exit **0**, elapsed **0.308 seconds**, no live session,
+stdout **69,550 bytes**, stderr **0 bytes**; no wrapper subprocess or retry.
+The retained terminal tool result is not a separately instrumented child-close
+callback/EOF event timestamp. No compiler, parser/Program/checker, provider,
+Vitest, Wasm, install or whole-source JavaScript execution occurred.
+
+Actual **7 unique helper records = 5 core + 2 payload**, all safety true:
+the safe-user, plain-i32 collision, boolean-branded-i32 collision, parameter
+collision and exact rollback controls retain their original names/contexts.
+Both local collision source maps remain1 with distinct marker2; parameter
+source0 remains0 with distinct marker1. Rollback restored the complete seeded
+map/body/length state with no dedup between snapshot and restore.
+
+New payload controls: source local `__finally_exn_2` remains source1,
+marker2/payload3; parameter `__finally_exn_1` remains source0,
+marker1/payload2. Both actual payload prologues retain exact nested local.get,
+local.set, throw-tag0 and final payload-read identity after dedup, with
+unchanged free lists. These are two added helper controls, not extra official
+originals or a retroactively enlarged old diagnostic denominator.
+
+Root requested an additional labeled subcontext inside safe-user-positive,
+**not an eighth record**: duplicate temps before guard/payload force real
+compaction. Actual marker **4 → 3** and payload **5 → 4**; reset/mark,
+handler guard, nested payload get/throw0 and final payload get all remap
+consistently while source-read1 stays distinct. No post-finalization localMap
+contract is invented. Actual rejected imports0; all source, caller, package,
+lock/modules and accepted-graph pins remained identical before/after.
+
+Full receipt `candidate-receipt.json` SHA256
+`f8f2bf21e95f4e84f887400037e482b369f8f8c2e0afdbf17a27177f11efbfda`;
+terminal tool receipt `candidate-terminal-tool-result.json` SHA256
+`56ab72ac977c285a15225d17657bf1610a945d490356df57e0772fd34508c416`.
+All artifacts above are under owned `.tmp/5267-private-allocation-candidate-47f/`.
+
+Historical first-candidate checkpoint (superseded by the dated actual
+removal/restoration append below): patches were prepared but **not applied**:
+`removal.apply-patch.txt` SHA256 `4b439587…92fdc` removes only this injection
+and new leaf; `restoration.apply-patch.txt` SHA256 `b8a4cdad…26a15` restores
+their exact candidate bytes. The same frozen utility's baseline mode requires
+the original caller hash/allocator and excludes the leaf from allowed imports;
+actual leaf deletion is checked by the separate removal-source readback,
+not by a filesystem-absence assertion in the utility.
+its expectations preserve core2 safe/3 unsafe plus both unsafe payload seeds.
+Root must review this first receipt and explicitly admit removal/restoration
+before those source changes or helper reruns. Currently stopped at first
+candidate. This is measured allocation isolation only, no136 named/native
+acceptance, original gain, shared-handler/IR repair, PR readiness or global score.
+
+#### Actual bounded removal/restoration attribution, completed after separate GO
+
+Root read the first receipt and exact two-path patches, then separately
+admitted removal/restoration. No utility assertion or import policy changed:
+every launch used the same `ed5e889e…a1a4c` utility, explicit caller mode
+checks (and private-mode leaf pins), canonical Node24/1024, TS7=0 and the
+same private dependencies. Baseline leaf deletion was established separately
+by the actual removal-source readback, not a frozen-utility absence assertion.
+
+Removal used apply_patch only: the one import/callback substitution returned
+exceptions.ts to exact HEAD47f SHA256 `d6746e9d…7451f`, and only our new
+private leaf was temporarily deleted. Its exact ignored snapshot remained
+recoverable. Actual whole-src diff against HEAD was empty at this boundary.
+The direct baseline-mode helper launch exited **0**, terminal/no live session,
+**0.251 seconds**, stderr **0 bytes**, receipt **68,693 bytes**. The actual
+core five returned **2 safe / 3 unsafe**; both new payload controls were
+unsafe, making **2 safe / 5 unsafe / 7 unique records**. In the local payload
+collision, source-map1 became3 and actual dedup redirected payload3 to the
+source-read1 slot. In the parameter payload collision, source-map0 became2.
+The extra safe remap subcontext remained positive, shifting marker4→3 and
+payload5→4. Expected safety failures are not a failed diagnostic or conformance
+passes; all seven diagnostic expectations were met.
+
+Restoration used the reviewed apply_patch only, restoring exact exceptions
+`134f9502…1fe6f2` and leaf `60d0da50…40086` bytes. The direct private-mode
+launch exited **0**, terminal/no live session, **0.265 seconds**, stderr
+**0 bytes**, receipt **69,550 bytes**, actual **7 safe / 0 unsafe** with
+the same five-plus-two floor and actual-shift subcontext. Both source/setup
+vectors remained unchanged within each run; rejected imports0. The complete
+restoration JSON is byte-identical and deep-equal to the first candidate JSON.
+
+Immutable ignored receipts in `.tmp/5267-private-allocation-candidate-47f/`:
+
+- `removal-receipt.json`: SHA256
+  `aae596453dda6bc0541974d64b3c21fd27c26ee88356cd673cfca3c2d16ff766`.
+- `removal-terminal-tool-result.json`: SHA256
+  `7e367cf0b5fed4630d9514c0d86f0ca4d67a4671303a2cc757fd7b575e696ccc`.
+- `restoration-receipt.json`: SHA256
+  `f8f2bf21e95f4e84f887400037e482b369f8f8c2e0afdbf17a27177f11efbfda`.
+- `restoration-terminal-tool-result.json`: SHA256
+  `0be2c21990290bc611efe5c856dc67619760580e58adc4ec7cfa024b99b826f1`.
+
+Current working source is restored candidate, not removal state. Original
+five-record script/receipt remain immutable; shared guard/locals/IR remain
+HEAD-identical. All three helper execution handles are terminal. No Git
+mutation, compiler/provider/Vitest/Wasm/install, published assertion rewrite
+or source expansion occurred. Removal/restoration attributes the injected
+helper-context isolation result to this exact callback delta; it does not
+establish a whole-JavaScript collision path, statement lowering correctness,
+136-case/native acceptance, official-original gain or publication readiness.
+
+### 2026-10-06 — Four current-handler test replacements prepared, execution HOLD
+
+**Current checkpoint status: in-progress.** Historical September umbrella
+completion and the completed helper-only records are not completion of this
+current-main repair. Root admitted TEST PREPARATION ONLY after the full Astra
+5267 appendix3630–3798 was read (whole planner SHA256
+`2881da1c678656d8e68ef23517cfd4f7eb1b3706caf5e0844f68f815602dfef2`).
+Census retains the engine lease; these assertions have not been executed.
+
+Added own `tests/issue-5267-finally-reentry.test.ts`, 520 lines, SHA256
+`2be96ff35827f61d4d94fbaad238b6e27e11d818e8b73a53c44cc9efd2363c0a`.
+The exact published original remains immutable in
+`.tmp/5267-preserved-inputs/issue-5267-finally-reentry.test.ts`, SHA256
+`9cd37fcdc90a0bb617a0cf7f82141c230b3cff88d79ea026dfcb2277709fff13`.
+Only its structural fixture/helper block was replaced; imports, real compile/
+Wasm run helper, 60 semantic cases and two foreign-host identity cases remain
+byte-exact. No assertions were weakened in those retained cases.
+
+Four exact replacement titles, under the unchanged structural suite:
+
+- `resets on entry and guards own handlers without replacing the pending exception (false)`
+- `resets on entry and guards own handlers without replacing the pending exception (true)`
+- `private guard slots preserve source bindings through remapping and rollback (false)`
+- `private guard slots preserve source bindings through remapping and rollback (true)`
+
+These unrun checks call actual `compileTryStatement`, not the new leaf in
+isolation. They extract the exact legacy catch_all or standardized join/
+payload-block/try_table scaffold; derive marker/payload indices from handlers;
+check entry domination, two distinct marker writes, original payload transport
+and distinct mutable gets. Storage subfixtures cover actual duplicate removal
+before two sequential guards, plain/boolean-branded source-local collisions,
+parameter collisions and body-discard-before-locals-restore rollback.
+Sequential remap requires a marker index shift and retained local-object
+identity. No post-dedup source-map contract is invented. Excluded no-catch
+handler payload allocation is checked for transport consistency, not private
+allocation; excluded callers497/665, shared guard/locals and IR are unchanged.
+
+One bounded pure registration/syntax metadata run used canonical Node24.19,
+1024 MiB and private TypeScript5.9.3; imports were not evaluated and every
+test callback was left uninvoked. Actual terminal tool result: exit0,
+no live handle, 0.105 seconds; stderr183 bytes is Node's native type-stripping
+experimental warning only. Result: parseDiagnostics0, 66 unique registrations,
+60 semantic / 2 host / 4 replacements; all62 retained names match. This is
+authored membership, not test PASS, compiler admission or conformance credit.
+
+Actual independently checked preserved substring pins:
+
+- Semantic matrix: 7481 bytes,
+  `74ad5a710a54d4f97eb4709e4cf7574e42e4cbda122761d7b48574e80e37d0c5`.
+- Host tail: 1613 bytes,
+  `0565a1fc4d38489ffcef8d7eacd34875a0a39d0f4f904da2f7aa03adb2154b3f`.
+- Run helper plus semantics: 8458 bytes,
+  `43c556bfeed5c2acef1c452cb2ac410a58c2b52672ed8b0fa7a4df3ab0b62619`.
+
+Own ignored review artifacts:
+
+- FULL preserved-original→candidate diff: `.tmp/5267-test-rewrite-full.diff`,
+  322 lines, SHA256
+  `5345ef2a05eb1437802b2b96678c5ddc0966eb758b7936e11820de83b2f2e0b2`.
+- Metadata collector: `.tmp/5267-test-rewrite-preparation.mjs`, SHA256
+  `0d97dbc4d7e1f7d2ab5ac9fe7a822f4403e7bf399c2e6dad4b02c98ffacb6769`.
+- Actual metadata receipt: `.tmp/5267-test-rewrite-preparation.receipt.json`,
+  SHA256 `1e6bf66f556a0847447f92f22322c4a4048fb184baec96aae16e0d8556be76ca`.
+
+Production candidate bytes remain exceptions
+`134f950290b797d53ef9cd72ce9f4d50537ec2a56b7f06788340b721671fe6f2`
+and private leaf
+`60d0da5027c4f525bdd138f33b6788635966968add54b9ee8d41ef87f6240086`.
+Original five and frozen seven helper artifacts are unchanged. No compiler,
+provider, Vitest, native/Wasm execution, build/formatter, installer or Git
+mutation occurred. Root review/test GO remains pending; subsequent all66 and
+full136 named cases plus nine official originals/two plain diagnostics,
+removal/restoration attribution and normal publication gates remain required.
+
+#### Targeted formatting preparation checkpoint — no test execution
+
+Root reviewed the full proposed diff and admitted only direct private
+Prettier formatting of the test and new leaf, followed by the same frozen
+metadata collector. Private Prettier3.8.1 file-info explicitly reported both
+paths `ignored:false`, inferred parser `typescript`. Its normal two-file
+write exited0: the test was formatted; the leaf was explicitly unchanged.
+Direct canonical Node24/1024 formatting check on those same two named files
+then physically exited0 and reported all matched files compliant (terminal
+receipt `.tmp/5267-test-rewrite-format-check-terminal.json`).
+No other source path was passed to the formatter.
+
+Formatted test: 540 lines, SHA256
+`8e841c594e1e58d04101e78a61acf15bb0f3b9f0ea6f4f918ff746048af16aa1`.
+The original preparation receipt, collector and preformat full diff remain
+immutable. Same frozen collector `0d97dbc4…cb6769` produced separate
+`.tmp/5267-test-rewrite-formatted-metadata.receipt.json`, SHA256
+`bb315ed45cba8aa7091fea5df88a2d6f60a9dbda44ae58a26ac23025decde648`,
+actual terminal exit0, no live handle, 0.112 seconds. This reconfirms all
+three exact byte chunks, all62 retained names, 66 unique registrations,
+60 semantic / 2 host / 4 replacement roles and parseDiagnostics0.
+Native type-stripping warning only; imports and test callbacks were not
+evaluated. No execution verdict was created.
+
+FULL formatted-original diff is `.tmp/5267-test-rewrite-formatted-full.diff`,
+327 lines, SHA256
+`1f2e7039cc812d662538154ef9e9c302b8080ee366db05656ca7da4efc7b2724`.
+Read-only no-index whitespace check emitted no diagnostics (its exit1
+records that original and candidate differ, not a successful equality).
+Caller `134f9502…1fe6f2`, leaf `60d0da50…40086`, original five/seven
+helper pins and shared guard/locals/IR HEAD bytes remain unchanged.
+Current checkpoint remains **in-progress / runtime HOLD**: formatting and
+membership do not substitute for all66/full136, nine official originals,
+two plain diagnostics or removal/restoration and publication gates.
+
+### 2026-10-06 — PR6515 current-main reconciliation and measurement start
+
+Current checkpoint remains in-progress. Normal append-only merge in the owned
+published branch preserves PR head052e9 and authoritative incoming upstream
+`d1f1fbdebcc7ca387fd2ec272e31862d8e92b315`. The two no-catch handler conflicts
+were resolved by preserving landed U4's complete guard/rethrowIfRan behavior,
+not stacking the historical PR-only entry flag or restoring its whole emitter.
+Only the reviewed allocator import/callback and ten-line private leaf differ
+from incoming production. All incoming IR and foreign source changes remain.
+The obsolete private-flag function allowance is removed; normal budget gates
+must judge the reconciled allocator delta without that historical waiver.
+
+Current exceptions SHA256 `134f9502…1fe6f2`, private leaf `60d0da50…40086` and
+reviewed66 test `8e841c59…6aa1` equal the prepared owned packet. The original
+published test and every old epoch receipt remain preserved. The 60 semantic
+and two foreign-host identity cases retain their original byte chunks; four
+structural tests now exercise the actual landed guard and storage privacy.
+Current136 named/native9+2/removal/restoration/gates remain NOT_RUN at freeze.
+Fresh private graph readback reuses this branch's own installed graph only;
+it does not borrow another checkout's node_modules or generated JS bundles.
+Full frozen459 census is separate evidence, not current-main validation.
+
+#### Current-main measured attribution and exact restoration
+
+The reconciled fix is **private finally-guard storage isolation**, not a new
+current-main Test262 improvement. Incoming U4 already fixes the old throwing
+finally original. Candidate, exact-main removal, and exact restored candidate
+each pass all nine official bodies under maintained strict-always assembly:
+18 official variants plus four variants from two plain diagnostics. Thus the
+attributable official delta on `d1f1fbdebcc7ca387fd2ec272e31862d8e92b315` is zero.
+The frozen459 failure remains historical evidence, never a current comparator.
+
+Fresh private dependency readback is GRAPH_READBACK_PASS: 45 roots, 996 lock
+snapshots, 825 physical packages, 171 explained omissions and 1636 edges, eight
+private Vitest3.2.7 family packages, errors/pendingBuilds empty. Wanted and
+installed lock bytes match `6a8b59fd…f2ac`. Each arm uses its own freshly built
+compiler/runtime/adapter, the documented three-file native acquisition selector
+on command3 only, then the normal keyed-cache requirement and canary. No donor
+JavaScript bundles, forced keys, shared node_modules edits or provider bypass.
+
+Actual candidate136: `.tmp/5267-current-gates.PSLJi1/receipt.json`, SHA256
+`24c8c6b0b478afa2469a332be31b4fc86224e14ed741763e3201b1ac25a74f49`.
+Actual removal136: `.tmp/5267-current-gates.aUFMH4/receipt.json`, 134P/2F;
+the two failures are private marker spelling/storage assertions, not themselves
+proof of user-visible corruption. All six identity floors are intact. Actual
+restored136: `.tmp/5267-current-gates.ByNEu8/receipt.json`, SHA256
+`8bf6e782f3b41b32740ea87ee28c24cbe3fdb3ccc2a2ff74b75503ce4857b651`,
+136P/0F, floors18/66/6/22/12/12, zero missing/unexpected/other/suite/unhandled
+errors, physical exit/close0/both EOF and source inputs unchanged.
+
+Strict-always candidate receipt `.tmp/5267-originals.mFulQM/receipt.json`
+SHA256 `20d646d39b52f45bcf17b4d30ee5b58a2ef0a0acbdffbdd0f83292bd9881c387`;
+exact-main removal `.tmp/5267-originals.bpmR01/receipt.json` SHA256
+`34fa336ae7cf5232aa2d1a2855531749cee0633f5e6da98d3679f8faae130335`;
+restored `.tmp/5267-originals.RJkPLn/receipt.json` SHA256
+`cb9ccad16bd259b81167f65b21f173afe2db52c4ae6f2c70003ab6002776083f`.
+All three have 18 official/4 diagnostic variants PASS/reachedTest/valid artifacts,
+actual worker exit/close/both EOF, exact body/variant floors and unchanged inputs.
+
+Ten finite compiled source-binding positives were preserved and are not defect
+evidence. One naturally observed AST literal-eval allocation supplied suffix8,
+without a suffix sweep, IR flag or broad allocator change. Exact typed witness:
+`export function probe(__finally_ran_8: number): number { try {} finally {} return eval("__finally_ran_8"); }`.
+It fails WebAssembly validation on exact-main removal in both gc and standalone
+(local.tee expects the direct-eval reference carrier but receives i32). Neither
+failed row reaches runtime. The otherwise identical suffix0 controls both
+compile and return37. Restoring the exact allocator bytes, rebuilding normally,
+and replaying the identical four source/options pairs makes all four compile,
+validate and return37; standalone imports remain empty. This is the concrete
+source-binding defect, not merely an allocator-layout preference.
+
+Immutable removal receipt `.tmp/5267-source-binding-observed-removed.86d4xd/receipt.json`
+SHA256 `c6f18dd5e9671ce54b747561890626175ac3c2eecd5fdac4bb3c9d12a15df3f0`;
+restored `.tmp/5267-source-binding-observed-restored.5XOKtg/receipt.json`
+SHA256 `e49cfcfd86a6c9ba6dc743020aec58d63b8ed9b433acce378d1b7f9ea2142a14`.
+Both retain their literal `floor:false`: the diagnostic driver accidentally
+compared four unique IDs against10. This is an identity-counter typo, not an
+expected-failure verdict. Neither old program nor receipt is rewritten.
+Independent readback `.tmp/5267-observed-attribution-readback.json`, SHA256
+`c5fe72f24e1ab8edb0f2aab178128458e30c5e52a9362916a40d6ed8dc13ce81`,
+records countFloor/sourceOptionsParity/expectedFailureAttribution/
+restorationRecovery/physicalBarrier all true. Removal is two compilation
+failures plus two passing controls, **not four passing tests**.
+
+The exact unannotated equivalent and suffix0 positive also compile, validate
+and return37 in both restored backends using allowJs/.js, no routing overrides.
+Receipt `.tmp/5267-source-binding-plain-js-restored.SCOWfG/receipt.json` SHA256
+`060d1c20a3ffd307a2ceacda6e4721ed32123f7ab94b7daa82acbb404db2c4c0`:
+four unique rows/allPass, physical exit/close0/both EOF and unchanged inputs.
+Its observed AST cell is `__direct_eval_cell___finally_ran_8_7` and private
+guard index9. This is restored JS coverage, not a separately measured JS
+removal claim. Four new named tracked regressions each check both exact typed
+and plain-JS source in one backend/collision role, above the unchanged66:
+final named floor140, with eight new compile/validate/value37 assertions.
+
+Current publication checkpoint remains in-progress until those final140 and
+normal current scoped gates/hooks actually terminate. The earlier full npm
+run77309 remains STOPPED_INCOMPLETE (user-authorized obsolete epoch/dependency
+validation retirement), not passed. Its legacy precompile-cache reader/producer
+incompatibility and wrapper missing-cache labels are separate infrastructure
+limitations; no current full-npm success or 100% ES2015 claim is made here.
+
+#### Final shipped tests and normal classification gate correction
+
+Final shipped tests `.tmp/5267-current-gates.XNODZF/receipt.json`, SHA256
+`e6296f9b4643e2c70a932172708af3e51d9452df66da52a43b3f9c165a8416db`:
+140/140 PASS, exact18/70/6/22/12/12 floors, all assertion names/statuses present,
+no suite/unhandled/missing/unexpected/other errors, terminal0 and unchanged
+inputs. Test SHA256 `e9a7983a0c5b5437430a4e560ac765bd9c0e65cb9573e45e20c9247ed87c76d2`.
+The entire original66-test file is its unchanged24647-byte prefix.
+Final same-source normal four-command build `.tmp/5267-build.fv36Br/postflight.json`
+SHA256 `0fe8174ec9deba7d0453402bc93215dc8517d9b360c4bb06cc6dc0a708cf5c35`;
+final strict-always `.tmp/5267-originals.mqiLvZ/receipt.json` SHA256
+`6f3944628ec763d4870487dc1090591d229cb219a943221402783f6d23bb99e9`:
+all18 official plus4 plain variants PASS/reachedTest/physical barriers,
+exact identity floors, errors empty, source/artifacts unchanged.
+
+Normal serial15-command quality packet physically terminated; retained
+`.tmp/5267-current-quality.1VHCPK/receipt.json`, SHA256
+`2a97a15ad8fdc836850b5f5c10c4a3622e2d20580b17df8bdc144c8e49e76845`.
+Fourteen commands exit0: typecheck, lint, owned formatting, flat829/829, LOC,
+function, oracle, coercion, configured dead-export/core gates, issue integrity,
+issue-spec coverage, done-status integrity, conformance sync and whole-tree
+formatting. No source/input changes. The inventory command exits2 because
+pnpm forwards its literal `--` to the checker: this is a setup failure, not an
+architecture verdict. Done-status's normal citation check explicitly skips
+when baseline JSONL is unavailable; the configured dead-export check exits0
+but prints modeled graph OPEN and retirement/deletion NOT CERTIFIED. These
+limitations are retained, not converted into complete-architecture claims.
+
+Separate unchanged direct CI inventory checker then physically exits1:
+`.tmp/5267-inventory-current.3XYC0F/receipt.json`, with exactly
+unclassified-module/unclassified-target for the new private-local leaf.
+This is **candidate-caused missing factual classification**, not inherited
+architecture incompleteness. Root authorizes registering only that new path:
+unmigrated / mixed-needs-split / backend-wasmgc / owner5267, adjacent actual
+nextBoundary. Pre-edit compiler inventory equals incoming main byte-for-byte,
+SHA256 `e91199cafc1788a5e976e29553b0c093a28c53fd7e2dcc3d806c8559c3f9547e`.
+All existing records, layers, allowed edges, checker and CI remain unchanged;
+no foreign ownership transfer, SourceOrigin/C1 literal refresh or architecture
+waiver. This necessary registration is the fifth scoped PR file. Its exact
+inventory rerun and maintained detector fixture tests remain pending here.
+
+#### Registered inventory and unchanged supplemental fixture comparison
+
+Actual corrected CI-style inventory receipt
+`.tmp/5267-inventory-current.ljVXvR/receipt.json`, SHA256
+`73a0a44f6bce5d4cd3839c5736885a3be48319974b89c81a8c777087117fb6ad`:
+exit/close0, both EOF, errors empty and inputs unchanged. Its precise result is
+inventory-valid-architecture-incomplete, not complete architecture certification.
+The sole new8-line record preserves every existing1838 record and all rules;
+registered inventory SHA256
+`69eaf95c6d675c48c2bb092603c50779309976ec0373d0370a93ed7068445828`.
+
+The unchanged supplemental `tests/issue-3518-compiler-boundaries.test.ts` suite
+actually records125 assertions,124 PASS and1 FAIL, unhandled errors empty;
+receipt `.tmp/5267-classification-tests.K7ohbA/receipt.json`, SHA256
+`b5eeed9bea2a08ad88df650f5ed0707f7c533629c7a3a6053a1b371747c964ab`.
+The sole failure is line797, historical held-B moved-symbol authentication.
+A whole-file125 baseline comparison under identical private dependencies,
+unchanged checker/test/config/package/lock bytes equal incoming d1, and the
+exact original inventory policy e911, repeats124 PASS and the same1 FAIL:
+`.tmp/5267-classification-baseline-tests.Do4dNF/receipt.json`, SHA256
+`6ea07b58a1abc9a31e9c133e4deedb010d66ffc41dfd2fc116748d619413a4ca`.
+Physical exit/close1 and both EOF, identity floor125, no unhandled errors and
+unchanged inputs are retained. Only the new classification record was
+reversibly removed; exact69eaf registered bytes are restored. This fixture
+constructs its own source tree and never imports the production allocator.
+It uses `manifest.moves.slice(0,2)`, whereas main prepended the unrelated
+nested-stackification move: the adapter's two symbols remain external-unbound.
+This proves this one supplemental failure baseline-present; it does not make
+the125 suite green or waive any CI gate. No historical fixture, IR, checker,
+SourceOrigin/C1 literal or assertion was edited. The unchanged3518 file is
+neither a pinned issue-test nor a changed TEST path in this PR.
+
+Fresh upstream cdc0255882d45181072342d9fd57f291aca93092 adds only six generated
+npm report files after measured d1. Compiler/source/config/dependency inputs
+are equivalent; old receipts retain their explicit d1 measured epoch. Normal
+append-only integration and unchanged publication hooks remain required;
+no source-dependent newer-epoch or full-suite claim is inferred.

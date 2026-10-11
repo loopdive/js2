@@ -47,6 +47,11 @@ export function emitStandaloneAwaitUnwrap(ctx: CodegenContext, fctx: FunctionCon
     { op: "local.get", index: tmp },
     { op: "any.convert_extern" },
     { op: "ref.cast", typeIdx: promiseTypeIdx },
+    { op: "i32.const", value: 1 },
+    { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 },
+    { op: "local.get", index: tmp },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: promiseTypeIdx },
     // $Promise field 1 = `value` (externref). See getOrRegisterPromiseType.
     { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
   ];

@@ -35,6 +35,59 @@ function step(workflow: string, name: string): string {
   return workflow.slice(start, next === -1 ? undefined : next);
 }
 
+/**
+ * Exit-code -> (step status, $GITHUB_OUTPUT) contract every gated pusher must
+ * honour. (#6799) A gate malfunction FAILS the step and writes `error`, which
+ * the push step's `== 'proceed'` guard never accepts — it used to write
+ * `proceed` and push anyway ("failing open").
+ */
+const GATE_EXIT_TABLE: Array<[number, number, string]> = [
+  [0, 0, "decision=proceed"],
+  [10, 0, "decision=defer"],
+  [3, 1, "decision=error"],
+  [1, 1, "decision=error"],
+];
+
+/**
+ * Run a gate step's `run:` script VERBATIM under the same `bash -e` GitHub
+ * uses, with a stub `node` supplying the exit code. This is the only assertion
+ * that proves the exit-code -> output mapping works rather than merely looking
+ * right. The specific bug it pins (#3915): `node ...` on its own line followed
+ * by `RC=$?` ABORTS THE WHOLE STEP under `-e` before `RC` is read, so the DEFER
+ * path would surface as a red step. Only the `|| RC=$?` form survives.
+ */
+function runGateStep(gate: string, code: number): { status: number | null; output: string; stderr: string } {
+  const script = gate.slice(gate.indexOf("\n        run: |") + "\n        run: |".length);
+  const body = script
+    .split("\n")
+    .map((l) => (l.startsWith("          ") ? l.slice(10) : l))
+    .join("\n");
+  const dir = mkdtempSync(join(tmpdir(), "gate-3915-"));
+  try {
+    // Stub `node` so the gate invocation contributes nothing but its exit code.
+    // `node -e` is the benchmark step's try/catch-wrapped freshness read, which
+    // always exits 0 for real — it must not inherit the gate's code.
+    writeFileSync(join(dir, "node"), `#!/bin/sh\n[ "$1" = "-e" ] && exit 0\nexit ${code}\n`, { mode: 0o755 });
+    const out = join(dir, "gh-output");
+    writeFileSync(out, "");
+    const res = spawnSync("bash", ["-e", "-c", body], {
+      env: {
+        ...process.env,
+        PATH: `${dir}:${process.env.PATH ?? ""}`,
+        GITHUB_OUTPUT: out,
+        GITHUB_REPOSITORY: "loopdive/js2wasm",
+        IS_FORCED: "false",
+        FORCE: "false",
+        LAST_REFRESH: "",
+      },
+      encoding: "utf8",
+    });
+    return { status: res.status, output: readFileSync(out, "utf8").trim(), stderr: `${res.stdout}${res.stderr}` };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 describe("#3915 decision table", () => {
   it("defers only when the queue is KNOWN busy and the artifact is KNOWN fresh", () => {
     const d = decide({
@@ -191,14 +244,22 @@ describe("#3915 wiring: benchmark-refresh.yml", () => {
   });
 
   it("the PUSH step — not some other step — is guarded by that output", () => {
-    expect(promote).toContain("if: steps.queue_gate.outputs.decision != 'defer'");
+    // (#6799) Only an explicit `proceed` pushes; `!= 'defer'` would also let a
+    // missing or `error` value through.
+    expect(promote).toContain("if: steps.queue_gate.outputs.decision == 'proceed'");
     // Positive control on the slice: this really is the step that pushes.
     expect(promote).toContain("git push deploykey HEAD:main");
   });
 
-  it("maps exit 10 to defer and every other non-zero to fail-open", () => {
-    expect(gate).toContain('if [ "$RC" -eq 10 ]');
-    expect(gate).toMatch(/failing open/);
+  it("maps exit 10 to defer and every other non-zero to a FAILED step (#6799)", () => {
+    expect(gate).toContain('case "$RC" in');
+    expect(gate).not.toMatch(/failing open/);
+  });
+
+  it.each(GATE_EXIT_TABLE)("running the step script verbatim, node exit %i -> status %i, %s", (code, status, out) => {
+    const r = runGateStep(gate, code);
+    expect(r.status, r.stderr).toBe(status);
+    expect(r.output).toBe(out);
   });
 
   it("takes freshness from the artifact's own generatedAt, never from git log", () => {
@@ -225,7 +286,7 @@ describe("#3915 wiring: refresh-baseline.yml", () => {
 
   it("guards the main audit push with the gate's output", () => {
     expect(gate).toContain("id: queue_gate");
-    expect(promote).toContain("if: steps.queue_gate.outputs.decision != 'defer'");
+    expect(promote).toContain("if: steps.queue_gate.outputs.decision == 'proceed'");
     expect(promote).toContain("git push deploykey HEAD:main");
   });
 
@@ -250,34 +311,28 @@ describe("#3915 wiring: refresh-baseline.yml", () => {
    * path would surface as a red step instead of a skipped push. Only the
    * `|| RC=$?` form survives. Verified by running both idioms.
    */
-  it.each([
-    [10, "decision=defer"],
-    [0, "decision=proceed"],
-    [3, "decision=proceed"], // gate malfunction => fail OPEN, never freeze
-  ])("running the step script verbatim, node exit %i writes %s", (code, expected) => {
-    const script = gate.slice(gate.indexOf("\n        run: |") + "\n        run: |".length);
-    const body = script
-      .split("\n")
-      .map((l) => (l.startsWith("          ") ? l.slice(10) : l))
-      .join("\n");
-    const dir = mkdtempSync(join(tmpdir(), "gate-3915-"));
-    // Stub `node` so the gate invocation contributes nothing but its exit code.
-    writeFileSync(join(dir, "node"), `#!/bin/sh\nexit ${code}\n`, { mode: 0o755 });
-    const out = join(dir, "gh-output");
-    writeFileSync(out, "");
-    const res = spawnSync("bash", ["-e", "-c", body], {
-      env: {
-        ...process.env,
-        PATH: `${dir}:${process.env.PATH ?? ""}`,
-        GITHUB_OUTPUT: out,
-        GITHUB_REPOSITORY: "loopdive/js2wasm",
-        IS_FORCED: "false",
-      },
-      encoding: "utf8",
-    });
-    expect(res.status, res.stderr).toBe(0);
-    expect(readFileSync(out, "utf8").trim()).toBe(expected);
-    rmSync(dir, { recursive: true, force: true });
+  it.each(GATE_EXIT_TABLE)("running the step script verbatim, node exit %i -> status %i, %s", (code, status, out) => {
+    const r = runGateStep(gate, code);
+    expect(r.status, r.stderr).toBe(status);
+    expect(r.output).toBe(out);
+  });
+});
+
+describe("#6799 wiring: diff-test.yml", () => {
+  const wf = readFileSync(resolve(ROOT, ".github/workflows/diff-test.yml"), "utf8");
+  const gate = step(wf, "Gate the main push on the merge queue");
+  const promote = step(wf, "Promote the refreshed baseline");
+
+  it("guards the baseline push with an explicit proceed", () => {
+    expect(gate).toContain("id: queue_gate");
+    expect(promote).toContain("steps.queue_gate.outputs.decision == 'proceed'");
+    expect(gate).not.toMatch(/failing open/);
+  });
+
+  it.each(GATE_EXIT_TABLE)("running the step script verbatim, node exit %i -> status %i, %s", (code, status, out) => {
+    const r = runGateStep(gate, code);
+    expect(r.status, r.stderr).toBe(status);
+    expect(r.output).toBe(out);
   });
 });
 

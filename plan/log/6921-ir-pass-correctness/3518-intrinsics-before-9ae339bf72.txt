@@ -1,0 +1,116 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-ac7dec7220ff3e780
+
+ ❯ tests/issue-3518-semantic-verification-ownership.test.ts (34 tests | 3 failed) 3976ms
+   ✓ semantic implementation preservation > preserves every selected 'src/ir/callable-bindings.ts' declaration in 'src/ir/core/callable-bindings.ts' 52ms
+   ✓ semantic implementation preservation > preserves every selected 'src/ir/effects.ts' declaration in 'src/ir/analysis/effects.ts' 38ms
+   × semantic implementation preservation > preserves every selected 'src/ir/intrinsics.ts' declaration in 'src/ir/core/intrinsics.ts' 41ms
+     → expected [ 'F64_TYPE', 'I32_TYPE', …(19) ] to deeply equal [ 'F64_TYPE', 'I32_TYPE', …(18) ]
+   × semantic implementation preservation > preserves every selected 'src/ir/intrinsics.ts' declaration in 'src/ir/analysis/intrinsics.ts' 18ms
+     → signatureMismatch: expected '38f1214d1a8b93c91dc85e147ca4c06c6615a…' to be '0e58749590b4dbfa116ddeba00d65903f852d…' // Object.is equality
+   ✓ semantic implementation preservation > preserves every selected 'src/ir/runtime/contracts/intrinsics.ts' declaration in 'src/ir/core/intrinsic-contracts.ts' 7ms
+   ✓ semantic implementation preservation > preserves every selected 'src/ir/async-plan.ts' declaration in 'src/ir/analysis/async-plan.ts' 72ms
+   ✓ semantic implementation preservation > preserves every selected 'src/ir/async-runtime-providers.ts' declaration in 'src/ir/core/async-intents.ts' 2ms
+   ✓ semantic implementation preservation > keeps the fixed denominator and rejects deleted, duplicated and changed implementations 26ms
+   ✓ semantic implementation preservation > retains every evidence member and the async error parameter-property constructor 39ms
+   ✓ semantic implementation preservation > pins the exact extracted signature prefix, not an empty success adapter 6ms
+   ✓ canonical export identities and complete catalogs > forwards callable IR_FNCTOR_CONSTRUCTOR_SUPPORT_ROLE without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable irUnitCallableBindingId without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable irUnitFuncRef without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable irImportFuncRef without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable irCapabilityImportFuncRef without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable irRuntimeFuncRef without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable irIntrinsicFuncRef without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable irSupportFuncRef without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable irFnctorConstructorBindingId without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable irFnctorConstructorFuncRef without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable irCallableBindingKey without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > forwards callable sameIrCallableBinding without a wrapper 0ms
+   ✓ canonical export identities and complete catalogs > keeps the callable export denominator, provenance and compatibility names 2ms
+   × canonical export identities and complete catalogs > forwards all five effect functions and every intrinsic signature/catalog object 9ms
+     → expected [ 'js.to_uint32', …(38) ] to have a length of 38 but got 39
+   ✓ canonical export identities and complete catalogs > forwards semantic async exports through B's composed historical facade 3ms
+   ✓ semantic diagnostics and shared effect authority > preserves cache identity, conflict ordering and schedule violations 2ms
+   ✓ semantic diagnostics and shared effect authority > accepts only pure evidence from the one private-field class 2ms
+   ✓ semantic diagnostics and shared effect authority > keeps first-failure ordering for use identity, location, version, signature and effects 1ms
+   ✓ semantic diagnostics and shared effect authority > preserves signature diagnostic order and appends provider diagnostics afterward 1ms
+   ✓ nonempty async plan preservation > preserves suspension/spill/handler data, canonical ordering, deep freeze and exact old serialization/hash 38ms
+   ✓ nonempty async plan preservation > retains exact missing-spill and liveness diagnostics 5ms
+   ✓ nonempty async plan preservation > retains complete missing-intent diagnostic ordering and invariant error contents 4ms
+   ✓ nonempty async plan preservation > does not admit source-node fields or undefined metadata 3ms
+   ✓ actually compiles legacy/core types, wider runtime features and located negative controls  3594ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-semantic-verification-ownership.test.ts > semantic implementation preservation > preserves every selected 'src/ir/intrinsics.ts' declaration in 'src/ir/core/intrinsics.ts'
+AssertionError: expected [ 'F64_TYPE', 'I32_TYPE', …(19) ] to deeply equal [ 'F64_TYPE', 'I32_TYPE', …(18) ]
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[33m@@ -4,10 +4,11 @@[39m
+[2m    "U32_TYPE",[22m
+[2m    "EXTERNREF_TYPE",[22m
+[2m    "F64_TO_EXTERNREF_INTRINSIC_SIGNATURE",[22m
+[2m    "EXTERNREF_TO_F64_INTRINSIC_SIGNATURE",[22m
+[2m    "I32_TO_EXTERNREF_INTRINSIC_SIGNATURE",[22m
+[31m+   "EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE",[39m
+[2m    "EXTERNREF_TO_I32_INTRINSIC_SIGNATURE",[22m
+[2m    "EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE",[22m
+[2m    "REF_EXTERN_TYPE",[22m
+[2m    "EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE",[22m
+[2m    "EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE",[22m
+
+ ❯ verifyReceipt tests/issue-3518-semantic-verification-ownership.test.ts:243:45
+    241|         ? ["ASYNC_RUNTIME_FEATURES", "ASYNC_OPTIONAL_RUNTIME_FEATURES"…
+    242|         : [];
+    243|   expect(declarations.map(declarationName)).toEqual(
+       |                                             ^
+    244|     receipt.path === "src/ir/core/async-intents.ts"
+    245|       ? [...additions, ...selectedNames]
+ ❯ tests/issue-3518-semantic-verification-ownership.test.ts:330:92
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/issue-3518-semantic-verification-ownership.test.ts > semantic implementation preservation > preserves every selected 'src/ir/intrinsics.ts' declaration in 'src/ir/analysis/intrinsics.ts'
+AssertionError: signatureMismatch: expected '38f1214d1a8b93c91dc85e147ca4c06c6615a…' to be '0e58749590b4dbfa116ddeba00d65903f852d…' // Object.is equality
+
+Expected: [32m"0e58749590b4dbfa116ddeba00d65903f852d0c2040a66b81cd3cefcc5ca87d6"[39m
+Received: [31m"38f1214d1a8b93c91dc85e147ca4c06c6615a257e6558661ed9d75d394df41cd"[39m
+
+ ❯ verifyReceipt tests/issue-3518-semantic-verification-ownership.test.ts:251:65
+    249|     const matches = declarations.filter((node) => declarationName(node…
+    250|     expect(matches, name).toHaveLength(1);
+    251|     expect(sha(preservedText(receipt.path, matches[0]!)), name).toBe(e…
+       |                                                                 ^
+    252|   }
+    253| }
+ ❯ tests/issue-3518-semantic-verification-ownership.test.ts:330:92
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/issue-3518-semantic-verification-ownership.test.ts > canonical export identities and complete catalogs > forwards all five effect functions and every intrinsic signature/catalog object
+AssertionError: expected [ 'js.to_uint32', …(38) ] to have a length of 38 but got 39
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 38[39m
+[31m+ 39[39m
+
+ ❯ tests/issue-3518-semantic-verification-ownership.test.ts:409:35
+    407|     expect(oldIntrinsics.verifyIntrinsicUse).toBe(intrinsic.verifyIntr…
+    408|     expect(Object.keys(catalog.INTRINSIC_DEFINITIONS)).toEqual(catalog…
+    409|     expect(catalog.INTRINSIC_IDS).toHaveLength(38);
+       |                                   ^
+    410|     expect(Object.isFrozen(catalog.INTRINSIC_DEFINITIONS)).toBe(true);
+    411|     for (const [id, row] of Object.entries(catalog.INTRINSIC_DEFINITIO…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 31 passed (34)
+   Start at  01:18:10
+   Duration  7.14s (transform 742ms, setup 0ms, collect 2.35s, tests 3.98s, environment 0ms, prepare 206ms)
+

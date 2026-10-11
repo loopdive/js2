@@ -1,11 +1,12 @@
 ---
 id: 5185
 title: "Destructured callback param on a heterogeneous literal reads null (post-#5204)"
-status: ready
+status: done
 sprint: current
-assignee:
+assignee: ttraenkler/claude-es2015-w9
 created: 2026-08-29
-updated: 2026-08-29
+updated: 2026-10-07
+completed: 2026-10-07
 priority: high
 horizon: m
 feasibility: hard
@@ -80,3 +81,32 @@ only the destructured-parameter read path is broken.
 - The repro answers 201; both #4376 tests above pass.
 - No regression in #5204's own suites (`issue-1058-*`), the equivalence
   destructuring family, or test262 destructuring buckets.
+
+## Resolution — 2026-10-07 (#6651 slice W9)
+
+Re-measured before touching it: the destructured-parameter repro above
+already answers **201** on `fab22c35ff` (base), and both #4376 tests
+("preserves heterogeneous object entries through callback destructuring",
+"invokes Object.assign after loading it from an any-typed bootstrap carrier")
+pass. Something between 2026-08-29 and now fixed that shape; it was not
+bisected.
+
+The residual that #6651 routed here is the NON-destructured twin,
+`TypedArrayConstructors/ctors/length-arg/toindex-length.js`:
+`items.forEach(function (item) { var expected = item[1]; … })` over rows
+`[-0, 0, "-0"]`, `["", 0, …]`, `[true, 1, …]`, `[null, 0, …]`. `expected` is a
+`string | number | boolean | null` `$AnyValue` local fed by a dynamic element
+read (externref). The generic boxing default `__any_box_extern_s1` keeps the
+#1888 tag-5 lie for every non-nullish externref, so the boxed number `0` was
+stored as a tag-5 "string": `typeof expected` was not `"number"` and
+`expected === 0` was false (`Expected SameValue(«0», «[object Object]»)`).
+
+Fix (`emitPrimitiveUnionExternToAny`, `src/codegen/any-helpers.ts`, called
+from the expected-type coercion in `compileExpression`): for an externref →
+`$AnyValue` coercion whose static type is a union of primitives only, box
+through `s1` (keeps the nullish / UNDEF-sentinel partition) and re-classify a
+residual tag-5 wrap with `__any_from_extern` (number → tag 3, boolean →
+tag 4, a genuine string stays tag 5). The shared default is untouched (the
+−788/−794 hazard), the same per-site discipline as #6631 / #3055. The row
+passes; pinned by `tests/issue-6651-w9-typedarray-singles.test.ts` (cases
+under "W9 · 1").

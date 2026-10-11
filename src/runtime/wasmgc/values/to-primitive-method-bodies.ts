@@ -56,6 +56,8 @@ export interface ToPrimitiveSymbolBindings {
   readonly boxSymbolIdx: number;
   readonly applyClosureIdx: number;
   readonly defaultHint: readonly Instr[];
+  /** (#6774 S19) native-string `"default"`: an EXPLICIT default hint (loose `==`) keeps a Symbol result. */
+  readonly defaultHintNative: readonly Instr[];
   readonly errors: readonly [readonly Instr[], readonly Instr[], readonly Instr[], readonly Instr[]];
 }
 /** Literal operands are copied per use; they are not semantic arm buffers. */
@@ -314,6 +316,8 @@ export function buildSymbolToPrimitive(
               blockType: { kind: "empty" },
               then: [
                 ...structuredClone(isStringHint),
+                ...buildToPrimitiveStringHint(d, binding.defaultHintNative),
+                { op: "i32.or" },
                 {
                   op: "if",
                   blockType: { kind: "empty" },

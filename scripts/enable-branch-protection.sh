@@ -88,6 +88,25 @@ REQUIRED_CHECKS=(
   "cla-check"                            # cla-check.yml — external contributor CLA acceptance (REQUIRED, #1660)
 )
 
+# -----------------------------------------------------------------------------
+# REQUIRED-AFTER-SEEDING (#6783). `issue-tests-gate` (ci.yml) is a known-failures
+# ratchet whose baseline, scripts/issue-tests-baseline.json, is written on main
+# only, by the post-merge bank, from a complete CI run. Until that file exists
+# the gate runs in seed mode and enforces nothing, so requiring it would add a
+# context that cannot fail — and listing it in REQUIRED_CHECKS above would make
+# this array claim a policy that is not in force (#3934). It is appended only
+# once the baseline is on main; see docs/ci-policy.md §7.
+# -----------------------------------------------------------------------------
+REQUIRED_AFTER_SEEDING=(
+  "issue-tests-gate"                     # ci.yml — root-suite known-failures ratchet (#6783)
+)
+ISSUE_TESTS_BASELINE="$(cd "$(dirname "$0")" && pwd)/issue-tests-baseline.json"
+if [ -f "$ISSUE_TESTS_BASELINE" ]; then
+  REQUIRED_CHECKS+=("${REQUIRED_AFTER_SEEDING[@]}")
+else
+  echo "Note: ${ISSUE_TESTS_BASELINE} is not seeded yet — not requiring: ${REQUIRED_AFTER_SEEDING[*]} (#6783)." >&2
+fi
+
 # Build the JSON payload from the live ruleset. Ruleset PUT is replace-style,
 # so preserve everything unrelated to required status checks.
 #

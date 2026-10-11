@@ -32,6 +32,13 @@ const STANDALONE_UNAVAILABLE_TIMER_GLOBALS = new Set([
   // hono's service-worker `fire()`) needs the same event loop to ever call back.
   "addEventListener",
   "removeEventListener",
+  // (#6841) Window functions of a browser: animation frames need the same
+  // rendering event loop, and the CSSOM queries need a document.
+  // styled-components' `createTheme().resolve` calls `getComputedStyle`.
+  "requestAnimationFrame",
+  "cancelAnimationFrame",
+  "getComputedStyle",
+  "matchMedia",
 ]);
 
 export function isStandaloneUnavailableTimerGlobal(ctx: CodegenContext, name: string): boolean {

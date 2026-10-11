@@ -45,6 +45,7 @@ import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 
 /** The two synthetic member names the glue mints the pair's closures under. */
 export const ERROR_STACK_GETTER_MEMBER = "get stack";
@@ -292,6 +293,24 @@ export function emitErrorStackSetterBody(ctx: CodegenContext, fctx: FunctionCont
   addStringConstantGlobal(ctx, "stack");
 
   emitThisIsObjectCheck(ctx, fctx, "set Error.prototype.stack called on a non-object");
+  // (#6775) Step 3 — "If v is not a String, throw a TypeError": no coercion
+  // (a String wrapper, an object with toString, a missing argument all throw).
+  const typeofStringIdx = ensureLateImport(ctx, "__typeof_string", [{ kind: "externref" }], [{ kind: "i32" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (typeofStringIdx !== undefined) {
+    fctx.body.push(
+      { op: "local.get", index: 2 },
+      { op: "call", funcIdx: ctx.funcMap.get("__typeof_string") ?? typeofStringIdx },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: buildThrowJsErrorInstrs(ctx, "TypeError", "set Error.prototype.stack: value is not a string", {
+          flush: fctx,
+        }),
+      },
+    );
+  }
 
   // Step 2 — the home object itself is refused. `emitLazyNativeProtoGet` leaves
   // the brand's prototype on the stack, so this is an IDENTITY compare: a Proxy

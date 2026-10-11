@@ -109,7 +109,13 @@ import { emitUndefined } from "./expressions/late-imports.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { objectCoercionPreservesFunction } from "./object-ctor-primitive-receiver.js";
 import { moduleTouchesConstructorProp } from "./builtin-instance-constructor-prototype.js";
-import { compileExpression } from "./shared.js";
+import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { emitNativeGlobalThisObject } from "./array-object-proto.js"; // (#6651 W2a)
+import { emitRuntimeEvalSharedValueUnwrap } from "./global-environment.js"; // (#6651 W2a)
+import { stringConstantExternrefInstrs } from "./native-strings.js"; // (#6651 W2a)
+import { registerLateReadStringConstant } from "./registry/imports.js"; // (#6651 W2a)
+
+const EXTERNREF: ValType = { kind: "externref" };
 
 /**
  * Does this module read the BARE `Function` value anywhere?
@@ -175,6 +181,98 @@ export function emitStandaloneFunctionIntrinsicValue(ctx: CodegenContext, fctx: 
   // properties (`length`, `name`, `prototype`) and #4120's callable brand
   // (`typeof === "function"`) with no new table entry.
   return emitBuiltinConstructorIdentity(ctx, fctx, "Function");
+}
+
+/**
+ * (#6651 W2a) Push the global object's `Function` property — the value
+ * `globalThis.Function` reads, and therefore the value every realm seed
+ * (`$262.createRealm().global.Function`, scripts/test262-fyi-runtime.js)
+ * copies. It is the realm `%Function%` (§19.3.17), but NOT always the same
+ * reference {@link emitStandaloneFunctionIntrinsicValue} pushes: in a
+ * runtime-eval module that never reads the bare `Function` value the emitter
+ * answers its self-contained carrier, while the global object's property is
+ * the constructor carrier the eval boundary seeds (measured 2026-10-07:
+ * `globalThis.Function === (function(){}).constructor` is `false` there and
+ * `true` in an eval-free module). Reconciling the two spellings is a
+ * module-wide identity change; this read lets a single site accept either.
+ *
+ * Declines (pushing NOTHING) when the module may itself write a global
+ * `Function` — {@link moduleMayWriteGlobalFunction} — because the property
+ * would then no longer be the intrinsic. Stack: `[] → [externref]`.
+ */
+export function emitStandaloneGlobalFunctionPropertyValue(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  site: ts.Node,
+): ValType | undefined {
+  if (!ctx.standalone || moduleMayWriteGlobalFunction(site.getSourceFile())) return undefined;
+  const getIdx = ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
+  flushLateImportShifts(ctx, fctx);
+  if (getIdx === undefined) return undefined;
+  const saved = fctx.body.length;
+  if (!emitNativeGlobalThisObject(ctx, fctx)) {
+    fctx.body.length = saved; // not-a-probe-rollback (#1919): nothing pushed on failure; trim a partial emit
+    return undefined;
+  }
+  registerLateReadStringConstant(ctx, "Function");
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, "Function"));
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
+  if (ctx.runtimeEvalGlobalFunctionBindings === true) emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+  return EXTERNREF;
+}
+
+const GLOBAL_FUNCTION_WRITE_BY_FILE = new WeakMap<ts.SourceFile, boolean>();
+
+/**
+ * Could this file replace the global object's `Function` property? Syntactic
+ * and over-approximate: a declaration named `Function` (a script-level one
+ * creates the global property), an assignment / `delete` whose target is a
+ * member named `Function`, or the string `"Function"` passed to any call (a
+ * `defineProperty` / `Reflect.set` / `eval` source). Any of these keeps the
+ * W2a arm on the emitter's identity alone.
+ */
+function moduleMayWriteGlobalFunction(file: ts.SourceFile | undefined): boolean {
+  if (file === undefined) return true;
+  const memo = GLOBAL_FUNCTION_WRITE_BY_FILE.get(file);
+  if (memo !== undefined) return memo;
+  // A computed write with a RUNTIME key (`g[k] = v`, k === "Function") is not
+  // seen — recorded residual; every spelled key is.
+  const namedFunction = (node: ts.Node): boolean =>
+    (ts.isPropertyAccessExpression(node) && node.name.text === "Function") ||
+    (ts.isElementAccessExpression(node) &&
+      ts.isStringLiteralLike(node.argumentExpression) &&
+      node.argumentExpression.text === "Function") ||
+    (ts.isIdentifier(node) && node.text === "Function");
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (
+      (ts.isFunctionDeclaration(node) || ts.isVariableDeclaration(node) || ts.isClassDeclaration(node)) &&
+      node.name !== undefined &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === "Function"
+    ) {
+      found = true;
+    } else if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      namedFunction(node.left)
+    ) {
+      found = true;
+    } else if (ts.isDeleteExpression(node) && namedFunction(node.expression)) {
+      found = true;
+    } else if (
+      ts.isCallExpression(node) &&
+      node.arguments.some((a) => ts.isStringLiteralLike(a) && a.text === "Function")
+    ) {
+      found = true;
+    }
+    if (!found) ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(file, visit);
+  GLOBAL_FUNCTION_WRITE_BY_FILE.set(file, found);
+  return found;
 }
 
 /**

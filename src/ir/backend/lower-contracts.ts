@@ -264,6 +264,10 @@ export interface IrLowerResolver {
    * falls back to a throw stub when missing.
    */
   resolvePromiseType?(): number;
+  /** Authenticated optional same-graph Deno rejection dispatcher. */
+  resolvePromiseRejectionDispatcher?(): number | undefined;
+  buildPromiseRejectionEvent?: typeof import("../../runtime/wasmgc/promise/rejection-event-bodies.js").buildPromiseRejectionEvent;
+  buildPromiseReactionHandled?: typeof import("../../runtime/wasmgc/promise/rejection-event-bodies.js").buildPromiseReactionHandled;
   /**
    * (#1373b C-1) True iff the compile's awaited values are the Wasm-native
    * `$Promise` carrier (`isStandalonePromiseActive(ctx)` — currently the

@@ -81,12 +81,14 @@ function emptySummary() {
 /**
  * Reduce one vitest JSON report to what the gate scores: failing / passing
  * test ids, the files seen, and every failure that has no assertion to carry
- * it (`fileFailures`, `unexplained`).
+ * it (`fileFailures`, `unexplained`). `toRel` maps vitest's absolute file name
+ * to the repo-relative id (#6783: scripts/known-failures-gate.mjs scores
+ * suites outside tests/equivalence/ with the same reduction).
  */
-export function summarizeReport(report, label = "report") {
+export function summarizeReport(report, label = "report", toRel = relPath) {
   const summary = emptySummary();
   for (const file of report.testResults || []) {
-    const rel = relPath(file.name);
+    const rel = toRel(file.name);
     summary.files.add(rel);
     const assertions = file.assertionResults || [];
     let failed = 0;
@@ -174,9 +176,10 @@ function missingShards(shards) {
 /**
  * Score a summary against the baseline. `partial: true` (a single shard)
  * skips the whole-suite checks. `diskFiles`, when given, names test files that
- * exist but never reached the report.
+ * exist but never reached the report. `floors: false` (#6783) skips the
+ * passingFloor / fileCount checks for a baseline that carries none.
  */
-export function evaluateGate(summary, baseline, { partial = false, diskFiles = null } = {}) {
+export function evaluateGate(summary, baseline, { partial = false, diskFiles = null, floors = true } = {}) {
   const known = new Set(baseline.knownFailures || []);
   const regressions = [...summary.failing].filter((id) => !known.has(id)).sort();
   const newlyFixed = [...known].filter((id) => summary.passing.has(id)).sort();
@@ -193,7 +196,10 @@ export function evaluateGate(summary, baseline, { partial = false, diskFiles = n
       }
     }
     const { passingFloor, fileCount } = baseline;
-    if (!Number.isInteger(passingFloor) || !Number.isInteger(fileCount)) {
+    if (!floors) {
+      // (#6783) A known-failures baseline carries no floors; file presence is
+      // checked against `diskFiles` above instead.
+    } else if (!Number.isInteger(passingFloor) || !Number.isInteger(fileCount)) {
       floorFailures.push(
         "baseline has no passingFloor/fileCount — bank them with: node scripts/equivalence-gate.mjs --update",
       );
@@ -218,8 +224,9 @@ export function evaluateGate(summary, baseline, { partial = false, diskFiles = n
 /**
  * The baseline an `--update` would write. Raises the floors, never lowers
  * them; `refusals` is non-empty when the run must not be banked at all.
+ * `floors: false` (#6783) banks `knownFailures` alone.
  */
-export function bankBaseline(summary, previous) {
+export function bankBaseline(summary, previous, { floors = true } = {}) {
   const refusals = [];
   if (summary.fileFailures.length || summary.unexplained.length) {
     refusals.push(
@@ -227,6 +234,7 @@ export function bankBaseline(summary, previous) {
     );
   }
   for (const slot of missingShards(summary.shards)) refusals.push(`no partial for shard ${slot}`);
+  if (!floors) return { baseline: { knownFailures: [...summary.failing].sort() }, refusals };
   const oldFloor = Number.isInteger(previous.passingFloor) ? previous.passingFloor : 0;
   const oldFiles = Number.isInteger(previous.fileCount) ? previous.fileCount : 0;
   if (summary.passing.size < oldFloor) {

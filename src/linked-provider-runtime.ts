@@ -246,7 +246,53 @@ function wireProviderInstance(
     if (typeof init !== "function") {
       throw new Error(`Linked provider ${artifact.namespace} is missing ${manifest.initExport}`);
     }
-    (init as () => void)();
+    try {
+      (init as () => void)();
+    } catch (error) {
+      throw renderedProviderInitError(artifact, providerImports, instance, error) ?? error;
+    }
+  }
+}
+
+/**
+ * (#6748) Name a provider's module-init throw. It escapes before the CONSUMER
+ * instance exists, so an embedder holding only the consumer cannot read a
+ * natively-thrown payload (a WasmGC struct no host can stringify): every
+ * regime Temporal row collapsed onto "wasm exception during module init".
+ * The PROVIDER's own `__exn_render_*` exports (#2962) can read it; when they
+ * render something, the throw becomes an `Error` naming the provider and the
+ * rendered text, with the original exception as `cause`. A payload the
+ * provider cannot render (no exports — e.g. a host-lane provider, whose
+ * payloads are real JS values — or an empty render) rethrows unchanged.
+ */
+interface WasmException {
+  getArg(tag: unknown, index: number): unknown;
+}
+
+function renderedProviderInitError(
+  artifact: LinkedModuleArtifact,
+  providerImports: WebAssembly.Imports,
+  instance: WebAssembly.Instance,
+  error: unknown,
+): Error | undefined {
+  const Exception = (WebAssembly as unknown as { Exception?: abstract new (...args: never[]) => WasmException })
+    .Exception;
+  if (!Exception || !(error instanceof Exception)) return undefined;
+  const exports = instance.exports as Record<string, unknown>;
+  const prepare = exports.__exn_render_prepare;
+  const char = exports.__exn_render_char;
+  if (typeof prepare !== "function" || typeof char !== "function") return undefined;
+  const tag = (providerImports as Record<string, Record<string, unknown> | undefined>).env?.__exn ?? exports.__exn_tag;
+  if (!tag) return undefined;
+  try {
+    const payload = error.getArg(tag, 0);
+    const length = (prepare as (value: unknown) => number)(payload);
+    if (typeof length !== "number" || length <= 0 || length > 65536) return undefined;
+    let text = "";
+    for (let i = 0; i < length; i++) text += String.fromCharCode((char as (index: number) => number)(i));
+    return new Error(`Linked provider ${artifact.namespace} threw during module init: ${text}`, { cause: error });
+  } catch {
+    return undefined;
   }
 }
 
@@ -300,7 +346,18 @@ export function instantiateLinkedProviders(
     // Measured: with the mirror in place the consumer sees an object with zero
     // own keys and every read `undefined`. Passing the raw struct through is
     // what lets the #5383 S2d boundary terminals decode it.
-    const noHostMirror = manifest.providerMetadata.targetProfile?.environment !== "javascript";
+    //
+    // (#6748) A provider lowered with the native REGIME in a JavaScript
+    // environment is the same case: its consumer is a regime module too (the
+    // linker compiles every provider with the consumer's options), whose
+    // dynamic reads already route a missed receiver to the provider's
+    // `__js2wasm_link_*` terminals — both halves are `ctx.standalone` and the
+    // provider is `exportsConsumedByWasm`. A host mirror there handed the
+    // consumer a JS proxy its native MOP could only treat as an unadmitted
+    // foreign object: `new Temporal.PlainTime()` read "value is not a
+    // constructor" on every regime row.
+    const profile = manifest.providerMetadata.targetProfile;
+    const noHostMirror = profile?.environment !== "javascript" || profile?.nativeRegime === true;
     for (const boundary of Object.values(manifest.exportBoundaries)) {
       if (boundary.kind === "function" || noHostMirror) continue;
       const getter = rawExports[boundary.field];

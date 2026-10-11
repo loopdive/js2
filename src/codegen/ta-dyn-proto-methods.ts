@@ -31,6 +31,7 @@ import {
   pushTaDynViewInBoundsLen,
 } from "./dataview-native.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { getOrRegisterTaIterVecType } from "./array/ta-iter-detach.js"; // (#6651 V3)
 import { getArrTypeIdxFromVec } from "./index.js";
 import {
   ensureNativeIteratorRuntime,
@@ -1216,10 +1217,14 @@ function ensureTaDynIteratorHelper(ctx: CodegenContext, method: string): number 
 
   // struct.new $__IterRec(kind, vec, idx, userIter, family) — field order is
   // load-bearing (see getOrRegisterIterRecType).
+  // (#6651 V3) the snapshot vec carries the view, so `__iterator_next` can
+  // throw once the buffer is detached mid-iteration (§23.1.5.2.1 step 6.b).
+  const taIterVecIdx = getOrRegisterTaIterVecType(ctx, canonVecTypeIdx, canonArrTypeIdx, dynIdx);
   fctx.body.push({ op: "i32.const", value: ITER_KIND_VEC });
   fctx.body.push({ op: "local.get", index: lenLocal });
   fctx.body.push({ op: "local.get", index: outLocal });
-  fctx.body.push({ op: "struct.new", typeIdx: canonVecTypeIdx });
+  fctx.body.push({ op: "local.get", index: dvLocal });
+  fctx.body.push({ op: "struct.new", typeIdx: taIterVecIdx });
   fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "i32.const", value: ITER_FAMILY_ARRAY });

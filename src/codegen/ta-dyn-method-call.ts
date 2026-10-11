@@ -44,7 +44,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
-import { i32ByteVec } from "./dataview-native.js";
+import { i32ByteVec, pushElemSizeForKind, pushTaDynViewInBoundsLen } from "./dataview-native.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 
@@ -323,6 +323,61 @@ export function taDynDetachedGuardPrologue(
     { op: "any.convert_extern" },
     { op: "local.set", index: anyLocalIdx },
     ...taDynDetachedGuardInstrs(ctx, method, anyLocalIdx, (name, type) => allocLocal(fctx, name, type)),
+  ];
+}
+
+/**
+ * (#6651 U2) The `len` of a `recv.join(…)` / `recv.toLocaleString()` call whose
+ * receiver is an externref local. §23.2.3.18 / §23.2.3.32 step 3 read
+ * TypedArrayLength — the INTERNAL [[ArrayLength]] — so a `$__ta_dyn_view`
+ * receiver must not go through `__extern_length`, which is LengthOfArrayLike and
+ * honours an own `"length"` accessor (#6771 S2c; `get-length-uses-internal-
+ * arraylength.js` installs one and counts its calls). Every other receiver keeps
+ * the generic `__extern_length` call, and a module with no dynamic view emits
+ * exactly that call. Pushes one f64.
+ */
+export function taDynJoinLengthInstrs(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  recvExternLocalIdx: number,
+  externLenIdx: number,
+): Instr[] {
+  const generic: Instr[] = [
+    { op: "local.get", index: recvExternLocalIdx },
+    { op: "call", funcIdx: externLenIdx },
+  ];
+  const dynIdx = ctx.taDynViewTypeIdx;
+  if (!ctx.standalone || dynIdx === undefined || dynIdx < 0) return generic;
+  const anyLocal = allocLocal(fctx, `__tajl_any_${fctx.locals.length}`, { kind: "anyref" });
+  const dvLocal = allocLocal(fctx, `__tajl_dv_${fctx.locals.length}`, { kind: "ref_null", typeIdx: dynIdx });
+  const kindLocal = allocLocal(fctx, `__tajl_kind_${fctx.locals.length}`, { kind: "i32" });
+  const esLocal = allocLocal(fctx, `__tajl_es_${fctx.locals.length}`, { kind: "i32" });
+  const internal: Instr[] = [];
+  const saved = fctx.body;
+  fctx.savedBodies.push(saved);
+  fctx.body = internal;
+  try {
+    internal.push(
+      { op: "local.get", index: anyLocal },
+      { op: "ref.cast", typeIdx: dynIdx },
+      { op: "local.tee", index: dvLocal },
+      { op: "struct.get", typeIdx: dynIdx, fieldIdx: 3 },
+      { op: "local.set", index: kindLocal },
+    );
+    pushElemSizeForKind(fctx, kindLocal);
+    internal.push({ op: "local.set", index: esLocal });
+    pushTaDynViewInBoundsLen(ctx, fctx, dvLocal, esLocal);
+    internal.push({ op: "f64.convert_i32_s" });
+  } finally {
+    fctx.body = saved;
+    fctx.savedBodies.pop();
+  }
+  return [
+    { op: "local.get", index: recvExternLocalIdx },
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: anyLocal },
+    { op: "ref.test", typeIdx: dynIdx },
+    { op: "if", blockType: { kind: "val", type: { kind: "f64" } }, then: internal, else: generic },
   ];
 }
 

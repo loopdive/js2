@@ -2,7 +2,8 @@
 id: 1426
 renumbered_from: 1278
 title: "Update stale lodash-tier1 stress test — resolver fixed, clamp/add behavior changed"
-status: review
+status: done
+completed: 2026-05-03
 created: 2026-05-02
 updated: 2026-05-02
 priority: low

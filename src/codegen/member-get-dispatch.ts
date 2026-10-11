@@ -41,7 +41,7 @@
  * hazard is mode-independent — acorn dogfoods in gc/host mode).
  */
 import type { Instr, ValType } from "../ir/types.js";
-import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js"; // (#2963) method-arm candidates
+import { classMemberFuncKey, isInstanceAccessorKey, resolveMethodOwnerClass } from "./class-member-keys.js"; // (#2963) method-arm candidates
 import { ensureMethodClosureSingleton } from "./closures.js"; // (#2963) canonical method-value singleton
 import { closureBagInitInstr } from "./closures/funcref-wrapper-types.js"; // (#4241) $bag header operand
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -218,7 +218,7 @@ export function classMethodCandidatesForProp(
     if (receiverStructTypeIdx === undefined) continue;
     const owner = resolveMethodOwnerClass(ctx, className, propName);
     const methodFullName = `${owner}_${propName}`;
-    const methodFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, methodFullName));
+    const methodFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, methodFullName, "instance"));
     if (methodFuncIdx === undefined) continue;
     const ownerStructTypeIdx = ctx.structMap.get(owner) ?? receiverStructTypeIdx;
     // Inheritance depth (for children-first arm ordering under subtyping).
@@ -281,8 +281,7 @@ export function classAccessorCandidatesForProp(ctx: CodegenContext, propName: st
     if (seenCanonical.has(className)) continue;
     seenCanonical.add(className);
     const accessorKey = `${className}_${propName}`;
-    if (!ctx.classAccessorSet.has(accessorKey)) continue;
-    if (ctx.staticAccessorSet.has(accessorKey)) continue; // static accessor — off the constructor, not an instance
+    if (!isInstanceAccessorKey(ctx, accessorKey)) continue; // static accessor — off the constructor, not an instance (#6772 S12)
     const structTypeIdx = ctx.structMap.get(className);
     if (structTypeIdx === undefined || seenStructs.has(structTypeIdx)) continue;
     // Inherited getters register a per-child funcMap entry pointing at the

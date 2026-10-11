@@ -36,6 +36,7 @@
 import type { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { isCtorReturnOverrideClass } from "./classes/ctor-return-override.js";
 
 /**
  * `{ kind: "externref" }` when `sym` names an externref-backed user class,
@@ -50,5 +51,8 @@ export function externrefBackedClassValType(ctx: CodegenContext, sym: ts.Symbol 
   if (ctx.classExternrefBackedSet.has(name)) return { kind: "externref" };
   const synthetic = ctx.classExprNameMap.get(name);
   if (synthetic !== undefined && ctx.classExternrefBackedSet.has(synthetic)) return { kind: "externref" };
+  // (#6772 S2) A return-override class's `new` yields externref (the foreign
+  // override object or the struct), so its bindings are externref slots.
+  if (isCtorReturnOverrideClass(ctx, name) || isCtorReturnOverrideClass(ctx, synthetic)) return { kind: "externref" };
   return undefined;
 }

@@ -50,11 +50,14 @@ export function directObjectMethodFuncIdx(
   const declaration = objectLiteralMethodDeclaration(ctx, expr);
   const literalFuncIdx = declaration ? ctx.objectLiteralMethodFuncIdx.get(declaration) : undefined;
   if (literalFuncIdx !== undefined) funcIdx = literalFuncIdx;
-  const hasRestBinding = declaration?.parameters.some(
-    (parameter) =>
-      parameter.dotDotDotToken !== undefined &&
-      (ts.isArrayBindingPattern(parameter.name) || ts.isObjectBindingPattern(parameter.name)),
-  );
+  // (#6774 S7) Standalone lowers a pattern rest to the vec ABI (restPatternParamSlot).
+  const hasRestBinding =
+    !ctx.standalone &&
+    declaration?.parameters.some(
+      (parameter) =>
+        parameter.dotDotDotToken !== undefined &&
+        (ts.isArrayBindingPattern(parameter.name) || ts.isObjectBindingPattern(parameter.name)),
+    );
   return hasRestBinding ? undefined : funcIdx;
 }
 
@@ -74,7 +77,7 @@ export function knownMethodRestInfo(
   if (registered) return registered;
   const declaration = objectLiteralMethodDeclaration(ctx, expr);
   const restIndex = declaration?.parameters.findIndex(
-    (parameter) => parameter.dotDotDotToken !== undefined && ts.isIdentifier(parameter.name),
+    (parameter) => parameter.dotDotDotToken !== undefined && (ctx.standalone || ts.isIdentifier(parameter.name)),
   );
   if (restIndex === undefined || restIndex < 0) return undefined;
   const restType = paramTypes?.[selfOffset + restIndex];

@@ -1,0 +1,335 @@
+{
+  "schema": "ir-program-validator-relocation-v1",
+  "baseMain": "39fd7b7d44c9bc6f9be47ddd1f7fd75196a7d5f1",
+  "coordinateUnit": "utf8-byte",
+  "currentPaths": [
+    "src/ir/program-runtime-demands.ts",
+    "src/ir/program/runtime-demands.ts",
+    "src/ir/program-runtime-abi.ts",
+    "src/ir/program/runtime-abi.ts",
+    "src/ir/runtime-program-manifest.ts",
+    "src/ir/program/runtime-manifest.ts",
+    "src/ir/program-runtime-validation.ts",
+    "src/ir/program/runtime-validation.ts",
+    "src/ir/program-validation.ts",
+    "src/ir/program/validation.ts"
+  ],
+  "pairs": [
+    {
+      "donorPath": "src/ir/program-runtime-demands.ts",
+      "implementationPath": "src/ir/program/runtime-demands.ts",
+      "before": {
+        "path": "src/ir/program-runtime-demands.ts",
+        "bytes": 13421,
+        "sha256": "e3b2d8e2adc4dbee309050dd9085ef710949422e1b94789cdc3138b1737caf32",
+        "gitBlob": "7ab4f93af694716ae532c1fb598f35fa42e067f5"
+      },
+      "facade": {
+        "path": "src/ir/program-runtime-demands.ts",
+        "bytes": 474,
+        "sha256": "6af11b258faefd71a5602a021cdb8524f6d7bd804764e6ec7914440575f4fc39",
+        "gitBlob": "fce0ec1086445fba84a0e720c51b7e06405f2ed6"
+      },
+      "implementation": {
+        "path": "src/ir/program/runtime-demands.ts",
+        "bytes": 13467,
+        "sha256": "74bfbc2fa49f6ce33fc5b4970a7dd0a5def4a6a17b009032321fce13cdfabf85",
+        "gitBlob": "cd7cfebb496ebf51d3bcc8bb5fbcd665607c5e4d"
+      },
+      "facadeText": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n\n/** Compatibility exports; implementation belongs to the prepared-program owner. */\nexport {\n  irStringCompareDemand,\n  irStringEqDemand,\n  irStringLenDemand,\n  irStringConcatDemand,\n  irHostCallbackWrapDemand,\n  irFunctionPrototypeCallDemand,\n  irStringConstDemand,\n  irStringCharCodeAtDemand,\n  irStringConcatManyDemand,\n  irProgramRuntimeDemands,\n} from \"./program/runtime-demands.js\";\n",
+      "valueExports": [
+        "irStringCompareDemand",
+        "irStringEqDemand",
+        "irStringLenDemand",
+        "irStringConcatDemand",
+        "irHostCallbackWrapDemand",
+        "irFunctionPrototypeCallDemand",
+        "irStringConstDemand",
+        "irStringCharCodeAtDemand",
+        "irStringConcatManyDemand",
+        "irProgramRuntimeDemands"
+      ],
+      "typeExports": [],
+      "segments": [
+        {
+          "kind": "unchanged",
+          "beforeStart": 0,
+          "beforeEnd": 85,
+          "afterStart": 0,
+          "afterEnd": 85,
+          "beforeSha256": "56bf88dc4c3a627fc20affb2ea7a4b4b8792a9cdf66df0f0d07691edc0a298f5",
+          "afterSha256": "56bf88dc4c3a627fc20affb2ea7a4b4b8792a9cdf66df0f0d07691edc0a298f5"
+        },
+        {
+          "kind": "imports",
+          "beforeStart": 85,
+          "beforeEnd": 578,
+          "afterStart": 85,
+          "afterEnd": 624,
+          "beforeSha256": "5b6d7869b0d9669e642290d87b66d6fe2823f3ea0ef5e9225c18ff9026c15f3e",
+          "afterSha256": "fc5483b2ccfda5bd85a24dfb4e858d36e7db1e9f9380f9136b93af29901181b9",
+          "beforeText": "import { forEachInstrDeep, type IrFunction, type IrInstr } from \"./nodes.js\";\nimport {\n  IR_STRING_COMPARE_FN,\n  JSSTR_CHARCODEAT_FN,\n  NATIVE_CHARCODEAT_FN,\n  FUNCTION_PROTOTYPE_CALL_HELPER,\n} from \"./runtime-symbols.js\";\nimport { IR_ASYNC_STRING_CONCAT_5_FN } from \"./async-semantic-runtime.js\";\nimport { parseIrStringConcatManyArity } from \"./string-runtime.js\";\nimport { irGeneratorNumberBoxDemand } from \"./generator-support.js\";\nimport { hasLoneSurrogate } from \"../string-surrogate.js\";",
+          "afterText": "import { forEachInstrDeep, type IrFunction, type IrInstr } from \"../core/nodes.js\";\nimport {\n  IR_STRING_COMPARE_FN,\n  JSSTR_CHARCODEAT_FN,\n  NATIVE_CHARCODEAT_FN,\n  FUNCTION_PROTOTYPE_CALL_HELPER,\n} from \"../core/runtime-symbols.js\";\nimport { IR_ASYNC_STRING_CONCAT_5_FN } from \"../core/async-callables.js\";\nimport { parseIrStringConcatManyArity } from \"../core/string-runtime.js\";\nimport { irGeneratorNumberBoxDemand } from \"../runtime/generator-support.js\";\nimport { hasLoneSurrogate } from \"../../shared/contracts/string-surrogate.js\";"
+        },
+        {
+          "kind": "unchanged",
+          "beforeStart": 578,
+          "beforeEnd": 13421,
+          "afterStart": 624,
+          "afterEnd": 13467,
+          "beforeSha256": "e2eb6ff1795a5f10cc36cf88a0a68b9c5a62745fe53d60bed68e1488d0ee7f22",
+          "afterSha256": "e2eb6ff1795a5f10cc36cf88a0a68b9c5a62745fe53d60bed68e1488d0ee7f22"
+        }
+      ]
+    },
+    {
+      "donorPath": "src/ir/program-runtime-abi.ts",
+      "implementationPath": "src/ir/program/runtime-abi.ts",
+      "before": {
+        "path": "src/ir/program-runtime-abi.ts",
+        "bytes": 4475,
+        "sha256": "0f8eb92a65a87a4fe0275aa4e90f88a600f3f598f9278fd01edd198fff4c41a4",
+        "gitBlob": "d10bd411a6030ba898b8febe5bf3d0ff1d99e35f"
+      },
+      "facade": {
+        "path": "src/ir/program-runtime-abi.ts",
+        "bytes": 363,
+        "sha256": "cec827cc20299610d6351e050cce5e9d3bd5198c9b334eb95253b96372ed7247",
+        "gitBlob": "307f5fd4b31c10c0bea32892e5d1c0c80e938188"
+      },
+      "implementation": {
+        "path": "src/ir/program/runtime-abi.ts",
+        "bytes": 4522,
+        "sha256": "65fcb7d226b260f30f517ae0f0a55117f5f5f99dcaef2c83219a466ee79cad4e",
+        "gitBlob": "670b421735b57cda583340acab33067a43e97811"
+      },
+      "facadeText": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n\n/** Compatibility exports; implementation belongs to the prepared-program owner. */\nexport {\n  preparedIrRuntimeAbiAnchor,\n  preparedIrRuntimeCallableBindingId,\n  assertPreparedIrRuntimeCallableDeclaration,\n  prepareIrProgramRuntimeCallables,\n} from \"./program/runtime-abi.js\";\n",
+      "valueExports": [
+        "preparedIrRuntimeAbiAnchor",
+        "preparedIrRuntimeCallableBindingId",
+        "assertPreparedIrRuntimeCallableDeclaration",
+        "prepareIrProgramRuntimeCallables"
+      ],
+      "typeExports": [],
+      "segments": [
+        {
+          "kind": "unchanged",
+          "beforeStart": 0,
+          "beforeEnd": 85,
+          "afterStart": 0,
+          "afterEnd": 85,
+          "beforeSha256": "56bf88dc4c3a627fc20affb2ea7a4b4b8792a9cdf66df0f0d07691edc0a298f5",
+          "afterSha256": "56bf88dc4c3a627fc20affb2ea7a4b4b8792a9cdf66df0f0d07691edc0a298f5"
+        },
+        {
+          "kind": "imports",
+          "beforeStart": 85,
+          "beforeEnd": 832,
+          "afterStart": 85,
+          "afterEnd": 887,
+          "beforeSha256": "6f2ad837e59a1290f2f9a13bda7933c43ebfc93351c826cbcc59b3ff617e9979",
+          "afterSha256": "a831bb5697337ad64b828f7f57001a843d57b8b9be1d9c8faabd0394e5797dae",
+          "beforeText": "import { irCallableBindingKey } from \"./callable-bindings.js\";\nimport { forEachInstrDeep } from \"./nodes.js\";\nimport { assertPreparedIrProgramPopulation } from \"./program-population.js\";\nimport { preparedIrDataMismatch, preparedIrProgramOwner, PreparedIrProgramInvariantError } from \"./program.js\";\nimport type { PreparedIrProgramFailure, PreparedIrProgramProducerInput } from \"./program/prepared-contracts.js\";\nimport { irRuntimeCallableDeclaration, type IrRuntimeCallableDeclaration } from \"./runtime-callable-declarations.js\";\nimport { collectNativeAsyncCallableDemands, IrNativeAsyncCallableError } from \"./runtime/native-async-callables.js\";\nimport { collectVectorCallableDemands, IrVectorCallableError } from \"./runtime/vector-callables.js\";",
+          "afterText": "import { irCallableBindingKey } from \"../core/callable-bindings.js\";\nimport { forEachInstrDeep } from \"../core/nodes.js\";\nimport { assertPreparedIrProgramPopulation } from \"./population.js\";\nimport { preparedIrDataMismatch } from \"./data.js\";\nimport { preparedIrProgramOwner } from \"./owner.js\";\nimport { PreparedIrProgramInvariantError } from \"./errors.js\";\nimport type { PreparedIrProgramFailure, PreparedIrProgramProducerInput } from \"./prepared-contracts.js\";\nimport { irRuntimeCallableDeclaration, type IrRuntimeCallableDeclaration } from \"../runtime/callable-declarations.js\";\nimport { collectNativeAsyncCallableDemands, IrNativeAsyncCallableError } from \"../runtime/native-async-callables.js\";\nimport { collectVectorCallableDemands, IrVectorCallableError } from \"../runtime/vector-callables.js\";"
+        },
+        {
+          "kind": "unchanged",
+          "beforeStart": 832,
+          "beforeEnd": 1017,
+          "afterStart": 887,
+          "afterEnd": 1072,
+          "beforeSha256": "d80c74eaac2aea497f164ab3fe84b5e41c594c0f5028967002749c5c33e60780",
+          "afterSha256": "d80c74eaac2aea497f164ab3fe84b5e41c594c0f5028967002749c5c33e60780"
+        },
+        {
+          "kind": "export-module",
+          "beforeStart": 1017,
+          "beforeEnd": 1052,
+          "afterStart": 1072,
+          "afterEnd": 1099,
+          "beforeSha256": "57326bf80adf3127eacc9747436d31aa882422135db3ed97d3c3ac020b373f99",
+          "afterSha256": "ed9c03efe7634641cd7a7edbbd74ad2c90fd8baab276930c1be958cec24b718d",
+          "beforeText": "\"./program/runtime-abi-identity.js\"",
+          "afterText": "\"./runtime-abi-identity.js\""
+        },
+        {
+          "kind": "unchanged",
+          "beforeStart": 1052,
+          "beforeEnd": 4475,
+          "afterStart": 1099,
+          "afterEnd": 4522,
+          "beforeSha256": "c56fd4e9ee43c5f0466fd6b1e428bba2a30efb1805dabcbe96b965e736ffb7f6",
+          "afterSha256": "c56fd4e9ee43c5f0466fd6b1e428bba2a30efb1805dabcbe96b965e736ffb7f6"
+        }
+      ]
+    },
+    {
+      "donorPath": "src/ir/runtime-program-manifest.ts",
+      "implementationPath": "src/ir/program/runtime-manifest.ts",
+      "before": {
+        "path": "src/ir/runtime-program-manifest.ts",
+        "bytes": 12069,
+        "sha256": "d9698e66ad1d048e51dd58f6a5b47b2adf65a61da1787c5d543b1ac6437036a9",
+        "gitBlob": "bd80eecc4f6937a72757ea0124bea7af92e3cf27"
+      },
+      "facade": {
+        "path": "src/ir/runtime-program-manifest.ts",
+        "bytes": 450,
+        "sha256": "9d6a11bb96ce4dde466d92baf2945ca2c9a877ee5124a93ebaccac5118e44c56",
+        "gitBlob": "57fa674a5e7368c19cbc10e0ca608711b3889a55"
+      },
+      "implementation": {
+        "path": "src/ir/program/runtime-manifest.ts",
+        "bytes": 12179,
+        "sha256": "069795708c8134e2bf69f17ed9f546a2f63c9f3494889213e6c26b211388f470",
+        "gitBlob": "11202df8cb0c5c1f5cb4bf34e27927365591242b"
+      },
+      "facadeText": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n\n/** Compatibility exports; implementation belongs to the prepared-program owner. */\nexport {\n  locatedFailure,\n  invariant,\n  checkFunctionPopulation,\n  prepareWholeProgramRuntimeManifest,\n} from \"./program/runtime-manifest.js\";\nexport type {\n  PrepareWholeProgramRuntimeManifestInput,\n  PreparedWholeProgramRuntimeManifest,\n} from \"./program/runtime-manifest.js\";\n",
+      "valueExports": ["locatedFailure", "invariant", "checkFunctionPopulation", "prepareWholeProgramRuntimeManifest"],
+      "typeExports": ["PrepareWholeProgramRuntimeManifestInput", "PreparedWholeProgramRuntimeManifest"],
+      "segments": [
+        {
+          "kind": "unchanged",
+          "beforeStart": 0,
+          "beforeEnd": 196,
+          "afterStart": 0,
+          "afterEnd": 196,
+          "beforeSha256": "0b89fed9b126252c7b2c2eadeb81f14efde3ff2a956418b51e9767ea75bf6d91",
+          "afterSha256": "0b89fed9b126252c7b2c2eadeb81f14efde3ff2a956418b51e9767ea75bf6d91"
+        },
+        {
+          "kind": "imports",
+          "beforeStart": 196,
+          "beforeEnd": 2313,
+          "afterStart": 196,
+          "afterEnd": 2423,
+          "beforeSha256": "94ce5f02ddef1d6cc8ba339d0c2c8f1924b3e5e5afa0cb76108c3f10d5bcbe9c",
+          "afterSha256": "1c053f5affe0ffe78fc66d90cbdfe52545accec0b79acde8d330e990a10ac0ef",
+          "beforeText": "import {\n  assertPreparedIrAsyncRuntimeCurrent,\n  preparedIrAsyncFrameCapabilityFailure,\n} from \"./runtime/async-attachment.js\";\nimport { irAsyncPlanNeedsNumberBridge } from \"./analysis/async-plan.js\";\nimport type { IrUnitId } from \"../shared/contracts/ir-identity.js\";\nimport {\n  IrRuntimeFunctionPreparationError,\n  prepareIrRuntimeManifest,\n  type IrRuntimeManifestDemands,\n} from \"./intrinsic-support.js\";\nimport type { PreparedIrRuntimeManifest } from \"./runtime/contracts/prepared.js\";\nimport { INTRINSIC_DEFINITIONS } from \"./core/intrinsics.js\";\nimport type { IntrinsicSourceLocation } from \"./core/intrinsic-contracts.js\";\nimport { forEachInstrDeep } from \"./nodes.js\";\nimport type { PreparedIrFunction as IrFunction } from \"./runtime/contracts/prepared.js\";\nimport { classifyIrFailure, IrInvariantError } from \"./outcomes.js\";\nimport type { IrPreparationFailure } from \"../shared/contracts/ir-preparation-failure.js\";\nimport { PreparedIrProgramInvariantError, preparedIrProgramOwner, preparedIrReadonlyMap } from \"./program.js\";\nimport type { PreparedIrProgramFailure, PreparedIrProgramProducerInput } from \"./program/prepared-contracts.js\";\nimport { assertPreparedIrProgramPopulation } from \"./program-population.js\";\nimport { irRuntimeCallableDeclaration } from \"./runtime/callable-declarations.js\";\nimport {\n  collectNativeAsyncCallableDemands,\n  IrNativeAsyncCallableError,\n  type IrNativeAsyncCallableDemand,\n} from \"./runtime/native-async-callables.js\";\nimport {\n  collectVectorCallableDemands,\n  IrVectorCallableError,\n  type IrVectorCallableDemand,\n} from \"./runtime/vector-callables.js\";\nimport {\n  FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES,\n  GENERATOR_NUMBER_BOX_RUNTIME_FEATURES,\n  HOST_CALLBACK_WRAP_RUNTIME_FEATURES,\n  STRING_CHAR_CODE_AT_RUNTIME_FEATURES,\n  STRING_COMPARE_RUNTIME_FEATURES,\n  STRING_CONCAT_MANY_RUNTIME_FEATURES,\n  STRING_CONCAT_RUNTIME_FEATURES,\n  STRING_CONST_RUNTIME_FEATURES,\n  STRING_EQ_RUNTIME_FEATURES,\n  STRING_LEN_RUNTIME_FEATURES,\n  RuntimeManifestInvariantError,\n} from \"./runtime/manifest.js\";\nimport type { RuntimeFeature } from \"./runtime/contracts/manifest.js\";",
+          "afterText": "import {\n  assertPreparedIrAsyncRuntimeCurrent,\n  preparedIrAsyncFrameCapabilityFailure,\n} from \"../runtime/async-attachment.js\";\nimport { irAsyncPlanNeedsNumberBridge } from \"../analysis/async-plan.js\";\nimport type { IrUnitId } from \"../../shared/contracts/ir-identity.js\";\nimport {\n  IrRuntimeFunctionPreparationError,\n  prepareIrRuntimeManifest,\n  type IrRuntimeManifestDemands,\n} from \"../runtime/intrinsic-preparation.js\";\nimport type { PreparedIrRuntimeManifest } from \"../runtime/contracts/prepared.js\";\nimport { INTRINSIC_DEFINITIONS } from \"../core/intrinsics.js\";\nimport type { IntrinsicSourceLocation } from \"../core/intrinsic-contracts.js\";\nimport { forEachInstrDeep } from \"../core/nodes.js\";\nimport type { PreparedIrFunction as IrFunction } from \"../runtime/contracts/prepared.js\";\nimport { classifyIrFailure, IrInvariantError } from \"../../shared/contracts/ir-preparation-errors.js\";\nimport type { IrPreparationFailure } from \"../../shared/contracts/ir-preparation-failure.js\";\nimport { PreparedIrProgramInvariantError } from \"./errors.js\";\nimport { preparedIrProgramOwner } from \"./owner.js\";\nimport { preparedIrReadonlyMap } from \"./data.js\";\nimport type { PreparedIrProgramFailure, PreparedIrProgramProducerInput } from \"./prepared-contracts.js\";\nimport { assertPreparedIrProgramPopulation } from \"./population.js\";\nimport { irRuntimeCallableDeclaration } from \"../runtime/callable-declarations.js\";\nimport {\n  collectNativeAsyncCallableDemands,\n  IrNativeAsyncCallableError,\n  type IrNativeAsyncCallableDemand,\n} from \"../runtime/native-async-callables.js\";\nimport {\n  collectVectorCallableDemands,\n  IrVectorCallableError,\n  type IrVectorCallableDemand,\n} from \"../runtime/vector-callables.js\";\nimport {\n  FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES,\n  GENERATOR_NUMBER_BOX_RUNTIME_FEATURES,\n  HOST_CALLBACK_WRAP_RUNTIME_FEATURES,\n  STRING_CHAR_CODE_AT_RUNTIME_FEATURES,\n  STRING_COMPARE_RUNTIME_FEATURES,\n  STRING_CONCAT_MANY_RUNTIME_FEATURES,\n  STRING_CONCAT_RUNTIME_FEATURES,\n  STRING_CONST_RUNTIME_FEATURES,\n  STRING_EQ_RUNTIME_FEATURES,\n  STRING_LEN_RUNTIME_FEATURES,\n  RuntimeManifestInvariantError,\n} from \"../runtime/manifest.js\";\nimport type { RuntimeFeature } from \"../runtime/contracts/manifest.js\";"
+        },
+        {
+          "kind": "unchanged",
+          "beforeStart": 2313,
+          "beforeEnd": 12069,
+          "afterStart": 2423,
+          "afterEnd": 12179,
+          "beforeSha256": "d6dd8ea16fb04b911a4ad04c3934b33f472750c9c69e69601279730fb16e2c35",
+          "afterSha256": "d6dd8ea16fb04b911a4ad04c3934b33f472750c9c69e69601279730fb16e2c35"
+        }
+      ]
+    },
+    {
+      "donorPath": "src/ir/program-runtime-validation.ts",
+      "implementationPath": "src/ir/program/runtime-validation.ts",
+      "before": {
+        "path": "src/ir/program-runtime-validation.ts",
+        "bytes": 8186,
+        "sha256": "bb4006f9bcdf641f665b6b1ee10ea6fd8ced30e168d09faf8439358d574f2b0c",
+        "gitBlob": "0e514564a61e077baaba01048ad5ca6a5688ebd9"
+      },
+      "facade": {
+        "path": "src/ir/program-runtime-validation.ts",
+        "bytes": 302,
+        "sha256": "8dbc664c29166cade8867d58f5bddb3af3e12d9e98c25aea2a9f8ce9c7ac7e9b",
+        "gitBlob": "604c5aa1638a98e23a745c957d13dab304a88ee7"
+      },
+      "implementation": {
+        "path": "src/ir/program/runtime-validation.ts",
+        "bytes": 8248,
+        "sha256": "1aa7bc3520b1c88483821d96fa41c633bb02e9082c6e6993605847ef296cd13f",
+        "gitBlob": "51ee28bc9e2e12bb392c6c680ce526256fdb4d65"
+      },
+      "facadeText": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n\n/** Compatibility exports; implementation belongs to the prepared-program owner. */\nexport {\n  assertPreparedIrSemanticRuntimeSeparation,\n  assertPreparedIrRuntimeProjection,\n} from \"./program/runtime-validation.js\";\n",
+      "valueExports": ["assertPreparedIrSemanticRuntimeSeparation", "assertPreparedIrRuntimeProjection"],
+      "typeExports": [],
+      "segments": [
+        {
+          "kind": "unchanged",
+          "beforeStart": 0,
+          "beforeEnd": 85,
+          "afterStart": 0,
+          "afterEnd": 85,
+          "beforeSha256": "56bf88dc4c3a627fc20affb2ea7a4b4b8792a9cdf66df0f0d07691edc0a298f5",
+          "afterSha256": "56bf88dc4c3a627fc20affb2ea7a4b4b8792a9cdf66df0f0d07691edc0a298f5"
+        },
+        {
+          "kind": "imports",
+          "beforeStart": 85,
+          "beforeEnd": 816,
+          "afterStart": 85,
+          "afterEnd": 878,
+          "beforeSha256": "b9eca45a4ae6039c0321ca3029a83ebf61bc786c5dd5ded6b55f0ca9efc5da4c",
+          "afterSha256": "20f024a9b071597be685c6c293b2c7b80ad5d9d93f3df983fe79db3b5f4ca66d",
+          "beforeText": "import { assertPreparedIrAsyncRuntimeCurrent } from \"./async-plan.js\";\nimport { forEachInstrDeep, forEachNestedBuffer, type IrInstr } from \"./nodes.js\";\nimport { IR_ASYNC_CLOCK_SNAPSHOT_FN } from \"./core/async-callables.js\";\nimport { nativeAsyncCallablePolicyMismatch, nativeAsyncProviderMismatch } from \"./runtime/native-async-callables.js\";\nimport { preparedIrDraftAbiLookup } from \"./program-abi-contracts.js\";\nimport { irProgramRuntimeDemands } from \"./program-runtime-demands.js\";\nimport { prepareWholeProgramRuntimeManifest } from \"./runtime-program-manifest.js\";\nimport {\n  preparedIrDataMismatch,\n  PreparedIrProgramInvariantError,\n  type PreparedIrProgram,\n  type PreparedIrProgramRuntimeProjection,\n} from \"./program.js\";",
+          "afterText": "import { assertPreparedIrAsyncRuntimeCurrent } from \"../runtime/async-attachment.js\";\nimport { forEachInstrDeep, forEachNestedBuffer, type IrInstr } from \"../core/nodes.js\";\nimport { IR_ASYNC_CLOCK_SNAPSHOT_FN } from \"../core/async-callables.js\";\nimport { nativeAsyncCallablePolicyMismatch, nativeAsyncProviderMismatch } from \"../runtime/native-async-callables.js\";\nimport { preparedIrDraftAbiLookup } from \"./draft-abi-lookup.js\";\nimport { irProgramRuntimeDemands } from \"./runtime-demands.js\";\nimport { prepareWholeProgramRuntimeManifest } from \"./runtime-manifest.js\";\nimport { preparedIrDataMismatch } from \"./data.js\";\nimport { PreparedIrProgramInvariantError } from \"./errors.js\";\nimport { type PreparedIrProgram, type PreparedIrProgramRuntimeProjection } from \"./prepared-contracts.js\";"
+        },
+        {
+          "kind": "unchanged",
+          "beforeStart": 816,
+          "beforeEnd": 8186,
+          "afterStart": 878,
+          "afterEnd": 8248,
+          "beforeSha256": "5ebc05d9ff2cbf3ad907c39c0f3541a58bc8fe062b519e0d4da07af7646ba197",
+          "afterSha256": "5ebc05d9ff2cbf3ad907c39c0f3541a58bc8fe062b519e0d4da07af7646ba197"
+        }
+      ]
+    },
+    {
+      "donorPath": "src/ir/program-validation.ts",
+      "implementationPath": "src/ir/program/validation.ts",
+      "before": {
+        "path": "src/ir/program-validation.ts",
+        "bytes": 19427,
+        "sha256": "816c404e96f8e9a5782d5c51714f0aec0592967bb13f1e09ca50f3f29c2c3299",
+        "gitBlob": "46d2679da3f750ac01b54b40cc33ba9ae2eb29ba"
+      },
+      "facade": {
+        "path": "src/ir/program-validation.ts",
+        "bytes": 236,
+        "sha256": "b64454a7c97179e8efdab677049fb0f231ba3b6ce731bff602b231406d2dd098",
+        "gitBlob": "fbcd84648424059795285aa45f85020e564ed2ba"
+      },
+      "implementation": {
+        "path": "src/ir/program/validation.ts",
+        "bytes": 19448,
+        "sha256": "572aab2d72f9eabf322347e90c3d13e25f690a44fa3cede1ac5666dcd1674354",
+        "gitBlob": "18e65c59b175e01412683b4c0b977513bde868fe"
+      },
+      "facadeText": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\n\n/** Compatibility exports; implementation belongs to the prepared-program owner. */\nexport { assertPreparedIrProgram } from \"./program/validation.js\";\n",
+      "valueExports": ["assertPreparedIrProgram"],
+      "typeExports": [],
+      "segments": [
+        {
+          "kind": "unchanged",
+          "beforeStart": 0,
+          "beforeEnd": 85,
+          "afterStart": 0,
+          "afterEnd": 85,
+          "beforeSha256": "56bf88dc4c3a627fc20affb2ea7a4b4b8792a9cdf66df0f0d07691edc0a298f5",
+          "afterSha256": "56bf88dc4c3a627fc20affb2ea7a4b4b8792a9cdf66df0f0d07691edc0a298f5"
+        },
+        {
+          "kind": "imports",
+          "beforeStart": 85,
+          "beforeEnd": 1841,
+          "afterStart": 85,
+          "afterEnd": 1862,
+          "beforeSha256": "14f341730dd4b5256b0624579eefe29a069c79d5ae6e093657eedac4322f9ded",
+          "afterSha256": "79621be69e14513f2d244ebc6959e4e3a161d4840aed24942b076a34d8120994",
+          "beforeText": "import { irCallableBindingKey, irUnitCallableBindingId } from \"./callable-bindings.js\";\nimport { irGlobalBindingKey, irTypeBindingKey } from \"./abi-bindings.js\";\nimport { irBindingKey } from \"./declared-types.js\";\nimport { forEachInstrDeep } from \"./nodes.js\";\nimport type { IrDeclaredSignature } from \"./core/nodes.js\";\nimport type { IrType } from \"./core/types.js\";\nimport { ProgramAbiMap } from \"./program-abi.js\";\nimport { preparedIrProgramCallableResults } from \"./program-callable-contract.js\";\nimport {\n  preparedIrCallableSignature,\n  preparedIrClassLayoutKey,\n  preparedIrDataKey,\n  preparedIrTypeKey,\n} from \"./program-abi-contracts.js\";\nimport { assertPreparedIrProgramPopulation } from \"./program-population.js\";\nimport { preparedIrDataMismatch, PreparedIrProgramInvariantError } from \"./program.js\";\nimport type { PreparedIrAbiEntry, PreparedIrProgram } from \"./program/prepared-contracts.js\";\nimport {\n  prepareIrProgramRuntimeCallables,\n  preparedIrRuntimeAbiAnchor,\n  preparedIrRuntimeCallableBindingId,\n} from \"./program-runtime-abi.js\";\nimport { verifyIrFunction, type IrVerificationOptions } from \"./verify.js\";\nimport { assertPreparedIrClassLayouts } from \"./program-class-layouts.js\";\nimport { assertPreparedIrProgramAllocations } from \"./program-allocations.js\";\nimport { assertIrRuntimeSupport } from \"./program/runtime-support.js\";\nimport { numberFormatRadixSupportDeclarations } from \"./program/formatter-support.js\";\nimport { assertPreparedIrRuntimeSupportDependencies } from \"./prepared-component-dependencies.js\";\nimport { irRuntimeCallableHasNoSlot } from \"./runtime/native-async-callables.js\";\nimport {\n  assertPreparedIrRuntimeProjection,\n  assertPreparedIrSemanticRuntimeSeparation,\n} from \"./program-runtime-validation.js\";",
+          "afterText": "import { irCallableBindingKey, irUnitCallableBindingId } from \"../core/callable-bindings.js\";\nimport { irGlobalBindingKey } from \"../core/global-binding-keys.js\";\nimport { irTypeBindingKey } from \"../core/type-binding-keys.js\";\nimport { irBindingKey } from \"../core/declared-types.js\";\nimport { forEachInstrDeep } from \"../core/nodes.js\";\nimport type { IrDeclaredSignature } from \"../core/nodes.js\";\nimport type { IrType } from \"../core/types.js\";\nimport { ProgramAbiMap } from \"./abi.js\";\nimport { preparedIrProgramCallableResults } from \"./callable-results.js\";\nimport {\n  preparedIrCallableSignature,\n  preparedIrClassLayoutKey,\n  preparedIrDataKey,\n  preparedIrTypeKey,\n} from \"./abi-signatures.js\";\nimport { assertPreparedIrProgramPopulation } from \"./population.js\";\nimport { preparedIrDataMismatch } from \"./data.js\";\nimport { PreparedIrProgramInvariantError } from \"./errors.js\";\nimport type { PreparedIrAbiEntry, PreparedIrProgram } from \"./prepared-contracts.js\";\nimport {\n  prepareIrProgramRuntimeCallables,\n  preparedIrRuntimeAbiAnchor,\n  preparedIrRuntimeCallableBindingId,\n} from \"./runtime-abi.js\";\nimport { verifyIrFunction, type IrVerificationOptions } from \"../runtime/verify.js\";\nimport { assertPreparedIrClassLayouts } from \"./class-layouts.js\";\nimport { assertPreparedIrProgramAllocations } from \"./allocations.js\";\nimport { assertIrRuntimeSupport } from \"./runtime-support.js\";\nimport { numberFormatRadixSupportDeclarations } from \"./formatter-support.js\";\nimport { assertPreparedIrRuntimeSupportDependencies } from \"./runtime-support-dependencies.js\";\nimport { irRuntimeCallableHasNoSlot } from \"../runtime/native-async-callables.js\";\nimport { assertPreparedIrRuntimeProjection, assertPreparedIrSemanticRuntimeSeparation } from \"./runtime-validation.js\";"
+        },
+        {
+          "kind": "unchanged",
+          "beforeStart": 1841,
+          "beforeEnd": 19427,
+          "afterStart": 1862,
+          "afterEnd": 19448,
+          "beforeSha256": "378d8a643901dee7e3bb1e1e8a4fc5312ff04d3cbcd92d5e3c81d16ecbc6bf6d",
+          "afterSha256": "378d8a643901dee7e3bb1e1e8a4fc5312ff04d3cbcd92d5e3c81d16ecbc6bf6d"
+        }
+      ]
+    }
+  ]
+}

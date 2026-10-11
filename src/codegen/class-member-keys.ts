@@ -64,9 +64,23 @@ export function classMemberFuncKey(ctx: CodegenContext, fullName: string, kind?:
   if (kind === "static" && ctx.classMethodSet.has(fullName)) {
     key = `__cm$static$${key}`;
   }
+  // (#6772 S4) A MEMBER literally named `new` / `init` (`new() {}` too —
+  // TS cooks the escape) must not take the allocator's `<C>_new` or the
+  // constructor body's `<C>_init` key: registration then skipped the method and
+  // the body fill compiled the method INTO the allocator. Only member callers
+  // pass `kind`; the allocator / `_init` lookups never do.
+  if (kind !== undefined && isConstructorSlotKey(ctx, fullName)) key = `__cm$member$${key}`;
   let n = 0;
   while (ctx.topLevelFunctionNames.has(key)) key = `__cm$${fullName}$${n++}`;
   return key;
+}
+
+/** `<C>_new` / `<C>_init` for a class `C` of this program. */
+function isConstructorSlotKey(ctx: CodegenContext, fullName: string): boolean {
+  for (const suffix of ["_new", "_init"]) {
+    if (fullName.endsWith(suffix) && ctx.classSet.has(fullName.slice(0, -suffix.length))) return true;
+  }
+  return false;
 }
 
 /**
@@ -202,4 +216,87 @@ export function elementCallTargetsStaticMethod(
   return (
     ctx.staticMethodSet.has(fullName) && ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static")) !== undefined
   );
+}
+
+/**
+ * (#6772 S5) True when a computed member key contains a plain assignment
+ * outside any nested function. `resolveComputedKeyExpression` folds
+ * `[x = 1]` to its RHS (literals.ts), so the member's NAME is static — but the
+ * write is still part of ClassDefinitionEvaluation and must run there.
+ */
+export function computedKeyHasAssignment(node: ts.Node): boolean {
+  if (ts.isFunctionLike(node) || ts.isClassLike(node)) return false;
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) return true;
+  return ts.forEachChild(node, (child) => computedKeyHasAssignment(child) || undefined) === true;
+}
+
+/** (#6772 S5) A method / accessor of `decl` whose computed key contains an assignment. */
+export function classHasComputedKeyAssignment(decl: ts.ClassLikeDeclaration): boolean {
+  return decl.members.some(
+    (member) =>
+      (ts.isMethodDeclaration(member) || ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) &&
+      ts.isComputedPropertyName(member.name) &&
+      computedKeyHasAssignment(member.name.expression),
+  );
+}
+
+/**
+ * (#6772 S12) funcMap key of a STATIC accessor half. A class may declare
+ * `static get x()` next to `get x()`: the two have different receivers, but
+ * both used to take `<C>_get_x`, so the second registration was skipped (#1983)
+ * and every read of one called the other. When an instance accessor of the
+ * same name exists the static half relocates to `__cm$static$…`; the instance
+ * key, and every class without the collision, stay byte-identical.
+ */
+export function staticAccessorFuncKey(
+  ctx: CodegenContext,
+  className: string,
+  half: "get" | "set",
+  propName: string,
+): string {
+  const legacy = classMemberFuncKey(ctx, `${className}_${half}_${propName}`);
+  return ctx.classInstanceAccessorKeys.has(`${className}_${propName}`) ? `__cm$static$${legacy}` : legacy;
+}
+
+/** funcMap key of an accessor half of either kind. */
+export function classAccessorFuncKey(
+  ctx: CodegenContext,
+  className: string,
+  half: "get" | "set",
+  propName: string,
+  isStatic: boolean,
+): string {
+  return isStatic
+    ? staticAccessorFuncKey(ctx, className, half, propName)
+    : classMemberFuncKey(ctx, `${className}_${half}_${propName}`);
+}
+
+/**
+ * (#6772 S12) `<C>_<p>` names an INSTANCE accessor. `classAccessorSet` holds
+ * both kinds, so the old `has && !staticAccessorSet.has` spelling also said
+ * "no" for an instance accessor that has a static twin.
+ */
+export function isInstanceAccessorKey(ctx: CodegenContext, accessorKey: string): boolean {
+  return (
+    ctx.classAccessorSet.has(accessorKey) &&
+    (!ctx.staticAccessorSet.has(accessorKey) || ctx.classInstanceAccessorKeys.has(accessorKey))
+  );
+}
+
+/**
+ * (#6772 S12) The key a STATIC-receiver site looks up: the relocated static
+ * half when the accessor has an instance twin, otherwise the site's own legacy
+ * key — so every class without the collision keeps its bytes.
+ */
+export function staticReceiverAccessorKey(
+  ctx: CodegenContext,
+  className: string,
+  half: "get" | "set",
+  propName: string,
+  legacyKey: string = classMemberFuncKey(ctx, `${className}_${half}_${propName}`),
+): string {
+  const key = `${className}_${propName}`;
+  return ctx.staticAccessorSet.has(key) && ctx.classInstanceAccessorKeys.has(key)
+    ? staticAccessorFuncKey(ctx, className, half, propName)
+    : legacyKey;
 }

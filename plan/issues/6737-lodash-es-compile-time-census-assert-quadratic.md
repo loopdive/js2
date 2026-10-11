@@ -14,7 +14,7 @@ task_type: performance
 area: compiler
 goal: standalone
 requested_by: ttraenkler/sendev-standalone
-related: [6720, 6704, 3525, 6741, 6745, 6732]
+related: [6720, 6704, 3525, 6741, 6745, 6732, 6742]
 loc-budget-allow:
   # 2026-09-28 (#6737): +16 — the user-program name sets of
   # collectDeclaredGlobals move into a memoized helper in the same file.
@@ -169,3 +169,13 @@ That is the #4586 / [#6732](https://js2wasm.loopdive.com/dashboard/issue.html?sl
 O4-Flatten class (present on main before this change); the remaining
 compile-time item is hotspot 1 (`wasm-opt -O4` on a 5.8 MB module) and
 hotspot 3 (first module-init pass), both unchanged here.
+
+## Update 2026-09-29 — remaining item 1 (`wasm-opt -O4`) handled by #6742
+
+The standalone lanes now choose the wasm-opt level from the raw size and the
+lane budget, and record it
+([#6742](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6742-npm-compat-standalone-budget-aware-wasm-opt-level)).
+lodash-es (5.82 MB raw) is still planned at `-O4`: 251.8 CPU-s,
+3,627,787 B. In a 120 s child, the rungs that cannot fit are skipped, down
+to `-O1` (38.4 CPU-s, 4,233,275 B) or to level 0. Items 2 (census syntax
+walk) and 3 (first module-init pass) remain open here.

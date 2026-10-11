@@ -2,47 +2,8 @@
 import type { FuncHandle, TypeHandle, Instr, LocalDef } from "../../../wasm/model/instructions.js";
 import { buildTargetTaggedTry } from "../../../wasm/physical/exception-control.js";
 import { PROMISE_STATE_FULFILLED, PROMISE_STATE_REJECTED } from "./settlement-bodies.js";
-
-/**
- * (#5197 r3 Step 4) §27.2.1.3 [[AlreadyResolved]], recorded per settle FUNCTION
- * in its `bfnstate` word (bits 0/1 are the builtin-fn delete bits; readers
- * mask them, so this bit is invisible to them). A settle function's second call
- * is a no-op, and an abrupt completion after `resolve(thenable)` — the promise
- * still PENDING — is ignored by the executor / thenable-job catch, which asks
- * {@link buildSettlePairUnresolvedInstrs}. No layout change: `$__promise_settle_cap`
- * and its backend twin are untouched. Deliberate residual: the pair does not
- * share one record, so `resolve(thenable); reject(r)` from the SAME pair still
- * rejects the pending promise (it did before as well).
- */
-export const SETTLE_FN_CALLED_BIT = 0x100;
-/**
- * The `bfnstate` slot of the settle-cap layout `buildPromiseSettleClosureValue`
- * asserts (func, arity, bag, bfnstate, bfnid, cap_promise — `capPromiseFieldIdx`
- * 5). Spelled here rather than imported so this runtime body adds no module edge.
- */
-const SETTLE_CAP_STATE_FIELD_IDX = 3;
-
-/** `[] → [i32]`: 1 iff neither settle function of a pair has been called. */
-export function buildSettlePairUnresolvedInstrs(
-  capTypeIdx: TypeHandle,
-  resolveFn: readonly Instr[],
-  rejectFn: readonly Instr[],
-): Instr[] {
-  const calledBit = (fn: readonly Instr[]): Instr[] => [
-    ...fn,
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: capTypeIdx },
-    { op: "struct.get", typeIdx: capTypeIdx, fieldIdx: SETTLE_CAP_STATE_FIELD_IDX },
-  ];
-  return [
-    ...calledBit(resolveFn),
-    ...calledBit(rejectFn),
-    { op: "i32.or" },
-    { op: "i32.const", value: SETTLE_FN_CALLED_BIT },
-    { op: "i32.and" },
-    { op: "i32.eqz" },
-  ];
-}
+import { buildPromiseReactionHandled } from "./rejection-event-bodies.js";
+import { buildPromiseResolvingPairGuard } from "./resolving-pair-bodies.js";
 
 export interface PromiseResolutionBindings {
   readonly hasCallableThenFuncIdx: FuncHandle;
@@ -52,6 +13,7 @@ export interface PromiseResolutionBindings {
   readonly newTypeErrorFuncIdx: FuncHandle;
 }
 export interface PromiseResolveValueResources {
+  readonly rejectionDispatchFuncIdx?: FuncHandle;
   readonly target: { wasi: boolean; standalone: boolean };
   readonly state: {
     readonly promiseFulfillFuncIdx: FuncHandle;
@@ -376,6 +338,7 @@ export function buildPromiseResolveValueBody(resources: PromiseResolveValueResou
         { op: "local.set", index: innerLocal },
         ...selfCheck,
         ...ownThenArm,
+        ...buildPromiseReactionHandled(resources.rejectionDispatchFuncIdx, promiseTypeIdx, innerLocal),
         // caps = $__then_caps{ callback: null, chained: promise }
         { op: "ref.null.extern" },
         { op: "local.get", index: promiseLocal },
@@ -452,14 +415,23 @@ export interface PromiseSettleClosureResources {
   readonly capTypeIdx: TypeHandle;
   readonly capMetaTypeIdx: TypeHandle;
   readonly capPromiseFieldIdx: number;
+  /** Shared by one resolving pair; fresh for each assimilation job. */
+  readonly guardTypeIdx?: TypeHandle;
+  readonly rejectionDispatchFuncIdx?: FuncHandle;
+  readonly duplicateEvent?: 2 | 3;
 }
 export function buildPromiseSettleClosureValue(
   closures: PromiseSettleClosureResources,
   clFuncIdx: FuncHandle,
   promiseInstrs: readonly Instr[],
+  guardInstrs: readonly Instr[] = [],
 ): Instr[] {
   if (closures.capPromiseFieldIdx !== 5)
     throw new Error("Promise settle closure requires function/arity/bag/state/metadata/capture layout");
+  if (closures.guardTypeIdx !== undefined && guardInstrs.length === 0)
+    throw new Error("Promise settle closure requires its shared resolving-pair guard");
+  if (closures.guardTypeIdx === undefined && guardInstrs.length !== 0)
+    throw new Error("Legacy Promise settle closure cannot carry a resolving-pair guard");
   return [
     { op: "ref.func", funcIdx: clFuncIdx },
     { op: "i32.const", value: 1 }, // (#3673) $arity — settle fns take 1 arg
@@ -471,6 +443,7 @@ export function buildPromiseSettleClosureValue(
     { op: "i32.const", value: 0 },
     { op: "i32.const", value: closures.capMetaTypeIdx },
     ...promiseInstrs,
+    ...guardInstrs,
     { op: "struct.new", typeIdx: closures.capTypeIdx },
   ];
 }
@@ -480,23 +453,8 @@ export function buildPromiseSettleClosureBody(
   settleFuncIdx: FuncHandle,
 ): Instr[] {
   const { capTypeIdx, capPromiseFieldIdx } = resources;
-  const self: Instr[] = [
-    { op: "local.get", index: 0 },
-    { op: "ref.cast", typeIdx: capTypeIdx },
-  ];
   return [
-    // (#5197 r3) [[AlreadyResolved]]: a second call of this function is a no-op.
-    ...self,
-    { op: "struct.get", typeIdx: capTypeIdx, fieldIdx: SETTLE_CAP_STATE_FIELD_IDX },
-    { op: "i32.const", value: SETTLE_FN_CALLED_BIT },
-    { op: "i32.and" },
-    { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
-    ...self,
-    ...self,
-    { op: "struct.get", typeIdx: capTypeIdx, fieldIdx: SETTLE_CAP_STATE_FIELD_IDX },
-    { op: "i32.const", value: SETTLE_FN_CALLED_BIT },
-    { op: "i32.or" },
-    { op: "struct.set", typeIdx: capTypeIdx, fieldIdx: SETTLE_CAP_STATE_FIELD_IDX },
+    ...(resources.guardTypeIdx === undefined ? [] : buildPromiseResolvingPairGuard(resources)),
     { op: "local.get", index: 0 }, // self: (ref $wrapperRoot)
     { op: "ref.cast", typeIdx: capTypeIdx }, // downcast to the cap subtype (non-null)
     { op: "struct.get", typeIdx: capTypeIdx, fieldIdx: capPromiseFieldIdx }, // captured (ref $Promise)
@@ -540,8 +498,8 @@ export function buildPromiseThenableJob(resources: PromiseThenableJobResources):
   const reasonLocal = 3;
   const vecLocal = 4;
   const capturedThenLocal = 5;
-  const resolveFnLocal = 6; // (#5197 r3) the job's fresh pair, for the catch's [[AlreadyResolved]] test
-  const rejectFnLocal = 7;
+  const rejectClosureLocal = 6;
+  const guardLocal = 7;
   // (#5197 R3-5) `__apply_closure(fn, recv, argvec)` — the open closure-call
   // bridge. Reserved here so the funcIdx is stable before this body bakes it.
   const jobLocals: LocalDef[] = [
@@ -549,26 +507,33 @@ export function buildPromiseThenableJob(resources: PromiseThenableJobResources):
     { name: "$reason", type: { kind: "externref" } },
     { name: "$argvec", type: { kind: "externref" } },
     { name: "$capturedThen", type: { kind: "externref" } },
-    { name: "$resolveFn", type: { kind: "externref" } },
-    { name: "$rejectFn", type: { kind: "externref" } },
+    ...(execClosures.guardTypeIdx === undefined
+      ? []
+      : ([
+          { name: "$rejectClosure", type: { kind: "externref" } },
+          { name: "$resolvingPair", type: { kind: "ref", typeIdx: execClosures.guardTypeIdx } },
+        ] satisfies LocalDef[])),
   ];
-  const emitSettleCap = (clFuncIdx: number, dst: number): Instr[] => [
-    ...buildPromiseSettleClosureValue(execClosures, clFuncIdx, [
-      { op: "local.get", index: promiseLocal },
-      { op: "ref.as_non_null" },
-    ]),
+  const emitSettleCap = (clFuncIdx: number): Instr[] => [
+    ...buildPromiseSettleClosureValue(
+      execClosures,
+      clFuncIdx,
+      [{ op: "local.get", index: promiseLocal }, { op: "ref.as_non_null" }],
+      execClosures.guardTypeIdx === undefined ? [] : [{ op: "local.get", index: guardLocal }],
+    ),
     { op: "extern.convert_any" },
-    { op: "local.tee", index: dst },
   ];
   const jobTryBody: Instr[] = [
     // argvec = [resolveFn, rejectFn]
     { op: "call", funcIdx: objVecNewIdx },
     { op: "local.set", index: vecLocal },
     { op: "local.get", index: vecLocal },
-    ...emitSettleCap(execClosures.resolveClFuncIdx, resolveFnLocal),
+    ...emitSettleCap(execClosures.resolveClFuncIdx),
     { op: "call", funcIdx: objVecPushIdx },
     { op: "local.get", index: vecLocal },
-    ...emitSettleCap(execClosures.rejectClFuncIdx, rejectFnLocal),
+    ...(execClosures.guardTypeIdx === undefined
+      ? emitSettleCap(execClosures.rejectClFuncIdx)
+      : ([{ op: "local.get", index: rejectClosureLocal }] satisfies Instr[])),
     { op: "call", funcIdx: objVecPushIdx },
     // __call_m_then_vararg(peel(thenable), argvec) — `then.call(thenable,
     // res, rej)`. The peel unwraps an `$AnyValue`-boxed resolution so the
@@ -621,40 +586,39 @@ export function buildPromiseThenableJob(resources: PromiseThenableJobResources):
       { op: "ref.cast", typeIdx: capsTypeIdx },
       { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: capsFields.chained },
       { op: "local.set", index: promiseLocal },
+      ...(execClosures.guardTypeIdx === undefined
+        ? []
+        : ([
+            { op: "i32.const", value: 0 },
+            { op: "struct.new", typeIdx: execClosures.guardTypeIdx },
+            { op: "local.set", index: guardLocal },
+            ...emitSettleCap(execClosures.rejectClFuncIdx),
+            { op: "local.set", index: rejectClosureLocal },
+          ] satisfies Instr[])),
       buildTargetTaggedTry(target, { kind: "empty" }, jobTryBody, [
         {
           tagIdx: exnTag,
           body: [
             // A throw from Get/then-call before settle rejects the promise
             // (§27.2.2.2 step 2 / §27.2.1.3.2 step 15). Post-settle throws
-            // are no-ops via the one-shot settle guard, and (#5197 r3) so is a
-            // throw after the pair already resolved — still pending when it
-            // resolved with a thenable. A throw before the pair was minted
-            // (null locals) keeps the unconditional reject.
+            // are no-ops via the shared resolving-pair guard, including when
+            // resolve adopted a thenable and the promise is still pending.
             { op: "local.set", index: reasonLocal },
-            { op: "local.get", index: rejectFnLocal },
-            { op: "ref.is_null" },
-            {
-              op: "if",
-              blockType: { kind: "val", type: { kind: "i32" } },
-              then: [{ op: "i32.const", value: 1 }],
-              else: buildSettlePairUnresolvedInstrs(
-                execClosures.capTypeIdx,
-                [{ op: "local.get", index: resolveFnLocal }],
-                [{ op: "local.get", index: rejectFnLocal }],
-              ),
-            },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                { op: "local.get", index: promiseLocal },
-                { op: "ref.as_non_null" },
-                { op: "local.get", index: reasonLocal },
-                { op: "call", funcIdx: state.promiseRejectFuncIdx },
-                { op: "drop" },
-              ],
-            },
+            ...(execClosures.guardTypeIdx === undefined
+              ? ([
+                  { op: "local.get", index: promiseLocal },
+                  { op: "ref.as_non_null" },
+                  { op: "local.get", index: reasonLocal },
+                  { op: "call", funcIdx: state.promiseRejectFuncIdx },
+                  { op: "drop" },
+                ] satisfies Instr[])
+              : ([
+                  { op: "local.get", index: rejectClosureLocal },
+                  { op: "any.convert_extern" },
+                  { op: "ref.cast", typeIdx: execClosures.capTypeIdx },
+                  { op: "local.get", index: reasonLocal },
+                  { op: "call", funcIdx: execClosures.rejectClFuncIdx },
+                ] satisfies Instr[])),
           ],
         },
       ]),

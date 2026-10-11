@@ -143,6 +143,7 @@ export function tryEmitExactStructFieldGet(
   structTypeIdx: number,
   fields: FieldDef[],
 ): ValType | undefined {
+  if (typeName === "$Promise" && propName === "$handled") return undefined;
   const fieldIdx = fields.findIndex((field) => field.name === propName);
   if (fieldIdx === -1) return undefined;
   const objResult = compileExpression(ctx, fctx, expr.expression);

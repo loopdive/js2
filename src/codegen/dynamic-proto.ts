@@ -215,6 +215,14 @@ export function scanForDynamicProto(ctx: CodegenContext, root: ts.Node): void {
       // (#4163) the PROTO argument is a proto-source.
       if (node.arguments.length >= 2) markProtoSource(node.arguments[1]!);
     }
+    // (#6651 W2b) `Reflect.construct(K, args, NT)` for a declared class `K`
+    // whose NewTarget's `prototype` the file sets to a primitive: §10.1.14
+    // step 4 re-prototypes the instance to `%Object.prototype%`, which the
+    // closed `$K` struct can only carry through this field.
+    if (ctx.standalone && isReflectConstructWithPrimitiveNewTargetProto(node, root)) {
+      ctx.usesDynamicProto = true;
+      markedRaw.add(((node as ts.CallExpression).arguments[0] as ts.Identifier).text);
+    }
     // (#4163) Object.create(X, …) — X is a proto-source.
     if (
       ts.isCallExpression(node) &&
@@ -313,6 +321,46 @@ export function scanForDynamicProto(ctx: CodegenContext, root: ts.Node): void {
     }
     ctx.dynamicProtoClasses.add(cur);
   }
+}
+
+/**
+ * (#6651 W2b) `Reflect.construct(<identifier>, …, <identifier NT>)` where the
+ * file assigns `NT.prototype` a primitive literal (`null`, `undefined`, a
+ * number/string/boolean). Syntactic, like every other prescan mark: a non-class
+ * first argument never matches a declared class at the append site.
+ */
+function isReflectConstructWithPrimitiveNewTargetProto(node: ts.Node, root: ts.Node): boolean {
+  if (!ts.isCallExpression(node) || node.arguments.length < 3) return false;
+  const callee = node.expression;
+  if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "construct") return false;
+  if (!ts.isIdentifier(callee.expression) || callee.expression.text !== "Reflect") return false;
+  const [target, , newTarget] = node.arguments;
+  if (!ts.isIdentifier(target!) || !ts.isIdentifier(newTarget!) || target.text === newTarget.text) return false;
+  const name = newTarget.text;
+  let found = false;
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    if (
+      ts.isBinaryExpression(n) &&
+      n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(n.left) &&
+      n.left.name.text === "prototype" &&
+      ts.isIdentifier(n.left.expression) &&
+      n.left.expression.text === name
+    ) {
+      const v = n.right;
+      found =
+        v.kind === ts.SyntaxKind.NullKeyword ||
+        (ts.isIdentifier(v) && v.text === "undefined") ||
+        ts.isNumericLiteral(v) ||
+        ts.isStringLiteralLike(v) ||
+        v.kind === ts.SyntaxKind.TrueKeyword ||
+        v.kind === ts.SyntaxKind.FalseKeyword;
+    }
+    if (!found) forEachChild(n, visit);
+  };
+  visit(root);
+  return found;
 }
 
 // ── Emission-time queries ──────────────────────────────────────────────────

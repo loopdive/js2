@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { describe, expect, it } from "vitest";
+import { setImmediate } from "node:timers/promises";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   authenticateRuntimeProgramRelocationReceipt,
   assertRuntimeProgramRelocationSource,
@@ -16,9 +17,14 @@ import {
   runtimeProgramRelocationStatements,
   type RuntimeProgramRelocationStatement,
 } from "./helpers/ir-runtime-program-relocation.js";
+import { captureC1CurrentPopulation, reconstructC1CurrentSources } from "./helpers/ir-c1-current-source.js";
 
-const population = (): Map<string, string> =>
-  new Map(runtimeProgramRelocationPopulationPaths.map((path) => [path, read(path)]));
+afterEach(async () => {
+  // Yield between synchronous source proofs so Vitest can process task-update RPCs.
+  await setImmediate();
+});
+
+const population = (): Map<string, string> => new Map(captureC1CurrentPopulation().historicalPopulation);
 // This census contains metadata only. Genuine source is freshly read for each control.
 const receipt = authenticateRuntimeProgramRelocationReceipt();
 const moved = receipt.transfers.filter((t) => t.moved);
@@ -70,11 +76,18 @@ describe("C1 four-donor/eight-current reciprocal source preservation", () => {
   });
   it("captures each actual source and receipt exactly once on every independent operation", () => {
     const calls = new Map<string, number>();
-    const capture = () =>
-      reconstructRuntimeProgramRelocationSources((path) => {
+    const capture = () => {
+      // Live capture and its extra authority reads are independently counted by the bridge suite.
+      // This counter retains the unchanged 47-read historical reconstruction stage.
+      const current = captureC1CurrentPopulation();
+      return reconstructRuntimeProgramRelocationSources((path) => {
         calls.set(path, (calls.get(path) ?? 0) + 1);
-        return read(path);
+        if (path === runtimeProgramRelocationReceiptPath) return current.receiptText;
+        const source = current.historicalPopulation.get(path);
+        if (source === undefined) throw new Error(`missing captured C1 historical operand: ${path}`);
+        return source;
       });
+    };
     expect([...capture()]).toEqual([...capture()]);
     expect([...calls.keys()]).toEqual([
       runtimeProgramRelocationReceiptPath,
@@ -83,12 +96,10 @@ describe("C1 four-donor/eight-current reciprocal source preservation", () => {
     expect([...calls.values()].every((n) => n === 2)).toBe(true);
   });
   it("does not reuse a successful capture after a moved body changes", () => {
-    expect(reconstructRuntimeProgramRelocationSources().size).toBe(4);
+    expect(reconstructC1CurrentSources().size).toBe(4);
     const path = runtimeProgramRelocationPairs[0][1];
     expect(() =>
-      reconstructRuntimeProgramRelocationSources((p) =>
-        p === path ? read(p).replace("if (!owner)", "if (owner)") : read(p),
-      ),
+      reconstructC1CurrentSources((p) => (p === path ? read(p).replace("if (!owner)", "if (owner)") : read(p))),
     ).toThrow(/length\/SHA256/);
   });
   it("keeps generator private helpers, six public exports and the prepared-function type alias", () => {
@@ -363,7 +374,7 @@ describe("C1 four-donor/eight-current reciprocal source preservation", () => {
   it("propagates an unavailable real source without returning an old view", () => {
     positive();
     expect(() =>
-      reconstructRuntimeProgramRelocationSources((path) => {
+      reconstructC1CurrentSources((path) => {
         if (path === runtimeProgramRelocationPairs[0][1]) throw new Error("destination unavailable");
         return read(path);
       }),
@@ -577,7 +588,7 @@ describe("C1 four-donor/eight-current reciprocal source preservation", () => {
   ];
   it.each(malformed)("fails closed on malformed receipt: %s", (_name, mutate) => rejectReceipt(mutate));
   it("leaves later historical injected mutants raw after the initial reconstruction", () => {
-    const reconstructed = reconstructRuntimeProgramRelocationSources();
+    const reconstructed = reconstructC1CurrentSources();
     const path = runtimeProgramRelocationPairs[0][0],
       original = reconstructed.get(path)!;
     const mutant = original.replace("if (!owner)", "if (owner)");

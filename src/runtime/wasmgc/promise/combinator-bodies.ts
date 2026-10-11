@@ -2,6 +2,7 @@
 
 import type { FuncHandle, Instr, LocalDef, TypeHandle, ValType } from "../../../wasm/model/instructions.js";
 import { PROMISE_STATE_PENDING, PROMISE_STATE_FULFILLED, PROMISE_STATE_REJECTED } from "./settlement-bodies.js";
+import { buildPromiseReactionHandled } from "./rejection-event-bodies.js";
 
 export interface CombinatorCaptureTypes {
   readonly elemCapsTypeIdx: TypeHandle;
@@ -9,6 +10,7 @@ export interface CombinatorCaptureTypes {
 }
 
 export interface CombinatorSubscriptionDispatchResources extends CombinatorCaptureTypes {
+  readonly rejectionDispatchFuncIdx?: FuncHandle;
   readonly promiseTypeIdx: TypeHandle;
   readonly callbackTypeIdx: TypeHandle;
   readonly enqueueFuncIdx: FuncHandle;
@@ -103,6 +105,7 @@ export function buildSubscribeBody(ids: CombinatorSubscriptionResources): Instr[
           { op: "ref.null.extern" },
           { op: "ref.null.extern" },
           { op: ids.bagInit.op },
+          { op: "i32.const", value: 0 },
           { op: "struct.new", typeIdx: ids.promiseTypeIdx },
           { op: "local.set", index: P },
           { op: "local.get", index: P },
@@ -125,6 +128,7 @@ export function buildSubscribeDispatchBody(ids: CombinatorSubscriptionDispatchRe
   const CAPS = 6;
   const cbTypeIdx = ids.callbackTypeIdx;
   return [
+    ...buildPromiseReactionHandled(ids.rejectionDispatchFuncIdx, ids.promiseTypeIdx, P),
     // caps = $CombinatorElemCaps{ state, index } (boxed to externref).
     { op: "local.get", index: STATE },
     { op: "any.convert_extern" },
@@ -329,6 +333,7 @@ export function buildNativePromiseCombinatorVectorBody(
   body.push({ op: "ref.null.extern" });
   body.push({ op: "ref.null.extern" });
   body.push({ op: ids.bagInit.op });
+  body.push({ op: "i32.const", value: 0 });
   body.push({ op: "struct.new", typeIdx: ids.promiseTypeIdx });
   body.push({ op: "local.set", index: resultLocal });
 

@@ -110,6 +110,7 @@ import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 // (#4437) the per-declaration `name` / §15.1.5 `length` carrier — read surface
 import { fnMetaArms, type FnMetaArms } from "./function-instance-meta-arms.js";
 import { fillFnIntrinsicSeed } from "./fn-intrinsic-seed.js"; // (#4562) intrinsic length/name record
+import { CARRIER_BAG_HAS } from "./object-model/native-names.js"; // (#6770 S3)
 
 /** `(externref fn, externref key) -> i32` — 1 iff fn's bag holds ANY entry for key. */
 export const FNINST_BAG_OWNS = "__fninst_bag_owns";
@@ -575,6 +576,20 @@ function spliceOwnNamesArm(
   const pushOwnFn = ctx.mod.functions.find((f) => f.name === "__builtinfn_push_ownnames");
   if (!pushOwnFn || objVecPushIdx === undefined) return;
 
+  // (#6770 S3) A key REDEFINED in place (a live, non-tombstone bag entry) is
+  // still the intrinsic, created first — push it here, in `length, name`
+  // order; the bag walk de-dups it. Only a DELETED key (marker) is skipped.
+  const bagHasIdx = ctx.funcMap.get(CARRIER_BAG_HAS);
+  const liveInBag = (key: string): Instr[] =>
+    bagHasIdx === undefined
+      ? []
+      : [
+          { op: "local.get", index: 0 },
+          ...nativeStringLiteralInstrs(ctx, key),
+          { op: "extern.convert_any" },
+          { op: "call", funcIdx: bagHasIdx },
+          { op: "i32.or" },
+        ];
   /** Push `key` into the vec unless the receiver's bag has taken it over. */
   const pushIfLive = (key: string): Instr[] => [
     // Presence is asked with the SAME key the arm would push.
@@ -583,6 +598,7 @@ function spliceOwnNamesArm(
     { op: "extern.convert_any" },
     { op: "call", funcIdx: bagOwnsIdx },
     { op: "i32.eqz" },
+    ...liveInBag(key),
     {
       op: "if",
       blockType: { kind: "empty" },

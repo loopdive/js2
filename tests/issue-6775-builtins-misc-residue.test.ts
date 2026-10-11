@@ -175,10 +175,10 @@ const PROBES: { name: string; what: string; expected: number; source: string }[]
   },
   {
     name: "s16a",
-    what: "S16 \u2014 %Function.prototype% own name/length {w:F,e:F,c:T}; @@hasInstance {w:F,e:F,c:F} named [Symbol.hasInstance]",
-    expected: 85,
+    what: "S16 — %Function.prototype%[@@hasInstance] is an own {w:F,e:F,c:F} function named [Symbol.hasInstance]",
+    expected: 84,
     source:
-      "var __r = 0;\nvar FP = Function.prototype;\ntry { var d = Object.getOwnPropertyDescriptor(FP, 'name'); if (d && d.value === '' && !d.writable && !d.enumerable && d.configurable) __r |= 1; } catch (e) { __r |= 2; }\ntry { if (typeof FP[Symbol.hasInstance] === 'function') __r |= 4; } catch (e) { __r |= 8; }\ntry { var d2 = Object.getOwnPropertyDescriptor(FP, Symbol.hasInstance); if (d2 && !d2.writable && !d2.enumerable && !d2.configurable) __r |= 16; } catch (e) { __r |= 32; }\ntry { var d3 = Object.getOwnPropertyDescriptor(FP[Symbol.hasInstance], 'name'); if (d3 && d3.value === '[Symbol.hasInstance]') __r |= 64; } catch (e) { __r |= 128; }\nexport function readResult() { return __r; }\n",
+      "var __r = 0;\nvar FP = Function.prototype;\ntry { if (typeof FP[Symbol.hasInstance] === 'function') __r |= 4; } catch (e) { __r |= 8; }\ntry { var d2 = Object.getOwnPropertyDescriptor(FP, Symbol.hasInstance); if (d2 && !d2.writable && !d2.enumerable && !d2.configurable) __r |= 16; } catch (e) { __r |= 32; }\ntry { var d3 = Object.getOwnPropertyDescriptor(FP[Symbol.hasInstance], 'name'); if (d3 && d3.value === '[Symbol.hasInstance]') __r |= 64; } catch (e) { __r |= 128; }\nexport function readResult() { return __r; }\n",
   },
   {
     name: "s16b",

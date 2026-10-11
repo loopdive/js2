@@ -19,6 +19,8 @@ import { canonicalUndefinedExternInstrs, ensureAnyFromExternHelper, undefinedExt
 import { anyValueElemFromExternInstrs } from "./anyvalue-elem-materialize.js"; // (#2717)
 import { ensureAnyToStringHelper, stringConstantExternrefInstrs } from "./native-strings.js";
 import { buildThrowJsErrorInstrs } from "./expressions/helpers.js";
+import { arrayLikeLengthLimitGuard } from "./proxy-array-like.js"; // (#6651 H6)
+import { prepareVecF64UndefElem, vecF64ElemFromExternInstrs } from "./array/vec-elem-fidelity.js"; // (#6771 S8)
 import { ensureWrapperStringValueHelper } from "./object-runtime.js";
 import { ensureNativeArrayFromIterN } from "./iterator-native.js";
 import { markNoBrandSiblingShapes } from "./shape-brand.js";
@@ -47,6 +49,7 @@ import { structMustReifyAtExternrefBoundary } from "./struct-boundary-reify.js";
 import { pushZeroArgCallPad } from "./zero-arg-method-pad.js"; // (#4644) declared-but-unpassed params
 import { samePhysicalValType } from "./struct-hierarchy-layout.js";
 import { wrapArrayProtoVecAlias } from "./vec-proto-link.js"; // (#2917) stable Array.prototype in vec slots
+import { emitOptionalFieldWidening } from "./object-model/struct-optional-widen.js"; // (#6867)
 
 /**
  * Emit a guarded ref.cast: use ref.test to check if the cast will succeed.
@@ -964,6 +967,8 @@ export function buildVecFromExternref(
       [{ kind: "externref" }],
     );
   }
+  const lengthGuard = arrayLikeLengthLimitGuard(ctx, fctx); // (#6651 H6) before the flush
+  prepareVecF64UndefElem(ctx, vecInfo.elemType); // (#6771 S8) before the flush
   flushLateImportShifts(ctx, fctx);
   const lenIdx = ctx.funcMap.get("__extern_length");
   const getIdx = ctx.funcMap.get("__extern_get");
@@ -988,10 +993,34 @@ export function buildVecFromExternref(
   });
   const idxLocal = allocLocal(fctx, `__vec_idx_${fctx.locals.length}`, { kind: "i32" });
 
+  // (#2866 slice 3, see the i32 element arm) `$Symbol` carrier → its id, else
+  // a number unbox. (#6770 S2) Shared with the tuple-field arm below.
+  const symbolCarrierOrNumberUnbox = (unbox: number): Instr[] | undefined => {
+    if (!(ctx.standalone || ctx.wasi) || ctx.symbolTypeIdx < 0) return undefined;
+    const symIdx = ctx.symbolTypeIdx;
+    const tmpSym = allocLocal(fctx, `__sym_elem_${fctx.locals.length}`, { kind: "externref" });
+    return [
+      { op: "local.tee", index: tmpSym },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: symIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: tmpSym },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: symIdx },
+          { op: "struct.get", typeIdx: symIdx, fieldIdx: 0 },
+        ],
+        else: [{ op: "local.get", index: tmpSym }, { op: "call", funcIdx: unbox }, { op: "i32.trunc_sat_f64_s" }],
+      },
+    ];
+  };
+
   const buildElemCoerce = (): Instr[] => {
     const et = vecInfo.elemType;
     if (et.kind === "f64" && unboxIdx !== undefined) {
-      return [{ op: "call", funcIdx: unboxIdx }];
+      return vecF64ElemFromExternInstrs(ctx, fctx, unboxIdx); // (#6771 S8) undefined → UNDEF_F64_BITS
     }
     // i8/i16 are PACKED array element kinds (Uint8Array, Int8Array, Uint16Array,
     // …). Their value-position representation is i32: a packed `array.set`
@@ -1037,30 +1066,8 @@ export function buildVecFromExternref(
       // runtime: a `$Symbol` carrier yields its i32 id (`$Symbol.id`), anything
       // else unboxes as a number. Gated on the carrier being registered
       // (standalone/WASI symbol modules); plain numeric modules are byte-identical.
-      if ((ctx.standalone || ctx.wasi) && ctx.symbolTypeIdx >= 0 && et.kind === "i32") {
-        const symIdx = ctx.symbolTypeIdx;
-        const tmpSym = allocLocal(fctx, `__sym_elem_${fctx.locals.length}`, { kind: "externref" });
-        return [
-          { op: "local.tee", index: tmpSym },
-          { op: "any.convert_extern" },
-          { op: "ref.test", typeIdx: symIdx },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } },
-            then: [
-              { op: "local.get", index: tmpSym },
-              { op: "any.convert_extern" },
-              { op: "ref.cast", typeIdx: symIdx },
-              { op: "struct.get", typeIdx: symIdx, fieldIdx: 0 },
-            ],
-            else: [
-              { op: "local.get", index: tmpSym },
-              { op: "call", funcIdx: unboxIdx },
-              { op: "i32.trunc_sat_f64_s" },
-            ],
-          },
-        ];
-      }
+      const symbolElem = et.kind === "i32" ? symbolCarrierOrNumberUnbox(unboxIdx) : undefined;
+      if (symbolElem) return symbolElem;
       return [{ op: "call", funcIdx: unboxIdx }, { op: "i32.trunc_sat_f64_s" }];
     }
     // (#3024) i64 (BigInt) element arrays previously fell through to the empty
@@ -1141,8 +1148,9 @@ export function buildVecFromExternref(
           if (fieldType.kind === "f64" && unboxIdx !== undefined) {
             instrs.push({ op: "call", funcIdx: unboxIdx });
           } else if (fieldType.kind === "i32" && unboxIdx !== undefined) {
-            instrs.push({ op: "call", funcIdx: unboxIdx });
-            instrs.push({ op: "i32.trunc_sat_f64_s" });
+            // (#6770 S2) a `symbol` field keeps its carrier's identity
+            const sym = fieldType.symbol === true ? symbolCarrierOrNumberUnbox(unboxIdx) : undefined;
+            instrs.push(...(sym ?? [{ op: "call", funcIdx: unboxIdx }, { op: "i32.trunc_sat_f64_s" }]));
           }
           // externref fields don't need conversion
         }
@@ -1175,6 +1183,7 @@ export function buildVecFromExternref(
     ...matInstrs,
     { op: "local.get", index: matLocal },
     { op: "call", funcIdx: lenIdx },
+    ...lengthGuard,
     { op: "i32.trunc_sat_f64_s" },
     { op: "local.set", index: lenLocal },
     { op: "local.get", index: lenLocal },
@@ -1752,9 +1761,10 @@ function getStructNarrowInfo(
   ctx: CodegenContext,
   fromTypeIdx: number,
   toTypeIdx: number,
+  allowOptional = false,
 ): {
   srcFields: ({ name: string; type: ValType; fieldIdx: number } | undefined)[];
-  dstFields: { name: string; type: ValType }[];
+  dstFields: { name: string; type: ValType; optional?: true }[];
 } | null {
   const fromDef = ctx.mod.types[fromTypeIdx];
   const toDef = ctx.mod.types[toTypeIdx];
@@ -1779,16 +1789,19 @@ function getStructNarrowInfo(
       // does not materialize them. Permit a structural projection to complete
       // only these erased fields with their null/zero default; every ordinary
       // missing field still rejects the projection.
-      if (!erasedTypeBrandFieldCanDefault(field)) return null;
+      // (#6867) …and, when widening, declared-optional (`k?: T`) fields.
+      if (!erasedTypeBrandFieldCanDefault(field) && !(allowOptional && field.optional)) return null;
       srcFields.push(undefined);
       continue;
     }
     srcFields.push({ name: field.name, type: srcField.type, fieldIdx: srcField.fieldIdx });
   }
+  // (#6867) Widening needs a shared field: an unrelated shape is no evidence.
+  if (allowOptional && !srcFields.some((field) => field !== undefined)) return null;
 
   return {
     srcFields,
-    dstFields: dstStruct.fields.map((f) => ({ name: f.name, type: f.type })),
+    dstFields: dstStruct.fields.map((f) => ({ name: f.name, type: f.type, optional: f.optional })),
   };
 }
 
@@ -1913,7 +1926,13 @@ function emitSafeStructConversion(
     }
   }
 
-  return false;
+  // Case 4 (#6867): the destination only ADDS declared-optional fields.
+  const widen = getStructNarrowInfo(ctx, fromTypeIdx, toTypeIdx, true);
+  if (!widen) return false;
+  emitOptionalFieldWidening(fctx, fromTypeIdx, toTypeIdx, toNullable, () =>
+    emitStructNarrowBody(ctx, fctx, fromTypeIdx, toTypeIdx, widen, false, false),
+  );
+  return true;
 }
 
 /**
@@ -2297,7 +2316,7 @@ function emitStructNarrowBody(
   toTypeIdx: number,
   info: {
     srcFields: ({ name: string; type: ValType; fieldIdx: number } | undefined)[];
-    dstFields: { name: string; type: ValType }[];
+    dstFields: { name: string; type: ValType; optional?: true }[];
   },
   fromNullable: boolean,
   toNullable: boolean,
@@ -2338,7 +2357,9 @@ function emitStructNarrowBody(
     const dstField = info.dstFields[i]!;
 
     if (!srcField) {
-      fctx.body.push(...defaultValueInstrs(dstField.type));
+      if (dstField.optional && dstField.type.kind === "externref")
+        emitUndefinedValue(ctx, fctx); // (#6867)
+      else fctx.body.push(...defaultValueInstrs(dstField.type));
       continue;
     }
 

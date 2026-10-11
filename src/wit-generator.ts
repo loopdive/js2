@@ -22,6 +22,7 @@ import { ts } from "./ts-api.js";
 import type { PlatformCapabilityRequirement } from "./capability-registry.js";
 import type { TypedAST } from "./checker/index.js";
 import type { Import, TypeDef, ValType } from "./ir/types.js";
+import type { IrUnitId, IrBindingId } from "./shared/contracts/ir-identity.js";
 
 /** Options for {@link generateWit} — controls the generated WIT world's naming. */
 export interface WitGeneratorOptions {
@@ -674,4 +675,205 @@ function toPackageIdentifier(name: string): string {
 function toWitIdentifier(name: string): string {
   const ident = toPackageIdentifier(name);
   return WIT_KEYWORDS.has(ident) ? `%${ident}` : ident;
+}
+
+/** Complete primitive WIT export data joined by prepared presentation. */
+export interface PreparedWitExport {
+  readonly externalName: string;
+  readonly params: readonly { readonly sourceName: string; readonly kind: "number" | "boolean" }[];
+  readonly result: "number" | "boolean" | null;
+  readonly sourceFile: string;
+  readonly unitId: IrUnitId;
+  readonly bindingId: IrBindingId;
+}
+export interface PreparedWitView {
+  readonly entryFile: string;
+  readonly exports: readonly PreparedWitExport[];
+}
+export interface PreparedWitRenderOptions {
+  readonly packageName?: string;
+  readonly worldName?: string;
+  readonly imports: readonly Import[];
+  readonly types: readonly TypeDef[];
+  readonly capabilities: readonly PlatformCapabilityRequirement[];
+}
+export interface PreparedWitGap {
+  readonly field: string;
+  readonly code: string;
+  readonly detail: string;
+  readonly sourceFile?: string;
+  readonly unitId?: IrUnitId;
+  readonly bindingId?: IrBindingId;
+}
+export type PreparedWitRenderResult =
+  | { readonly kind: "wit"; readonly text: string }
+  | { readonly kind: "unsupported"; readonly gaps: readonly PreparedWitGap[] };
+
+const INVALID_PREPARED_WIT_FIELD = Symbol("invalid prepared WIT data field");
+const PREPARED_WIT_KEYWORDS = new Set([...WIT_KEYWORDS, "async", "map"]);
+
+function preparedWitName(name: string): string {
+  const normalized = toPackageIdentifier(name);
+  return PREPARED_WIT_KEYWORDS.has(normalized) ? `%${normalized}` : normalized;
+}
+
+function preparedWitField(value: unknown, key: string): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  return descriptor
+    ? "value" in descriptor
+      ? descriptor.value
+      : INVALID_PREPARED_WIT_FIELD
+    : key in value
+      ? INVALID_PREPARED_WIT_FIELD
+      : undefined;
+}
+function preparedWitArray(value: unknown): value is readonly unknown[] {
+  if (!Array.isArray(value)) return false;
+  for (let index = 0; index < value.length; index++) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || !("value" in descriptor)) return false;
+  }
+  return true;
+}
+function preparedWitIdentifier(value: string): boolean {
+  const escaped = value.startsWith("%");
+  const name = escaped ? value.slice(1) : value;
+  return (
+    /^(?:[a-z][a-z0-9]*|[A-Z][A-Z0-9]*)(?:-(?:[a-z0-9]+|[A-Z0-9]+))*$/.test(name) &&
+    (escaped || !PREPARED_WIT_KEYWORDS.has(name))
+  );
+}
+function preparedWitVersion(value: string): boolean {
+  const parts =
+    /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/.exec(
+      value,
+    );
+  return (
+    parts !== null &&
+    (parts[4] === undefined ||
+      parts[4].split(".").every((part) => !/^[0-9]+$/.test(part) || /^(0|[1-9][0-9]*)$/.test(part)))
+  );
+}
+function preparedWitPackage(value: string): boolean {
+  const parts = value.split("@");
+  if (parts.length > 2 || (parts.length === 2 && !preparedWitVersion(parts[1]!))) return false;
+  const names = parts[0]!.split(":");
+  return names.length === 2 && names.every(preparedWitIdentifier);
+}
+
+/** Strict prepared scalar rendering; this data API does not authenticate a C capability. */
+export function renderPreparedWit(view: PreparedWitView, options: PreparedWitRenderOptions): PreparedWitRenderResult {
+  const gaps: PreparedWitGap[] = [];
+  const entry = preparedWitField(view, "entryFile");
+  const entryFile = typeof entry === "string" && entry.length > 0 ? entry : undefined;
+  const gap = (field: string, code: string, detail: string, row?: unknown) => {
+    const source = preparedWitField(row, "sourceFile");
+    const unit = preparedWitField(row, "unitId");
+    const binding = preparedWitField(row, "bindingId");
+    gaps.push(
+      Object.freeze({
+        field,
+        code,
+        detail,
+        ...(typeof source === "string" ? { sourceFile: source } : entryFile ? { sourceFile: entryFile } : {}),
+        ...(typeof unit === "string" ? { unitId: unit as IrUnitId } : {}),
+        ...(typeof binding === "string" ? { bindingId: binding as IrBindingId } : {}),
+      }),
+    );
+  };
+  const exports = preparedWitField(view, "exports");
+  if (!entryFile || !preparedWitArray(exports))
+    gap("wit.exports", "invalid-wit-export", "complete entry and export array required");
+  const imports = preparedWitField(options, "imports");
+  const capabilities = preparedWitField(options, "capabilities");
+  const types = preparedWitField(options, "types");
+  if (
+    !preparedWitArray(imports) ||
+    !preparedWitArray(capabilities) ||
+    !preparedWitArray(types) ||
+    imports.length ||
+    capabilities.length
+  )
+    gap("wit.resources", "unmapped-wit-resources", "actual dense types and empty imports and capabilities required");
+  const requestedPackage = preparedWitField(options, "packageName");
+  const requestedWorld = preparedWitField(options, "worldName");
+  const packageName =
+    requestedPackage === undefined && entryFile
+      ? `js2wasm:${preparedWitName(baseNameWithoutExtension(entryFile))}`
+      : requestedPackage;
+  const worldName = requestedWorld === undefined ? "module" : requestedWorld;
+  if (typeof packageName !== "string" || !preparedWitPackage(packageName))
+    gap("wit.packageName", "invalid-wit-name", "package must be namespace:name with an optional semantic version");
+  if (typeof worldName !== "string" || !preparedWitIdentifier(worldName))
+    gap("wit.worldName", "invalid-wit-name", "world must be a valid WIT identifier");
+  const functions: WitFunc[] = [];
+  const externalNames = new Set<string>();
+  const renderedNames = new Set<string>();
+  if (preparedWitArray(exports))
+    for (const row of exports) {
+      const external = preparedWitField(row, "externalName");
+      const params = preparedWitField(row, "params");
+      const result = preparedWitField(row, "result");
+      const required = ["sourceFile", "unitId", "bindingId"].every((key) => {
+        const value = preparedWitField(row, key);
+        return typeof value === "string" && value.length > 0;
+      });
+      if (
+        !required ||
+        typeof external !== "string" ||
+        !external ||
+        !preparedWitArray(params) ||
+        (result !== "number" && result !== "boolean" && result !== null) ||
+        externalNames.has(external as string)
+      ) {
+        gap("wit.exports", "invalid-wit-export", "complete unique primitive export required", row);
+        continue;
+      }
+      externalNames.add(external);
+      const name = preparedWitName(external);
+      if (
+        [...external].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) ||
+        !preparedWitIdentifier(name)
+      )
+        gap("wit.exports", "invalid-wit-name", "export name is invalid", row);
+      const key = name.replace(/^%/, "");
+      if (renderedNames.has(key))
+        gap("wit.exports", "wit-name-collision", "export names collide after WIT normalization", row);
+      renderedNames.add(key);
+      const parameters: WitFunc["params"] = [];
+      const parameterNames = new Set<string>();
+      for (const param of params) {
+        const sourceName = preparedWitField(param, "sourceName");
+        const kind = preparedWitField(param, "kind");
+        if (typeof sourceName !== "string" || !sourceName || (kind !== "number" && kind !== "boolean")) {
+          gap("wit.exports", "invalid-wit-export", "complete primitive parameter required", row);
+          continue;
+        }
+        const parameterName = preparedWitName(sourceName);
+        if (
+          [...sourceName].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) ||
+          !preparedWitIdentifier(parameterName)
+        )
+          gap("wit.params", "invalid-wit-name", "parameter name is invalid", row);
+        const parameterKey = parameterName.replace(/^%/, "");
+        if (parameterNames.has(parameterKey))
+          gap("wit.params", "wit-name-collision", "parameter names collide after WIT normalization", row);
+        parameterNames.add(parameterKey);
+        parameters.push({ name: parameterName, type: kind === "number" ? "f64" : "bool" });
+      }
+      functions.push({
+        name,
+        params: parameters,
+        result: result === null ? null : result === "number" ? "f64" : "bool",
+      });
+    }
+  if (gaps.length) return Object.freeze({ kind: "unsupported", gaps: Object.freeze(gaps) });
+  const lines = [`package ${packageName};`, "", `world ${worldName} {`];
+  for (const fn of functions) {
+    const params = fn.params.map((param) => `${param.name}: ${param.type}`).join(", ");
+    lines.push(`  export ${fn.name}: func(${params})${fn.result === null ? "" : ` -> ${fn.result}`};`);
+  }
+  lines.push("}", "");
+  return Object.freeze({ kind: "wit", text: lines.join("\n") });
 }

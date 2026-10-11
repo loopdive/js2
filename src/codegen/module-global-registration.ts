@@ -148,6 +148,43 @@ function functionIsFromAnotherSource(
 }
 
 /**
+ * (#6651 V10b) Does this top-level SCRIPT `var` redeclare an ambient lib global
+ * (`var length = {…}` against lib.dom's `declare var length: number`)? The two
+ * merge into one checker symbol whose declared type is the LIB's, which is a
+ * host fiction on the host-free lane: the runtime binding holds whatever the
+ * script stores. Standalone only, so host-lane bytes are untouched.
+ */
+export function scriptVarRedeclaresAmbientGlobal(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
+  if (!ctx.standalone || ctx.sourceIsModule || decl.initializer === undefined) return false;
+  if (decl.getSourceFile().isDeclarationFile || !ts.isIdentifier(decl.name)) return false;
+  return ctx.oracle.declarationsOf(decl.name).some((d) => d.getSourceFile().isDeclarationFile);
+}
+
+/** (#6651 V10b) An identifier read whose binding is such a redeclared ambient script var. */
+function readsAmbientRedeclaringScriptVar(ctx: CodegenContext, expr: ts.Expression): boolean {
+  if (!ctx.standalone || ctx.sourceIsModule || !ts.isIdentifier(expr)) return false;
+  return ctx.oracle
+    .declarationsOf(expr)
+    .some((d) => ts.isVariableDeclaration(d) && scriptVarRedeclaresAmbientGlobal(ctx, d));
+}
+
+/**
+ * (#6651 V10b) A CALL-ARGUMENT object literal reading such a var: the read
+ * carries the LIB's checker type (`length: number`), so a closed struct field
+ * would ToNumber it at construction (one observable `valueOf`). The caller
+ * builds it as an open `$Object` instead. A declaration initializer keeps the
+ * shape its binding was typed with.
+ */
+export function objectLiteralReadsAmbientRedeclaredVar(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
+  if (!ctx.standalone || ctx.sourceIsModule || ts.isVariableDeclaration(expr.parent)) return false;
+  return expr.properties.some(
+    (p) =>
+      (ts.isPropertyAssignment(p) && readsAmbientRedeclaringScriptVar(ctx, p.initializer)) ||
+      (ts.isShorthandPropertyAssignment(p) && readsAmbientRedeclaringScriptVar(ctx, p.name)),
+  );
+}
+
+/**
  * Register one module-level global and expose its exact allocator object to
  * the structural ABI sidecar when the source declaration is authoritative.
  */
@@ -287,13 +324,40 @@ export function registerModulePatternTdzGlobal(ctx: CodegenContext, binding: ts.
   bindings.set(binding.name.text, previous === undefined || previous === binding ? binding : null);
 }
 
+/** (#6651 V6) `import * as ns from '<this module>'` anywhere at top level. */
+function importsOwnNamespace(ctx: CodegenContext, sourceFile: ts.SourceFile): boolean {
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement)) continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (bindings === undefined || !ts.isNamespaceImport(bindings)) continue;
+    if (ctx.oracle.aliasedValueDeclarationOf(bindings.name) === sourceFile) return true;
+  }
+  return false;
+}
+
+/**
+ * (#6651 V6) A self-importing module's namespace getter bakes each binding's
+ * TDZ flag, and a class body compiled before the top-level pass can build that
+ * namespace first — so allocate the flags before classes compile. The module
+ * keeps every flag (no elision), so the early call answers the same set.
+ */
+export function prepareSelfImportingModuleTdzGlobals(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
+  if (importsOwnNamespace(ctx, sourceFile)) prepareModuleTdzGlobals(ctx, sourceFile);
+}
+
 /**
  * Materialize the top-level TDZ globals that both body emitters reference.
  * Safe to call before IR preparation and again from the direct declaration
  * pass because allocation and structural ABI observation are idempotent.
  */
 export function prepareModuleTdzGlobals(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
-  const elidableTdzNames = computeElidableTopLevelTdzNames(ctx, sourceFile, ctx.tdzLetConstNames);
+  // (#6651 V6) A module that imports its OWN namespace can observe every
+  // binding through `ns.x` before initialization (§10.4.6.8 step 12 →
+  // ReferenceError), and that read is invisible to the identifier walk below.
+  // Keep every top-level lexical flag for such a module.
+  const elidableTdzNames = importsOwnNamespace(ctx, sourceFile)
+    ? new Set<string>()
+    : computeElidableTopLevelTdzNames(ctx, sourceFile, ctx.tdzLetConstNames);
   for (const name of unresolvedDynamicWithTopLevelLexicalWrites(ctx, sourceFile, elidableTdzNames)) {
     elidableTdzNames.delete(name);
   }

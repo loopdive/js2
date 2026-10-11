@@ -239,8 +239,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # (#6749) The native-first JS-host lane links `js2wasm:runtime-eval` for
+      # eval-shaped spellings (moment); the refusal provider builds in seconds
+      # and lets those modules instantiate. Calls into it throw, so a package
+      # that really evaluates code still reports a runtime error.
+      - name: Prebuild the runtime-eval refusal provider (#6749)
+        env:
+          JS2WASM_EVAL_ENGINE: interpreter
+        run: NODE_OPTIONS="--max-old-space-size=3072" node scripts/build-runtime-eval-provider.mjs --refusal-only
+
       - name: Measure package
         env:
+          JS2WASM_EVAL_ENGINE: interpreter
           NPM_COMPAT_SUITE_LOGS: 1
         run: |
           set -euo pipefail
@@ -293,9 +303,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Prebuild the runtime-eval refusal provider (#6749)
+        env:
+          JS2WASM_EVAL_ENGINE: interpreter
+        run: NODE_OPTIONS="--max-old-space-size=3072" node scripts/build-runtime-eval-provider.mjs --refusal-only
+
       - name: Measure package
         env:
           DOGFOOD_REACT_DOM_PROJECT_CONCURRENCY: 2
+          JS2WASM_EVAL_ENGINE: interpreter
           NPM_COMPAT_SUITE_LOGS: 1
         run: |
           set -euo pipefail

@@ -24,6 +24,8 @@ const OUTPUT_ARG = process.argv.indexOf("--output");
 const OUTPUT_PATH = OUTPUT_ARG >= 0 && process.argv[OUTPUT_ARG + 1] ? resolve(process.argv[OUTPUT_ARG + 1]) : undefined;
 
 const SOURCE = "export {};\n";
+// #2527: keep strict admission in sync with src/emit/canonical-recgroup.ts.
+const EXPECTED_RUNTIME_RECGROUP_ABI_VERSION = 3;
 const COMPILE_OPTIONS = Object.freeze({
   target: "standalone",
   nativeStrings: true,
@@ -74,8 +76,10 @@ function verify(binary, expectedFingerprint) {
   for (const name of EXPORTS) {
     if (!exports.has(name)) throw new Error(`js2wasm:runtime provider export ${name} is missing`);
   }
-  if (!expectedFingerprint || expectedFingerprint.abiVersion !== 2) {
-    throw new Error("js2wasm:runtime provider did not publish canonical rec-group ABI v2 metadata");
+  if (!expectedFingerprint || expectedFingerprint.abiVersion !== EXPECTED_RUNTIME_RECGROUP_ABI_VERSION) {
+    throw new Error(
+      `js2wasm:runtime provider did not publish canonical rec-group ABI v${EXPECTED_RUNTIME_RECGROUP_ABI_VERSION} metadata`,
+    );
   }
   // Instantiate once as a canary. The consumer-side test performs the actual
   // provider→consumer import binding in the same engine store.

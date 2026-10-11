@@ -7,6 +7,8 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import * as bodies from "../src/runtime/wasmgc/promise/settlement-bodies.js";
 import type { Instr } from "../src/wasm/model/instructions.js";
+import { movedResolutionNames, assertMovedResolutionReceipt } from "./helpers/promise-resolution-receipts.js";
+import { promiseRejectionDispatcher } from "../src/codegen/registry/promise-rejection-dispatch.js";
 
 const root = resolve(import.meta.dirname, "..");
 const canonicalPath = "src/runtime/wasmgc/promise/settlement-bodies.ts";
@@ -404,6 +406,327 @@ function once(text: string, before: string, after: string): string {
   assert.equal(text.split(before).length, 2, "exact resource adaptation " + before);
   return text.replace(before, after);
 }
+const retainedEpochStages = [
+  {
+    function: "emitStandalonePromiseResolve",
+    stage: "deno-to-main",
+    before: {
+      bytes: 3130,
+      sha256: "4f3eb6c40cf52784c1cdc006821f0dc0019492cef46b561144a1c43889615275",
+    },
+    after: {
+      bytes: 3042,
+      sha256: "f648618c442bc2a21867e63a5fb21eeaf490aa1b7a6aae390772c36130308f40",
+    },
+    spans: [
+      {
+        beforeOffset: 1432,
+        afterOffset: 1432,
+        beforeBytes: 51,
+        afterBytes: 0,
+        before: '    fctx.body.push({ op: "i32.const", value: 0 });\n',
+        after: "",
+        left: 'ref.null.extern" });\n    fctx.body.push(closureBagInitInstr());\n',
+        right: '    fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx }',
+      },
+      {
+        beforeOffset: 2650,
+        afterOffset: 2599,
+        beforeBytes: 37,
+        afterBytes: 0,
+        before: '      { op: "i32.const", value: 0 },\n',
+        after: "",
+        left: ',\n      { op: "ref.null.extern" },\n      closureBagInitInstr(),\n',
+        right: '      { op: "struct.new", typeIdx: promiseTypeIdx },\n      { op:',
+      },
+    ],
+    inverseReplay: true,
+  },
+  {
+    function: "emitStandalonePromiseResolve",
+    stage: "main-to-original",
+    before: {
+      bytes: 3042,
+      sha256: "f648618c442bc2a21867e63a5fb21eeaf490aa1b7a6aae390772c36130308f40",
+    },
+    after: {
+      bytes: 2684,
+      sha256: "5c0aa24ffc4cd304ffa515da77ce819b2e433d4aeedfb910f821dc5fff3bc510",
+    },
+    spans: [
+      {
+        beforeOffset: 768,
+        afterOffset: 768,
+        beforeBytes: 257,
+        afterBytes: 0,
+        before:
+          '  const vLocal = allocLocal(fctx, `__presolve_v_${fctx.locals.length}`, { kind: "externref" });\n  // (#5197 r3 Step 1e) PromiseResolve step 1 — `x.constructor` must be `%Promise%`.\n  const passThrough = promiseResolvePassThroughInstrs(ctx, fctx, vLocal);\n',
+        after: "",
+        left: "r is observably unchanged.\n  ensurePromiseSettleFunctions(ctx);\n",
+        right: '  const resolveValueIdx = ctx.funcMap.get("__promise_resolve_val',
+      },
+      {
+        beforeOffset: 1565,
+        afterOffset: 1308,
+        beforeBytes: 0,
+        afterBytes: 96,
+        before: "",
+        after: '  const vLocal = allocLocal(fctx, `__presolve_v_${fctx.locals.length}`, { kind: "externref" });\n',
+        left: '  fctx.body.push({ op: "extern.convert_any" });\n    return;\n  }\n',
+        right: "  const pLocal = allocLocal(fctx, `__presolve_p_${fctx.locals.le",
+      },
+      {
+        beforeOffset: 1968,
+        afterOffset: 1807,
+        beforeBytes: 197,
+        afterBytes: 0,
+        before:
+          '  if (passThrough) {\n    fctx.body.push({\n      op: "if",\n      blockType: { kind: "val", type: { kind: "i32" } },\n      then: passThrough,\n      else: [{ op: "i32.const", value: 0 }],\n    });\n  }\n',
+        after: "",
+        left: '\n  fctx.body.push({ op: "ref.test", typeIdx: promiseTypeIdx });\n',
+        right: '  fctx.body.push({\n    op: "if",\n    blockType: { kind: "val", t',
+      },
+    ],
+    inverseReplay: true,
+  },
+  {
+    function: "emitStandalonePromiseThen",
+    stage: "deno-to-main",
+    before: {
+      bytes: 12021,
+      sha256: "ce2db569273715caed0ab25dfb77cb5e7fdc7dfcb5a4925a22d8f06916886a82",
+    },
+    after: {
+      bytes: 11871,
+      sha256: "3d3c6c54230fa80e5baf9fde0d74b2dd46c53f5e74272ea9204aa9ebb1012b08",
+    },
+    spans: [
+      {
+        beforeOffset: 4320,
+        afterOffset: 4320,
+        beforeBytes: 113,
+        afterBytes: 0,
+        before:
+          "  fctx.body.push(...buildPromiseReactionHandled(promiseRejectionDispatcher(ctx), promiseTypeIdx, promiseLocal));\n",
+        after: "",
+        left: ";\n  fctx.savedBodies.push(outerBody);\n  fctx.body = nativeBody;\n",
+        right: "\n  // Chained promise starts pending with no callbacks.\n  const ",
+      },
+      {
+        beforeOffset: 4666,
+        afterOffset: 4553,
+        beforeBytes: 35,
+        afterBytes: 0,
+        before: '    { op: "i32.const", value: 0 },\n',
+        after: "",
+        left: 'n" },\n    { op: "ref.null.extern" },\n    closureBagInitInstr(),\n',
+        right: '    { op: "struct.new", typeIdx: promiseTypeIdx },\n    { op: "lo',
+      },
+      {
+        beforeOffset: 7868,
+        afterOffset: 7720,
+        beforeBytes: 159,
+        afterBytes: 157,
+        before:
+          "            // chaining. Settlement reverses multi-node lists before enqueueing\n            // to restore registration order without changing immutable nodes.\n",
+        after:
+          "            // chaining. FIFO append can be added later without changing the\n            // node shape; simple chains have one pending callback per promise.\n",
+        left: " // callback list. This preserves every continuation needed for\n",
+        right: '            { op: "local.get", index: promiseLocal },\n          ',
+      },
+    ],
+    inverseReplay: true,
+  },
+  {
+    function: "emitStandalonePromiseThen",
+    stage: "main-to-original",
+    before: {
+      bytes: 11871,
+      sha256: "3d3c6c54230fa80e5baf9fde0d74b2dd46c53f5e74272ea9204aa9ebb1012b08",
+    },
+    after: {
+      bytes: 10947,
+      sha256: "6496dc53cdf1956ea2cfb7a6553915755dcbb2acfb5846f74c08851d6044ccfc",
+    },
+    spans: [
+      {
+        beforeOffset: 223,
+        afterOffset: 223,
+        beforeBytes: 105,
+        afterBytes: 0,
+        before:
+          "  intrinsic = false, // (#6651 D7) %Promise.prototype.then% itself: never re-dispatches to an own `then`\n",
+        after: "",
+        left: "ck | null,\n  onRejected?: StandalonePromiseThenCallback | null,\n",
+        right: "): void {\n  ensurePromiseSettleFunctions(ctx);\n",
+      },
+      {
+        beforeOffset: 375,
+        afterOffset: 270,
+        beforeBytes: 255,
+        afterBytes: 0,
+        before:
+          '  // (#5197 r3 Step 1) §27.2.5.4 steps 3-4, registered before any index is read.\n  const species = preparePromiseThenSpecies(ctx, fctx);\n  const speciesFwd = species && [ensureDynamicThenWrapper(ctx, "fulfill"), ensureDynamicThenWrapper(ctx, "reject")];\n',
+        after: "",
+        left: "): void {\n  ensurePromiseSettleFunctions(ctx);\n",
+        right: "  const state = getOrInitState(ctx as CodegenContextWithSchedule",
+      },
+      {
+        beforeOffset: 4376,
+        afterOffset: 4016,
+        beforeBytes: 582,
+        afterBytes: 325,
+        before:
+          '  const mintChained: Instr[] = [\n    { op: "i32.const", value: PROMISE_STATE_PENDING },\n    { op: "ref.null.extern" },\n    { op: "ref.null.extern" },\n    closureBagInitInstr(),\n    { op: "struct.new", typeIdx: promiseTypeIdx },\n    { op: "local.set", index: chainedLocal },\n  ];\n  const sp =\n    species && speciesFwd?.[0] !== undefined && speciesFwd[1] !== undefined\n      ? emitPromiseThenSpeciesCapability(ctx, fctx, species, promiseLocal)\n      : undefined;\n  fctx.body.push(...(sp && species ? speciesChainedInstrs(ctx, species, sp, chainedLocal, mintChained) : mintChained));\n',
+        after:
+          '  fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });\n  fctx.body.push({ op: "ref.null.extern" });\n  fctx.body.push({ op: "ref.null.extern" });\n  fctx.body.push(closureBagInitInstr());\n  fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });\n  fctx.body.push({ op: "local.set", index: chainedLocal });\n',
+        left: "veBody;\n\n  // Chained promise starts pending with no callbacks.\n",
+        right: "  fctx.body.push(\n    ...buildDenoPromiseHookCall(\n      ctx,\n  ",
+      },
+      {
+        beforeOffset: 8517,
+        afterOffset: 7900,
+        beforeBytes: 400,
+        afterBytes: 80,
+        before:
+          '    ...(sp && species && speciesFwd\n      ? speciesForwardAndResultInstrs(ctx, species, sp, chainedLocal, {\n          callbackTypeIdx,\n          capsTypeIdx,\n          dynFulfillIdx: ctx.funcMap.get("__then_dyn_fulfill")!,\n          dynRejectIdx: ctx.funcMap.get("__then_dyn_reject")!,\n        })\n      : ([{ op: "local.get", index: chainedLocal }, { op: "extern.convert_any" }] satisfies Instr[])),\n',
+        after: '    { op: "local.get", index: chainedLocal },\n    { op: "extern.convert_any" },\n',
+        left: "TypeIdx, fieldIdx: 2 },\n          ],\n        },\n      ],\n    },\n",
+        right: "  );\n  fctx.savedBodies.pop();\n  fctx.body = outerBody;\n\n  // A ",
+      },
+      {
+        beforeOffset: 9843,
+        afterOffset: 8906,
+        beforeBytes: 96,
+        afterBytes: 109,
+        before: '  if (intrinsic || !ctx.funcMap.has("__carrier_bag_has") || !ctx.funcMap.has("__extern_get")) {\n',
+        after:
+          '  if (ctx.funcMap.get("__carrier_bag_has") === undefined || ctx.funcMap.get("__extern_get") === undefined) {\n',
+        left: "t-import\n  // ratchet counts against every plain async module).\n",
+        right: "    fctx.body.push(...nativeBody);\n    return;\n  }\n  const { new",
+      },
+    ],
+    inverseReplay: true,
+  },
+] as const;
+function transformRetainedEpoch(name: string, stage: string, text: string, forward = false): string {
+  const recipe = retainedEpochStages.find((row) => row.function === name && row.stage === stage);
+  assert(recipe, "mandatory retained epoch " + name + " " + stage);
+  const edits = recipe.spans.map((span) => {
+    const before = forward ? span.after : span.before;
+    const after = forward ? span.before : span.after;
+    const needle = span.left + before + span.right;
+    assert.equal(
+      text.split(needle).length,
+      2,
+      "exact retained epoch span " + name + " " + stage + " " + span.beforeOffset,
+    );
+    return { start: text.indexOf(needle) + span.left.length, before, after };
+  });
+  for (let i = 1; i < edits.length; i++)
+    assert(
+      edits[i]!.start >= edits[i - 1]!.start + edits[i - 1]!.before.length,
+      "ordered nonoverlapping retained epoch spans",
+    );
+  for (const edit of [...edits].reverse())
+    text = text.slice(0, edit.start) + edit.after + text.slice(edit.start + edit.before.length);
+  return text;
+}
+function undoDeliveredPromiseSpeciesDelta(name: string, text: string): string {
+  return name === "emitStandalonePromiseResolve" || name === "emitStandalonePromiseThen"
+    ? transformRetainedEpoch(name, "main-to-original", text)
+    : text;
+}
+function undoDenoRetainedDelta(name: string, text: string): string {
+  if (name === "emitStandalonePromiseResolve" || name === "emitStandalonePromiseThen")
+    return transformRetainedEpoch(name, "deno-to-main", text);
+  if (name === "emitStandalonePromiseReject") {
+    text = once(
+      text,
+      `  fctx.body.push(
+    ...buildPromiseRejectionEvent(
+      promiseRejectionDispatcher(ctx),
+      0,
+      [{ op: "local.get", index: pLocal }],
+      [
+        { op: "local.get", index: pLocal },
+        { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
+      ],
+    ),
+  );\n`,
+      "",
+    );
+  }
+  if (name === "ensureAsyncDriveRuntime") {
+    text = once(text, "    rejectionDispatchFuncIdx: promiseRejectionDispatcher(ctx),\n", "");
+  }
+  // Each substitution must occur exactly once. Everything else is still
+  // authenticated against the original digest, including unrelated body edits.
+  // The observable then/finally changes arrived on main and are separately
+  // exercised by the D5/D7 runtime behavior suites.
+  if (name === "getOrRegisterPromiseType") {
+    text = once(text, '      { name: "$handled", type: { kind: "i32" }, mutable: true },\n', "");
+    text = once(text, '    { name: "$handled", type: { kind: "i32" as const }, mutable: true },\n', "");
+  }
+  if (["emitStandalonePromiseResolve", "emitStandalonePromiseReject", "emitStandalonePromiseFinally"].includes(name)) {
+    const indent = name === "emitStandalonePromiseResolve" ? "    " : "  ";
+    text = once(
+      text,
+      `${indent}fctx.body.push(closureBagInitInstr());\n${indent}fctx.body.push({ op: "i32.const", value: 0 });`,
+      `${indent}fctx.body.push(closureBagInitInstr());`,
+    );
+  }
+  if (name === "ensurePromiseFinallyRuntime") {
+    text = once(
+      text,
+      '      closureBagInitInstr(),\n      { op: "i32.const", value: 1 },',
+      "      closureBagInitInstr(),",
+    );
+  }
+  if (name === "emitStandalonePromiseFinally") {
+    text = once(
+      text,
+      "  fctx.body.push(...buildPromiseReactionHandled(promiseRejectionDispatcher(ctx), promiseTypeIdx, promiseLocal));\n",
+      "",
+    );
+  }
+  if (name === "emitStandalonePromiseFinally") {
+    text = once(
+      text,
+      "  // (#6651 D7) §27.2.5.3 step 7: Get `then` first; only an intrinsic `then` on a\n" +
+        "  // native `$Promise` re-enters here for the lowering below (promise-finally-invoke.ts).\n" +
+        "  if (tryEmitObservablePromiseFinally(ctx, fctx, promiseInstrs, onFinally, emitStandalonePromiseFinally)) return;\n",
+      "",
+    );
+  }
+  if (name === "exportPromiseBoundaryIfRegistered") {
+    text = once(text, "  exportPromiseHandlerBoundary(ctx, promiseTypeIdx, state.markRejectionHandledFuncIdx);\n", "");
+    text = once(
+      text,
+      "      ...buildPromiseReactionHandled(promiseRejectionDispatcher(ctx), promiseTypeIdx, 2),\n",
+      "",
+    );
+  }
+  if (name === "exportDrainMicrotasksIfRegistered") {
+    text = once(text, "  exportOneMicrotaskDrain(ctx, state, MICROTASK_QUEUE_INITIAL_SLOTS);\n", "");
+    text = once(
+      text,
+      "  // Native embedders must observe quiescence rather than guessing that a\n" +
+        "  // drain of one graph did not enqueue work in another graph or host queue.\n" +
+        "  const pendingIdx = mintDefinedFunc(ctx);\n" +
+        "  pushDefinedFunc(ctx, pendingIdx, {\n" +
+        '    name: "__microtasks_pending",\n' +
+        '    typeIdx: addFuncType(ctx, [], [{ kind: "i32" }], "$__mt_pending_type"),\n' +
+        "    locals: [],\n    body: [\n" +
+        '      { op: "global.get", index: state.microtaskTailGlobalIdx },\n' +
+        '      { op: "global.get", index: state.microtaskHeadGlobalIdx },\n' +
+        '      { op: "i32.sub" },\n    ],\n    exported: false,\n  });\n' +
+        '  ctx.mod.exports.push({ name: "__microtasks_pending", desc: { kind: "func", index: pendingIdx } });\n',
+      "",
+    );
+  }
+  return text;
+}
 function originalText(node: ts.FunctionDeclaration): string {
   const name = node.name!.text;
   assert.equal(node.asteriskToken, undefined, "canonical builder must not become a generator");
@@ -418,7 +741,62 @@ function originalText(node: ts.FunctionDeclaration): string {
     "exact canonical signature before original-header reconstruction: " + name,
   );
   let body = node.body!.getText();
+  if (name === "buildPromiseSettleLocals") {
+    body = once(body, '    { name: "$orderedCallbacks", type: { kind: "externref" } },\n', "");
+  }
   if (name === "buildPromiseSettleBody") {
+    body = once(
+      body,
+      `        ...buildPromiseRejectionEvent(
+          state.rejectionDispatchFuncIdx,
+          settledState === PROMISE_STATE_REJECTED ? 2 : 3,
+          [{ op: "local.get", index: promiseLocal }],
+          [{ op: "local.get", index: valueLocal }],
+        ),\n`,
+      "",
+    );
+    body = once(
+      body,
+      `    ...(settledState === PROMISE_STATE_REJECTED && state.rejectionDispatchFuncIdx !== undefined
+      ? ([
+          { op: "local.get", index: promiseLocal },
+          { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 4 },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: buildPromiseRejectionEvent(
+              state.rejectionDispatchFuncIdx,
+              0,
+              [{ op: "local.get", index: promiseLocal }],
+              [{ op: "local.get", index: valueLocal }],
+            ),
+          },
+        ] satisfies Instr[])
+      : []),
+
+`,
+      "",
+    );
+    body = once(
+      body,
+      '      then: [\n        { op: "local.get", index: valueLocal },\n        { op: "return" },\n      ],',
+      '      then: [{ op: "local.get", index: valueLocal }, { op: "return" }],',
+    );
+    // Independently reverse only the registration-order and persistent-handler
+    // deltas. The historical declaration digest remains the authenticated donor.
+    body = once(
+      body,
+      "    ...buildRegistrationOrderedCallbacks(callbackTypeIdx, callbacksLocal, callbackLocal, 4),\n",
+      "",
+    );
+    body = once(
+      body,
+      '          { op: "local.get", index: promiseLocal },\n' +
+        '          { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 4 },\n' +
+        '          { op: "i32.eqz" },\n          { op: "i32.and" },\n',
+      "",
+    );
     body = once(body, "\n  const { promiseTypeIdx, callbackTypeIdx } = state;", "");
     body = once(
       body,
@@ -616,8 +994,9 @@ function adapters(undefinedInstructions: (ctx: any) => Instr[]) {
     "canonicalUndefinedExternInstrs",
     "buildPromiseHookInstructions",
     "DENO_PROMISE_HOOK_DISPATCH",
+    "promiseRejectionDispatcher",
     js + "\nreturn { " + names.join(",") + " };",
-  )(undefinedInstructions, bodies.buildDenoPromiseHookCall, "__v8x_dispatch_promise_hook");
+  )(undefinedInstructions, bodies.buildDenoPromiseHookCall, "__v8x_dispatch_promise_hook", promiseRejectionDispatcher);
 }
 const resource = {
   promiseTypeIdx: 11,
@@ -628,6 +1007,91 @@ const resource = {
   unhandledNodeTypeIdx: -1,
 };
 describe("native Promise settlement canonical ownership (not full runtime closure)", () => {
+  it.each([
+    [
+      "buildPromiseSettleClosureInstrs",
+      "buildPromiseSettleClosureValue(closures, clFuncIdx, promiseInstrs, guardInstrs)",
+      "buildPromiseSettleClosureValue(closures, clFuncIdx + 1, promiseInstrs, guardInstrs)",
+    ],
+    ["ensurePromiseExecutorClosures", "makeBody(resolveValueFuncIdx, 3)", "makeBody(resolveValueFuncIdx + 1, 3)"],
+    [
+      "ensurePromiseThenableSubstrate",
+      "capsFields: { callback: 0, chained: 1 }",
+      "capsFields: { callback: 0, chained: 2 }",
+    ],
+    [
+      "buildPromiseResolveValueBody",
+      "promiseFields: { state: 0, value: 1, callbacks: 2 }",
+      "promiseFields: { state: 0, value: 2, callbacks: 2 }",
+    ],
+  ])("refuses an altered current moved-body adapter %s", (name, before, after) => {
+    const source = read(schedulerPath);
+    const adapter = fn(source, name!).getText();
+    const changed = once(source, adapter, once(adapter, before!, after!));
+    const receipt = retained.find(([path, candidate]) => path === schedulerPath && candidate === name)!;
+    expect(() => assertMovedResolutionReceipt(name!, receipt[2], changed)).toThrow();
+  });
+  it("refuses a changed resolution-local import and wrong historical digest", () => {
+    const name = "buildPromiseResolveValueLocals";
+    const receipt = retained.find(([path, candidate]) => path === schedulerPath && candidate === name)!;
+    const source = read(schedulerPath);
+    const changed = once(
+      source,
+      "  buildPromiseResolveValueLocals,",
+      "  buildPromiseResolveValueLocals as unrelatedLocals,",
+    );
+    expect(() => assertMovedResolutionReceipt(name, receipt[2], changed)).toThrow();
+    expect(() => assertMovedResolutionReceipt(name, "0".repeat(64), source)).toThrow();
+    expect(() => assertMovedResolutionReceipt(name, receipt[2], "")).toThrow();
+  });
+  it.each([
+    [
+      "ensureAsyncDriveRuntime",
+      "rejectionDispatchFuncIdx: promiseRejectionDispatcher(ctx)",
+      "rejectionDispatchFuncIdx: 42",
+    ],
+    [
+      "exportPromiseBoundaryIfRegistered",
+      "buildPromiseReactionHandled(promiseRejectionDispatcher(ctx), promiseTypeIdx, 2)",
+      "buildPromiseReactionHandled(promiseRejectionDispatcher(ctx), promiseTypeIdx, 3)",
+    ],
+    ["emitStandalonePromiseReject", "fieldIdx: 1", "fieldIdx: 0"],
+    [
+      "getOrRegisterPromiseType",
+      '{ name: "$handled", type: { kind: "i32" }, mutable: true }',
+      '{ name: "$handled", type: { kind: "i32" }, mutable: false }',
+    ],
+    [
+      "emitStandalonePromiseThen",
+      "buildPromiseReactionHandled(promiseRejectionDispatcher(ctx), promiseTypeIdx, promiseLocal)",
+      "buildPromiseReactionHandled(promiseRejectionDispatcher(ctx), promiseTypeIdx, promiseLocal + 1)",
+    ],
+    [
+      "exportDrainMicrotasksIfRegistered",
+      '{ op: "global.get", index: state.microtaskTailGlobalIdx }',
+      '{ op: "global.get", index: state.microtaskHeadGlobalIdx }',
+    ],
+  ])("refuses mutation of explicitly accounted Deno delta %s", (name, before, after) => {
+    const current = fn(read(schedulerPath), name!).getText();
+    const changed = once(current, before!, after!);
+    const receipt = retained.find(([path, candidate]) => path === schedulerPath && candidate === name);
+    expect(receipt).toBeDefined();
+    expect(sha(undoDeliveredPromiseSpeciesDelta(name!, undoDenoRetainedDelta(name!, current)))).toBe(receipt![2]);
+    if (name === "emitStandalonePromiseThen")
+      expect(() => undoDenoRetainedDelta(name, changed)).toThrow(
+        "exact retained epoch span emitStandalonePromiseThen deno-to-main 4320",
+      );
+    else
+      expect(() => {
+        expect(sha(undoDeliveredPromiseSpeciesDelta(name!, undoDenoRetainedDelta(name!, changed)))).toBe(receipt![2]);
+      }).toThrow();
+  });
+  it.each([
+    "    ...buildRegistrationOrderedCallbacks(callbackTypeIdx, callbacksLocal, callbackLocal, 4),\n",
+    '          { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 4 },\n',
+  ])("requires the deliberate settlement delta instead of accepting its removal %#", (delta) => {
+    expect(() => requireDeclarationReceipt(once(read(canonicalPath), delta, ""))).toThrow();
+  });
   it("requires six executable declarations and all seven original constant receipts", () => {
     requireDeclarationReceipt(read(canonicalPath));
     expect(Object.keys(bodies).sort()).toEqual([...constantNames, ...functionNames].sort());
@@ -650,9 +1114,10 @@ describe("native Promise settlement canonical ownership (not full runtime closur
     ["changed branch", read(canonicalPath).replace('op: "br_if", depth: 1', 'op: "br_if", depth: 0')],
     [
       "changed result",
-      read(canonicalPath).replace(
-        'then: [{ op: "local.get", index: valueLocal }',
-        'then: [{ op: "local.get", index: promiseLocal }',
+      once(
+        read(canonicalPath),
+        '        { op: "local.get", index: valueLocal },\n        { op: "return" },',
+        '        { op: "local.get", index: promiseLocal },\n        { op: "return" },',
       ),
     ],
   ])("rejects declaration mutation: %s", (_name, changed) =>
@@ -754,15 +1219,39 @@ describe("native Promise settlement canonical ownership (not full runtime closur
   it("keeps the canonical owner on the one import-free instruction-model leaf", () => {
     const sf = parse(read(canonicalPath));
     const imports = sf.statements.filter(ts.isImportDeclaration);
-    expect(imports).toHaveLength(1);
+    expect(imports).toHaveLength(3);
     expect(imports[0]!.importClause!.isTypeOnly).toBe(true);
     expect((imports[0]!.moduleSpecifier as ts.StringLiteral).text).toBe("../../../wasm/model/instructions.js");
+    expect(imports[1]!.getText()).toBe(
+      'import { buildRegistrationOrderedCallbacks } from "./reaction-order-bodies.js";',
+    );
+    expect(imports[2]!.getText()).toBe('import { buildPromiseRejectionEvent } from "./rejection-event-bodies.js";');
+    const eventImports = parse(read("src/runtime/wasmgc/promise/rejection-event-bodies.ts")).statements.filter(
+      ts.isImportDeclaration,
+    );
+    expect(eventImports).toHaveLength(1);
+    expect(eventImports[0]!.importClause!.isTypeOnly).toBe(true);
+    expect((eventImports[0]!.moduleSpecifier as ts.StringLiteral).text).toBe("../../../wasm/model/instructions.js");
     const leaf = parse(read("src/wasm/model/instructions.ts"));
     expect(leaf.statements.filter((n) => ts.isImportDeclaration(n) || ts.isExportDeclaration(n))).toEqual([]);
     expect(read(canonicalPath)).not.toMatch(/CodegenContext|AsyncSchedulerState|=>\s*Instr|import\(/);
   });
-  it.each(retained)("retains %s :: %s unchanged", (path, name, hash) => {
-    expect(sha(fn(read(path), name).getText())).toBe(hash);
+  it.each(retained)("retains the authenticated %s :: %s receipt after explicit deltas", (path, name, hash) => {
+    if (path === schedulerPath && movedResolutionNames.has(name)) {
+      assertMovedResolutionReceipt(name, hash, read(path));
+      return;
+    }
+    let text = fn(read(path), name).getText();
+    if (path === schedulerPath && name === "ensureMicrotaskQueue") {
+      // Preserve the authenticated donor. Account only for the two deliberate
+      // opt-in notification edits, rather than blessing a new function hash.
+      const registration = "  const notification = registerMicrotaskNotification(ctx);\n";
+      const enqueue = "body: [...buildEnqueueBody(queueResources), ...notification]";
+      expect(text.split(registration)).toHaveLength(2);
+      expect(text.split(enqueue)).toHaveLength(2);
+      text = text.replace(registration, "").replace(enqueue, "body: buildEnqueueBody(queueResources)");
+    }
+    expect(sha(undoDeliveredPromiseSpeciesDelta(name, undoDenoRetainedDelta(name, text)))).toBe(hash);
   });
   it("does not allocate undefined when dispatcher is absent, even with parent operands", () => {
     let calls = 0;
@@ -780,8 +1269,9 @@ describe("native Promise settlement canonical ownership (not full runtime closur
     const events: string[] = [];
     const ctx = {
       funcMap: {
-        get() {
+        get(name: string) {
           events.push("lookup");
+          if (name === "__v8x_deno_promise_reject_dispatch") return undefined;
           return 20;
         },
       },
@@ -794,7 +1284,7 @@ describe("native Promise settlement canonical ownership (not full runtime closur
       return [{ op: "ref.null.extern" }];
     });
     const bound = adapter.bindPromiseSettleResources(ctx, state, 11, 12);
-    expect(events).toEqual(["lookup", "undefined"]);
+    expect(events).toEqual(["lookup", "undefined", "lookup"]);
     expect(bound).toMatchObject({
       promiseTypeIdx: 11,
       callbackTypeIdx: 12,
@@ -881,4 +1371,97 @@ describe("native Promise settlement canonical ownership (not full runtime closur
     );
     expect(got.at(-1)).toEqual({ op: "local.get", index: 1 });
   });
+});
+
+describe("finite retained Promise declaration epochs", () => {
+  it.each(["emitStandalonePromiseResolve", "emitStandalonePromiseThen"])(
+    "reconstructs both independently pinned epochs and replays %s",
+    (name) => {
+      const current = fn(read(schedulerPath), name).getText();
+      let text = current;
+      for (const stage of retainedEpochStages.filter((row) => row.function === name)) {
+        expect(Buffer.byteLength(text)).toBe(stage.before.bytes);
+        expect(sha(text)).toBe(stage.before.sha256);
+        for (const span of stage.spans) {
+          expect(Buffer.byteLength(span.before)).toBe(span.beforeBytes);
+          expect(Buffer.byteLength(span.after)).toBe(span.afterBytes);
+          expect(
+            Buffer.byteLength(text.slice(0, text.indexOf(span.left + span.before + span.right) + span.left.length)),
+          ).toBe(span.beforeOffset);
+        }
+        const next = transformRetainedEpoch(name, stage.stage, text);
+        expect(Buffer.byteLength(next)).toBe(stage.after.bytes);
+        expect(sha(next)).toBe(stage.after.sha256);
+        expect(transformRetainedEpoch(name, stage.stage, next, true)).toBe(text);
+        const first = stage.spans[0]!;
+        const second = stage.spans[stage.spans.length - 1]!;
+        const firstNeedle = first.left + first.before + first.right;
+        const secondNeedle = second.left + second.before + second.right;
+        const firstStart = text.indexOf(firstNeedle) + first.left.length;
+        const secondStart = text.indexOf(secondNeedle) + second.left.length;
+        const reordered =
+          text.slice(0, firstStart) +
+          second.before +
+          text.slice(firstStart + first.before.length, secondStart) +
+          first.before +
+          text.slice(secondStart + second.before.length);
+        expect(() => transformRetainedEpoch(name, stage.stage, reordered)).toThrow();
+        expect(transformRetainedEpoch(name, stage.stage, text)).toBe(next);
+        for (const span of stage.spans) {
+          const needle = span.left + span.before + span.right;
+          for (const replacement of [
+            span.before ? span.left + span.right : span.right,
+            needle + needle,
+            span.left + "/* shifted */" + span.before + span.right,
+            span.left + span.before.replace("promiseLocal", "promiseLocal + 1") + "/* malformed */" + span.right,
+          ]) {
+            expect(
+              () => transformRetainedEpoch(name, stage.stage, once(text, needle, replacement)),
+              stage.stage + " " + span.beforeOffset + " " + JSON.stringify(replacement),
+            ).toThrow("exact retained epoch span");
+            expect(transformRetainedEpoch(name, stage.stage, text)).toBe(next);
+          }
+        }
+        text = next;
+      }
+      const receipt = retained.find(([path, candidate]) => path === schedulerPath && candidate === name)!;
+      expect(sha(text)).toBe(receipt[2]);
+      const outside = once(current, "export function " + name, "export  function " + name);
+      const transformed = undoDeliveredPromiseSpeciesDelta(name, undoDenoRetainedDelta(name, outside));
+      expect(sha(transformed)).not.toBe(receipt[2]);
+      expect(undoDeliveredPromiseSpeciesDelta(name, undoDenoRetainedDelta(name, current))).toBe(text);
+    },
+  );
+});
+
+it.each([
+  [
+    "emitStandalonePromiseResolve",
+    '    fctx.body.push({ op: "i32.const", value: 0 });',
+    '    fctx.body.push({ op: "i32.const", value: 1 });',
+  ],
+  [
+    "emitStandalonePromiseResolve",
+    "promiseResolvePassThroughInstrs(ctx, fctx, vLocal)",
+    "promiseResolvePassThroughInstrs(ctx, fctx, vLocal + 1)",
+  ],
+  ["emitStandalonePromiseThen", "promiseTypeIdx, promiseLocal));", "promiseTypeIdx, promiseLocal + 1));"],
+  [
+    "emitStandalonePromiseThen",
+    "promiseRejectionDispatcher(ctx), promiseTypeIdx, promiseLocal",
+    "promiseRejectionDispatcher(other), promiseTypeIdx, promiseLocal",
+  ],
+  [
+    "emitStandalonePromiseThen",
+    "emitPromiseThenSpeciesCapability(ctx, fctx, species, promiseLocal)",
+    "emitPromiseThenSpeciesCapability(ctx, fctx, species, promiseLocal + 1)",
+  ],
+])("refuses actual retained field/receiver/species operand corruption %s %#", (name, before, after) => {
+  const current = fn(read(schedulerPath), name!).getText();
+  const receipt = retained.find(([path, candidate]) => path === schedulerPath && candidate === name)!;
+  const verify = (text: string) =>
+    expect(sha(undoDeliveredPromiseSpeciesDelta(name!, undoDenoRetainedDelta(name!, text)))).toBe(receipt[2]);
+  verify(current);
+  expect(() => verify(once(current, before!, after!))).toThrow("exact retained epoch span");
+  verify(current);
 });

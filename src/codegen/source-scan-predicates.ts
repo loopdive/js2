@@ -184,8 +184,34 @@ export function collectSloppyImplicitGlobalNames(
       if (ts.isIdentifier(lhs) && !isStrictContext(lhs, inferModuleStrict) && oracle.isUnresolvableIdentifier(lhs)) {
         names.add(lhs.text);
       }
+      // (#6774 S12) …and every identifier TARGET of an assignment pattern.
+      if (ts.isArrayLiteralExpression(lhs) || ts.isObjectLiteralExpression(lhs)) addPatternTargets(lhs);
     }
     forEachChild(node, walk);
+  }
+  function addPatternTargets(pattern: ts.Expression): void {
+    const elements: ts.Expression[] = ts.isArrayLiteralExpression(pattern)
+      ? [...pattern.elements]
+      : ts.isObjectLiteralExpression(pattern)
+        ? (pattern.properties.map((p) =>
+            ts.isPropertyAssignment(p)
+              ? p.initializer
+              : ts.isShorthandPropertyAssignment(p)
+                ? p.name
+                : ts.isSpreadAssignment(p)
+                  ? p.expression
+                  : p.name,
+          ) as ts.Expression[])
+        : [];
+    for (let el of elements) {
+      if (ts.isSpreadElement(el)) el = el.expression;
+      if (ts.isBinaryExpression(el) && el.operatorToken.kind === ts.SyntaxKind.EqualsToken) el = el.left;
+      if (ts.isIdentifier(el)) {
+        if (!isStrictContext(el, inferModuleStrict) && oracle.isUnresolvableIdentifier(el)) names.add(el.text);
+      } else if (ts.isArrayLiteralExpression(el) || ts.isObjectLiteralExpression(el)) {
+        addPatternTargets(el);
+      }
+    }
   }
   walk(sourceFile);
   return names;

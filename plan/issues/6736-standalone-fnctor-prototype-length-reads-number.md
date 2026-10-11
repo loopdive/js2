@@ -1,7 +1,8 @@
 ---
 id: 6736
 title: "standalone: `.length` of a function's `prototype` object reads a number, so lodash's `isArrayLike(LazyWrapper.prototype)` is true and module init throws"
-status: ready
+status: done
+completed: 2026-10-05
 sprint: current
 created: 2026-09-28
 priority: high
@@ -12,13 +13,7 @@ task_type: bug
 area: compiler
 goal: standalone
 requested_by: ttraenkler/sendev-standalone
-related: [6713, 6711, 2580, 6751]
-# (2026-09-29) The revert of #6299 restores emitStandaloneAnyLength inside
-# property-access-dispatch.ts (+158 lines back to its pre-#6299 size); main's
-# post-merge baseline refresh had already banked the shrink. A re-land moves it
-# out again.
-loc-budget-allow:
-  - src/codegen/property-access-dispatch.ts
+related: [6713, 6711, 2580, 6751, 6861]
 ---
 
 # #6736 — `F.prototype.length` answers a number in standalone
@@ -230,3 +225,136 @@ queued.
 
 The pin `tests/issue-6736-any-length-absent.test.ts` left with the code; it is
 in `51c62b057` for the re-land.
+
+## Re-land — 2026-10-05
+
+The `.length` change from `51c62b057` is re-applied with the same behaviour.
+It now lives at `src/codegen/expressions/standalone-any-length.ts`, to respect
+the flat-directory budget. Its three helpers that sit inside the codegen import
+cycle (`coercionInstrs`, `addStringConstantGlobal` and
+`stringConstantExternrefInstrs`) are passed in by `property-access-dispatch.ts`,
+so the module stays outside the cycle (`check:import-cycles`). The revert's re-land condition is now met: the ES5 row
+`harness/compare-array-arguments.js` is fixed at its cause, not by the old
+coincidence.
+
+**Why `arguments[0]` read wrong.** A spread call into an `arguments`-reading
+callee builds `__extras_argv` in `emitSetExtrasArgv`. In an untyped program
+`[0, 'a', undefined]` is a vec of `$AnyValue` tagged unions, and each element
+went into the externref extras array through a bare `extern.convert_any`. So
+`arguments` held the union structs themselves:
+
+- `arguments[0] === 0` was false;
+- `typeof arguments[0]` was `"object"`;
+- `String(arguments[0])` was still `"0"`.
+
+That was true for every spread call, not just inside the harness. Probe
+`f(1, ...[0, 'a']); g(...[0, 'a'])` gave 248 on the parent; Node gives 447.
+
+The new module `expressions/spread-elem-extern.ts` (`spreadElemToExternInstrs`) projects an
+`$AnyValue` element through the coercion engine, which unboxes it. It is gated
+on standalone. `emitSetExtrasArgv` now carries the element `ValType` instead of
+its kind, so `nested-declarations.ts` shrinks by 13 lines.
+
+**Pin.** `tests/issue-6736-any-length-absent.test.ts` gains a fourth case for
+spread into `arguments`, including test262's `compareArray` both ways. Its
+direct calls serve as the anti-vacuity control. On the parent the four cases
+read 248, 2, 108 and 127; with this change they read 1983, 5, 127 and 511,
+which are Node's answers. `tests/issue-2576.test.ts` keeps its re-land edit,
+`(5).length` reading `NaN`.
+
+**ES5 row.** `harness/compare-array-arguments.js` passes in standalone with
+`--isolate`. Re-applying only the `.length` change reproduced the revert's
+failure (`Actual [0, a, undefined] and expected [0, a, undefined] should have
+the same contents`).
+
+**Scoped standalone test262**, 2503 rows, run in-process on the same base
+(`b6324ee6d1`), parent against this branch:
+
+| | pass | fail | CE |
+|---|---|---|---|
+| parent | 2146 | 292 | 65 |
+| this branch | 2146 | 292 | 65 |
+
+Zero rows flipped. The rows cover `language/statements/function`,
+`language/expressions/{new,call,instanceof,object/method-definition}`,
+`language/arguments-object`, `language/statements/for-in`, `harness`,
+`built-ins/Function/prototype`, `built-ins/Object/{create,keys,getPrototypeOf,prototype/isPrototypeOf}`,
+`built-ins/Array/from` and `built-ins/Array/prototype/{slice,indexOf}`.
+
+**lodash.** Today's module-init failure is no longer this issue. It is
+[#6861](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6861-standalone-fnctor-ctor-calls-own-prototype-method),
+which throws at `lodash.js:6830`, long before `isArrayLike` at 17127. With
+#6861 alone, init still throws `called value is not a function`. I did not
+trace that throw to a line; this issue's `isArrayLike` site is the expected
+one. With both, init
+completes, and the next link is the checksum
+([#6751](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6751-standalone-lodash-checksum-called-value-not-function)).
+
+**JS-host.** All three changes are gated on standalone. Binaries are
+byte-identical, before and after, on the 9-file probe set and on lodash's gc
+lane (sha256 `1d5ceb787c914081…`, 1,288,275 bytes).
+
+## Merge-group park — 2026-10-07
+
+PR #6506 was parked by the merge-group standalone guard (run
+`37388187410`): improvements 0, wasm-change regressions 79, host-free pass
+41973 against the 42055 high-water mark.
+
+**Attribution.** All 79 regressed rows were checked against main's standalone
+results at `abb3471c46` (has #6502, lacks #6506; baselines commit
+`b2e4f92e89`). All 79 **pass** there, so every one belongs to this PR. None is
+inherited from #6502.
+
+**Cause.** The re-land sent every receiver that was not a string, closure or
+nullish to `__extern_get(recv, "length")`. It also read a `$__vec_base`
+subtype's field 0 directly. `__extern_length` owns the `length` of several
+carriers that `__extern_get` does not know:
+
+| rows | receiver | re-land read | correct |
+|---|---|---|---|
+| 75 | TypedArray view over a resizable buffer (length-tracking) | -1 (the field-0 sentinel) | live length |
+| (in the 75) | detached TypedArray view | stale length | 0 |
+| 3 | String wrapper (`Array.prototype.{forEach,filter,reduce,reduceRight}.call(new String(…))`) | `undefined` | 3 |
+| 1 | rest-args array from an IIFE (`language/rest-parameters/arrow-function.js`) | `undefined` | 0 / 3 |
+
+**Fix.** Only an ordinary `$Object` takes the real Get. So do number and
+boolean primitives, so that `(5).length` stays `undefined`. Every other carrier
+keeps the old `__extern_length` answer. The read also asks for
+`__extern_get`'s #6651 C5 String-wrapper `length` arm. That arm is passed in
+through `AnyLengthDeps`, so the module stays out of the import cycle.
+
+**Pin.** `tests/issue-6736-any-length-absent.test.ts`, case "non-object
+carriers keep their own length". The parent (`c9e15c4e23`) reads 484. The fix
+reads 1023, which matches Node. Bits 32, 128 and 256 are the anti-vacuity
+control: they pass on both sides.
+
+**The 79 rows.** Re-run in standalone with the fix: 79 of 79 pass. The three
+detach rows need the QuickJS eval provider built.
+
+**lodash.** The standalone-dynamic lane still finishes module init. It fails
+at the `checksum` phase
+([#6751](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6751-standalone-lodash-checksum-called-value-not-function)),
+as before. The narrowing gives none of the lodash progress back.
+
+**Scoped standalone test262.** I ran 2512 rows in-process on the merged
+branch (`a2fbd6121b`, upstream `7ebc362ecc`) and compared them with main's
+standalone baseline (`js2wasm-baselines` `f6fcebfe50`). The rows cover
+`built-ins/Array/prototype/{forEach,filter,reduce,reduceRight,map,every,some}`,
+`built-ins/TypedArray/prototype/{length,set,fill,copyWithin}`,
+`language/arguments-object`, `language/rest-parameters`, `harness`,
+`built-ins/Object/keys`, `built-ins/Function/prototype/apply`,
+`built-ins/String/prototype/split` and `built-ins/Array/from`.
+
+| | pass |
+|---|---|
+| main baseline | 2087 |
+| this branch | 2087 |
+
+No row went pass to non-pass, and none went the other way. Seven rows were
+left out because main's baseline records them as `compile_timeout`.
+Two of them (`Array/prototype/{some,every}/…-7-c-ii-2.js`, which walk a
+million-element sparse array) hang in the in-process runner.
+
+**JS-host.** The new code runs only for standalone and WASI. JS-host binaries
+match the merge parent `7ebc362ecc` byte for byte (sha256) for lodash, redux,
+marked, moment and the probe fixtures.

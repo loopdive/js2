@@ -502,7 +502,7 @@ describe("benchmark artifact lifecycle", () => {
     const workflow = readFileSync(resolve(import.meta.dirname, "../.github/workflows/benchmark-refresh.yml"), "utf8");
     const cleanup = workflow.slice(
       workflow.indexOf("- name: Remove checkout-stale benchmark outputs"),
-      workflow.indexOf("# Both sides run sequentially"),
+      workflow.indexOf("- name: Measure candidate"),
     );
     for (const artifact of [
       "latest.json",
@@ -520,26 +520,19 @@ describe("benchmark artifact lifecycle", () => {
     expect(cleanup).not.toContain('"$results/history.json"');
     expect(workflow).toContain("- name: Detect auxiliary benchmark changes");
     expect(workflow).toContain('auxiliary_mode="inherit"');
-    expect(workflow).toContain('if [ "${{ github.event_name }}" != "pull_request" ] &&');
-    expect(workflow).toContain('[ "${{ github.ref }}" = "refs/heads/main" ] &&');
+    expect(workflow).toContain('if [ "${{ github.ref }}" = "refs/heads/main" ] &&');
     expect(workflow).toContain('auxiliary_mode="measure"');
     expect(workflow).toContain('elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then');
     expect(workflow).toContain("- name: Install and verify pinned Javy");
-    expect(workflow).toContain(
-      "if: steps.auxiliary.outputs.mode == 'measure' || steps.auxiliary.outputs.legacy_manifest_javy == 'true'",
-    );
-    expect(workflow).toContain("legacy_manifest_javy");
-    expect(workflow).toContain("not-used (auxiliary measurements inherited)");
+    expect(workflow).toContain("if: steps.auxiliary.outputs.mode == 'measure'");
     expect(workflow).toContain("BENCHMARK_AUXILIARY_RUNTIME_BASELINE");
     expect(workflow).toContain("website/public/benchmarks/competitive/programs");
-    expect(workflow).toContain("- name: Detect benchmark timing methodology migration");
-    expect(workflow).toContain("steps.timing_methodology.outputs.changed != 'true'");
-    expect(workflow).toContain("- name: Record timing methodology migration");
-    const comparison = workflow.slice(
-      workflow.indexOf("- name: Compare same-run PR base and candidate"),
-      workflow.indexOf("- name: Record timing methodology migration"),
-    );
-    expect(comparison).toContain("continue-on-error: true");
+    // (#6799) The workflow has no `pull_request` trigger, so PR-only steps
+    // (base measurement, same-run comparison, timing-migration notice) were
+    // dead and are gone; nothing may branch on that event any more.
+    expect(workflow).not.toMatch(/event_name\s*[!=]=\s*'pull_request'/);
+    expect(workflow).not.toMatch(/event_name \}\}" !?= "pull_request"/);
+    expect(workflow).not.toContain("legacy_manifest_javy");
     const promotion = workflow.slice(workflow.indexOf("promote-benchmarks:"));
     expect(promotion).toContain("- name: Checkout trusted measured main revision");
     expect(promotion).toContain("ref: ${{ needs.measure-and-gate.outputs.source_sha }}");

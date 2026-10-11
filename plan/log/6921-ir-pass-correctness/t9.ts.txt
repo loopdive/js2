@@ -1,0 +1,15 @@
+export function getr(o: any): number {
+  o.x;
+  return 1;
+}
+export function tonum(o: any): number {
+  +o;
+  return 1;
+}
+export function eqq(o: any): number {
+  o == 1;
+  return 1;
+}
+export function twice(o: any): number {
+  return (+o) + (+o);
+}

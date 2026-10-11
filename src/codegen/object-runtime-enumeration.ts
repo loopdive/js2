@@ -36,6 +36,8 @@ import { protoIndexForInPushInstrs, protoIndexHasIdxInstrs } from "./proto-index
 import { stringExoticPushKeysPrologue } from "./string-exotic-own-props.js"; // (#4491) §10.4.3 own index keys
 import { definedFuncAt } from "./func-space.js";
 import { orProxyArrayLikeTest, proxyArrayLikeTypeIdx } from "./proxy-array-like.js"; // (#6651 H6)
+import { stringExoticAssignSourceInstrs } from "./object-model/object-assign-primitive-operands.js"; // (#6770 S1)
+import { nonObjectEnumerableOwnInstrs } from "./object-model/object-own-key-order.js"; // (#6770 S3)
 
 /**
  * Everything the enumeration/array-like/object-static block reads from the
@@ -68,32 +70,44 @@ export interface ObjectEnumerationHelperState {
   objVecPushIdx: number;
   objOrderedIdx: number;
   objOrderedAllIdx: number;
-  boundaryObjectKeysIdx?: number;
-  boundaryObjectForInKeysIdx?: number;
+  /** (#6882) Every "not mine — who can enumerate it?" terminal, asked in order. */
+  boundaryObjectKeysIdxs: readonly number[];
+  boundaryObjectForInKeysIdxs: readonly number[];
   FLAG_ENUMERABLE: number;
   FLAG_TOMBSTONE: number;
 }
 
+/**
+ * (#6882) One "ask, and use the answer only when it is non-null" arm per
+ * terminal (param 0 = receiver), each returning a non-null answer. A
+ * native-regime module in a JavaScript environment owns several families — the
+ * wasm peer (a struct the provider minted), the JS boundary (a host object this
+ * instance admitted), a provider's reverse hop (a carrier its consumer built) —
+ * and each answers for different values, so all are asked, in that order. A
+ * module with one family emits exactly the one arm it had.
+ */
+function nonNullAnswerArms(terminalIdxs: readonly number[], resultLocal: number): Instr[] {
+  return terminalIdxs.flatMap((funcIdx): Instr[] => [
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx },
+    { op: "local.tee", index: resultLocal },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "local.get", index: resultLocal }, { op: "return" }],
+    },
+  ]);
+}
+
 /** Non-$Object for-in snapshot: admitted JS object, or carrier bag + prototype. */
-function nonObjectForInKeysIf(ctx: CodegenContext, boundaryObjectForInKeysIdx?: number): Instr {
+function nonObjectForInKeysIf(ctx: CodegenContext, boundaryObjectForInKeysIdxs: readonly number[]): Instr {
   return {
     op: "if",
     blockType: { kind: "empty" },
     then: [
-      ...(boundaryObjectForInKeysIdx !== undefined
-        ? ([
-            { op: "local.get", index: 0 },
-            { op: "call", funcIdx: boundaryObjectForInKeysIdx },
-            { op: "local.tee", index: 10 },
-            { op: "ref.is_null" },
-            { op: "i32.eqz" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [{ op: "local.get", index: 10 }, { op: "return" }],
-            },
-          ] satisfies Instr[])
-        : []),
+      ...nonNullAnswerArms(boundaryObjectForInKeysIdxs, 10),
       ...buildBagPushKeys(ctx, { vecLocal: 7, includeNonEnum: false }),
       ...protoIndexForInPushInstrs(ctx, 0, 7, 8),
       { op: "local.get", index: 7 },
@@ -269,8 +283,8 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
     objVecPushIdx,
     objOrderedIdx,
     objOrderedAllIdx,
-    boundaryObjectKeysIdx,
-    boundaryObjectForInKeysIdx,
+    boundaryObjectKeysIdxs,
+    boundaryObjectForInKeysIdxs,
     FLAG_ENUMERABLE,
     FLAG_TOMBSTONE,
   } = s;
@@ -308,20 +322,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
         op: "if",
         blockType: { kind: "empty" },
         then: [
-          ...(boundaryObjectKeysIdx !== undefined
-            ? ([
-                { op: "local.get", index: 0 },
-                { op: "call", funcIdx: boundaryObjectKeysIdx },
-                { op: "local.tee", index: 8 },
-                { op: "ref.is_null" },
-                { op: "i32.eqz" },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [{ op: "local.get", index: 8 }, { op: "return" }],
-                },
-              ] satisfies Instr[])
-            : []),
+          ...nonNullAnswerArms(boundaryObjectKeysIdxs, 8),
           ...bagKeysTail(ctx, { vecLocal: 7, includeNonEnum: false }),
         ],
       },
@@ -388,7 +389,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
         { name: "i", type: { kind: "i32" } },
         { name: "e", type: entryRefNull },
         { name: "vec", type: { kind: "externref" } },
-        ...(boundaryObjectKeysIdx !== undefined
+        ...(boundaryObjectKeysIdxs.length > 0
           ? [{ name: "boundaryKeys", type: { kind: "externref" } as ValType }]
           : []),
       ],
@@ -464,7 +465,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       { op: "local.tee", index: 1 },
       { op: "ref.test", typeIdx: objectTypeIdx },
       { op: "i32.eqz" },
-      nonObjectForInKeysIf(ctx, boundaryObjectForInKeysIdx),
+      nonObjectForInKeysIf(ctx, boundaryObjectForInKeysIdxs),
       // cur = cast<$Object>(any)
       { op: "local.get", index: 1 },
       { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -628,7 +629,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
         { name: "vec", type: { kind: "externref" } },
         { name: "seen", type: { kind: "externref" } },
         { name: "keyExt", type: { kind: "externref" } },
-        ...(boundaryObjectForInKeysIdx !== undefined
+        ...(boundaryObjectForInKeysIdxs.length > 0
           ? [{ name: "boundaryKeys", type: { kind: "externref" } as ValType }]
           : []),
       ],
@@ -803,7 +804,12 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: 7 }, { op: "return" }],
+        then: [
+          // (#6770 S3) EnumerableOwnProperties over the receiver's own keys
+          ...nonObjectEnumerableOwnInstrs(ctx, false),
+          { op: "local.get", index: 7 },
+          { op: "return" },
+        ],
       },
       // o = cast<$Object>(any) ; arr = __obj_ordered(o) ; cap = arr.len (#1837)
       { op: "local.get", index: 1 },
@@ -864,6 +870,8 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
         { name: "i", type: { kind: "i32" } },
         { name: "e", type: entryRefNull },
         { name: "vec", type: { kind: "externref" } },
+        { name: "keys", type: { kind: "externref" } },
+        { name: "key", type: { kind: "externref" } },
       ],
       body,
     );
@@ -892,7 +900,12 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: 7 }, { op: "return" }],
+        then: [
+          // (#6770 S3) EnumerableOwnProperties over the receiver's own keys
+          ...nonObjectEnumerableOwnInstrs(ctx, true),
+          { op: "local.get", index: 7 },
+          { op: "return" },
+        ],
       },
       // o = cast<$Object>(any) ; arr = __obj_ordered(o) ; cap = arr.len (#1837)
       { op: "local.get", index: 1 },
@@ -968,6 +981,8 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
         { name: "e", type: entryRefNull },
         { name: "vec", type: { kind: "externref" } },
         { name: "pair", type: { kind: "externref" } },
+        { name: "keys", type: { kind: "externref" } },
+        { name: "key", type: { kind: "externref" } },
       ],
       body,
     );
@@ -1265,8 +1280,18 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
               { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 1 },
               { op: "local.get", index: 5 },
               { op: "array.get", typeIdx: objVecArrTypeIdx },
-              { op: "local.tee", index: 12 },
+              { op: "local.set", index: 12 },
+              // (#6770 S1) ToObject(String source): its §10.4.3 index keys.
+              ...stringExoticAssignSourceInstrs(ctx, {
+                target: 0,
+                source: 12,
+                keys: 13,
+                count: 14,
+                index: 15,
+                key: 16,
+              }),
               // srcAny = any.convert_extern(srcExt)
+              { op: "local.get", index: 12 },
               { op: "any.convert_extern" },
               { op: "local.tee", index: 6 },
               // if !$Object → skip this source
@@ -1439,6 +1464,7 @@ export function fillObjectAssignProxySourceArm(ctx: CodegenContext, proxyTypeIdx
   if (!objectAssign) return;
 
   const objectKeysIdx = ctx.funcMap.get("__object_keys");
+  const ownKeysAllIdx = ctx.funcMap.get("__proxy_ownkeys_names_dispatch"); // (#6770 S7) [[OwnPropertyKeys]]
   const externLengthIdx = ctx.funcMap.get("__extern_length");
   const externGetIdxIdx = ctx.funcMap.get("__extern_get_idx");
   const getOwnPropertyDescriptorIdx = ctx.funcMap.get("__getOwnPropertyDescriptor");
@@ -1497,9 +1523,14 @@ export function fillObjectAssignProxySourceArm(ctx: CodegenContext, proxyTypeIdx
       op: "if",
       blockType: { kind: "empty" },
       then: [
-        // keys = [[OwnPropertyKeys]](source)
+        // keys = [[OwnPropertyKeys]](source) — the validated full list,
+        // strings AND symbols (#6770 S7: `__object_keys` is now the
+        // enumerable-string projection, which would drop symbols and run the
+        // gopd trap a second time per key).
         { op: "local.get", index: 12 },
-        { op: "call", funcIdx: objectKeysIdx },
+        ...(ownKeysAllIdx !== undefined
+          ? ([{ op: "ref.null.extern" }, { op: "call", funcIdx: ownKeysAllIdx }] satisfies Instr[])
+          : ([{ op: "call", funcIdx: objectKeysIdx }] satisfies Instr[])),
         { op: "local.set", index: keyListLocal },
         // length = ToLength(keys.length), narrowed to the bounded native loop
         { op: "local.get", index: keyListLocal },

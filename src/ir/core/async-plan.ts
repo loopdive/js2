@@ -16,7 +16,7 @@
 
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import type { AsyncRuntimeFeature } from "./async-intents.js";
-import type { IrInstr, IrValueId } from "./nodes.js";
+import type { IrInstr, IrValueId, IrSiteId } from "./nodes.js";
 import type { IrType } from "./types.js";
 
 export type IrAsyncStateId = number & { readonly __brand: "IrAsyncStateId" };
@@ -67,6 +67,7 @@ export interface IrAsyncResumeValue {
  * stable spill identity observed by successor states.
  */
 export interface IrAsyncSpillUpdate {
+  readonly site?: IrSiteId;
   readonly target: IrValueId;
   readonly value: IrValueId;
 }
@@ -88,6 +89,7 @@ export interface IrAsyncHandler {
 }
 
 export interface IrAsyncSuspendTerminator {
+  readonly site?: IrSiteId;
   readonly kind: "suspend";
   readonly awaited: IrValueId;
   readonly resume: {
@@ -101,11 +103,13 @@ export interface IrAsyncSuspendTerminator {
 }
 
 export interface IrAsyncGotoTerminator {
+  readonly site?: IrSiteId;
   readonly kind: "goto";
   readonly target: IrAsyncStateId;
 }
 
 export interface IrAsyncBranchTerminator {
+  readonly site?: IrSiteId;
   readonly kind: "branch";
   readonly condition: IrValueId;
   readonly ifTrue: IrAsyncStateId;
@@ -113,17 +117,20 @@ export interface IrAsyncBranchTerminator {
 }
 
 export interface IrAsyncResolveTerminator {
+  readonly site?: IrSiteId;
   readonly kind: "resolve";
   /** Absent for Promise<void>. */
   readonly value?: IrValueId;
 }
 
 export interface IrAsyncRejectTerminator {
+  readonly site?: IrSiteId;
   readonly kind: "reject";
   readonly reason: IrValueId;
 }
 
 export interface IrAsyncCompleteTerminator {
+  readonly site?: IrSiteId;
   readonly kind: "complete";
 }
 

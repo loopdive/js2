@@ -178,9 +178,9 @@ describe("#6767 — standalone class definition reflective residue", () => {
     expect(await runStandalone(P11)).toBe(250);
   });
 
-  it("p12 answers 495 — node's 511 minus the recorded bit 16 (RED on base: 303)", async () => {
+  it("p12 answers node's 511 (RED on base: 303; bit 16 was the R1 residual, fixed by #6772 S12)", async () => {
     expect(runHost(P12)).toBe(511);
-    expect(await runStandalone(P12)).toBe(495);
+    expect(await runStandalone(P12)).toBe(511);
   });
 
   it("step 1: a helper sees method/accessor descriptors on C and C.prototype (RED on base: 811)", async () => {
@@ -240,19 +240,20 @@ describe("#6767 — standalone class definition reflective residue", () => {
   });
 
   // ── RESIDUAL pins ───────────────────────────────────────────────────────
-  it("RESIDUAL: a static accessor sharing an instance accessor's name reads the instance half (node: 3)", async () => {
-    // #5195 cluster B item 5: `get eval` and `static get eval` share ONE
-    // function slot (`class-bodies.ts` accessor registration), so the typed
-    // `C.eval` runs the instance body. definition/getters-restricted-ids.js.
+  it("a static accessor sharing an instance accessor's name reads the static half (node: 3; was RESIDUAL R1, fixed by #6772 S12)", async () => {
+    // #5195 cluster B item 5: `get eval` and `static get eval` shared ONE
+    // function slot; #6772 S12 gives the static half its own key.
+    // definition/getters-restricted-ids.js.
     const src = `class C { get eval() { return 1; } static get eval() { return 3; } } __r = C.eval;`;
     expect(runHost(src)).toBe(3);
-    expect(await runStandalone(src)).toBe(1);
+    expect(await runStandalone(src)).toBe(3);
   });
 
-  it("RESIDUAL: getPrototypeOf of a DERIVED class object is not its parent (node: 1)", async () => {
-    // Step 2 routes only BASE classes; the fold answers D.prototype for D.
+  it("getPrototypeOf of a DERIVED class object is its parent (node: 1; was RESIDUAL R4, fixed by #6772 S6)", async () => {
+    // Step 2 routes only BASE classes; #6772 S6 answers the parent's class
+    // object for a derived class whose heritage provably names that parent.
     const src = `class B {} class D extends B {} __r = Object.getPrototypeOf(D) === B ? 1 : 0;`;
     expect(runHost(src)).toBe(1);
-    expect(await runStandalone(src)).toBe(0);
+    expect(await runStandalone(src)).toBe(1);
   });
 });

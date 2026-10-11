@@ -49,7 +49,11 @@ import {
   ensureGlobalEnvironmentOperation,
 } from "../global-environment.js";
 import { arrayIteratorOverrideGlobalIdx } from "../expressions/proto-override.js";
-import { tryEmitSpecOrderedArrayAssignDrive } from "../dstr-assign-iterator-drive.js"; // (#6651 G1) §13.15.5.2 lazy drive
+import {
+  evaluateForOfPatternKey,
+  objectPatternHasRuntimeKey,
+  tryEmitSpecOrderedArrayAssignDrive,
+} from "../dstr-assign-iterator-drive.js"; // (#6651 G1 lazy drive, U4 computed keys)
 import { emitHoleToUndefined } from "../array-holes.js"; // (#6651 G2) hole read boundary before a default
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { resolveWasmType } from "../index.js";
@@ -1112,6 +1116,15 @@ export function compileForOfAssignDestructuring(
           fctx.body.push(...instrs);
         }
       }
+      return;
+    }
+
+    // (#6651 U4) A runtime-only key has no field: the extern-get arm evaluates it.
+    if (objectPatternHasRuntimeKey(ctx, expr)) {
+      const externElem = allocLocal(fctx, `__forof_objkey_elem_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.get", index: elemLocal }, { op: "extern.convert_any" });
+      fctx.body.push({ op: "local.set", index: externElem });
+      compileForOfIteratorAssignDestructuring(ctx, fctx, expr, externElem, stmt);
       return;
     }
 
@@ -2621,14 +2634,18 @@ export function compileForOfIteratorAssignDestructuring(
       // (#4447) Numeric-literal keys count: `for ([...{ 1: x }] of [[1,2,3]])`
       // reads index 1 of the rest slice. §13.2.5.5 canonicalises a numeric
       // PropertyName to its string form, which `prop.name.text` already is.
-      const propName = ts.isShorthandPropertyAssignment(prop)
+      const staticName = ts.isShorthandPropertyAssignment(prop)
         ? prop.name.text
         : ts.isIdentifier(prop.name)
           ? prop.name.text
           : ts.isStringLiteral(prop.name) || ts.isNumericLiteral(prop.name)
             ? prop.name.text
             : undefined;
-      if (!propName) continue;
+      // (#6651 U4) a computed key is evaluated HERE, in source order.
+      const computed =
+        !staticName && ts.isPropertyAssignment(prop) ? evaluateForOfPatternKey(ctx, fctx, prop) : undefined;
+      const propName = staticName || computed?.name;
+      if (propName === undefined) continue;
 
       // (#4447) Same (target, default) split as the struct path — `{ k: t = d }`
       // is a PropertyAssignment over the AssignmentExpression `t = d`, and
@@ -2650,6 +2667,13 @@ export function compileForOfIteratorAssignDestructuring(
 
       /** Push `__extern_get(elem, "propName")` — the read shared by every arm. */
       const pushPropRead = (): boolean => {
+        if (computed?.keyLocal !== undefined) {
+          getIdx = ctx.funcMap.get("__extern_get");
+          if (getIdx === undefined) return false;
+          fctx.body.push({ op: "local.get", index: elemLocal }, { op: "local.get", index: computed.keyLocal });
+          fctx.body.push({ op: "call", funcIdx: getIdx });
+          return true;
+        }
         // Register string constant for property name.
         addStringConstantGlobal(ctx, propName);
         // Refresh getIdx in case addStringConstantGlobal shifted indices.

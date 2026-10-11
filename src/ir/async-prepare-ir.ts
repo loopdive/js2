@@ -642,6 +642,154 @@ export function prepareFinalMainIrFunction(fn: IrFunction): PreparedSingleAwaitI
   };
 }
 
+function exactZeroSuspensionNullRejection(fn: IrFunction): boolean {
+  if (
+    fn.funcKind !== "async" ||
+    !fn.exported ||
+    fn.asyncPlan ||
+    fn.closureSubtype ||
+    fn.slots !== undefined ||
+    fn.params.length !== 1 ||
+    fn.resultTypes.length !== 1 ||
+    !irTypeEquals(fn.params[0]!.type, F64) ||
+    !irTypeEquals(fn.resultTypes[0]!, F64) ||
+    fn.blocks.length !== 3
+  )
+    return false;
+  if (
+    fn.blocks.some(
+      (block, index) => block.id !== index || block.blockArgs.length !== 0 || block.blockArgTypes.length !== 0,
+    )
+  )
+    return false;
+  const entry = fn.blocks[0]!;
+  const branch = entry.terminator;
+  if (
+    entry.instrs.length !== 2 ||
+    branch.kind !== "br_if" ||
+    branch.ifTrue.args.length !== 0 ||
+    branch.ifFalse.args.length !== 0 ||
+    branch.ifTrue.target === branch.ifFalse.target ||
+    ![1, 2].includes(branch.ifTrue.target) ||
+    ![1, 2].includes(branch.ifFalse.target)
+  )
+    return false;
+  const thrown = fn.blocks[branch.ifTrue.target]!;
+  const returned = fn.blocks[branch.ifFalse.target]!;
+  const [zero, comparison] = entry.instrs;
+  const [nullValue, throwing] = thrown.instrs;
+  const [one, addition] = returned.instrs;
+  if (
+    zero?.kind !== "const" ||
+    zero.value.kind !== "f64" ||
+    !Object.is(zero.value.value, 0) ||
+    zero.result === null ||
+    zero.resultType === null ||
+    !irTypeEquals(zero.resultType, F64) ||
+    comparison?.kind !== "binary" ||
+    comparison.op !== "f64.lt" ||
+    comparison.lhs !== fn.params[0]!.value ||
+    comparison.rhs !== zero.result ||
+    comparison.result === null ||
+    comparison.resultType === null ||
+    comparison.resultType.kind !== "val" ||
+    comparison.resultType.val.kind !== "i32" ||
+    comparison.resultType.val.boolean !== true ||
+    branch.condition !== comparison.result ||
+    thrown.instrs.length !== 2 ||
+    thrown.terminator.kind !== "unreachable" ||
+    nullValue?.kind !== "const" ||
+    nullValue.value.kind !== "null" ||
+    !irTypeEquals(nullValue.value.ty, EXTERNREF) ||
+    nullValue.result === null ||
+    nullValue.resultType === null ||
+    !irTypeEquals(nullValue.resultType, EXTERNREF) ||
+    throwing?.kind !== "throw" ||
+    throwing.value !== nullValue.result ||
+    throwing.result !== null ||
+    throwing.resultType !== null ||
+    returned.instrs.length !== 2 ||
+    returned.terminator.kind !== "return" ||
+    returned.terminator.values.length !== 1 ||
+    one?.kind !== "const" ||
+    one.value.kind !== "f64" ||
+    !Object.is(one.value.value, 1) ||
+    one.result === null ||
+    one.resultType === null ||
+    !irTypeEquals(one.resultType, F64) ||
+    addition?.kind !== "binary" ||
+    addition.op !== "f64.add" ||
+    addition.lhs !== fn.params[0]!.value ||
+    addition.rhs !== one.result ||
+    addition.result === null ||
+    addition.resultType === null ||
+    !irTypeEquals(addition.resultType, F64) ||
+    returned.terminator.values[0] !== addition.result
+  )
+    return false;
+  const values = [fn.params[0]!.value, zero.result, comparison.result, nullValue.result, one.result, addition.result];
+  return (
+    values.every((value) => Number.isSafeInteger(value) && value >= 0) &&
+    new Set(values).size === values.length &&
+    Number.isSafeInteger(fn.valueCount) &&
+    fn.valueCount === Math.max(...values) + 1
+  );
+}
+
+/** The closed no-await family keeps the complete throwing CFG in its ordinary helper. */
+function prepareZeroSuspensionNullRejection(fn: IrFunction): PreparedSingleAwaitIrFunction | null {
+  if (!exactZeroSuspensionNullRejection(fn)) return null;
+  const role = "ir-async-state" as const;
+  const ordinal = 0;
+  const unitId = createDerivedIrUnitId({ parentId: fn.unitId, role, ordinal });
+  const helper: IrFunction = {
+    ...fn,
+    unitId,
+    name: `${fn.name}__ir_async_state_${ordinal}`,
+    funcKind: "regular",
+    exported: false,
+  };
+  const result = asValueId(fn.valueCount);
+  const asyncPlan = createIrAsyncPlan({
+    schemaVersion: 1,
+    ownerUnitId: fn.unitId,
+    kind: "async-function",
+    abi: canonicalPromiseAbi(F64),
+    entry: asAsyncStateId(0),
+    params: fn.params.map((param) => ({ value: param.value, type: param.type })),
+    values: [...fn.params.map((param) => ({ value: param.value, type: param.type })), { value: result, type: F64 }],
+    spills: [],
+    states: [
+      {
+        id: asAsyncStateId(0),
+        body: [
+          {
+            kind: "call",
+            target: irUnitFuncRef({ unitId, name: helper.name }),
+            args: fn.params.map((param) => param.value),
+            result,
+            resultType: F64,
+          },
+        ],
+        terminator: { kind: "resolve", value: result },
+      },
+    ],
+    handlers: [],
+    runtimeIntents: [...ASYNC_RUNTIME_FEATURES, "promise.number.bridge"],
+  });
+  return {
+    main: {
+      ...fn,
+      blocks: [
+        { id: fn.blocks[0]!.id, blockArgs: [], blockArgTypes: [], instrs: [], terminator: { kind: "unreachable" } },
+      ],
+      asyncPlan,
+    },
+    stateFunctions: [helper],
+    provenance: [{ id: unitId, parentId: fn.unitId, role, ordinal }],
+  };
+}
+
 /** Dispatch the closed prepared async source families. */
 export function prepareSuspendingIrFunction(
   fn: IrFunction,
@@ -654,7 +802,8 @@ export function prepareSuspendingIrFunction(
     // exact proof still succeeds.  B2 takes ownership only after that route
     // declines (for example, when a mutable slot crosses the await).
     prepareSingleAwaitIrFunction(fn, numberBoundary) ??
-    prepareLinearSuspendingIrFunction(fn)
+    prepareLinearSuspendingIrFunction(fn) ??
+    prepareZeroSuspensionNullRejection(fn)
   );
 }
 

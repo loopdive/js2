@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.ts7.json",
+  "compilerOptions": {
+    "rootDir": "../..",
+    "noEmit": true,
+    "incremental": false
+  },
+  "include": ["../../src/**/*.ts", "../../tests/issue-6915-linear-owned-ascii-append-copy-kernel.test.ts"],
+  "exclude": ["../../node_modules", "../../dist", "../../website"]
+}

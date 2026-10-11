@@ -1,3 +1,4 @@
+import { localGlobalIdx } from "../registry/imports.js";
 import {
   initializeNativeGeneratorFunctionValue,
   nativeGeneratorFunctionValueNeedsResultBridge,
@@ -23,6 +24,7 @@ import { popBody, pushBody } from "../context/bodies.js";
 import { getOrRegisterRefCellType } from "../index.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
 import { valTypesMatch } from "../shared.js";
+import { promotedCaptureValueInstrs } from "./promoted-capture-value.js";
 import {
   observeProgramAbiFunctionValue,
   sourceFunctionDeclarationForHandle,
@@ -43,6 +45,7 @@ import {
   getOrCreateFuncRefWrapperTypes,
 } from "./funcref-wrapper-types.js";
 import { hasExplicitThisParameter } from "./func-value-callable-signature.js";
+import { noteFunctionValueInhabitant } from "./closure-type-sources.js"; // (#6913)
 
 /**
  * (#5270 step 1.3) A `__fn_tramp_*` body is a PURE FORWARDER — it re-pushes the
@@ -252,9 +255,13 @@ function emitMemoizedNestedFnClosure(
     if (cap.mutable && cap.valType) {
       const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.valType);
       const boxGlobal = capUnresolvedHere ? ctx.capturedBoxGlobals?.get(cap.name) : undefined;
-      if (fctx.boxedCaptures?.has(cap.name)) {
-        const currentLocalIdx = fctx.localMap.get(cap.name)!;
-        fctx.body.push({ op: "local.get", index: currentLocalIdx });
+      if (
+        liveBoxLocalIdx !== undefined &&
+        liveBox !== undefined &&
+        (liveBoxType?.kind === "ref" || liveBoxType?.kind === "ref_null") &&
+        liveBoxType.typeIdx === liveBox.refCellTypeIdx
+      ) {
+        fctx.body.push({ op: "local.get", index: liveBoxLocalIdx });
       } else if (boxGlobal !== undefined) {
         // Shared ref-cell box promoted to a module global — live
         // write-through semantics with the declaring function.
@@ -302,10 +309,7 @@ function emitMemoizedNestedFnClosure(
       // (#2029 family A) Immutable capture promoted to a value global by
       // the accessor-capture pass — read it instead of the out-of-scope
       // declaring-function local slot.
-      fctx.body.push({ op: "global.get", index: ctx.capturedGlobals.get(cap.name)! });
-      if (ctx.capturedGlobalsWidened.has(cap.name)) {
-        fctx.body.push({ op: "ref.as_non_null" });
-      }
+      fctx.body.push(...promotedCaptureValueInstrs(ctx, cap.name, cap.valType, localGlobalIdx));
     } else {
       const capSourceIdx = captureSourceSlot(fctx, cap);
       const sourceType = getLocalType(fctx, capSourceIdx);
@@ -622,6 +626,7 @@ export function emitFuncRefAsClosure(
       ...(ownerHasRest ? { hasRestParam: true } : {}),
     };
     ctx.closureInfoByTypeIdx.set(structTypeIdx, closureInfo);
+    noteFunctionValueInhabitant(ctx, structTypeIdx, ownerDecl); // (#6913) read via the shared base wrapper
 
     // (#2976) Register the module-level artifacts so every later reference —
     // in this or any other fctx — reuses this ONE struct type + trampoline
@@ -655,6 +660,7 @@ export function emitFuncRefAsClosure(
   if (!wrapperTypes) return null;
 
   const { structTypeIdx, liftedFuncTypeIdx, closureInfo } = wrapperTypes;
+  noteFunctionValueInhabitant(ctx, structTypeIdx, metaDecl); // (#6913)
 
   // Create a trampoline function for THIS specific function.
   // The trampoline takes (self, ...userParams) and calls the original function.

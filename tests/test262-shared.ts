@@ -846,9 +846,16 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
             // test executes import(). Standalone import() of a module outside
             // the compiled graph settles as a rejected Promise at runtime. Do
             // not turn dynamic fixtures into eager compileMulti inputs.
-            if (Object.keys(fixtureGraph.fixtureFiles).length > 0 || selfModuleImport) {
+            if (
+              Object.keys(fixtureGraph.fixtureFiles).length > 0 ||
+              selfModuleImport ||
+              fixtureGraph.requiresEntrySelfImportGraph === true
+            ) {
               // Fixture tests are rare — compile in-process
               try {
+                if (Object.prototype.hasOwnProperty.call(fixtureGraph.fixtureFiles, fixtureGraph.entryFile)) {
+                  throw new Error(`fixture graph collides with entry file: ${fixtureGraph.entryFile}`);
+                }
                 const vfiles: Record<string, string> = {
                   ...fixtureGraph.fixtureFiles,
                   [fixtureGraph.entryFile]: compileSource,

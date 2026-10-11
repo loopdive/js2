@@ -57,7 +57,10 @@ import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "../expres
 import { emitToPropertyKeyOnce } from "../expressions/computed-member-reference.js";
 import { emitLazyProtoGet, emitRegisterDynamicClassParent } from "../expressions/extern.js";
 import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5195 r3-5)
+import { emitStandaloneCommaHeritageEffects } from "../classes/class-heritage-comma.js"; // (#6772 S6)
+import { emitStandaloneHeritagePrototypeGet } from "../classes/class-heritage-runtime-get.js"; // (#6772 S11)
 import { classHierarchyHasDynamicMember, dynamicClassKeyGlobalKey } from "../class-dynamic-keys.js"; // (#5195 Step 1 / F1)
+import { computedKeyHasAssignment } from "../class-member-keys.js"; // (#6772 S5)
 import { isForeignEvalNode } from "../expressions/eval-source.js";
 import { ensureNativeArrayFromIterN } from "../iterator-native.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
@@ -69,6 +72,7 @@ import {
   extractConstantDefault,
   hoistLetConstWithTdz,
   hoistVarDeclarations,
+  isAnyValue,
   nativeGeneratorBindingType,
   ensureStructForType,
   resolveInstallableClassMemberName,
@@ -88,7 +92,8 @@ import {
   getOrRegisterVecType,
   refCellValueType,
 } from "../registry/types.js";
-import { getVecInfo } from "../type-coercion.js";
+import { coercionInstrs, getVecInfo } from "../type-coercion.js";
+import { spreadElemToExternInstrs } from "../expressions/spread-elem-extern.js"; // (#6736) $AnyValue spread elements
 import { widenMixedUndefinedReturn } from "../mixed-return-widening.js";
 import {
   coerceType,
@@ -466,9 +471,16 @@ export function emitUnresolvedComputedAccessorNameEffects(
         !ts.isSetAccessorDeclaration(member) &&
         !ts.isMethodDeclaration(member)) ||
       !member.name ||
-      !ts.isComputedPropertyName(member.name) ||
-      resolveComputedKeyExpression(ctx, member.name.expression) !== undefined
+      !ts.isComputedPropertyName(member.name)
     ) {
+      continue;
+    }
+    if (resolveComputedKeyExpression(ctx, member.name.expression) !== undefined) {
+      // (#6772 S5) The name folded, but a write inside the key still runs here.
+      if (computedKeyHasAssignment(member.name.expression)) {
+        const effectType = compileExpression(ctx, fctx, member.name.expression);
+        if (effectType !== null && effectType !== (VOID_RESULT as unknown as ValType)) fctx.body.push({ op: "drop" });
+      }
       continue;
     }
     const keyGlobalIdx =
@@ -538,6 +550,8 @@ export function compileNestedClassDeclaration(
   // only for a heritage shape with no static parent lane — see
   // `class-heritage-check.ts`, whose predicate is the safety property here.
   emitStandaloneHeritageCheck(ctx, fctx, decl, compileExpression);
+  emitStandaloneCommaHeritageEffects(ctx, fctx, decl, compileExpression); // (#6772 S6)
+  emitStandaloneHeritagePrototypeGet(ctx, fctx, decl); // (#6772 S11)
 
   const isDeferred = ctx.deferredClassBodies.has(className);
   // (#4646) "Already fully compiled" used to be `structMap.has(className)` — a
@@ -3977,27 +3991,15 @@ export function emitSetExtrasArgv(
     flushLateImportShifts(ctx, fctx);
     if (lenFn !== undefined && getFn !== undefined && iterFn !== undefined) {
       const boxIdx = ctx.funcMap.get("__box_number");
-      // Box a vec element of the given kind to externref (extras are externref).
-      const boxVecElem = (elemKind: ValType["kind"]): Instr[] => {
-        if (elemKind === "f64") {
-          return boxIdx !== undefined ? [{ op: "call", funcIdx: boxIdx }] : [{ op: "drop" }, { op: "ref.null.extern" }];
-        }
-        if (elemKind === "i32" || elemKind === "i8" || elemKind === "i16") {
-          return boxIdx !== undefined
-            ? [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxIdx }]
-            : [{ op: "drop" }, { op: "ref.null.extern" }];
-        }
-        if (elemKind === "ref" || elemKind === "ref_null") {
-          return [{ op: "extern.convert_any" }];
-        }
-        // externref element — already correct.
-        return [];
-      };
+      // Box a vec element of the given type to externref (extras are externref).
+      const anyToExtern = (t: ValType): Instr[] | undefined =>
+        ctx.standalone && isAnyValue(t, ctx) ? coercionInstrs(ctx, t, { kind: "externref" }, fctx) : undefined;
+      const boxVecElem = (elemType: ValType): Instr[] => spreadElemToExternInstrs(elemType, boxIdx, anyToExtern);
       // Per-extra descriptor.
       type Slot =
         | { kind: "single"; valLocal: number }
         // vec-ref spread: read length/data fields directly.
-        | { kind: "vec"; vecLocal: number; vecTi: number; arrTi: number; elemKind: ValType["kind"]; lenLocal: number }
+        | { kind: "vec"; vecLocal: number; vecTi: number; arrTi: number; elemType: ValType; lenLocal: number }
         // extern spread (host iterable): materialized array indexed by helpers.
         | { kind: "spread"; srcLocal: number; lenLocal: number };
       const slots: Slot[] = [];
@@ -4035,7 +4037,7 @@ export function emitSetExtrasArgv(
               if (st.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" });
               fctx.body.push({ op: "struct.get", typeIdx: stTypeIdx, fieldIdx: fi });
               const valLocal = allocLocal(fctx, `__xa_tv_${fctx.locals.length}`, { kind: "externref" });
-              fctx.body.push(...boxVecElem(tupleDef.fields[fi]!.type.kind));
+              fctx.body.push(...boxVecElem(tupleDef.fields[fi]!.type));
               fctx.body.push({ op: "local.set", index: valLocal });
               fctx.body.push({ op: "local.get", index: totalLenLocal });
               fctx.body.push({ op: "i32.const", value: 1 });
@@ -4072,7 +4074,7 @@ export function emitSetExtrasArgv(
               vecLocal,
               vecTi,
               arrTi: vecInfo.arrTypeIdx,
-              elemKind: vecInfo.elemType.kind,
+              elemType: vecInfo.elemType,
               lenLocal,
             });
             continue;
@@ -4166,10 +4168,10 @@ export function emitSetExtrasArgv(
                   { op: "ref.as_non_null" },
                   { op: "struct.get", typeIdx: slot.vecTi, fieldIdx: 1 },
                   { op: "local.get", index: sIdx },
-                  ...(slot.elemKind === "i8" || slot.elemKind === "i16"
+                  ...(slot.elemType.kind === "i8" || slot.elemType.kind === "i16"
                     ? ([{ op: "array.get_s", typeIdx: slot.arrTi }] satisfies Instr[])
                     : ([{ op: "array.get", typeIdx: slot.arrTi }] satisfies Instr[])),
-                  ...boxVecElem(slot.elemKind),
+                  ...boxVecElem(slot.elemType),
                   { op: "array.set", typeIdx: ati },
                   // wIdx++
                   { op: "local.get", index: wIdx },

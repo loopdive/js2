@@ -729,3 +729,16 @@ a missing feature.
 - Phase 4 acceptance: `grep -rc "legacy-semantic" src/` → 0; `resolveImport`
   has no ECMAScript-semantic arms; the gate counts above are re-measured and
   every remaining site names an environment or an opt-in accelerator.
+
+### 2026-10-07 — nightly after #6748: the regime leads the host lane by 2,116 rows
+
+Nightly 37596924980 regime artifact vs the host baseline of the same day:
+**41,816 vs 39,700** (standalone-vs-host gap of 10-06 closed and reversed).
+ES2026 +4,228. Remaining per-edition regressions ES5 −90 / ES2016 −3 /
+ES2023 −5, all owned by in-flight slices (#6880, #6894, #6898, #6912, #6881).
+npm-compat regime lane: react now measures on BOTH lanes (#6877 + #6890),
+acorn and prettier measure (#6879), cookie/hono/redux/moment/clsx/marked/lit
+measured since 10-06; uuid waits on the next refresh. S6 (#6708) evidence
+items: (1) test262 ≥ host — **met**; (2) per-edition ratchet — three
+editions pending the slices above; (3) npm-compat parity — prettier `-O4`
+and uuid pending the refresh; (4) perf — still needs Node ≥ 24.

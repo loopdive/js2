@@ -26,6 +26,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { test262CompilerBundleHash } from "./test262-harness-cache.mjs";
 
 /** File the pre-warm step writes into the provider cache dir (HOST lane). */
 export const TEMPORAL_PREWARM_STAMP = "prewarm.json";
@@ -106,6 +107,22 @@ export function temporalProviderCompileOptions(target, semanticProviders = "auto
   if (isNativeFirstHostLane(target, semanticProviders))
     return { semanticProviders: "native-first", hostBridge: "always" };
   return undefined;
+}
+
+/**
+ * (#6882) The lane's provider compile options plus the COMPILER's identity
+ * (`compilerFingerprint`, the compiler-bundle hash). `temporalProviderCacheKey`
+ * folds it into the key and `buildTemporalProvider` into the provider
+ * directory, so a cache an older compiler built is a miss — before this a local
+ * `.test262-cache/temporal` served a stale provider after every codegen change.
+ * The pre-warm and the worker both call this, so their keys agree as long as
+ * they load the same bundle (the same rule as the harness-provider cache, #6723).
+ *
+ * @param {object | undefined} compileOptions
+ * @returns {object}
+ */
+export function withTemporalCompilerFingerprint(compileOptions) {
+  return { ...compileOptions, compilerFingerprint: test262CompilerBundleHash() };
 }
 
 /**
