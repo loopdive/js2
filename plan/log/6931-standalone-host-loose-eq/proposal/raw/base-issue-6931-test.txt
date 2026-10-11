@@ -1,0 +1,68 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a4022d934675184ae
+
+ ❯ tests/issue-6931-standalone-host-loose-eq.test.ts (6 tests | 3 failed) 4050ms
+   ✓ #6931 standalone loose == on a host value in an `any` parameter > IR path stays IR-emitted on gc  1136ms
+   ✓ #6931 standalone loose == on a host value in an `any` parameter > IR path stays IR-emitted on standalone  641ms
+   ✓ #6931 standalone loose == on a host value in an `any` parameter > gc: IR and legacy sources match Node for every input  405ms
+   × #6931 standalone loose == on a host value in an `any` parameter > standalone IR path: native inputs match Node, host inputs throw the deliberate TypeError 480ms
+     → expected RuntimeError: illegal cast to not be an instance of RuntimeError
+   × #6931 standalone loose == on a host value in an `any` parameter > standalone legacy path: same decision as the IR path 714ms
+     → expected a deliberate throw: expected undefined to be defined
+   × #6931 standalone loose == on a host value in an `any` parameter > standalone: the refusal is a catchable TypeError inside the module 668ms
+     → tryEq(1.5): expected +0 to be 2 // Object.is equality
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-6931-standalone-host-loose-eq.test.ts > #6931 standalone loose == on a host value in an `any` parameter > standalone IR path: native inputs match Node, host inputs throw the deliberate TypeError
+AssertionError: expected RuntimeError: illegal cast to not be an instance of RuntimeError
+ ❯ expectHostRefusal tests/issue-6931-standalone-host-loose-eq.test.ts:87:22
+     85|   }
+     86|   expect(caught, "expected a deliberate throw").toBeDefined();
+     87|   expect(caught).not.toBeInstanceOf(WebAssembly.RuntimeError);
+       |                      ^
+     88|   expect(caught).toBeInstanceOf(WebAssembly.Exception);
+     89|   const payload = (caught as WebAssembly.Exception).getArg(ex.__exn_ta…
+ ❯ tests/issue-6931-standalone-host-loose-eq.test.ts:124:41
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/issue-6931-standalone-host-loose-eq.test.ts > #6931 standalone loose == on a host value in an `any` parameter > standalone legacy path: same decision as the IR path
+AssertionError: expected a deliberate throw: expected undefined to be defined
+ ❯ expectHostRefusal tests/issue-6931-standalone-host-loose-eq.test.ts:86:49
+     84|     caught = e;
+     85|   }
+     86|   expect(caught, "expected a deliberate throw").toBeDefined();
+       |                                                 ^
+     87|   expect(caught).not.toBeInstanceOf(WebAssembly.RuntimeError);
+     88|   expect(caught).toBeInstanceOf(WebAssembly.Exception);
+ ❯ tests/issue-6931-standalone-host-loose-eq.test.ts:137:39
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/issue-6931-standalone-host-loose-eq.test.ts > #6931 standalone loose == on a host value in an `any` parameter > standalone: the refusal is a catchable TypeError inside the module
+AssertionError: tryEq(1.5): expected +0 to be 2 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 2[39m
+[31m+ 0[39m
+
+ ❯ tests/issue-6931-standalone-host-loose-eq.test.ts:144:86
+    142|     expect(ex.tryEq(1)).toBe(1);
+    143|     expect(ex.tryEq(5)).toBe(0);
+    144|     for (const [label, mk] of HOST_INPUTS) expect(ex.tryEq(mk()), `try…
+       |                                                                                      ^
+    145|   });
+    146| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 3 passed (6)
+   Start at  20:51:39
+   Duration  40.42s (transform 25.86s, setup 0ms, collect 35.76s, tests 4.05s, environment 0ms, prepare 97ms)
+
+EXIT 1

@@ -1,0 +1,13 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3523-ir-algorithms-retirement.test.ts (6 tests) 2129ms
+   ✓ #3523 Algorithms legacy-body retirement > seals all seven terminals as one prepared IR component and retires the exact final six bodies  1299ms
+   ✓ #3523 Algorithms legacy-body retirement > never enters the direct function-body emitter for the five newly retired functions  343ms
+   ✓ #3523 Algorithms legacy-body retirement > never enters the direct module-init emitter and proves the poison with unsupported Map shapes  417ms
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  22:37:34
+   Duration  28.46s (transform 18.49s, setup 0ms, collect 25.91s, tests 2.13s, environment 0ms, prepare 63ms)
+

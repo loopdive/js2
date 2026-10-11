@@ -1,0 +1,11 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3300.test.ts (7 tests | 1 skipped) 747ms
+   ✓ #3300 shared allocation-policy proof > reclaims promoted linear-Wasm sites per invocation while preserving alias and identity  719ms
+
+ Test Files  1 passed (1)
+      Tests  6 passed | 1 skipped (7)
+   Start at  22:29:12
+   Duration  25.40s (transform 17.11s, setup 0ms, collect 24.31s, tests 747ms, environment 0ms, prepare 54ms)
+

@@ -1,0 +1,11 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/ir-vec-two-backend.test.ts (14 tests) 545ms
+   ✓ #2954 whole-function lowering through LinearEmitter runs in linear memory > recursive numeric fib lowers through LinearEmitter and computes correctly  466ms
+
+ Test Files  1 passed (1)
+      Tests  14 passed (14)
+   Start at  22:43:26
+   Duration  24.93s (transform 16.89s, setup 0ms, collect 23.94s, tests 545ms, environment 0ms, prepare 69ms)
+
