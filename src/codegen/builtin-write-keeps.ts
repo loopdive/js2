@@ -107,6 +107,31 @@ const EXPANDO_NAMESPACES: ReadonlySet<string> = new Set(["Math", "JSON", "Reflec
  */
 const MATH_CONSTANTS: ReadonlySet<string> = new Set(["PI", "E", "LN2", "LN10", "SQRT2", "SQRT1_2", "LOG2E", "LOG10E"]);
 
+/**
+ * (#1472 raytrace) Builtin CONSTRUCTORS whose bare standalone value is an
+ * extensible `$Object` carrier (#2907 namespace objects, #3006
+ * `__builtin_ctor_<Name>`); measured: an in-body `C.zzq = fn; C.zzq(1)` works
+ * for each. Prototype.js's top-level `Object.extend = function …` (Octane
+ * raytrace) needs the same write kept at module init. Typed-array
+ * constructors are omitted — their in-body expando does not round-trip yet.
+ */
+const EXPANDO_CONSTRUCTORS: ReadonlySet<string> = new Set(
+  "Object Array Function Symbol Proxy BigInt Date RegExp ArrayBuffer DataView Promise WeakMap WeakSet WeakRef FinalizationRegistry Map Set Error TypeError RangeError SyntaxError URIError EvalError ReferenceError String Number Boolean".split(
+    " ",
+  ),
+);
+
+/**
+ * (#1472) Spec own DATA properties of those constructors (§20.2.4 function
+ * instances, §21.1.2 Number constants, §20.4.2 well-known symbols). All are
+ * non-writable, so a write to one keeps its dropped lowering.
+ */
+const CTOR_OWN_DATA_PROPS: ReadonlySet<string> = new Set(
+  "prototype length name caller arguments EPSILON MAX_SAFE_INTEGER MAX_VALUE MIN_SAFE_INTEGER MIN_VALUE NaN NEGATIVE_INFINITY POSITIVE_INFINITY asyncDispose asyncIterator dispose hasInstance isConcatSpreadable iterator match matchAll replace search species split toPrimitive toStringTag unscopables".split(
+    " ",
+  ),
+);
+
 /** Strip parens / `as` / `!` / `<T>` wrappers. */
 function unwrap(expr: ts.Expression): ts.Expression {
   let e = expr;
@@ -161,6 +186,7 @@ export function isBuiltinProtoWriteTarget(left: ts.Expression): boolean {
 /** (#4199) Is `prop` on `ns`'s own static surface (so a write stays dropped)? */
 function isOwnStaticSurface(ns: string, prop: string): boolean {
   if (BUILTIN_STATIC_METHOD_ARITY[ns]?.[prop] !== undefined) return true;
+  if (EXPANDO_CONSTRUCTORS.has(ns) && CTOR_OWN_DATA_PROPS.has(prop)) return true;
   return ns === "Math" && MATH_CONSTANTS.has(prop);
 }
 
@@ -192,7 +218,7 @@ export function isBuiltinNamespaceExpandoWriteTarget(left: ts.Expression, ctx: B
   const base = unwrap(receiver);
   if (!ts.isIdentifier(base)) return false;
   const ns = base.text;
-  if (!EXPANDO_NAMESPACES.has(ns)) return false;
+  if (!EXPANDO_NAMESPACES.has(ns) && !EXPANDO_CONSTRUCTORS.has(ns)) return false;
   if (ctx.moduleGlobals.has(ns) || ctx.topLevelFunctionNames.has(ns) || ctx.classSet.has(ns)) return false;
   return !isOwnStaticSurface(ns, propName);
 }
