@@ -1,0 +1,11 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-lowering-relocation-coverage.test.ts (28 tests | 1 skipped) 5567ms
+   ✓ #3518 lowering relocation keeps the real pushRaw gate connected > accepts the actual old-to-new source diff with both original sites and tags  408ms
+
+ Test Files  1 passed (1)
+      Tests  27 passed | 1 skipped (28)
+   Start at  23:10:22
+   Duration  6.53s (transform 69ms, setup 0ms, collect 619ms, tests 5.57s, environment 0ms, prepare 59ms)
+

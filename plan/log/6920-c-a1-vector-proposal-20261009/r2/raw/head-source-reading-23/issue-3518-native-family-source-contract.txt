@@ -1,0 +1,84 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > pins the unchanged original source and the exact export-only runtime transformation 5ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > prepares every original owner, await and main operation in original 1142ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > prepares every original owner, await and main operation in export-only 343ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > does not infer the omitted family request from native delay or target 49ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > does not infer the disabled family request from native delay or target 39ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > rejects invalid request null before any lowering 19ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > rejects invalid request true before any lowering 19ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > rejects invalid request 0 before any lowering 17ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > rejects invalid request native before any lowering 16ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > rejects invalid request host before any lowering 18ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > requires explicit native delay when its value is undefined 15ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > requires explicit native delay when its value is disabled 25ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > rejects conflicting source policy {"backend":"wasmgc","target":"host"} 15ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > rejects conflicting source policy {"backend":"linear","target":"standalone"} 14ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > preserves duplicate/source-policy checks and rejects an additional host projection 15ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > original GVN=off decoded=false: rejects omitted native string policy 884ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > original GVN=off decoded=true: rejects omitted native string policy 812ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > original GVN=on decoded=false: rejects omitted native string policy 748ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > original GVN=on decoded=true: rejects omitted native string policy 732ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > export-only GVN=off decoded=false: rejects omitted native string policy 819ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > export-only GVN=off decoded=true: rejects omitted native string policy 841ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > export-only GVN=on decoded=false: rejects omitted native string policy 769ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > export-only GVN=on decoded=true: rejects omitted native string policy 787ms
+ × tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > original GVN=off decoded=false: prepares the entire native family 861ms
+   → expected 3 to be greater than or equal to 4
+ × tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > original GVN=off decoded=true: prepares the entire native family 868ms
+   → expected 3 to be greater than or equal to 4
+ × tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > original GVN=on decoded=false: prepares the entire native family 835ms
+   → expected 3 to be greater than or equal to 4
+ × tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > original GVN=on decoded=true: prepares the entire native family 840ms
+   → expected 3 to be greater than or equal to 4
+ × tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > export-only GVN=off decoded=false: prepares the entire native family 834ms
+   → expected 3 to be greater than or equal to 4
+ × tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > export-only GVN=off decoded=true: prepares the entire native family 921ms
+   → expected 3 to be greater than or equal to 4
+ × tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > export-only GVN=on decoded=false: prepares the entire native family 822ms
+   → expected 3 to be greater than or equal to 4
+ × tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > export-only GVN=on decoded=true: prepares the entire native family 837ms
+   → expected 3 to be greater than or equal to 4
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > replays the complete source-free packet with 'missing native policy' in a fresh process 1387ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > replays the complete source-free packet with 'explicit native policy' in a fresh process 1613ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > retains every established preparation exclusion before adding the two source producers 1ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > denies the actual forbidden import ../src/ts-api.ts with exact URL/error/census attribution 138ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > denies the actual forbidden import ../src/compiler.ts with exact URL/error/census attribution 146ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > denies the actual forbidden import ../src/compiler/ir-program-driver.ts with exact URL/error/census attribution 141ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > denies the actual forbidden import ../src/ir/async-prepare.ts with exact URL/error/census attribution 143ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > denies the actual forbidden import ../src/ir/program-middleend.ts with exact URL/error/census attribution 159ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > denies the actual forbidden import ../src/ir/passes/gvn.ts with exact URL/error/census attribution 136ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > denies the actual forbidden import ../node_modules/typescript/lib/typescript.js with exact URL/error/census attribution 132ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > denies the actual forbidden import ../src/ir/program-logical-types.ts with exact URL/error/census attribution 132ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > denies the actual forbidden import ../src/ir/program-native-async-source.ts with exact URL/error/census attribution 142ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > denies the actual forbidden import ../src/ir/program-logical-types.ts?admission-guard with exact URL/error/census attribution 173ms
+ ✓ tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > denies the actual forbidden import ../src/ir/program-native-async-source.ts#admission-guard with exact URL/error/census attribution 153ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > original GVN=off decoded=false: prepares the entire native family
+ FAIL  tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > original GVN=off decoded=true: prepares the entire native family
+ FAIL  tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > original GVN=on decoded=false: prepares the entire native family
+ FAIL  tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > original GVN=on decoded=true: prepares the entire native family
+ FAIL  tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > export-only GVN=off decoded=false: prepares the entire native family
+ FAIL  tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > export-only GVN=off decoded=true: prepares the entire native family
+ FAIL  tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > export-only GVN=on decoded=false: prepares the entire native family
+ FAIL  tests/issue-3518-native-family-source-contract.test.ts > complete native family logical source preparation > export-only GVN=on decoded=true: prepares the entire native family
+AssertionError: expected 3 to be greater than or equal to 4
+ ❯ tests/issue-3518-native-family-source-contract.test.ts:379:32
+    377|           expect(encodeTypedPacket(original)).toBe(encoded);
+    378|           // The producer scans three stages; final validation indepen…
+    379|           expect(scans.length).toBeGreaterThanOrEqual(4);
+       |                                ^
+    380|           expect(scans[0]).toHaveLength(5);
+    381|           expect(scans[1]).toHaveLength(16);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  8 failed | 37 passed (45)
+   Start at  19:47:15
+   Duration  46.89s (transform 18.98s, setup 0ms, collect 26.83s, tests 19.56s, environment 0ms, prepare 77ms)
+
