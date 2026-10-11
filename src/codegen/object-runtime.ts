@@ -223,6 +223,7 @@ import {
 import { reserveClassToPrimitive } from "./class-to-primitive.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
 import { fnctorProtoLinkInstrs, fnctorProtoStartNeeded } from "./fnctor-identity-fields.js"; // (#6951 G3) [[Prototype]] snapshot
+import { unshiftFnctorFastGetArm } from "./fnctor-fast-get.js"; // (#6973) fnctor-instance read fast arm
 import { emitSelfHostedFunc } from "./stdlib-selfhost.js"; // (#3160) self-hosted object-runtime slice
 import { SELF_HOSTED_OBJECT_RUNTIME } from "../stdlib/object-runtime.js"; // (#3160) TS-source builtins
 import { buildObjectDescriptorHelpers } from "./object-runtime-descriptors.js";
@@ -9945,6 +9946,7 @@ export function unshiftExternGetStringExoticArm(ctx: CodegenContext): void {
  * LAST among the `__extern_get` body fills.
  */
 export function unshiftExternGetProtoCacheArm(ctx: CodegenContext): void {
+  unshiftFnctorFastGetArm(ctx); // (#6973) BEFORE the cache arm, which must stay the prefix
   if (!ctx.standalone || ctx.hashedStrTypeIdx < 0) return;
   const HSTR = ctx.hashedStrTypeIdx;
   const protoStartIdx = ctx.funcMap.get("__fnctor_proto_start");
