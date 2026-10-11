@@ -1,11 +1,10 @@
 {
   "id": "6975",
-  "assignee": "",
+  "assignee": "ttraenkler/claude-session-d",
   "requested_by": "ttraenkler/claude-session-d",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-10-11T23:09:20Z",
-  "updated_at": "2026-10-11T23:09:20Z",
-  "write_id": "14140-imjqexp6",
-  "pr_scan": "off"
+  "status": "in-progress",
+  "branch": "claude/standalone-new-result-proto",
+  "claimed_at": "2026-10-11T23:11:22Z",
+  "updated_at": "2026-10-11T23:11:22Z",
+  "write_id": "15762-kuiivy2n"
 }
