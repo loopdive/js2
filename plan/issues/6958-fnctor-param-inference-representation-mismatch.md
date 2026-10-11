@@ -163,3 +163,23 @@ failures on base and head. The equivalence gate shows no new regressions.
   because `A` is not escape-gate approved and has no prototype object. That is
   #6949. A variant where `OUT` escapes (`keep(OUT)`) gives node's `23`, and that
   variant is the test case.
+
+### Octane earley-boyer, standalone (2026-10-11)
+Measured on a local, unpushed merge of `c-octane-integ` (which includes #6956),
+with and without this commit:
+
+- **Before:** `runtime-error — TypeError: Cannot read properties of undefined (reading 'appendJSString')`
+- **After:** `wrong-result — Earley or Boyer did incorrect number of rewrites`. The
+  benchmark now gets past `sc_display`. The Earley half returns `0` where it should
+  return `132`.
+
+The new failure is not in this inference. Forcing every user-struct parameter
+narrowing to `externref` still gives `0`.
+
+## Remaining
+- `eb22` as written (node `23`) needs #6949, the prototype object for a
+  non-approved fnctor.
+- Plan step 3 (a TypeError instead of a silent null in the externref→fnctor-struct
+  coercion) lives in `type-coercion.ts`, which is out of this slice's scope.
+- Earley returns `0` instead of `132`. This is a new, separate root cause and has
+  not been triaged.
