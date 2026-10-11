@@ -1,0 +1,47 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 host-callback-wrap contract > adds exactly ONE feature row — the policy picks the authority, not the namespace 3ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 host-callback-wrap contract > is TWO-armed, and the arms are a crossing and its absence 1ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 host-callback-wrap contract > REUSES the async catalogue's callback record — no rename, no second row 3ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 host-callback-wrap contract > gives the dispatcher arm a ROLE and NO host capability 1ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 host-callback-wrap contract > carries NO intrinsic signature — the maker's ABI is the record's, not a closed IntrinsicId's 1ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 provider policy > selects the host arm through the reused record, publishing module, field and ABI 9ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 provider policy > selects the dispatcher arm by ROLE, requesting NO host capability and importing nothing 2ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 provider policy > refuses the arm its caller resolved to unsupported, naming the seam and the policy 2ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 provider policy > defaults an omitted policy closed and publishes the resolved decision 3ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 provider policy > resolves independently of every sibling policy 2ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 provider policy > freezes NOTHING when no closure crosses the boundary 3ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 provider policy > freezes the row for EITHER arm's demand — the dispatcher lane emits no call to scan for 6ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 provider policy > refuses a manifest frozen for the OTHER arm 7ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 end-to-end behaviour is unchanged > keeps the maker at its pre-slice import position and spells it from the record 946ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 end-to-end behaviour is unchanged > dispatches the wrapped one-shot callback exactly as before 84ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 end-to-end behaviour is unchanged > imports no maker on a lane the selection gate never admits 1283ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 end-to-end behaviour is unchanged > leaves a closure with no host-callback crossing entirely alone 100ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 the overlay proof reads the record > accepts a maker whose physical ABI is the record's 0ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 the overlay proof reads the record > refuses a maker whose ABI drifts from the record 0ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 the overlay proof reads the record > refuses a maker imported from the wrong module or under the wrong name 0ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 the overlay proof reads the record > still refuses when the funcMap slot is absent or out of the import range 0ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 the maker spelling has ONE source > leaves no maker string literal in from-ast — the crossing is built from the record 8ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 the maker spelling has ONE source > leaves no maker string literal and no hand-written ABI in the overlay proof 1ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 the maker spelling has ONE source > keeps the post-freeze admission keyed on the FROZEN provider, not on a name 5ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 native-dispatch validation > refuses a native-dispatch provider that requests a host capability 1ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 native-dispatch validation > refuses a host-callback-wrap provider whose implementation is neither arm 1ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 native-dispatch validation > is INVISIBLE to the async backend projection — the reason it is not a native-managed service 2ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 native-dispatch validation > keeps the dispatcher service closed at the TYPE level 0ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 the exact standalone-DOM lane > still reserves the dispatcher and imports no maker 1623ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 the demand scan > counts a hostOneShot closure as the host arm's demand 2ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 the demand scan > counts a domCallbackAuthority closure as the dispatcher arm's demand 1ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 the demand scan > counts an ordinary closure as neither 0ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 the demand scan > requests the demand at freeze from the same scan the partition runs 0ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 the demand scan > partitions a refused arm owner-locally, naming the arm and the policy 0ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 the demand scan > projects the policy ONCE, before the freeze, from the two lane predicates 0ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 deliberately out of scope > keeps the one-shot sentinel a from-ast fact, with no record field for it 0ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 deliberately out of scope > hands the legacy `_ctor` and getter makers to F3-S2's sibling rows 0ms
+ ✓ tests/issue-3526-callable-boundary-callback.test.ts > #3526 F3-S1 adapters resolve the arm explicitly > refuses nothing, because neither adapter passes a callback demand 1ms
+
+ Test Files  1 passed (1)
+      Tests  38 passed (38)
+   Start at  22:15:46
+   Duration  36.26s (transform 22.53s, setup 0ms, collect 31.65s, tests 4.11s, environment 0ms, prepare 75ms)
+

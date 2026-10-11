@@ -1,0 +1,377 @@
+diff --git a/tests/issue-6865-linear-layout-contract.test.ts b/tests/issue-6865-linear-layout-contract.test.ts
+--- /dev/null
++++ b/tests/issue-6865-linear-layout-contract.test.ts
+@@ -0,0 +1,373 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++
++import { readFileSync } from "node:fs";
++import ts from "typescript";
++import { describe, expect, it } from "vitest";
++import { references } from "../scripts/check-compiler-boundaries.mjs";
++import * as shared from "../src/shared/contracts/linear-memory-layout.js";
++import * as planner from "../src/ir/analysis/linear-memory-plan.js";
++import * as publicIr from "../src/ir/index.js";
++import { irDynamic, irSupportRef, irVal, irVec, type IrClassShape, type IrType } from "../src/ir/core/types.js";
++import { irSupportTypeRef } from "../src/ir/core/type-references.js";
++import { createTestIrClassId, createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
++import type { ValType } from "../src/wasm/model/instructions.js";
++
++const ownerPath = "src/shared/contracts/linear-memory-layout.ts";
++const ownerText = () => readFileSync(new URL(`../${ownerPath}`, import.meta.url), "utf8");
++const sourceFile = (path: string, text: string) => ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
++const F64 = irVal({ kind: "f64" });
++const classShape: IrClassShape = {
++  classId: createTestIrClassId("issue-6865-linear-layout-contract"),
++  className: "GeometryCell",
++  fields: [],
++  methods: [],
++  constructorParams: [],
++};
++
++// These byte expectations are hand-written ABI fixtures. They do not call a
++// storage, alignment, key or layout function to compute expected geometry.
++function expectedVector(
++  id: string,
++  storage: shared.LinearStorageKind,
++  stride: number,
++  alignment: number,
++  containsPointers: boolean,
++): shared.LinearVectorLayoutPlan {
++  return {
++    id,
++    kind: "vector",
++    alignment,
++    size: { kind: "elements", baseBytes: 16, strideBytes: stride, minimumElements: 16 },
++    pointerMap: {
++      kind: "elements",
++      fixedOffsets: [],
++      elementsOffset: 16,
++      elementStride: stride,
++      elementsContainPointers: containsPointers,
++    },
++    lengthOffset: 8,
++    capacityOffset: 12,
++    elementsOffset: 16,
++    elementStorage: storage,
++    elementStride: stride,
++    minimumCapacity: 16,
++  };
++}
++
++function checkScalar(
++  storage: shared.LinearStorageKind,
++  val: ValType,
++  id: string,
++  width: number,
++  alignment: number,
++  containsPointers: boolean,
++): void {
++  const expected = expectedVector(id, storage, width, alignment, containsPointers);
++  expect(shared.storageBytes(storage)).toBe(width);
++  expect(shared.storageAlignment(storage)).toBe(width);
++  expect(planner.linearStorageForIrType(irVal(val))).toBe(storage);
++  expect(shared.linearScalarStorageKey(storage)).toBe(id.slice("vector:".length));
++  expect(shared.planLinearScalarVectorLayout(storage)).toEqual(expected);
++  expect(planner.planLinearVectorLayout(irVal(val))).toEqual(expected);
++  expect(planner.linearVectorLayoutId(irVal(val))).toBe(id);
++}
++
++function checkPointer(type: IrType, id: string): void {
++  const expected = expectedVector(id, "pointer", 4, 8, true);
++  expect(planner.linearStorageForIrType(type)).toBe("pointer");
++  expect(planner.linearVectorLayoutId(type)).toBe(id);
++  expect(planner.planLinearVectorLayout(type)).toEqual(expected);
++  expect(shared.planLinearVectorStorageLayout(id.slice("vector:".length), "pointer")).toEqual(expected);
++  expect(id).not.toBe("vector:scalar:pointer");
++}
++
++describe("#6865 — shared Linear byte geometry contract", () => {
++  it("preserves i8 storage and canonical i8 vector geometry", () => {
++    checkScalar("i8", { kind: "i8" }, "vector:scalar:i8", 1, 8, false);
++  });
++
++  it("preserves i16 storage and canonical i16 vector geometry", () => {
++    checkScalar("i16", { kind: "i16" }, "vector:scalar:i16", 2, 8, false);
++  });
++
++  it("preserves i32 storage and canonical i32 vector geometry", () => {
++    checkScalar("i32", { kind: "i32" }, "vector:scalar:i32", 4, 8, false);
++  });
++
++  it("preserves i64 storage and canonical i64 vector geometry", () => {
++    checkScalar("i64", { kind: "i64" }, "vector:scalar:i64", 8, 8, false);
++  });
++
++  it("preserves f32 storage and canonical f32 vector geometry", () => {
++    checkScalar("f32", { kind: "f32" }, "vector:scalar:f32", 4, 8, false);
++  });
++
++  it("preserves f64 storage and canonical f64 vector geometry", () => {
++    checkScalar("f64", { kind: "f64" }, "vector:scalar:f64", 8, 8, false);
++  });
++
++  it("preserves bytes16 storage and canonical v128 vector geometry", () => {
++    checkScalar("bytes16", { kind: "v128" }, "vector:scalar:bytes16", 16, 16, false);
++  });
++
++  it("preserves pointer storage and canonical externref vector geometry", () => {
++    checkScalar("pointer", { kind: "externref" }, "vector:scalar:pointer", 4, 8, true);
++  });
++
++  it("keeps string pointer vector identity distinct from scalar pointer", () => {
++    checkPointer({ kind: "string" }, "vector:string");
++  });
++
++  it("keeps nested vector pointer identity including nullability", () => {
++    checkPointer(irVec(F64), "vector:vec:scalar:f64?");
++    checkPointer(irVec(F64, false), "vector:vec:scalar:f64");
++  });
++
++  it("keeps ordered object field semantics in pointer vector identity", () => {
++    checkPointer(
++      {
++        kind: "object",
++        shape: {
++          fields: [
++            { name: "label", type: { kind: "string" } },
++            { name: "value", type: F64 },
++          ],
++        },
++      },
++      'vector:object:"label"=string;"value"=scalar:f64',
++    );
++  });
++
++  it("keeps canonical nominal class identity in pointer vector layout", () => {
++    checkPointer({ kind: "class", shape: classShape }, `vector:class:${JSON.stringify(classShape.classId)}`);
++    checkPointer(
++      { kind: "class", shape: { ...classShape, className: "RenamedDebugLabel" } },
++      `vector:class:${JSON.stringify(classShape.classId)}`,
++    );
++  });
++
++  it("keeps boxed scalar identity in pointer vector layout", () => {
++    checkPointer({ kind: "boxed", inner: F64 }, "vector:boxed:scalar:f64");
++  });
++
++  it("keeps dynamic pointer vector identity distinct from scalar pointer", () => {
++    checkPointer(irDynamic(), "vector:dynamic");
++  });
++
++  it("keeps closure signature identity and rejects canonical support references", () => {
++    checkPointer(
++      { kind: "closure", signature: { params: [F64, { kind: "string" }], returnType: irVal({ kind: "i32" }) } },
++      "vector:closure:(scalar:f64,string)->scalar:i32",
++    );
++    checkPointer({ kind: "closure", signature: { params: [], returnType: null } }, "vector:closure:()->void");
++    const identities = createTestIrFunctionIdentityFactory("issue-6865-linear-layout-contract");
++    const support = irSupportRef(irSupportTypeRef(identities.sourceId, "scratch", "buffer"), true);
++    expect(() => planner.linearVectorLayoutId(support)).toThrowError(
++      "linear-memory plan does not support compiler support references",
++    );
++    expect(() => planner.planLinearVectorLayout(support)).toThrowError(
++      "linear-memory plan does not support compiler support references",
++    );
++  });
++
++  it("preserves the independently specified empty record header", () => {
++    expect(shared.planLinearRecordLayout("record:empty", [])).toEqual({
++      id: "record:empty",
++      kind: "record",
++      alignment: 8,
++      size: { kind: "constant", bytes: 8 },
++      pointerMap: { kind: "none" },
++      headerBytes: 8,
++      typeTagOffset: 0,
++      payloadSizeOffset: 4,
++      fields: [],
++    });
++  });
++
++  it("preserves ordered mixed record slots and both fixed pointer offsets", () => {
++    expect(
++      shared.planLinearRecordLayout("record:mixed", [
++        { name: "number", storage: "f64" },
++        { name: "left", storage: "pointer" },
++        { name: "count", storage: "i32" },
++        { name: "right", storage: "pointer" },
++      ]),
++    ).toEqual({
++      id: "record:mixed",
++      kind: "record",
++      alignment: 8,
++      size: { kind: "constant", bytes: 40 },
++      pointerMap: { kind: "fixed", offsets: [16, 32] },
++      headerBytes: 8,
++      typeTagOffset: 0,
++      payloadSizeOffset: 4,
++      fields: [
++        { name: "number", offset: 8, storage: "f64", slotBytes: 8, alignment: 8, containsPointer: false },
++        { name: "left", offset: 16, storage: "pointer", slotBytes: 8, alignment: 4, containsPointer: true },
++        { name: "count", offset: 24, storage: "i32", slotBytes: 8, alignment: 4, containsPointer: false },
++        { name: "right", offset: 32, storage: "pointer", slotBytes: 8, alignment: 4, containsPointer: true },
++      ],
++    });
++  });
++
++  it("retains the existing eight-byte record slot for bytes16 storage", () => {
++    expect(shared.planLinearRecordLayout("record:wide", [{ name: "wide", storage: "bytes16" }])).toEqual({
++      id: "record:wide",
++      kind: "record",
++      alignment: 8,
++      size: { kind: "constant", bytes: 16 },
++      pointerMap: { kind: "none" },
++      headerBytes: 8,
++      typeTagOffset: 0,
++      payloadSizeOffset: 4,
++      fields: [{ name: "wide", offset: 8, storage: "bytes16", slotBytes: 8, alignment: 16, containsPointer: false }],
++    });
++  });
++
++  it("preserves the independently specified UTF-8 byte string layout", () => {
++    expect(shared.linearStringLayoutId()).toBe("string:utf8-bytes-v1");
++    expect(shared.planLinearStringLayout()).toEqual({
++      id: "string:utf8-bytes-v1",
++      kind: "string",
++      alignment: 8,
++      size: { kind: "elements", baseBytes: 12, strideBytes: 1, minimumElements: 0 },
++      pointerMap: { kind: "none" },
++      payloadSizeOffset: 4,
++      payloadPrefixBytes: 4,
++      lengthOffset: 8,
++      elementsOffset: 12,
++      elementStorage: "i8",
++      elementStride: 1,
++    });
++  });
++
++  it("retains five function bindings through planner and public IR compatibility exports", () => {
++    for (const name of [
++      "storageBytes",
++      "storageAlignment",
++      "planLinearRecordLayout",
++      "linearStringLayoutId",
++      "planLinearStringLayout",
++    ] as const) {
++      expect(planner[name]).toBe(shared[name]);
++      expect(publicIr[name]).toBe(shared[name]);
++    }
++    expect(planner.planLinearVectorLayout).not.toBe(shared.planLinearScalarVectorLayout);
++    expect(publicIr.planLinearVectorLayout).toBe(planner.planLinearVectorLayout);
++    for (const name of [
++      "LINEAR_POINTER_BYTES",
++      "LINEAR_RECORD_ALIGNMENT",
++      "LINEAR_RECORD_HEADER_BYTES",
++      "LINEAR_RECORD_FIELD_SLOT_BYTES",
++      "LINEAR_RECORD_TAG_OFFSET",
++      "LINEAR_RECORD_PAYLOAD_SIZE_OFFSET",
++      "LINEAR_VECTOR_LENGTH_OFFSET",
++      "LINEAR_VECTOR_CAPACITY_OFFSET",
++      "LINEAR_VECTOR_ELEMENTS_OFFSET",
++      "LINEAR_VECTOR_MINIMUM_CAPACITY",
++      "LINEAR_STRING_LENGTH_OFFSET",
++      "LINEAR_STRING_ELEMENTS_OFFSET",
++      "LINEAR_STRING_PAYLOAD_SIZE_OFFSET",
++      "LINEAR_STRING_PAYLOAD_PREFIX_BYTES",
++    ] as const) {
++      expect(planner[name]).toBe(shared[name]);
++      expect(publicIr[name]).toBe(shared[name]);
++    }
++  });
++
++  it("returns fresh mutable layouts and isolates nested array mutations", () => {
++    const record = shared.planLinearRecordLayout("record:fresh", [{ name: "p", storage: "pointer" }]);
++    const nextRecord = shared.planLinearRecordLayout("record:fresh", [{ name: "p", storage: "pointer" }]);
++    expect(record).not.toBe(nextRecord);
++    expect(record.fields).not.toBe(nextRecord.fields);
++    expect(record.fields[0]).not.toBe(nextRecord.fields[0]);
++    expect(record.pointerMap).not.toBe(nextRecord.pointerMap);
++    expect(Object.isFrozen(record)).toBe(false);
++    expect(Reflect.set(record.fields[0]!, "offset", 999)).toBe(true);
++    if (record.pointerMap.kind !== "fixed" || nextRecord.pointerMap.kind !== "fixed")
++      throw new Error("expected fixed map");
++    (record.pointerMap.offsets as number[]).push(999);
++    expect(nextRecord.fields[0]!.offset).toBe(8);
++    expect(nextRecord.pointerMap.offsets).toEqual([8]);
++    const vector = shared.planLinearScalarVectorLayout("pointer");
++    const nextVector = planner.planLinearVectorLayout(irVal({ kind: "externref" }));
++    expect(vector).not.toBe(nextVector);
++    expect(vector.size).not.toBe(nextVector.size);
++    if (vector.pointerMap.kind !== "elements" || nextVector.pointerMap.kind !== "elements")
++      throw new Error("expected elements map");
++    expect(vector.pointerMap.fixedOffsets).not.toBe(nextVector.pointerMap.fixedOffsets);
++    (vector.pointerMap.fixedOffsets as number[]).push(999);
++    expect(Object.isFrozen(vector)).toBe(false);
++    expect(Reflect.set(vector.size, "strideBytes", 999)).toBe(true);
++    expect(nextVector).toEqual(expectedVector("vector:scalar:pointer", "pointer", 4, 8, true));
++    const string = shared.planLinearStringLayout();
++    const nextString = planner.planLinearStringLayout();
++    expect(string).not.toBe(nextString);
++    expect(string.size).not.toBe(nextString.size);
++    expect(string.pointerMap).not.toBe(nextString.pointerMap);
++    expect(Object.isFrozen(string)).toBe(false);
++    expect(Reflect.set(string, "elementsOffset", 999)).toBe(true);
++    expect(Reflect.set(string.size, "baseBytes", 999)).toBe(true);
++    expect(nextString.elementsOffset).toBe(12);
++    expect(nextString.size).toEqual({ kind: "elements", baseBytes: 12, strideBytes: 1, minimumElements: 0 });
++  });
++
++  it("shares one frozen forwarding object with independently specified header bytes", () => {
++    expect(shared.LINEAR_ARRAY_FORWARDING).toEqual({ tag: 6, tagOffset: 0, pointerOffset: 4, pointerBytes: 4 });
++    expect(Object.isFrozen(shared.LINEAR_ARRAY_FORWARDING)).toBe(true);
++    expect(planner.LINEAR_ARRAY_FORWARDING).toBe(shared.LINEAR_ARRAY_FORWARDING);
++    expect(publicIr.LINEAR_ARRAY_FORWARDING).toBe(shared.LINEAR_ARRAY_FORWARDING);
++    const bytes = new Uint8Array(8);
++    const view = new DataView(bytes.buffer);
++    view.setUint32(shared.LINEAR_ARRAY_FORWARDING.tagOffset, shared.LINEAR_ARRAY_FORWARDING.tag, true);
++    view.setUint32(shared.LINEAR_ARRAY_FORWARDING.pointerOffset, 0x12345678, true);
++    expect([...bytes]).toEqual([6, 0, 0, 0, 0x78, 0x56, 0x34, 0x12]);
++  });
++
++  it("has a nonempty shared source owner with zero value or type references and exact IR delegation", () => {
++    const text = ownerText();
++    expect(text.length).toBeGreaterThan(7000);
++    const tree = sourceFile(ownerPath, text);
++    expect(tree.statements.length).toBeGreaterThan(30);
++    expect(references(tree, {})).toEqual([]);
++    const plannerText = readFileSync(new URL("../src/ir/analysis/linear-memory-plan.ts", import.meta.url), "utf8");
++    const plannerTree = sourceFile("linear-memory-plan.ts", plannerText);
++    const adapter = plannerTree.statements.find(
++      (node): node is ts.FunctionDeclaration =>
++        ts.isFunctionDeclaration(node) && node.name?.text === "planLinearVectorLayout",
++    );
++    expect(adapter?.body?.statements.map((node) => node.getText(plannerTree))).toEqual([
++      "const storage = linearStorageForIrType(element);",
++      'if (element.kind === "val") return planLinearScalarVectorLayout(storage);',
++      "return planLinearVectorStorageLayout(linearIrTypeKey(element), storage);",
++    ]);
++    const idAdapter = plannerTree.statements.find(
++      (node): node is ts.FunctionDeclaration =>
++        ts.isFunctionDeclaration(node) && node.name?.text === "linearVectorLayoutId",
++    );
++    expect(idAdapter?.body?.statements.map((node) => node.getText(plannerTree))).toEqual([
++      "return linearVectorLayoutIdForElementKey(linearIrTypeKey(element));",
++    ]);
++  });
++
++  it("detects injected forbidden IR value and type references with the repository parser", () => {
++    const genuine = ownerText();
++    expect(references(sourceFile(ownerPath, genuine), {})).toEqual([]);
++    const valueControl = references(
++      sourceFile(ownerPath, 'import { irVal } from "../../ir/core/types.js";\n' + genuine),
++      {},
++    );
++    expect(valueControl).toHaveLength(1);
++    expect(valueControl[0]).toMatchObject({ specifier: "../../ir/core/types.js", syntax: "import", typeOnly: false });
++    const typeControl = references(
++      sourceFile(ownerPath, 'export type { IrType } from "../../ir/core/types.js";\n' + genuine),
++      {},
++    );
++    expect(typeControl).toHaveLength(1);
++    expect(typeControl[0]).toMatchObject({
++      specifier: "../../ir/core/types.js",
++      syntax: "export-from",
++      typeOnly: true,
++    });
++  });
++});
