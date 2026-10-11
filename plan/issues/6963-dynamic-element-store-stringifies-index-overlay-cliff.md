@@ -1,7 +1,8 @@
 ---
 id: 6963
 title: "standalone: `x[i] = v` on an untyped array receiver stringifies the index and stores through the descriptor overlay, making every later indexed read a string-keyed hash lookup (Octane navier-stokes 2 s/rep vs node 8 ms)"
-status: ready
+status: done
+completed: 2026-10-11
 sprint: current
 goal: standalone-gap
 area: compiler
@@ -149,3 +150,74 @@ as a follow-up with its own measurement; expected to bring the rep to
   180 s).
 - No change in `tests/equivalence/` and the #2666/#2668 regression tests;
   gc lane byte-identical (standalone-only paths).
+
+## Implementation notes (Stage 1, 2026-10-11)
+
+What landed, and why each piece is semantics-preserving:
+
+- **Call site** (`emitElementStoreKeyOnce`, computed-member-reference.ts; used
+  by `compileExternSetFallback` and `compileComputedMemberKeyAfterBaseGuard`):
+  standalone stores route the key through `__elem_store_key(obj, key)`,
+  reserved with the old `__to_property_key(key)` body. `fillElemStoreKeyArm`
+  (object-runtime.ts, run from `fillExternSetVecArms`) prepends one arm: a
+  NON-NEGATIVE i31 key on one of the overlay's JS-array carriers
+  (`allowedCarriers`) is returned unchanged. Restricting it to those carriers
+  is deliberate: TypedArray views and other `$__vec_base` subtypes, plus every
+  non-vec receiver, keep the string key the receiver-specific `__extern_set`
+  arms were written against (the dyn-read.ts L884 concern). A non-negative
+  i31 is a canonical array index, and ToPropertyKey of a Number is
+  unobservable, so §13.15.2 order is unchanged. gc lane untouched.
+- **Overlay WRITE prologue front door** (`buildOwnElementFastSet`,
+  vec-overlay.ts): with `__vec_overlay_numeric == 0` (no companion anywhere
+  has a numeric entry — the gate the READ prologue already trusts), an i31
+  key that is in the BACKED length, whose value fits the carrier losslessly
+  (`valueFitsCarrierInstrs`: externref always, f64 only for a strict number —
+  the `__vec_dp_value` write-back rule) and that passes the frozen-array guard
+  and the slow path's own `backedIndexIsPresent`, `br`s out of the prologue to
+  the `fillExternSetVecArms` numeric arm. These are exactly the conditions
+  under which the slow path reached `overlayStore(SEED_FLAGS)` /
+  `__vec_dp_value(SEED_FLAGS)` for an implicit all-true element, whose only
+  effect was the same backing write plus a redundant companion entry.
+- **String-key twin**: the parseIndex branch takes the same fall-through
+  instead of seeding a companion when the index has no companion entry, is
+  backed (and present, in the inherited-set-decision branch) and the value
+  fits. Out-of-bounds indices and deleted-index tombstones keep `__vec_dp_value`.
+- `__to_property_key`'s contract is unchanged.
+
+Not done: the `__extern_set_idx(obj, f64, v)` variant (the i31 key is already
+allocation-free; boxing is Stage 2 territory).
+
+### Measurements (4-core container, load ~6 from other agents)
+
+| probe | before | after |
+|---|---|---|
+| `.tmp/ns-probe.js` runB (1M untyped read+write, warm) | 776 ms | 126 ms |
+| navier-stokes `octane_run(1)` x3 | 2713 / 1728 / 1817 ms | 946 / 302 / 272 ms |
+| `benchmark:octane --only navier-stokes --lanes node,standalone` (30 reps) | standalone `skipped: timeout after 180s` | standalone `pass`, samples 7.4-8.0 s / 30 reps, min 248 ms/rep, score 576 (node 41765) |
+
+The ns-probe profile has no `number_toString`, `__vec_dp_value` or
+`__obj_find` left under `loop`.
+
+### Known interaction — earley-boyer (follow-up filed separately)
+
+earley-boyer gets slower per run before AND after this change (both time out
+in the benchmark), and this change makes the per-run time ~1.7x worse:
+`octane_run(1)` x5 1479/2355/8000/10770/13284 ms -> 1534/4625/12635/19667/24632
+ms. Cause: every sloppy `arguments` object adds a companion to the
+never-pruned overlay table (`callee` / `@@iterator` defines), and once the
+numeric flag is set every vec READ scans that table. The hot vectors used to
+have their own (redundant) companions, which the newest-first scan found
+quickly; now they miss and walk the whole table. The fix is to index the read
+scan by "companion has a numeric entry" and stop minting companions for
+arguments objects — see the follow-up issue drafted from this work.
+
+### Pre-existing gaps seen while testing (unchanged here)
+
+- A param fed only one array literal is inferred as a typed array, so
+  `set(nums, 0, "str")` inside it stores ToNumber("str") = NaN and ignores
+  `Object.freeze` / non-writable descriptors (the dynamic path never runs).
+- Without the overlay (no descriptor op in the module), a kind-incompatible
+  dynamic store into an f64-carrier array is dropped.
+- `a[1.5] = v` on an array stores into element 1 and `a[-1] = v` is lost
+  (the numeric vec arm truncates `ToNumber(key)`); a Float64Array
+  out-of-bounds dynamic store grows the view. Same on base.
