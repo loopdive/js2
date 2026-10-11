@@ -1,11 +1,10 @@
 {
   "id": "5157",
-  "assignee": "",
-  "requested_by": "claude/fable-es2015",
-  "status": "reserved",
+  "assignee": "codex-pr-shepherd-root",
+  "requested_by": "codex-pr-shepherd-root",
+  "status": "in-progress",
   "branch": "",
-  "reserved_at": "2026-08-28T14:32:14Z",
-  "updated_at": "2026-08-28T14:32:14Z",
-  "write_id": "9887-btq1t3c2",
-  "pr_scan": "degraded"
+  "claimed_at": "2026-10-11T21:25:32Z",
+  "updated_at": "2026-10-11T21:25:32Z",
+  "write_id": "94984-jambi0ab"
 }
