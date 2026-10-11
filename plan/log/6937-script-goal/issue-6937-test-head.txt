@@ -1,0 +1,20 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-ab0245120cafacc2b
+
+ ✓ tests/issue-6937.test.ts (18 tests) 10197ms
+   ✓ #6937 Script-goal single-file compile (gc) > implicit global assignment creates a global (crypto setupEngine)  835ms
+   ✓ #6937 Script-goal single-file compile (standalone) > implicit global assignment creates a global (crypto setupEngine)  1812ms
+   ✓ #6937 Script-goal single-file compile (standalone) > sloppy `this` in a plain call is the global object (navier-stokes checkResult)  1068ms
+   ✓ #6937 Script-goal single-file compile (standalone) > top-level `this` is the global object  1660ms
+   ✓ #6937 Script-goal single-file compile (standalone) > top-level `var` is a property of top-level `this`  775ms
+   ✓ #6937 Script-goal single-file compile (standalone) > top-level `var` is readable as a globalThis property  675ms
+   ✓ #6937 Script-goal single-file compile (standalone) > exported entry points stay Wasm exports and callable by name  410ms
+   ✓ #6937 Script-goal single-file compile (standalone) > default compile keeps module semantics  794ms
+   ✓ #6937 Script-goal single-file compile (standalone) > an explicit 'use strict' prologue stays strict under the flag  317ms
+   ✓ #6937 Script-goal single-file compile (standalone) > a source without any export compiles under both settings  1246ms
+
+ Test Files  1 passed (1)
+      Tests  18 passed (18)
+   Start at  07:31:39
+   Duration  51.33s (transform 28.82s, setup 0ms, collect 40.26s, tests 10.20s, environment 0ms, prepare 191ms)
+
