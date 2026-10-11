@@ -1,0 +1,73 @@
+FILE src/ir/array-element-lowering.ts
+@@ -15,15 +15,16 @@ import {
+@@ -331,7 +332,11 @@ export function annotatedArrayElementValType(
+@@ -468,8 +473,11 @@ export function tryLowerVecPush(
+FILE src/ir/backend/contract-conformance.ts
+@@ -45,8 +45,7 @@ import type {
+@@ -83,7 +82,7 @@ export type StubSink = string[];
+FILE src/ir/backend/contract.ts
+@@ -83,6 +83,7 @@ export type {
+FILE src/ir/backend/emitter.ts
+@@ -48,16 +48,17 @@ import type {
+@@ -131,8 +132,10 @@ export interface BackendEmitter<S = Instr[]> extends StringBackendEmitter<S> {
+FILE src/ir/backend/handles.ts
+@@ -181,7 +181,7 @@ export interface LinearRefCellLowering extends IrRefCellLowering {
+@@ -438,6 +438,9 @@ export interface IrDynamicLowering {
+@@ -446,11 +449,13 @@ export interface IrDynamicLowering {
+@@ -461,3 +466,11 @@ export interface LinearVecLowering {
+FILE src/ir/backend/linear-emitter.ts
+@@ -157,15 +157,9 @@ function notImplemented(method: string): never {
+@@ -346,8 +340,7 @@ export class LinearEmitter implements BackendEmitter<Instr[]> {
+FILE src/ir/backend/linear-integration.ts
+@@ -174,12 +174,12 @@ import type {
+@@ -1600,22 +1600,16 @@ export function compileLinearIrFunctions(
+@@ -1912,7 +1906,7 @@ function makeLinearIrResolver(
+@@ -1929,10 +1923,6 @@ function makeLinearIrResolver(
+@@ -2172,10 +2162,10 @@ function makeLinearIrResolver(
+@@ -2364,7 +2354,15 @@ function linearValueTypeConverter(resolver: IrLowerResolver, funcName: string):
+FILE src/ir/backend/lower-contracts.ts
+@@ -25,7 +25,7 @@ import type {
+@@ -37,6 +37,7 @@ export type {
+@@ -136,8 +137,14 @@ export interface IrLowerResolver {
+@@ -145,9 +152,10 @@ export interface IrLowerResolver {
+FILE src/ir/backend/porffor/assembler.ts
+@@ -31,7 +31,7 @@ import { compareIrIdentity, type IrUnitId } from "../../identity.js";
+@@ -103,7 +103,11 @@ type ControlFrame = { readonly kind: "block" | "loop" | "if"; readonly label: st
+@@ -519,11 +523,11 @@ export class PorfforModuleAssembler
+@@ -1288,7 +1292,7 @@ export class PorfforModuleAssembler
+@@ -1305,10 +1309,6 @@ export class PorfforModuleAssembler
+FILE src/ir/backend/porffor/sink.ts
+@@ -17,7 +17,7 @@ import type {
+@@ -254,7 +254,7 @@ function irTypeSlot(type: IrType): PorfforValueSlot {
+FILE src/ir/backend/vector-representation.ts
+@@ -0,0 +1,240 @@
+FILE src/ir/backend/wasm-lowering.ts
+@@ -26,7 +26,7 @@ export function wasmValueTypeConverter(
+FILE src/ir/from-ast.ts
+@@ -197,7 +197,8 @@ import {
+@@ -288,7 +289,7 @@ import {
+@@ -318,8 +319,7 @@ function resolveIrVecType(
+@@ -350,12 +350,17 @@ function resolveIrSlotRepresentation(
+@@ -559,13 +564,13 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
+@@ -5436,10 +5441,7 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint:
+@@ -5611,10 +5613,7 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint:
+@@ -12135,7 +12134,7 @@ function lowerForOfVec(
+FILE src/ir/lower-generic.ts
+@@ -47,7 +47,7 @@ import type { IrLowerResolver, IrLoweredBody, IrLoweredSignature } from "./backe
+@@ -342,6 +342,8 @@ export function lowerIrFunctionBody<S, Slot>(
+@@ -731,7 +733,7 @@ export function lowerIrFunctionBody<S, Slot>(
+@@ -840,18 +842,20 @@ export function lowerIrFunctionBody<S, Slot>(
+@@ -947,28 +951,11 @@ export function lowerIrFunctionBody<S, Slot>(
+@@ -1212,7 +1199,7 @@ export function lowerIrFunctionBody<S, Slot>(
+@@ -1564,7 +1551,7 @@ export function lowerIrFunctionBody<S, Slot>(
+@@ -1656,7 +1643,7 @@ export function lowerIrFunctionBody<S, Slot>(
+@@ -2317,7 +2304,7 @@ export function lowerIrFunctionBody<S, Slot>(
+@@ -2327,19 +2314,19 @@ export function lowerIrFunctionBody<S, Slot>(
+@@ -2347,12 +2334,12 @@ export function lowerIrFunctionBody<S, Slot>(
+@@ -2364,8 +2351,8 @@ export function lowerIrFunctionBody<S, Slot>(
+@@ -2531,12 +2518,12 @@ export function lowerIrFunctionBody<S, Slot>(
+@@ -2578,7 +2565,7 @@ export function lowerIrFunctionBody<S, Slot>(
+@@ -3988,7 +3975,13 @@ function memberValType(t: IrType, funcName: string): ValType {
+@@ -4014,16 +4007,13 @@ export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcN
+FILE src/ir/lower.ts
+@@ -18,5 +18,6 @@ export type {
