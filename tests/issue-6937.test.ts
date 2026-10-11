@@ -10,7 +10,12 @@ import { buildImports, compile, instantiateWasm } from "../src/index.ts";
 
 type Lane = "gc" | "standalone";
 
-async function runMain(src: string, lane: Lane, scriptGoal: boolean): Promise<unknown> {
+/**
+ * Compile, validate and instantiate. Any failure here is a harness or compiler
+ * defect, never an expected program outcome, so it propagates as a test error
+ * instead of being folded into "throw" by `outcome` below.
+ */
+async function loadMain(src: string, lane: Lane, scriptGoal: boolean): Promise<() => unknown> {
   const result = await compile(src, {
     fileName: "input.js",
     allowJs: true,
@@ -30,16 +35,23 @@ async function runMain(src: string, lane: Lane, scriptGoal: boolean): Promise<un
     imports.setInstance?.(instance);
     exports = instance.exports;
   }
-  return (exports.main as () => unknown)();
+  const main = exports.main;
+  if (typeof main !== "function") throw new Error("no exported main()");
+  return main as () => unknown;
 }
 
-/** Run, mapping a throw (JS error or Wasm exception) to the string "throw". */
+/**
+ * Run the program's `main()`. A throw from the program maps to "throw"; a Wasm
+ * trap (`WebAssembly.RuntimeError`) maps to "trap", so a broken lowering cannot
+ * pass for a source-level exception. Compile, validation and instantiation
+ * failures are outside the catch and escape as test errors.
+ */
 async function outcome(src: string, lane: Lane, scriptGoal: boolean): Promise<unknown> {
+  const main = await loadMain(src, lane, scriptGoal);
   try {
-    return await runMain(src, lane, scriptGoal);
+    return main();
   } catch (e) {
-    if (e instanceof Error && e.message.startsWith("compile failed")) throw e;
-    return "throw";
+    return e instanceof WebAssembly.RuntimeError ? "trap" : "throw";
   }
 }
 
@@ -101,10 +113,11 @@ for (const lane of ["gc", "standalone"] as const) {
     // Known residual on the gc HOST lane, independent of the goal switch: an
     // export-free script fails the same `this.g` read, because the host lane
     // does not publish top-level `var`s onto the host global object
-    // (`emitScriptGlobalVarBindings` is standalone/WASI-only). `it.fails`
-    // flips red once that is fixed, so the assertion can be promoted.
-    (lane === "gc" ? it.fails : it)("top-level `var` is a property of top-level `this`", async () => {
-      expect(await outcome(R3_TOP_LEVEL_THIS, lane, true)).toBe(1);
+    // (`emitScriptGlobalVarBindings` is standalone/WASI-only). The gc row pins
+    // the observed residual (`top` is the global object, `top.g` is not 7 → 0);
+    // it goes red once that is fixed, so the expectation can be promoted to 1.
+    it("top-level `var` is a property of top-level `this`", async () => {
+      expect(await outcome(R3_TOP_LEVEL_THIS, lane, true)).toBe(lane === "gc" ? 0 : 1);
     });
 
     // Does-not-regress only: `globalThis.g` already reads 7 under the module
@@ -118,17 +131,22 @@ for (const lane of ["gc", "standalone"] as const) {
       expect(await outcome(R5_EXPORTED_ENTRY, lane, false)).toBe(2);
     });
 
+    // Strict `this` in a plain call is `undefined`, so `this.result = 0` throws
+    // a TypeError. Standalone does exactly that. The gc HOST lane is a known,
+    // pre-existing residual: it reads and writes through a non-throwing receiver
+    // and returns NaN. Both rows pin the observed result per lane, so a change
+    // in either direction is visible.
+    const STRICT_PLAIN_CALL_THIS = lane === "gc" ? NaN : "throw";
+
     // Negative controls: the default (module goal) behaviour must not change.
     it("default compile keeps module semantics", async () => {
       expect(await outcome(R1_IMPLICIT_GLOBAL, lane, false)).toBe("throw");
-      const r2 = await outcome(R2_SLOPPY_THIS, lane, false);
-      expect(r2 === "throw" || Number.isNaN(r2)).toBe(true);
+      expect(await outcome(R2_SLOPPY_THIS, lane, false)).toBe(STRICT_PLAIN_CALL_THIS);
       expect(await outcome(R3_TOP_LEVEL_THIS, lane, false)).toBe(-1);
     });
 
     it("an explicit 'use strict' prologue stays strict under the flag", async () => {
-      const r = await outcome(R2_STRICT, lane, true);
-      expect(r === "throw" || Number.isNaN(r)).toBe(true);
+      expect(await outcome(R2_STRICT, lane, true)).toBe(STRICT_PLAIN_CALL_THIS);
     });
 
     it("a source without any export compiles under both settings", async () => {
