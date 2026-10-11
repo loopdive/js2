@@ -6817,3 +6817,26 @@ The first normal commit attempt completed all 17 changed-root suites: 2646 passe
 The original frozen caller cohort subsequently completed 2254/2254 across 13 suites with all 26 collection/ordinary children exiting0, exact ordered names (including duplicate occurrences), clean error channels and all2314 input custody rows restored. Its attribution remains pre-normalization ca11, not the final formatted epoch. The earlier .tmp Prettier check was partially ignored and is not a 30-file coverage claim: actual lint-staged formatted all26TS+4JSON, and 30 independent stdin formatting operations over real target paths returned nonempty byte-identical staged output. The unique C1 test scalar changed only quote rendering; AST-decoded authority data and all other test bytes remain identical.
 
 Canonical fdb116928b5861fd628abfde95da5e3deb91f689 is now integrated. Its delta contains nine benchmark artifacts and issue6651 documentation; all31 owned IR paths, 103 authenticated C1 inputs and both1969/2314 custody domains remain unchanged. Independent reconciliation SHA2569df5899daade37d1646c9740e27c877f5625de0580491928cd121baa8934ca51. A fresh complete17-PR census confirms allfour qualified D1 claims remain held, no duplicate D1 ref and no overlap with the four production paths; existing shared metadata intersections remain recorded. Normal signed commit retry, pre-push checks and protected main delivery are still pending. Legacy retirement and complete IR parity remain unproved.
+
+
+### Finite cloud timeout takeover (2026-10-10)
+
+The user explicitly authorized taking over the two blocked timeout and metadata
+areas. This continuation changes only the changed-issue-test job timeout from
+40 to 120 minutes, its explanatory comment and its exact workflow assertion.
+The other three timeout assertions remain at 40 minutes. The original command
+and outcome-archive block is unchanged (SHA256
+`88b8799e3e5ed5fb00676b1848252b3281d0a61580905e1f033bda1e9c980872`).
+The selector/workflow suite passes 54/54 on canonical base
+`dca6a41a470fe4eebbe1154f3b2c55eb04f350ec`.
+
+This addresses the reported 40-minute job cancellations; it does not resolve
+PR6606's newer quality failure at head
+`a702598e98fc635b62eff030988577004e29f3e2`: the first changed-root suite
+passed 479/486 tests, with seven individual probe/test timeouts and 15 later
+files not run. Preserve that failure and the remaining Session A integration
+ownership. PR6626 remains draft and unmerged; all other coordination holds,
+fixtures, legacy sources and full-equivalence requirements remain in force.
+The attempted new continuation claim was not published. A Git dry-run push
+returned HTTP403, permission denied to ttraenkler; no protected delivery is
+claimed from local work.
