@@ -793,6 +793,21 @@ function buildEntryArm(
  * method funcs are registered, and after `addUnionImports` (so
  * `__box_number`/`__box_boolean` exist). No-op when nothing was reserved.
  */
+/**
+ * (#6962) `∨ ref.test $__fnctor_*` terms for the #2903 iterator arms' "not an
+ * iterator" test: a raw `new F()` carrier is a plain object whose methods live
+ * on `F.prototype` (reached via `__extern_method_call`), never an iterator —
+ * else Octane splay's `splayTree.find(key)` ran `__iter_hof_find` → undefined.
+ */
+function fnctorNotIterTest(ctx: CodegenContext, anyLocalIdx: number): Instr[] {
+  const test: Instr[] = [];
+  for (const [name, typeIdx] of ctx.structMap) {
+    if (!name.startsWith("__fnctor_")) continue;
+    test.push({ op: "local.get", index: anyLocalIdx }, { op: "ref.test", typeIdx }, { op: "i32.or" });
+  }
+  return test;
+}
+
 export function fillClosedMethodDispatch(ctx: CodegenContext): void {
   const mod = ctx.mod;
   const ci: CoerceIdxs = buildCoerceIdxs(ctx);
@@ -1001,6 +1016,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
             { op: "i32.or" },
           );
         }
+        notIterTest.push(...fnctorNotIterTest(ctx, anyLocalIdx)); // (#6962)
         current = [
           ...notIterTest,
           {
@@ -1072,6 +1088,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
             { op: "i32.or" },
           );
         }
+        notIterTest.push(...fnctorNotIterTest(ctx, anyLocalIdx)); // (#6962)
         current = [
           ...notIterTest,
           {
